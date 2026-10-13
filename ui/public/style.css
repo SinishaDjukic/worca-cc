@@ -8952,6 +8952,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
   .chat-home-dot.is-think{animation:none;}
 }
 
-.same-src-row{margin-top:8px;}   /* `.field > label.switch-row` already gives it flex + margin-bottom:0 */
+/* `.branches-new > label{display:block}` would otherwise win over `.switch-row{display:flex}` and collapse the switch. */
+.branches-new > label.same-src-row{display:flex;margin:8px 0 0;}
 #sameAsSourceHint[hidden]{display:none;}   /* .hint{display:block} beats the UA [hidden] rule */
 #featureBranch:disabled{opacity:.65;cursor:not-allowed;}   /* no global .input:disabled rule exists */

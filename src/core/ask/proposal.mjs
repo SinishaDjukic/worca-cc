@@ -258,6 +258,9 @@ export function createProposalValidator({
     }
     if (inp.sameAsSource !== undefined && inp.sameAsSource !== null && typeof inp.sameAsSource !== 'boolean') errors.push('sameAsSource must be true or false');
     const sameAsSource = inp.sameAsSource === true;
+    if (!sameAsSource && featureBranch && sourceBranch && featureBranch === sourceBranch) {
+      errors.push(`featureBranch and sourceBranch are both "${sourceBranch}": to commit onto it, set sameAsSource: true (and drop featureBranch); otherwise name another feature branch`);
+    }
 
     // ── schedule (docs/scheduled-runs.md "Ask Worca"): when | every, read in the user's zone ──
     const spec = resolveScheduleSpec({ ...inp, projectKey: target.projectKey || '', workspaceId: target.workspaceId || '' }, { nowMs, timeZone, defaults: scheduleDefaults, afterRef });

@@ -18,7 +18,7 @@ import { createWorktree, sweepRunRoots } from '../src/core/worktree.mjs';
 import { readRunManifest } from '../src/core/run-manifest.mjs';
 import { checkoutRecordsFor, lookupPipelineRow, runRootSweepLookups } from '../src/core/artifacts.mjs';
 import { archivePipeline } from '../src/core/pipeline-delete.mjs';
-import { canon, checkoutRun, discardCheckout, enforceCheckoutCap, setSetupState } from '../src/core/checkout.mjs';
+import { canon, checkoutRun, discardCheckout, enforceCheckoutCap, membersOfRow, setSetupState } from '../src/core/checkout.mjs';
 
 useTempHome(after, 'worca-cc-checkout-');
 
@@ -246,4 +246,12 @@ test('useExisting links the folder that has the branch; Discard only unlinks it;
   assert.ok(existsSync(join(repo, 'dirty.txt')) && existsSync(join(repo, '.git')), 'the folder and its changes stay');
   assert.equal(git(repo, ['branch', '--show-current']).stdout.trim(), 'worca-cc/mine');
   assert.equal(checkoutRecordsFor(lookupPipelineRow(key, id)), null);
+});
+
+test('membersOfRow: a run merged back into its source has no branch of its own (Check out, Try it and the keep policy see no-branch)', () => {
+  const same = (mergeBack) => ({ id: 'mb1', target: 'project', project_key: 'no-such-project-00000000',
+    branch: JSON.stringify({ feature: 'worca-cc/h-1', source: 'main', sameAsSource: true, mergeBack }) });
+  assert.equal(membersOfRow(same({ merged: true, sha: 'a'.repeat(40) }))[0].br.feature, null);
+  assert.equal(membersOfRow(same({ merged: false, kind: 'dirty' }))[0].br.feature, 'worca-cc/h-1', 'refused: the work is on its branch');
+  assert.equal(membersOfRow({ ...same(null), branch: JSON.stringify({ feature: 'worca-cc/f', source: 'main' }) })[0].br.feature, 'worca-cc/f');
 });

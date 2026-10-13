@@ -60,6 +60,12 @@ test('--on-source-branch with --branch exits 2', () => {
   assert.match(r.stderr.toString(), /--on-source-branch and --branch cannot both be given/);
 });
 
+test('--branch equal to --source-branch without --on-source-branch exits 2 and names the flag (never an error run)', () => {
+  const r = spawnSync(process.execPath, [CLI, '--prompt', 'x', '--source-branch', 'dev', '--branch', 'dev']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr.toString(), /--on-source-branch/);
+});
+
 test('--on-source-branch: the run lands on main (checked out + clean), no run branch is left', async () => {
   const repo = await freshRepo();
   const before = spawnSync('git', ['-C', repo, 'rev-parse', 'main'], { encoding: 'utf8' }).stdout.trim();

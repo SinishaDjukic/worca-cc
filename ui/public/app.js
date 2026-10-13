@@ -6556,6 +6556,8 @@ function snapshotTask() {
     source: (el.sourceRadios.find((r) => r.checked) || {}).value || 'prompt',
     title: el.title.value, prompt: el.prompt.value, markdown: el.promptMarkdown.value,
     mdFileName: el.mdFileName.textContent, extras: [...extrasFiles],
+    // Run on the source branch goes with the task: a cleared form never silently commits the next run onto its source.
+    sameAsSource: !!el.sameAsSource?.checked,
   };
 }
 const sameTask = (a, b) => a.title === b.title && a.prompt === b.prompt && a.markdown === b.markdown
@@ -6568,6 +6570,7 @@ function setTask(t) {
   el.mdFile.value = '';
   extrasFiles = [...t.extras];
   renderExtrasPills();
+  if (el.sameAsSource && el.sameAsSource.checked !== !!t.sameAsSource) { el.sameAsSource.checked = !!t.sameAsSource; paintSameAsSource(); }
   scheduleMentionHighlight(el.prompt);
   scheduleMentionHighlight(el.promptMarkdown);
 }
@@ -19690,20 +19693,58 @@ function renderMergeBack(node, p) {
   const title = document.createElement('h4');
   title.textContent = 'Not merged back into the source branch';
   const intro = document.createElement('p');
-  intro.textContent = 'The run’s work is safe on its own branch. Merge it by hand, then the branch can go:';
+  intro.textContent = 'The run’s work stayed on its own branch. To land it, open a pull request or merge it by hand:';
   const list = document.createElement('ul');
   for (const m of failed) {
     const li = document.createElement('li');
     const label = document.createElement('strong');
-    label.textContent = m.projectKey || m.source || 'Project';
+    // A person reads the project's name, not its store key (<name>-<8 hex>).
+    label.textContent = m.name || (p.target !== 'workspace' && p.projectName)
+      || String(m.projectKey || '').replace(/-[0-9a-f]{8}$/, '') || m.source || 'Project';
     const detail = document.createElement('span');
     detail.textContent = ` — ${m.reason || 'the fast-forward was not possible'}. The work is on ${m.branch}.`;
-    const command = document.createElement('code');
-    command.textContent = `git switch ${shellSingleQuote(m.source)}\ngit merge ${shellSingleQuote(m.branch)}\ngit branch -d ${shellSingleQuote(m.branch)}`;
-    li.append(label, detail, command);
+    const { lead, cmd } = mergeBackRecipe(m, p);
+    const how = document.createElement('p');
+    how.textContent = lead;
+    li.append(label, detail, how);
+    if (cmd) { const command = document.createElement('code'); command.textContent = cmd; li.append(command); }
     list.appendChild(li);
   }
   banner.append(title, intro, list);
+}
+
+// What to run by hand for one member that was not merged back, by why it was refused. Every line is
+// chained with && (a failed step stops the rest: a failed `git switch` must never merge into whatever
+// is checked out), starts in the right directory, and keeps worca's own safety: fast-forward only,
+// never overwriting an ignored file. Only a source with new commits needs a real merge.
+function mergeBackRecipe(m, p) {
+  const q = shellSingleQuote;
+  const src = q(m.source), br = q(m.branch);
+  const dir = m.projectDir || (p && p.target !== 'workspace' ? p.projectDir : null);
+  const cd = dir ? `cd ${q(dir)} && ` : '';
+  const ff = `git merge --ff-only --no-overwrite-ignore ${br}`;
+  const del = `git branch -d ${br}`;
+  const inSource = `${cd}git switch ${src} && ${ff} && ${del}`;
+  switch (m.kind) {
+    case 'commit-failed':
+      return { lead: 'The run’s last changes were never committed, so nothing could be merged. Recover them first (see the saved-work notice).', cmd: '' };
+    case 'in-use': {
+      const wt = Array.isArray(m.paths) && m.paths[0];
+      return wt
+        ? { lead: `${m.source} is checked out in another worktree. Merge it there:`, cmd: `cd ${q(wt)} && ${ff} && ${del}` }
+        : { lead: `Finish or abort what is using ${m.source} (a rebase, a bisect or another worktree), then:`, cmd: inSource };
+    }
+    case 'missing':
+      return { lead: `${m.source} no longer exists. Create it from the run’s work:`, cmd: `${cd}git branch ${src} ${br} && ${del}` };
+    case 'dirty':
+      return { lead: `Commit or stash your changes in ${m.source} first (or move the file in the way), then:`, cmd: inSource };
+    case 'diverged':
+      return { lead: `${m.source} has new commits, so it needs a real merge (or open a pull request instead):`, cmd: `${cd}git switch ${src} && git merge ${br} && ${del}` };
+    case 'not-done':
+      return { lead: 'The run did not finish. Check its work in Diff before you merge it:', cmd: inSource };
+    default:
+      return { lead: 'Merge it by hand:', cmd: inSource };
+  }
 }
 
 // Paint both the collapsed warning badge and the expanded manual-recovery
@@ -21471,7 +21512,9 @@ function wsRollupPr(p) {
 // takes that member's `memberKey`. A single-project run keeps its three clauses.
 function histPrEligible(p) {
   if (!(prHostAvailable() && p)) return false;
-  if (p.sameAsSource) return false;   // a run on its source branch never opens a PR (head == base): it ships by Push (paintHdPush)
+  // Merged back (or still settling): the work is ON the source (head == base) and ships by Push (paintHdPush).
+  // Not merged back: the work stays on its own branch, so a PR is the way to land it.
+  if (p.sameAsSource && p.mergeBack?.merged !== false) return false;
   if (p.target === 'workspace') return histWsShippable(p).length > 0;
   return !!(p.survived && p.branch && p.sourceBranch);
 }
@@ -21493,13 +21536,22 @@ function paintHdPush(screen, record) {
   const btn = screen.querySelector('.hd-push');
   if (btn) btn.hidden = true;
   if (!record || !record.sameAsSource) return false;
+  if (record.mergeBack?.merged === false) return false;   // not merged back: the work is on its own branch, a PR lands it
   if (!btn || record.target === 'workspace' || !record.sourceBranch || !record.mergeBack || record.mergeBack.merged !== true) return true;
   btn.hidden = false;
   btn.disabled = false;
   btn.textContent = `Push ${record.sourceBranch}`;
+  // The run summary's CTA (.hd-g-push) clicks this button: keep its label and state in step with it.
+  const mirror = (label, disabled) => {
+    const g = screen.querySelector('.hd-g-push');
+    if (!g) return;
+    g.disabled = disabled;
+    setCtaContent(g, PR_CTA_LOOK.push.icon, label);
+  };
   btn.onclick = async () => {               // property, not addEventListener: paintHdPr re-runs (as its own btn.onclick, :18315)
     btn.disabled = true;
     btn.textContent = 'Pushing…';
+    mirror('Pushing…', true);
     try {
       const res = await fetch('/api/push', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -21510,10 +21562,12 @@ function paintHdPush(screen, record) {
       const dd = await safeJson(res);
       if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
       btn.textContent = `Pushed to ${dd.remote || 'the remote'}`;
+      mirror(btn.textContent, true);
     } catch (err) {
       btn.disabled = false;
       btn.textContent = `Push ${record.sourceBranch}`;
       btn.title = err && err.message ? err.message : String(err);
+      mirror(`Push failed: ${btn.title}`, false);
     }
   };
   return true;
@@ -21904,6 +21958,8 @@ async function paintHdPublish(screen, record, data) {
   note.hidden = true;
   const status = String((data && data.state && data.state.status) || record.status || '').toLowerCase();
   if (!PUBLISH_FINISHED.has(status) || !record.id) return;
+  // Merged back into its source: the run's branch is gone and Push ships the work (paintHdPush).
+  if ((record.sameAsSource && record.mergeBack?.merged === true) || data?.state?.branch?.mergeBack?.merged === true) return;
   let members;
   try {
     const res = await fetch(`/api/runs/${encodeURIComponent(record.id)}/publish?${new URLSearchParams(publishScope(record))}`);
@@ -22195,12 +22251,16 @@ function paintHdHeaderMeta(screen, record, data) {
   // A workspace member this run never changed has its branch dropped at teardown
   // (run-harness _dropUnchangedMemberBranch): never offer a name that no longer exists.
   const dropped = !!br.branchDeleted;
-  const same = br.sameAsSource === true || record.sameAsSource === true;   // ← : the run's branch flows INTO the source
-  base.textContent = dropped ? 'No branch — no changes in this project' : (source ? `${source} ${same ? '←' : '→'}` : '');
+  // ← : the run's branch flows INTO the source — unless the merge back was refused (its work stays on its branch: →).
+  const same = (br.sameAsSource === true || record.sameAsSource === true) && (br.mergeBack || record.mergeBack)?.merged !== false;
+  // Merged back: the hidden branch was fast-forwarded into the source and deleted, so never offer its name.
+  const mergedBack = same && (br.mergeBack || record.mergeBack)?.merged === true;
+  base.textContent = dropped ? 'No branch — no changes in this project'
+    : (source ? (mergedBack ? `Merged into ${source}` : `${source} ${same ? '←' : '→'}`) : '');
   base.hidden = !dropped && !source;
-  copyBtn.hidden = dropped || !feature;
-  paintPageBranch(screen.querySelector('.hd-glance'), feature);
-  if (feature && !dropped) {
+  copyBtn.hidden = dropped || mergedBack || !feature;
+  paintPageBranch(screen.querySelector('.hd-glance'), mergedBack ? source : feature);
+  if (feature && !dropped && !mergedBack) {
     screen.querySelector('.hd-branch-name').textContent = feature;
     if (copyBtn.dataset.bound !== '1') {              // paintHdHeaderMeta re-runs (refreshHdFromRow)
       copyBtn.dataset.bound = '1';
@@ -30494,7 +30554,7 @@ function glancePrInput(record) {
   const pr = record && record.pr;
   if (pr && typeof pr === 'object') return String(pr.state || '').toUpperCase() || 'UNAVAILABLE';
   if (!record) return 'PENDING';
-  if (record.sameAsSource) return 'UNAVAILABLE';   // never a PR (head == base): no "checking" placeholder either
+  if (record.sameAsSource && record.mergeBack?.merged !== false) return 'UNAVAILABLE';   // on the source (head == base): no PR, no "checking" placeholder
   if (!prHostAvailable()) return 'UNAVAILABLE';
   if (pr === undefined) return 'PENDING';
   return histPrEligible(record) ? 'NONE' : 'UNAVAILABLE';
@@ -31359,7 +31419,7 @@ function paintRdHeader(screen, r) {
   const source = br.source || '';
   const base = screen.querySelector('.rd-base');
   // #527: the start commit rides inside the existing span (no new themed element).
-  base.textContent = source ? `${source}${br.baseSha ? ` @ ${String(br.baseSha).slice(0, 7)}` : ''} ${br.sameAsSource ? '←' : '→'}` : '';
+  base.textContent = source ? `${source}${br.baseSha ? ` @ ${String(br.baseSha).slice(0, 7)}` : ''} ${br.sameAsSource && br.mergeBack?.merged !== false ? '←' : '→'}` : '';
   base.title = br.baseSha ? `Started from ${br.baseSha}${br.startRef ? ' (the remote tip; the local branch was left untouched)' : ''}` : '';
   base.hidden = !source;
   const syncBtn = screen.querySelector('.rd-sync');

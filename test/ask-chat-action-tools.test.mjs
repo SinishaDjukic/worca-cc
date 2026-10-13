@@ -22,6 +22,9 @@ const ROWS = {
   aaaa0007: row('aaaa0007', 'done', { branch: null }),
   aaaa0008: row('aaaa0008', 'done', { target: 'workspace', branch: null }),
   aaaa0009: row('aaaa0009', 'paused', { archived_at: '2026-10-01T00:00:00Z' }),
+  // Runs on their source branch: merged back (the work is on main), and refused (the work stays on its branch).
+  aaaa0010: row('aaaa0010', 'done', { branch: JSON.stringify({ feature: 'worca-cc/h-10', source: 'main', sameAsSource: true, mergeBack: { merged: true } }) }),
+  aaaa0011: row('aaaa0011', 'done', { branch: JSON.stringify({ feature: 'worca-cc/h-11', source: 'main', sameAsSource: true, mergeBack: { merged: false, kind: 'diverged' } }) }),
 };
 const LIVE = '0b9b6c1e-3c62-4e8b-9d6e-2f6f0f6a1c11';
 const APPLIED = 'worca applies this right after this call: a receipt card in the chat confirms it, or a notice says why not — do not restate its values. Only your own turn\'s call is applied; a sub-agent\'s call is recorded as not applied.';
@@ -136,6 +139,8 @@ test('run controls: refuse what the row shows, pass a live run id through, and o
       assert.deepEqual(await call('propose_pull_request', { runId: 'aaaa0001' }), { ok: false, error: 'the run is running; a pull request is for a finished run' });
       assert.deepEqual(await call('propose_pull_request', { runId: 'aaaa0007' }), { ok: false, error: 'the run has no feature branch' });
       assert.equal((await call('propose_pull_request', { runId: 'aaaa0008' })).ok, true, 'a workspace run keeps its branches per member');
+      assert.deepEqual(await call('propose_pull_request', { runId: 'aaaa0010' }), { ok: false, error: 'the run\'s work is already on main: offer to push main instead of a pull request' });
+      assert.equal((await call('propose_pull_request', { runId: 'aaaa0011' })).ok, true, 'not merged back: its own branch opens a PR');
     } },
   ]);
 });

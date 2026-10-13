@@ -2018,6 +2018,13 @@ const startRunHandler = async (req, res) => {
     if (body.sameAsSource !== undefined && body.sameAsSource !== null && typeof body.sameAsSource !== 'boolean') {
       return badRequest(res, 'sameAsSource must be true or false');
     }
+    // The same name for both, without the flag: refuse now with the way out, instead of accepting the run
+    // and failing it at setup ("they must differ") — or, on a repeating schedule, silently running on a
+    // date-suffixed copy. Never inferred: chains, schedules and Ask carry the mode as data.
+    if (body.sameAsSource !== true && typeof body.featureBranch === 'string' && typeof body.sourceBranch === 'string'
+      && body.featureBranch.trim() && body.featureBranch.trim() === body.sourceBranch.trim()) {
+      return badRequest(res, `the new branch and the source branch are both "${body.sourceBranch.trim()}": to commit onto it, set sameAsSource (Run on the source branch); otherwise name another branch`);
+    }
     // Scheduled runs: `scheduledFor` (one-shot) and/or `repeat` (recurring) turn this
     // request into a TICKET instead of a run. Parsed here so a bad time is a clean 400
     // before anything else; everything below still validates the request, so a schedule
@@ -6982,9 +6989,14 @@ app.post('/api/pr', async (req, res) => {
   const resolved = await resolvePrPipeline(body, res);
   if (!resolved) return;
   const { id, state } = resolved;
-  // A run on its source branch has no PR: its work is ON the base (head == base). It ships with Push.
-  if (state.branch && state.branch.sameAsSource === true) {
-    return res.status(409).json({ error: 'this run committed onto its source branch — push it instead of opening a pull request' });
+  // A run on its source branch that merged back has no PR: its work is ON the base (head == base) and
+  // ships with Push. One that did NOT merge back keeps its work on its own branch: that opens a PR
+  // like any other run (prTargetFor: hidden branch → source). Still settling (no outcome yet): wait.
+  const sameBr = (body.memberKey && state.branches && state.branches[body.memberKey]) || state.branch;
+  if (sameBr && sameBr.sameAsSource === true && sameBr.mergeBack?.merged !== false) {
+    return res.status(409).json({ error: sameBr.mergeBack?.merged === true
+      ? 'this run\'s work is already on its source branch — push the source instead of opening a pull request'
+      : 'this run is still merging its work back into the source branch — try again in a moment' });
   }
 
   const target = prTargetFor(state, body.memberKey);
