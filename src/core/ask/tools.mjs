@@ -418,6 +418,7 @@ export function createAskTools(deps) {
         memoryScope: SCHEMA.s('Memory defragment workflow only: "global" | "project"'),
         engine: SCHEMA.s('claude | codex | copilot | cursor — only when the user asked for that engine; omit for the default. codex, copilot and cursor are beta: never pick one on your own'),
         sourceBranch: SCHEMA.s('branch to start from (default: current)'), featureBranch: SCHEMA.s('feature branch name'),
+        sameAsSource: SCHEMA.b('commit straight onto the source branch instead of a separate feature branch: the run fast-forwards the source to its work when it finishes. Only when the user asks for it.'),
         note: SCHEMA.s('one line shown on the card: why this workflow fits the work (≤ 200 chars)'),
         attachmentIds: { type: 'array', items: { type: 'string' },
           description: 'attachment ids of this conversation the run should receive as extra files — copied into the run\'s extras/ folder when the user starts it' },
@@ -920,8 +921,10 @@ export function createAskTools(deps) {
       phase: row.phase ?? null,
       startedAt: row.started_at ?? null,
       updatedAt: row.updated_at ?? null,
-      branch: branch.feature ?? null,
+      // A run on its source branch that merged back: its work is ON the source, its own branch is gone.
+      branch: (branch.sameAsSource === true && branch.mergeBack?.merged === true ? branch.source : branch.feature) ?? null,
       sourceBranch: branch.source ?? null,
+      ...(branch.sameAsSource === true ? { onSourceBranch: true, mergedBack: branch.mergeBack ? branch.mergeBack.merged === true : null } : {}),
       // #527: the commit the run actually started from (only runs that recorded one).
       ...(branch.baseSha ? { baseSha: branch.baseSha } : {}), ...(branch.startRef ? { startRef: branch.startRef } : {}),
       guardrailsId: row.guardrails_id ?? null,
@@ -1718,7 +1721,8 @@ export function createAskTools(deps) {
             : { projectKey: e.projectKey, projectName: e.projectName ?? null }),
           status: e.status ?? null, startedAt: e.startedAt ?? null,
           updatedAt: e.mtime ? new Date(e.mtime).toISOString() : null,
-          branch: e.branch ?? null, sourceBranch: e.sourceBranch ?? null, guardrailsId: e.guardrailsId ?? null,
+          branch: (e.sameAsSource && e.mergeBack?.merged === true ? e.sourceBranch : e.branch) ?? null,
+          sourceBranch: e.sourceBranch ?? null, guardrailsId: e.guardrailsId ?? null,
           totalCostUsd: e.totalCostUsd ?? null,
           startedBy: e.startedBy ?? null,
         });
@@ -2686,6 +2690,12 @@ export function createAskTools(deps) {
         if (row.target !== 'workspace') {      // a workspace run keeps its branches per member (workspace_meta)
           const branch = parseJson(row.branch, null);
           if (!branch || !branch.feature) return { ok: false, error: 'the run has no feature branch' };
+          // Merged back into its source: the work is already on the source (head == base), there is nothing to review in a PR.
+          if (branch.sameAsSource === true && branch.mergeBack?.merged !== false) {
+            return { ok: false, error: branch.mergeBack?.merged === true
+              ? `the run's work is already on ${branch.source}: offer to push ${branch.source} instead of a pull request`
+              : 'the run is still merging its work back into its source branch' };
+          }
           const pr = typeof ca.prState === 'function' ? ca.prState(row.id) : null;
           if (pr && pr.url) return { ok: false, error: `the run already has a pull request: ${pr.url}` };
         }

@@ -12,7 +12,7 @@
 // network commands run in their own session instead, so ssh has no tty to prompt on (defaultRun).
 
 import { spawn, spawnSync } from 'node:child_process';
-import { stat, realpath, readFile } from 'node:fs/promises';
+import { stat, realpath, readFile, readdir } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { devNull } from 'node:os';
 import { githubEnv } from './github-credentials.mjs';
@@ -245,6 +245,24 @@ async function checkoutsOf(dir, base) {
   return out;
 }
 
+/** 'a rebase' / 'a bisect' when a worktree is in the middle of one that started from refs/heads/<base>,
+ *  '' when none is, null when git could not say. HEAD is detached there, so `worktree list` no longer
+ *  names the branch, yet `rebase --abort` / `bisect reset` will put it back where it was: moving it
+ *  meanwhile would leave the moved-to commits on no branch. */
+async function operationOn(dir, base) {
+  const r = await _run(['rev-parse', '--git-common-dir'], { cwd: dir });
+  if (!r.ok || !r.stdout.trim()) return null;
+  const common = isAbsolute(r.stdout.trim()) ? r.stdout.trim() : join(dir, r.stdout.trim());
+  const gitDirs = [common, ...(await readdir(join(common, 'worktrees')).catch(() => [])).map((w) => join(common, 'worktrees', w))];
+  const read = (f) => readFile(f, 'utf8').then((t) => t.trim(), () => '');
+  for (const gd of gitDirs) {
+    for (const f of ['rebase-merge/head-name', 'rebase-apply/head-name']) if (await read(join(gd, f)) === `refs/heads/${base}`) return 'a rebase';
+    const bisect = await read(join(gd, 'BISECT_START'));
+    if (bisect === base || bisect === `refs/heads/${base}`) return 'a bisect';
+  }
+  return '';
+}
+
 // ── remote + fetch ───────────────────────────────────────────────────────────
 /** The remote's display label (host/owner/repo, credential-free), its github "owner/name", and whether it is Azure DevOps. */
 export async function remoteInfo(dir, remote = 'origin') {
@@ -464,6 +482,69 @@ export async function fastForward(dir, { base, remote = 'origin' } = {}) {
     return { ok: false, kind, error: scrubGitText(e), ...(kind === 'diverged' ? { ahead: status.ahead, behind: status.behind } : {}), status };
   }
   return { ok: true, from: s.headSha, to: s.remoteSha, commits: s.behind };
+}
+
+/**
+ * Fast-forward refs/heads/<base> to the LOCAL commit `to` — the merge back of a run on its
+ * source branch (branch.sameAsSource). Same rules as fastForward: only ever a fast-forward;
+ * a base checked out HERE (dir's own HEAD — pass the project dir, never the run worktree) moves
+ * only when that checkout is clean (`git merge --ff-only --no-overwrite-ignore`: an ignored local file the
+ * run's commits add is never replaced); a base checked out in ANOTHER worktree
+ * is refused; otherwise a compare-and-swap update-ref. No network, no remote needed.
+ * → { ok:true, from, to, commits } | { ok:false, kind:'bad-target'|'bad-base'|'missing'|'diverged'|'in-use'|'dirty'|'failed', error }
+ */
+export async function fastForwardTo(dir, { base, to, message = null } = {}) {
+  if (typeof to !== 'string' || !/^[0-9a-f]{40,64}$/.test(to)) return { ok: false, kind: 'bad-target', error: 'not a full commit id' };
+  const s = await syncStatus(dir, { base });   // no network; works without any remote (hasRemote:false)
+  if (!s.ok) return { ok: false, kind: s.kind, error: s.error };
+  if (!s.hasLocal) return { ok: false, kind: 'missing', error: `${base} no longer exists` };
+  if (s.headSha === to) return { ok: true, from: to, to, commits: 0 };
+  const anc = await _run(['merge-base', '--is-ancestor', s.headSha, to], { cwd: dir });
+  if (!anc.ok) {
+    return anc.code === 1
+      ? { ok: false, kind: 'diverged', error: `${base} has new commits since the run started` }
+      : { ok: false, kind: 'failed', error: scrubGitText(anc.stderr) || 'git merge-base failed' };
+  }
+  if (s.checkedOutElsewhere.length || (s.worktreesUnknown && !s.checkedOutHere)) {
+    return { ok: false, kind: 'in-use', paths: s.checkedOutElsewhere, error: `${base} is checked out in ${s.checkedOutElsewhere.join(', ') || 'another worktree'}` };
+  }
+  const busy = await operationOn(dir, base);
+  if (busy) return { ok: false, kind: 'in-use', error: `${base} is in the middle of ${busy}: finish or abort it first` };
+  const commits = await commitsBetween(dir, s.headSha, to);
+  let r;
+  if (s.checkedOutHere) {
+    if (s.dirty) return { ok: false, kind: 'dirty', error: `${base} is checked out in ${dir} with ${s.dirtyCount} uncommitted change(s)` };
+    // As in fastForward: merge acts on whatever HEAD is NOW — re-check right before it.
+    const headNow = await _run(['symbolic-ref', '-q', 'HEAD'], { cwd: dir });
+    if (!(headNow.ok && headNow.stdout.trim() === `refs/heads/${base}`)) return { ok: false, kind: 'in-use', error: `${dir} switched branches meanwhile` };
+    // --no-autostash: with merge.autoStash set, an edit made since the dirty check would be stashed
+    // and re-applied, and a clash would leave conflict markers in the user's file.
+    r = await _run(['merge', '--ff-only', '--no-overwrite-ignore', '--no-autostash', '--no-stat', '-q', to], { cwd: dir, timeoutMs: FF_TIMEOUT_MS });
+  } else {
+    // As in fastForward: update-ref on a checked-out branch would move HEAD under that checkout — re-read first.
+    const [again, headNow] = await Promise.all([checkoutsOf(dir, base), _run(['symbolic-ref', '-q', 'HEAD'], { cwd: dir })]);
+    if (again === null || again.length || (headNow.ok && headNow.stdout.trim() === `refs/heads/${base}`)) {
+      return { ok: false, kind: 'in-use', paths: again || [], error: `${base} was checked out meanwhile` };
+    }
+    // Raw update-ref skips git's own "used by worktree" guard, which also covers a rebase or bisect: re-check.
+    const busyNow = await operationOn(dir, base);
+    if (busyNow) return { ok: false, kind: 'in-use', error: `${base} is in the middle of ${busyNow}: finish or abort it first` };
+    r = await _run(['update-ref', '-m', message || `worca: fast-forward ${base}`, `refs/heads/${base}`, to, s.headSha], { cwd: dir });
+  }
+  if (!r.ok) {
+    const e = String(r.stderr || '');
+    // "cannot lock ref" is also plain lock contention: whether <base> MOVED is read, not parsed.
+    const moved = (await shaOf(dir, `refs/heads/${base}`)) !== s.headSha;
+    const kind = /would be overwritten|untracked working tree/i.test(e) ? 'dirty'
+      : (moved || /Not possible to fast-forward/i.test(e)) ? 'diverged' : 'failed';
+    return { ok: false, kind, error: scrubGitText(e) || `git exited ${r.code}` };
+  }
+  // The merge acts on whatever HEAD is at that instant: a branch switch after the re-check above
+  // would have fast-forwarded a different branch. Report merged only when <base> really holds `to`.
+  if (s.checkedOutHere && (await shaOf(dir, `refs/heads/${base}`)) !== to) {
+    return { ok: false, kind: 'in-use', error: `${dir} switched branches during the merge; ${base} did not move` };
+  }
+  return { ok: true, from: s.headSha, to, commits: commits ?? 0 };
 }
 
 // ── composite operations ─────────────────────────────────────────────────────

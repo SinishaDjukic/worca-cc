@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  fetchRemote, syncStatus, fastForward, ensureLocalBranch, syncBaseForRun, listBranches,
+  fetchRemote, syncStatus, fastForward, fastForwardTo, ensureLocalBranch, syncBaseForRun, listBranches,
   resolveSourceRef, incomingCommits, commitsBetween, isSafeBranchName, isSafeRemoteName,
   classifyFetchError, scrubGitText, syncState, runSyncOptions, lastFetchedAt, fetchHeadUrls, syncRepo, _testing,
 } from '../src/core/git-sync.mjs';
@@ -585,4 +585,140 @@ test('scrubGitText redacts Azure DevOps PAT shapes', () => {
   assert.equal(scrubGitText(`fatal: token ${pat84} refused`), 'fatal: token <redacted> refused');
   assert.equal(scrubGitText(`fatal: token ${pat52} refused`), 'fatal: token <redacted> refused');
   assert.equal(scrubGitText('fatal: repository not found'), 'fatal: repository not found');
+});
+
+// test/git-sync.test.mjs  (append)
+/** A local repo on dev (the file's gitconfig; NO remote) + a linked worktree on `run`, the hidden branch. */
+async function hidden() {
+  const dir = join(root, `ff${++n}`);
+  g(root, 'init', '-q', dir);
+  await writeFile(join(dir, 'f.txt'), 'one\n'); g(dir, 'add', '-A'); g(dir, 'commit', '-qm', 'init');
+  const wt = `${dir}-run`;
+  g(dir, 'worktree', 'add', '-q', '-b', 'run', wt);
+  const work = async (file) => { await writeFile(join(wt, file), `${file}\n`); g(wt, 'add', '-A'); g(wt, 'commit', '-qm', file); return g(wt, 'rev-parse', 'HEAD'); };
+  return { dir, wt, work };
+}
+
+test('fastForwardTo: checked out here + clean → merge --ff-only moves dev and the working tree', async () => {
+  const { dir, work } = await hidden();
+  const to = await work('a.txt');
+  const r = await fastForwardTo(dir, { base: 'dev', to });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.commits, 1);
+  assert.equal(g(dir, 'rev-parse', 'dev'), to);
+  assert.equal(await readFile(join(dir, 'a.txt'), 'utf8'), 'a.txt\n', 'the main checkout got the file');
+});
+
+test('fastForwardTo: a dirty checkout of the base is refused and left untouched', async () => {
+  const { dir, work } = await hidden();
+  const before = g(dir, 'rev-parse', 'dev');
+  const to = await work('a.txt');
+  await writeFile(join(dir, 'f.txt'), 'local edit\n');
+  const r = await fastForwardTo(dir, { base: 'dev', to });
+  assert.equal(r.ok, false); assert.equal(r.kind, 'dirty');
+  assert.equal(g(dir, 'rev-parse', 'dev'), before);
+  assert.equal(await readFile(join(dir, 'f.txt'), 'utf8'), 'local edit\n');
+});
+
+test('fastForwardTo: base not checked out anywhere → CAS update-ref; HEAD stays where it was', async () => {
+  const { dir, work } = await hidden();
+  g(dir, 'checkout', '-q', '-b', 'elsewhere');
+  const to = await work('a.txt');
+  const r = await fastForwardTo(dir, { base: 'dev', to });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(g(dir, 'rev-parse', 'dev'), to);
+  assert.equal(g(dir, 'rev-parse', '--abbrev-ref', 'HEAD'), 'elsewhere');
+});
+
+test('fastForwardTo: base moved since the run started → diverged, nothing moves', async () => {
+  const { dir, work } = await hidden();
+  const to = await work('a.txt');
+  await writeFile(join(dir, 'm.txt'), 'm\n'); g(dir, 'add', 'm.txt'); g(dir, 'commit', '-qm', 'moved');
+  const moved = g(dir, 'rev-parse', 'dev');
+  const r = await fastForwardTo(dir, { base: 'dev', to });
+  assert.equal(r.ok, false); assert.equal(r.kind, 'diverged');
+  assert.equal(g(dir, 'rev-parse', 'dev'), moved);
+});
+
+test('fastForwardTo: base checked out in ANOTHER worktree → in-use; missing base; bad target; no-op', async () => {
+  const { dir, work } = await hidden();
+  const to = await work('a.txt');
+  g(dir, 'checkout', '-q', '-b', 'elsewhere');
+  g(dir, 'worktree', 'add', '-q', `${dir}-other`, 'dev');
+  assert.equal((await fastForwardTo(dir, { base: 'dev', to })).kind, 'in-use');
+  assert.equal((await fastForwardTo(dir, { base: 'nope', to })).kind, 'missing');
+  assert.equal((await fastForwardTo(dir, { base: 'dev', to: '--force' })).kind, 'bad-target');
+  const same = await fastForwardTo(dir, { base: 'run', to });
+  assert.deepEqual([same.ok, same.commits], [true, 0]);
+});
+
+test('fastForwardTo: never replaces an IGNORED local file that the run\'s commits add → dirty, file untouched', async () => {
+  const { dir, wt } = await hidden();
+  const excl = join(root, `excl${n}`);
+  await writeFile(excl, 'secret.json\n');
+  g(dir, 'config', 'core.excludesFile', excl);               // the user ignores secret.json …
+  await writeFile(join(dir, 'secret.json'), 'mine\n');        // … and keeps a local one git has no copy of
+  await writeFile(join(wt, 'secret.json'), 'run\n');
+  g(wt, 'add', '-f', 'secret.json'); g(wt, 'commit', '-qm', 'secret');   // the agent force-added it
+  const to = g(wt, 'rev-parse', 'HEAD');
+  const r = await fastForwardTo(dir, { base: 'dev', to });
+  assert.equal(r.ok, false); assert.equal(r.kind, 'dirty', JSON.stringify(r));
+  assert.notEqual(g(dir, 'rev-parse', 'dev'), to, 'dev did not move');
+  assert.equal(await readFile(join(dir, 'secret.json'), 'utf8'), 'mine\n');
+});
+
+/** dev with two more commits, THEN the run's worktree: dev's tip is an ancestor of the run's work. */
+async function hiddenDeep() {
+  const dir = join(root, `ffd${++n}`);
+  g(root, 'init', '-q', dir);
+  for (const f of ['f.txt', 'g.txt', 'h.txt']) { await writeFile(join(dir, f), `${f}\n`); g(dir, 'add', '-A'); g(dir, 'commit', '-qm', f); }
+  const wt = `${dir}-run`;
+  g(dir, 'worktree', 'add', '-q', '-b', 'run', wt);
+  await writeFile(join(wt, 'a.txt'), 'a\n'); g(wt, 'add', '-A'); g(wt, 'commit', '-qm', 'a');
+  return { dir, to: g(wt, 'rev-parse', 'HEAD'), before: g(dir, 'rev-parse', 'dev') };
+}
+/** Branches (any) that contain `sha`. */
+const holders = (dir, sha) => g(dir, 'branch', '-a', '--contains', sha).split('\n').map((l) => l.replace(/^[*+ ]+/, '').trim()).filter(Boolean);
+
+test('fastForwardTo: a rebase of the base in progress (HEAD detached) → in-use; aborting it never orphans the run', async () => {
+  const { dir, to, before } = await hiddenDeep();
+  spawnSync('git', ['-C', dir, 'rebase', '-q', '-x', 'false', 'HEAD~1'], { encoding: 'utf8' });   // stops: rebase in progress
+  assert.equal(spawnSync('git', ['-C', dir, 'symbolic-ref', '-q', 'HEAD']).status, 1, 'HEAD is detached mid-rebase');
+  const r = await fastForwardTo(dir, { base: 'dev', to });
+  assert.equal(r.ok, false, JSON.stringify(r)); assert.equal(r.kind, 'in-use'); assert.match(r.error, /rebase/);
+  assert.equal(g(dir, 'rev-parse', 'refs/heads/dev'), before, 'dev did not move under the rebase');
+  g(dir, 'rebase', '--abort');
+  assert.ok(holders(dir, to).includes('run'), 'the run\'s work is still on a branch');
+});
+
+test('fastForwardTo: a bisect started from the base (HEAD detached) → in-use, dev untouched', async () => {
+  const { dir, to, before } = await hiddenDeep();
+  g(dir, 'bisect', 'start', 'HEAD', 'HEAD~2');
+  assert.equal(spawnSync('git', ['-C', dir, 'symbolic-ref', '-q', 'HEAD']).status, 1, 'bisect detached HEAD');
+  const r = await fastForwardTo(dir, { base: 'dev', to });
+  assert.equal(r.ok, false); assert.equal(r.kind, 'in-use'); assert.match(r.error, /bisect/);
+  assert.equal(g(dir, 'rev-parse', 'refs/heads/dev'), before);
+  g(dir, 'bisect', 'reset');
+});
+
+test('fastForwardTo: base moved while NOT checked out (update-ref path) → diverged, the moved commit stays on dev', async () => {
+  const { dir, work } = await hidden();
+  const to = await work('a.txt');
+  await writeFile(join(dir, 'm.txt'), 'm\n'); g(dir, 'add', 'm.txt'); g(dir, 'commit', '-qm', 'moved');
+  const moved = g(dir, 'rev-parse', 'dev');
+  g(dir, 'checkout', '-q', '-b', 'elsewhere');
+  const r = await fastForwardTo(dir, { base: 'dev', to });
+  assert.equal(r.ok, false); assert.equal(r.kind, 'diverged');
+  assert.equal(g(dir, 'rev-parse', 'refs/heads/dev'), moved, 'a raw update-ref would have dropped the moved commit');
+});
+
+test('fastForwardTo: an untracked local file at a path the run adds → refused, the file and dev untouched', async () => {
+  const { dir, work } = await hidden();
+  const before = g(dir, 'rev-parse', 'dev');
+  const to = await work('a.txt');
+  await writeFile(join(dir, 'a.txt'), 'mine\n');
+  const r = await fastForwardTo(dir, { base: 'dev', to });
+  assert.equal(r.ok, false, JSON.stringify(r)); assert.equal(r.kind, 'dirty');
+  assert.equal(g(dir, 'rev-parse', 'dev'), before);
+  assert.equal(await readFile(join(dir, 'a.txt'), 'utf8'), 'mine\n');
 });
