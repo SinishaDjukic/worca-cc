@@ -27,4 +27,8 @@ docker/.pack/
 docs/changelog/worca-app-v*.html
 !docs/changelog/worca-app-v*.src.html
 test/live/out/
+# browser extension builds (tools/build-extension.mjs) and Playwright E2E output
+extension/dist/
+e2e/extension/test-results/
+e2e/extension/playwright-report/
 .gstack/

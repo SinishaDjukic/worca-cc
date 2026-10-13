@@ -24,7 +24,7 @@ import {
  * @property {object|null} ext    what the provider's extract() added (a diff line, side, path)
  *
  * @typedef {object} PinpointProvider
- * @property {'chat'|'artifact'|'diff'} kind
+ * @property {'chat'|'artifact'|'diff'|'web'} kind
  * @property {(el:Element) => Element|null} [unit]   the selection's unit for a node inside the root; null = not here
  * @property {(range:Range, unit:Element) => object|null} [extract]   {text, ...} — what the selection really quotes
  * @property {(sel:PinpointSel) => string} [source]   e.g. "plan.md", "src/x.ts L12"
@@ -101,10 +101,14 @@ export async function streamPinpoint(fetchFn, body, { onDelta = () => {}, onAlte
 }
 
 /**
- * @param {{doc?:Document, win?:Window, fetch?:Function}} [o]
+ * @param {{doc?:Document, win?:Window, fetch?:Function, trustedOnly?:boolean|((e:Event) => boolean), shadow?:{host:Element, root:ShadowRoot}|null}} [o]
+ *   shadow — the browser extension mounts the toolbar/popovers in a shadow root (closed in production). Document-level
+ *   events are retargeted to its host and doc.activeElement IS the host, so the real target/focus is read from `root`.
+ *   trustedOnly — on a web page, a page script must not be able to press the toolbar's buttons, its shortcuts or a
+ *   popover's keys. `true` = e.isTrusted; a function decides per event (the jsdom tests, which cannot make trusted events).
  * @returns {{addSurface(root:Element, p:PinpointProvider):() => void, close():void, holding():boolean, destroy():void}}
  */
-export function createPinpoint({ doc = document, win = doc.defaultView, fetch: fetchFn = (u, o) => win.fetch(u, o) } = {}) {
+export function createPinpoint({ doc = document, win = doc.defaultView, fetch: fetchFn = (u, o) => win.fetch(u, o), trustedOnly = false, shadow = null } = {}) {
   const surfaces = new Map();       // root → provider
   const X = { sel: null, bar: null, items: [], over: [], more: null, pop: null, t: 0, kt: 0, lastRect: null };
   const HL = win.CSS && win.CSS.highlights && typeof win.Highlight === 'function' ? win.CSS.highlights : null;
@@ -114,6 +118,22 @@ export function createPinpoint({ doc = document, win = doc.defaultView, fetch: f
   const el = (html) => { const t = doc.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
   const $$ = (s, r) => [...r.querySelectorAll(s)];
   const reduced = () => !!(win.matchMedia && win.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const ours = (e) => !!(shadow && e && typeof e.composedPath === 'function' && e.composedPath().includes(shadow.host));
+  /** The element an event really concerns. For an event from inside `shadow`, a document listener sees only the host
+   *  (closed root): a pointer event resolves by position, a key event by the root's focus. A pointer over nothing in
+   *  the root resolves to null (= outside), never to the focused element. */
+  function realTarget(e) {
+    if (!e) return null;
+    if (!ours(e)) return e.target;
+    if (/^(pointer|mouse|click)/.test(e.type)) {
+      const hit = typeof e.clientX === 'number' && typeof shadow.root.elementFromPoint === 'function' ? shadow.root.elementFromPoint(e.clientX, e.clientY) : null;
+      return hit && hit !== shadow.host ? hit : null;
+    }
+    return shadow.root.activeElement || null;
+  }
+  const within = (box, e) => { const t = realTarget(e); return !!(box && t && t.nodeType && box.contains(t)); };
+  const activeEl = () => (shadow && doc.activeElement === shadow.host ? shadow.root.activeElement : doc.activeElement);
+  const honoured = (e) => !trustedOnly || (typeof trustedOnly === 'function' ? !!trustedOnly(e) : !!(e && e.isTrusted));
 
   function surfaceOf(node) {
     const e = nodeEl(node);
@@ -197,7 +217,7 @@ export function createPinpoint({ doc = document, win = doc.defaultView, fetch: f
     const btn = ([k, label, kbd, lab]) => `<button type="button" class="pp-b${lab ? ' pp-lab' : ''}" data-k="${k}" aria-label="${esc(label)}" aria-keyshortcuts="${kbd}" title="${esc(label)} (${kbd})">${icon(k)}${lab ? `<span>${esc(label)}</span>` : ''}</button>`;
     const bar = el(`<div class="pp-bar" role="toolbar" aria-label="Selection actions">${X.items.map((s) => (s[0] === '|' ? '<i class="pp-sep" aria-hidden="true"></i>' : btn(s))).join('')}${X.over.length ? `<i class="pp-sep" aria-hidden="true"></i><button type="button" class="pp-b" data-k="more" aria-label="More" aria-haspopup="menu" aria-expanded="false" title="More">${icon('more')}</button>` : ''}<i class="pp-arr" aria-hidden="true"></i></div>`);
     bar.addEventListener('pointerdown', (e) => e.preventDefault());   // keep the selection
-    bar.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (b) act(b.dataset.k, b); });
+    bar.addEventListener('click', (e) => { if (!honoured(e)) return; const b = e.target.closest('[data-k]'); if (b) act(b.dataset.k, b); });
     layerOf(sel).appendChild(bar);
     X.bar = bar;
     positionBar();
@@ -428,7 +448,7 @@ export function createPinpoint({ doc = document, win = doc.defaultView, fetch: f
     });
     p.onKey = (e) => {
       if (!list.length) return;
-      if (/^[1-9]$/.test(e.key) && +e.key <= list.length) { e.preventDefault(); focus(+e.key - 1); } else if (e.key === 'Enter' && !e.target.closest?.('[data-disc],[data-x]')) { e.preventDefault(); use(on); }
+      if (/^[1-9]$/.test(e.key) && +e.key <= list.length) { e.preventDefault(); focus(+e.key - 1); } else if (e.key === 'Enter' && !realTarget(e)?.closest?.('[data-disc],[data-x]')) { e.preventDefault(); use(on); }
     };
     streamPinpoint(fetchFn, request(sel, 'alternatives'), { signal: ac.signal, onAlternatives: (a) => { list = normalizeAlternatives(a); } })
       .then(() => {
@@ -510,12 +530,12 @@ export function createPinpoint({ doc = document, win = doc.defaultView, fetch: f
   }
 
   const onPointerUp = (e) => {
-    if (X.bar?.contains(e.target) || X.pop?.el.contains(e.target)) return;
+    if (within(X.bar, e) || within(X.pop?.el, e)) return;
     clearTimeout(X.t);
     X.t = setTimeout(evaluate, 120);
   };
   const onKeyUp = (e) => {
-    if (X.pop || typing(e.target)) return;
+    if (X.pop || typing(realTarget(e))) return;
     if (e.shiftKey || /^(Arrow|Home|End|Shift|PageUp|PageDown)/.test(e.key)) { clearTimeout(X.kt); X.kt = setTimeout(evaluate, 400); }
   };
   const onSelChange = () => {
@@ -524,30 +544,30 @@ export function createPinpoint({ doc = document, win = doc.defaultView, fetch: f
     if (!s || !s.rangeCount || s.isCollapsed || normText(s.toString()).length < 2) closeBar();
   };
   const onPointerDown = (e) => {
-    const t = e.target;
-    if (X.pop && !X.pop.el.contains(t)) closePop(false);
-    if (X.bar && !X.bar.contains(t)) closeBar();
+    if (X.pop && !within(X.pop.el, e)) closePop(false);
+    if (X.bar && !within(X.bar, e)) closeBar();
   };
   const onKeyDown = (e) => {
     if (X.pop) {
       if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closePop(true); return; }
-      if (!(e.target && e.target.nodeType) || !X.pop.el.contains(e.target)) return;
+      const t = realTarget(e);
+      if (!(t && t.nodeType) || !X.pop.el.contains(t)) return;
       if (e.key === 'Tab') {
         const f = $$('button:not(:disabled),textarea', X.pop.el);
-        const i = f.indexOf(doc.activeElement);
+        const i = f.indexOf(activeEl());
         e.stopImmediatePropagation();
         if (i === -1 || (e.shiftKey ? i === 0 : i === f.length - 1)) { e.preventDefault(); f[e.shiftKey ? f.length - 1 : 0]?.focus(); }
         return;
       }
-      if (!typing(e.target) || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) X.pop.onKey?.(e);
+      if (honoured(e) && (!typing(t) || (e.key === 'Enter' && (e.metaKey || e.ctrlKey)))) X.pop.onKey?.(e);
       e.stopPropagation();
       return;
     }
     if (!X.bar) return;
     if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); win.getSelection()?.removeAllRanges(); closeBar(); return; }
-    if (typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (typing(realTarget(e)) || e.metaKey || e.ctrlKey || e.altKey) return;
     const btns = $$('.pp-b, .pp-mi', X.bar);
-    const i = btns.indexOf(doc.activeElement);
+    const i = btns.indexOf(activeEl());
     if (e.key === 'Tab' && i < 0 && !e.shiftKey) { e.preventDefault(); e.stopImmediatePropagation(); btns[0]?.focus(); return; }
     if (i > -1 && (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       e.preventDefault();
@@ -557,6 +577,7 @@ export function createPinpoint({ doc = document, win = doc.defaultView, fetch: f
       return;
     }
     if (i > -1 && (e.key === 'Enter' || e.key === ' ')) return;   // the focused button's own click
+    if (!honoured(e)) return;
     if (e.key.length !== 1) return;
     const hit = [...X.items, ...X.over].find((s) => s[2] === e.key.toUpperCase());
     if (hit) { e.preventDefault(); e.stopImmediatePropagation(); act(hit[0], null); }

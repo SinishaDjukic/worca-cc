@@ -460,6 +460,15 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ![The Chat page: a finished "Paginate the search endpoint" run card for nimbus-crm with elapsed time, cost, 5/5 agents and its workflow graph, then a follow-up answer about the docs repository](docs/screenshots/ask-worca.png)
 
+### Browser extension
+
+- **Ask Worca next to the page you are reading** — a sidebar for Chrome, Edge and Firefox chats with
+  your local Worca. Each message carries the page's URL, title and your selection, the page text if
+  you switch it on, and any passage you quote. Pinpoint works on web pages too: select text, then
+  Explain it, Discuss it or send it to the chat. You approve the pairing in Worca with a matching
+  code, and Settings › General › **Browser extension** lists and revokes paired browsers. See
+  [`docs/browser-extension.md`](docs/browser-extension.md).
+
 ### Away mode
 
 - **Runs keep going while you're away** — during your away hours, or after you click **Step away**
@@ -873,6 +882,7 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Storage](docs/storage.md) — where state lives, project keys, migration
 - [Worca in a container](docs/docker.md) — Worca and every `claude` it spawns in a disposable Linux container: the published image, compose, `worca container`
 - [Remote access](docs/remote-access.md) — opt-in, behind Cloudflare Access, with Worca checking the token
+- [Browser extension](docs/browser-extension.md) — sidebar chat, page context and Pinpoint on web pages; pairing and security model
 - [Deploy on Railway](docs/deploy-railway.md) — the container as a hosted service behind Cloudflare Access
 - [Releasing](docs/RELEASING.md) — how `@worca/app` versions are published
 - [Screenshots](docs/screenshots.md) — how the shots in this README are made: a sandboxed Worca, demo data, headless Chrome

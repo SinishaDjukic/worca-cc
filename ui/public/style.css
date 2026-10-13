@@ -3324,6 +3324,15 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-providers--broker .mv-cp-quota,.mv-providers--broker .mv-pv-test,.mv-providers--broker .mv-field:has(.mv-pv-key){display:none;}
 .mv-broker-note{display:block;margin:6px 0 12px;}
 
+/* ---------- Browser extension pairings (Settings → General; docs/browser-extension.md) ---------- */
+.xp-list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none;}
+.xp-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);}
+.xp-main{flex:1 1 auto;min-width:0;}
+.xp-name{font-weight:500;color:var(--ink);}
+.xp-meta{font-size:12px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.xp-empty{margin:0;font-size:13px;color:var(--ink-2);}
+.xp-row .xp-revoke{padding:7px 14px;font-size:12.5px;}
+
 /* About card rows. .about-val and .about-link share specificity on one anchor, so
    .about-link must stay AFTER .about-val (test/ui-settings-about.test.mjs pins it). */
 .about-row{display:flex;align-items:baseline;gap:10px;font-size:13px;}

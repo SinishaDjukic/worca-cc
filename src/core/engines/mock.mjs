@@ -193,6 +193,11 @@ const COMPOSER_CANVAS_BLOCK_RE = /\[composer canvas\][\s\S]*?\[\/composer canvas
 /** Test seam: holdFrame(frame, index) may return a promise that holds a MOCK_SLOW turn after that
  *  frame until it settles (or the turn is aborted). Unset = the real 300 ms per frame. */
 export const _testing = { holdFrame: null };
+/** MOCK_SLOW's per-frame pace: WORCA_MOCK_SLOW_MS (50–5000, read per call so a test can set it), else 300 ms. */
+export function mockSlowMs() {
+  const n = Number(process.env.WORCA_MOCK_SLOW_MS);
+  return Number.isFinite(n) && n >= 50 && n <= 5000 ? Math.round(n) : 300;
+}
 function untilSettledOrAborted(p, signal) {
   if (!signal) return p;
   if (signal.aborted) return Promise.resolve();
@@ -410,7 +415,7 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
     const hold = slow && signal && typeof _testing.holdFrame === 'function' ? _testing.holdFrame(f, i) : null;
     await (hold && typeof hold.then === 'function'
       ? untilSettledOrAborted(hold, signal)
-      : new Promise((r) => setTimeout(r, slow && !_testing.holdFrame ? 300 : 0)));
+      : new Promise((r) => setTimeout(r, slow && !_testing.holdFrame ? mockSlowMs() : 0)));
   }
   abortIfNeeded(signal);
   if (fail || maxTurns || maxBudget) {

@@ -132,6 +132,7 @@ import {
 } from './plugins-view.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
+import { renderExtensionPairings, browserLabel, formatPairCode } from './extension-settings-view.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
@@ -1252,6 +1253,7 @@ function handleServerMessage(msg) {
     onHello(msg);
     refreshRunningActions();
     if (terminalPane) terminalPane.onHello(msg);
+    if (Array.isArray(msg.extensionPairs)) msg.extensionPairs.forEach((r) => void promptExtensionPair(r));
     return;
   }
 
@@ -1332,6 +1334,8 @@ function handleServerMessage(msg) {
     if (currentView() === 'schedules' || inRunsView() || crpShowsRun()) void schedulesView.load().then(() => { if (inRunsView()) paintRunsList(); repaintLimitNotices(); });
     return;
   }
+  if (msg.type === 'extension-pair-request') { void promptExtensionPair(msg.request); return; }
+  if (msg.type === 'extension-pairings-changed') { pairRequestResolved(msg.requestId); void paintExtensionPairings(); return; }
   if (msg.type === 'notification' || msg.type === 'notifications-changed') {
     if (msg.type === 'notification') alerts.onScheduleNotification(msg.notification);
     refreshAllCounts();
@@ -12186,11 +12190,13 @@ function buildPdMemory(sec, key) {
 // opts.danger tints the title and the OK button red for a destructive action
 // (opt-in). `done` always clears every opt-in again — the modal is shared, and
 // neither the tint nor a leftover field may leak into the next, harmless call.
+let modalGen = 0;
 function modalShell({
   title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel',
   checkbox = null, danger = false, fields = null, messageTone = null,
 } = {}) {
   return new Promise((resolve) => {
+    modalGen += 1;   // the extension pair prompt checks this to detect a confirm opened over it (see promptExtensionPair)
     el.confirmTitle.textContent = title;
     el.confirmTitle.classList.toggle('danger', !!danger);
     // message: a string, or parts [text | { strong: text }] so the variable bits (a branch, a command)
@@ -13659,6 +13665,7 @@ async function loadSettings() {
     refreshBudget();
     paintChatSettings(data.chat);
     paintCredentials();
+    void paintExtensionPairings();
     loadAskHistory();
     setSettingsLoadMsg('');
   } catch (e) { setSettingsLoadMsg(e.message || 'network error'); }
@@ -13677,6 +13684,119 @@ async function paintCredentials() {
   card.hidden = !data || data.enabled !== true;
   if (card.hidden) return;
   host.replaceChildren(renderCredentials(data));
+}
+
+// Settings → Browser extension (docs/browser-extension.md).
+async function paintExtensionPairings() {
+  const host = document.getElementById('extensionPairingsHost');
+  if (!host) return;
+  let data = null;
+  try { const r = await fetch('/api/extension/pairings'); data = r.ok ? await r.json() : null; } catch { data = null; }
+  if (data) { host.replaceChildren(renderExtensionPairings(data, { doc: document })); return; }
+  const p = document.createElement('p');
+  p.className = 'xp-empty';
+  p.textContent = 'Could not load the paired browser extensions.';
+  host.replaceChildren(p);
+}
+// The server's refusal text (403 extension-agent-blocked, 409 extension-remote-mode, 404 expired/replaced …), or null.
+async function extensionCallError(url, init) {
+  try {
+    const r = await fetch(url, init);
+    if (r.ok) return null;
+    const body = await r.json().catch(() => ({}));
+    return body.error || `Worca refused (${r.status})`;
+  } catch { return 'Worca did not answer'; }
+}
+
+document.getElementById('extensionPairingsHost')?.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-revoke]');
+  if (!b) return;
+  const ok = await confirmModal({ title: 'Revoke browser extension', message: `Revoke “${b.dataset.name}”?\nIt stops working at once; pair it again from its sidebar.`, confirmLabel: 'Revoke', danger: true });
+  if (!ok) return;
+  b.disabled = true;
+  const err = await extensionCallError(`/api/extension/pairings/${encodeURIComponent(b.dataset.revoke)}`, { method: 'DELETE' });
+  if (err) reportStatus(null, '', `Could not revoke the extension: ${err}`, 'err');
+  void paintExtensionPairings();
+});
+
+// A pairing request from the extension: approve only when its code matches.
+// confirmModal is ONE shared modal (modalShell): a second call while it is open overwrites its text and stacks
+// listeners, so one Approve would resolve every stacked call — approving requests whose code was never shown, or
+// confirming an unrelated open dialog (e.g. a delete). The pair prompt is the first confirm the SERVER opens, so
+// prompts run strictly one at a time, and each waits until no other confirm is open.
+const extensionPrompts = new Set();
+const latestPairByOrigin = new Map();   // origin -> newest requestId: the server keeps one pending request per origin
+let extensionPairQueue = Promise.resolve();
+const confirmModalFree = async () => {
+  while (el.confirmModal && !el.confirmModal.classList.contains('hidden')) await new Promise((res) => setTimeout(res, 250));
+};
+function promptExtensionPair(r) {
+  if (!r || !r.requestId || extensionPrompts.has(r.requestId)) return;
+  // A framed shell (the server sends frame-ancestors 'none', but an old browser may ignore it) could have a decoy
+  // laid over Approve: never ask there. The request stays pending for an unframed Worca tab.
+  if (window.self !== window.top) return;
+  extensionPrompts.add(r.requestId);
+  latestPairByOrigin.set(r.origin, r.requestId);
+  extensionPairQueue = extensionPairQueue.then(async () => {
+    // Waiting for a free modal stops the pair prompt from opening ON TOP of another confirm. It does not stop a
+    // user-initiated confirm from opening on top of the pair prompt (e.g. deleteProject awaits a fetch, then calls
+    // confirmModal). In that case one OK click resolves both. So the answer counts only when no other modalShell call
+    // opened while this prompt was showing (modalGen unchanged). Otherwise the prompt asks again.
+    for (;;) {
+      await confirmModalFree();
+      if (r.expiresAt && r.expiresAt <= Date.now()) return;   // expired while it waited in the queue
+      if (latestPairByOrigin.get(r.origin) !== r.requestId) return;   // replaced by a newer request from the same extension
+      if (resolvedPairRequests.has(r.requestId)) return;   // approved or denied in another Worca tab
+      const pending = confirmModal({
+        title: 'Connect a browser extension?',
+        message: [`${r.name} (${browserLabel(r.browser)}) wants to use this Worca.\nExtension id: ${r.origin}\n\nCode: `,
+          { strong: formatPairCode(r.code) },
+          '\n\nApprove only if the Worca sidebar in your browser shows the same code. The extension will be able to chat with Ask Worca, explain selected text on web pages and list your projects and workspaces.'],
+        confirmLabel: 'Approve',
+      });
+      const gen = modalGen;   // the Promise executor ran synchronously, so modalGen now counts THIS prompt
+      openPairPrompt = r.requestId;
+      openPairGen = gen;
+      // modalShell focuses OK. This modal opens without a user action, so a stray Enter typed into the
+      // composer must not approve: deny is the default (Esc and Enter both land on Cancel).
+      el.confirmCancel.focus();
+      // Close the prompt when its request ends elsewhere (another tab answered it, or the 2 min TTL ran out). Clicking
+      // Cancel resolves `pending`, and the `closedElsewhere` check below then sends nothing.
+      // Never click Cancel while another dialog covers the prompt (modalGen moved): that click would cancel the
+      // user's own dialog. Once the cover closes, the `modalGen !== gen` path re-checks expiry and resolvedPairRequests.
+      const expiry = r.expiresAt ? setTimeout(() => { if (pairPromptUncovered(r.requestId)) el.confirmCancel.click(); }, Math.max(0, r.expiresAt - Date.now())) : null;
+      // A promptModal opened over this prompt and submitted with Enter hides the shared modal without resolving
+      // `pending` (modalShell handles Enter only for the dialog that has fields). Seeing the modal
+      // hidden under an open prompt, resolve it as Cancel; modalGen has moved, so the loop asks again.
+      const watch = setInterval(() => {
+        if (openPairPrompt === r.requestId && el.confirmModal.classList.contains('hidden')) el.confirmCancel.click();
+      }, 250);
+      const ok = await pending;
+      clearTimeout(expiry);
+      clearInterval(watch);
+      openPairPrompt = null;
+      if (modalGen !== gen) continue;   // another confirm covered this one: its answer is not the person's answer
+      const closedElsewhere = resolvedPairRequests.has(r.requestId) || (r.expiresAt && r.expiresAt <= Date.now());
+      if (closedElsewhere) return;
+      const err = await extensionCallError(`/api/extension/pair/${encodeURIComponent(r.requestId)}/${ok ? 'approve' : 'deny'}`, { method: 'POST' });
+      if (err && ok) reportStatus(null, '', `The extension was not approved: ${err}`, 'err');
+      void paintExtensionPairings();
+      return;
+    }
+  }).catch(() => {}).finally(() => extensionPrompts.delete(r.requestId));
+}
+// `extension-pairings-changed` carries the requestId it resolved (the approve/deny routes broadcast
+// `{ type:'extension-pairings-changed', requestId }`). A prompt for it that is still open in this tab closes without
+// answering.
+const resolvedPairRequests = new Set();
+let openPairPrompt = null;
+let openPairGen = 0;   // modalGen when the open pair prompt was shown
+const pairPromptUncovered = (requestId) => openPairPrompt === requestId && modalGen === openPairGen;
+function pairRequestResolved(requestId) {
+  if (!requestId) return;
+  resolvedPairRequests.add(requestId);
+  // Also fired for a request replaced by a newer one from the same extension.
+  if (pairPromptUncovered(requestId)) el.confirmCancel.click();
 }
 
 async function paintChatSettings(prefs) {

@@ -25,6 +25,7 @@ import { runFolderHosting } from '../src/core/preflight-host.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
 import { selectRunEngine } from '../src/core/engines/index.mjs';
+import { mockSlowMs } from '../src/core/engines/mock.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
@@ -162,8 +163,11 @@ import { policyCatalogModels } from '../src/core/policy/cache.mjs';
 import { pickFolderNative, pickAppNative, nativeDialogAvailable } from '../src/core/folder-dialog.mjs';
 import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
-  isPeerThisMachine,
+  isPeerThisMachine, LOCAL_HOSTNAMES, hostnameOf,
 } from '../src/core/remote-access.mjs';
+import {
+  createExtensionPairing, decideExtensionRequest, extensionOrigin, EXTENSION_WS_PROTOCOL, TOKEN_PREFIX,
+} from '../src/core/extension-pairing.mjs';
 import { detectDeployment, deploymentFacts } from '../src/core/deployment.mjs';
 import { resolveIdentity, startedByOf, prAttributionFooter, actorOf, isSharedIdentity, byActor } from '../src/core/identity.mjs';
 import { withBillTo, currentBillTo, currentOwner } from '../src/core/billing.mjs';
@@ -545,6 +549,9 @@ const HOST_FORBIDDEN = REMOTE_MODE
   ? 'forbidden: host not allowed (see WORCA_ALLOWED_HOSTS)'
   : 'forbidden: worca is a localhost-only tool';
 
+// Browser extension pairings (docs/browser-extension.md). The path resolves per use.
+const extensionPairing = createExtensionPairing({ file: () => path.join(worcaHome(), 'extension-pairings.json') });
+
 /**
  * Who is asking: `{ local: true }` for an in-container caller or when no
  * identity check applies, `{ email, sub }` for a valid proxy token (an issuer's
@@ -622,10 +629,23 @@ const server = http.createServer(app);
 // Refuse during the upgrade (before any replay is sent): the Host/Origin guard
 // first, then the identity check when remote access is on. The 'connection'
 // handler below re-checks the host guard as a second line.
+/** An extension socket's pairing (from the worca-ext subprotocol), 'refuse', or null = not ours (S1 path decides). */
+function extensionSocketAuth(req) {
+  const origin = extensionOrigin(req.headers.origin);
+  if (!origin || REMOTE_MODE) return null;
+  if (!LOCAL_HOSTNAMES.has(String(hostnameOf(req.headers.host) || '').toLowerCase())) return null;
+  const offered = String(req.headers['sec-websocket-protocol'] || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!offered.includes(EXTENSION_WS_PROTOCOL)) return 'refuse';
+  return extensionPairing.verify(origin, offered.find((p) => p.startsWith(TOKEN_PREFIX)) || null) || 'refuse';
+}
+
 const wss = new WebSocketServer({
   server,
   path: '/ws',
   verifyClient: (info, done) => {
+    const ext = extensionSocketAuth(info.req);
+    if (ext === 'refuse') return done(false, 401);
+    if (ext) { info.req.worcaExtension = ext; return done(true); }
     if (!isLocalRequest(info.req)) return done(false, 403);
     requestIdentity(info.req).then(
       // Keep who this is on the upgrade request: the connection handler reads it to scope
@@ -634,6 +654,9 @@ const wss = new WebSocketServer({
       () => done(false, 503),
     );
   },
+  // The browser extension offers [worca-ext, wex_<token>]: select the name, never echo the token. Other clients offer
+  // no subprotocol, so this is never called for them.
+  handleProtocols: (protocols) => (protocols.has(EXTENSION_WS_PROTOCOL) ? EXTENSION_WS_PROTOCOL : false),
 });
 // ws re-emits the http server's 'error' on the WebSocketServer. With no listener
 // here, an EADDRINUSE on listen() became an unhandled 'error' event and a full
@@ -701,7 +724,28 @@ function closeAtTokenExpiry(ws, who, now = Date.now()) {
   return timer;
 }
 
+/** A paired extension's socket: Ask frames only, no runs, no terminals, no other subscriptions. */
+function acceptExtensionSocket(ws, req) {
+  ws.worcaExtension = req.worcaExtension;
+  ws.worcaViewer = null;
+  ws.terminalAllowed = false;
+  ws.termAttached = new Set();
+  sockets.add(ws);
+  trackHeartbeat(ws);
+  ws.on('close', () => sockets.delete(ws));
+  ws.on('error', () => sockets.delete(ws));
+  send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), ask: askHello(ws) });
+  ws.on('message', (raw) => {
+    let msg = null;
+    try { msg = JSON.parse(String(raw)); } catch { return; }
+    const threadId = msg && msg.type === 'subscribe' && typeof msg.threadId === 'string' ? msg.threadId : null;
+    // askSocketSees refuses composer threads for extension sockets, so a running composer turn is never replayed.
+    if (threadId && askJobs.has(threadId) && askSocketSees(ws, threadId)) replayAskJob(ws, askJobs.get(threadId));
+  });
+}
+
 wss.on('connection', (ws, req) => {
+  if (req.worcaExtension) { acceptExtensionSocket(ws, req); return; }
   // S1: WS upgrades bypass the express middleware chain, so re-apply the
   // loopback guard here (same DNS-rebinding protection as the HTTP routes).
   if (!isLocalRequest(req)) {
@@ -745,7 +789,8 @@ wss.on('connection', (ws, req) => {
   }
   const id = requestedRunId || requestedGenId || requestedBenchId || requestedInstanceId;
 
-  send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), runs: summarizeRuns(), ask: askHello(ws) });
+  send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), runs: summarizeRuns(), ask: askHello(ws),
+    extensionPairs: REMOTE_MODE ? [] : extensionPairing.pendingPublic() });
 
   if (id && runs.has(id)) {
     replayEntry(ws, runs.get(id));
@@ -826,7 +871,11 @@ function replayEntry(ws, entry) {
 function broadcast(obj) {
   const text = JSON.stringify(obj);
   const owner = askFrameOwner(obj);
+  const askFrame = !!(obj && typeof obj.type === 'string' && obj.type.startsWith('ask-'));
+  let composer;                                                        // computed lazily, only if an extension socket is open
   for (const ws of sockets) {
+    if (ws.worcaExtension && !askFrame) continue;                       // an extension sees its chat, nothing else
+    if (ws.worcaExtension && (composer ??= askFrameComposer(obj))) continue;   // never a composer thread's frames
     if (owner && ws.worcaViewer && ws.worcaViewer !== owner) continue;   // someone else's Ask thread
     if (ws.readyState === ws.OPEN) {
       try {
@@ -854,6 +903,19 @@ function askFrameOwner(obj) {
   if (ASK_OWNER_CACHE.size > 5000) ASK_OWNER_CACHE.clear();
   ASK_OWNER_CACHE.set(obj.threadId, owner);
   return owner;
+}
+
+// Browser extension: a composer (Workflows editor) thread's frames never reach an extension socket — they would leak
+// its id and streamed text. A thread's mode is fixed at creation and ids are random, so the cache never goes stale.
+const ASK_MODE_CACHE = new Map();   // threadId -> 'composer' | null
+function askFrameComposer(obj) {
+  if (!obj || typeof obj.threadId !== 'string') return false;
+  if (ASK_MODE_CACHE.has(obj.threadId)) return ASK_MODE_CACHE.get(obj.threadId) === 'composer';
+  let mode = null;
+  try { mode = askGetThread(obj.threadId)?.mode || null; } catch { return true; }   // unreadable = do not leak
+  if (ASK_MODE_CACHE.size > 5000) ASK_MODE_CACHE.clear();
+  ASK_MODE_CACHE.set(obj.threadId, mode);
+  return mode === 'composer';
 }
 
 // Fire-and-forget "this entity set changed — refetch your counts" signal. Bare +
@@ -1331,8 +1393,32 @@ app.post('/api/ingress/teams/:plugin/:channelId/:token',
 // from a non-loopback Host used to answer 400 (with a stack) where a valid one
 // answered 403. The ingress webhook above is deliberately mounted EARLIER and
 // stays exempt — it carries its own token check and 256 KB cap.
+//
+// Browser extension (docs/browser-extension.md, src/core/extension-pairing.mjs). S1 below refuses every non-loopback
+// Origin; chrome-extension:// and moz-extension:// are let through HERE ONLY, in local mode, on a loopback Host: the
+// pairing routes (a person approves in this UI) and the token allowlist with that extension's own token. CORS is
+// answered for exactly that origin (never *, never credentials). Also ahead of the body parsers (MIN-108).
+function setExtensionCors(req, res, origin) {
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH');
+  res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-worca-pair-poll');
+  res.setHeader('Access-Control-Max-Age', '600');
+  if (req.headers['access-control-request-private-network'] === 'true') res.setHeader('Access-Control-Allow-Private-Network', 'true');
+}
 app.use((req, res, next) => {
-  if (!isLocalRequest(req)) {
+  const d = decideExtensionRequest(req, { remoteMode: REMOTE_MODE, verify: extensionPairing.verify });
+  if (d.kind === 'pass') return next();
+  setExtensionCors(req, res, d.origin);
+  if (d.kind === 'preflight') return res.status(204).end();
+  if (d.kind === 'refuse') return res.status(d.status).json({ error: d.error, code: d.code });
+  req.worcaExtensionRoute = true;
+  req.worcaExtension = d.extension;   // null on a pairing route
+  next();
+});
+
+app.use((req, res, next) => {
+  if (!req.worcaExtensionRoute && !isLocalRequest(req)) {   // S1 itself is unchanged for every other request
     return res.status(403).json({ error: HOST_FORBIDDEN });
   }
   next();
@@ -1590,6 +1676,10 @@ function sendIndex(res) {
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');
   res.set('X-Content-Type-Options', 'nosniff');
+  // Nothing frames the shell. A framed shell lets a third party (an extension, any page) put a decoy over a
+  // security prompt it can trigger, e.g. the browser-extension pairing Approve.
+  res.set('Content-Security-Policy', "frame-ancestors 'none'");
+  res.set('X-Frame-Options', 'DENY');
   return res.send(html);
 }
 // `/index` (express.static's `extensions:['html']`) and `/Index.html` on a case-insensitive
@@ -10271,6 +10361,7 @@ function askHello(ws = null) {
 
 /** Whether this socket may receive thread `threadId`'s frames (its owner, or not a shared viewer). */
 function askSocketSees(ws, threadId) {
+  if (ws?.worcaExtension) { try { if (askGetThread(threadId)?.mode === 'composer') return false; } catch { return false; } }
   if (!ws || !ws.worcaViewer) return true;
   let owner = null;
   try { owner = askGetThread(threadId)?.createdBy || null; } catch { return true; }
@@ -10333,7 +10424,8 @@ app.get('/api/ask/threads', (req, res) => {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
     const visibleTo = askViewer(req);
-    const mode = req.query.mode === 'composer' ? 'composer' : null;
+    // Browser extension: never lists composer (Workflows editor) threads.
+    const mode = !req.worcaExtension && req.query.mode === 'composer' ? 'composer' : null;
     // q = the History column's search (title or any message's text); the owner and surface filters above still apply.
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     const threads = askListThreads({ limit, visibleTo, mode, query }).map((t) => {
@@ -10400,6 +10492,8 @@ app.delete('/api/ask/threads', async (req, res) => {
 app.post('/api/ask/threads', (req, res) => {
   try {
     const body = req.body || {};
+    // Browser extension: plain Ask threads only — a composer thread carries the Workflows editor's toolset.
+    if (req.worcaExtension && body.mode !== undefined && body.mode !== null) return res.status(403).json({ error: 'the browser extension creates Ask threads only', code: 'extension-route' });
     let title = null;
     if (body.title !== undefined && body.title !== null && body.title !== '') {
       if (typeof body.title !== 'string' || body.title.length > 120) {
@@ -10423,6 +10517,7 @@ app.get('/api/ask/threads/:id', (req, res) => {
   try {
     const thread = askGetThread(id);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
+    if (req.worcaExtension && thread.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
     const job = askInFlight(id);
     res.json({
       // `engine`: the lock the server enforces (D12), so the panel locks on the same answer even when the chat's model
@@ -10485,6 +10580,7 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   try {
+    if (req.worcaExtension && askGetThread(id)?.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
     const body = req.body || {};
     const patch = {};
     // The Ask panel's model · effort picker, moved while this chat is open: the pair
@@ -11020,7 +11116,7 @@ function askSignedIn(req) {
   return who.source === 'local' ? null : who.name;
 }
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined }) {
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null }) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -11100,6 +11196,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
     const { inline, listed } = askSelectInlineAttachments(withText);
     const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id, { signedIn });
+    // Browser extension (docs/browser-extension.md): server-stamped from the request's token, never client-supplied —
+    // the header tells the model the page attachments (context, text, quote) are untrusted web content.
+    if (client) headerCtx.client = client;
     // Context chips: accumulate the project/run/workspace/named page this turn ran in
     // (origin first, deduped; contexts.mjs). Cosmetic — a failure must never fail the turn.
     try { askAddThreadContexts(id, askContextEntries(ctx, headerCtx)); } catch (e) {
@@ -11239,6 +11338,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
   try {
     const thread = askGetThread(id);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
+    if (req.worcaExtension && thread.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
     if (askDeleting.has(id)) return res.status(409).json({ error: 'thread is being deleted' });
     if (askInFlight(id)) return res.status(409).json({ error: 'turn in flight' });
     // Budget gate (F6), same figure /api/run enforces: Ask spend is folded into the
@@ -11338,7 +11438,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     }
 
     if (composerState) askUpdateThread(id, { composer: composerState });
-    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode });
+    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast
@@ -11387,11 +11487,95 @@ app.post('/api/ask/mcp-preview', async (req, res) => {
 app.post('/api/ask/threads/:id/stop', (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
+  if (req.worcaExtension && askGetThread(id)?.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
   const job = askInFlight(id);
   if (job && job.turn && typeof job.turn.stop === 'function') {
     try { job.turn.stop(); } catch { /* best-effort */ }
   }
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Browser extension pairing (docs/browser-extension.md). The extension asks; a person answers in this UI with the
+// 6-digit code both sides show; the extension collects its token once. Approve/deny/revoke/list: this UI only — never
+// an extension (its origin never reaches these routes: extension-route), never another origin, never an agent (with
+// agent isolation on, a loopback browser on this machine is refused too: approve through the published address).
+// ---------------------------------------------------------------------------
+/** Close every extension socket opened with one of these pairings (revoked, or replaced by a re-pair). 4003 sends the
+ *  sidebar back to Connect; its stored token no longer verifies. */
+function closeExtensionSockets(ids) {
+  if (!ids || !ids.length) return;
+  const gone = new Set(ids);
+  for (const ws of sockets) {
+    if (ws.worcaExtension && gone.has(ws.worcaExtension.id)) { try { ws.close(4003, 'extension pairing ended'); } catch { /* closing */ } }
+  }
+}
+
+function extensionUiCaller(req, res) {
+  if (req.worcaExtensionRoute) { res.status(403).json({ error: 'answered in Worca, not by the extension', code: 'extension-route' }); return false; }
+  if (!terminalSameOrigin(req)) { res.status(403).json({ error: 'forbidden: cross-origin request', code: 'extension-origin' }); return false; }
+  if (agentMayBeCaller(req)) { res.status(403).json({ error: 'Browser extensions cannot be paired or revoked from inside the container while agent isolation is on. Open Worca through its published address.', code: 'extension-agent-blocked' }); return false; }
+  return true;
+}
+
+app.get('/api/extension/hello', (req, res) => {
+  if (!req.worcaExtensionRoute) return res.status(403).json({ error: 'for the browser extension', code: 'extension-origin' });
+  res.set('Cache-Control', 'no-store').json({ worca: true });
+});
+
+app.post('/api/extension/pair', (req, res) => {
+  if (!req.worcaExtensionRoute) return res.status(403).json({ error: 'pairing starts in the browser extension', code: 'extension-origin' });
+  const body = req.body || {};
+  const r = extensionPairing.request({ origin: extensionOrigin(req.headers.origin), name: body.name, browser: body.browser });
+  // A replaced request's prompt closes in every Worca tab (the same event approve/deny send).
+  for (const requestId of r.replacedRequestIds || []) broadcast({ type: 'extension-pairings-changed', requestId });
+  if (!r.ok) return res.status(r.status).json({ error: r.error, code: r.code });
+  broadcast({ type: 'extension-pair-request', request: r.public });   // UI sockets only (extension sockets get ask-* only)
+  res.status(201).json({ requestId: r.requestId, code: r.code, pollKey: r.pollKey, expiresAt: r.expiresAt });
+});
+
+app.get('/api/extension/pair/:requestId', (req, res) => {
+  if (!req.worcaExtensionRoute) return res.status(403).json({ error: 'pairing starts in the browser extension', code: 'extension-origin' });
+  const r = extensionPairing.poll(req.params.requestId, { origin: extensionOrigin(req.headers.origin), pollKey: req.headers['x-worca-pair-poll'] });
+  res.set('Cache-Control', 'no-store').status(r.status).json(r.body);
+});
+
+app.post('/api/extension/pair/:requestId/:verdict(approve|deny)', (req, res) => {
+  if (!extensionUiCaller(req, res)) return;
+  if (REMOTE_MODE) return res.status(409).json({ error: 'pairing is off while remote access is on', code: 'extension-remote-mode' });
+  try {
+    const r = extensionPairing.resolve(req.params.requestId, req.params.verdict);
+    if (!r.ok) return res.status(r.status).json({ error: r.error, code: r.code });
+    closeExtensionSockets(r.replaced);   // a re-pair rotated the token: sockets opened with the old one go (review m3)
+    broadcast({ type: 'extension-pairings-changed', requestId: req.params.requestId });   // other Worca tabs close their open prompt
+    res.json({ ok: true, state: r.state, ...(r.entry ? { extension: r.entry } : {}) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/extension/pairings', (req, res) => {
+  if (!extensionUiCaller(req, res)) return;
+  if (REMOTE_MODE) return res.json({ remoteMode: true, paired: [], pending: [] });
+  res.json({ remoteMode: false, ...extensionPairing.list() });
+});
+
+app.delete('/api/extension/pairings/:id', (req, res) => {
+  if (!extensionUiCaller(req, res)) return;
+  try {
+    const gone = extensionPairing.revoke(req.params.id);
+    if (!gone) return res.status(404).json({ error: 'no such paired extension' });
+    closeExtensionSockets([gone.id]);
+    broadcast({ type: 'extension-pairings-changed' });
+    res.json({ ok: true, revoked: gone });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/extension/status', (req, res) => {
+  if (!req.worcaExtension) return res.status(403).json({ error: 'extension token required', code: 'extension-route' });
+  res.json({ paired: true, id: req.worcaExtension.id, name: req.worcaExtension.name, serverMock: serverMockMode(), version: PKG_VERSION });
 });
 
 // ---------------------------------------------------------------------------
@@ -11410,8 +11594,18 @@ const PINPOINT_MOCK = {
     { title: 'Put it behind a flag', detail: 'Keep it, but off by default behind a setting.', tradeoffs: [{ tone: 'ok', text: 'Easy to undo' }, { tone: 'warn', text: 'One more setting' }] },
   ],
 };
+/** The mock Explain answer in ~6 word groups, so the popover streams in mock mode too. */
+function mockPinpointParts(text, n = 6) {
+  const words = String(text).match(/\S+\s*/g) || [];
+  const size = Math.max(1, Math.ceil(words.length / n));
+  const out = [];
+  for (let i = 0; i < words.length; i += size) out.push(words.slice(i, i + size).join(''));
+  return out;
+}
 app.post('/api/pinpoint', async (req, res) => {
-  const v = validatePinpointInput(req.body);
+  // Browser extension: a token holder gets the web framing whatever it sends (docs/browser-extension.md).
+  const input = req.worcaExtension ? { ...(req.body || {}), surface: 'web' } : req.body;
+  const v = validatePinpointInput(input);
   if (!v.ok) return badRequest(res, v.error);
   const budget = budgetStatus();
   if (budget.blocked) return res.status(403).json({ error: 'total cost limit reached', budget });
@@ -11430,8 +11624,22 @@ app.post('/api/pinpoint', async (req, res) => {
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
   const send = (o) => { if (!res.writableEnded) res.write(`${JSON.stringify(o)}\n`); };
   if (mock) {
-    if (v.value.action === 'explain') send({ type: 'delta', text: PINPOINT_MOCK.explain });
-    else send({ type: 'alternatives', alternatives: PINPOINT_MOCK.alternatives });
+    if (v.value.action === 'explain') {
+      // Streamed like a real answer. A MOCK_SLOW quote (the Ask mock's convention, src/core/engines/mock.mjs) spaces
+      // the deltas mockSlowMs() apart so a UI test can see a half-written answer and the Stop button.
+      const slow = /\bMOCK_SLOW\b/.test(v.value.quote);
+      let gone = false;
+      res.on('close', () => { gone = true; });
+      // The web surface is visible in mock mode, so a test can prove an extension's surface:'chat' is forced to 'web'.
+      // The chat surface's text stays exactly PINPOINT_MOCK.explain.
+      const parts = mockPinpointParts(PINPOINT_MOCK.explain);
+      if (v.value.surface === 'web') parts.unshift('(mock · web surface) ');
+      for (const part of parts) {
+        if (gone) return;
+        send({ type: 'delta', text: part });
+        if (slow) await new Promise((r) => setTimeout(r, mockSlowMs()));
+      }
+    } else send({ type: 'alternatives', alternatives: PINPOINT_MOCK.alternatives });
     send({ type: 'done' });
     return res.end();
   }

@@ -1,0 +1,6 @@
+/* The Pinpoint layer inside the content script's shadow root. Emitted BEFORE the generated :host token block, which
+   (re)sets color-scheme:light dark; the explicit declarations below keep that true even if the order ever changes. */
+:host{all:initial;color-scheme:light dark;font-family:var(--sans);font-size:14px;line-height:1.5;color:var(--ink);}
+:host([data-theme="light"]){color-scheme:light;}
+:host([data-theme="dark"]){color-scheme:dark;}
+.wx-layer{position:fixed;inset:0 auto auto 0;width:0;height:0;}
