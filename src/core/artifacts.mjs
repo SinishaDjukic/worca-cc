@@ -545,8 +545,10 @@ export function reviewKindOf(base) { return REVIEW_KIND[base] || base; }
 
 /**
  * Upsert a per-cycle review verdict. `kind` ∈ refine|impl|plan|ws|webui (free text,
- * A2); `cycle` is the run cycle; `verdict` is the normalized { issues:[...], summary }
- * object protocol.readReview returns. The AUTHORITATIVE per-cycle verdict store. The
+ * A2); `cycle` is the run cycle; `verdict` is the normalized { issues:[...], summary,
+ * resolved?:[...], lanes?:[...] } object protocol.normalizeReview returns (`issues` =
+ * still open in the output, the gate; `resolved` = found, fixed and verified, shown but
+ * never gating; `lanes` = the audit lanes run). The AUTHORITATIVE per-cycle verdict store. The
  * agent writes *-review-cycleN.json as transient scratch; the runner parses it once
  * and returns the verdict, which the orchestrator persists here (awaited). The live
  * loop gates on that returned verdict in-memory. Re-running a cycle REPLACES its
@@ -616,6 +618,10 @@ export function readPipelineExtras(pipelineId) {
       cycle: r.cycle,
       issues: Array.isArray(v.issues) ? v.issues : [],
       summary: typeof v.summary === 'string' ? v.summary : '',
+      // The output-graded record (normalizeReview): CONDITIONAL, so rows written before it
+      // and the bare-run `reviews: []` pin keep their exact key set.
+      ...(Array.isArray(v.resolved) && v.resolved.length ? { resolved: v.resolved } : {}),
+      ...(Array.isArray(v.lanes) && v.lanes.length ? { lanes: v.lanes } : {}),
     };
   });
   return { clarify, reviews, stepQuestions: readStepQuestions(pipelineId) };

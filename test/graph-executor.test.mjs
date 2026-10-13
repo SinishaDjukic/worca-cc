@@ -616,3 +616,46 @@ test('runExecution dispatches kind:script to the script runner, and the runners.
   await assert.rejects(runExecution({ node: { id: 'n_s', kind: 'script', key: 'echo' }, script: { meta: { runtime: 'ruby' } }, ports: {}, outputs: {}, pipelineDir: tmp('worca-exec-sd-'), claudeOpts: {} }),
     (e) => /unknown runtime "ruby"/.test(e.message) && e.errorClass === null);
 });
+
+test('21 a cycle-2 prompt carries the previous cycle\'s review (open + resolved + lanes) from ctx, and nothing without one', () => {
+  const previousReview = {
+    cycle: 1, summary: 'one major stayed open',
+    issues: [{ severity: 'major', title: 'Run line never ran', detail: 'Task 2 Step 4 hangs', location: 'Task 2' }],
+    resolved: [{ severity: 'major', title: 'Dead anchor in Task 1', detail: 'replayed at the base', location: 'Task 1' }],
+    lanes: ['replay', 'suite'],
+  };
+  const p = buildAgentPrompt(ctx8({ previousReview }));
+  const at = (s) => { const i = p.indexOf(s); assert.notEqual(i, -1, `missing: ${s}`); return i; };
+  assert.ok(at('## Ports (this run)') < at("## Previous cycle's review (cycle 1)"));
+  assert.ok(at("## Previous cycle's review (cycle 1)") < at('The review JSON shape is'));
+  assert.ok(p.includes('Summary: one major stayed open\n'));
+  assert.ok(p.includes('### Open (1)\n\n- [major] Run line never ran — Task 2: Task 2 Step 4 hangs\n'));
+  assert.ok(p.includes('### Resolved last cycle (1)\n\n- [major] Dead anchor in Task 1 — Task 1: replayed at the base\n'));
+  assert.ok(p.includes('Lanes run last cycle: replay, suite\n'));
+  assert.ok(p.includes('"resolved": [ same item shape ]'), 'the contract reminder names resolved');
+  assert.ok(p.includes('only critical/major in `issues` block the pipeline'));
+  assert.ok(p.includes('a finding fixed (by you or by the fix you are reviewing) and verified this cycle goes under `resolved`'),
+    'the contract reminder fits verifiers too, not only producers');
+  assert.ok(!p.includes('instead of re-exploring'), 'the generic block never tells a verifier to skip re-checking');
+  assert.ok(!p.includes('do not widen'), 'audit scope rules live in the agent bodies, not the generic block');
+  assert.ok(p.includes('Then review what changed since that cycle and anything those changes could break; your own instructions on what to re-check every cycle still apply.'));
+  const empty = buildAgentPrompt(ctx8({ previousReview: { cycle: 1, issues: [], summary: '' } }));
+  assert.ok(empty.includes('### Open (0)\n\n- none\n\n### Resolved last cycle (0)\n\n- none\n'));
+  assert.ok(!empty.includes('Lanes run last cycle'), 'no lanes recorded ⇒ no lanes line');
+  const bare = buildAgentPrompt(ctx8());
+  assert.ok(!bare.includes("## Previous cycle's review"), 'no record ⇒ no block (every snapshot stays)');
+  assert.equal(buildAgentPrompt(ctx8({ previousReview: null })), bare);
+});
+
+test('22 the previous-review block clips long records: 40 items per list, 20 lanes of at most 60 characters', () => {
+  const issues = Array.from({ length: 41 }, (_, i) => ({ severity: 'minor', title: `item ${i}`, detail: '', location: '' }));
+  const lanes = Array.from({ length: 21 }, (_, i) => `lane${i}-${'x'.repeat(80)}`);
+  const p = buildAgentPrompt(ctx8({ previousReview: { cycle: 1, issues, resolved: [], lanes, summary: '' } }));
+  assert.ok(p.includes('- [minor] item 39\n- … and 1 more\n'), '41 open items: 40 listed, then the remainder count');
+  assert.ok(!p.includes('item 40'));
+  const line = p.split('\n').find((l) => l.startsWith('Lanes run last cycle: '));
+  const shown = line.slice('Lanes run last cycle: '.length).split(', ');
+  assert.equal(shown.length, 21, '20 lanes plus the remainder note');
+  assert.equal(shown[20], '… and 1 more');
+  assert.ok(shown.slice(0, 20).every((l) => l.length === 60 && l.endsWith('…')), 'each lane clipped to 60 characters');
+});

@@ -13,7 +13,7 @@ BUILD THE THING
 
 You are a verifier. Inspect the inputs below exactly as your role instructions describe, then write a human-readable review markdown AND a machine-readable review JSON.
 
-Review the implementation PLAN against the original request and the real codebase. Do NOT rewrite the plan. Only critical/major block (the planner then revises).
+Review the implementation PLAN against the original request and the real codebase. Do NOT rewrite the plan. The issues array lists only what is still wrong in this plan; on cycle 2+ the previous cycle's open items the re-plan fixed go under resolved. Only critical/major in issues block (the planner then revises).
 
 ## Fan-out ENABLED — parallelize your research
 
@@ -47,7 +47,7 @@ When unsure between two tiers, take the lower one only if you will verify the re
 - Write **review** to: <WORCA_HOME>/store/<STORE_KEY>/reviews/01-01-26-feature-plan-review.md
 - Write the **verdict** JSON (machine-readable) to: <PIPELINE_DIR>/plan-review-cycle2.json
 
-The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], "summary" }. Use severities critical|major|minor|suggestion; only critical/major block the pipeline.
+The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], "resolved": [ same item shape ], "lanes": [ "<lane>", ... ], "summary" }. `issues` (keep it the FIRST key) lists only what is still open in the output you hand over; a finding fixed (by you or by the fix you are reviewing) and verified this cycle goes under `resolved`; `lanes` names the audit lanes you ran. Use severities critical|major|minor|suggestion; only critical/major in `issues` block the pipeline.
 
 MOCK_ROLE: plan-review
 MOCK_CYCLE: 2

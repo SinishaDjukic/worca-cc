@@ -905,7 +905,7 @@ test('temp home: a seeded project run and a seeded workspace run round-trip thro
 
 // ── run-artifact + progress tools over the real readers ──────────────────────
 test('list_run_artifacts / read_run_artifact / get_run_progress over real deps', async () => {
-  const { recordArtifact, writeDecomposition, listRunArtifacts } = await import('../src/core/artifacts.mjs');
+  const { recordArtifact, writeDecomposition, listRunArtifacts, writeReview } = await import('../src/core/artifacts.mjs');
   const { writeFileSync, mkdirSync } = await import('node:fs');
   const projectDir = mkdtempSync(join(tmpdir(), 'worca-ask-art-proj-'));
   await addProject({ name: 'artdemo', path: projectDir });
@@ -974,6 +974,18 @@ test('list_run_artifacts / read_run_artifact / get_run_progress over real deps',
   assert.ok(prog.clarify && Array.isArray(prog.reviews) && Array.isArray(prog.stepQuestions));
   const t1 = prog.tasks.find((t) => t.id === 't1');
   assert.doesNotMatch(t1.title, /ghp_abcdefghijklmnopqrstuvwxyz0123456789/, 'task title redacted');
+
+  // get_run_progress: a verdict's resolved + lanes ride along, redacted like issues; absent when the row has none.
+  await writeReview(seeded.id, 'refine', 1, { issues: [{ severity: 'major', title: 'open ghp_abcdefghijklmnopqrstuvwxyz0123456789', detail: '', location: '' }], summary: 'c1' });
+  await writeReview(seeded.id, 'refine', 2, { issues: [], summary: 'c2', resolved: [{ severity: 'major', title: 'fixed ghp_abcdefghijklmnopqrstuvwxyz0123456789', detail: '', location: '' }], lanes: ['replay'] });
+  const prog2 = await real.call('get_run_progress', { runId: seeded.id });
+  const [c1, c2] = prog2.reviews.filter((r) => r.kind === 'refine');
+  assert.equal('resolved' in c1, false, 'no resolved on the row ⇒ no key');
+  assert.equal('lanes' in c1, false);
+  assert.equal(c2.resolved.length, 1);
+  assert.doesNotMatch(c2.resolved[0], /ghp_abcdefghijklmnopqrstuvwxyz0123456789/, 'resolved items are redacted');
+  assert.match(c2.resolved[0], /"severity":"major"/);
+  assert.deepEqual(c2.lanes, ['replay']);
 });
 
 // The one repo guard for the read-only chat tool layer (§6.1): tools.mjs, tool-deps.mjs and every

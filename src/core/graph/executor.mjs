@@ -41,7 +41,7 @@ import {
 } from '../claude-runner.mjs';
 import { planPath, reviewPath, writeStepQuestions, writeClarify, appendAuditById } from '../artifacts.mjs';
 import { byActor } from '../identity.mjs';
-import { readReview, classifyAskPayload } from '../protocol.mjs';
+import { readReview, classifyAskPayload, normalizeSeverity } from '../protocol.mjs';
 import { prepareFormAsk, formAnswerValidator, downgradeQuestion, redactSecrets } from '../ask-forms.mjs';
 import {
   taskHeader, buildSystemPrompt, resolveAgentBody, mockMarkers, runOpts,
@@ -63,12 +63,57 @@ const AWAIT_ID = AWAIT_PORT.id;
  *  referenced through the imported constant rather than a bare agent-key literal. */
 const CLARIFY_ASK_KIND = MOCK_ROLE_CLARIFY;
 
-/** The verdict-contract reminder every node with a declared verdict carries
- *  (phases.mjs:879-881, verbatim). */
+/** The verdict-contract reminder every node with a declared verdict carries. Output-graded:
+ *  `issues` = still open in the output the agent hands over (the gate), `resolved` = found,
+ *  fixed and verified this cycle (recorded, never gating), `lanes` = the audit lanes run.
+ *  Pinned by the five verdict-node prompt snapshots (test/fixtures/prompt-snapshots). */
 export const VERDICT_CONTRACT =
   'The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], ' +
-  '"summary" }. Use severities critical|major|minor|suggestion; only critical/major block the ' +
-  'pipeline.\n\n';
+  '"resolved": [ same item shape ], "lanes": [ "<lane>", ... ], "summary" }. `issues` (keep it the ' +
+  'FIRST key) lists only what is still open in the output you hand over; a finding fixed (by you or by ' +
+  'the fix you are reviewing) and verified this cycle goes under `resolved`; `lanes` names the audit ' +
+  'lanes you ran. Use severities ' +
+  'critical|major|minor|suggestion; only critical/major in `issues` block the pipeline.\n\n';
+
+/** Clip one free-text field of a previous-cycle item for the prompt (the normalizer caps nothing). */
+const clipReviewText = (s, max) => {
+  const t = String(s ?? '').replace(/\s+/g, ' ').trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+};
+
+/**
+ * The block a cycle >= 2 prompt of a verdict node carries when the previous cycle's verdict
+ * is on record: orchestrator._execCtx reads the reviews row (kind, ordinal - 1) into
+ * `ctx.previousReview` = { cycle, issues, summary, resolved?, lanes? }. Rendered ONLY from
+ * that supplied data, so a ctx without the field builds the byte-identical prompt it did
+ * before (test 17 and the argv/prompt snapshots rebuild prompts from bare ctxs). Generic:
+ * the refiner, the reviewer, the plan reviewer and the other verifiers all get it, so the
+ * text is role-neutral — audit-scope rules ("do not widen") live in the agent bodies.
+ */
+export function previousReviewBlock(prev) {
+  if (!prev || typeof prev !== 'object') return '';
+  const item = (i) => `- [${normalizeSeverity(i?.severity)}] ${clipReviewText(i?.title, 200)}` +
+    (i?.location ? ` — ${clipReviewText(i.location, 200)}` : '') +
+    (i?.detail ? `: ${clipReviewText(i.detail, 600)}` : '');
+  const list = (arr) => (arr.length ? arr.slice(0, 40).map(item).join('\n') + (arr.length > 40 ? `\n- … and ${arr.length - 40} more` : '') + '\n' : '- none\n');
+  const open = Array.isArray(prev.issues) ? prev.issues : [];
+  const resolved = Array.isArray(prev.resolved) ? prev.resolved : [];
+  const lanes = Array.isArray(prev.lanes) ? prev.lanes.filter((l) => typeof l === 'string' && l) : [];
+  const laneList = lanes.slice(0, 20).map((l) => clipReviewText(l, 60)).join(', ') +
+    (lanes.length > 20 ? `, … and ${lanes.length - 20} more` : '');
+  const summary = clipReviewText(prev.summary, 600);
+  return (
+    `## Previous cycle's review (cycle ${prev.cycle})\n\n` +
+    'Check each OPEN item against the current input first: an item now closed and verified goes under ' +
+    '`resolved`; an item still open stays in `issues` under the same title. Do not re-open a resolved item ' +
+    'without NEW evidence. Then review what changed since that cycle and anything those changes could ' +
+    'break; your own instructions on what to re-check every cycle still apply.\n\n' +
+    (summary ? `Summary: ${summary}\n\n` : '') +
+    `### Open (${open.length})\n\n${list(open)}\n` +
+    `### Resolved last cycle (${resolved.length})\n\n${list(resolved)}\n` +
+    (lanes.length ? `Lanes run last cycle: ${laneList}\n\n` : '')
+  );
+}
 
 // ── allocation ────────────────────────────────────────────────────────────────
 
@@ -522,6 +567,7 @@ export function buildAgentPrompt(ctx) {
     portIoBlock({ node, ports, bindings, outputs, verdict, ctx }) +
     decompositionContractBlock(expandsPort, runCtx) +
     answersBlock +
+    previousReviewBlock(ctx.previousReview) +
     (verdict?.path ? VERDICT_CONTRACT : '') +
     mockMarkers(markersFor({
       role: ctx.mockRole || resolveMockRole({ meta, expandsPort }),

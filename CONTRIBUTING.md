@@ -147,7 +147,12 @@ docs/            RELEASING.md and other docs
 
 Note: `agents/` (the shipped, data-driven agent set) is **not** the same thing
 as `.claude/agents/` (Claude Code agents used to develop this repo). Changes to
-pipeline agent behavior belong in `agents/`.
+pipeline agent behavior belong in `agents/`. The verdict contract, the severity
+rubric, the convergence rules and the planner's self-verification section are
+shared text in both copies — `test/agent-contract-sync.test.mjs` pins them
+byte-identical, so edit both or the suite goes red; everything else in the
+`.claude/agents/` copies (frontmatter, Inputs vs Ports, no fan-out / workspace /
+memory sections) differs on purpose.
 
 ## UI levels
 

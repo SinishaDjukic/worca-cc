@@ -25,42 +25,63 @@ Contrast with the Plan Refiner: the refiner reviews AND rewrites the plan itself
    - **Correctness**: would the plan's approach actually work? Wrong APIs, broken logic, unhandled edge cases, incorrect snippets.
    - **Completeness**: does it cover the whole request? Missing steps, missing tests, unaddressed requirements or scope.
    - **Feasibility & grounding**: invented files/APIs, references to things that do not exist, conflicts with the existing architecture.
-   - **Testability**: does each step describe a concrete, testable change (TDD)? A plan with no real tests is at least a major issue.
+   - **Testability**: does each step describe a concrete, testable change (TDD)? A task that changes behaviour with NO test is major; a weak or unfailing test follows the Severity rubric below.
    - **Quality**: stubs/TODOs/placeholders, pseudocode where real code is required, internal contradictions.
    - **UI levels** (only when the plan touches `ui/public/`): every new user-visible element has a level (`simple` / `advanced` / `expert` / all levels) justified against `docs/ui-levels.md` § Placing a new element, and the plan updates that doc's catalogue. A missing level is a **major** issue. A blocking prompt (a control a run waits on) placed above `simple`, or a control that can hold a non-default value with no plan to keep it visible, is **critical**.
 4. Write the review markdown to the given path: a readable report with an overview, what is strong, and a severity-categorized list of issues (each with the plan location it concerns and a concrete fix), plus a verdict (blocking vs. clean).
-5. Write `plan-review-cycleN.json` mirroring the issues for the orchestrate skill to gate on.
+5. Write `plan-review-cycleN.json` from the SAME findings: `issues` = what is still wrong in this plan, `resolved` = the previous cycle's open items the re-plan fixed (cycle ≥ 2 only — read `<pipelineDir>/plan-review-cycle{cycle-1}.json` yourself; it is your "previous cycle's review"), `lanes` = what you ran (contract below).
 
 Do NOT edit the plan. Do NOT write any file other than the two absolute paths you are given.
 
-## plan-review-cycleN.json contract (consumed by protocol.readReview / hasBlocking)
+## plan-review-cycleN.json contract (consumed by exec-io.readVerdict / hasBlocking)
+
+The verdict is graded on the plan AS IT STANDS: `issues` lists only what is still wrong in the plan you reviewed. On cycle ≥ 2 start from your own previous verdict (the `## Previous cycle's review` block when your prompt carries one): check each open item against the new plan FIRST — an item the re-plan fixed goes under `resolved` (same item shape, same title), an item still open stays under `issues` (same title). `lanes` names what you ran. Keep `issues` as the FIRST key.
 
 ```json
 {
   "issues": [
     {
       "severity": "critical",
-      "title": "Short imperative summary",
+      "title": "Short imperative summary of what is STILL wrong in this plan",
       "detail": "What is wrong with the plan and why it matters; the concrete fix the planner should make.",
       "location": "plan section heading or file/path the issue concerns"
     }
   ],
-  "summary": "1-3 sentence verdict on the plan."
+  "resolved": [
+    {
+      "severity": "major",
+      "title": "The previous cycle's open item the re-plan fixed",
+      "detail": "Where the new plan fixes it and how you confirmed that.",
+      "location": "plan section heading or file/path"
+    }
+  ],
+  "lanes": ["grounding", "node-check", "run-lines", "requirements"],
+  "summary": "1-3 sentence verdict on the plan as it stands."
 }
 ```
 
-Severity definitions (use them honestly):
-- **critical** — the plan would not work / produces wrong results / blocks implementation; MUST be fixed before building.
-- **major** — significant correctness, completeness, or grounding problem; should be fixed before building.
-- **minor** — small issue; non-blocking.
-- **suggestion** — optional improvement.
+## Severity rubric
 
-`critical` and `major` are blocking; the loop continues (the Planner revises, you re-review) until none remain. Report `[]` with a positive summary only when the plan is correct, complete, grounded, and testable.
+Blocking means ANOTHER cycle is needed. A finding is **blocking** (`critical` or `major`) only when, taken verbatim as it stands, the plan or the change would:
+- ship wrong or broken behaviour, or lose data (**critical**);
+- fail to apply or to run — a dead anchor, a Create over an existing file, a step or Run line that cannot run (**critical**);
+- turn CI or the suite red, contradict the original request or the `## Clarifications (Q&A)` answers, miss a requirement of the request, or leave a fix of this cycle unverified (**major**).
 
-After writing both files, emit a short assistant note with the two absolute paths and the count of critical/major issues.
+A test-strength gap (a mutation survivor, a test that cannot fail, a missing negative case) or a visual / a11y / wording polish item is **major** only when it hides a real user-visible defect; otherwise it is **minor**, written as a concrete instruction the implementer must follow (file, place, what to change). **suggestion** is an optional improvement.
+
+Severity decides ONLY whether another cycle is needed. Every finding is still recorded (under `issues` or `resolved`) and still fixed when it is yours to fix. Only `critical` and `major` items in `issues` block the loop; nothing in `resolved` ever does.
+
+## Convergence rules
+
+- Cycle 1 grounds the whole plan by RUNNING what is cheap to run in a scratch clone of the checkpoint (`git clone -q "$PWD" <mktemp dir>/tree`; never in the worktree): every cited path, symbol and Replace anchor exists exactly once at the base (`git grep -n -F`), every JS fence passes `node --check`, each failing-test command fails for the stated reason. Record what you ran under `lanes`.
+- On cycle ≥ 2 check the `## Previous cycle's review` block's open items against the new plan FIRST (fixed → `resolved`, still open → `issues`, same titles), then review only what the re-plan changed. Do not widen the review to a lane class the previous cycle did not run unless it is the only way to confirm a fix.
+- A re-plan that fixed every open item and introduced nothing new gets `issues: []`. Never keep the loop alive to re-confirm your own previous findings.
+- Report `[]` only when the plan is correct, complete, grounded and testable as it stands; never downgrade an open defect to end the loop, and never list a fixed item under `issues` to keep it going.
+
+After writing both files, emit a short assistant note with the two absolute paths, the lanes run, and the counts of open critical/major items and of resolved items.
 
 ## Output contract reminders
-- The review JSON must be valid and match the shape above (`severity` from {critical, major, minor, suggestion}); it is parsed by `safeParseJson` / `readReview`.
+- The review JSON must be valid and match the shape above (`severity` from {critical, major, minor, suggestion}; `issues` first); it is parsed by `safeParseJson` / `normalizeReview`, and unknown keys are dropped.
 - Base findings on the real plan + real codebase, not assumptions. Write only to the two absolute paths given. Never edit the plan.
 - Keep prose in the assistant message minimal; the markdown + JSON are your real output.
 

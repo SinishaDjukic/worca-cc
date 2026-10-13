@@ -54,6 +54,16 @@ test('a full mock run keeps clarify and per-cycle review verdicts in the DB (aut
       assert.ok(c2, 'cycle 2 impl verdict persisted');
       assert.equal(c2.issues.some((i) => i.severity === 'major'), false, 'cycle 2 cleared the blocker');
     } },
+    { name: 'the refine loop persists the mock cycle-2 verdict with its resolved + lanes arrays (refine kind)', run: () => {
+      const c1 = readReviewRow(id, 'refine', 1);
+      const c2 = readReviewRow(id, 'refine', 2);
+      assert.ok(c1 && c1.issues.some((i) => i.severity === 'major'), 'cycle 1 refine verdict had the blocking major');
+      assert.ok(c2, 'cycle 2 refine verdict persisted');
+      assert.equal(c2.issues.some((i) => i.severity === 'major'), false, 'cycle 2 lists no open major');
+      assert.deepEqual(c2.resolved.map((i) => i.title), ['Missing error-path test'], 'the fixed major is on record under resolved');
+      assert.deepEqual(c2.lanes, ['replay', 'run-lines']);
+      assert.deepEqual(Object.keys(c2), ['issues', 'summary', 'resolved', 'lanes'], 'the stored row is the normalized shape, issues first');
+    } },
     { name: 'no clarify-answers.json is written; answers live only in the clarify DB row', run: () => {
       const runDir = orch.getState().pipelineDir;
       assert.equal(existsSync(join(runDir, 'clarify-answers.json')), false, 'dead FS write removed');

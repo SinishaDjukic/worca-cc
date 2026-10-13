@@ -47,7 +47,7 @@ When unsure between two tiers, take the lower one only if you will verify the re
 - Write **review** to: <WORCA_HOME>/store/<STORE_KEY>/reviews/01-01-26-feature-impl-review.md
 - Write the **verdict** JSON (machine-readable) to: <PIPELINE_DIR>/impl-review-cycle2.json
 
-The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], "summary" }. Use severities critical|major|minor|suggestion; only critical/major block the pipeline.
+The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], "resolved": [ same item shape ], "lanes": [ "<lane>", ... ], "summary" }. `issues` (keep it the FIRST key) lists only what is still open in the output you hand over; a finding fixed (by you or by the fix you are reviewing) and verified this cycle goes under `resolved`; `lanes` names the audit lanes you ran. Use severities critical|major|minor|suggestion; only critical/major in `issues` block the pipeline.
 
 MOCK_ROLE: reviewer
 MOCK_CYCLE: 2

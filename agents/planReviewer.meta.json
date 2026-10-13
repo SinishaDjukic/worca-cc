@@ -2,7 +2,7 @@
   "key": "planReviewer",
   "metaVersion": 2,
   "mockRole": "plan-review",
-  "promptHints": "Review the implementation PLAN against the original request and the real codebase. Do NOT rewrite the plan. Only critical/major block (the planner then revises).",
+  "promptHints": "Review the implementation PLAN against the original request and the real codebase. Do NOT rewrite the plan. The issues array lists only what is still wrong in this plan; on cycle 2+ the previous cycle's open items the re-plan fixed go under resolved. Only critical/major in issues block (the planner then revises).",
   "wantsRequest": true,
   "workspaceFanOut": true,
   "workspaceStrategy": "explore",

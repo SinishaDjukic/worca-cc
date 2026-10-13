@@ -277,25 +277,48 @@ export async function readAskFile(absPath) {
   return { ...classifyAskPayload(parsed), malformed: false };
 }
 
+/** One normalized review item (an issue or a resolved item). */
+function normalizeIssue(it) {
+  return {
+    severity: normalizeSeverity(it.severity),
+    title: asString(it.title).trim(),
+    detail: asString(it.detail).trim(),
+    location: asString(it.location).trim(),
+  };
+}
+
+/** A list of review items; anything that is not an object is dropped. */
+function normalizeIssueList(list) {
+  const out = [];
+  for (const it of Array.isArray(list) ? list : []) {
+    if (!it || typeof it !== 'object') continue;
+    out.push(normalizeIssue(it));
+  }
+  return out;
+}
+
 /**
  * Coerce arbitrary parsed data into the canonical review shape:
- *   { issues: [ { severity, title, detail, location } ], summary }
+ *   { issues: [ { severity, title, detail, location } ], summary,
+ *     resolved?: [ same item shape ], lanes?: [ string ] }
+ * `issues` is what the gate reads — what is STILL open in the output the agent hands
+ * over. `resolved` is the non-gating record of what the cycle found, fixed AND verified;
+ * `lanes` names the audit lanes that ran. Both optional keys appear only when the input
+ * carries a non-empty array, so a review without them normalizes byte-for-byte as before
+ * (readVerdict's `{ issues: [], summary }` pins). `issues` stays the FIRST key: the
+ * human-evidence sizer counts the first array-valued property of a verdict.
  * Always returns { issues: [], summary: '' } on bad input.
  */
 export function normalizeReview(data) {
   if (!data || typeof data !== 'object') return { issues: [], summary: '' };
-  const list = Array.isArray(data.issues) ? data.issues : [];
-  const issues = [];
-  for (const it of list) {
-    if (!it || typeof it !== 'object') continue;
-    issues.push({
-      severity: normalizeSeverity(it.severity),
-      title: asString(it.title).trim(),
-      detail: asString(it.detail).trim(),
-      location: asString(it.location).trim(),
-    });
-  }
-  return { issues, summary: asString(data.summary).trim() };
+  const out = { issues: normalizeIssueList(data.issues), summary: asString(data.summary).trim() };
+  const resolved = normalizeIssueList(data.resolved);
+  if (resolved.length) out.resolved = resolved;
+  const lanes = (Array.isArray(data.lanes) ? data.lanes : [])
+    .filter((l) => typeof l === 'string' && l.trim())
+    .map((l) => l.trim());
+  if (lanes.length) out.lanes = lanes;
+  return out;
 }
 
 /**

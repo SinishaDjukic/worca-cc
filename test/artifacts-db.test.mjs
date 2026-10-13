@@ -445,6 +445,19 @@ test('readPipelineExtras returns clarify + ordered reviews, and empty arrays for
       assert.equal(ex.reviews[0].issues[0].severity, 'major');
       assert.equal(ex.reviews[1].issues.length, 0);
     } },
+    { name: 'readPipelineExtras carries resolved + lanes when the stored verdict has them, and omits the keys otherwise', run: async () => {
+      seedPipelineRow({ id: 'ex000003', projectKey: 'proj-00000001', status: 'done' });
+      await writeReview('ex000003', 'refine', 1, { issues: [{ severity: 'major', title: 't', detail: 'd', location: 'l' }], summary: 'open' });
+      await writeReview('ex000003', 'refine', 2, {
+        issues: [], summary: 'clean',
+        resolved: [{ severity: 'major', title: 't', detail: 'fixed in v2, replayed', location: 'l' }], lanes: ['replay', 'suite'],
+      });
+      const ex = readPipelineExtras('ex000003');
+      assert.deepEqual(ex.reviews.map((r) => [r.kind, r.cycle]), [['refine', 1], ['refine', 2]]);
+      assert.deepEqual(Object.keys(ex.reviews[0]), ['kind', 'cycle', 'issues', 'summary'], 'cycle 1 row: no resolved/lanes keys');
+      assert.deepEqual(ex.reviews[1].resolved.map((i) => i.title), ['t']);
+      assert.deepEqual(ex.reviews[1].lanes, ['replay', 'suite']);
+    } },
     { name: 'readPipelineExtras on a bare pipeline returns empty arrays (never null)', run: async () => {
       seedPipelineRow({ id: 'ex000002', projectKey: 'proj-00000001', status: 'done' });
       const ex = readPipelineExtras('ex000002');

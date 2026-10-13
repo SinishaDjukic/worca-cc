@@ -2,7 +2,7 @@
   "key": "refiner",
   "metaVersion": 2,
   "mockRole": "refiner",
-  "promptHints": "Read the current plan, critically review it INCLUDING its code snippets, then write an improved version and a machine-readable review.\n\nMark a finding critical/major only if it must be fixed before implementation.",
+  "promptHints": "Read the current plan, critically review it INCLUDING its code snippets, then write an improved version and a machine-readable review.\n\nGrade the OUTPUT: the issues array lists only what is still open in the version you wrote (plus any fix you could not verify this cycle); a finding you fixed AND verified goes under resolved. Mark a finding critical/major only if, implemented verbatim, the plan would ship broken behaviour, fail to apply, turn the suite red, or contradict the request or the Q&A answers.",
   "wantsRequest": true,
   "workspaceFanOut": true,
   "workspaceStrategy": "explore",

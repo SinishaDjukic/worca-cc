@@ -75,6 +75,7 @@ export async function runGraphOffline({
       projectDir, pipelineDir, taskPrompt: 'BUILD IT', toolInstruction: 'TOOLS',
       extras: [], workspace: null, agentPrompts: {}, checkpointRef: 'abc1234',
       claudeOpts: { mock: true },
+      previousReview: null,   // mirrors _execCtx; the offline runner has no reviews table to read a previous cycle from
       ask: async (a) => answer(a),
       // A script card's contract, the way _execCtx builds it (D12: cwd = projectDir).
       script: node.kind === 'script'

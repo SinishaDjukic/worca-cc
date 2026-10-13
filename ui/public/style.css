@@ -9154,3 +9154,6 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .branches-new > label.same-src-row{display:flex;margin:8px 0 0;}
 #sameAsSourceHint[hidden]{display:none;}   /* .hint{display:block} beats the UA [hidden] rule */
 #featureBranch:disabled{opacity:.65;cursor:not-allowed;}   /* no global .input:disabled rule exists */
+
+/* History › Overview: issues the review loop found and fixed before hand-over (verdict `resolved`). */
+.hd-ov-resolved{margin-top:6px;font-size:12px;color:var(--ink-2)}

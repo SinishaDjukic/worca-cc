@@ -52,7 +52,7 @@ import { autoModelsFor } from './auto/runnable.mjs';
 import { probeClaudeAuth } from './preflight.mjs';
 import { helperEngineFor } from './model-env.mjs';
 import {
-  appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
+  appendAudit, writeReview, readReviewRow, reviewKindOf, writeDecomposition, updateTaskStatus,
   updatePhaseStatus, writeStepQuestions, readStepQuestions, forgetMissingArtifacts,
   indexedNamesUnder, forgetOtherKinds,
 } from './artifacts.mjs';
@@ -1314,6 +1314,10 @@ export class GraphOrchestrator extends RunHarness {
     };
     const outputs = allocateOutputs({ node, ports, executionId, ordinal, runCtx });
     const verdict = allocateVerdict({ node, ports, ordinal, runCtx });
+    // F: a cycle >= 2 execution of a verdict node gets its own previous cycle's verdict (the
+    // reviews row _afterExecution persisted) so the prompt can carry "## Previous cycle's
+    // review" and the agent checks that record's open items first.
+    const previousReview = this._previousReview(nc, { verdict, ordinal, nodeId: node.id });
     // attr.stepKey IS the executionId: that single substitution is what re-keys
     // the whole inherited telemetry block (sub_agents.step_key, step skills,
     // graphify counts, cost) onto executions. stepIndex is null — a graph has
@@ -1397,6 +1401,7 @@ export class GraphOrchestrator extends RunHarness {
       executionId,
       ordinal,
       cycle: ordinal,
+      previousReview,                     // { cycle, issues, summary, resolved?, lanes? } | null (executor.mjs#previousReviewBlock)
       slice,
       parentExecutionId: args.parentExecutionId ?? null,
       taskIndex: args.taskIndex ?? null,
@@ -1876,6 +1881,23 @@ export class GraphOrchestrator extends RunHarness {
     const file = String(ctx.verdict?.path || '').split(/[\\/]/).pop() || '';
     const stem = file.replace(`-cycle${ctx.ordinal}.json`, '').replace(/\.json$/, '');
     return (stem && reviewKindOf(stem)) || nc.key || ctx.nodeId;
+  }
+
+  /** F: the previous cycle's persisted verdict for a verdict node at ordinal >= 2 — the
+   *  reviews row _afterExecution wrote for (kind, ordinal - 1), tagged with that cycle — or
+   *  null (cycle 1; a node without a verdict; a previous verdict that was never written, so
+   *  its row was skipped). The kind is cycle-independent (_verdictKind strips the cycle
+   *  suffix), so a duplicate-key or slice prefix matches writer and reader alike. Generic
+   *  for every node with a verdict; the executor renders it as "## Previous cycle's review".
+   *  A DB error loses only this optional block (null), never pauses the execution. */
+  _previousReview(nc, ctx) {
+    if (!(ctx.ordinal > 1) || !ctx.verdict?.path || !this.pipeline?.id) return null;
+    try {
+      const row = readReviewRow(this.pipeline.id, this._verdictKind(nc, ctx), ctx.ordinal - 1);
+      return row && typeof row === 'object' ? { cycle: ctx.ordinal - 1, ...row } : null;
+    } catch {
+      return null;
+    }
   }
 
   /**

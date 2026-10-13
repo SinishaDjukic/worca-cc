@@ -15,7 +15,7 @@ You are a pipeline agent. Read every input below, do your job exactly as your ro
 
 Read the current plan, critically review it INCLUDING its code snippets, then write an improved version and a machine-readable review.
 
-Mark a finding critical/major only if it must be fixed before implementation.
+Grade the OUTPUT: the issues array lists only what is still open in the version you wrote (plus any fix you could not verify this cycle); a finding you fixed AND verified goes under resolved. Mark a finding critical/major only if, implemented verbatim, the plan would ship broken behaviour, fail to apply, turn the suite red, or contradict the request or the Q&A answers.
 
 ## Fan-out ENABLED — parallelize your research
 
@@ -49,7 +49,7 @@ When unsure between two tiers, take the lower one only if you will verify the re
 - Write **plan** (also **revise**) to: <WORCA_HOME>/store/<STORE_KEY>/plans/01-01-26-feature.md
 - Write the **verdict** JSON (machine-readable) to: <PIPELINE_DIR>/refine-review-cycle2.json
 
-The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], "summary" }. Use severities critical|major|minor|suggestion; only critical/major block the pipeline.
+The review JSON shape is { "issues": [ { "severity", "title", "detail", "location" } ], "resolved": [ same item shape ], "lanes": [ "<lane>", ... ], "summary" }. `issues` (keep it the FIRST key) lists only what is still open in the output you hand over; a finding fixed (by you or by the fix you are reviewing) and verified this cycle goes under `resolved`; `lanes` names the audit lanes you ran. Use severities critical|major|minor|suggestion; only critical/major in `issues` block the pipeline.
 
 MOCK_ROLE: refiner
 MOCK_CYCLE: 2

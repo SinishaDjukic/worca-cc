@@ -909,7 +909,9 @@ async function mockRefiner(m, cycle, onEvent) {
           ],
         }
       : {
-          summary: 'No blocking issues remain.',
+          // Output-graded: the cycle-1 major was fixed in this version and verified, so it is
+          // recorded under `resolved` (never gating); only the open minor stays under `issues`.
+          summary: 'No blocking issues remain; the cycle-1 major was fixed in this version and verified.',
           issues: [
             {
               severity: 'minor',
@@ -918,6 +920,15 @@ async function mockRefiner(m, cycle, onEvent) {
               location: 'src/feature.mjs',
             },
           ],
+          resolved: [
+            {
+              severity: 'major',
+              title: 'Missing error-path test',
+              detail: 'Added the invalid-input test and ran it: red on the input plan, green on this version.',
+              location: 'test/feature.test.mjs',
+            },
+          ],
+          lanes: ['replay', 'run-lines'],
         };
 
   if (jsonPath) {

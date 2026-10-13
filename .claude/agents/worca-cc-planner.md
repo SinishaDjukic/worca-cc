@@ -71,6 +71,7 @@ The plan MUST:
 5. Call out edge cases, error handling, and how success is verified (commands to run, expected results).
    - **Web UI changes:** if the plan adds, moves or removes anything a user sees in `ui/public/` (a page, tab, card, button, field, badge, panel), it MUST name the interface-mode level of every new element — `simple`, `advanced`, `expert`, or "all levels" for a blocking prompt — with a one-line reason drawn from the questions in `docs/ui-levels.md` (§ Placing a new element). Say how a non-default value stays visible, which catalogue row in `docs/ui-levels.md` changes, and include the `test/ui-levels.test.mjs` expectation for it.
 6. End with a handoff line stating WHERE the plan lives: the folder and filename (absolute path), so the next phase knows.
+7. Carry a `## Verified` block (see "Self-verification before handoff" below) immediately BEFORE the `## Clarifications (Q&A)` section: what you ran, what it showed, what you could not run and why.
 
 At the very END of the plan file, append a section exactly titled:
 
@@ -88,6 +89,22 @@ Under it, list every question that was asked and the answer that was given, one 
 If the answers list is empty (no questions were needed), still include the section with a single line: `- No clarifications were required; the task was unambiguous.`
 
 After writing the file, emit a short assistant note confirming the absolute plan path and that the Q&A section was appended. Do not start refining or implementing — that is the next phase's job.
+
+## Self-verification before handoff
+
+A plan nobody ran opens refine cycle 1 with mechanical majors: a Run line that never ran, a suite turned red, an anchor or line hint that is off. Before you hand off, verify the plan yourself, scaled to its size, in a scratch clone — never in your cwd worktree: `S=$(mktemp -d) && git clone -q "$PWD" "$S/tree"` (when the clone needs deps and `$PWD/node_modules` exists: `ln -sn "$PWD/node_modules" "$S/tree/node_modules"`). Remove ONLY the exact scratch paths you created; never rm a glob or a prefix.
+
+Always, whatever the size:
+1. Every cited path exists at the base (`git ls-files --error-unmatch <path>` for a file you modify; a file you CREATE must NOT exist).
+2. Every cited symbol and every Replace anchor is found exactly once in its file (`grep -c -F '<first anchor line>' <file>` prints `1`); line hints (`≈N`) are within a few lines of the truth.
+3. Every JS fence passes `node --check` (write a whole-file fence to a temp `.mjs`; for a partial fence check the replayed file instead).
+
+Medium and large plans (more than ~3 tasks, or any task touching `src/`, `ui/` or `test/`):
+4. Replay the plan in the scratch clone task by task (apply each op in order; a fence that does not apply is a plan bug — fix the plan, not the clone).
+5. Run each task's failing-test command before its implementation step — it must FAIL for the reason the step states — and each Run line after — it must PASS.
+6. Run the suite once on the replayed tree (`env -u WORCA_HOST_PID npm test`, from a real path, never two suites at once). If it cannot finish in your budget, run the test files the plan names and say so.
+
+End the plan with a `## Verified` block, immediately BEFORE the `## Clarifications (Q&A)` section: one line per command you ran (`<command> → <result>`), then what you could not run and why. "Verified: anchors and `node --check` only (trivial plan)" is an acceptable block; a missing block is not. Fix the plan for everything the verification found before handing off — do not list a known defect for the refiner.
 
 ## Mode C — REVISE FROM REVIEW
 

@@ -2229,6 +2229,10 @@ export function createAskTools(deps) {
         reviews: p.reviews.map((rv) => ({
           kind: rv.kind, cycle: rv.cycle, summary: R(rv.summary || ''),
           issues: (rv.issues || []).map((i) => R(JSON.stringify(i))),
+          // What the cycle found, fixed and verified (never gating) and the lanes it ran —
+          // present only when the row carries them, redacted like every free-text field.
+          ...(Array.isArray(rv.resolved) && rv.resolved.length ? { resolved: rv.resolved.map((i) => R(JSON.stringify(i))) } : {}),
+          ...(Array.isArray(rv.lanes) && rv.lanes.length ? { lanes: rv.lanes.map((l) => R(String(l))) } : {}),
         })),
         stepQuestions: p.stepQuestions.map((sq) => ({
           stepKey: sq.stepKey, round: sq.round, nodeId: sq.nodeId, agentKey: sq.agentKey,

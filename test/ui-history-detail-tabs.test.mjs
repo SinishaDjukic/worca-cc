@@ -109,6 +109,20 @@ test('Overview: clean verdict + stat cards + task card; a non-done run shows the
 
 test('Overview findings: keyThingsToCheck render, workspace findings collected from perProject and prefixed', async () => {
   await checkRows([
+    { name: 'Overview: issues the review loop found and fixed are counted under the verdict (resolved arrays); no line without them', run: async () => {
+      const reviews = [
+        { kind: 'refine', cycle: 1, issues: [{ severity: 'major', title: 'a', detail: '', location: '' }], summary: 'open' },
+        { kind: 'refine', cycle: 2, issues: [], summary: 'clean', lanes: ['replay'],
+          resolved: [{ severity: 'major', title: 'a', detail: 'fixed', location: '' }, { severity: 'minor', title: 'b', detail: '', location: '' }] },
+        { kind: 'impl', cycle: 2, issues: [], summary: 'clean', resolved: [{ severity: 'major', title: 'c', detail: '', location: '' }] },
+      ];
+      const ctx = await bootDetail({ detail: { ...OV_DETAIL, reviews } });
+      const sec = await openOverview(ctx);
+      assert.ok(sec.querySelector('.hd-ov-verdict').classList.contains('clean'), 'resolved items never count as things to check');
+      assert.equal(sec.querySelector('.hd-ov-resolved').textContent, '3 issues found and fixed during review (refine 2, impl 1)');
+      const bare = await openOverview(await bootDetail({ detail: OV_DETAIL }));
+      assert.equal(bare.querySelector('.hd-ov-resolved'), null, 'no resolved items, no line');
+    } },
     { name: 'Overview: findings render when keyThingsToCheck is non-empty', run: async () => {
       const results = {
         ...RESULTS,

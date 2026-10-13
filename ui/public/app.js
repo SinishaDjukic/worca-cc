@@ -24773,6 +24773,22 @@ function hdStatCard(kind, label, value, sub) {
   return card;
 }
 
+// The review loop's `resolved` items (found, fixed and verified before hand-over), summed over
+// every persisted verdict row of the run: { total: 3, byKind: 'refine 2, impl 1' }. The rows
+// come with the History detail payload (readPipelineExtras); results.json is untouched.
+function hdResolvedCounts(reviews) {
+  const byKind = new Map();
+  let total = 0;
+  for (const rv of Array.isArray(reviews) ? reviews : []) {
+    const n = rv && Array.isArray(rv.resolved) ? rv.resolved.length : 0;
+    if (!n) continue;
+    const kind = (rv && rv.kind) || 'review';
+    total += n;
+    byKind.set(kind, (byKind.get(kind) || 0) + n);
+  }
+  return { total, byKind: [...byKind].map(([k, n]) => `${k} ${n}`).join(', ') };
+}
+
 // Workspace results have NO top-level keyThingsToCheck — findings live under
 // perProject[<key>].keyThingsToCheck (the rollup summary only counts them), so a
 // workspace run would otherwise always read "Clean".
@@ -24860,6 +24876,15 @@ function buildHdOverview(sec, record, data) {
     verdict.append(chip, document.createTextNode(' No review results captured — the run did not complete.'));
   }
   wrap.appendChild(verdict);
+  // What the review loop found and fixed before handing over (every verdict row's `resolved`
+  // array). Informational text inside the Overview card — all levels; never a "thing to check".
+  const fixed = hdResolvedCounts(data && data.reviews);
+  if (fixed.total) {
+    const line = document.createElement('div');
+    line.className = 'hd-ov-resolved';
+    line.textContent = `${fixed.total} issue${fixed.total === 1 ? '' : 's'} found and fixed during review (${fixed.byKind})`;
+    wrap.appendChild(line);
+  }
   // The open pull request(s) as GitHub sees them now, beside the review's verdict from the run.
   const prs = document.createElement('div');
   prs.className = 'hd-ov-prs';

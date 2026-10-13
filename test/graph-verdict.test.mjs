@@ -49,3 +49,46 @@ test('protocol.readReview still normalizes severities through the moved helper',
   assert.equal(protocol.hasBlocking(r), true);
   await rm(dir, { recursive: true, force: true });
 });
+
+test('output-graded verdicts: resolved never blocks, an unverified fix under issues does, normalizeReview keeps resolved + lanes', async () => {
+  await checkRows([
+    { name: 'a verdict whose only major sits under resolved is clean', run: () => {
+      const r = { issues: [], resolved: [{ severity: 'major', title: 'fixed and verified' }], summary: 'ok' };
+      assert.equal(verdict.hasBlocking(r), false);
+      assert.deepEqual(verdict.blockingIssues(r), []);
+    } },
+    { name: 'a fix applied but not verified, listed under issues, blocks', run: () => {
+      const r = { issues: [{ severity: 'major', title: 'fix applied, not verified' }], resolved: [{ severity: 'major', title: 'other' }], summary: '' };
+      assert.equal(verdict.hasBlocking(r), true);
+      assert.equal(verdict.blockingIssues(r).length, 1);
+    } },
+    { name: 'normalizeReview keeps resolved (normalized items) and lanes (trimmed strings); issues stays the first key', run: () => {
+      const n = protocol.normalizeReview({
+        summary: ' s ', lanes: ['replay', ' suite ', 3, ''],
+        resolved: [{ severity: 'MAJOR', title: ' t ', detail: 'd' }, 'junk', null],
+        issues: [{ severity: 'minor', title: 'open' }],
+      });
+      assert.deepEqual(Object.keys(n), ['issues', 'summary', 'resolved', 'lanes']);
+      assert.deepEqual(n.issues, [{ severity: 'minor', title: 'open', detail: '', location: '' }]);
+      assert.deepEqual(n.resolved, [{ severity: 'major', title: 't', detail: 'd', location: '' }]);
+      assert.deepEqual(n.lanes, ['replay', 'suite']);
+      assert.equal(n.summary, 's');
+    } },
+    { name: 'absent, empty or malformed resolved/lanes are omitted (the clean-review pins stay byte-identical)', run: () => {
+      assert.deepEqual(protocol.normalizeReview({ issues: [], summary: 'ok' }), { issues: [], summary: 'ok' });
+      assert.deepEqual(protocol.normalizeReview({ issues: [], summary: 'ok', resolved: [], lanes: [] }), { issues: [], summary: 'ok' });
+      assert.deepEqual(protocol.normalizeReview({ issues: [], summary: '', resolved: 'x', lanes: 'y' }), { issues: [], summary: '' });
+      assert.deepEqual(protocol.normalizeReview({ issues: [], summary: '', resolved: ['junk'], lanes: [3, ' '] }), { issues: [], summary: '' });
+    } },
+    { name: 'readReview from a file keeps resolved + lanes and still gates on issues only', run: async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'worca-verdict-'));
+      const file = join(dir, 'review.json');
+      await writeFile(file, JSON.stringify({ issues: [], resolved: [{ severity: 'major', title: 'r' }], lanes: ['replay'], summary: 'clean' }), 'utf8');
+      const r = await protocol.readReview(file);
+      assert.equal(protocol.hasBlocking(r), false);
+      assert.equal(r.resolved.length, 1);
+      assert.deepEqual(r.lanes, ['replay']);
+      await rm(dir, { recursive: true, force: true });
+    } },
+  ]);
+});
