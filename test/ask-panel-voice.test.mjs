@@ -180,7 +180,7 @@ test('voice turns off on close, New chat and thread switch; destroy tears it dow
 
   ctx.panel.open();
   await startHandsFree(ctx);
-  ctx.doc.querySelector('[data-ask-new-btn]').click();
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
   assert.deepEqual(f.calls.at(-1), ['stop']);
 
   await openThread(ctx, 0);

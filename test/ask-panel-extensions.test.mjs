@@ -316,6 +316,6 @@ test('New chat hands the add-ons the empty chat at once (update(null)), before a
   registerComposerAddon({ id: 'probe', mount: () => ({ update: (thread) => seen.push(thread ? thread.id : null) }) });
   const ctx = await openThread();
   assert.equal(seen.at(-1), TID);
-  ctx.doc.querySelector('[data-ask-new-btn]').click();
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
   assert.equal(seen.at(-1), null, 'the add-ons see the new (empty) chat');
 });

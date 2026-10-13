@@ -808,6 +808,85 @@ test('a failed search fetch asks again: the same text typed again retries, and a
   ctx.panel.destroy();
 });
 
+test('New chat leads the column: a labelled button between the head and the date groups, [data-ask-new-btn] like the head\'s; a click starts a new chat and routes home', async () => {
+  const routes = [];
+  const ctx = makePanel({ fetchHandler: api({}), now: () => NOW, innerWidth: 1700, deps: { onRoute: (id, o) => routes.push([id, o]) } });
+  ctx.panel.open({ threadId: 'ask_00000001' });
+  await ticks(ctx);
+  ctx.flush();
+  const col = ctx.doc.querySelector('aside.chat-history[data-chat-history]');
+  const nb = col.querySelector('button[data-ask-new-btn]');
+  assert.ok(nb, 'the column has its own New chat');
+  assert.equal(nb.type, 'button');
+  assert.equal(nb.textContent, 'New chat', 'a visible label');
+  assert.equal(nb.getAttribute('aria-label'), null, 'the label is its name');
+  assert.equal(nb.querySelector('svg').getAttribute('aria-hidden'), 'true', 'the plus glyph is decoration');
+  assert.ok(nb.classList.contains('chat-new-btn'), 'the head button\'s look (style.css)');
+  const where = (c) => (c.classList.contains('chat-history-head') ? 'head' : c === nb ? 'new' : c.classList.contains('chat-history-body') ? 'body' : c.className);
+  assert.deepEqual([...col.children].map(where), ['head', 'new', 'body'], 'outside the body the list repaints');
+  assert.ok(nb.compareDocumentPosition(col.querySelector('.chat-history-group-label')) & ctx.window.Node.DOCUMENT_POSITION_FOLLOWING, 'above Today / Yesterday / Earlier');
+  assert.equal(ctx.doc.querySelectorAll('[data-ask-new-btn]').length, 2, 'the head\'s and the column\'s');
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Fix the login bug');
+  nb.click();
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'New chat');
+  assert.deepEqual(routes.at(-1), [null, { replace: false }], 'home, pushed (as the head\'s)');
+  assert.equal(col.querySelector('[aria-current="true"]'), null, 'no row is the open chat');
+  assert.equal(ctx.doc.activeElement, ctx.doc.querySelector('textarea.ask-input'), 'the composer of the new chat');
+  assert.equal(ctx.panel.root.dataset.history, 'open', 'a push column stays open');
+});
+
+test('the column\'s New chat survives every repaint: a refresh, a search with matches, one with none', async () => {
+  const rec = { lists: [] };
+  const ctx = makePanel({ fetchHandler: searchApi(rec), now: () => NOW, innerWidth: 1700 });
+  ctx.panel.open();
+  await ticks(ctx);
+  const col = ctx.doc.querySelector('[data-chat-history]');
+  const nb = col.querySelector('[data-ask-new-btn]');
+  const body = col.querySelector('.chat-history-body');
+  const kept = (label) => {
+    assert.equal(col.querySelector('[data-ask-new-btn]'), nb, `${label}: the same button`);
+    assert.equal(nb.nextElementSibling, body, `${label}: still right above the rows`);
+  };
+  ctx.panel.pushServerFrame({ type: 'ask-title', threadId: 'ask_00000002', title: 'Renamed' });
+  await wait(320);                                                         // past THREADS_REFRESH_MS
+  await ticks(ctx);
+  assert.equal(rec.lists.length, 2, 'the refresh repainted the rows');
+  kept('a refresh');
+  const { btn, input } = searchHead(ctx);
+  btn.click();
+  typeInto(ctx, input, 'login');
+  await wait(DEBOUNCED);
+  await ticks(ctx);
+  assert.deepEqual(titles(ctx), ['Fix the login bug', 'Offline sync banner']);
+  kept('a search');
+  typeInto(ctx, input, 'zzz');
+  await wait(DEBOUNCED);
+  await ticks(ctx);
+  assert.equal(col.querySelector('.chat-history-empty').textContent, 'No chats match.');
+  kept('a search with no match');
+  ctx.panel.destroy();
+});
+
+test('below 1100px New chat in the overlay closes it, as a pick does (never a stored choice): the new chat has its room and the composer the focus', async () => {
+  const routes = [];
+  const ctx = makePanel({ fetchHandler: api({}), innerWidth: 900, deps: { onRoute: (id, o) => routes.push([id, o]) } });
+  ctx.panel.open({ threadId: 'ask_00000002' });
+  await ticks(ctx);
+  const page = ctx.panel.root;
+  ctx.doc.querySelector('[data-ask-threads-btn]').click();
+  assert.equal(page.dataset.history, 'open');
+  const nb = ctx.doc.querySelector('[data-chat-history] [data-ask-new-btn]');
+  nb.focus();
+  assert.equal(page.dataset.history, 'open', 'Tab onto it stays inside the overlay');
+  nb.click();
+  assert.equal(page.dataset.history, 'closed', 'the overlay gives the new chat its room');
+  assert.equal(ctx.doc.querySelector('[data-chat-scrim]').hidden, true);
+  assert.equal(ctx.storage.getItem('worca-cc.chat.history'), null, 'never a stored choice');
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'New chat');
+  assert.deepEqual(routes.at(-1), [null, { replace: false }]);
+  assert.equal(ctx.doc.activeElement, ctx.doc.querySelector('textarea.ask-input'), 'the button is hidden now: focus goes to the composer');
+});
+
 test('the search field\'s placeholder uses the Workflows Library\'s rendered colour (--ink-2), not the lighter --ink-3', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const rule = css.match(/\.chat-history-search-input::placeholder\{([^}]*)\}/);

@@ -438,6 +438,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     b.addEventListener('click', onClick);
     return b;
   }
+  /** "+ New chat" — the head's and the History column's: a labelled ghost button (style.css .chat-new-btn). Both carry
+   *  [data-ask-new-btn], which the add-ons' capture-phase listeners read (chat/home-flip.mjs arms the glide,
+   *  chat/intent.mjs drops the intent). Below 1100px the overlay closes first, as after a pick, so the new chat has its
+   *  room and newThread() can focus its composer. */
+  function newChatButton(className) {
+    const b = make('button', `ask-icon-btn chat-new-btn ${className}`);
+    b.type = 'button';
+    b.setAttribute('data-ask-new-btn', '');
+    b.appendChild(svgIcon(ICONS.plus, 14, 2));
+    b.appendChild(make('span', null, 'New chat'));
+    b.addEventListener('click', () => {
+      if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+      newThread();
+      route(null);
+    });
+    return b;
+  }
   /** The History toggle's glyph: a page with a folded corner and lines of text (the saved chats). */
   function historyIcon() {
     return svgIcon(['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z', 'M14 3v4a1 1 0 0 0 1 1h4',
@@ -477,9 +494,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.title = make('div', 'ask-title', 'New chat');
     head.appendChild(el.title);
     head.appendChild(make('span', 'chat-head-spacer'));
-    const newBtn = iconButton('ask-icon-btn chat-head-btn', 'New chat', ICONS.plus, () => { newThread(); route(null); });
-    newBtn.setAttribute('data-ask-new-btn', '');
-    head.appendChild(newBtn);
+    head.appendChild(newChatButton('chat-head-btn'));
     convo.appendChild(head);
 
     el.home = make('div', 'chat-home');
@@ -1443,6 +1458,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(el.historyMeter);
     head.appendChild(buildHistorySearch());
     aside.appendChild(head);
+    // New chat leads the list, outside the body renderHistory repaints: a refresh or a search never drops it.
+    aside.appendChild(newChatButton('chat-history-new'));
     el.historyBody = make('div', 'chat-history-body');
     aside.appendChild(el.historyBody);
     syncHistorySearch();
