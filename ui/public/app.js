@@ -184,6 +184,10 @@ import { artifactsByNodeCycle, groupArtifactsByKind, BULK_KIND_THRESHOLD, viewer
   renderMarkdown as renderArtifactMarkdown } from './artifact-view-c4.mjs';
 // The popup viewer every artifact opener uses (Chat P5).
 import { openArtifactViewer, downloadArtifact } from './artifacts/viewer.mjs';
+// Pinpoint (#669): act on selected text in the chat, run artifacts and the Diff tab.
+import { createPinpoint } from './pinpoint.mjs';
+import { decorateArtifact, decorateDiff } from './pinpoint-surfaces.mjs';
+import { trayKey as pinpointTrayKey } from './pinpoint-model.mjs';
 import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
@@ -280,6 +284,11 @@ function bindMarkdownReady() {
 const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' });
 
 let askPanel = null;           // Ask Worca panel — assigned by the boot mount; every seam uses askPanel?.
+// Pinpoint (#669): one selection controller for the page. Created at load, so its window key handler runs ahead of
+// the artifact viewer's (added when a popup opens).
+const pinpoint = createPinpoint({ doc: document, win: window, fetch: (u, o) => fetch(u, o) });
+/** Pinpoint's "to the chat" from outside it: the quote chip and the text in the composer, not sent (R3). */
+const pinpointDraft = (quote, text) => openChat({ text, quote });
 // worca Chat (CONTRACT §3): the run panel's hooks P4 assigns, and the ONE mutable deps object the Chat page's cards read
 // at call time (P4 swaps openRunPanel, P5 openArtifact, P2 adds openShipIt). Up here, above every caller (TDZ).
 let chatPanelRouter = null;    // (segments: ['<runId>', '<tab>'?]) => void — [] closes the panel
@@ -20244,6 +20253,7 @@ let histDetailState = null; // { key, id, record, data, screen } while open
 // `reload` refetches the comments and repaints CARDS ONLY — never the diff, never
 // the patch (D18).
 let hdCommentState = null; // { key, id, reload }
+let hdPinpoint = null;      // the open Diff tab's Pinpoint (#669): { paint(comments), off() }
 // One-shot "open the Ship it? modal on arrival" intent, consumed by
 // openHistDetail unconditionally so it can never strand across visits.
 let pendingShipIt = null;   // { id, projectKey, memberPrs? } | null — memberPrs: workspace click-time { [memberKey]: pr|null }
@@ -23962,6 +23972,8 @@ function buildHdDiff(sec, record, data) {
   // another file while the patch is still downloading (without it both selects
   // resume after the await and append two bodies to the same pane).
   const pstate = { index: null, patchPromise: null, error: null, selEpoch: 0 };
+  // Pinpoint (#669): selection actions on the diff (registered below, once the comment layer exists).
+  let pp = null;
 
   // ---- the comment layer ---------------------------------------------------
   const cstate = { comments: [], byFile: new Map(), patchAvailable: false, treeSig: null,
@@ -24123,6 +24135,13 @@ function buildHdDiff(sec, record, data) {
     },
     toAsk(comment) { askAboutDiffComment(comment, ctx.replyCountOf(comment), record.id); },
   };
+  hdPinpoint?.off();
+  pp = decorateDiff({
+    pinpoint, doc: document, win: window, pane, trayHost: sec, ctx, runId: record.id, finished: hdRunFinished(data),
+    draft: pinpointDraft,
+    send: (text) => { openChat(); askPanel?.sendQuoted({ quote: null, text }); },
+  });
+  hdPinpoint = pp;
 
   // A comment can name a path the patch does not contain (or the patch may be gone
   // entirely). Such a path gets a SYNTHETIC file row so it is reachable and counts
@@ -24255,6 +24274,7 @@ function buildHdDiff(sec, record, data) {
       if (b.dataset.composer !== '1' && !b.childElementCount) b.remove();
     }
     paintDetached(body, orphans);
+    pp?.paint(cstate.comments);   // Pinpoint: the quoted code's highlights and the fix-run tray
   }
 
   // A thread whose root anchor is not renderable still shows — at the BOTTOM of the
@@ -27969,8 +27989,46 @@ function openRunArtifactPopup(ctx, artifact, list = null) {
     // A row that does not say which step made it (a log line, the End chip) shows no step rather than a wrong one.
     metaFor: (a) => ({ step: a && a.nodeId !== undefined ? artifactStepLabel(c, a.nodeId) : null, cycle: a ? a.cycle : null }),
     deps: { ...artifactViewerDeps(), hljsLoader: diffHljsLoader },
+    decorate: (o) => pinpointArtifact(c, base, o),
   });
   return viewer.ready.then(() => viewer);
+}
+
+/** Run states a direction is never read in (src/core/directions.mjs DIRECTIONS_CLOSED). */
+const PINPOINT_CLOSED = new Set(['done', 'error', 'stopped']);
+/** Pinpoint (#669) on a markdown artifact in the popup: the selection actions, and — while the run can still take a
+ *  direction — the tray that sends Disagree / Note / Use this back as one. */
+function pinpointArtifact(ctx, base, { artifact, stage, body, root }) {
+  const rel = artifactRelOf(artifact);
+  if (!rel || !/\.(md|markdown)$/i.test(rel)) return null;
+  const run = artifactRunFor(ctx);
+  const pid = ctx.pipelineId || (run && (run.pipelineId || run.id)) || ctx.runId || '';
+  if (!pid) return null;
+  const file = artifactBaseName(rel);
+  const live = () => {
+    const r = artifactRunFor(ctx);
+    const status = String((r && r.status) || '').toLowerCase();
+    return !!status && !PINPOINT_CLOSED.has(status);
+  };
+  return decorateArtifact({
+    pinpoint, doc: document, win: window, stage, body, root, file, key: pinpointTrayKey(pid, rel),
+    storage: (() => { try { return window.localStorage; } catch { return null; } })(),
+    live,
+    // A plan artifact (kind 'plan', saved under plans/), or a file named plan*.md.
+    plan: artifact.kind === 'plan' || /(^|\/)plans?(\/|[^/]*\.md$)/i.test(rel),
+    async sendBack(text) {
+      try {
+        const res = await fetch(`/api/runs/${encodeURIComponent(pid)}/directions`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+        });
+        if (res.status === 201) return null;
+        let m = `could not send (${res.status})`;
+        try { const b = await res.json(); if (b && b.error) m = b.error; } catch { /* keep the fallback */ }
+        return m;
+      } catch { return 'network error — nothing was sent'; }
+    },
+    draft: pinpointDraft,
+  });
 }
 
 /** A row's Download (the browser's hover button): the viewer's probe-then-save; a failure is a toast, the row has no
@@ -32848,7 +32906,7 @@ for (const a of document.querySelectorAll('.brand a.logo, .brand a.logo-mark')) 
 }
 /** Every Ask entry point outside the chat (R3): go to Chat — home, or that chat — then add `text` to the composer
  *  WITHOUT sending, so several can stack and the user presses send once. */
-function openChat({ text = '', threadId = null } = {}) {
+function openChat({ text = '', threadId = null, quote = null } = {}) {
   const id = typeof threadId === 'string' && CHAT_THREAD_RE.test(threadId) ? threadId : '';
   // Already on Chat and no chat named: stay put, the address too — a run panel open over the chat must not close.
   if (!(currentShownView === 'chat' && !id)) {
@@ -32857,9 +32915,11 @@ function openChat({ text = '', threadId = null } = {}) {
     if (location.hash.slice(1) === target) showView('chat', id);   // no hashchange fires for the same address
     else location.hash = target;
   }
+  // Pinpoint (#669): a quoted span rides above the composer as a chip and goes with the next message.
+  if (quote) askPanel?.setQuote(quote);
   const add = String(text ?? '').trim();
   if (add) askPanel?.appendToComposer(add);
-  else if (currentShownView === 'chat') document.querySelector('[data-chat-page] textarea.ask-input')?.focus();
+  else if (currentShownView === 'chat' || quote) document.querySelector('[data-chat-page] textarea.ask-input')?.focus();
 }
 /** chatDeps.openRunPanel's P1 default (P4 swaps in the panel): the run's own page — Running while this tab has the
  *  run, else its History page. `opts.tab` opens that Details tab (Running calls Q&A `qa`, History `clarify`). */
@@ -33444,6 +33504,24 @@ askPanel = createAskPanel({
   onUnread: paintChatUnread,
 });
 ($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
+// Pinpoint (#669) on the chat's answers: Disagree, Use this and Go deeper send at once with the quote.
+pinpoint.addSurface(askPanel.root, {
+  kind: 'chat',
+  unit: (el) => el.closest('.ask-msg-assistant .ask-answer.ask-md'),
+  container: () => askPanel.root.querySelector('.ask-transcript') || askPanel.root,
+  bounds() {
+    const t = (askPanel.root.querySelector('.ask-transcript') || askPanel.root).getBoundingClientRect();
+    const box = askPanel.root.querySelector('.ask-composer-box');
+    const top = box ? box.getBoundingClientRect().top - 8 : t.bottom;
+    return { left: t.left, right: t.right, top: t.top, bottom: Math.min(t.bottom, top > t.top ? top : t.bottom) };
+  },
+  draft(quote, text) {
+    askPanel.setQuote(quote);
+    if (text) askPanel.appendToComposer(text);
+    else askPanel.root.querySelector('textarea.ask-input')?.focus();
+  },
+  send: (quote, text) => askPanel.sendQuoted({ quote, text }),
+});
 // The Chat home (worca Chat P6) inside the page's [data-chat-home], mounted before the boot route so the first Chat
 // render already has it (the section is still hidden here: the visit starts when the route shows it).
 mountChatHome();

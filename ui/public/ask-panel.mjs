@@ -27,6 +27,7 @@ import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
 import { engineOfEntry, chatEngineOf, pickerGroups } from './ask-engine.mjs';
+import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
@@ -285,6 +286,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     unreadThread: null,       // the chat whose reply lit the dot — the most recent one (app.js opens it from the Chat row)
     askedIn: new Set(),       // chats this tab sent a message in: only their replies (and the open chat's) light the dot
     pendingFiles: [],
+    quote: null,          // Pinpoint (#669): {text, src?, code?} sent above the next message as a blockquote
     sending: false,
     subscribedFor: null,
     elapsedTimer: null,
@@ -538,7 +540,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function renderChips() {
     el.chips.replaceChildren();
-    el.chips.hidden = !st.pendingFiles.length;
+    el.chips.hidden = !st.pendingFiles.length && !st.quote;
+    if (st.quote) el.chips.appendChild(buildQuoteChip(st.quote));
     for (const f of st.pendingFiles) {
       const chip = make('span', 'ask-chip');
       if (f.attKind === 'image' && f.dataBase64) {
@@ -561,6 +564,45 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       chip.appendChild(x);
       el.chips.appendChild(chip);
     }
+  }
+
+  /** Pinpoint (#669): the quote the next message carries — a card above the attachments, removable. */
+  function buildQuoteChip(q) {
+    const chip = make('div', 'ask-chip ask-chip-quote');
+    chip.setAttribute('role', 'group');
+    chip.setAttribute('aria-label', 'Quoted text');
+    const m = make('div', 'ask-chip-quote-m');
+    m.append(make('div', 'ask-chip-quote-k', q.src ? `From ${q.src}` : 'Quoting'), make('div', `ask-chip-quote-t${q.code ? ' mono' : ''}`, q.text));
+    const x = make('button', 'ask-chip-x', '×');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Remove quote');
+    x.addEventListener('click', () => { setQuote(null); focusComposer(); });
+    chip.append(m, x);
+    return chip;
+  }
+
+  /** Set (or clear, with null) the quote the next message carries. */
+  function setQuote(q) {
+    if (st.destroyed) return false;
+    const text = q && typeof q.text === 'string' ? q.text.trim() : '';
+    st.quote = text ? { text, ...(q.src ? { src: String(q.src) } : {}), ...(q.code ? { code: true } : {}) } : null;
+    renderChips();
+    return !!st.quote;
+  }
+
+  /**
+   * Pinpoint's chat actions (Disagree, Use this, Go deeper): quote `quote` and send `text` at once. A draft already in
+   * the composer is never sent along — the quote and the text are added to it instead and wait for the user.
+   */
+  function sendQuoted({ quote, text }) {
+    const add = String(text ?? '').trim();
+    if (!add || st.destroyed) return false;
+    setQuote(quote);
+    if (el.input.value.trim() || (st.model && st.model.live())) { appendToComposer(add); return false; }
+    el.input.value = add;
+    fitInput();
+    Promise.resolve().then(() => sendMessage()).catch(() => false).then((ok) => { if (!ok) focusComposer(); });
+    return true;
   }
 
   async function addFiles(fileList) {
@@ -834,6 +876,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.sending || st.destroyed) return false;
     let text = el.input.value.trim();
     if (!text) return false;
+    // Pinpoint (#669): the quote chip rides as a blockquote above the text — for an add-on's direction too.
+    const quoted = st.quote;
+    if (quoted) text = formatQuotedMessage(quoted, text);
     // A chat is still loading (a History pick, Back to a chat): the send would land in the chat being left — or, from
     // home, in a brand-new chat — while the address already names the loading one. The draft waits for it, and so do
     // the add-ons (a direction would reach the run of the chat being left).
@@ -849,6 +894,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (st.destroyed) return false;
       if (taken === 'keep') { updateSendStop(); return true; }
       if (taken) {
+        if (st.quote === quoted) setQuote(null);
         el.input.value = '';
         fitInput();                                  // a programmatic clear fires no input event
         updateSendStop();
@@ -936,6 +982,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       el.input.value = '';
       fitInput();                                    // a programmatic clear fires no input event
       st.pendingFiles = [];
+      if (st.quote === quoted) st.quote = null;
       renderChips();
       subscribe(id);
       st.pinned = true;
@@ -4971,8 +5018,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (synthetic.length) {
         for (const b of synthetic) wrap.appendChild(buildNotice(b));
       } else {
-        const bubble = make('div', 'ask-user-bubble', row.text || '');
-        wrap.appendChild(bubble);
+        // Pinpoint (#669): a message that opens with a blockquote shows it as a quote card above the bubble.
+        const { quote, rest } = parseQuotedMessage(row.text || '');
+        if (quote) {
+          const card = make('div', 'ask-user-quote');
+          card.append(make('div', 'ask-user-quote-h', quote.src ? `From ${quote.src}` : 'Quoted'), make('div', 'ask-user-quote-t', quote.text));
+          wrap.appendChild(card);
+        }
+        if (!quote || rest) wrap.appendChild(make('div', 'ask-user-bubble', quote ? rest : (row.text || '')));
         const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
         if (atts.length) {
           const pills = make('div', 'extras-pills ask-user-pills');
@@ -5563,6 +5616,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     unreadThreadId: () => (st.unread ? st.unreadThread : null),
     contextChanged: () => onHashChange(),           // P4: the run panel's run changed with no hashchange (replaceState)
     appendToComposer,
+    setQuote,
+    sendQuoted,
     pushServerFrame,
     onHello,
     ownsKey,
