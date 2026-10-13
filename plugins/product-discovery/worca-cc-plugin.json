@@ -1,0 +1,8 @@
+{
+  "name": "product-discovery",
+  "version": "0.1.0",
+  "description": "Turn a product idea into an implementation-ready specification through ten structured discovery workshops, with worca agents, skills and pipeline templates",
+  "author": "Worca CC",
+  "license": "MIT",
+  "engines": { "worca-cc-api": ">=4 <5" }
+}

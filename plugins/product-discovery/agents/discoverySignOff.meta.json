@@ -1,0 +1,88 @@
+{
+  "metaVersion": 2,
+  "domain": "product",
+  "key": "discoverySignOff",
+  "displayName": "Discovery: Sign off specification",
+  "description": "Shows the audited specification and asks the product owner to sign it off for hand-over. Requested changes go back to the specification writer.",
+  "color": "violet",
+  "agentFile": "discoverySignOff.md",
+  "runnerType": "verifier",
+  "sideEffect": "code",
+  "verdict": {
+    "filename": "discovery-signoff-cycle{cycle}.json"
+  },
+  "inputs": [
+    {
+      "id": "spec",
+      "type": "md"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "review",
+      "type": "md",
+      "when": "blocking",
+      "filename": "discovery-signoff.md"
+    },
+    {
+      "id": "signed",
+      "type": "md",
+      "when": "clean",
+      "filename": "discovery-final-brief.md"
+    }
+  ],
+  "asksQuestions": true,
+  "questionsLocked": true,
+  "questionsDefault": true,
+  "humanEffort": {
+    "hours": 0.5
+  },
+  "ask": {
+    "forms": {
+      "sign-off-spec": {
+        "version": 1,
+        "title": "Sign off the product specification?",
+        "data": {
+          "type": "object",
+          "required": ["product", "summary"],
+          "properties": {
+            "product": { "type": "string", "maxLength": 120 },
+            "summary": { "type": "string", "maxLength": 8000 }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "required": ["decision"],
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": ["Sign off", "Request changes"],
+              "default": "Sign off"
+            },
+            "notes": { "type": "string", "maxLength": 4000 }
+          }
+        },
+        "layout": [
+          { "widget": "markdown", "bind": "data.summary" },
+          { "widget": "select", "field": "decision", "label": "Decision", "style": "segmented" },
+          {
+            "widget": "textarea",
+            "field": "notes",
+            "label": "What should change?",
+            "rows": 5,
+            "when": { "decision": "Request changes" }
+          }
+        ],
+        "example": {
+          "product": "Briefly",
+          "summary": "**Briefly** lets internal communications create, approve and send newsletters to employees.\n\n- 42 requirements (31 MVP, 11 later), 18 business rules, 57 acceptance criteria\n- MVP: drafting, single approval, audience selection, sending, basic statistics\n- Open and blocking: OQ-021 retention period (records manager)\n- Audit: passed"
+        }
+      }
+    }
+  },
+  "requiresSkills": [
+    "discovery-spec-format",
+    "discovery-workspace"
+  ],
+  "order": 935
+}

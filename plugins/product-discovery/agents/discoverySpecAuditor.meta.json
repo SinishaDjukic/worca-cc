@@ -1,0 +1,39 @@
+{
+  "metaVersion": 2,
+  "domain": "product",
+  "key": "discoverySpecAuditor",
+  "displayName": "Discovery: Audit specification",
+  "description": "Checks the specification against the discovery record for traceability, consistency, testability and invented behavior. Blocking findings go back to the specification writer.",
+  "color": "amber",
+  "agentFile": "discoverySpecAuditor.md",
+  "runnerType": "verifier",
+  "verdict": {
+    "filename": "discovery-spec-audit-cycle{cycle}.json"
+  },
+  "inputs": [
+    {
+      "id": "spec",
+      "type": "md"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "review",
+      "type": "md",
+      "when": "blocking",
+      "filename": "discovery-spec-audit.md"
+    },
+    {
+      "id": "pass",
+      "type": "md",
+      "when": "clean",
+      "filename": "discovery-spec-audited.md"
+    }
+  ],
+  "requiresSkills": [
+    "discovery-spec-format",
+    "discovery-workspace",
+    "discovery-method"
+  ],
+  "order": 934
+}

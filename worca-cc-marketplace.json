@@ -13,6 +13,7 @@
     "plugins/firebase-mcp",
     "plugins/railway-mcp",
     "plugins/notion-mcp",
-    "plugins/openspec"
+    "plugins/openspec",
+    "plugins/product-discovery"
   ]
 }

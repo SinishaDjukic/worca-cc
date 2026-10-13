@@ -1,0 +1,798 @@
+{
+  "version": 2,
+  "name": "Product Discovery: Full",
+  "domain": "product",
+  "nodes": [
+    {
+      "id": "n_task",
+      "kind": "task",
+      "x": 40,
+      "y": 320,
+      "config": {}
+    },
+    {
+      "id": "n_kickoff",
+      "kind": "agent",
+      "key": "discoveryKickoff",
+      "x": 320,
+      "y": 320,
+      "config": {}
+    },
+    {
+      "id": "n_f1",
+      "kind": "agent",
+      "key": "discoveryFacilitator",
+      "x": 600,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_r1",
+      "kind": "agent",
+      "key": "discoveryWorkshopReview",
+      "x": 600,
+      "y": 440,
+      "config": {}
+    },
+    {
+      "id": "n_f2",
+      "kind": "agent",
+      "key": "discoveryFacilitator",
+      "x": 880,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_r2",
+      "kind": "agent",
+      "key": "discoveryWorkshopReview",
+      "x": 880,
+      "y": 440,
+      "config": {}
+    },
+    {
+      "id": "n_f3",
+      "kind": "agent",
+      "key": "discoveryFacilitator",
+      "x": 1160,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_r3",
+      "kind": "agent",
+      "key": "discoveryWorkshopReview",
+      "x": 1160,
+      "y": 440,
+      "config": {}
+    },
+    {
+      "id": "n_f4",
+      "kind": "agent",
+      "key": "discoveryFacilitator",
+      "x": 1440,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_r4",
+      "kind": "agent",
+      "key": "discoveryWorkshopReview",
+      "x": 1440,
+      "y": 440,
+      "config": {}
+    },
+    {
+      "id": "n_f5",
+      "kind": "agent",
+      "key": "discoveryFacilitator",
+      "x": 1720,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_r5",
+      "kind": "agent",
+      "key": "discoveryWorkshopReview",
+      "x": 1720,
+      "y": 440,
+      "config": {}
+    },
+    {
+      "id": "n_f6",
+      "kind": "agent",
+      "key": "discoveryFacilitator",
+      "x": 2000,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_r6",
+      "kind": "agent",
+      "key": "discoveryWorkshopReview",
+      "x": 2000,
+      "y": 440,
+      "config": {}
+    },
+    {
+      "id": "n_f7",
+      "kind": "agent",
+      "key": "discoveryFacilitator",
+      "x": 2280,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_r7",
+      "kind": "agent",
+      "key": "discoveryWorkshopReview",
+      "x": 2280,
+      "y": 440,
+      "config": {}
+    },
+    {
+      "id": "n_f8",
+      "kind": "agent",
+      "key": "discoveryFacilitator",
+      "x": 2560,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_r8",
+      "kind": "agent",
+      "key": "discoveryWorkshopReview",
+      "x": 2560,
+      "y": 440,
+      "config": {}
+    },
+    {
+      "id": "n_f9",
+      "kind": "agent",
+      "key": "discoveryFacilitator",
+      "x": 2840,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_r9",
+      "kind": "agent",
+      "key": "discoveryWorkshopReview",
+      "x": 2840,
+      "y": 440,
+      "config": {}
+    },
+    {
+      "id": "n_f10",
+      "kind": "agent",
+      "key": "discoveryFacilitator",
+      "x": 3120,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_r10",
+      "kind": "agent",
+      "key": "discoveryWorkshopReview",
+      "x": 3120,
+      "y": 440,
+      "config": {}
+    },
+    {
+      "id": "n_write",
+      "kind": "agent",
+      "key": "discoverySpecWriter",
+      "x": 3400,
+      "y": 320,
+      "config": {}
+    },
+    {
+      "id": "n_audit",
+      "kind": "agent",
+      "key": "discoverySpecAuditor",
+      "x": 3680,
+      "y": 320,
+      "config": {}
+    },
+    {
+      "id": "n_signoff",
+      "kind": "agent",
+      "key": "discoverySignOff",
+      "x": 3960,
+      "y": 320,
+      "config": {}
+    },
+    {
+      "id": "n_end",
+      "kind": "end",
+      "x": 4240,
+      "y": 320,
+      "config": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_kickoff",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w2",
+      "from": {
+        "node": "n_kickoff",
+        "port": "brief"
+      },
+      "to": {
+        "node": "n_f1",
+        "port": "brief"
+      }
+    },
+    {
+      "id": "w3",
+      "from": {
+        "node": "n_f1",
+        "port": "progress"
+      },
+      "to": {
+        "node": "n_f1",
+        "port": "continue"
+      },
+      "config": {
+        "maxCycles": 20
+      }
+    },
+    {
+      "id": "w4",
+      "from": {
+        "node": "n_f1",
+        "port": "workshop"
+      },
+      "to": {
+        "node": "n_r1",
+        "port": "workshop"
+      }
+    },
+    {
+      "id": "w5",
+      "from": {
+        "node": "n_r1",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_f1",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 5
+      }
+    },
+    {
+      "id": "w6",
+      "from": {
+        "node": "n_r1",
+        "port": "brief"
+      },
+      "to": {
+        "node": "n_f2",
+        "port": "brief"
+      }
+    },
+    {
+      "id": "w7",
+      "from": {
+        "node": "n_f2",
+        "port": "progress"
+      },
+      "to": {
+        "node": "n_f2",
+        "port": "continue"
+      },
+      "config": {
+        "maxCycles": 20
+      }
+    },
+    {
+      "id": "w8",
+      "from": {
+        "node": "n_f2",
+        "port": "workshop"
+      },
+      "to": {
+        "node": "n_r2",
+        "port": "workshop"
+      }
+    },
+    {
+      "id": "w9",
+      "from": {
+        "node": "n_r2",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_f2",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 5
+      }
+    },
+    {
+      "id": "w10",
+      "from": {
+        "node": "n_r2",
+        "port": "brief"
+      },
+      "to": {
+        "node": "n_f3",
+        "port": "brief"
+      }
+    },
+    {
+      "id": "w11",
+      "from": {
+        "node": "n_f3",
+        "port": "progress"
+      },
+      "to": {
+        "node": "n_f3",
+        "port": "continue"
+      },
+      "config": {
+        "maxCycles": 20
+      }
+    },
+    {
+      "id": "w12",
+      "from": {
+        "node": "n_f3",
+        "port": "workshop"
+      },
+      "to": {
+        "node": "n_r3",
+        "port": "workshop"
+      }
+    },
+    {
+      "id": "w13",
+      "from": {
+        "node": "n_r3",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_f3",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 5
+      }
+    },
+    {
+      "id": "w14",
+      "from": {
+        "node": "n_r3",
+        "port": "brief"
+      },
+      "to": {
+        "node": "n_f4",
+        "port": "brief"
+      }
+    },
+    {
+      "id": "w15",
+      "from": {
+        "node": "n_f4",
+        "port": "progress"
+      },
+      "to": {
+        "node": "n_f4",
+        "port": "continue"
+      },
+      "config": {
+        "maxCycles": 20
+      }
+    },
+    {
+      "id": "w16",
+      "from": {
+        "node": "n_f4",
+        "port": "workshop"
+      },
+      "to": {
+        "node": "n_r4",
+        "port": "workshop"
+      }
+    },
+    {
+      "id": "w17",
+      "from": {
+        "node": "n_r4",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_f4",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 5
+      }
+    },
+    {
+      "id": "w18",
+      "from": {
+        "node": "n_r4",
+        "port": "brief"
+      },
+      "to": {
+        "node": "n_f5",
+        "port": "brief"
+      }
+    },
+    {
+      "id": "w19",
+      "from": {
+        "node": "n_f5",
+        "port": "progress"
+      },
+      "to": {
+        "node": "n_f5",
+        "port": "continue"
+      },
+      "config": {
+        "maxCycles": 20
+      }
+    },
+    {
+      "id": "w20",
+      "from": {
+        "node": "n_f5",
+        "port": "workshop"
+      },
+      "to": {
+        "node": "n_r5",
+        "port": "workshop"
+      }
+    },
+    {
+      "id": "w21",
+      "from": {
+        "node": "n_r5",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_f5",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 5
+      }
+    },
+    {
+      "id": "w22",
+      "from": {
+        "node": "n_r5",
+        "port": "brief"
+      },
+      "to": {
+        "node": "n_f6",
+        "port": "brief"
+      }
+    },
+    {
+      "id": "w23",
+      "from": {
+        "node": "n_f6",
+        "port": "progress"
+      },
+      "to": {
+        "node": "n_f6",
+        "port": "continue"
+      },
+      "config": {
+        "maxCycles": 20
+      }
+    },
+    {
+      "id": "w24",
+      "from": {
+        "node": "n_f6",
+        "port": "workshop"
+      },
+      "to": {
+        "node": "n_r6",
+        "port": "workshop"
+      }
+    },
+    {
+      "id": "w25",
+      "from": {
+        "node": "n_r6",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_f6",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 5
+      }
+    },
+    {
+      "id": "w26",
+      "from": {
+        "node": "n_r6",
+        "port": "brief"
+      },
+      "to": {
+        "node": "n_f7",
+        "port": "brief"
+      }
+    },
+    {
+      "id": "w27",
+      "from": {
+        "node": "n_f7",
+        "port": "progress"
+      },
+      "to": {
+        "node": "n_f7",
+        "port": "continue"
+      },
+      "config": {
+        "maxCycles": 20
+      }
+    },
+    {
+      "id": "w28",
+      "from": {
+        "node": "n_f7",
+        "port": "workshop"
+      },
+      "to": {
+        "node": "n_r7",
+        "port": "workshop"
+      }
+    },
+    {
+      "id": "w29",
+      "from": {
+        "node": "n_r7",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_f7",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 5
+      }
+    },
+    {
+      "id": "w30",
+      "from": {
+        "node": "n_r7",
+        "port": "brief"
+      },
+      "to": {
+        "node": "n_f8",
+        "port": "brief"
+      }
+    },
+    {
+      "id": "w31",
+      "from": {
+        "node": "n_f8",
+        "port": "progress"
+      },
+      "to": {
+        "node": "n_f8",
+        "port": "continue"
+      },
+      "config": {
+        "maxCycles": 20
+      }
+    },
+    {
+      "id": "w32",
+      "from": {
+        "node": "n_f8",
+        "port": "workshop"
+      },
+      "to": {
+        "node": "n_r8",
+        "port": "workshop"
+      }
+    },
+    {
+      "id": "w33",
+      "from": {
+        "node": "n_r8",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_f8",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 5
+      }
+    },
+    {
+      "id": "w34",
+      "from": {
+        "node": "n_r8",
+        "port": "brief"
+      },
+      "to": {
+        "node": "n_f9",
+        "port": "brief"
+      }
+    },
+    {
+      "id": "w35",
+      "from": {
+        "node": "n_f9",
+        "port": "progress"
+      },
+      "to": {
+        "node": "n_f9",
+        "port": "continue"
+      },
+      "config": {
+        "maxCycles": 20
+      }
+    },
+    {
+      "id": "w36",
+      "from": {
+        "node": "n_f9",
+        "port": "workshop"
+      },
+      "to": {
+        "node": "n_r9",
+        "port": "workshop"
+      }
+    },
+    {
+      "id": "w37",
+      "from": {
+        "node": "n_r9",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_f9",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 5
+      }
+    },
+    {
+      "id": "w38",
+      "from": {
+        "node": "n_r9",
+        "port": "brief"
+      },
+      "to": {
+        "node": "n_f10",
+        "port": "brief"
+      }
+    },
+    {
+      "id": "w39",
+      "from": {
+        "node": "n_f10",
+        "port": "progress"
+      },
+      "to": {
+        "node": "n_f10",
+        "port": "continue"
+      },
+      "config": {
+        "maxCycles": 20
+      }
+    },
+    {
+      "id": "w40",
+      "from": {
+        "node": "n_f10",
+        "port": "workshop"
+      },
+      "to": {
+        "node": "n_r10",
+        "port": "workshop"
+      }
+    },
+    {
+      "id": "w41",
+      "from": {
+        "node": "n_r10",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_f10",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 5
+      }
+    },
+    {
+      "id": "w42",
+      "from": {
+        "node": "n_r10",
+        "port": "brief"
+      },
+      "to": {
+        "node": "n_write",
+        "port": "brief"
+      }
+    },
+    {
+      "id": "w43",
+      "from": {
+        "node": "n_write",
+        "port": "spec"
+      },
+      "to": {
+        "node": "n_audit",
+        "port": "spec"
+      }
+    },
+    {
+      "id": "w44",
+      "from": {
+        "node": "n_audit",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_write",
+        "port": "revise"
+      },
+      "config": {
+        "maxCycles": 3
+      }
+    },
+    {
+      "id": "w45",
+      "from": {
+        "node": "n_audit",
+        "port": "pass"
+      },
+      "to": {
+        "node": "n_signoff",
+        "port": "spec"
+      }
+    },
+    {
+      "id": "w46",
+      "from": {
+        "node": "n_signoff",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_write",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 3
+      }
+    },
+    {
+      "id": "w47",
+      "from": {
+        "node": "n_signoff",
+        "port": "signed"
+      },
+      "to": {
+        "node": "n_end",
+        "port": "result"
+      }
+    }
+  ]
+}

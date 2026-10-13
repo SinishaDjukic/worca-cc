@@ -400,8 +400,10 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **Built-in marketplace** — **Worca CC Official**, Worca's GitHub repository on
   its `dev` branch, is registered on every install (nothing is installed until
   you pick it): the GitHub Issues task source, the four chat channels below,
-  MCP plugins for Atlassian, Cloudflare, Firebase, Notion and Railway, and an
-  OpenSpec plugin (agents, skills and pipelines for spec-driven changes). Set
+  MCP plugins for Atlassian, Cloudflare, Firebase, Notion and Railway, an
+  OpenSpec plugin (agents, skills and pipelines for spec-driven changes), and a
+  product discovery plugin (ten interview workshops that turn an idea into an
+  implementation-ready specification). Set
   `WORCA_BUILTIN_MARKETPLACE` to another repo URL or a local checkout to use
   that instead (followed at its HEAD; only committed files count).
 - **Drive runs from chat** — two-way **Telegram**, **Slack**, **Discord** and

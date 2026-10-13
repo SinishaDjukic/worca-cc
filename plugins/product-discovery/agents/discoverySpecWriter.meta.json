@@ -1,0 +1,45 @@
+{
+  "metaVersion": 2,
+  "domain": "product",
+  "key": "discoverySpecWriter",
+  "displayName": "Discovery: Write specification",
+  "description": "Compiles the closed workshops, decision log and register into an implementation-ready specification, recording every gap instead of inventing behavior.",
+  "color": "peach",
+  "agentFile": "discoverySpecWriter.md",
+  "runnerType": "producer",
+  "sideEffect": "code",
+  "inputs": [
+    {
+      "id": "brief",
+      "type": "md",
+      "directive": "Compile the discovery record into the specification under spec/."
+    },
+    {
+      "id": "revise",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "directive": "The specification failed its audit. Fix every critical and major finding in the audit below without inventing behavior discovery did not confirm."
+    },
+    {
+      "id": "feedback",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "directive": "The product owner asked for changes before signing off. Address every point in the sign-off review below."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "spec",
+      "type": "md",
+      "filename": "discovery-spec-brief.md"
+    }
+  ],
+  "requiresSkills": [
+    "discovery-spec-format",
+    "discovery-workspace",
+    "discovery-method"
+  ],
+  "order": 933
+}

@@ -1,0 +1,119 @@
+{
+  "version": 2,
+  "name": "Product Discovery: Compile specification",
+  "domain": "product",
+  "nodes": [
+    {
+      "id": "n_task",
+      "kind": "task",
+      "x": 40,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_write",
+      "kind": "agent",
+      "key": "discoverySpecWriter",
+      "x": 320,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_audit",
+      "kind": "agent",
+      "key": "discoverySpecAuditor",
+      "x": 600,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_signoff",
+      "kind": "agent",
+      "key": "discoverySignOff",
+      "x": 880,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_end",
+      "kind": "end",
+      "x": 1160,
+      "y": 200,
+      "config": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_write",
+        "port": "brief"
+      }
+    },
+    {
+      "id": "w2",
+      "from": {
+        "node": "n_write",
+        "port": "spec"
+      },
+      "to": {
+        "node": "n_audit",
+        "port": "spec"
+      }
+    },
+    {
+      "id": "w3",
+      "from": {
+        "node": "n_audit",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_write",
+        "port": "revise"
+      },
+      "config": {
+        "maxCycles": 3
+      }
+    },
+    {
+      "id": "w4",
+      "from": {
+        "node": "n_audit",
+        "port": "pass"
+      },
+      "to": {
+        "node": "n_signoff",
+        "port": "spec"
+      }
+    },
+    {
+      "id": "w5",
+      "from": {
+        "node": "n_signoff",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_write",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 3
+      }
+    },
+    {
+      "id": "w6",
+      "from": {
+        "node": "n_signoff",
+        "port": "signed"
+      },
+      "to": {
+        "node": "n_end",
+        "port": "result"
+      }
+    }
+  ]
+}

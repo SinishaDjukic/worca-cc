@@ -1,0 +1,158 @@
+{
+  "metaVersion": 2,
+  "domain": "product",
+  "key": "discoveryKickoff",
+  "displayName": "Discovery: Kickoff",
+  "description": "Creates the discovery workspace, confirms the product basics with the product owner and agrees a ten-workshop plan.",
+  "color": "green",
+  "agentFile": "discoveryKickoff.md",
+  "runnerType": "producer",
+  "sideEffect": "code",
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "brief",
+      "type": "md",
+      "filename": "discovery-kickoff-brief.md"
+    }
+  ],
+  "asksQuestions": true,
+  "questionsDefault": true,
+  "humanEffort": {
+    "hours": 1
+  },
+  "ask": {
+    "forms": {
+      "product-intake": {
+        "version": 1,
+        "title": "Tell me about the product",
+        "data": {
+          "type": "object",
+          "required": ["productName", "idea"],
+          "properties": {
+            "productName": { "type": "string", "maxLength": 120 },
+            "idea": { "type": "string", "maxLength": 4000 },
+            "owner": { "type": "string", "maxLength": 200 },
+            "users": { "type": "string", "maxLength": 2000 },
+            "references": { "type": "string", "maxLength": 1000 },
+            "constraints": { "type": "string", "maxLength": 2000 }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "required": ["productName", "idea"],
+          "properties": {
+            "productName": { "type": "string", "minLength": 1, "maxLength": 120, "defaultFrom": "data.productName" },
+            "idea": { "type": "string", "minLength": 1, "maxLength": 4000, "defaultFrom": "data.idea" },
+            "owner": { "type": "string", "maxLength": 200, "defaultFrom": "data.owner" },
+            "users": { "type": "string", "maxLength": 2000, "defaultFrom": "data.users" },
+            "references": { "type": "string", "maxLength": 1000, "defaultFrom": "data.references" },
+            "constraints": { "type": "string", "maxLength": 2000, "defaultFrom": "data.constraints" }
+          }
+        },
+        "layout": [
+          {
+            "widget": "callout",
+            "tone": "info",
+            "title": "This is what I understood",
+            "text": "Correct anything that is wrong and fill in what you know. Leave a field empty when you are not sure: it becomes an open question, not a guess."
+          },
+          { "widget": "text", "field": "productName", "label": "Product name" },
+          { "widget": "textarea", "field": "idea", "label": "The idea in a few sentences", "help": "What problem does it solve, and for whom?", "rows": 5 },
+          { "widget": "text", "field": "owner", "label": "Product owner", "placeholder": "Name or role of whoever makes the product decisions" },
+          { "widget": "textarea", "field": "users", "label": "Who will use it", "rows": 3 },
+          { "widget": "textarea", "field": "references", "label": "Products to compare with", "help": "Established products in the same category worth learning from.", "rows": 2 },
+          { "widget": "textarea", "field": "constraints", "label": "Known constraints", "placeholder": "Deadlines, budget, regulation, mandatory systems…", "rows": 3 }
+        ],
+        "example": {
+          "productName": "Briefly",
+          "idea": "An internal enterprise application for creating and sending newsletters to employees, replacing hand-built emails.",
+          "owner": "Head of Internal Communications",
+          "users": "Communication managers who write newsletters; team leads who approve them; employees who read them.",
+          "references": "Mailchimp, SAP Marketing Cloud, Adobe Experience Manager, Contentful"
+        }
+      },
+      "approve-plan": {
+        "version": 1,
+        "title": "Approve the discovery plan?",
+        "data": {
+          "type": "object",
+          "required": ["plan", "workshops"],
+          "properties": {
+            "plan": { "type": "string", "maxLength": 8000 },
+            "workshops": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 12,
+              "items": {
+                "type": "object",
+                "required": ["id", "title"],
+                "properties": {
+                  "id": { "type": "string", "maxLength": 16 },
+                  "title": { "type": "string", "maxLength": 120 },
+                  "objective": { "type": "string", "maxLength": 400 }
+                }
+              }
+            }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "required": ["decision"],
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": ["Approve the plan", "Adjust the plan"],
+              "default": "Approve the plan"
+            },
+            "workshopOrder": {
+              "type": "array",
+              "items": { "type": "string", "enumFrom": "data.workshops[].id" }
+            },
+            "notes": { "type": "string", "maxLength": 4000 }
+          }
+        },
+        "layout": [
+          { "widget": "markdown", "bind": "data.plan" },
+          {
+            "widget": "rank",
+            "bind": "data.workshops",
+            "field": "workshopOrder",
+            "label": "Workshop order",
+            "help": "Drag to change the order. Later workshops build on the decisions of earlier ones.",
+            "titleKey": "title",
+            "metaKey": "objective"
+          },
+          { "widget": "select", "field": "decision", "label": "Decision", "style": "segmented" },
+          {
+            "widget": "textarea",
+            "field": "notes",
+            "label": "What should change?",
+            "placeholder": "Merge, split, rename or add a topic…",
+            "rows": 4,
+            "when": { "decision": "Adjust the plan" }
+          }
+        ],
+        "example": {
+          "plan": "**Ten workshops for Briefly**\n\n1. Vision, goals and success\n2. Users, stakeholders and roles\n3. Current process and pain points\n4. Core journeys and workflows\n5. Functional requirements\n6. Content and data\n7. Business rules, validation and permissions\n8. Integrations and non-functional requirements\n9. Edge cases, errors and recovery\n10. MVP scope, release and acceptance\n\nReference products: Mailchimp, SAP Marketing Cloud.",
+          "workshops": [
+            { "id": "w1", "title": "Vision, goals and success", "objective": "Why the product exists and how success is measured." },
+            { "id": "w2", "title": "Users, stakeholders and roles", "objective": "Who uses it and what each is responsible for." },
+            { "id": "w3", "title": "Current process and pain points", "objective": "How the work is done today and what goes wrong." }
+          ]
+        }
+      }
+    }
+  },
+  "requiresSkills": [
+    "discovery-method",
+    "discovery-workshops",
+    "discovery-workspace"
+  ],
+  "order": 930
+}

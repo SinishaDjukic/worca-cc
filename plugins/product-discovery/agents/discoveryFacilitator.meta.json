@@ -1,0 +1,175 @@
+{
+  "metaVersion": 2,
+  "domain": "product",
+  "key": "discoveryFacilitator",
+  "displayName": "Discovery: Run workshop",
+  "description": "Interviews the product owner one question at a time for one workshop, records requirements, decisions, assumptions and open questions, and loops until the workshop is ready for review.",
+  "color": "blue",
+  "agentFile": "discoveryFacilitator.md",
+  "runnerType": "verifier",
+  "sideEffect": "code",
+  "verdict": {
+    "filename": "discovery-interview-cycle{cycle}.json"
+  },
+  "inputs": [
+    {
+      "id": "brief",
+      "type": "md",
+      "directive": "Run the workshop the brief names, or the next workshop that is not closed. Interview the product owner one question at a time."
+    },
+    {
+      "id": "continue",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "directive": "Continue the same workshop from your progress note below. Do not re-ask anything already in the interview log."
+    },
+    {
+      "id": "feedback",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "directive": "The product owner kept this workshop open. Cover every point in the workshop review below before asking for review again."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "progress",
+      "type": "md",
+      "when": "blocking",
+      "filename": "discovery-progress.md"
+    },
+    {
+      "id": "workshop",
+      "type": "md",
+      "when": "clean",
+      "filename": "discovery-workshop-brief.md"
+    }
+  ],
+  "asksQuestions": true,
+  "questionsLocked": true,
+  "questionsDefault": true,
+  "humanEffort": {
+    "hours": 0.5
+  },
+  "ask": {
+    "forms": {
+      "interview-choice": {
+        "version": 1,
+        "title": "Discovery interview",
+        "data": {
+          "type": "object",
+          "required": ["workshop", "context", "question", "options"],
+          "properties": {
+            "workshop": { "type": "string", "maxLength": 200 },
+            "context": { "type": "string", "maxLength": 6000 },
+            "question": { "type": "string", "maxLength": 600 },
+            "options": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 6,
+              "items": {
+                "type": "object",
+                "required": ["id", "label"],
+                "properties": {
+                  "id": { "type": "string", "maxLength": 16 },
+                  "label": { "type": "string", "maxLength": 200 }
+                }
+              }
+            }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "properties": {
+            "choice": { "type": "string", "enumFrom": "data.options[].id" },
+            "details": { "type": "string", "maxLength": 4000 },
+            "wrapUp": { "type": "boolean", "default": false }
+          }
+        },
+        "layout": [
+          { "widget": "markdown", "bind": "data.workshop" },
+          { "widget": "markdown", "bind": "data.context" },
+          { "widget": "callout", "bind": "data.question", "title": "Question", "tone": "info" },
+          {
+            "widget": "select",
+            "field": "choice",
+            "label": "Your answer",
+            "options": { "from": "data.options", "value": "id", "label": "label" }
+          },
+          {
+            "widget": "textarea",
+            "field": "details",
+            "label": "In your own words",
+            "help": "Add detail, an example, or a different answer. Leave everything empty if you are not sure yet: it is recorded as an open question.",
+            "rows": 4
+          },
+          {
+            "widget": "toggle",
+            "field": "wrapUp",
+            "label": "That is enough for this workshop — move on to its review"
+          }
+        ],
+        "example": {
+          "workshop": "**Workshop 4 of 10 — Core journeys and workflows** · W04-Q06",
+          "context": "A newsletter now goes from draft to sent in one step (W03-Q02). Most enterprise tools add an approval step for internal communications; Mailchimp only does so on paid team plans. An approval step prevents mistakes but slows urgent messages.\n\n**Recommendation:** one approver for the MVP, with no exceptions for urgent messages, so the rule stays simple to explain and to test.",
+          "question": "Does a newsletter need approval before it is sent?",
+          "options": [
+            { "id": "a", "label": "Yes, one approver (recommended)" },
+            { "id": "b", "label": "Yes, several approvers in sequence" },
+            { "id": "c", "label": "Only for some audiences" },
+            { "id": "d", "label": "No approval needed" }
+          ]
+        }
+      },
+      "interview-open": {
+        "version": 1,
+        "title": "Discovery interview",
+        "data": {
+          "type": "object",
+          "required": ["workshop", "context", "question"],
+          "properties": {
+            "workshop": { "type": "string", "maxLength": 200 },
+            "context": { "type": "string", "maxLength": 6000 },
+            "question": { "type": "string", "maxLength": 600 }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "properties": {
+            "answer": { "type": "string", "maxLength": 6000 },
+            "wrapUp": { "type": "boolean", "default": false }
+          }
+        },
+        "layout": [
+          { "widget": "markdown", "bind": "data.workshop" },
+          { "widget": "markdown", "bind": "data.context" },
+          { "widget": "callout", "bind": "data.question", "title": "Question", "tone": "info" },
+          {
+            "widget": "textarea",
+            "field": "answer",
+            "label": "Your answer",
+            "help": "Leave it empty if you are not sure yet: it is recorded as an open question.",
+            "rows": 8
+          },
+          {
+            "widget": "toggle",
+            "field": "wrapUp",
+            "label": "That is enough for this workshop — move on to its review"
+          }
+        ],
+        "example": {
+          "workshop": "**Workshop 3 of 10 — Current process and pain points** · W03-Q01",
+          "context": "Before we design anything, I want to understand how a newsletter is made today, so we keep what works and fix what hurts.",
+          "question": "Walk me through how the last newsletter was created, from the first idea to the moment employees received it. Who did what, and with which tools?"
+        }
+      }
+    }
+  },
+  "requiresSkills": [
+    "discovery-method",
+    "discovery-workshops",
+    "discovery-workspace"
+  ],
+  "order": 931
+}

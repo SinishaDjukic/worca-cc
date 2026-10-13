@@ -1,0 +1,137 @@
+{
+  "metaVersion": 2,
+  "domain": "product",
+  "key": "discoveryWorkshopReview",
+  "displayName": "Discovery: Review workshop",
+  "description": "Checks the workshop against its completion criteria and asks the product owner to confirm pending decisions and close it. Keeping it open sends it back to the facilitator.",
+  "color": "red",
+  "agentFile": "discoveryWorkshopReview.md",
+  "runnerType": "verifier",
+  "sideEffect": "code",
+  "verdict": {
+    "filename": "discovery-workshop-review-cycle{cycle}.json"
+  },
+  "inputs": [
+    {
+      "id": "workshop",
+      "type": "md"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "review",
+      "type": "md",
+      "when": "blocking",
+      "filename": "discovery-workshop-review.md"
+    },
+    {
+      "id": "brief",
+      "type": "md",
+      "when": "clean",
+      "filename": "discovery-workshop-closed.md"
+    }
+  ],
+  "asksQuestions": true,
+  "questionsLocked": true,
+  "questionsDefault": true,
+  "humanEffort": {
+    "hours": 0.25
+  },
+  "ask": {
+    "forms": {
+      "close-workshop": {
+        "version": 1,
+        "title": "Is this workshop complete?",
+        "data": {
+          "type": "object",
+          "required": ["workshop", "summary", "pending"],
+          "properties": {
+            "workshop": { "type": "string", "maxLength": 200 },
+            "summary": { "type": "string", "maxLength": 8000 },
+            "pending": {
+              "type": "array",
+              "maxItems": 30,
+              "items": {
+                "type": "object",
+                "required": ["id", "title"],
+                "properties": {
+                  "id": { "type": "string", "maxLength": 16 },
+                  "kind": { "type": "string", "maxLength": 40 },
+                  "title": { "type": "string", "maxLength": 300 },
+                  "detail": { "type": "string", "maxLength": 1500 }
+                }
+              }
+            }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "required": ["decision"],
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": ["Close the workshop", "Keep it open"],
+              "default": "Close the workshop"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "verdict"],
+                "properties": {
+                  "id": { "type": "string", "enumFrom": "data.pending[].id" },
+                  "verdict": {
+                    "type": "string",
+                    "enum": ["keep-open", "confirm", "reject"],
+                    "default": "keep-open"
+                  },
+                  "note": { "type": "string", "maxLength": 1000 }
+                }
+              }
+            },
+            "notes": { "type": "string", "maxLength": 4000 }
+          }
+        },
+        "layout": [
+          { "widget": "markdown", "bind": "data.workshop" },
+          { "widget": "markdown", "bind": "data.summary" },
+          {
+            "widget": "review-list",
+            "bind": "data.pending",
+            "field": "items",
+            "label": "Waiting for your confirmation",
+            "help": "Nothing here is a requirement until you confirm it. Items you keep open stay open questions or assumptions.",
+            "titleKey": "title",
+            "bodyKey": "detail",
+            "metaKey": "kind",
+            "labels": { "keep-open": "Keep open", "confirm": "Confirm", "reject": "Reject" },
+            "tones": { "keep-open": "warn", "confirm": "ok", "reject": "bad" },
+            "notePlaceholder": "Why, or what should change?"
+          },
+          { "widget": "select", "field": "decision", "label": "Decision", "style": "segmented" },
+          {
+            "widget": "textarea",
+            "field": "notes",
+            "label": "What should we still cover?",
+            "rows": 4,
+            "when": { "decision": "Keep it open" }
+          }
+        ],
+        "example": {
+          "workshop": "Workshop 4 — Core journeys and workflows",
+          "summary": "**Established:** five core journeys (REQ-010 to REQ-018); one approver before sending (DEC-007).\n\n**Completion criteria**\n- Every role appears in a journey: met\n- Every journey has a start, an end and states: open but recorded (OQ-011, archiving)\n\n**Questions for stakeholders:** OQ-011 for the records manager.",
+          "pending": [
+            { "id": "DEC-008", "kind": "Proposed decision", "title": "A rejected draft returns to its author with the approver's comment", "detail": "Recommended in W04-Q09; the PO leaned towards it but did not confirm." },
+            { "id": "ASM-006", "kind": "Assumption", "title": "Approvers are always team leads", "detail": "Stated in W02 for the pilot team only." }
+          ]
+        }
+      }
+    }
+  },
+  "requiresSkills": [
+    "discovery-method",
+    "discovery-workshops",
+    "discovery-workspace"
+  ],
+  "order": 932
+}

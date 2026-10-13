@@ -1,0 +1,100 @@
+{
+  "version": 2,
+  "name": "Product Discovery: Run workshop",
+  "domain": "product",
+  "nodes": [
+    {
+      "id": "n_task",
+      "kind": "task",
+      "x": 40,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_facilitate",
+      "kind": "agent",
+      "key": "discoveryFacilitator",
+      "x": 320,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_review",
+      "kind": "agent",
+      "key": "discoveryWorkshopReview",
+      "x": 600,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_end",
+      "kind": "end",
+      "x": 880,
+      "y": 200,
+      "config": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_facilitate",
+        "port": "brief"
+      }
+    },
+    {
+      "id": "w2",
+      "from": {
+        "node": "n_facilitate",
+        "port": "progress"
+      },
+      "to": {
+        "node": "n_facilitate",
+        "port": "continue"
+      },
+      "config": {
+        "maxCycles": 20
+      }
+    },
+    {
+      "id": "w3",
+      "from": {
+        "node": "n_facilitate",
+        "port": "workshop"
+      },
+      "to": {
+        "node": "n_review",
+        "port": "workshop"
+      }
+    },
+    {
+      "id": "w4",
+      "from": {
+        "node": "n_review",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_facilitate",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 5
+      }
+    },
+    {
+      "id": "w5",
+      "from": {
+        "node": "n_review",
+        "port": "brief"
+      },
+      "to": {
+        "node": "n_end",
+        "port": "result"
+      }
+    }
+  ]
+}
