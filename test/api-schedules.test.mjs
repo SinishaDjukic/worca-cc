@@ -498,17 +498,16 @@ test('sameAsSource: an immediate run ignores the typed feature, merges back onto
   assert.doesNotMatch(branchesOf(d), /worca-cc\//);
 });
 
-test('flag OFF: featureBranch === sourceBranch is NOT switched to same-branch mode server-side', async () => {
+test('flag OFF: featureBranch === sourceBranch is refused up front (400, naming sameAsSource), never inferred and never an error run', async () => {
   const d = gitDir('same-off');
   const main = headOf(d);
   const before = execFileSync('git', ['-C', d, 'rev-parse', main], { encoding: 'utf8' }).trim();
   const r = await post('/api/run', { projectDir: d, prompt: 'x', mock: true, sourceBranch: main, featureBranch: main });
-  assert.equal(r.status, 200, 'today: accepted, refused by the harness');
-  const e = await untilSettled((await r.json()).runId);
-  assert.ok(['error', 'paused'].includes(e.status), `today's refusal (must differ) still applies: ${e.status}`);
-  const b = e.pipelineId ? branchRow(e.pipelineId) : null;
-  assert.equal(b?.sameAsSource, undefined);
-  assert.equal(b?.mergeBack, undefined);
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /sameAsSource/);
+  // A repeating schedule is refused the same way at creation, instead of later running on "<name>-<date>".
+  const s = await post('/api/run', { projectDir: d, prompt: 'x', mock: true, sourceBranch: main, featureBranch: main, repeat: { rule: { freq: 'daily', time: '09:00', tz: 'UTC' } } });
+  assert.equal(s.status, 400);
   assert.equal(execFileSync('git', ['-C', d, 'rev-parse', main], { encoding: 'utf8' }).trim(), before);
 });
 

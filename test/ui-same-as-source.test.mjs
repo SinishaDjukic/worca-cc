@@ -156,3 +156,25 @@ test('Start right after typing the source name (no change event yet, e.g. Enter)
   assert.equal(ctx.runBodies[0].sameAsSource, true);
   assert.equal('featureBranch' in ctx.runBodies[0], false);
 });
+
+test('the switch goes with the task: cleared after a run starts, back with Reuse last task', async () => {
+  const ctx = await projectForm();
+  const toggle = ctx.doc.getElementById('sameAsSource');
+  const feature = ctx.doc.getElementById('featureBranch');
+  toggle.checked = true;
+  toggle.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  ctx.doc.getElementById('start-btn').click();
+  await tick(10);
+  assert.equal(ctx.runBodies[0].sameAsSource, true);
+  assert.equal(toggle.checked, false, 'the next run does not silently commit onto its source');
+  assert.equal(feature.disabled, false);
+  ctx.doc.getElementById('reuse-task-btn').click();
+  assert.equal(toggle.checked, true);
+  assert.equal(feature.disabled, true);
+});
+
+test('the switch row is a flex row: the branch field\'s block labels must not collapse its switch', () => {
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  assert.match(css, /\.branches-new > label\{display:block;/, 'the rule this guards against is still there');
+  assert.match(css, /\.branches-new > label\.same-src-row\{display:flex;/);
+});

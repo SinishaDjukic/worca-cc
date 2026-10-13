@@ -41,15 +41,20 @@ export const busyRunIds = (extra = []) => new Set([
 /** The project dir of a single-project row, exactly as rowToState derives it (artifacts.mjs:2249). */
 const projectDirOfRow = (row) => readStoreMeta(row.project_key)?.path ?? null;
 
-/** Members of a run as { projectKey, projectName, projectDir, br } (br = the live branch record). */
+/** A run on its source branch whose work was merged back: the hidden branch it committed on was
+ *  fast-forwarded into the source and deleted, so it has no branch of its own to check out. */
+const branchOf = (br) => (br && br.sameAsSource === true && br.mergeBack?.merged === true ? { ...br, feature: null } : br);
+
+/** Members of a run as { projectKey, projectName, projectDir, br } (br = the live branch record; a merged-back
+ *  member's `feature` is null: Check out, Try it, the keep policy and the actions card see "no branch"). */
 export function membersOfRow(row) {
   const wm = parse(row.workspace_meta);
   if (row.target === 'workspace' && wm?.branches) {
     const projects = Array.isArray(wm.projects) ? wm.projects : [];
-    return projects.map((p) => ({ projectKey: p.projectKey, projectName: p.projectName, projectDir: p.projectDir, br: wm.branches[p.projectKey] || null }));
+    return projects.map((p) => ({ projectKey: p.projectKey, projectName: p.projectName, projectDir: p.projectDir, br: branchOf(wm.branches[p.projectKey] || null) }));
   }
   const dir = projectDirOfRow(row);
-  return [{ projectKey: row.project_key, projectName: dir ? basename(dir) : null, projectDir: dir, br: parse(row.branch) }];
+  return [{ projectKey: row.project_key, projectName: dir ? basename(dir) : null, projectDir: dir, br: branchOf(parse(row.branch)) }];
 }
 
 /** Where the checkout goes: the recorded worktreeDir, else derived from the recorded mode (D6). */

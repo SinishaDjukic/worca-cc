@@ -10,6 +10,7 @@
 // The Phase-1 fixture HAND-WRITES `injectedPaths` entries into run.json: the schema
 // field formally lands with Phase 3's assembly, but readRunManifest is shape-tolerant
 // JSON, so the teardown/rescue machinery is fully testable now.
+import { realpathSync } from 'node:fs';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, mkdir, readFile, realpath, utimes } from 'node:fs/promises';
@@ -981,6 +982,23 @@ test('detached: same-branch + main moved during the run → not merged back (div
     assert.equal(res.status, 'done', JSON.stringify(res));
     const b = orch.getState().branch;
     assert.deepEqual([b.mergeBack.merged, b.mergeBack.kind], [false, 'diverged']);
+    assert.ok(branchList(repo).includes(b.feature));
+  });
+});
+
+test('detached: same-branch + main checked out in ANOTHER worktree → in-use, and the record names that worktree for the banner', async () => {
+  const repo = await freshRepo();
+  git(repo, 'checkout', '-q', '-b', 'elsewhere');
+  const other = `${repo}-other`;
+  git(repo, 'worktree', 'add', '-q', other, 'main');
+  await withMode('detached', async () => {
+    const orch = sameRun(repo);
+    const res = await orch.run();
+    assert.equal(res.status, 'done', JSON.stringify(res));
+    const b = orch.getState().branch;
+    assert.deepEqual([b.mergeBack.merged, b.mergeBack.kind], [false, 'in-use']);
+    assert.equal(b.mergeBack.paths.length, 1);
+    assert.equal(realpathSync(b.mergeBack.paths[0]), realpathSync(other));
     assert.ok(branchList(repo).includes(b.feature));
   });
 });

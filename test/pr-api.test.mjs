@@ -887,6 +887,17 @@ test('POST /api/pr: a run on its source branch is refused (409) — it ships wit
   assert.match((await r.json()).error, /source branch/);
 });
 
+test('POST /api/pr: a same-branch run that did NOT merge back is not refused as "on its source": its work is on its own branch', async () => {
+  const s = await seedPipeline(betaRepo, { title: 'Same', status: 'done', branch: SAME({ merged: false, kind: 'diverged', reason: 'main has new commits', at: 't' }) });
+  gitInfo.setRunner((cmd, args) => Promise.resolve({ ok: true, stdout: cmd === 'gh' && args[0] === '--version' ? 'gh 2.x' : '', stderr: '', code: 0 }));
+  const r = await postTo('/api/pr', { projectKey: s.key, id: s.id });
+  assert.doesNotMatch(JSON.stringify(await r.json()), /source branch/);
+  const pending = await seedPipeline(betaRepo, { title: 'Same', status: 'done', branch: SAME(null) });
+  const p = await postTo('/api/pr', { projectKey: pending.key, id: pending.id });
+  assert.equal(p.status, 409, 'no outcome yet: still merging back');
+  assert.match((await p.json()).error, /still merging/);
+});
+
 test('POST /api/push: pushes the SOURCE branch of a merged-back same-branch run to its sync remote', async () => {
   const s = await seedPipeline(betaRepo, { title: 'Same', status: 'done', branch: SAME(MERGED) });
   const seen = [];

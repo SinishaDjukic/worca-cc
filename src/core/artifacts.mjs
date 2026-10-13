@@ -1981,7 +1981,8 @@ export function mergeBackFor(row) {
     if (!br || br.sameAsSource !== true) continue;
     const mb = br.mergeBack && typeof br.mergeBack === 'object' ? br.mergeBack : null;
     members.push({ projectKey: projectKey_ || null, source: br.source || null, branch: br.feature || null,
-      merged: mb ? mb.merged === true : null, kind: mb?.kind || null, reason: mb?.reason || null, sha: mb?.sha || null });
+      merged: mb ? mb.merged === true : null, kind: mb?.kind || null, reason: mb?.reason || null, sha: mb?.sha || null,
+      paths: Array.isArray(mb?.paths) ? mb.paths : [] });
   }
   return members.length ? { merged: members.every((m) => m.merged === true), members } : null;
 }

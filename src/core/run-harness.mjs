@@ -4269,8 +4269,9 @@ export class RunHarness extends EventEmitter {
     if (!branchRecord || branchRecord.sameAsSource !== true || this._isWorkspaceScan()) return false;
     const source = branchRecord.source;
     const at = new Date().toISOString();
-    const notMerged = async (kind, reason) => {
-      branchRecord.mergeBack = { merged: false, kind, reason, at };
+    const notMerged = async (kind, reason, paths = null) => {
+      // paths: the worktree(s) holding the source checked out (kind in-use): the banner's commands run there.
+      branchRecord.mergeBack = { merged: false, kind, reason, at, ...(Array.isArray(paths) && paths.length ? { paths } : {}) };
       this._log('worktree', 'warn', `${key}: not merged back into ${source} (${kind}): ${reason}`);
       if (this.pipeline) {
         await appendAudit(this.pipeline.dir, `Not merged back into \`${source}\` (\`${key}\`): ${reason}. The work stays on \`${info.branch}\`.`).catch(() => {});
@@ -4287,7 +4288,7 @@ export class RunHarness extends EventEmitter {
       const to = tip.ok ? tip.stdout.trim() : '';
       if (!to) return await notMerged('failed', `could not read ${info.branch}`);
       const r = await fastForwardTo(dir, { base: source, to, message: `worca: fast-forward ${source} to run ${this.pipeline?.id || ''}` });
-      if (!r.ok) return await notMerged(r.kind, r.error);
+      if (!r.ok) return await notMerged(r.kind, r.error, r.paths);
       branchRecord.mergeBack = { merged: true, sha: r.to, commits: r.commits, at };
       this._log('worktree', 'info', `${key}: merged back into ${source} (${r.commits} commit(s), now ${r.to.slice(0, 10)})`);
       if (this.pipeline) {

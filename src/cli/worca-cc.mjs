@@ -246,6 +246,9 @@ function parseArgs(argv) {
     out._.push(arg);
   }
   if (out.onSourceBranch && out.featureBranch) fail('--on-source-branch and --branch cannot both be given');
+  if (!out.onSourceBranch && out.featureBranch && out.sourceBranch && out.featureBranch === out.sourceBranch) {
+    fail(`--branch and --source-branch are both "${out.sourceBranch}": add --on-source-branch (without --branch) to commit onto it, or pick another --branch`);
+  }
   return out;
 }
 

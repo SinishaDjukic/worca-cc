@@ -197,6 +197,8 @@ const SAME_NOT = { ...SAME_MERGED, id: 'pn2', survived: true,
   mergeBack: { merged: false, members: [{ ...SAME_MEMBER, merged: false, kind: 'dirty', reason: 'main is checked out in /x/proj with 2 uncommitted change(s)', sha: null }] } };
 const sameArms = (rows, pushes) => (url, opts) => {
   if (url.endsWith('/api/push')) { pushes.push(JSON.parse(opts.body)); return ok({ ok: true, remote: 'origin', branch: 'main' }); }
+  // A publish status painted before the merge back deleted the branch: the page must not trust it.
+  if (url.includes('/publish?')) return ok({ ok: true, members: [{ memberKey: null, name: null, branch: 'worca-cc/feat-ps', remote: null, state: 'unpublished', published: null }] });
   return armsFor(rows)(url);
 };
 
@@ -210,28 +212,57 @@ test('same-branch, merged back: Push replaces Create PR and posts /api/push; the
   const push = doc.querySelector('#hist-detail .hd-push');
   assert.equal(push.hidden, false);
   assert.equal(push.textContent, 'Push main');
-  assert.equal(doc.querySelector('#hist-detail .hd-base').textContent, 'main ←');
-  push.click();
+  // The hidden branch was fast-forwarded into main and deleted: never offer its name, Publish or a copy.
+  assert.equal(doc.querySelector('#hist-detail .hd-base').textContent, 'Merged into main');
+  assert.equal(doc.querySelector('#hist-detail .hd-branch-copy').hidden, true);
+  assert.equal(doc.querySelector('#hist-detail .hd-publish').hidden, true);
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-branch-name').textContent, 'main');
+  const cta = doc.querySelector('#hist-detail .hd-g-push');
+  assert.ok(cta, 'the run summary offers Push');
+  cta.click();   // the summary's button drives the header's (one wiring) and must show the outcome too
   await ctx.settle();
   assert.deepEqual(pushes[0], { projectKey: DONE.projectKey, projectDir: DONE.projectDir, id: 'ps' });
   assert.equal(push.textContent, 'Pushed to origin');
+  assert.equal(doc.querySelector('#hist-detail .hd-g-push').textContent.trim(), 'Pushed to origin');
+  assert.equal(doc.querySelector('#hist-detail .hd-g-push').disabled, true);
 });
 
-test('same-branch, not merged back: no Push, no Create PR, a banner with the reason and the manual commands', async () => {
+test('same-branch, not merged back: no Push; Create PR lands the work from its own branch; a banner with the reason and the manual commands', async () => {
   const ctx = await boot({ fetchHandler: sameArms([SAME_NOT], []) });
   ctx.showDetails(SAME_NOT);
   await ctx.settle();
   const doc = ctx.window.document;
   assert.equal(doc.querySelector('#hist-detail .hd-push').hidden, true);
-  assert.equal(doc.querySelector('#hist-detail .hd-pr').hidden, true, 'no PR for a run on its source branch, even though its branch survived');
-  // histPrEligible's `!p.sameAsSource` term, through glancePrInput (:24899): the branch survived, gh is
-  // available and pr is null, so WITHOUT the term the headline would invite a PR ("…before you open a
-  // pull request"). Red first: drop the term and see this fail.
-  const glance = doc.querySelector('#hist-detail .hd-glance').textContent;
-  assert.match(glance, /Review the changes in Diff/);
-  assert.doesNotMatch(glance, /pull request|Ready to ship/);
+  // The merge back was refused, so the work is on its own branch: a PR is how it lands (M6).
+  assert.equal(doc.querySelector('#hist-detail .hd-pr').hidden, false, 'Create PR for a run that did not merge back');
+  assert.equal(doc.querySelector('#hist-detail .hd-base').textContent, 'main →', 'the work did not flow into main');
   const banner = doc.querySelector('#hist-detail .merge-back-banner');
   assert.equal(banner.hidden, false);
   assert.match(banner.textContent, /uncommitted change/);
-  assert.match(banner.querySelector('code').textContent, /git switch 'main'\ngit merge 'worca-cc\/feat-ps'\ngit branch -d 'worca-cc\/feat-ps'/);
+  assert.equal(banner.querySelector('strong').textContent, DONE.projectName, 'the project by its name, not its store key');
+  // Chained (a failed switch stops the rest), in the project dir, fast-forward only.
+  assert.equal(banner.querySelector('code').textContent,
+    "cd '/x/proj' && git switch 'main' && git merge --ff-only --no-overwrite-ignore 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'");
+  assert.match(banner.textContent, /Commit or stash your changes/);
+});
+
+test('merge-back banner: each refusal gets its own recipe (in-use runs in that worktree, diverged needs a real merge, missing re-creates the source, commit-failed has none)', async () => {
+  const recipe = async (mb) => {
+    const row = { ...SAME_NOT, id: `pk${mb.kind}`, mergeBack: { merged: false, members: [{ ...SAME_MEMBER, merged: false, sha: null, reason: 'r', paths: [], ...mb }] } };
+    const ctx = await boot({ fetchHandler: sameArms([row], []) });
+    ctx.showDetails(row);
+    await ctx.settle();
+    const banner = ctx.window.document.querySelector('#hist-detail .merge-back-banner');
+    return { code: banner.querySelector('code')?.textContent ?? null, text: banner.textContent };
+  };
+  await checkRows([
+    { name: 'in-use with the worktree', run: async () => assert.equal((await recipe({ kind: 'in-use', paths: ['/x/other wt'] })).code,
+      "cd '/x/other wt' && git merge --ff-only --no-overwrite-ignore 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'") },
+    { name: 'in-use without one (rebase/bisect)', run: async () => assert.match((await recipe({ kind: 'in-use' })).text, /Finish or abort/) },
+    { name: 'diverged', run: async () => assert.equal((await recipe({ kind: 'diverged' })).code,
+      "cd '/x/proj' && git switch 'main' && git merge 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'") },
+    { name: 'missing', run: async () => assert.equal((await recipe({ kind: 'missing' })).code,
+      "cd '/x/proj' && git branch 'main' 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'") },
+    { name: 'commit-failed', run: async () => assert.equal((await recipe({ kind: 'commit-failed' })).code, null) },
+  ]);
 });
