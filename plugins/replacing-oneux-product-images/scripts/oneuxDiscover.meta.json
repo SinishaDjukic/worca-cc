@@ -1,0 +1,117 @@
+{
+  "metaVersion": 2,
+  "key": "oneuxDiscover",
+  "displayName": "OneUX images: discover",
+  "description": "Step 1: finds every production blob of the request's media IDs (<slug>-<productId>-hires-png-rgb-oneux-<mediaId>.png with a _hash.png marker) in each locale container of prodoneuxpremium2 and freezes the result. Read-only; a continued job reuses it.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "oneuxDiscover.py",
+  "command": null,
+  "timeoutMs": 900000,
+  "params": [
+    {
+      "id": "ids",
+      "type": "string",
+      "required": false,
+      "label": "Media IDs",
+      "description": "Only without a request input: media IDs, comma or space separated. Empty: a 'Media IDs:' line in the task. With a request they must match its files."
+    },
+    {
+      "id": "workDir",
+      "type": "string",
+      "required": false,
+      "label": "Work dir",
+      "description": "Only without a request input: new, empty folder (else a 'Work dir:' line, else ~/oneux-image-replacements/<UTC timestamp>)."
+    },
+    {
+      "id": "env",
+      "type": "enum",
+      "required": false,
+      "label": "Environment",
+      "options": [
+        "prod",
+        "stage"
+      ],
+      "default": "prod"
+    },
+    {
+      "id": "locales",
+      "type": "string",
+      "required": false,
+      "label": "Locales",
+      "description": "Locale containers to search. Empty: a 'Locales:' line in the task, else the 73 real locale containers of prodoneuxpremium2."
+    },
+    {
+      "id": "exclude",
+      "type": "string",
+      "required": false,
+      "label": "Excluded locales",
+      "description": "Synthetic or unwanted locale containers.",
+      "default": "xz-xy"
+    },
+    {
+      "id": "kind",
+      "type": "string",
+      "required": false,
+      "label": "Image type",
+      "description": "Rendition token before the media ID. The site reads HIRES_PNG_RGB_ONEUX.",
+      "default": "hires-png-rgb-oneux"
+    },
+    {
+      "id": "requireMarker",
+      "type": "boolean",
+      "required": false,
+      "label": "Require _hash marker",
+      "description": "Fail when a match has no <name>_hash.png beside it (not prescaler-managed).",
+      "default": true
+    },
+    {
+      "id": "threads",
+      "type": "number",
+      "required": false,
+      "label": "Listing threads",
+      "default": 8
+    }
+  ],
+  "portSummary": "Reads request, task, names; produces mapping, report.",
+  "inputs": [
+    {
+      "id": "request",
+      "type": "json",
+      "required": false
+    },
+    {
+      "id": "task",
+      "type": "md",
+      "required": false
+    },
+    {
+      "id": "names",
+      "type": "json",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "mapping",
+      "type": "json",
+      "when": "always",
+      "filename": "oneux-01-discovery.json",
+      "store": "run",
+      "artifactKind": "mapping"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "oneux-01-discovery.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

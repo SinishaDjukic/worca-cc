@@ -1,0 +1,43 @@
+{
+  "metaVersion": 2,
+  "key": "oneuxPrescalerInputs",
+  "displayName": "OneUX images: prescaler inputs",
+  "description": "Step 4: names every staged copy COUNTRY_<basename>.png for the shared dev de-de container, dedupes only identical media ID and SHA-256, freezes the map back to every locale and copies the uploads to 04-prescaler-inputs. No Azure calls.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "oneuxPrescalerInputs.py",
+  "command": null,
+  "timeoutMs": 300000,
+  "params": [],
+  "portSummary": "Reads staged; produces inventory, report.",
+  "inputs": [
+    {
+      "id": "staged",
+      "type": "json",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "inventory",
+      "type": "json",
+      "when": "always",
+      "filename": "oneux-04-prescaler-inventory.json",
+      "store": "run",
+      "artifactKind": "inventory"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "oneux-04-prescaler-inventory.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

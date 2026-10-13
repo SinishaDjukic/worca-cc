@@ -1,0 +1,17 @@
+{
+  "name": "eisa-assessment",
+  "version": "0.1.0",
+  "description": "Workflows shared from Worca — EISA assessment",
+  "engines": {
+    "worca-cc-api": ">=4 <5"
+  },
+  "worca": {
+    "exports": {
+      "eisa-assessment": {
+        "workflowId": "wf_eisa-assessment",
+        "name": "EISA assessment",
+        "updatedAt": "2026-10-13T14:01:42.182Z"
+      }
+    }
+  }
+}

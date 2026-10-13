@@ -1,0 +1,78 @@
+{
+  "metaVersion": 2,
+  "key": "eisaCheck",
+  "displayName": "EISA: check answers",
+  "description": "Gate between the EISA assessor and the write step: every row to assess needs an allowed Implemented value, every claim a short rationale, evidence and a section in the proof document. Blocking findings go back to the assessor as feedback.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "eisaCheck.py",
+  "command": null,
+  "timeoutMs": 60000,
+  "params": [
+    {
+      "id": "maxRationale",
+      "type": "number",
+      "required": false,
+      "label": "Rationale length",
+      "description": "Characters above which a rationale is flagged as too long (minor).",
+      "default": 300
+    },
+    {
+      "id": "requireProof",
+      "type": "boolean",
+      "required": false,
+      "label": "Require a proof section",
+      "description": "Every Y / N / Partial answer must have a section in the proof document (when the proof port is wired).",
+      "default": true
+    }
+  ],
+  "portSummary": "Reads rows, assessment, proof; produces report, feedback.",
+  "inputs": [
+    {
+      "id": "rows",
+      "type": "json",
+      "required": true
+    },
+    {
+      "id": "assessment",
+      "type": "json",
+      "required": true
+    },
+    {
+      "id": "proof",
+      "type": "md",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "eisa-check-cycle{cycle}.md",
+      "store": "run",
+      "artifactKind": "report"
+    },
+    {
+      "id": "feedback",
+      "type": "md",
+      "when": "blocking",
+      "filename": "eisa-check-cycle{cycle}.md",
+      "store": "run",
+      "artifactKind": "feedback"
+    },
+    {
+      "id": "pass",
+      "type": "void",
+      "when": "clean"
+    }
+  ],
+  "verdict": {
+    "filename": "eisa-check-cycle{cycle}.json"
+  },
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

@@ -1,0 +1,43 @@
+{
+  "metaVersion": 2,
+  "key": "oneuxDevDownload",
+  "displayName": "OneUX images: dev download",
+  "description": "Step 7: requires one 3200x1800 PNG and one _hash marker (= source MD5) per input in devscalerlocalenvtarget/de-de, downloads each under its ETag and fans them out to 07-scaled-by-locale/<COUNTRY>/<locale>/. Reads dev only.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "oneuxDevDownload.py",
+  "command": null,
+  "timeoutMs": 1800000,
+  "params": [],
+  "portSummary": "Reads prev; produces job, report.",
+  "inputs": [
+    {
+      "id": "prev",
+      "type": "json",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "job",
+      "type": "json",
+      "when": "always",
+      "filename": "oneux-07-scaled.json",
+      "store": "run",
+      "artifactKind": "job"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "oneux-07-scaled.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

@@ -1,0 +1,65 @@
+{
+  "metaVersion": 2,
+  "key": "oneuxRequest",
+  "displayName": "OneUX images: request",
+  "description": "Step 0: fetches the corrected <mediaId>.png files from ptoneuxpcimagestoreprd/manual-upload-images (root only), checks ETag, Content-MD5 and PNG header, freezes them in a fresh work dir. A later run of the same job reuses them. Writes nothing to Azure.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "oneuxRequest.py",
+  "command": null,
+  "timeoutMs": 600000,
+  "params": [
+    {
+      "id": "job",
+      "type": "string",
+      "required": false,
+      "label": "Job id",
+      "description": "Name of this job (letters, digits, . _ -). Empty: a 'Job:' line in the task, else the UTC timestamp. Give the same job id to continue a job (e.g. with its approval)."
+    },
+    {
+      "id": "container",
+      "type": "string",
+      "required": false,
+      "label": "Upload container",
+      "default": "manual-upload-images"
+    },
+    {
+      "id": "workDir",
+      "type": "string",
+      "required": false,
+      "label": "Work dir",
+      "description": "Local folder of this job (outside Git). Empty: a 'Work dir:' line in the task, else ~/oneux-image-replacements/<job>."
+    }
+  ],
+  "portSummary": "Reads task; produces request, report.",
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "request",
+      "type": "json",
+      "when": "always",
+      "filename": "oneux-00-request.json",
+      "store": "run",
+      "artifactKind": "request"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "oneux-00-request.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

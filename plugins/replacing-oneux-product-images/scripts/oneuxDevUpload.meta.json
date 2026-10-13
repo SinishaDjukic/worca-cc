@@ -1,0 +1,43 @@
+{
+  "metaVersion": 2,
+  "key": "oneuxDevUpload",
+  "displayName": "OneUX images: dev upload",
+  "description": "Step 5: uploads every prescaler input create-only to devscalerlocalenvsource/de-de as <job>_<COUNTRY>_<basename>.png with Content-MD5, reads each back under its ETag. Never overwrites; writes only to the dev source account.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "oneuxDevUpload.py",
+  "command": null,
+  "timeoutMs": 1800000,
+  "params": [],
+  "portSummary": "Reads prev; produces job, report.",
+  "inputs": [
+    {
+      "id": "prev",
+      "type": "json",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "job",
+      "type": "json",
+      "when": "always",
+      "filename": "oneux-05-dev-upload.json",
+      "store": "run",
+      "artifactKind": "job"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "oneux-05-dev-upload.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

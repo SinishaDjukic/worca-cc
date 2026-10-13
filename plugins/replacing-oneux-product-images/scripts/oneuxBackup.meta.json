@@ -1,0 +1,43 @@
+{
+  "metaVersion": 2,
+  "key": "oneuxBackup",
+  "displayName": "OneUX images: backup",
+  "description": "Step 10: backs up every byte-different production blob once under its compared ETag, verified by length, MD5 and SHA-256, locally and create-only in manual-upload-images/oneux-jobs/<job>/backup/. Never writes to prodoneuxpremium2.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "oneuxBackup.py",
+  "command": null,
+  "timeoutMs": 3600000,
+  "params": [],
+  "portSummary": "Reads prev; produces job, report.",
+  "inputs": [
+    {
+      "id": "prev",
+      "type": "json",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "job",
+      "type": "json",
+      "when": "always",
+      "filename": "oneux-10-backup.json",
+      "store": "run",
+      "artifactKind": "job"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "oneux-10-backup.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

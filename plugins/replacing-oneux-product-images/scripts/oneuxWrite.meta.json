@@ -1,0 +1,68 @@
+{
+  "metaVersion": 2,
+  "key": "oneuxWrite",
+  "displayName": "OneUX images: write to production (approval)",
+  "description": "Step 11, the only pause: freezes the write plan and pauses the run with a preview and its digest; Resume approves, stopping cancels. Then pilot locale first, the rest after: ETag-conditional overwrites with a journal and full read-back.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "oneuxWrite.py",
+  "command": null,
+  "timeoutMs": 7200000,
+  "params": [
+    {
+      "id": "pilotLocale",
+      "type": "string",
+      "required": false,
+      "label": "Pilot locale",
+      "description": "Written and verified first, then the rest follows automatically. Empty: a 'Pilot locale:' line, else ro-ro when it has rows, else the first locale."
+    },
+    {
+      "id": "approve",
+      "type": "string",
+      "required": false,
+      "label": "Approved digest",
+      "description": "Normally empty. Alternative to Resume: 'Approved: <digest>' in the task of a new run of the same job."
+    }
+  ],
+  "portSummary": "Reads prev, task, approval; produces job, report.",
+  "inputs": [
+    {
+      "id": "prev",
+      "type": "json",
+      "required": true
+    },
+    {
+      "id": "task",
+      "type": "md",
+      "required": false
+    },
+    {
+      "id": "approval",
+      "type": "md",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "job",
+      "type": "json",
+      "when": "always",
+      "filename": "oneux-11-write.json",
+      "store": "run",
+      "artifactKind": "job"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "oneux-11-write.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

@@ -13,6 +13,8 @@
     "plugins/firebase-mcp",
     "plugins/railway-mcp",
     "plugins/notion-mcp",
+    "plugins/eisa-assessment",
+    "plugins/replacing-oneux-product-images",
     "plugins/openspec",
     "plugins/product-discovery"
   ]

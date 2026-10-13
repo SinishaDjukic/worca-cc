@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "twoLocales",
+      "name": "exact match, other types and look-alike IDs ignored, xz-xy excluded",
+      "params": {
+        "ids": "416317",
+        "locales": "de-de fr-ch xz-xy",
+        "workDir": "./work"
+      },
+      "ports": null,
+      "inputs": {
+        "names": {
+          "text": "{\"de-de\": [\"a-set-100057515-hires-png-rgb-oneux-416317.png\", \"a-set-100057515-hires-png-rgb-oneux-416317_hash.png\", \"a-set-100057515-hires-png-rgb-416317.png\", \"a-set-100057515-lores-png-rgb-416317.png\", \"b-2-hires-png-rgb-oneux-1416317.png\", \"b-2-hires-png-rgb-oneux-1416317_hash.png\"], \"fr-ch\": [\"c-set-100057515-hires-png-rgb-oneux-416317.png\", \"c-set-100057515-hires-png-rgb-oneux-416317_hash.png\"], \"xz-xy\": [\"z-1-hires-png-rgb-oneux-416317.png\", \"z-1-hires-png-rgb-oneux-416317_hash.png\"]}"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "clean"
+      }
+    },
+    {
+      "id": "noMarker",
+      "name": "match without _hash marker fails",
+      "params": {
+        "ids": "416317",
+        "locales": "de-de",
+        "workDir": "./work"
+      },
+      "ports": null,
+      "inputs": {
+        "names": {
+          "text": "{\"de-de\": [\"a-1-hires-png-rgb-oneux-416317.png\"]}"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "error"
+      }
+    },
+    {
+      "id": "fromRequest",
+      "name": "IDs and work dir come from the request",
+      "params": {
+        "locales": "de-de"
+      },
+      "ports": null,
+      "inputs": {
+        "request": {
+          "text": "{\"kind\": \"oneux-request\", \"workDir\": \".\", \"request\": \"OUXD-1\", \"account\": \"https://ptoneuxpcimagestoreprd.blob.core.windows.net\", \"container\": \"manual-upload-images\", \"imagesDir\": \"./00-request\", \"expectedIds\": [\"416317\"], \"images\": {\"416317\": {\"sha256\": \"x\"}}}"
+        },
+        "names": {
+          "text": "{\"de-de\": [\"a-1-hires-png-rgb-oneux-416317.png\", \"a-1-hires-png-rgb-oneux-416317_hash.png\"]}"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "clean"
+      }
+    }
+  ]
+}

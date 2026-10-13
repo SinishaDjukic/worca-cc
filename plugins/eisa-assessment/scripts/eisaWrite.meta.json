@@ -1,0 +1,74 @@
+{
+  "metaVersion": 2,
+  "key": "eisaWrite",
+  "displayName": "EISA: write workbook",
+  "description": "Runs once EISA: check answers passes. Fills Implemented and Rationale of the assessed rows (and N/A for rows outside the system types) into a copy of the original EISA workbook, leaving formatting, other sheets and pre-filled rows untouched, adds the new values to the Implemented dropdown, and saves",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "eisaWrite.py",
+  "command": null,
+  "timeoutMs": 120000,
+  "params": [
+    {
+      "id": "outputName",
+      "type": "string",
+      "required": false,
+      "label": "File name",
+      "default": "EISA-filled.xlsx"
+    },
+    {
+      "id": "extendDropdown",
+      "type": "boolean",
+      "required": false,
+      "label": "Extend the Implemented dropdown",
+      "description": "Adds the allowed values (N, Partial, N/A ...) to an inline Y list.",
+      "default": true
+    },
+    {
+      "id": "writeNotApplicable",
+      "type": "boolean",
+      "required": false,
+      "label": "Mark not-applicable rows N/A",
+      "description": "Rows EISA: read workbook marked notApplicable get N/A and the reason.",
+      "default": true
+    }
+  ],
+  "portSummary": "Reads rows, assessment, proof; produces report.",
+  "inputs": [
+    {
+      "id": "checked",
+      "type": "void",
+      "required": true
+    },
+    {
+      "id": "rows",
+      "type": "json",
+      "required": true
+    },
+    {
+      "id": "assessment",
+      "type": "json",
+      "required": true
+    },
+    {
+      "id": "proof",
+      "type": "md",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "eisa-write.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

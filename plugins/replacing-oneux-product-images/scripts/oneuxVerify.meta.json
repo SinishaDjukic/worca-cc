@@ -1,0 +1,51 @@
+{
+  "metaVersion": 2,
+  "key": "oneuxVerify",
+  "displayName": "OneUX images: verify",
+  "description": "Step 12: read-only reconciliation of the write plan, journal, live production blobs and backups: complete journal per path, live ETag, Content-MD5, metadata, content type and full-byte SHA-256 must match; backups are re-hashed.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "oneuxVerify.py",
+  "command": null,
+  "timeoutMs": 3600000,
+  "params": [
+    {
+      "id": "threads",
+      "type": "number",
+      "required": false,
+      "label": "Threads",
+      "default": 8
+    }
+  ],
+  "portSummary": "Reads prev; produces job, report.",
+  "inputs": [
+    {
+      "id": "prev",
+      "type": "json",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "job",
+      "type": "json",
+      "when": "always",
+      "filename": "oneux-12-verify.json",
+      "store": "run",
+      "artifactKind": "job"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "oneux-12-verify.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

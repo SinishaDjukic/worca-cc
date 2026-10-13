@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "missingAnswer",
+      "name": "one row unanswered, one claim without evidence",
+      "params": {},
+      "ports": null,
+      "inputs": {
+        "rows": {
+          "text": "{\"allowedValues\":[\"Y\",\"N\",\"Partial\",\"N/A\"],\"rows\":[{\"row\":5,\"id\":\"EISA-ACC-301.4\",\"title\":\"Password hashing\",\"status\":\"assess\"},{\"row\":6,\"id\":\"EISA-ACC-301.5\",\"title\":\"Lockout\",\"status\":\"assess\"},{\"row\":7,\"id\":\"EISA-OPS-401.1\",\"title\":\"Logging\",\"status\":\"prefilled\",\"reason\":\"already filled in the workbook\"}]}"
+        },
+        "assessment": {
+          "text": "{\"assessments\":[{\"id\":\"EISA-ACC-301.4\",\"implemented\":\"Y\",\"rationale\":\"bcrypt cost 12. Proof §EISA-ACC-301.4\",\"evidence\":[],\"confidence\":\"high\"}]}"
+        },
+        "proof": {
+          "text": "# EISA proof\n\n## EISA-ACC-301.4 — Password hashing\n"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "blocking"
+      }
+    },
+    {
+      "id": "allGood",
+      "name": "every row answered with evidence and proof",
+      "params": {},
+      "ports": null,
+      "inputs": {
+        "rows": {
+          "text": "{\"allowedValues\":[\"Y\",\"N\",\"Partial\",\"N/A\"],\"rows\":[{\"row\":5,\"id\":\"EISA-ACC-301.4\",\"title\":\"Password hashing\",\"status\":\"assess\"},{\"row\":6,\"id\":\"EISA-ACC-301.5\",\"title\":\"Lockout\",\"status\":\"assess\"}]}"
+        },
+        "assessment": {
+          "text": "{\"assessments\":[{\"id\":\"EISA-ACC-301.4\",\"implemented\":\"Y\",\"rationale\":\"bcrypt cost 12. Proof §EISA-ACC-301.4\",\"evidence\":[\"repo/src/auth/hash.ts:12\"],\"confidence\":\"high\"},{\"id\":\"EISA-ACC-301.5\",\"implemented\":\"\",\"rationale\":\"Handled by the IdP; not visible in code.\",\"evidence\":[],\"confidence\":\"low\"}]}"
+        },
+        "proof": {
+          "text": "# EISA proof\n\n## EISA-ACC-301.4 — Password hashing\n"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "clean"
+      }
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "metaVersion": 2,
+  "key": "oneuxManifest",
+  "displayName": "OneUX images: manifest",
+  "description": "Step 2: joins the discovery with the request's frozen corrected images (SHA-256 re-checked) into one row per target blob: blob and _hash path, local image, size, MD5. A continued job reuses the manifest. No Azure calls.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "oneuxManifest.py",
+  "command": null,
+  "timeoutMs": 300000,
+  "params": [
+    {
+      "id": "images",
+      "type": "string",
+      "required": false,
+      "label": "Images folder",
+      "description": "Only without a request: folder with the corrected <mediaId>.png files. Empty: an 'Images:' line in the task, else the images attached to the run (extras/)."
+    }
+  ],
+  "portSummary": "Reads mapping, task; produces manifest, report.",
+  "inputs": [
+    {
+      "id": "mapping",
+      "type": "json",
+      "required": true
+    },
+    {
+      "id": "task",
+      "type": "md",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "manifest",
+      "type": "json",
+      "when": "always",
+      "filename": "oneux-02-manifest.json",
+      "store": "run",
+      "artifactKind": "manifest"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "oneux-02-manifest.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

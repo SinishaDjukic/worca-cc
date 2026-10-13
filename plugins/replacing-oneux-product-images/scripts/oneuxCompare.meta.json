@@ -1,0 +1,51 @@
+{
+  "metaVersion": 2,
+  "key": "oneuxCompare",
+  "displayName": "OneUX images: compare",
+  "description": "Step 9: read-only comparison of the scaled manifest with the production blobs in prodoneuxpremium2: HEAD, then an ETag-conditional read and SHA-256. Missing, drifted or tagged blobs stop the job; byte-different paths become write candidates.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "oneuxCompare.py",
+  "command": null,
+  "timeoutMs": 1800000,
+  "params": [
+    {
+      "id": "threads",
+      "type": "number",
+      "required": false,
+      "label": "Threads",
+      "default": 8
+    }
+  ],
+  "portSummary": "Reads prev; produces job, report.",
+  "inputs": [
+    {
+      "id": "prev",
+      "type": "json",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "job",
+      "type": "json",
+      "when": "always",
+      "filename": "oneux-09-comparison.json",
+      "store": "run",
+      "artifactKind": "job"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "oneux-09-comparison.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

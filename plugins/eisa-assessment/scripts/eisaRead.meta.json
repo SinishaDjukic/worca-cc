@@ -1,0 +1,88 @@
+{
+  "metaVersion": 2,
+  "key": "eisaRead",
+  "displayName": "EISA: read workbook",
+  "description": "Reads the EISA requirements workbook (.xlsx attached to the run) into JSON rows: finds the requirements sheet by its headers, marks each row assess / prefilled / notApplicable / outOfScope / heading, and keeps a copy of the workbook for EISA: write workbook. Standard library only.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "eisaRead.py",
+  "command": null,
+  "timeoutMs": 120000,
+  "params": [
+    {
+      "id": "workbook",
+      "type": "string",
+      "required": false,
+      "label": "Workbook",
+      "description": "Absolute path, or a file name in the run's extras/ folder. Empty: the first .xlsx attached to the run."
+    },
+    {
+      "id": "systemTypes",
+      "type": "string",
+      "required": false,
+      "label": "System types",
+      "description": "Comma-separated Applicability values of the assessed system, e.g. 'Web Application, Software-as-a-Service (SaaS)'. Empty: a 'System types:' line in the task, else every row applies."
+    },
+    {
+      "id": "scope",
+      "type": "string",
+      "required": false,
+      "label": "Requirements in scope",
+      "description": "Comma-separated EISA ids or families to assess, e.g. 'ACC-301, OPS-401, ACQ-205'. Empty: a 'Requirements:' line in the task, else every row. Rows outside stay untouched."
+    },
+    {
+      "id": "skipFilled",
+      "type": "boolean",
+      "required": false,
+      "label": "Keep pre-filled rows",
+      "description": "Rows that already have Implemented or Rationale are left as they are.",
+      "default": true
+    },
+    {
+      "id": "skipNotRelevant",
+      "type": "boolean",
+      "required": false,
+      "label": "Skip CD09000_relevant = FALSE",
+      "default": false
+    },
+    {
+      "id": "values",
+      "type": "string",
+      "required": false,
+      "label": "Implemented values",
+      "description": "Allowed values besides blank; checked by EISA: check answers, added to the dropdown by EISA: write workbook.",
+      "default": "Y,N,Partial,N/A"
+    }
+  ],
+  "portSummary": "Reads task; produces rows, report.",
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "rows",
+      "type": "json",
+      "when": "always",
+      "filename": "eisa-rows.json",
+      "store": "run",
+      "artifactKind": "rows"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "eisa-rows.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

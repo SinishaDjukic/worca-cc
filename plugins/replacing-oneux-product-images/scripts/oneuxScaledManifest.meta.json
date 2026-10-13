@@ -1,0 +1,43 @@
+{
+  "metaVersion": 2,
+  "key": "oneuxScaledManifest",
+  "displayName": "OneUX images: scaled manifest",
+  "description": "Step 8: rebuilds the manifest with the verified scaled files (same paths, new size and MD5, provenance) and refuses unscaled bytes or anything not a 3200x1800 PNG. Only this manifest may reach production. No Azure calls.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "oneuxScaledManifest.py",
+  "command": null,
+  "timeoutMs": 600000,
+  "params": [],
+  "portSummary": "Reads prev; produces job, report.",
+  "inputs": [
+    {
+      "id": "prev",
+      "type": "json",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "job",
+      "type": "json",
+      "when": "always",
+      "filename": "oneux-08-scaled-manifest.json",
+      "store": "run",
+      "artifactKind": "job"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "oneux-08-scaled-manifest.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

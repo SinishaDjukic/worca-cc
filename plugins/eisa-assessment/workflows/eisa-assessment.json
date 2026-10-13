@@ -1,0 +1,197 @@
+{
+  "version": 2,
+  "name": "EISA assessment",
+  "domain": "demo",
+  "nodes": [
+    {
+      "id": "n_sp0l96ar",
+      "kind": "task",
+      "x": 60,
+      "y": 55,
+      "config": {}
+    },
+    {
+      "id": "n_6lr7m5j8",
+      "kind": "script",
+      "key": "eisaRead",
+      "x": 583,
+      "y": -209,
+      "config": {}
+    },
+    {
+      "id": "n_rdq3hjkz",
+      "kind": "agent",
+      "key": "eisaAssessmentAssessor",
+      "x": 583,
+      "y": 11,
+      "config": {
+        "awaitAll": true,
+        "askQuestions": true
+      }
+    },
+    {
+      "id": "n_y69e4qpj",
+      "kind": "script",
+      "key": "eisaCheck",
+      "x": 935,
+      "y": 264,
+      "config": {
+        "awaitAll": true
+      }
+    },
+    {
+      "id": "n_vjxxsxlz",
+      "kind": "script",
+      "key": "eisaWrite",
+      "x": 1353,
+      "y": 22,
+      "config": {
+        "awaitAll": true
+      }
+    },
+    {
+      "id": "n_otw4k0kl",
+      "kind": "end",
+      "x": 1660,
+      "y": 55,
+      "config": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w_0311hnf1",
+      "from": {
+        "node": "n_sp0l96ar",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_6lr7m5j8",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w_3v409yvp",
+      "from": {
+        "node": "n_sp0l96ar",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_rdq3hjkz",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w_ha9lnsb6",
+      "from": {
+        "node": "n_6lr7m5j8",
+        "port": "rows"
+      },
+      "to": {
+        "node": "n_rdq3hjkz",
+        "port": "rows"
+      }
+    },
+    {
+      "id": "w_8zczxtw2",
+      "from": {
+        "node": "n_6lr7m5j8",
+        "port": "rows"
+      },
+      "to": {
+        "node": "n_y69e4qpj",
+        "port": "rows"
+      }
+    },
+    {
+      "id": "w_udsi5dju",
+      "from": {
+        "node": "n_6lr7m5j8",
+        "port": "rows"
+      },
+      "to": {
+        "node": "n_vjxxsxlz",
+        "port": "rows"
+      }
+    },
+    {
+      "id": "w_rdamgo61",
+      "from": {
+        "node": "n_rdq3hjkz",
+        "port": "assessment"
+      },
+      "to": {
+        "node": "n_y69e4qpj",
+        "port": "assessment"
+      }
+    },
+    {
+      "id": "w_zeepexqw",
+      "from": {
+        "node": "n_rdq3hjkz",
+        "port": "proof"
+      },
+      "to": {
+        "node": "n_y69e4qpj",
+        "port": "proof"
+      }
+    },
+    {
+      "id": "w_ufuymj47",
+      "from": {
+        "node": "n_rdq3hjkz",
+        "port": "assessment"
+      },
+      "to": {
+        "node": "n_vjxxsxlz",
+        "port": "assessment"
+      }
+    },
+    {
+      "id": "w_ahtsypil",
+      "from": {
+        "node": "n_rdq3hjkz",
+        "port": "proof"
+      },
+      "to": {
+        "node": "n_vjxxsxlz",
+        "port": "proof"
+      }
+    },
+    {
+      "id": "w_1vjvo17j",
+      "from": {
+        "node": "n_y69e4qpj",
+        "port": "feedback"
+      },
+      "to": {
+        "node": "n_rdq3hjkz",
+        "port": "feedback"
+      },
+      "config": {
+        "maxCycles": 3
+      }
+    },
+    {
+      "id": "w_a4ckdnpn",
+      "from": {
+        "node": "n_y69e4qpj",
+        "port": "pass"
+      },
+      "to": {
+        "node": "n_vjxxsxlz",
+        "port": "checked"
+      }
+    },
+    {
+      "id": "w_2rjkdi54",
+      "from": {
+        "node": "n_vjxxsxlz",
+        "port": "report"
+      },
+      "to": {
+        "node": "n_otw4k0kl",
+        "port": "result"
+      }
+    }
+  ]
+}

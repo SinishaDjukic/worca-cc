@@ -1,0 +1,70 @@
+{
+  "metaVersion": 2,
+  "key": "oneuxPrescale",
+  "displayName": "OneUX images: prescale",
+  "description": "Step 6: runs the sibling bosch-oneux-py-imagescaler once in its Docker image (main_scanner de-de | parallel main_scaler) after a preflight: dev accounts only, do_overwrite=false, exactly 3200x1800. Scans the full log for per-image failures.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "oneuxPrescale.py",
+  "command": null,
+  "timeoutMs": 14400000,
+  "params": [
+    {
+      "id": "scalerDir",
+      "type": "string",
+      "required": false,
+      "label": "Prescaler checkout",
+      "description": "Folder of bosch-oneux-py-imagescaler. Empty: a 'Scaler dir:' line in the task, else the run's checkout (run this workflow on that project)."
+    },
+    {
+      "id": "parallel",
+      "type": "number",
+      "required": false,
+      "label": "Parallel scalers",
+      "default": 8
+    },
+    {
+      "id": "timeoutHours",
+      "type": "number",
+      "required": false,
+      "label": "Timeout (hours)",
+      "default": 3
+    }
+  ],
+  "portSummary": "Reads prev, task; produces job, report.",
+  "inputs": [
+    {
+      "id": "prev",
+      "type": "json",
+      "required": true
+    },
+    {
+      "id": "task",
+      "type": "md",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "job",
+      "type": "json",
+      "when": "always",
+      "filename": "oneux-06-prescale.json",
+      "store": "run",
+      "artifactKind": "job"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "oneux-06-prescale.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

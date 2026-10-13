@@ -1,0 +1,320 @@
+{
+  "version": 2,
+  "name": "Replacing oneux product images",
+  "domain": "demo",
+  "nodes": [
+    {
+      "id": "n_zi75pldb",
+      "kind": "task",
+      "x": -165,
+      "y": 451,
+      "config": {}
+    },
+    {
+      "id": "n_o6j6c2vy",
+      "kind": "script",
+      "key": "oneuxRequest",
+      "x": 154,
+      "y": 176,
+      "config": {}
+    },
+    {
+      "id": "n_fpybbao4",
+      "kind": "script",
+      "key": "oneuxDiscover",
+      "x": 473,
+      "y": 176,
+      "config": {
+        "awaitAll": true
+      }
+    },
+    {
+      "id": "n_91ld8dp4",
+      "kind": "script",
+      "key": "oneuxManifest",
+      "x": 748,
+      "y": 176,
+      "config": {}
+    },
+    {
+      "id": "n_9m4wfvtp",
+      "kind": "script",
+      "key": "oneuxStage",
+      "x": 1034,
+      "y": 165,
+      "config": {}
+    },
+    {
+      "id": "n_3mdtlxjs",
+      "kind": "script",
+      "key": "oneuxPrescalerInputs",
+      "x": 1309,
+      "y": 165,
+      "config": {}
+    },
+    {
+      "id": "n_s023mm6l",
+      "kind": "script",
+      "key": "oneuxDevUpload",
+      "x": 1584,
+      "y": 165,
+      "config": {}
+    },
+    {
+      "id": "n_v23hjzz5",
+      "kind": "script",
+      "key": "oneuxPrescale",
+      "x": 462,
+      "y": 429,
+      "config": {
+        "awaitAll": true
+      }
+    },
+    {
+      "id": "n_a3ltd589",
+      "kind": "script",
+      "key": "oneuxDevDownload",
+      "x": 748,
+      "y": 418,
+      "config": {}
+    },
+    {
+      "id": "n_k502ddk0",
+      "kind": "script",
+      "key": "oneuxScaledManifest",
+      "x": 1034,
+      "y": 418,
+      "config": {}
+    },
+    {
+      "id": "n_4i86wxbl",
+      "kind": "script",
+      "key": "oneuxCompare",
+      "x": 1309,
+      "y": 418,
+      "config": {}
+    },
+    {
+      "id": "n_ciq6u098",
+      "kind": "script",
+      "key": "oneuxBackup",
+      "x": 1595,
+      "y": 418,
+      "config": {}
+    },
+    {
+      "id": "n_ctadwl38",
+      "kind": "script",
+      "key": "oneuxWrite",
+      "x": 462,
+      "y": 682,
+      "config": {
+        "awaitAll": true
+      }
+    },
+    {
+      "id": "n_3wkuwq67",
+      "kind": "script",
+      "key": "oneuxVerify",
+      "x": 748,
+      "y": 682,
+      "config": {}
+    },
+    {
+      "id": "n_4101fa4t",
+      "kind": "end",
+      "x": 1023,
+      "y": 682,
+      "config": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w_ehu59ctd",
+      "from": {
+        "node": "n_zi75pldb",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_o6j6c2vy",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w_qc2qdos2",
+      "from": {
+        "node": "n_zi75pldb",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_fpybbao4",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w_3n75j4mq",
+      "from": {
+        "node": "n_zi75pldb",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_v23hjzz5",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w_6s303j8w",
+      "from": {
+        "node": "n_zi75pldb",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_ctadwl38",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w_a1hjol2a",
+      "from": {
+        "node": "n_o6j6c2vy",
+        "port": "request"
+      },
+      "to": {
+        "node": "n_fpybbao4",
+        "port": "request"
+      }
+    },
+    {
+      "id": "w_jn22bn6m",
+      "from": {
+        "node": "n_fpybbao4",
+        "port": "mapping"
+      },
+      "to": {
+        "node": "n_91ld8dp4",
+        "port": "mapping"
+      }
+    },
+    {
+      "id": "w_i0cts416",
+      "from": {
+        "node": "n_91ld8dp4",
+        "port": "manifest"
+      },
+      "to": {
+        "node": "n_9m4wfvtp",
+        "port": "manifest"
+      }
+    },
+    {
+      "id": "w_mxuahjwj",
+      "from": {
+        "node": "n_9m4wfvtp",
+        "port": "staged"
+      },
+      "to": {
+        "node": "n_3mdtlxjs",
+        "port": "staged"
+      }
+    },
+    {
+      "id": "w_5n2k8rrf",
+      "from": {
+        "node": "n_3mdtlxjs",
+        "port": "inventory"
+      },
+      "to": {
+        "node": "n_s023mm6l",
+        "port": "prev"
+      }
+    },
+    {
+      "id": "w_e64xo3h6",
+      "from": {
+        "node": "n_s023mm6l",
+        "port": "job"
+      },
+      "to": {
+        "node": "n_v23hjzz5",
+        "port": "prev"
+      }
+    },
+    {
+      "id": "w_adbmp8p0",
+      "from": {
+        "node": "n_v23hjzz5",
+        "port": "job"
+      },
+      "to": {
+        "node": "n_a3ltd589",
+        "port": "prev"
+      }
+    },
+    {
+      "id": "w_6b1z3dkr",
+      "from": {
+        "node": "n_a3ltd589",
+        "port": "job"
+      },
+      "to": {
+        "node": "n_k502ddk0",
+        "port": "prev"
+      }
+    },
+    {
+      "id": "w_gsezi8g9",
+      "from": {
+        "node": "n_k502ddk0",
+        "port": "job"
+      },
+      "to": {
+        "node": "n_4i86wxbl",
+        "port": "prev"
+      }
+    },
+    {
+      "id": "w_u3qcmrp6",
+      "from": {
+        "node": "n_4i86wxbl",
+        "port": "job"
+      },
+      "to": {
+        "node": "n_ciq6u098",
+        "port": "prev"
+      }
+    },
+    {
+      "id": "w_mtn7f98c",
+      "from": {
+        "node": "n_ciq6u098",
+        "port": "job"
+      },
+      "to": {
+        "node": "n_ctadwl38",
+        "port": "prev"
+      }
+    },
+    {
+      "id": "w_io9zh3g0",
+      "from": {
+        "node": "n_ctadwl38",
+        "port": "job"
+      },
+      "to": {
+        "node": "n_3wkuwq67",
+        "port": "prev"
+      }
+    },
+    {
+      "id": "w_10dues7x",
+      "from": {
+        "node": "n_3wkuwq67",
+        "port": "job"
+      },
+      "to": {
+        "node": "n_4101fa4t",
+        "port": "result"
+      }
+    }
+  ]
+}

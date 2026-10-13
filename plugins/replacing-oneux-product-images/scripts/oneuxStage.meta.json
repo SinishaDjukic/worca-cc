@@ -1,0 +1,52 @@
+{
+  "metaVersion": 2,
+  "key": "oneuxStage",
+  "displayName": "OneUX images: stage",
+  "description": "Step 3: copies each corrected image to <work dir>/03-staged-originals/<COUNTRY>/<locale>/<exact blob basename>, SHA-256-checks every copy, never overwrites different content. A continued job reuses the tree. No Azure calls.",
+  "color": "amber",
+  "icon": "",
+  "domain": "general",
+  "order": 99,
+  "runtime": "python",
+  "file": "oneuxStage.py",
+  "command": null,
+  "timeoutMs": 300000,
+  "params": [
+    {
+      "id": "exclude",
+      "type": "string",
+      "required": false,
+      "label": "Excluded locales",
+      "description": "A manifest row in one of these locales stops the job (discovery should never include them).",
+      "default": "xz-xy"
+    }
+  ],
+  "portSummary": "Reads manifest; produces staged, report.",
+  "inputs": [
+    {
+      "id": "manifest",
+      "type": "json",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "staged",
+      "type": "json",
+      "when": "always",
+      "filename": "oneux-03-staged.json",
+      "store": "run",
+      "artifactKind": "staged"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "oneux-03-staged.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ],
+  "createdBy": "ui",
+  "updatedBy": "ui"
+}

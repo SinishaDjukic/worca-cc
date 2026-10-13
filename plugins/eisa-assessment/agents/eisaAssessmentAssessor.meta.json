@@ -1,0 +1,60 @@
+{
+  "key": "eisaAssessmentAssessor",
+  "displayName": "EISA Assessor",
+  "description": "Assess EISA requirements against code and infrastructure. Produces structured assessments with evidence and detailed proof documentation.",
+  "color": "blue",
+  "icon": "",
+  "agentFile": "eisaAssessmentAssessor.md",
+  "runnerType": "producer",
+  "scope": "project",
+  "domain": "security",
+  "fanOut": false,
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 99,
+  "promptHints": "",
+  "requiresSkills": [],
+  "requiresAssets": [],
+  "metaVersion": 2,
+  "inputs": [
+    {
+      "id": "rows",
+      "type": "json",
+      "required": true,
+      "as": "file"
+    },
+    {
+      "id": "feedback",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "as": "file"
+    },
+    {
+      "id": "task",
+      "type": "md",
+      "required": false,
+      "as": "file"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "assessment",
+      "type": "json",
+      "when": "always",
+      "filename": "eisa-assessment-cycle{cycle}.json",
+      "store": "run",
+      "artifactKind": "assessment"
+    },
+    {
+      "id": "proof",
+      "type": "md",
+      "when": "always",
+      "filename": "EISA-proof-cycle{cycle}.md",
+      "store": "run",
+      "artifactKind": "proof"
+    }
+  ],
+  "portSummary": "Reads rows, feedback, task; produces assessment, proof."
+}
