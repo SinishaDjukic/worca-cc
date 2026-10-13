@@ -312,6 +312,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: proposal cards themselves | all (rule 4) |
 | Ask: the context ring and its popover's window fill and topics | S |
 | Ask: model picker, scope, cost meter, tool rows, branches, guardrails, "Open in New Pipeline" | A |
+| Ask: the chevron on a reply's activity line (`Done · 7.4s · …`) | A when it opens tool rows, E when it opens only sub-agents; the line itself shows at every level |
 | Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E |
 | Chat home: heading, composer, the New run / Build workflow / Track a run / Write a script / Clone a repo tiles, More (Step away), the four tabs and their run tiles, the Workflows and Away mode promos | S |
 | Chat home: the Schedule a run and Explain a diff tiles; More › New workspace, Remember something, Find tasks; the Schedules promo | A — with the page or surface that owns each feature |

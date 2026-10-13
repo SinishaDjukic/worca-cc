@@ -33665,8 +33665,8 @@ askPanel = createAskPanel({
   doc: document,
   win: window,
   fetch: (...args) => fetch(...args),
-  // Shared terminal (#574): a command Ask starts in the open chat, or a click on its card, shows its tab in the pane below.
-  showTerminal: (sessionId, opts) => terminalPane?.showSession(sessionId, opts),
+  // Shared terminal (#574): a click on a command card's folder shows its tab in the pane below (Ask's own commands never do).
+  showTerminal: (sessionId) => terminalPane?.showSession(sessionId),
   sendWs: (obj) => {
     const ws = state.ws;
     if (ws && state.wsReady) {

@@ -2,8 +2,8 @@
 // runs on the worca server (src/core/terminal/manager.mjs); this pane draws it with xterm.js over /ws
 // (term-* frames), follows the page (a run's folder, a project's own folder: opening the pane starts or
 // reattaches that shell). The server records each command for the audit log; the pane does not list them.
-// Ask Worca's terminals (agent mode, #574) are shared: their tabs show on every page, and the pane follows
-// Ask (showSession) when a command starts in the open chat or the user clicks a command card.
+// Ask Worca's terminals (agent mode, #574) are shared: their tabs show on every page. A command Ask starts never
+// opens or switches the pane; its tab waits here, and a click on the command card's folder shows it (showSession).
 // Built in JS and appended to <body>, like the Ask dock: index.html is untouched.
 import { createLineEditor } from './terminal-line.mjs';
 
@@ -59,8 +59,7 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
     starting: null,              // the start key whose shell is being made
     closing: new Set(),          // session ids whose close (a tab's ×) is under way
     restartKey: null,            // Enter starts a new shell for this start key (the last one exited, or never started)
-    why: null, focusNext: false, pendingTimer: null,
-    askShown: new Set() };       // Ask chats (createdBy) whose command already opened the pane: never reopened by itself
+    why: null, focusNext: false, pendingTimer: null };
   const drawn = { tabs: '', context: '' };     // what the tabs and the context bar show: unchanged → not rebuilt (an open select stays open)
 
   const make = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
@@ -234,7 +233,7 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
    * D3: the pane shows this page's shell. Its running session is reattached; with none, one is started,
    * at most once per start key while the pane is open (a later one needs Enter, see promptRestart).
    * Other pages start nothing: they keep the attached shell, or attach the newest running one.
-   * An attached Ask tab (the pane followed Ask) stays until the user moves to another page or project.
+   * An Ask tab a command card's click attached stays until the user moves to another page or project.
    */
   async function follow({ navigated = false } = {}) {
     const cur = st.sessions.get(st.current);
@@ -341,26 +340,18 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
     if (st.current) api('POST', `/api/terminal/sessions/${encodeURIComponent(st.current)}/stop`).catch(showError);
   }
   /**
-   * Shows one terminal (an Ask session): attaches it and opens the pane. `auto` (a command Ask just started) never
-   * takes the keyboard, never switches away from another tab the user is typing in, and opens a closed pane only
-   * the first time for each chat (a pane the user closed afterwards stays closed). A card click (not auto) always
-   * shows and focuses it.
+   * Shows one terminal (an Ask session) because the user asked to (a click on a command card's folder): attaches
+   * it, opens the pane and focuses it, even after the user closed the pane.
    */
-  async function showSession(id, { auto = false } = {}) {
+  async function showSession(id) {
     if (st.destroyed) return;
-    if (auto && st.open && st.current !== id && root.contains(doc.activeElement)) return;
     if (!st.sessions.get(id)) await refreshInfo();
     const s = st.sessions.get(id);
     if (!st.enabled || !s || s.status !== 'running') return;
-    if (auto) {
-      const chat = s.createdBy || id;
-      if (!st.open && st.askShown.has(chat)) return;
-      st.askShown.add(chat);
-    }
-    st.focusNext = !auto;
+    st.focusNext = true;
     if (st.current !== id) await attach(id);
-    if (!st.open) await open({ focus: !auto });
-    else if (!auto) { st.focusNext = false; focusTerm(); }
+    if (!st.open) await open({ focus: true });
+    else { st.focusNext = false; focusTerm(); }
   }
   /**
    * A tab's ×: closes that terminal (an ended one just leaves). One that has run a command asks first. The
