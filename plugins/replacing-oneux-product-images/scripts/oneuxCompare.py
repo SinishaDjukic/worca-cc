@@ -10,9 +10,18 @@ import datetime
 import hashlib
 import json
 import os
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 TARGET = 'https://prodoneuxpremium2.blob.core.windows.net'
+
+
+def log(message, level='info'):
+    """One live progress line. print() reaches the run log WHILE the step runs; api.log()
+    lines only travel on the result frame, and a frame that failed is never rendered - so
+    anything logged before a raise would be lost."""
+    print('[%s] %s' % (level, message), flush=True)
 
 
 def read_port(api, port):
@@ -103,6 +112,7 @@ def main(api):
             text = fh.read()
         if json.loads(text).get('kind') != 'oneux-comparison':
             raise ValueError('%s is not a comparison.' % out)
+        log('reusing the comparison of this job; production is not read again')
         write_port(api, 'job', text)
         write_port(api, 'report', '# OneUX images: compare\n\nReused the comparison of this job.\n')
         return {'summary': 'Reused comparison'}
@@ -111,12 +121,31 @@ def main(api):
     from azure.identity import DefaultAzureCredential
     from azure.storage.blob import BlobServiceClient
     service = BlobServiceClient(TARGET, credential=DefaultAzureCredential())
-    with ThreadPoolExecutor(max_workers=max(1, int(api.params.get('threads') or 8))) as pool:
-        results = list(pool.map(lambda r: compare_one(service, r), scaled['rows']))
+    threads = max(1, int(api.params.get('threads') or 8))
+    total = len(scaled['rows'])
+    log('read-only comparison of %d scaled rows against %s with %d threads (HEAD, then a full '
+        'ETag-conditional GET when the sizes match)' % (total, TARGET, threads))
+    # The pool is silent until the last row is back: count completions as they land.
+    done = {'n': 0}
+    lock = threading.Lock()
+    t0 = time.time()
+
+    def one(row):
+        result = compare_one(service, row)
+        with lock:
+            done['n'] += 1
+            if done['n'] % 25 == 0 or done['n'] == total:
+                elapsed = time.time() - t0
+                log('compared %d/%d (%.0f s elapsed, %.1f/s)' % (done['n'], total, elapsed, done['n'] / max(elapsed, 0.001)))
+        return result
+
+    with ThreadPoolExecutor(max_workers=threads) as pool:
+        results = list(pool.map(one, scaled['rows']))
     results.sort(key=lambda r: (r['Locale'], r['Filename']))
     counts = {}
     for r in results:
         counts[r['ContentStatus']] = counts.get(r['ContentStatus'], 0) + 1
+    log('comparison: %s' % ', '.join('%s %d' % (k, v) for k, v in sorted(counts.items())))
     tagged = [r['Locale'] + '/' + r['Filename'] for r in results if isinstance(r['TagCount'], int) and r['TagCount'] > 0]
     bad = [r for r in results if r['ContentStatus'] not in ('byte-different', 'byte-identical')]
 
@@ -129,6 +158,8 @@ def main(api):
         failed = os.path.join(work_dir, '09-comparison-FAILED-%s.json' % stamp)
         with open(failed, 'x', encoding='utf-8') as fh:
             fh.write(text)
+        log('comparison rejected: %d rows missing/errored/drifted, %d with index tags; details in %s'
+            % (len(bad), len(tagged), failed), 'error')
         raise RuntimeError('Comparison rejected (%s; %d with index tags). Details in %s. First: %s'
                            % (counts, len(tagged), failed,
                               [(r['Locale'] + '/' + r['Filename'], r['ContentStatus'], r['ContentCheck']) for r in bad[:5]] or tagged[:5]))
@@ -140,6 +171,10 @@ def main(api):
         writer.writerows(results)
     write_port(api, 'job', text)
     unknown = sum(1 for r in results if r['TagCount'] == 'unknown')
+    if unknown:
+        log('index tag count not reported for %d blobs: unknown, not proof of no tags' % unknown, 'warn')
+    log('%d write candidates (byte-different), %d byte-identical and skipped'
+        % (counts.get('byte-different', 0), counts.get('byte-identical', 0)))
     write_port(api, 'report', '# OneUX images: compare\n\n- Read-only against `%s`\n- %s\n'
                               '- Write candidates (byte-different): **%d**; byte-identical (skipped): %d\n'
                               '- Index tag count not reported for %d blobs: unknown, not proof of no tags\n'

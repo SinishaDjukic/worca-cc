@@ -11,6 +11,8 @@ import hashlib
 import json
 import os
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 ACCOUNTS = {
@@ -28,6 +30,13 @@ LOCALES = (
     'ro-ro ru-by ru-kz ru-ru sk-sk sl-si sr-rs sv-se th-th tr-tr uk-ua vi-vn zh-cn zh-tw'
 ).split()
 LOCALE_RE = re.compile(r'^[a-z]{2,3}-[a-z]{2}$')
+
+
+def log(message, level='info'):
+    """One live progress line. print() reaches the run log WHILE the step runs; api.log()
+    lines only travel on the result frame, and a frame that failed is never rendered - so
+    anything logged before a raise would be lost."""
+    print('[%s] %s' % (level, message), flush=True)
 
 
 def task_line(api, *names):
@@ -86,15 +95,32 @@ def live_names(account_url, containers, threads):
     except ImportError:
         raise RuntimeError('Needs the Azure SDK: python -m pip install azure-storage-blob azure-identity')
     service = BlobServiceClient(account_url=account_url, credential=DefaultAzureCredential())
+    t0 = time.time()
     live = sorted(c.name for c in service.list_containers())
+    log('%s holds %d containers (listed in %.0f s)' % (account_url, len(live), time.time() - t0))
+
+    present = [c for c in containers if c in live]
+    # A progress line every 10 containers: listing all of them takes minutes and the
+    # pool gives no output of its own until the last one is back.
+    counter = {'done': 0, 'blobs': 0}
+    lock = threading.Lock()
+    started = time.time()
 
     def names(container):
         client = service.get_container_client(container)
         if hasattr(client, 'list_blob_names'):
-            return container, list(client.list_blob_names())
-        return container, [b.name for b in client.list_blobs()]
+            found = list(client.list_blob_names())
+        else:
+            found = [b.name for b in client.list_blobs()]
+        with lock:
+            counter['done'] += 1
+            counter['blobs'] += len(found)
+            if counter['done'] % 10 == 0 or counter['done'] == len(present):
+                log('listed %d/%d containers, %s blob names so far (%.0f s)'
+                    % (counter['done'], len(present), format(counter['blobs'], ','), time.time() - started))
+        return container, found
 
-    present = [c for c in containers if c in live]
+    log('listing %d locale containers with %d threads' % (len(present), max(1, threads)))
     with ThreadPoolExecutor(max_workers=max(1, threads)) as pool:
         listed = dict(pool.map(names, present))
     return live, listed
@@ -106,6 +132,8 @@ def reuse(api, path):
     doc = json.loads(text)
     if doc.get('kind') != 'oneux-discovery':
         raise ValueError('%s is not a discovery file.' % path)
+    log('reusing the discovery of %s (%d blob paths); production is not listed again'
+        % (doc['listedAt'], doc['summary']['blob_paths']))
     write_port(api, 'mapping', text)
     write_port(api, 'report', '# OneUX images: discovery\n\nReused the discovery of %s (%d blob paths); production '
                               'was not listed again. Digest `%s`.\n'
@@ -143,6 +171,9 @@ def main(api):
     kind = (api.params.get('kind') or 'hires-png-rgb-oneux').strip()
     require_marker = api.params.get('requireMarker', True) not in (False, 'false', 0)
     pattern = re.compile(r'^(?P<stem>.+)-%s-(?P<mid>\d+)\.png$' % re.escape(kind))
+    log('%s (%s): %d media IDs (%s) across %d locale containers, matching -%s-<mediaId>.png%s'
+        % (env, account, len(ids), ', '.join(ids), len(locales), kind,
+           ' with a _hash.png marker' if require_marker else ''))
 
     started = datetime.datetime.now(datetime.timezone.utc)
     offline = read_port(api, 'names')
@@ -150,6 +181,7 @@ def main(api):
         live = sorted(offline)
         listed = {c: list(offline.get(c) or []) for c in locales if c in offline}
         source = 'names input (offline)'
+        log('using the offline "names" input: %d containers, no Azure call' % len(listed))
     else:
         live, listed = live_names(account, locales, int(api.params.get('threads') or 8))
         source = account
@@ -157,6 +189,8 @@ def main(api):
     if missing_containers:
         raise ValueError('Locale containers missing in %s: %s' % (source, missing_containers))
     unlisted = [c for c in live if LOCALE_RE.match(c) and c not in locales and c not in exclude]
+    if unlisted:
+        log('%d locale containers exist but were NOT searched: %s' % (len(unlisted), ', '.join(unlisted)), 'warn')
 
     wanted = set(ids)
     rows = {i: [] for i in ids}
@@ -185,6 +219,9 @@ def main(api):
                 'hash_marker': has_marker,
             })
 
+    if no_marker:
+        log('%d matching blobs have no _hash.png marker (%s)'
+            % (len(no_marker), 'rejected' if require_marker else 'included, requireMarker=false'), 'warn')
     if no_marker and require_marker:
         raise ValueError('%d matching blobs have no _hash.png marker (not prescaler-managed); review them or set '
                          'requireMarker=false deliberately: %s' % (len(no_marker), no_marker[:20]))
@@ -225,6 +262,8 @@ def main(api):
     with open(path, 'x', encoding='utf-8') as fh:
         fh.write(text)
     digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    log('matched %d blob paths for %d media IDs in %d locales; wrote %s (digest %s)'
+        % (total, len(ids), len(used_locales), path, digest))
     write_port(api, 'mapping', text)
 
     lines = ['# OneUX images: discovery', '',

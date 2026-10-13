@@ -8,6 +8,23 @@ import hashlib
 import json
 import os
 import struct
+import time
+
+
+def log(message, level='info'):
+    """One live progress line. print() reaches the run log WHILE the step runs; api.log()
+    lines only travel on the result frame, and a frame that failed is never rendered - so
+    anything logged before a raise would be lost."""
+    print('[%s] %s' % (level, message), flush=True)
+
+
+def progress(label, done, total, t0, every=50):
+    """A progress line every `every` items and on the last one - a bulk loop is otherwise
+    silent for as long as it runs."""
+    if done % every and done != total:
+        return
+    elapsed = time.time() - t0
+    log('%s %d/%d (%.0f s elapsed, %.1f/s)' % (label, done, total, elapsed, done / max(elapsed, 0.001)))
 
 
 def read_port(api, port):
@@ -47,6 +64,7 @@ def main(api):
             text = fh.read()
         if json.loads(text).get('kind') != 'oneux-scaled-manifest':
             raise ValueError('%s is not a scaled manifest.' % out)
+        log('reusing the frozen scaled manifest of this job')
         write_port(api, 'job', text)
         write_port(api, 'report', '# OneUX images: scaled manifest\n\nReused the frozen scaled manifest.\n')
         return {'summary': 'Reused scaled manifest'}
@@ -59,8 +77,12 @@ def main(api):
         raise ValueError('Scaled files do not cover exactly the manifest paths (%d scaled, %d in manifest).'
                          % (len(by_path), len(raw_paths)))
     originals = set(s['sha256'] for s in manifest['images'].values())
+    log('re-hashing %d scaled files and checking each is a 3200x1800 PNG, not an unscaled original'
+        % len(manifest['rows']))
+    t0 = time.time()
     rows = []
-    for r in manifest['rows']:
+    for index, r in enumerate(manifest['rows'], 1):
+        progress('checked', index, len(manifest['rows']), t0)
         d = by_path[r['blob_path']]
         with open(d['local_path'], 'rb') as fh:
             data = fh.read()
@@ -97,6 +119,8 @@ def main(api):
     text = json.dumps(doc, indent=2)
     with open(out, 'x', encoding='utf-8') as fh:
         fh.write(text)
+    log('scaled manifest: %d rows, %d locales, %d media IDs - this is the only manifest eligible for production'
+        % (len(rows), doc['counts']['locales'], doc['counts']['media_ids']))
     write_port(api, 'job', text)
     write_port(api, 'report', '# OneUX images: scaled manifest\n\n- %d rows, %d locales, %d media IDs\n'
                               '- Same paths as the raw manifest; every row a 3200x1800 PNG, none with original bytes\n'

@@ -10,8 +10,25 @@ import hashlib
 import json
 import os
 import re
+import time
 
 NAME_RE = re.compile(r'^[A-Z]{2}_[A-Za-z0-9][A-Za-z0-9._-]*\.png$')
+
+
+def log(message, level='info'):
+    """One live progress line. print() reaches the run log WHILE the step runs; api.log()
+    lines only travel on the result frame, and a frame that failed is never rendered - so
+    anything logged before a raise would be lost."""
+    print('[%s] %s' % (level, message), flush=True)
+
+
+def progress(label, done, total, t0, every=25):
+    """A progress line every `every` items and on the last one - a bulk loop is otherwise
+    silent for as long as it runs."""
+    if done % every and done != total:
+        return
+    elapsed = time.time() - t0
+    log('%s %d/%d (%.0f s elapsed, %.1f/s)' % (label, done, total, elapsed, done / max(elapsed, 0.001)))
 
 
 def sha256_bytes(data):
@@ -39,6 +56,8 @@ def reuse(api, path):
     doc = json.loads(text)
     if doc.get('kind') != 'oneux-prescaler-inputs':
         raise ValueError('%s is not a prescaler inventory.' % path)
+    log('reusing the prescaler inventory of this job (%d inputs for %d rows)'
+        % (doc['counts']['inputs'], doc['counts']['rows']))
     write_port(api, 'inventory', text)
     write_port(api, 'report', '# OneUX images: prescaler inputs\n\nReused the inventory (%d inputs for %d rows).\n'
                % (doc['counts']['inputs'], doc['counts']['rows']))
@@ -53,8 +72,11 @@ def main(api):
     if os.path.isfile(os.path.join(work_dir, '04-prescaler-inventory.json')):
         return reuse(api, os.path.join(work_dir, '04-prescaler-inventory.json'))
 
+    log('grouping %d staged rows into COUNTRY_<basename>.png prescaler inputs' % len(staged['rows']))
+    t0 = time.time()
     groups = {}
-    for row in staged['rows']:
+    for index, row in enumerate(staged['rows'], 1):
+        progress('hashed', index, len(staged['rows']), t0, every=50)
         locale = row['container']
         country = locale.rsplit('-', 1)[-1].upper()
         basename = row['blob_path'].split('/', 1)[1]
@@ -76,8 +98,12 @@ def main(api):
 
     out_dir = os.path.join(work_dir, '04-prescaler-inputs')
     os.makedirs(out_dir, exist_ok=False)
+    log('%d staged rows -> %d unique prescaler inputs; copying them into %s'
+        % (len(staged['rows']), len(groups), out_dir))
+    t0 = time.time()
     inputs = []
-    for name in sorted(groups):
+    for index, name in enumerate(sorted(groups), 1):
+        progress('copied', index, len(groups), t0)
         group = groups[name]
         with open(group['source_path'], 'rb') as fh:
             data = fh.read()
@@ -117,6 +143,8 @@ def main(api):
     with open(os.path.join(work_dir, '04-prescaler-inventory.json'), 'x', encoding='utf-8') as fh:
         fh.write(text)
     digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    log('inventory: %d inputs, %d of them shared by several locales (digest %s)'
+        % (counts['inputs'], counts['shared'], digest))
     write_port(api, 'inventory', text)
 
     lines = ['# OneUX images: prescaler inputs', '',

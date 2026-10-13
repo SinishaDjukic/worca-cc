@@ -16,12 +16,34 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 
 SERVICE = 'py_imagescaler_local'
 DEV_SOURCE = 'https://devscalerlocalenvsource.blob.core.windows.net'
 DEV_TARGET = 'https://devscalerlocalenvtarget.blob.core.windows.net'
 ERROR_RE = re.compile(r'(ERROR|CRITICAL|Traceback|Skipping scale of image|Failed to upload MD5)')
+HEARTBEAT_SECONDS = 60
+
+
+def log(message, level='info'):
+    """One live progress line. print() reaches the run log WHILE the step runs; api.log()
+    lines only travel on the result frame, and a frame that failed is never rendered - so
+    anything logged before a raise would be lost."""
+    print('[%s] %s' % (level, message), flush=True)
+
+
+def heartbeat(log_path, stop, started):
+    """A line a minute while the prescaler runs. Its own output goes to the log FILE, and
+    the run can take hours - without this the step looks hung. Daemon thread: the harness
+    waits for non-daemon ones, and this one never ends on its own."""
+    while not stop.wait(HEARTBEAT_SECONDS):
+        try:
+            size = os.path.getsize(log_path)
+        except OSError:
+            size = 0
+        log('prescaler still running: %.0f min elapsed, %s KB of log'
+            % ((time.time() - started) / 60, format(size // 1024, ',')))
 
 
 def task_line(api, *names):
@@ -75,6 +97,7 @@ def reuse(api, path):
         text = fh.read()
     if json.loads(text).get('kind') != 'oneux-prescale':
         raise ValueError('%s is not a prescale record.' % path)
+    log('reusing the prescaler run of this job; it is not run again')
     write_port(api, 'job', text)
     write_port(api, 'report', '# OneUX images: prescale\n\nReused the prescaler run of this job; it was not run again.\n')
     return {'summary': 'Reused prescale run'}
@@ -141,15 +164,21 @@ def main(api):
     upload = load(work_dir, '05-dev-upload.json', 'oneux-dev-upload')
     job = upload['job']
     scaler = find_scaler(api)
+    log('job %s; scaler checkout %s' % (job, scaler))
     checks = preflight(scaler)
+    log('preflight passed: %s -> %s, do_overwrite=false, sizes %s, image %s'
+        % (checks['source'], checks['target'], checks['sizes'], checks['image']))
 
     if not shutil.which('docker') or quiet(['docker', 'version'], scaler) != 0:
         raise RuntimeError('Docker is not available (is Docker Desktop running?).')
     compose = ['docker', 'compose'] if quiet(['docker', 'compose', 'version'], scaler) == 0 else ['docker-compose']
+    log('using %s' % ' '.join(compose))
     if checks['image'] and quiet(['docker', 'image', 'inspect', checks['image']], scaler) != 0:
+        log('image %s is not local yet; pulling it (this can take a while)' % checks['image'])
         if quiet(['docker', 'pull', checks['image']], scaler) != 0:
             raise RuntimeError('Image %s is not available. Log in first: az acr login --name devoneuxcontainerregistry'
                                % checks['image'])
+        log('pulled %s' % checks['image'])
 
     jobs = max(1, int(api.params.get('parallel') or 8))
     inner = 'python3 main_scanner.py de-de | parallel --halt soon,fail=1 -j%d -n 1 python3 main_scaler.py' % jobs
@@ -162,17 +191,27 @@ def main(api):
     started = datetime.datetime.now(datetime.timezone.utc)
     t0 = time.time()
     timeout = float(api.params.get('timeoutHours') or 3) * 3600
-    api.log('info', 'Running the prescaler in %s; log: %s' % (scaler, log_path))
-    with open(log_path, 'xb') as log:
+    log('running the prescaler with -j%d, timeout %.1f h; its output goes to %s' % (jobs, timeout / 3600, log_path))
+    if env_flags:
+        log('passing through by name only: %s' % ', '.join(env_flags[1::2]))
+    stop = threading.Event()
+    beat = threading.Thread(target=heartbeat, args=(log_path, stop, t0), daemon=True)
+    beat.start()
+    with open(log_path, 'xb') as handle:
         try:
-            code = subprocess.run(cmd, cwd=scaler, stdout=log, stderr=subprocess.STDOUT, timeout=timeout).returncode
+            code = subprocess.run(cmd, cwd=scaler, stdout=handle, stderr=subprocess.STDOUT, timeout=timeout).returncode
         except subprocess.TimeoutExpired:
             code = 'timeout'
+        finally:
+            stop.set()
     duration = round(time.time() - t0)
+    log('prescaler exited %s after %d s' % (code, duration), 'info' if code == 0 else 'error')
     with open(log_path, encoding='utf-8', errors='replace') as fh:
         errors = [line.rstrip() for line in fh if ERROR_RE.search(line)]
     ours = [l for l in errors if job + '_' in l]
     others = [l for l in errors if job + '_' not in l]
+    log('scanned the log: %d error lines, %d of them for this job\'s inputs' % (len(errors), len(ours)),
+        'warn' if errors else 'info')
     if code != 0 or ours:
         raise RuntimeError('Prescaler failed (exit %s, %d error lines for this job, %d others). See %s. First: %s'
                            % (code, len(ours), len(others), log_path, (ours or others or ['-'])[:5]))

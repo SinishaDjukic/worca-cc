@@ -17,9 +17,17 @@ import hashlib
 import json
 import os
 import re
+import time
 
 TARGET = 'https://prodoneuxpremium2.blob.core.windows.net'
 HEX64 = re.compile(r'\b[0-9a-f]{64}\b')
+
+
+def log(message, level='info'):
+    """One live progress line. print() reaches the run log WHILE the step runs; api.log()
+    lines only travel on the result frame, and a frame that failed is never rendered - so
+    the approval preview below, which is logged and then raised, would never be seen."""
+    print('[%s] %s' % (level, message), flush=True)
 
 
 def task_line(api, *names):
@@ -155,7 +163,7 @@ class Journal:
         self.events.append(rec)
 
 
-def write_row(service, row, journal):
+def write_row(service, row, journal, position=''):
     from azure.core import MatchConditions
     from azure.storage.blob import ContentSettings
     with open(row['local_image'], 'rb') as fh:
@@ -191,7 +199,12 @@ def write_row(service, row, journal):
         if after.etag != new_etag or not stored or bytes(stored) != md5:
             raise RuntimeError('Properties of %s after the write do not match.' % row['blob_path'])
         journal.add('verified', row, new_etag=new_etag)
+        # Every production overwrite gets its own line: this is the irreversible step, and the
+        # journal it mirrors is only readable after the run.
+        log('%swrote and verified %s (%s -> %s, %s bytes)'
+            % (position, row['blob_path'], row['old_etag'], new_etag, format(row['new_size'], ',')))
     except Exception as exc:
+        log('FAILED on %s: %s' % (row['blob_path'], str(exc)[:300]), 'error')
         journal.add('failed', row, error=str(exc)[:300])
         raise
 
@@ -201,12 +214,15 @@ def reconcile(service, row, journal):
     last = journal.last(row['blob_path'])
     if last is None or last['event'] == 'verified':
         return last is None
+    log('reconciling %s: an earlier attempt left it at "%s"' % (row['blob_path'], last['event']), 'warn')
     blob = service.get_container_client(row['container']).get_blob_client(row['filename'])
     props = blob.get_blob_properties()
     if props.etag == row['old_etag']:
+        log('%s is still the backed-up original: it will be written' % row['blob_path'])
         return True
     data = blob.download_blob().readall()
     if hashlib.sha256(data).hexdigest() == row['new_sha256']:
+        log('%s already holds the new image: marked verified, not written again' % row['blob_path'])
         journal.add('verified', row, new_etag=props.etag, reconciled=True)
         return False
     raise RuntimeError('%s is neither the backed-up original nor the new image (journal: %s). Inspect it before '
@@ -246,7 +262,10 @@ def main(api):
         plan = json.loads(text)
         if plan.get('kind') != 'oneux-write-plan':
             raise ValueError('%s is not a write plan.' % plan_path)
+        log('job %s: reusing the frozen write plan (%d rows)' % (request['job'], plan['counts']['rows']))
     else:
+        log('job %s: building the write plan from the scaled manifest, the comparison and the backup'
+            % request['job'])
         plan = build_plan(api, work_dir, request, load(work_dir, '08-scaled-manifest.json', 'oneux-scaled-manifest'),
                           load(work_dir, '09-comparison.json', 'oneux-comparison'),
                           load(work_dir, '10-backup-index.json', 'oneux-backup'))
@@ -255,8 +274,12 @@ def main(api):
             fh.write(text)
         put_record(request, '11-write-plan.json', text.encode('utf-8'), 'application/json')
     digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    log('write plan: %d images in %d locales, pilot %s (%d), %d byte-identical skipped; digest %s'
+        % (plan['counts']['rows'], plan['counts']['locales'], plan['pilotLocale'], plan['counts']['pilotRows'],
+           plan['counts']['byteIdenticalSkipped'], digest))
 
     if not plan['rows']:
+        log('nothing to write: production already holds these exact bytes')
         result = {'version': 1, 'kind': 'oneux-write-result', 'workDir': work_dir, 'job': plan['job'],
                   'planDigest': digest, 'written': 0, 'note': 'nothing to write: every image is byte-identical'}
         write_port(api, 'job', json.dumps(result, indent=2))
@@ -282,7 +305,7 @@ def main(api):
             with open(os.path.join(work_dir, '11-write-preview.md'), 'w', encoding='utf-8') as fh:
                 fh.write(md)
             put_record(request, '11-write-preview.md', md.encode('utf-8'), 'text/markdown')
-            api.log('info', md)
+            log(md)
             raise RuntimeError('WAITING FOR APPROVAL - nothing was written to production. %d images in %d locales; '
                                'pilot %s first, then all other locales automatically. Review %s. Click Resume to '
                                'approve and write; stop the run to cancel. (Plan digest %s)'
@@ -293,7 +316,7 @@ def main(api):
         with open(approved_path, 'w', encoding='utf-8') as fh:
             json.dump(approval, fh, indent=2)
         put_record(request, '11-approval.json', json.dumps(approval, indent=2).encode('utf-8'), 'application/json')
-        api.log('info', 'Approved: %s' % via)
+        log('APPROVED: %s' % via)
 
     from azure.identity import DefaultAzureCredential
     from azure.storage.blob import BlobServiceClient
@@ -302,29 +325,41 @@ def main(api):
     pilot = [r for r in plan['rows'] if r['container'] == plan['pilotLocale']]
     rest = [r for r in plan['rows'] if r['container'] != plan['pilotLocale']]
     written, record_error = 0, None
+    log('writing to %s: pilot %s (%d), then %d in every other locale; the first failure stops the run'
+        % (TARGET, plan['pilotLocale'], len(pilot), len(rest)))
     try:
         for phase, rows in (('pilot', pilot), ('remainder', rest)):
+            t0 = time.time()
             todo = [r for r in rows if reconcile(service, r, journal)]
+            skipped = len(rows) - len(todo)
+            log('%s: %d blobs, %d already verified by an earlier attempt, %d to write'
+                % (phase, len(rows), skipped, len(todo)))
             if phase == 'remainder' and todo:
+                log('re-checking the backed-up ETag of %d remaining blobs after the pilot' % len(todo))
                 moved = []
                 for r in todo:
                     props = service.get_container_client(r['container']).get_blob_client(r['filename']).get_blob_properties()
                     if props.etag != r['old_etag']:
                         moved.append(r['blob_path'])
                 if moved:
+                    log('%d remaining blobs no longer show their backed-up ETag; stopping' % len(moved), 'error')
                     raise RuntimeError('After the pilot, %d remaining blobs no longer show their backed-up ETag: %s'
                                        % (len(moved), moved[:10]))
-            for r in todo:
-                write_row(service, r, journal)
+            for index, r in enumerate(todo, 1):
+                write_row(service, r, journal, position='%s %d/%d: ' % (phase, index, len(todo)))
                 written += 1
-            api.log('info', '%s done: %d blobs' % (phase, len(rows)))
+            log('%s done: %d blobs (%d written now) in %.0f s' % (phase, len(rows), len(todo), time.time() - t0))
     finally:
         journal.fh.close()
         stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')
         with open(journal.path, 'rb') as fh:
             record_error = put_record(request, '11-write-journal-%s.jsonl' % stamp, fh.read(), 'application/x-ndjson')
 
+    if record_error:
+        log('copy of the journal to the job folder failed: %s' % record_error, 'warn')
     verified = set(e['blob_path'] for e in journal.events if e['event'] == 'verified')
+    log('%d of %d production images replaced and verified (%d written in this attempt)'
+        % (len(verified), len(plan['rows']), written))
     result = {'version': 1, 'kind': 'oneux-write-result', 'workDir': work_dir, 'job': plan['job'], 'planDigest': digest,
               'approval': approval, 'written': written, 'verified': len(verified), 'planned': len(plan['rows']),
               'journal': journal.path, 'remoteRecordError': record_error}

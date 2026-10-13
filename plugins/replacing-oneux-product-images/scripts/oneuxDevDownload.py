@@ -9,10 +9,27 @@ import hashlib
 import json
 import os
 import struct
+import time
 
 DEV_TARGET = 'https://devscalerlocalenvtarget.blob.core.windows.net'
 CONTAINER = 'de-de'
 SIZE = [3200, 1800]
+
+
+def log(message, level='info'):
+    """One live progress line. print() reaches the run log WHILE the step runs; api.log()
+    lines only travel on the result frame, and a frame that failed is never rendered - so
+    anything logged before a raise would be lost."""
+    print('[%s] %s' % (level, message), flush=True)
+
+
+def progress(label, done, total, t0, every=25):
+    """A progress line every `every` items and on the last one - a bulk loop is otherwise
+    silent for as long as it runs."""
+    if done % every and done != total:
+        return
+    elapsed = time.time() - t0
+    log('%s %d/%d (%.0f s elapsed, %.1f/s)' % (label, done, total, elapsed, done / max(elapsed, 0.001)))
 
 
 def read_port(api, port):
@@ -46,6 +63,7 @@ def reuse(api, path):
         text = fh.read()
     if json.loads(text).get('kind') != 'oneux-scaled':
         raise ValueError('%s is not a scaled-download record.' % path)
+    log('reusing the downloaded and fanned-out images of this job')
     write_port(api, 'job', text)
     write_port(api, 'report', '# OneUX images: dev download\n\nReused the downloaded and fanned-out images of this job.\n')
     return {'summary': 'Reused scaled download'}
@@ -87,6 +105,7 @@ def main(api):
     from azure.identity import DefaultAzureCredential
     from azure.storage.blob import BlobServiceClient
     container = BlobServiceClient(DEV_TARGET, credential=DefaultAzureCredential()).get_container_client(CONTAINER)
+    log('listing the prescaler output in %s/%s for job %s' % (DEV_TARGET, CONTAINER, job))
     if hasattr(container, 'list_blob_names'):
         present = set(container.list_blob_names(name_starts_with=job + '_'))
     else:
@@ -94,7 +113,9 @@ def main(api):
     expected = {e['dev_name']: e for e in upload['entries']}
     wanted = set(expected) | set(n[:-4] + '_hash.png' for n in expected)
     missing, extra = sorted(wanted - present), sorted(present - wanted)
+    log('%d blobs for this job: %d outputs + %d _hash markers expected' % (len(present), len(expected), len(expected)))
     if missing or extra:
+        log('prescaler output incomplete: %d missing, %d extra' % (len(missing), len(extra)), 'error')
         raise RuntimeError('Prescaler output for job %s is incomplete or has extras. Missing: %s; extra: %s'
                            % (job, missing[:20] or 'none', extra[:20] or 'none'))
 
@@ -103,8 +124,11 @@ def main(api):
     fan_dir = os.path.join(work_dir, '07-scaled-by-locale')
     os.makedirs(download_dir, exist_ok=False)
     os.makedirs(fan_dir, exist_ok=False)
+    log('downloading %d outputs under their ETag and fanning them out into %s' % (len(expected), fan_dir))
+    t0 = time.time()
     outputs, destinations, problems = [], [], []
-    for dev_name in sorted(expected):
+    for index, dev_name in enumerate(sorted(expected), 1):
+        progress('downloaded', index, len(expected), t0, every=10)
         item = by_name[expected[dev_name]['name']]
         marker = container.get_blob_client(dev_name[:-4] + '_hash.png').download_blob().readall()
         if marker != bytes.fromhex(item['md5_hex']):
@@ -138,9 +162,13 @@ def main(api):
             destinations.append({'container': locale, 'blob_path': d['blob_path'], 'local_path': os.path.abspath(path),
                                  'sha256': write_new(path, data), 'dev_name': dev_name, 'media_id': item['media_id']})
     if problems:
+        for p in problems[:20]:
+            log(p, 'error')
         raise RuntimeError('Scaled output rejected: %s' % '; '.join(problems[:20]))
     if len(destinations) != inventory['counts']['rows']:
         raise RuntimeError('Fan-out produced %d of %d locale files' % (len(destinations), inventory['counts']['rows']))
+    log('%d outputs -> %d locale files, each SHA-256-checked (%.0f s)'
+        % (len(outputs), len(destinations), time.time() - t0))
 
     doc = {'version': 1, 'kind': 'oneux-scaled', 'workDir': work_dir, 'job': job, 'account': DEV_TARGET,
            'container': CONTAINER, 'outputs': outputs, 'destinations': destinations}

@@ -21,6 +21,13 @@ CONTENT_TYPES = {
 }
 
 
+def log(message, level='info'):
+    """One live progress line. print() reaches the run log WHILE the step runs; api.log()
+    lines only travel on the result frame, and a frame that failed is never rendered - so
+    anything logged before a raise would be lost."""
+    print('[%s] %s' % (level, message), flush=True)
+
+
 def md5_file(path):
     """Return (md5 digest bytes, md5 hex string)."""
     digest = hashlib.md5()
@@ -109,6 +116,7 @@ def reuse(api, path):
     doc = json.loads(text)
     if doc.get('kind') != 'oneux-manifest':
         raise ValueError('%s is not a manifest file.' % path)
+    log('reusing the frozen manifest of this job (%d rows)' % doc['counts']['rows'])
     write_port(api, 'manifest', text)
     write_port(api, 'report', '# OneUX images: manifest\n\nReused the frozen manifest (%d rows). Digest `%s`.\n'
                % (doc['counts']['rows'], hashlib.sha256(text.encode('utf-8')).hexdigest()))
@@ -157,6 +165,8 @@ def main(api):
     else:
         images = find_images(api, setting(api, 'images', 'images', 'corrected images', 'image folder'),
                              set(i.lower() for i in expected))
+    log('joining %d discovered media IDs with the corrected images in %s%s'
+        % (len(expected), images, ' (frozen request %s, SHA-256 re-checked)' % request['request'] if request else ''))
 
     rows, missing_images, sources = [], [], {}
     for media_id in expected:
@@ -191,6 +201,7 @@ def main(api):
                 'size_bytes': os.path.getsize(local_path),
                 'md5_hex': md5_hex,
             })
+        log('media %s: %s -> %d target blobs' % (media_id, os.path.basename(local_path), len(entries)))
 
     missing = [mid for mid in expected if not mapping['ids'].get(mid)]
     if missing or missing_images or not rows:
@@ -226,6 +237,9 @@ def main(api):
         writer.writeheader()
         writer.writerows(rows)
     digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    log('manifest: %d rows, %d media IDs, %d locales, %s bytes to stage (digest %s)'
+        % (len(rows), len(expected), manifest['counts']['locales'],
+           format(manifest['counts']['total_bytes'], ','), digest))
     write_port(api, 'manifest', text)
 
     lines = ['# OneUX images: manifest', '',

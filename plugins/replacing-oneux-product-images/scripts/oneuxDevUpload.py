@@ -7,9 +7,26 @@
 import hashlib
 import json
 import os
+import time
 
 DEV_SOURCE = 'https://devscalerlocalenvsource.blob.core.windows.net'
 CONTAINER = 'de-de'
+
+
+def log(message, level='info'):
+    """One live progress line. print() reaches the run log WHILE the step runs; api.log()
+    lines only travel on the result frame, and a frame that failed is never rendered - so
+    anything logged before a raise would be lost."""
+    print('[%s] %s' % (level, message), flush=True)
+
+
+def progress(label, done, total, t0, every=25):
+    """A progress line every `every` items and on the last one - a bulk loop is otherwise
+    silent for as long as it runs."""
+    if done % every and done != total:
+        return
+    elapsed = time.time() - t0
+    log('%s %d/%d (%.0f s elapsed, %.1f/s)' % (label, done, total, elapsed, done / max(elapsed, 0.001)))
 
 
 def read_port(api, port):
@@ -50,6 +67,7 @@ def reuse(api, path, kind, title):
         text = fh.read()
     if json.loads(text).get('kind') != kind:
         raise ValueError('%s is not a %s file.' % (path, kind))
+    log('reusing %s from an earlier run of this job; nothing was redone' % os.path.basename(path))
     write_port(api, 'job', text)
     write_port(api, 'report', '# %s\n\nReused `%s` from an earlier run of this job; nothing was redone.\n'
                % (title, os.path.basename(path)))
@@ -77,8 +95,12 @@ def main(api):
         raise RuntimeError('%s/%s does not exist. Creating it needs a separate decision; nothing uploaded.'
                            % (DEV_SOURCE, CONTAINER))
 
+    log('uploading %d prescaler inputs to %s/%s as %s_<COUNTRY>_<basename>.png (create-only)'
+        % (len(inventory['inputs']), DEV_SOURCE, CONTAINER, job))
+    t0 = time.time()
     entries = []
-    for item in inventory['inputs']:
+    for index, item in enumerate(inventory['inputs'], 1):
+        progress('uploaded', index, len(inventory['inputs']), t0, every=10)
         dev_name = '%s_%s' % (job, item['name'])
         with open(item['local_path'], 'rb') as fh:
             data = fh.read()
@@ -110,6 +132,8 @@ def main(api):
     text, digest = save(work_dir, '05-dev-upload.json', doc)
     write_port(api, 'job', text)
     uploaded = sum(1 for e in entries if e['status'] == 'uploaded')
+    log('%d inputs in dev source %s: %d uploaded, %d already present byte-identical (%.0f s)'
+        % (len(entries), CONTAINER, uploaded, len(entries) - uploaded, time.time() - t0))
     lines = ['# OneUX images: dev upload', '',
              '- Target: `%s/%s`, names `%s_<COUNTRY>_<basename>.png`' % (DEV_SOURCE, CONTAINER, job),
              '- %d inputs: %d uploaded create-only, %d already present byte-identical' % (

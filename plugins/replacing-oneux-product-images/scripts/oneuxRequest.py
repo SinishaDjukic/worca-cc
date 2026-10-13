@@ -25,6 +25,13 @@ FILE_RE = re.compile(r'^(?P<id>\d+)\.png$', re.I)
 API_VERSION = '2021-08-06'
 
 
+def log(message, level='info'):
+    """One live progress line. print() reaches the run log WHILE the step runs; api.log()
+    lines only travel on the result frame, and a frame that failed is never rendered - so
+    anything logged before a raise would be lost."""
+    print('[%s] %s' % (level, message), flush=True)
+
+
 def task_line(api, *names):
     task = api.inputs.get('task') if hasattr(api.inputs, 'get') else None
     if not task or not task.get('path') or not os.path.isfile(task['path']):
@@ -139,13 +146,18 @@ class AzureLogin:
 def open_container(container):
     reader = Anonymous(container)
     try:
-        return reader, reader.list()
+        blobs = reader.list()
+        log('listed %s/%s anonymously: %d blobs' % (ACCOUNT, container, len(blobs)))
+        return reader, blobs
     except urllib.error.HTTPError as exc:
         if exc.code not in (401, 403, 404):
             raise
+        log('anonymous listing refused (HTTP %d); trying the Azure login' % exc.code)
     try:
         reader = AzureLogin(container)
-        return reader, reader.list()
+        blobs = reader.list()
+        log('listed %s/%s with the Azure login: %d blobs' % (ACCOUNT, container, len(blobs)))
+        return reader, blobs
     except Exception as exc:
         raise RuntimeError('Cannot list %s/%s anonymously or with the Azure login (%s). A private container '
                            'needs Storage Blob Data Reader on ptoneuxpcimagestoreprd.' % (ACCOUNT, container, exc))
@@ -157,10 +169,13 @@ def reuse(api, path):
     doc = json.loads(text)
     if doc.get('kind') != 'oneux-request':
         raise ValueError('%s is not a request file.' % path)
+    log('job %s was already frozen on %s: re-checking the SHA-256 of %d images, not reading the container again'
+        % (doc['job'], doc['fetchedAt'], len(doc['images'])))
     for media_id, image in doc['images'].items():
         with open(image['path'], 'rb') as fh:
             if hashlib.sha256(fh.read()).hexdigest() != image['sha256']:
                 raise ValueError('Frozen image %s changed since job %s was fetched.' % (image['path'], doc['job']))
+    log('reused the frozen request of job %s: %d images, every SHA-256 still matches' % (doc['job'], len(doc['images'])))
     write_port(api, 'request', text)
     write_port(api, 'report', '# OneUX images: request (job %s)\n\nReused the request frozen on %s: %d images, '
                               'SHA-256 re-checked. The upload container was not read again.\n'
@@ -177,13 +192,16 @@ def main(api):
     job_prefix = '%s/%s/' % (JOBS, job)
     work_dir = os.path.abspath(os.path.expanduser(
         setting(api, 'workDir', 'work dir', 'work folder') or os.path.join('~', 'oneux-image-replacements', job)))
+    log('job %s; work dir %s' % (job, work_dir))
     existing = os.path.join(work_dir, '00-request.json')
     if os.path.isfile(existing):
         return reuse(api, existing)
 
+    log('reading the upload container %s/%s' % (ACCOUNT, container))
     reader, blobs = open_container(container)
     root = [b for b in blobs if '/' not in b['name']]
     in_folders = len(blobs) - len(root)
+    log('%d images at the container root, %d blobs inside job folders (ignored)' % (len(root), in_folders))
     if any(b['name'].startswith(job_prefix) for b in blobs):
         raise ValueError('%s/%s already exists: pick a new job id.' % (container, job_prefix))
     if not root:
@@ -209,6 +227,7 @@ def main(api):
     images_dir = os.path.join(work_dir, '00-request')
     os.makedirs(images_dir, exist_ok=False)
 
+    log('freezing %d media IDs (%s) into %s' % (len(ids), ', '.join(ids), images_dir))
     images, problems = {}, []
     for media_id in ids:
         b = by_id[media_id]
@@ -245,7 +264,11 @@ def main(api):
             'png_size': size,
             'path': os.path.abspath(path),
         }
+        log('froze %s.png: %dx%d, %s bytes, Content-MD5 %s' % (
+            media_id, size[0], size[1], format(len(data), ','), 'checked' if stored_md5 else 'not stored'))
     if problems:
+        for p in problems:
+            log(p, 'error')
         raise ValueError('Request not frozen: %s' % '; '.join(problems))
 
     doc = {
@@ -267,6 +290,7 @@ def main(api):
     with open(existing, 'x', encoding='utf-8') as fh:
         fh.write(text)
     digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    log('wrote %s (digest %s)' % (existing, digest))
     write_port(api, 'request', text)
 
     lines = ['# OneUX images: request (job %s)' % job, '',

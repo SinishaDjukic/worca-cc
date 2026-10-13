@@ -9,10 +9,19 @@ import datetime
 import hashlib
 import json
 import os
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 TARGET = 'https://prodoneuxpremium2.blob.core.windows.net'
 FRONTEND = 'https://www.bosch-diy.com'
+
+
+def log(message, level='info'):
+    """One live progress line. print() reaches the run log WHILE the step runs; api.log()
+    lines only travel on the result frame, and a frame that failed is never rendered - so
+    anything logged before a raise would be lost."""
+    print('[%s] %s' % (level, message), flush=True)
 
 
 def read_port(api, port):
@@ -85,6 +94,7 @@ def main(api):
     plan = load(work_dir, '11-write-plan.json', 'oneux-write-plan')
     request = load(work_dir, '00-request.json', 'oneux-request')
     if not plan['rows']:
+        log('nothing was planned, nothing to verify')
         write_port(api, 'job', json.dumps({'kind': 'oneux-verify', 'workDir': work_dir, 'checked': 0}))
         write_port(api, 'report', '# OneUX images: verify\n\nNothing was planned, nothing to verify.\n')
         return {'summary': 'Nothing to verify'}
@@ -97,16 +107,36 @@ def main(api):
     planned = {r['blob_path']: r for r in plan['rows']}
     out_of_scope = sorted(set(e['blob_path'] for e in events) - set(planned))
     wrong_account = sorted(set(e['blob_path'] for e in events if e.get('account') != TARGET))
+    if out_of_scope:
+        log('%d journal entries are outside the write plan' % len(out_of_scope), 'error')
+    if wrong_account:
+        log('%d journal entries name another account than %s' % (len(wrong_account), TARGET), 'error')
 
     from azure.identity import DefaultAzureCredential
     from azure.storage.blob import BlobServiceClient
     service = BlobServiceClient(TARGET, credential=DefaultAzureCredential())
+    threads = max(1, int(api.params.get('threads') or 8))
+    total = len(plan['rows'])
+    log('verifying %d planned paths against the journal, the live blobs and the backups, %d threads '
+        '(%d journal events read)' % (total, threads, len(events)))
+    # The pool is silent until the last row is back: count completions as they land.
+    done = {'n': 0}
+    lock = threading.Lock()
+    t0 = time.time()
 
     def one(row):
         mine = [e for e in events if e['blob_path'] == row['blob_path']]
-        return row, check(service, row, mine, backup[row['blob_path']])
+        problems = check(service, row, mine, backup[row['blob_path']])
+        with lock:
+            done['n'] += 1
+            if problems:
+                log('%s: %s' % (row['blob_path'], '; '.join(problems)), 'error')
+            if done['n'] % 25 == 0 or done['n'] == total:
+                elapsed = time.time() - t0
+                log('verified %d/%d (%.0f s elapsed, %.1f/s)' % (done['n'], total, elapsed, done['n'] / max(elapsed, 0.001)))
+        return row, problems
 
-    with ThreadPoolExecutor(max_workers=max(1, int(api.params.get('threads') or 8))) as pool:
+    with ThreadPoolExecutor(max_workers=threads) as pool:
         results = list(pool.map(one, plan['rows']))
     failed = [{'blob_path': r['blob_path'], 'problems': p} for r, p in results if p]
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')
@@ -124,10 +154,13 @@ def main(api):
             request['container']).get_blob_client(request['remoteJobPrefix'] + os.path.basename(path)).upload_blob(
             text.encode('utf-8'), overwrite=False, content_settings=ContentSettings(content_type='application/json'))
     except Exception as exc:
-        api.log('warn', 'Copy of the verification to the job folder failed: %s' % str(exc)[:200])
+        log('copy of the verification to the job folder failed: %s' % str(exc)[:200], 'warn')
     if failed or out_of_scope or wrong_account:
+        log('verification FAILED for %d of %d paths; details in %s' % (len(failed), len(results), path), 'error')
         raise RuntimeError('Verification failed for %d of %d paths (out of scope: %d, wrong account: %d). Details in %s. '
                            'First: %s' % (len(failed), len(results), len(out_of_scope), len(wrong_account), path, failed[:3]))
+    log('all %d replaced images verified independently in %.0f s; report %s'
+        % (len(results), time.time() - t0, path))
     write_port(api, 'job', text)
     write_port(api, 'report', '# OneUX images: verify\n\n- **%d of %d** replaced images verified independently: journal '
                               'complete, live ETag, Content-MD5, metadata, content type and full-byte SHA-256\n'

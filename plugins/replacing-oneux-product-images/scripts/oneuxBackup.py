@@ -10,8 +10,25 @@ import datetime
 import hashlib
 import json
 import os
+import time
 
 TARGET = 'https://prodoneuxpremium2.blob.core.windows.net'
+
+
+def log(message, level='info'):
+    """One live progress line. print() reaches the run log WHILE the step runs; api.log()
+    lines only travel on the result frame, and a frame that failed is never rendered - so
+    anything logged before a raise would be lost."""
+    print('[%s] %s' % (level, message), flush=True)
+
+
+def progress(label, done, total, t0, every=10):
+    """A progress line every `every` items and on the last one - a bulk loop is otherwise
+    silent for as long as it runs."""
+    if done % every and done != total:
+        return
+    elapsed = time.time() - t0
+    log('%s %d/%d (%.0f s elapsed, %.1f/s)' % (label, done, total, elapsed, done / max(elapsed, 0.001)))
 
 
 def read_port(api, port):
@@ -75,6 +92,7 @@ def main(api):
             text = fh.read()
         if json.loads(text).get('kind') != 'oneux-backup':
             raise ValueError('%s is not a backup index.' % out)
+        log('reusing the backup of this job; production is not read again')
         write_port(api, 'job', text)
         write_port(api, 'report', '# OneUX images: backup\n\nReused the backup of this job; production was not read again.\n')
         return {'summary': 'Reused backup'}
@@ -91,9 +109,12 @@ def main(api):
     prefix = request['remoteJobPrefix'] + 'backup/'
     root = os.path.join(work_dir, '10-backup')
     os.makedirs(root, exist_ok=False)
+    log('backing up %d byte-different production blobs before any write: local %s, remote %s/%s'
+        % (len(candidates), root, request['container'], prefix))
+    t0, saved = time.time(), 0
 
     entries = []
-    for r in candidates:
+    for index, r in enumerate(candidates, 1):
         locale, filename = r['Locale'], r['Filename']
         blob = target.get_container_client(locale).get_blob_client(filename)
         props = blob.get_blob_properties()
@@ -133,6 +154,8 @@ def main(api):
                         'size': props.size, 'sha256': sha, 'tag_count': tag_count, 'metadata': props.metadata,
                         'content_type': settings.content_type, 'local_path': os.path.abspath(local),
                         'remote_blob': remote_blob})
+        saved += len(data)
+        progress('backed up', index, len(candidates), t0)
 
     doc = {'version': 1, 'kind': 'oneux-backup', 'workDir': work_dir, 'job': request['job'], 'target': TARGET,
            'remote': {'account': request['account'], 'container': request['container'], 'prefix': prefix},
@@ -143,6 +166,11 @@ def main(api):
     with open(out, 'x', encoding='utf-8') as fh:
         fh.write(text)
     put_remote(remote, request['remoteJobPrefix'] + '10-backup-index.json', text.encode('utf-8'), 'application/json')
+    log('backed up %d blobs (%s MB) in %.0f s, each verified locally and remotely'
+        % (len(entries), format(saved // (1024 * 1024), ','), time.time() - t0))
+    if doc['counts']['unknownTagCount']:
+        log('index tag count not reported for %d blobs: unknown, not proof of no tags'
+            % doc['counts']['unknownTagCount'], 'warn')
     write_port(api, 'job', text)
     write_port(api, 'report', '# OneUX images: backup\n\n- %d production blobs backed up once, each verified\n'
                               '- Local: `%s`\n- Remote: `%s/%s/%s`\n- Index tag count unknown for %d blobs\n'

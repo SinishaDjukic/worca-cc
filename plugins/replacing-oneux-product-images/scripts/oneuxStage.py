@@ -7,8 +7,25 @@ import hashlib
 import json
 import os
 import re
+import time
 
 IMAGE_SHA256_CACHE = {}
+
+
+def log(message, level='info'):
+    """One live progress line. print() reaches the run log WHILE the step runs; api.log()
+    lines only travel on the result frame, and a frame that failed is never rendered - so
+    anything logged before a raise would be lost."""
+    print('[%s] %s' % (level, message), flush=True)
+
+
+def progress(label, done, total, t0, every=25):
+    """A progress line every `every` items and on the last one - a bulk loop is otherwise
+    silent for as long as it runs."""
+    if done % every and done != total:
+        return
+    elapsed = time.time() - t0
+    log('%s %d/%d (%.0f s elapsed, %.1f/s)' % (label, done, total, elapsed, done / max(elapsed, 0.001)))
 
 
 def sha256(path):
@@ -61,6 +78,7 @@ def reuse(api, path):
     doc = json.loads(text)
     if doc.get('kind') != 'oneux-staged':
         raise ValueError('%s is not a staging file.' % path)
+    log('reusing the staged tree of this job (%d copies)' % len(doc['rows']))
     write_port(api, 'staged', text)
     write_port(api, 'report', '# OneUX images: staged originals\n\nReused the staged tree (%d copies).\n' % len(doc['rows']))
     return {'summary': 'Reused staged tree: %d copies' % len(doc['rows'])}
@@ -82,8 +100,11 @@ def main(api):
     root = os.path.join(work_dir, '03-staged-originals')
     os.makedirs(root, exist_ok=False)
     staged, skipped_existing, missing_source, conflicts, out_rows = [], [], [], [], []
+    log('staging %d manifest rows into %s (each copy SHA-256-checked)' % (len(manifest['rows']), root))
+    t0 = time.time()
 
-    for row in manifest['rows']:
+    for index, row in enumerate(manifest['rows'], 1):
+        progress('staged', index, len(manifest['rows']), t0)
         src = row['local_image']
         if not os.path.isfile(src):
             missing_source.append(row['blob_path'])
@@ -118,6 +139,8 @@ def main(api):
         })
 
     if missing_source or conflicts or skipped_existing:
+        log('staging rejected: %d missing sources, %d conflicts, %d already present'
+            % (len(missing_source), len(conflicts), len(skipped_existing)), 'error')
         raise ValueError('Staging failed - missing source: %s; conflicts/failures: %s; duplicate paths: %s'
                          % (missing_source or 'none', conflicts or 'none', skipped_existing or 'none'))
     doc = {
@@ -136,6 +159,7 @@ def main(api):
     countries = {}
     for r in out_rows:
         countries.setdefault(country_from_locale(r['container']), set()).add(r['container'])
+    log('staged %d copies in %d countries in %.0f s' % (len(out_rows), len(countries), time.time() - t0))
     lines = ['# OneUX images: staged originals', '',
              '- Tree: `%s`' % os.path.abspath(root),
              '- %d copies, each SHA-256-checked against its ID-named source' % len(out_rows),
