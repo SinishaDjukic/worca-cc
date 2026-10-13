@@ -64,6 +64,11 @@ node --test test/toolchain-setup-*.test.mjs                  # the script suites
 The suites stub `mise`, `brew`, `winget`, `rustup` and `powershell` on a temporary PATH and HOME, so they install
 nothing and need no network. They are POSIX shell stubs: the suites skip on Windows.
 
+One manual check downloads for real, on macOS only: `npm run smoke:toolchain-bootstrap`. It hides Homebrew's mise
+with `sandbox-exec`, installs mise with the mise.run installer into a scratch HOME (about 20 MB), and resolves a version
+with it. Your own mise and HOME are not touched; `--keep` (via `node tools/smoke-toolchain-bootstrap.mjs --keep`)
+keeps the scratch folder.
+
 ## Developing it
 
 Your own scripts and agents win over a plugin's on a key clash, so remove local copies of the `toolchain*` scripts and
