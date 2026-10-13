@@ -1,0 +1,29 @@
+{
+  "metaVersion": 2,
+  "domain": "coding",
+  "key": "openspecSpecWriter",
+  "displayName": "OpenSpec: Delta specs",
+  "description": "Writes the change's delta specs (ADDED / MODIFIED / REMOVED / RENAMED requirements with scenarios).",
+  "color": "green",
+  "agentFile": "openspecSpecWriter.md",
+  "runnerType": "producer",
+  "sideEffect": "code",
+  "inputs": [
+    {
+      "id": "change",
+      "type": "md"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "change",
+      "type": "md",
+      "filename": "openspec-change-specs.md"
+    }
+  ],
+  "requiresSkills": [
+    "ospec-format",
+    "ospec-workspace"
+  ],
+  "order": 911
+}

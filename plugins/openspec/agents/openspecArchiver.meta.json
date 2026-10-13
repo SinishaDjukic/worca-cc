@@ -1,0 +1,30 @@
+{
+  "metaVersion": 2,
+  "domain": "coding",
+  "key": "openspecArchiver",
+  "displayName": "OpenSpec: Archive",
+  "description": "Merges the change's delta specs into openspec/specs/ and moves the change to openspec/changes/archive/.",
+  "color": "violet",
+  "agentFile": "openspecArchiver.md",
+  "runnerType": "producer",
+  "sideEffect": "code",
+  "inputs": [
+    {
+      "id": "change",
+      "type": "md"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "archived",
+      "type": "md",
+      "filename": "openspec-archive.md"
+    }
+  ],
+  "requiresSkills": [
+    "ospec-format",
+    "ospec-workspace",
+    "ospec-archive"
+  ],
+  "order": 917
+}

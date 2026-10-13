@@ -1,0 +1,49 @@
+{
+  "metaVersion": 2,
+  "domain": "coding",
+  "key": "openspecProposer",
+  "displayName": "OpenSpec: Propose",
+  "description": "Finds or creates openspec/, picks a change id and writes proposal.md (plus design.md when warranted).",
+  "color": "green",
+  "agentFile": "openspecProposer.md",
+  "runnerType": "producer",
+  "sideEffect": "code",
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md"
+    },
+    {
+      "id": "answers",
+      "type": "json",
+      "required": false,
+      "as": "answers"
+    },
+    {
+      "id": "revise",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "directive": "The change failed validation. Fix every critical and major finding in the review below that concerns proposal.md or design.md, and copy the findings about delta specs or tasks.md verbatim into the brief's \"Findings to address\" section."
+    },
+    {
+      "id": "feedback",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "directive": "A human asked for changes before apply. Rework the change to address every point in the approval review below, and copy the points about delta specs or tasks.md verbatim into the brief's \"Findings to address\" section."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "change",
+      "type": "md",
+      "filename": "openspec-change.md"
+    }
+  ],
+  "requiresSkills": [
+    "ospec-format",
+    "ospec-workspace"
+  ],
+  "order": 910
+}

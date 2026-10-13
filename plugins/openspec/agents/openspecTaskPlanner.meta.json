@@ -1,0 +1,29 @@
+{
+  "metaVersion": 2,
+  "domain": "coding",
+  "key": "openspecTaskPlanner",
+  "displayName": "OpenSpec: Tasks",
+  "description": "Writes tasks.md: numbered groups of checkbox tasks, each with how it is verified.",
+  "color": "green",
+  "agentFile": "openspecTaskPlanner.md",
+  "runnerType": "producer",
+  "sideEffect": "code",
+  "inputs": [
+    {
+      "id": "change",
+      "type": "md"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "change",
+      "type": "md",
+      "filename": "openspec-change-tasks.md"
+    }
+  ],
+  "requiresSkills": [
+    "ospec-format",
+    "ospec-workspace"
+  ],
+  "order": 912
+}

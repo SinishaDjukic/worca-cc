@@ -1,0 +1,37 @@
+{
+  "metaVersion": 2,
+  "domain": "coding",
+  "key": "openspecValidator",
+  "displayName": "OpenSpec: Validate change",
+  "description": "Validates the change folder (openspec validate --strict when the CLI is installed, the documented format otherwise). Blocking findings go back to the proposer.",
+  "color": "amber",
+  "agentFile": "openspecValidator.md",
+  "runnerType": "verifier",
+  "verdict": {
+    "filename": "openspec-validate-cycle{cycle}.json"
+  },
+  "inputs": [
+    {
+      "id": "change",
+      "type": "md"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "review",
+      "type": "md",
+      "when": "blocking",
+      "filename": "openspec-validation.md"
+    },
+    {
+      "id": "pass",
+      "type": "void",
+      "when": "clean"
+    }
+  ],
+  "requiresSkills": [
+    "ospec-format",
+    "ospec-workspace"
+  ],
+  "order": 913
+}

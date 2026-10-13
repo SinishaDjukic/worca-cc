@@ -1,0 +1,8 @@
+{
+  "name": "openspec",
+  "version": "0.1.0",
+  "description": "Run the OpenSpec spec-driven workflow (propose, apply, verify, archive) with worca agents, skills and pipeline templates",
+  "author": "Worca CC",
+  "license": "MIT",
+  "engines": { "worca-cc-api": ">=4 <5" }
+}

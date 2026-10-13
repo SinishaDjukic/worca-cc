@@ -1,0 +1,44 @@
+{
+  "metaVersion": 2,
+  "domain": "coding",
+  "key": "openspecVerifier",
+  "displayName": "OpenSpec: Verify",
+  "description": "Checks the implementation diff against the change's spec scenarios and tasks.md. Blocking findings loop back to the OpenSpec implementer.",
+  "color": "blue",
+  "agentFile": "openspecVerifier.md",
+  "runnerType": "verifier",
+  "verdict": {
+    "filename": "openspec-verify-cycle{cycle}.json"
+  },
+  "inputs": [
+    {
+      "id": "change",
+      "type": "md"
+    },
+    {
+      "id": "done",
+      "type": "void",
+      "required": false,
+      "as": "worktree"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "review",
+      "type": "md",
+      "when": "blocking",
+      "filename": "openspec-verify.md"
+    },
+    {
+      "id": "pass",
+      "type": "void",
+      "when": "clean"
+    }
+  ],
+  "requiresSkills": [
+    "ospec-format",
+    "ospec-workspace",
+    "ospec-verify"
+  ],
+  "order": 916
+}

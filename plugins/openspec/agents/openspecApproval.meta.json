@@ -1,0 +1,112 @@
+{
+  "metaVersion": 2,
+  "domain": "coding",
+  "key": "openspecApproval",
+  "displayName": "OpenSpec: Approve change",
+  "description": "Shows the validated change and asks a human to approve it before apply. Requested changes go back to the proposer.",
+  "color": "red",
+  "agentFile": "openspecApproval.md",
+  "runnerType": "verifier",
+  "verdict": {
+    "filename": "openspec-approval-cycle{cycle}.json"
+  },
+  "humanEffort": {
+    "hours": 0.25
+  },
+  "inputs": [
+    {
+      "id": "change",
+      "type": "md"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "review",
+      "type": "md",
+      "when": "blocking",
+      "filename": "openspec-approval.md"
+    },
+    {
+      "id": "pass",
+      "type": "void",
+      "when": "clean"
+    }
+  ],
+  "asksQuestions": true,
+  "questionsLocked": true,
+  "questionsDefault": true,
+  "ask": {
+    "forms": {
+      "approve-change": {
+        "version": 1,
+        "title": "Approve this OpenSpec change?",
+        "data": {
+          "type": "object",
+          "required": [
+            "changeId",
+            "summary"
+          ],
+          "properties": {
+            "changeId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "summary": {
+              "type": "string",
+              "maxLength": 8000
+            }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "required": [
+            "decision"
+          ],
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": [
+                "Approve and apply",
+                "Request changes"
+              ],
+              "default": "Approve and apply"
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 4000
+            }
+          }
+        },
+        "layout": [
+          {
+            "widget": "markdown",
+            "bind": "data.summary"
+          },
+          {
+            "widget": "select",
+            "field": "decision",
+            "label": "Decision",
+            "style": "segmented"
+          },
+          {
+            "widget": "textarea",
+            "field": "notes",
+            "label": "What should change?",
+            "rows": 5,
+            "when": {
+              "decision": "Request changes"
+            }
+          }
+        ],
+        "example": {
+          "changeId": "add-dark-mode",
+          "summary": "**add-dark-mode** adds a theme toggle.\n\n- New capability `ui-theme` (2 requirements, 4 scenarios)\n- 3 task groups, 9 tasks\n- `openspec validate add-dark-mode --strict`: passed"
+        }
+      }
+    }
+  },
+  "requiresSkills": [
+    "ospec-workspace"
+  ],
+  "order": 914
+}
