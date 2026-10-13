@@ -1,6 +1,6 @@
 {
   "name": "replacing-oneux-product-images",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Workflows shared from Worca — Replacing oneux product images",
   "engines": {
     "worca-cc-api": ">=4 <5"
