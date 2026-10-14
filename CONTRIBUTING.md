@@ -106,6 +106,13 @@ the relevant smoke script if you touched the engine, workspace, or plugin
 paths) locally before opening or updating a PR, and say so in the PR
 description.
 
+While you work, `npm run test:related` runs only the test files your
+uncommitted changes can affect (`-- --base origin/dev` for everything on your
+branch). It follows imports and the paths tests load by name, and falls back to
+the full suite when you change the runner, its config or `package.json`. It
+can't see every link, so run the full `npm test` once before you hand the
+change over.
+
 ### In a container
 
 The container image ([`docs/docker.md`](docs/docker.md)) is built from the
