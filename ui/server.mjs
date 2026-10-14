@@ -85,6 +85,7 @@ import { effectiveNightConfig, nightLayers } from '../src/core/night/effective.m
 import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.mjs';
 import { createAwayHoursWatch } from '../src/core/night/hours-watch.mjs';
 import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
+import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal } from '../src/core/run-overlay.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
 import { validatePinpointInput, runPinpoint, pinpointCwd } from '../src/core/pinpoint.mjs';
 import { effectiveHumanRateUsd } from '../src/core/human-rate.mjs';
@@ -2171,6 +2172,29 @@ const startRunHandler = async (req, res) => {
     if (engineShape.error) return badRequest(res, engineShape.error);
     const runEngine = engineShape.opts;
 
+    // Per-run agent picks (the Ask run card's lane; docs/models.md "Per-agent models for one run"): `overlay.nodes`
+    // merges PER NODE over the project's saved agent settings for THIS run only and never writes them. Checked here
+    // against the workflow's agent nodes and the catalog the run's engine runs (src/core/run-overlay.mjs — the
+    // propose_run validator's checks); a schedule stores the checked overlay and its ticket fires it verbatim.
+    let runOverlay = null;
+    if (body.overlay !== undefined && body.overlay !== null) {
+      const shape = parseRunOverlay(body.overlay);
+      if (shape.error) return badRequest(res, shape.error);
+      runOverlay = shape.overlay;
+    }
+    if (runOverlay) {
+      const refusal = overlayWorkflowRefusal(workflowRow, { scan: !!scanTarget });
+      if (refusal) return badRequest(res, refusal);
+      if (!internal) {
+        const checked = checkRunOverlay(runOverlay.nodes, {
+          workflow: workflowRow, engine: runEngine.engine || 'claude',
+          models: await listModels(hasWorkspace ? '' : (resolveProjectDir(body.projectDir) || '')),
+        });
+        if (checked.errors.length) return badRequest(res, checked.errors.join('; '));
+        runOverlay = { nodes: checked.nodes };
+      }
+    }
+
     // Budget gate: no new pipelines while the total window is spent (F6).
     const budget = budgetStatus();
     if (budget.blocked && !sched) {
@@ -2282,7 +2306,7 @@ const startRunHandler = async (req, res) => {
           const refusal = await probe.engineStartRefusal();
           if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
         }
-        return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
+        return res.status(202).json(await scheduleRequest({ body: runOverlay ? { ...body, overlay: runOverlay } : body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
       }
       const mcpOptOut = await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws));
 
@@ -2312,6 +2336,7 @@ const startRunHandler = async (req, res) => {
         workflowId,
         template: workflowRow,
         ...(scanTarget && scanTarget.models ? { scanModels: scanTarget.models } : {}),
+        ...(runOverlay ? { overlay: runOverlay } : {}),
         guardrailsId,
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
@@ -2403,7 +2428,9 @@ const startRunHandler = async (req, res) => {
         sched.afterRef = r.after;
       }
       // A schedule stores the pair as checked (the catalog's casing, trimmed): its ticket takes it verbatim.
-      const storedBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
+      const pairBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
+      // …and the overlay as checked (the catalog's casing, each model with its effort): the ticket fires it verbatim.
+      const storedBody = runOverlay ? { ...pairBody, overlay: runOverlay } : pairBody;
       if (sched) {
         // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
         if (runEngine.engine) {
@@ -2447,6 +2474,7 @@ const startRunHandler = async (req, res) => {
         sync,
         humanInLoop,
         ...(memoryScope ? { memoryScope } : {}),
+        ...(runOverlay ? { overlay: runOverlay } : {}),
         claude: {
           permissionMode: stored.permissionMode || 'acceptEdits',
           ...(startPair ? { model: startPair.model, ...(startPair.effort ? { effort: startPair.effort } : {}) } : (stored.model ? { model: stored.model } : {})),

@@ -27551,7 +27551,13 @@ function stepModelByNode(stepper, runEngine = 'claude') {
     if (!n || n.kind !== 'agent' || !n.id || typeof n.model !== 'string' || !n.model) continue;
     const entry = modelById(n.model);
     if (entry && !runsOn(entry, runEngine)) continue;
-    out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '' };
+    // A node that ran the model the run's own overlay set (the Ask run card's per-agent picks, manifest.runOverlay) says
+    // so on its pill — not when another model ran (a pinned Memory pair or the run's engine won), and never for an entry
+    // naming only fan-out or questions.
+    const ov = stepper.runOverlay && stepper.runOverlay.nodes && typeof stepper.runOverlay.nodes === 'object' && Object.hasOwn(stepper.runOverlay.nodes, n.id)
+      ? stepper.runOverlay.nodes[n.id] : null;
+    const perRun = !!(ov && typeof ov.model === 'string' && ov.model && typeof n.model === 'string' && ov.model.toLowerCase() === n.model.toLowerCase());
+    out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '', ...(perRun ? { perRun: true } : {}) };
   }
   return out;
 }
@@ -27565,8 +27571,10 @@ function stepModelPillHtml(sel) {
   const m = modelById(sel.model);
   // "· bridged" (model-bridge-design.md §8.6): the node ran through worca's own
   // bridge — the catalog knows, the manifest does not.
-  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '') + (m && m.bridged ? ' · bridged' : '');
-  return `<span class="sub-model-pill">${escapeHtml(text)}</span>`;
+  // " · this run": the model came from the run's own per-run picks (manifest.runOverlay) — said in the text, like
+  // " · bridged", because a title is hover-only (touch, keyboard and screen-reader users never get it).
+  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '') + (m && m.bridged ? ' · bridged' : '') + (sel.perRun ? ' · this run' : '');
+  return `<span class="sub-model-pill"${sel.perRun ? ' title="Picked for this run only"' : ''}>${escapeHtml(text)}</span>`;
 }
 
 // Neutral count badge for how many times an agent / sub-agent invoked the graphify

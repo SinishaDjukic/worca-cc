@@ -16,7 +16,7 @@ import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mj
 import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './ask-run-card.mjs';
 import { createCommandCard, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
-import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf } from './node-tunables.mjs';
+import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
@@ -2826,7 +2826,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const slotDefaults = defaults && defaults.steps && defaults.steps[engine] ? defaults.steps[engine] : null;
     const rows = buildNodeConfigRows(wf, registry, runConfig, { ...(workflowId === 'wf_default' ? { legacySteps: config.steps || {} } : {}),
       models: allModels, engine, ...(slotDefaults ? { slotDefaults } : {}) });
-    return { wf, registry, runConfig, rows, edits: {}, editable: !!projectDir, engine, defaultEngine,
+    // `editable`: every target edits the lane — the edits ride THIS run (`overlay`); only a project target can also save
+    // them as its defaults ("Save as project defaults", saveLaneEdits). `explicit`: a workspace card's rows are the
+    // built-in defaults, not the run's baseline (laneOverlay names its picks outright). `proposal` / `proposed` /
+    // `warnings`: Ask Worca's per-agent picks (card.nodes) once applyProposal lays them in as the lane's baseline.
+    return { wf, registry, runConfig, rows, edits: {}, editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
       models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
@@ -2842,15 +2846,110 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const c = laneEffective(lane, r);
       const k = c.model ? modelLabel(lane, c.model) : 'inherit';
       counts.set(k, (counts.get(k) || 0) + 1);
-      if (c.fanOut) fan++;
+      if (c.fanOut || fanForced(lane, r)) fan++;
     }
-    return `${lane.rows.length} agents · ${[...counts].map(([k, v]) => `${k} ×${v}`).join(' · ')}${fan ? ` · ${fan} fan-out` : ''}`;
+    const picked = laneProposedCount(lane);
+    return `${lane.rows.length} agents · ${[...counts].map(([k, v]) => `${k} ×${v}`).join(' · ')}${fan ? ` · ${fan} fan-out` : ''}${picked ? ` · ${picked} picked by Ask Worca` : ''}`;
   }
   function laneSet(lane, row, patch) {
     const next = { ...(lane.edits[row.nodeId] || {}), ...patch };
     for (const k of Object.keys(next)) if (next[k] === row[k]) delete next[k];   // back to the proposal = no edit
     if (Object.keys(next).length) lane.edits[row.nodeId] = next; else delete lane.edits[row.nodeId];
   }
+  // Ask Worca's per-agent picks (card.nodes) are the lane's BASELINE edits: "changed" means the user moved a row off
+  // them; with no proposal that is exactly "the row has an edit", as before.
+  const editKey = (e) => JSON.stringify(Object.keys(e || {}).sort().map((k) => [k, e[k]]));
+  const sameEdit = (a, b) => editKey(a) === editKey(b);
+  const cloneEdits = (edits) => Object.fromEntries(Object.entries(edits || {}).map(([id, e]) => [id, { ...e }]));
+  // `lane.dropped`: workspace picks the user set aside with "Use default" (a pick equal to the built-in row is no edit,
+  // so deleting the edit cannot drop it).
+  const laneDropped = (lane, row) => !!(lane.dropped && lane.dropped.has(row.nodeId));
+  const laneDiverged = (lane, row) => laneDropped(lane, row) || !sameEdit(lane.edits[row.nodeId], lane.proposal[row.nodeId]);
+  /** Ask Worca's pick for the row while it still stands — the row runs its model and effort, whatever else the user
+   *  changed there ({ model, effort, reason, facts }) — else null. */
+  const proposedPick = (lane, row) => {
+    if (!Object.hasOwn(lane.proposed, row.nodeId) || laneDropped(lane, row)) return null;
+    const p = lane.proposed[row.nodeId];
+    const c = laneEffective(lane, row);
+    return (c.model || '') === p.model && (c.effort || '') === p.effort ? p : null;
+  };
+  const laneProposedCount = (lane) => lane.rows.filter((r) => proposedPick(lane, r)).length;
+  /** The project's own setting for a row, as the lane shows it: "Opus 5.5 · high", "inherit". */
+  const projectPick = (lane, row) => `${row.model ? modelLabel(lane, row.model) : 'inherit'}${row.model && row.effort ? ` · ${row.effort}` : ''}`;
+  /** Lay Ask Worca's picks in as the lane's baseline: each healed to the run's engine first (healForEngine — another
+   *  engine's model is dropped and the row keeps the project's setting) and dropped when this catalog lacks it; a row
+   *  Settings › Memory pins keeps its pin. `lane.proposal` is what "Reset to proposal" restores. */
+  function applyProposal(lane, nodes) {
+    lane.edits = {};
+    lane.proposed = {};
+    lane.dropped = new Set();
+    const picks = nodes && typeof nodes === 'object' && !Array.isArray(nodes) ? nodes : {};
+    for (const row of lane.rows) {
+      const p = Object.hasOwn(picks, row.nodeId) ? picks[row.nodeId] : null;
+      if (!p || typeof p !== 'object' || typeof p.model !== 'string' || !p.model || row.pinned) continue;
+      const effort = typeof p.effort === 'string' ? p.effort : '';
+      const healed = healForEngine({ def: { model: row.model, effort: row.effort }, override: { model: p.model, effort }, model: p.model, effort },
+        { models: lane.allModels, engine: lane.engine });
+      if (healed.enginePair) continue;                       // a model this run's engine cannot run
+      const hit = lane.models.find((m) => typeof m.id === 'string' && m.id.toLowerCase() === p.model.toLowerCase());
+      if (!hit) continue;                                    // left the catalog since the proposal
+      const patch = { model: hit.id, effort: (hit.efforts || []).includes(effort) ? effort : '' };
+      if (lane.engine === 'claude' && typeof p.subagentModel === 'string' && lane.subagentModels.includes(p.subagentModel)) patch.subagentModel = p.subagentModel;
+      laneSet(lane, row, patch);
+      lane.proposed[row.nodeId] = { model: patch.model, effort: patch.effort, reason: typeof p.reason === 'string' ? p.reason : '', facts: typeof p.facts === 'string' ? p.facts : '' };
+    }
+    lane.proposal = cloneEdits(lane.edits);
+  }
+  /** The lane rows that differ from the project's settings, as POST /api/run's `overlay.nodes` (src/core/run-overlay.mjs):
+   *  { nodes } or { error }. A model always travels with its effort ('' = the model's default). An overlay names
+   *  values and never clears one, so "inherit" over the project's own pick falls back to the workflow default when
+   *  there is one, else needs "Save as project defaults"; "subs: default" rides as `auto`, what an unset node runs
+   *  (model-env.mjs SUBAGENT_DEFAULT). A workspace card's rows are the built-in defaults, not this run's baseline (the
+   *  run merges over its primary member's own settings, which the card never loads): there a standing pick and an
+   *  edited model are named outright, even when they equal the row (`lane.explicit`). */
+  function laneOverlay(lane) {
+    const nodes = {};
+    for (const row of lane.rows) {
+      const ed = lane.edits[row.nodeId];
+      const c = laneEffective(lane, row);
+      // A workspace card names a pick whose model is still on the row (whatever else the user changed there) and any
+      // edited model or effort outright.
+      const pp = lane.explicit && Object.hasOwn(lane.proposed, row.nodeId) && !laneDropped(lane, row) ? lane.proposed[row.nodeId] : null;
+      const named = !!lane.explicit && ((!!pp && (c.model || '') === pp.model) || (!!ed && ('model' in ed || 'effort' in ed)));
+      if (!ed && !named) continue;
+      const e = {};
+      if (named || (c.model || '') !== (row.model || '') || (c.effort || '') !== (row.effort || '')) {
+        const pair = c.model ? { model: c.model, effort: c.effort || '' } : (row.def.model ? { model: row.def.model, effort: row.def.effort || '' } : null);
+        if (!pair && !lane.explicit) return { error: `${row.label}: "inherit" over this project's own model only works as a project default — turn on "Save as project defaults", or pick a model` };
+        if (pair) Object.assign(e, pair);
+      }
+      if (!!c.fanOut !== !!row.fanOut) e.fanOut = !!c.fanOut;
+      if (row.askQuestions !== null && !row.questionsLocked && !!c.askQuestions !== !!row.askQuestions) e.askQuestions = !!c.askQuestions;
+      if ((c.subagentModel || '') !== (row.subagentModel || '')) e.subagentModel = c.subagentModel || row.def.subagentModel || 'auto';
+      if (Object.keys(e).length) nodes[row.nodeId] = e;
+    }
+    return { nodes };
+  }
+  /** Ask Worca's picks as proposed (card.nodes), for a Start whose lane has not loaded (still loading, or it could
+   *  not): { nodes } or null. POST /api/run checks them again (catalog, efforts, the run's engine). */
+  function proposalOverlay(card, workflowId) {
+    const picks = card && card.workflowId === workflowId && card.nodes && typeof card.nodes === 'object' && !Array.isArray(card.nodes) ? card.nodes : {};
+    const nodes = {};
+    for (const [id, p] of Object.entries(picks)) {
+      if (!p || typeof p !== 'object' || typeof p.model !== 'string' || !p.model) continue;
+      nodes[id] = { model: p.model, effort: typeof p.effort === 'string' ? p.effort : '',
+        ...(typeof p.subagentModel === 'string' && p.subagentModel ? { subagentModel: p.subagentModel } : {}) };
+    }
+    return Object.keys(nodes).length ? { nodes } : null;
+  }
+  /** Ask Worca's picks this card would run with that are no lane edits, so lanePending misses them: the proposal while
+   *  the lane is not loaded, or picks standing on a workspace lane (they equal its built-in rows). Open in New run asks
+   *  before leaving them behind. */
+  const picksPending = (local, card) => (local.lane
+    ? !!local.lane.explicit && laneProposedCount(local.lane) > 0
+    : !!proposalOverlay(card || {}, local.workflowId()));
+  /** A workspace run fans out every agent whose meta says workspaceFanOut (workflows.mjs), whatever the lane says. */
+  const fanForced = (lane, row) => !!lane.workspace && !!(lane.registry && lane.registry[row.key] && lane.registry[row.key].workspaceFanOut === true);
   /** D1: persist every edited row through the New Pipeline writers' bodies (app.js saveStep / saveNode), pruned to
    *  inherit. Returns an error line or null. Nothing is written for a workspace target or an unloaded lane. */
   async function saveLaneEdits(local) {
@@ -2928,18 +3027,38 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       lc.summary.textContent = '';
       return;
     }
-    const edited = laneEditedRows(lane).length;
+    // "changed" = rows the user moved off the proposal (Ask Worca's picks are the baseline, not the user's edits).
+    const edited = lane.rows.filter((r) => laneDiverged(lane, r)).length;
+    const picked = laneProposedCount(lane);
     const over = laneOverrideCount(lane);
+    const overText = `${over} override${over === 1 ? '' : 's'} of the workflow defaults`;
     sub.textContent = edited
-      ? `you changed ${edited} agent${edited > 1 ? 's' : ''} · ${over} override${over === 1 ? '' : 's'} of the workflow defaults`
-      : `proposed by Worca · ${over} override${over === 1 ? '' : 's'} of the workflow defaults`;
+      ? `you changed ${edited} agent${edited > 1 ? 's' : ''} · ${overText}`
+      : picked ? `Ask Worca picked ${picked} agent${picked > 1 ? 's' : ''} for this run · ${overText}`
+        : `proposed by Worca · ${overText}`;
     reset.hidden = !edited;
-    reset.addEventListener('click', () => { lane.edits = {}; renderLane(laneSec, lane, lc); });
+    reset.addEventListener('click', () => { lane.edits = cloneEdits(lane.proposal); if (lane.dropped) lane.dropped.clear(); renderLane(laneSec, lane, lc); });
+    // The lane shows at every mode while Ask Worca's picks are laid in (data-level-keep, set when the card is built);
+    // healed away on another engine, or on another workflow, it is Expert-only again — and the team policy's word on
+    // the picks (card.warnings, soft: the run still starts) goes with them.
+    const laid = Object.keys(lane.proposed || {}).length;
+    if (laid) laneSec.dataset.levelKeep = '1'; else delete laneSec.dataset.levelKeep;
+    // Each warning names the off-policy model (policy/effective.mjs deviationsFor): it stays while this card's picks or
+    // edits carry it (what the run sends and records, overlayStepModels) — an agent on the project's own setting is not
+    // this card's pick, whatever model it runs.
+    const ov = laneOverlay(lane);
+    // laneOverlay errors (an "inherit" over the project's own model): the rows whose edit carries a model — its pair rule.
+    const carried = ov.nodes ? Object.values(ov.nodes).map((e) => e.model)
+      : lane.rows.filter((r) => { const ed = lane.edits[r.nodeId]; return !!ed && ('model' in ed || 'effort' in ed); }).map((r) => laneEffective(lane, r).model);
+    const running = new Set(carried.map((m) => (m || '').toLowerCase()).filter(Boolean));
+    const holds = (w) => String(w).split(/\s+/).some((t) => running.has(t.toLowerCase()));
+    if (laid) for (const w of (lane.warnings || []).filter(holds)) laneSec.appendChild(make('div', 'ask-card-task-warn ask-rp-lane-warn', w));
     const box = make('div', 'ask-rp-agents');
     const opt = (v, t) => { const o = doc.createElement('option'); o.value = v; o.textContent = t; return o; };
     lane.rows.forEach((row, i) => {
       const c = laneEffective(lane, row);
-      const changed = !!lane.edits[row.nodeId];
+      const changed = laneDiverged(lane, row);
+      const pick = proposedPick(lane, row);
       const tile = make('div', `ask-rp-tile${changed ? ' mod' : ''}`);
       tile.dataset.nodeId = row.nodeId;
       const l1 = make('div', 'ask-rp-tile-l1');
@@ -2948,8 +3067,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       name.appendChild(make('b', null, row.label));
       const small = make('small');
       // "step N" = position in the lane (launch order); row.stepIndex ranks the task card as 0.
-      if (changed) { small.appendChild(make('span', 'ask-rp-m', 'edited')); small.appendChild(doc.createTextNode(` · step ${i + 1}`)); }
-      else small.textContent = `step ${i + 1} · ${row.pinned ? 'model from Settings › Memory' : row.modified ? 'project override' : 'workflow default'}`;
+      if (pick) {
+        // Ask Worca's pick: its reason (and the model's facts) on hover and to assistive tech, the project's own setting
+        // beside it (a workspace card shows the workflow default: agent settings are per project). `role="note"`: a
+        // generic span may not carry aria-label (ARIA 1.2), so a screen reader would skip the reason.
+        const mark = make('span', 'ask-rp-prop', 'Ask Worca');
+        mark.title = ['Proposed by Ask Worca for this run', pick.reason, pick.facts].filter(Boolean).join(' — ');
+        mark.tabIndex = 0;
+        mark.setAttribute('role', 'note');
+        mark.setAttribute('aria-label', mark.title);
+        // The project's own setting is the point of this caption: it wraps instead of ellipsizing (a narrow column).
+        small.classList.add('ask-rp-pickcap');
+        small.appendChild(mark);
+        small.appendChild(doc.createTextNode(` · step ${i + 1} · ${lane.explicit ? 'default' : 'project'}: ${projectPick(lane, row)}`));
+        if (changed) { small.appendChild(doc.createTextNode(' · ')); small.appendChild(make('span', 'ask-rp-m', 'edited')); }
+      } else if (changed) {
+        small.appendChild(make('span', 'ask-rp-m', lane.edits[row.nodeId] ? 'edited' : lane.explicit ? 'default' : 'project default'));
+        small.appendChild(doc.createTextNode(` · step ${i + 1}`));
+      } else small.textContent = `step ${i + 1} · ${row.pinned ? 'model from Settings › Memory' : row.modified ? 'project override' : 'workflow default'}`;
       name.appendChild(small);
       l1.appendChild(name);
       // model
@@ -2988,7 +3123,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       tile.appendChild(l1);
       // line 2
       const l2 = make('div', 'ask-rp-tile-l2');
-      l2.appendChild(rpSwitch('fanOut', 'fan-out', c.fanOut, false, (v) => { laneSet(lane, row, { fanOut: v }); renderLane(laneSec, lane, lc); }, lane.editable));
+      // A workspace run fans this agent out over its projects whatever the switch says (workflows.mjs workspaceFanOut):
+      // it shows on and locked, as on Auto's proposal panel.
+      const forced = fanForced(lane, row);
+      const fan = rpSwitch('fanOut', 'fan-out', forced || c.fanOut, forced, (v) => { laneSet(lane, row, { fanOut: v }); renderLane(laneSec, lane, lc); }, lane.editable);
+      if (forced) fan.title = 'A workspace run fans this agent out over its projects';
+      l2.appendChild(fan);
       const subWrap = make('label', 'ask-rp-ctl');
       subWrap.appendChild(make('span', null, 'sub-agents'));
       const subSel = rpSelect('ask-rp-subagent', `Sub-agent model for ${row.label}`);
@@ -3003,13 +3143,35 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (row.askQuestions !== null) {
         l2.appendChild(rpSwitch('questions', 'questions', c.askQuestions, row.questionsLocked, (v) => { laneSet(lane, row, { askQuestions: v }); renderLane(laneSec, lane, lc); }, lane.editable));
       }
+      // Back to the project's own setting for this agent (the proposal's pick or the user's edit dropped).
+      // A workspace pick equal to the built-in row is no edit but still rides (laneOverlay names it): it can be dropped too.
+      if (lane.edits[row.nodeId] || (lane.explicit && pick)) {
+        const back = make('button', 'ask-rp-mini ask-rp-row-reset', lane.explicit ? 'Use default' : 'Use project default');
+        back.type = 'button';
+        back.title = lane.explicit ? 'This agent runs without a pick for this run' : `This agent runs on the project's setting: ${projectPick(lane, row)}`;
+        back.addEventListener('click', () => {
+          delete lane.edits[row.nodeId];
+          if (lane.explicit && Object.hasOwn(lane.proposed, row.nodeId)) lane.dropped.add(row.nodeId);
+          renderLane(laneSec, lane, lc);
+        });
+        l2.appendChild(back);
+      }
       tile.appendChild(l2);
       box.appendChild(tile);
     });
+    // A per-run lane: changes (and Ask Worca's picks) apply to THIS run only, unless the user saves them as the
+    // project's defaults — a project target only (agent defaults are per project).
     const foot = make('div', 'ask-rp-agents-foot');
-    foot.textContent = !lane.editable
-      ? 'Agent settings are per project — pick a project target to edit them.'
-      : edited ? `Edits become this project's defaults for ${lane.wf.name || lc.workflowId()}` : 'Everything at the workflow default';
+    const projectDir = lc.projectDir();
+    const saving = !!projectDir && lc.saveDefaults();
+    const pending = laneEditedRows(lane).length > 0;
+    foot.appendChild(make('span', 'ask-rp-foot-text', !projectDir
+      ? 'Changes apply to this run only — agent defaults are per project.'
+      : saving ? `Edits become this project's defaults for ${lane.wf.name || lc.workflowId()}`
+        : pending ? 'Changes apply to this run only' : "Runs on this project's agent settings"));
+    const save = rpSwitch('saveDefaults', 'save as project defaults', saving, false, (v) => { lc.setSaveDefaults(v); renderLane(laneSec, lane, lc); }, !!projectDir);
+    if (!projectDir) save.title = 'Agent defaults are per project — pick a project target to save them';
+    foot.appendChild(save);
     box.appendChild(foot);
     laneSec.appendChild(box);
     lc.summary.textContent = laneSummary(lane);
@@ -3952,6 +4114,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // agents lane (reloadLane → renderLane fills laneSec)
     const laneSec = make('div', 'ask-rp-sec ask-rp-lane');
     laneSec.dataset.minLevel = 'expert';
+    // Ask Worca's per-agent picks apply at Start: the lane that shows them stays on screen at any mode.
+    if (card.nodes && typeof card.nodes === 'object' && Object.keys(card.nodes).length) laneSec.dataset.levelKeep = '1';
     rootEl.appendChild(laneSec);
 
     const briefSec = make('div', 'ask-rp-sec ask-rp-brief-host');
@@ -4220,7 +4384,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     // A reload (workflow / project / target change) rebuilds the lane from scratch:
     // `edits` are per workflow-and-project and are DISCARDED, silently.
-    const laneCtx = { summary, workflowId: () => local.workflowId() };
+    // `saveDefaults`: the card's "Save as project defaults" switch (off by default), kept across lane reloads.
+    const laneCtx = { summary, workflowId: () => local.workflowId(), projectDir: () => local.projectDir(),
+      saveDefaults: () => !!local.saveDefaults, setSaveDefaults: (v) => { local.saveDefaults = !!v; } };
     let laneSeq = 0;
     function reloadLane() {
       const seq = ++laneSeq;
@@ -4234,15 +4400,35 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         return;
       }
       renderLane(laneSec, null, laneCtx, 'Loading agent settings…');
-      loadLane(workflowId, projectDir, local.engine()).then((lane) => {
+      // Kept so a Start during the load waits for it (startCard): the loaded lane heals Ask Worca's picks to the engine.
+      local.lanePending = loadLane(workflowId, projectDir, local.engine()).then((lane) => {
         if (st.destroyed || seq !== laneSeq) return;            // a later reload won
         local.lane = lane;
+        // A workspace run fans out every workspaceFanOut agent (fanForced): the lane locks that switch there.
+        if (lane) lane.workspace = local.target === 'workspace';
+        // Ask Worca's per-agent picks are for the workflow it proposed: laid in again on every reload of it (another
+        // engine heals them away, another project keeps them over its own settings); any other workflow starts clean.
+        if (lane && workflowId === card.workflowId) {
+          applyProposal(lane, card.nodes);
+          // The team-policy word was checked for the proposed target's policy: another project or target has its own.
+          const proposedTarget = local.target === (card.target === 'workspace' ? 'workspace' : 'project') && projectDir === (card.projectDir || '');
+          lane.warnings = proposedTarget && Array.isArray(card.warnings) ? card.warnings.filter((w) => typeof w === 'string') : [];
+        }
         if (lane) {
           engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
           for (const o of engineSel.options) o.hidden = o.value !== '' && o.value === lane.defaultEngine && engineSel.value !== o.value;   // listed once
         }
         wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
         renderLane(laneSec, lane, laneCtx);
+        // A lane that could not load: a Start sends Ask Worca's picks as proposed (proposalOverlay), so it shows at every
+        // mode and names them (the rows that would show them are gone). Without picks for this workflow nothing on it
+        // applies at Start: Expert-only again (renderLane(null) leaves the mark as it was).
+        const unseen = lane ? null : proposalOverlay(card, workflowId);
+        if (unseen) {
+          laneSec.dataset.levelKeep = '1';
+          const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${p.subagentModel}` : ''}`);
+          laneSec.appendChild(make('div', 'ask-rp-lane-msg', `Start runs Ask Worca's picks as proposed (checked again at Start): ${list.join(', ')}`));
+        } else if (!lane) delete laneSec.dataset.levelKeep;
       });
     }
     local.reloadLane = reloadLane;   // after a successful save the lane re-reads the persisted config
@@ -4339,9 +4525,27 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // D3: read-only, so it runs BEFORE saveLaneEdits — a refusal here must not leave the config already written.
       const ex = await collectCardExtras(local);
       if (ex.error) { err.textContent = ex.error; return; }
-      const saveErr = await saveLaneEdits(local);            // the previous phase's guard, now second
-      if (saveErr) { err.textContent = saveErr; return; }
+      // The lane's agent picks: with "Save as project defaults" on they become the project's settings first (D1,
+      // saveLaneEdits); otherwise they ride THIS run's body as `overlay` and nothing is written (run-overlay.mjs). A lane
+      // still loading (an engine or workflow switch a moment ago) is waited for: it heals the picks to the run's engine
+      // (the target inputs are frozen, so no newer reload starts meanwhile). One that could not load sends Ask Worca's
+      // picks as proposed — POST /api/run checks them — so they are never dropped without a word.
+      let overlay = null;
+      if (!local.lane && local.lanePending) {
+        try { await local.lanePending; } catch { /* it could not load: the picks ride as proposed */ }
+        if (st.destroyed) return;
+      }
+      if (!local.lane) overlay = proposalOverlay(block.card || {}, local.workflowId());
+      else if (local.saveDefaults && local.projectDir()) {
+        const saveErr = await saveLaneEdits(local);            // the previous phase's guard, now second
+        if (saveErr) { err.textContent = saveErr; return; }
+      } else {
+        const ov = laneOverlay(local.lane);
+        if (ov.error) { err.textContent = ov.error; return; }
+        if (Object.keys(ov.nodes).length) overlay = { nodes: ov.nodes };
+      }
       const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
+      if (overlay) body.overlay = overlay;
       // Run chains: "the branch of the run before it" is a flag, and the wire refuses it next to a branch name.
       // Keyed off the schedule being POSTED — a Start now on an after-proposal carries none and keeps the picked branch.
       if (body.sourceFromPrevious) { delete body.sourceBranch; delete body.sourceBranchByKey; }
@@ -4444,7 +4648,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       p.sourceBranch = src ? src.value : '';
     }
     // Nothing to save or fetch → hand over synchronously (the caller may not await).
-    const pending = cardPending(local);
+    // Ask Worca's picks count as well, edits or not: New run cannot carry them (picksPending).
+    const pending = cardPending(local) || picksPending(local, card);
     if (!pending) { openNewPipeline(p); return; }
     const err = rootEl.querySelector('.ask-card-err');
     if (err) err.textContent = '';
@@ -4455,6 +4660,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     collectCardExtras(local).then(async (ex) => {
       if (st.destroyed) return;
       if (ex.error) { if (err) err.textContent = ex.error; return; }
+      // A lane still loading is waited for, as Start does: "Save as project defaults" saves the loaded lane. One that
+      // could not load has nothing to save, so the picks would stay behind even with the switch on.
+      if (!local.lane && local.lanePending) {
+        try { await local.lanePending; } catch { /* asks below */ }
+        if (st.destroyed) return;
+      }
+      const saving = !!(local.saveDefaults && local.projectDir() && local.lane);
+      // New run has no per-run agent picks: without "Save as project defaults" the lane's picks stay on this card.
+      if ((lanePending(local) || picksPending(local, card)) && !saving) {
+        const ok = typeof confirm !== 'function' || await confirm({
+          title: 'Open New run without the agent picks?',
+          message: local.projectDir() && local.saveDefaults
+            ? 'New run starts from the project\'s saved agent settings, and this card\'s agent settings could not load to be saved, so the models picked on this card do not come along. Start the run from the card to use them.'
+            : local.projectDir()
+            ? 'New run starts from the project\'s saved agent settings, so the models picked on this card do not come along. Start the run from the card to use them, or turn on "Save as project defaults" first.'
+            : 'New run starts from each project\'s saved agent settings, so the models picked on this card do not come along. Start the run from the card to use them.',
+          confirmLabel: 'Open New run',
+        });
+        if (st.destroyed || !ok) return;
+        if (ex.extras.length) p.extras = ex.extras;
+        openNewPipeline(p);
+        return;
+      }
       const saveErr = await saveLaneEdits(local);
       if (st.destroyed) return;
       if (saveErr) { if (err) err.textContent = saveErr; return; }
