@@ -22,6 +22,10 @@ under `~/.worca-cc/mcp/` ([storage.md](storage.md)). A set holds skills as well 
   General, and a workspace run includes it when any member does. A project with no sets, General
   off and no team policy requiring MCP servers gets no registry servers ("No MCP servers in runs on
   this project").
+- The project's **Sets** tab also lists the servers of the repository's own `.mcp.json`, when it has
+  any. Claude runs ask about them in Claude Code; a Codex, Copilot or Cursor run attaches only the
+  approved ones ([models.md](models.md)). **Approve** names a server in the project's untracked
+  `.claude/settings.local.json`; when git tracks that file, approve it in `~/.claude/settings.json`.
 - Different credentials per project ⇒ different sets: **Duplicate** a set (the copy starts with
   the same members, values and secrets), replace what differs, assign it. Duplicating a Team set
   gives an ordinary set with the same members, values and secrets.

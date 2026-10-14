@@ -801,7 +801,7 @@ test('mcpjsonApproval: the committed .claude/settings.json (and a tracked settin
   // A settings.local.json the repository tracks is the repository's too.
   const tracked = await committedMcpMember({ local: { enabledMcpjsonServers: ['a'] } });
   execFileSync('git', ['init', '-q'], { cwd: tracked.member.projectDir });
-  execFileSync('git', ['add', '.claude/settings.local.json'], { cwd: tracked.member.projectDir });
+  execFileSync('git', ['add', '-f', '.claude/settings.local.json'], { cwd: tracked.member.projectDir });   // -f: a global gitignore may list it
   assert.equal((await mcpjsonApproval(tracked.member.projectDir, tracked.home, undefined, NO_MANAGED))('a'), 'unapproved', 'tracked: no approval');
   execFileSync('git', ['rm', '-q', '--cached', '.claude/settings.local.json'], { cwd: tracked.member.projectDir });
   assert.equal((await mcpjsonApproval(tracked.member.projectDir, tracked.home, undefined, NO_MANAGED))('a'), 'approved', 'untracked in a repository: approves');
@@ -810,6 +810,22 @@ test('mcpjsonApproval: the committed .claude/settings.json (and a tracked settin
   const managed = join(managedDir, 'managed-settings.json');
   await writeFile(managed, JSON.stringify({ enabledMcpjsonServers: ['c'] }), 'utf8');
   assert.equal((await mcpjsonApproval(repo.member.projectDir, repo.home, undefined, { managed: [managed] }))('c'), 'approved');
+});
+
+test('mcpjsonApproval: Claude Code\'s own answers in ~/.claude.json projects[<projectDir>] approve and disable', async () => {
+  const { member, home } = await committedMcpMember({});
+  const other = await emptyDir();
+  await writeFile(join(home, '.claude.json'), JSON.stringify({
+    mcpServers: { userOnly: { command: 'x' } },
+    projects: {
+      [member.projectDir]: { enabledMcpjsonServers: ['a', 'b'], disabledMcpjsonServers: ['b'] },
+      [other]: { enabledMcpjsonServers: ['c'] },
+    },
+  }), 'utf8');
+  const v = await mcpjsonApproval(member.projectDir, home, undefined, { managed: [] });
+  assert.equal(v('a'), 'approved', 'approved at Claude Code\'s prompt');
+  assert.equal(v('b'), 'disabled', 'declined at the prompt');
+  assert.equal(v('c'), 'unapproved', 'another project\'s answer does not count');
 });
 
 test('mcpjsonApproval: lists add up across the layers, disabled wins, absent files are silent', async () => {
