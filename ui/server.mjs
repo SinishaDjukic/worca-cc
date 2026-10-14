@@ -51,7 +51,9 @@ import {
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
-import { renderIndexHtml, INDEX_THEME_ANCHOR } from '../src/core/index-html.mjs';
+import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
+import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError } from '../src/core/flags.mjs';
+import { createKeepAwake, countWorking } from '../src/core/keep-awake.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
   rawProjectsRoot, defaultProjectsRoot, runRootMode, getProjectsRoot,
@@ -549,6 +551,15 @@ const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
 const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
 // local | container | hosted (src/core/deployment.mjs): what Ask Worca is told about where it runs.
 const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
+// Experimental keepAwake flag (docs/feature-flags.md): one OS child holds off idle system sleep while
+// any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it wherever a
+// run's status or pendingQuestion changes, and when the flag flips.
+const keepAwake = createKeepAwake({ deployment: DEPLOYMENT, log: (line) => console.warn(line) });
+const KEEP_AWAKE_EVENTS = new Set(['question', 'night-decision', 'done', 'error', 'exec', 'state']);
+function syncKeepAwake() {
+  try { keepAwake.update(flagEnabled('keepAwake') ? countWorking(runs.values()) : 0); }
+  catch (err) { console.error(`[worca-ui] keep-awake update failed: ${err && err.message ? err.message : err}`); }
+}
 const SEEN_SIGN_INS = new Set();
 const SIGN_IN_HINT = REMOTE_ACCESS.identity?.provider === 'issuer'
   ? 'unauthorized: sign in through the identity proxy (your sign-in has expired or is missing)'
@@ -797,7 +808,7 @@ wss.on('connection', (ws, req) => {
   }
   const id = requestedRunId || requestedGenId || requestedBenchId || requestedInstanceId;
 
-  send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), runs: summarizeRuns(), ask: askHello(ws),
+  send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), flags: allFlags(), runs: summarizeRuns(), ask: askHello(ws),
     extensionPairs: REMOTE_MODE ? [] : extensionPairing.pendingPublic() });
 
   if (id && runs.has(id)) {
@@ -939,6 +950,8 @@ function emitChanged(type, action) {
 metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.action ? e.action : null));
 policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.action ? e.action : null));
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
+// D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
+flagEvents.on('changed', (flags) => { broadcast({ type: 'flags', flags }); syncKeepAwake(); });
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -993,6 +1006,7 @@ function resolvePending(entry, { id = null, reason = 'resolved' } = {}) {
   if (!pq || (id && pq.id !== id)) return false;
   entry.pendingQuestion = null;
   broadcast(bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason }));
+  syncKeepAwake();
   return true;
 }
 
@@ -1250,8 +1264,12 @@ function wireRun(entry) {
       }
 
       record(event);
+      // Only the events that can change status or pendingQuestion; log/token frames are far too
+      // frequent for a flag check (it reads settings.json synchronously).
+      if (KEEP_AWAKE_EVENTS.has(name)) syncKeepAwake();
     });
   }
+  syncKeepAwake();
 }
 
 // ---------------------------------------------------------------------------
@@ -1675,12 +1693,14 @@ async function pinUiLevel() {
   if (!storedUiLevel()) await setUiLevel(effectiveUiLevel());
 }
 const INDEX_FILE = path.join(PUBLIC_DIR, 'index.html');
-if (!fs.readFileSync(INDEX_FILE, 'utf8').includes(INDEX_THEME_ANCHOR)) {
-  throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
+{
+  const shell = fs.readFileSync(INDEX_FILE, 'utf8');
+  if (!shell.includes(INDEX_THEME_ANCHOR)) throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
+  if (!shell.includes(FLAG_GATES_ANCHOR)) throw new Error(`ui/public/index.html lost its flag-gates anchor ${FLAG_GATES_ANCHOR}`);
 }
 function sendIndex(res) {
   let html;
-  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme(), effectiveUiLevel()); }
+  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme(), effectiveUiLevel(), allFlags()); }
   catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');
@@ -2627,6 +2647,7 @@ const startRunHandler = async (req, res) => {
       const stillOwn = internal && still && still.block.state === 'scheduled' && still.block.runId === runId;
       if (!still || (still.block.state !== 'proposed' && !stillOwn)) {
         runs.delete(runId);
+        syncKeepAwake();
         return res.status(409).json({ error: `card is no longer proposed (${still ? still.block.state : 'gone'})` });
       }
       try {
@@ -2671,6 +2692,7 @@ const startRunHandler = async (req, res) => {
         entry.status = 'error';
         entry.events.push(event);
         broadcast(event);
+        syncKeepAwake();
       })
       // #620: the harness's post-run base check landed after the run's last frame; History re-reads it.
       .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });
@@ -3879,6 +3901,7 @@ async function stopRun(runId, by = 'local') {
   entry.status = 'stopped';
   if (entry.pipelineId) cancelScheduledResumes(entry.pipelineId, { by, reason: `the run was stopped${byActor(by || 'local')}` });
   resolvePending(entry, { reason: 'stopped' });
+  syncKeepAwake();
   return { ok: true };
 }
 function pauseRun(runId, by = 'local') {
@@ -3889,6 +3912,7 @@ function pauseRun(runId, by = 'local') {
   entry.lastAction = { kind: 'pause', by: by || 'local', at: new Date().toISOString() };
   entry.status = 'pausing';
   resolvePending(entry, { reason: 'paused' });
+  syncKeepAwake();
 }
 
 /** In-process stops in flight, by pipeline id. A second click, tab or chat command for the same
@@ -4002,6 +4026,7 @@ function settleStaleParked(pipelineId) {
     broadcast(bufferEvent(e, { type: 'state', status, id: pipelineId }));
     broadcast(bufferEvent(e, { type: 'done', status, pipelineDir: null }));
   }
+  syncKeepAwake();
 }
 
 /** The paused entries this server holds whose rows another process settled meanwhile (`worca stop`
@@ -4479,6 +4504,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
       entry.status = 'error';
       entry.events.push(event);
       broadcast(event);
+      syncKeepAwake();
     })
     .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });   // #620, as /api/run's
 
@@ -8852,6 +8878,7 @@ const settingsState = () => ({
   schedule: scheduleDefaults(),                           // defaults a NEW schedule inherits
   sync: syncDefaults(),                                   // sync before run (#527): instance defaults
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
+  flags: allFlags(),                                      // { key: bool } resolved (docs/feature-flags.md)
   memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
   memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: the built-in's own model
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
@@ -9192,6 +9219,7 @@ function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
             pausedIds.add(e.id);
             e.status = 'pausing';
             resolvePending(e, { reason: 'paused' });
+            syncKeepAwake();
           }
         } catch (err) { console.error(`[worca-ui] drain: could not pause ${e.pipelineId || e.id}: ${err?.message || err}`); }
       }
@@ -9343,6 +9371,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasHideBuiltinKey = has('hideBuiltinModels');
   const hasThemeKey = has('theme');
   const hasUiLevelKey = has('uiLevel');
+  const hasFlagsKey = has('flags');
   const hasAutoKey = has('autoWorkflowModel');
   const hasNightKey = has('nightMode') || has('nightModeToggle');
   const autoModels = hasAutoKey ? await listModels('') : null;
@@ -9444,6 +9473,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('nightModeToggle')) asSettingsField('nightModeToggle', () => assertNightModeToggleInput(body.nightModeToggle));
     if (hasActionsKey) asSettingsField('actions', () => assertActionsInput(body.actions));
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
+    if (hasFlagsKey) asSettingsField('flags', () => checkFlags(body.flags));   // validate + cascade dry run, before anything is written
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -9469,6 +9499,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
     if (hasThemeKey) await setTheme(body.theme);
     if (hasUiLevelKey) await setUiLevel(body.uiLevel);
+    if (hasFlagsKey) await asSettingsField('flags', () => setFlags(body.flags));   // same path as PATCH /api/flags (it broadcasts `flags`)
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
     if (hasPrDescKey) await setPrDescriptionModel(body.prDescriptionModel ?? '', { models: prDescModels });
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
@@ -9495,6 +9526,26 @@ async function applySettingsPatch(body, { person = null } = {}) {
     return { actionsWarnings };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Feature flags (docs/feature-flags.md). GET lists every non-retiring flag; PATCH takes
+// { key: true|false|null } (null = back to the default), applies `requires`, persists and
+// broadcasts a `flags` frame (flagEvents above). 400 unknown key / bad value, 409 env-locked.
+// ---------------------------------------------------------------------------
+const flagsPayload = () => ({
+  flags: listFlags().map((f) => ({ ...f, docsUrl: f.docs && APP_REPO_URL ? `${APP_REPO_URL}/blob/dev/${f.docs}` : null })),
+});
+app.get('/api/flags', (_req, res) => res.json(flagsPayload()));
+app.patch('/api/flags', async (req, res) => {
+  try {
+    await setFlags(req.body);
+    return res.json(flagsPayload());
+  } catch (err) {
+    if (err instanceof FlagError && err.code === 'locked') return res.status(409).json({ error: err.message, code: 'locked', key: err.key });
+    if (err instanceof FlagError) return res.status(400).json({ error: err.message, ...(err.key ? { key: err.key } : {}) });
+    return res.status(500).json({ error: err && err.message ? err.message : 'could not save the flags' });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Per-project model/effort config + custom-model registry. Validation lives in
@@ -14816,7 +14867,7 @@ if (isMain) {
     // B2: pause the active runs first (bounded), so they come back paused with a resume point.
     drainServer({ reason: signal })
       .then(() => settleShutdownSteps({ chat: () => channelHost.stop(), actions: () => actions.stopAll(), terminals: () => terminals.closeAll(), prWatch: () => prWatcher.runner.stop() }))
-      .finally(() => { clearTimeout(hardExit); process.exit(exitCodeFor(signal)); });
+      .finally(() => { clearTimeout(hardExit); keepAwake.stop(); process.exit(exitCodeFor(signal)); });
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));

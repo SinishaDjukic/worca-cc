@@ -227,6 +227,8 @@ import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdow
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
+import { applyFlags, decorateFlagChips } from './flags.mjs';
+import { createFlagsView } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
@@ -597,6 +599,11 @@ const el = {
   // Memory view (Settings tab; the Projects expanders mount their own hosts)
   memoryHost: $('#memory-host'),
   memoryMsg: $('#memory-msg'),
+
+  // Experimental (Settings tab; docs/feature-flags.md)
+  flagsHost: $('#flags-host'),
+  flagsMsg: $('#flags-msg'),
+  flagsReset: $('#flags-reset'),
 
   // Models view
   modelsList: $('#models-list'),
@@ -1258,6 +1265,11 @@ function handleServerMessage(msg) {
     if (Array.isArray(msg.extensionPairs)) msg.extensionPairs.forEach((r) => void promptExtensionPair(r));
     return;
   }
+  if (msg.type === 'flags') {                 // D6: a flag changed (Settings in any tab, or the API)
+    applyFlags(msg.flags);
+    if (flagsTabCtl && currentView() === 'settings' && currentSettingsTab === 'experimental') void flagsTabCtl.load();
+    return;
+  }
 
   if (msg.type === 'channel-status') {
     onChannelStatus(msg);
@@ -1600,6 +1612,7 @@ function onHello(msg) {
   const rebooted = !!(msg.bootId && state.serverBootId && state.serverBootId !== msg.bootId);
   noteBoot(state, msg.bootId, runs);   // a restarted server numbers run events from 1 again
   applyServerMock(msg.serverMock);     // every hello: a restarted server may have changed mode
+  if (msg.flags) applyFlags(msg.flags);  // every hello: a frame missed while the socket was down, or a restart with a new WORCA_FLAGS
   // A restarted server lists only the runs IT started, and nothing below drops the old ones: mark
   // every entry stale, and the upserts below clear the ones it lists. The saved run's bar skips a
   // stale entry (hdPipelineRun), which would otherwise offer a Pause / Stop the server answers
@@ -15693,6 +15706,18 @@ function globalDefragHost() {
   const picked = path ? state.projects.find((x) => x && x.path === path) : null;
   const p = picked || state.projects.find((x) => x && x.exists && x.key) || null;
   return p && p.key ? { key: p.key, name: p.name } : null;
+}
+
+// Settings › Experimental (docs/feature-flags.md): one controller, made on first entry; a chip's
+// '#settings/experimental/<key>' lands on that flag's row.
+let flagsTabCtl = null;
+function loadFlagsTab(sub = '') {
+  if (!el.flagsHost) return;
+  if (!flagsTabCtl) {
+    flagsTabCtl = createFlagsView({ host: el.flagsHost, msgEl: el.flagsMsg, resetBtn: el.flagsReset,
+      api: (method, body) => mcpApi(method, '/api/flags', body), confirm: confirmModal });
+  }
+  void flagsTabCtl.load(sub ? safeDecode(sub) : '');
 }
 
 async function loadMemoryTab(sub = '') {
@@ -32898,7 +32923,7 @@ document.addEventListener('worca:level', () => {
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'runs', 'ask', 'guardrails', 'memory'];
+const SETTINGS_TABS = ['general', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
 // Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
 // it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
 const SETTINGS_FORM_TABS = ['general', 'runs', 'ask'];
@@ -32955,6 +32980,12 @@ function rewriteHash([view, param]) {
 }
 // Test hook: lets a test call the router the way an in-app caller does.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { showView });
+// CDP proofs (D12): flip a flag through the real API; every tab follows through the `flags` frame.
+if (typeof window !== 'undefined') {
+  window.__np = Object.assign(window.__np || {}, {
+    flags: { set: (key, on) => mcpApi('PATCH', '/api/flags', { [key]: on }) },
+  });
+}
 // The Settings tab currently painted, so the leave-guards below can fire on a
 // TAB transition and not only on a view transition.
 let currentSettingsTab = null;
@@ -33231,6 +33262,7 @@ function showSettingsTab(param = '') {
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
+  if (tab === 'experimental') loadFlagsTab(sub);
 }
 
 // A link to one card ('#settings/runs/actions', '#models/engine'): scroll to the
@@ -33280,6 +33312,12 @@ let syncingHash = false;
 // Boot paint of the account menu's mode row / Settings card. Here, not beside levelCtl: a first paint can
 // dispatch worca:level, whose banner repaint reads currentShownView (declared just above).
 levelCtl.paint();
+// Feature flags: the shell came with them (data-flags + #flag-gates); a page restored from a stale
+// cache corrects itself from the server (D6), and static [data-flag-chip] markup gets its chip (D9).
+decorateFlagChips(document);
+void mcpApi('GET', '/api/flags').then((r) => {
+  if (r.ok && r.data && Array.isArray(r.data.flags)) applyFlags(Object.fromEntries(r.data.flags.map((f) => [f.key, f.on])));
+});
 // Renderers that branch on the mode. Registered here (after levelListeners exists); every callee
 // is a hoisted function declaration.
 onLevelChange(() => { refreshNewPipelinePickers(); });     // Simple lists Auto + Default only

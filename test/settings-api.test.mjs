@@ -164,6 +164,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       actions: {},
       runEngine: null, stepModels: {}, utilityModels: {},   // cascading settings (Plan 2a): null / {} change nothing
       askEngine: null, askModels: {},                        // Ask Worca's engine (Plan 2b, D17): null / {} change nothing
+      flags: {},                                             // feature flags (docs/feature-flags.md): {} is a no-op
     };
     for (const k of SETTINGS_POST_KEYS) {
       if (k === 'root') continue;

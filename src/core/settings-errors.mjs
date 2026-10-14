@@ -58,6 +58,7 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   nightModeToggle: 'Away mode',
   theme: 'Theme',
   uiLevel: 'Interface mode',
+  flags: 'Experimental features',
   hideBuiltinModels: 'Hide built-in models',
   chat: 'Chat notifications',
   runEngine: 'Default engine',
