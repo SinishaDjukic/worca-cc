@@ -135,12 +135,12 @@ export async function configure(sw, worca, { token = null } = {}) {
   }, [worca.url, token]);
 }
 
-/** Open the sidebar page bound to `page`'s tab (test builds honour ?tabId/&windowId). */
-export async function openSidebar(context, sw, extensionId, page) {
+/** Open the sidebar page bound to `page`'s tab (test builds honour ?tabId/&windowId, and ?retryMs= for the offline retry). */
+export async function openSidebar(context, sw, extensionId, page, { retryMs = null } = {}) {
   const { tabId, windowId } = await sw.evaluate(async (u) => { const [t] = await chrome.tabs.query({ url: u }); return { tabId: t.id, windowId: t.windowId }; }, page.url());
   const sidebar = await context.newPage();
   await sidebar.setViewportSize({ width: 400, height: 760 });
-  await sidebar.goto(`chrome-extension://${extensionId}/sidebar.html?tabId=${tabId}&windowId=${windowId}`);
+  await sidebar.goto(`chrome-extension://${extensionId}/sidebar.html?tabId=${tabId}&windowId=${windowId}${retryMs ? `&retryMs=${retryMs}` : ''}`);
   return sidebar;
 }
 

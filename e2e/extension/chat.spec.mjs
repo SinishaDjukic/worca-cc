@@ -60,7 +60,7 @@ test('a turn that ends while the socket is down still settles: hello re-syncs (r
   await expect(sidebar.locator('.ask-msg-assistant .ask-answer').last()).toContainText('[mock]');
 });
 
-test('threads: the first send lists and selects the new chat, its title arrives, "New chat" clears (review M1)', async ({ context, sw, extensionId, worca, site }) => {
+test('threads: the first send lists and selects the new chat, its title arrives, the New chat button clears (review M1)', async ({ context, sw, extensionId, worca, site }) => {
   const { sidebar } = await pairedSidebar({ context, sw, extensionId, worca, site });
   const select = sidebar.getByRole('combobox', { name: 'Chat' });
   const openId = () => sidebar.evaluate(() => globalThis.__worcaSidebarTest.threadId());
@@ -77,8 +77,11 @@ test('threads: the first send lists and selects the new chat, its title arrives,
   const titleOf = async () => (await (await fetch(`${worca.url}/api/ask/threads/${firstId}`)).json()).thread.title;
   await expect.poll(titleOf, { timeout: 30_000 }).not.toBeNull();
   await expect(select.locator('option:checked')).toHaveText(await titleOf());
-  await select.selectOption('');                                                             // "New chat": a real change
+  await sidebar.locator('textarea.ask-input').fill('a draft that stays');
+  await sidebar.locator('.chat-head').getByRole('button', { name: 'New chat' }).click();      // worca's Chat head button
   await expect(sidebar.locator('.ask-msg')).toHaveCount(0);                                  // transcript cleared
+  await expect(select).toHaveValue('');
+  await expect(sidebar.locator('textarea.ask-input')).toHaveValue('a draft that stays');      // the draft stays
   await sidebar.locator('textarea.ask-input').fill('And the burst size?');
   await send(sidebar).click();
   await expect(send(sidebar)).toBeVisible({ timeout: 30_000 });

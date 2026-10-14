@@ -15,7 +15,8 @@ export const SIDEBAR_CLASSES = Object.freeze([
   'ask-composer', 'ask-composer-box', 'ask-chips', 'ask-chip', 'ask-chip-quote', 'ask-chip-quote-m', 'ask-chip-quote-k', 'ask-chip-quote-t', 'ask-chip-x',
   'ask-input', 'ask-composer-msg', 'ask-composer-row', 'ask-composer-spacer', 'ask-send', 'ask-stop',
   'wx-app', 'wx-select', 'wx-page-chip', 'wx-sends', 'wx-card', 'wx-card-t', 'wx-card-k', 'wx-state', 'wx-state-t', 'wx-state-k', 'wx-code',
-  'wx-state-actions', 'wx-settings',
+  'wx-state-actions', 'wx-state-body', 'wx-settings', 'wf-disc', 'wf-disc-body', 'field', 'hint', 'wx-settings-body', 'wx-settings-row',
+  'btn-mini', 'ask-icon-btn', 'chat-head-btn', 'wx-scope', 'wx-scope-k', 'wx-scope-note', 'linkish',
 ]);
 
 export function make(doc, tag, cls, text) {
@@ -119,6 +120,80 @@ export function threadOptions(list, openId) {
     { value: '', label: 'New chat', selected: !openId },
     ...rows.map((t) => ({ value: t.id, label: t.title || 'Untitled chat', selected: t.id === openId })),
   ];
+}
+
+/** The Chat head's New chat glyph, ask-panel.mjs ICONS.plus (test/extension-sidebar-markup.test.mjs pins it to that
+ *  file and to the button the Ask panel renders). */
+export const NEW_CHAT_ICON_PATH = 'M12 5v14M5 12h14';
+
+/** ask-panel.mjs iconButton (:432), with its svgIcon defaults (17px, stroke 1.9). */
+export function buildIconButton(doc, className, title, d, onClick) {
+  const b = make(doc, 'button', className);
+  b.type = 'button';
+  b.title = title;
+  b.setAttribute('aria-label', title);
+  b.appendChild(svgIcon(doc, d, 17, 1.9));
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+// ---- the project picker ------------------------------------------------------------------------------------------
+export const ANY_PROJECT_TITLE = 'Worca picks the project from your message';
+
+/**
+ * What the picker shows, from the lists' load state and the chat's scope. Pure.
+ * → {kind:'loading'|'error'|'empty'} | {kind:'select', value, pinned, label, projects:[{value,label}], workspaces:[…]}
+ * A pinned scope the lists lack (a removed project, or a Worca with none) is still listed, so a chat's pin always shows.
+ */
+export function scopeModel({ status, projects = [], workspaces = [], scope = null }) {
+  if (status === 'loading' || status === 'error') return { kind: status };
+  const P = projects.map((p) => ({ value: `p:${p.key}`, label: p.name || p.key }));
+  const W = workspaces.map((w) => ({ value: `w:${w.id}`, label: w.name || w.id }));
+  const pin = scope && scope.pinned ? (scope.workspaceId ? `w:${scope.workspaceId}` : scope.projectKey ? `p:${scope.projectKey}` : null) : null;
+  if (pin && ![...P, ...W].some((o) => o.value === pin)) (pin.startsWith('w:') ? W : P).unshift({ value: pin, label: pin.slice(2) });
+  if (!P.length && !W.length) return { kind: 'empty' };
+  const hit = pin && [...P, ...W].find((o) => o.value === pin);
+  return { kind: 'select', value: pin || 'auto', pinned: !!pin, label: hit ? hit.label : null, projects: P, workspaces: W };
+}
+
+/** Fill the head's project bar for `m` (scopeModel): the picker, or a muted line with its one action. */
+export function renderScopeBar(doc, bar, m, { baseUrl, onPick, onRetry, onOpen }) {
+  if (m.kind === 'select') {
+    const k = make(doc, 'label', 'wx-scope-k', 'Project');
+    k.htmlFor = 'wx-scope';
+    const sel = make(doc, 'select', 'wx-select');
+    sel.id = 'wx-scope';
+    const opt = (o) => { const e = make(doc, 'option', null, o.label); e.value = o.value; return e; };
+    const any = opt({ value: 'auto', label: 'Any project' });
+    any.title = ANY_PROJECT_TITLE;
+    sel.append(any);
+    for (const [label, list] of [['Projects', m.projects], ['Workspaces', m.workspaces]]) {
+      if (!list.length) continue;
+      const g = make(doc, 'optgroup');
+      g.label = label;
+      g.append(...list.map(opt));
+      sel.append(g);
+    }
+    sel.value = m.value;
+    if (m.pinned) sel.setAttribute('data-pinned', '');
+    sel.title = m.pinned ? `This chat is pinned to ${m.label}` : ANY_PROJECT_TITLE;
+    sel.addEventListener('change', () => onPick(sel.value));
+    bar.replaceChildren(k, sel);
+    return;
+  }
+  const k = make(doc, 'span', 'wx-scope-k', 'Project');
+  if (m.kind === 'loading') { bar.replaceChildren(k, make(doc, 'span', 'wx-scope-note', 'Loading projects…')); return; }
+  if (m.kind === 'error') {
+    const retry = make(doc, 'button', 'linkish', 'Retry');
+    retry.type = 'button';
+    retry.addEventListener('click', onRetry);
+    bar.replaceChildren(k, make(doc, 'span', 'wx-scope-note', 'Couldn\'t load projects'), retry);
+    return;
+  }
+  const open = make(doc, 'a', 'linkish', 'Open Worca');
+  open.href = baseUrl;
+  open.addEventListener('click', (e) => { e.preventDefault(); onOpen(); });
+  bar.replaceChildren(k, make(doc, 'span', 'wx-scope-note', 'No projects in this Worca yet'), open);
 }
 
 /** The messages route echoes {id,name,bytes,kind,mime}; ask-model reads attKind (ask-panel.mjs:975). */
@@ -255,6 +330,13 @@ export function buildRow(doc, row, { text, live, renderer, sentQuote = null, ope
 /** Offline / unpaired / pairing / denied / expired / remote states. */
 export function buildState(doc, kind, props = {}) {
   const box = make(doc, 'div', `wx-state wx-${kind}`);
+  box.append(...stateNodes(doc, kind, props));
+  return box;
+}
+
+/** A state screen's title, text and (pairing) code. sidebar.mjs patches these into ONE screen, so the Connection
+ *  settings below them are never rebuilt. */
+export function stateNodes(doc, kind, props = {}) {
   const T = {
     offline: props.reason
       ? ['Worca could not load this chat', `Worca at ${props.baseUrl} answered with an error: ${props.reason}`]
@@ -265,7 +347,45 @@ export function buildState(doc, kind, props = {}) {
     expired: ['The pairing request expired', 'Nobody answered in time. Ask again.'],
     remote: ['Local Worca only', 'This Worca has remote access on; the browser extension works with a local Worca only.'],
   }[kind];
-  box.append(make(doc, 'h2', 'wx-state-t', T[0]), make(doc, 'p', 'wx-state-k', T[1]));
-  if (kind === 'pairing') box.append(make(doc, 'div', 'wx-code mono', props.code));
-  return box;
+  const out = [make(doc, 'h2', 'wx-state-t', T[0]), make(doc, 'p', 'wx-state-k', T[1])];
+  if (kind === 'pairing') out.push(make(doc, 'div', 'wx-code mono', props.code));
+  return out;
+}
+
+/**
+ * Connection settings: worca's disclosure (.wf-disc), a labelled address row with a compact Save, and a hint. Built
+ * ONCE per sidebar page and kept across every state screen, so a retry never collapses it or drops what is typed.
+ * → { el, input, sync(v), reset(v), invalid(msg) }
+ */
+export function buildSettings(doc, { value, onSave }) {
+  const d = make(doc, 'details', 'wf-disc wx-settings');
+  d.append(make(doc, 'summary', null, 'Connection settings'));
+  const body = make(doc, 'div', 'field wf-disc-body wx-settings-body');
+  const label = make(doc, 'label', null, 'Worca address');
+  label.htmlFor = 'wx-base-url';
+  const row = make(doc, 'div', 'wx-settings-row');
+  const input = make(doc, 'input', 'input');
+  input.id = 'wx-base-url';
+  input.type = 'text';
+  input.spellcheck = false;
+  input.autocomplete = 'off';
+  input.value = value;
+  input.addEventListener('input', () => input.setCustomValidity(''));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); onSave(input.value); } });
+  const save = make(doc, 'button', 'btn-ghost btn-mini', 'Save');
+  save.type = 'button';
+  save.addEventListener('click', () => onSave(input.value));
+  row.append(input, save);
+  body.append(label, row, make(doc, 'p', 'hint', 'Only 127.0.0.1 or localhost. Saving forgets the pairing.'));
+  d.append(body);
+  let shown = value;
+  const reset = (v) => { shown = v; input.value = v; input.setCustomValidity(''); };
+  return {
+    el: d,
+    input,
+    /** The stored address: the input follows it only when it really changed; otherwise what is typed stays. */
+    sync(v) { if (v !== shown) reset(v); },
+    reset,
+    invalid(msg) { input.setCustomValidity(msg); input.reportValidity(); },
+  };
 }

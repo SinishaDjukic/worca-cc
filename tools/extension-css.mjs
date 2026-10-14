@@ -11,7 +11,11 @@ export const SIDEBAR_PIECES = Object.freeze([
   { name: 'extraPill', rule: '.extra-pill{' },
   { name: 'extraPillName', rule: '.extra-pill-name{' },
   { name: 'buttons', from: '/* ---------- buttons ---------- */', to: '/* ===================== Action feedback' },
+  // Connection settings is worca's disclosure (the Workflows .wf-disc chevron); the project picker's actions are .linkish.
+  { name: 'disclosure', from: '.wf-disc{border-bottom', to: '.wf-disc-body .ask-wfcard-graph' },
+  { name: 'disclosureMotion', rule: '@media (prefers-reduced-motion: reduce){.wf-disc>summary::before' },
   { name: 'syntaxVars', rule: '.hd-diff-pane,.ask-md,.code-editor,.apv{' },
+  { name: 'linkish', rule: '.linkish{' },
   { name: 'keyframes', from: '/* ---------- Running redesign: shared keyframes', to: '/* ---------- Runs: one list beside one content pane' },
   { name: 'ask', from: '/* ---------- Ask Worca (spec §10.3-§10.6; tokens only, no hex) ---------- */', to: '/* ---------- native control skins' },
   { name: 'chatShell', from: '/* ===== Chat P1: shell ===== */', to: '/* ===== Chat P2: Action cards ===== */' },

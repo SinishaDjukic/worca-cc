@@ -12,9 +12,24 @@ html,body{margin:0;height:100%;overflow:hidden;background:var(--panel);}
 .wx-state-t{margin:0;font-size:17px;font-weight:600;color:var(--ink);}
 .wx-state-k{margin:0;font-size:13px;color:var(--ink-2);}
 .wx-code{font-family:var(--mono);font-size:28px;letter-spacing:.12em;color:var(--ink);padding:10px 0;}
+.wx-state-body{display:flex;flex-direction:column;gap:10px;}
 .wx-state-actions{display:flex;gap:8px;justify-content:center;}
-.wx-settings{margin-top:12px;font-size:12.5px;color:var(--ink-2);text-align:left;}
-.wx-settings .input{margin:8px 0;}
+/* Connection settings: worca's .wf-disc disclosure; a labelled address row (input + compact Save, one height), a hint. */
+.wx-settings{margin-top:14px;border-top:1px solid var(--line);border-bottom:0;text-align:left;}
+.wx-settings-body.field{margin:0;padding:2px 0 0;}
+.wx-settings-body.field > label{margin-bottom:0;font-size:12.5px;}
+.wx-settings-body.wf-disc-body>*+*{margin-top:8px;}
+.wx-settings-row{display:flex;align-items:stretch;gap:6px;}
+.wx-settings-row .input{flex:1 1 auto;min-width:0;width:auto;padding:7px 10px;font-size:13px;}
+.wx-settings-row .btn-mini{flex:none;padding:0 14px;}
+.wx-settings-body .hint{margin-top:6px;}
+/* The project picker: one row under the chat list. */
+.wx-scope{flex:none;display:flex;align-items:center;gap:8px;min-height:40px;padding:4px 10px;box-sizing:border-box;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink-2);}
+.wx-scope-k{flex:none;font-weight:600;}
+.wx-scope .wx-select{font-size:12.5px;padding:5px 30px 5px 10px;}
+.wx-scope .wx-select[data-pinned]{border-color:var(--ink);color:var(--ink);font-weight:600;}
+.wx-scope-note{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.wx-scope .linkish{flex:none;}
 .wx-card{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel);display:flex;flex-direction:column;gap:6px;}
 .wx-card-t{font-weight:600;color:var(--ink);}
 .wx-card-k{font-size:12px;color:var(--ink-2);}

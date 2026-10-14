@@ -14,7 +14,6 @@ const state = createPanelState();
 const sidebars = new Map();        // windowId -> sidebar Port
 const contents = new Map();        // tabId -> content Port
 const queuedQuotes = new Map();    // windowId -> [{quote}] until the sidebar connects
-let theme = 'system';
 
 // No setAccessLevel call (v7): Chrome offers it on storage.session only, and storage.local is always readable from the
 // extension's own content scripts, on every browser. That is acceptable because ours never reads storage, and page
@@ -43,7 +42,7 @@ async function inject(windowId, tabId) {
   if (contents.has(tabId)) {
     // A tab switch back to an already-injected tab: the content script sends no new hello, so ask it for the tab info
     // here — otherwise the page chip and "Sends with your message" keep describing the previous tab (review cycle 1).
-    toContent(tabId, { type: 'activate', theme });
+    toContent(tabId, { type: 'activate' });
     toContent(tabId, { type: 'collect', id: 'tab', withText: false });
     return;
   }
@@ -109,7 +108,6 @@ function onSidebar(port) {
       windowId = m.windowId;
       sidebars.set(windowId, port);
       state.open(windowId, { pinnedTabId: TEST_BUILD && Number.isInteger(m.pinnedTabId) ? m.pinnedTabId : null });
-      theme = m.theme || 'system';
       for (const q of queuedQuotes.get(windowId) || []) port.postMessage({ type: 'quote', ...q });
       queuedQuotes.delete(windowId);
       const [tab] = await api.tabs.query({ active: true, windowId });
@@ -118,10 +116,6 @@ function onSidebar(port) {
       const tabId = state.activeTabOf(windowId);
       if (tabId != null && toContent(tabId, { type: 'collect', id: m.id, withText: !!m.withText })) return;
       port.postMessage({ type: 'context', id: m.id, data: tabId != null ? await tabBasics(tabId) : null });   // s1
-    } else if (m.type === 'theme') {
-      theme = m.theme;
-      const tabId = state.activeTabOf(windowId);
-      if (tabId != null) toContent(tabId, { type: 'theme', theme });
     }
   });
   port.onDisconnect.addListener(() => {
@@ -142,7 +136,7 @@ function onContent(port) {
     const windowId = state.windowOfActiveTab(tabId);
     if (m.type === 'hello') {
       contents.set(tabId, port);   // a live script re-announcing itself (re-inject hit its guard) is tracked again
-      if (windowId != null) { port.postMessage({ type: 'activate', theme }); port.postMessage({ type: 'collect', id: 'tab', withText: false }); }
+      if (windowId != null) { port.postMessage({ type: 'activate' }); port.postMessage({ type: 'collect', id: 'tab', withText: false }); }
       else port.postMessage({ type: 'deactivate' });
     } else if (m.type === 'fonts') {
       port.postMessage({ type: 'fonts', fonts: await loadFonts() });

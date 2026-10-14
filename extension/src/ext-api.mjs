@@ -3,4 +3,7 @@
 // A page element id="browser" could clobber the global in a content script; require a real runtime first.
 export const api = globalThis.browser?.runtime?.id ? globalThis.browser : globalThis.chrome;
 export { BROWSER, TEST_BUILD } from './build-flags.mjs';   // re-export only; see build-flags.mjs
-export const STORAGE_KEYS = Object.freeze({ baseUrl: 'worca.baseUrl', token: 'worca.token', pairedId: 'worca.pairedId', theme: 'worca.theme' });
+export const STORAGE_KEYS = Object.freeze({ baseUrl: 'worca.baseUrl', token: 'worca.token', pairedId: 'worca.pairedId' });
+// Keys an older build stored and nothing reads any more; the sidebar removes them at startup (the theme choice: the
+// sidebar and Pinpoint now always follow the browser's colour scheme).
+export const LEGACY_STORAGE_KEYS = Object.freeze(['worca.theme']);

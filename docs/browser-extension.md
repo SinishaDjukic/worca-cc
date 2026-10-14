@@ -9,9 +9,13 @@ load it into your browser yourself (see [Install](#install)).
 
 ## What it does
 
-- **Sidebar chat.** The same Ask Worca conversation as the Chat page: pick a thread, ask, and watch
-  the answer stream in. A card in an answer shows its title and **Open in Worca**, which opens the
-  thread in the full UI, where you act on it.
+- **Sidebar chat.** The same Ask Worca conversation as the Chat page: pick a chat from the list (or
+  start one with the **+** New chat button), ask, and watch the answer stream in. A card in an answer
+  shows its title and **Open in Worca**, which opens the thread in the full UI, where you act on it.
+- **Project.** Under the chat list, **Project** pins a chat to one project or workspace. **Any
+  project** lets Worca pick the project from your message. If Worca has no projects yet, or the
+  list cannot be loaded, the sidebar says so (with **Open Worca** or **Retry**).
+- **Light and dark.** The sidebar and the Pinpoint toolbar follow your browser's colour scheme.
 - **Page context.** Every message tells Ask which page you are on: its URL, its title and the text
   you have selected. You can also send the readable text of the whole page, one message at a time.
 - **Pinpoint on web pages.** Select text on the page and the Pinpoint toolbar appears, as it does in
@@ -188,7 +192,7 @@ asks for:
 |---|---|
 | `activeTab` | read the current tab's URL, title, selection and text, and inject Pinpoint, only after you click the toolbar button or use the context menu |
 | `scripting` | inject the page script into that tab |
-| `storage` | keep the Worca address, the token and the theme |
+| `storage` | keep the Worca address and the token |
 | `contextMenus` | the **Ask Worca about selection** item |
 | `sidePanel` (Chrome, Edge) | show the sidebar; Firefox uses `sidebar_action`, which needs no permission |
 
@@ -200,7 +204,7 @@ Firefox's manifest declares that the extension collects no data.
   `worca ui` (or `npx @worca/app`) and try again.
 - **Worca runs on another port.** The sidebar uses `http://127.0.0.1:4317` by default. Open
   **Connection settings** at the bottom of the sidebar, enter `http://127.0.0.1:<port>` or
-  `http://localhost:<port>` and click **Save**. Only loopback addresses are accepted. Saving
+  `http://localhost:<port>` under **Worca address** and click **Save**. Only loopback addresses are accepted. Saving
   forgets the token, so pair again.
 - **"No Ask model is available in Worca".** Ask has no model to answer with. Set one up in Worca
   under Settings → **Models**.

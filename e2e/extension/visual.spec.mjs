@@ -97,6 +97,9 @@ for (const scheme of ['light', 'dark']) {
     const sidebar = await openSidebar(context, sw, extensionId, page); await sidebar.emulateMedia({ colorScheme: scheme });
     await expect(sidebar.locator('.wx-unpaired')).toBeVisible();
     await expect(sidebar).toHaveScreenshot(`sidebar-unpaired-${scheme}.png`);
+    await sidebar.getByText('Connection settings').click();                // the labelled address row, Save, the hint
+    await expect(sidebar.getByLabel('Worca address')).toBeVisible();
+    await expect(sidebar).toHaveScreenshot(`sidebar-settings-${scheme}.png`);
     await configure(sw, worca, { token: await tokenFor(worca, extensionId) });   // the worker's one pairing
     await sidebar.reload();
     await expect(sidebar.locator('textarea.ask-input')).toBeVisible();

@@ -4,7 +4,7 @@
 // state changes patch only chips, note, Send/Stop and changed rows, so a half-typed draft is never lost.
 import { marked } from 'marked';
 import createDOMPurify from 'dompurify';
-import { api, BROWSER, STORAGE_KEYS, TEST_BUILD } from '../ext-api.mjs';
+import { api, BROWSER, LEGACY_STORAGE_KEYS, STORAGE_KEYS, TEST_BUILD } from '../ext-api.mjs';
 import { createWorcaClient, DEFAULT_BASE_URL, normalizeBaseUrl } from '../worca-client.mjs';
 import { buildMessageBody } from '../compose.mjs';
 import { createThreadModel } from '../../../ui/public/ask-model.mjs';
@@ -17,11 +17,14 @@ const params = new URLSearchParams(location.search);
 const st = {
   phase: 'loading', baseUrl: DEFAULT_BASE_URL, token: null, code: null,
   catalog: null, threads: [], threadId: null, model: null,
-  quote: null, draft: '', tab: null, withText: false, scope: { pinned: false }, projects: [], workspaces: [],
-  ws: null, posting: false, error: null, theme: 'system',
+  quote: null, draft: '', tab: null, withText: false, scope: { pinned: false }, projects: [], workspaces: [], lists: 'loading',
+  ws: null, posting: false, error: null,
   sentQuotes: new Map(),   // userMessageId -> quote (this session: the quote rode page-quote.md, M1)
 };
 let el = null;                 // the paired shell's live nodes (null while a state screen shows)
+let screen = null;             // the state screen, built once: setPhase patches its body, never Connection settings
+// While offline, probe() runs again after this long. Test builds may shorten it (?retryMs=) so an E2E run sees retries.
+const OFFLINE_RETRY_MS = TEST_BUILD && params.has('retryMs') ? Number(params.get('retryMs')) : 5000;
 const rowEls = new Map();      // messageId -> { el, answer }
 const renderer = createMarkdownRenderer({ doc, load: async () => ({ marked, createDOMPurify }), hljsLoader: null });
 const getConfig = async () => ({ baseUrl: st.baseUrl, token: st.token });
@@ -53,7 +56,7 @@ async function connectBackground() {
   });
   bg.onDisconnect.addListener(() => { bg = null; setTimeout(connectBackground, 500); });   // the SW restarted: rebind
   const pinned = TEST_BUILD && params.has('tabId') ? Number(params.get('tabId')) : null;
-  bg.postMessage({ type: 'hello', windowId, pinnedTabId: pinned, theme: st.theme });   // windowId: set by boot()
+  bg.postMessage({ type: 'hello', windowId, pinnedTabId: pinned });   // windowId: set by boot()
 }
 setInterval(() => { try { bg?.postMessage({ type: 'ping' }); } catch { /* reconnecting */ } }, 20_000);   // keeps the SW awake while open
 
@@ -88,11 +91,11 @@ function appendToDraft(text) {
 
 // ---- connection & pairing ---------------------------------------------------------------------------------------
 async function boot() {
-  const s = await api.storage.local.get([STORAGE_KEYS.baseUrl, STORAGE_KEYS.token, STORAGE_KEYS.theme]);
+  const s = await api.storage.local.get([STORAGE_KEYS.baseUrl, STORAGE_KEYS.token]);
   st.baseUrl = normalizeBaseUrl(s[STORAGE_KEYS.baseUrl]) || DEFAULT_BASE_URL;
   st.token = s[STORAGE_KEYS.token] || null;
-  st.theme = s[STORAGE_KEYS.theme] || 'system';
-  doc.documentElement.dataset.theme = st.theme;
+  // The sidebar and Pinpoint follow the browser's colour scheme; the old theme choice is dropped, never read.
+  void api.storage.local.remove([...LEGACY_STORAGE_KEYS]).catch?.(() => {});
   void renderer.ensure();
   windowId = await resolveWindowId();
   st.draft = await loadDraft();                    // D23: survives a sidebar reload / reopen (review m12)…
@@ -112,7 +115,7 @@ async function probe() {
     // Worca answered but a paired call failed (e.g. a 500 from /api/ask/models): say so instead of "isn't running".
     st.offlineReason = err.kind === 'http' ? err.message : null;
     setPhase('offline');
-    setTimeout(() => { if (st.phase === 'offline') void probe(); }, 5000);
+    setTimeout(() => { if (st.phase === 'offline') void probe(); }, OFFLINE_RETRY_MS);
   }
 }
 
@@ -157,20 +160,36 @@ async function forgetToken() {
 
 // ---- paired: catalog, threads, socket -----------------------------------------------------------------------------
 async function enterPaired() {
-  const [catalog, threads, projects, workspaces] = await Promise.all([
+  const [catalog, threads] = await Promise.all([
     client.call('/api/ask/models'),
     client.call('/api/ask/threads?limit=20'),
-    client.call('/api/projects').catch(() => ({ projects: [] })),
-    client.call('/api/workspaces').catch(() => ({ workspaces: [] })),
+    loadLists(),
   ]);
   st.catalog = catalog;
   st.threads = threads.threads || [];
   if (st.threadId) st.threads = V.upsertThread(st.threads, { id: st.threadId });   // the open chat stays listed
-  st.projects = (projects.projects || []).filter((p) => p.exists !== false);
-  st.workspaces = workspaces.workspaces || [];
   setPhase('paired');
   patchHead();   // a reconnect re-enters here with the shell already mounted: setPhase returns early (review M1)
   void openSocket();
+}
+
+/** The project picker's lists. Never rejects: a failed request is st.lists = 'error' ("Couldn't load projects" + Retry),
+ *  never an empty list that reads as "no projects". `show`: Retry paints "Loading projects…" meanwhile. */
+let listsGen = 0;
+async function loadLists({ show = false } = {}) {
+  const gen = ++listsGen;
+  if (show) { st.lists = 'loading'; patchHead(); }
+  try {
+    const [projects, workspaces] = await Promise.all([client.call('/api/projects'), client.call('/api/workspaces')]);
+    if (gen !== listsGen) return;
+    st.projects = (projects.projects || []).filter((p) => p.exists !== false);
+    st.workspaces = workspaces.workspaces || [];
+    st.lists = 'ok';
+  } catch {
+    if (gen !== listsGen) return;
+    st.lists = 'error';
+  }
+  patchHead();
 }
 
 const reportLoadError = (err) => { st.error = err && err.message ? err.message : String(err); patchComposer(); };
@@ -333,6 +352,7 @@ async function stop() {
 async function setScope(value) {
   const [kind, id] = String(value).split(':');
   st.scope = kind === 'p' ? { pinned: true, projectKey: id } : kind === 'w' ? { pinned: true, workspaceId: id } : { pinned: false };
+  patchHead();
   if (st.threadId) {
     const scope = st.scope.pinned ? (st.scope.workspaceId ? { pinned: true, workspaceId: st.scope.workspaceId } : { pinned: true, projectKey: st.scope.projectKey }) : { pinned: false };
     await client.call(`/api/ask/threads/${encodeURIComponent(st.threadId)}`, { method: 'PATCH', body: { scope } }).catch((e) => { st.error = e.message; patchComposer(); });
@@ -342,19 +362,46 @@ async function setScope(value) {
 // ---- rendering ----------------------------------------------------------------------------------------------------
 const openInWorca = () => api.tabs.create({ url: `${st.baseUrl}/${st.threadId ? `#chat/${st.threadId}` : '#chat'}` });
 
+/** Every non-paired state. The offline retry, the pairing poll, the socket's onclose timer and releaseSocket call this
+ *  over and over: only the screen's body is replaced, so an open Connection settings panel keeps its typed address,
+ *  focus and caret. */
 function setPhase(p) {
   st.phase = p;
   if (p === 'paired') { if (!el) mountPaired(); return; }
   el = null;
   rowEls.clear();
-  const box = V.buildState(doc, p === 'loading' ? 'offline' : p, { baseUrl: st.baseUrl, reason: p === 'offline' ? st.offlineReason : null, code: st.code && `${st.code.slice(0, 3)} ${st.code.slice(3)}` });
+  const kind = p === 'loading' ? 'offline' : p;
+  const s = stateScreen();
+  s.box.className = `wx-state wx-${kind}`;
   const row = V.make(doc, 'div', 'wx-state-actions');
   const btn = (cls, label, fn) => { const b = V.make(doc, 'button', cls, label); b.type = 'button'; b.onclick = fn; row.append(b); };
   if (['unpaired', 'denied', 'expired'].includes(p)) btn('btn-go', p === 'unpaired' ? 'Connect' : 'Ask again', () => void startPairing());
   if (p === 'offline' || p === 'loading') btn('btn-ghost', 'Try again', () => void probe());
   if (p === 'pairing') btn('btn-ghost', 'Open Worca', openInWorca);
-  box.append(row, buildSettings());
-  app.replaceChildren(box);
+  s.body.replaceChildren(...V.stateNodes(doc, kind, { baseUrl: st.baseUrl, reason: p === 'offline' ? st.offlineReason : null, code: st.code && `${st.code.slice(0, 3)} ${st.code.slice(3)}` }), row);
+  s.settings.sync(st.baseUrl);
+  if (s.box.parentNode !== app) app.replaceChildren(s.box);
+}
+
+function stateScreen() {
+  if (screen) return screen;
+  const box = V.make(doc, 'div', 'wx-state');
+  const body = V.make(doc, 'div', 'wx-state-body');
+  const settings = V.buildSettings(doc, { value: st.baseUrl, onSave: (v) => void saveBaseUrl(v) });
+  box.append(body, settings.el);
+  screen = { box, body, settings };
+  return screen;
+}
+
+async function saveBaseUrl(raw) {
+  const v = normalizeBaseUrl(raw);
+  if (!v) { screen.settings.invalid('Use http://127.0.0.1:<port> or http://localhost:<port>'); return; }
+  st.baseUrl = v;
+  screen.settings.reset(v);   // only Save (or a changed stored address, setPhase → sync) resets the input
+  await api.storage.local.set({ [STORAGE_KEYS.baseUrl]: v });
+  pairGen += 1;          // v8: a pairing loop for the old address stops
+  await forgetToken();   // a token belongs to the Worca that issued it
+  void probe();
 }
 
 /** The paired shell — the real Chat page structure (index.html chat view / ask-panel.mjs :480-498). Built once. */
@@ -367,10 +414,11 @@ function mountPaired() {
   const threads = V.make(doc, 'select', 'wx-select');
   threads.setAttribute('aria-label', 'Chat');
   threads.onchange = () => { if (threads.value) void openThread(threads.value).catch(reportLoadError); else newChat(); };
-  const scope = V.make(doc, 'select', 'wx-select');
-  scope.setAttribute('aria-label', 'Project or workspace');
-  scope.onchange = () => void setScope(scope.value);
-  head.append(threads, scope);
+  // worca's Chat head button (ask-panel.mjs: iconButton('ask-icon-btn chat-head-btn', 'New chat', ICONS.plus, …)).
+  const newBtn = V.buildIconButton(doc, 'ask-icon-btn chat-head-btn', 'New chat', V.NEW_CHAT_ICON_PATH, () => newChat());
+  newBtn.setAttribute('data-ask-new-btn', '');
+  head.append(threads, newBtn);
+  const scopeBar = V.make(doc, 'div', 'wx-scope');   // the project picker (patchHead fills it)
   const transcript = V.make(doc, 'div', 'ask-transcript');
   transcript.setAttribute('data-ask-scroll', '');
   const col = V.make(doc, 'div', 'ask-transcript-col');
@@ -378,10 +426,10 @@ function mountPaired() {
   const dock = V.make(doc, 'div', 'chat-dock');
   const composer = V.buildComposer(doc, { placeholder: 'Ask about this page…', onInput: (v) => setDraft(v), onSend: () => void send(), onStop: () => void stop() });
   dock.appendChild(composer.el);
-  convo.append(head, transcript, dock);
+  convo.append(head, scopeBar, transcript, dock);
   page.appendChild(convo);
   app.replaceChildren(page);
-  el = { page, threads, scope, transcript, col, dock, ...composer };
+  el = { page, threads, scopeBar, transcript, col, dock, ...composer };
   el.input.value = st.draft;                                    // restore the draft (M4, D23)
   requestAnimationFrame(() => V.fitInput(el.input));            // measured once laid out (m10)
   new ResizeObserver(() => page.style.setProperty('--chat-dock-h', `${dock.offsetHeight}px`)).observe(dock);   // as ask-panel mirrors it
@@ -390,14 +438,17 @@ function mountPaired() {
   renderTranscript({ force: true });
 }
 
-/** The head: the thread list (V.threadOptions: the open thread is always listed and selected) and the scope. Called
- *  after every list or thread change: create, load, ask-title, enterPaired (review M1). */
+/** The head: the thread list (V.threadOptions: the open thread is always listed and selected) and the project picker.
+ *  Called after every list, thread or scope change: create, load, ask-title, enterPaired, loadLists (review M1). */
 function patchHead() {
   if (!el) return;
   el.threads.replaceChildren(...V.threadOptions(st.threads, st.threadId).map((o) => new Option(o.label, o.value, false, o.selected)));
-  el.scope.replaceChildren(new Option('Auto', 'auto'),
-    ...st.projects.map((p) => new Option(p.name, `p:${p.key}`, false, st.scope.projectKey === p.key)),
-    ...st.workspaces.map((w) => new Option(`${w.name} (workspace)`, `w:${w.id}`, false, st.scope.workspaceId === w.id)));
+  V.renderScopeBar(doc, el.scopeBar, V.scopeModel({ status: st.lists, projects: st.projects, workspaces: st.workspaces, scope: st.scope }), {
+    baseUrl: st.baseUrl,
+    onPick: (v) => void setScope(v),
+    onRetry: () => void loadLists({ show: true }),
+    onOpen: () => api.tabs.create({ url: st.baseUrl }),
+  });
 }
 
 /** Chips, the sends-note, the error line, Send/Stop — never the textarea (M4). */
@@ -448,32 +499,6 @@ function renderTranscript({ force = false } = {}) {
   }
   if (nearBottom || force) el.transcript.scrollTop = el.transcript.scrollHeight;
   patchComposer();
-}
-
-function buildSettings() {
-  const d = V.make(doc, 'details', 'wx-settings');
-  d.append(V.make(doc, 'summary', null, 'Connection settings'));
-  const url = V.make(doc, 'input', 'input');
-  url.type = 'text';
-  url.value = st.baseUrl;
-  url.setAttribute('aria-label', 'Worca address');
-  const save = V.make(doc, 'button', 'btn-ghost', 'Save');
-  save.type = 'button';
-  save.onclick = async () => {
-    const v = normalizeBaseUrl(url.value);
-    if (!v) { url.setCustomValidity('Use http://127.0.0.1:<port> or http://localhost:<port>'); url.reportValidity(); return; }
-    st.baseUrl = v;
-    await api.storage.local.set({ [STORAGE_KEYS.baseUrl]: v });
-    pairGen += 1;          // v8: a pairing loop for the old address stops
-    await forgetToken();   // a token belongs to the Worca that issued it
-    void probe();
-  };
-  const theme = V.make(doc, 'select', 'wx-select');
-  theme.setAttribute('aria-label', 'Theme');
-  for (const [v, l] of [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]) theme.append(new Option(l, v, false, st.theme === v));
-  theme.onchange = async () => { st.theme = theme.value; doc.documentElement.dataset.theme = st.theme; await api.storage.local.set({ [STORAGE_KEYS.theme]: st.theme }); bg?.postMessage({ type: 'theme', theme: st.theme }); };
-  d.append(url, save, theme);
-  return d;
 }
 
 void boot();

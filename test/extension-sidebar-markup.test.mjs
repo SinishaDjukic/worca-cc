@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
-import { buildQuoteChip, buildRow, buildComposer, SEND_ICON_PATH } from '../extension/src/sidebar/sidebar-view.mjs';
+import { buildQuoteChip, buildRow, buildComposer, buildIconButton, SEND_ICON_PATH, NEW_CHAT_ICON_PATH } from '../extension/src/sidebar/sidebar-view.mjs';
 import { formatQuotedMessage } from '../ui/public/pinpoint-model.mjs';
 
 const TID = 'askt_00000001';
@@ -59,6 +59,17 @@ test('the quote chip has the Ask panel quote chip skeleton', async () => {
   const ref = h.doc.querySelector('.ask-chip-quote');
   assert.ok(ref);
   assert.deepEqual(skeleton(buildQuoteChip(h.doc, { text: 'token bucket', src: 'docs.example.com' }, () => {})), skeleton(ref));
+});
+
+test('the head\'s New chat button is the Chat head\'s: classes, label, glyph (ask-panel.mjs ICONS.plus)', async () => {
+  const h = await loaded();
+  const ref = h.doc.querySelector('.chat-head [data-ask-new-btn]');
+  assert.ok(ref, 'the Ask panel rendered its New chat button');
+  const mine = buildIconButton(h.doc, 'ask-icon-btn chat-head-btn', 'New chat', NEW_CHAT_ICON_PATH, () => {});
+  const attrs = (b) => ({ cls: b.className, title: b.title, label: b.getAttribute('aria-label'), type: b.type, skel: skeleton(b),
+    svg: ['width', 'height', 'viewBox', 'stroke-width'].map((a) => b.querySelector('svg').getAttribute(a)), d: [...b.querySelectorAll('path')].map((p) => p.getAttribute('d')) });
+  assert.deepEqual(attrs(mine), attrs(ref));
+  assert.equal(/\bplus: '([^']+)'/.exec(readFileSync('ui/public/ask-panel.mjs', 'utf8'))[1], NEW_CHAT_ICON_PATH);
 });
 
 test('the composer box keeps the Ask order: lead, chips, input, message, row; send glyph matches', async () => {

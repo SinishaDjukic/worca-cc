@@ -34,8 +34,10 @@ import SHADOW_CSS from 'worca:shadow-css';   // tools/build-extension.mjs inline
     pageSheet = null;
   }
 
-  function activate(theme) {
-    if (pp) { host.setAttribute('data-theme', theme || 'system'); return; }
+  // The layer follows the browser's colour scheme (:host carries color-scheme: light dark), as worca's
+  // data-theme="system" does: the host never gets a data-theme.
+  function activate() {
+    if (pp) return;
     // v8: a page can customElements.define('worca-pinpoint', …) and attach its own shadow root on upgrade, which makes
     // our attachShadow throw. Fall back to a <div> (a built-in a page cannot define). E2E selectors use the
     // `data-worca-pinpoint` attribute, which both hosts carry.
@@ -49,7 +51,6 @@ import SHADOW_CSS from 'worca:shadow-css';   // tools/build-extension.mjs inline
     host = made.h;
     const root = made.r;
     for (const [k, v] of [['position', 'fixed'], ['top', '0'], ['left', '0'], ['width', '0'], ['height', '0'], ['z-index', '2147483647'], ['display', 'block']]) host.style.setProperty(k, v, 'important');
-    host.setAttribute('data-theme', theme || 'system');
     try { const s = new CSSStyleSheet(); s.replaceSync(SHADOW_CSS); root.adoptedStyleSheets = [s]; }
     catch { const s = document.createElement('style'); s.textContent = SHADOW_CSS; root.append(s); }
     const layer = document.createElement('div');
@@ -85,9 +86,8 @@ import SHADOW_CSS from 'worca:shadow-css';   // tools/build-extension.mjs inline
 
   port.onMessage.addListener((m) => {
     if (!m || typeof m.type !== 'string') return;
-    if (m.type === 'activate') activate(m.theme);
+    if (m.type === 'activate') activate();
     else if (m.type === 'deactivate') deactivate();
-    else if (m.type === 'theme') host?.setAttribute('data-theme', m.theme || 'system');
     else if (m.type === 'collect') port.postMessage({ type: 'context', id: m.id, data: collect(!!m.withText) });
     else if (m.type === 'fonts') {
       for (const f of m.fonts || []) {
