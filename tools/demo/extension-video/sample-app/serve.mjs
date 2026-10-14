@@ -9,7 +9,9 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=
   '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.png': 'image/png' };
 const port = Number(process.env.PORT) || 5173;
 createServer(async (req, res) => {
-  const rel = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^([/\\])+/, '') || 'index.html';
+  let path;
+  try { path = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { res.writeHead(400, { 'content-type': 'text/plain' }).end('bad request'); return; }
+  const rel = normalize(path).replace(/^([/\\])+/, '') || 'index.html';
   if (rel.startsWith('..')) { res.writeHead(403).end(); return; }
   try {
     const body = await readFile(join(ROOT, rel.endsWith('/') ? `${rel}index.html` : rel));

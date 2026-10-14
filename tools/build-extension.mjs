@@ -102,9 +102,11 @@ export async function buildOne(browser, { test = false, demo = false, dist = DIS
   for (const s of ICON_SIZES) cpSync(join(ROOT, 'extension/icons', `worca-${s}.png`), join(out, 'icons', `worca-${s}.png`));
   writeFileSync(join(out, 'manifest.json'), `${JSON.stringify(buildManifest(browser, { version, versionName, test: hooks, demo }), null, 2)}\n`);
   // A production bundle never carries the E2E hooks (TEST_BUILD is a define; minifySyntax folds it and drops the branches).
+  // 'worca-demo-build' is a demo-only string literal (background.mjs __worcaTest.build). The define name itself proves
+  // nothing: esbuild always substitutes __WORCA_EXT_DEMO__, so it never survives into any bundle.
   if (!hooks) for (const f of ['background.js', 'content.js', 'sidebar.js']) {
     const js = readFileSync(join(out, f), 'utf8');
-    if (/__worcaTest|__worcaSidebarTest|__WORCA_EXT_DEMO__/.test(js)) throw new Error(`${browser}/${f}: a test hook leaked into the production build`);
+    if (/__worcaTest|__worcaSidebarTest|worca-demo-build/.test(js)) throw new Error(`${browser}/${f}: a test hook leaked into the production build`);
   }
   return { out, version: versionName, baseUrl };
 }

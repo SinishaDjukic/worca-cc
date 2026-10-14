@@ -251,4 +251,5 @@ async function loadFonts() {
   return fontCache;
 }
 
-if (TEST_BUILD) globalThis.__worcaTest = { focus, contextMenuClick: onMenuClick, command: onCommand, setCaptureSource: (fn) => { testCaptureSource = fn; } };
+// `build`: the demo recorder checks it before recording; 'worca-demo-build' is also what the production leak check greps for.
+if (TEST_BUILD) globalThis.__worcaTest = { build: DEMO_BUILD ? 'worca-demo-build' : 'test', focus, contextMenuClick: onMenuClick, command: onCommand, setCaptureSource: (fn) => { testCaptureSource = fn; } };

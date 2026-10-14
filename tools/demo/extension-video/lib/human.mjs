@@ -8,10 +8,10 @@ export function rng(seed = 7) {
   return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 
-/** Per-key delays in [min,max] ms; longer after spaces and punctuation. */
-export function keyDelays(text, { min = 50, max = 70, seed = 7 } = {}) {
+/** Per-key delays in [min,max] ms (brisk, still readable); a short beat after spaces and punctuation. */
+export function keyDelays(text, { min = 35, max = 45, seed = 7 } = {}) {
   const r = rng(seed);
-  return [...text].map((ch) => Math.round(min + r() * (max - min)) + (/[ ,.?!]/.test(ch) ? 40 : 0));
+  return [...text].map((ch) => Math.round(min + r() * (max - min)) + (/[ ,.?!]/.test(ch) ? 20 : 0));
 }
 
 export function createHuman(page, stage) {

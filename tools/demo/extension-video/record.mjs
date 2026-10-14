@@ -14,10 +14,13 @@ import { startHost } from './lib/start-host.mjs';
 import { pairExtension } from './lib/pairing.mjs';
 import { installStage, mountSidebar, slideSidebarIn } from './lib/stage.mjs';
 import { createHuman } from './lib/human.mjs';
-import { fitWindow, hasFfmpeg, startScreencast, encodeMp4, probe } from './lib/capture.mjs';
+import { fitWindow, hasFfmpeg, startScreencast, encodeMp4, probe, tailSeconds } from './lib/capture.mjs';
+import { createCamera } from './lib/camera.mjs';
 import * as script from './lib/script.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
+/** MP4: the page renders at 2× device pixels, so the camera's zoomed crops downscale to the output instead of upscaling. */
+const CAPTURE_SCALE = 2;
 
 export async function main(argv = process.argv.slice(2)) {
   const o = parseArgs(argv);
@@ -27,7 +30,8 @@ export async function main(argv = process.argv.slice(2)) {
   mkdirSync(outDir, { recursive: true });
   const mp4 = !o.webm && hasFfmpeg();
   if (!o.webm && !mp4) log('ffmpeg not found: recording WebM with Playwright instead (install ffmpeg for the MP4)');
-  let host = null; let ctx = null;
+  const scale = mp4 ? CAPTURE_SCALE : 1;
+  let host = null; let ctx = null; let rec = null;
   try {
     const port = await freePort();
     log(`demo Worca on 127.0.0.1:${port} (home ${join(work, 'home')})`);
@@ -38,13 +42,17 @@ export async function main(argv = process.argv.slice(2)) {
     log(`sample app on ${host.appUrl}`);
     if (!host.actionStarted) log('WARN the Dev server Action did not start: the scope will be pinned by hand');
     ctx = await chromium.launchPersistentContext(join(work, 'profile'), {
-      // viewport null + fitWindow: an emulated viewport is NOT what the window shows (see fitWindow). Headless DPR is 1.
+      // viewport null + fitWindow: an emulated viewport is NOT what the window shows (see fitWindow). The device scale
+      // factor changes only device pixels: innerWidth/innerHeight and every input coordinate stay in CSS px.
       channel: 'chromium', headless: !o.headed, viewport: null, colorScheme: 'light',
-      args: [`--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`, '--hide-scrollbars', `--window-size=${o.size.width},${o.size.height}`],
+      args: [`--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`, '--hide-scrollbars', `--window-size=${o.size.width},${o.size.height}`,
+        `--force-device-scale-factor=${scale}`],
       ...(mp4 ? {} : { recordVideo: { dir: join(work, 'webm'), size: o.size } }),
     });
     const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker');
     const extensionId = new URL(sw.url()).host;
+    const build = await sw.evaluate(() => globalThis.__worcaTest?.build);
+    if (build !== 'worca-demo-build') throw new Error(`the loaded extension is not the demo build (${build ?? 'no test hooks'})`);
     const token = await pairExtension(host.url, extensionId);
     await sw.evaluate(async (t) => { await chrome.storage.local.clear(); await chrome.storage.local.set({ 'worca.token': t }); }, token);
     const page = ctx.pages()[0] || await ctx.newPage();
@@ -53,7 +61,7 @@ export async function main(argv = process.argv.slice(2)) {
     await page.evaluate(() => document.fonts.ready);
     const stage = await installStage(page);
     await stage.card(script.INTRO);                                   // title card first: the video opens on it
-    const rec = mp4 ? await startScreencast(page, join(work, 'frames'), o.size) : null;
+    rec = mp4 ? await startScreencast(page, join(work, 'frames'), o.size, scale) : null;
     const tab = await sw.evaluate(async (url) => (await chrome.tabs.query({ url })).map((t) => ({ id: t.id, windowId: t.windowId }))[0], page.url());
     if (!tab) throw new Error(`the extension cannot see the app tab (${page.url()}): is http://localhost/* in the demo manifest?`);
     const side = await mountSidebar(page, { extensionId, tabId: tab.id, windowId: tab.windowId });
@@ -65,13 +73,16 @@ export async function main(argv = process.argv.slice(2)) {
       await sw.evaluate((b) => globalThis.__worcaTest.setCaptureSource(async () => `data:image/png;base64,${b}`), png);
     };
     const human = createHuman(page, stage);
-    const env = { page, side, stage: { ...stage, slideSidebarIn: () => slideSidebarIn(page) }, human, command, setCapture, host };
+    // The WebM fallback has no post step, so it records without the camera (the whole stage throughout).
+    const camera = createCamera(stage, { frame: o.size, enabled: mp4 });
+    const env = { page, side, stage: { ...stage, slideSidebarIn: () => slideSidebarIn(page) }, human, command, setCapture, host, camera };
     await script.run(env);
     const outFile = join(outDir, outputName(new Date(), mp4 ? 'mp4' : 'webm'));
     if (mp4) {
       const frames = await rec.stop();
-      log(`encoding ${frames.length} frames`);
-      encodeMp4(frames, { dir: join(work, 'frames'), out: outFile, width: o.size.width, height: o.size.height });
+      log(`encoding ${frames.length} frames (${camera.keys.length} camera moves)`);
+      encodeMp4(frames, { dir: join(work, 'frames'), out: outFile, width: o.size.width, height: o.size.height, camera: { keys: camera.keys, scale },
+        tailS: tailSeconds(frames, rec.endT) });
     } else {
       const v = page.video();
       await ctx.close(); ctx = null;
@@ -81,6 +92,7 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(`\nDemo video: ${outFile}${p ? `\n  ${p.width}×${p.height}, ${p.durationS.toFixed(1)} s` : ''}`);
     return outFile;
   } finally {
+    if (rec) await rec.stop().catch(() => {});   // an aborted run must not leave the screencast writing frames
     if (ctx) await ctx.close().catch(() => {});
     if (host) await host.stop().catch(() => {});
     if (!o.keep) rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); else log(`kept ${work}`);
