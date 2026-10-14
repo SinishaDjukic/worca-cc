@@ -242,6 +242,7 @@ import { applyShapeFirstHello, shapeFirstOn } from './chat/shape-gate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun } from './shape/plan-text.mjs';
+import { renderChecklistGroups } from './shape/checklist-view.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
 import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
@@ -24938,6 +24939,10 @@ function buildHdOverview(sec, record, data) {
     paintActionsStrip(strip, record.id, runActionQuery(record.projectDir, record).toString());
   }
   if (checks.length) wrap.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
+  if (shapeFirstOn()) {   // spec D7: the same groups as the run page
+    const cl = renderChecklistGroups(document, data.reviews);
+    if (cl) wrap.appendChild(cl);
+  }
 
   // 2) Stat cards.
   const grid = document.createElement('div');
@@ -26260,6 +26265,24 @@ function paintRunSkills(host, mount) {
   host.replaceChildren(...(card ? [card] : []));
 }
 
+/** Spec D7: the Overview's Perspective checklists, from the saved review rows. While the run is live it
+ *  re-fetches when its status or a node's state moves (a review cycle finished); a live run that is not shaping
+ *  never fetches for it. */
+function paintRdChecklists(host, run) {
+  if (!shapeFirstOn()) { host.hidden = true; host.replaceChildren(); delete host.dataset.sig; return; }
+  const live = !RD_TERMINAL.includes(run.status);
+  if (live && !isShapingRun(run)) { host.hidden = true; return; }
+  const sig = `${run.status}|${JSON.stringify(run.nodeStatus || {})}`;
+  if (host.dataset.sig === sig) return;
+  host.dataset.sig = sig;
+  void rdLoadData(run, { force: live }).then((data) => {
+    if (!host.isConnected || host.dataset.sig !== sig) return;
+    const el = renderChecklistGroups(document, data && data.reviews);
+    host.hidden = !el;
+    host.replaceChildren(...(el ? [el] : []));
+  });
+}
+
 function buildRdOverview(sec, ctx) {
   sec.innerHTML = '';
   const wrap = document.createElement('div');
@@ -26276,14 +26299,17 @@ function buildRdOverview(sec, ctx) {
   strip.hidden = true;
   const skills = tagLevel(document.createElement('div'), 'advanced');   // the set skills it got (§6 board 9)
   skills.className = 'hd-ov-skills-host';
-  wrap.append(banner, strip, grid, skills, rdOvTask(ctx.run));
+  const checklists = document.createElement('div');   // Perspective checklists (spec D7)
+  checklists.className = 'rd-checklists';
+  checklists.hidden = true;
+  wrap.append(banner, strip, grid, checklists, skills, rdOvTask(ctx.run));
   sec.appendChild(wrap);
   const paintStrip = (run) => {
     const on = isTerminalStatus(run.status) && !!run.pipelineId;
     strip.hidden = !on;
     if (on && strip.dataset.runId !== run.pipelineId) paintActionsStrip(strip, run.pipelineId, rdScopeQuery(run));
   };
-  const paint = (c) => { rdOvStateBanner(banner, c.run); paintStrip(c.run); rdOvStats(grid, c.run); paintRunSkills(skills, c.run.skillMount); };
+  const paint = (c) => { rdOvStateBanner(banner, c.run); paintStrip(c.run); rdOvStats(grid, c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
   paint(ctx);
   sec.__update = paint;
 }

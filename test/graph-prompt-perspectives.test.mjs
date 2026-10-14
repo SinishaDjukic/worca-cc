@@ -93,3 +93,22 @@ test('blank or absent config.promptHints change nothing', () => {
     assert.equal(buildAgentPrompt({ ...base, node: { ...base.node, config: { promptHints } } }), expected);
   }
 });
+
+test('a reviewer with checklistItems lists them between the task header and "What to do" (spec D7)', () => {
+  const ctx = ctxFor('reviewer');
+  const items = [{ id: 'R-qa-1', perspective: 'qa', text: 'Rejects empty input.' }];
+  const prompt = buildAgentPrompt({ ...ctx, checklistItems: items });
+  assert.ok(prompt.includes('## Perspective checklist'));
+  assert.ok(prompt.includes('`R-qa-1` (QA): Rejects empty input.'));
+  const at = prompt.indexOf('## Perspective checklist');
+  assert.ok(at > prompt.indexOf('## Original request'), 'after the original request');
+  assert.ok(at < prompt.indexOf('## What to do'), 'before What to do');
+});
+
+test('byte identity: empty or absent checklistItems change nothing, for every builtin (spec D7)', () => {
+  for (const key of BUILTIN_KEYS) {
+    const ctx = ctxFor(key);
+    assert.equal(buildAgentPrompt({ ...ctx, checklistItems: [] }), buildAgentPrompt(ctx), key);
+    assert.equal(buildAgentPrompt({ ...ctx, checklistItems: undefined }), buildAgentPrompt(ctx), key);
+  }
+});

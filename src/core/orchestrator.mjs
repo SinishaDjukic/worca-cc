@@ -10,8 +10,8 @@
 // an ordinary execution, `x:<nodeId>:<ordinal>:<taskId>` for a composite slice.
 // state.steps[] IS the execution ledger: one row per execution, key ===
 // executionId. There is no separate executions[] array.
-import { join, isAbsolute, extname } from 'node:path';
-import { rm, readFile, readdir, access, stat, writeFile } from 'node:fs/promises';
+import { join, isAbsolute, extname, dirname } from 'node:path';
+import { rm, readFile, readdir, access, stat, writeFile, mkdir } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
 import { runsOn } from '../shared/connections.mjs';
 
@@ -33,8 +33,10 @@ import { registryPortsFn } from './graph/registry-ports.mjs';
 import { checkPlan } from './shape/check.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
 import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
+import { extractChecklist } from '../shared/shape/checklist.mjs';
+import { applyChecklist, checklistFindingsMarkdown } from '../shared/shape/review-checklist.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
-import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
+import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, CHECKLIST_REVIEWER_KEY } from './graph/executor.mjs';
 import { serialQueue, measureCodeCursor, collectStepEvidence } from './graph/human-evidence.mjs';
 import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/human-estimate.mjs';
 import { diffNumstat } from './git-info.mjs';
@@ -1211,6 +1213,61 @@ export class GraphOrchestrator extends RunHarness {
     this._emit('state', this.getState());
   }
 
+  /** Spec D7: the approved plan's checklist items for a shaped run's reviewer. Cached per plan file; a resume
+   *  reads it again. A read failure is logged and gives [] (nothing to check), and is not cached. */
+  async _reviewChecklistItems(ctx) {
+    const file = this.state.shaping?.approved?.file || ctx.bindings?.plan?.path || null;
+    if (!file) return [];
+    if (this._checklistCache?.file === file) return this._checklistCache.items;
+    try {
+      const items = extractChecklist(await readFile(file, 'utf8'));
+      this._checklistCache = { file, items };
+      return items;
+    } catch (err) {
+      this._log('orchestrator', 'warn', `checklist: cannot read the approved plan ${file}: ${err?.message || err}`);
+      return [];
+    }
+  }
+
+  /** Spec D7: merge the plan's items into the verdict before it is routed, gated and stored. Without items, a
+   *  reviewer-sent `checklist` is dropped, so runs without one store exactly what they did. */
+  async _applyReviewChecklist(ctx, result) {
+    const v = result?.verdict;
+    if (!v) return result;
+    const items = Array.isArray(ctx.checklistItems) ? ctx.checklistItems : [];
+    if (!items.length) {
+      if (!Object.hasOwn(v, 'checklist')) return result;
+      const { checklist, ...rest } = v;   // eslint-disable-line no-unused-vars
+      return { ...result, verdict: rest };
+    }
+    // A verifier that wrote no verdict omitted the checklist too: one major, and the row is stored.
+    const base = v.missing ? { issues: [], summary: v.summary || '' } : v;
+    const verdict = applyChecklist(base, items);
+    const added = verdict.issues.slice(base.issues.length);
+    if (added.length) await this._writeChecklistFindings(ctx, added);
+    return { ...result, verdict };
+  }
+
+  /** The Implementer reads the review Markdown, not the JSON: append the checklist findings, or write a fresh
+   *  file when the reviewer wrote none this execution (it judged the diff clean). */
+  async _writeChecklistFindings(ctx, issues) {
+    const path = ctx.outputs?.review?.path;
+    if (!path) return;
+    let prev = '';
+    try {
+      const st = await stat(path);
+      if (st.mtimeMs >= (ctx.startedMs || 0)) prev = await readFile(path, 'utf8');
+    } catch { /* not written: start a fresh file */ }
+    const head = prev ? prev.trimEnd() + '\n\n'
+      : `# Implementation Review (cycle ${ctx.ordinal})\n\nThe review found no blocking issue in the diff itself.\n\n`;
+    try {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, head + checklistFindingsMarkdown(issues), 'utf8');
+    } catch (err) {
+      this._log('orchestrator', 'warn', `checklist: cannot write the findings to ${path}: ${err?.message || err}`);
+    }
+  }
+
   /** checkPlan for this run: grounded in the run's checkout; a workspace run skips grounding (paths are per member). */
   async _planCheck(file) {
     try {
@@ -1292,14 +1349,17 @@ export class GraphOrchestrator extends RunHarness {
         // A child process through the NODE site: every runner error carries
         // errorClass:null (D9), so _recover lands on the '*' row — pause as
         // REASON.ERROR, resumable, never a "network" retry. No questions, no session.
-        const result = await this._runNodeAttempts(nc, ctx);
+        let result = await this._runNodeAttempts(nc, ctx);
+        result = await this._applyReviewChecklist(ctx, result);   // spec D7: drops a script verdict's `checklist`
         await this._afterExecution(nc, ctx, result);
         return result;
       }
       this._primeQuestions(nc, ctx);
       await this._primeDirections(ctx);
+      if (this.runShape && nc.key === CHECKLIST_REVIEWER_KEY) ctx.checklistItems = await this._reviewChecklistItems(ctx);
       let result = await this._runNodeAttempts(nc, ctx);
       result = await this._questionsLoop(nc, ctx, result);
+      result = await this._applyReviewChecklist(ctx, result);
       await this._afterExecution(nc, ctx, result);
       await this._reconcileDirections(ctx);
       return result;

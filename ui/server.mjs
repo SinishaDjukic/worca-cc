@@ -32,7 +32,7 @@ import {
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   resolveIndexedArtifactFileForRow, readPromptFile, runDirForRow, recordArtifact, appendAudit,
-  persistMemberPrState, readMemberPrStates,
+  persistMemberPrState, readMemberPrStates, readPipelineExtras,
   checkoutRecordsFor, retainedWorkFor, runEngineOfRow,
 } from '../src/core/artifacts.mjs';
 import { mimeForPath, viewerKindFor } from '../src/shared/artifact-kinds.mjs';
@@ -301,6 +301,7 @@ import {
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { shapeFirstEnabled, requireShapeFirst } from '../src/core/shape/gate.mjs';
+import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
@@ -7129,8 +7130,17 @@ app.post('/api/pr', async (req, res) => {
   // The run's GitHub issue, closed on merge: after the description, before the footer.
   const closing = runSourceIssue(pipelineIdForPr, { baseRemote: baseR, memberKey })
     ? issueClosingLine({ sourceUrl: runSourceUrl(pipelineIdForPr), baseRepo: repo, body: description }) : '';
+  // Spec D7: a shaped run's PR ends with its checklist (the latest review cycle that has one), before the
+  // attribution footer; skipped when the description already carries it. Guarded like runSourceUrl: this handler
+  // has no try/catch and the branch is already pushed, so a DB error must not become an unhandled rejection.
+  let cl = null;
+  if (shapeFirstEnabled() && !description.includes(CHECKLIST_PR_MARKER)) {
+    try { cl = latestChecklist(readPipelineExtras(pipelineIdForPr).reviews); } catch { cl = null; }
+  }
+  const checklistMd = cl ? checklistMarkdown(cl.checklist).trimEnd() : '';
   const lead = description || state.title || feature;
-  const prBody = description || closing || footer ? `${lead}${closing ? `\n\n${closing}` : ''}${footer}` : '';
+  const prBody = description || closing || checklistMd || footer
+    ? `${lead}${closing ? `\n\n${closing}` : ''}${checklistMd ? `\n\n${checklistMd}` : ''}${footer}` : '';
   const pr = await createPr({
     projectDir: repoDir, base, head: feature, title: state.title || feature, repo, headOwner,
     baseRemote: baseR, pushRemote: pushR, workItemId, draft,

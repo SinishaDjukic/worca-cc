@@ -1059,3 +1059,47 @@ test('snapshotFromState carries state.shaping; without it the key set is unchang
   assert.equal('shaping' in plain, false);
   assert.deepEqual(Object.keys(snapshotFromState(STATE({ shaping: null }), { now: 0 })), Object.keys(plain));
 });
+
+test('chat run card result region: the checklist tally of a shaped run (spec D7), gated by Shape it first', async () => {
+  const RES = (checklist) => ({ filesChanged: 1, additions: 1, deletions: 0, checks: 0, topFiles: [], ...(checklist ? { checklist } : {}) });
+  const ex = (checklist) => ({ results: RES(checklist), artifacts: [], moreArtifacts: false, pr: null });
+  try {
+    await checkRows([
+      { name: 'unmet: the tally line reads out the counts and is open', run: () => {
+        applyShapeFirstHello({ features: { shapeFirst: true } });
+        const { card, $ } = mk();
+        card.update(done(ex({ met: 1, unmet: 1, na: 0, missing: 0, total: 2 })));
+        const el = $('.chat-rc-checklist');
+        assert.equal(el.textContent, 'Checklist: 1 met · 1 unmet · 0 n/a');
+        assert.ok(el.classList.contains('is-open'));
+      } },
+      { name: 'all met: not open', run: () => {
+        applyShapeFirstHello({ features: { shapeFirst: true } });
+        const { card, $ } = mk();
+        card.update(done(ex({ met: 2, unmet: 0, na: 1, missing: 0, total: 3 })));
+        assert.ok(!$('.chat-rc-checklist').classList.contains('is-open'));
+      } },
+      { name: 'not reported counts as open and is named', run: () => {
+        applyShapeFirstHello({ features: { shapeFirst: true } });
+        const { card, $ } = mk();
+        card.update(done(ex({ met: 1, unmet: 0, na: 0, missing: 1, total: 2 })));
+        assert.equal($('.chat-rc-checklist').textContent, 'Checklist: 1 met · 0 unmet · 0 n/a · 1 not reported');
+        assert.ok($('.chat-rc-checklist').classList.contains('is-open'));
+      } },
+      { name: 'gate off: no line', run: () => {
+        applyShapeFirstHello({});
+        const { card, $ } = mk();
+        card.update(done(ex({ met: 1, unmet: 1, na: 0, missing: 0, total: 2 })));
+        assert.equal($('.chat-rc-checklist'), null);
+      } },
+      { name: 'no checklist: no line', run: () => {
+        applyShapeFirstHello({ features: { shapeFirst: true } });
+        const { card, $ } = mk();
+        card.update(done(ex(null)));
+        assert.equal($('.chat-rc-checklist'), null);
+      } },
+    ]);
+  } finally {
+    applyShapeFirstHello({});
+  }
+});

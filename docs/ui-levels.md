@@ -171,6 +171,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Plan approval (Shape it first): the plan, its shape check, Run this plan / Send changes / Stop | all (rule 1) |
 | Plan approval extras: perspective chips + Update plan, Fix, Save to plans/ | S |
 | Plan approval: Open in New run | A |
+| Run page Overview: Perspective checklists (Shape it first, gated), one group per review cycle — met / unmet / n/a / not reported with evidence; the newest open, older ones folded | S |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
 | Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
 | Resume menu: Resume at HH:MM (when the limit resets) | A |
@@ -198,6 +199,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Answered for you", as on the run page | S |
 | History: usage-limit notice | S |
 | "Files changed" list on the Overview | S — the stand-in for the Diff tab |
+| Overview: Perspective checklists, as on the run page (shaped runs) | S |
 | Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; ⋯ menu (Archive, Restore, Report); Artifacts tab; Archived toggle in the Runs header (with Restore) | A |
 | Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
 | Ship It modal: Open as draft checkbox, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
@@ -310,6 +312,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: run card, perspective chips and the Shape it first nudge (open decisions, Run as is / Shape it first with estimates) | S |
 | Ask: the run card's question, "Answer and draft" / "Skip, draft with defaults" (shaping runs) | all (rule 1) |
 | Ask: live run card, "Clarify ✓ · Plan ✓ · Refine ✓ while shaping", plan file, saved path + Open | S |
+| Ask: run card result, the checklist tally ("Checklist: 3 met · 1 unmet · 1 n/a") on a finished shaped run | S |
 | Ask: the run card's agent model label, its artifact chips and "All artifacts", Create pull request / View pull request | A — as on the run page |
 | Ask: the run card's agent "cycle N" label | E — a loop badge |
 | Ask: a proposal's own schedule (the "Schedule" action and its time), schedule-change cards | S — the answer the user asked for |

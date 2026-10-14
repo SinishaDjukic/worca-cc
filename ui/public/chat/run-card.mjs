@@ -12,6 +12,7 @@ import { mountRunGraph } from '../graph/run-hosts.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askRendererFor, askKindOf } from '../ask/registry.mjs';
 import { shapeFirstOn } from './shape-gate.mjs';
+import { checklistTallyText } from '../../../src/shared/shape/review-checklist.mjs';
 
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
@@ -443,7 +444,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const arts = Array.isArray(s.artifacts) ? s.artifacts : [];
     const prUrl = s.pr && isWebUrl(s.pr.url) ? s.pr.url : '';
     const canCreate = word.key === 'ship' && !s.archived && !(s.pr && s.pr.url) && call(controls.prHost) !== false;
-    const sig = JSON.stringify([word, r, arts.map((a) => a.relPath), !!s.moreArtifacts, prUrl, canCreate]);
+    const sig = JSON.stringify([word, r, arts.map((a) => a.relPath), !!s.moreArtifacts, prUrl, canCreate, shapeFirstOn()]);
     if (sig === resultSig) return;
     resultSig = sig;
     resultSec.replaceChildren();
@@ -456,6 +457,12 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     rhead.append(glyph, text);
     if (r && r.filesChanged) rhead.appendChild(churnEl(r));
     resultSec.appendChild(rhead);
+    // Spec D7: a shaped run's checklist tally, from results.json via runCardResults.
+    const tally = r && r.checklist && r.checklist.total && shapeFirstOn() ? r.checklist : null;
+    if (tally) {
+      resultSec.appendChild(h('div', `chat-rc-checklist${tally.unmet || tally.missing ? ' is-open' : ''}`,
+        checklistTallyText(tally)));
+    }
     const top = r && Array.isArray(r.topFiles) ? r.topFiles : [];
     if (top.length) {
       const ul = h('ul', 'chat-rc-files');

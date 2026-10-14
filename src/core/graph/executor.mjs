@@ -52,6 +52,7 @@ import {
 import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
 import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
+import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
 import { runScriptExecution } from './script-runner.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
@@ -443,6 +444,8 @@ const joinHints = (a, b) => [a, b].map((s) => String(s || '').trim()).filter(Boo
 
 /** The agents whose prompt carries the Perspectives block (spec D5: the planner writes for them, Refine checks them). */
 const PERSPECTIVE_AGENT_KEYS = new Set(['planner', 'refiner']);
+/** The node key whose verdict carries the plan's checklist (spec D7). Workspace runs swap it out. */
+export const CHECKLIST_REVIEWER_KEY = 'reviewer';
 
 /**
  * The decomposition contract, rendered for ANY node whose output is wired into an
@@ -515,6 +518,9 @@ export function buildAgentPrompt(ctx) {
   const perspectives = PERSPECTIVE_AGENT_KEYS.has(node?.key) && Array.isArray(ctx.shape?.perspectives)
     ? perspectivesBlock(ctx.shape.perspectives, { refiner: node.key === 'refiner' })
     : '';
+  // Spec D7: the approved plan's R-… items, set by the orchestrator for a shaped run's reviewer only. Driven by the
+  // list, never by ctx.shape, so every unshaped and shaped-without-items prompt stays byte-identical.
+  const checklist = reviewChecklistBlock(ctx.checklistItems);
   const title = meta.displayName || node?.key || node?.id || 'agent';
   const siblings = ctx.slice ? siblingsBlock(ctx.slice.siblings) : '';
   const answersBlock = (ports.inputs || []).some((p) => p?.as === 'answers')
@@ -523,6 +529,7 @@ export function buildAgentPrompt(ctx) {
 
   return (
     taskHeader(headerCtx, title) +
+    (checklist ? '\n' + checklist : '') +
     '\n## What to do\n\n' +
     baseInstruction(meta.runnerType, meta) + '\n\n' +
     (hints ? hints + '\n\n' : '') +

@@ -917,3 +917,58 @@ test('POST /api/push: 409 when not merged back, and 409 for a normal run (open a
   r = await postTo('/api/push', { projectKey: plain.key, id: plain.id });
   assert.equal(r.status, 409);
 });
+
+// ---------------------------------------------------------------------------
+// Spec D7 (slice 3): a shaped run's PR ends with its perspective checklist, before the attribution footer.
+// ---------------------------------------------------------------------------
+test('POST /api/pr appends the latest perspective checklist after the Closes line and before the footer (gated)', async () => {
+  const { writeReview } = await import('../src/core/artifacts.mjs');
+  const id = await seedIssueRun({ feature: 'worca-cc/checklist-run' });
+  const item = (over) => ({ id: 'R-qa-1', perspective: 'qa', text: 'Rejects empty input.', status: 'met', evidence: 'test passes', ...over });
+  await writeReview(id, 'impl', 1, { issues: [], summary: '', checklist: [item({ status: 'unmet', evidence: 'old' })] });
+  await writeReview(id, 'impl', 2, { issues: [], summary: '', checklist: [item(), item({ id: 'R-ux-1', perspective: 'ux', text: 'Empty state.', status: 'na', evidence: 'no UI' })] });
+  const section = '<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n' +
+    '- [x] **R-qa-1** Rejects empty input. — test passes\n' +
+    '- [ ] ~~**R-ux-1** Empty state.~~ — Not applicable: no UI';
+  const footer = '\n\n---\nStarted by grace@example.com via worca';
+
+  let seen = [];
+  stubForkRepo(seen);
+  await withEnv({ WORCA_SHAPE_FIRST: '1' }, async () => {
+    assert.equal((await post({ projectKey: betaKey, id, body: 'Did it.', ...FORK })).status, 200);
+  });
+  assert.equal(bodyArg(seen), `Did it.\n\nCloses #42\n\n${section}${footer}`, 'only cycle 2 is used');
+
+  seen = [];
+  stubForkRepo(seen);
+  await withEnv({ WORCA_SHAPE_FIRST: '' }, async () => {
+    assert.equal((await post({ projectKey: betaKey, id, body: 'Did it.', ...FORK })).status, 200);
+  });
+  assert.equal(bodyArg(seen), `Did it.\n\nCloses #42${footer}`, 'gate off: today\'s body');
+
+  seen = [];
+  stubForkRepo(seen);
+  const own = 'Mine.\n\n<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n- [x] done';
+  await withEnv({ WORCA_SHAPE_FIRST: '1' }, async () => {
+    assert.equal((await post({ projectKey: betaKey, id, body: own, ...FORK })).status, 200);
+  });
+  assert.equal(bodyArg(seen), `${own}\n\nCloses #42${footer}`, 'a description that carries the marker is left alone');
+});
+
+test('POST /api/pr: a gated run without checklist rows is unchanged; a footer-less run ends with the section', async () => {
+  const { writeReview } = await import('../src/core/artifacts.mjs');
+  let seen = [];
+  stubForkRepo(seen);
+  await withEnv({ WORCA_SHAPE_FIRST: '1' }, async () => {
+    assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
+  });
+  assert.equal(bodyArg(seen), 'Did it.', 'no rows: byte-identical');
+
+  await writeReview(betaId, 'impl', 1, { issues: [], summary: '', checklist: [{ id: 'R-qa-1', perspective: 'qa', text: 'T.', status: 'met', evidence: 'e' }] });
+  seen = [];
+  stubForkRepo(seen);
+  await withEnv({ WORCA_SHAPE_FIRST: '1' }, async () => {
+    assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
+  });
+  assert.equal(bodyArg(seen), 'Did it.\n\n<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n- [x] **R-qa-1** T. — e');
+});

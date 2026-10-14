@@ -5,6 +5,7 @@
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { recordArtifact, resolvePipelineId, readPipelineExtras } from './artifacts.mjs';
+import { latestChecklist, checklistTally } from '../shared/shape/review-checklist.mjs';
 
 const NEW_STATUS = new Set(['A', 'C']);
 
@@ -128,6 +129,7 @@ export function assembleResults({ nameStatus, numstat, reviews }) {
   const keyThingsToCheck = selectKeyChecks(reviews);
   const nitpicks = splitNitpicks(reviews);
   linkIssues(keyThingsToCheck, files);
+  const latest = latestChecklist(reviews);   // spec D7: a shaped run's last checklist, for the Chat tally
   return {
     summary: {
       ...files.counts,
@@ -138,6 +140,7 @@ export function assembleResults({ nameStatus, numstat, reviews }) {
     changedFiles: files.changedFiles,
     keyThingsToCheck,
     nitpicks,
+    ...(latest ? { checklist: { ...checklistTally(latest.checklist), cycle: latest.cycle } } : {}),
   };
 }
 
