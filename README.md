@@ -94,6 +94,13 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   `worca-cc/…` branch, so agents never edit your checkout and parallel runs
   don't collide. When a run ends, its work is committed to that branch and the
   worktree is removed; the branch stays.
+- **Run on the source branch** — switch it on under the feature branch (or
+  `--on-source-branch`) and the run still works on a hidden branch, but when it
+  finishes `done` its source branch is fast-forwarded onto that work and the
+  hidden branch is deleted; the run's page then offers **Push <source>** instead
+  of a pull request. Only ever a fast-forward: a source that moved meanwhile, a
+  dirty checkout of it, or a run that did not finish leaves the work on its own
+  branch, with the commands to merge it by hand.
 - **Live cockpit** — **Runs** in the sidebar lists every run, live and
   finished, with **All / Live / Finished / Needs you** tabs, search, and
   grouping by project or date. A live run's page shows its state and current
@@ -440,6 +447,13 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   artifacts and **Create pull request**. While the chat follows a live run, the composer's **→**
   chip (named after the run) sends it a direction instead of a message. The chat still posts when
   the run waits for an answer, pauses, fails or finishes.
+- **Per-agent models for one run** — on a run card for a saved workflow, Ask Worca can pick a
+  model and effort for each agent step from the catalog (judgement steps on the top price tier,
+  mechanical ones on the cheapest capable model, Anthropic first, then OpenAI; a premium-tier
+  model such as Fable 5.1 only when you name it). Each pick sits
+  beside the project's own setting with its reason on hover; change or reset any of them before
+  **Start run**. The picks apply to that run only — turn on **Save as project defaults** to keep
+  them ([`docs/models.md`](docs/models.md#per-agent-models-for-one-run)).
 - **Memory** — say "remember …" or state a lasting preference, and Ask saves it to Worca's
   memory: global for how you work, per project for facts about one repository. Pipeline agents
   load the same memory; view, edit, delete or restore it on Settings › **Memory** and on a
@@ -452,6 +466,16 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   [`docs/speech-languages.md`](docs/speech-languages.md).
 
 ![The Chat page: a finished "Paginate the search endpoint" run card for nimbus-crm with elapsed time, cost, 5/5 agents and its workflow graph, then a follow-up answer about the docs repository](docs/screenshots/ask-worca.png)
+
+### Browser extension
+
+- **Ask Worca next to the page you are reading** — a sidebar for Chrome, Edge and Firefox chats with
+  your local Worca. Each message carries the page's URL, title and your selection, the page text if
+  you switch it on, and any passage you quote. Pinpoint works on web pages too: select text, then
+  Explain it, Discuss it or send it to the chat. You approve the pairing in Worca with a matching
+  code, and Settings › General › **Browser extension** lists and revokes paired browsers. See
+  [`docs/browser-extension.md`](docs/browser-extension.md).
+- **Ships with Worca** — the built extension is in the npm package: open Settings › General › Browser extension, or run `worca extension`, for the folder to load; each GitHub release also has Chrome, Edge and Firefox zips (Firefox unsigned for now).
 
 ### Away mode
 
@@ -809,12 +833,15 @@ worca script test shell --param command="npm test" --cwd .
 worca plugin init my-plugin
 worca plugin new-script tidy --dir ./my-plugin
 worca plugin validate ./my-plugin --run-cases
+
+# the browser extension packaged with Worca
+worca extension --open          # the packaged browser extension folder
 ```
 
 Run `worca --help` for every subcommand — projects (`add`, `list`,
 `remove`), `resume`, `runs`, `logs`, `schedule`, `workflow`, `script`,
 `plugin`, `marketplace`, `models`, `config`, `metrics`, `policy`,
-`container`, `broker`, `doctor` — and flag; most have their own
+`container`, `broker`, `extension`, `doctor` — and flag; most have their own
 `worca <subcommand> help`.
 
 Exit codes, for scripts and CI wrappers: `0` the run finished (or an
@@ -866,6 +893,7 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Storage](docs/storage.md) — where state lives, project keys, migration
 - [Worca in a container](docs/docker.md) — Worca and every `claude` it spawns in a disposable Linux container: the published image, compose, `worca container`
 - [Remote access](docs/remote-access.md) — opt-in, behind Cloudflare Access, with Worca checking the token
+- [Browser extension](docs/browser-extension.md) — sidebar chat, page context and Pinpoint on web pages; pairing and security model
 - [Deploy on Railway](docs/deploy-railway.md) — the container as a hosted service behind Cloudflare Access
 - [Releasing](docs/RELEASING.md) — how `@worca/app` versions are published
 - [Screenshots](docs/screenshots.md) — how the shots in this README are made: a sandboxed Worca, demo data, headless Chrome

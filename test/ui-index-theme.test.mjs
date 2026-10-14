@@ -49,13 +49,16 @@ after(async () => {
 });
 const postJson = (body) => fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
-test('GET /, /index, /index.html (any case) and an SPA path serve the shell in the stored theme, no-store', async () => {
+test('GET /, /index, /index.html (any case) and an SPA path serve the shell in the stored theme, no-store, unframable', async () => {
   for (const p of ['/', '/index', '/index.html', '/Index.html', '/history/some-key/pl_0000']) {
     const r = await fetch(`${base}${p}`);
     assert.equal(r.status, 200, p);
     assert.match(r.headers.get('content-type'), /^text\/html; charset=utf-8/i, p);
     assert.equal(r.headers.get('cache-control'), 'no-store', p);
     assert.equal(r.headers.get('x-content-type-options'), 'nosniff', p);
+    // The shell can never be framed: a framed pairing prompt could be clickjacked (docs/browser-extension.md).
+    assert.equal(r.headers.get('content-security-policy'), "frame-ancestors 'none'", p);
+    assert.equal(r.headers.get('x-frame-options'), 'DENY', p);
     assert.match(await r.text(), /<html lang="en" data-theme="system"( data-level="(simple|advanced|expert)")?>/, p);   // + the interface mode (docs/ui-levels.md)
   }
   try {

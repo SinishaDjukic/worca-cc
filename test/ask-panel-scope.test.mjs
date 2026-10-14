@@ -143,7 +143,7 @@ test('#397: reopening a pinned thread restores the selector (name resolved from 
   assert.equal(btn.querySelector('.ask-scope-label').textContent, 'Demo', 'restored and resolved to the display name');
   assert.ok(btn.classList.contains('is-pinned'));
   // New chat resets to Auto
-  ctx.doc.querySelector('[data-ask-new-btn]').click();
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
   await ctx.tick();
   assert.equal(btn.textContent.trim(), 'Auto');
   assert.ok(!btn.classList.contains('is-pinned'));

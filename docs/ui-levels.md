@@ -152,7 +152,7 @@ be skipped by forgetting it.
 | Workflow picker | S — lists Auto and Default only; the selected workflow always stays listed |
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
 | "Set in Advanced mode and still applied" note | S |
-| Target switch, task source (Markdown), source and feature branch | A |
+| Target switch, task source (Markdown), source and feature branch; "Run on the source branch" toggle | A |
 | Engine dropdown beside the workflow (greyed-out engines the credential broker refuses) | A — stays visible at every level while a non-Claude engine is picked (rule 2) |
 | Advanced disclosure: guardrails, human in the loop, per-agent model and effort | A |
 | Per-agent fan-out, sub-agent model, questions; feedback-loop max cycles; "Save as workflow defaults"; memory scope | E |
@@ -166,7 +166,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Card (History-level): status, title, elapsed, cost, Stop, Pause/Resume, open; a strip on a waiting or parked run that opens the run page at its question | S |
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
-| Recovery prompt, cycle gate, cost-pause banner, retained-work banner | all |
+| Recovery prompt, cycle gate, cost-pause banner, retained-work banner, merge-back banner (a run on its source branch that could not be fast-forwarded) | all |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
 | Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
 | Resume menu: Resume at HH:MM (when the limit resets) | A |
@@ -194,7 +194,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Answered for you", as on the run page | S |
 | History: usage-limit notice | S |
 | "Files changed" list on the Overview | S — the stand-in for the Diff tab |
-| Diff tab, diff pill, inline comments; Create PR / View PR; branch line; ⋯ menu (Archive, Restore, Report); Artifacts tab; Archived toggle in the Runs header (with Restore) | A |
+| Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; ⋯ menu (Archive, Restore, Report); Artifacts tab; Archived toggle in the Runs header (with Restore) | A |
 | Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
 | Ship It modal: Open as draft checkbox, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
@@ -216,7 +216,9 @@ branch are skipped, counted apart on the checks line ("· 2 also failing on dev"
 and named in the fix brief as not the PR's to fix. A failed GitHub Actions check is
 re-run (an Azure build policy re-queued) once per PR commit before any fix; a failure the base head has no result for
 yet waits up to 30 minutes for it; and when the PR is behind its base and the base
-head passes the failing check, the first fix run only merges the base in. Review
+head passes the failing check, the base is merged in first. When it merges cleanly
+Worca writes the merge commit itself and pushes it: no agent, and no fix run used.
+Only a conflicting merge starts a fix run, which merges the base in and nothing else. Review
 text is untrusted code feedback. Each fix run is an unattended
 Implement ⇄ Review on the PR's own branch, run through the built-in PR fix
 workflow (`wf_pr_fix`, internal and not listed in the picker): it keeps the
@@ -299,6 +301,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
 | Required-plugins strip and setup checklist (the Marketplace page) | A — with the page that holds them |
 | Ask: chat, history, attachments, run card, proposal title / project / workflow / brief / Start | S |
+| Pinpoint (#669): select text in a chat answer, a Markdown artifact or the Diff tab for Copy · Explain · Alternatives · Disagree · Note / Comment · Quote / Send to chat; the composer's quote chip; an artifact's pending-changes tray (sent back to the run as one direction while it still takes directions); the diff's open-comments tray (Propose fix run) | all — follows the surface it is on |
 | Ask: the run card's Pause / Resume / Stop, its answer receipt, its result (verdict, changes, top changed files) and the composer's "→ run" direction chip | S — the run card's controls, as on the Running card |
 | Ask: the run card's question (clarify, form, cycle gate, recovery, Auto proposal) | all (rule 1) — its own controls keep the run page's levels (Auto proposal Revise A, tunables E) |
 | Ask: the run card's agent model label, its artifact chips and "All artifacts", Create pull request / View pull request | A — as on the run page |
@@ -310,8 +313,9 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: a classified failure's raw-detail expander ("Details") | E |
 | Ask: proposal cards themselves | all (rule 4) |
 | Ask: the context ring and its popover's window fill and topics | S |
-| Ask: model picker, scope, cost meter, tool rows, branches, guardrails, "Open in New Pipeline" | A |
-| Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E |
+| Ask: model picker, scope, cost meter, tool rows, branches, guardrails, "Open in New run" | A |
+| Ask: the chevron on a reply's activity line (`Done · 7.4s · …`) | A when it opens tool rows, E when it opens only sub-agents; the line itself shows at every level |
+| Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E — a run card carrying Ask Worca's per-agent picks shows its lane at every mode (the picks apply at Start) |
 | Chat home: heading, composer, the New run / Build workflow / Track a run / Write a script / Clone a repo tiles, More (Step away), the four tabs and their run tiles, the Workflows and Away mode promos | S |
 | Chat home: the Schedule a run and Explain a diff tiles; More › New workspace, Remember something, Find tasks; the Schedules promo | A — with the page or surface that owns each feature |
 | Chat home: More › Team metrics, Add a model | E — with the Team metrics and Models pages |

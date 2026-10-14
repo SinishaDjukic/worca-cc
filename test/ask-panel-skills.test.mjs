@@ -208,7 +208,7 @@ test('a skill switch: saved per chat as <setId>|<skillId> in mcpOff (preview + P
   ctx.panel.destroy();
 });
 
-test('transcript: the join notice links "Sets"; a Skill tool call reads skill · <qualified name> (args after it)', async () => {
+test('transcript: the join notice links "Sets"; a Skill tool call reads Skill <qualified name> (args after it, never cut)', async () => {
   const notice = { kind: 'notice', text: "shop's skills (shop:notes) join from the next message", mcp: true };
   const blocks = [notice,
     { kind: 'tool', id: 't1', name: 'Skill', input: { skill: 'billing:deploy-checklist' }, status: 'done', durationMs: 200 },
@@ -223,8 +223,8 @@ test('transcript: the join notice links "Sets"; a Skill tool call reads skill ·
   await settle(ctx); ctx.flush(); await settle(ctx);
   const link = ctx.doc.querySelector('.ask-notice .ask-notice-mcp');
   assert.equal(link.textContent, 'Sets');
-  const rows = [...ctx.doc.querySelectorAll('.ask-tool-row')].map((r) => [r.querySelector('.ask-tool-op').textContent, r.querySelector('.ask-tool-target').textContent]);
-  assert.deepEqual(rows, [['skill', 'billing:deploy-checklist'], ['skill', 'general:graphify · the run graph'], ['skill', `general:graphify · ${'x'.repeat(60)}…`]]);
+  const rows = [...ctx.doc.querySelectorAll('.ask-tool-row')].map((r) => [r.querySelector('.ask-tool-name').textContent, r.querySelector('.ask-tool-args').textContent]);
+  assert.deepEqual(rows, [['Skill', 'billing:deploy-checklist'], ['Skill', 'general:graphify · the run graph'], ['Skill', `general:graphify · ${'x'.repeat(70)}`]]);
   link.click();
   await settle(ctx);
   assert.ok(pop(ctx), 'the picker is open');

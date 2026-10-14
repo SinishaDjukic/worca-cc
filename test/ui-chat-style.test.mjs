@@ -117,6 +117,12 @@ test('History: a 264px push column that turns into an overlay with a scrim below
   assert.equal(ruleBody('.ask-threads-list'), 'display:flex;flex-direction:column;gap:1px;');
 });
 
+test('New chat is a labelled ghost button (.ask-icon-btn widened): in the head, and leading the History column at the rows\' inset and radius', () => {
+  assert.equal(ruleBody('.ask-icon-btn.chat-new-btn'), 'width:auto;gap:6px;padding:0 10px 0 8px;font:500 12.5px/1 var(--sans);white-space:nowrap;');
+  assert.equal(ruleBody('.chat-history-new.chat-new-btn'), 'flex:none;justify-content:flex-start;height:34px;margin:6px 6px 0;padding:0 10px;border-radius:10px;');
+  assert.ok(css.indexOf('\n.chat-history-new.chat-new-btn{') > css.indexOf('\n.ask-icon-btn.chat-new-btn{'), 'the column\'s padding wins: same weight, later');
+});
+
 test('the History list scrolls, the open chat\'s row is marked, the trash waits for hover', () => {
   assert.match(ruleBody('.chat-history-body'), /min-height:0;overflow-y:auto;/, 'older chats stay reachable');
   assert.equal(ruleBody('.ask-thread-row.is-current'), 'background:var(--field);');

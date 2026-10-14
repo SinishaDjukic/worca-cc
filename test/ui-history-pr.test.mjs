@@ -187,3 +187,82 @@ test('a run with no PR reads "Ready to ship" when gh or an Azure DevOps token is
 // The two merge-pill re-check tests moved to test/ui-history-shipit.test.mjs:
 // the pill is detail-only now (`.hd .hist-merge`), and the PR is opened from the
 // detail screen's ship-it modal rather than from the list card.
+
+const SAME_MEMBER = { projectKey: DONE.projectKey, source: 'main', branch: 'worca-cc/feat-ps' };
+// pr: null = "gh answered: no PR yet". DONE has no `pr` key, and paintHdPr returns early on
+// pr === undefined (app.js:18309), which would make every "no Create PR" assertion below vacuous.
+const SAME_MERGED = { ...DONE, id: 'ps', pr: null, branch: 'worca-cc/feat-ps', survived: false, sameAsSource: true,
+  mergeBack: { merged: true, members: [{ ...SAME_MEMBER, merged: true, kind: null, reason: null, sha: 'a'.repeat(40) }] } };
+const SAME_NOT = { ...SAME_MERGED, id: 'pn2', survived: true,
+  mergeBack: { merged: false, members: [{ ...SAME_MEMBER, merged: false, kind: 'dirty', reason: 'main is checked out in /x/proj with 2 uncommitted change(s)', sha: null }] } };
+const sameArms = (rows, pushes) => (url, opts) => {
+  if (url.endsWith('/api/push')) { pushes.push(JSON.parse(opts.body)); return ok({ ok: true, remote: 'origin', branch: 'main' }); }
+  // A publish status painted before the merge back deleted the branch: the page must not trust it.
+  if (url.includes('/publish?')) return ok({ ok: true, members: [{ memberKey: null, name: null, branch: 'worca-cc/feat-ps', remote: null, state: 'unpublished', published: null }] });
+  return armsFor(rows)(url);
+};
+
+test('same-branch, merged back: Push replaces Create PR and posts /api/push; the header arrow points into the source', async () => {
+  const pushes = [];
+  const ctx = await boot({ fetchHandler: sameArms([SAME_MERGED], pushes) });
+  ctx.showDetails(SAME_MERGED);
+  await ctx.settle();
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#hist-detail .hd-pr').hidden, true);
+  const push = doc.querySelector('#hist-detail .hd-push');
+  assert.equal(push.hidden, false);
+  assert.equal(push.textContent, 'Push main');
+  // The hidden branch was fast-forwarded into main and deleted: never offer its name, Publish or a copy.
+  assert.equal(doc.querySelector('#hist-detail .hd-base').textContent, 'Merged into main');
+  assert.equal(doc.querySelector('#hist-detail .hd-branch-copy').hidden, true);
+  assert.equal(doc.querySelector('#hist-detail .hd-publish').hidden, true);
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-branch-name').textContent, 'main');
+  const cta = doc.querySelector('#hist-detail .hd-g-push');
+  assert.ok(cta, 'the run summary offers Push');
+  cta.click();   // the summary's button drives the header's (one wiring) and must show the outcome too
+  await ctx.settle();
+  assert.deepEqual(pushes[0], { projectKey: DONE.projectKey, projectDir: DONE.projectDir, id: 'ps' });
+  assert.equal(push.textContent, 'Pushed to origin');
+  assert.equal(doc.querySelector('#hist-detail .hd-g-push').textContent.trim(), 'Pushed to origin');
+  assert.equal(doc.querySelector('#hist-detail .hd-g-push').disabled, true);
+});
+
+test('same-branch, not merged back: no Push; Create PR lands the work from its own branch; a banner with the reason and the manual commands', async () => {
+  const ctx = await boot({ fetchHandler: sameArms([SAME_NOT], []) });
+  ctx.showDetails(SAME_NOT);
+  await ctx.settle();
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#hist-detail .hd-push').hidden, true);
+  // The merge back was refused, so the work is on its own branch: a PR is how it lands (M6).
+  assert.equal(doc.querySelector('#hist-detail .hd-pr').hidden, false, 'Create PR for a run that did not merge back');
+  assert.equal(doc.querySelector('#hist-detail .hd-base').textContent, 'main →', 'the work did not flow into main');
+  const banner = doc.querySelector('#hist-detail .merge-back-banner');
+  assert.equal(banner.hidden, false);
+  assert.match(banner.textContent, /uncommitted change/);
+  assert.equal(banner.querySelector('strong').textContent, DONE.projectName, 'the project by its name, not its store key');
+  // Chained (a failed switch stops the rest), in the project dir, fast-forward only.
+  assert.equal(banner.querySelector('code').textContent,
+    "cd '/x/proj' && git switch 'main' && git merge --ff-only --no-overwrite-ignore 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'");
+  assert.match(banner.textContent, /Commit or stash your changes/);
+});
+
+test('merge-back banner: each refusal gets its own recipe (in-use runs in that worktree, diverged needs a real merge, missing re-creates the source, commit-failed has none)', async () => {
+  const recipe = async (mb) => {
+    const row = { ...SAME_NOT, id: `pk${mb.kind}`, mergeBack: { merged: false, members: [{ ...SAME_MEMBER, merged: false, sha: null, reason: 'r', paths: [], ...mb }] } };
+    const ctx = await boot({ fetchHandler: sameArms([row], []) });
+    ctx.showDetails(row);
+    await ctx.settle();
+    const banner = ctx.window.document.querySelector('#hist-detail .merge-back-banner');
+    return { code: banner.querySelector('code')?.textContent ?? null, text: banner.textContent };
+  };
+  await checkRows([
+    { name: 'in-use with the worktree', run: async () => assert.equal((await recipe({ kind: 'in-use', paths: ['/x/other wt'] })).code,
+      "cd '/x/other wt' && git merge --ff-only --no-overwrite-ignore 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'") },
+    { name: 'in-use without one (rebase/bisect)', run: async () => assert.match((await recipe({ kind: 'in-use' })).text, /Finish or abort/) },
+    { name: 'diverged', run: async () => assert.equal((await recipe({ kind: 'diverged' })).code,
+      "cd '/x/proj' && git switch 'main' && git merge 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'") },
+    { name: 'missing', run: async () => assert.equal((await recipe({ kind: 'missing' })).code,
+      "cd '/x/proj' && git branch 'main' 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'") },
+    { name: 'commit-failed', run: async () => assert.equal((await recipe({ kind: 'commit-failed' })).code, null) },
+  ]);
+});

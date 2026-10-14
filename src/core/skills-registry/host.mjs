@@ -37,6 +37,15 @@ export function managedSettingsPath(platform = process.platform, env = process.e
   return posix.join('/etc/claude-code', 'managed-settings.json');
 }
 
+/** The managed settings file and its `managed-settings.d/*.json` drop-ins in the order the CLI layers them (a later one
+ *  wins); the drop-ins only when the folder can be read. */
+export function managedSettingsFiles(platform = process.platform, env = process.env) {
+  const file = managedSettingsPath(platform, env);
+  let names = [];
+  try { names = readdirSync(join(dirname(file), 'managed-settings.d')).filter((n) => n.endsWith('.json') && !n.startsWith('.')).sort(); } catch { names = []; }
+  return [file, ...names.map((n) => join(dirname(file), 'managed-settings.d', n))];
+}
+
 /** A JSON object read from `file`, or null (missing, unreadable, not JSON, not an object). */
 function readObject(file) {
   try {

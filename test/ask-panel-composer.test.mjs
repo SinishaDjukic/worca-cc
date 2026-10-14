@@ -93,9 +93,9 @@ test('ask-panel-composer: attachment chips — dedupe by name (newest wins), bad
       await ctx.tick(); await ctx.tick();
       assert.equal(ctx.doc.querySelector('.ask-chip'), null);
       assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment type not allowed: evil\.exe/);
-      injectFiles(ctx, [mkFile(ctx, 'big.md', 'x'.repeat(524_289))]);
+      injectFiles(ctx, [mkFile(ctx, 'big.md', 'x'.repeat(100 * 1024 * 1024 + 1))]);
       await ctx.tick(); await ctx.tick();
-      assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment over 524288 bytes: big\.md/);
+      assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment over 104857600 bytes: big\.md/);
       injectFiles(ctx, [mkFile(ctx, 'ok.md', 'fine')]);
       await ctx.tick(); await ctx.tick();
       assert.ok(ctx.doc.querySelector('.ask-chip'));
@@ -113,9 +113,9 @@ test('ask-panel-composer: attachment chips — dedupe by name (newest wins), bad
   ]);
 });
 
-test('ask-panel-composer: accepted kinds — png (thumbnail chip), pdf, .html/.htm as text; the binary cap is 5 MB; the file input advertises them', async () => {
+test('ask-panel-composer: accepted kinds — png (thumbnail chip), pdf, .html/.htm as text; the binary cap is 100 MB; the file input advertises them', async () => {
   await checkRows([
-    { name: 'ask-panel-composer (#398): png accepted with a thumbnail chip, pdf accepted, binary cap is 5 MB', run: async () => {
+    { name: 'ask-panel-composer (#398): png accepted with a thumbnail chip, pdf accepted, binary cap is 100 MB', run: async () => {
       const ctx = makePanel({ fetchHandler: apiHandler() });
       ctx.panel.open();
       const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
@@ -131,9 +131,9 @@ test('ask-panel-composer: accepted kinds — png (thumbnail chip), pdf, .html/.h
       await ctx.tick(); await ctx.tick();
       assert.equal(ctx.doc.querySelectorAll('.ask-chip').length, 2, 'pdf accepted too');
       assert.equal(ctx.doc.querySelectorAll('.ask-chip img.ask-chip-thumb').length, 1, 'no thumbnail on a pdf chip');
-      injectFiles(ctx, [new ctx.window.File([new Uint8Array(32 * 1024 * 1024 + 1)], 'big.png', { type: 'image/png' })]);
+      injectFiles(ctx, [new ctx.window.File([new Uint8Array(100 * 1024 * 1024 + 1)], 'big.png', { type: 'image/png' })]);
       await ctx.tick(); await ctx.tick();
-      assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment over 33554432 bytes: big\.png/);
+      assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment over 104857600 bytes: big\.png/);
       // the file input advertises the binary types
       const accept = ctx.doc.querySelector('.ask-composer input[type="file"]').accept;
       for (const e of ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf']) assert.ok(accept.includes(e), `accept carries ${e}`);
@@ -189,13 +189,13 @@ test('ask-panel-composer: a 409 or 413 body renders verbatim and the composer ke
       assert.equal(ctx.doc.querySelector('textarea.ask-input').value, 'try again later', 'text preserved on failure');
     } },
     { name: 'ask-panel-composer: a 413 body renders verbatim', run: async () => {
-      const calls = { messages: () => ({ ok: false, status: 413, json: async () => ({ error: 'attachments over 50331648 bytes per message' }) }) };
+      const calls = { messages: () => ({ ok: false, status: 413, json: async () => ({ error: 'attachments over 104857600 bytes per message' }) }) };
       const ctx = makePanel({ fetchHandler: apiHandler(calls) });
       ctx.panel.open();
       ctx.doc.querySelector('textarea.ask-input').value = 'big send';
       ctx.doc.querySelector('[data-ask-send]').click();
       await ctx.tick(); await ctx.tick(); await ctx.tick();
-      assert.equal(ctx.doc.querySelector('.ask-composer-msg').textContent, 'attachments over 50331648 bytes per message');
+      assert.equal(ctx.doc.querySelector('.ask-composer-msg').textContent, 'attachments over 104857600 bytes per message');
     } },
   ]);
 });

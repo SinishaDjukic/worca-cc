@@ -116,9 +116,12 @@ export async function downloadArtifact({ doc, fetch: fetchFn, url, name = '' }) 
  * @param {{step?:string, cycle?:number}} [o.meta]   the first file's step and cycle (CONTRACT §7)
  * @param {(a:object) => {step?:string|null, cycle?:number|null}} [o.metaFor]   per file; wins over `meta`
  * @param {{loadMarkdown?:Function, hljsLoader?:object}} [o.deps]
+ * @param {(o:{artifact:object, stage:HTMLElement, body:HTMLElement, root:HTMLElement}) => (() => void)|void} [o.decorate]
+ *   after a text preview renders (Pinpoint #669 adds its selection actions and tray); the returned function undoes it
+ *   when the file changes or the popup closes
  * @returns {{close(opts?:{restore?:boolean}):void, ready:Promise<void>, el:HTMLElement}}
  */
-export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn, artifact, urls, list = null, meta = null, metaFor = null, deps = {} }) {
+export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn, artifact, urls, list = null, meta = null, metaFor = null, deps = {}, decorate = null }) {
   const prior = OPEN.get(doc);
   const active = doc.activeElement && doc.activeElement !== doc.body ? doc.activeElement : null;
   // A viewer opened over another inherits ITS opener: focus must go back to the page, not into a removed dialog.
@@ -206,6 +209,8 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
   const opened = items[index];                // the list's own entry for `artifact` (an equal copy is found by path)
   let token = 0;
   let closed = false;
+  let undecorate = null;
+  const undo = () => { const u = undecorate; undecorate = null; if (typeof u === 'function') { try { u(); } catch { /* a decoration never blocks the viewer */ } } };
   const sizes = new Map();                    // rel -> bytes a HEAD found for a row that did not carry them
   const sizeOf = (a) => (a.bytes != null ? a.bytes : sizes.get(relOf(a)));
   const route = routeKeyOf(win);              // where it was opened (onHash)
@@ -283,6 +288,7 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
     index = i;
     const a = items[index];
     const my = ++token;
+    undo();
     header(a);
     root.classList.remove('is-info');
     const stage = h('div', 'apv-stage artifact-view');
@@ -338,6 +344,9 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
         return;
       }
       await renderPreview({ kind: a.kind || null, relPath: shown, text }, stage, deps);
+      if (live() && typeof decorate === 'function') {
+        try { undecorate = decorate({ artifact: a, stage, body, root }) || null; } catch { undecorate = null; }
+      }
     } catch {
       if (live()) fail(stage, 'Could not load');
     }
@@ -434,6 +443,7 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
     if (closed) return;
     closed = true;
     token += 1;
+    undo();
     win.removeEventListener('keydown', onKey, true);
     win.removeEventListener('hashchange', onHash);
     doc.removeEventListener('fullscreenchange', onFs);

@@ -212,7 +212,7 @@ test('choices: held before a thread exists and sent with the first message, PATC
       assert.deepEqual(state.previews.at(-1).mcpOff, { sets: ['shop'], members: [] });
       btn(ctx).click(); await settle(ctx);
       assert.equal(pop(ctx).querySelectorAll('.ask-mcp-row')[2].children[0].getAttribute('aria-checked'), 'false', 'Shop is off in this chat');
-      ctx.doc.querySelector('[data-ask-new-btn]').click();
+      ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
       await settle(ctx);
       assert.deepEqual(state.previews.at(-1).mcpOff, { sets: [], members: [] });
       assert.equal(state.previews.at(-1).threadId, undefined);
@@ -440,7 +440,7 @@ test('choices: a queued toggle PATCH still goes to the thread it was made in aft
   btn(ctx).click(); await settle(ctx);
   pop(ctx).querySelectorAll('.ask-mcp-row')[0].children[0].click(); await settle(ctx);   // General off (its PATCH held)
   pop(ctx).querySelectorAll('.ask-mcp-row')[1].children[0].click(); await settle(ctx);   // Billing off (queued behind it)
-  ctx.doc.querySelector('[data-ask-new-btn]').click(); await settle(ctx);               // New chat
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click(); await settle(ctx);               // New chat
   ctx.doc.querySelector('textarea.ask-input').value = 'hi';
   ctx.doc.querySelector('[data-ask-send]').click(); await settle(ctx);                  // creates thread B
   while (held.length) { held.shift()(); await settle(ctx); }

@@ -3,7 +3,7 @@
 // (workflows/chat-dock.mjs): the type tables and caps, the early checks with their messages, base64, and the drag and
 // paste helpers. Pure: no DOM, no state beyond a paste namer's own counter.
 // Mirrors src/shared/artifact-kinds.mjs (the allowlists) + src/core/ask/limits.mjs (the caps, #398): text kinds are
-// UTF-8 capped at 512 KB, binary kinds (images + PDF) at 32 MB, 8 files and 48 MB per message. The server re-validates
+// UTF-8 and binary kinds (images + PDF) alike capped at 100 MB, 8 files and 100 MB per message. The server re-validates
 // everything; these are just early clear messages (test/attach-files.test.mjs pins the mirror).
 import { attachRefusal } from './ask-engine.mjs';
 
@@ -12,9 +12,9 @@ export const ATTACH_BINARY = Object.freeze({
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf',
 });
-export const ATTACH_MAX_TEXT_BYTES = 524_288;
-export const ATTACH_MAX_BINARY_BYTES = 32 * 1024 * 1024;
-export const ATTACH_MAX_MESSAGE_BYTES = 48 * 1024 * 1024;
+export const ATTACH_MAX_TEXT_BYTES = 100 * 1024 * 1024;
+export const ATTACH_MAX_BINARY_BYTES = 100 * 1024 * 1024;
+export const ATTACH_MAX_MESSAGE_BYTES = 100 * 1024 * 1024;
 export const ATTACH_MAX_FILES = 8;
 /** The file picker's accept list: every allowed extension, then text/*. */
 export const ATTACH_ACCEPT = `${ATTACH_TEXT_EXT.join(',')},${Object.keys(ATTACH_BINARY).join(',')},text/*`;

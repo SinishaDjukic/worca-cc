@@ -1,0 +1,10 @@
+/* The Pinpoint layer inside the content script's shadow root. Emitted BEFORE the generated :host token block, which
+   (re)sets color-scheme:light dark; the explicit declarations below keep that true even if the order ever changes. */
+:host{all:initial;color-scheme:light dark;font-family:var(--sans);font-size:14px;line-height:1.5;color:var(--ink);}
+.wx-layer{position:fixed;inset:0 auto auto 0;width:0;height:0;}
+/* The area capture overlay (capture-overlay.mjs). Dimmed page, crosshair; the selection box punches a clear hole. */
+.wx-cap{position:fixed;inset:0;cursor:crosshair;background:var(--scrim);user-select:none;touch-action:none;}
+.wx-cap.is-dragging{background:transparent;}
+.wx-cap-box{position:fixed;box-sizing:border-box;border:1.5px solid var(--blue);border-radius:2px;box-shadow:0 0 0 100vmax var(--scrim);pointer-events:none;}
+.wx-cap-box[hidden]{display:none;}
+.wx-cap-hint{position:fixed;top:14px;left:50%;transform:translateX(-50%);padding:6px 12px;border-radius:999px;background:var(--panel);color:var(--ink);font:500 12.5px/1.4 var(--sans);box-shadow:var(--shadow-pop);pointer-events:none;}

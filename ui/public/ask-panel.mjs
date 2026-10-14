@@ -16,7 +16,7 @@ import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mj
 import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './ask-run-card.mjs';
 import { createCommandCard, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
-import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf } from './node-tunables.mjs';
+import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
@@ -27,9 +27,19 @@ import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
 import { engineOfEntry, chatEngineOf, pickerGroups } from './ask-engine.mjs';
-import { ATTACH_ACCEPT, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
+import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
+import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
+import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
+import {
+  fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
+  fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
+} from './ask-meter.mjs';
+export {
+  fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT,
+  fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
+} from './ask-meter.mjs';
 
 /**
  * Cold-start pick, used ONLY until GET /api/ask/models resolves — and afterwards
@@ -65,82 +75,12 @@ function contextHref(c) {
   return null;
 }
 
-export function fmtTokens(n) {
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return n < 1000 ? `${n} tok` : `${(n / 1000).toFixed(1)}k tok`;
-}
-/** Context window meter (docs: Claude Code compacts about 33k short of the window — 967k of 1M). */
-export const CTX_COMPACT_BUFFER = 33000;
-export const CTX_WARN = 0.75;          // amber, as a share of the compaction trigger
-export const CTX_HIGH = 0.9;           // red: compaction soon
-export const CTX_COST_HINT = 200000;   // from here the hover notes every message re-sends the whole context
-const validWindow = (w) => Number.isInteger(w) && w > 0;
-const kTok = (n) => (n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`);
-
-/** 1000000 → "1M", 1500000 → "1.5M", 200000 → "200k"; null for an unknown window. */
-export function fmtWindow(w) {
-  if (!validWindow(w)) return null;
-  if (w >= 1e6) return `${+(w / 1e6).toFixed(1)}M`;
-  if (w >= 1000) return `${+(w / 1000).toFixed(1)}k`;
-  return String(w);
-}
-/** Where automatic compaction starts: window − buffer (the window itself when it is too small for one). */
-export function ctxTrigger(w) {
-  if (!validWindow(w)) return null;
-  return w > 2 * CTX_COMPACT_BUFFER ? w - CTX_COMPACT_BUFFER : w;
-}
-export function ctxLevel(ctx, w) {
-  const t = ctxTrigger(w);
-  if (!t || !Number.isFinite(ctx) || ctx <= 0) return null;
-  const r = ctx / t;
-  return r >= CTX_HIGH ? 'high' : r >= CTX_WARN ? 'warn' : 'ok';
-}
-/** Share of the FULL window (Claude's own meter does the same); not clamped — a model switch can pass 100. */
-export function ctxPercent(ctx, w) {
-  return validWindow(w) && Number.isFinite(ctx) && ctx > 0 ? Math.round((ctx / w) * 100) : null;
-}
-/** Context fill (usage.ctx / totals.ctx) — a snapshot, never a cumulative sum — against the window when known. */
-export function fmtCtx(n, w) {
-  if (!Number.isFinite(n) || n <= 0) return null;
-  const win = fmtWindow(w);
-  return win ? `${kTok(n)} / ${win} ctx` : `${kTok(n)} ctx`;
-}
-/** The meter's hover text, or null when there is nothing worth saying. */
-export function ctxTitle(ctx, w) {
-  if (!Number.isFinite(ctx) || ctx <= 0) return null;
-  const parts = [];
-  const pct = ctxPercent(ctx, w);
-  if (pct != null) {
-    if (ctxLevel(ctx, w) === 'high') parts.push('Compaction soon.');
-    parts.push(`${pct}% of the ${fmtWindow(w)} context window. Automatic compaction starts around ${fmtWindow(ctxTrigger(w))}.`);
-  }
-  if (ctx >= CTX_COST_HINT) parts.push(`Each message re-sends about ${(ctx / 1000).toFixed(1)}k tokens.`);
-  return parts.length ? parts.join(' ') : null;
-}
-/** Share of the window with one decimal, as the popover's rows show it: 120400 of 1M → "12.0%". */
-export function fmtShare(n, w) {
-  return validWindow(w) && Number.isFinite(n) && n >= 0 ? `${((n / w) * 100).toFixed(1)}%` : null;
-}
-/** The context popover's figures, or null without a known window and fill. Only what Worca knows:
- *  the fill, the window and the documented compaction buffer — never a per-category split. */
-export function ctxBreakdown(ctx, w) {
-  if (!validWindow(w) || !Number.isFinite(ctx) || ctx <= 0) return null;
-  const trigger = ctxTrigger(w);
-  const buffer = w - trigger;
-  return {
-    used: ctx, buffer, free: Math.max(0, w - ctx - buffer), untilCompact: Math.max(0, trigger - ctx),
-    pct: ctxPercent(ctx, w), level: ctxLevel(ctx, w),
-  };
-}
 const validContexts = (list) => (Array.isArray(list) ? list : [])
   .filter((c) => c && typeof c.kind === 'string' && typeof c.id === 'string' && c.id);
 /** A chat's topics split for the popover: where it was asked from (page) and what it mentioned (source 'chat'). */
 export function groupContexts(list) {
   const all = validContexts(list);
   return { asked: all.filter((c) => c.source !== 'chat'), mentioned: all.filter((c) => c.source === 'chat') };
-}
-export function fmtUsd(x) {
-  return Number.isFinite(x) ? `$${x.toFixed(2)}` : null;
 }
 export function fmtAgents(n) {
   return Number.isFinite(n) && n > 0 ? `${n} agent${n === 1 ? '' : 's'}` : null;
@@ -172,13 +112,12 @@ function mmss(ms) {
   const s = Math.max(0, Math.floor((Number.isFinite(ms) ? ms : 0) / 1000));
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
-function clipInput(input) {
+/** A tool row's args: the persisted input as JSON, or the preview of one the server clipped (events.mjs clipJson caps
+ *  both at limits.blockIoMaxChars). Never cut here: the row's CSS clamps it to two lines and the hover holds it all. */
+function toolArgs(input) {
   if (input && input._truncated === true) return String(input.preview ?? '');
   if (input == null) return '';
-  let s = '';
-  try { s = JSON.stringify(input); } catch { s = String(input); }
-  if (s === '{}') return '';
-  return s.length > 60 ? `${s.slice(0, 60)}…` : s;
+  try { return JSON.stringify(input); } catch { return String(input); }
 }
 
 const SCRIPT_TOOL_NAMES = new Set(['list_scripts', 'get_script', 'save_script', 'test_script']);
@@ -187,9 +126,9 @@ const SCRIPT_TOOL_NAMES = new Set(['list_scripts', 'get_script', 'save_script', 
  * The script tools' thread line (scripts-workbench-design.md §9.3): the key instead of a JSON
  * blob, plus what came back once the call finished. `block.script` is stamped by the reducer
  * (events.mjs#scriptToolKey at the call, #scriptResultNote at the result) and persisted with the
- * block, so the line survives a reload and a clipped input. null for every other tool — those
- * keep the op / target / preview shape.
- * @returns {{target: string}|null}  e.g. { target: 'script runTests → blocking, exit 1' }
+ * block, so the line survives a reload and a clipped input. The row already names the tool (test_script), so
+ * this is its args: the key and the outcome. null for every other tool — those show their input.
+ * @returns {{target: string}|null}  e.g. { target: 'runTests → blocking, exit 1' }
  */
 export function scriptToolLine(short, block = {}) {
   if (!SCRIPT_TOOL_NAMES.has(short)) return null;
@@ -202,8 +141,7 @@ export function scriptToolLine(short, block = {}) {
     if (typeof s.status === 'string' && s.status) bits.push(s.status);
     if (Number.isInteger(s.exitCode)) bits.push(`exit ${s.exitCode}`);
   }
-  const noun = short.split('_').slice(1).join(' ');
-  return { target: [noun, key, bits.length ? `→ ${bits.join(', ')}` : ''].filter(Boolean).join(' ') };
+  return { target: [key, bits.length ? `→ ${bits.join(', ')}` : ''].filter(Boolean).join(' ') };
 }
 
 /**
@@ -255,6 +193,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // It outranks the backend default like a stored pick, but it is the chat's,
     // not the browser's: nothing sourced from a thread reaches worca-cc.ask.model.
     pickerFromThread: false,
+    // The model was chosen in the picker during this chat (setPickerModel): it outranks the Ask-engine default
+    // that a stored pick yields to. Cleared whenever the picker is re-seeded from the browser or a thread.
+    pickerExplicit: false,
     catalog: null,
     // #397: the thread's project/workspace scope. pinned:false = Auto (follow the
     // page — today's behaviour). label caches the display name once resolved.
@@ -263,6 +204,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     contexts: [],             // the open chat's topics (thread.contexts), shown in the context popover
     threadsRefresh: null,     // the debounce timer behind the History popover's ask-run-status refetch
     expandedAgents: new Set(),
+    expandedActivity: new Set(), // assistant message ids whose activity body (tool rows, sub-agents) the user opened
     worktrees: [],            // P4 §10: the chat's open worktrees (snapshot-fed)
     // MCP registry §9.4: the chat's picker choices (held here, sent with every message, PATCHed between turns),
     // the last POST /api/ask/mcp-preview body and whether it failed; gen drops a stale response, render repaints
@@ -270,7 +212,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     mcp: { off: { sets: [], members: [] }, preview: null, failed: false, gen: 0, queued: false, render: null, saving: Promise.resolve() },
     commands: new Map(),      // blockId → command card handle (ask-command-card.mjs)
     commandFrames: new Map(), // blockId → the last ask-command view that arrived before its card was built
-    commandsShown: new Set(), // blockIds whose start already showed their terminal tab (shared terminal)
+    commandsOpen: new Set(),  // blockIds whose output the user unfolded (the card's toggle; outlives a rebuild of the card)
     pinned: true,
     wantThread: undefined,    // the chat the page shows or is loading: an id, null = home (a new chat), undefined = none yet
     unread: false,            // what onUnread was last told (the Chat row's dot)
@@ -285,6 +227,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     unreadThread: null,       // the chat whose reply lit the dot — the most recent one (app.js opens it from the Chat row)
     askedIn: new Set(),       // chats this tab sent a message in: only their replies (and the open chat's) light the dot
     pendingFiles: [],
+    quote: null,          // Pinpoint (#669): {text, src?, code?} sent above the next message as a blockquote
     sending: false,
     subscribedFor: null,
     elapsedTimer: null,
@@ -436,6 +379,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     b.addEventListener('click', onClick);
     return b;
   }
+  /** "+ New chat" — the head's and the History column's: a labelled ghost button (style.css .chat-new-btn). Both carry
+   *  [data-ask-new-btn], which the add-ons' capture-phase listeners read (chat/home-flip.mjs arms the glide,
+   *  chat/intent.mjs drops the intent). Below 1100px the overlay closes first, as after a pick, so the new chat has its
+   *  room and newThread() can focus its composer. */
+  function newChatButton(className) {
+    const b = make('button', `ask-icon-btn chat-new-btn ${className}`);
+    b.type = 'button';
+    b.setAttribute('data-ask-new-btn', '');
+    b.appendChild(svgIcon(ICONS.plus, 14, 2));
+    b.appendChild(make('span', null, 'New chat'));
+    b.addEventListener('click', () => {
+      if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+      newThread();
+      route(null);
+    });
+    return b;
+  }
   /** The History toggle's glyph: a page with a folded corner and lines of text (the saved chats). */
   function historyIcon() {
     return svgIcon(['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z', 'M14 3v4a1 1 0 0 0 1 1h4',
@@ -475,9 +435,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.title = make('div', 'ask-title', 'New chat');
     head.appendChild(el.title);
     head.appendChild(make('span', 'chat-head-spacer'));
-    const newBtn = iconButton('ask-icon-btn chat-head-btn', 'New chat', ICONS.plus, () => { newThread(); route(null); });
-    newBtn.setAttribute('data-ask-new-btn', '');
-    head.appendChild(newBtn);
+    head.appendChild(newChatButton('chat-head-btn'));
     convo.appendChild(head);
 
     el.home = make('div', 'chat-home');
@@ -538,7 +496,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function renderChips() {
     el.chips.replaceChildren();
-    el.chips.hidden = !st.pendingFiles.length;
+    el.chips.hidden = !st.pendingFiles.length && !st.quote;
+    if (st.quote) el.chips.appendChild(buildQuoteChip(st.quote));
     for (const f of st.pendingFiles) {
       const chip = make('span', 'ask-chip');
       if (f.attKind === 'image' && f.dataBase64) {
@@ -561,6 +520,45 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       chip.appendChild(x);
       el.chips.appendChild(chip);
     }
+  }
+
+  /** Pinpoint (#669): the quote the next message carries — a card above the attachments, removable. */
+  function buildQuoteChip(q) {
+    const chip = make('div', 'ask-chip ask-chip-quote');
+    chip.setAttribute('role', 'group');
+    chip.setAttribute('aria-label', 'Quoted text');
+    const m = make('div', 'ask-chip-quote-m');
+    m.append(make('div', 'ask-chip-quote-k', q.src ? `From ${q.src}` : 'Quoting'), make('div', `ask-chip-quote-t${q.code ? ' mono' : ''}`, q.text));
+    const x = make('button', 'ask-chip-x', '×');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Remove quote');
+    x.addEventListener('click', () => { setQuote(null); focusComposer(); });
+    chip.append(m, x);
+    return chip;
+  }
+
+  /** Set (or clear, with null) the quote the next message carries. */
+  function setQuote(q) {
+    if (st.destroyed) return false;
+    const text = q && typeof q.text === 'string' ? q.text.trim() : '';
+    st.quote = text ? { text, ...(q.src ? { src: String(q.src) } : {}), ...(q.code ? { code: true } : {}) } : null;
+    renderChips();
+    return !!st.quote;
+  }
+
+  /**
+   * Pinpoint's chat actions (Disagree, Use this, Go deeper): quote `quote` and send `text` at once. A draft already in
+   * the composer is never sent along — the quote and the text are added to it instead and wait for the user.
+   */
+  function sendQuoted({ quote, text }) {
+    const add = String(text ?? '').trim();
+    if (!add || st.destroyed) return false;
+    setQuote(quote);
+    if (el.input.value.trim() || (st.model && st.model.live())) { appendToComposer(add); return false; }
+    el.input.value = add;
+    fitInput();
+    Promise.resolve().then(() => sendMessage()).catch(() => false).then((ok) => { if (!ok) focusComposer(); });
+    return true;
   }
 
   async function addFiles(fileList) {
@@ -834,6 +832,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.sending || st.destroyed) return false;
     let text = el.input.value.trim();
     if (!text) return false;
+    // Pinpoint (#669): the quote chip rides as a blockquote above the text — for an add-on's direction too.
+    const quoted = st.quote;
+    if (quoted) text = formatQuotedMessage(quoted, text);
     // A chat is still loading (a History pick, Back to a chat): the send would land in the chat being left — or, from
     // home, in a brand-new chat — while the address already names the loading one. The draft waits for it, and so do
     // the add-ons (a direction would reach the run of the chat being left).
@@ -849,6 +850,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (st.destroyed) return false;
       if (taken === 'keep') { updateSendStop(); return true; }
       if (taken) {
+        if (st.quote === quoted) setQuote(null);
         el.input.value = '';
         fitInput();                                  // a programmatic clear fires no input event
         updateSendStop();
@@ -936,6 +938,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       el.input.value = '';
       fitInput();                                    // a programmatic clear fires no input event
       st.pendingFiles = [];
+      if (st.quote === quoted) st.quote = null;
       renderChips();
       subscribe(id);
       st.pinned = true;
@@ -1396,6 +1399,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(el.historyMeter);
     head.appendChild(buildHistorySearch());
     aside.appendChild(head);
+    // New chat leads the list, outside the body renderHistory repaints: a refresh or a search never drops it.
+    aside.appendChild(newChatButton('chat-history-new'));
     el.historyBody = make('div', 'chat-history-body');
     aside.appendChild(el.historyBody);
     syncHistorySearch();
@@ -1691,7 +1696,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // A thread's pick claims both slots.
     // D12/D17: a new chat starts on the user's Ask engine; a stored pick of the OTHER engine does not override it.
     const askEngine = st.catalog && st.catalog.askEngine === 'codex' ? 'codex' : 'claude';
-    const storeFits = st.pickerFromStore && (!catalogEntry(st.picker.model) || engineOfEntry(catalogEntry(st.picker.model)) === askEngine);
+    const storeFits = st.pickerFromStore && (st.pickerExplicit || !catalogEntry(st.picker.model) || engineOfEntry(catalogEntry(st.picker.model)) === askEngine);
     if (st.pickerFromStore && !storeFits && !st.pickerFromThread) {
       // The stored pick is the other engine's: this chat claims neither its model nor its effort (the Ask slot's pair
       // applies), and nothing short of an explicit model choice writes over it (storeModel).
@@ -1704,6 +1709,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       effort: st.pickerFromThread || st.effortFromStore ? st.picker.effort : fallback.effort,
     };
     const wantedEntry = catalogEntry(wanted.model);
+    if (!wantedEntry && list.length) st.pickerExplicit = false;   // the picked model left the catalog: the fallback below is not a user pick
     // Unknown stored/default id -> the backend default -> the first model we do
     // have that is not a hidden built-in (#422; a hidden id is still a valid pick).
     const entry = wantedEntry || catalogEntry(fallback.model) || list.find((m) => m && !m.hidden && !m.needsSignIn) || list[0] || null;
@@ -1728,6 +1734,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.effortFromStore = home.effortFromStore;
     st.storeOtherEngine = false;
     st.pickerFromThread = false;
+    st.pickerExplicit = false;
     if (st.catalog) applyCatalogToPicker();
     else updatePickerButton();
   }
@@ -1738,6 +1745,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!t || typeof t.model !== 'string' || !t.model || typeof t.effort !== 'string' || !t.effort) { restoreBrowserPick(); return; }
     st.picker = { model: t.model, effort: t.effort };
     st.pickerFromThread = true;
+    st.pickerExplicit = false;
     if (st.catalog) applyCatalogToPicker();   // effort coerced against the entry; a dropped model falls back
     else updatePickerButton();               // the raw id shows until the catalog lands
   }
@@ -1815,6 +1823,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.effortFromStore = true;
     st.storeOtherEngine = false;
     st.pickerFromThread = false;                    // the user's own pick now, not the thread's
+    st.pickerExplicit = true;
     storeModel();
     persistThreadPick();
     updatePickerButton();
@@ -1876,8 +1885,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       }
     };
     let shownPane = 'main';
+    let effortPaneKey = '';   // the model + effort list the effort pane was painted from
+    const effortKeyNow = () => { const e = catalogEntry(st.picker.model); return `${st.picker.model}:${e && Array.isArray(e.efforts) ? e.efforts.join() : ''}`; };
     const renderPane = (pane) => {
       shownPane = pane;
+      if (pane === 'effort') effortPaneKey = effortKeyNow();
       panel.replaceChildren();
       if (pane === 'effort') {
         const back = menuItem('ask-pane-back', () => renderPane('main'));
@@ -1937,7 +1949,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // What we have paints at once; the refetch repaints the main pane if it is still showing.
     const had = st.catalog;
     loadCatalog({ fresh: true }).then((c) => {
-      if (c !== had && shownPane === 'main' && st.popover && st.popover.panel === panel) renderPane('main');
+      if (c === had || !st.popover || st.popover.panel !== panel) return;
+      // The effort pane repaints only when the refresh changed what it lists (a dropped model fell back): a repaint moves focus.
+      if (shownPane === 'main' || (shownPane === 'effort' && effortKeyNow() !== effortPaneKey)) renderPane(shownPane);
     });
     renderPane('main');
   }
@@ -2762,7 +2776,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const slotDefaults = defaults && defaults.steps && defaults.steps[engine] ? defaults.steps[engine] : null;
     const rows = buildNodeConfigRows(wf, registry, runConfig, { ...(workflowId === 'wf_default' ? { legacySteps: config.steps || {} } : {}),
       models: allModels, engine, ...(slotDefaults ? { slotDefaults } : {}) });
-    return { wf, registry, runConfig, rows, edits: {}, editable: !!projectDir, engine, defaultEngine,
+    // `editable`: every target edits the lane — the edits ride THIS run (`overlay`); only a project target can also save
+    // them as its defaults ("Save as project defaults", saveLaneEdits). `explicit`: a workspace card's rows are the
+    // built-in defaults, not the run's baseline (laneOverlay names its picks outright). `proposal` / `proposed` /
+    // `warnings`: Ask Worca's per-agent picks (card.nodes) once applyProposal lays them in as the lane's baseline.
+    return { wf, registry, runConfig, rows, edits: {}, editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
       models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
@@ -2778,15 +2796,110 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const c = laneEffective(lane, r);
       const k = c.model ? modelLabel(lane, c.model) : 'inherit';
       counts.set(k, (counts.get(k) || 0) + 1);
-      if (c.fanOut) fan++;
+      if (c.fanOut || fanForced(lane, r)) fan++;
     }
-    return `${lane.rows.length} agents · ${[...counts].map(([k, v]) => `${k} ×${v}`).join(' · ')}${fan ? ` · ${fan} fan-out` : ''}`;
+    const picked = laneProposedCount(lane);
+    return `${lane.rows.length} agents · ${[...counts].map(([k, v]) => `${k} ×${v}`).join(' · ')}${fan ? ` · ${fan} fan-out` : ''}${picked ? ` · ${picked} picked by Ask Worca` : ''}`;
   }
   function laneSet(lane, row, patch) {
     const next = { ...(lane.edits[row.nodeId] || {}), ...patch };
     for (const k of Object.keys(next)) if (next[k] === row[k]) delete next[k];   // back to the proposal = no edit
     if (Object.keys(next).length) lane.edits[row.nodeId] = next; else delete lane.edits[row.nodeId];
   }
+  // Ask Worca's per-agent picks (card.nodes) are the lane's BASELINE edits: "changed" means the user moved a row off
+  // them; with no proposal that is exactly "the row has an edit", as before.
+  const editKey = (e) => JSON.stringify(Object.keys(e || {}).sort().map((k) => [k, e[k]]));
+  const sameEdit = (a, b) => editKey(a) === editKey(b);
+  const cloneEdits = (edits) => Object.fromEntries(Object.entries(edits || {}).map(([id, e]) => [id, { ...e }]));
+  // `lane.dropped`: workspace picks the user set aside with "Use default" (a pick equal to the built-in row is no edit,
+  // so deleting the edit cannot drop it).
+  const laneDropped = (lane, row) => !!(lane.dropped && lane.dropped.has(row.nodeId));
+  const laneDiverged = (lane, row) => laneDropped(lane, row) || !sameEdit(lane.edits[row.nodeId], lane.proposal[row.nodeId]);
+  /** Ask Worca's pick for the row while it still stands — the row runs its model and effort, whatever else the user
+   *  changed there ({ model, effort, reason, facts }) — else null. */
+  const proposedPick = (lane, row) => {
+    if (!Object.hasOwn(lane.proposed, row.nodeId) || laneDropped(lane, row)) return null;
+    const p = lane.proposed[row.nodeId];
+    const c = laneEffective(lane, row);
+    return (c.model || '') === p.model && (c.effort || '') === p.effort ? p : null;
+  };
+  const laneProposedCount = (lane) => lane.rows.filter((r) => proposedPick(lane, r)).length;
+  /** The project's own setting for a row, as the lane shows it: "Opus 5.5 · high", "inherit". */
+  const projectPick = (lane, row) => `${row.model ? modelLabel(lane, row.model) : 'inherit'}${row.model && row.effort ? ` · ${row.effort}` : ''}`;
+  /** Lay Ask Worca's picks in as the lane's baseline: each healed to the run's engine first (healForEngine — another
+   *  engine's model is dropped and the row keeps the project's setting) and dropped when this catalog lacks it; a row
+   *  Settings › Memory pins keeps its pin. `lane.proposal` is what "Reset to proposal" restores. */
+  function applyProposal(lane, nodes) {
+    lane.edits = {};
+    lane.proposed = {};
+    lane.dropped = new Set();
+    const picks = nodes && typeof nodes === 'object' && !Array.isArray(nodes) ? nodes : {};
+    for (const row of lane.rows) {
+      const p = Object.hasOwn(picks, row.nodeId) ? picks[row.nodeId] : null;
+      if (!p || typeof p !== 'object' || typeof p.model !== 'string' || !p.model || row.pinned) continue;
+      const effort = typeof p.effort === 'string' ? p.effort : '';
+      const healed = healForEngine({ def: { model: row.model, effort: row.effort }, override: { model: p.model, effort }, model: p.model, effort },
+        { models: lane.allModels, engine: lane.engine });
+      if (healed.enginePair) continue;                       // a model this run's engine cannot run
+      const hit = lane.models.find((m) => typeof m.id === 'string' && m.id.toLowerCase() === p.model.toLowerCase());
+      if (!hit) continue;                                    // left the catalog since the proposal
+      const patch = { model: hit.id, effort: (hit.efforts || []).includes(effort) ? effort : '' };
+      if (lane.engine === 'claude' && typeof p.subagentModel === 'string' && lane.subagentModels.includes(p.subagentModel)) patch.subagentModel = p.subagentModel;
+      laneSet(lane, row, patch);
+      lane.proposed[row.nodeId] = { model: patch.model, effort: patch.effort, reason: typeof p.reason === 'string' ? p.reason : '', facts: typeof p.facts === 'string' ? p.facts : '' };
+    }
+    lane.proposal = cloneEdits(lane.edits);
+  }
+  /** The lane rows that differ from the project's settings, as POST /api/run's `overlay.nodes` (src/core/run-overlay.mjs):
+   *  { nodes } or { error }. A model always travels with its effort ('' = the model's default). An overlay names
+   *  values and never clears one, so "inherit" over the project's own pick falls back to the workflow default when
+   *  there is one, else needs "Save as project defaults"; "subs: default" rides as `auto`, what an unset node runs
+   *  (model-env.mjs SUBAGENT_DEFAULT). A workspace card's rows are the built-in defaults, not this run's baseline (the
+   *  run merges over its primary member's own settings, which the card never loads): there a standing pick and an
+   *  edited model are named outright, even when they equal the row (`lane.explicit`). */
+  function laneOverlay(lane) {
+    const nodes = {};
+    for (const row of lane.rows) {
+      const ed = lane.edits[row.nodeId];
+      const c = laneEffective(lane, row);
+      // A workspace card names a pick whose model is still on the row (whatever else the user changed there) and any
+      // edited model or effort outright.
+      const pp = lane.explicit && Object.hasOwn(lane.proposed, row.nodeId) && !laneDropped(lane, row) ? lane.proposed[row.nodeId] : null;
+      const named = !!lane.explicit && ((!!pp && (c.model || '') === pp.model) || (!!ed && ('model' in ed || 'effort' in ed)));
+      if (!ed && !named) continue;
+      const e = {};
+      if (named || (c.model || '') !== (row.model || '') || (c.effort || '') !== (row.effort || '')) {
+        const pair = c.model ? { model: c.model, effort: c.effort || '' } : (row.def.model ? { model: row.def.model, effort: row.def.effort || '' } : null);
+        if (!pair && !lane.explicit) return { error: `${row.label}: "inherit" over this project's own model only works as a project default — turn on "Save as project defaults", or pick a model` };
+        if (pair) Object.assign(e, pair);
+      }
+      if (!!c.fanOut !== !!row.fanOut) e.fanOut = !!c.fanOut;
+      if (row.askQuestions !== null && !row.questionsLocked && !!c.askQuestions !== !!row.askQuestions) e.askQuestions = !!c.askQuestions;
+      if ((c.subagentModel || '') !== (row.subagentModel || '')) e.subagentModel = c.subagentModel || row.def.subagentModel || 'auto';
+      if (Object.keys(e).length) nodes[row.nodeId] = e;
+    }
+    return { nodes };
+  }
+  /** Ask Worca's picks as proposed (card.nodes), for a Start whose lane has not loaded (still loading, or it could
+   *  not): { nodes } or null. POST /api/run checks them again (catalog, efforts, the run's engine). */
+  function proposalOverlay(card, workflowId) {
+    const picks = card && card.workflowId === workflowId && card.nodes && typeof card.nodes === 'object' && !Array.isArray(card.nodes) ? card.nodes : {};
+    const nodes = {};
+    for (const [id, p] of Object.entries(picks)) {
+      if (!p || typeof p !== 'object' || typeof p.model !== 'string' || !p.model) continue;
+      nodes[id] = { model: p.model, effort: typeof p.effort === 'string' ? p.effort : '',
+        ...(typeof p.subagentModel === 'string' && p.subagentModel ? { subagentModel: p.subagentModel } : {}) };
+    }
+    return Object.keys(nodes).length ? { nodes } : null;
+  }
+  /** Ask Worca's picks this card would run with that are no lane edits, so lanePending misses them: the proposal while
+   *  the lane is not loaded, or picks standing on a workspace lane (they equal its built-in rows). Open in New run asks
+   *  before leaving them behind. */
+  const picksPending = (local, card) => (local.lane
+    ? !!local.lane.explicit && laneProposedCount(local.lane) > 0
+    : !!proposalOverlay(card || {}, local.workflowId()));
+  /** A workspace run fans out every agent whose meta says workspaceFanOut (workflows.mjs), whatever the lane says. */
+  const fanForced = (lane, row) => !!lane.workspace && !!(lane.registry && lane.registry[row.key] && lane.registry[row.key].workspaceFanOut === true);
   /** D1: persist every edited row through the New Pipeline writers' bodies (app.js saveStep / saveNode), pruned to
    *  inherit. Returns an error line or null. Nothing is written for a workspace target or an unloaded lane. */
   async function saveLaneEdits(local) {
@@ -2812,12 +2925,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return null;
   }
   const lanePending = (local) => !!(local.lane && local.lane.editable && laneEditedRows(local.lane).length);
-  const RP_EXTRAS_MAX_BYTES = 5 * 1024 * 1024;   // D3: the JSON body cap is 8 MB and base64 grows by a third
+  // D3: as much as one message may carry; /api/run's JSON window (ui/server.mjs) is sized for it at base64's 4/3
+  const RP_EXTRAS_MAX_BYTES = ATTACH_MAX_MESSAGE_BYTES;
   /** The pills as /api/run extras. {extras} or {error}. */
   async function collectCardExtras(local) {
     const pills = local.pills || [];
     if (!pills.length) return { extras: [] };
-    if (pills.reduce((n, p) => n + (p.bytes || 0), 0) > RP_EXTRAS_MAX_BYTES) return { error: 'attachments exceed 5 MB — remove one' };
+    if (pills.reduce((n, p) => n + (p.bytes || 0), 0) > RP_EXTRAS_MAX_BYTES) return { error: `attachments exceed ${RP_EXTRAS_MAX_BYTES / (1024 * 1024)} MB — remove one` };
     const extras = [];
     for (const p of pills) {
       let res = null;
@@ -2863,18 +2977,38 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       lc.summary.textContent = '';
       return;
     }
-    const edited = laneEditedRows(lane).length;
+    // "changed" = rows the user moved off the proposal (Ask Worca's picks are the baseline, not the user's edits).
+    const edited = lane.rows.filter((r) => laneDiverged(lane, r)).length;
+    const picked = laneProposedCount(lane);
     const over = laneOverrideCount(lane);
+    const overText = `${over} override${over === 1 ? '' : 's'} of the workflow defaults`;
     sub.textContent = edited
-      ? `you changed ${edited} agent${edited > 1 ? 's' : ''} · ${over} override${over === 1 ? '' : 's'} of the workflow defaults`
-      : `proposed by Worca · ${over} override${over === 1 ? '' : 's'} of the workflow defaults`;
+      ? `you changed ${edited} agent${edited > 1 ? 's' : ''} · ${overText}`
+      : picked ? `Ask Worca picked ${picked} agent${picked > 1 ? 's' : ''} for this run · ${overText}`
+        : `proposed by Worca · ${overText}`;
     reset.hidden = !edited;
-    reset.addEventListener('click', () => { lane.edits = {}; renderLane(laneSec, lane, lc); });
+    reset.addEventListener('click', () => { lane.edits = cloneEdits(lane.proposal); if (lane.dropped) lane.dropped.clear(); renderLane(laneSec, lane, lc); });
+    // The lane shows at every mode while Ask Worca's picks are laid in (data-level-keep, set when the card is built);
+    // healed away on another engine, or on another workflow, it is Expert-only again — and the team policy's word on
+    // the picks (card.warnings, soft: the run still starts) goes with them.
+    const laid = Object.keys(lane.proposed || {}).length;
+    if (laid) laneSec.dataset.levelKeep = '1'; else delete laneSec.dataset.levelKeep;
+    // Each warning names the off-policy model (policy/effective.mjs deviationsFor): it stays while this card's picks or
+    // edits carry it (what the run sends and records, overlayStepModels) — an agent on the project's own setting is not
+    // this card's pick, whatever model it runs.
+    const ov = laneOverlay(lane);
+    // laneOverlay errors (an "inherit" over the project's own model): the rows whose edit carries a model — its pair rule.
+    const carried = ov.nodes ? Object.values(ov.nodes).map((e) => e.model)
+      : lane.rows.filter((r) => { const ed = lane.edits[r.nodeId]; return !!ed && ('model' in ed || 'effort' in ed); }).map((r) => laneEffective(lane, r).model);
+    const running = new Set(carried.map((m) => (m || '').toLowerCase()).filter(Boolean));
+    const holds = (w) => String(w).split(/\s+/).some((t) => running.has(t.toLowerCase()));
+    if (laid) for (const w of (lane.warnings || []).filter(holds)) laneSec.appendChild(make('div', 'ask-card-task-warn ask-rp-lane-warn', w));
     const box = make('div', 'ask-rp-agents');
     const opt = (v, t) => { const o = doc.createElement('option'); o.value = v; o.textContent = t; return o; };
     lane.rows.forEach((row, i) => {
       const c = laneEffective(lane, row);
-      const changed = !!lane.edits[row.nodeId];
+      const changed = laneDiverged(lane, row);
+      const pick = proposedPick(lane, row);
       const tile = make('div', `ask-rp-tile${changed ? ' mod' : ''}`);
       tile.dataset.nodeId = row.nodeId;
       const l1 = make('div', 'ask-rp-tile-l1');
@@ -2883,8 +3017,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       name.appendChild(make('b', null, row.label));
       const small = make('small');
       // "step N" = position in the lane (launch order); row.stepIndex ranks the task card as 0.
-      if (changed) { small.appendChild(make('span', 'ask-rp-m', 'edited')); small.appendChild(doc.createTextNode(` · step ${i + 1}`)); }
-      else small.textContent = `step ${i + 1} · ${row.pinned ? 'model from Settings › Memory' : row.modified ? 'project override' : 'workflow default'}`;
+      if (pick) {
+        // Ask Worca's pick: its reason (and the model's facts) on hover and to assistive tech, the project's own setting
+        // beside it (a workspace card shows the workflow default: agent settings are per project). `role="note"`: a
+        // generic span may not carry aria-label (ARIA 1.2), so a screen reader would skip the reason.
+        const mark = make('span', 'ask-rp-prop', 'Ask Worca');
+        mark.title = ['Proposed by Ask Worca for this run', pick.reason, pick.facts].filter(Boolean).join(' — ');
+        mark.tabIndex = 0;
+        mark.setAttribute('role', 'note');
+        mark.setAttribute('aria-label', mark.title);
+        // The project's own setting is the point of this caption: it wraps instead of ellipsizing (a narrow column).
+        small.classList.add('ask-rp-pickcap');
+        small.appendChild(mark);
+        small.appendChild(doc.createTextNode(` · step ${i + 1} · ${lane.explicit ? 'default' : 'project'}: ${projectPick(lane, row)}`));
+        if (changed) { small.appendChild(doc.createTextNode(' · ')); small.appendChild(make('span', 'ask-rp-m', 'edited')); }
+      } else if (changed) {
+        small.appendChild(make('span', 'ask-rp-m', lane.edits[row.nodeId] ? 'edited' : lane.explicit ? 'default' : 'project default'));
+        small.appendChild(doc.createTextNode(` · step ${i + 1}`));
+      } else small.textContent = `step ${i + 1} · ${row.pinned ? 'model from Settings › Memory' : row.modified ? 'project override' : 'workflow default'}`;
       name.appendChild(small);
       l1.appendChild(name);
       // model
@@ -2923,7 +3073,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       tile.appendChild(l1);
       // line 2
       const l2 = make('div', 'ask-rp-tile-l2');
-      l2.appendChild(rpSwitch('fanOut', 'fan-out', c.fanOut, false, (v) => { laneSet(lane, row, { fanOut: v }); renderLane(laneSec, lane, lc); }, lane.editable));
+      // A workspace run fans this agent out over its projects whatever the switch says (workflows.mjs workspaceFanOut):
+      // it shows on and locked, as on Auto's proposal panel.
+      const forced = fanForced(lane, row);
+      const fan = rpSwitch('fanOut', 'fan-out', forced || c.fanOut, forced, (v) => { laneSet(lane, row, { fanOut: v }); renderLane(laneSec, lane, lc); }, lane.editable);
+      if (forced) fan.title = 'A workspace run fans this agent out over its projects';
+      l2.appendChild(fan);
       const subWrap = make('label', 'ask-rp-ctl');
       subWrap.appendChild(make('span', null, 'sub-agents'));
       const subSel = rpSelect('ask-rp-subagent', `Sub-agent model for ${row.label}`);
@@ -2938,13 +3093,35 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (row.askQuestions !== null) {
         l2.appendChild(rpSwitch('questions', 'questions', c.askQuestions, row.questionsLocked, (v) => { laneSet(lane, row, { askQuestions: v }); renderLane(laneSec, lane, lc); }, lane.editable));
       }
+      // Back to the project's own setting for this agent (the proposal's pick or the user's edit dropped).
+      // A workspace pick equal to the built-in row is no edit but still rides (laneOverlay names it): it can be dropped too.
+      if (lane.edits[row.nodeId] || (lane.explicit && pick)) {
+        const back = make('button', 'ask-rp-mini ask-rp-row-reset', lane.explicit ? 'Use default' : 'Use project default');
+        back.type = 'button';
+        back.title = lane.explicit ? 'This agent runs without a pick for this run' : `This agent runs on the project's setting: ${projectPick(lane, row)}`;
+        back.addEventListener('click', () => {
+          delete lane.edits[row.nodeId];
+          if (lane.explicit && Object.hasOwn(lane.proposed, row.nodeId)) lane.dropped.add(row.nodeId);
+          renderLane(laneSec, lane, lc);
+        });
+        l2.appendChild(back);
+      }
       tile.appendChild(l2);
       box.appendChild(tile);
     });
+    // A per-run lane: changes (and Ask Worca's picks) apply to THIS run only, unless the user saves them as the
+    // project's defaults — a project target only (agent defaults are per project).
     const foot = make('div', 'ask-rp-agents-foot');
-    foot.textContent = !lane.editable
-      ? 'Agent settings are per project — pick a project target to edit them.'
-      : edited ? `Edits become this project's defaults for ${lane.wf.name || lc.workflowId()}` : 'Everything at the workflow default';
+    const projectDir = lc.projectDir();
+    const saving = !!projectDir && lc.saveDefaults();
+    const pending = laneEditedRows(lane).length > 0;
+    foot.appendChild(make('span', 'ask-rp-foot-text', !projectDir
+      ? 'Changes apply to this run only — agent defaults are per project.'
+      : saving ? `Edits become this project's defaults for ${lane.wf.name || lc.workflowId()}`
+        : pending ? 'Changes apply to this run only' : "Runs on this project's agent settings"));
+    const save = rpSwitch('saveDefaults', 'save as project defaults', saving, false, (v) => { lc.setSaveDefaults(v); renderLane(laneSec, lane, lc); }, !!projectDir);
+    if (!projectDir) save.title = 'Agent defaults are per project — pick a project target to save them';
+    foot.appendChild(save);
     box.appendChild(foot);
     laneSec.appendChild(box);
     lc.summary.textContent = laneSummary(lane);
@@ -3887,6 +4064,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // agents lane (reloadLane → renderLane fills laneSec)
     const laneSec = make('div', 'ask-rp-sec ask-rp-lane');
     laneSec.dataset.minLevel = 'expert';
+    // Ask Worca's per-agent picks apply at Start: the lane that shows them stays on screen at any mode.
+    if (card.nodes && typeof card.nodes === 'object' && Object.keys(card.nodes).length) laneSec.dataset.levelKeep = '1';
     rootEl.appendChild(laneSec);
 
     const briefSec = make('div', 'ask-rp-sec ask-rp-brief-host');
@@ -3968,6 +4147,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     feature.className = 'ask-card-feature';
     feature.value = card.featureBranch || '';
     feature.setAttribute('aria-label', 'Feature branch');
+
+    // Run on the source branch (branch.sameAsSource): ONE checkbox for both targets, like `feature`.
+    const sameSrc = doc.createElement('input');
+    sameSrc.type = 'checkbox';
+    sameSrc.className = 'ask-card-same-source';
+    sameSrc.checked = card.sameAsSource === true;
+    sameSrc.setAttribute('aria-label', 'Run on the source branch');
+    feature.disabled = sameSrc.checked;
+    // updateTargetSub is a function declaration further down in this same scope (hoisted).
+    sameSrc.addEventListener('change', () => { feature.disabled = sameSrc.checked; updateTargetSub(); });
+    // The card header names the feature branch: never a typed name the run will ignore.
+    const featureWord = () => (sameSrc.checked ? 'none (source branch)' : (feature.value.trim() || 'auto'));
 
     const err = make('div', 'ask-card-err');
     rootEl.appendChild(err);
@@ -4056,12 +4247,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const projSel = rootEl.querySelector('.ask-card-project-select');
         const srcSel = rootEl.querySelector('.ask-card-source');
         const name = projSel && projSel.selectedOptions[0] ? projSel.selectedOptions[0].textContent : (card.projectName || '');
-        targetSub.textContent = `${name} · branch ${(srcSel && srcSel.value) || 'current'} · feature ${feature.value.trim() || 'auto'}`;
+        targetSub.textContent = `${name} · branch ${(srcSel && srcSel.value) || 'current'} · feature ${featureWord()}`;
       } else {
         const wsSel = rootEl.querySelector('.ask-card-workspace-select');
         const row = opts && wsSel && opts.workspaces.find((w) => w && w.id === wsSel.value);
         const n = row && Array.isArray(row.projectKeys) ? row.projectKeys.length : (Array.isArray(card.members) ? card.members.length : 0);
-        targetSub.textContent = `${(row && row.name) || card.workspaceName || 'workspace'} · ${n} member${n === 1 ? '' : 's'} · feature ${feature.value.trim() || 'auto'}`;
+        targetSub.textContent = `${(row && row.name) || card.workspaceName || 'workspace'} · ${n} member${n === 1 ? '' : 's'} · feature ${featureWord()}`;
       }
     }
     feature.addEventListener('input', updateTargetSub);
@@ -4088,7 +4279,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           updateTargetSub();
         });
         grid.append(rpField('Project', projSel), lvTag(srcField, 'advanced', !!card.sourceBranch),
-          lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch));
+          lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch),
+          lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource));
         targetHost.appendChild(grid);
         updateTargetSub();
         return;
@@ -4129,7 +4321,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const wsField = rpField('Workspace', wsSel);
       wsField.appendChild(members);
       grid.append(wsField, lvTag(rpField('Source branch', srcInput, 'default for members'), 'advanced', !!card.sourceBranch),
-        lvTag(rpField('Feature branch', feature), 'advanced', !!card.featureBranch));
+        lvTag(rpField('Feature branch', feature), 'advanced', !!card.featureBranch),
+        lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource));
       targetHost.appendChild(grid);      // attach BEFORE filling: renderMembers → updateTargetSub finds the select through rootEl
       targetHost.appendChild(details);
       if (opts) {
@@ -4141,7 +4334,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     // A reload (workflow / project / target change) rebuilds the lane from scratch:
     // `edits` are per workflow-and-project and are DISCARDED, silently.
-    const laneCtx = { summary, workflowId: () => local.workflowId() };
+    // `saveDefaults`: the card's "Save as project defaults" switch (off by default), kept across lane reloads.
+    const laneCtx = { summary, workflowId: () => local.workflowId(), projectDir: () => local.projectDir(),
+      saveDefaults: () => !!local.saveDefaults, setSaveDefaults: (v) => { local.saveDefaults = !!v; } };
     let laneSeq = 0;
     function reloadLane() {
       const seq = ++laneSeq;
@@ -4155,15 +4350,35 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         return;
       }
       renderLane(laneSec, null, laneCtx, 'Loading agent settings…');
-      loadLane(workflowId, projectDir, local.engine()).then((lane) => {
+      // Kept so a Start during the load waits for it (startCard): the loaded lane heals Ask Worca's picks to the engine.
+      local.lanePending = loadLane(workflowId, projectDir, local.engine()).then((lane) => {
         if (st.destroyed || seq !== laneSeq) return;            // a later reload won
         local.lane = lane;
+        // A workspace run fans out every workspaceFanOut agent (fanForced): the lane locks that switch there.
+        if (lane) lane.workspace = local.target === 'workspace';
+        // Ask Worca's per-agent picks are for the workflow it proposed: laid in again on every reload of it (another
+        // engine heals them away, another project keeps them over its own settings); any other workflow starts clean.
+        if (lane && workflowId === card.workflowId) {
+          applyProposal(lane, card.nodes);
+          // The team-policy word was checked for the proposed target's policy: another project or target has its own.
+          const proposedTarget = local.target === (card.target === 'workspace' ? 'workspace' : 'project') && projectDir === (card.projectDir || '');
+          lane.warnings = proposedTarget && Array.isArray(card.warnings) ? card.warnings.filter((w) => typeof w === 'string') : [];
+        }
         if (lane) {
           engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
           for (const o of engineSel.options) o.hidden = o.value !== '' && o.value === lane.defaultEngine && engineSel.value !== o.value;   // listed once
         }
         wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
         renderLane(laneSec, lane, laneCtx);
+        // A lane that could not load: a Start sends Ask Worca's picks as proposed (proposalOverlay), so it shows at every
+        // mode and names them (the rows that would show them are gone). Without picks for this workflow nothing on it
+        // applies at Start: Expert-only again (renderLane(null) leaves the mark as it was).
+        const unseen = lane ? null : proposalOverlay(card, workflowId);
+        if (unseen) {
+          laneSec.dataset.levelKeep = '1';
+          const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${p.subagentModel}` : ''}`);
+          laneSec.appendChild(make('div', 'ask-rp-lane-msg', `Start runs Ask Worca's picks as proposed (checked again at Start): ${list.join(', ')}`));
+        } else if (!lane) delete laneSec.dataset.levelKeep;
       });
     }
     local.reloadLane = reloadLane;   // after a successful save the lane re-reads the persisted config
@@ -4219,7 +4434,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       };
     }
     const feature = rootEl.querySelector('.ask-card-feature').value.trim();
-    if (feature) body.featureBranch = feature;
+    const same = rootEl.querySelector('.ask-card-same-source');
+    if (same && same.checked) body.sameAsSource = true;   // the run auto-names its hidden branch
+    else if (feature) body.featureBranch = feature;
     if (local.target === 'workspace') {
       body.workspaceId = rootEl.querySelector('.ask-card-workspace-select').value;
       const src = rootEl.querySelector('.ask-card-source-input');
@@ -4258,9 +4475,27 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // D3: read-only, so it runs BEFORE saveLaneEdits — a refusal here must not leave the config already written.
       const ex = await collectCardExtras(local);
       if (ex.error) { err.textContent = ex.error; return; }
-      const saveErr = await saveLaneEdits(local);            // the previous phase's guard, now second
-      if (saveErr) { err.textContent = saveErr; return; }
+      // The lane's agent picks: with "Save as project defaults" on they become the project's settings first (D1,
+      // saveLaneEdits); otherwise they ride THIS run's body as `overlay` and nothing is written (run-overlay.mjs). A lane
+      // still loading (an engine or workflow switch a moment ago) is waited for: it heals the picks to the run's engine
+      // (the target inputs are frozen, so no newer reload starts meanwhile). One that could not load sends Ask Worca's
+      // picks as proposed — POST /api/run checks them — so they are never dropped without a word.
+      let overlay = null;
+      if (!local.lane && local.lanePending) {
+        try { await local.lanePending; } catch { /* it could not load: the picks ride as proposed */ }
+        if (st.destroyed) return;
+      }
+      if (!local.lane) overlay = proposalOverlay(block.card || {}, local.workflowId());
+      else if (local.saveDefaults && local.projectDir()) {
+        const saveErr = await saveLaneEdits(local);            // the previous phase's guard, now second
+        if (saveErr) { err.textContent = saveErr; return; }
+      } else {
+        const ov = laneOverlay(local.lane);
+        if (ov.error) { err.textContent = ov.error; return; }
+        if (Object.keys(ov.nodes).length) overlay = { nodes: ov.nodes };
+      }
       const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
+      if (overlay) body.overlay = overlay;
       // Run chains: "the branch of the run before it" is a flag, and the wire refuses it next to a branch name.
       // Keyed off the schedule being POSTED — a Start now on an after-proposal carries none and keeps the picked branch.
       if (body.sourceFromPrevious) { delete body.sourceBranch; delete body.sourceBranchByKey; }
@@ -4345,6 +4580,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       memoryScope: card.memoryScope || null,
       engine: (rootEl.querySelector('.ask-card-engine') || {}).value || null,
     };
+    if ((rootEl.querySelector('.ask-card-same-source') || {}).checked) p.sameAsSource = true;
     if (local.target === 'workspace') {
       p.workspaceId = rootEl.querySelector('.ask-card-workspace-select').value;
       const src = rootEl.querySelector('.ask-card-source-input');
@@ -4362,7 +4598,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       p.sourceBranch = src ? src.value : '';
     }
     // Nothing to save or fetch → hand over synchronously (the caller may not await).
-    const pending = cardPending(local);
+    // Ask Worca's picks count as well, edits or not: New run cannot carry them (picksPending).
+    const pending = cardPending(local) || picksPending(local, card);
     if (!pending) { openNewPipeline(p); return; }
     const err = rootEl.querySelector('.ask-card-err');
     if (err) err.textContent = '';
@@ -4373,6 +4610,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     collectCardExtras(local).then(async (ex) => {
       if (st.destroyed) return;
       if (ex.error) { if (err) err.textContent = ex.error; return; }
+      // A lane still loading is waited for, as Start does: "Save as project defaults" saves the loaded lane. One that
+      // could not load has nothing to save, so the picks would stay behind even with the switch on.
+      if (!local.lane && local.lanePending) {
+        try { await local.lanePending; } catch { /* asks below */ }
+        if (st.destroyed) return;
+      }
+      const saving = !!(local.saveDefaults && local.projectDir() && local.lane);
+      // New run has no per-run agent picks: without "Save as project defaults" the lane's picks stay on this card.
+      if ((lanePending(local) || picksPending(local, card)) && !saving) {
+        const ok = typeof confirm !== 'function' || await confirm({
+          title: 'Open New run without the agent picks?',
+          message: local.projectDir() && local.saveDefaults
+            ? 'New run starts from the project\'s saved agent settings, and this card\'s agent settings could not load to be saved, so the models picked on this card do not come along. Start the run from the card to use them.'
+            : local.projectDir()
+            ? 'New run starts from the project\'s saved agent settings, so the models picked on this card do not come along. Start the run from the card to use them, or turn on "Save as project defaults" first.'
+            : 'New run starts from each project\'s saved agent settings, so the models picked on this card do not come along. Start the run from the card to use them.',
+          confirmLabel: 'Open New run',
+        });
+        if (st.destroyed || !ok) return;
+        if (ex.extras.length) p.extras = ex.extras;
+        openNewPipeline(p);
+        return;
+      }
       const saveErr = await saveLaneEdits(local);
       if (st.destroyed) return;
       if (saveErr) { if (err) err.textContent = saveErr; return; }
@@ -4561,7 +4821,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const blockId = String(card.blockId || '');
     const handle = createCommandCard({ doc, card, onStop: (sid) => {
       fetch(`/api/terminal/sessions/${encodeURIComponent(sid)}/stop`, { method: 'POST' }).catch(() => { /* the next frame says what happened */ });
-    }, onShow: (sid) => showTerminal(sid, { auto: false }) });
+    }, onShow: (sid) => showTerminal(sid), expanded: st.commandsOpen.has(blockId), keepInPlace, onToggle: (open) => {
+      if (open) st.commandsOpen.add(blockId); else st.commandsOpen.delete(blockId);
+    } });
     st.commands.set(blockId, handle);
     const early = st.commandFrames.get(blockId);
     if (early) { st.commandFrames.delete(blockId); handle.update(early); }
@@ -4700,32 +4962,33 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     });
   }
 
+  /** A tool row's name and args. Worca's own tools drop their `mcp__worca__` prefix (list_projects), built-ins keep
+   *  their name (Read, Grep). The special cases keep their own args: a registry copy's tool (MCP registry §9.7) is
+   *  named `<copy> · <tool>`; a set skill (skills registry §4.4) shows its qualified name (and its args); a script
+   *  tool (§9.3) its key and outcome — its input is a whole program, so the JSON is worth nothing there. */
+  function toolLine(block) {
+    const mcp = parseMcpToolName(block.name);
+    if (mcp && mcp.server !== 'worca') return { name: `${mcp.server} · ${mcp.tool}`, args: toolArgs(block.input), mcp: true };
+    if (block.name === 'Skill' && block.input && typeof block.input.skill === 'string') {
+      const args = typeof block.input.args === 'string' && block.input.args ? block.input.args : '';
+      return { name: block.name, args: args ? `${block.input.skill} · ${args}` : block.input.skill, mcp: false };
+    }
+    const short = String(block.name || '').replace(/^mcp__worca__/, '');
+    const script = scriptToolLine(short, block);
+    return { name: short, args: script ? script.target : toolArgs(block.input), mcp: false };
+  }
+
   function toolRow(block) {
     const rowEl = make('div', 'ask-tool-row');
     rowEl.dataset.minLevel = 'advanced';            // what the assistant ran, step by step
-    const mcp = parseMcpToolName(block.name);
-    if (mcp && mcp.server !== 'worca') {
-      // A registry copy's tool (MCP registry §9.7): `<copy> · <tool>` in the name cell, then the
-      // input preview — no op cell, since a third-party tool name has no worca verb to show.
-      rowEl.appendChild(make('span', 'ask-tool-mcp', `${mcp.server} · ${mcp.tool}`));
-      rowEl.appendChild(make('span', 'ask-tool-target', clipInput(block.input)));
-    } else if (block.name === 'Skill' && block.input && typeof block.input.skill === 'string') {
-      // Skills registry §4.4: a set skill the turn loaded — `skill`, then its qualified name (and its args).
-      const args = typeof block.input.args === 'string' && block.input.args ? block.input.args : '';
-      rowEl.appendChild(make('span', 'ask-tool-op', 'skill'));
-      rowEl.appendChild(make('span', 'ask-tool-target', args ? `${block.input.skill} · ${args.length > 60 ? `${args.slice(0, 60)}…` : args}` : block.input.skill));
-    } else {
-      const short = String(block.name || '').replace(/^mcp__worca__/, '');
-      const parts = short.split('_');
-      rowEl.appendChild(make('span', 'ask-tool-op', parts[0] || short));
-      // A script tool reads as `test script runTests → blocking, exit 1` (§9.3): the op column
-      // (a fixed 38 px cell) keeps the verb, the target column carries the key and the outcome —
-      // a script's input is a whole program, so the JSON preview is worth nothing there.
-      const script = scriptToolLine(short, block);
-      const target = script ? script.target : parts.slice(1).join(' ');
-      const preview = script ? '' : clipInput(block.input);
-      rowEl.appendChild(make('span', 'ask-tool-target', preview ? (target ? `${target} · ${preview}` : preview) : target));
-    }
+    rowEl.appendChild(make('span', `ask-tool-dot${block.status === 'running' ? ' is-running' : block.status === 'error' ? ' is-error' : ''}`));
+    // The name and the args flow as one text, clamped to two lines by CSS (.ask-tool-target); the hover holds it all.
+    const { name, args, mcp } = toolLine(block);
+    const text = make('span', 'ask-tool-target');
+    text.appendChild(make('span', mcp ? 'ask-tool-name ask-tool-mcp' : 'ask-tool-name', name));
+    if (args) text.append(' ', make('span', 'ask-tool-args', args));
+    text.title = args ? `${name} ${args}` : name;
+    rowEl.appendChild(text);
     const note = block.status === 'error' ? 'error' : block.status === 'running' ? '…' : fmtElapsed(block.durationMs);
     rowEl.appendChild(make('span', 'ask-tool-note', note || ''));
     return rowEl;
@@ -4787,47 +5050,66 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   const isLiveRow = (row) => !!(row && st.model && st.model.live() && st.model.live().messageId === row.id);
 
   /**
-   * The block above the answer, with an `update(row)` that patches it IN PLACE:
-   * the head is re-stated (one line, fixed height), a tool/agent row already on
-   * screen is replaced by its own fresh node, and a new one is appended into its
-   * group. Nothing outside `.ask-activity` is touched, so an ask-label or
-   * ask-block frame can no longer re-create the message around the text being
-   * read (which replayed the entry animation on every frame of a turn).
+   * The block above the answer: one head line (`Done · 7.4s · 19.8k ctx · $0.05`) over a body holding the tool rows
+   * and the sub-agent section. The body is collapsed by default in every state, live turns included, so nothing
+   * jumps when a turn lands; an open body keeps updating live. The head is a button (aria-expanded, a chevron) only
+   * while the body holds rows the current mode shows — tool rows are Advanced, sub-agents Expert (docs/ui-levels.md)
+   * — so a Simple user never gets a toggle that opens nothing. What is open is panel state (st.expandedActivity, by
+   * message id, like st.expandedAgents): it outlives the per-frame sync and a structural repaint.
+   *
+   * `update(row)` patches it IN PLACE: the head is re-stated, a tool/agent row
+   * already on screen is replaced by its own fresh node, and a new one is
+   * appended into its group. Nothing outside `.ask-activity` is touched, so an
+   * ask-label or ask-block frame can no longer re-create the message around the
+   * text being read (which replayed the entry animation on every frame of a turn).
    */
   function buildActivity(row) {
     const activity = make('div', 'ask-activity');
-    const head = make('div', 'ask-activity-head');
-    activity.appendChild(head);
+    let head = make('div', 'ask-activity-head');
+    const body = make('div', 'ask-activity-body');
+    body.hidden = true;
+    activity.append(head, body);
+    let cur = row;
     const toolEls = new Map();     // block id → the row currently rendered for it
     const agentEls = new Map();
     let agents = null;             // the .ask-agents section, once the row has one
     let agentsCount = null;
 
-    function renderHead(r) {
+    function renderHead(r, canOpen) {
       const isLive = isLiveRow(r);
       const stopped = r.status === 'stopped' || r.status === 'error';
       const parts = [];
+      // The head names its state in one word — Thinking, Done, or Stopped after —
+      // and nothing more while the turn is live: the orb row at the bottom of the
+      // message owns the elapsed and the meter, and printing either set twice is
+      // the noise this replaced. A turn that ended badly says so instead of Done;
+      // nothing else marks a stop. A turn that ended before any result, or within
+      // a few ms (a signed-out CLI answers in ~20 ms), has no duration worth
+      // printing: plain Stopped, never a dangling "Stopped after" or "Stopped
+      // after 0.0s". The rest follows on the same line, dot-separated.
       if (isLive) parts.push(make('span', 'ask-activity-label', 'Thinking'));
-      else if (!stopped) parts.push(make('span', 'ask-activity-label', 'Done'));
-      parts.push(make('span', `ask-dot${isLive ? ' ask-dot-run' : r.status === 'error' ? '' : ' ask-dot-done'}`));
-      // The head names its state in one word ahead of the dot — Thinking, Done, or
-      // Stopped after — and nothing more while the turn is live: the orb row at the
-      // bottom of the message owns the elapsed and the meter, and printing either
-      // set twice is the noise this replaced. A turn that ended badly says so
-      // instead of Done; nothing else marks a stop. A turn that ended before any
-      // result, or within a few ms (a signed-out CLI answers in ~20 ms), has no
-      // duration worth printing: plain Stopped, never a dangling "Stopped after"
-      // or "Stopped after 0.0s".
-      if (!isLive) {
+      else {
         const shown = fmtElapsed(r.durationMs);
         const elapsed = shown && shown !== '0.0s' ? shown : '';
-        if (stopped) parts.push(make('span', 'ask-activity-label', elapsed ? 'Stopped after' : 'Stopped'));
-        parts.push(make('span', 'ask-activity-elapsed', elapsed));
-        parts.push(make('span', 'ask-activity-spacer'));
         const meter = [fmtCtx(r.usage && r.usage.ctx), fmtUsd(r.costUsd)].filter(Boolean).join(' · ');
+        parts.push(make('span', 'ask-activity-label', stopped ? (elapsed ? 'Stopped after' : 'Stopped') : 'Done'));
+        if (elapsed) parts.push(stopped ? ' ' : ' · ');
+        parts.push(make('span', 'ask-activity-elapsed', elapsed));
+        if (meter) parts.push(' · ');
         parts.push(make('span', 'ask-activity-meter', meter));
       }
+      if (canOpen) {
+        const chev = make('span', 'ask-activity-chev', '›');
+        chev.setAttribute('aria-hidden', 'true');
+        parts.push(chev);
+      }
       head.replaceChildren(...parts);
+    }
+
+    function toggle() {
+      if (st.expandedActivity.has(cur.id)) st.expandedActivity.delete(cur.id);
+      else st.expandedActivity.add(cur.id);
+      keepInPlace(head, () => sync(cur));
     }
 
     /** Re-render the tracked rows of one kind against `blocks`, in order, inside `host` before `before`. */
@@ -4845,8 +5127,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
 
     function sync(r) {
-      renderHead(r);
+      cur = r;
       const blocks = Array.isArray(r.blocks) ? r.blocks : [];
+      const toolBlocks = blocks.filter((b) => b && b.kind === 'tool');
       const agentBlocks = blocks.filter((b) => b && b.kind === 'agent');
       if (agentBlocks.length && !agents) {
         agents = make('div', 'ask-agents');
@@ -4856,16 +5139,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         agentsCount = make('span', 'ask-agents-count', '');
         cap.appendChild(agentsCount);
         agents.appendChild(cap);
-        activity.appendChild(agents);
+        body.appendChild(agents);
       }
       // Tool rows go before the sub-agent section, so a tool that lands after the
       // first agent still slots into its own group.
-      syncRows(blocks.filter((b) => b && b.kind === 'tool'), toolEls, toolRow, activity, agents);
+      syncRows(toolBlocks, toolEls, toolRow, body, agents);
       if (agents) {
         agentsCount.textContent = String(agentBlocks.length);
         syncRows(agentBlocks, agentEls, agentRow, agents, null);
         if (!agentBlocks.length) { agents.remove(); agents = null; agentsCount = null; }
       }
+      const level = currentLevel(doc);
+      const canOpen = (toolBlocks.length > 0 && levelShows(level, 'advanced')) || (agentBlocks.length > 0 && levelShows(level, 'expert'));
+      const open = canOpen && st.expandedActivity.has(r.id);
+      if (head.tagName !== (canOpen ? 'BUTTON' : 'DIV')) {
+        // Rare (the first row lands, the mode changes): the head becomes a button or stops being one.
+        const next = make(canOpen ? 'button' : 'div', 'ask-activity-head');
+        if (canOpen) { next.type = 'button'; next.addEventListener('click', toggle); }
+        head.replaceWith(next);
+        head = next;
+      }
+      if (canOpen) head.setAttribute('aria-expanded', String(open));
+      renderHead(r, canOpen);
+      body.hidden = !open;
     }
 
     sync(row);
@@ -4963,6 +5259,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // closure below reads the latest one through this, never the captured `row`.
     let cur = row;
     let patch = null;   // the in-place update for an assistant row; null ⇒ update() rebuilds
+    let relevel = null; // re-decides the activity's toggle after a mode change (assistant rows only)
     let renderAnswer = null;
     if (row.role === 'user') {
       // PD6: a synthetic row (a workflow-card event) is a notice, never a bubble — its text is the model-facing event line.
@@ -4970,8 +5267,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (synthetic.length) {
         for (const b of synthetic) wrap.appendChild(buildNotice(b));
       } else {
-        const bubble = make('div', 'ask-user-bubble', row.text || '');
-        wrap.appendChild(bubble);
+        // Pinpoint (#669): a message that opens with a blockquote shows it as a quote card above the bubble.
+        const { quote, rest } = parseQuotedMessage(row.text || '');
+        if (quote) {
+          const card = make('div', 'ask-user-quote');
+          card.append(make('div', 'ask-user-quote-h', quote.src ? `From ${quote.src}` : 'Quoted'), make('div', 'ask-user-quote-t', quote.text));
+          wrap.appendChild(card);
+        }
+        if (!quote || rest) wrap.appendChild(make('div', 'ask-user-bubble', quote ? rest : (row.text || '')));
         const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
         if (atts.length) {
           const pills = make('div', 'extras-pills ask-user-pills');
@@ -5037,10 +5340,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // replacing its subtree per tool row is exactly what defeated the browser's
       // scroll anchoring mid-turn.
       patch = (row2) => { cur = row2; activity.update(row2); renderTail(); };
+      relevel = () => activity.update(cur);
     }
     const entry = {
       el: wrap,
       renderAnswer,
+      relevel,
       update(row2) {
         // An assistant row is PATCHED. Rebuilding it handed the column a brand-new
         // `.ask-msg` on every ask-label and every ask-block frame, so the whole
@@ -5262,15 +5567,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     if (frame.type === 'ask-command') {                         // #574: a command card's live state, this chat only
       if (frame.threadId !== st.threadId) return;
+      // Only the card: the terminal pane is never opened or switched for Ask's command (its tab waits there).
       applyCommandFrame(frame.command);
-      // Shared terminal: a command starting in the chat the user is looking at shows its tab in the terminal pane
-      // (the pane decides whether to open or switch); once per block.
-      const c = frame.command;
-      if (st.open && c && c.status === 'running' && typeof c.sessionId === 'string' && !st.commandsShown.has(c.blockId)) {
-        st.commandsShown.add(c.blockId);
-        if (st.commandsShown.size > 200) st.commandsShown.delete(st.commandsShown.values().next().value);
-        showTerminal(c.sessionId, { auto: true });
-      }
       return;
     }
     if (THREADS_REFRESH_FRAMES.has(frame.type)) scheduleThreadsRefresh();
@@ -5422,6 +5720,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (el.jump) el.jump.hidden = st.pinned;
   }
 
+  /** A user toggle (an activity head, a command's output) opens or closes content below its control. The pin was
+   *  written to follow a growing stream: pinned to the end, applyPin() (the next frame, the column's ResizeObserver)
+   *  would follow the opened body and scroll the clicked control off the top. So the control keeps its place on
+   *  screen, and the pin follows the new geometry, as after a user scroll: a body opened past the end leaves it,
+   *  one closed back at the end pins again. */
+  function keepInPlace(control, change) {
+    const t = el.transcript;
+    const before = control.getBoundingClientRect().top;
+    change();
+    const moved = control.getBoundingClientRect().top - before;
+    if (moved) t.scrollTop += moved;
+    st.pinWrite = null;
+    st.pinned = t.scrollHeight - t.scrollTop - t.clientHeight < 24;
+    if (el.jump) el.jump.hidden = st.pinned;
+  }
+
   function jumpToLatest() {
     st.pinned = true;
     el.transcript.scrollTop = el.transcript.scrollHeight;
@@ -5504,6 +5818,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   mountAddons();
   doc.addEventListener('keydown', onDocKeydown, true);
   doc.addEventListener('pointerdown', onDocPointerdown, true);
+  // A mode change (ui-level.mjs applyLevel) re-decides every activity toggle: a mode that hides the rows opens nothing.
+  const onLevelChange = () => { if (st.rowEls) for (const entry of st.rowEls.values()) if (entry.relevel) entry.relevel(); };
+  doc.addEventListener('worca:level', onLevelChange);
   win.addEventListener('resize', onWinResize);
   // MCP registry §9.4: in Auto the page is the scope, so a route change re-previews the picker.
   const onHashChange = () => { if (!st.scope.pinned) scheduleMcpRefresh(); };
@@ -5539,6 +5856,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     orbs.destroy();
     doc.removeEventListener('keydown', onDocKeydown, true);
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
+    doc.removeEventListener('worca:level', onLevelChange);
     win.removeEventListener('resize', onWinResize);
     win.removeEventListener('hashchange', onHashChange);
     if (dockRo) { dockRo.disconnect(); dockRo = null; }
@@ -5562,6 +5880,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     unreadThreadId: () => (st.unread ? st.unreadThread : null),
     contextChanged: () => onHashChange(),           // P4: the run panel's run changed with no hashchange (replaceState)
     appendToComposer,
+    setQuote,
+    sendQuoted,
     pushServerFrame,
     onHello,
     ownsKey,

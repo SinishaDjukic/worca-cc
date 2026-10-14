@@ -7,7 +7,8 @@
 //   • the parent: turn.mjs re-validates a proposal with validateModelChange, and the cards route
 //     applies a confirmed card with applyModelChange.
 // Never a credential out: env values and keys are masked unless they are ${VAR} references.
-import { listModels, PREDEFINED_MODELS, EFFORTS, globalModelRefs, removeGlobalModelAndRefs } from '../config.mjs';
+import { listModels, PREDEFINED_MODELS, EFFORTS, globalModelRefs, removeGlobalModelAndRefs, modelCostConfig } from '../config.mjs';
+import { modelFacts } from '../model-tiers.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel, updateProvider, providerConfig } from '../settings.mjs';
 import { listPluginModels } from '../plugin-models.mjs';
 import { policyCatalogModels } from '../policy/cache.mjs';
@@ -21,6 +22,9 @@ import { harnessesOf } from '../../shared/connections.mjs';
 import { createModelChangeValidator, mergeEditPatch, maskEntry } from './model-proposal.mjs';
 
 const envHas = (name) => typeof process.env[name] === 'string' && process.env[name].trim() !== '';
+/** One row's picking facts as list_models shows them (model-tiers.mjs): vendor, price tier, list price, free, window —
+ *  and `billing: 'copilot'` on a Copilot import (premium requests: no token price, no tier, never free). */
+export const factFields = (f) => (f ? { vendor: f.vendor, tier: f.tier, price: f.price, free: f.free, context: f.context, ...(f.billing ? { billing: f.billing } : {}) } : {});
 
 /** The authoritative validator, over the real readers (the turn's default; the child's too). */
 export const validateModelChange = createModelChangeValidator({
@@ -40,6 +44,7 @@ export async function listModelsForAsk() {
   const globals = new Map(listGlobalModels().map((m) => [m.id.toLowerCase(), m]));
   const plugins = new Map(listPluginModels().map((m) => [m.id.toLowerCase(), m]));
   const source = { false: 'built-in', global: 'user', plugin: 'plugin', policy: 'team policy', project: 'project (legacy)' };
+  const facts = new Map(modelFacts(rows, { costOf: modelCostConfig }).map((f) => [f.id, f]));
   const models = rows.map((row) => {
     const g = globals.get(row.id.toLowerCase());
     const p = !g ? plugins.get(row.id.toLowerCase()) : null;
@@ -51,6 +56,7 @@ export async function listModelsForAsk() {
       editable: !!g, engine: row.engine || 'claude', efforts: row.efforts,
       // The engines (harnesses) that can run it, preferred first: a provider model runs on more than one.
       harnesses: harnessesOf(row),
+      ...factFields(facts.get(row.id)),
       connection: up ? 'provider' : row.routed ? 'env' : 'default',
       ...(row.bridged ? { provider: row.bridged, upstreamApi: row.upstreamApi, upstreamModel: row.upstreamModel } : {}),
       ...(row.bridged ? { ready: !row.needsSignIn, ...(row.needsSignIn && up ? { notReady: providerReadiness(up).message } : {}) } : {}),
