@@ -1,0 +1,36 @@
+{
+  "metaVersion": 2,
+  "domain": "product-video",
+  "requiresSkills": [
+    "product-video"
+  ],
+  "key": "videoStoryboard",
+  "displayName": "Video Storyboard",
+  "description": "Reads the features, picks the medium per feature (browser, terminal replay, simulator…), plans an isolated demo environment with realistic seed data, and writes the scene-by-scene storyboard.",
+  "color": "violet",
+  "icon": "<rect x=\"3\" y=\"4\" width=\"8\" height=\"7\" rx=\"1.2\"/><rect x=\"13\" y=\"4\" width=\"8\" height=\"7\" rx=\"1.2\"/><path d=\"M3 15h18M3 19h12\" stroke-linecap=\"round\"/>",
+  "agentFile": "videoStoryboard.md",
+  "runnerType": "producer",
+  "promptHints": "Pipeline directory: {pipelineDir}. Write nothing into the worktree.",
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md",
+      "required": true
+    },
+    {
+      "id": "answers",
+      "type": "json",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "storyboard",
+      "type": "md",
+      "filename": "video-storyboard.md",
+      "artifactKind": "video-storyboard"
+    }
+  ],
+  "order": 910
+}

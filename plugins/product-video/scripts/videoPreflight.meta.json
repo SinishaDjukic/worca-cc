@@ -1,0 +1,47 @@
+{
+  "metaVersion": 2,
+  "key": "videoPreflight",
+  "displayName": "Video: check programs",
+  "description": "Checks, before any question or storyboard, that this machine can record and encode: Playwright and a browser it can start, an ffmpeg that reads the take, and an H.264 encoder (ffmpeg with libx264 on any OS, or swiftc on macOS). Stops the run with install commands when one is missing; otherwise hands the storyboard what this machine has.",
+  "color": "slate",
+  "icon": "",
+  "domain": "product-video",
+  "order": 909,
+  "runtime": "node",
+  "file": "videoPreflight.mjs",
+  "timeoutMs": 180000,
+  "params": [
+    {
+      "id": "failOnMissing",
+      "type": "boolean",
+      "required": false,
+      "label": "Stop when a program is missing",
+      "description": "Off: report what is missing and carry on (for example to deliver the .webm take only).",
+      "default": true
+    },
+    {
+      "id": "launchBrowser",
+      "type": "boolean",
+      "required": false,
+      "label": "Start the browser once",
+      "description": "Prove the browser starts headless instead of only finding Playwright.",
+      "default": true
+    }
+  ],
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "tools",
+      "type": "json",
+      "when": "always",
+      "filename": "video-tools.json",
+      "artifactKind": "video-tools"
+    }
+  ]
+}

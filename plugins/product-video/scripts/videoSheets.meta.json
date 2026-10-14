@@ -1,0 +1,45 @@
+{
+  "metaVersion": 2,
+  "key": "videoSheets",
+  "displayName": "Video: contact sheets",
+  "description": "Pulls contact sheets (12 frames each, one every few seconds) from the take the recording notes name, plus one full-size frame from the middle of every zoom moment, for the review. A missing or empty take is reported in the sheets file so the review flags it.",
+  "color": "teal",
+  "icon": "",
+  "domain": "product-video",
+  "order": 912,
+  "runtime": "node",
+  "file": "videoSheets.mjs",
+  "timeoutMs": 600000,
+  "params": [
+    {
+      "id": "every",
+      "type": "number",
+      "required": false,
+      "label": "Seconds between frames",
+      "description": "One frame every this many seconds.",
+      "default": 2.5
+    }
+  ],
+  "inputs": [
+    {
+      "id": "recording",
+      "type": "md",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "sheets",
+      "type": "md",
+      "when": "always",
+      "filename": "video-sheets-cycle{cycle}.md",
+      "artifactKind": "video-sheets",
+      "extraFiles": [
+        {
+          "kind": "video-sheet",
+          "glob": "video-sheets/*.png"
+        }
+      ]
+    }
+  ]
+}

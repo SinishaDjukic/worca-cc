@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "reports",
+      "name": "reports what this machine has without stopping",
+      "params": {
+        "failOnMissing": false,
+        "launchBrowser": false
+      },
+      "inputs": {
+        "task": {
+          "text": "# Demo\n\nFilm the export feature."
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "expect": {
+        "verdict": "clean",
+        "summaryIncludes": "Programs:"
+      }
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "metaVersion": 2,
+  "domain": "product-video",
+  "requiresSkills": [
+    "product-video"
+  ],
+  "key": "videoRecorder",
+  "displayName": "Video Recorder",
+  "description": "Builds the isolated demo environment, seeds it, writes the take script and records the take — browser, terminal replay or simulator — under the pipeline directory.",
+  "color": "blue",
+  "icon": "<circle cx=\"12\" cy=\"12\" r=\"8\"/><circle cx=\"12\" cy=\"12\" r=\"3.2\" fill=\"currentColor\" stroke=\"none\"/>",
+  "agentFile": "videoRecorder.md",
+  "runnerType": "producer",
+  "promptHints": "Pipeline directory: {pipelineDir}. Cycle: {cycle}. Takes go to video-takes/, the environment to video-env/. Write nothing into the worktree.",
+  "inputs": [
+    {
+      "id": "storyboard",
+      "type": "md",
+      "required": true
+    },
+    {
+      "id": "approval",
+      "type": "json",
+      "required": true
+    },
+    {
+      "id": "task",
+      "type": "md",
+      "required": true
+    },
+    {
+      "id": "fixes",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "as": "fix-review",
+      "directive": "## Fix cycle\n\nAddress EVERY critical and major finding in the review named below, then re-record the WHOLE take (no splicing). List what changed under \"Changed this cycle\" in the recording notes."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "recording",
+      "type": "md",
+      "filename": "video-recording-cycle{cycle}.md",
+      "artifactKind": "video-recording",
+      "extraFiles": [
+        {
+          "kind": "video-take",
+          "glob": "video-takes/*.webm"
+        },
+        {
+          "kind": "video-take",
+          "glob": "video-takes/*.mp4"
+        }
+      ]
+    }
+  ],
+  "order": 912
+}

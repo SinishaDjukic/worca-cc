@@ -1,0 +1,8 @@
+{
+  "name": "product-video",
+  "version": "0.2.0",
+  "description": "Product demo videos of one or more features: storyboard, isolated demo environment, recorded takes, frame review, MP4 delivery. Videos are run artifacts, never commits.",
+  "engines": {
+    "worca-cc-api": ">=4 <5"
+  }
+}

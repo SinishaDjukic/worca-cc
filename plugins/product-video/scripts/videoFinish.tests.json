@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "missingTake",
+      "name": "refuses to deliver without a take",
+      "inputs": {
+        "recording": {
+          "text": "# Recording\n\nTake: `video-takes/demo-cycle1.webm`.\n"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "expect": {
+        "verdict": "error"
+      }
+    }
+  ]
+}
