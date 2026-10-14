@@ -75,6 +75,9 @@ export function manifestModels(manifest, out = new Set(), depth = 0) {
   if (!manifest || typeof manifest !== 'object' || depth > 8) return out;
   if (Array.isArray(manifest)) { for (const x of manifest) manifestModels(x, out, depth + 1); return out; }
   for (const [k, v] of Object.entries(manifest)) {
+    // `runOverlay` (orchestrator.mjs) records what a run was ASKED to use; the cells hold what it runs (a defragment
+    // pair or an engine switch can override a pick), so a model only that record names is never dispatched.
+    if (depth === 0 && k === 'runOverlay') continue;
     if (k === 'model' && typeof v === 'string' && v.trim()) out.add(v.trim());
     else if (v && typeof v === 'object') manifestModels(v, out, depth + 1);
   }
