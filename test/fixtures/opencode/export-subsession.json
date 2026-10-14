@@ -1,0 +1,244 @@
+{
+  "info": {
+    "id": "ses_ee2c6ffe4ffe2lbboOzQjzEkHc",
+    "slug": "calm-cactus",
+    "projectID": "global",
+    "directory": "/tmp/oc-spike/p2",
+    "path": "",
+    "parentID": "ses_ee2c72f47ffex4jBVb27IKrDAc",
+    "title": "Run echo from-sub (@general subagent)",
+    "agent": "general",
+    "model": {
+      "id": "big-pickle",
+      "providerID": "opencode",
+      "variant": "default"
+    },
+    "version": "1.18.23",
+    "summary": {
+      "additions": 0,
+      "deletions": 0,
+      "files": 0
+    },
+    "cost": 0,
+    "tokens": {
+      "input": 5351,
+      "output": 32,
+      "reasoning": 235,
+      "cache": {
+        "read": 5522,
+        "write": 0
+      }
+    },
+    "permission": [
+      {
+        "permission": "question",
+        "pattern": "*",
+        "action": "deny"
+      },
+      {
+        "permission": "plan_enter",
+        "pattern": "*",
+        "action": "deny"
+      },
+      {
+        "permission": "plan_exit",
+        "pattern": "*",
+        "action": "deny"
+      },
+      {
+        "permission": "task",
+        "pattern": "*",
+        "action": "deny"
+      }
+    ],
+    "time": {
+      "created": 1791491637275,
+      "updated": 1791491645204
+    }
+  },
+  "messages": [
+    {
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1791491637286
+        },
+        "agent": "general",
+        "model": {
+          "providerID": "opencode",
+          "modelID": "big-pickle"
+        },
+        "summary": {
+          "diffs": []
+        },
+        "id": "msg_11d390025001DR8VyuR8JZiUz8",
+        "sessionID": "ses_ee2c6ffe4ffe2lbboOzQjzEkHc"
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Run the shell command `echo from-sub` and return its exact output to me. Do nothing else.",
+          "id": "prt_11d390028001d603xaGesDE3A8",
+          "sessionID": "ses_ee2c6ffe4ffe2lbboOzQjzEkHc",
+          "messageID": "msg_11d390025001DR8VyuR8JZiUz8"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_11d390025001DR8VyuR8JZiUz8",
+        "role": "assistant",
+        "mode": "general",
+        "agent": "general",
+        "path": {
+          "cwd": "/tmp/oc-spike/p2",
+          "root": "/tmp/oc-spike/p2"
+        },
+        "cost": 0,
+        "tokens": {
+          "total": 5490,
+          "input": 5324,
+          "output": 23,
+          "reasoning": 45,
+          "cache": {
+            "write": 0,
+            "read": 98
+          }
+        },
+        "modelID": "big-pickle",
+        "providerID": "opencode",
+        "time": {
+          "created": 1791491637298,
+          "completed": 1791491640029
+        },
+        "finish": "tool-calls",
+        "id": "msg_11d390032001bLpUwdXGCD2aoY",
+        "sessionID": "ses_ee2c6ffe4ffe2lbboOzQjzEkHc"
+      },
+      "parts": [
+        {
+          "snapshot": "a12a6bab33a8afee880904316730ce6298bec0b9",
+          "type": "step-start",
+          "id": "prt_11d390a4d0012OCGk7RBJC1d66",
+          "sessionID": "ses_ee2c6ffe4ffe2lbboOzQjzEkHc",
+          "messageID": "msg_11d390032001bLpUwdXGCD2aoY"
+        },
+        {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "c0ab08be-bf93-469b-b8dc-0c2991ac3ac1",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "echo from-sub"
+            },
+            "output": "from-sub\n",
+            "metadata": {
+              "output": "from-sub\n",
+              "exit": 0,
+              "truncated": false
+            },
+            "title": "echo from-sub",
+            "time": {
+              "start": 1791491639911,
+              "end": 1791491639915
+            }
+          },
+          "id": "prt_11d390a50001OuwspRrPboxJQy",
+          "sessionID": "ses_ee2c6ffe4ffe2lbboOzQjzEkHc",
+          "messageID": "msg_11d390032001bLpUwdXGCD2aoY"
+        },
+        {
+          "reason": "tool-calls",
+          "snapshot": "a12a6bab33a8afee880904316730ce6298bec0b9",
+          "type": "step-finish",
+          "tokens": {
+            "total": 5490,
+            "input": 5324,
+            "output": 23,
+            "reasoning": 45,
+            "cache": {
+              "write": 0,
+              "read": 98
+            }
+          },
+          "cost": 0,
+          "id": "prt_11d390a9e0017VtBARoeBhWfXx",
+          "sessionID": "ses_ee2c6ffe4ffe2lbboOzQjzEkHc",
+          "messageID": "msg_11d390032001bLpUwdXGCD2aoY"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_11d390025001DR8VyuR8JZiUz8",
+        "role": "assistant",
+        "mode": "general",
+        "agent": "general",
+        "path": {
+          "cwd": "/tmp/oc-spike/p2",
+          "root": "/tmp/oc-spike/p2"
+        },
+        "cost": 0,
+        "tokens": {
+          "total": 5650,
+          "input": 27,
+          "output": 9,
+          "reasoning": 190,
+          "cache": {
+            "write": 0,
+            "read": 5424
+          }
+        },
+        "modelID": "big-pickle",
+        "providerID": "opencode",
+        "time": {
+          "created": 1791491640031,
+          "completed": 1791491645197
+        },
+        "finish": "stop",
+        "id": "msg_11d390adf001k6y5pk9Eyn3H3N",
+        "sessionID": "ses_ee2c6ffe4ffe2lbboOzQjzEkHc"
+      },
+      "parts": [
+        {
+          "snapshot": "a12a6bab33a8afee880904316730ce6298bec0b9",
+          "type": "step-start",
+          "id": "prt_11d391e91001OldJ4reiDe6TNZ",
+          "sessionID": "ses_ee2c6ffe4ffe2lbboOzQjzEkHc",
+          "messageID": "msg_11d390adf001k6y5pk9Eyn3H3N"
+        },
+        {
+          "type": "text",
+          "text": "from-sub",
+          "time": {
+            "start": 1791491645077,
+            "end": 1791491645078
+          },
+          "id": "prt_11d391e95001EY1sXJ6Mb5Uh8t",
+          "sessionID": "ses_ee2c6ffe4ffe2lbboOzQjzEkHc",
+          "messageID": "msg_11d390adf001k6y5pk9Eyn3H3N"
+        },
+        {
+          "reason": "stop",
+          "snapshot": "a12a6bab33a8afee880904316730ce6298bec0b9",
+          "type": "step-finish",
+          "tokens": {
+            "total": 5650,
+            "input": 27,
+            "output": 9,
+            "reasoning": 190,
+            "cache": {
+              "write": 0,
+              "read": 5424
+            }
+          },
+          "cost": 0,
+          "id": "prt_11d391ed7001RUUIg2Mqwy1cXm",
+          "sessionID": "ses_ee2c6ffe4ffe2lbboOzQjzEkHc",
+          "messageID": "msg_11d390adf001k6y5pk9Eyn3H3N"
+        }
+      ]
+    }
+  ]
+}

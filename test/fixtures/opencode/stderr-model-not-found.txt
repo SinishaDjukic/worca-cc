@@ -1,0 +1,1 @@
+timestamp=2026-10-08T20:27:55.140Z level=ERROR run=7dcc638c message=failed ref=err_1c367b1d error="ProviderModelNotFoundError: Model not found: anthropic/claude-sonnet-4-5. Did you mean: claude-sonnet-4-5, claude-sonnet-4-5-20250929?"

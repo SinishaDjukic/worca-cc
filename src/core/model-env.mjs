@@ -21,20 +21,36 @@ export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 /** Cursor has no effort flag (engines/cursor.mjs capability `effort: false`). */
 export const CURSOR_EFFORTS = [];
+/** OpenCode's `--variant` values (engines/opencode.mjs): the union of its providers' reasoning variants. */
+export const OPENCODE_EFFORTS = ['minimal', 'low', 'medium', 'high', 'max'];
 export const MODEL_ENGINES = [...MODEL_ENGINE_NAMES];
 /** The engines a run's agent nodes can run on (engines/index.mjs). Copilot runs pipelines but owns no catalog
  *  model, so it is not a MODEL_ENGINES member (no step or helper slots, no Ask chats). */
 export const RUN_ENGINES = [...ENGINE_NAMES];
 /** Engines with helper-model slots of their own (title, overview, PR description, Auto classifier, night decider). */
 export const HELPER_ENGINES = ['claude', 'codex'];
-/** The engine a run's helper jobs run on. A Cursor run hands them to Claude: they read untrusted text, and Cursor's
- *  shell cannot be switched off. Copilot runs its own on its default model (no helper slots). The memory defrag and
+/** The engine a run's helper jobs run on. A Cursor or OpenCode run hands them to Claude: they read untrusted text, and
+ *  those engines' shells cannot be switched off (no verified read-only mode). Copilot runs its own on its default model (no helper slots). The memory defrag and
  *  the workspace scan are agent nodes of the run, not helper jobs. */
 export function helperEngineFor(engine) { return RUN_ENGINES.includes(engine) && ENGINES[engine].helpers ? engine : 'claude'; }
+/** Engines whose models connect through the engine's own sign-in: a catalog entry takes no routing env and no
+ *  upstream (cursor-agent's login; OpenCode's providers, `opencode auth login`). */
+export const OWN_SIGNIN_ENGINES = ['cursor', 'opencode'];
+const OWN_SIGNIN_NOTE = Object.freeze({ cursor: 'cursor-agent connects with its own sign-in', opencode: 'OpenCode connects through its own providers' });
+/** 'a cursor model' / 'an opencode model', for the messages that name an engine's catalog entry. */
+export function aModelOf(engine) { return `${/^[aeiou]/i.test(String(engine)) ? 'an' : 'a'} ${engine} model`; }
+/** How an OWN_SIGNIN_ENGINES model connects, for the messages that refuse its env or upstream. */
+export function ownSignInNote(engine) { return OWN_SIGNIN_NOTE[engine] || ''; }
+/** An OpenCode model id is `provider/model`, as `opencode models` lists it (`-m` takes nothing else). */
+const OPENCODE_MODEL_ID_RE = /^[^/\s]+\/\S+$/;
+/** Why `id` cannot be a model of `engine`, or null. */
+export function modelIdProblem(engine, id) {
+  return engine === 'opencode' && !OPENCODE_MODEL_ID_RE.test(String(id ?? '')) ? 'an opencode model id is provider/model (as `opencode models` lists it)' : null;
+}
 /** Engines an Ask Worca chat may run on: those whose shell and disk tools can be switched off (Codex: CODEX_ASK_LOCKDOWN,
- *  and a codex that has every flag in it, ask/turn.mjs). Cursor: no such switch is known (CURSOR_ASK_LOCKDOWN = null). */
+ *  and a codex that has every flag in it, ask/turn.mjs). Cursor and OpenCode: none is known (CURSOR_ASK_LOCKDOWN, OPENCODE_ASK_LOCKDOWN = null). */
 export const ASK_ENGINES = ['claude', 'codex'];
-export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : engine === 'cursor' ? CURSOR_EFFORTS : EFFORTS; }
+export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : engine === 'cursor' ? CURSOR_EFFORTS : engine === 'opencode' ? OPENCODE_EFFORTS : EFFORTS; }
 export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS])];
 
 // The effort worca's own auxiliary calls run at (title generation, the Models

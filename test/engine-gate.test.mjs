@@ -43,7 +43,7 @@ const CMD_RULES = { deny: ['Bash(curl:*)', 'Bash(git push)', 'WebSearch'] };
 test('an unknown engine fails at construction', () => {
   assert.throws(() => orch({ engine: 'codx' }), /unknown engine "codx"/);
   // The mock stands in for Claude under --mock only; it is not a run engine.
-  assert.throws(() => orch({ engine: 'mock' }), /"mock" is not a run engine \(choose one of: claude, codex, copilot, cursor\); the offline mock runs under --mock/);
+  assert.throws(() => orch({ engine: 'mock' }), /"mock" is not a run engine \(choose one of: claude, codex, copilot, cursor, opencode\); the offline mock runs under --mock/);
 });
 
 test('claude (the default) passes the gate with nothing to say', () => {
@@ -764,6 +764,34 @@ test('a result with no cost warns on a reporting engine, not on cursor; a per-Mt
     assert.equal(warns('cursor').some((t) => /no cost estimate/.test(t)), false);
     assert.ok(warns('cursor', 'gate-priced').some((t) => /priced per-Mtok but the result carried no token usage/.test(t)));
   });
+});
+
+// ── OpenCode (engines/opencode.mjs) ──────────────────────────────────────────
+
+test('opencode: Permissive passes, one audit line per missing capability; cost is reported', () => {
+  const lines = withNodes(orch({ engine: 'opencode' }), {})._engineGate();
+  const caps = lines.filter((l) => /^engine opencode: no \w+ — /.test(l));
+  assert.deepEqual(caps.map((l) => l.split(':')[1].trim().split(' ')[1]).sort(), ['allowedTools', 'hookTelemetry', 'turnBudget']);
+});
+
+test('opencode: the Normal set holds in part — it needs --allow-unguarded-engine, then names its permission rules', async () => {
+  const rules = await NORMAL_RULES();
+  const o = withNodes(orch({ engine: 'opencode' }), {});
+  o.guardrailPermissionRules = rules;
+  o.guardrailsId = 'normal';
+  assert.throws(() => o._engineGate(), (err) => /holds only in part/.test(err.message) && /permission rules/.test(err.message));
+  const allowed = withNodes(orch({ engine: 'opencode', allowUnguardedEngine: true }), {});
+  allowed.guardrailPermissionRules = rules;
+  allowed.guardrailsId = 'normal';
+  const lines = allowed._engineGate();
+  assert.ok(lines.some((l) => l.startsWith('engine opencode: deny rules held on opencode only in part, as permission rules — command rules match each command')), lines.join('\n'));
+  assert.equal(lines.some((l) => /NOT enforced on opencode/.test(l)), false, 'every Normal rule reaches OpenCode');
+});
+
+test('engineStartRefusal: a missing opencode binary is not liftable', POSIX, async () => {
+  const r = await createOrchestrator({ projectDir: tmp(), claude: { engine: 'opencode', bin: join(tmp(), 'no-opencode') } }).engineStartRefusal();
+  assert.equal(r.overridable, false);
+  assert.match(r.error, /WORCA_OPENCODE_BIN/);
 });
 
 // The Cursor files in the §8.8 set, the commit and the diffs (run-harness _registerEngineConfig, _injectedFor,
