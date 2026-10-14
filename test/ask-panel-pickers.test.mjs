@@ -426,7 +426,7 @@ test('ask-panel-pickers: New chat clears the thread; the next send creates a fre
   ctx.panel.open();
   await ctx.tick(); await ctx.tick(); await ctx.tick();
   assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Stored');
-  ctx.doc.querySelector('[data-ask-new-btn]').click();
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
   assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'New chat');
   assert.equal(ctx.storage.getItem('worca-cc.ask.thread'), null);
   ctx.doc.querySelector('textarea.ask-input').value = 'fresh start';
@@ -626,7 +626,7 @@ test('ask-panel-pickers: thread switch shows each thread\'s stored model; a mode
       ctx.panel.open();
       await settle(ctx);
       assert.deepEqual(pickerShows(ctx), ['Opus 4.8', 'max']);
-      ctx.doc.querySelector('[data-ask-new-btn]').click();
+      ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
       assert.deepEqual(pickerShows(ctx), ['Haiku 4.5', 'medium']);
       assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.model')), { model: 'claude-haiku-4-5', effort: 'medium' });
     } },

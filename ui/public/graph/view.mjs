@@ -1156,9 +1156,9 @@ export function thumbnailFor(template, portsFn, { width = 240, height = 96 } = {
  *  `.gv-static .node` is pointer-events:none in style.css. */
 export function mountStaticGraph(host, template, {
   doc = globalThis.document, portsFn, agents = {}, width = 0, viewport = null,
-  scale = 1, layout = 'auto', band = null, order = null, onLayout = null,
+  scale = 1, layout = 'auto', band = null, order = null, onLayout = null, modelOf = null,
 } = {}) {
-  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents, viewport, scale, layout, band, order });
+  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents, viewport, scale, layout, band, order, modelOf });
   view.render(template, {});
   const isFlow = layout === 'flow';
   const widthOf = () => host.clientWidth || width || 0;

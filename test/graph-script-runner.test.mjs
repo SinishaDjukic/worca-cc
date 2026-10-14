@@ -203,9 +203,9 @@ test('node runtime, clean: the frame`s outputs/verdict/summary/logs land; events
 import { writeFileSync } from 'node:fs';
 export default async function ({ inputs, outputs, params, ctx, log, execution }) {
   console.log('hello from stdout');            // routed to stderr by the harness
+  log('info', 'params=' + JSON.stringify(params) + ' cwd=' + ctx.cwd + ' fresh=' + inputs.done.fresh);
   console.error('hello from stderr');
   writeFileSync(outputs.log.path, '# tests cycle ' + execution.ordinal + '\\n');
-  log('info', 'params=' + JSON.stringify(params) + ' cwd=' + ctx.cwd + ' fresh=' + inputs.done.fresh);
   return { summary: 'all passing', outputs: { report: { value: { passed: 3 } } }, verdict: { issues: [] } };
 }\n`);
   const ctx = ctxFor({ meta: nodeMeta(), file, params: { cmd: 'x' } });
@@ -225,10 +225,36 @@ export default async function ({ inputs, outputs, params, ctx, log, execution })
   assert.ok(existsSync(res.envelopePath), 'the envelope audit copy exists');
   assert.equal(JSON.parse(readFileSync(res.envelopePath, 'utf8')).node.key, 'runTests');
   const texts = ctx.events.filter((e) => e.type === 'text').map((e) => e.text);
-  assert.deepEqual(texts, ['hello from stdout', 'hello from stderr', `[info] params={"cmd":"x"} cwd=${ctx.projectDir} fresh=true`], 'stderr lines first, then logs[]');
+  assert.deepEqual(texts, ['hello from stdout', `[info] params={"cmd":"x"} cwd=${ctx.projectDir} fresh=true`, 'hello from stderr'], 'log() lines ride stderr, in call order with console.*');
   const result = ctx.events.find((e) => e.type === 'result');
   assert.equal(result.costUsd, 0);
   assert.deepEqual({ ...result.raw, durationMs: 0 }, { type: 'result', script: true, exitCode: 0, durationMs: 0 });
+});
+
+/** Records when each event reaches the host, so a test can tell a live line from one replayed at the end. */
+function timedEvents(ctx) {
+  const seen = [];
+  ctx.onEvent = (e) => seen.push({ e, at: Date.now() });
+  return seen;
+}
+
+test('node runtime: log() lines stream live, long before the result frame', async () => {
+  const file = writeProgram(tmp('worca-sr-prog-'), `export default async function ({ log, outputs }) {
+  const { writeFileSync } = await import('node:fs');
+  log('info', 'step one');
+  await new Promise((r) => setTimeout(r, 1000));
+  writeFileSync(outputs.log.path, 'x');
+  writeFileSync(outputs.report.path, '{}');
+  return { summary: 'done' };
+}\n`);
+  const ctx = ctxFor({ meta: nodeMeta(), file });
+  const seen = timedEvents(ctx);
+  await runScriptExecution(ctx);
+  const line = seen.find(({ e }) => e.type === 'text' && e.text === '[info] step one');
+  const result = seen.find(({ e }) => e.type === 'result');
+  assert.ok(line, 'the log line is emitted');
+  assert.equal(seen.filter(({ e }) => e.type === 'text' && e.text === '[info] step one').length, 1, 'emitted once, not again from the frame');
+  assert.ok(result.at - line.at >= 500, `the line arrived ${result.at - line.at} ms before the result, not at the end`);
 });
 
 test('node runtime, blocking verdict and a thrown error; a verdict file the script writes itself wins', async () => {
@@ -622,6 +648,39 @@ def main(api):
   assert.ok(existsSync(res.envelopePath), 'the envelope audit copy is written for python too');
 });
 
+test('python: api.log() lines stream live, long before the result frame', { skip: pySkip }, async () => {
+  const { meta, file } = pyScript(`
+import time
+
+def main(api):
+    api.log('info', 'step one')
+    time.sleep(1)
+    with open(api.outputs.log.path, 'w', encoding='utf-8') as f:
+        f.write('x')
+    with open(api.outputs.report.path, 'w', encoding='utf-8') as f:
+        f.write('{}')
+    return {'summary': 'done'}
+`);
+  const ctx = ctxFor({ meta, file });
+  const seen = timedEvents(ctx);
+  await runScriptExecution(ctx);
+  const lines = seen.filter(({ e }) => e.type === 'text' && e.text === '[info] step one');
+  const result = seen.find(({ e }) => e.type === 'result');
+  assert.equal(lines.length, 1, 'emitted once, not again from the frame');
+  assert.ok(result.at - lines[0].at >= 500, `the line arrived ${result.at - lines[0].at} ms before the result, not at the end`);
+});
+
+test('python: api.log() lines written before a raise still reach the run log', { skip: pySkip }, async () => {
+  const { meta, file } = pyScript(`
+def main(api):
+    api.log('warn', 'about to fail')
+    raise RuntimeError('boom')
+`);
+  const ctx = ctxFor({ meta, file });
+  await assert.rejects(runScriptExecution(ctx), /boom/);
+  assert.ok(ctx.events.some((e) => e.type === 'text' && e.text === '[warn] about to fail'));
+});
+
 test('python: a raise is an execution error with the message and errorClass null', { skip: pySkip }, async () => {
   const { meta, file } = pyScript(`
 def main(api):
@@ -635,14 +694,13 @@ def main(api):
   });
 });
 
-test('python: a frame over 8 MiB is refused by name, and the hint does not send the author to api.log()', { skip: pySkip }, async () => {
+test('python: a frame over 8 MiB is refused by name, and the hint sends the author to the run log', { skip: pySkip }, async () => {
   const { meta, file } = pyScript(`
 def main(api):
     return {'summary': 'x' * (9 * 1024 * 1024)}
 `);
   await assert.rejects(runScriptExecution(ctxFor({ meta, file })), (err) => {
-    assert.match(err.message, /^script "pyCard": stdout exceeded 8 MiB — stdout is reserved for the result frame; log through print\(\)/);
-    assert.equal(err.message.includes('api.log'), false, 'api.log() lines ride the frame: they are part of the 8 MiB, not a way around it');
+    assert.match(err.message, /^script "pyCard": stdout exceeded 8 MiB — stdout is reserved for the result frame; log through print\(\) or api\.log\(\)/);
     assert.equal(err.errorClass, null);
     return true;
   });

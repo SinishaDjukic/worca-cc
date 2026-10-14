@@ -581,7 +581,7 @@ export async function runScriptExecution(ctx) {
       env: { ...env, ...PY_ENV }, stdin: JSON.stringify(envelope), timeoutMs, signal: ctx.signal, onLine,
       stdoutMode: 'frame', platform });
     afterRun(run);
-    frame = readFrame(run, 'print()');          // NOT api.log(): its lines travel ON the frame (frame.logs) and count against the same 8 MiB
+    frame = readFrame(run, 'print() or api.log()');
   } else {
     const command = shellCommand(script, meta, platform);
     if (!command) throw scriptError(`script "${key}": no command to run`);
@@ -634,6 +634,7 @@ export async function runScriptExecution(ctx) {
   const summary = typeof frame.summary === 'string' && frame.summary.trim()
     ? frame.summary.trim().slice(0, SUMMARY_MAX)
     : `${meta.displayName || key} completed.`;
+  // Both harnesses now stream api.log() on stderr and send `logs: []`; a frame that still carries lines is replayed here.
   for (const l of Array.isArray(frame.logs) ? frame.logs : []) emit({ type: 'text', text: `[${l?.level || 'info'}] ${String(l?.msg ?? '')}` });
   resultEvent({ exitCode: run.exitCode, durationMs: run.durationMs });
   return {

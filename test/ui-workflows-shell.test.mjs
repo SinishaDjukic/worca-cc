@@ -7,13 +7,14 @@ const items = (doc) => [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')]
 const click = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
 const keydown = (el, key, extra = {}) => el.dispatchEvent(new el.ownerDocument.defaultView.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra }));
 
-test('"Workflows ▾": New canvas, Open…, Import…, Export… (disabled until saved)', async () => {
-  const s = await bootShell({ template: { ...fixture(), id: '' } });     // fixture() is SAVED (id 'wf_t'): Export would be live
+test('"Workflows ▾": New canvas, Open…, Import…, Export… (live on an unsaved canvas too)', async () => {
+  const s = await bootShell({ template: { ...fixture(), id: '' } });
   click(s.g('wfv-wf-menu'));
   assert.deepEqual(items(s.doc), ['New canvas', 'Open…', 'Import…', 'Export…']);
   const exp = [...s.doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.startsWith('Export'));
-  assert.equal(exp.disabled, true);
-  assert.equal(exp.title, 'Save the pipeline first');
+  assert.equal(exp.disabled, false, 'exportCurrent saves first — the item is never a dead end');
+  click(s.g('wfv-wf-menu'));                                           // the trigger's second click closes it
+  click(s.g('wfv-wf-menu'));
   click([...s.doc.querySelectorAll('.wfv-menu-item')][0]);
   assert.deepEqual(s.calls.at(-1), ['newCanvas']);
   assert.equal(s.doc.querySelector('.wfv-menu'), null, 'a pick closes the menu');
@@ -246,17 +247,13 @@ test('a drop places only what the Library offers: a workspace-only or unknown ag
   assert.equal(s.c.template().nodes.at(-1).key, 'shell', 'a known script still lands');
 });
 
-test('"Workflows ▾" › Export… waits while the open workflow has unsaved changes (it exports the SAVED row)', async () => {
+test('"Workflows ▾" › Export… stays live with unsaved changes and hands off to exportCurrent', async () => {
   const s = await bootShell();                                         // fixture() is saved (id 'wf_t')
   const exportItem = () => [...s.doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.startsWith('Export'));
   s.c.spawn({ key: 'planner' });
   click(s.g('wfv-wf-menu'));
-  assert.equal(exportItem().disabled, true);
-  assert.equal(exportItem().title, 'Save your changes first');
-  click(s.g('wfv-wf-menu'));                                           // the trigger's second click closes it
-  s.c.markSaved('wf_t', 'T', '');
-  click(s.g('wfv-wf-menu'));
   assert.equal(exportItem().disabled, false);
+  assert.equal(exportItem().title, '');
   click(exportItem());
   assert.deepEqual(s.calls.at(-1), ['exportCurrent']);
 });

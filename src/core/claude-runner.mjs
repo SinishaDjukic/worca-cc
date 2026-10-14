@@ -170,6 +170,10 @@ export async function runClaude(o = {}) {
     pluginDirs,
     extraSettings,
     argvInlineLimit,
+    // The user's own project folder whose approvals decide the cwd's committed `.mcp.json` servers on Claude
+    // (mcpjson-approval.mjs). A pipeline node's cwd is a run checkout, which holds neither the untracked
+    // settings.local.json nor Claude Code's answers for the project. Default: the cwd. Never a spawn flag.
+    mcpjsonProjectDir,
     // A pipeline agent (phases.mjs): runs as WORCA_AGENT_USER when the container set one
     // up (agent-user.mjs). Server-side helpers and Ask Worca leave it unset.
     asAgent,
@@ -199,6 +203,20 @@ export async function runClaude(o = {}) {
     // named HERE too, or the mock implementer never sees it (this call is a gate, not
     // a pass-through; test/spawn-args.test.mjs asserts the forwarding end to end).
     return engine.run({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets, permissionMode });
+  }
+
+  // Claude Code starts every server of the cwd's committed `.mcp.json` in -p, approved or not (probed on 2.1.293):
+  // the unapproved ones go into disabledMcpjsonServers, which it honors over any approval. Read at every spawn, so
+  // a server an agent adds mid-run is held too. --strict-mcp-config loads no `.mcp.json` at all.
+  let settings = extraSettings;
+  if (engine.name === 'claude' && strictMcpConfig !== true) {
+    // Loaded here, not at the top: mcpjson-approval reads run-context, whose imports lead back to this runner.
+    const { unapprovedMcpjsonNames } = await import('./mcpjson-approval.mjs');
+    const off = await unapprovedMcpjsonNames(cwd, mcpjsonProjectDir || cwd);
+    if (off.length) {
+      const prev = Array.isArray(extraSettings?.disabledMcpjsonServers) ? extraSettings.disabledMcpjsonServers : [];
+      settings = { ...(extraSettings || {}), disabledMcpjsonServers: [...new Set([...prev, ...off])] };
+    }
   }
 
   return engine.run({
@@ -239,7 +257,7 @@ export async function runClaude(o = {}) {
     images,
     agents,
     pluginDirs,
-    extraSettings,
+    extraSettings: settings,
     argvInlineLimit,
     asAgent,
     billTo,

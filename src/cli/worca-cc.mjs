@@ -43,6 +43,7 @@ import { cmdLogs } from './logs.mjs';
 import { cmdControl } from './control.mjs';
 import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
+import { cmdExtension } from './extension.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
 } from '../core/ui-instance.mjs';
@@ -122,6 +123,7 @@ function parseArgs(argv) {
     install: null,
     sourceBranch: undefined,
     featureBranch: undefined,
+    onSourceBranch: false,
     memoryScope: undefined,
     after: undefined,
     afterAny: false,
@@ -204,6 +206,7 @@ function parseArgs(argv) {
     }
     if (arg === '--after-any') { out.afterAny = true; continue; }
     if (arg === '--source-from-previous') { out.sourceFromPrevious = true; continue; }
+    if (arg === '--on-source-branch') { out.onSourceBranch = true; continue; }
 
     let inlineValue;
     const eq = arg.indexOf('=');
@@ -242,6 +245,10 @@ function parseArgs(argv) {
       fail(`Unknown flag: ${arg}`);
     }
     out._.push(arg);
+  }
+  if (out.onSourceBranch && out.featureBranch) fail('--on-source-branch and --branch cannot both be given');
+  if (!out.onSourceBranch && out.featureBranch && out.sourceBranch && out.featureBranch === out.sourceBranch) {
+    fail(`--branch and --source-branch are both "${out.sourceBranch}": add --on-source-branch (without --branch) to commit onto it, or pick another --branch`);
   }
   return out;
 }
@@ -307,6 +314,9 @@ Subcommands:
                               See: worca models help
   container <cmd> [...]       Run Worca in a container: init|up|down|status|logs|pull|login|shell|run|where.
                               See: worca container help (docs/docker.md)
+  extension [--browser <b>] [--open]
+                              The browser extension packaged with this Worca: folder, version, install steps.
+                              See: worca extension help (docs/browser-extension.md)
   broker [serve|secrets|revoke --person <email>]
                               The credential broker: holds model keys outside worca's container
                               (docs/credential-broker.md)
@@ -332,6 +342,8 @@ Options:
                            run restructures (--workflow wf_memory_defrag needs it; no --prompt needed)
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
+  --on-source-branch       Commit onto the source branch itself: the run works on a hidden branch and
+                           fast-forwards the source to it when it finishes (not with --branch)
   --mock                   Offline mock mode (no claude, no tokens)
   --at <when>              Run ONCE, later: "02:00", "tomorrow 02:00", "+90m", "2026-09-19 02:00",
                            or ISO 8601 with an offset. Needs a Worca server up at that time — or --wait
@@ -3139,7 +3151,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3226,6 +3238,7 @@ async function main() {
     if (sub === 'schedule') return cmdSchedule(rest, { out, c, fail });
     if (sub === 'models') return cmdModels(rest, { out, c, fail });
     if (sub === 'container') return cmdContainer(rest, { out, c, fail });
+    if (sub === 'extension') return cmdExtension(rest, { out, c, fail });
     if (sub === 'broker') {
       // Loaded lazily: the broker is its own process and needs none of the core graph.
       const { runBrokerCli } = await import('../broker/main.mjs');
@@ -3373,7 +3386,7 @@ async function main() {
     workflowId: flags.workflow || undefined,
     template: row,
     memoryScope: flags.memoryScope || undefined,
-    branch: { source: flags.sourceBranch, feature: flags.featureBranch },
+    branch: { source: flags.sourceBranch, feature: flags.featureBranch, ...(flags.onSourceBranch ? { sameAsSource: true } : {}) },
     claude: {
       permissionMode: flags.permissionMode,
       model: flags.model,

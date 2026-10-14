@@ -97,21 +97,80 @@ test('always agent: no Agent switch, no message carries agentMode, nothing PATCH
   ctx.panel.destroy();
 });
 
-test('shared terminal: a new command in the open chat shows its tab (auto, once per block); the folder label shows it on click', async () => {
+test('shared terminal: a command Ask starts never shows the terminal on its own; the folder label shows its tab on click', async () => {
   const shows = [];
-  const { ctx } = setup({ blocks: [CMD], deps: { showTerminal: (sid, o) => shows.push([sid, o]) } });
+  const { ctx } = setup({ blocks: [CMD], deps: { showTerminal: (...a) => shows.push(a) } });
   const live = { blockId: 't-0000000002:1', sessionId: 't-0000000002', seq: 1, status: 'running', exitCode: null, tail: '' };
-  ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: live });          // the sheet is closed: nothing
-  assert.deepEqual(shows, []);
+  ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: live });          // the sheet is closed
   ctx.panel.open();
   await settle(ctx);
   const next = { ...live, blockId: 't-0000000002:2', seq: 2 };
-  ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: next });
-  ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: { ...next, tail: 'more' } });   // the same block: once
+  ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: next });            // a command starting in the open chat
+  ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: { ...next, tail: 'more' } });
   ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: { ...live, blockId: 't-0000000002:3', seq: 3, status: 'done', exitCode: 0 } });
-  ctx.panel.pushServerFrame({ type: 'ask-command', threadId: 'ask_99999999', command: { ...live, blockId: 't-0000000009:1', sessionId: 't-0000000009' } });
-  assert.deepEqual(shows, [['t-0000000002', { auto: true }]]);
+  ctx.flush();
+  assert.deepEqual(shows, [], 'no running frame opens or switches the terminal pane');
   ctx.doc.querySelector('.ask-card.ask-cmd .ask-cmd-folder').click();
-  assert.deepEqual(shows.at(-1), ['t-0000000001', { auto: false }]);
+  assert.deepEqual(shows, [['t-0000000001']], 'the folder click still shows (and focuses) its tab');
+  ctx.panel.destroy();
+});
+
+test('opening a command\'s output while the transcript is pinned to its end keeps the toggle where it was (the pin does not follow the click)', async () => {
+  const { ctx } = setup({ blocks: [CMD] });
+  ctx.panel.open();
+  await settle(ctx);
+  const t = ctx.doc.querySelector('.ask-transcript');
+  const toggle = ctx.doc.querySelector('.ask-card.ask-cmd .ask-cmd-toggle');
+  const out = ctx.doc.querySelector('.ask-card.ask-cmd .ask-cmd-out');
+  // 1000px in a 200px scrollport, the toggle 50px below the top at the end; the open output adds 192px below it.
+  Object.defineProperty(t, 'scrollHeight', { get: () => 1000 + (out.hidden ? 0 : 192), configurable: true });
+  Object.defineProperty(t, 'clientHeight', { value: 200, configurable: true });
+  toggle.getBoundingClientRect = () => ({ top: 850 - t.scrollTop, bottom: 868 - t.scrollTop, left: 0, right: 120, width: 120, height: 18 });
+  t.scrollTop = 800;
+  t.dispatchEvent(new ctx.window.Event('scroll'));
+  toggle.click();
+  ctx.flush();
+  ctx.window.dispatchEvent(new ctx.window.Event('resize'));
+  assert.equal(out.hidden, false, 'opened');
+  assert.equal(t.scrollTop, 800, 'the transcript did not snap to the new end');
+  assert.equal(toggle.getBoundingClientRect().top, 50, 'the toggle stays under the pointer');
+  assert.equal(ctx.doc.querySelector('.ask-jump').hidden, false);
+  toggle.click();
+  ctx.flush();
+  assert.equal(out.hidden, true);
+  assert.equal(ctx.doc.querySelector('.ask-jump').hidden, true, 'closed at the end: pinned again');
+  ctx.panel.destroy();
+});
+
+test('a command card\'s output: folded by default, the toggle shows it, and the fold survives a frame and a rebuild of the card', async () => {
+  const { ctx } = setup({ blocks: [CMD] });
+  ctx.panel.open();
+  await settle(ctx);
+  const el = ctx.doc.querySelector('.ask-card.ask-cmd');
+  const out = () => ctx.doc.querySelector('.ask-card.ask-cmd .ask-cmd-out');
+  const toggle = () => ctx.doc.querySelector('.ask-card.ask-cmd .ask-cmd-toggle');
+  assert.equal(out().textContent, 'PASS all');
+  assert.equal(out().hidden, true, 'folded by default');
+  assert.equal(toggle().hidden, false);
+  toggle().click();
+  assert.equal(out().hidden, false, 'the toggle shows the output');
+  ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: { blockId: BID, status: 'running', exitCode: null, tail: 'compiling…' } });
+  ctx.flush();
+  assert.equal(out().hidden, false, 'a live frame keeps it open');
+  assert.match(out().textContent, /compiling/);
+  ctx.panel.open({ threadId: null });                     // a new chat disposes every card…
+  await settle(ctx);
+  assert.equal(ctx.doc.querySelector('.ask-card.ask-cmd'), null);
+  ctx.panel.open({ threadId: TID });                      // …and coming back builds this one again
+  await settle(ctx);
+  assert.notEqual(ctx.doc.querySelector('.ask-card.ask-cmd'), el, 'a rebuilt card');
+  assert.equal(toggle().getAttribute('aria-expanded'), 'true');
+  assert.equal(out().hidden, false, 'still open after the rebuild');
+  toggle().click();
+  ctx.panel.open({ threadId: null });
+  await settle(ctx);
+  ctx.panel.open({ threadId: TID });
+  await settle(ctx);
+  assert.equal(out().hidden, true, 'folded again after the next rebuild');
   ctx.panel.destroy();
 });

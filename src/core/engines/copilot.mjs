@@ -28,11 +28,11 @@
 //   `--disable-builtin-mcps` drops the built-in GitHub MCP server (it would act with the
 //   signed-in GitHub identity, which worca otherwise keeps from its agents).
 // - A failed session ends with `session.error` {errorType, message, statusCode} and exit 1.
-import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
-import { join } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS, describeUnattachableMcp } from './capabilities.mjs';
@@ -234,6 +234,27 @@ export function userCopilotMcpNames(env = process.env) {
     const doc = JSON.parse(readFileSync(join(home, 'mcp-config.json'), 'utf8'));
     return Object.keys(doc?.mcpServers && typeof doc.mcpServers === 'object' ? doc.mcpServers : {}).filter((n) => MCP_NAME_RE.test(n));
   } catch { return []; }
+}
+
+/** The servers Copilot loads on its own from the project: every `.mcp.json` and `.github/mcp.json` from `cwd` up to its
+ *  git root (the whole way up when there is none). Copilot reads them in a folder the user trusted, and worca cannot
+ *  tell which, so a spawn turns off each one worca did not hand it: the approved ones reach it through the run's MCP
+ *  config (run-context.mjs attachCommittedMcp), the rest were never approved. Never throws. */
+export function projectCopilotMcpNames(cwd) {
+  const names = new Set();
+  let dir = cwd ? resolve(cwd) : null;
+  while (dir) {
+    for (const f of [join(dir, '.mcp.json'), join(dir, '.github', 'mcp.json')]) {
+      try {
+        const doc = JSON.parse(readFileSync(f, 'utf8').replace(/^\uFEFF/, ''));
+        for (const n of Object.keys(doc?.mcpServers && typeof doc.mcpServers === 'object' ? doc.mcpServers : {})) if (n && !/[\r\n]/.test(n)) names.add(n);
+      } catch { /* absent or unreadable: nothing Copilot would load from it either */ }
+    }
+    if (existsSync(join(dir, '.git'))) break;
+    const up = dirname(dir);
+    dir = up === dir ? null : up;
+  }
+  return [...names].sort();
 }
 
 // ── agents (system prompt + investigator) ───────────────────────────────────
@@ -591,7 +612,9 @@ export async function runCopilotProcess({
   const args = buildCopilotArgs({
     sessionId: session, resume, model, effort, agent: COPILOT_NODE_AGENT,
     addDirs: [scratch, ...(readOnly ? [] : [...(addDirs || []), ...(writableDirs || [])])],
-    mcpConfigFile, disableMcp: userCopilotMcpNames(env),
+    // Off: the user's own Copilot servers, and the project's `.mcp.json` servers Copilot would load itself in a trusted
+    // folder, but never a server worca hands it (an approved one of the same name stays on).
+    mcpConfigFile, disableMcp: [...new Set([...userCopilotMcpNames(env), ...projectCopilotMcpNames(cwd).filter((n) => !Object.hasOwn(mcpServers || {}, n))])],
     // Read-only: no built-in tool at all (the shell and file tools would read the whole checkout's secrets);
     // only the MCP servers it was handed (worca's own read_file/grep/glob behind the secret-path denies).
     availableTools: readOnly ? Object.keys(mcpServers || {}) : undefined,

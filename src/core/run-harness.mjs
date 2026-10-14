@@ -76,7 +76,7 @@ import {
   isValidSourceRef, snapshotWorktreePatch, listLocalBranches, worktreeHead, deleteBranchIfAt,
   reusedBranchBase, isAncestor,
 } from './worktree.mjs';
-import { syncBaseForRun, ensureLocalBranch, fetchRemote, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS } from './git-sync.mjs';
+import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS } from './git-sync.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
 import { classifyError, rateLimitHint, brokerHint, freeDailyHint, limitResetAt } from './recoverable-error.mjs';
@@ -103,6 +103,7 @@ import { recordRunMetrics } from './metrics/record.mjs';
 // per-run state, and the off-policy findings the run log names at start.
 import { resolveProjectPolicy, resolveWorkspacePolicy } from './policy/sync.mjs';
 import { fieldsForRun, effectiveCap, deviationsFor, mcpDeviations } from './policy/effective.mjs';
+import { overlayStepModels } from './run-overlay.mjs';
 import { writePolicyState, hasPipelineOverride, readTotalAck } from './policy/state.mjs';
 import { installedPluginsMap, WORCA_VERSION as POLICY_WORCA_VERSION } from './policy/local.mjs';
 import { readSettings as readRawSettings } from './settings.mjs';
@@ -208,9 +209,14 @@ function hasPermissionRules(rules) {
   return !!rules && Object.values(rules).some((a) => Array.isArray(a) && a.length);
 }
 
+/** #620: the `branch.resolves` marker of a Resolve-in-a-pipeline run, or null. */
+const validResolves = (r) => (r && typeof r === 'object' && typeof r.runId === 'string' && r.runId
+  ? { runId: r.runId, member: typeof r.member === 'string' && r.member ? r.member : null } : null);
+
 /** The parenthetical of a workspace member's teardown audit line. Scan + kept wording is
  *  unchanged; an unchanged member's dropped branch says why. */
-function memberBranchNote(branch, { readOnly, dropped }) {
+function memberBranchNote(branch, { readOnly, dropped, merged = false }) {
+  if (merged) return `deleted branch \`${branch}\` — merged back into its source`;
   if (readOnly) return `deleted branch \`${branch}\``;
   if (dropped) return `deleted branch \`${branch}\` — no changes`;
   return `kept branch \`${branch}\``;
@@ -853,7 +859,15 @@ export class RunHarness extends EventEmitter {
     this.branchOpts = {
       source: (this.opts.branch && this.opts.branch.source) || null,
       feature: (this.opts.branch && this.opts.branch.feature) || null,
+      // #620: a "Resolve in a pipeline" run names the run it resolves (server-only, never from HTTP).
+      resolves: validResolves(this.opts.branch && this.opts.branch.resolves),
     };
+    // Run on the source branch (branch.sameAsSource, explicit — never inferred from feature === source):
+    // the run still works on a hidden, auto-named branch (a typed feature name is ignored) and
+    // fast-forwards `source` onto it at teardown (_mergeBack).
+    if (this.opts.branch && this.opts.branch.sameAsSource === true) {
+      this.branchOpts = { ...this.branchOpts, feature: null, sameAsSource: true };
+    }
     // Sync before run (#527): absent → disabled, so the CLI, resume and every existing caller
     // keep today's behaviour; the UI server passes per-member options on a fresh start.
     this.syncOpts = runSyncOptions(this.opts.sync);
@@ -1670,6 +1684,7 @@ export class RunHarness extends EventEmitter {
       if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
         await this._teardownRunRoot().catch(() => {});
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
+        await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
       }
       await this.logWriter.close().catch(() => {}); // flush + stop timer (last, to capture teardown logs)
     }
@@ -1969,6 +1984,7 @@ export class RunHarness extends EventEmitter {
       if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
         await this._teardownRunRoot().catch(() => {});
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
+        await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
       }
       await this.logWriter.close().catch(() => {}); // flush + stop timer (last, to capture teardown logs)
     }
@@ -2194,7 +2210,10 @@ export class RunHarness extends EventEmitter {
     } finally {
       this._stopHeartbeat();
       // resume()'s teardown on a stop: commit the work onto the kept branch, remove the checkout.
-      if (reattached) await this._teardownRunRoot().catch(() => {});
+      if (reattached) {
+        await this._teardownRunRoot().catch(() => {});
+        await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));   // #620
+      }
       await this.logWriter.close().catch(() => {}); // last, to capture the teardown's log lines
     }
   }
@@ -2282,6 +2301,14 @@ export class RunHarness extends EventEmitter {
    */
   async _setupRunRoot({ replay = false } = {}) {
     this.state.branches = this.state.branches || {};      // belt-and-braces for resumed/legacy shapes
+    // ONE flag per run. A resume passes no opts.branch: a replay reads it back from any persisted
+    // member record (pending or final), so every member — and the resolvers below — agree.
+    if (!this.branchOpts.sameAsSource
+        && [this.state.branch, ...Object.values(this.state.branches)].some((b) => b && b.sameAsSource === true)) {
+      this.branchOpts = { ...this.branchOpts, feature: null, sameAsSource: true };
+    }
+    // Never for a read-only Workspace scan or a memory defragment: neither lands work anywhere.
+    const sameAsSource = this.branchOpts.sameAsSource === true && !this._isWorkspaceScan() && !this.memoryScope;
     // A resume REPLAY keeps the mode the row recorded — never the live flag — unless
     // the paused run never got far enough to record one (then this IS run()'s read).
     if (!replay || !this._modeRecorded) this.runRootMode = runRootMode(); // §10 flag, read ONCE, here, per pipeline
@@ -2341,7 +2368,16 @@ export class RunHarness extends EventEmitter {
               && sanitizeBranchName(featureRaw) === sanitizeBranchName(source)) {
             throw markTerminal(new Error(`featureBranch and sourceBranch both resolve to "${sanitizeBranchName(source)}" — they must differ`));
           }
-          const synced = await this._syncMemberBase(m, source, { replay, fellBack });
+          const synced = await this._syncMemberBase(m, source, { replay, fellBack, sameAsSource });
+          // Run on the source branch: the work is fast-forwarded into `source` at teardown, so it must
+          // be a real local branch — never a workspace member's silent fallback, a tag or a SHA.
+          // isSafeBranchName: the merge back's syncStatus refuses any other name (bad-base), after all the work.
+          if (sameAsSource && (fellBack || !isSafeBranchName(source)
+              || !(await listLocalBranches(resolve(m.projectDir))).includes(source))) {
+            throw markTerminal(new Error(fellBack
+              ? `Run on the source branch: ${m.projectName || m.projectKey} has no branch "${(m.branch && m.branch.source) || this.branchOpts.source}" to commit onto`
+              : `Run on the source branch needs a local branch to commit onto; "${source}" is not one (a tag, a commit, a missing branch, or a name with characters worca will not fast-forward)`));
+          }
           const startRef = synced.startRef || (pending && pending.startRef) || null;
           // createWorktree's feature == source guard compares NAMES; a startRef SHA slips past it,
           // and feature `dev` off source `dev` would reuse the shared `dev` itself.
@@ -2382,7 +2418,8 @@ export class RunHarness extends EventEmitter {
             ...(startRef ? { startRef } : {}),
             ...(baseMoved ? { baseMoved: true } : {}),
             ...(reuseBase ? { diffBase: reuseBase.sha, diffBaseFrom: reuseBase.against } : {}),
-            ...(syncRecord ? { sync: syncRecord } : {}) };
+            ...(syncRecord ? { sync: syncRecord } : {}),
+            ...(sameAsSource ? { sameAsSource: true } : {}) };
           const info = await createWorktree({
             projectDir: resolve(m.projectDir),              // the REAL dir: git runs here
             pipelineId: this.pipeline.id,
@@ -2424,7 +2461,9 @@ export class RunHarness extends EventEmitter {
                                                 ...(baseSha ? { baseSha } : {}),
                                                 ...(!freshStart && diffBase ? { diffBase, diffBaseFrom: recreated ? null : (reuseBase?.against || null) } : {}),
                                                 ...(keptStart ? { startRef: keptStart } : {}),
-                                                ...(syncRecord ? { sync: syncRecord } : {}) };
+                                                ...(syncRecord ? { sync: syncRecord } : {}),
+                                                ...(this.branchOpts.resolves ? { resolves: this.branchOpts.resolves } : {}),
+                                                ...(sameAsSource ? { sameAsSource: true } : {}) };
           const short = (s) => String(s).slice(0, 10);
           if ((freshStart || recreated) && diffBase && (baseMoved || (checkoutHead && diffBase !== checkoutHead))) {
             await appendAudit(this.pipeline.dir, `Diff base for \`${m.projectKey}\` moved to the run's start \`${short(diffBase)}\`.`).catch(() => {});
@@ -2541,6 +2580,9 @@ export class RunHarness extends EventEmitter {
     let metricsRecord = null;
     try { const tm = readTeamMetricsPrefs(projectKey(this.projectDir)); metricsRecord = tm ? tm.record !== false : null; } catch { /* optional */ }
     const stepModels = Object.entries(this.stepModels || {}).map(([role, sel]) => ({ role, model: sel?.model }));
+    // A per-run overlay's picks (the Ask run card) run on their nodes: an off-policy one is recorded like a role's
+    // (the manifest is in state before this runs, and restored on resume; deviationsFor counts a model once).
+    stepModels.push(...overlayStepModels(this.state && this.state.stepper));
     const deviations = deviationsFor(fields, {
       guardrailsId: this.guardrailsId, guardrailSet: this.guardrails ? { settings: this.guardrails } : null,
       stepModels, installed, worcaVersion: POLICY_WORCA_VERSION, metricsRecord,
@@ -4005,7 +4047,8 @@ export class RunHarness extends EventEmitter {
     const namedOk = !!named && (await isValidSourceRef(dir, named));
     const source = namedOk ? named : await resolveDefaultBranch(dir);
     const fellBack = !!named && !namedOk;          // _syncMemberBase never syncs a fallback (D9)
-    const feature = (m.branch && m.branch.feature) || this.branchOpts.feature || null;
+    const feature = this.branchOpts.sameAsSource ? null
+      : ((m.branch && m.branch.feature) || this.branchOpts.feature || null);
     const featureRaw = feature
       ? sanitizeBranchName(`${feature}-${slugify(m.projectName)}`)
       : suggestBranchName({
@@ -4135,18 +4178,19 @@ export class RunHarness extends EventEmitter {
     // so it rides neither the retained-work snapshot nor an outlived checkout.
     await removeInjectedPaths(info.worktreeDir, injected);
     const retained = await this._recordCommitFailure(commit, { info, branchRecord: this.state.branch });
+    const merged = await this._mergeBack(key, info, this.state.branch, { retained });
     if (retained) {
       await this._snapshotRetained(info);
       this.workDir = this.projectDir;
       await this._persist().catch(() => {});
       return;
     }
-    // branch:null — the branch is always kept (done/error/stopped alike); only the
-    // disposable checkout is removed.
+    // branch:null — the branch is kept (done/error/stopped alike), except after a merge back:
+    // the source then holds the same commit and the hidden branch is redundant.
     const res = await removeWorktree({
       projectDir: this.projectDir,
       worktreeDir: info.worktreeDir,
-      branch: null,
+      branch: merged ? info.branch : null,
       force: true,
     });
     for (const s of res.steps.filter((x) => !x.ok)) {
@@ -4155,13 +4199,13 @@ export class RunHarness extends EventEmitter {
     if (this.pipeline) {
       await appendAudit(
         this.pipeline.dir,
-        `Worktree removed at \`${info.worktreeDir}\` (kept branch \`${info.branch}\`).`,
+        `Worktree removed at \`${info.worktreeDir}\` (${merged ? 'deleted' : 'kept'} branch \`${info.branch}\`).`,
       ).catch(() => {});
     }
     // Reflect the post-teardown reality in state for any late observer.
     if (this.state.branch) {
       this.state.branch.worktreeRemoved = true;
-      this.state.branch.branchKept = true;
+      this.state.branch.branchKept = !merged;
     }
     this.workDir = this.projectDir;
     await this._persist().catch(() => {});
@@ -4188,32 +4232,35 @@ export class RunHarness extends EventEmitter {
       const commit = await this._commitWork(info, branchRecord,
         { excludePathspecs: this._excludePathspecs(projectKey_), forcePaths: ec.forced, unstagePaths: ec.owned });
       await removeInjectedPaths(info.worktreeDir, this._injectedFor(projectKey_, info.worktreeDir));
-      if (await this._recordCommitFailure(commit, { key: projectKey_, info, branchRecord })) {
+      const retained = await this._recordCommitFailure(commit, { key: projectKey_, info, branchRecord });
+      const merged = await this._mergeBack(projectKey_, info, branchRecord, { retained });
+      if (retained) {
         anyRetained = true;
         await this._snapshotRetained(info, projectKey_);
         this.workDirs.delete(projectKey_);
         continue;
       }
       const readOnly = this._isWorkspaceScan();   // D5: a scan leaves no branch behind
+      const dropBranch = readOnly || merged;
       const res = await removeWorktree({
         projectDir: resolve(this.memberByKey.get(projectKey_)?.projectDir || this.projectDir),
         worktreeDir: info.worktreeDir,
-        branch: readOnly ? info.branch : null,
+        branch: dropBranch ? info.branch : null,
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
         this._log('worktree', 'warn', `teardown ${projectKey_} ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
       }
-      const dropped = !readOnly && await this._dropUnchangedMemberBranch(projectKey_, info, branchRecord);
+      const dropped = !dropBranch && await this._dropUnchangedMemberBranch(projectKey_, info, branchRecord);
       if (this.pipeline) {
         await appendAudit(
           this.pipeline.dir,
-          `Worktree \`${projectKey_}\` removed at \`${info.worktreeDir}\` (${memberBranchNote(info.branch, { readOnly, dropped })}).`,
+          `Worktree \`${projectKey_}\` removed at \`${info.worktreeDir}\` (${memberBranchNote(info.branch, { readOnly, dropped, merged })}).`,
         ).catch(() => {});
       }
       if (branchRecord) {
         branchRecord.worktreeRemoved = true;
-        branchRecord.branchKept = !readOnly && !dropped;
+        branchRecord.branchKept = !dropBranch && !dropped;
       }
       this.workDirs.delete(projectKey_);
     }
@@ -4224,6 +4271,49 @@ export class RunHarness extends EventEmitter {
     this.branchInfo = null;
     this.workDir = this.projectDir;
     await this._persist().catch(() => {});
+  }
+
+  /**
+   * Run on the source branch (branch.sameAsSource): fast-forward the member's source to the hidden
+   * branch this run committed on — only for a `done` run whose work committed (D4). Records
+   * branchRecord.mergeBack ({ merged:true, sha, commits, at } | { merged:false, kind, reason, at }) and
+   * returns true when the source now holds the work (the caller then deletes the hidden branch).
+   * false, recording nothing, for every other run. Never throws: a throw in the teardown loop would
+   * skip its final _persist.
+   */
+  async _mergeBack(key, info, branchRecord, { retained = false } = {}) {
+    if (!branchRecord || branchRecord.sameAsSource !== true || this._isWorkspaceScan()) return false;
+    const source = branchRecord.source;
+    const at = new Date().toISOString();
+    const notMerged = async (kind, reason, paths = null) => {
+      // paths: the worktree(s) holding the source checked out (kind in-use): the banner's commands run there.
+      branchRecord.mergeBack = { merged: false, kind, reason, at, ...(Array.isArray(paths) && paths.length ? { paths } : {}) };
+      this._log('worktree', 'warn', `${key}: not merged back into ${source} (${kind}): ${reason}`);
+      if (this.pipeline) {
+        await appendAudit(this.pipeline.dir, `Not merged back into \`${source}\` (\`${key}\`): ${reason}. The work stays on \`${info.branch}\`.`).catch(() => {});
+      }
+      return false;
+    };
+    try {
+      if (retained) return await notMerged('commit-failed', 'the run\'s last changes could not be committed');
+      if (this.state.status !== 'done') return await notMerged('not-done', `the run ended ${this.state.status || 'early'}`);
+      // The PROJECT dir (the user's checkout), never the run worktree: syncStatus's "checked out here"
+      // is that dir's own HEAD.
+      const dir = resolve(this.memberByKey.get(key)?.projectDir || this.projectDir);
+      const tip = await this._git(['rev-parse', '--verify', '--quiet', `refs/heads/${info.branch}^{commit}`], { cwd: dir, ignoreAbort: true });
+      const to = tip.ok ? tip.stdout.trim() : '';
+      if (!to) return await notMerged('failed', `could not read ${info.branch}`);
+      const r = await fastForwardTo(dir, { base: source, to, message: `worca: fast-forward ${source} to run ${this.pipeline?.id || ''}` });
+      if (!r.ok) return await notMerged(r.kind, r.error, r.paths);
+      branchRecord.mergeBack = { merged: true, sha: r.to, commits: r.commits, at };
+      this._log('worktree', 'info', `${key}: merged back into ${source} (${r.commits} commit(s), now ${r.to.slice(0, 10)})`);
+      if (this.pipeline) {
+        await appendAudit(this.pipeline.dir, `Merged back: \`${source}\` fast-forwarded to \`${r.to.slice(0, 10)}\` (${r.commits} commit(s), \`${key}\`).`).catch(() => {});
+      }
+      return true;
+    } catch (err) {
+      return notMerged('failed', (err && err.message) || String(err));
+    }
   }
 
   /**
@@ -4295,6 +4385,7 @@ export class RunHarness extends EventEmitter {
       // (4) remove what worca-cc injected, so nothing can be committed dangling or
       // outlive the run root. An engine config file worca did not write stays (_injectedFor).
       await removeInjectedPaths(wt, this._injectedFor(key, wt));
+      const merged = await this._mergeBack(key, info, branchRecord, { retained });
       if (retained) {
         await this._snapshotRetained(info, key);
         retainedMembers.push({
@@ -4309,27 +4400,29 @@ export class RunHarness extends EventEmitter {
         continue;
       }
       // (5) remove the checkout. The branch is kept — except on a read-only Workspace scan
-      // (D5), and except for a workspace member this run never changed ("affected only").
+      // (D5), a workspace member this run never changed ("affected only"), and after a merge
+      // back (the source now holds the same commit).
       const readOnly = this._isWorkspaceScan();   // D5: a scan leaves no branch behind
+      const dropBranch = readOnly || merged;
       const res = await removeWorktree({
         projectDir: resolve(this.memberByKey.get(key)?.projectDir || this.projectDir),
         worktreeDir: wt,
-        branch: readOnly ? info.branch : null,
+        branch: dropBranch ? info.branch : null,
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
         this._log('worktree', 'warn', `teardown ${key} ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
       }
-      const dropped = !readOnly && await this._dropUnchangedMemberBranch(key, info, branchRecord);
+      const dropped = !dropBranch && await this._dropUnchangedMemberBranch(key, info, branchRecord);
       if (this.pipeline) {
         await appendAudit(
           this.pipeline.dir,
-          `Worktree \`${key}\` removed at \`${wt}\` (${memberBranchNote(info.branch, { readOnly, dropped })}).`,
+          `Worktree \`${key}\` removed at \`${wt}\` (${memberBranchNote(info.branch, { readOnly, dropped, merged })}).`,
         ).catch(() => {});
       }
       if (branchRecord) {
         branchRecord.worktreeRemoved = true;
-        branchRecord.branchKept = !readOnly && !dropped;
+        branchRecord.branchKept = !dropBranch && !dropped;
       }
       this.workDirs.delete(key);
     }
@@ -4483,6 +4576,12 @@ export class RunHarness extends EventEmitter {
     if (!kept) return;
     // _teardownRunRoot already _persist()ed the pre-checkout branch record. keepAfterRun stamped the
     // checkout with a targeted UPDATE, so mirror it into memory: a later _persist() must not erase it.
+    await this._mirrorBranchRecords();
+  }
+
+  /** A targeted UPDATE (checkout.mjs updateBranchRecords) wrote branch records: copy them into memory so a later
+   *  _persist() (writeState re-serializes branch / workspace_meta) never erases them. */
+  async _mirrorBranchRecords() {
     const { findPipelineRowById } = await import('./artifacts.mjs');
     const row = findPipelineRowById(this.state.id);
     const parse = (t) => { try { return typeof t === 'string' ? JSON.parse(t) : t; } catch { return null; } };
@@ -4493,6 +4592,14 @@ export class RunHarness extends EventEmitter {
       const br = parse(row.branch);
       if (br) this.state.branch = br;
     }
+  }
+
+  /** #620 (D9): after teardown the branch holds the run's final commit; check it against its fetched base. */
+  async _checkBaseAfterRun() {
+    if (this._isWorkspaceScan() || !this.state.id || !['done', 'stopped', 'error'].includes(this.state.status)) return;
+    const { afterRunBaseCheck } = await import('./base-conflicts.mjs');   // lazy, like checkout.mjs
+    await afterRunBaseCheck(this.state.id, { log: (m) => this._log('git', 'info', m) });
+    await this._mirrorBranchRecords();
   }
 
   /** A Workspace scan run (wf_workspace_scan on a workspace target) is READ-ONLY: nothing is
@@ -4545,7 +4652,7 @@ export class RunHarness extends EventEmitter {
     const primary = this.isWorkspace ? this.state.branches?.[this.members[0]?.projectKey] : null;
     this.state.branch.branchKept = primary && typeof primary.branchKept === 'boolean'
       ? primary.branchKept
-      : !this._isWorkspaceScan();
+      : !this._isWorkspaceScan() && this.state.branch.mergeBack?.merged !== true;   // merged back: the hidden branch is gone
     if (primary?.branchDeleted) this.state.branch.branchDeleted = primary.branchDeleted;
   }
 
@@ -7616,7 +7723,7 @@ export class RunHarness extends EventEmitter {
    * onDiverged 'fail' (never a pause: resuming cannot fix a divergence).
    * Never on a replay/resume, a read-only scan, or a memory-defrag run.
    */
-  async _syncMemberBase(m, source, { replay = false, fellBack = false } = {}) {
+  async _syncMemberBase(m, source, { replay = false, fellBack = false, sameAsSource = false } = {}) {
     const cfg = this.syncOpts.memberFor(m.projectKey);
     if (!cfg.enabled || replay || this._isWorkspaceScan() || this.memoryScope) return {};
     const attr = { nodeId: 'sync', executionId: SYNC_EXECUTION_ID };
@@ -7669,6 +7776,23 @@ export class RunHarness extends EventEmitter {
     await appendAudit(this.pipeline.dir, `Sync \`${m.projectKey}\`: ${source} ${r.result}${r.reason ? ` (${r.reason})` : ''}` +
       `${r.commits ? `, ${r.commits} commit(s)` : ''}${r.to ? ` → \`${String(r.to).slice(0, 10)}\`` : ''}` +
       ` (onDiverged ${cfg.onDiverged}, from ${cfg.policySource}).`).catch(() => {});
+    // Run on the source branch: the run fast-forwards `source` onto its own work at the end, so it must
+    // START from `source` itself, brought up to date. A diverged base (either policy) or a remote start
+    // (dirty checkout, a checkout in another worktree, onDiverged 'origin') leaves `source` behind —
+    // refuse now (terminal: resuming never syncs) instead of a merge back that cannot work. Before the
+    // diverged block, so its "choose Start from origin" advice never reaches such a run.
+    if (sameAsSource && (r.result === 'diverged' || r.startRef)) {
+      this._syncStageFailed = true;
+      const why = r.reason || r.result;
+      // No worktreeDir: previousBranchesOf never waits on this record (D9).
+      this.state.branches[m.projectKey] = { source, sync: record, sameAsSource: true };
+      const fix = why === 'dirty' ? `commit or stash the uncommitted changes in ${mdir}`
+        : why === 'diverged' ? `${source} has local commits ${cfg.remote}/${source} lacks: push or reconcile them`
+        : why === 'in-use' ? `${source} is checked out in another worktree: switch that worktree to another branch`
+        : 'see the Sync log';
+      throw markTerminal(new Error(`Sync: could not fast-forward ${source} to ${cfg.remote}/${source} (${why}). ` +
+        `A run on the source branch must start from an up-to-date ${source}; ${fix}, then start again.`));
+    }
     if (r.result === 'diverged') {
       // Keep the refusal on the run (header Sync button, Ask get_run): the terminal run's persisted
       // state.branch is mirrored from this before the setup-failure throw. No worktreeDir, so

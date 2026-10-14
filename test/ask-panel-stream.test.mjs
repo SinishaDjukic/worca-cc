@@ -62,14 +62,14 @@ test('ask-panel-stream: frames for another thread are ignored; replaying the who
   ]);
 });
 
-test('ask-panel-stream: plain-text stream — dot, orb, growing answer, done state', async () => {
+test('ask-panel-stream: plain-text stream — head word, orb, growing answer, done state', async () => {
   const ref = { body: snapBody() };
   const ctx = await openWith(ref);
   const { frames } = replayFixture('plain-text', { threadId: TID, messageId: MID, threadTotals: { costUsd: 0.02, input: 10, output: 44, cacheRead: 0, cacheCreation: 11290, turns: 1, agents: 0 } });
   const done = frames[frames.length - 1];
   for (const f of frames.slice(0, -1)) ctx.panel.pushServerFrame(f);
   ctx.flush();
-  assert.ok(ctx.doc.querySelector('.ask-dot-run'), 'green running dot while streaming');
+  assert.equal(ctx.doc.querySelector('.ask-activity-head').textContent, 'Thinking', 'the live head is its one word: the orb row owns the numbers');
   assert.equal(ctx.doc.querySelector('.ask-activity-label').textContent, 'Thinking', 'the head names the live turn');
   const thinking = ctx.doc.querySelector('.ask-thinking');
   assert.ok(thinking, 'the orb row marks the live turn');
@@ -79,7 +79,7 @@ test('ask-panel-stream: plain-text stream — dot, orb, growing answer, done sta
   assert.match(ctx.doc.querySelector('.ask-answer').textContent, /pong/);
   ctx.panel.pushServerFrame(done);
   ctx.flush();
-  assert.ok(ctx.doc.querySelector('.ask-dot-done'), 'grey dot after done');
+  assert.match(ctx.doc.querySelector('.ask-activity-head').textContent, /^Done · \d/, 'the landed head is one dot-separated line');
   assert.equal(ctx.doc.querySelector('.ask-thinking'), null, 'the orb row leaves with the turn');
   assert.equal(ctx.doc.querySelector('.ask-activity-label').textContent, 'Done', 'a clean turn lands on Done');
   assert.equal(ctx.doc.querySelector('.sr-only[aria-live="polite"]').textContent, 'answer finished');
@@ -188,6 +188,28 @@ test('ask-panel-stream: a theme switch between turns recolours the next turn\'s 
 
 test('ask-panel-stream: tool rows stream in with server labels; a sub-agent expands mid-stream and stays expanded', async () => {
   await checkRows([
+    { name: 'ask-panel-stream: a live turn\'s activity is collapsed too; opened mid-stream it stays open and keeps updating to the end', run: async () => {
+      const ref = { body: snapBody() };
+      const ctx = await openWith(ref);
+      const { frames } = replayFixture('tool-list-runs', { threadId: TID, messageId: MID });
+      const firstToolAt = frames.findIndex((f) => f.type === 'ask-block' && f.block.kind === 'tool');
+      assert.ok(firstToolAt > 0);
+      for (const f of frames.slice(0, firstToolAt + 1)) ctx.panel.pushServerFrame(f);
+      ctx.flush();
+      const head = () => ctx.doc.querySelector('.ask-activity-head');
+      const body = () => ctx.doc.querySelector('.ask-activity-body');
+      assert.ok(ctx.doc.querySelector('.ask-thinking'), 'the turn is live');
+      assert.equal(head().getAttribute('aria-expanded'), 'false', 'collapsed while live: nothing jumps when the turn lands');
+      assert.equal(body().hidden, true);
+      assert.equal(body().querySelector('.ask-tool-note').textContent, '…', 'the row is there, running, behind the fold');
+      head().click();
+      assert.equal(body().hidden, false);
+      for (const f of frames.slice(firstToolAt + 1)) { ctx.panel.pushServerFrame(f); ctx.flush(); }
+      assert.equal(ctx.doc.querySelector('.ask-thinking'), null, 'the turn landed');
+      assert.equal(head().getAttribute('aria-expanded'), 'true', 'still open after every update');
+      assert.equal(body().hidden, false);
+      assert.notEqual(body().querySelector('.ask-tool-note').textContent, '…', 'the open body followed the tool to its end');
+    } },
     { name: 'ask-panel-stream: tool rows stream in with server labels', run: async () => {
       const ref = { body: snapBody() };
       const ctx = await openWith(ref);

@@ -238,6 +238,46 @@ jobs:
             echo "::endgroup::"
           done
 
+  # The browser extension (docs/browser-extension.md): build the three browser
+  # targets and their store zips, lint the Firefox build and smoke it in Firefox.
+  extension:
+    name: Browser extension (build, zips, Firefox lint + smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run ext:zip
+      - run: npm run ext:lint:firefox
+      - run: npm run e2e:firefox-smoke
+        env: { CI: "true" }
+      - uses: actions/upload-artifact@v4
+        with: { name: worca-extension-zips, path: extension/dist/*.zip }
+
+  # The Playwright E2E runs in the SAME image that renders the Linux baselines (e2e:extension:update-linux), so
+  # fonts and fontconfig match and the 1% pixel tolerance holds (a bare ubuntu-latest runner with
+  # `playwright install --with-deps` has a different font set — the fixture pages use UA default fonts). Firefox is
+  # not in this image, which is why the Firefox steps stay in the job above.
+  extension-e2e:
+    name: Browser extension (Playwright E2E)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    container:
+      image: mcr.microsoft.com/playwright:v1.56.0-noble   # == devDependencies["@playwright/test"] (pinned by a test)
+      options: --ipc=host
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run e2e:extension
+        env: { HOME: /root }
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: extension-playwright-report, path: e2e/extension/playwright-report }
+
   # The container image (docs/docker.md): build it from this checkout's
   # `npm pack` output — the same path the release takes — lint the Dockerfile,
   # run the offline mock smoke inside it (tools/docker-smoke.mjs), and scan
