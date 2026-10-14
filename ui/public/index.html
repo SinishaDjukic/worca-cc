@@ -380,6 +380,7 @@
                   <div class="wf-engine-hints">
                     <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Its models: Models › Codex</small>
                     <small class="hint" id="engine-default-hint" hidden></small>
+                    <small class="hint warn" id="engine-mcpjson-hint" hidden></small>
                   </div>
                 </div>
 
@@ -986,6 +987,10 @@
                 </div>
                 <!-- "Published to <remote>/<branch>" (#618): its own line, so a long branch never squeezes the title. -->
                 <p class="hd-published hint mono" hidden data-min-level="advanced"></p>
+                <!-- Base conflicts (#620): the stored check of each branch against its base. Painted by paintHdBase. -->
+                <div class="hd-base-check" hidden>
+                  <ul class="hd-base-members"></ul>
+                </div>
                 <!-- Workspace runs: one line per member repo (View PR / Merged / No changes).
                      Painted by paintHdPr; never shown for a single-project run. -->
                 <ul class="hd-pr-repos" hidden data-min-level="advanced" aria-label="Pull requests per repository"></ul>
@@ -1603,6 +1608,13 @@
                 </div>
               </div>
               <div id="credentialsHost"></div>
+            </section>
+
+            <!-- Browser extension (docs/browser-extension.md): install info painted by paintExtensionInstall, pairings by paintExtensionPairings. -->
+            <section class="card settings-card" id="extension-settings-card" data-min-level="simple">
+              <div class="card-head"><div class="label-row"><h2>Browser extension</h2> <button class="info-tip" type="button" aria-label="About the browser extension">i<span class="tip-content hidden">The Worca extension for Chrome, Edge and Firefox chats with this Worca from a browser sidebar and brings the page you are reading into context. It ships with Worca: install it from the folder below or from the release zips. Each paired extension has its own token, and you can revoke it here. It works with a local Worca only.</span></button></div></div>
+              <div id="extensionInstallHost"></div>
+              <div id="extensionPairingsHost"></div>
             </section>
 
             <!-- Interface mode (docs/ui-levels.md): the same setting as the account menu's Interface mode row. -->
@@ -2510,6 +2522,8 @@
         </div>
         <!-- Sync before run (#527): the base moved on the remote since this run started. -->
         <small class="hint warn" id="shipit-base-warn" hidden></small>
+        <!-- Base conflicts (#620): the stored local check while no PR exists. Painted by paintShipItBaseCheck. -->
+        <small class="hint shipit-basecheck" hidden></small>
         <!-- Fork support: where the branch is pushed and which repo the PR opens in
              (GitHub's "compare across forks"; Azure DevOps opens PRs within one repository). Filled from GET /api/pr/remotes on
              open; hidden until the list arrives and stays hidden when it cannot be

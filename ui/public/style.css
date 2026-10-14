@@ -3324,6 +3324,28 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-providers--broker .mv-cp-quota,.mv-providers--broker .mv-pv-test,.mv-providers--broker .mv-field:has(.mv-pv-key){display:none;}
 .mv-broker-note{display:block;margin:6px 0 12px;}
 
+/* ---------- Browser extension pairings (Settings → General; docs/browser-extension.md) ---------- */
+.xp-list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none;}
+.xp-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);}
+.xp-main{flex:1 1 auto;min-width:0;}
+.xp-name{font-weight:500;color:var(--ink);}
+.xp-meta{font-size:12px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.xp-empty{margin:0;font-size:13px;color:var(--ink-2);}
+.xp-row .xp-revoke{padding:7px 14px;font-size:12.5px;}
+.xi{display:flex;flex-direction:column;gap:10px;margin-bottom:18px;}
+.xi-head{margin:0;font-size:13px;font-weight:600;color:var(--ink);}
+.xi-tabs{align-self:flex-start;}
+.xi-panel{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);}
+.xi-panel[hidden]{display:none;}
+.xi-path-row{display:flex;align-items:center;gap:10px;min-width:0;}
+.xi-path{flex:1 1 auto;min-width:0;font-family:var(--mono, 'JetBrains Mono', monospace);font-size:12.5px;color:var(--ink);background:var(--field);border-radius:8px;padding:7px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.xi-path-row .xi-copy{flex:none;padding:7px 14px;font-size:12.5px;}
+.xi-steps{margin:0;padding-left:20px;font-size:13px;color:var(--ink);display:flex;flex-direction:column;gap:2px;}
+.xi-note{margin:0;font-size:13px;color:var(--ink-2);}
+.xi-cmd{align-self:flex-start;font-family:var(--mono, 'JetBrains Mono', monospace);font-size:12.5px;color:var(--ink);background:var(--field);border-radius:8px;padding:5px 10px;}
+.xi-meta{margin:0;font-size:12px;color:var(--ink-2);}
+.xi-link{color:var(--ink);text-decoration:underline;text-underline-offset:2px;}
+
 /* About card rows. .about-val and .about-link share specificity on one anchor, so
    .about-link must stay AFTER .about-val (test/ui-settings-about.test.mjs pins it). */
 .about-row{display:flex;align-items:baseline;gap:10px;font-size:13px;}
@@ -4336,6 +4358,24 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .publish-repo .select-wrap::after{right:13px;}
 .publish-status{margin:0;font-size:12px;}
 .publish-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:22px;}
+
+/* Base conflicts (#620) */
+.hd-base-check[hidden], .hd-base-check [hidden], .shipit-basecheck[hidden] { display: none; }
+.hd-base-members { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+/* One quiet line per branch that needs something: a tone dot, the status text, then compact buttons. */
+.hd-base-member { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font: 500 12.5px var(--sans); color: var(--ink-2); }
+.hd-base-name { color: var(--ink); }
+.hd-base-pill { display: inline-flex; align-items: center; gap: 7px; }
+.hd-base-pill::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; }
+.hd-base-pill.tone-green::before { background: var(--green-ink); }
+.hd-base-pill.tone-blue::before { background: var(--blue-ink); }
+.hd-base-pill.tone-red::before { background: var(--red-ink); }
+.hd-base-pill.tone-amber::before { background: var(--amber-ink); }
+.hd-base-member .btn-mini { padding: 5px 10px; font-size: 12px; }
+.hd-base-msg { flex-basis: 100%; font-size: 12px; }
+.hd-base-msg-err { color: var(--red-ink); }
+.hd-base-files { flex-basis: 100%; margin: 0 0 0 14px; padding: 0; list-style: none; font-size: 12px; color: var(--ink-3); }
+.shipit-basecheck.tone-red { color: var(--red-ink); }
 
 /* The PR description: label, Write / Preview tabs and Generate with AI on one row,
    the textarea (or its rendered preview) under it. Left-aligned inside the centered
@@ -5679,6 +5719,11 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rp-sw input:focus-visible+.ask-rp-knob{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-rp-agents-foot{display:flex;align-items:center;gap:8px;padding:8px 14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-3);}
 .ask-rp-lane-msg{padding:12px 14px;font-size:12px;color:var(--ink-3);}
+.ask-rp-prop{display:inline-block;padding:0 6px;border-radius:999px;background:var(--violet-wash);color:var(--violet-ink);font-weight:700;cursor:help;}
+.ask-rp-row-reset{margin-left:auto;}
+.ask-rp-name small.ask-rp-pickcap{white-space:normal;overflow:visible;}
+.ask-rp-lane-warn{margin:0 0 10px;}
+.ask-rp-agents-foot .ask-rp-ctl{margin-left:auto;}
 .ask-card.ask-rp textarea.ask-rp-brief{width:100%;min-height:150px;max-height:420px;padding:12px 14px;border:1px solid var(--line-2);border-radius:12px;background:var(--field);font-size:13px;line-height:1.6;resize:vertical;}
 .ask-rp-brief-foot{display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11.5px;color:var(--ink-3);flex-wrap:wrap;}
 .ask-rp-brief-foot[hidden],.ask-rp-brief[hidden]{display:none;}   /* a tracker-task card shows the task instead */

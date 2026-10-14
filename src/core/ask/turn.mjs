@@ -31,7 +31,7 @@ import { refreshAskMemoryMount } from './memory-deps.mjs';
 import { materializeSkillMount } from '../skills-registry/mount.mjs';
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
 import { renderSkillsSection, renderCodexSkillsSection, codexSkillNames } from './prompt.mjs';
-import { validateProposal } from './proposal.mjs';
+import { validateProposal, proposalClaudeAuth } from './proposal.mjs';
 import { validateMetricsChange } from './metrics-deps.mjs';
 import { validateAwayChange } from './away-deps.mjs';
 import { validatePolicyChange } from './policy-deps.mjs';
@@ -214,6 +214,9 @@ class AskTurn extends EventEmitter {
         finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments,
         ...(deps.store || {}),
       },
+      // Claude Code's sign-in for propose_run's per-agent picks, asked once per turn (proposal.mjs proposalClaudeAuth: a
+      // probe only when the catalog holds a Claude-run routed model).
+      claudeAuthState: deps.claudeAuthState ?? proposalClaudeAuth,
       validateProposal: deps.validateProposal ?? validateProposal,
       revalidateWorkflow: deps.revalidateWorkflow ?? revalidateWorkflowProposal,
       validateMetricsChange: deps.validateMetricsChange ?? validateMetricsChange,
@@ -341,7 +344,8 @@ class AskTurn extends EventEmitter {
       try { attachments = (typeof d.store.listAttachments === 'function' && d.store.listAttachments(this.threadId)) || []; } catch { attachments = []; }
       let defaults = {};
       try { defaults = d.scheduleDefaults() || {}; } catch { defaults = {}; }
-      const r = await d.validateProposal(inp, { cardId, attachments, timeZone: this.timeZone, nowMs: d.now(), scheduleDefaults: defaults, lookupTask: d.lookupTask });
+      // The sign-in answer this turn handed its MCP child (run()): the card is checked as the model's own call was.
+      const r = await d.validateProposal(inp, { cardId, attachments, timeZone: this.timeZone, nowMs: d.now(), scheduleDefaults: defaults, lookupTask: d.lookupTask, ...(this.claudeAuth ? { claudeAuth: this.claudeAuth } : {}) });
       if (r && r.ok) {
         // #397 guardrail: a proposal targeting a DIFFERENT project/workspace than
         // the pinned one is accepted but flagged — the card renders the mismatch
@@ -1164,6 +1168,9 @@ class AskTurn extends EventEmitter {
     let timer = null;
     let mcpConfigPath = null;
     let out;
+    // propose_run's per-agent picks check Claude Code's sign-in: asked now, so a probe overlaps the mounts below. The
+    // Workflows chat proposes no runs and never asks. Never rejects.
+    const authAsk = this.composer ? null : Promise.resolve().then(() => d.claudeAuthState()).catch(() => 'unknown');
     try {
       // R-G: ONE scratch dir for all threads, RAW home base (never worcaHome()
       // itself — it already ends in /.worca-cc), per-message config json.
@@ -1197,10 +1204,15 @@ class AskTurn extends EventEmitter {
       this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(skillRoot ? { skillRoot } : {}) }) : null;
       // Agent mode never rides the relay: relay mode is agent isolation, where the terminal refuses agent callers.
       this.commands = !this.relay && this.agentMode && d.commandBridge ? d.commandBridge({ threadId: this.threadId }) : null;
+      // One sign-in answer per turn: handed to the MCP child (spawn.mjs WORCA_ASK_CLAUDE_AUTH) and used by _onProposal,
+      // so the model and the card get one verdict however long the turn runs. A relayed chat runs its tools here, in
+      // this process (preflight's cache), so its child gets nothing.
+      this.claudeAuth = authAsk ? await authAsk : null;
+      const claudeAuth = this.relay ? null : this.claudeAuth;
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.engine === 'codex' ? { engine: 'codex' } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.engine === 'codex' ? { engine: 'codex' } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group: the
         // scratch dir is setgid worca-share (2770), so 0640 reaches the agent users and nobody

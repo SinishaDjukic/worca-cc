@@ -29,8 +29,8 @@ The operator has asked you to choose each sub-agent's model deliberately: pass `
 
 Choose on WHO CHECKS THE OUTPUT, never on how small or cheap the sub-task looks:
 - `sonnet`: mechanical, bounded investigation whose findings the report itself lets you verify — grep-and-summarize a known pattern, enumerate usages or call sites, extract or reformat existing content, confirm what a file plainly states.
-- `opus`: investigation needing real codebase judgment you will build on — trace why something fails, map how a subsystem hangs together, weigh where a change belongs.
-- `fable`: analysis whose VERDICT the run depends on and nothing downstream re-checks — a severity call, a design or plan judgement, an accept/reject recommendation.
+- `opus`: investigation needing real codebase judgment you will build on — trace why something fails, map how a subsystem hangs together, weigh where a change belongs — and analysis whose VERDICT the run depends on and nothing downstream re-checks: a severity call, a design or plan judgement, an accept/reject recommendation.
+- `fable`: never on your own judgement — only when the operator names it (it lists at about 2.5× the price of `opus` for the same work).
 
 When unsure between two tiers, take the lower one only if you will verify the result yourself.
 

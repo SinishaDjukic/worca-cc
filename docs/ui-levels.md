@@ -216,7 +216,9 @@ branch are skipped, counted apart on the checks line ("· 2 also failing on dev"
 and named in the fix brief as not the PR's to fix. A failed GitHub Actions check is
 re-run (an Azure build policy re-queued) once per PR commit before any fix; a failure the base head has no result for
 yet waits up to 30 minutes for it; and when the PR is behind its base and the base
-head passes the failing check, the first fix run only merges the base in. Review
+head passes the failing check, the base is merged in first. When it merges cleanly
+Worca writes the merge commit itself and pushes it: no agent, and no fix run used.
+Only a conflicting merge starts a fix run, which merges the base in and nothing else. Review
 text is untrusted code feedback. Each fix run is an unattended
 Implement ⇄ Review on the PR's own branch, run through the built-in PR fix
 workflow (`wf_pr_fix`, internal and not listed in the picker): it keeps the
@@ -311,9 +313,9 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: a classified failure's raw-detail expander ("Details") | E |
 | Ask: proposal cards themselves | all (rule 4) |
 | Ask: the context ring and its popover's window fill and topics | S |
-| Ask: model picker, scope, cost meter, tool rows, branches, guardrails, "Open in New Pipeline" | A |
+| Ask: model picker, scope, cost meter, tool rows, branches, guardrails, "Open in New run" | A |
 | Ask: the chevron on a reply's activity line (`Done · 7.4s · …`) | A when it opens tool rows, E when it opens only sub-agents; the line itself shows at every level |
-| Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E |
+| Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E — a run card carrying Ask Worca's per-agent picks shows its lane at every mode (the picks apply at Start) |
 | Chat home: heading, composer, the New run / Build workflow / Track a run / Write a script / Clone a repo tiles, More (Step away), the four tabs and their run tiles, the Workflows and Away mode promos | S |
 | Chat home: the Schedule a run and Explain a diff tiles; More › New workspace, Remember something, Find tasks; the Schedules promo | A — with the page or surface that owns each feature |
 | Chat home: More › Team metrics, Add a model | E — with the Team metrics and Models pages |

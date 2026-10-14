@@ -10,6 +10,8 @@ export const PINPOINT_ACTIONS = Object.freeze({
   chat: [['copy', 'Copy', 'C', false], ['explain', 'Explain', 'E', true], ['alts', 'Alternatives', 'A', true], ['disagree', 'Disagree', 'D', true], ['quote', 'Quote in reply', 'Q', false]],
   artifact: [['copy', 'Copy', 'C', false], ['explain', 'Explain', 'E', true], ['alts', 'Alternatives', 'A', true], ['disagree', 'Disagree', 'D', true], ['note', 'Note', 'N', true], ['|'], ['send', 'Send to chat', 'S', false]],
   diff: [['copy', 'Copy', 'C', false], ['explain', 'Explain', 'E', true], ['alts', 'Alternatives', 'A', true], ['comment', 'Comment', 'M', true], ['|'], ['send', 'Send to chat', 'S', false]],
+  // The browser extension: a web page (no Disagree/Note/Comment there).
+  web: [['copy', 'Copy', 'C', false], ['explain', 'Explain', 'E', true], ['alts', 'Alternatives', 'A', true], ['|'], ['send', 'Send to chat', 'S', false]],
 });
 
 /** Quick reasons on the Disagree box. */
