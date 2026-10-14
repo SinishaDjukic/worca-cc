@@ -1428,9 +1428,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     box.appendChild(el.input);
 
     // The suggestion's words for screen readers (aria-describedby while it shows; the placeholder alone is not enough).
+    // Outside the box: the browser extension's composer mirrors the box's children one for one.
     el.suggestHint = make('span', 'sr-only');
     el.suggestHint.id = `ask-suggest-${Math.random().toString(36).slice(2, 10)}`;
-    box.appendChild(el.suggestHint);
+    wrap.appendChild(el.suggestHint);
 
     el.composerMsg = make('div', 'ask-composer-msg');
     el.composerMsg.hidden = true;
