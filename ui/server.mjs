@@ -7149,7 +7149,7 @@ app.get('/api/pr/remotes', async (req, res) => {
 // to ship; its PR is recorded per member and the response echoes memberKey) —
 // remote names are validated against the repo's real remote list (never trusted
 // from the body); baseBranch must be a well-formed ref other than the feature
-// branch (whether the base repo has it is gh's call, its error surfaces as usual).
+// branch; a base the base remote does not have is refused (409) before anything is pushed.
 // `body` is the "Ship it?" modal's PR description (a string of at most PR_BODY_MAX
 // characters): it becomes the PR body, the attribution footer after it. Absent,
 // null or blank keeps the title-only body exactly as before. `draft` (boolean) opens a
@@ -7240,6 +7240,16 @@ app.post('/api/pr', async (req, res) => {
   if (!avail.ok) return res.status(409).json({ error: avail.reason, forge: provider.forge });
   const refusal = azureForkRefusal(pushR, baseR);
   if (refusal) return res.status(422).json({ error: refusal, kind: 'unsupported' });
+  // A base the base remote does not have (a run started from a branch that was never pushed) would
+  // push the head, then fail on GitHub's "Base sha can't be blank". Refuse first, naming the fix.
+  // Judged on a fresh fetch only: when the fetch fails, the forge's own answer stands as before.
+  if (baseR && isSafeRemoteName(baseR.name)) {
+    const f = await fetchRemote(repoDir, { remote: baseR.name, maxAgeMs: 0 });
+    const rb = f.ok ? await listRemoteBranches(repoDir, [baseR.name]) : null;
+    if (rb?.ok && !rb.byRemote[baseR.name].includes(base)) {
+      return res.status(409).json({ error: `the base branch ${base} is not on ${baseR.name}: push it there first, or pick a base branch that is` });
+    }
+  }
 
   // Push (idempotent) -> create PR -> read mergeability. All args are passed as
   // an argv array (no shell), so branch/remote/source names cannot inject.

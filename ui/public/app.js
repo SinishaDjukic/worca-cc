@@ -21040,6 +21040,13 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
     const bs = data.baseStatus && typeof data.baseStatus === 'object' ? data.baseStatus : null;
     const paintBaseWarn = () => {
       if (!baseWarn) return;
+      // A base the base remote does not have (a run started from a local-only branch) cannot take a PR.
+      const pick = shipItChosenBase(modal, record);
+      if (!box.hidden && pick && Array.isArray(byRemote[baseSel.value]) && !byRemote[baseSel.value].includes(pick)) {
+        baseWarn.hidden = false;
+        baseWarn.textContent = `${pick} is not on ${baseSel.value}. Push it there first, or pick a base branch that is.`;
+        return;
+      }
       const n = bs && Number(bs.movedSinceRun);
       // Measured on bs.remote: a PR into another remote's copy of the same branch name says nothing.
       const sameRemote = box.hidden || !baseSel.value || baseSel.value === (bs && bs.remote ? bs.remote : 'origin');
