@@ -5913,8 +5913,15 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-queue-x{flex:none;width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--ink-3);cursor:pointer;transition:.15s;}
 .ask-queue-x:hover{color:var(--ink);background:var(--hover);}
 .ask-queue-x:disabled{visibility:hidden;}
+.ask-queue-pen{flex:none;display:grid;place-items:center;width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--ink-3);cursor:pointer;transition:.15s;}
+.ask-queue-pen:hover{color:var(--ink);background:var(--hover);}
+.ask-queue-pen:disabled{visibility:hidden;}
+.ask-queue-item.is-editing{border-color:var(--hover-outline);color:var(--ink);}
+.ask-queue-item.is-editing .ask-queue-text{display:none;}
+.ask-queue-item.is-editing .ask-queue-pen{color:var(--ink);}
+.ask-queue-edit{flex:1 1 auto;min-width:0;max-height:120px;margin:0;padding:2px 0;border:0;outline:0;resize:none;background:transparent;color:inherit;font:inherit;line-height:1.4;overflow-y:auto;}
 .ask-queue-ghost{position:absolute;margin:0;pointer-events:none;animation:ask-queue-out .2s cubic-bezier(.65,.02,.28,1) both;}
-.ask-composer :is(.ask-queue-text,.ask-queue-x,.ask-queue-resume):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-composer :is(.ask-queue-text,.ask-queue-pen,.ask-queue-x,.ask-queue-resume):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-send:disabled,.ask-send:disabled:hover{opacity:.4;cursor:default;box-shadow:none;}
 @keyframes ask-queue-in{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
 @keyframes ask-queue-out{from{opacity:1;transform:none;}to{opacity:0;transform:translateY(-18px);}}

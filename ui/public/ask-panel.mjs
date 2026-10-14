@@ -52,6 +52,8 @@ const ICONS = {
   mic: ['M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z', 'M19 11a7 7 0 0 1-14 0', 'M12 18v3'],
   voiceTalk: ['M7.9 20A9 9 0 1 0 4 16.1L2 22z', 'M8 10h8M8 14h5'],           // chat bubble with text lines: speak in, read the reply
   voiceHandsFree: ['M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4'],               // waveform: a live conversation
+  pencil: ['M12 20h9', 'M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z'],
+  check: 'M5 13l4 4L19 7',
   pin: ['M12 17v5', 'M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z'],
   search: ['M5 11a6 6 0 1 0 12 0a6 6 0 1 0-12 0', 'M20 20l-4.5-4.5'],    // the Workflows Library's search glyph
 };
@@ -314,6 +316,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     runPoked: false,
     addons: [],               // worca Chat CONTRACT §2: the mounted composer add-ons, [{ id, handle }] in registration order
     queues: new Map(),        // threadId → {items:[{key,text,quote,files}], paused, draining}: messages sent while a reply ran
+    queueEdit: null,          // {id, item, li, ta}: the queued card whose text is being edited in place (one at a time)
     stopBy: null,             // who asked the live turn to stop: 'button' pauses the queue, 'voice' (barge-in) lets it send
     hist: { idx: -1, draft: '' },   // ArrowUp history walk: idx into historyEntries(), -1 = not walking; the draft it replaced
     basePlaceholder: INPUT_PLACEHOLDER,   // the add-ons' placeholder (addonCtx.setPlaceholder); a suggestion shows only over the default
@@ -1081,6 +1084,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (q.paused || !q.items.length || st.destroyed) return;
     if (st.sending || turnBusy()) return;            // the next ask-done drains
     const item = q.items[0];
+    if (st.queueEdit && st.queueEdit.item === item) return;   // it waits: saving or cancelling the edit drains
     q.draining = true;
     q.again = false;
     renderQueue();
@@ -1125,34 +1129,80 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!silent && id === st.threadId) announce(sent ? 'Queued message sent' : 'Removed from the queue');
   }
 
-  /** A card's text: the item goes back to the composer for editing and leaves the queue. */
-  function editQueued(item) {
+  /** The pencil or a card's text: the text turns into a textarea in place — the item keeps its place, files and quote.
+   *  Not the item being sent. */
+  function startQueueEdit(item) {
     const id = st.threadId;
     const q = queueOf(id);
-    if (!q || (q.draining && q.items[0] === item)) return;
-    const blank = !el.input.value.trim() && !st.pendingFiles.length && !st.quote;
-    removeQueued(id, item, { silent: true });
-    if (blank) {
-      st.pendingFiles = item.files.slice();
-      st.quote = item.quote;
-      renderChips();
-      showHistory(item.text);
-      focusComposer();
-    } else {
-      appendToComposer(item.text);
-      const names = new Set(st.pendingFiles.map((f) => f.name));
-      st.pendingFiles = [...st.pendingFiles, ...item.files.filter((f) => !names.has(f.name))];
-      if (!st.quote && item.quote) st.quote = item.quote;
-      renderChips();
+    if (!q || !q.items.includes(item) || (q.draining && q.items[0] === item)) return;
+    if (st.queueEdit) {
+      if (st.queueEdit.item === item) { st.queueEdit.ta.focus(); return; }
+      endQueueEdit(true, { refocus: false });
     }
-    st.hist = { idx: -1, draft: '' };
-    updateSendStop();
-    announce('Queued message moved to the input');
+    const li = [...el.queueList.children].find((c) => c.dataset.key === item.key);
+    if (!li) return;
+    const ta = make('textarea', 'ask-queue-edit');
+    ta.rows = 1;
+    ta.value = item.text;
+    ta.addEventListener('input', () => fitQueueEdit(ta));
+    ta.addEventListener('keydown', (e) => {
+      if (e.isComposing) return;
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); endQueueEdit(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); endQueueEdit(false); }
+    });
+    // Leaving the field keeps a change (and drops an unchanged edit); Save and Escape got there first otherwise.
+    ta.addEventListener('blur', () => { if (st.queueEdit && st.queueEdit.ta === ta) endQueueEdit(true, { refocus: false }); });
+    st.queueEdit = { id, item, li, ta };
+    li.classList.add('is-editing');
+    li.querySelector('.ask-queue-text').after(ta);
+    renderQueue();
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    fitQueueEdit(ta);
+  }
+
+  function fitQueueEdit(ta) {
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.min(ta.scrollHeight || 0, 120)}px`;
+  }
+
+  /** Drop the open edit's field; with `save` its text becomes the item's (non-empty only). Paints nothing.
+   *  @returns {'saved'|'emptied'|'same'|'gone'} */
+  function closeQueueEdit(save) {
+    const ed = st.queueEdit;
+    st.queueEdit = null;
+    ed.ta.remove();
+    ed.li.classList.remove('is-editing');
+    const q = queueOf(ed.id);
+    if (!q || !q.items.includes(ed.item)) return 'gone';
+    const text = ed.ta.value.trim();
+    if (!save || text === ed.item.text) return 'same';
+    if (!text) return 'emptied';
+    ed.item.text = text;
+    return 'saved';
+  }
+
+  /** Save (Enter, ✓, blur with a change) or cancel (Escape, blur without one). Saving empty text removes the item,
+   *  like ×. Focus goes back to the card's text; a first item the edit held back drains now if the chat is idle. */
+  function endQueueEdit(save, { refocus = true } = {}) {
+    const ed = st.queueEdit;
+    if (!ed) return;
+    const how = closeQueueEdit(save);
+    const open = ed.id === st.threadId;
+    if (how === 'emptied') {
+      if (refocus && open) removeQueuedByUser(ed.item); else removeQueued(ed.id, ed.item);
+    } else if (open) {
+      renderQueue();
+      if (how === 'saved') announce('Queued message updated');
+      if (refocus && ed.li.isConnected) ed.li.querySelector('.ask-queue-text').focus();
+    }
+    const q = queueOf(ed.id);
+    if (open && how !== 'emptied' && q && q.items[0] === ed.item && !q.draining) drainQueue();
   }
 
   function queueExcerpt(text) { const line = String(text).split('\n').find((l) => l.trim()) || ''; return line.trim(); }
 
-  /** A new card: its parts are built once (an item never changes); fillQueueCard keeps position and state current.
+  /** A new card: its parts are built once; fillQueueCard keeps text, position and state current.
    *  Only a new card plays the entry animation — a kept card must not, or it hides the FLIP shift. */
   function queueCard(item) {
     const li = make('li', 'ask-queue-item is-entering');
@@ -1162,12 +1212,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const txt = make('button', 'ask-queue-text', queueExcerpt(item.text));
     txt.type = 'button';
     txt.title = 'Edit this message';
-    txt.addEventListener('click', () => editQueued(item));
+    txt.addEventListener('click', () => startQueueEdit(item));
     li.appendChild(txt);
     const extras = [];
     if (item.files.length) extras.push(`${item.files.length} file${item.files.length === 1 ? '' : 's'}`);
     if (item.quote) extras.push('quote');
     if (extras.length) li.appendChild(make('span', 'ask-queue-meta', extras.join(' · ')));
+    // The pencil turns into ✓ (Save) while the card is edited.
+    const pen = make('button', 'ask-queue-pen');
+    pen.type = 'button';
+    pen.addEventListener('mousedown', (e) => { if (li.classList.contains('is-editing')) e.preventDefault(); });   // keep the field's focus: no blur-save first
+    pen.addEventListener('click', () => { if (st.queueEdit && st.queueEdit.item === item) endQueueEdit(true); else startQueueEdit(item); });
+    li.appendChild(pen);
     const x = make('button', 'ask-queue-x', '×');
     x.type = 'button';
     x.addEventListener('click', () => removeQueuedByUser(item));
@@ -1178,11 +1234,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function fillQueueCard(li, item, pos, total, q) {
     const sending = q.draining && q.items[0] === item;
     li.classList.toggle('is-sending', sending);
+    const editing = !!st.queueEdit && st.queueEdit.item === item;
     const txt = li.querySelector('.ask-queue-text');
+    const pen = li.querySelector('.ask-queue-pen');
     const x = li.querySelector('.ask-queue-x');
     txt.disabled = sending;
+    pen.disabled = sending;
     x.disabled = sending;
+    txt.textContent = queueExcerpt(item.text);
     txt.setAttribute('aria-label', `Queued message ${pos} of ${total}${pos === 1 ? ', sends next' : ''}: ${queueExcerpt(item.text)}. Edit`);
+    if (pen.dataset.mode !== (editing ? 'save' : 'edit')) {
+      pen.dataset.mode = editing ? 'save' : 'edit';
+      pen.replaceChildren(svgIcon(editing ? ICONS.check : ICONS.pencil, 13, 2));
+    }
+    pen.setAttribute('aria-label', `${editing ? 'Save' : 'Edit'} queued message ${pos}`);
+    pen.title = editing ? 'Save' : 'Edit';
+    if (editing) st.queueEdit.ta.setAttribute('aria-label', `Edit queued message ${pos}`);
     x.setAttribute('aria-label', `Remove queued message ${pos}`);
   }
 
@@ -1205,6 +1272,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const q = queueOf(st.threadId);
     const items = q ? q.items : [];
     const shown = [...el.queueList.children];
+    const hadFocus = el.queueList.contains(doc.activeElement);
     const motion = motionOk() && shown.length > 0;
     const before = motion ? new Map(shown.map((li) => [li.dataset.key, li.getBoundingClientRect()])) : null;
     if (motion && leaving) {
@@ -1218,10 +1286,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       fillQueueCard(li, it, i + 1, items.length, q);
       return li;
     }).reverse();
+    // A card edited in another chat, or whose item went away, keeps a non-empty change and closes its field.
+    if (st.queueEdit && !want.includes(st.queueEdit.li)) closeQueueEdit(true);
     for (const li of shown) if (!want.includes(li)) li.remove();
     // Insert only what is not already in place: moving a kept card would restart its animations and drop its focus.
     want.forEach((li, i) => { if (el.queueList.children[i] !== li) el.queueList.insertBefore(li, el.queueList.children[i] || null); });
     el.queue.hidden = !items.length;
+    // A focused card that left (sent or removed) or turned to sending: focus goes to the input, not the page.
+    const at = doc.activeElement;
+    if (hadFocus && (!el.queueList.contains(at) || at.disabled)) focusComposer();
     const paused = !!q && q.paused;
     el.queueResume.hidden = !paused;
     el.queueNote.textContent = paused ? 'Queue paused'
