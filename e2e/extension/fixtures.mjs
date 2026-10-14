@@ -10,6 +10,7 @@ import { closeSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { extensionWorkerHandle } from './sw-handle.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const EXT_DIR = join(ROOT, 'extension/dist/chrome-test');
@@ -122,7 +123,7 @@ export const test = base.extend({
     await use(ctx);
     await ctx.close();
   },
-  sw: async ({ context }, use) => { let [w] = context.serviceWorkers(); if (!w) w = await context.waitForEvent('serviceworker'); await use(w); },
+  sw: async ({ context }, use) => { await use(await extensionWorkerHandle(context)); },   // see sw-handle.mjs
   extensionId: async ({ sw }, use) => { await use(new URL(sw.url()).host); },
 });
 export { expect };
