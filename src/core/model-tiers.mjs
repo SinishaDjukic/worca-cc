@@ -11,12 +11,14 @@ import { harnessesOf } from '../shared/connections.mjs';
 /** Who makes a model, in picking order: Anthropic first, then OpenAI, then everyone else. */
 export const VENDORS = Object.freeze(['anthropic', 'openai', 'other']);
 
-/** Price tiers by the OUTPUT list price in USD per million tokens, strongest first; `min` is the tier's floor. */
+/** Price tiers by the OUTPUT list price in USD per million tokens, strongest first; `min` is the tier's floor. The
+ *  premium tier (Fable 5.1) is picked only when the user names the model (MODEL_PICK_POLICY). */
 export const TIERS = Object.freeze([
-  Object.freeze({ id: 'top', rank: 1, min: 20 }),
-  Object.freeze({ id: 'strong', rank: 2, min: 8 }),
-  Object.freeze({ id: 'mid', rank: 3, min: 2 }),
-  Object.freeze({ id: 'economy', rank: 4, min: 0 }),
+  Object.freeze({ id: 'premium', rank: 1, min: 40 }),
+  Object.freeze({ id: 'top', rank: 2, min: 20 }),
+  Object.freeze({ id: 'strong', rank: 3, min: 8 }),
+  Object.freeze({ id: 'mid', rank: 4, min: 2 }),
+  Object.freeze({ id: 'economy', rank: 5, min: 0 }),
 ]);
 
 /** The window the claude CLI assumes for a model it knows no limit of (config.mjs resolveModelEnv's note). */
@@ -28,7 +30,7 @@ const ONE_M_BUILTINS = new Set(['claude-fable-5-1', 'claude-opus-5-5', 'claude-s
 
 /** How to pick a model per agent step — ONE text for the Ask rules (prompt.mjs rule 18) and the Auto classifier's
  *  tuning guide. Stages by display name only: the Ask rules may not name an agent key. */
-export const MODEL_PICK_POLICY = 'Judgement steps (Plan, Plan Review, Refine Plan, Review Implementation, Bug Root Cause, Deck Review) take the top tier at high effort; producers that design (Implementation, Bug Fix, Deck Builder) the strong tier at medium or high effort by the size of the task; mechanical producers (Decompose, Manual Tests Checklist, Bug Report Analysis, Deck Export, Bug Triage Report) the cheapest capable tier at medium effort; tool-driven verifiers (Manual web UI testing, visual checks) the mid tier, with tool calls and vision; any other step (Clarify included) the strong tier at medium effort. Scale the tiers down with the weight of the task: a one-file fix never needs the top tier on Implementation. Prefer Anthropic models, then OpenAI, then others, only among the models the run\'s engine runs. A free model only on a low-risk producer step, only when it is ready, has tool calls and at least a 64k context, and never on a judgement step or as the only Implementation step. A 1M-context twin only when the context demands it. A model without a tier (no token price: a Copilot import, an unpriced provider entry) ranks as the model it serves, judged by its name.';
+export const MODEL_PICK_POLICY = 'Judgement steps (Plan, Plan Review, Refine Plan, Review Implementation, Bug Root Cause, Deck Review) take the top tier (never the premium tier) at high effort; producers that design (Implementation, Bug Fix, Deck Builder) the strong tier at medium or high effort by the size of the task; mechanical producers (Decompose, Manual Tests Checklist, Bug Report Analysis, Deck Export, Bug Triage Report) the cheapest capable tier at medium effort; tool-driven verifiers (Manual web UI testing, visual checks) the mid tier, with tool calls and vision; any other step (Clarify included) the strong tier at medium effort. Within a tier take the cheapest capable model. Never pick a premium-tier model unless the user names that model. Scale the tiers down with the weight of the task: a one-file fix never needs the top tier on Implementation. Prefer Anthropic models, then OpenAI, then others, only among the models the run\'s engine runs. A free model only on a low-risk producer step, only when it is ready, has tool calls and at least a 64k context, and never on a judgement step or as the only Implementation step. A 1M-context twin only when the context demands it. A model without a tier (no token price: a Copilot import, an unpriced provider entry) ranks as the model it serves, judged by its name.';
 
 // The maker, from a model NAME (the upstream id when the entry has one, else the catalog id): a family word as its own token.
 const ANTHROPIC_RE = /(^|[^a-z0-9])(anthropic|claude|opus|sonnet|haiku|fable)(?![a-z])/;

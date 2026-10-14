@@ -449,7 +449,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   the run waits for an answer, pauses, fails or finishes.
 - **Per-agent models for one run** — on a run card for a saved workflow, Ask Worca can pick a
   model and effort for each agent step from the catalog (judgement steps on the top price tier,
-  mechanical ones on the cheapest capable model, Anthropic first, then OpenAI). Each pick sits
+  mechanical ones on the cheapest capable model, Anthropic first, then OpenAI; a premium-tier
+  model such as Fable 5.1 only when you name it). Each pick sits
   beside the project's own setting with its reason on hover; change or reset any of them before
   **Start run**. The picks apply to that run only — turn on **Save as project defaults** to keep
   them ([`docs/models.md`](docs/models.md#per-agent-models-for-one-run)).

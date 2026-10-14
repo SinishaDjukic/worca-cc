@@ -31,6 +31,10 @@ import { autoModelsFor } from '../auto/runnable.mjs';
 import { probeClaudeAuth } from '../preflight.mjs';
 import { parseOverlayNodes, checkRunOverlay } from '../run-overlay.mjs';
 import { modelFacts, factsLine } from '../model-tiers.mjs';
+import { listPriceFor } from '../list-prices.mjs';
+
+// What a premium-tier pick is priced against on the card: Opus 5.5, the top tier's flagship (output USD per Mtok).
+const OPUS_LIST_OUTPUT = (listPriceFor('claude-opus-5-5') || {}).output || 20;
 
 export const PROPOSAL_ERRORS = Object.freeze({
   bothTargets: 'provide workspaceId OR projectKey, not both',
@@ -60,6 +64,9 @@ export const PROPOSAL_ERRORS = Object.freeze({
   nodesEngine: (engine) => `nodes: the ${engineLabel(engine)} engine runs its own models — omit nodes for a run on it`,
   nodeNoModel: (id) => `node ${JSON.stringify(String(id).slice(0, 64))}: a pick needs a model`,
   signedOutPick: (id, model) => `node ${JSON.stringify(String(id).slice(0, 64))}: ${model} needs the Claude Code sign-in, which this install lacks — pick a model routed through an endpoint or provider`,
+  // Not an error: a WARNING on the card for a pick in the premium tier (model-tiers.mjs TIERS). It names the model id
+  // as a word of its own — the card keeps a warning only while a pick carries a model it names (ask-panel.mjs).
+  premiumPick: (role, f) => `The ${role}'s model ${f.id}${f.label && f.label !== f.id ? ` (${f.label})` : ''} is a premium model (~${Math.round((f.price.output / OPUS_LIST_OUTPUT) * 10) / 10}× Opus 5.5 list price): keep it only if the user asked for it.`,
   // Not an error: a NOTE on an accepted plain proposal (the project's own settings may already route every agent).
   signedOutPlain: 'Claude Code is not signed in on this install: unless this project\'s own agent settings already name models routed through an endpoint or provider, a run of this card on Claude Code fails at its first agent. Say so, then propose again with nodes naming such a model for every agent node (rule 18) and tell the user the new card replaces this one.',
 });
@@ -176,7 +183,8 @@ export function createProposalValidator({
 } = {}) {
   /** propose_run `nodes` → { nodes, errors, warnings }: the run API's check (run-overlay.mjs) on the catalog the run's
    *  engine runs, plus Ask's own: signed out, every agent node needs a model the install can run (auto/runnable.mjs,
-   *  the Auto classifier's rule); a pick outside the team policy's allowed models is a WARNING (deviationsFor). */
+   *  the Auto classifier's rule); a pick outside the team policy's allowed models is a WARNING (deviationsFor), and so is a
+   *  pick in the premium tier (MODEL_PICK_POLICY: only when the user names that model). */
   async function checkNodes(nodes, { wf, target, engine, policyHome, auth = null }) {
     const runEngine = engine || resolveEngine(target.target === 'workspace' ? { workspace: true } : { projectDir: target.projectDir });
     if (!MODEL_ENGINE_NAMES.includes(runEngine)) return { nodes: {}, errors: [PROPOSAL_ERRORS.nodesEngine(runEngine)], warnings: [] };
@@ -210,15 +218,22 @@ export function createProposalValidator({
       const f = t.model ? facts.get(t.model.toLowerCase()) : null;
       out[id] = { ...t, ...(reason ? { reason } : {}), ...(f ? { facts: factsLine(f) } : {}) };
     }
+    const keyOf = new Map((Array.isArray(wf.nodes) ? wf.nodes : []).filter((n) => n && n.kind === 'agent').map((n) => [n.id, n.key]));
     let warnings = [];
     try {
-      const keyOf = new Map((Array.isArray(wf.nodes) ? wf.nodes : []).filter((n) => n && n.kind === 'agent').map((n) => [n.id, n.key]));
       const stepModels = Object.entries(out).filter(([, t]) => t.model).map(([id, t]) => ({ role: keyOf.get(id) || id, model: t.model }));
       warnings = deviationsFor(policyFields({ projectDir: target.projectDir, policyProject: policyHome }) || {}, { stepModels })
         // The run records a per-run pick as off-policy too (run-harness.mjs _resolvePolicy, run-overlay.mjs overlayStepModels).
         .filter((d) => d && typeof d.code === 'string' && d.code.startsWith('model:'))
         .map((d) => String(d.text));
     } catch { warnings = []; }
+    // Outside the policy read: a policy that cannot be read drops its own word, never this one.
+    for (const [id, t] of Object.entries(out)) {
+      const f = t.model ? facts.get(t.model.toLowerCase()) : null;
+      if (!f || f.tier !== 'premium') continue;
+      const w = PROPOSAL_ERRORS.premiumPick(keyOf.get(id) || id, f);
+      if (!warnings.includes(w)) warnings.push(w);
+    }
     return { nodes: out, errors, warnings };
   }
   /**

@@ -593,20 +593,23 @@ When Ask Worca proposes a run of a saved workflow it can also pick a model and e
 agent step (`propose_run` `nodes`), from the models the run's engine runs:
 
 - **The picking policy** — judgement steps (Plan, Plan Review, Refine Plan, Review
-  Implementation, Bug Root Cause, Deck Review) take the top price tier at high effort; producers
-  that design (Implementation, Bug Fix, Deck Builder) the strong tier at medium or high effort;
-  mechanical producers (Decompose, Manual Tests Checklist, Bug Report Analysis, Deck Export, Bug
-  Triage Report) the cheapest capable tier at medium effort; tool-driven checks (Manual web UI
-  testing, visual checks) the mid tier with tool calls and vision; any other step (Clarify
-  included) the strong tier at medium effort. A small task scales the tiers down. Anthropic
+  Implementation, Bug Root Cause, Deck Review) take the top price tier at high effort, never the
+  premium tier; producers that design (Implementation, Bug Fix, Deck Builder) the strong tier at
+  medium or high effort; mechanical producers (Decompose, Manual Tests Checklist, Bug Report
+  Analysis, Deck Export, Bug Triage Report) the cheapest capable tier at medium effort;
+  tool-driven checks (Manual web UI testing, visual checks) the mid tier with tool calls and
+  vision; any other step (Clarify included) the strong tier at medium effort. Within a tier the
+  cheapest capable model is picked. A premium-tier model (Fable 5.1 today) is picked only when
+  you name that model: it does the work of the top tier at about 2.5× Opus 5.5's list price. A
+  small task scales the tiers down. Anthropic
   models come first, then OpenAI, then others. A free model is used only on a low-risk producer
   step, only when it is ready, has tool calls and at least a 64k window — never on a judgement
   step or as the only Implementation step. A `[1m]` twin shares its base model's price row and is
   picked only when the context demands it; a model without a tier (a Copilot import, an unpriced
   provider entry) ranks as the model it serves. A model the catalog marks not ready (its provider
   is not set up) is never picked unless you ask for it. The Auto classifier follows the same guide.
-- **Price tiers** come from the output list price per million tokens: top from $20, strong from
-  $8, mid from $2, economy below (a free model is economy). A Copilot import is pinned *Free*
+- **Price tiers** come from the output list price per million tokens: premium from $40, top from
+  $20, strong from $8, mid from $2, economy below (a free model is economy). A Copilot import is pinned *Free*
   only so its spend reads $0 (Copilot bills premium requests): it has no token price and no tier,
   and it is never treated as a free model. `list_models` and the chat's catalog
   show each model's vendor, tier, list price, free flag and prompt window; a user or plugin entry's
@@ -636,7 +639,10 @@ agent step (`propose_run` `nodes`), from the models the run's engine runs:
   read the sign-in from the same place, the server, which asks Claude Code only when such a model
   exists; a proposal without picks then comes back with a note saying so). A model outside the
   team policy's allowed list is a warning on the card, never a refusal; the run proceeds and is
-  recorded as off-policy, as for any step model. An overlay names values and never clears one,
+  recorded as off-policy, as for any step model. A premium-tier pick is a warning on the card too
+  (*… is a premium model (~2.5× Opus 5.5 list price): keep it only if the user asked for it*): keep
+  it only if you asked for that model. Each warning shows while a pick on the card runs the model
+  it names. An overlay names values and never clears one,
   so "inherit" over a model the project set itself rides as the workflow default's model when
   the workflow names one; when it names none, Start refuses it: pick a model, or save it as the
   project default.
