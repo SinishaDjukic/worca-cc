@@ -288,7 +288,7 @@ test('History Logs: manifest labels on the node select, __setLogFilter drives no
   ]);
 });
 
-test('History graph: a v2 card (.node[data-node-id]) is a labelled link whose click opens the Logs tab on that node', async () => {
+test('History graph: a v2 card (.node[data-node-id]) is a labelled link whose click opens its log in the drawer under the workflow; Open in Logs opens the Logs tab on that node', async () => {
   let release = null;
   const held = new Promise((res) => { release = res; });
   const { window } = await boot({ fetchHandler: historyArms({ detail: () => held.then(() => ok(DETAIL)) }) });
@@ -307,10 +307,29 @@ test('History graph: a v2 card (.node[data-node-id]) is a labelled link whose cl
   await settle(6);
   assert.equal(card.getAttribute('role'), 'link');
   assert.equal(card.tabIndex, 0);
-  assert.equal(card.getAttribute('aria-label'), 'Filter logs by Planner');
+  assert.equal(card.getAttribute('aria-label'), 'Show the log of Planner below the workflow');
   const sec = $(window, '#hist-detail .hd-sec[data-sec="logs"]');
   assert.equal(sec.dataset.loaded, undefined, 'the Logs tab starts unbuilt (parked-intent path)');
+  // The drawer follows the Logs tab's level: History Logs is Expert, so Advanced gets nothing.
+  const level = window.document.documentElement.dataset.level;
+  window.document.documentElement.dataset.level = 'advanced';
   click(window, card);
+  await settle(2);
+  assert.equal($(window, '#hist-detail .wf-log-drawer'), null, 'no drawer below the Logs tab level');
+  window.document.documentElement.dataset.level = 'expert';
+  click(window, card);
+  await settle(4);
+  if (level === undefined) delete window.document.documentElement.dataset.level;
+  else window.document.documentElement.dataset.level = level;
+  const drawer = $(window, '#hist-detail .hd-sec[data-sec="workflow"] .wf-log-drawer');
+  assert.ok(drawer && !drawer.hidden, 'the drawer opens under the workflow');
+  assert.equal(drawer.querySelector('.wf-log-title').textContent, 'Planner');
+  assert.equal(lines(drawer).length, 2, "only Planner's lines");
+  const marked = [...window.document.querySelectorAll('#hist-detail .hd-graph [aria-current="true"]')];
+  assert.deepEqual(marked.map((n) => n.dataset.nodeId), ['n_a'], 'the card it shows is marked, and only it');
+  assert.ok(!$(window, '#hist-detail .hd-tab[data-sec="logs"]').classList.contains('active'), 'the page stays on the graph');
+  assert.equal(sec.dataset.loaded, undefined, 'the Logs tab is untouched');
+  click(window, drawer.querySelector('.wf-log-full'));
   await settle(4);
   assert.ok($(window, '#hist-detail .hd-tab[data-sec="logs"]').classList.contains('active'));
   assert.equal(sec.querySelector('.log-f-step').value, 'n_a');

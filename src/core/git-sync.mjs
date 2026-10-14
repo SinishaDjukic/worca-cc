@@ -1,7 +1,8 @@
 // src/core/git-sync.mjs
 // Base-branch freshness for runs, pickers and Ask Worca (#527): fetch a remote, read how far a
 // local branch is from its remote twin, and fast-forward it when — and only when — that is safe.
-// Never merges, rebases or resets. Every git call goes through an injectable runner
+// Never rebases or resets. The only merges are #620's on a run's FEATURE branch (mergeBaseInto,
+// startConflictMerge); a base is only ever fast-forwarded. Every git call goes through an injectable runner
 // (_testing.setRunner, mirroring git-info.mjs); nothing here throws.
 //
 // Freshness is shared ACROSS processes: the UI server and every Ask Worca MCP child import this
@@ -12,7 +13,7 @@
 // network commands run in their own session instead, so ssh has no tty to prompt on (defaultRun).
 
 import { spawn, spawnSync } from 'node:child_process';
-import { stat, realpath, readFile } from 'node:fs/promises';
+import { stat, realpath, readFile, readdir } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { devNull } from 'node:os';
 import { githubEnv } from './github-credentials.mjs';
@@ -44,9 +45,10 @@ const QUIET_ENV = Object.freeze({ LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0', GIT_ASK
  *  core.sshCommand and ssh-agent keep working (C6 still holds).
  *  `merge` is a network command too (v8): worca's own clones are blobless (clone-project.mjs:102,
  *  --filter=blob:none), so a fast-forward that checks out new files lazily fetches their blobs.
+ *  `merge-tree` likewise (#620): it reads the blobs of both sides, which a blobless clone fetches lazily.
  *  Windows (v8): no setsid. Git for Windows' ssh can still prompt on an inherited console; on a
  *  timeout the whole tree is ended with `taskkill /T /F`, as script-runner.mjs:264-272 does. */
-const NETWORK_CMDS = new Set(['fetch', 'merge']);
+const NETWORK_CMDS = new Set(['fetch', 'merge', 'merge-tree']);
 /** Every git-sync call runs with an empty hooks directory (metrics/sync.mjs hookFreeArgs, decision 33):
  *  `reference-transaction` fires on fetch / update-ref / branch and `post-merge` on merge --ff-only,
  *  with the spawn env — worca's GitHub credential included. Run worktrees share the project's
@@ -243,6 +245,24 @@ async function checkoutsOf(dir, base) {
     else if (line.trim() === `branch refs/heads/${base}` && cur) out.push(await canonPath(cur));
   }
   return out;
+}
+
+/** 'a rebase' / 'a bisect' when a worktree is in the middle of one that started from refs/heads/<base>,
+ *  '' when none is, null when git could not say. HEAD is detached there, so `worktree list` no longer
+ *  names the branch, yet `rebase --abort` / `bisect reset` will put it back where it was: moving it
+ *  meanwhile would leave the moved-to commits on no branch. */
+async function operationOn(dir, base) {
+  const r = await _run(['rev-parse', '--git-common-dir'], { cwd: dir });
+  if (!r.ok || !r.stdout.trim()) return null;
+  const common = isAbsolute(r.stdout.trim()) ? r.stdout.trim() : join(dir, r.stdout.trim());
+  const gitDirs = [common, ...(await readdir(join(common, 'worktrees')).catch(() => [])).map((w) => join(common, 'worktrees', w))];
+  const read = (f) => readFile(f, 'utf8').then((t) => t.trim(), () => '');
+  for (const gd of gitDirs) {
+    for (const f of ['rebase-merge/head-name', 'rebase-apply/head-name']) if (await read(join(gd, f)) === `refs/heads/${base}`) return 'a rebase';
+    const bisect = await read(join(gd, 'BISECT_START'));
+    if (bisect === base || bisect === `refs/heads/${base}`) return 'a bisect';
+  }
+  return '';
 }
 
 // ── remote + fetch ───────────────────────────────────────────────────────────
@@ -466,6 +486,69 @@ export async function fastForward(dir, { base, remote = 'origin' } = {}) {
   return { ok: true, from: s.headSha, to: s.remoteSha, commits: s.behind };
 }
 
+/**
+ * Fast-forward refs/heads/<base> to the LOCAL commit `to` — the merge back of a run on its
+ * source branch (branch.sameAsSource). Same rules as fastForward: only ever a fast-forward;
+ * a base checked out HERE (dir's own HEAD — pass the project dir, never the run worktree) moves
+ * only when that checkout is clean (`git merge --ff-only --no-overwrite-ignore`: an ignored local file the
+ * run's commits add is never replaced); a base checked out in ANOTHER worktree
+ * is refused; otherwise a compare-and-swap update-ref. No network, no remote needed.
+ * → { ok:true, from, to, commits } | { ok:false, kind:'bad-target'|'bad-base'|'missing'|'diverged'|'in-use'|'dirty'|'failed', error }
+ */
+export async function fastForwardTo(dir, { base, to, message = null } = {}) {
+  if (typeof to !== 'string' || !/^[0-9a-f]{40,64}$/.test(to)) return { ok: false, kind: 'bad-target', error: 'not a full commit id' };
+  const s = await syncStatus(dir, { base });   // no network; works without any remote (hasRemote:false)
+  if (!s.ok) return { ok: false, kind: s.kind, error: s.error };
+  if (!s.hasLocal) return { ok: false, kind: 'missing', error: `${base} no longer exists` };
+  if (s.headSha === to) return { ok: true, from: to, to, commits: 0 };
+  const anc = await _run(['merge-base', '--is-ancestor', s.headSha, to], { cwd: dir });
+  if (!anc.ok) {
+    return anc.code === 1
+      ? { ok: false, kind: 'diverged', error: `${base} has new commits since the run started` }
+      : { ok: false, kind: 'failed', error: scrubGitText(anc.stderr) || 'git merge-base failed' };
+  }
+  if (s.checkedOutElsewhere.length || (s.worktreesUnknown && !s.checkedOutHere)) {
+    return { ok: false, kind: 'in-use', paths: s.checkedOutElsewhere, error: `${base} is checked out in ${s.checkedOutElsewhere.join(', ') || 'another worktree'}` };
+  }
+  const busy = await operationOn(dir, base);
+  if (busy) return { ok: false, kind: 'in-use', error: `${base} is in the middle of ${busy}: finish or abort it first` };
+  const commits = await commitsBetween(dir, s.headSha, to);
+  let r;
+  if (s.checkedOutHere) {
+    if (s.dirty) return { ok: false, kind: 'dirty', error: `${base} is checked out in ${dir} with ${s.dirtyCount} uncommitted change(s)` };
+    // As in fastForward: merge acts on whatever HEAD is NOW — re-check right before it.
+    const headNow = await _run(['symbolic-ref', '-q', 'HEAD'], { cwd: dir });
+    if (!(headNow.ok && headNow.stdout.trim() === `refs/heads/${base}`)) return { ok: false, kind: 'in-use', error: `${dir} switched branches meanwhile` };
+    // --no-autostash: with merge.autoStash set, an edit made since the dirty check would be stashed
+    // and re-applied, and a clash would leave conflict markers in the user's file.
+    r = await _run(['merge', '--ff-only', '--no-overwrite-ignore', '--no-autostash', '--no-stat', '-q', to], { cwd: dir, timeoutMs: FF_TIMEOUT_MS });
+  } else {
+    // As in fastForward: update-ref on a checked-out branch would move HEAD under that checkout — re-read first.
+    const [again, headNow] = await Promise.all([checkoutsOf(dir, base), _run(['symbolic-ref', '-q', 'HEAD'], { cwd: dir })]);
+    if (again === null || again.length || (headNow.ok && headNow.stdout.trim() === `refs/heads/${base}`)) {
+      return { ok: false, kind: 'in-use', paths: again || [], error: `${base} was checked out meanwhile` };
+    }
+    // Raw update-ref skips git's own "used by worktree" guard, which also covers a rebase or bisect: re-check.
+    const busyNow = await operationOn(dir, base);
+    if (busyNow) return { ok: false, kind: 'in-use', error: `${base} is in the middle of ${busyNow}: finish or abort it first` };
+    r = await _run(['update-ref', '-m', message || `worca: fast-forward ${base}`, `refs/heads/${base}`, to, s.headSha], { cwd: dir });
+  }
+  if (!r.ok) {
+    const e = String(r.stderr || '');
+    // "cannot lock ref" is also plain lock contention: whether <base> MOVED is read, not parsed.
+    const moved = (await shaOf(dir, `refs/heads/${base}`)) !== s.headSha;
+    const kind = /would be overwritten|untracked working tree/i.test(e) ? 'dirty'
+      : (moved || /Not possible to fast-forward/i.test(e)) ? 'diverged' : 'failed';
+    return { ok: false, kind, error: scrubGitText(e) || `git exited ${r.code}` };
+  }
+  // The merge acts on whatever HEAD is at that instant: a branch switch after the re-check above
+  // would have fast-forwarded a different branch. Report merged only when <base> really holds `to`.
+  if (s.checkedOutHere && (await shaOf(dir, `refs/heads/${base}`)) !== to) {
+    return { ok: false, kind: 'in-use', error: `${dir} switched branches during the merge; ${base} did not move` };
+  }
+  return { ok: true, from: s.headSha, to, commits: commits ?? 0 };
+}
+
 // ── composite operations ─────────────────────────────────────────────────────
 /**
  * mode 'status' (no network) | 'fetch' | 'ff' (fetch, then fast-forward when safe).
@@ -537,6 +620,160 @@ export async function syncBaseForRun(dir, { base, remote = 'origin', timeoutMs =
   }
   note(`not moving ${base} (${ff.kind}${ff.kind === 'dirty' ? `: ${s.dirtyCount} changed file(s)` : ''}); the run starts from ${remote}/${base} (${short(s.remoteSha)}) in a fresh worktree`);
   return { result: 'remote-start', reason: ff.kind, startRef: s.remoteSha, ...common, to: s.remoteSha, commits: s.behind, log };
+}
+
+// ── base conflicts (#620) ────────────────────────────────────────────────────
+export const BASE_CHECK_FETCH_TIMEOUT_MS = 20_000;
+const MERGE_TREE_TIMEOUT_MS = 120_000;
+const CONFLICT_FILES_CAP = 200;
+const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+
+/** The read credential env for `remote` (GitHub/Azure); null = this machine's git (fastForward's rule). */
+async function readEnvFor(dir, remote) {
+  const info = isSafeRemoteName(remote) ? await remoteInfo(dir, remote) : { ok: false };
+  return info.ok && (info.githubRepo || info.azure) ? (await readCred(info)).env : null;
+}
+
+/** Where the base lives: the fetched <remote>/<base> when present, else the local <base> (Q&A base-ref). */
+async function baseTip(dir, base, remote) {
+  const remoteSha = remote ? await shaOf(dir, `refs/remotes/${remote}/${base}`) : null;
+  if (remoteSha) return { ref: `${remote}/${base}`, sha: remoteSha, remote };
+  const localSha = await shaOf(dir, `refs/heads/${base}`);
+  return localSha ? { ref: base, sha: localSha, remote: null } : null;
+}
+
+/** NUL-separated names, deduplicated (merge-tree --name-only can repeat a path). */
+const nulNames = (s) => [...new Set(String(s || '').split('\0').filter(Boolean))];
+
+/**
+ * Would `feature` still merge into its base? Fetches <remote> (maxAgeMs as fetchRemote), then
+ * `git merge-tree --write-tree` in `dir` (no checkout, no ref moves). Never throws.
+ * → { status: 'up-to-date'|'clean'|'conflicts'|'error'|'no-branch', base, baseRef, remote, baseSha, headSha,
+ *     feature, behind, files, fileCount, tree?, stale, fetchError?, kind?, error?, at }
+ */
+export async function checkBaseMerge(dir, { base, feature, remote = 'origin', fetch = true, maxAgeMs = 0,
+  timeoutMs = BASE_CHECK_FETCH_TIMEOUT_MS } = {}) {
+  const at = new Date().toISOString();
+  const fail = (kind, error, extra = {}) => ({ status: 'error', kind, error: scrubGitText(error, 500), base: base ?? null,
+    feature: feature ?? null, files: [], fileCount: 0, at, ...extra });
+  if (!dir) return fail('failed', 'projectDir is required');
+  if (!isSafeBranchName(base)) return fail('bad-base', `not a mergeable base branch: ${String(base).slice(0, 80)}`);
+  if (!isSafeBranchName(feature)) return fail('bad-branch', `not a branch name: ${String(feature).slice(0, 80)}`);
+  const r = isSafeRemoteName(remote) ? remote : 'origin';
+  let fetchError = null;
+  let useRemote = true;
+  if (fetch) {
+    const f = await fetchRemote(dir, { remote: r, timeoutMs, maxAgeMs });
+    // No such remote: the local base is the base, nothing is stale. Any other failure: the last fetch.
+    if (!f.ok && (f.kind === 'no-remote' || f.kind === 'bad-remote')) useRemote = false;
+    else if (!f.ok) fetchError = { kind: f.kind, message: f.error };
+  }
+  const headSha = await shaOf(dir, `refs/heads/${feature}`);
+  if (!headSha) return { status: 'no-branch', base, feature, files: [], fileCount: 0, at };
+  const tip = await baseTip(dir, base, useRemote ? r : null);
+  if (!tip) return fail('missing-base', `${base} exists neither locally nor on ${r}`, { headSha });
+  const common = { base, baseRef: tip.ref, remote: tip.remote, baseSha: tip.sha, headSha, feature, at,
+    stale: !!fetchError, ...(fetchError ? { fetchError } : {}) };
+  const behind = await commitsBetween(dir, headSha, tip.sha);
+  if (behind === null) return fail('failed', 'could not count the base commits', common);
+  if (behind === 0) return { status: 'up-to-date', behind: 0, files: [], fileCount: 0, ...common };
+  const env = tip.remote ? await readEnvFor(dir, tip.remote) : null;
+  const m = await _run(['merge-tree', '--write-tree', '-z', '--name-only', '--no-messages', headSha, tip.sha],
+    { cwd: dir, timeoutMs: MERGE_TREE_TIMEOUT_MS, env });
+  // `-z --name-only --no-messages` prints "<tree>\0" (clean, exit 0) or "<tree>\0<path>\0…" (conflicts, exit 1).
+  // git ALSO exits 1 with an empty stdout for an object it cannot merge, so a result counts only with a tree OID.
+  const [tree, ...rest] = nulNames(m.stdout);
+  if (SHA_RE.test(tree || '') && m.code === 0) return { status: 'clean', behind, tree, files: [], fileCount: 0, ...common };
+  if (SHA_RE.test(tree || '') && m.code === 1 && rest.length) {
+    return { status: 'conflicts', behind, files: rest.slice(0, CONFLICT_FILES_CAP), fileCount: rest.length, ...common };
+  }
+  if (m.code === 129 || /usage: git merge-tree/.test(m.stderr)) {
+    return fail('git-too-old', 'The conflict check needs git 2.38 or newer (git merge-tree --write-tree).', common);
+  }
+  return fail(m.timedOut ? 'timeout' : 'failed', m.stderr || `git merge-tree exited ${m.code}`, common);
+}
+
+/** Canonical worktree paths with refs/heads/<branch> checked out, null when git cannot list them (checkoutsOf). */
+export const branchCheckouts = (dir, branch) => checkoutsOf(dir, branch);
+
+/**
+ * Update branch (#620): a merge commit of `baseSha` into `feature`. Not checked out anywhere: commit-tree on the
+ * merge-tree result + a compare-and-swap update-ref (no checkout moves). Checked out in ONE clean worktree that
+ * is on the branch at `headSha`: `git merge --no-ff` there. Never throws.
+ * → { ok:true, from, to, via:'commit-tree'|'merge', path? } | { ok:false, kind:'in-use'|'dirty'|'moved'|'identity'|'not-clean'|'failed'|'bad-request', error, path? }
+ */
+export async function mergeBaseInto(dir, { feature, baseSha, headSha, baseRef, tree = null, remote = null } = {}) {
+  if (!isSafeBranchName(feature) || !SHA_RE.test(baseSha || '') || !SHA_RE.test(headSha || '')) {
+    return { ok: false, kind: 'bad-request', error: 'invalid branch or commit' };
+  }
+  const message = `Merge ${baseRef || baseSha.slice(0, 10)} into ${feature}`;
+  const holders = await checkoutsOf(dir, feature);
+  if (holders === null || holders.length > 1) return { ok: false, kind: 'in-use', error: 'git could not tell where the branch is checked out' };
+  if (holders.length === 1) {
+    const wt = holders[0];
+    const head = await _run(['symbolic-ref', '-q', 'HEAD'], { cwd: wt });
+    if (!(head.ok && head.stdout.trim() === `refs/heads/${feature}`)) return { ok: false, kind: 'in-use', path: wt, error: `${wt} is not on ${feature}` };
+    if (await shaOf(wt, 'HEAD') !== headSha) return { ok: false, kind: 'moved', error: `${feature} moved since the check` };
+    const st = await _run(['status', '--porcelain', '--untracked-files=no'], { cwd: wt });
+    if (!st.ok || st.stdout.trim()) return { ok: false, kind: 'dirty', path: wt, error: `${wt} has uncommitted changes` };
+    const env = remote ? await readEnvFor(wt, remote) : null;
+    const r = await _run(['merge', '--no-ff', '--no-edit', '-q', '-m', message, baseSha], { cwd: wt, timeoutMs: FF_TIMEOUT_MS, env });
+    if (!r.ok) {
+      await _run(['merge', '--abort'], { cwd: wt });
+      return { ok: false, kind: 'failed', path: wt, error: scrubGitText(r.stderr) || `git merge exited ${r.code}` };
+    }
+    return { ok: true, from: headSha, to: await shaOf(wt, 'HEAD'), via: 'merge', path: wt };
+  }
+  let t = tree;
+  if (!t) {
+    const m = await _run(['merge-tree', '--write-tree', '-z', '--name-only', '--no-messages', headSha, baseSha],
+      { cwd: dir, timeoutMs: MERGE_TREE_TIMEOUT_MS, env: remote ? await readEnvFor(dir, remote) : null });
+    [t] = nulNames(m.stdout);
+    if (m.code !== 0 || !SHA_RE.test(t || '')) {
+      return { ok: false, kind: m.code === 1 && SHA_RE.test(t || '') ? 'not-clean' : 'failed', error: scrubGitText(m.stderr) || 'the merge is not clean' };
+    }
+  }
+  const c = await _run(['commit-tree', t, '-p', headSha, '-p', baseSha, '-m', message], { cwd: dir });
+  if (!c.ok || !SHA_RE.test(c.stdout.trim())) {
+    const identity = /Author identity unknown|tell me who you are|unable to auto-detect email/i.test(c.stderr);
+    return { ok: false, kind: identity ? 'identity' : 'failed', error: scrubGitText(c.stderr) || 'git commit-tree failed' };
+  }
+  const to = c.stdout.trim();
+  // Belt and braces (fastForward's rule): a checkout that appeared meanwhile must not see its ref move.
+  const again = await checkoutsOf(dir, feature);
+  if (again === null || again.length) return { ok: false, kind: 'in-use', error: `${feature} was checked out meanwhile` };
+  const u = await _run(['update-ref', '-m', `worca: ${message}`, `refs/heads/${feature}`, to, headSha], { cwd: dir });
+  if (!u.ok) return { ok: false, kind: 'moved', error: scrubGitText(u.stderr) || `${feature} moved since the check` };
+  return { ok: true, from: headSha, to, via: 'commit-tree' };
+}
+
+/** Unmerged paths of a worktree's index (a merge in progress). */
+async function unmergedFiles(wt) {
+  const r = await _run(['diff', '--name-only', '--diff-filter=U', '-z'], { cwd: wt });
+  return r.ok ? nulNames(r.stdout) : [];
+}
+
+/**
+ * Resolve in a terminal (#620): start `git merge --no-ff --no-commit <baseSha>` in a run's checkout and leave the
+ * conflicts for a person. A merge already in progress is reported as is (idempotent). Never throws.
+ * → { ok:true, started, files } | { ok:false, kind:'in-use'|'dirty'|'failed', error }
+ */
+export async function startConflictMerge(wt, { feature, baseSha, baseRef, remote = null } = {}) {
+  if (!isSafeBranchName(feature) || !SHA_RE.test(baseSha || '')) return { ok: false, kind: 'failed', error: 'invalid branch or commit' };
+  const head = await _run(['symbolic-ref', '-q', 'HEAD'], { cwd: wt });
+  if (!(head.ok && head.stdout.trim() === `refs/heads/${feature}`)) return { ok: false, kind: 'in-use', error: `${wt} is not on ${feature}` };
+  if (await shaOf(wt, 'MERGE_HEAD')) return { ok: true, started: false, files: await unmergedFiles(wt) };
+  const st = await _run(['status', '--porcelain', '--untracked-files=no'], { cwd: wt });
+  if (!st.ok || st.stdout.trim()) return { ok: false, kind: 'dirty', error: `${wt} has uncommitted changes; commit or discard them first` };
+  const env = remote ? await readEnvFor(wt, remote) : null;
+  const r = await _run(['merge', '--no-ff', '--no-commit', '-m', `Merge ${baseRef || baseSha.slice(0, 10)} into ${feature}`, baseSha],
+    { cwd: wt, timeoutMs: FF_TIMEOUT_MS, env });
+  const files = await unmergedFiles(wt);
+  if (!r.ok && !files.length) {
+    await _run(['merge', '--abort'], { cwd: wt });
+    return { ok: false, kind: 'failed', error: scrubGitText(r.stderr) || `git merge exited ${r.code}` };
+  }
+  return { ok: true, started: true, files };
 }
 
 /** Resolve a user/model-named source: local ref first, then (after a TTL fetch) <remote>/<name>. */

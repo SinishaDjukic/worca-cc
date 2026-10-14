@@ -32,15 +32,16 @@ export function makePanel(overrides = {}) {
       disconnect() { this.targets = []; this.disconnected = true; }
     };
   }
-  // jsdom has no requestAnimationFrame, so every createThinkingOrb() stays
-  // inert (no canvas, no loop). `orb: true` installs, BEFORE the panel is
-  // built, a recording rAF pair, a stub 2d context that logs the arcs painted
-  // per canvas, and a visible document (draw() skips a hidden one) — so a suite
-  // can tell WHICH orb is looping: `orbFrames.run()` runs every armed-and-not-
-  // cancelled frame once and the paints land on the looping orbs' canvases.
-  // Only the orbs read window.requestAnimationFrame; the panel's own scheduling
-  // goes through the injected `raf` below. The orbs' clock (performance.now)
-  // becomes `orbFrames.t`, so a morph tween can be stepped by hand.
+  // jsdom has no requestAnimationFrame, so the panel's dot orb (createDotOrbs,
+  // dot-orb.mjs) never asks for a 2d context and runs no loop: its canvas only
+  // carries data-phase. `orb: true` installs, BEFORE the panel is built, a
+  // recording rAF pair, a stub 2d context that logs the arcs painted per canvas,
+  // and a visible document — so a suite can tell whether the orb loop is still
+  // armed: `orbFrames.run()` runs every armed-and-not-cancelled frame once.
+  // jsdom lays nothing out (offsetParent is null), so dot-orb treats a live orb
+  // as out of sight: it keeps the loop but draws nothing. Only the orbs read
+  // window.requestAnimationFrame; the panel's own scheduling goes through the
+  // injected `raf` below. performance.now becomes `orbFrames.t`.
   const orbFrames = { armed: [], cancelled: new Set(), paints: new Map(), t: 0, run: null };
   if (overrides.orb) {
     let id = 0;
@@ -84,6 +85,9 @@ export function makePanel(overrides = {}) {
     now: overrides.now || (() => 1_000_000),
     ...(overrides.deps || {}),
   };
+  // `innerWidth: n` fixes window.innerWidth before the panel is built (jsdom's is 1024): the History column opens
+  // by default from 1600px and turns into an overlay below 1100px.
+  if (overrides.innerWidth) Object.defineProperty(window, 'innerWidth', { value: overrides.innerWidth, configurable: true });
   const panel = createAskPanel(deps);
   window.document.body.appendChild(panel.root);
   // Force one flush pass, then drain whatever it re-arms. With nothing armed
@@ -120,15 +124,4 @@ export function pointerdown(window, target) {
 export function pointer(window, type, init = {}) {
   const buttons = type === 'pointerup' || type === 'pointercancel' ? 0 : 1;
   return new window.PointerEvent(type, { pointerId: 1, button: 0, buttons, bubbles: true, cancelable: true, ...init });
-}
-
-/**
- * jsdom reports every box as 0×0. Give the dock a content box so the sheet's
- * clamp has an upper bound: inner width = width − 2×28, inner height = height − 26 − 20.
- */
-export function sizeDock(doc, width, height) {
-  const dock = doc.querySelector('.ask-dock');
-  Object.defineProperty(dock, 'clientWidth', { value: width, configurable: true });
-  Object.defineProperty(dock, 'clientHeight', { value: height, configurable: true });
-  return dock;
 }

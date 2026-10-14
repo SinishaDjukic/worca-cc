@@ -76,10 +76,10 @@ test('boot: the pill mounts at the top of the sidebar and routes to the page (wh
   assert.equal(host.hidden, true, 'not painted while the page is not open');
   const pillHost = doc.querySelector('.nav').firstElementChild;
   assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'the pill host is the first child of the nav (New run has no row)');
-  assert.equal(pillHost.nextElementSibling.dataset.nav, 'runs', 'right above Runs');
+  assert.equal(pillHost.nextElementSibling.dataset.nav, 'chat', 'right above Chat');
   assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/9');
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 12, 'the nav census (Schedules, Team policy, Workflows and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu; New run is the top bar\'s button)');
-  assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to New run: welcome up');
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 13, 'the nav census (Chat, Schedules, Team policy, Workflows and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu; New run is the top bar\'s button)');
+  assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to the home page (Chat): welcome up');
   assert.deepEqual(posts, [], 'showing the welcome writes nothing until a choice');
   click(window, doc.querySelector('#welcome-modal .ob-skip'));
   click(window, doc.querySelector('.gs-pill'));
@@ -107,7 +107,7 @@ test('welcome: shows once; Skip or a door posts {welcomeSeen:true}; never shown 
       await settle();
       assert.deepEqual(posts, [{ welcomeSeen: true }]);
       // Getting to Projects is the FIRST hop: the sidebar entry is ringed, the view stays.
-      assert.equal(doc.querySelector('.view[data-view="new"]').classList.contains('hidden'), false, 'no auto-navigation');
+      assert.equal(doc.querySelector('.view[data-view="chat"]').classList.contains('hidden'), false, 'no auto-navigation');
       let layer = doc.querySelector('.guide-layer.spotlight');
       assert.ok(layer, 'a spotlight is up');
       assert.ok(layer.dataset.target.startsWith('.nav button[data-nav="projects"]'), layer.dataset.target);
@@ -170,7 +170,7 @@ test('Connect Claude Code re-checks on open: a page that loaded while signed out
   assert.match(line.className, /\bok\b/);
 });
 
-test('a tile guide: "Connect Claude Code" opens the setup dialog; "Ask Worca" rings the dock pill in place; nav hops survive navigation', async () => {
+test('a tile guide: "Connect Claude Code" opens the setup dialog; "Ask Worca" rings the sidebar Chat row, then the composer; nav hops survive navigation', async () => {
   const { doc, window } = await boot({ onboarding: status([], { welcomeSeen: true }) });
   click(window, doc.querySelector('.gs-pill'));
   await settle();
@@ -185,18 +185,18 @@ test('a tile guide: "Connect Claude Code" opens the setup dialog; "Ask Worca" ri
   await settle();
   let layer = doc.querySelector('.guide-layer');
   assert.ok(layer, 'spotlight up');
-  assert.equal(layer.dataset.target, '.ask-pill');
+  assert.ok(layer.dataset.target.startsWith('.nav button[data-nav="chat"]'), layer.dataset.target);
   assert.equal(doc.querySelector('.view[data-view="getting-started"]').classList.contains('hidden'), false, 'stays on the page');
-  // Sheet open (the pill hides): the input is next; typed text moves on to Send.
-  const pill = doc.querySelector('.ask-pill'); const input = doc.querySelector('.ask-input');
-  pill.hidden = true; pill.dispatchEvent(new window.Event('click', { bubbles: true }));
+  // The user's own click on the Chat row routes; the input is next; typed text moves on to Send.
+  click(window, doc.querySelector('.nav button[data-nav="chat"]'));
   await settle();
+  assert.equal(doc.querySelector('.view[data-view="chat"]').classList.contains('hidden'), false);
+  const input = doc.querySelector('.ask-input');
   assert.equal(doc.querySelector('.guide-layer').dataset.target, '.ask-input');
   assert.match(doc.querySelector('.guide-text').textContent, /What did my last run change/);
   input.value = 'what changed?'; input.dispatchEvent(new window.Event('input', { bubbles: true }));
   await settle();
   assert.equal(doc.querySelector('.guide-layer').dataset.target, '.ask-send');
-  pill.hidden = false;
 
   // The workspace guide with fewer than two projects first sends the user to Projects.
   click(window, doc.querySelector('.gs-tile[data-step="workspace"]'));

@@ -46,9 +46,9 @@ async function openThread(ctx) {
 const openCtx = (ctx) => { ctx.doc.querySelector('[data-ask-ctx-btn]').click(); return ctx.doc.querySelector('.ask-pop-ctx'); };
 const topics = (pop, group) => [...pop.querySelectorAll(`[data-ctx-group="${group}"] .ask-ctx-topic`)];
 
-test('topics: "Asked from" rows in stored order route + close, pinned marked, the homeless run is neither a link nor an arrow-key stop', async () => {
+test('topics: "Asked from" rows in stored order route, pinned marked, the homeless run is neither a link nor an arrow-key stop', async () => {
   await checkRows([
-    { name: 'topics: "Asked from" rows in stored order, links route + close, pinned marked, homeless run not a link', run: async () => {
+    { name: 'topics: "Asked from" rows in stored order, links route, pinned marked, homeless run not a link', run: async () => {
       const ctx = makePanel({ fetchHandler: handler({ threads: [thread()], thread: thread() }) });
       await openThread(ctx);
       const pop = openCtx(ctx);
@@ -69,8 +69,8 @@ test('topics: "Asked from" rows in stored order route + close, pinned marked, th
       assert.equal(ctx.doc.activeElement, rows[0], 'focus lands on the first topic');
       rows[1].click();
       assert.equal(ctx.window.location.hash, '#history/worca-cc-ace1a602/1a2b3c4d');
-      assert.equal(ctx.panel.isOpen(), false, 'routing closes the sheet');
-      assert.equal(ctx.doc.querySelector('.ask-pop-ctx'), null);
+      assert.equal(ctx.panel.isOpen(), true, 'a topic only routes — leaving #chat hides the page (app.js), not the link');
+      assert.equal(ctx.doc.querySelector('.ask-pop-ctx'), null, 'the popover closed with the click');
       ctx.panel.destroy();
     } },
     { name: 'topics: arrow keys skip the homeless run', run: async () => {
@@ -98,7 +98,7 @@ test('topics: the 202 contexts, ask-done contexts and New chat repaint an open p
       await ctx.tick(); await ctx.tick(); await ctx.tick();
       assert.equal(ctx.doc.querySelector('.ask-pop-ctx'), pop, 'still open, same node');
       assert.deepEqual(topics(pop, 'asked').map((r) => r.querySelector('.ask-ctx-topic-name').textContent), ['Team policy']);
-      ctx.doc.querySelector('[data-ask-new-btn]').click();
+      ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
       const p3 = ctx.doc.querySelector('.ask-pop-ctx') || openCtx(ctx);
       assert.equal(p3.querySelectorAll('.ask-ctx-topic').length, 0, 'New chat starts with no topics');
       ctx.panel.destroy();

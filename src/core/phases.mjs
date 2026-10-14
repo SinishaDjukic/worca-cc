@@ -223,9 +223,11 @@ export function subagentModelDirective(subagentModel) {
       'verify — grep-and-summarize a known pattern, enumerate usages or call sites, extract or ' +
       'reformat existing content, confirm what a file plainly states.\n' +
       '- `opus`: investigation needing real codebase judgment you will build on — trace why ' +
-      'something fails, map how a subsystem hangs together, weigh where a change belongs.\n' +
-      '- `fable`: analysis whose VERDICT the run depends on and nothing downstream re-checks — a ' +
-      'severity call, a design or plan judgement, an accept/reject recommendation.\n\n' +
+      'something fails, map how a subsystem hangs together, weigh where a change belongs — and ' +
+      'analysis whose VERDICT the run depends on and nothing downstream re-checks: a severity call, ' +
+      'a design or plan judgement, an accept/reject recommendation.\n' +
+      '- `fable`: never on your own judgement — only when the operator names it (it lists at about ' +
+      '2.5× the price of `opus` for the same work).\n\n' +
       'When unsure between two tiers, take the lower one only if you will verify the result ' +
       'yourself.\n\n'
     );

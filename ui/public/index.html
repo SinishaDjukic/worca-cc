@@ -15,8 +15,10 @@
       <!-- ===================== Sidebar ===================== -->
       <aside class="sidebar" id="side-rail">
         <div class="brand">
-          <span class="logo" role="img" aria-label="Worca"></span>
-          <span class="logo-mark" role="img" aria-label="Worca"></span>
+          <!-- The wordmark (and the rail's mark) go to Chat's home — a new chat (worca Chat U5); app.js swaps
+               #chat/new for #chat. -->
+          <a class="logo" href="#chat/new" aria-label="worca — Chat" title="Chat"></a>
+          <a class="logo-mark" href="#chat/new" aria-label="worca — Chat" title="Chat"></a>
           <!-- The server's mock mode (WS hello serverMock, app.js#applyServerMock): every run is a mock. -->
           <span class="badge amber side-mock-pill" id="side-mock-pill" title="Server started with WORCA_MOCK=1 — all runs are mock." hidden>MOCK</span>
           <button type="button" class="side-close" id="side-close" aria-label="Close menu" title="Close menu">
@@ -27,6 +29,14 @@
         <!-- The one scrolling band: the logo row above and .side-foot below stay put. -->
         <div class="side-scroll" id="side-scroll">
           <nav class="nav" aria-label="Primary">
+            <!-- Chat (worca Chat): the app's home, Ask Worca as a page. The dot (a .nav-count, so the rail parks it in
+                 the square's corner): a reply in the chat you left finished while you were on another page
+                 (app.js#paintChatUnread). -->
+            <button type="button" data-nav="chat" data-min-level="simple">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5H4.5A2.5 2.5 0 0 0 2 7.5v8A2.5 2.5 0 0 0 4.5 18H6v2.2c0 .9 1.1 1.3 1.7.6L10.5 18h6A2.5 2.5 0 0 0 19 15.5v-3"></path><path d="M18 2.2Q18.8 5.2 21.8 6Q18.8 6.8 18 9.8Q17.2 6.8 14.2 6Q17.2 5.2 18 2.2z"></path></svg>
+              <span>Chat</span>
+              <span class="nav-count nav-dot" id="nav-chat-unread" aria-hidden="true" hidden></span>
+            </button>
             <button type="button" data-nav="runs" data-min-level="simple">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path><path d="M12 8v4l3 2"></path></svg>
               <span>Runs</span>
@@ -134,10 +144,14 @@
           </div>
           <div class="msect" role="group">
             <button type="button" class="mi" id="acct-lvl" role="menuitem" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="lvl-menu">
+              <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h9M17 7.5h3M4 16.5h3M11 16.5h9"></path><circle cx="15" cy="7.5" r="2"></circle><circle cx="9" cy="16.5" r="2"></circle></svg>
               <span class="mi-lbl">Interface mode</span><span class="mi-val">Expert</span>
               <svg class="mi-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
             </button>
-            <button type="button" class="mi" id="acct-settings" role="menuitem" data-nav="settings" data-min-level="simple"><span class="mi-lbl">Settings</span></button>
+            <button type="button" class="mi" id="acct-settings" role="menuitem" data-nav="settings" data-min-level="simple">
+              <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.06 3.93L10.39 1.22A10.9 10.9 0 0 1 13.61 1.22L13.94 3.93A8.3 8.3 0 0 1 16.34 4.92L18.48 3.24A10.9 10.9 0 0 1 20.76 5.52L19.08 7.66A8.3 8.3 0 0 1 20.07 10.06L22.78 10.39A10.9 10.9 0 0 1 22.78 13.61L20.07 13.94A8.3 8.3 0 0 1 19.08 16.34L20.76 18.48A10.9 10.9 0 0 1 18.48 20.76L16.34 19.08A8.3 8.3 0 0 1 13.94 20.07L13.61 22.78A10.9 10.9 0 0 1 10.39 22.78L10.06 20.07A8.3 8.3 0 0 1 7.66 19.08L5.52 20.76A10.9 10.9 0 0 1 3.24 18.48L4.92 16.34A8.3 8.3 0 0 1 3.93 13.94L1.22 13.61A10.9 10.9 0 0 1 1.22 10.39L3.93 10.06A8.3 8.3 0 0 1 4.92 7.66L3.24 5.52A10.9 10.9 0 0 1 5.52 3.24L7.66 4.92A8.3 8.3 0 0 1 10.06 3.93z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              <span class="mi-lbl">Settings</span>
+            </button>
           </div>
           <div class="msect" role="group">
             <button type="button" class="mi away-item" id="acct-away" role="menuitem" data-state="here" data-min-level="simple">
@@ -146,9 +160,11 @@
               <span class="mi-hint"></span>
             </button>
           </div>
-          <!-- Appearance, icons only: the same three modes as Settings › General (app.js#paintTheme
-               paints both). A pick applies and saves; the menu stays open. -->
-          <div class="msect theme-sect" role="group" aria-label="Appearance">
+          <!-- Appearance, one row: its visible label (it names the group) and three icon segments, the
+               same three modes as Settings › General (app.js#paintTheme paints both). Each segment
+               is named only by its aria-label. A pick applies and saves; the menu stays open. -->
+          <div class="msect theme-sect" role="group" aria-labelledby="acct-theme-k">
+            <span class="theme-k" id="acct-theme-k">Appearance</span>
             <div class="theme-seg" id="acct-theme">
               <button type="button" class="theme-ic on" role="menuitemradio" aria-checked="true" data-theme-mode="system" data-min-level="simple" aria-label="System" title="System">
                 <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4.5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"></path><path d="M8.5 19.5h7M12 15.5v4"></path></svg>
@@ -244,8 +260,11 @@
           <button type="button" class="btn btn-ghost btn-mini" id="level-banner-switch" data-mode-set=""></button>
         </div>
 
+        <!-- ===== VIEW: CHAT (worca Chat): ask-panel.mjs builds div.chat-page into this section ===== -->
+        <section class="view hidden" data-view="chat" aria-label="Chat"></section>
+
         <!-- ===== VIEW: NEW PIPELINE ===== -->
-        <section class="view" data-view="new">
+        <section class="view hidden" data-view="new">
           <div class="topbar">
             <div>
               <div class="sub">Pick a project, describe the task, and run &middot; agents come tuned &mdash; open one only to change it</div>
@@ -401,6 +420,8 @@
                     </div>
                   </div>
                   <div id="plugin-source-pane" class="source-pane hidden"></div>
+                  <!-- #687: a started run takes its task with it; this puts it back (app.js#clearTask). -->
+                  <p id="reuse-task" class="reuse-task" hidden><button type="button" class="link-btn" id="reuse-task-btn">Reuse last task</button></p>
                 </div>
 
                 <!-- Config-load failure hint; app.js#setConfigError paints/clears it.
@@ -459,6 +480,11 @@
                     <label for="featureBranch">New branch <span class="opt">(optional)</span></label>
                     <input id="featureBranch" class="input" type="text" placeholder="e.g. feat/rate-limiter" spellcheck="false" />
                     <small class="hint" id="featureBranchHint">Leave empty and Worca will propose one.</small>
+                    <label class="switch-row same-src-row">
+                      <input id="sameAsSource" class="sw-input" type="checkbox" aria-describedby="sameAsSourceHint">
+                      <span class="switch switch-sm"></span><span class="txt">Run on the source branch</span>
+                    </label>
+                    <small class="hint" id="sameAsSourceHint" hidden>The run's commits land on the source branch when it finishes (fast-forward only). No new branch is kept.</small>
                   </div>
                   <small class="hint err" id="branches-blocked" hidden></small>
                 </div>
@@ -726,6 +752,7 @@
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
                     </button>
                     <div class="btn-split-menu rd-resume-menu" role="menu" hidden>
+                      <button type="button" role="menuitem" class="rd-resume-limit" hidden><b>Resume at</b><small>When the limit resets</small></button>
                       <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
                       <button type="button" role="menuitem" class="resume-with-model" hidden><b>Resume with another model…</b><small>Every remaining step runs on the model you pick</small></button>
@@ -882,6 +909,7 @@
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
                     </button>
                     <div class="btn-split-menu hd-resume-menu" role="menu" hidden>
+                      <button type="button" role="menuitem" class="hd-resume-limit-item" hidden><b>Resume at</b><small>When the limit resets</small></button>
                       <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
                       <button type="button" role="menuitem" class="resume-with-model" hidden><b>Resume with another model…</b><small>Every remaining step runs on the model you pick</small></button>
@@ -920,9 +948,11 @@
                       <div class="rd-now-text"><h2 class="rd-now-title"></h2><p class="rd-now-sub"></p></div>
                     </div>
                   </div>
+                  <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
                   <div class="hd-banners">
                     <span class="badge hist-retained-badge" hidden>Work retained</span>
                     <div class="retained-banner" role="alert" hidden></div>
+                    <div class="merge-back-banner" role="status" hidden></div>
                     <button type="button" class="hist-discard btn-ghost" hidden>Discard worktree</button>
                   </div>
                   <div class="rd-facts"></div>
@@ -953,9 +983,14 @@
                   <button type="button" class="hd-publish btn-ghost" hidden data-min-level="advanced">Publish branch</button>
                   <span class="act-pill-slot"></span>
                   <a class="hd-pr-link" hidden data-min-level="advanced" target="_blank" rel="noopener"></a>
+                  <button type="button" class="hd-push" hidden data-min-level="advanced"></button>
                 </div>
                 <!-- "Published to <remote>/<branch>" (#618): its own line, so a long branch never squeezes the title. -->
                 <p class="hd-published hint mono" hidden data-min-level="advanced"></p>
+                <!-- Base conflicts (#620): the stored check of each branch against its base. Painted by paintHdBase. -->
+                <div class="hd-base-check" hidden>
+                  <ul class="hd-base-members"></ul>
+                </div>
                 <!-- Workspace runs: one line per member repo (View PR / Merged / No changes).
                      Painted by paintHdPr; never shown for a single-project run. -->
                 <ul class="hd-pr-repos" hidden data-min-level="advanced" aria-label="Pull requests per repository"></ul>
@@ -1575,6 +1610,13 @@
               <div id="credentialsHost"></div>
             </section>
 
+            <!-- Browser extension (docs/browser-extension.md): install info painted by paintExtensionInstall, pairings by paintExtensionPairings. -->
+            <section class="card settings-card" id="extension-settings-card" data-min-level="simple">
+              <div class="card-head"><div class="label-row"><h2>Browser extension</h2> <button class="info-tip" type="button" aria-label="About the browser extension">i<span class="tip-content hidden">The Worca extension for Chrome, Edge and Firefox chats with this Worca from a browser sidebar and brings the page you are reading into context. It ships with Worca: install it from the folder below or from the release zips. Each paired extension has its own token, and you can revoke it here. It works with a local Worca only.</span></button></div></div>
+              <div id="extensionInstallHost"></div>
+              <div id="extensionPairingsHost"></div>
+            </section>
+
             <!-- Interface mode (docs/ui-levels.md): the same setting as the account menu's Interface mode row. -->
             <section class="card settings-card" id="mode-settings-card" data-min-level="simple">
               <div class="card-head">
@@ -1769,6 +1811,12 @@
                   <label for="budgetHumanRate">Developer rate (USD/h)</label>
                 </div>
                 <input id="budgetHumanRate" data-setting="humanRateUsdPerHour" class="input" type="number" min="0" step="1" inputmode="decimal" placeholder="35" autocomplete="off" />
+              </div>
+              <div class="field">
+                <div class="label-row">
+                  <label class="check-row" for="budgetLimitResume"><input id="budgetLimitResume" data-setting="resumeAfterUsageLimit" type="checkbox" /> Resume runs automatically when a usage limit resets</label>
+                  <button type="button" class="info-tip" aria-label="About resuming after a usage limit">i<span class="tip-content hidden">When a run pauses on a plan's session or weekly limit, Worca schedules its resume for 5 minutes after the reset, on the same engine, at most 3 times in a row. Cost caps still pause for you.</span></button>
+                </div>
               </div>
               <div class="add-project-actions" style="margin-top:14px">
                 <button type="button" id="budgetReset" class="btn btn-ghost btn-mini">Clear limits</button>
@@ -2471,6 +2519,8 @@
         </div>
         <!-- Sync before run (#527): the base moved on the remote since this run started. -->
         <small class="hint warn" id="shipit-base-warn" hidden></small>
+        <!-- Base conflicts (#620): the stored local check while no PR exists. Painted by paintShipItBaseCheck. -->
+        <small class="hint shipit-basecheck" hidden></small>
         <!-- Fork support: where the branch is pushed and which repo the PR opens in
              (GitHub's "compare across forks"; Azure DevOps opens PRs within one repository). Filled from GET /api/pr/remotes on
              open; hidden until the list arrives and stays hidden when it cannot be

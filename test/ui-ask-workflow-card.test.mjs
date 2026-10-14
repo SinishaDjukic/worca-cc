@@ -127,7 +127,8 @@ async function settle(window, n = 4) {
 }
 
 async function openSheet(window) {
-  window.document.querySelector('.ask-pill').click();
+  // worca Chat: the chat is a page and the boot page; route there only when the test left it.
+  if (!/^#chat(\/|$)/.test(window.location.hash)) window.location.hash = '#chat';
   await settle(window);
 }
 async function sendText(window, text) {
@@ -182,7 +183,7 @@ test('building → proposed: the trace renders first; the flip mounts the REAL g
   assert.deepEqual(ctx.cardPosts, [{ state: 'saved', name: 'Renamed by me', nodes: {} }]);
 });
 
-test('chip picker: the model chip opens a menu in the sheet; picking a model repaints the band and Save posts the DIFF; the effort pill too', async () => {
+test('chip picker: the model chip opens a menu in the conversation column; picking a model repaints the band and Save posts the DIFF; the effort pill too', async () => {
   const ctx = await boot();
   await openBuilding(ctx);
   flip(ctx, 3, { state: 'proposed', card: wfCard() });
@@ -193,8 +194,8 @@ test('chip picker: the model chip opens a menu in the sheet; picking a model rep
   const chip = el.querySelector(`[data-node-id="${nodeId}"] .bchip.model`);
   chip.click();
   await settle(ctx.window, 2);
-  const pop = ctx.window.document.querySelector('.ask-sheet .ask-pop-chip');
-  assert.ok(pop, 'the popover lives in the sheet'); assert.equal(chip.getAttribute('aria-expanded'), 'true');
+  const pop = ctx.window.document.querySelector('.chat-convo > .ask-pop-chip');
+  assert.ok(pop, 'the popover lives in the conversation column'); assert.equal(chip.getAttribute('aria-expanded'), 'true');
   const items = [...pop.querySelectorAll('.ask-model-item')];
   assert.deepEqual(items.map((i) => i.textContent.replace('✓', '').trim()), p.models.map((m) => m.label));
   assert.ok(items.every((i) => i.getAttribute('role') === 'menuitem'), 'menuitem: the panel\'s arrow-key nav selects that role (PD28)');

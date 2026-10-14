@@ -152,8 +152,19 @@ export class GraphOrchestrator extends RunHarness {
     // this class). resume() never calls this hook: the manifest froze the pair on the node.
     const defrag = this.memoryScope ? await this._defragAgentPair() : null;
     const scan = this._scanModelPins();
+    // A per-run overlay (POST /api/run `overlay`, checked by the route: the Ask run card's per-agent picks) merges PER
+    // NODE over the project layer for THIS run only — never with `ignoreProjectOverrides`, which is Auto's own tuning.
+    // A model always names its effort ('' = the model's default) so a stored effort never rides under it (resolveGraph
+    // merges per key): the route's check names it, but a firing schedule ticket's re-parse drops the '' — Auto's
+    // proposal uses the same form (auto/proposal.mjs).
+    const rawNodes = this.opts && this.opts.overlay && typeof this.opts.overlay === 'object' ? this.opts.overlay.nodes : null;
+    const overlayNodes = rawNodes && typeof rawNodes === 'object' && !Array.isArray(rawNodes)
+      ? Object.fromEntries(Object.entries(rawNodes).filter(([, e]) => e && typeof e === 'object' && !Array.isArray(e))
+        .map(([id, e]) => [id, typeof e.model === 'string' && e.model && e.effort === undefined ? { ...e, effort: '' } : { ...e }]))
+      : {};
+    const overlay = Object.keys(overlayNodes).length ? { nodes: overlayNodes } : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
-      engine: this.claude.engine || 'claude', isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
+      engine: this.claude.engine || 'claude', isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
       ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}),
     });
     this._adoptResolvedGraph(resolved);
@@ -180,6 +191,9 @@ export class GraphOrchestrator extends RunHarness {
     const manifest = buildGraphManifest(this.resolved.template, this.resolved.agentsByKey, {
       overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires }, scripts: this.resolved.scriptsByKey,
     });
+    // What THIS run was told to use over the project's settings, beside the cells it resolved to (the run page marks
+    // those pills "this run only"; resume reads the cells, never this).
+    if (overlay) manifest.runOverlay = { nodes: structuredClone(overlay.nodes) };
     return {
       manifest,
       agentKeys: new Set(this.resolved.agentKeys),
@@ -1684,6 +1698,7 @@ export class GraphOrchestrator extends RunHarness {
    *    after the last phase (_finishComposite).
    */
   async _afterExecution(nc, ctx, result) {
+    this._autoLimitResumes = 0;   // D7: real progress ends an automatic-resume streak
     // `missing` = the verifier never wrote its verdict (MAJ-10). Persisting that as
     // a zero-issue row makes History render a genuine-looking clean review of work
     // nobody reviewed, so the row is SKIPPED; the run log + state.warnings carry it.

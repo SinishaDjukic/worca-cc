@@ -30,9 +30,8 @@ function handlerFor(snapshotRef) {
 async function openWith(snapshotRef, overrides = {}) {
   const ctx = makePanel({ fetchHandler: handlerFor(snapshotRef), ...overrides });
   ctx.panel.open();
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();
-  await ctx.tick();
-  ctx.doc.querySelector('.ask-pop [role="menuitem"]').click();
+  await ctx.tick();                                    // the first show loaded the History column
+  ctx.doc.querySelector('[data-chat-history] .ask-thread-pick').click();
   await ctx.tick();
   await ctx.tick();
   ctx.flush();
@@ -63,14 +62,14 @@ test('ask-panel-stream: frames for another thread are ignored; replaying the who
   ]);
 });
 
-test('ask-panel-stream: plain-text stream — dot, orb, growing answer, done state', async () => {
+test('ask-panel-stream: plain-text stream — head word, orb, growing answer, done state', async () => {
   const ref = { body: snapBody() };
   const ctx = await openWith(ref);
   const { frames } = replayFixture('plain-text', { threadId: TID, messageId: MID, threadTotals: { costUsd: 0.02, input: 10, output: 44, cacheRead: 0, cacheCreation: 11290, turns: 1, agents: 0 } });
   const done = frames[frames.length - 1];
   for (const f of frames.slice(0, -1)) ctx.panel.pushServerFrame(f);
   ctx.flush();
-  assert.ok(ctx.doc.querySelector('.ask-dot-run'), 'green running dot while streaming');
+  assert.equal(ctx.doc.querySelector('.ask-activity-head').textContent, 'Thinking', 'the live head is its one word: the orb row owns the numbers');
   assert.equal(ctx.doc.querySelector('.ask-activity-label').textContent, 'Thinking', 'the head names the live turn');
   const thinking = ctx.doc.querySelector('.ask-thinking');
   assert.ok(thinking, 'the orb row marks the live turn');
@@ -80,14 +79,137 @@ test('ask-panel-stream: plain-text stream — dot, orb, growing answer, done sta
   assert.match(ctx.doc.querySelector('.ask-answer').textContent, /pong/);
   ctx.panel.pushServerFrame(done);
   ctx.flush();
-  assert.ok(ctx.doc.querySelector('.ask-dot-done'), 'grey dot after done');
+  assert.match(ctx.doc.querySelector('.ask-activity-head').textContent, /^Done · \d/, 'the landed head is one dot-separated line');
   assert.equal(ctx.doc.querySelector('.ask-thinking'), null, 'the orb row leaves with the turn');
   assert.equal(ctx.doc.querySelector('.ask-activity-label').textContent, 'Done', 'a clean turn lands on Done');
   assert.equal(ctx.doc.querySelector('.sr-only[aria-live="polite"]').textContent, 'answer finished');
 });
 
+test('ask-panel-stream: the live orb is the Workflows chat\'s dot orb — one canvas for the whole turn, its data-phase following it (think → tool → write → rest)', async () => {
+  // The phase is dot-orb.mjs turnPhase over the model's live(): its label, its text and the live message's blocks,
+  // whose tool/agent rows stream with status 'running' until they land (src/core/ask/events.mjs).
+  const phasesOf = async (fixture) => {
+    const ref = { body: snapBody() };
+    const ctx = await openWith(ref);
+    const { frames } = replayFixture(fixture, { threadId: TID, messageId: MID });
+    const seen = [];
+    let orb = null;
+    for (const f of frames) {
+      ctx.panel.pushServerFrame(f);
+      ctx.flush();
+      const cur = ctx.doc.querySelector('.ask-transcript .ask-thinking .ask-orb');
+      if (cur && !orb) orb = cur;
+      if (cur) assert.equal(cur, orb, `${f.type}: the one canvas is re-parented, never rebuilt`);
+      if (orb && seen.at(-1) !== orb.dataset.phase) seen.push(orb.dataset.phase);
+    }
+    return { orb, seen };
+  };
+  await checkRows([
+    { name: 'a tool call: tool while it runs, thinking again once it lands, writing under "Writing", rest when done', run: async () => {
+      const { orb, seen } = await phasesOf('tool-list-runs');
+      assert.equal(orb.tagName, 'CANVAS');
+      assert.ok(orb.classList.contains('dot-orb') && orb.classList.contains('ask-orb'), orb.className);
+      assert.equal(orb.style.width, '28px');
+      assert.deepEqual(seen, ['think', 'tool', 'think', 'write', 'rest']);
+      assert.equal(orb.isConnected, false, 'the finished turn dropped the orb row');
+      assert.equal(orb.classList.contains('is-live'), false);
+    } },
+    { name: 'a sub-agent counts as a tool while it runs', run: async () => {
+      const { seen } = await phasesOf('task-subagent');
+      assert.deepEqual(seen, ['think', 'tool', 'think', 'write', 'rest']);
+    } },
+    { name: 'plain text: thinking, then writing as the answer streams', run: async () => {
+      const { seen } = await phasesOf('plain-text');
+      assert.deepEqual(seen, ['think', 'write', 'rest']);
+    } },
+  ]);
+});
+
+test('ask-panel-stream: the orb loop winds down after the turn and destroy() cancels it mid-turn', async () => {
+  const start = stampFrames([{ type: 'ask-start', userMessageId: 'u', model: 'm', effort: 'high', startedAt: 'x' }], { threadId: TID, messageId: MID });
+  const pending = (ctx) => ctx.orbFrames.armed.filter((f) => !ctx.orbFrames.cancelled.has(f.id)).length;
+  await checkRows([
+    { name: 'ask-panel-stream: a finished turn leaves no orb frame running', run: async () => {
+      const ref = { body: snapBody() };
+      const ctx = await openWith(ref, { orb: true });
+      ctx.panel.pushServerFrame(start[0]);
+      ctx.flush();
+      assert.equal(ctx.doc.querySelector('.ask-orb').dataset.phase, 'think');
+      assert.ok(pending(ctx) > 0, 'a thinking orb runs its frame loop');
+      ctx.panel.pushServerFrame({ type: 'ask-done', text: 'ok', threadId: TID, messageId: MID, seq: 2 });
+      ctx.flush();
+      for (let i = 0; i < 300 && pending(ctx); i += 1) ctx.orbFrames.run();
+      assert.equal(pending(ctx), 0, 'the detached orb dropped out of the loop');
+    } },
+    { name: 'ask-panel-stream: destroy() cancels a live orb\'s pending frame', run: async () => {
+      const ref = { body: snapBody() };
+      const ctx = await openWith(ref, { orb: true });
+      ctx.panel.pushServerFrame(start[0]);
+      ctx.flush();
+      assert.ok(pending(ctx) > 0);
+      ctx.panel.destroy();
+      assert.equal(pending(ctx), 0);
+    } },
+  ]);
+});
+
+test('ask-panel-stream: a theme switch between turns recolours the next turn\'s orb (the one canvas left the loop while detached)', async () => {
+  const ref = { body: snapBody() };
+  const ctx = await openWith(ref, { orb: true });
+  // The orb reads its ink from the canvas's computed colour once it is in the page; jsdom computes none, so serve it.
+  let ink = 'rgb(24, 24, 27)';
+  const real = ctx.window.getComputedStyle.bind(ctx.window);
+  ctx.window.getComputedStyle = (node, pseudo) => (node && node.classList && node.classList.contains('dot-orb') ? { color: ink } : real(node, pseudo));
+  const fills = [];
+  ctx.window.HTMLCanvasElement.prototype.getContext = () => ({ clearRect() {}, beginPath() {}, arc() {}, fill() { fills.push(this.fillStyle); }, fillStyle: '', globalAlpha: 1 });
+  const pending = () => ctx.orbFrames.armed.filter((f) => !ctx.orbFrames.cancelled.has(f.id)).length;
+  const turn = (messageId, seq) => {
+    ctx.panel.pushServerFrame({ type: 'ask-start', userMessageId: `u${seq}`, model: 'm', effort: 'high', startedAt: 'x', threadId: TID, messageId, seq });
+    ctx.flush();
+    const orb = ctx.doc.querySelector('.ask-transcript .ask-thinking .ask-orb');
+    assert.ok(orb && orb.isConnected, `${messageId}: the live row holds the orb`);
+    assert.equal(orb.dataset.phase, 'think');
+    return orb;
+  };
+  const first = turn(MID, 2);
+  assert.equal(fills.at(-1), 'rgb(24, 24, 27)');
+  ctx.panel.pushServerFrame({ type: 'ask-done', text: 'ok', threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  assert.equal(first.isConnected, false, 'the finished turn dropped the orb row');
+  for (let i = 0; i < 300 && pending(); i += 1) ctx.orbFrames.run();
+  assert.equal(pending(), 0, 'the detached orb dropped out of the loop');
+  ink = 'rgb(236, 236, 233)';
+  ctx.doc.dispatchEvent(new ctx.window.Event('worca:theme'));
+  const next = turn('askm_00000002', 4);
+  assert.equal(next, first, 'the same canvas, re-parented');
+  assert.equal(fills.at(-1), 'rgb(236, 236, 233)', 'painted in the new theme\'s ink, not the last turn\'s');
+  ctx.panel.destroy();
+});
+
 test('ask-panel-stream: tool rows stream in with server labels; a sub-agent expands mid-stream and stays expanded', async () => {
   await checkRows([
+    { name: 'ask-panel-stream: a live turn\'s activity is collapsed too; opened mid-stream it stays open and keeps updating to the end', run: async () => {
+      const ref = { body: snapBody() };
+      const ctx = await openWith(ref);
+      const { frames } = replayFixture('tool-list-runs', { threadId: TID, messageId: MID });
+      const firstToolAt = frames.findIndex((f) => f.type === 'ask-block' && f.block.kind === 'tool');
+      assert.ok(firstToolAt > 0);
+      for (const f of frames.slice(0, firstToolAt + 1)) ctx.panel.pushServerFrame(f);
+      ctx.flush();
+      const head = () => ctx.doc.querySelector('.ask-activity-head');
+      const body = () => ctx.doc.querySelector('.ask-activity-body');
+      assert.ok(ctx.doc.querySelector('.ask-thinking'), 'the turn is live');
+      assert.equal(head().getAttribute('aria-expanded'), 'false', 'collapsed while live: nothing jumps when the turn lands');
+      assert.equal(body().hidden, true);
+      assert.equal(body().querySelector('.ask-tool-note').textContent, '…', 'the row is there, running, behind the fold');
+      head().click();
+      assert.equal(body().hidden, false);
+      for (const f of frames.slice(firstToolAt + 1)) { ctx.panel.pushServerFrame(f); ctx.flush(); }
+      assert.equal(ctx.doc.querySelector('.ask-thinking'), null, 'the turn landed');
+      assert.equal(head().getAttribute('aria-expanded'), 'true', 'still open after every update');
+      assert.equal(body().hidden, false);
+      assert.notEqual(body().querySelector('.ask-tool-note').textContent, '…', 'the open body followed the tool to its end');
+    } },
     { name: 'ask-panel-stream: tool rows stream in with server labels', run: async () => {
       const ref = { body: snapBody() };
       const ctx = await openWith(ref);
@@ -269,9 +391,8 @@ test('ask-panel-stream: switching off a streaming thread resets the stop button'
   const ctx = makePanel({ fetchHandler: handler });
   ctx.panel.open();
   const pick = async (i) => {
-    ctx.doc.querySelector('[data-ask-threads-btn]').click();
     await ctx.tick();
-    ctx.doc.querySelectorAll('.ask-pop [role="menuitem"]')[i].click();
+    ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-pick')[i].click();
     await ctx.tick();
     await ctx.tick();
     ctx.flush();
@@ -285,7 +406,7 @@ test('ask-panel-stream: switching off a streaming thread resets the stop button'
   assert.equal(ctx.doc.querySelector('[data-ask-send]').hidden, false, 'send back');
 });
 
-test('ask-panel-stream: an open History popover refetches its rows on ask-run-status for ANY thread (debounced), keeps its caption, and stops once closed', async () => {
+test('ask-panel-stream: the History column refetches its rows on ask-run-status / ask-start for ANY thread (debounced) while Chat shows — column open or not — keeps its node and the composer focus, and stops once Chat is hidden', async () => {
   const TID2 = 'ask_00000002';
   const listRow = (id, inFlight, tracking) => ({ id, title: id, updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight, tracking });
   const list = { threads: [listRow(TID, false, false), listRow(TID2, false, false)], total: 2 };
@@ -298,16 +419,17 @@ test('ask-panel-stream: an open History popover refetches its rows on ask-run-st
   const listFetches = () => ctx.fetchCalls.filter((c) => c.url.startsWith('/api/ask/threads?')).length;
   const settle = () => new Promise((r) => setTimeout(r, 320));   // past the ~250 ms debounce
   ctx.panel.open();
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();
   await ctx.tick();
-  assert.equal(listFetches(), 1, 'one fetch on open');
-  const pop = ctx.doc.querySelector('.ask-pop-threads');
-  const rows = () => [...pop.querySelectorAll('.ask-thread-pick')];
+  assert.equal(listFetches(), 1, 'one fetch on the first show');
+  assert.equal(ctx.panel.root.dataset.history, 'closed', 'jsdom is 1024px wide: the column is closed, its rows are built');
+  const col = ctx.doc.querySelector('[data-chat-history]');
+  const rows = () => [...col.querySelectorAll('.ask-thread-pick')];
+  assert.equal(rows().length, 2);
   assert.equal(rows()[1].querySelector('.ask-dot-track'), null, 'T2 not tracking at open');
-  const focused = ctx.doc.activeElement;
-  assert.equal(focused, rows()[0], 'the first row holds focus');
+  const input = ctx.doc.querySelector('textarea.ask-input');
+  assert.equal(ctx.doc.activeElement, input, 'open() focused the composer');
   // The chat behind row 2 starts following a run: no thread is active (st.threadId null),
-  // so the frame would otherwise be dropped before the model — the popover still refetches.
+  // so the frame would otherwise be dropped before the model — the column still refetches.
   list.threads[1] = listRow(TID2, false, true);
   list.total = 3;
   ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'plan' });
@@ -318,12 +440,10 @@ test('ask-panel-stream: an open History popover refetches its rows on ask-run-st
   assert.equal(listFetches(), 2, 'three frames in a burst → ONE refetch');
   assert.ok(rows()[1].querySelector('.ask-dot-track'), 'T2 now shows the violet tracking dot');
   assert.equal(rows()[0].querySelector('.ask-dot-track'), null);
-  assert.equal(pop.querySelectorAll('.ask-threads-list').length, 1, 'the rows were replaced, not appended');
-  assert.equal(pop.querySelectorAll('.ask-thread-pick').length, 2);
-  assert.equal(pop.querySelector('.ask-pop-caption').textContent, 'History', 'the caption survives');
-  assert.equal(pop.querySelector('.ask-pop-caption-meter').textContent, '3 chats', 'the meter follows the fresh total');
-  assert.equal(ctx.doc.activeElement, rows()[0], 'focus stays on the same row, not reset by the rebuild');
-  assert.equal(ctx.doc.querySelector('.ask-pop-threads'), pop, 'same panel node — never reopened');
+  assert.equal(rows().length, 2, 'the rows were replaced, not appended');
+  assert.equal(col.querySelector('.chat-history-meter').textContent, '3 chats', 'the meter follows the fresh total');
+  assert.equal(ctx.doc.querySelector('[data-chat-history]'), col, 'same column node');
+  assert.equal(ctx.doc.activeElement, input, 'a refresh never steals focus');
   // A turn starting elsewhere arms the thinking dot the same way.
   list.threads[1] = listRow(TID2, true, true);
   ctx.panel.pushServerFrame({ type: 'ask-start', userMessageId: 'u', model: 'm', effort: 'high', startedAt: 't', threadId: TID2, messageId: 'askm_00000009', seq: 1 });
@@ -337,20 +457,12 @@ test('ask-panel-stream: an open History popover refetches its rows on ask-run-st
   await settle();
   assert.equal(listFetches(), 4);
   assert.ok(rows()[1].querySelector('.ask-dot-track'), 'a terminal status alone does not clear the dot');
-  // Closed: a pending debounce is cancelled and later frames fetch nothing.
+  // Hidden: a pending debounce fetches nothing, later frames neither (they mark the list stale for the next show).
   ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'x' });
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();   // toggles it closed
-  assert.equal(ctx.doc.querySelector('.ask-pop-threads'), null);
+  ctx.panel.close();
   ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'y' });
   await settle();
-  assert.equal(listFetches(), 4, 'no refetch once the popover is gone');
-  // Another popover open (context) is left alone.
-  ctx.doc.querySelector('[data-ask-ctx-btn]').click();
-  assert.ok(ctx.doc.querySelector('.ask-pop-ctx'), 'the context popover is open');
-  assert.equal(ctx.doc.querySelector('.ask-pop-threads'), null);
-  ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'z' });
-  await settle();
-  assert.equal(listFetches(), 4, 'only the History popover refetches');
+  assert.equal(listFetches(), 4, 'no refetch while Chat is hidden');
 });
 
 test('ask-panel-stream: an adopted turn (no ask-start) gets the orb row and Stop; the subscribe replay renders the whole answer', async () => {
@@ -358,15 +470,16 @@ test('ask-panel-stream: an adopted turn (no ask-start) gets the orb row and Stop
     { name: 'ask-panel-stream: an adopted turn with no ask-start still gets the orb row', run: async () => {
       // The ring buffer can evict the prefix; the model adopts the in-flight message
       // at whatever seq arrives, so afterFrame never sees ask-start and never calls
-      // startElapsed(). buildMessage's own el.orb.start() covers the loop — jsdom has
-      // no rAF, so only the row is observable here; the re-arm itself is pinned by
-      // thinking-orb's "start is idempotent and stop cancels the pending frame".
+      // startElapsed(). The orb needs no start: updateThinking() sets its phase on
+      // every flush, so the adopted turn's orb moves like any other.
       const ref = { body: snapBody({ inFlight: { messageId: MID } }) };
       const ctx = await openWith(ref);
       ctx.panel.pushServerFrame({ type: 'ask-delta', text: 'adopted', threadId: TID, messageId: MID, seq: 77 });
       ctx.flush();
       assert.match(ctx.doc.querySelector('.ask-answer').textContent, /adopted/);
-      assert.ok(ctx.doc.querySelector('.ask-transcript .ask-orb'), 'the orb mounted on the adopted turn');
+      const orb = ctx.doc.querySelector('.ask-transcript .ask-orb');
+      assert.ok(orb, 'the orb mounted on the adopted turn');
+      assert.equal(orb.dataset.phase, 'write', 'streaming text with no tool: writing');
       assert.ok(ctx.doc.querySelector('.ask-thinking'), 'and the row with it');
     } },
     // Review of PR #376: a delta that landed between the REST snapshot and the

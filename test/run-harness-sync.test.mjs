@@ -51,6 +51,12 @@ function installRunner() {
 }
 installRunner();
 afterEach(() => { gitSync.reset(); fetches = 0; fetchDelayMs = 0; installRunner(); });
+/** The fetches up to the run's done frame (`.n`): the post-run base check (#620) fetches again after teardown. */
+function fetchesUntilDone(orch) {
+  const box = { n: null };
+  orch.on('done', () => { box.n = fetches; });
+  return box;
+}
 after(() => gitSync.reset());
 
 function git(cwd, args) {
@@ -209,6 +215,7 @@ test('sync off (no opts.sync): nothing is fetched or moved; baseSha still record
   const before = sha(w.a, 'dev');
   teammate(w, ['m.txt']);
   const orch = orchFor(w);
+  const seen = fetchesUntilDone(orch);
   const res = await orch.run();
   assert.equal(res.status, 'done', JSON.stringify(res));
   const st = orch.getState();
@@ -216,7 +223,7 @@ test('sync off (no opts.sync): nothing is fetched or moved; baseSha still record
   assert.equal('sync' in st.branch, false);
   assert.equal(st.branch.baseSha, before);
   assert.equal(st.checkpointRef, before);
-  assert.equal(fetches, 0);
+  assert.equal(seen.n, 0);
   assert.equal(syncRow(orch), undefined);
 });
 
@@ -459,9 +466,10 @@ test('tag source + sync on: never synced, no branch named after the tag', { time
   const orch = orchFor(w, { branch: { source: 'v1' }, sync: on(w.key) });
   const logs = [];
   orch.on('log', (e) => logs.push(e));
+  const seen = fetchesUntilDone(orch);
   const res = await orch.run();
   assert.equal(res.status, 'done', JSON.stringify(res));
-  assert.equal(fetches, 0);
+  assert.equal(seen.n, 0);
   assert.equal(spawnSync('git', ['rev-parse', '--verify', '-q', 'refs/heads/v1'], { cwd: w.a }).status, 1);
   assert.equal('sync' in orch.getState().branch, false);
   const syncLines = logs.filter((e) => e.source === 'sync');
@@ -683,9 +691,10 @@ test('workspace member whose named source exists nowhere: one miss fetch, no Syn
   const orch = createOrchestrator({ ...wsOpts([w1.a], { branch: { source: 'feat/ghost' } }), prompt: 'x', auto: true, claude: { mock: true }, sync: on(w1.key) });
   const logs = [];
   orch.on('log', (e) => logs.push(e));
+  const seen = fetchesUntilDone(orch);
   const res = await orch.run();
   assert.equal(res.status, 'done', JSON.stringify(res));
-  assert.equal(fetches, 1);
+  assert.equal(seen.n, 1);
   const lines = logs.filter((e) => e.source === 'sync');
   assert.equal(lines.length, 1);
   assert.match(lines[0].text, /fallback/);
@@ -707,4 +716,57 @@ test('scheduled workspace member source pushed after a fresh fetch: fetched once
   const m = orch.members[0];
   await orch._ensureLocalSource(m, 'feat/other', { replay: true });
   assert.equal(fetches, 0);
+});
+
+const dirty = (dir) => writeFileSync(join(dir, 'seed.txt'), 'local edit\n');   // seed.txt is tracked (world())
+
+const SAME = { branch: { source: 'dev', sameAsSource: true } };
+
+test('same-branch + sync on + behind + clean: dev is fast-forwarded first, then the run merges onto it', { timeout: 60000 }, async () => {
+  const w = world();
+  const tip = teammate(w, ['mate.txt']);
+  const orch = orchFor(w, { ...SAME, sync: on(w.key) });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', JSON.stringify(res));
+  const st = orch.getState();
+  assert.equal(st.branch.sync.result, 'fast-forwarded');
+  assert.equal(st.branch.baseSha, tip);
+  assert.equal(st.branch.mergeBack.merged, true, JSON.stringify(st.branch.mergeBack));
+  assert.equal(sha(w.a, 'dev'), st.branch.mergeBack.sha);
+});
+
+for (const onDiverged of ['fail', 'origin']) {
+  test(`same-branch + sync on + diverged (onDiverged ${onDiverged}): refused (terminal) with ONE message, dev untouched`, { timeout: 60000 }, async () => {
+    const w = world();
+    teammate(w, ['mate.txt']);
+    localCommit(w.a, 'local.txt');
+    const before = sha(w.a, 'dev');
+    const orch = orchFor(w, { ...SAME, sync: on(w.key, { onDiverged }) });
+    const res = await orch.run();
+    assert.equal(res.status, 'error', JSON.stringify(res));
+    assert.match(res.error, /could not fast-forward dev .*\(diverged\).*run on the source branch.*push or reconcile/i);
+    assert.doesNotMatch(res.error, /Start from origin/, 'never the advice that leads into this refusal');
+    assert.equal(sha(w.a, 'dev'), before);
+  });
+}
+
+test('same-branch + sync on + behind + dirty checkout: refused (terminal) with the fix in the message', { timeout: 60000 }, async () => {
+  const w = world();
+  teammate(w, ['mate.txt']);
+  dirty(w.a);
+  const orch = orchFor(w, { ...SAME, sync: on(w.key) });
+  const res = await orch.run();
+  assert.equal(res.status, 'error', JSON.stringify(res));
+  assert.match(res.error, /\(dirty\).*commit or stash/);
+});
+
+test('flag OFF: feature == source is still refused exactly as before — the server never switches modes', { timeout: 60000 }, async () => {
+  const w = world();
+  const before = sha(w.a, 'dev');
+  const orch = orchFor(w, { branch: { source: 'dev', feature: 'dev' }, sync: on(w.key) });
+  const res = await orch.run();
+  assert.equal(res.status, 'error', JSON.stringify(res));
+  assert.match(res.error, /must differ/);
+  assert.equal(orch.getState().branch?.sameAsSource, undefined, 'never inferred from feature === source');
+  assert.equal(sha(w.a, 'dev'), before);
 });

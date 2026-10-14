@@ -18,8 +18,26 @@ const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 const NODE_COLORS = new Set(['violet', 'blue', 'green', 'red', 'peach', 'amber']);
 const PAUSE_WHY = { cost_pipeline: 'cost limit', cost_total: 'total budget', cost_pipeline_policy: 'team cap', cost_total_policy: 'team total', error: 'error', recoverable: 'recoverable', usage_limit: 'usage limit', drain: 'restart' };
 
-/** A frozen snapshot from GET /api/ask/runs/:id `state` (artifacts.mjs rowToState). null for a non-object. */
-export function snapshotFromState(state, { now = Date.now() } = {}) {
+/** Chat P3 (U10): the active nodes with what the chat run card's agent chips show — the node's model (the run's
+ *  manifest cell, as app.js activeNodes reads it) named through `modelLabel` (app.js: the catalog label; REST: the
+ *  raw id) and the cycle the in-flight execution is on (its ledger ordinal). [] without a decor bag. */
+export function activeAgents(decor, stepper, { modelLabel = null } = {}) {
+  if (!decor || !Array.isArray(decor.activeNodes)) return [];
+  const byId = new Map((isGraphManifest(stepper) ? stepper.graph.nodes : []).filter(Boolean).map((n) => [n.id, n]));
+  return decor.activeNodes.map((a) => {
+    const n = byId.get(a.nodeId);
+    const rows = (decor.footers && decor.footers[a.nodeId] && decor.footers[a.nodeId].rows) || [];
+    const row = rows.find((x) => x.executionId === a.executionId) || rows[rows.length - 1] || null;
+    const model = a.model || (n && n.model) || '';
+    const named = model && typeof modelLabel === 'function' ? modelLabel(model) : null;
+    return { ...a, model, effort: a.effort || (n && n.effort) || '', modelLabel: model ? (named || model) : '', cycle: row ? (Number(row.ordinal) || 1) : 1 };
+  });
+}
+
+/** A frozen snapshot from GET /api/ask/runs/:id `state` (artifacts.mjs rowToState). null for a non-object.
+ *  `extras` is the same response's `extras` (Chat P3): a finished run's results.json counts + top files, its last
+ *  (newest) artifacts and its PR — null / false when absent. */
+export function snapshotFromState(state, { now = Date.now(), extras = null } = {}) {
   if (!state || typeof state !== 'object') return null;
   const status = String(state.status || '').toLowerCase();
   const graph = isGraphManifest(state.stepper);
@@ -28,6 +46,7 @@ export function snapshotFromState(state, { now = Date.now() } = {}) {
   const live = LIVE_STATUS.has(status);
   const decor = graph ? decorFromState(state, { live, now }) : null;
   const ws = state.target === 'workspace';
+  const x = extras && typeof extras === 'object' ? extras : null;
   return {
     source: 'rest',
     runId: null,
@@ -47,9 +66,16 @@ export function snapshotFromState(state, { now = Date.now() } = {}) {
     elapsedMs: Number(state.totalActiveMs) || 0,
     costUsd: engineReportsCost(state.runEngine) ? (Number(state.totalCostUsd) || 0) : null,   // null: cost unknown (Cursor), never $0.00
     progress: decor ? decor.progress : null,
-    active: decor ? decor.activeNodes : [],          // a v1 row names no agent even when state.active is set
+    active: decor ? activeAgents(decor, state.stepper) : [],   // a v1 row names no agent even when state.active is set
     stepper: graph ? state.stepper : null,
     decor,
+    auto: (state.stepper && typeof state.stepper === 'object' && state.stepper.auto) || null,
+    branch: state.branch && typeof state.branch === 'object' && typeof state.branch.feature === 'string' ? state.branch.feature : '',
+    results: x && x.results && typeof x.results === 'object' ? x.results : null,
+    artifacts: x && Array.isArray(x.artifacts) ? x.artifacts : null,
+    moreArtifacts: !!(x && x.moreArtifacts),
+    pr: x && x.pr && typeof x.pr.url === 'string' && x.pr.url ? x.pr : null,
+    archived: !!state.archivedAt,                    // archived: the run folder and its History row are gone
   };
 }
 
@@ -86,7 +112,7 @@ export function progressRoute(ident, snap) {
 }
 
 const nodeSig = (stepper) => (stepper && stepper.graph && Array.isArray(stepper.graph.nodes) ? stepper.graph.nodes.filter(Boolean).map((n) => n.id).join('|') : '');
-const projectLabel = (ident, snap) => {
+export const projectLabel = (ident, snap) => {
   if (ident.label) return ident.label;
   if (snap && Array.isArray(snap.projectNames) && snap.projectNames.length) return snap.projectNames.join(' · ');
   if (snap && snap.projectDir) return String(snap.projectDir).split(/[\\/]/).filter(Boolean).pop() || '';
@@ -143,6 +169,9 @@ export function createRunProgressCard({ doc, ident, onOpen = null }) {
       // and again on every host width change its ResizeObserver sees (the path relayoutCards() never covers).
       graph = mountStaticGraph(graphHost, manifestTemplate(stepper), {
         doc, portsFn: manifestPortsFn(stepper), agents: manifestAgents(stepper), scale: FLOW_SCALE, layout: 'flow',
+        // The model each agent RUNS — its manifest cell (a per-run overlay pick, a project pick, a team default), as the run
+        // page names it (graph/run-hosts.mjs modelOf) — never the template's authored config.model alone.
+        modelOf: (node) => ((stepper.graph.nodes.find((n) => n && n.id === node.id) || {}).model) || (node.config && node.config.model) || '',
         onLayout: redecorate,
       });
       graphSig = sig;

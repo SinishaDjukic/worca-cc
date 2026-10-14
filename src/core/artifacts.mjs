@@ -1961,6 +1961,32 @@ export function totalsFor(row) {
   return { cost, active };
 }
 
+/** [[projectKey, branchRecord]] of a pipelines row: every workspace member's, else the single run's own.
+ *  Exported for pipeline-delete's same-branch guard. */
+export function branchRecordsOf(row) {
+  const branch = typeof row.branch === 'string' ? j(row.branch, null) : row.branch;
+  const wm = typeof row.workspace_meta === 'string' ? j(row.workspace_meta, null) : row.workspace_meta;
+  const workspaceBranches = wm?.branches || row.branches;
+  const isWorkspace = row.target === 'workspace' && workspaceBranches && typeof workspaceBranches === 'object';
+  return isWorkspace ? Object.entries(workspaceBranches) : [[row.project_key ?? row.projectKey ?? null, branch]];
+}
+
+/** Run on the source branch (branch.sameAsSource): each member's merge back of its hidden branch into
+ *  its source. `merged: null` = not attempted yet (the run, or its teardown, is still going). null for
+ *  every other run, so their history entries keep today's shape. */
+export function mergeBackFor(row) {
+  if (!row || typeof row !== 'object') return null;
+  const members = [];
+  for (const [projectKey_, br] of branchRecordsOf(row)) {
+    if (!br || br.sameAsSource !== true) continue;
+    const mb = br.mergeBack && typeof br.mergeBack === 'object' ? br.mergeBack : null;
+    members.push({ projectKey: projectKey_ || null, source: br.source || null, branch: br.feature || null,
+      merged: mb ? mb.merged === true : null, kind: mb?.kind || null, reason: mb?.reason || null, sha: mb?.sha || null,
+      paths: Array.isArray(mb?.paths) ? mb.paths : [] });
+  }
+  return members.length ? { merged: members.every((m) => m.merged === true), members } : null;
+}
+
 /**
  * Return the still-live worktrees retained after a teardown commit failure.
  * The DB stores single-project metadata in `branch` and workspace metadata in
@@ -1969,15 +1995,8 @@ export function totalsFor(row) {
  */
 export function retainedWorkFor(row) {
   if (!row || typeof row !== 'object') return null;
-  const branch = typeof row.branch === 'string' ? j(row.branch, null) : row.branch;
-  const wm = typeof row.workspace_meta === 'string' ? j(row.workspace_meta, null) : row.workspace_meta;
-  const workspaceBranches = wm?.branches || row.branches;
-  const isWorkspace = row.target === 'workspace' && workspaceBranches && typeof workspaceBranches === 'object';
-  const candidates = isWorkspace
-    ? Object.entries(workspaceBranches)
-    : [[row.project_key ?? row.projectKey ?? null, branch]];
   const members = [];
-  for (const [projectKey_, br] of candidates) {
+  for (const [projectKey_, br] of branchRecordsOf(row)) {
     const failure = br?.commitFailed;
     const worktreeDir = br?.worktreeDir;
     if (!failure || !worktreeDir || !existsSync(worktreeDir)) continue;
@@ -1995,16 +2014,27 @@ export function retainedWorkFor(row) {
   return { reason: members[0].code || 'unknown', members };
 }
 
+const BASE_RANK = { conflicts: 4, error: 3, 'no-branch': 2, clean: 1, 'up-to-date': 0 };
+/** History list summary of a stored base check (#620): no file list, the detail view has it. */
+export function baseCheckSummary(c) {
+  if (!c || typeof c !== 'object' || !c.status) return null;
+  return { status: c.status, base: c.base ?? null, behind: Number.isFinite(c.behind) ? c.behind : null,
+    fileCount: c.fileCount | 0, kind: c.kind ?? null, stale: !!c.stale, at: c.at ?? null };
+}
+/** The worst member's summary (a workspace row), else the run's own. */
+export function baseCheckSummaryFor(row) {
+  const branch = typeof row.branch === 'string' ? j(row.branch, null) : row.branch;
+  const wm = typeof row.workspace_meta === 'string' ? j(row.workspace_meta, null) : row.workspace_meta;
+  const recs = row.target === 'workspace' && wm?.branches ? Object.values(wm.branches).map((b) => b?.baseCheck) : [branch?.baseCheck];
+  return recs.map(baseCheckSummary).filter(Boolean)
+    .sort((a, b) => (BASE_RANK[b.status] ?? 0) - (BASE_RANK[a.status] ?? 0))[0] || null;
+}
+
 /** Checked-out members of a finished run (issue #529) — never an error, unlike retainedWorkFor. */
 export function checkoutRecordsFor(row) {
   if (!row || typeof row !== 'object') return null;
-  const branch = typeof row.branch === 'string' ? j(row.branch, null) : row.branch;
-  const wm = typeof row.workspace_meta === 'string' ? j(row.workspace_meta, null) : row.workspace_meta;
-  const wsBranches = wm?.branches || row.branches;
-  const isWorkspace = row.target === 'workspace' && wsBranches && typeof wsBranches === 'object';
-  const candidates = isWorkspace ? Object.entries(wsBranches) : [[row.project_key ?? row.projectKey ?? null, branch]];
   const members = [];
-  for (const [pk, br] of candidates) {
+  for (const [pk, br] of branchRecordsOf(row)) {
     const c = br?.checkout;
     // A linked folder (checkout.external) lives at checkout.dir; br.worktreeDir is the run's own path.
     const dir = c?.external ? c.dir : br?.worktreeDir;
@@ -2055,6 +2085,7 @@ async function workspaceMemberFacts(row, results, opts = {}) {
       memberKey: m.memberKey, name: m.name, projectDir: m.projectDir,
       branch: m.feature, sourceBranch: m.source,
       survived: false, affected: false, added: 0, removed: 0, diffFrozen: false,
+      baseCheck: baseCheckSummary(wm.branches?.[m.memberKey]?.baseCheck),
     };
     if (m.projectDir && m.feature) out.survived = await branchExists(m.projectDir, m.feature);
     const sum = perProject && perProject[m.memberKey] ? perProject[m.memberKey].summary : null;
@@ -2163,6 +2194,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     }
   }
   const { cost, active } = totalsFor(row);
+  const mergeBack = mergeBackFor(row);
   const entry = {
     id: row.id,
     dir: row.dir,
@@ -2176,9 +2208,13 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     pauseReason: row.pause_reason ?? null,
     pauseDetail: row.pause_detail ?? null,
     limitEngine: row.limit_engine ?? null,
+    limitResetAt: row.limit_reset_at ?? null,
     runEngine: row.run_engine || 'claude',
     retainedWork: retainedWorkFor(row),
     checkout: checkoutRecordsFor(row),
+    baseCheck: baseCheckSummaryFor(row),
+    // Only a run on its source branch carries these two keys (history shape unchanged otherwise).
+    ...(mergeBack ? { sameAsSource: true, mergeBack } : {}),
     survived,
     added,
     removed,
@@ -2253,6 +2289,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            ${RUN_ENGINE_SQL} AS run_engine
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
@@ -2291,6 +2328,7 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            ${RUN_ENGINE_SQL} AS run_engine
     FROM pipelines
     WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'}
@@ -2530,6 +2568,7 @@ function rowToState(row) {
   state.lastAction = rp && rp.lastAction && typeof rp.lastAction.by === 'string' ? { ...rp.lastAction } : null;
   state.pauseDetail = typeof rp?.pauseDetail === 'string' ? rp.pauseDetail : null;
   state.limitEngine = typeof rp?.limitEngine === 'string' ? rp.limitEngine : null;
+  state.limitResetAt = typeof rp?.limitResetAt === 'string' ? rp.limitResetAt : null;
   state.runEngine = runEngineOfRow(row);
   const outcome = j(row.outcome, null);
   if (outcome) {
