@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
-import { buildQuoteChip, buildRow, buildComposer, buildIconButton, SEND_ICON_PATH, NEW_CHAT_ICON_PATH } from '../extension/src/sidebar/sidebar-view.mjs';
+import { buildQuoteChip, buildRow, buildComposer, buildIconButton, buildFileChip, buildDropOverlay, SEND_ICON_PATH, NEW_CHAT_ICON_PATH, ICON } from '../extension/src/sidebar/sidebar-view.mjs';
+import { ATTACH_ACCEPT } from '../ui/public/attach-files.mjs';
 import { formatQuotedMessage } from '../ui/public/pinpoint-model.mjs';
 
 const TID = 'askt_00000001';
@@ -81,4 +82,40 @@ test('the composer box keeps the Ask order: lead, chips, input, message, row; se
   const askPanelSrc = readFileSync('ui/public/ask-panel.mjs', 'utf8');
   assert.equal(/\bsend: '([^']+)'/.exec(askPanelSrc)[1], SEND_ICON_PATH);
   for (const cls of ['ask-send', 'ask-stop']) assert.ok(refBox.querySelector(`.${cls}`) && mine.el.querySelector(`.${cls}`), cls);
+});
+
+const ASK_SRC = readFileSync('ui/public/ask-panel.mjs', 'utf8');
+test('the shared icons are ask-panel.mjs ICONS, path for path', () => {
+  for (const k of ['plus', 'chevronDown', 'send']) assert.equal(new RegExp(`\\b${k}: '([^']+)'`).exec(ASK_SRC)[1], ICON[k], k);
+});
+
+test('the composer row keeps Ask\'s order and controls, minus voice and Sets, plus the capture button', async () => {
+  const h = await loaded();
+  const key = (c) => (c.tagName === 'INPUT' ? `input[${c.type}]` : [...c.classList].sort().join(' '));
+  const ref = [...h.doc.querySelector('.ask-composer-row').children].filter((c) => !c.matches('.ask-sets-btn, .ask-voice')).map(key);
+  const mine = buildComposer(h.doc, { placeholder: 'x', onInput() {}, onSend() {}, onStop() {} });
+  const row = mine.el.querySelector('.ask-composer-row');
+  assert.deepEqual([...row.children].filter((c) => !c.matches('[data-wx-capture-btn]')).map(key), ref);
+  assert.equal(row.querySelector('[data-wx-capture-btn]').previousElementSibling, row.querySelector('[data-ask-attach-btn]'), 'capture sits right after +');
+  assert.equal(mine.file.accept, ATTACH_ACCEPT);
+  assert.equal(mine.file.accept, h.doc.querySelector('.ask-composer-row input[type=file]').accept);
+  // The ring, the model button and the stop glyph match Ask's markup.
+  const attrs = (n) => [...n.attributes].map((a) => `${a.name}=${a.value}`).sort();
+  for (const sel of ['.ask-ctx-ring svg', '.ask-ctx-ring-track', '.ask-ctx-ring-arc', '.ask-stop svg', '.ask-stop rect', '.ask-send svg', '.ask-model-btn svg']) {
+    assert.deepEqual(attrs(row.querySelector(sel)), attrs(h.doc.querySelector(`.ask-composer-row ${sel}`)), sel);
+  }
+  for (const sel of ['[data-ask-meter]', '[data-ask-ctx-btn]', '[data-ask-model-btn]', '[data-ask-scope-btn]', '[data-ask-attach-btn]']) {
+    assert.deepEqual(skeleton(row.querySelector(sel)), skeleton(h.doc.querySelector(`.ask-composer-row ${sel}`)), sel);
+  }
+});
+
+test('the file chip and the drop overlay have Ask\'s skeleton', async () => {
+  const h = await loaded();
+  const chip = buildFileChip(h.doc, { name: 'shot.png', attKind: 'image', mime: 'image/png', dataBase64: 'iVBORw==' }, () => {});
+  assert.deepEqual([...chip.children].map((c) => c.className), ['ask-chip-thumb', 'ask-chip-name', 'ask-chip-x']);
+  assert.equal(chip.querySelector('.ask-chip-x').getAttribute('aria-label'), 'Remove shot.png');
+  const refDrop = h.doc.querySelector('[data-ask-drop]');
+  assert.ok(refDrop, 'the Ask panel rendered its drop overlay');
+  assert.deepEqual(skeleton(buildDropOverlay(h.doc)), skeleton(refDrop));
+  assert.equal(buildDropOverlay(h.doc).textContent, refDrop.textContent);
 });

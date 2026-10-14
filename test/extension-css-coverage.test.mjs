@@ -21,6 +21,8 @@ test('the shadow variant: own layer first, tokens on :host with color-scheme, as
   assert.ok(css.includes(':host([data-theme="dark"])'));
   assert.ok(css.includes('.ask-chip{'));
   assert.ok(css.includes('.pp-bar'));
+  assert.ok(css.includes('.wx-cap{') && css.includes('.wx-cap-box{'), 'the area capture overlay is styled');
+  for (const t of ['--scrim', '--blue', '--panel', '--shadow-pop']) assert.ok(css.includes(`${t}:`), `token ${t} is defined in the shadow CSS`);
   assert.ok(!/:root/.test(css));
   assert.ok(css.includes("'Worca Poppins'"));
   assert.ok(!css.includes('@font-face'));

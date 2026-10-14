@@ -1,5 +1,5 @@
 // test/extension-sidebar-head.test.mjs — the paired sidebar's head (the real sidebar.mjs in jsdom): the chat list plus
-// worca's New chat button, and the project picker's list / empty / failed / pinned states.
+// worca's New chat button, and the chat scope pill's list / empty / failed / pinned states.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootSidebar, stopSidebar, ok, pairedRoutes, SNAP } from './helpers/sidebar-harness.mjs';
@@ -31,50 +31,52 @@ test('the head keeps the chat list and adds worca\'s New chat icon button; it op
   assert.equal(h.$('textarea.ask-input').value, 'half a question', 'the draft stays');
 });
 
-test('project picker: a visible "Project" label, "Any project" with its tooltip, projects and workspaces in their own groups', async () => {
+// The chat scope is Ask's composer pill + popover (it replaced the head's project picker).
+const pill = (h) => h.$('.ask-scope-btn');
+const scopeItems = (h) => [...h.$$('.ask-pop-scope .ask-pop-item')];
+const scopeLabels = (h) => scopeItems(h).map((i) => [i.querySelector('.ask-model-name').textContent, !!i.querySelector('.ask-model-check')]);
+
+test('chat scope: "Any project" with its tooltip, then projects and workspaces under their own captions', async () => {
   const h = await bootSidebar({ storage: STORE, route: pairedRoutes(null, { projects: PROJECTS, workspaces: WORKSPACES }) });
-  const sel = h.doc.getElementById('wx-scope');
-  assert.ok(sel);
-  assert.equal(h.$('label[for="wx-scope"]').textContent, 'Project');
-  const any = sel.options[0];
-  assert.equal(any.textContent, 'Any project');
-  assert.equal(any.value, 'auto');
-  assert.equal(any.title, 'Worca picks the project from your message');
-  assert.equal(sel.value, 'auto');
-  const groups = [...sel.querySelectorAll('optgroup')].map((g) => [g.label, [...g.children].map((o) => [o.value, o.textContent])]);
-  assert.deepEqual(groups, [['Projects', [['p:acme-api', 'ACME API'], ['p:acme-web', 'ACME Web']]], ['Workspaces', [['w:ws_1', 'ACME platform']]]]);
-  assert.ok(!sel.hasAttribute('data-pinned'));
+  assert.equal(h.$('.wx-scope'), null, 'no head picker any more');
+  assert.equal(h.$('.ask-scope-label').textContent, 'Any project');
+  assert.equal(pill(h).title, 'Worca picks the project from your message');
+  assert.ok(!pill(h).hasAttribute('data-pinned'));
+  await h.click(pill(h));
+  assert.deepEqual([...h.$$('.ask-pop-scope .ask-pop-caption')].map((c) => c.textContent), ['Chat scope', 'Projects', 'Workspaces']);
+  assert.deepEqual(scopeLabels(h), [['Any project', true], ['ACME API', false], ['ACME Web', false], ['ACME platform', false]]);
+  assert.equal(scopeItems(h)[0].title, 'Worca picks the project from your message');
+  await h.click(pill(h));
+  assert.equal(h.$('.ask-pop-scope'), null, 'a second click closes it');
 });
 
-test('project picker: the server has none → a muted line and Open Worca (opens the Worca address in a tab)', async () => {
+test('chat scope: the server has none → a muted line and Open Worca (opens the Worca address in a tab)', async () => {
   const h = await bootSidebar({ storage: STORE, route: pairedRoutes() });
-  assert.equal(h.doc.getElementById('wx-scope'), null, 'no select');
-  const bar = h.$('.wx-scope');
-  assert.match(bar.textContent, /No projects in this Worca yet/);
-  const link = [...bar.querySelectorAll('a')].find((a) => a.textContent === 'Open Worca');
-  assert.ok(link);
-  await h.click(link);
+  await h.click(pill(h));
+  assert.match(h.$('.ask-pop-scope').textContent, /No projects in this Worca yet/);
+  const open = scopeItems(h).find((b) => b.textContent === 'Open Worca');
+  assert.ok(open);
+  await h.click(open);
   assert.deepEqual(h.tabsCreated, [{ url: BASE }]);
 });
 
-test('project picker: a failed load says so (not "none") and Retry re-fetches only the lists', async () => {
+test('chat scope: a failed load says so (not "none") and Retry re-fetches only the lists', async () => {
   let fail = true;
   const h = await bootSidebar({ storage: STORE, route: pairedRoutes((p) => (fail && p === '/api/projects' ? ok({ error: 'boom' }, 500) : null), { projects: PROJECTS }) });
-  const bar = h.$('.wx-scope');
-  assert.match(bar.textContent, /Couldn't load projects/);
-  assert.doesNotMatch(bar.textContent, /No projects/);
-  assert.equal(h.doc.getElementById('wx-scope'), null);
-  const retry = [...bar.querySelectorAll('button')].find((b) => b.textContent === 'Retry');
+  await h.click(pill(h));
+  const pop = h.$('.ask-pop-scope');
+  assert.match(pop.textContent, /Couldn't load projects/);
+  assert.doesNotMatch(pop.textContent, /No projects/);
+  const retry = scopeItems(h).find((b) => b.textContent === 'Retry');
   assert.ok(retry);
   fail = false;
   const before = h.calls.length;
   await h.click(retry);
   assert.deepEqual(h.paths().slice(before).sort(), ['/api/projects', '/api/workspaces']);
-  assert.ok(h.doc.getElementById('wx-scope'), 'the picker is back');
-  assert.equal(h.doc.getElementById('wx-scope').options.length, 1 + PROJECTS.length);
+  assert.equal(scopeItems(h).length, 1 + PROJECTS.length, 'the open popover shows the lists');
 });
 
-test('project picker: a pinned chat shows its project on load; a pin the list lacks still shows; a change PATCHes the scope', async () => {
+test('chat scope: a pinned chat shows its project on load; a pin the list lacks still shows; a pick PATCHes the scope', async () => {
   const route = pairedRoutes((p, opts, method) => {
     if (p === `/api/ask/threads/${TID}` && method === 'GET') return ok(SNAP(TID, { pinned: true, projectKey: 'acme-web' }));
     if (p === '/api/ask/threads/askt_00000002' && method === 'GET') return ok(SNAP('askt_00000002', { pinned: true, workspaceId: 'ws_gone' }));
@@ -83,24 +85,27 @@ test('project picker: a pinned chat shows its project on load; a pin the list la
   }, { projects: PROJECTS, workspaces: WORKSPACES, threads: [{ id: TID, title: 'A' }, { id: 'askt_00000002', title: 'B' }] });
   const h = await bootSidebar({ storage: STORE, route });
   await h.change(h.$('.chat-head select[aria-label="Chat"]'), TID);
-  const sel = h.doc.getElementById('wx-scope');
-  assert.equal(sel.value, 'p:acme-web');
-  assert.ok(sel.hasAttribute('data-pinned'), 'styled as pinned');
-  assert.match(sel.title, /ACME Web/);
-  await h.change(sel, 'w:ws_1');
+  assert.equal(h.$('.ask-scope-label').textContent, 'ACME Web');
+  assert.ok(pill(h).hasAttribute('data-pinned') && pill(h).classList.contains('is-pinned'), 'styled as pinned');
+  assert.match(pill(h).title, /ACME Web/);
+  await h.click(pill(h));
+  assert.deepEqual(scopeLabels(h).filter(([, on]) => on), [['ACME Web', true]]);
+  await h.click(scopeItems(h).find((b) => b.textContent.startsWith('ACME platform')));
   const patch = h.calls.find((c) => c.startsWith('PATCH '));
   assert.ok(patch && patch.endsWith(`/api/ask/threads/${TID} {"scope":{"pinned":true,"workspaceId":"ws_1"}}`), patch);
-  assert.ok(h.doc.getElementById('wx-scope').hasAttribute('data-pinned'));
+  assert.equal(h.$('.ask-scope-label').textContent, 'ACME platform');
   await h.change(h.$('.chat-head select[aria-label="Chat"]'), 'askt_00000002');
-  const sel2 = h.doc.getElementById('wx-scope');
-  assert.equal(sel2.value, 'w:ws_gone', 'an unknown pin is still shown');
-  await h.change(sel2, 'auto');
-  assert.ok(!h.doc.getElementById('wx-scope').hasAttribute('data-pinned'));
+  assert.equal(h.$('.ask-scope-label').textContent, 'ws_gone', 'an unknown pin is still shown');
+  await h.click(pill(h));
+  await h.click(scopeItems(h).find((b) => b.textContent.startsWith('Any project')));
+  assert.ok(!pill(h).hasAttribute('data-pinned'));
+  assert.equal(h.$('.ask-scope-label').textContent, 'Any project');
 });
 
-test('project picker: a pinned chat on a Worca with no projects still shows its pin', async () => {
+test('chat scope: a pinned chat on a Worca with no projects still shows its pin', async () => {
   const route = pairedRoutes((p, opts, method) => (p === `/api/ask/threads/${TID}` && method === 'GET' ? ok(SNAP(TID, { pinned: true, projectKey: 'acme-old' })) : null), { threads: [{ id: TID, title: 'A' }] });
   const h = await bootSidebar({ storage: STORE, route });
   await h.change(h.$('.chat-head select[aria-label="Chat"]'), TID);
-  assert.equal(h.doc.getElementById('wx-scope').value, 'p:acme-old');
+  assert.equal(h.$('.ask-scope-label').textContent, 'acme-old');
+  assert.ok(pill(h).hasAttribute('data-pinned'));
 });

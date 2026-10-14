@@ -16,7 +16,7 @@ test('"Worca isn\'t running" when nothing answers', async ({ context, sw, extens
   await expect(sidebar.locator('.wx-offline')).toContainText(url);
 });
 
-test('Connection settings stays open with the typed address, focus and caret across offline retries', async ({ context, sw, extensionId, site }) => {
+test('Settings stays open with the typed address, focus and caret across offline retries', async ({ context, sw, extensionId, site }) => {
   const url = await deadUrl();
   await configure(sw, { url });
   const page = await context.newPage(); await page.goto(site.url);
@@ -24,7 +24,7 @@ test('Connection settings stays open with the typed address, focus and caret acr
   let probes = 0;
   sidebar.on('requestfailed', (r) => { if (r.url().endsWith('/api/extension/hello')) probes += 1; });
   await expect(sidebar.locator('.wx-offline')).toBeVisible();
-  await sidebar.getByText('Connection settings').click();
+  await sidebar.locator('details.wx-settings > summary').click();
   const input = sidebar.getByLabel('Worca address');
   await expect(input).toHaveValue(url);
   await input.fill('http://127.0.0.1:5');

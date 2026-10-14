@@ -12,15 +12,28 @@ load it into your browser yourself (see [Install](#install)).
 - **Sidebar chat.** The same Ask Worca conversation as the Chat page: pick a chat from the list (or
   start one with the **+** New chat button), ask, and watch the answer stream in. A card in an answer
   shows its title and **Open in Worca**, which opens the thread in the full UI, where you act on it.
-- **Project.** Under the chat list, **Project** pins a chat to one project or workspace. **Any
-  project** lets Worca pick the project from your message. If Worca has no projects yet, or the
-  list cannot be loaded, the sidebar says so (with **Open Worca** or **Retry**).
+- **Composer.** The composer is Ask Worca's own:
+  - **+** attaches files (you can also paste or drag them in), and the camera button captures an
+    area of the page (see [Area capture](#area-capture)).
+  - The scope pill sets the chat scope. **Any project** lets Worca pick the project from your
+    message; a project or workspace pins the chat to it. If Worca has no projects yet, the list says
+    **No projects in this Worca yet** (with **Open Worca**); if the list cannot be loaded, it says
+    so (with **Retry**).
+  - The model button picks the model and, in its **Effort** row, the effort.
+  - The chat's cost and its context ring (click it for the context window) sit next to them.
 - **Light and dark.** The sidebar and the Pinpoint toolbar follow your browser's colour scheme.
 - **Page context.** Every message tells Ask which page you are on: its URL, its title and the text
   you have selected. You can also send the readable text of the whole page, one message at a time.
-- **Pinpoint on web pages.** Select text on the page and the Pinpoint toolbar appears, as it does in
-  Worca's own chat, artifacts and diffs: **Explain** answers in a popover, and **Send to chat**,
-  **Use this**, **Discuss** and **Go deeper** hand the passage to the sidebar.
+- **Pinpoint on web pages.** Select text and press **Alt+Shift+W**: the Pinpoint toolbar opens on
+  the selection, as it does in Worca's own chat, artifacts and diffs. **Explain** answers in a
+  popover, and **Send to chat**, **Use this**, **Discuss** and **Go deeper** hand the passage to the
+  sidebar. Selecting text alone no longer opens the toolbar; to bring that back, turn on
+  **Settings → Show Pinpoint when I select text** at the bottom of the sidebar.
+- **Area capture.** Press **Alt+Shift+S** (or click the camera button) and drag a rectangle on the
+  page: the picture goes into the composer as a chip (see [Area capture](#area-capture)).
+- **Running Actions.** When the page is served by a running Worca Action (a run's dev server), a new
+  chat is pinned to that run's project, and the page context names the run. A scope you picked
+  yourself is never overridden.
 - **Context menu.** Right-click a selection → **Ask Worca about selection** opens the sidebar with
   the selection quoted.
 
@@ -41,6 +54,31 @@ npm run ext:zip            # the same, plus one zip per browser in extension/dis
   when it quits, so load it again after a restart.
 - **The zips** in `extension/dist/` are for a manual upload to a browser's extension store. Nothing
   here publishes them.
+
+## Keyboard shortcuts
+
+| Command | Default | |
+|---|---|---|
+| Open Pinpoint on the selection | Alt+Shift+W | only in the tab the sidebar is showing |
+| Capture an area | Alt+Shift+S | opens the sidebar if needed |
+
+- **Rebind them** at `chrome://extensions/shortcuts` (Edge: `edge://extensions/shortcuts`). In
+  Firefox: Add-ons → ⚙ → **Manage Extension Shortcuts**.
+- **ChromeOS** reserves Alt+Shift+S, so Chrome leaves the capture command unbound there; bind your
+  own.
+- Pressing Alt+Shift+W with nothing selected makes the sidebar say **Select some text on the page
+  first, then press the shortcut again.**
+
+## Area capture
+
+1. Press **Alt+Shift+S**, or click the camera button in the composer. The page dims and shows
+   **Drag to capture an area · Esc to cancel**.
+2. Drag a rectangle over the part of the page you mean. Esc cancels, and so does a drag smaller
+   than 4 pixels.
+3. The picture of that rectangle goes into the composer as an image chip, with the page details
+   that go with it. Nothing is sent until you press Send, and you can remove the chip first.
+
+A message carries up to 4 screenshots.
 
 ## Pairing
 
@@ -75,6 +113,15 @@ carries. Each item travels as a text attachment, shown as a pill on the sent mes
 | `page-context.md` | always, once the sidebar can read the tab | the page URL, its title and your selection | title 300 characters, selection 4,000 |
 | `page-text.md` | only when you switch the **Page text** chip on | the readable text of the page (no scripts, styles or navigation) | 200,000 characters |
 | `page-quote.md` | when you quoted a passage (Pinpoint or the context menu) | the passage and the page it came from | 4,000 characters |
+| `screenshot-<time>.png` | one per area capture | the picture of the rectangle you drew | up to 4 per message; at most 2048 px on the longest side |
+| `page-capture.md` | when the message carries a screenshot | per screenshot: the page URL and title, the viewport size, the rectangle, a CSS selector for the element under it and the HTML of that element | selector 300 characters, HTML 2,000 |
+
+**What a capture sends.** A capture sends a picture of exactly the rectangle you drew, plus the page
+URL, title, viewport size, the rectangle, a CSS selector, and up to 2,000 characters of the HTML
+under it. Scripts, styles, event handlers and password `value`s are removed from that HTML. Form
+values typed into the page are not in the HTML, but text visible on the screen is in the picture.
+Nothing is sent until you press Send, and each chip can be removed first. Everything taken from the
+page is an attachment that Worca marks as untrusted page data.
 
 The **Page text** chip turns itself off after each message, so the page text is opt-in per message.
 On a page the extension cannot read (a browser page, a store page, or a tab it has no access to
@@ -83,19 +130,23 @@ yet), the line says so and nothing about the page is sent.
 **Why the quote is not in the message text.** Your message text is only what you typed. Everything
 that came from the page, the quote included, is an attachment, because page text can contain
 instructions written to manipulate an AI ("ignore your rules and…"). Worca adds a line to the
-model's context that names `page-context.md`, `page-text.md` and `page-quote.md` as untrusted data
+model's context that names `page-context.md`, `page-text.md`, `page-quote.md` and `page-capture.md` as untrusted data
 from a web page, never as instructions. If the quote were pasted into the message, the model could
 not tell your words from the page's.
 
 ## Pinpoint on web pages
 
-Pinpoint works on a page only while the sidebar is open and showing that tab. The extension has no
+Pinpoint works on a page only while the sidebar is open and showing that tab. It opens on request:
+press **Alt+Shift+W** with text selected, or turn on **Settings → Show Pinpoint when I select text**
+to have it appear on every selection, as before. The extension has no
 standing access to any site: the toolbar button grants access to the current tab (`activeTab`), and
 the sidebar then injects Pinpoint into it. Switching tabs moves Pinpoint to the new tab, and closing
 the sidebar removes it.
 
 After you navigate a tab to another site, the page chip says **Click the Worca button in the toolbar
-to use this page.** Click the button again to grant access to the new site.
+to use this page.** Click the button again, or press the capture shortcut (a shortcut grants the
+same access), to use the new site. Area capture needs the same access: without it the composer says
+**Worca could not capture this page**.
 
 - **Chrome and Edge** keep the grant while you stay on the same site.
 - **Firefox** revokes `activeTab` on every navigation, so there the button is needed again after
@@ -134,7 +185,8 @@ as your user can call the approve route directly (for example with `curl`, which
 
 **The token is narrow.** It works only on the routes the sidebar uses: reading the Ask models,
 listing, opening and renaming threads, sending a message and stopping it, Pinpoint, and listing
-projects and workspaces. **Cards are not on the list**, so the extension can show a card but never
+projects and workspaces, and looking up whether a page belongs to a running Action (one origin in;
+one run's id, title and project out). `/api/actions/running` itself stays off. **Cards are not on the list**, so the extension can show a card but never
 apply, undo or start one: do that in Worca. An extension's WebSocket receives only chat frames, never
 runs, terminals or notifications.
 
@@ -190,11 +242,15 @@ asks for:
 
 | Permission | Why |
 |---|---|
-| `activeTab` | read the current tab's URL, title, selection and text, and inject Pinpoint, only after you click the toolbar button or use the context menu |
+| `activeTab` | read the current tab's URL, title, selection and text, inject Pinpoint, and capture the visible tab for an area capture, only after you click the toolbar button, use the context menu or press a shortcut |
 | `scripting` | inject the page script into that tab |
 | `storage` | keep the Worca address and the token |
 | `contextMenus` | the **Ask Worca about selection** item |
 | `sidePanel` (Chrome, Edge) | show the sidebar; Firefox uses `sidebar_action`, which needs no permission |
+
+The manifest also declares the two keyboard shortcuts under `commands`, which is not a permission.
+The area capture uses the same `activeTab` grant; after a navigation (in Firefox, any navigation),
+click the toolbar button or press the capture shortcut again.
 
 Firefox's manifest declares that the extension collects no data.
 
@@ -203,7 +259,7 @@ Firefox's manifest declares that the extension collects no data.
 - **"Worca isn't running".** Nothing answers at the address the sidebar uses. Start Worca with
   `worca ui` (or `npx @worca/app`) and try again.
 - **Worca runs on another port.** The sidebar uses `http://127.0.0.1:4317` by default. Open
-  **Connection settings** at the bottom of the sidebar, enter `http://127.0.0.1:<port>` or
+  **Settings** at the bottom of the sidebar, enter `http://127.0.0.1:<port>` or
   `http://localhost:<port>` under **Worca address** and click **Save**. Only loopback addresses are accepted. Saving
   forgets the token, so pair again.
 - **"No Ask model is available in Worca".** Ask has no model to answer with. Set one up in Worca
@@ -212,6 +268,8 @@ Firefox's manifest declares that the extension collects no data.
 - **The page chip says "Click the Worca button…".** The extension has no access to this tab yet,
   or lost it on navigation. Click the toolbar button (see
   [Pinpoint on web pages](#pinpoint-on-web-pages)).
+- **"Worca could not capture this page".** The extension lost its access to the tab (usually after a
+  navigation). Click the toolbar button or press **Alt+Shift+S** and capture again.
 - **The approval is refused with `extension-agent-blocked`.** Agent isolation is on: approve
   through Worca's published address (see [Pairing](#pairing)).
 
@@ -232,7 +290,8 @@ npm run e2e:extension:update-linux  # re-render the screenshot baselines in the 
 ```
 
 The Playwright suite runs against a test build (`--test`), which adds a host permission for its
-fixture site and lets the panel be pinned to one tab. Its screenshot baselines in
+fixture site, lets the panel be pinned to one tab, and lets a spec run a keyboard command and supply
+the viewport picture for an area capture (`captureVisibleTab` needs a real shortcut press). Its screenshot baselines in
 `e2e/extension/__screenshots__/` are rendered in `mcr.microsoft.com/playwright:<version>-noble`,
 the same image CI uses, so fonts match; the image tag must equal the pinned `@playwright/test`
 version, and a test checks it. Re-render baselines with `e2e:extension:update-linux`, never on a
@@ -252,8 +311,11 @@ Firefox**, on the **production** build (`npm run ext:build`, no host permissions
   chip and the **Sends with your message** line show tab A's title again.
 - **The `activeTab` path.** On a fresh tab of a site never visited before, click the toolbar
   button. The page chip shows the page title, a sent message carries `page-context.md` (visible as
-  its pill), and selecting text shows the Pinpoint toolbar. Navigate that tab to another site: the
+  its pill), and Alt+Shift+W on a selection opens the Pinpoint toolbar. Navigate that tab to another site: the
   chip says **Click the Worca button…** until you click the button again.
+- **The keyboard shortcuts.** Alt+Shift+W opens Pinpoint on a selection; Alt+Shift+S opens the
+  sidebar if needed and starts the capture overlay, and the captured chip shows in the composer
+  (Playwright cannot press extension shortcuts, so the suite calls the command handler directly).
 - **Pinpoint in the closed shadow root.** A click on **Explain** opens the popover (the toolbar does
   not vanish), the arrow keys move between toolbar buttons, and Esc closes it.
 - **Local Network Access** (stable Chrome and Edge only). Pair, send a message and watch the answer

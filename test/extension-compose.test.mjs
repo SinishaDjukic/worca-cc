@@ -38,3 +38,41 @@ test('pinned scope → project or workspace context', () => {
   assert.deepEqual(buildMessageBody({ text: 'x', ctx: null, catalog: CAT, scope: { pinned: true, workspaceId: 'ws_1' } }).context, { pinned: true, workspaceId: 'ws_1' });
   assert.deepEqual(buildMessageBody({ text: 'x', ctx: null, catalog: CAT, scope: { pinned: true, projectKey: 'acme' } }).context, { pinned: true, projectKey: 'acme' });
 });
+
+// ---- files, captures and the composer's model pick
+import { reservedSlots, validPick } from '../extension/src/compose.mjs';
+
+const CAP_META = { url: 'http://fixture.test/', title: 'T', viewport: { width: 1280, height: 720, dpr: 1 }, rect: { x: 1, y: 2, width: 30, height: 40 }, selector: '#para', snippet: '<p id="para">x</p>' };
+test('attachment order: user files and screenshots (chip order), then page context, then page-capture.md', () => {
+  const files = [{ name: 'notes.md', dataBase64: 'IyBoaQ==' }, { name: 'screenshot-1.png', dataBase64: 'iVBORw==', capture: CAP_META }];
+  const b = buildMessageBody({ text: 'x', ctx: CTX, catalog: CAT, scope: { pinned: false }, files });
+  assert.deepEqual(b.attachments.map((a) => a.name), ['notes.md', 'screenshot-1.png', 'page-context.md', 'page-capture.md']);
+  assert.deepEqual(b.attachments[0], { name: 'notes.md', dataBase64: 'IyBoaQ==' });
+  assert.equal(b.attachments[1].capture, undefined);
+  assert.match(dec(b.attachments[3].dataBase64), /selector: #para/);
+});
+test('an explicit pick overrides the catalog default; a half pick does not', () => {
+  const b = buildMessageBody({ text: 'x', catalog: CAT, scope: { pinned: false }, pick: { model: 'claude-sonnet-5-5', effort: 'low' } });
+  assert.deepEqual([b.model, b.effort], ['claude-sonnet-5-5', 'low']);
+  const c = buildMessageBody({ text: 'x', catalog: CAT, scope: { pinned: false }, pick: { model: 'claude-sonnet-5-5' } });
+  assert.deepEqual([c.model, c.effort], ['claude-opus-5-5', 'high']);
+});
+test('more than 8 attachments throws before the POST', () => {
+  const files = [...Array.from({ length: 5 }, (_, i) => ({ name: `f${i}.md`, dataBase64: 'eA==' })), { name: 'screenshot-1.png', dataBase64: 'iVBORw==', capture: CAP_META }];
+  assert.throws(() => buildMessageBody({ text: 'x', ctx: CTX, catalog: CAT, scope: { pinned: false }, files: [...files, { name: 'g.md', dataBase64: 'eA==' }] }), /at most 8 attachments/);
+  assert.equal(buildMessageBody({ text: 'x', ctx: CTX, catalog: CAT, scope: { pinned: false }, files }).attachments.length, 8);
+});
+test('reservedSlots: page context, page text, quote, capture', () => {
+  assert.equal(reservedSlots({ tab: null, withText: true, quote: null, hasCapture: false }), 0);
+  assert.equal(reservedSlots({ tab: { url: 'http://x/' }, withText: false, quote: null, hasCapture: false }), 1);
+  assert.equal(reservedSlots({ tab: { url: 'http://x/', readable: true }, withText: true, quote: null, hasCapture: false }), 2);
+  assert.equal(reservedSlots({ tab: { url: 'http://x/', readable: false }, withText: true, quote: null, hasCapture: false }), 1);
+  assert.equal(reservedSlots({ tab: { url: 'http://x/', readable: true }, withText: true, quote: { text: 'q' }, hasCapture: true }), 4);
+  assert.equal(reservedSlots({ tab: null, withText: false, quote: { text: 'q' }, hasCapture: true }), 2);
+});
+test('validPick: a stored pick the catalog still offers (case-insensitive), else null', () => {
+  assert.deepEqual(validPick(CAT, { model: 'CLAUDE-SONNET-5-5', effort: 'high' }), { model: 'claude-sonnet-5-5', effort: 'high' });
+  assert.equal(validPick(CAT, { model: 'claude-sonnet-5-5', effort: 'max' }), null);
+  assert.equal(validPick(CAT, { model: 'gone', effort: 'low' }), null);
+  assert.equal(validPick(CAT, null), null);
+});

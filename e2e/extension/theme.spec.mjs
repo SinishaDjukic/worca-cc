@@ -15,7 +15,7 @@ test('a stale worca.theme has no effect: the sidebar follows an emulated colour 
   const sidebar = await openSidebar(context, sw, extensionId, page);
   await sidebar.emulateMedia({ colorScheme: 'light' });
   await expect(sidebar.locator('.wx-unpaired')).toBeVisible();
-  await sidebar.getByText('Connection settings').click();
+  await sidebar.locator('details.wx-settings > summary').click();
   await expect(sidebar.locator('.wx-settings select')).toHaveCount(0);
   await expect(sidebar.getByRole('combobox', { name: 'Theme' })).toHaveCount(0);
   await expect(sidebar.locator('html')).toHaveAttribute('data-theme', 'system');
@@ -29,7 +29,7 @@ test('a stale worca.theme has no effect: the sidebar follows an emulated colour 
 });
 
 test('the Pinpoint layer carries no data-theme and follows the page\'s emulated colour scheme', async ({ context, sw, extensionId, worca, site }) => {
-  await configure(sw, worca, { token: await tokenFor(worca, extensionId) });
+  await configure(sw, worca, { token: await tokenFor(worca, extensionId), pinpointOnSelect: true });   // the spec selects to open Pinpoint
   await sw.evaluate(() => chrome.storage.local.set({ 'worca.theme': 'light' }));
   const page = await context.newPage(); await page.emulateMedia({ colorScheme: 'dark' }); await page.goto(site.url);
   const sidebar = await openSidebar(context, sw, extensionId, page);

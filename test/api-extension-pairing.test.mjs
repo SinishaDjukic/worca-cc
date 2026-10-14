@@ -110,6 +110,18 @@ test('pair → token reaches the allowlist only; cards, commands, HEAD refused; 
   assert.equal(st.body.paired, true);
 });
 
+test('the running-Action match: extension-only, one http(s) origin in, the instance list stays refused (D7)', async () => {
+  const { token } = await pair(CHROME_B);
+  const ok = await call('GET', `/api/extension/actions/match?origin=${encodeURIComponent('http://localhost:5999')}`, { origin: CHROME_B, token });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body, { match: null });
+  assert.equal((await call('GET', '/api/extension/actions/match?origin=javascript:alert(1)', { origin: CHROME_B, token })).status, 400);
+  const plain = await call('GET', `/api/extension/actions/match?origin=${encodeURIComponent('http://localhost:5999')}`);
+  assert.deepEqual([plain.status, plain.body.code], [403, 'extension-only']);
+  const list = await call('GET', '/api/actions/running', { origin: CHROME_B, token });
+  assert.deepEqual([list.status, list.body.code], [403, 'extension-route']);
+});
+
 test('approve/deny/revoke/list are refused for an extension caller, a cross-origin caller and an agent caller', async () => {
   const r = await call('POST', '/api/extension/pair', { origin: CHROME, body: { browser: 'chrome' } });
   assert.equal((await call('POST', `/api/extension/pair/${r.body.requestId}/approve`, { origin: CHROME })).status, 403);

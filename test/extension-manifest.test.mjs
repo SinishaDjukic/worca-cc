@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildManifest, manifestVersion } from '../extension/src/manifest.mjs';
+import { buildManifest, manifestVersion, COMMANDS } from '../extension/src/manifest.mjs';
 
 test('chrome/edge: side_panel + sidePanel, service worker, minimal permissions, no host access', () => {
   const m = buildManifest('chrome', { version: '1.10.0' });
@@ -24,7 +24,19 @@ test('firefox: sidebar_action, background.scripts, gecko id, min 140 (data_colle
   assert.equal(m.version_name, undefined);
   for (const k of ['host_permissions', 'optional_host_permissions', 'web_accessible_resources', 'externally_connectable', 'content_scripts']) assert.equal(m[k], undefined, k);
 });
-test('test builds add only the fixture host; versions are Chrome-legal', () => {
+test('both browsers declare the two rebindable commands with their default keys', () => {
+  for (const b of ['chrome', 'edge', 'firefox']) {
+    const m = buildManifest(b, { version: '1.0.0' });
+    assert.deepEqual(Object.keys(m.commands).sort(), [COMMANDS.capture, COMMANDS.pinpoint].sort());
+    assert.equal(m.commands[COMMANDS.pinpoint].suggested_key.default, 'Alt+Shift+W');
+    assert.equal(m.commands[COMMANDS.capture].suggested_key.default, 'Alt+Shift+S');
+    assert.match(m.commands[COMMANDS.pinpoint].description, /Pinpoint/);
+    assert.equal(m.host_permissions, undefined);                 // production: still no host permissions
+  }
+});
+test('test builds add only the fixture host (<all_urls> would strip the Origin the pairing gate needs)', () => {
   assert.deepEqual(buildManifest('chrome', { version: '1.10.0', test: true }).host_permissions, ['http://fixture.test/*']);
+});
+test('versions are Chrome-legal', () => {
   assert.deepEqual(manifestVersion('1.11.0-rc.2'), { version: '1.11.0', versionName: '1.11.0-rc.2' });
 });

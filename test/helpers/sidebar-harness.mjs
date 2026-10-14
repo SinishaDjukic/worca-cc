@@ -11,6 +11,7 @@ globalThis.chrome = {
   runtime: { id: 'wx-test', connect: () => live.h.connect() },
   windows: { getCurrent: async () => ({ id: 1 }) },
   tabs: { create: (o) => { live.h.tabsCreated.push(o); return Promise.resolve({ id: 99 }); } },
+  commands: { getAll: async () => live.h.commands },
   storage: {
     local: {
       get: async (keys) => live.h.localGet(keys),
@@ -18,6 +19,7 @@ globalThis.chrome = {
       remove: async (k) => { for (const x of [].concat(k)) delete live.h.store[x]; },
     },
     session: { get: async () => ({}), set: async () => {} },
+    onChanged: { addListener() {} },
   },
 };
 
@@ -25,22 +27,29 @@ export const ok = (body, status = 200) => ({ status, body });
 export const OFFLINE = 'offline';
 
 /**
- * @param {{storage?:object, route?:(path:string, opts:object, method:string)=>({status?:number, body:any}|'offline'|null)}} o
+ * @param {{storage?:object, route?:(path:string, opts:object, method:string)=>({status?:number, body:any}|'offline'|null), commands?:object[]}} o
+ *   commands: what chrome.commands.getAll() answers (the bound shortcuts).
  *   route: null or 'offline' → the fetch throws (nothing answers).
  */
-export async function bootSidebar({ storage = {}, route = () => null } = {}) {
+export async function bootSidebar({ storage = {}, route = () => null, commands = [] } = {}) {
   mock.timers.reset();
   mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   const dom = new JSDOM('<!doctype html><html lang="en" data-theme="system"><body><div id="app" class="wx-app"></div></body></html>', { url: 'chrome-extension://wx-test/sidebar.html' });
   const w = dom.window;
   const h = {
-    dom, win: w, doc: w.document, store: { ...storage }, posted: [], calls: [], tabsCreated: [], sockets: [], route,
+    dom, win: w, doc: w.document, store: { ...storage }, posted: [], calls: [], tabsCreated: [], sockets: [], route, commands, bgListeners: [],
     localGet(keys) {
       const out = {};
       for (const k of keys == null ? Object.keys(h.store) : [].concat(keys)) if (k in h.store) out[k] = h.store[k];
       return out;
     },
-    connect() { return { postMessage: (m) => h.posted.push(m), onMessage: { addListener() {} }, onDisconnect: { addListener() {} } }; },
+    connect() {
+      const listeners = [];
+      h.bgListeners = listeners;
+      return { postMessage: (m) => h.posted.push(m), onMessage: { addListener(fn) { listeners.push(fn); } }, onDisconnect: { addListener() {} } };
+    },
+    /** Deliver a service-worker message to the sidebar (tab / quote / capture / capture-failed / notice). */
+    async fromBackground(m) { for (const fn of h.bgListeners) fn(m); await h.flush(); },
     async flush() { for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r)); },
     async tick(ms) { mock.timers.tick(ms); await h.flush(); },
     $: (s) => w.document.querySelector(s),
@@ -56,7 +65,7 @@ export async function bootSidebar({ storage = {}, route = () => null } = {}) {
     close() { this.readyState = 3; }
   }
   Object.assign(globalThis, {
-    window: w, document: w.document, location: w.location, Option: w.Option, WebSocket: FakeSocket,
+    window: w, document: w.document, location: w.location, Option: w.Option, File: w.File, WebSocket: FakeSocket,
     requestAnimationFrame: (fn) => { fn(); return 1; },
     ResizeObserver: class { observe() {} disconnect() {} },
     addEventListener: (...a) => w.addEventListener(...a),

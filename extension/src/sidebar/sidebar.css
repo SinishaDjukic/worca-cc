@@ -23,13 +23,19 @@ html,body{margin:0;height:100%;overflow:hidden;background:var(--panel);}
 .wx-settings-row .input{flex:1 1 auto;min-width:0;width:auto;padding:7px 10px;font-size:13px;}
 .wx-settings-row .btn-mini{flex:none;padding:0 14px;}
 .wx-settings-body .hint{margin-top:6px;}
-/* The project picker: one row under the chat list. */
-.wx-scope{flex:none;display:flex;align-items:center;gap:8px;min-height:40px;padding:4px 10px;box-sizing:border-box;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink-2);}
-.wx-scope-k{flex:none;font-weight:600;}
-.wx-scope .wx-select{font-size:12.5px;padding:5px 30px 5px 10px;}
-.wx-scope .wx-select[data-pinned]{border-color:var(--ink);color:var(--ink);font-weight:600;}
-.wx-scope-note{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.wx-scope .linkish{flex:none;}
+/* Ask's composer row at sidebar widths (D14): Ask hides the cost below 480px (phones); a side panel is always that
+   narrow, and the sidebar must show cost + context. Tighter gap instead; the scope pill ellipsizes first. */
+@media (max-width:480px){
+  .wx-app .chat-page .ask-meter-cost{display:inline;}
+  .wx-app .chat-page .ask-composer-row{gap:4px;}
+}
+@media (max-width:360px){ .wx-app .chat-page .ask-composer-row > .ask-meter{display:flex;} }
+@media (max-width:340px){ .wx-app .chat-page .ask-meter-cost{display:none;} }
+.wx-app .chat-page .ask-composer-row > .ask-scope-btn{max-width:120px;}
+/* Settings in the paired shell: under the head, the same disclosure as the state screens. */
+.wx-settings-paired{margin:0;padding:8px 12px;border-top:0;border-bottom:1px solid var(--line);}
+.wx-settings-check{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink);cursor:pointer;}
+.wx-settings .wx-pin-hint{color:var(--ink-2);}
 .wx-card{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel);display:flex;flex-direction:column;gap:6px;}
 .wx-card-t{font-weight:600;color:var(--ink);}
 .wx-card-k{font-size:12px;color:var(--ink-2);}

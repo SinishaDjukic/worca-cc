@@ -21,3 +21,13 @@ export function createPanelState() {
     isActiveTab: (tabId) => windowOfActiveTab(tabId) !== null,
   };
 }
+
+/** A capture asked for in a tab whose content script is not up yet (the shortcut opened the sidebar first, D13). Pure. */
+export function createPendingCaptures({ now = () => Date.now(), ttlMs = 15_000 } = {}) {
+  const m = new Map();   // tabId -> asked at
+  return {
+    set(tabId) { m.set(tabId, now()); },
+    /** → true once, when a fresh request is pending for the tab. */
+    take(tabId) { const t = m.get(tabId); m.delete(tabId); return t != null && now() - t <= ttlMs; },
+  };
+}

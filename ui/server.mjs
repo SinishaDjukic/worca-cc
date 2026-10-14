@@ -168,6 +168,7 @@ import {
 import {
   createExtensionPairing, decideExtensionRequest, extensionOrigin, EXTENSION_WS_PROTOCOL, TOKEN_PREFIX,
 } from '../src/core/extension-pairing.mjs';
+import { pageOrigin, matchRunningAction } from '../src/core/extension-actions.mjs';
 import { detectDeployment, deploymentFacts } from '../src/core/deployment.mjs';
 import { resolveIdentity, startedByOf, prAttributionFooter, actorOf, isSharedIdentity, byActor } from '../src/core/identity.mjs';
 import { withBillTo, currentBillTo, currentOwner } from '../src/core/billing.mjs';
@@ -6750,6 +6751,24 @@ app.get('/api/actions/running', (req, res) => {
     const ws = row ? bareWorkspaceKey(row) : null;
     return { ...s, workspaceId: ws, histKey: row ? (ws ? `workspaces/${ws}` : row.project_key) : null, runTitle: row?.title || null };
   }));
+});
+
+// The browser extension's page → running Action lookup (docs/browser-extension.md "Running Actions"). Extension-only and
+// read-only: one origin in, at most {url, projectKey, workspaceId, runId, runTitle} out — never the instance list
+// (pids, ports, stack ids stay on /api/actions/running, which is NOT on the extension allowlist).
+app.get('/api/extension/actions/match', (req, res) => {
+  if (!req.worcaExtension) return res.status(403).json({ error: 'forbidden: this route is for the browser extension', code: 'extension-only' });
+  const origin = pageOrigin(typeof req.query.origin === 'string' ? req.query.origin : '');
+  if (!origin) return badRequest(res, 'origin must be an http(s) origin');
+  try {
+    const match = matchRunningAction(origin, actions.running(), (runId) => {
+      const row = findPipelineRowById(runId);
+      return row ? { title: row.title || null, projectKey: row.project_key || null, workspaceId: bareWorkspaceKey(row) || null } : null;
+    });
+    res.json({ match });
+  } catch (err) {
+    res.status(500).json({ error: String(err && err.message || err) });
+  }
 });
 
 // D28: scope-free stop for the sidebar and the header pill. Not gated by D4, like the scoped stop.

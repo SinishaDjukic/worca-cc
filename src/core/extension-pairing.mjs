@@ -54,6 +54,9 @@ export const EXTENSION_TOKEN_ROUTES = Object.freeze([
   route('POST', /^\/api\/pinpoint$/),
   route('GET', /^\/api\/projects$/),
   route('GET', /^\/api\/workspaces$/),
+  // Read-only: one page origin → at most the matching running Action's {url, projectKey, workspaceId, runId, runTitle}
+  // (the sidebar pre-pins a page chat to that run's project). Never /api/actions/running: that lists every instance.
+  route('GET', /^\/api\/extension\/actions\/match$/),
 ]);
 
 /** 'pair' | 'token' | null for a method + path (req.path: no query string, not decoded; method- and case-exact). */

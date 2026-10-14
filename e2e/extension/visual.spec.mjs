@@ -1,4 +1,4 @@
-import { test, expect, configure, openSidebar, pairedSidebar, tokenFor } from './fixtures.mjs';
+import { test, expect, configure, openSidebar, pairedSidebar, tokenFor, runCommand, stubCapture } from './fixtures.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,7 @@ const resolveTokens = (names) => names.map((n) => { const p = document.createEle
 const PROPS = ['font-family', 'font-size', 'font-weight', 'line-height', 'color', 'background-color', 'border-top-color', 'border-top-width',
   'border-top-left-radius', 'border-bottom-right-radius', 'padding-top', 'padding-left', 'padding-bottom', 'padding-right'];
 const STYLE_TARGETS = ['.ask-msg-user .ask-user-bubble', '.ask-msg-assistant .ask-answer', '.ask-user-pills .ask-attachment-pill',
-  '.ask-composer-box', 'textarea.ask-input', '.ask-send'];
+  '.ask-composer-box', 'textarea.ask-input', '.ask-send', '.ask-model-btn', '.ask-scope-btn'];
 const styleOf = ([sels, props]) => Object.fromEntries(sels.map((s) => {
   const e = [...document.querySelectorAll(s)].at(-1);
   if (!e) return [s, null];
@@ -31,7 +31,7 @@ const unWorca = (o) => JSON.parse(JSON.stringify(o).replace(/\\"Worca (Poppins|J
 
 /** A paired sidebar with one finished exchange, plus the same thread open in the real Worca Chat page. */
 async function chatted(fx, scheme) {
-  const { page, sidebar } = await pairedSidebar(fx, { scheme });
+  const { page, sidebar } = await pairedSidebar(fx, { scheme, pinpointOnSelect: true });   // these specs select to open Pinpoint
   await sidebar.locator('textarea.ask-input').fill('What is the refill rate?');
   await sidebar.getByRole('button', { name: 'Send' }).click();
   await expect(sidebar.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 30_000 });
@@ -97,10 +97,10 @@ for (const scheme of ['light', 'dark']) {
     const sidebar = await openSidebar(context, sw, extensionId, page); await sidebar.emulateMedia({ colorScheme: scheme });
     await expect(sidebar.locator('.wx-unpaired')).toBeVisible();
     await expect(sidebar).toHaveScreenshot(`sidebar-unpaired-${scheme}.png`);
-    await sidebar.getByText('Connection settings').click();                // the labelled address row, Save, the hint
+    await sidebar.locator('details.wx-settings > summary').click();                // the labelled address row, Save, the hint
     await expect(sidebar.getByLabel('Worca address')).toBeVisible();
     await expect(sidebar).toHaveScreenshot(`sidebar-settings-${scheme}.png`);
-    await configure(sw, worca, { token: await tokenFor(worca, extensionId) });   // the worker's one pairing
+    await configure(sw, worca, { token: await tokenFor(worca, extensionId), pinpointOnSelect: true });   // the worker's one pairing
     await sidebar.reload();
     await expect(sidebar.locator('textarea.ask-input')).toBeVisible();
     await sidebar.locator('textarea.ask-input').fill('What is the refill rate?');
@@ -111,5 +111,32 @@ for (const scheme of ['light', 'dark']) {
     await page.locator('[data-worca-pinpoint] .pp-bar [data-k="explain"]').click();
     await expect(page.locator('[data-worca-pinpoint] .pp-pop')).toContainText('about the selected text.');   // complete
     await expect(page).toHaveScreenshot(`pinpoint-explain-${scheme}.png`);
+  });
+
+  test(`screenshots: Ask's composer, its model popover and the capture overlay (${scheme})`, async ({ context, sw, extensionId, worca, site }) => {
+    const { page, sidebar } = await pairedSidebar({ context, sw, extensionId, worca, site }, { scheme, select: null });
+    await sidebar.locator('textarea.ask-input').fill('What is the refill rate?');
+    await sidebar.getByRole('button', { name: 'Send' }).click();
+    await expect(sidebar.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 30_000 });
+    await sidebar.locator('.ask-composer-row input[type=file]').setInputFiles({ name: 'notes.md', mimeType: 'text/markdown', buffer: Buffer.from('# Notes\n') });
+    await page.bringToFront();
+    await expect(page.locator('[data-worca-pinpoint]')).toHaveCount(1);
+    await stubCapture(sw, page);
+    await runCommand(sw, page, 'worca-capture');
+    await expect(page.locator('[data-worca-capture] .wx-cap')).toBeVisible();
+    const box = await page.locator('#para').boundingBox();
+    await page.mouse.move(box.x + 4, box.y + 4);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width - 4, box.y + box.height - 4, { steps: 6 });
+    await expect(page.locator('[data-worca-capture] .wx-cap-box')).toBeVisible();
+    await expect(page).toHaveScreenshot(`capture-overlay-${scheme}.png`);   // mid-drag
+    await page.mouse.up();
+    await expect(sidebar.locator('.ask-chip img.ask-chip-thumb')).toHaveCount(1);
+    await sidebar.bringToFront();
+    const mask = [sidebar.locator('.chat-head select'), sidebar.locator('.ask-chip-thumb'), sidebar.locator('.ask-chip:not(.wx-page-chip) .ask-chip-name')];
+    await expect(sidebar).toHaveScreenshot(`sidebar-composer-${scheme}.png`, { mask });
+    await sidebar.locator('.ask-model-btn').click();
+    await expect(sidebar.locator('.ask-pop-model')).toBeVisible();
+    await expect(sidebar).toHaveScreenshot(`sidebar-model-pop-${scheme}.png`, { mask });
   });
 }

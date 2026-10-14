@@ -101,14 +101,18 @@ export async function streamPinpoint(fetchFn, body, { onDelta = () => {}, onAlte
 }
 
 /**
- * @param {{doc?:Document, win?:Window, fetch?:Function, trustedOnly?:boolean|((e:Event) => boolean), shadow?:{host:Element, root:ShadowRoot}|null}} [o]
+ * @param {{doc?:Document, win?:Window, fetch?:Function, trustedOnly?:boolean|((e:Event) => boolean), shadow?:{host:Element, root:ShadowRoot}|null, auto?:boolean}} [o]
  *   shadow — the browser extension mounts the toolbar/popovers in a shadow root (closed in production). Document-level
  *   events are retargeted to its host and doc.activeElement IS the host, so the real target/focus is read from `root`.
  *   trustedOnly — on a web page, a page script must not be able to press the toolbar's buttons, its shortcuts or a
  *   popover's keys. `true` = e.isTrusted; a function decides per event (the jsdom tests, which cannot make trusted events).
- * @returns {{addSurface(root:Element, p:PinpointProvider):() => void, close():void, holding():boolean, destroy():void}}
+ *   auto — false: a selection opens nothing until openAtSelection() (the browser extension's "Pinpoint on request").
+ *   Default true: worca's own pages are unchanged.
+ * @returns {{addSurface(root:Element, p:PinpointProvider):() => void, close():void, holding():boolean, destroy():void,
+ *   setAuto(on:boolean):void, openAtSelection():boolean}}
  */
-export function createPinpoint({ doc = document, win = doc.defaultView, fetch: fetchFn = (u, o) => win.fetch(u, o), trustedOnly = false, shadow = null } = {}) {
+export function createPinpoint({ doc = document, win = doc.defaultView, fetch: fetchFn = (u, o) => win.fetch(u, o), trustedOnly = false, shadow = null, auto = true } = {}) {
+  let autoOpen = auto !== false;
   const surfaces = new Map();       // root → provider
   const X = { sel: null, bar: null, items: [], over: [], more: null, pop: null, t: 0, kt: 0, lastRect: null };
   const HL = win.CSS && win.CSS.highlights && typeof win.Highlight === 'function' ? win.CSS.highlights : null;
@@ -531,11 +535,12 @@ export function createPinpoint({ doc = document, win = doc.defaultView, fetch: f
 
   const onPointerUp = (e) => {
     if (within(X.bar, e) || within(X.pop?.el, e)) return;
+    if (!autoOpen) return;
     clearTimeout(X.t);
     X.t = setTimeout(evaluate, 120);
   };
   const onKeyUp = (e) => {
-    if (X.pop || typing(realTarget(e))) return;
+    if (!autoOpen || X.pop || typing(realTarget(e))) return;
     if (e.shiftKey || /^(Arrow|Home|End|Shift|PageUp|PageDown)/.test(e.key)) { clearTimeout(X.kt); X.kt = setTimeout(evaluate, 400); }
   };
   const onSelChange = () => {
@@ -605,6 +610,16 @@ export function createPinpoint({ doc = document, win = doc.defaultView, fetch: f
     close: closeAll,
     holding: () => !!(X.bar || X.pop),
     reduced,
+    /** The extension's option "Show Pinpoint when I select text". */
+    setAuto(on) { autoOpen = !!on; if (!autoOpen) { clearTimeout(X.t); clearTimeout(X.kt); } },
+    /** Open the bar on the current selection now (the extension's keyboard command). → false when nothing usable is selected. */
+    openAtSelection() {
+      if (X.pop) return true;
+      const sel = readSelection();
+      if (!sel) return false;
+      showBar(sel);
+      return true;
+    },
     destroy() {
       closeAll();
       surfaces.clear();

@@ -127,12 +127,26 @@ export const test = base.extend({
 });
 export { expect };
 
-/** Point the extension at this worca: clear storage, then set the base URL (and, optionally, a token). */
-export async function configure(sw, worca, { token = null } = {}) {
-  await sw.evaluate(async ([url, tok]) => {
+/** Point the extension at this worca: clear storage, then set the base URL (and, optionally, a token). pinpointOnSelect:
+ *  the Settings option "Show Pinpoint when I select text" (off by default: Pinpoint then opens on the command only). */
+export async function configure(sw, worca, { token = null, pinpointOnSelect = false } = {}) {
+  await sw.evaluate(async ([url, tok, onSelect]) => {
     await chrome.storage.local.clear();
-    await chrome.storage.local.set({ 'worca.baseUrl': url, ...(tok ? { 'worca.token': tok } : {}) });
-  }, [worca.url, token]);
+    await chrome.storage.local.set({ 'worca.baseUrl': url, ...(tok ? { 'worca.token': tok } : {}), ...(onSelect ? { 'worca.pinpointOnSelect': true } : {}) });
+  }, [worca.url, token, pinpointOnSelect]);
+}
+
+/** captureVisibleTab needs activeTab (a real shortcut press) or <all_urls>, neither of which an E2E run can have: hand
+ *  the test build a real viewport screenshot of `page` as its capture source (background.mjs captureVisible). The
+ *  overlay, the rectangle, the crop and the upload stay the extension's own code. */
+export async function stubCapture(sw, page) {
+  const b64 = (await page.screenshot()).toString('base64');
+  await sw.evaluate((png) => { globalThis.__worcaTest.setCaptureSource(async () => `data:image/png;base64,${png}`); }, b64);
+}
+
+/** Run a manifest command (worca-pinpoint / worca-capture) for `page`'s tab, as the browser would on its shortcut. */
+export async function runCommand(sw, page, name) {
+  await sw.evaluate(async ([u, cmd]) => { const [tab] = await chrome.tabs.query({ url: u }); globalThis.__worcaTest.command(cmd, tab); }, [page.url(), name]);
 }
 
 /** Open the sidebar page bound to `page`'s tab (test builds honour ?tabId/&windowId, and ?retryMs= for the offline retry). */
@@ -145,8 +159,8 @@ export async function openSidebar(context, sw, extensionId, page, { retryMs = nu
 }
 
 /** A paired sidebar for `url` (default: the CSP fixture page), using the worker's one pairing. */
-export async function pairedSidebar({ context, sw, extensionId, worca, site }, { url = site.url, select = '#para', scheme = null } = {}) {
-  await configure(sw, worca, { token: await tokenFor(worca, extensionId) });
+export async function pairedSidebar({ context, sw, extensionId, worca, site }, { url = site.url, select = '#para', scheme = null, pinpointOnSelect = false } = {}) {
+  await configure(sw, worca, { token: await tokenFor(worca, extensionId), pinpointOnSelect });
   const page = await context.newPage();
   if (scheme) await page.emulateMedia({ colorScheme: scheme });
   await page.goto(url);

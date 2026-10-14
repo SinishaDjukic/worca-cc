@@ -19,3 +19,18 @@ test('a pinned tab (test builds: sidebar opened as a tab) ignores activation', (
   assert.deepEqual(s.focus(1, 99), { deactivate: null, activate: 10 });
   assert.deepEqual(s.focus(1, 98), { deactivate: null, activate: null });
 });
+
+// ---- a capture asked for before the tab's content script is up (the shortcut opened the sidebar first, D13)
+import { createPendingCaptures } from '../extension/src/panel-state.mjs';
+test('pending captures: taken once, expire after the TTL, per tab', () => {
+  let t = 1000;
+  const p = createPendingCaptures({ now: () => t, ttlMs: 100 });
+  assert.equal(p.take(7), false);
+  p.set(7); p.set(8);
+  assert.equal(p.take(7), true);
+  assert.equal(p.take(7), false);        // once
+  t += 101;
+  assert.equal(p.take(8), false);        // expired
+  p.set(9); t += 100;
+  assert.equal(p.take(9), true);         // exactly at the TTL still counts
+});

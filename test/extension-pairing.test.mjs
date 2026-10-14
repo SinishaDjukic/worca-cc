@@ -41,6 +41,9 @@ test('route kinds: pairing, token allowlist, everything else refused (cards, hea
   assert.equal(extensionRouteKind('POST', '/api/run'), null);
   assert.equal(extensionRouteKind('GET', '/api/ask/threads/%2e%2e/messages'), null);
   assert.equal(extensionRouteKind('GET', '/api/ask/threads/t_123/attachments/att_1'), null);   // v5: the sidebar never reads attachments
+  assert.equal(extensionRouteKind('GET', '/api/extension/actions/match'), 'token');             // D7: one origin → at most one run
+  assert.equal(extensionRouteKind('POST', '/api/extension/actions/match'), null);
+  assert.equal(extensionRouteKind('GET', '/api/actions/running'), null);                        // the instance list stays off
 });
 
 test('decide: non-extension origins pass to S1; non-loopback Host passes to S1; remote mode refuses', () => {
