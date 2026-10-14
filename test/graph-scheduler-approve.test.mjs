@@ -244,6 +244,50 @@ test('8 revise clears the stale loop rewrite: R re-runs on the new plan with no 
   assert.equal(await run, 'done');
 });
 
+test('10 revise resets the loop budget: the round-2 rewrite is delivered, not held at a gate', { timeout: 5000 }, async () => {
+  let deliveriesAtRound2 = null;
+  const h = harness({
+    template: approveTpl('polisher', SELF(2)),
+    script: {
+      n_p: () => PLAN,
+      // Blocks once per shaping round: round 1 spends the self-loop's single allowance, round 2 needs it back.
+      n_r: (a) => ([1, 3].includes(a.ordinal)
+        ? { verdict: BLOCKING(), outputs: { revise: { path: `/p/rev${a.ordinal}.md` } } }
+        : { verdict: CLEAN, outputs: { plan: { path: `/p/r${a.ordinal}.md` } } }),
+    },
+    onAsk: (a) => {
+      if (a.kind === 'gate') return 'continue';
+      if (a.plan.round === 1) return { decision: 'revise', path: '/fb.md' };
+      deliveriesAtRound2 = h.scheduler.getState().wireDeliveries.w5;
+      return 'approve';
+    },
+  });
+  assert.equal(await h.scheduler.run(), 'done');
+  assert.equal(h.asks.filter((a) => a.kind === 'gate').length, 0, 'no gate: the revise gave the budget back');
+  assert.equal(h.callsFor('n_r').length, 4);
+  assert.equal(h.callsFor('n_r')[3].bindings.revise.path, '/p/rev3.md');
+  assert.equal(deliveriesAtRound2, 1);
+});
+
+test('11 holds survive the reset: a later hold on the same wire gets a fresh ask id', { timeout: 5000 }, async () => {
+  const h = harness({
+    template: approveTpl('polisher', SELF(2)),
+    script: {
+      n_p: () => PLAN,
+      n_r: (a) => ([1, 2, 4, 5].includes(a.ordinal)
+        ? { verdict: BLOCKING(), outputs: { revise: { path: `/p/rev${a.ordinal}.md` } } }
+        : { verdict: CLEAN, outputs: { plan: { path: `/p/r${a.ordinal}.md` } } }),
+    },
+    // R3 is clean, so the second hold needs a second revise (round 2) before R4/R5 spend the reset budget.
+    onAsk: (a) => {
+      if (a.kind === 'gate') return 'continue';
+      return a.plan.round < 3 ? { decision: 'revise', path: `/fb${a.plan.round}.md` } : 'approve';
+    },
+  });
+  assert.equal(await h.scheduler.run(), 'done');
+  assert.deepEqual(h.asks.filter((a) => a.kind === 'gate').map((a) => a.id), ['gate-w5-2', 'gate-w5-2-h2']);
+});
+
 test('9 the revise target skips the synthesized await input', { timeout: 5000 }, async () => {
   const tpl = TPL(
     [N('n_task', 'task'), N('n_p', 'agent', 'planner'), N('n_r', 'agent', 'reviewer', APPROVE),

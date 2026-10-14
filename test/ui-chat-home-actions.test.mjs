@@ -31,17 +31,18 @@ function setup({ runs = { live: [], finished: [] }, level = 'expert' } = {}) {
   };
 }
 
-test('eight tiles in the mockup order — seven intents and More — each naming its interface level', () => {
+test('nine tiles in the mockup order — eight intents and More — each naming its interface level', () => {
   const s = setup();
   const tiles = [...s.doc.querySelectorAll('.chat-home-act')];
-  assert.deepEqual(tiles.map((b) => b.textContent), ['New run', 'Build workflow', 'Schedule a run', 'Track a run',
+  assert.deepEqual(tiles.map((b) => b.textContent), ['New run',
+    'Plan it with meAgree on what gets built before anything runs · ~3 minNew', 'Build workflow', 'Schedule a run', 'Track a run',
     'Explain a diff', 'Write a script', 'Clone a repo', 'More']);
-  assert.deepEqual(tiles.map((b) => b.dataset.minLevel), ['simple', 'simple', 'advanced', 'simple', 'advanced', 'simple', 'simple', 'simple']);
+  assert.deepEqual(tiles.map((b) => b.dataset.minLevel), ['simple', 'simple', 'simple', 'advanced', 'simple', 'advanced', 'simple', 'simple', 'simple']);
   assert.ok(tiles.every((b) => b.type === 'button' && b.querySelector('.chat-ic svg')));
   assert.equal(s.actions.el.getAttribute('role'), 'group');
   assert.equal(s.actions.el.getAttribute('aria-label'), 'Quick actions');
   assert.equal(s.more().getAttribute('aria-haspopup'), 'menu');
-  assert.deepEqual([...TILE_INTENTS], ['run', 'workflow', 'schedule', 'track', 'diff', 'script', 'clone']);
+  assert.deepEqual([...TILE_INTENTS], ['run', 'shape', 'workflow', 'schedule', 'track', 'diff', 'script', 'clone']);
   assert.deepEqual([...MORE_INTENTS], ['away', 'metrics', 'model', 'workspace', 'remember', 'tasks']);
   assert.equal(ACTION_LEVEL.metrics, 'expert', 'Team metrics is gated like its page');
   assert.equal(ACTION_LEVEL.tasks, 'advanced', 'Find tasks is gated like the task source picker');
@@ -121,11 +122,40 @@ test('switches: script tools off hides Write a script; Clone has no off switch; 
   assert.equal(s.tile('script').hidden, true);
   s.actions.setFlags({ scripts: true });
   assert.equal(s.tile('script').hidden, false);
-  assert.deepEqual({ ...DEFAULT_FLAGS }, { scripts: true, tasks: false });
+  assert.deepEqual({ ...DEFAULT_FLAGS }, { scripts: true, tasks: false, shapeFirst: false });
   assert.equal(actionAvailable('clone', { scripts: false, tasks: false }), true);
   assert.equal(actionAvailable('tasks', {}), false);
   assert.equal(actionAvailable('tasks', { tasks: true }), true);
   assert.equal(actionAvailable('script', {}), true);
+});
+
+test('Plan it with me: hidden until the Shape it first flag is on, with its help line and New badge; re-pushed flags keep the others', () => {
+  const s = setup();
+  const t = s.tile('shape');
+  assert.equal(t.hidden, true, 'DEFAULT_FLAGS: the gate is off until the hello says otherwise');
+  assert.equal(t.dataset.minLevel, 'simple');
+  assert.equal(t.querySelector('.chat-home-act-l').textContent, 'Plan it with me');
+  assert.equal(t.querySelector('.chat-home-act-help').textContent, 'Agree on what gets built before anything runs · ~3 min');
+  assert.equal(t.querySelector('.chat-home-act-badge').textContent, 'New');
+  assert.equal(s.tile('run').querySelector('.chat-home-act-help'), null, 'only an intent with a help line gets one');
+  assert.equal(s.tile('run').querySelector('.chat-home-act-badge'), null);
+  s.actions.setFlags({ shapeFirst: false });
+  assert.equal(t.hidden, true);
+  const loaded = { scripts: false, tasks: true };
+  s.actions.setFlags(loaded);
+  assert.equal(t.hidden, true);
+  const pushed = { ...loaded, shapeFirst: true };
+  s.actions.setFlags(pushed);
+  assert.equal(t.hidden, false);
+  assert.equal(s.tile('script').hidden, true, 'scripts keeps its state when the flags are re-pushed with the spread');
+  assert.equal(actionAvailable('tasks', pushed), true, 'tasks keeps its state');
+  s.actions.setFlags({});
+  assert.equal(t.hidden, true);
+  assert.equal(actionAvailable('shape', {}), false);
+  assert.equal(actionAvailable('shape', { shapeFirst: true }), true);
+  t.click();
+  assert.deepEqual(s.calls, [['setIntent', 'shape', null]], 'a tile only arms the composer');
+  assert.ok(!MORE_INTENTS.includes('shape'), 'a tile, never also in More');
 });
 
 test('runMention: the title in quotes and the run id when known', () => {

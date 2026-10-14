@@ -9170,3 +9170,55 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .branches-new > label.same-src-row{display:flex;margin:8px 0 0;}
 #sameAsSourceHint[hidden]{display:none;}   /* .hint{display:block} beats the UA [hidden] rule */
 #featureBranch:disabled{opacity:.65;cursor:not-allowed;}   /* no global .input:disabled rule exists */
+
+/* ---------- Shape it first (spec §3.3–§3.5): the plan ask, the shaping Clarify, the Chat proposal/tile/run card ---------- */
+.plan-body{display:flex;flex-direction:column;gap:10px;padding-top:10px;font-size:12.5px;}
+.plan-meta{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);}
+.plan-perspectives{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.plan-perspectives-ro{font-size:12px;color:var(--ink-2);}
+.plan-check{display:flex;flex-wrap:wrap;gap:6px;}
+.plan-check-ok{padding:3px 9px;border-radius:999px;background:var(--green-bg);color:var(--green-ink);font-size:11.5px;font-weight:500;}
+/* Wraps on a narrow card: the detail's basis sends it to its own line rather than shrinking it to nothing under Fix. */
+.plan-check-bad{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;width:100%;padding:6px 10px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);}
+.plan-check-label{font-weight:600;}
+.plan-check-detail{flex:1 1 12em;min-width:0;color:var(--ink-2);}
+.plan-md{position:relative;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);overflow-wrap:anywhere;}
+.plan-md.collapsed{max-height:40vh;overflow:hidden;}
+.plan-md.collapsed::after{content:'';position:absolute;inset:auto 0 0;height:48px;background:linear-gradient(transparent,var(--panel));pointer-events:none;}
+.plan-md pre{white-space:pre-wrap;margin:0;}
+.plan-tag{margin-left:8px;padding:2px 8px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink);font-size:10.5px;font-weight:600;vertical-align:middle;}
+.plan-ground{margin-left:6px;font-size:10.5px;font-weight:600;}
+.plan-ground.found{color:var(--green-ink);}
+.plan-ground.new{color:var(--ink-3);}
+.plan-ground.missing{color:var(--red-ink);}
+.plan-versions{display:flex;flex-direction:column;gap:6px;}
+.plan-version summary{cursor:pointer;color:var(--ink-2);font-size:12px;}
+.plan-version .plan-md{margin-top:6px;}
+.plan-err{color:var(--red-ink);font-size:12px;}
+.plan-err.ok{color:var(--green-ink);}
+.plan-err[hidden]{display:none;}
+.plan-typed{display:flex;align-items:flex-end;gap:8px;}
+.plan-typed textarea{flex:1;min-width:0;resize:vertical;}
+.plan-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.plan-actions .plan-stop{margin-left:auto;}
+.shape-chips{display:flex;flex-wrap:wrap;gap:6px;}
+.shape-chip{padding:4px 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink-2);font:500 11.5px/1.2 var(--sans);cursor:pointer;}
+.shape-chip.on{border-color:var(--amber);background:var(--amber-bg);color:var(--amber-ink);}
+.shape-chip:disabled{cursor:default;opacity:.8;}
+.shape-chip-more{padding:4px 8px;border:0;background:none;color:var(--ink-2);font:500 11.5px/1.2 var(--sans);cursor:pointer;}
+.shape-card,.ask-card-shape{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--amber-line);border-radius:var(--r-ctrl);background:var(--amber-wash);}
+.shape-nudge-head{font-weight:600;color:var(--amber-ink);}
+.shape-nudge-list{margin:0;padding-left:18px;color:var(--ink-2);font-size:12px;}
+.shape-choices{display:flex;flex-wrap:wrap;gap:8px;}
+.shape-choice{display:flex;flex-direction:column;align-items:flex-start;gap:2px;}
+.shape-choice.primary{border-color:var(--amber);}
+.shape-est{font-size:11px;color:var(--ink-3);font-weight:400;}
+.clarify-defaults{margin-right:8px;}
+.clarify-defaults-err{margin-top:8px;color:var(--red-ink);font-size:12px;}
+.clarify-defaults-err[hidden]{display:none;}
+.chat-rc-shaped{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:8px;font-size:12px;color:var(--ink-2);}
+.chat-rc-shaped:empty{display:none;}
+.chat-rc-shaped-stages{color:var(--green-ink);font-weight:500;}
+.chat-rc-shaped-plan,.chat-rc-shaped-saved{font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere;}
+.chat-home-act-help{max-width:100%;font-size:10.5px;color:var(--ink-3);overflow-wrap:anywhere;}
+.chat-home-act-badge{padding:1px 7px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;}

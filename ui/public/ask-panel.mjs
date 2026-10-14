@@ -32,6 +32,8 @@ import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64,
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
+import { shapeFirstOn } from './chat/shape-gate.mjs';
+import { shapeCardExtras } from './shape/proposal.mjs';
 
 /**
  * Cold-start pick, used ONLY until GET /api/ask/models resolves — and afterwards
@@ -3876,6 +3878,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     titleRow.append(titleInput, make('span', 'ask-rp-edit', '✎ click to rename'));
     head.appendChild(titleRow);
     if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
+    // A shaped card follows card.shape: the server puts it there only while the gate is on, and a card built before the
+    // first hello (a boot on Chat) must still start its shaped run. The nudge is advisory and needs the client gate.
+    const shapeUi = card.shape ? shapeCardExtras(doc, card)
+      : card.nudge && shapeFirstOn() ? shapeCardExtras(doc, card) : null;
+    local.shapeUi = shapeUi;
     rootEl.appendChild(head);
 
     // #397 guardrail: the model proposed a different target than the chat's pin.
@@ -3942,6 +3949,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
     wfRow.append(wfField, engineField, guardField);
     targetSec.appendChild(wfRow);
+    if (shapeUi) rootEl.appendChild(shapeUi.el);
     rootEl.appendChild(targetSec);
     engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
     workflowSel.addEventListener('change', () => {
@@ -4121,7 +4129,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (picked) startCard(block, rootEl, local, picked);
       });
     }
-    foot.append(openNp, summary, dismissBtn, laterBtn, startBtn);
+    // Shape it first: Start holds an icon and a text node, so only the text node is relabelled.
+    let shapeBtn = null;
+    if (shapeUi) {
+      const setLabel = (b, t) => { const n = [...b.childNodes].find((x) => x.nodeType === 3); if (n) n.textContent = t; else b.append(t); };
+      if (card.shape) {
+        setLabel(startBtn, 'Shape it first');           // a shaped card is never scheduled
+      } else {
+        shapeBtn = make('button', 'ask-card-start ask-card-shape', 'Shape it first');
+        shapeBtn.type = 'button';
+        shapeBtn.dataset.askCardShape = '';
+        shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));
+        setLabel(startBtn, 'Run anyway');
+      }
+    }
+    foot.append(openNp, summary, dismissBtn, laterBtn, ...(shapeBtn ? [shapeBtn] : []), startBtn);
     rootEl.appendChild(foot);
 
     local.projectDir = () => (local.target === 'project' ? ((rootEl.querySelector('.ask-card-project-select') || {}).value || '') : '');
@@ -4264,10 +4286,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     loadCardOptions({ fresh: true }).then((opts) => {
       if (st.destroyed) return;
       local.options = opts;
-      // Auto is not a saved workflow: listed only when Ask Worca proposed it (a plain card keeps its list).
-      const autoOpt = card.workflowId === 'wf_auto' ? [{ value: 'wf_auto', label: 'Auto — picks the workflow when the run starts' }] : [];
-      fillSelect(workflowSel, [...autoOpt, ...opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id }))], card.workflowId || 'wf_default');
-      if (card.workflowId && workflowSel.value !== card.workflowId) markWorkflowUnavailable();
+      if (card.shape && local.shapeUi) {
+        // Shape it first (D9): the workflow is fixed; the server re-derives wf_shape / wf_shape_ux from the chips at start.
+        fillSelect(workflowSel, [{ value: card.workflowId, label: card.workflowName || 'Shape it first' }], card.workflowId);
+        workflowSel.disabled = true;
+      } else {
+        // Auto is not a saved workflow: listed only when Ask Worca proposed it (a plain card keeps its list).
+        const autoOpt = card.workflowId === 'wf_auto' ? [{ value: 'wf_auto', label: 'Auto — picks the workflow when the run starts' }] : [];
+        fillSelect(workflowSel, [...autoOpt, ...opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id }))], card.workflowId || 'wf_default');
+        if (card.workflowId && workflowSel.value !== card.workflowId) markWorkflowUnavailable();
+      }
       fillSelect(guardSel, opts.guardrails.map((g) => ({ value: g.id, label: g.id === 'permissive' ? 'Permissive' : (g.name || g.id) })), card.guardrailsId || 'normal');
       renderTarget();
       reloadLane();
@@ -4329,11 +4357,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
   }
 
-  async function startCard(block, rootEl, local, schedule = null) {
+  async function startCard(block, rootEl, local, schedule = null, { shaped = false } = {}) {
     const err = rootEl.querySelector('.ask-card-err');
     const startBtn = rootEl.querySelector('[data-ask-card-start]');
     err.textContent = '';
     startBtn.disabled = true;
+    const shapeBtn = rootEl.querySelector('[data-ask-card-shape]');
+    if (shapeBtn) shapeBtn.disabled = true;               // a double click must not post /api/run twice
     freezeTargetInputs(rootEl, true);
     try {
       // D3: read-only, so it runs BEFORE saveLaneEdits — a refusal here must not leave the config already written.
@@ -4342,6 +4372,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const saveErr = await saveLaneEdits(local);            // the previous phase's guard, now second
       if (saveErr) { err.textContent = saveErr; return; }
       const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
+      if (local.shapeUi && (shaped || (block.card || {}).shape)) Object.assign(body, local.shapeUi.body());
       // Run chains: "the branch of the run before it" is a flag, and the wire refuses it next to a branch name.
       // Keyed off the schedule being POSTED — a Start now on an after-proposal carries none and keeps the picked branch.
       if (body.sourceFromPrevious) { delete body.sourceBranch; delete body.sourceBranchByKey; }
@@ -4374,7 +4405,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // (beginRun is NEVER called — spec §10.5).
     } finally {
       startBtn.disabled = false;
+      if (shapeBtn) shapeBtn.disabled = false;
       freezeTargetInputs(rootEl, false);
+      // freezeTargetInputs re-enabled the select; a shaped card's workflow is fixed.
+      if ((block.card || {}).shape && local.shapeUi) rootEl.querySelector('.ask-card-workflow').disabled = true;
     }
   }
 
@@ -4571,7 +4605,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       try { made = custom(block, cardCtx); } catch (err) { console.warn('[worca] a chat card builder failed', err); }
       if (made && made.el) {
         if (cached) disposeCardEntry(cached);
-        st.cardEls.set(block.id, { el: made.el, state: block.state, rev, custom, handle: made.handle || null, dispose: made.dispose || null, animate: !!made.animate, cancelAnim: null, lastW: -1 });
+        st.cardEls.set(block.id, { el: made.el, state: block.state, rev, custom, handle: made.handle || null, dispose: made.dispose || null, animate: !!made.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn() });
         return made.el;
       }
     }
@@ -4587,7 +4621,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isAway = !!(block.card && block.card.type === 'away');
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
     const isProgress = isProgressBlock(block);
-    if (cached && cached.state === block.state && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isWeb || isWorkspace || isActions || isAway || isCommand || isProgress || block.state === 'proposed')) return cached.el;
+    // Proposed cards only: `card.nudge` stays on the block after it flips to 'started', and a live run card must never
+    // be disposed and remounted because the gate changed.
+    const nudgeStale = block.state === 'proposed' && !!(block.card && block.card.nudge) && cached && cached.shapeOn !== shapeFirstOn();
+    if (cached && !nudgeStale && cached.state === block.state && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isWeb || isWorkspace || isActions || isAway || isCommand || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -4602,7 +4639,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
-    st.cardEls.set(block.id, { el: built.el, state: block.state, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });
+    st.cardEls.set(block.id, { el: built.el, state: block.state, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn() });
     return built.el;
   }
   function disposeCardEntry(c) {

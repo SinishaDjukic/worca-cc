@@ -1189,3 +1189,46 @@ test('isByteArtifact agrees with the shared artifact-kind table', () => {
   assert.equal(isByteArtifact('Makefile'), false, 'no extension is not bytes');
   assert.equal(isByteArtifact('shots/S01.PNG'), true, 'the extension match is case-insensitive');
 });
+
+// ── Shape it first (spec D9, D12): propose_run's shape/assess fields ride the injected gate ──
+
+test('propose_run: shape and assess exist only while the injected gate is on with the perspective keys', async () => {
+  const { PERSPECTIVE_KEYS } = await import('../src/shared/shape/perspectives.mjs');
+  const schemaOf = (deps) => createAskTools({ ...fake, ...deps }).list().find((d) => d.name === 'propose_run').inputSchema;
+  const today = schemaOf({});
+  assert.deepEqual(Object.keys(today.properties), ['projectKey', 'workspaceId', 'workflowId', 'brief', 'source', 'title', 'guardrailsId', 'memoryScope',
+    'engine', 'sourceBranch', 'featureBranch', 'sameAsSource', 'note', 'attachmentIds', 'sourceBranchByKey', 'commentIds',
+    'when', 'every', 'until', 'count', 'overlap', 'maxFailures', 'after', 'afterPolicy', 'sourceFromPrevious'], 'no deps: today\'s schema');
+  assert.deepEqual(today.required, ['brief']);
+  await checkRows([
+    { name: 'gate off: byte-identical to no deps', run: () => {
+      assert.deepEqual(schemaOf({ shapeFirstOn: () => false, perspectiveKeys: PERSPECTIVE_KEYS }), today);
+    } },
+    { name: 'gate on without perspectiveKeys: no shape fields', run: () => {
+      assert.deepEqual(schemaOf({ shapeFirstOn: () => true }), today);
+      assert.deepEqual(schemaOf({ shapeFirstOn: () => true, perspectiveKeys: [] }), today);
+    } },
+    { name: 'gate on with perspectiveKeys: shape and assess, required unchanged', run: () => {
+      const s = schemaOf({ shapeFirstOn: () => true, perspectiveKeys: PERSPECTIVE_KEYS });
+      assert.deepEqual(s.required, ['brief']);
+      assert.equal(s.additionalProperties, false);
+      const keys = Object.keys(s.properties);
+      assert.deepEqual(keys.slice(keys.indexOf('commentIds'), keys.indexOf('commentIds') + 3), ['commentIds', 'shape', 'assess'], 'right after commentIds');
+      assert.equal(s.properties.shape.additionalProperties, false);
+      assert.deepEqual(s.properties.shape.properties.perspectives.items.enum, [...PERSPECTIVE_KEYS]);
+      assert.deepEqual(s.properties.shape.properties.slices.enum, ['auto', 'off']);
+      assert.equal(s.properties.assess.additionalProperties, false);
+      assert.deepEqual(s.properties.assess.required, ['size', 'openDecisions']);
+      assert.deepEqual(s.properties.assess.properties.size.enum, ['small', 'medium', 'large']);
+      assert.equal(s.properties.assess.properties.openDecisions.maxItems, 6);
+      assert.deepEqual(s.properties.assess.properties.perspectives.items.enum, [...PERSPECTIVE_KEYS]);
+    } },
+    { name: 'defaultToolDeps carries the gate and the perspective keys', run: () => {
+      const d = defaultToolDeps({ threadId: null });
+      assert.equal(typeof d.shapeFirstOn, 'function');
+      assert.equal(typeof d.shapeFirstOn(), 'boolean');
+      assert.ok(Array.isArray(d.perspectiveKeys) && d.perspectiveKeys.length > 0);
+      assert.deepEqual([...d.perspectiveKeys], [...PERSPECTIVE_KEYS]);
+    } },
+  ]);
+});

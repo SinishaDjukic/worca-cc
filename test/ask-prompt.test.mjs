@@ -846,3 +846,20 @@ test('the composer prompt names every placeable agent (all domains, no cap); Ask
   assert.equal((p.match(/\n- deckBuilder "/g) || []).length, 1, 'listed once');
   assert.doesNotMatch(buildSystemPrompt(cat, {}), /\n- deckBuilder "/, 'Ask\'s propose_workflow list stays the coding vocabulary');
 });
+
+// ── Shape it first (spec D9) ─────────────────────────────────────────────────
+
+test('shape section: after mcp and before commands, only with shape; the default prompt is unchanged', async () => {
+  const { renderShapeSection } = await import('../src/core/ask/prompt.mjs');
+  const cat = { projects: [], workspaces: [], workflows: [] };
+  const plain = buildSystemPrompt(cat);
+  assert.equal(buildSystemPrompt(cat, { shape: false }), plain);
+  assert.equal(buildSystemPrompt(cat, { shape: true }), `${plain}\n\n${renderShapeSection()}`);
+  assert.equal(buildSystemPrompt(cat, { shape: true, commands: true }), `${plain}\n\n${renderShapeSection()}\n\n${renderCommandsSection()}`, 'commands stay last');
+  const s = renderShapeSection();
+  assert.match(s, /^## Shape it first\n/);
+  for (const phrase of ['shape: { perspectives }', 'at most 3 questions', 'Shape this task first', 'assess: { size, openDecisions, perspectives }',
+    'Never give workflowId, when, every or after with shape']) assert.ok(s.includes(phrase), `states: ${phrase}`);
+  assert.ok(!/^\s*\d+\. /m.test(s), 'not a numbered rule');
+  for (const key of ['implementer', 'planner', 'refiner', 'reviewer', 'clarify', 'decomposer']) assert.ok(!s.includes(key), `no agent key (${key})`);
+});

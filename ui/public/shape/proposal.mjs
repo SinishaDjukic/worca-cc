@@ -1,0 +1,45 @@
+// ui/public/shape/proposal.mjs — the run card's Shape it first parts (spec §3.2): perspective chips on a shaped card;
+// the nudge (open decisions, both choices with estimates) on a nudged one. null when the card has neither.
+import { buildPerspectiveChips } from './chips.mjs';
+import { SHAPE_ATTENTION } from './plan-text.mjs';
+
+const money = (e) => (e ? `≈ $${e.costUsd.toFixed(2)} · ~${e.minutes} min` : 'no estimate yet');
+
+export function shapeCardExtras(doc, card) {
+  if (!card || (!card.shape && !card.nudge)) return null;
+  const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const el = h('div', 'shape-card');
+  const picked = card.shape ? card.shape.perspectives : card.nudge.perspectives;
+  // UX picks wf_shape_ux at start; the server re-derives it (resolveShapeRequest), so every chip is free here.
+  const chips = buildPerspectiveChips(doc, { picked, collapsed: true });
+  if (card.nudge) {
+    const n = card.nudge;
+    if (n.openDecisions.length) {
+      el.appendChild(h('div', 'shape-nudge-head', `This task leaves ${n.openDecisions.length} decision${n.openDecisions.length === 1 ? '' : 's'} open`));
+      const ul = h('ul', 'shape-nudge-list');
+      for (const d of n.openDecisions) ul.appendChild(h('li', null, d));
+      el.appendChild(ul);
+    } else {
+      el.appendChild(h('div', 'shape-nudge-head', 'This is a large task'));
+    }
+    const est = n.estimates || {};
+    // Same agents on both sides (S3): one build figure for both choices, not two equal numbers.
+    const shared = est.same && !n.asIsAuto;
+    const choices = h('div', 'shape-choices');
+    const asIs = h('div', 'shape-choice');
+    asIs.append(h('b', null, 'Run as is'), h('span', null, 'The run decides these itself and may stop to ask you mid-run.'));
+    if (!shared) asIs.appendChild(h('span', 'shape-est', n.asIsAuto ? 'Auto picks the workflow at start' : money(est.asIs)));
+    const shaped = h('div', 'shape-choice primary');
+    shaped.append(h('b', null, 'Shape it first'), h('span', null, 'Settle them now: you approve the plan, the run only builds.'),
+      h('span', 'shape-est', shared ? SHAPE_ATTENTION : `${money(est.shaped)} · ${SHAPE_ATTENTION}`));
+    choices.append(asIs, shaped);
+    el.appendChild(choices);
+    if (shared) el.appendChild(h('div', 'shape-est shape-est-shared', est.shaped ? `Build ${money(est.shaped)} either way` : 'Build: no estimate yet'));
+  }
+  el.appendChild(chips.el);
+  return {
+    el,
+    /** The POST /api/run fields of a shaped start: the server picks wf_shape or wf_shape_ux from the perspectives. */
+    body: () => ({ workflowId: 'wf_shape', shape: { perspectives: chips.value() } }),
+  };
+}

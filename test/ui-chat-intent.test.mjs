@@ -11,6 +11,7 @@ import {
   createIntentAddon, installIntentAddon, intentText, INTENTS, EXAMPLES, EXAMPLE_MS, INTENT_ADDON_ID,
 } from '../ui/public/chat/intent.mjs';
 import { composerAddons, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
+import { applyShapeFirstHello } from '../ui/public/chat/shape-gate.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const DEFAULT_PH = 'Ask about any run, agent, or project…';   // P1's resting placeholder (setPlaceholder(null))
@@ -147,6 +148,18 @@ test('leaving the home without sending drops the intent: a later message in anot
   assert.equal(s.handle.transformSend('hi'), 'hi');
 });
 
+test('leave() (the Chat page was left) drops a set intent, but keeps one riding a send for the retry', () => {
+  const s = setup();
+  s.ctl.set('clone');
+  s.ctl.leave();
+  assert.equal(s.ctl.current(), null);
+  assert.equal(s.chip(), null);
+  s.ctl.set('track');
+  s.handle.transformSend('x');
+  s.ctl.leave();
+  assert.equal(s.ctl.current(), 'track', 'a send in flight or refused keeps it');
+});
+
 test('placeholder ownership: clearing gives back only a placeholder this add-on put there', () => {
   const s = setup();
   s.ctl.set('run');
@@ -172,11 +185,34 @@ test('every intent: a chip label, an icon, a placeholder and one plain sentence 
     assert.equal(intentText(id, 'x'), `${it.lead}\n\nx`);
   }
   assert.equal(intentText('nope', ' x '), 'x');
-  assert.deepEqual(Object.keys(INTENTS), ['run', 'workflow', 'schedule', 'track', 'diff', 'script', 'clone',
+  assert.deepEqual(Object.keys(INTENTS), ['run', 'shape', 'workflow', 'schedule', 'track', 'diff', 'script', 'clone',
     'away', 'metrics', 'model', 'workspace', 'remember', 'tasks']);
   assert.equal(INTENTS.away.prefill, "I'm away now", 'an empty composer never sends: Step away arrives with its text (P2\'s receipt words, straight apostrophe)');
   assert.equal(INTENTS.metrics.placeholder, 'Which project or workspace?', 'get_team_metrics needs a scope; the range defaults to this month');
   assert.deepEqual(Object.keys(INTENTS).filter((id) => INTENTS[id].prefill), ['away']);
+});
+
+test('Plan it with me (Shape it first): refused while the gate is off; with it on it arms and the send leads with its sentence', () => {
+  assert.equal(INTENTS.shape.label, 'Plan it with me');
+  assert.equal(INTENTS.shape.help, 'Agree on what gets built before anything runs · ~3 min');
+  assert.equal(INTENTS.shape.badge, 'New');
+  const s = setup();
+  try {
+    applyShapeFirstHello({});
+    assert.equal(s.ctl.set('shape'), false, 'gate off (the default): no intent');
+    assert.equal(s.ctl.current(), null);
+    assert.equal(s.chip(), null);
+    applyShapeFirstHello({ features: { shapeFirst: true } });
+    assert.equal(s.ctl.set('shape'), true);
+    assert.equal(s.ctl.current(), 'shape');
+    assert.equal(s.chip().querySelector('.chat-intent-l').textContent, 'Plan it with me');
+    assert.equal(s.input.placeholder, 'Describe the problem…');
+    const sent = s.handle.transformSend('Uploads fail on large files');
+    assert.ok(sent.startsWith(INTENTS.shape.lead), sent);
+    assert.equal(sent, `${INTENTS.shape.lead}\n\nUploads fail on large files`);
+  } finally {
+    applyShapeFirstHello({});
+  }
 });
 
 test('examples rotate on the home while idle; they stop when typing, with an intent, or on a thread — never over an intent', () => {

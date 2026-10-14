@@ -130,7 +130,7 @@ import { redactSecrets } from '../shared/workspace-map/redact.mjs';
 import { effectiveNightConfig } from './night/effective.mjs';
 import { nightState, decideDelayMs, nightAnchorMs, runAllowed } from './night/activation.mjs';
 import { decideAsk } from './night/decider.mjs';
-import { PLAN_ASK_KIND } from './shape/run.mjs';
+import { PLAN_ASK_KIND, initialShaping } from './shape/run.mjs';
 import { runNightAnalysis, readMemoryText } from './night/analysis.mjs';
 import { resolveDeciderPair } from './night/decider-model.mjs';
 import { writeNightDecision, countNightDecisions, nightCounts, nightGateCycles, nightSpendSinceUsd } from './night/store.mjs';
@@ -1002,6 +1002,7 @@ export class RunHarness extends EventEmitter {
       pauseDetail: null,   // mirrors this.pauseDetail
       limitEngine: null,   // mirrors this.limitEngine: the engine whose usage limit paused the run
       limitResetAt: null,  // mirrors this.limitResetAt: when that usage limit resets (ISO)
+      ...(this.runShape ? { shaping: initialShaping(this.runShape, this.resumeOpts?.resumePoint?.shaping) } : {}),
       // Sub-agent lifecycle records (rides the existing `state` snapshot; mirrored to
       // the sub_agents table). Each: { id, label, nodeId, stepIndex, cycle, stepKey,
       // status, startedAt, finishedAt, durationMs?, tokens?, costUsd? };
@@ -1034,6 +1035,14 @@ export class RunHarness extends EventEmitter {
   /** @returns {object} a deep-ish snapshot of current state. */
   getState() {
     return JSON.parse(JSON.stringify(this.state));
+  }
+
+  /** Save to plans/ (server): the saved checkout path rides state.shaping so the run card can show it. */
+  recordPlanSaved(rel) {
+    if (!this.state.shaping || typeof rel !== 'string') return false;
+    this.state.shaping.savedTo = rel;
+    this._emit('state', this.getState());
+    return true;
   }
 
   /**

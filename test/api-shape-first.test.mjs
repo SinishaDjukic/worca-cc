@@ -3,7 +3,7 @@
 // Boot = the server-mock-mode recipe (temp home + WORCA_MOCK BEFORE the dynamic import; listen on the MODULE server).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
@@ -172,6 +172,97 @@ test('gate on: an invalid answer is a 422 with the run\'s field errors', () => w
     assert.equal(r.status, 422);
     assert.deepEqual((await r.json()).errors, errors);
   } finally { runs.delete('shape-422-run'); }
+}));
+
+test('gate off: the plan text and Save to plans/ routes are 404', () => withGate(false, async () => {
+  assert.equal((await fetch(`${base}/api/runs/x/plan`)).status, 404);
+  assert.equal((await post('/api/runs/x/plan/save', {})).status, 404);
+}));
+
+/** Answer clarify asks until a plan ask other than `skipId` is open; returns it. */
+async function untilPlanAsk(runId, skipId = null) {
+  const entry = runs.get(runId);
+  const t0 = Date.now();
+  while (Date.now() - t0 < 60000) {
+    const pq = entry.pendingQuestion;
+    if (pq && pq.kind === 'plan' && pq.id !== skipId) return pq;
+    if (pq && pq.kind !== 'plan') {
+      const a = await post('/api/answer', { runId, id: pq.id, payload: { answers: [] } });
+      assert.equal(a.status, 200, await a.text());
+    }
+    assert.ok(!settled.has(String(entry.status || '')), `the run settled (${entry.status}) before the plan stop`);
+    await sleep(50);
+  }
+  throw new Error(`run ${runId} never reached a plan ask`);
+}
+
+test('gate on: a shaped run serves its plan text, saves it to plans/, revises with perspectives and approves', () => withGate(true, async () => {
+  const dir = gitDir('shape-plan');
+  const r = await post('/api/run', { prompt: 'Add a charts page.', projectDir: dir, shape: { perspectives: ['qa'] } });
+  const text = await r.text();
+  assert.equal(r.status, 200, text);
+  const { runId } = JSON.parse(text);
+  const entry = runs.get(runId);
+
+  const pq = await untilPlanAsk(runId);
+  let g = await fetch(`${base}/api/runs/${runId}/plan`);
+  assert.equal(g.status, 200);
+  const body = await g.json();
+  assert.equal(body.file, pq.plan.file);
+  assert.equal(body.text, readFileSync(pq.plan.file, 'utf8'));
+  assert.equal(body.truncated, false);
+  assert.ok(body.name.endsWith('.md'));
+  g = await fetch(`${base}/api/runs/${runId}/plan?round=99`);
+  assert.equal(g.status, 404);
+
+  let s = await post(`/api/runs/${runId}/plan/save`, {});
+  let saved = await s.json();
+  assert.equal(s.status, 200, JSON.stringify(saved));
+  assert.match(saved.path, /^plans\/.+\.md$/);
+  assert.equal(readFileSync(join(dir, saved.path), 'utf8'), body.text);
+  s = await post(`/api/runs/${runId}/plan/save`, {});
+  assert.equal(s.status, 409);
+  assert.equal((await s.json()).error, 'exists');
+  s = await post(`/api/runs/${runId}/plan/save`, { overwrite: true });
+  saved = await s.json();
+  assert.equal(s.status, 200, JSON.stringify(saved));
+  const row = (await hello()).runs.find((x) => x.runId === runId);
+  assert.equal(row.shaping.savedTo, saved.path);
+
+  let a = await post(`/api/runs/${runId}/answer`, { id: pq.id, decision: 'revise', feedback: 'Cover the threats too.', perspectives: ['qa', 'security'] });
+  assert.equal(a.status, 200, await a.text());
+  const pq2 = await untilPlanAsk(runId, pq.id);
+  assert.deepEqual(pq2.plan.perspectives, ['product', 'qa', 'security']);
+
+  a = await post(`/api/runs/${runId}/answer`, { id: pq2.id, decision: 'approve' });
+  assert.equal(a.status, 200, await a.text());
+  const done = await untilSettled(runId);
+  assert.equal(done.status, 'done', JSON.stringify({ status: done.status, reason: done.pauseReason, detail: done.pauseDetail }));
+  assert.ok(entry.events.some((e) => e.type === 'state' && e.shaping?.approved?.file === pq2.plan.file), 'a state frame carries shaping.approved');
+  const after = (await hello()).runs.find((x) => x.runId === runId);
+  assert.equal(after.shaping.approved.file, pq2.plan.file);
+}));
+
+test('gate on: Save to plans/ refuses a workspace run and saves a single-project one', () => withGate(true, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'worca-cc-shape-save-'));
+  const planFile = join(tmp, 'plan.md');
+  writeFileSync(planFile, '# Plan\n');
+  const projectDir = gitDir('shape-save');
+  const stand = (id, extra) => runs.set(id, { id, kind: 'workspace-run', status: 'running', events: [], title: 'Charts page',
+    projectDir, pendingQuestion: { id: 'plan-n_refine-1', kind: 'plan', plan: { file: planFile } }, ...extra });
+  stand('shape-save-ws', { workspaceId: 'ws1' });
+  stand('shape-save-one', {});
+  try {
+    let r = await post('/api/runs/shape-save-ws/plan/save', {});
+    assert.equal(r.status, 409);
+    assert.match((await r.json()).error, /needs a single-project run/);
+    assert.equal(existsSync(join(projectDir, 'plans')), false, 'the refusal wrote nothing');
+
+    r = await post('/api/runs/shape-save-one/plan/save', {});
+    const body = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(body));
+    assert.equal(readFileSync(join(projectDir, body.path), 'utf8'), '# Plan\n');
+  } finally { runs.delete('shape-save-ws'); runs.delete('shape-save-one'); }
 }));
 
 test('gate off: a held plan is still answered through POST /api/answer (never stranded)', () => withGate(false, async () => {

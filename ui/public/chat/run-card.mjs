@@ -11,6 +11,7 @@ import { registerChatCard } from './extensions.mjs';
 import { mountRunGraph } from '../graph/run-hosts.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askRendererFor, askKindOf } from '../ask/registry.mjs';
+import { shapeFirstOn } from './shape-gate.mjs';
 
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
@@ -167,6 +168,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const autoEl = h('span', 'chat-rc-auto');
   autoEl.hidden = true;
   sub.append(where, autoEl);
+  // ---- Shape it first: the approved plan this run was shaped into (snapshot.shaping)
+  const shapedEl = h('div', 'chat-rc-shaped');
+  shapedEl.hidden = true;
   // ---- stats
   const stats = h('div', 'ask-rc-stats');
   const stat = (label, cls) => { const box = h('div', 'ask-rc-stat'); const v = h('span', `ask-rc-stat-v ${cls}`); box.append(h('span', 'ask-rc-stat-k', label), v); stats.appendChild(box); return v; };
@@ -223,7 +227,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   footErr.hidden = true;
   footErr.setAttribute('role', 'status');
   foot.append(pauseBtn, stopBtn, footErr);
-  el.append(head, title, sub, stats, agentsBox, well, qSec, resultSec, reason, foot);
+  el.append(head, title, sub, shapedEl, stats, agentsBox, well, qSec, resultSec, reason, foot);
 
   let last = null, graph = null, agentsSig = null, resultSig = '', painted = null, sent = null, inFlight = false, dead = false, pauseAsked = '';
   let shownFor = null;   // the question whose receipt shows the "Answered" fallback (its answer may still be in flight)
@@ -563,6 +567,19 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const prog = s && s.progress;
     progEl.textContent = prog && prog.total ? `${prog.done}/${prog.total} agents` : '—';
     open.setAttribute('href', progressRoute(id, s));
+    const sh = s && s.shaping;
+    if (sh && sh.approved && shapeFirstOn()) {
+      const name = String(sh.approved.file || '').split(/[\\/]/).pop();
+      shapedEl.replaceChildren(h('span', 'chat-rc-shaped-stages', 'Clarify ✓ · Plan ✓ · Refine ✓ while shaping'),
+        h('span', 'chat-rc-shaped-plan', `Plan: ${name}`));
+      if (sh.savedTo) {
+        const open = button('chat-rc-shaped-open');
+        open.textContent = 'Open';
+        open.addEventListener('click', () => call(ctx.openArtifact, artifactRef(), { relPath: sh.approved.file, kind: 'plan' }));
+        shapedEl.append(h('span', 'chat-rc-shaped-saved', `Saved to ${sh.savedTo}`), open);
+      }
+      shapedEl.hidden = false;
+    } else shapedEl.hidden = true;
     paintAgents(s);
     paintGraph(s, chip);
     paintQuestion(s);

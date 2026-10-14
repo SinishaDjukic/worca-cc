@@ -76,6 +76,7 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     moreArtifacts: !!(x && x.moreArtifacts),
     pr: x && x.pr && typeof x.pr.url === 'string' && x.pr.url ? x.pr : null,
     archived: !!state.archivedAt,                    // archived: the run folder and its History row are gone
+    ...(state && state.shaping ? { shaping: state.shaping } : {}),
   };
 }
 

@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { RESERVED_KEY_VAR } from '../web-allowlist.mjs';
 import { keepListNames } from '../mcp/keep-list.mjs';
 import { ASK_DENY_RULES } from './deny-rules.mjs';
+import { SHAPE_FIRST_ENV_KEYS } from '../shape/gate.mjs';
 
 /** Absolute path of the worca MCP server script — the `serverPath` of buildMcpConfig (P2 never guesses it). */
 export const ASK_MCP_SERVER_PATH = fileURLToPath(new URL('./mcp-stdio.mjs', import.meta.url));
@@ -246,7 +247,8 @@ function buildCodexAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, re
  *  spawned env-scrubbed, so nothing WORCA_* reaches the child unless it rides mcpServers.env. Forwarded only when set. */
 // WORCA_PROJECTS_ROOT / WORCA_CLONE_ALLOW: propose_clone_project validates against the same projects
 // folder and allowlist the server clones with (neither is a secret; no credential is ever forwarded).
-export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW']);
+export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT',
+  'WORCA_CLONE_ALLOW', ...SHAPE_FIRST_ENV_KEYS]);
 
 /** The search key's env var name for one turn, or null. The VALUE never touches disk: the per-turn mcp json sits in
  *  the chat's own cwd (tmp/ask, where a Grep can ignore the Read deny), so the var instead rides the claude process's

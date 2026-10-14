@@ -9,7 +9,8 @@ import { checkRows } from './helpers/rows.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { snapshotFromState } from '../ui/public/ask-run-card.mjs';
 import { createChatRunCard, resultWord, answerReceipt, autoChip, midTrunc, progressIdent, runRefOf } from '../ui/public/chat/run-card.mjs';
-import { registerAskRenderer } from '../ui/public/ask/registry.mjs';
+import { registerAskRenderer, askRendererFor, askKindOf } from '../ui/public/ask/registry.mjs';
+import { applyShapeFirstHello } from '../ui/public/chat/shape-gate.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
@@ -953,4 +954,108 @@ test('chat run card: an answer whose 200 lands before the question goes away kee
   card.update(live({ status: 'pausing', pendingQuestion: null }));
   assert.equal($('.chat-rc-receipt').hidden, false, 'the card names what it sent');
   assert.equal($('.chat-rc-receipt summary').textContent, 'Answer sent · Implementer');
+});
+
+test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · Refine ✓ while shaping", the plan file, Saved to + Open; hidden with the gate off or nothing approved', async () => {
+  const SHAPING = (over = {}) => ({ perspectives: ['ux'], rounds: [{ round: 1 }], approved: { round: 1, file: 'docs/plans/2026-10-14-login.md' }, savedTo: null, ...over });
+  try {
+    await checkRows([
+      { name: 'an approved plan with the gate on shows the line and the plan file name, between the sub-line and the stats', run: () => {
+        applyShapeFirstHello({ features: { shapeFirst: true } });
+        const { card, $ } = mk();
+        card.update(live({ shaping: SHAPING() }));
+        const line = $('.chat-rc-shaped');
+        assert.equal(line.hidden, false);
+        assert.equal(line.previousElementSibling, $('.ask-rc-sub'));
+        assert.equal(line.nextElementSibling, $('.ask-rc-stats'));
+        assert.equal($('.chat-rc-shaped-stages').textContent, 'Clarify ✓ · Plan ✓ · Refine ✓ while shaping');
+        assert.equal($('.chat-rc-shaped-plan').textContent, 'Plan: 2026-10-14-login.md');
+        assert.equal($('.chat-rc-shaped-saved'), null, 'not saved: no Saved to');
+        assert.equal($('.chat-rc-shaped-open'), null);
+      } },
+      { name: 'the gate off hides it', run: () => {
+        applyShapeFirstHello({});
+        const { card, $ } = mk();
+        card.update(live({ shaping: SHAPING() }));
+        assert.equal($('.chat-rc-shaped').hidden, true);
+      } },
+      { name: 'no shaping, or nothing approved, hides it — and a later snapshot without it hides a shown line', run: () => {
+        applyShapeFirstHello({ features: { shapeFirst: true } });
+        const { card, $ } = mk();
+        card.update(live());
+        assert.equal($('.chat-rc-shaped').hidden, true);
+        card.update(live({ shaping: SHAPING({ approved: null }) }));
+        assert.equal($('.chat-rc-shaped').hidden, true);
+        card.update(live({ shaping: SHAPING() }));
+        assert.equal($('.chat-rc-shaped').hidden, false);
+        card.update(live({ shaping: SHAPING({ approved: null }) }));
+        assert.equal($('.chat-rc-shaped').hidden, true);
+      } },
+      { name: 'saved: "Saved to <path>" with an Open button that opens the plan through ctx.openArtifact', run: () => {
+        applyShapeFirstHello({ features: { shapeFirst: true } });
+        const { card, $, calls } = mk();
+        card.update(live({ shaping: SHAPING({ savedTo: 'docs/plans/2026-10-14-login.md' }) }));
+        assert.equal($('.chat-rc-shaped-saved').textContent, 'Saved to docs/plans/2026-10-14-login.md');
+        const open = $('.chat-rc-shaped-open');
+        assert.equal(open.tagName, 'BUTTON');
+        assert.equal(open.type, 'button');
+        assert.equal(open.textContent, 'Open');
+        open.click();
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0][0], 'artifact');
+        assert.equal(calls[0][1].pipelineId, 'abcd1234');
+        assert.equal(calls[0][1].runId, 'run-uuid-1');
+        assert.deepEqual(calls[0][2], { relPath: 'docs/plans/2026-10-14-login.md', kind: 'plan' });
+      } },
+      { name: 'a repaint never stacks a second line', run: () => {
+        applyShapeFirstHello({ features: { shapeFirst: true } });
+        const { card } = mk();
+        const snap = live({ shaping: SHAPING({ savedTo: 'docs/plans/x.md' }) });
+        card.update(snap);
+        card.update(snap);
+        assert.equal(card.el.querySelectorAll('.chat-rc-shaped-stages').length, 1);
+        assert.equal(card.el.querySelectorAll('.chat-rc-shaped-open').length, 1);
+      } },
+    ]);
+  } finally {
+    applyShapeFirstHello({});
+  }
+});
+
+test('chat run card: a plan question paints through the registered `plan` ask renderer, and its Submit collects through it', async () => {
+  const seen = { render: 0, collect: 0 };
+  registerAskRenderer('plan', {
+    render(panel, pq) { seen.render += 1; panel.innerHTML = `<div class="plan-body">${pq.round}</div><button class="btn-go">Approve</button>`; },
+    collect() { seen.collect += 1; return { decision: 'approve' }; },
+  });
+  const pq = { id: 'p-1', kind: 'plan', nodeId: 'n_plan', round: 1 };
+  const sent = [];
+  // app.js chatPaintQuestion → renderQpanel: askRendererFor(askKindOf(pq)).render(panel, pq).
+  const controls = {
+    paintQuestion(ref, host) {
+      const panel = host.querySelector('.qpanel');
+      askRendererFor(askKindOf(pq)).render(panel, pq);
+      panel.classList.remove('hidden');
+      return { id: pq.id, kind: askKindOf(pq), heading: 'Review the plan', step: 'Planner' };
+    },
+    releaseQuestion() {},
+    answer: async (ref, qid, payload) => { sent.push([qid, payload]); return true; },
+  };
+  const { card, $ } = mk({ controls });
+  card.update(live({ pendingQuestion: pq }));
+  assert.equal(seen.render, 1, 'the plan renderer drew the question');
+  assert.equal($('.chat-rc-q').hidden, false);
+  assert.equal($('.chat-rc-q .plan-body').textContent, '1');
+  $('.chat-rc-q .btn-go').click();
+  await settle();
+  assert.equal(seen.collect, 1);
+  assert.deepEqual(sent, [['p-1', { decision: 'approve' }]]);
+});
+
+test('snapshotFromState carries state.shaping; without it the key set is unchanged', () => {
+  const shaping = { perspectives: [], rounds: [], approved: { round: 2, file: 'docs/plans/p.md' }, savedTo: 'docs/plans/p.md' };
+  assert.deepEqual(snapshotFromState(STATE({ shaping }), { now: 0 }).shaping, shaping);
+  const plain = snapshotFromState(STATE(), { now: 0 });
+  assert.equal('shaping' in plain, false);
+  assert.deepEqual(Object.keys(snapshotFromState(STATE({ shaping: null }), { now: 0 })), Object.keys(plain));
 });

@@ -301,7 +301,8 @@ import {
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { shapeFirstEnabled, requireShapeFirst } from '../src/core/shape/gate.mjs';
-import { resolveShapeRequest, PLAN_ASK_KIND } from '../src/core/shape/run.mjs';
+import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
+import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
@@ -997,6 +998,7 @@ function summarizeRuns() {
     // Who last stopped / paused / resumed it ({ kind, by, at }), or null.
     lastAction: r.lastAction || r.orch?.state?.lastAction || null,
     pendingQuestion: r.pendingQuestion || null,
+    ...(r.orch?.state?.shaping ? { shaping: r.orch.state.shaping } : {}),
     // Night mode switches + counters ({optIn, override, decisions, flagged}), so a reconnect paints the run-view switch.
     night: r.orch?.state?.night || null,
     // kind discriminator so the client routes runs vs agent generations vs
@@ -3929,18 +3931,55 @@ app.post('/api/runs/:id/answer', (req, res) => {
   const runId = req.params.id;
   const entry = runs.get(runId);
   if (!entry) return res.status(404).json({ error: 'unknown run' });
-  const { id, decision, feedback } = req.body || {};
+  const { id, decision, feedback, perspectives } = req.body || {};
   const pq = entry.pendingQuestion;
   if (!pq || pq.kind !== PLAN_ASK_KIND || !id || pq.id !== id) {
     return res.status(409).json({ error: 'no plan approval with that id is waiting on this run' });
   }
   try {
-    answerRun(runId, id, { decision, ...(feedback !== undefined ? { feedback } : {}) }, actorOf(req));
+    answerRun(runId, id, { decision, ...(feedback !== undefined ? { feedback } : {}),
+      ...(perspectives !== undefined ? { perspectives } : {}) }, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
     if (err && err.code === 'INVALID_ANSWER') {
       return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
     }
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+const PLAN_TEXT_MAX = 512 * 1024;   // characters (UTF-16 units), not bytes
+
+// The plan card's text (S4/S6): the open plan ask's file, the approved one, or ?round=N's. The path is the server's own.
+app.get('/api/runs/:id/plan', async (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  const entry = runs.get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'unknown run' });
+  const file = planFileOf({ pendingQuestion: entry.pendingQuestion, shaping: entry.orch?.state?.shaping }, req.query.round);
+  if (!file) return res.status(404).json({ error: 'no plan on this run' });
+  try {
+    const text = await fsp.readFile(file, 'utf8');
+    const truncated = text.length > PLAN_TEXT_MAX;
+    res.json({ file, name: path.basename(file), text: truncated ? text.slice(0, PLAN_TEXT_MAX) : text, truncated });
+  } catch {
+    res.status(404).json({ error: 'plan file not found' });
+  }
+});
+
+// Save to plans/ (D10, S7): into the registered checkout, never over a file without {overwrite:true}, never a commit.
+app.post('/api/runs/:id/plan/save', async (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  const entry = runs.get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'unknown run' });
+  if (entry.workspaceId || !entry.projectDir) return res.status(409).json({ error: 'Save to plans/ needs a single-project run' });
+  const file = planFileOf({ pendingQuestion: entry.pendingQuestion, shaping: entry.orch?.state?.shaping });
+  if (!file) return res.status(404).json({ error: 'no plan on this run' });
+  try {
+    const r = await savePlanToCheckout({ file, projectDir: entry.projectDir, title: entry.title, overwrite: req.body?.overwrite === true });
+    if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.path ? { path: r.path } : {}) });
+    entry.orch?.recordPlanSaved?.(r.path);
+    res.json({ ok: true, path: r.path });
+  } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -10783,7 +10822,8 @@ function askWebAccessFor(threadId, ctx) {
  *  for this turn) is on, and the MCP servers section when the turn has registry copies (`mcp`,
  *  askMcpPromptInput()). Memory is mounted, not rendered. */
 async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
-  return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput(), deployment: DEPLOYMENT, web, mcp, commands, ...(engine === 'codex' ? { engine } : {}) });
+  return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput(), deployment: DEPLOYMENT, web, mcp, commands,
+    ...(engine === 'codex' ? { engine } : {}), ...(shapeFirstEnabled() ? { shape: true } : {}) });
 }
 
 /** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */

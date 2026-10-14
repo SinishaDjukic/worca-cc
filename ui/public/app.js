@@ -238,7 +238,10 @@ import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.m
 import { activeAgents } from './ask-run-card.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
-import { applyShapeFirstHello } from './chat/shape-gate.mjs';
+import { applyShapeFirstHello, shapeFirstOn } from './chat/shape-gate.mjs';
+import { renderPlanBody } from './shape/plan-body.mjs';
+import { decorateShapingQuestions } from './shape/questions.mjs';
+import { isShapingRun } from './shape/plan-text.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
 import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
@@ -295,6 +298,8 @@ const pinpointDraft = (quote, text) => openChat({ text, quote });
 let chatPanelRouter = null;    // (segments: ['<runId>', '<tab>'?]) => void — [] closes the panel
 let chatPanelContext = null;   // () => ({ runId?, pipelineId?, projectDir?, projectKey?, workspaceId?, runPage?, diffPath? })
 let chatEntryPending = false;  // openChat() is routing to a bare #chat: enterChatView reopens the LAST chat, not an unread one
+let pendingShapeEntry = null;   // the New run link (§3.6): {text}, armed once Chat home is open
+let lastChatHomeFlags = null;   // the switches chatHomeFlags last read: onHello re-pushes them with the gate, no fetch
 const chatDeps = {
   openRunPanel: (ref, opts) => chatOpenRunPage(ref, opts),
   openArtifact: (ref, artifact) => chatDeps.openRunPanel(ref, { tab: 'artifacts' }),
@@ -1596,6 +1601,10 @@ function onHello(msg) {
   noteBoot(state, msg.bootId, runs);   // a restarted server numbers run events from 1 again
   applyServerMock(msg.serverMock);     // every hello: a restarted server may have changed mode
   applyShapeFirstHello(msg);
+  const shapeLink = document.getElementById('shapeChatLink');
+  if (shapeLink) shapeLink.hidden = !shapeFirstOn();
+  // A gate that arrives while the home is open shows its tile. The spread keeps scripts/tasks: setFlags replaces the set.
+  if (chatHome && lastChatHomeFlags) chatHome.update({ flags: { ...lastChatHomeFlags, shapeFirst: shapeFirstOn() } });
   // A restarted server lists only the runs IT started, and nothing below drops the old ones: mark
   // every entry stale, and the upserts below clear the ones it lists. The saved run's bar skips a
   // stale entry (hdPipelineRun), which would otherwise offer a Pause / Stop the server answers
@@ -1635,6 +1644,7 @@ function onHello(msg) {
       workspaceId: r0.workspaceId || undefined,
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
       night: r0.night || undefined,
+      shaping: r0.shaping || null,
     });
     // Seed the run's stepper from the hello summary so the live card resolves
     // sub-agents to their real nodes BEFORE any subagent delta paints — closing
@@ -1772,6 +1782,7 @@ function makeRun({
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
   pauseDetail = null, limitEngine = null, limitResetAt = null, runEngine = undefined, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined,
+  shaping = null,
 }) {
   return {
     runId,
@@ -1794,6 +1805,7 @@ function makeRun({
     workspaceId,
     workspaceName,
     night,                // Away mode on this run: {optIn, override, decisions, flagged, openedAt} (hello / state)
+    shaping,              // Shape it first: {perspectives, rounds, approved, savedTo} on a shaping run (hello / state), or null
     // Stable ordering key: assigned once per runId, never bumped by activity
     // and never re-minted if the run is dropped and re-materialized.
     // hello seeds runs in server registration order, so this tracks true
@@ -2268,6 +2280,7 @@ function addNightDecisions(r, list) {
 
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
+  if (msg.shaping && typeof msg.shaping === 'object') r.shaping = msg.shaping;
   if (msg.startedAt) r.startedAt = msg.startedAt;
   // The harness mirrors startedBy onto its state (creation-immutable), so a live card
   // learns who started the run from the first state snapshot.
@@ -5893,7 +5906,11 @@ registerAskRenderer('clarify', {
     // The ACTIVE agent names the panel (the v1 phase vocabulary is gone).
     : `${(activeNodes(ctx.run)[0] || {}).label || 'Pipeline'} needs your input`),
   count: (pq) => { const n = realQuestions(pq).length; return `${n} question${n === 1 ? '' : 's'}`; },
-  render: (panel, pq, ctx) => renderClarifyBody(ctx.run, panel, pq),
+  // title: unchanged. The visible "A few questions before the plan" heading is askHeading's.
+  render: (panel, pq, ctx) => {
+    renderClarifyBody(ctx.run, panel, pq);
+    if (shapeFirstOn() && isShapingRun(ctx.run)) decorateShapingQuestions(panel, pq, ctx);
+  },
   // `panel` is null only for a caller that has no panel node; r._answers is the
   // no-panel fallback renderClarifyBody keeps writing.
   collect: (panel) => ({
@@ -5916,6 +5933,42 @@ registerAskRenderer('workflow', {
   count: () => 'workflow',
   render: (panel, pq, ctx) => renderWorkflowBody(ctx.run, panel, pq),
 });
+// Shape it first (S4): registered ungated: the only way to answer a run still held when the gate goes off.
+// title/count fill the hidden .qpanel-head (F28); askHeading is what people read. Kept for completeness.
+registerAskRenderer('plan', {
+  title: (pq) => `Plan ready for your approval · v${(pq.plan && pq.plan.round) || 1}`,
+  count: (pq) => { const c = pq.plan && pq.plan.check; return c && Number.isFinite(c.total) ? `Shape ${c.passed}/${c.total}` : null; },
+  render: (panel, pq, ctx) => renderPlanBody(panel, pq, planBodyDeps(ctx)),
+  setErrors: (panel, errors) => { if (panel && panel.__plan) panel.__plan.setErrors(errors); },
+});
+
+function planBodyDeps(ctx) {
+  const r = ctx.run;
+  const extras = shapeFirstOn();
+  const runUrl = (tail) => `/api/runs/${encodeURIComponent(r.runId)}${tail}`;
+  return {
+    doc: document, run: r, extras,
+    fetchPlan: (round) => (extras
+      ? fetch(runUrl(`/plan${round ? `?round=${encodeURIComponent(round)}` : ''}`)).then((res) => (res.ok ? res.json() : null)).catch(() => null)
+      : Promise.resolve(null)),
+    markdown: { ensure: bindMarkdownReady, render: (t) => hdMarkdown.render(t) },
+    // The route is chosen when the answer is POSTED: the panel is rebuilt only when the question id changes, and a hello
+    // can turn the gate off in between. The gated route would then answer 404 and strand the run (D12).
+    submit: (payload) => postAnswer(r, payload, { plan: shapeFirstOn() }),
+    openFull: () => {
+      // openRunArtifactPopup rejects only a falsy artifact; {relPath:''} would open an empty viewer.
+      const file = r.pendingQuestion && r.pendingQuestion.plan ? r.pendingQuestion.plan.file : '';
+      if (file) openRunArtifactPopup({ pipelineId: r.pipelineId || null, runId: r.runId }, { relPath: file, kind: 'plan' });
+    },
+    // makeRun defaults a missing title to '(untitled)': never prefill that string.
+    openInNewRun: (text) => openNewPipeline({ target: 'project', projectDir: r.projectDir, workflowId: 'wf_auto',
+      promptMarkdown: text, title: r.title && r.title !== '(untitled)' ? r.title : '' }),
+    savePlan: (overwrite) => fetch(runUrl('/plan/save'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overwrite }) }).then(async (res) => ({ status: res.status, body: await safeJson(res) }))
+      .catch(() => null),
+    confirm: (opts) => confirmModal(opts),
+  };
+}
 
 // Gather the answer from the panel that was submitted and POST it. The shape is
 // the registered renderer's business; a renderer that returns null has refused
@@ -5936,7 +5989,7 @@ function submitAnswer(r, panel = null) {
 // Returns TRUE only when the POST came back 200 — the workflow panel's Revise
 // echo is recorded off that, so a failed send never claims a round the server
 // never saw. Every other caller ignores the return.
-async function postAnswer(r, payload) {
+async function postAnswer(r, payload, { plan = false } = {}) {
   if (!r || !r.pendingQuestion) return false;
   // Re-entrancy guard: an answer is already in flight for this run. Without
   // this a synthetic/double click (or a re-triggered handler) could fire a
@@ -5951,11 +6004,15 @@ async function postAnswer(r, payload) {
   r._answering = true;
 
   try {
-    const res = await fetch('/api/answer', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ runId, id, payload }),
-    });
+    const res = plan
+      // Shape it first (S4): the gated plan route while the gate is on; /api/answer otherwise, so a held run is never stranded.
+      ? await fetch(`/api/runs/${encodeURIComponent(runId)}/answer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...payload }) })
+      : await fetch('/api/answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId, id, payload }),
+      });
     // Gate 3 said no. That is an ANSWER outcome, not a transport failure: the
     // question stays open, the panel keeps every typed value, and the renderer
     // marks the offending fields. pendingQuestion is deliberately untouched.
@@ -6512,6 +6569,14 @@ el.mdFile.addEventListener('change', async () => {
   } catch (e) {
     el.mdFileName.textContent = `failed to read: ${e.message}`;
   }
+});
+
+// Shape it first's New run link (§3.6): the Markdown goes to the Chat home with Plan it with me armed.
+document.getElementById('shapeChatLinkBtn')?.addEventListener('click', () => {
+  pendingShapeEntry = { text: el.promptMarkdown ? el.promptMarkdown.value.trim() : '' };
+  // The link lives on #new, and enterChatView swaps #chat/new to #chat at once, so the address is never already
+  // #chat/new here: this always fires a hashchange. Home: `head` is set, so no last-chat pick.
+  location.hash = 'chat/new';
 });
 
 // Selected extra files live in this array, not in the <input>: a FileList is
@@ -27145,6 +27210,7 @@ function askRunSnapshot(r) {
     title: r.title || '', projectKey: null, workspaceId: r.workspaceId || null, projectDir: r.projectDir || '',
     projectNames: Array.isArray(r.projectNames) ? r.projectNames : null,
     status: r.status, pauseReason: r.pauseReason || null, pendingQuestion: r.pendingQuestion || null,
+    ...(r.shaping ? { shaping: r.shaping } : {}),
     live: isLive(r), terminal: !!r._finished || isTerminalStatus(r.status),
     startedAt: r.startedAt || null, elapsedMs: liveTotalMs(r.steps, Date.now()),
     costUsd: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,   // null: cost unknown (Cursor), never $0.00
@@ -31079,9 +31145,17 @@ function paintRdResult(screen, r, { glance = 'run', trailCount = 0 } = {}) {
 // The heading over a waiting question on the glance: what is asked, by which step. It
 // replaces the panel's own header row (title + count badge).
 function askHeading(r, pq) {
+  // Shape it first: a shaping run's Clarify reads as the step before the plan (spec §3.3).
+  if (askKindOf(pq) === 'clarify' && shapeFirstOn() && isShapingRun(r)) return 'A few questions before the plan';
   const who = pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '';
   const n = Array.isArray(pq.questions) ? pq.questions.length : (Array.isArray(pq.issues) ? pq.issues.length : 1);
   switch (pq.kind) {
+    case 'plan': {                                 // spec §3.4 header: version and shape score
+      const p = pq.plan || {};
+      const c = p.check;
+      const score = c && Number.isFinite(c.total) ? ` · Shape ${c.passed}/${c.total}` : '';
+      return `Plan ready for your approval · v${p.round || 1}${score}`;
+    }
     case 'workflow': return 'Review the workflow';
     case 'form': return pq.title ? String(pq.title) : (who ? `${who} needs your input` : 'Your input is needed');
     case 'gate': return who ? `${who} needs a decision` : 'A decision is needed';
@@ -32613,8 +32687,12 @@ function showView(name, param = '') {
   // Same guard for the composer: unbind its keyboard and cancel any live gesture
   // so Delete/arrows/⌘Z can never edit the graph from another view.
   if (currentShownView === 'workflows' && name !== 'workflows') workflowsExit();
-  // worca Chat: leaving hides the page (voice stops, popovers close); the panel keeps its chat for the way back.
-  if (currentShownView === 'chat' && name !== 'chat') askPanel?.close();
+  // worca Chat: leaving hides the page (voice stops, popovers close); the panel keeps its chat for the way back. An
+  // armed intent no send carries is dropped, so a later visit never finds it armed.
+  if (currentShownView === 'chat' && name !== 'chat') {
+    askPanel?.close();
+    chatIntent.leave();
+  }
   // Leaving the wizard resets it (a scan, once started, is a run on Running — nothing to abort).
   if (currentShownView === 'workspace-create' && name !== 'workspace-create') resetWizard();
   // Settings is tabbed, so its two body-level overlays must be torn down on a TAB
@@ -33056,6 +33134,12 @@ function enterChatView(param = '', prevView = null) {
     }
   }
   askPanel?.open({ threadId });
+  // The New run link's entry: consumed on ANY Chat entry, so a stale one (home never reached) can't arm a later visit.
+  if (pendingShapeEntry) {
+    const { text } = pendingShapeEntry;
+    pendingShapeEntry = null;
+    if (!threadId && chatIntent.set('shape', { focus: true }) && text) chatPrefill(text);
+  }
   if (typeof chatPanelRouter === 'function') {
     try { chatPanelRouter(parts[1] === 'run' ? parts.slice(2) : []); } catch (e) { console.warn('[worca] the chat panel route failed', e); }
   }
@@ -33301,12 +33385,13 @@ async function applyAskPrefill() {
   setRunTarget(p.target === 'workspace' ? 'workspace' : 'project');
   // The card's engine pick (none: the defaults the project change loads decide). Touched, so they keep off it.
   if (p.engine) { state.engineTouched = true; setRunEngine(p.engine); }
-  // force the prompt source — the three-step reset of the segment handler
+  // pick the source from the prefill (a Markdown handoff, else the prompt) — the three-step reset of the segment handler
+  const src = typeof p.promptMarkdown === 'string' ? 'markdown' : 'prompt';
   state.activePluginSource = null;
-  el.sourceRadios.forEach((r) => { r.checked = r.value === 'prompt'; });
+  el.sourceRadios.forEach((r) => { r.checked = r.value === src; });
   document.querySelectorAll('#source-seg button[data-src]').forEach((b) => {
-    b.classList.toggle('on', b.dataset.src === 'prompt');
-    b.setAttribute('aria-pressed', String(b.dataset.src === 'prompt')); // the real handlers keep it: :4662/:4666 (static), :4692 (plugin buttons)
+    b.classList.toggle('on', b.dataset.src === src);
+    b.setAttribute('aria-pressed', String(b.dataset.src === src)); // the real handlers keep it: :4662/:4666 (static), :4692 (plugin buttons)
   });
   document.querySelectorAll('#source-seg button[data-plugin-src]').forEach((b) => {
     b.classList.remove('on');
@@ -33326,7 +33411,8 @@ async function applyAskPrefill() {
     // AWAITED: onProjectChanged → loadConfig → loadWorkflowsInto/loadGuardrailsInto — un-awaited, that tail lands after our own awaits and resets both pickers.
     await onProjectChanged();
   }
-  el.prompt.value = p.prompt || '';
+  el.prompt.value = src === 'prompt' ? (p.prompt || '') : '';
+  if (el.promptMarkdown) el.promptMarkdown.value = src === 'markdown' ? p.promptMarkdown : el.promptMarkdown.value;
   refreshMentionHighlights();
   const titleInput = document.getElementById('title');
   if (titleInput) titleInput.value = p.title || '';
@@ -33645,6 +33731,9 @@ async function chatHomeFlags() {
     const data = await safeJson(res);
     if (res.ok && data && Array.isArray(data.sources)) out.tasks = data.sources.some((s) => s && s.type === 'plugin');
   } catch { /* none known */ }
+  // Read after the awaits: a boot's first load, started before the hello, would otherwise keep a stale gate.
+  out['shapeFirst'] = shapeFirstOn();
+  lastChatHomeFlags = { ...out };
   return out;
 }
 /** A quick action's prefill: an empty composer takes the text as is (a trailing space kept, the caret at the end);
