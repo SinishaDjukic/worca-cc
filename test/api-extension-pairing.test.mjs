@@ -4,7 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { WebSocket } from 'ws';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
@@ -128,6 +128,9 @@ test('pair → token reaches the allowlist only; cards, commands, HEAD refused; 
   assert.equal((await call('GET', '/api/ask/threads', { origin: CHROME })).body.code, 'extension-unpaired');
   assert.equal((await call('GET', '/api/ask/threads', { origin: 'chrome-extension://zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz', token })).status, 401);
   assert.equal((await call('GET', '/api/settings', { origin: CHROME, token })).body.code, 'extension-route');
+  const inst = await call('GET', '/api/extension/install', { origin: CHROME, token });
+  assert.equal(inst.status, 403, 'the install info is UI-only');
+  assert.equal(inst.body.code, 'extension-route');
   assert.equal((await call('POST', '/api/run', { origin: CHROME, token, body: {} })).status, 403);
   const card = await call('POST', '/api/ask/threads/askt_x/cards/card_x', { origin: CHROME, token, body: { action: 'start' } });
   assert.deepEqual([card.status, card.body.code], [403, 'extension-route']);                       // M2
@@ -275,4 +278,26 @@ test('Pinpoint: a token holder gets the web surface whatever it sends (step 8)',
   const text = (await res.text()).split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l))
     .filter((l) => l.type === 'delta').map((l) => l.text).join('');
   assert.match(text, /web surface/);
+});
+
+test('GET /api/extension/install: a local UI call answers paths, version, steps and release zips', async () => {
+  const r = await call('GET', '/api/extension/install');
+  assert.equal(r.status, 200);
+  assert.equal(r.headers['cache-control'], 'no-store');
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(r.body.version, pkg.version);
+  assert.equal(r.body.remoteMode, false);
+  assert.equal(r.body.buildCommand, 'npm run ext:build');
+  assert.deepEqual(r.body.builds.map((b) => b.browser), ['chrome', 'edge', 'firefox']);
+  for (const b of r.body.builds) {
+    assert.ok(isAbsolute(b.path) && b.path.endsWith(join('extension', 'dist', b.browser)), b.path);
+    assert.equal(typeof b.present, 'boolean');
+    assert.ok(b.steps.length > 0);
+    assert.match(b.downloadUrl, new RegExp(`/releases/download/worca-app-v${pkg.version.replace(/\./g, '\\.')}/worca-${b.browser}-`));
+  }
+});
+
+test('GET /api/extension/install stays behind the host guard', async () => {
+  const r = await call('GET', '/api/extension/install', { headers: { host: 'evil.example' } });
+  assert.equal(r.status, 403);
 });

@@ -4,8 +4,8 @@ The Worca browser extension puts Ask Worca in a sidebar next to the page you are
 Chrome, Edge and Firefox. It talks only to the Worca running on your own computer, and only after
 you approve it in Worca.
 
-The extension is not part of the `@worca/app` npm package. You build it from this repository and
-load it into your browser yourself (see [Install](#install)).
+The extension ships with Worca: every `@worca/app` release carries the built extension for Chrome, Edge and Firefox,
+and the same builds are attached as zips to each GitHub release. See [Install](#install).
 
 ## What it does
 
@@ -39,21 +39,30 @@ load it into your browser yourself (see [Install](#install)).
 
 ## Install
 
-Build the three browser targets first:
+Every `@worca/app` package carries the built extension in `extension/dist/{chrome,edge,firefox}` inside the
+installed package. Find the folder in one of these ways:
 
-```bash
-npm run ext:build          # extension/dist/chrome, extension/dist/edge, extension/dist/firefox
-npm run ext:zip            # the same, plus one zip per browser in extension/dist/
-```
+- **In Worca**: Settings › General › Browser extension › **Install** shows the folder for your browser (Chrome,
+  Edge or Firefox tabs), with **Copy path**, the version and the steps below.
+- **From the CLI**: `worca extension` prints each folder, the version and the steps. `--browser chrome|edge|firefox`
+  shows one; `--open` opens the folder in Finder, Explorer or your file manager.
+- **From a GitHub release**: each `worca-app-v<version>` release has `worca-chrome-<version>.zip`,
+  `worca-edge-<version>.zip` and `worca-firefox-<version>.zip`. Unzip one and use the unzipped folder below.
+- **From source**: `npm run ext:build` builds `extension/dist/<browser>`; `npm run ext:zip` adds the zips.
+
+Then load it:
 
 - **Chrome / Edge** (116 or later): open `chrome://extensions` (or `edge://extensions`), turn on
-  **Developer mode**, click **Load unpacked** and pick `extension/dist/chrome` (or
-  `extension/dist/edge`).
-- **Firefox** (140 or later): open `about:debugging` → **This Firefox** → **Load Temporary
-  Add-on…** and pick `extension/dist/firefox/manifest.json`. Firefox removes a temporary add-on
-  when it quits, so load it again after a restart.
-- **The zips** in `extension/dist/` are for a manual upload to a browser's extension store. Nothing
-  here publishes them.
+  **Developer mode**, click **Load unpacked** and pick the folder.
+- **Firefox** (140 or later): the Firefox build is **unsigned** for now (signing on addons.mozilla.org comes
+  later), so it loads as a temporary add-on: open `about:debugging` → **This Firefox** → **Load Temporary
+  Add-on…** and pick `manifest.json` in the folder. Firefox removes a temporary add-on when it quits, so load it
+  again after a restart.
+- **The zips** are also what a browser's extension store takes for a manual upload. Nothing publishes them to a
+  store yet.
+
+After updating `@worca/app`, reload the extension from `chrome://extensions` (Chrome/Edge) or load it again
+(Firefox).
 
 ## Keyboard shortcuts
 
@@ -293,6 +302,7 @@ which wraps the extension in an Xcode project. That step is not automated or tes
 ```bash
 npm run ext:build                 # build all three browsers into extension/dist/
 npm run ext:zip                   # … and zip them
+npm run ext:build -- --pack       # what npm pack/publish run (prepack): all three, production, refuses WORCA_EXT_PORT / WORCA_EXT_BASE_URL
 npm run ext:lint:firefox          # web-ext lint on the Firefox build
 npm run e2e:firefox-smoke         # load the Firefox build in Firefox and check it starts
 npm run e2e:extension             # the Playwright suite (Chromium) in e2e/extension/
@@ -321,7 +331,7 @@ WORCA_EXT_PORT=4327 npm run ext:try                          # build Chrome and 
 - The address must be `http` on `127.0.0.1` or `localhost` (the rule the Worca address field
   uses). Anything else fails the build with a message naming the variable.
 - It is only the default: an address saved under **Settings → Worca address** still wins.
-- `npm run ext:zip` refuses to run while either variable is set, so a store zip always tries
+- `npm run ext:zip` and `npm pack` (its `prepack` build) refuse to run while either variable is set, so a store zip always tries
   `http://127.0.0.1:4317`.
 - `npm run ext:try` builds `extension/dist/chrome` with the variables, then opens Playwright's
   Chromium, headed, in a temporary profile with only that build loaded. It opens on a neutral page,

@@ -3332,6 +3332,19 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .xp-meta{font-size:12px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .xp-empty{margin:0;font-size:13px;color:var(--ink-2);}
 .xp-row .xp-revoke{padding:7px 14px;font-size:12.5px;}
+.xi{display:flex;flex-direction:column;gap:10px;margin-bottom:18px;}
+.xi-head{margin:0;font-size:13px;font-weight:600;color:var(--ink);}
+.xi-tabs{align-self:flex-start;}
+.xi-panel{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);}
+.xi-panel[hidden]{display:none;}
+.xi-path-row{display:flex;align-items:center;gap:10px;min-width:0;}
+.xi-path{flex:1 1 auto;min-width:0;font-family:var(--mono, 'JetBrains Mono', monospace);font-size:12.5px;color:var(--ink);background:var(--field);border-radius:8px;padding:7px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.xi-path-row .xi-copy{flex:none;padding:7px 14px;font-size:12.5px;}
+.xi-steps{margin:0;padding-left:20px;font-size:13px;color:var(--ink);display:flex;flex-direction:column;gap:2px;}
+.xi-note{margin:0;font-size:13px;color:var(--ink-2);}
+.xi-cmd{align-self:flex-start;font-family:var(--mono, 'JetBrains Mono', monospace);font-size:12.5px;color:var(--ink);background:var(--field);border-radius:8px;padding:5px 10px;}
+.xi-meta{margin:0;font-size:12px;color:var(--ink-2);}
+.xi-link{color:var(--ink);text-decoration:underline;text-underline-offset:2px;}
 
 /* About card rows. .about-val and .about-link share specificity on one anchor, so
    .about-link must stay AFTER .about-val (test/ui-settings-about.test.mjs pins it). */

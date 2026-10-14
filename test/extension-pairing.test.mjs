@@ -38,6 +38,7 @@ test('route kinds: pairing, token allowlist, everything else refused (cards, hea
   assert.equal(extensionRouteKind('GET', '/api/Ask/threads'), null);                    // case-sensitive
   assert.equal(extensionRouteKind('POST', '/api/projects'), null);
   assert.equal(extensionRouteKind('GET', '/api/settings'), null);
+  assert.equal(extensionRouteKind('GET', '/api/extension/install'), null);   // UI-only: never on the token allowlist
   assert.equal(extensionRouteKind('POST', '/api/run'), null);
   assert.equal(extensionRouteKind('GET', '/api/ask/threads/%2e%2e/messages'), null);
   assert.equal(extensionRouteKind('GET', '/api/ask/threads/t_123/attachments/att_1'), null);   // v5: the sidebar never reads attachments

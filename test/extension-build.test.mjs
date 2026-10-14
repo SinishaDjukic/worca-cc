@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { buildOne, defaultBaseUrlFromEnv } from '../tools/build-extension.mjs';
+import { buildOne, defaultBaseUrlFromEnv, parseArgs, releaseBuildRefusal } from '../tools/build-extension.mjs';
 
 test('production builds (chrome, edge, firefox) contain no test hooks', async () => {
   const dist = mkdtempSync(join(tmpdir(), 'wx-build-'));
@@ -88,4 +88,32 @@ test('the CLI: an invalid address fails the build with a clear message; --zip re
     assert.match(z.stderr, /--zip/);
     assert.doesNotMatch(z.stdout, /built/, 'refused before building');
   }
+});
+
+test('--pack is a production build of all three browsers, refused with a test address or a partial/test build', () => {
+  const o = parseArgs(['--pack']);
+  assert.equal(o.pack, true);
+  assert.deepEqual(o.browsers, ['chrome', 'edge', 'firefox']);
+  assert.equal(releaseBuildRefusal(o, {}), null);
+  assert.match(releaseBuildRefusal(o, { WORCA_EXT_PORT: '4999' }), /--pack refuses .*WORCA_EXT_PORT/);
+  assert.match(releaseBuildRefusal(o, { WORCA_EXT_BASE_URL: 'http://127.0.0.1:4999' }), /--pack refuses/);
+  assert.match(releaseBuildRefusal(parseArgs(['--pack', '--test']), {}), /--pack .*--test/);
+  assert.match(releaseBuildRefusal(parseArgs(['--pack', '--browser', 'chrome']), {}), /--pack .*--browser/);
+  assert.equal(releaseBuildRefusal(parseArgs(['--pack', '--browser', 'all']), {}), null);
+  // --zip keeps its own refusal text (the existing CLI test greps for --zip)
+  assert.match(releaseBuildRefusal(parseArgs(['--zip']), { WORCA_EXT_PORT: '4999' }), /--zip refuses/);
+  assert.equal(releaseBuildRefusal(parseArgs([]), { WORCA_EXT_PORT: '4999' }), null, 'a plain build may use a test address');
+});
+
+test('CLI: --pack refuses before building when a test address is set', () => {
+  const run = (args, env) => spawnSync(process.execPath, ['tools/build-extension.mjs', ...args], { encoding: 'utf8', env: { ...process.env, WORCA_EXT_PORT: '', WORCA_EXT_BASE_URL: '', ...env } });
+  for (const env of [{ WORCA_EXT_PORT: '4999' }, { WORCA_EXT_BASE_URL: 'http://127.0.0.1:4999' }]) {
+    const r = run(['--pack'], env);
+    assert.equal(r.status, 2, JSON.stringify(env));
+    assert.match(r.stderr, /--pack/);
+    assert.doesNotMatch(r.stdout, /built/, 'refused before building');
+  }
+  const t = run(['--pack', '--test'], {});
+  assert.equal(t.status, 2);
+  assert.doesNotMatch(t.stdout, /built/);
 });

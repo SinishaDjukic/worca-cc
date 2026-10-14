@@ -168,6 +168,7 @@ import {
 import {
   createExtensionPairing, decideExtensionRequest, extensionOrigin, EXTENSION_WS_PROTOCOL, TOKEN_PREFIX,
 } from '../src/core/extension-pairing.mjs';
+import { extensionInstallInfo } from '../src/core/extension-package.mjs';
 import { pageOrigin, matchRunningAction } from '../src/core/extension-actions.mjs';
 import { detectDeployment, deploymentFacts } from '../src/core/deployment.mjs';
 import { resolveIdentity, startedByOf, prAttributionFooter, actorOf, isSharedIdentity, byActor } from '../src/core/identity.mjs';
@@ -11584,6 +11585,14 @@ app.get('/api/extension/pairings', (req, res) => {
   if (!extensionUiCaller(req, res)) return;
   if (REMOTE_MODE) return res.json({ remoteMode: true, paired: [], pending: [] });
   res.json({ remoteMode: false, ...extensionPairing.list() });
+});
+
+// Settings › General › Browser extension › Install (docs/browser-extension.md#install): the extension builds packaged
+// with this Worca, their version and install steps. Read-only and UI-only: NOT on EXTENSION_TOKEN_ROUTES, so a paired
+// extension's token is refused by the extension gate before it gets here; S1 (isLocalRequest) guards everyone else.
+// A hosted Worca answers without server paths (src/core/extension-package.mjs).
+app.get('/api/extension/install', (req, res) => {
+  res.set('Cache-Control', 'no-store').json(extensionInstallInfo({ root: PROJECT_ROOT, remoteMode: REMOTE_MODE, repoUrl: APP_REPO_URL, releaseUrl: APP_INFO.releaseUrl }));
 });
 
 app.delete('/api/extension/pairings/:id', (req, res) => {

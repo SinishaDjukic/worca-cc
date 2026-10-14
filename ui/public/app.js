@@ -132,7 +132,7 @@ import {
 } from './plugins-view.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
-import { renderExtensionPairings, browserLabel, formatPairCode } from './extension-settings-view.mjs';
+import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
@@ -13667,6 +13667,7 @@ async function loadSettings() {
     refreshBudget();
     paintChatSettings(data.chat);
     paintCredentials();
+    void paintExtensionInstall();
     void paintExtensionPairings();
     loadAskHistory();
     setSettingsLoadMsg('');
@@ -13687,6 +13688,34 @@ async function paintCredentials() {
   if (card.hidden) return;
   host.replaceChildren(renderCredentials(data));
 }
+
+// Settings → Browser extension → Install (docs/browser-extension.md#install). The tab follows the browser Worca is
+// open in until the user picks another one.
+let extensionInstallBrowser = null;
+async function paintExtensionInstall() {
+  const host = document.getElementById('extensionInstallHost');
+  if (!host) return;
+  let data = null;
+  try { const r = await fetch('/api/extension/install'); data = r.ok ? await r.json() : null; } catch { data = null; }
+  const browser = extensionInstallBrowser || detectBrowser(navigator.userAgent);
+  host.replaceChildren(renderExtensionInstall(data, { doc: document, browser }));
+}
+
+document.getElementById('extensionInstallHost')?.addEventListener('click', async (e) => {
+  const tab = e.target.closest('[data-xi-browser]');
+  if (tab) {
+    extensionInstallBrowser = tab.dataset.xiBrowser;
+    selectInstallBrowser(e.currentTarget, extensionInstallBrowser);
+    return;
+  }
+  const copy = e.target.closest('[data-copy-path]');
+  if (!copy) return;
+  const text = copy.dataset.copyPath;
+  let ok = false;
+  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); ok = true; } else ok = legacyCopy(text); } catch { ok = legacyCopy(text); }
+  if (ok) flashCopyBtn(copy, 'Copied');
+  else reportStatus(null, '', 'Could not copy the path: select it and copy it by hand.', 'err');
+});
 
 // Settings → Browser extension (docs/browser-extension.md).
 async function paintExtensionPairings() {

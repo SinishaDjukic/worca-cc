@@ -5,6 +5,7 @@
 //   node tools/build-extension.mjs --zip                 # + extension/dist/worca-<browser>-<version>.zip
 //   node tools/build-extension.mjs --test --browser chrome   # → extension/dist/chrome-test/ (E2E only: fixture host, open shadow root)
 //   WORCA_EXT_PORT=4327 node tools/build-extension.mjs       # the build's default Worca address (testing; never with --zip)
+//   node tools/build-extension.mjs --pack                # npm prepack: the three production builds, never a test address
 import { build } from 'esbuild';
 import { cpSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -22,16 +23,29 @@ export const ICON_SIZES = [16, 32, 48, 128];
 const FONTS = ['poppins-latin-300-normal', 'poppins-latin-400-normal', 'poppins-latin-500-normal', 'poppins-latin-600-normal', 'poppins-latin-700-normal', 'jetbrains-mono-latin-400-normal'];
 
 export function parseArgs(argv) {
-  const o = { browsers: BROWSERS, zip: false, test: false };
+  const o = { browsers: BROWSERS, zip: false, test: false, pack: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--zip') o.zip = true;
     else if (a === '--test') o.test = true;
+    else if (a === '--pack') o.pack = true;
     else if (a === '--browser') { const b = argv[++i]; if (!BROWSERS.includes(b) && b !== 'all') { console.error(`unknown browser: ${b}`); process.exit(2); } o.browsers = b === 'all' ? BROWSERS : [b]; }
-    else if (a === '--help') { console.log('usage: build-extension.mjs [--browser chrome|edge|firefox|all] [--zip] [--test]'); process.exit(0); }
+    else if (a === '--help') { console.log('usage: build-extension.mjs [--browser chrome|edge|firefox|all] [--zip] [--test] [--pack]'); process.exit(0); }
     else { console.error(`unknown argument: ${a}`); process.exit(2); }
   }
   return o;
+}
+
+/** Why a release build (--zip: store zips; --pack: the npm package, via prepack) must not run, or null.
+ *  A release build must try worca's default address, never a tester's, and --pack ships all three production builds. */
+export function releaseBuildRefusal(o, env = process.env) {
+  if (!o.zip && !o.pack) return null;
+  if (o.pack && o.test) return '--pack builds the production extension for the npm package: drop --test';
+  if (o.pack && o.browsers.length !== BROWSERS.length) return '--pack always builds chrome, edge and firefox: drop --browser';
+  if (env.WORCA_EXT_PORT || env.WORCA_EXT_BASE_URL) {
+    return `${o.pack ? '--pack' : '--zip'} refuses to run while WORCA_EXT_PORT or WORCA_EXT_BASE_URL is set: unset them for a release build`;
+  }
+  return null;
 }
 
 const LOOPBACK_HINT = 'http on 127.0.0.1 or localhost, e.g. http://127.0.0.1:4327';
@@ -100,11 +114,8 @@ export function pngSize(buf) {
 // realpath, as import.meta.url is: a symlinked checkout or tools dir must still run the CLI.
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const o = parseArgs(process.argv.slice(2));
-  // A store zip must try worca's default address, never a tester's.
-  if (o.zip && (process.env.WORCA_EXT_PORT || process.env.WORCA_EXT_BASE_URL)) {
-    console.error('--zip refuses to run while WORCA_EXT_PORT or WORCA_EXT_BASE_URL is set: unset them for a release build');
-    process.exit(2);
-  }
+  const refusal = releaseBuildRefusal(o);
+  if (refusal) { console.error(refusal); process.exit(2); }
   try { defaultBaseUrlFromEnv(); } catch (err) { console.error(`build-extension: ${err.message}`); process.exit(1); }
   for (const b of o.browsers) {
     const { out, version, baseUrl } = await buildOne(b, { test: o.test });
