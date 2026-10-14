@@ -43,6 +43,7 @@ import { cmdLogs } from './logs.mjs';
 import { cmdControl } from './control.mjs';
 import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
+import { cmdExtension } from './extension.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
 } from '../core/ui-instance.mjs';
@@ -312,6 +313,9 @@ Subcommands:
                               See: worca models help
   container <cmd> [...]       Run Worca in a container: init|up|down|status|logs|pull|login|shell|run|where.
                               See: worca container help (docs/docker.md)
+  extension [--browser <b>] [--open]
+                              The browser extension packaged with this Worca: folder, version, install steps.
+                              See: worca extension help (docs/browser-extension.md)
   broker [serve|secrets|revoke --person <email>]
                               The credential broker: holds model keys outside worca's container
                               (docs/credential-broker.md)
@@ -3125,7 +3129,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3211,6 +3215,7 @@ async function main() {
     if (sub === 'schedule') return cmdSchedule(rest, { out, c, fail });
     if (sub === 'models') return cmdModels(rest, { out, c, fail });
     if (sub === 'container') return cmdContainer(rest, { out, c, fail });
+    if (sub === 'extension') return cmdExtension(rest, { out, c, fail });
     if (sub === 'broker') {
       // Loaded lazily: the broker is its own process and needs none of the core graph.
       const { runBrokerCli } = await import('../broker/main.mjs');
