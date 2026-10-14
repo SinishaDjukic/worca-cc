@@ -1803,6 +1803,25 @@ test('run_command result mints one command card; an error result mints nothing',
   assert.ok(frames.some((f) => f.type === 'ask-card' && f.block.card.type === 'command'));
 });
 
+test('a command card records where in the answer it ran (textAt), so the chat shows it between the text around it', async () => {
+  const s = seed();
+  const ok = JSON.stringify({ ok: true, blockId: 't-0000000001:1', sessionId: 't-0000000001', seq: 1, command: 'npm test', cwd: '/w/p', folder: 'p · main', warning: null });
+  const runner = async (opts) => {
+    push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'text', text: 'Running the tests.' }, { type: 'tool_use', id: 'toolu_1', name: 'mcp__worca__run_command', input: { command: 'npm test' } }] } });
+    push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: ok }] } });
+    push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_2', content: [{ type: 'text', text: 'All green.' }] } });
+    await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+    push(opts.onEvent, RESULT());
+    return { text: '', exitCode: 0 };
+  };
+  const { turn } = makeTurn(s, {}, { runClaudeImpl: runner });
+  await turn.run();
+  const msg = getMessage(s.asst.id);
+  const card = msg.blocks.find((b) => b.kind === 'card');
+  assert.equal(msg.text, 'Running the tests.\n\nAll green.');
+  assert.equal(card.textAt, 'Running the tests.'.length);
+});
+
 const CE_TOOL = 'mcp__worca__edit_canvas';
 const ceStart = (onEvent, id) => push(onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id, name: CE_TOOL, input: { summary: 'Add Plan', ops: [] } }] } });
 

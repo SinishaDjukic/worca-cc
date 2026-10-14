@@ -5204,9 +5204,33 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (el.orb.isConnected) orbs.set(el.orb, turnPhase(live, row && row.blocks));
   }
 
-  function renderAnswerInto(div, row) {
+  /** A card that sits inside the answer where it happened (textAt: the answer's length then — a command card), in block order. */
+  function inlineCards(row) {
+    return (row.blocks || []).filter((b) => b && b.kind === 'card' && Number.isFinite(b.textAt));
+  }
+  /** The answer cut at each inline card's offset: one more piece than there are cards (clamped, never backwards). */
+  function answerPieces(text, cards) {
+    const pieces = [];
+    let at = 0;
+    for (const b of cards) {
+      const cut = Math.min(text.length, Math.max(at, b.textAt));
+      pieces.push(text.slice(at, cut));
+      at = cut;
+    }
+    pieces.push(text.slice(at));
+    return pieces;
+  }
+  /** Render the answer into its pieces: `divs[0]` before the first inline card, `divs[i]` after card i. */
+  function renderAnswerInto(divs, row) {
     const isLive = !!(st.model && st.model.live() && st.model.live().messageId === row.id);
-    const text = isLive ? st.model.live().text : row.text || '';
+    const full = isLive ? st.model.live().text : row.text || '';
+    const pieces = answerPieces(full, inlineCards(row).slice(0, divs.length - 1));
+    divs.forEach((div, i) => {
+      renderAnswerPiece(div, pieces[i] || '', isLive);
+      if (i > 0) div.hidden = !(pieces[i] || '').trim();      // no empty gap between two cards, or after the last
+    });
+  }
+  function renderAnswerPiece(div, text, isLive) {
     // Seed the >32 KB throttle clock here, not only in renderAnswerFor: a
     // structural flush repaints answers through renderTranscript, which never
     // passes through renderAnswerFor — left at 0, the 250 ms window would be
@@ -5291,18 +5315,41 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       wrap.appendChild(activity.el);
       const answer = make('div', 'ask-answer');
       wrap.appendChild(answer);
-      renderAnswer = () => renderAnswerInto(answer, cur);
+      // Inline cards (a command card) sit between answer pieces, in the order they happened: [card, piece] per card.
+      let inline = [];
+      const answerDivs = () => [answer, ...inline.map((x) => x.piece)];
+      renderAnswer = () => renderAnswerInto(answerDivs(), cur);
       renderAnswer();
       let tailSig = null;
       const renderTail = () => {
         const sig = tailSignature(cur);
         if (sig === tailSig) return;
         tailSig = sig;
-        while (wrap.lastChild && wrap.lastChild !== answer) wrap.removeChild(wrap.lastChild);
+        const cards = inlineCards(cur);
+        const sameInline = cards.length === inline.length && cards.every((b, i) => b.id === inline[i].id);
+        if (sameInline) {
+          // Kept in place: a card swaps its element only when buildCard hands back a new one.
+          cards.forEach((b, i) => {
+            const cardEl = buildCard(b, cur);
+            if (cardEl !== inline[i].card) { inline[i].card.replaceWith(cardEl); inline[i].card = cardEl; }
+          });
+        }
+        const last = inline.length ? inline[inline.length - 1].piece : answer;
+        while (wrap.lastChild && wrap.lastChild !== last) wrap.removeChild(wrap.lastChild);
+        if (!sameInline) {
+          while (wrap.lastChild && wrap.lastChild !== answer) wrap.removeChild(wrap.lastChild);
+          inline = cards.map((b) => {
+            const card = buildCard(b, cur);
+            const piece = make('div', 'ask-answer');
+            wrap.append(card, piece);
+            return { id: b.id, card, piece };
+          });
+          renderAnswer();
+        }
         for (const b of cur.blocks || []) {
           if (!b) continue;
           if (b.kind === 'notice') wrap.appendChild(buildNotice(b));
-          else if (b.kind === 'card') wrap.appendChild(buildCard(b, cur));
+          else if (b.kind === 'card' && !Number.isFinite(b.textAt)) wrap.appendChild(buildCard(b, cur));
         }
         if (cur.status === 'error') {
           if (cur.errorCode === 'claude-signed-out' && typeof openClaudeSetup === 'function') {

@@ -363,7 +363,8 @@ class AskTurn extends EventEmitter {
     if (!r || r.ok !== true || typeof r.blockId !== 'string') return;
     const card = { type: 'command', blockId: r.blockId, sessionId: r.sessionId, seq: r.seq, command: String(r.command || '').slice(0, 4000),
       folder: r.folder || null, cwd: r.cwd || null, warning: r.warning || null };
-    const block = this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'command', card });
+    // textAt: the card sits in the answer where the command ran, not below it.
+    const block = this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'command', textAt: this.reducer.textLength(), card });
     if (block) this._persistBlocks();
   }
 
