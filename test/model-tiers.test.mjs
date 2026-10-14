@@ -12,23 +12,24 @@ const row = (id, extra = {}) => ({ id, label: id, efforts: ['medium', 'high'], e
 const codex = (id) => row(id, { engine: 'codex', connection: CODEX, harnesses: ['codex'], efforts: ['minimal', 'low', 'medium', 'high'] });
 
 test('built-ins: vendor from the id, the price tier from the output list price, the known 1M windows', () => {
-  const [opus, fable, sonnet, haiku55, haiku45, twin, gpt, spark] = modelFacts([
+  const [opus, fable, sonnet, haiku55, haiku45, twin, gpt, spark, astra] = modelFacts([
     row('claude-opus-5-5'), row('claude-fable-5-1'), row('claude-sonnet-5-5'), row('claude-haiku-5-5'), row('claude-haiku-4-5'),
-    row('claude-opus-4-8[1m]'), codex('gpt-5.5'), codex('gpt-5.3-codex-spark'),
+    row('claude-opus-4-8[1m]'), codex('gpt-5.5'), codex('gpt-5.3-codex-spark'), codex('gpt-6-astra'),
   ]);
   assert.deepEqual(opus, {
-    id: 'claude-opus-5-5', label: 'claude-opus-5-5', vendor: 'anthropic', tier: 'top', tierRank: 1,
+    id: 'claude-opus-5-5', label: 'claude-opus-5-5', vendor: 'anthropic', tier: 'top', tierRank: 2,
     price: { input: 4, output: 20 }, free: false, ready: true, context: 1_000_000, contextFrom: 'built-in',
     engines: ['claude'], efforts: ['medium', 'high'], toolCalls: true, vision: true,
   });
-  assert.equal(fable.tier, 'top');
+  assert.deepEqual([fable.tier, fable.tierRank, fable.price], ['premium', 1, { input: 10, output: 50 }], 'Fable 5.1 lists at $50 output: above the top tier');
   assert.equal(sonnet.tier, 'strong');
   assert.deepEqual([haiku55.tier, haiku55.price, haiku55.longPrompt], ['economy', { input: 0.1, output: 0.5 }, { aboveTokens: 100_000, multiplier: 5 }]);
   assert.deepEqual([haiku45.tier, haiku45.context, haiku45.contextFrom], ['mid', DEFAULT_CONTEXT_TOKENS, 'default']);
   assert.deepEqual([twin.price, twin.tier, twin.context], [{ input: 5, output: 25 }, 'top', 1_000_000], 'a [1m] twin shares its base row');
   assert.deepEqual([gpt.vendor, gpt.tier, gpt.price, gpt.engines, gpt.efforts], ['openai', 'strong', { input: 1.25, output: 10 }, ['codex'], ['minimal', 'low', 'medium', 'high']]);
   assert.equal(spark.tier, 'mid');
-  assert.deepEqual(TIERS.map((t) => [t.id, t.rank, t.min]), [['top', 1, 20], ['strong', 2, 8], ['mid', 3, 2], ['economy', 4, 0]]);
+  assert.deepEqual([astra.tier, astra.price], ['top', { input: 6, output: 36 }], 'GPT-6 Astra at $36 output stays top');
+  assert.deepEqual(TIERS.map((t) => [t.id, t.rank, t.min]), [['premium', 1, 40], ['top', 2, 20], ['strong', 3, 8], ['mid', 4, 2], ['economy', 5, 0]]);
   assert.deepEqual(VENDORS, ['anthropic', 'openai', 'other']);
 });
 
@@ -54,8 +55,10 @@ test('user, plugin and bridged entries: the entry\'s own cost wins over the list
 
 test('compareFacts: Anthropic, OpenAI, then others; then tier; then the cheaper output price; factsBrief/factsLine read on one line', () => {
   const facts = modelFacts([codex('gpt-5.5'), row('local-coder', { connection: { kind: 'env' } }), row('claude-haiku-4-5'), row('claude-fable-5-1'), row('claude-opus-5-5')]);
-  assert.deepEqual([...facts].sort(compareFacts).map((f) => f.id), ['claude-opus-5-5', 'claude-fable-5-1', 'claude-haiku-4-5', 'gpt-5.5', 'local-coder']);
+  assert.deepEqual([...facts].sort(compareFacts).map((f) => f.id), ['claude-fable-5-1', 'claude-opus-5-5', 'claude-haiku-4-5', 'gpt-5.5', 'local-coder'],
+    'tiers strongest first: premium before top');
   const by = Object.fromEntries(facts.map((f) => [f.id, f]));
+  assert.equal(factsBrief(by['claude-fable-5-1']), 'anthropic · premium tier · $10/$50 per Mtok');
   assert.equal(factsBrief(by['claude-opus-5-5']), 'anthropic · top tier · $4/$20 per Mtok');
   assert.equal(factsLine(by['claude-opus-5-5']), 'anthropic · top tier · $4/$20 per Mtok · 1M context · runs on claude · efforts medium/high');
   assert.equal(factsBrief(by['local-coder']), 'other · no list price');
@@ -85,6 +88,13 @@ test('MODEL_PICK_POLICY names stages by display name only — the Ask rules may 
   assert.match(MODEL_PICK_POLICY, /Prefer Anthropic models, then OpenAI, then others/);
   assert.match(MODEL_PICK_POLICY, /at least a 64k context/);
   assert.match(MODEL_PICK_POLICY, /any other step \(Clarify included\) the strong tier at medium effort/, 'every wf_default run has a Clarify step');
+});
+
+test('MODEL_PICK_POLICY is conservative: judgement takes the top tier, never premium; the cheapest capable model within a tier; premium only when named', () => {
+  assert.match(MODEL_PICK_POLICY, /^Judgement steps \(Plan, Plan Review, Refine Plan, Review Implementation, Bug Root Cause, Deck Review\) take the top tier \(never the premium tier\) at high effort;/);
+  assert.match(MODEL_PICK_POLICY, /Within a tier take the cheapest capable model\./);
+  assert.match(MODEL_PICK_POLICY, /Never pick a premium-tier model unless the user names that model\./);
+  assert.equal(TIERS[0].id, 'premium', 'the policy\'s premium tier is the one the facts carry');
 });
 
 test('a Copilot import is pinned Free only for recording (Copilot bills premium requests): never a free, economy-tier model', () => {

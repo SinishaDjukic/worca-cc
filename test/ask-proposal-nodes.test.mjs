@@ -125,6 +125,31 @@ test('team policy: a model outside the allowed list is a WARNING on the card, ne
   assert.deepEqual(ws.calls.policy, [{ projectDir: null, policyProject: '/p/b' }]);
 });
 
+test('a premium-tier pick (Fable 5.1) is a WARNING on the card naming its model id; a policy read error never drops it', async () => {
+  const FABLE = { id: 'claude-fable-5-1', label: 'Fable 5.1', efforts: ['medium', 'high', 'xhigh', 'max'], engine: 'claude', harnesses: ['claude'] };
+  const PRICEY = { id: 'gw-pricey', label: 'gw-pricey', efforts: ['high'], engine: 'claude', harnesses: ['claude'], connection: { kind: 'env' } };
+  const listModels = async () => [...MODELS, FABLE, PRICEY];
+  const premium = "The planner's model claude-fable-5-1 (Fable 5.1) is a premium model (~2.5× Opus 5.5 list price): keep it only if the user asked for it.";
+  const one = validator({ listModels });
+  const card = ok(await one.validateProposal({ ...base, nodes: { n_plan: { model: 'claude-fable-5-1', effort: 'high' }, n_impl: { model: 'claude-opus-5-5' } } }));
+  assert.deepEqual(card.warnings, [premium], 'Opus 5.5 is top tier: no word on it');
+  assert.match(card.nodes.n_plan.facts, /^anthropic · premium tier · \$10\/\$50 per Mtok/);
+  // The team policy's word comes first; a policy read that throws drops only its own.
+  const allowed = { 'models.allowed': { value: ['claude-opus-5-5'], kind: 'soft' } };
+  const both = ok(await validator({ listModels, policyFields: () => allowed }).validateProposal({ ...base, nodes: { n_plan: { model: 'claude-fable-5-1' } } }));
+  assert.deepEqual(both.warnings, ["The planner's model claude-fable-5-1 is not in the allowed list (claude-opus-5-5). The run proceeds and is recorded as off-policy.", premium]);
+  const broken = validator({ listModels, policyFields: () => { throw new Error('policy cache unreadable'); } });
+  assert.deepEqual(ok(await broken.validateProposal({ ...base, nodes: { n_plan: { model: 'claude-fable-5-1' } } })).warnings, [premium]);
+  const twin = validator({ listModels, assertRunnableWorkflow: async () => ({ ...WF, nodes: [...WF.nodes, { id: 'n_plan2', kind: 'agent', key: 'planner', config: {} }] }) });
+  assert.deepEqual(ok(await twin.validateProposal({ ...base, nodes: { n_plan: { model: 'claude-fable-5-1' }, n_plan2: { model: 'CLAUDE-FABLE-5-1' } } })).warnings, [premium],
+    'two nodes of one agent on the same model: said once');
+  // The facts' tier decides: the entry's own cost moves a model into or out of premium; a label equal to the id is said once.
+  const costs = { 'gw-pricey': { perMtok: { input: 9, output: 45 } }, 'claude-fable-5-1': { perMtok: { input: 4, output: 20 } } };
+  const priced = validator({ listModels, costOf: (id) => costs[id] || null });
+  assert.deepEqual(ok(await priced.validateProposal({ ...base, nodes: { n_plan: { model: 'claude-fable-5-1' }, n_impl: { model: 'gw-pricey', effort: 'high' } } })).warnings,
+    ["The implementer's model gw-pricey is a premium model (~2.3× Opus 5.5 list price): keep it only if the user asked for it."]);
+});
+
 test('the sign-in answer is the parent turn\'s: the MCP child reads WORCA_ASK_CLAUDE_AUTH, never its own probe', async () => {
   const prev = process.env.WORCA_ASK_CLAUDE_AUTH;
   process.env.WORCA_ASK_CLAUDE_AUTH = 'signed-out';

@@ -55,10 +55,20 @@ test('rule 18 carries the per-agent picking policy for propose_run nodes; the Co
   const sub = ASK_SYSTEM_RULES.indexOf('\n   - Per-agent models for one run (propose_run nodes):');
   assert.ok(at > 0 && sub > at && sub < next, 'a sub-bullet of rule 18');
   for (const phrase of [MODEL_PICK_POLICY, 'keyed by the node ids list_workflows returns (steps[].nodeId)', 'never with wf_auto',
-    'name a model for every agent node', `at most ${ASK_LIMITS.proposalReasonMaxChars} characters`, 'comes back as a warning on the card']) {
+    'name a model for every agent node', `at most ${ASK_LIMITS.proposalReasonMaxChars} characters`, 'comes back as a warning on the card',
+    'A premium-tier pick comes back as a warning too: keep it only when the user named that model.']) {
     assert.ok(ASK_SYSTEM_RULES.includes(phrase), phrase.slice(0, 60));
   }
   assert.doesNotThrow(() => codexSystemRules());
+});
+
+test('the premium tier reaches every surface the chat picks from: the Models section, list_models\' tier scale and propose_run\'s warnings', () => {
+  const p = buildSystemPrompt({ ...CAT, models: modelFacts([...ROWS, { id: 'claude-fable-5-1', label: 'Fable 5.1', efforts: ['high'], harnesses: ['claude'] }]) });
+  assert.ok(p.includes('\n- claude-fable-5-1 "Fable 5.1": anthropic · premium tier · $10/$50 per Mtok · 1M context · runs on claude · efforts high\n'));
+  const tools = createAskTools({ limits: ASK_LIMITS, redact: (s) => s, models: {} }).list();
+  assert.match(tools.find((t) => t.name === 'list_models').description,
+    /tier \(its price tier by output list price per million tokens: premium from \$40, top from \$20, strong from \$8, mid from \$2, else economy; null when unpriced\)/);
+  assert.match(tools.find((t) => t.name === 'propose_run').description, /a card may carry warnings \(the team policy's allowed models, a premium-tier pick\) — relay them/);
 });
 
 test('createCatalog().buildCatalog carries the model facts; an unreadable catalog leaves them out, never the prompt', async () => {

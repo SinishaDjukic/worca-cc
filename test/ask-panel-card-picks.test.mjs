@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
+import { PROPOSAL_ERRORS } from '../src/core/ask/proposal.mjs';
+import { modelFacts } from '../src/core/model-tiers.mjs';
 
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
@@ -298,4 +300,15 @@ test('K12 a lane that could not load names the picks its Start sends (the rows t
   assert.equal(lane.dataset.levelKeep, '1');
   await start(ctx);
   assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_impl: { model: 'claude-haiku-4-5', effort: 'medium' }, n_rev: { model: 'claude-opus-5-5', effort: '', subagentModel: 'sonnet' } } });
+});
+
+test('K13 the premium-pick warning (proposal.mjs) names its model id: it shows while a row runs Fable and goes once none does', async () => {
+  const [fable] = modelFacts([{ id: 'claude-fable-5-1', label: 'Fable 5.1 (1M)', efforts: ['high'], harnesses: ['claude'] }]);
+  const w = PROPOSAL_ERRORS.premiumPick('planner', fable);
+  const ctx = await openWithCard({ ...PROJECT_CARD, workflowId: 'wf_review', nodes: { ...NODES, n_plan: { model: 'claude-fable-5-1', effort: 'high', reason: 'the user asked for Fable' } }, warnings: [w] }, {});
+  let lane = await laneOf(ctx);
+  assert.deepEqual([...lane.querySelectorAll('.ask-rp-lane-warn')].map((e) => e.textContent), [w]);
+  change(ctx, tileOf(lane, 'n_plan').querySelector('.ask-rp-model'), 'claude-opus-5-5');
+  lane = ctx.doc.querySelector('.ask-rp-lane');
+  assert.equal(lane.querySelectorAll('.ask-rp-lane-warn').length, 0, 'no agent runs Fable any more');
 });
