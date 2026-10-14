@@ -2780,7 +2780,19 @@ function wfvShellActions() {
       catch (e) { notify({ tone: 'err', title: `${f.name} is not valid JSON: ${e.message}` }); return; }
       await gvImportWorkflowObject(obj);
     },
-    exportCurrent: () => { const t = gvComposer.template(); if (t.id) openExportModal({ id: t.id, name: t.name || t.id }); },
+    // Export reads the SAVED row by id, so an unsaved canvas (new, or edited since its save) is saved
+    // first and the export follows; a blank canvas has nothing to export — open the saved list instead.
+    exportCurrent: () => {
+      const t = gvComposer.template();
+      const exportRow = (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id });
+      if (t.id && !gvComposer.isDirty()) { exportRow(t); return; }
+      if (gvComposer.isPristine()) {
+        wfvSetLibraryOpen(true); wfvLibrary?.open('workflows');
+        notify({ tone: 'info', title: 'Pick a pipeline to export', detail: 'Each saved pipeline has an Export button in the Library.' });
+        return;
+      }
+      gvComposer.openSaveDialog({ then: exportRow });
+    },
     newAgent: () => { location.hash = 'workflows/agents/new'; },
     newScript: () => { location.hash = 'workflows/scripts/new'; },
     afterRender: () => {
