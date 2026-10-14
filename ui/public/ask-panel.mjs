@@ -255,6 +255,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // It outranks the backend default like a stored pick, but it is the chat's,
     // not the browser's: nothing sourced from a thread reaches worca-cc.ask.model.
     pickerFromThread: false,
+    // The model was chosen in the picker during this chat (setPickerModel): it outranks the Ask-engine default
+    // that a stored pick yields to. Cleared whenever the picker is re-seeded from the browser or a thread.
+    pickerExplicit: false,
     catalog: null,
     // #397: the thread's project/workspace scope. pinned:false = Auto (follow the
     // page — today's behaviour). label caches the display name once resolved.
@@ -1755,7 +1758,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // A thread's pick claims both slots.
     // D12/D17: a new chat starts on the user's Ask engine; a stored pick of the OTHER engine does not override it.
     const askEngine = st.catalog && st.catalog.askEngine === 'codex' ? 'codex' : 'claude';
-    const storeFits = st.pickerFromStore && (!catalogEntry(st.picker.model) || engineOfEntry(catalogEntry(st.picker.model)) === askEngine);
+    const storeFits = st.pickerFromStore && (st.pickerExplicit || !catalogEntry(st.picker.model) || engineOfEntry(catalogEntry(st.picker.model)) === askEngine);
     if (st.pickerFromStore && !storeFits && !st.pickerFromThread) {
       // The stored pick is the other engine's: this chat claims neither its model nor its effort (the Ask slot's pair
       // applies), and nothing short of an explicit model choice writes over it (storeModel).
@@ -1768,6 +1771,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       effort: st.pickerFromThread || st.effortFromStore ? st.picker.effort : fallback.effort,
     };
     const wantedEntry = catalogEntry(wanted.model);
+    if (!wantedEntry && list.length) st.pickerExplicit = false;   // the picked model left the catalog: the fallback below is not a user pick
     // Unknown stored/default id -> the backend default -> the first model we do
     // have that is not a hidden built-in (#422; a hidden id is still a valid pick).
     const entry = wantedEntry || catalogEntry(fallback.model) || list.find((m) => m && !m.hidden && !m.needsSignIn) || list[0] || null;
@@ -1792,6 +1796,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.effortFromStore = home.effortFromStore;
     st.storeOtherEngine = false;
     st.pickerFromThread = false;
+    st.pickerExplicit = false;
     if (st.catalog) applyCatalogToPicker();
     else updatePickerButton();
   }
@@ -1802,6 +1807,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!t || typeof t.model !== 'string' || !t.model || typeof t.effort !== 'string' || !t.effort) { restoreBrowserPick(); return; }
     st.picker = { model: t.model, effort: t.effort };
     st.pickerFromThread = true;
+    st.pickerExplicit = false;
     if (st.catalog) applyCatalogToPicker();   // effort coerced against the entry; a dropped model falls back
     else updatePickerButton();               // the raw id shows until the catalog lands
   }
@@ -1879,6 +1885,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.effortFromStore = true;
     st.storeOtherEngine = false;
     st.pickerFromThread = false;                    // the user's own pick now, not the thread's
+    st.pickerExplicit = true;
     storeModel();
     persistThreadPick();
     updatePickerButton();
@@ -1940,8 +1947,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       }
     };
     let shownPane = 'main';
+    let effortPaneKey = '';   // the model + effort list the effort pane was painted from
+    const effortKeyNow = () => { const e = catalogEntry(st.picker.model); return `${st.picker.model}:${e && Array.isArray(e.efforts) ? e.efforts.join() : ''}`; };
     const renderPane = (pane) => {
       shownPane = pane;
+      if (pane === 'effort') effortPaneKey = effortKeyNow();
       panel.replaceChildren();
       if (pane === 'effort') {
         const back = menuItem('ask-pane-back', () => renderPane('main'));
@@ -2001,7 +2011,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // What we have paints at once; the refetch repaints the main pane if it is still showing.
     const had = st.catalog;
     loadCatalog({ fresh: true }).then((c) => {
-      if (c !== had && shownPane === 'main' && st.popover && st.popover.panel === panel) renderPane('main');
+      if (c === had || !st.popover || st.popover.panel !== panel) return;
+      // The effort pane repaints only when the refresh changed what it lists (a dropped model fell back): a repaint moves focus.
+      if (shownPane === 'main' || (shownPane === 'effort' && effortKeyNow() !== effortPaneKey)) renderPane(shownPane);
     });
     renderPane('main');
   }
