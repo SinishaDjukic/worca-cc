@@ -105,6 +105,27 @@ test('POST sets debugSpawnEnabled; GET reflects it; does not touch root', async 
   }
 });
 
+test('resumeAfterUsageLimit: GET defaults to false, POST true round-trips, a non-boolean answers 400 naming the field', async () => {
+  await checkRows([
+    { name: 'GET /api/settings: resumeAfterUsageLimit defaults to false', run: async () => {
+      assert.equal((await (await fetch(`${base}/api/settings`)).json()).resumeAfterUsageLimit, false);
+    } },
+    { name: 'POST resumeAfterUsageLimit true round-trips through GET and back to false', run: async () => {
+      try {
+        assert.equal((await (await postJson({ resumeAfterUsageLimit: true })).json()).resumeAfterUsageLimit, true);
+        assert.equal((await (await fetch(`${base}/api/settings`)).json()).resumeAfterUsageLimit, true);
+      } finally {
+        assert.equal((await (await postJson({ resumeAfterUsageLimit: false })).json()).resumeAfterUsageLimit, false);
+      }
+    } },
+    { name: 'POST resumeAfterUsageLimit "yes" answers 400 naming the field', run: async () => {
+      const r = await postJson({ resumeAfterUsageLimit: 'yes' });
+      assert.equal(r.status, 400);
+      assert.equal((await r.json()).field, 'resumeAfterUsageLimit');
+    } },
+  ]);
+});
+
 test('a mixed POST whose root is unusable answers 400 with neither the debug toggle nor the theme applied', async () => {
   const filePath = fileURLToPath(import.meta.url); // a file, not a dir → setWorcaRoot throws
   const r = await postJson({ debugSpawnEnabled: true, theme: 'dark', root: filePath });
@@ -131,7 +152,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     // key, each with a value its setter accepts as "no change / default".
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '', humanRateUsdPerHour: '',
-      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, debugSpawnEnabled: false,
+      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, debugSpawnEnabled: false, resumeAfterUsageLimit: false,
       titleModel: '', hideBuiltinModels: false, theme: '', uiLevel: '',
       autoWorkflowModel: '',
       prDescriptionModel: '',

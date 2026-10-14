@@ -181,13 +181,16 @@ test("wireRun: a usage limit's engine and the run's engine reach the hello summa
   runs.set(entry.id, entry);
   try {
     _testing.wireRun(entry);
-    entry.orch.emit('done', { status: 'paused', reason: 'usage_limit', detail: "You've hit your usage limit", limitEngine: 'codex' });
+    entry.orch.emit('done', { status: 'paused', reason: 'usage_limit', detail: "You've hit your usage limit", limitEngine: 'codex', limitResetAt: '2026-10-11T15:00:00.000Z' });
     assert.equal(entry.limitEngine, 'codex');
+    assert.equal(entry.limitResetAt, '2026-10-11T15:00:00.000Z');
     const sum = _testing.summarizeRuns().find((r) => r.runId === 'uuid-PR8');
     assert.equal(sum.limitEngine, 'codex');
+    assert.equal(sum.limitResetAt, '2026-10-11T15:00:00.000Z');
     assert.equal(sum.runEngine, 'codex');
     entry.orch.emit('done', { status: 'done' });
     assert.equal(entry.limitEngine, null, 'a later finish clears it');
+    assert.equal(entry.limitResetAt, null, 'and the reset time');
   } finally {
     runs.delete(entry.id);
   }

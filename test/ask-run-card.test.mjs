@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 import { JSDOM } from 'jsdom';
-import { snapshotFromState, runPill, progressRoute, createRunProgressCard, PROGRESS_CARD_TYPE } from '../ui/public/ask-run-card.mjs';
+import { snapshotFromState, runPill, progressRoute, createRunProgressCard, PROGRESS_CARD_TYPE, activeAgents, projectLabel } from '../ui/public/ask-run-card.mjs';
 
 const agent = (id, key, over = {}) => ({
   id, kind: 'agent', key, x: 0, y: 0, label: key[0].toUpperCase() + key.slice(1), color: 'violet',
@@ -165,4 +165,37 @@ test('a Cursor run\'s card reads cost unknown (REST snapshot and live snapshot),
   assert.equal(card.el.querySelector('.ask-rc-cost').textContent, 'cost unknown');
   card.update({ ...snapshotFromState(STATE(), { now: 0 }), source: 'live', runId: 'run-uuid-1', costUsd: null }, 0);
   assert.equal(card.el.querySelector('.ask-rc-cost').textContent, 'cost unknown', 'a live snapshot with no cost too');
+});
+
+test('Chat P3: snapshotFromState carries the chat card extras (results, artifacts, PR, branch, auto); activeAgents names model + cycle; projectLabel is shared', () => {
+  const extras = { results: { filesChanged: 2, additions: 9, deletions: 1, checks: 0, topFiles: [] },
+    artifacts: [{ kind: 'prompt', relPath: 'prompt.md', bytes: 3, nodeId: null, cycle: null }], moreArtifacts: true,
+    pr: { url: 'https://github.com/o/r/pull/1', number: 1, state: 'OPEN' } };
+  const s = snapshotFromState(STATE({ status: 'done', branch: { feature: 'worca/fix-login', source: 'main' },
+    stepper: { ...MANIFEST, auto: { status: 'decided', via: 'created' } } }), { now: 0, extras });
+  assert.deepEqual(s.results, extras.results);
+  assert.deepEqual(s.artifacts, extras.artifacts);
+  assert.equal(s.moreArtifacts, true);
+  assert.deepEqual(s.pr, extras.pr);
+  assert.equal(s.branch, 'worca/fix-login');
+  assert.deepEqual(s.auto, { status: 'decided', via: 'created' });
+  const bare = snapshotFromState(STATE(), { now: 0 });
+  assert.deepEqual([bare.results, bare.artifacts, bare.pr, bare.moreArtifacts, bare.branch, bare.auto], [null, null, null, false, '', null]);
+  assert.equal(snapshotFromState(STATE(), { now: 0, extras: { pr: { url: '' } } }).pr, null, 'a PR without a url is no PR');
+  assert.equal(snapshotFromState(STATE({ archivedAt: '2026-10-11T12:00:00.000Z' }), { now: 0 }).archived, true);
+  assert.equal(bare.archived, false);
+
+  const withModel = { ...MANIFEST, graph: { ...MANIFEST.graph, nodes: MANIFEST.graph.nodes.map((n) => (n.id === 'n_impl' ? { ...n, model: 'claude-opus-5-5', effort: 'high' } : n)) } };
+  const st = STATE({ stepper: withModel,
+    steps: [step({ executionId: 'x:n_plan:1', nodeId: 'n_plan', ordinal: 1 }), step({ executionId: 'x:n_impl:2', nodeId: 'n_impl', ordinal: 2, status: 'running' })],
+    active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }] });
+  const snap = snapshotFromState(st, { now: 0 });
+  assert.equal(snap.active[0].model, 'claude-opus-5-5');
+  assert.equal(snap.active[0].effort, 'high');
+  assert.equal(snap.active[0].modelLabel, 'claude-opus-5-5', 'REST has no catalog: the raw id');
+  assert.equal(snap.active[0].cycle, 2);
+  assert.equal(activeAgents(snap.decor, withModel, { modelLabel: (id) => (id === 'claude-opus-5-5' ? 'Opus 5.5' : null) })[0].modelLabel, 'Opus 5.5');
+  assert.deepEqual(activeAgents(null, withModel), []);
+  assert.equal(projectLabel(IDENT, snap), 'proj');
+  assert.equal(projectLabel({ ...IDENT, label: '' }, snap), 'proj', 'the project folder name');
 });

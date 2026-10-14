@@ -31,17 +31,17 @@ test('checkAttachment: Ask\'s checks in Ask\'s order, with its messages; a same-
   assert.equal(checkAttachment({ name: 'README', size: 1 }).error, 'attachment type not allowed: README');
   assert.equal(checkAttachment({ name: 'spec.pdf', size: 1 }, { engine: 'codex' }).error, 'PDFs need a Claude chat: spec.pdf');
   assert.equal(checkAttachment({ name: 'shot.png', size: 1 }, { engine: 'codex' }).ok, true);
-  assert.equal(checkAttachment({ name: 'big.md', size: 524_289 }).error, 'attachment over 524288 bytes: big.md');
-  assert.equal(checkAttachment({ name: 'big.md', size: 524_288 }).ok, true);
-  assert.equal(checkAttachment({ name: 'big.png', size: 33_554_433 }).error, 'attachment over 33554432 bytes: big.png');
+  assert.equal(checkAttachment({ name: 'big.md', size: 100 * 1024 * 1024 + 1 }).error, 'attachment over 104857600 bytes: big.md');
+  assert.equal(checkAttachment({ name: 'big.md', size: 100 * 1024 * 1024 }).ok, true);
+  assert.equal(checkAttachment({ name: 'big.png', size: 104_857_601 }).error, 'attachment over 104857600 bytes: big.png');
   const eight = Array.from({ length: 8 }, (_, i) => ({ name: `f${i}.md`, bytes: 1 }));
   assert.equal(checkAttachment({ name: 'f8.md', size: 1 }, { pending: eight }).error, 'at most 8 attachments per message');
   const again = checkAttachment({ name: 'f0.md', size: 1 }, { pending: eight });
   assert.equal(again.ok, true, 'the same name replaces its pending file');
   assert.deepEqual(again.others.map((p) => p.name), eight.slice(1).map((p) => p.name));
-  const big = [{ name: 'a.png', bytes: 30 * 1024 * 1024 }];
-  assert.equal(checkAttachment({ name: 'b.png', size: 18 * 1024 * 1024 + 1 }, { pending: big }).error, 'attachments over 50331648 bytes per message');
-  assert.equal(checkAttachment({ name: 'b.png', size: 18 * 1024 * 1024 }, { pending: big }).ok, true);
+  const big = [{ name: 'a.png', bytes: 60 * 1024 * 1024 }];
+  assert.equal(checkAttachment({ name: 'b.png', size: 40 * 1024 * 1024 + 1 }, { pending: big }).error, 'attachments over 104857600 bytes per message');
+  assert.equal(checkAttachment({ name: 'b.png', size: 40 * 1024 * 1024 }, { pending: big }).ok, true);
 });
 
 test('bytesToBase64 matches Buffer across its 32 KB chunks', () => {

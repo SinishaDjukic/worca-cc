@@ -171,7 +171,8 @@ async function settle(window, n = 4) {
 }
 
 async function openSheet(window) {
-  window.document.querySelector('.ask-pill').click();
+  // worca Chat: the chat is a page and the boot page; route there only when the test left it.
+  if (!/^#chat(\/|$)/.test(window.location.hash)) window.location.hash = '#chat';
   await settle(window);
 }
 async function sendText(window, text) {
@@ -277,7 +278,7 @@ test('ui-ask-card: Open in New Pipeline prefills the form — project fields, or
       await settle(ctx.window, 8); // the async applier awaits workflows/guardrails/branches
       const doc = ctx.window.document;
       assert.equal(ctx.window.location.hash, '#new');
-      assert.equal(doc.querySelector('.ask-sheet').hidden, true, 'the sheet closed');
+      assert.equal(doc.querySelector('section[data-view="chat"]').classList.contains('hidden'), true, 'New run replaced the Chat page');
       assert.equal(doc.querySelector('#prompt').value, 'edited before handoff');
       assert.equal(doc.querySelector('#title').value, 'Fix login');
       assert.equal(doc.querySelector('#workflowSelect').value, 'wf_review');
@@ -352,7 +353,7 @@ test('ui-ask-card: the handoff owns the extras list — card pills arrive, a sta
   ]);
 });
 
-test('ui-ask-card: Start from inside the app writes the lane edits, then posts the §9.4 body + title + extras', async () => {
+test('ui-ask-card: with "Save as project defaults" on, Start from inside the app writes the lane edits, then posts the §9.4 body + title + extras', async () => {
   const ctx = await boot();
   await openCard(ctx, ATT_CARD);
   await settle(ctx.window, 8);
@@ -360,6 +361,9 @@ test('ui-ask-card: Start from inside the app writes the lane edits, then posts t
   const before = ctx.window.location.hash;
   const sel = doc.querySelector('.ask-rp-tile[data-node-id="n_impl"] .ask-rp-model');
   assert.ok(sel, 'lane rendered inside the app');
+  const sw = doc.querySelector('.ask-rp-lane [data-ctl="saveDefaults"]');
+  sw.checked = true;
+  sw.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
   sel.value = 'claude-haiku-4-5';
   sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
   doc.querySelector('[data-ask-card-start]').click();
@@ -425,4 +429,34 @@ test('ui-ask-card: a proposed workflowId no list serves fails loudly — inline 
   await settle(ctx.window, 6);
   assert.equal(ctx.runBodies.length, 1);
   assert.equal(ctx.runBodies[0].workflowId, 'wf_review', 'Start posts the id the USER picked, never a fallback');
+});
+
+test('ui-ask-card: a sameAsSource card shows the checkbox on, disables the feature input, and Start posts the flag', async () => {
+  const ctx = await boot();
+  await openCard(ctx, { ...CARD, sameAsSource: true });
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('.ask-card-same-source').checked, true);
+  assert.equal(doc.querySelector('.ask-card-feature').disabled, true);
+  doc.querySelector('[data-ask-card-start]').click();
+  await settle(ctx.window, 6);
+  assert.equal(ctx.runBodies[0].sameAsSource, true);
+  assert.equal('featureBranch' in ctx.runBodies[0], false);
+});
+
+test('ui-ask-card: by default Start sends the lane edit as THIS run\'s overlay and writes no project config', async () => {
+  const ctx = await boot();
+  await openCard(ctx, ATT_CARD);
+  await settle(ctx.window, 8);
+  const doc = ctx.window.document;
+  const sel = doc.querySelector('.ask-rp-tile[data-node-id="n_impl"] .ask-rp-model');
+  sel.value = 'claude-haiku-4-5';
+  sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  doc.querySelector('[data-ask-card-start]').click();
+  await settle(ctx.window, 10);
+  const pathOf = (u) => u.split('?')[0].replace(/^https?:\/\/[^/]+/, '');
+  const seq = ctx.calls
+    .filter((c) => (c.opts.method || 'GET').toUpperCase() !== 'GET' && ['/api/config', '/api/run'].includes(pathOf(c.url)))
+    .map((c) => `${c.opts.method.toUpperCase()} ${pathOf(c.url)}`);
+  assert.deepEqual(seq, ['POST /api/run']);
+  assert.equal(ctx.runBodies[0].overlay.nodes.n_impl.model, 'claude-haiku-4-5');
 });

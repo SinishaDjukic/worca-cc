@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   rowTime, liveRowState, histRowState, schedRowState, countNeedsYou,
-  buildRunsModel, rowSub, isRowSelected, renderRunsList, rowInFilter, dateBucket, RUNS_FILTERS, DATE_BUCKETS,
+  buildRunsModel, rowSub, rowMatches, isRowSelected, renderRunsList, rowInFilter, dateBucket, RUNS_FILTERS, DATE_BUCKETS,
 } from '../ui/public/runs-list.mjs';
 
 const NOW = new Date(2026, 8, 30, 15, 0).getTime();           // Wed Sep 30 2026, 15:00 local
@@ -46,6 +46,10 @@ test('live row states: questions name their step, pause reasons, a named failure
   assert.equal(histRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude' }).word, 'Claude usage limit');
   assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit' }).word, 'Usage limit', 'a limit that was not the engine\'s (OpenRouter) names none');
   assert.equal(liveRowState({ status: 'paused', pauseReason: null }).word, 'Paused');
+  assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude', limitNote: 'resets 18:00' }).detail, 'resets 18:00', 'a usage-limit pause carries its reset note');
+  assert.equal(histRowState({ status: 'paused', pauseReason: 'usage_limit', limitNote: 'resets 18:00' }).detail, 'resets 18:00');
+  assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude' }).detail, '', 'no note: no detail');
+  assert.equal(histRowState({ status: 'paused', pauseReason: 'usage_limit' }).detail, '');
   assert.equal(liveRowState({ status: 'paused', ask: { kind: 'form' } }).icon, 'paused',
     'a pause outranks the question, as statusPill does');
   assert.deepEqual(liveRowState({ status: 'error', failedStep: 'Tester' }), { icon: 'fail', word: 'Tester failed', detail: '' });
@@ -306,4 +310,15 @@ test('group by date: sections in order, empty ones dropped, History by last acti
   const doc = new JSDOM('').window.document;
   const heads = renderRunsList(doc, m).filter((n) => n.classList.contains('runs-group')).map((n) => n.dataset.groupKey);
   assert.deepEqual(heads, ['date:today', 'date:yesterday', 'date:older']);
+});
+
+test('#620: a history row carries its base-check note in the subline, and search finds it', () => {
+  const m = buildRunsModel({ live: [], history: [histIt('h1', { base: 'conflicts with dev' }), histIt('h2')], now: NOW });
+  const worca = m.groups.find((g) => g.key === 'worca-00000002');
+  const [h1, h2] = worca.rows;
+  assert.equal(rowSub(h1), 'Merged · conflicts with dev · 11:17');
+  assert.equal(rowSub(h2), 'Merged · 11:17', 'no note, no extra part');
+  assert.equal(rowSub(h1, { bucket: 'today' }).startsWith('Merged · conflicts with dev'), true);
+  assert.equal(rowMatches(h1, 'conflicts'), true);
+  assert.equal(rowMatches(h2, 'conflicts'), false);
 });

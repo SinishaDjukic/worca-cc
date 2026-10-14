@@ -52,16 +52,13 @@ export function createWorkflowsShell({ doc, els, composer, actions }) {
   // ── top bar ──────────────────────────────────────────────────────────────
   on(els.back, 'click', () => act('back'));
   on(els.wfMenu, 'click', () => {
-    const saved = Boolean(composer.template().id);
-    // Export reads the SAVED row by id: with unsaved changes it would hand out the old graph under the new name.
-    const unsaved = saved && composer.isDirty();
-    const exportTip = !saved ? 'Save the pipeline first' : unsaved ? 'Save your changes first' : '';
     toggleMenu({ doc, anchor: els.wfMenu, label: 'Workflows', items: [
       { label: 'New canvas', onSelect: () => act('newCanvas') },
       { label: 'Open…', onSelect: () => act('openLibrary', 'workflows') },
       { sep: true },
       { label: 'Import…', onSelect: () => { if (els.importFile) { els.importFile.value = ''; els.importFile.click(); } } },
-      { label: 'Export…', disabled: !saved || unsaved, title: exportTip, onSelect: () => act('exportCurrent') },
+      // Always live: exportCurrent saves an unsaved canvas first, and on a blank one points at the saved list.
+      { label: 'Export…', onSelect: () => act('exportCurrent') },
     ] });
   });
   on(els.importFile, 'change', () => { const f = els.importFile.files && els.importFile.files[0]; if (f) act('importFile', f); });

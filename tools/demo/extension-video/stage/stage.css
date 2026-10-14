@@ -1,0 +1,35 @@
+/* tools/demo/extension-video/stage/stage.css — the demo stage overlay (lib/stage.mjs). Worca tokens only: stageCss()
+   prepends the real :root tokens rewritten for a shadow root (tools/extension-css.mjs) and the embedded Poppins. */
+:host { all: initial; }
+* { box-sizing: border-box; font-family: 'Stage Poppins', var(--sans); }
+/* The HUD (captions, keycaps) rides on the virtual camera's crop (lib/stage.mjs moves it every frame), so it comes out
+   of the post-production zoom at its own size; --cap-x is in output pixels. */
+.hud { position: absolute; left: 0; top: 0; width: 100vw; height: 100vh; transform-origin: 0 0; }
+.cap { position: absolute; bottom: 40px; left: var(--cap-x, 50vw); transform: translate(-50%, 14px); opacity: 0;
+  display: grid; gap: 4px; min-width: 520px; max-width: 760px; padding: 18px 26px 20px; border-radius: var(--r-card);
+  background: color-mix(in srgb, var(--panel) 94%, transparent); box-shadow: var(--shadow-glass, var(--shadow-pop)); border: 1px solid var(--line);
+  backdrop-filter: blur(14px) saturate(1.2); transition: opacity .5s ease, transform .5s cubic-bezier(.2,.8,.2,1); }
+.cap.in { opacity: 1; transform: translate(-50%, 0); }
+.cap .kick { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--peach); }
+.cap strong { font-size: 30px; font-weight: 600; color: var(--ink); line-height: 1.15; }
+.cap .sub { font-size: 16px; color: var(--ink-2); }
+.card { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 18px; background: var(--bg);
+  opacity: 0; transition: opacity .8s ease; }
+.card[hidden] { display: none; }
+.card.in { opacity: 1; }
+.card .logo { width: 112px; height: 112px; border-radius: 26px; box-shadow: var(--shadow-card, var(--shadow)); }
+.card h1 { margin: 0; font-size: 56px; font-weight: 600; color: var(--ink); letter-spacing: -.02em; }
+.card p { margin: 0; font-size: 22px; color: var(--ink-2); max-width: 900px; text-align: center; }
+.card p code { font-family: var(--mono); background: var(--field); padding: 2px 8px; border-radius: 6px; }
+.chips span { display: inline-block; margin: 0 6px; padding: 6px 14px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--ink-2); font-size: 14px; }
+.keys { position: absolute; left: 32px; bottom: 32px; display: flex; gap: 8px; opacity: 0; transform: translateY(8px); transition: all .25s ease; }
+.keys.in { opacity: 1; transform: none; }
+kbd { font: 600 18px var(--mono); padding: 10px 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line-2); box-shadow: var(--shadow-card, var(--shadow)); color: var(--ink); }
+.cursor { position: absolute; left: 0; top: 0; width: 26px; height: 26px; transform-origin: 0 0;
+  transform: translate(var(--cx, -40px), var(--cy, -40px)) scale(var(--cam-s, 1)); }
+.cursor path { fill: var(--ink); stroke: var(--panel); stroke-width: 1.5; }
+.cursor.down path { fill: var(--ink-2); }
+.spot { position: absolute; border-radius: var(--r-card); box-shadow: 0 0 0 3px var(--peach), 0 0 0 9999px color-mix(in srgb, var(--ink) 14%, transparent);
+  opacity: 0; transition: all .5s ease; }
+.spot.in { opacity: 1; }
+.card.in ~ .cursor { visibility: hidden; }

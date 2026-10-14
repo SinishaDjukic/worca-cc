@@ -25,6 +25,7 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   'askWeb.search.keyHeader': 'Key header',
   'askWeb.search.keyPrefix': 'Key prefix',
   debugSpawnEnabled: 'Spawn diagnostics',
+  resumeAfterUsageLimit: 'Resume after a usage limit',
   titleModel: 'Title generation model',
   autoWorkflowModel: 'Auto workflow model',
   prDescriptionModel: 'PR description model',

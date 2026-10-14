@@ -17,6 +17,8 @@
 //                            to CLI runs with no restart. A NON-EMPTY WORCA_DEBUG_SPAWN
 //                            in the process environment overrides it (power-user
 //                            override); this module never writes process.env.
+//   resumeAfterUsageLimit  — opt-in boolean (default false): schedule a usage-limit pause's
+//                            resume for just after the limit resets, unattended.
 //   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
 //   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
 //   costLimitResetPeriod   — total-budget window, 'weekly' | 'monthly' (default).
@@ -1122,6 +1124,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'askMaxTurns', 'askMaxBudgetUsd',
   'askWeb',                                  // Ask Worca web access { enabled, allowedDomains, search }
   'debugSpawnEnabled',
+  'resumeAfterUsageLimit',
   'titleModel', 'hideBuiltinModels',
   'theme',
   'uiLevel',                                 // interface mode (docs/ui-levels.md)
@@ -1511,6 +1514,33 @@ export async function setDebugSpawnEnabled(input) {
   else settings.debugSpawnEnabled = input;
   await persistSettings(settings);
   return { debugSpawnEnabled: debugSpawnEnabled() };
+}
+
+// ── Resume after a usage limit (opt-in) ──────────────────────────────────────
+export const DEFAULT_RESUME_AFTER_USAGE_LIMIT = false;
+
+/** @throws {Error} unless `input` is a boolean (the route and the setter share this). */
+export function assertResumeAfterUsageLimitInput(input) {
+  if (!isBool(input)) throw new Error('resumeAfterUsageLimit must be true or false');
+}
+
+/** D6: schedule a usage-limit pause's resume for just after the reset, unattended. */
+export function resumeAfterUsageLimit() {
+  const v = readSettings().resumeAfterUsageLimit;
+  if (v === undefined) return DEFAULT_RESUME_AFTER_USAGE_LIMIT;
+  if (isBool(v)) return v;
+  console.warn(`[worca] invalid resumeAfterUsageLimit ${JSON.stringify(v)} — using the default (${DEFAULT_RESUME_AFTER_USAGE_LIMIT})`);
+  return DEFAULT_RESUME_AFTER_USAGE_LIMIT;
+}
+
+/** @throws {Error} unless `input` is a boolean. */
+export async function setResumeAfterUsageLimit(input) {
+  assertResumeAfterUsageLimitInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_RESUME_AFTER_USAGE_LIMIT) delete settings.resumeAfterUsageLimit;
+  else settings.resumeAfterUsageLimit = input;
+  await persistSettings(settings);
+  return { resumeAfterUsageLimit: resumeAfterUsageLimit() };
 }
 
 // ---------------------------------------------------------------------------
@@ -2233,16 +2263,27 @@ export function scheduleDefaults() {
 }
 
 /**
- * Persist any subset of the schedule defaults; '' / null clears a key back to its
- * default. The whole patch is validated before anything is written.
+ * Validate a schedule-defaults patch ('' / null clear a key). The setter and Ask's change_setting (worca Chat P2)
+ * share it, so both refuse with the same words.
  * @throws {Error} on the first invalid value
  */
-export async function setScheduleDefaults(patch = {}) {
+export function assertScheduleDefaultsInput(patch = {}) {
   const has = (k) => Object.prototype.hasOwnProperty.call(patch, k);
   const clear = (v) => v === '' || v === null || v === undefined;
   if (has('graceMin') && !clear(patch.graceMin) && !isGraceMin(patch.graceMin)) throw new Error('scheduleGraceMin must be a whole number of minutes from 0 to 10080');
   if (has('ifMissed') && !clear(patch.ifMissed) && !SCHEDULE_IF_MISSED.includes(patch.ifMissed)) throw new Error(`scheduleIfMissed must be one of ${SCHEDULE_IF_MISSED.join(' | ')}`);
   if (has('maxFailures') && !clear(patch.maxFailures) && !isMaxFailures(patch.maxFailures)) throw new Error('scheduleMaxFailures must be a whole number from 0 to 100');
+}
+
+/**
+ * Persist any subset of the schedule defaults; '' / null clears a key back to its
+ * default. The whole patch is validated before anything is written.
+ * @throws {Error} on the first invalid value
+ */
+export async function setScheduleDefaults(patch = {}) {
+  assertScheduleDefaultsInput(patch);
+  const has = (k) => Object.prototype.hasOwnProperty.call(patch, k);
+  const clear = (v) => v === '' || v === null || v === undefined;
   const settings = readSettings();
   const put = (key, v) => { if (clear(v)) delete settings[key]; else settings[key] = v; };
   if (has('graceMin')) put('scheduleGraceMin', patch.graceMin);

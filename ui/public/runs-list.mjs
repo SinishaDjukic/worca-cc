@@ -64,12 +64,13 @@ const STATE_TERMS = Object.freeze({
   run: 'running', start: 'starting running', done: 'done finished', scheduled: 'scheduled',
 });
 
-/** `limitEngine`: a usage limit an engine hit names that engine ("Codex usage limit"). */
-function parkedState(s, pauseReason, limitEngine = null) {
+/** `limitEngine`: a usage limit an engine hit names that engine ("Codex usage limit").
+ *  `limitNote`: when that limit resets ("resets 18:00"), the usage-limit arms' detail. */
+function parkedState(s, pauseReason, limitEngine = null, limitNote = '') {
   if (s === 'pausing') return { icon: 'paused', word: 'Pausing', detail: '' };
   if (s === 'interrupted') return { icon: 'paused', word: 'Interrupted', detail: '' };
-  if (pauseReason === 'usage_limit' && limitEngine) return { icon: 'paused', word: `${engineLabel(limitEngine)} usage limit`, detail: '' };
-  return { icon: 'paused', word: PAUSE_WORDS[pauseReason] || 'Paused', detail: '' };
+  if (pauseReason === 'usage_limit' && limitEngine) return { icon: 'paused', word: `${engineLabel(limitEngine)} usage limit`, detail: limitNote || '' };
+  return { icon: 'paused', word: PAUSE_WORDS[pauseReason] || 'Paused', detail: pauseReason === 'usage_limit' ? limitNote || '' : '' };
 }
 
 /** A question's word, naming its step the way the mockup does ("Plan review"): a workflow
@@ -95,7 +96,7 @@ function doneWord({ pr = null, checks = null, files = null } = {}) {
  *  parked-ness outranks a question, a question outranks the raw terminal status. */
 export function liveRowState(it) {
   const s = String((it && it.status) || '').toLowerCase();
-  if (PARKED.has(s)) return parkedState(s, it.pauseReason, it.limitEngine);
+  if (PARKED.has(s)) return parkedState(s, it.pauseReason, it.limitEngine, it.limitNote);
   if (it.ask) return { icon: 'ask', word: askWord(it.ask), detail: '' };
   if (FAILED.has(s)) return { icon: 'fail', word: it.failedStep ? `${it.failedStep} failed` : 'Failed', detail: '' };
   if (STOPPED.has(s)) return { icon: 'stop', word: 'Stopped', detail: '' };
@@ -108,7 +109,7 @@ export function liveRowState(it) {
 export function histRowState(p) {
   const s = String((p && p.status) || '').toLowerCase();
   let st;
-  if (PARKED.has(s)) st = parkedState(s, p.pauseReason, p.limitEngine);
+  if (PARKED.has(s)) st = parkedState(s, p.pauseReason, p.limitEngine, p.limitNote);
   else if (FAILED.has(s)) st = { icon: 'fail', word: 'Failed', detail: '' };
   else if (STOPPED.has(s)) st = { icon: 'stop', word: 'Stopped', detail: '' };
   else if (DONE.has(s)) st = { icon: 'done', word: doneWord(p), detail: '' };
@@ -186,6 +187,7 @@ export function histRow(p, now = Date.now()) {
     title: String(p.title || p.id || '(untitled)'), status,
     groupKey: key, groupName: String(p.groupName || key || '(unknown project)'), by: String(p.by || ''),
     archived: !!(p && p.archived),
+    base: String(p.base || ''),                      // #620: "conflicts with dev" / "dev moved", else ''
     unread: false, needs: needsYou({ kind: 'hist', status }),
     activityMs: Number.isFinite(timeMs(p.mtime, now)) ? timeMs(p.mtime, now) : timeMs(p.startedAt, now),
   }, { at: p.startedAt || p.mtime }, now);
@@ -207,7 +209,7 @@ export function schedRow(t, now = Date.now()) {
 export function rowMatches(row, query) {
   const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return true;
-  const hay = [row.title, row.groupName, row.word, row.detail, STATE_TERMS[row.icon] || '', row.needs ? 'needs you' : '']
+  const hay = [row.title, row.groupName, row.word, row.detail, row.base || '', STATE_TERMS[row.icon] || '', row.needs ? 'needs you' : '']
     .join(' ').toLowerCase();
   return words.every((w) => hay.includes(w));
 }
@@ -216,13 +218,14 @@ export function rowMatches(row, query) {
  *  Grouped by date the section says when, so the project joins the line and the time stays only
  *  where the header does not already pin the day (Yesterday drops it) and the run is not live. */
 export function rowSub(row, { inNeeds = false, bucket = '' } = {}) {
+  const word = row.base ? `${row.word} · ${row.base}` : row.word;   // #620: the base-check note rides the word
   if (bucket) {
     // A live row is happening now: its start time would only push the line onto two.
     const time = bucket === 'yesterday' || row.kind === 'live' ? '' : (row.kind === 'hist' ? rowTime(row.activityMs, row.nowMs) : row.time);
-    return [row.word, row.detail, row.groupName, time].filter(Boolean).join(' · ');
+    return [word, row.detail, row.groupName, time].filter(Boolean).join(' · ');
   }
   const tail = inNeeds ? row.groupName : (row.detail || row.time);
-  return tail ? `${row.word} · ${tail}` : row.word;
+  return tail ? `${word} · ${tail}` : word;
 }
 
 /** The list's filter chips. Finished = the run ended (done, stopped, failed, and every History

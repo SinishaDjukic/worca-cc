@@ -30,7 +30,6 @@ const RUNTIME = new Map([
   ['#wfv-library #wfl-tab-workflows', ['workflows/library.mjs', 'b.id = `wfl-tab-${t}`']],   // the selector's Workflows tab
   ['#wfv-library .wfl-folder[data-folder]', ['workflows/library.mjs', 'row.dataset.folder = key']],   // a folder row (the one holding Default)
   ['#wfv-library .wfl-head.is-searching #wfl-close', ['workflows/library.mjs', /closeBtn\.id = 'wfl-close';[\s\S]*head\.classList\.toggle\('is-searching'/]],   // ✕ on an open search
-  ['.ask-pill', ['ask-panel.mjs', "make('button', 'ask-pill')"]],
   ['.ask-input', ['ask-panel.mjs', "el.input.className = 'ask-input'"]],
   ['.ask-send', ['ask-panel.mjs', "make('button', 'ask-send')"]],
   ['.ask-transcript', ['ask-panel.mjs', "make('div', 'ask-transcript')"]],

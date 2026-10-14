@@ -131,17 +131,16 @@ test('the Running detail Artifacts tab badge counts displayable artifacts and th
       click(ctx.window, tabOf(ctx.window, 'artifacts'));
       await settle(ctx.window);
       const sec = secOf(ctx.window, 'artifacts');
-      const groups = [...sec.querySelectorAll('.artifact-group')];
-      // plan + implement (ordered by the step ledger), then the legacy "Run" bucket last.
-      assert.deepEqual(groups.map((g) => g.querySelector('.artifact-group-head b').textContent),
-        ['Plan', 'Implementer', 'Run']);
-      const rows = [...sec.querySelectorAll('.artifact-row')];
-      assert.equal(rows.length, 3, 'every displayable artifact gets a clickable row (questions dropped)');
-      assert.ok(rows.some((r) => r.querySelector('.artifact-name').textContent === 'plan.md'));
-      assert.ok(rows.some((r) => r.querySelector('.artifact-name').textContent === 'prompt.md'),
-        'the legacy null-node artifact is surfaced in the Run bucket');
-      assert.ok(!rows.some((r) => r.querySelector('.artifact-name').textContent === 'questions.json'),
-        'the transient questions scratch file is not offered as a row');
+      const folders = [...sec.querySelectorAll('.afb-folder.is-step')];
+      // plan + implement (ordered by the step ledger), then the legacy "Run" folder last — all open.
+      assert.deepEqual(folders.map((f) => f.querySelector('.afb-fname').textContent), ['Plan', 'Implementer', 'Run']);
+      assert.ok(folders.every((f) => f.getAttribute('aria-expanded') === 'true'), 'step folders start open');
+      const names = [...sec.querySelectorAll('.afb-file .afb-name')].map((n) => n.textContent);
+      assert.equal(names.length, 3, 'every displayable artifact gets a clickable row (questions dropped)');
+      assert.ok(names.includes('plan.md'));
+      assert.ok(names.includes('prompt.md'), 'the legacy null-node artifact is surfaced in the Run folder');
+      assert.ok(!names.includes('questions.json'), 'the transient questions scratch file is not offered as a row');
+      assert.equal(sec.querySelector('.afb-title').textContent, '3 files');
     } },
   ]);
 });
@@ -161,16 +160,17 @@ test('clicking an artifact row fetches it by pipeline id and mounts the typed vi
       click(ctx.window, tabOf(ctx.window, 'artifacts'));
       await settle(ctx.window);
       const sec = secOf(ctx.window, 'artifacts');
-      const diffRow = [...sec.querySelectorAll('.artifact-row')]
-        .find((r) => r.querySelector('.artifact-name').textContent === 'result.diff');
+      const diffRow = [...sec.querySelectorAll('.afb-main')]
+        .find((r) => r.querySelector('.afb-name').textContent === 'result.diff');
       assert.ok(diffRow, 'the result.diff row is present');
       click(ctx.window, diffRow);
       await settle(ctx.window);
 
       assert.ok(asked && asked.includes('rel=result.diff'), 'fetched the singular artifact route by pipeline id');
-      const viewerCard = ctx.window.document.querySelector('#viewer-card');
-      assert.equal(viewerCard.classList.contains('hidden'), false, 'the viewer modal opens');
-      const view = ctx.window.document.querySelector('#viewer .artifact-view .artifact-diff');
+      assert.ok(ctx.window.document.querySelector('.apv'), 'the popup viewer opens');
+      assert.equal(ctx.window.document.querySelector('#viewer-card').classList.contains('hidden'), true,
+        '#viewer-card is for plain-text notices only');
+      const view = ctx.window.document.querySelector('.apv .artifact-view .artifact-diff');
       assert.ok(view, 'the diff viewer is mounted');
       assert.ok(view.querySelector('.artifact-diff-line.add'), 'a +line is coloured as an addition');
       assert.ok(view.querySelector('.artifact-diff-line.del'), 'a -line is coloured as a deletion');
@@ -196,11 +196,11 @@ test('clicking an artifact row fetches it by pipeline id and mounts the typed vi
       click(ctx.window, tabOf(ctx.window, 'artifacts'));
       await settle(ctx.window);
       const sec = secOf(ctx.window, 'artifacts');
-      const mdRow = [...sec.querySelectorAll('.artifact-row')]
-        .find((r) => r.querySelector('.artifact-name').textContent === 'plan.md');
+      const mdRow = [...sec.querySelectorAll('.afb-main')]
+        .find((r) => r.querySelector('.afb-name').textContent === 'plan.md');
       click(ctx.window, mdRow);
       await settle(ctx.window);
-      const md = ctx.window.document.querySelector('#viewer .artifact-view .artifact-markdown');
+      const md = ctx.window.document.querySelector('.apv .artifact-view .artifact-markdown');
       assert.ok(md, 'the markdown viewer is mounted through renderMarkdown');
       assert.equal(md.querySelector('h1').textContent, 'Plan');
     } },
@@ -226,11 +226,11 @@ test('renderMarkdown hardens untrusted content: strips stray classes, neutralize
   await openRunWithArtifacts(ctx);
   click(ctx.window, tabOf(ctx.window, 'artifacts'));
   await settle(ctx.window);
-  const mdRow = [...secOf(ctx.window, 'artifacts').querySelectorAll('.artifact-row')]
-    .find((r) => r.querySelector('.artifact-name').textContent === 'plan.md');
+  const mdRow = [...secOf(ctx.window, 'artifacts').querySelectorAll('.afb-main')]
+    .find((r) => r.querySelector('.afb-name').textContent === 'plan.md');
   click(ctx.window, mdRow);
   await settle(ctx.window);
-  const md = ctx.window.document.querySelector('#viewer .artifact-view .artifact-markdown');
+  const md = ctx.window.document.querySelector('.apv .artifact-view .artifact-markdown');
   assert.equal(md.querySelector('p').hasAttribute('class'), false, 'arbitrary class stripped');
   assert.equal(md.querySelector('code').getAttribute('class'), 'language-js', 'code language hint kept');
   assert.equal(md.querySelectorAll('input[type="text"]').length, 0, 'non-checkbox input removed');
@@ -267,9 +267,9 @@ const shot = (ctx, n) => frame(ctx, {
   nodeId: 'implement', executionId: 'implement#1', cycle: 1,
 });
 
-test('a kind over the collapse threshold renders as one expandable summary row, the badge counts its files individually, and an expanded group survives a live repaint', async () => {
+test('a burst of one kind sits in its own closed folder, the badge counts its files individually, and an open folder survives a live repaint', async () => {
   await checkRows([
-    { name: 'a kind over the collapse threshold renders as one expandable summary row', run: async () => {
+    { name: 'a kind over the collapse threshold is one closed folder whose rows are built when it opens', run: async () => {
       const ctx = await boot();
       await openRunWithArtifacts(ctx);
       for (let i = 1; i <= 6; i++) shot(ctx, i);
@@ -277,18 +277,18 @@ test('a kind over the collapse threshold renders as one expandable summary row, 
       await settle(ctx.window);
       const sec = secOf(ctx.window, 'artifacts');
 
-      const bulk = sec.querySelector('.artifact-bulk-toggle');
-      assert.ok(bulk, 'the six screenshots collapse behind one summary row');
-      assert.match(bulk.textContent, /deck-shot/);
-      assert.match(bulk.textContent, /6 files/);
+      const bulk = sec.querySelector('.afb-folder.is-bulk');
+      assert.ok(bulk, 'the six screenshots sit behind one folder');
+      assert.equal(bulk.querySelector('.afb-fname').textContent, 'deck-shot');
+      assert.equal(bulk.querySelector('.afb-fn').textContent, '6');
       assert.equal(bulk.getAttribute('aria-expanded'), 'false');
-      assert.equal(sec.querySelectorAll('.artifact-row').length, 3,
-        'the three ordinary artifacts stay flat rows; no screenshot is one yet');
+      assert.equal(sec.querySelectorAll('.afb-file').length, 3,
+        'the three ordinary artifacts are rows; no screenshot is one yet');
 
       click(ctx.window, bulk);
       await settle(ctx.window);
-      assert.equal(bulk.getAttribute('aria-expanded'), 'true');
-      assert.equal(sec.querySelectorAll('.artifact-row').length, 9, 'expanding reveals every screenshot');
+      assert.equal(sec.querySelector('.afb-folder.is-bulk').getAttribute('aria-expanded'), 'true');
+      assert.equal(sec.querySelectorAll('.afb-file').length, 9, 'opening reveals every screenshot');
     } },
     { name: 'the Artifacts badge counts collapsed files individually', run: async () => {
       const ctx = await boot();
@@ -298,30 +298,27 @@ test('a kind over the collapse threshold renders as one expandable summary row, 
       await settle(ctx.window);
       assert.equal(tabOf(ctx.window, 'artifacts').querySelector('.rd-tab-badge').textContent, '9');
     } },
-    { name: 'an expanded bulk group survives a live repaint', run: async () => {
-      // buildRdArtifacts repaints on every state frame and renderRunArtifacts opens
-      // with mount.innerHTML = '', so an expanded bulk group snapped shut on the next
-      // frame — the collapse affordance was unusable exactly while the run was live,
-      // which is the only time 43 screenshots are arriving.
+    { name: 'an open folder survives a live repaint that changes the list', run: async () => {
+      // buildRdArtifacts paints on every state frame. The browser is built once per section and updated in place, so
+      // a folder the reader opened stays open while the run keeps adding files to it.
       const ctx = await boot();
       await openRunWithArtifacts(ctx);
       for (let i = 1; i <= 6; i++) shot(ctx, i);
       click(ctx.window, tabOf(ctx.window, 'artifacts'));
       await settle(ctx.window);
       const sec = secOf(ctx.window, 'artifacts');
-
-      click(ctx.window, sec.querySelector('.artifact-bulk-toggle'));
+      click(ctx.window, sec.querySelector('.afb-folder.is-bulk'));
       await settle(ctx.window);
-      assert.equal(sec.querySelectorAll('.artifact-row').length, 9, 'expanded');
+      assert.equal(sec.querySelectorAll('.afb-file').length, 9, 'open');
 
-      // A state frame repaints the open detail (Overview/Agents/Artifacts all do).
+      shot(ctx, 7);
       frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', phase: 'implement', cycle: 1, stepper: STEPPER(), steps: STEPS(), subAgents: SUBS() });
       await settle(ctx.window);
 
       const after = secOf(ctx.window, 'artifacts');
-      assert.equal(after.querySelector('.artifact-bulk-toggle').getAttribute('aria-expanded'), 'true',
-        'the group is still expanded after the repaint');
-      assert.equal(after.querySelectorAll('.artifact-row').length, 9, 'and its rows are still rendered');
+      assert.equal(after.querySelector('.afb-folder.is-bulk').getAttribute('aria-expanded'), 'true', 'still open after the repaint');
+      assert.equal(after.querySelector('.afb-folder.is-bulk .afb-fn').textContent, '7');
+      assert.equal(after.querySelectorAll('.afb-file').length, 10, 'and its rows, the new one included, are rendered');
     } },
   ]);
 });
@@ -336,8 +333,8 @@ test('an indexed subresource is never offered as a browsable row', async () => {
   click(ctx.window, tabOf(ctx.window, 'artifacts'));
   await settle(ctx.window);
   const sec = secOf(ctx.window, 'artifacts');
-  assert.equal(sec.querySelectorAll('.artifact-row').length, 3);
-  assert.ok(![...sec.querySelectorAll('.artifact-name')].some((n) => n.textContent === 'deck-stage.js'),
+  assert.equal(sec.querySelectorAll('.afb-file').length, 3);
+  assert.ok(![...sec.querySelectorAll('.afb-name')].some((n) => n.textContent === 'deck-stage.js'),
     'the kit script is indexed but not listed');
 });
 
@@ -390,7 +387,7 @@ test('the live Artifacts tab seeds itself from the server after a reload', async
   click(ctx.window, tabOf(ctx.window, 'artifacts'));
   await settle(ctx.window, 14);
 
-  const names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.artifact-name')].map((n) => n.textContent);
+  const names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.afb-name')].map((n) => n.textContent);
   assert.ok(names.includes('deck-manifest.md'), names.join(','));
   assert.ok(names.includes('plan.md'), names.join(','));
 });
@@ -421,7 +418,7 @@ test('hydration does not duplicate what a live event already delivered', async (
   click(ctx.window, tabOf(ctx.window, 'artifacts'));
   await settle(ctx.window, 14);
 
-  const names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.artifact-name')].map((n) => n.textContent);
+  const names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.afb-name')].map((n) => n.textContent);
   assert.equal(names.filter((n) => n === 'plan.md').length, 1, names.join(','));
   assert.equal(names.filter((n) => n === 'result.diff').length, 1, names.join(','));
 });
@@ -442,27 +439,28 @@ test('a live event for an already-hydrated file replaces it rather than doubling
   frame(ctx, { type: 'artifact', runId: 'r1', kind: 'deck', path: '/Users/x/.worca-cc/store/p-1/pipelines/r-1/deck/deck.html', nodeId: 'implement', executionId: 'implement#3', cycle: 3 });
   await settle(ctx.window, 6);
 
-  const names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.artifact-name')].map((n) => n.textContent);
+  const names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.afb-name')].map((n) => n.textContent);
   assert.equal(names.filter((n) => n === 'deck.html').length, 1, names.join(','));
 });
 
-// .hidden{display:none} does not UNLOAD an iframe. The modal now holds a framed
-// deck (deck-stage.js, deck-enhance.js, and narration audio on some decks), an
-// <embed> PDF and images — so closing it left the deck running its timers and
-// playing audio until the modal was next opened with different content.
-test('closing the viewer unloads what it was holding', async () => {
+// .hidden{display:none} does not UNLOAD an iframe: a framed deck keeps its timers and its narration playing. The
+// popup removes its node on close, and focus goes back to what opened it.
+test('closing the viewer unloads what it was holding and hands focus back', async () => {
   const ctx = await boot({
     fetchHandler: (url) => (url.includes('/api/runs/p1/artifact?rel=') ? ok({ rel: 'plan.md', text: '# hi' }) : null),
   });
-  const viewer = ctx.window.document.querySelector('#viewer');
-  ctx.window.__np.showArtifactViewer('p1', { kind: 'plan', relPath: 'plan.md' });
+  const doc = ctx.window.document;
+  const opener = doc.createElement('button');
+  doc.body.appendChild(opener);
+  opener.focus();
+  await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: 'plan', relPath: 'plan.md' });
   await settle(ctx.window, 10);
-  assert.ok(viewer.querySelector('.artifact-view'), 'something is mounted');
+  assert.ok(doc.querySelector('.apv .artifact-view'), 'something is mounted');
 
-  ctx.window.document.querySelector('#viewer-close').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  doc.querySelector('.apv .apv-close').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await settle(ctx.window);
-  assert.equal(viewer.childElementCount, 0, 'the frame/embed/img is gone, not merely display:none');
-  assert.equal(viewer.classList.contains('holds-artifact'), false);
+  assert.equal(doc.querySelector('.apv'), null, 'the popup and its frame/embed/img are gone, not merely display:none');
+  assert.equal(doc.activeElement, opener, 'focus is back on the opener');
 });
 
 // The hydration flag was set BEFORE the fetch resolved, so a single failed
@@ -486,13 +484,13 @@ test('a failed hydration is retried the next time the tab is opened', async () =
 
   click(ctx.window, tabOf(ctx.window, 'artifacts'));      // attempt 1 — fails
   await settle(ctx.window, 14);
-  assert.equal(secOf(ctx.window, 'artifacts').querySelectorAll('.artifact-row').length, 0);
+  assert.equal(secOf(ctx.window, 'artifacts').querySelectorAll('.afb-file').length, 0);
 
   // A state frame repaints the open detail, which is where seeding is retried.
   frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', phase: 'implement', cycle: 1, stepper: STEPPER(), steps: STEPS(), subAgents: SUBS() });
   await settle(ctx.window, 14);
   assert.ok(attempt >= 2, 'the failure did not disable seeding');
-  const names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.artifact-name')].map((n) => n.textContent);
+  const names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.afb-name')].map((n) => n.textContent);
   assert.ok(names.includes('plan.md'), names.join(','));
 });
 
@@ -516,7 +514,7 @@ test('two files whose basenames collide across directories stay distinct', async
   click(ctx.window, tabOf(ctx.window, 'artifacts'));
   await settle(ctx.window, 14);
 
-  const names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.artifact-name')].map((n) => n.textContent);
+  const names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.afb-name')].map((n) => n.textContent);
   assert.equal(names.filter((n) => n === 'index.html').length, 2,
     `both index.html files must be listed: ${names.join(',')}`);
 });
@@ -615,14 +613,14 @@ test('the History Artifacts truncation notice loads the next page instead of dea
   const more = sec.querySelector('.artifact-truncated');
   assert.ok(more, 'a partial list still announces itself');
   assert.equal(more.tagName, 'BUTTON', 'and it is a control, not a dead end');
-  assert.equal(sec.querySelectorAll('.artifact-row').length, 2);
+  assert.equal(sec.querySelectorAll('.afb-file').length, 2);
 
   click(ctx.window, more);
   await settle(ctx.window, 12);
   assert.ok(asked.some((u) => u.includes('offset=2')), 'the next page was requested by its cursor');
-  const names = [...sec.querySelectorAll('.artifact-name')].map((n) => n.textContent);
+  const names = [...sec.querySelectorAll('.afb-name')].map((n) => n.textContent);
   assert.ok(names.includes('deck.pdf'), 'the newest rows are reachable');
-  assert.equal(sec.querySelectorAll('.artifact-row').length, 3, 'appended to the first page, not replacing it');
+  assert.equal(sec.querySelectorAll('.afb-file').length, 3, 'appended to the first page, not replacing it');
   assert.equal(sec.querySelector('.artifact-truncated'), null, 'and the control goes once the last page lands');
 });
 
@@ -675,7 +673,7 @@ test('hydration pages past the route cap so the newest rows are seeded too', asy
 
   assert.ok(asked.some((u) => u.includes('offset=2')), 'the second page was requested');
   const sec = secOf(ctx.window, 'artifacts');
-  const names = [...sec.querySelectorAll('.artifact-name')].map((n) => n.textContent);
+  const names = [...sec.querySelectorAll('.afb-name')].map((n) => n.textContent);
   assert.ok(names.includes('deck.pdf'), `the newest page is seeded: ${names.join(',')}`);
 });
 
@@ -691,35 +689,47 @@ test('a pruned artifact is removed from the live list instead of 404ing on click
   frame(ctx, { type: 'artifact', runId: 'r1', kind: 'deck-shot', path: '/abs/run/shots/s43.png', nodeId: 'implement', executionId: 'implement#1', cycle: 1 });
   click(ctx.window, tabOf(ctx.window, 'artifacts'));
   await settle(ctx.window);
-  let names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.artifact-name')].map((n) => n.textContent);
+  let names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.afb-name')].map((n) => n.textContent);
   assert.ok(names.includes('s43.png'), 'the shot is listed to begin with');
 
   // The fix cycle cuts that slide; the engine prunes the row.
   frame(ctx, { type: 'artifact-gone', runId: 'r1', paths: ['/abs/run/shots/s43.png'] });
   await settle(ctx.window);
-  names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.artifact-name')].map((n) => n.textContent);
+  names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.afb-name')].map((n) => n.textContent);
   assert.ok(!names.includes('s43.png'), `the pruned row is gone: ${names.join(',')}`);
   assert.ok(names.includes('plan.md'), 'and the surviving rows are untouched');
 });
 
-test('a raw-artifact error (404/415/413) is shown as text; a raw artifact that is there still mounts its media element', async () => {
+test('a raw-artifact error (404/415/413) is said inside the popup; a raw artifact that is there still mounts its media element', async () => {
   await checkRows([
     { name: 'a raw-artifact error is shown, not rendered as a blank frame', run: async () => {
-      // The byte branches hand the raw URL straight to an <iframe>/<embed>/<img>. The
-      // raw route answers 404 (the file went between listing and click — routine on a
-      // live run, the audit clears shots/ every cycle), 415 (no preview for the type)
-      // or 413 (over 25 MB), each a JSON body that renders as a blank frame or a broken
-      // image. The modal sat open on an empty shell with no explanation, while the text
-      // branch beside it has always shown `Error: …`.
+      // The byte kinds frame the raw URL in an <iframe>/<embed>/<img>/<audio>/<video>. The route answers 404 when the
+      // file went between listing and click (routine on a live run: the audit clears shots/ every cycle), as a JSON
+      // body that would render as a blank frame or a broken image. The viewer probes first and says why.
       const ctx = await boot({
         fetchHandler: (url) => (url.includes('/artifact-raw/')
           ? Promise.resolve({ ok: false, status: 404, json: async () => ({ error: 'artifact not found' }) })
           : null),
       });
-      await ctx.window.__np.showArtifactViewer('p1', { kind: 'deck-shot', relPath: 'shots/s43.png' });
+      await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: 'deck-shot', relPath: 'shots/s43.png' });
       await settle(ctx.window, 8);
-      const host = ctx.window.document.querySelector('.artifact-view, #viewer');
-      assert.match(host.textContent, /artifact not found/, 'the reason is on screen');
+      const err = ctx.window.document.querySelector('.apv .apv-error');
+      assert.ok(err, 'the reason is on screen');
+      assert.equal(err.textContent, 'File not found');
+      assert.equal(ctx.window.document.querySelector('.apv img'), null, 'no broken image');
+    } },
+    { name: 'a 413 opens the info view with Download instead', run: async () => {
+      const ctx = await boot({
+        fetchHandler: (url) => (url.includes('/artifact-raw/')
+          ? Promise.resolve({ ok: false, status: 413, json: async () => ({ error: 'artifact too large to preview' }) })
+          : null),
+      });
+      await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: 'deck', relPath: 'deck/deck.pdf', bytes: 30 * 1024 * 1024 });
+      await settle(ctx.window, 8);
+      const doc = ctx.window.document;
+      assert.ok(doc.querySelector('.apv').classList.contains('is-info'));
+      assert.equal(doc.querySelector('.apv .apv-info-note').textContent, 'Too large to preview');
+      assert.ok(doc.querySelector('.apv .apv-info-dl'), 'and Download is offered');
     } },
     { name: 'a raw artifact that IS there still renders', run: async () => {
       const ctx = await boot({
@@ -727,11 +737,11 @@ test('a raw-artifact error (404/415/413) is shown as text; a raw artifact that i
           ? Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
           : null),
       });
-      await ctx.window.__np.showArtifactViewer('p1', { kind: 'deck-shot', relPath: 'shots/s01.png' });
+      await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: 'deck-shot', relPath: 'shots/s01.png' });
       await settle(ctx.window, 8);
-      const host = ctx.window.document.querySelector('.artifact-view, #viewer');
-      assert.doesNotMatch(host.textContent, /Error:/, 'no error for a healthy artifact');
-      assert.ok(host.querySelector('img, iframe, embed'), 'and the media element is mounted');
+      const stage = ctx.window.document.querySelector('.apv .apv-stage');
+      assert.equal(stage.querySelector('.apv-error'), null, 'no error for a healthy artifact');
+      assert.equal(stage.querySelector('img').getAttribute('src'), '/api/runs/p1/artifact-raw/shots/s01.png');
     } },
   ]);
 });
@@ -753,7 +763,7 @@ test('hydration keeps the pages it already has when a later one fails', async ()
   await openRunWithArtifacts(ctx);
   click(ctx.window, tabOf(ctx.window, 'artifacts'));
   await settle(ctx.window, 12);
-  const names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.artifact-name')].map((n) => n.textContent);
+  const names = [...secOf(ctx.window, 'artifacts').querySelectorAll('.afb-name')].map((n) => n.textContent);
   assert.ok(names.includes('a.md') && names.includes('b.md'), `page 1 survives: ${names.join(',')}`);
 });
 
@@ -779,7 +789,7 @@ test('a failed "load next page" (HTTP error or thrown fetch) keeps the rows and 
       await settle(ctx.window, 12);
       assert.ok(sec.querySelector('.artifact-truncated'),
         'the list still declares itself partial after the page failed');
-      assert.equal(sec.querySelectorAll('.artifact-row').length, 2, 'and keeps the rows it had');
+      assert.equal(sec.querySelectorAll('.afb-file').length, 2, 'and keeps the rows it had');
     } },
     { name: 'a thrown failure on a later page keeps the partial list flagged as partial', run: async () => {
       const row = (kind, relPath) => ({ kind, relPath, nodeId: 'implement', stepKey: 'implement#1', cycle: 1 });
@@ -797,7 +807,7 @@ test('a failed "load next page" (HTTP error or thrown fetch) keeps the rows and 
       click(ctx.window, sec.querySelector('.artifact-truncated'));
       await settle(ctx.window, 12);
       assert.ok(sec.querySelector('.artifact-truncated'), 'still declares itself partial');
-      assert.equal(sec.querySelectorAll('.artifact-row').length, 2, 'and keeps the rows it had');
+      assert.equal(sec.querySelectorAll('.afb-file').length, 2, 'and keeps the rows it had');
     } },
   ]);
 });
@@ -817,7 +827,7 @@ test('a thrown fetch failure is reported, not silently rendered as an empty run'
   ctx.window.__np.buildHdArtifacts(sec, { id: 'p1' }, { state: {} });
   await settle(ctx.window, 12);
   assert.match(sec.textContent, /Could not load/, `an outright failure says so: ${sec.textContent}`);
-  assert.doesNotMatch(sec.textContent, /no artifacts recorded/, 'and does not claim the run has none');
+  assert.doesNotMatch(sec.textContent, /No artifacts/, 'and does not claim the run has none');
 });
 
 // Stopping at the page ceiling is correct; memoising that as a COMPLETE walk is
@@ -913,4 +923,419 @@ test('a prune removes every row for the file, whatever kind it was listed under'
 
   const rels = r.artifacts.map((a) => a.relPath);
   assert.deepEqual(rels, ['deck/deck.html'], `both rows for the file go: ${rels.join(',')}`);
+});
+
+// Chat P5: every run-page opener lands in ONE popup viewer. The run pages' capture-phase Escape handlers send the
+// detail back to its list; while the popup is open, Escape is the popup's.
+test('the popup viewer owns Escape over the Running detail, and every opener reaches it', async () => {
+  await checkRows([
+    { name: 'Escape closes the popup and leaves the Running detail where it was', run: async () => {
+      const ctx = await boot({
+        fetchHandler: (url) => (url.includes('/api/runs/p1/artifact?rel=') ? ok({ rel: 'plans/plan.md', text: '# plan' }) : null),
+      });
+      await openRunWithArtifacts(ctx);
+      // Details mode: there the page's own capture-phase Escape arm steps back to the glance (#running/r1). A tab click
+      // in jsdom's split layout stays on the glance, where that arm does nothing and this row could not fail.
+      go(ctx.window, 'running/r1/details/artifacts');
+      await settle(ctx.window);
+      const doc = ctx.window.document;
+      const hash = ctx.window.location.hash;
+      assert.equal(hash, '#running/r1/details/artifacts');
+      await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: 'plan', relPath: 'plans/plan.md', nodeId: 'plan', cycle: 1 });
+      assert.ok(doc.querySelector('.apv'), 'the popup is open');
+      assert.equal(doc.querySelector('.apv .apv-meta').textContent, 'Plan · cycle 1', 'the live run names the step');
+      (doc.activeElement || doc.body).dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await settle(ctx.window);
+      assert.equal(doc.querySelector('.apv'), null, 'Escape closed the popup');
+      assert.equal(ctx.window.location.hash, hash, 'and did not send the run page back to its list');
+      assert.ok(doc.querySelector('#run-detail .rd-sec[data-sec="artifacts"]'), 'the detail is still there');
+    } },
+    { name: 'a .log-artifact line opens the popup, by its kind, titled with the file name', run: async () => {
+      const asked = [];
+      const ctx = await boot({
+        fetchHandler: (url) => {
+          if (!url.includes('/api/runs/p1/artifact?rel=')) return null;
+          asked.push(url);
+          return ok({ rel: 'result.diff', text: '+a\n' });
+        },
+      });
+      const doc = ctx.window.document;
+      const pane = doc.createElement('div');
+      pane._artifactCtx = { run: { id: 'r1', pipelineId: 'p1', artifacts: [] }, runId: 'r1' };
+      const a = doc.createElement('a');
+      a.className = 'log-msg log-artifact';
+      a.href = '#';
+      a.dataset.path = '/abs/run/result.diff';
+      a.dataset.kind = 'result';
+      pane.appendChild(a);
+      doc.body.appendChild(pane);
+      click(ctx.window, a);
+      await settle(ctx.window, 8);
+      assert.deepEqual(asked, ['/api/runs/p1/artifact?rel=%2Fabs%2Frun%2Fresult.diff']);
+      assert.equal(doc.querySelector('.apv .apv-title').textContent, 'result.diff', 'the file name, never the absolute path');
+      assert.ok(doc.querySelector('.apv .artifact-view.kind-diff .artifact-diff'));
+    } },
+    { name: 'the Agents tab\'s per-node row opens the popup', run: async () => {
+      const ctx = await boot({
+        fetchHandler: (url) => (url.includes('/api/runs/p1/artifact?rel=') ? ok({ rel: 'plans/plan.md', text: '# plan' }) : null),
+      });
+      await openRunWithArtifacts(ctx);
+      click(ctx.window, tabOf(ctx.window, 'agents'));
+      await settle(ctx.window);
+      const sec = secOf(ctx.window, 'agents');
+      click(ctx.window, sec.querySelector('.node-artifacts .artifact-toggle'));
+      click(ctx.window, sec.querySelector('.node-artifacts .artifact-list .artifact-row'));
+      await settle(ctx.window, 8);
+      assert.ok(ctx.window.document.querySelector('.apv'), 'the popup opened');
+      assert.equal(ctx.window.document.querySelector('#viewer-card').classList.contains('hidden'), true);
+    } },
+    { name: 'the popup\'s Download saves through the download form of the raw route', run: async () => {
+      const heads = [];
+      const ctx = await boot({
+        fetchHandler: (url, opts) => {
+          if (opts.method === 'HEAD') { heads.push(url); return Promise.resolve({ ok: true, status: 200, json: async () => ({}) }); }
+          return url.includes('/api/runs/p1/artifact?rel=') ? ok({ rel: 'plans/plan.md', text: '# plan' }) : null;
+        },
+      });
+      const saved = [];
+      ctx.window.HTMLAnchorElement.prototype.click = function () { saved.push([this.getAttribute('href'), this.getAttribute('download')]); };
+      await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: 'plan', relPath: 'plans/plan.md', bytes: 6 });
+      click(ctx.window, ctx.window.document.querySelector('.apv .apv-dl'));
+      await settle(ctx.window, 8);
+      assert.deepEqual(heads, ['/api/runs/p1/artifact-raw/plans/plan.md?download=1']);
+      assert.deepEqual(saved, [['/api/runs/p1/artifact-raw/plans/plan.md?download=1', 'plan.md']]);
+    } },
+  ]);
+});
+
+test('a tab row opens the popup with the tab as its ←/→ list, and its Download saves the file', async () => {
+  const ctx = await boot({
+    fetchHandler: (url, opts) => {
+      if (opts.method === 'HEAD') return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+      return url.includes('/api/runs/p1/artifact?rel=') ? ok({ rel: 'x', text: 'x' }) : null;
+    },
+  });
+  const saved = [];
+  ctx.window.HTMLAnchorElement.prototype.click = function () { saved.push(this.getAttribute('href')); };
+  await openRunWithArtifacts(ctx);
+  click(ctx.window, tabOf(ctx.window, 'artifacts'));
+  await settle(ctx.window);
+  const sec = secOf(ctx.window, 'artifacts');
+  const mainOf = (name) => [...sec.querySelectorAll('.afb-main')].find((m) => m.querySelector('.afb-name').textContent === name);
+  click(ctx.window, mainOf('result.diff'));
+  await settle(ctx.window, 8);
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('.apv .apv-pos').textContent, '2 / 3', 'Plan, Implementer, Run: the tab\'s order');
+  assert.equal(doc.querySelector('.apv .apv-meta').textContent, 'Implementer · cycle 1');
+  click(ctx.window, doc.querySelector('.apv .apv-next'));
+  await settle(ctx.window, 8);
+  assert.equal(doc.querySelector('.apv .apv-title').textContent, 'prompt.md');
+  assert.equal(doc.querySelector('.apv .apv-meta').textContent, 'Run');
+  click(ctx.window, doc.querySelector('.apv .apv-close'));
+  click(ctx.window, mainOf('plan.md').parentElement.querySelector('.afb-dl'));
+  await settle(ctx.window, 8);
+  assert.deepEqual(saved, ['/api/runs/p1/artifact-raw/plans/plan.md?download=1']);
+});
+
+test('a row\'s Download that the server refuses is a toast, and nothing is saved', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => (url.includes('/artifact-raw/')
+      ? Promise.resolve({ ok: false, status: 404, json: async () => ({ error: 'artifact not found' }) })
+      : null),
+  });
+  const saved = [];
+  ctx.window.HTMLAnchorElement.prototype.click = function () { saved.push(this.getAttribute('href')); };
+  await openRunWithArtifacts(ctx);
+  click(ctx.window, tabOf(ctx.window, 'artifacts'));
+  await settle(ctx.window);
+  const sec = secOf(ctx.window, 'artifacts');
+  const main = [...sec.querySelectorAll('.afb-main')].find((m) => m.querySelector('.afb-name').textContent === 'plan.md');
+  click(ctx.window, main.parentElement.querySelector('.afb-dl'));
+  await settle(ctx.window, 8);
+  assert.deepEqual(saved, [], 'a 404 is never saved as the file');
+  const t = [...ctx.window.document.querySelectorAll('#toasts > .toast')].pop();
+  assert.ok(t, 'a toast');
+  assert.equal(t.querySelector('.tt').textContent, 'Download failed');
+  assert.equal(t.querySelector('.td').textContent, 'File not found');
+});
+
+// ── refine cycle 2: app.js wiring the rows above did not pin ──
+
+test('an empty Artifacts tab says "No artifacts yet" on a live run and "No artifacts" on a saved one', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => (url.includes('/api/runs/p1/artifacts') ? ok({ runId: 'p1', artifacts: [], truncated: false }) : null),
+  });
+  const np = ctx.window.__np;
+  const doc = ctx.window.document;
+  const live = doc.createElement('div');
+  np.buildRdArtifacts(live, { run: np.upsertRun({ runId: 'r1', title: 't', projectDir: PROJECT, status: 'running' }) });
+  await settle(ctx.window);
+  assert.equal(live.querySelector('.afb-empty').textContent, 'No artifacts yet');
+  const saved = doc.createElement('div');
+  np.buildHdArtifacts(saved, { id: 'p1' }, { state: {} });
+  await settle(ctx.window, 12);
+  assert.equal(saved.querySelector('.afb-empty').textContent, 'No artifacts');
+});
+
+test('step folders follow the run\'s step order, labelled from the latest state frame — not the first file to land or the first frame', async () => {
+  const ctx = await boot();
+  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', phase: 'plan', cycle: 1 });   // no stepper yet
+  go(ctx.window, 'running/r1');
+  await settle(ctx.window);
+  frame(ctx, { type: 'artifact', runId: 'r1', kind: 'result', path: 'result.diff', nodeId: 'implement', executionId: 'implement#1', cycle: 1 });
+  frame(ctx, { type: 'artifact', runId: 'r1', kind: 'plan', path: 'plans/plan.md', nodeId: 'plan', executionId: 'plan#1', cycle: 1 });
+  click(ctx.window, tabOf(ctx.window, 'artifacts'));
+  await settle(ctx.window);
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', phase: 'implement', cycle: 1, stepper: STEPPER(), steps: STEPS(), subAgents: SUBS() });
+  await settle(ctx.window);
+  const sec = secOf(ctx.window, 'artifacts');
+  assert.deepEqual([...sec.querySelectorAll('.afb-folder.is-step .afb-fname')].map((f) => f.textContent), ['Plan', 'Implementer']);
+});
+
+test('a log line\'s artifact takes size, step and cycle from the run\'s own row; a file the run does not list shows no step', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => (url.includes('/api/runs/p1/artifact?rel=') ? ok({ rel: 'x', text: '+a\n' }) : null),
+  });
+  const doc = ctx.window.document;
+  const run = { id: 'r1', pipelineId: 'p1', stepper: STEPPER(),
+    artifacts: [{ kind: 'result', relPath: 'result.diff', nodeId: 'implement', cycle: 1, bytes: 2048 }] };
+  const pane = doc.createElement('div');
+  pane._artifactCtx = { run, runId: 'r1' };
+  doc.body.appendChild(pane);
+  const line = (path) => {
+    const a = doc.createElement('a');
+    a.className = 'log-msg log-artifact';
+    a.href = '#';
+    a.dataset.path = path;
+    a.dataset.kind = 'result';
+    pane.appendChild(a);
+    return a;
+  };
+  click(ctx.window, line('/abs/run/result.diff'));
+  await settle(ctx.window, 8);
+  assert.equal(doc.querySelector('.apv .apv-meta').textContent, 'Implementer · cycle 1 · 2.0 KB');
+  click(ctx.window, line('/abs/run/other.diff'));
+  await settle(ctx.window, 8);
+  assert.equal(doc.querySelector('.apv .apv-title').textContent, 'other.diff');
+  assert.equal(doc.querySelector('.apv .apv-meta').textContent, '', 'no row says which step made it: no step, never "Run"');
+});
+
+test('the Agents tab\'s per-node row steps through its node\'s files', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => (url.includes('/api/runs/p1/artifact?rel=') ? ok({ rel: 'x', text: 'x' }) : null),
+  });
+  await openRunWithArtifacts(ctx);
+  frame(ctx, { type: 'artifact', runId: 'r1', kind: 'review', path: 'review.json', nodeId: 'implement', executionId: 'implement#1', cycle: 1 });
+  click(ctx.window, tabOf(ctx.window, 'agents'));
+  await settle(ctx.window);
+  const sec = secOf(ctx.window, 'agents');
+  const toggle = [...sec.querySelectorAll('.node-artifacts .artifact-toggle')].find((t) => t.textContent === 'Artifacts (2)');
+  assert.ok(toggle, 'the implement node lists two files');
+  click(ctx.window, toggle);
+  click(ctx.window, toggle.parentElement.querySelector('.artifact-list .artifact-row'));
+  await settle(ctx.window, 8);
+  assert.equal(ctx.window.document.querySelector('.apv .apv-pos').textContent, '1 / 2');
+});
+
+test('a saved run\'s tab names the step in the popup with no History detail open (the Chat run panel re-hosts it)', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.includes('/api/runs/p1/artifacts')) {
+        return ok({ runId: 'p1', artifacts: [{ kind: 'plan', relPath: 'plans/plan.md', nodeId: 'plan', stepKey: 'plan#1', cycle: 1 }], truncated: false });
+      }
+      return url.includes('/api/runs/p1/artifact?rel=') ? ok({ rel: 'plans/plan.md', text: '# p' }) : null;
+    },
+  });
+  const doc = ctx.window.document;
+  const sec = doc.createElement('div');
+  doc.body.appendChild(sec);
+  ctx.window.__np.buildHdArtifacts(sec, { id: 'p1' }, { state: { stepper: STEPPER() } });
+  await settle(ctx.window, 12);
+  click(ctx.window, [...sec.querySelectorAll('.afb-main')].find((m) => m.querySelector('.afb-name').textContent === 'plan.md'));
+  await settle(ctx.window, 8);
+  assert.equal(doc.querySelector('.apv .apv-meta').textContent, 'Plan · cycle 1');
+});
+
+test('a section something cleared gets a fresh browser on its next paint (a builder retry)', async () => {
+  const ctx = await boot({
+    fetchHandler: (url) => (url.includes('/api/runs/p1/artifacts') ? ok({ runId: 'p1', artifacts: [{ kind: 'plan', relPath: 'plan.md' }], truncated: false }) : null),
+  });
+  const sec = ctx.window.document.createElement('div');
+  ctx.window.__np.buildHdArtifacts(sec, { id: 'p1' }, { state: {} });
+  await settle(ctx.window, 12);
+  ctx.window.__np.buildHdArtifacts(sec, { id: 'p1' }, { state: {} });     // clears the section first
+  await settle(ctx.window, 12);
+  assert.equal(sec.querySelectorAll('.afb-file').length, 1);
+  assert.doesNotMatch(sec.textContent, /Loading artifacts/);
+});
+
+// Chat P4 + P5 (lead ruling): the Chat run panel re-hosts the real Artifacts tab, so its browser rows open the same
+// body-level popup. The popup's WINDOW-capture Escape runs before the panel's document-capture one and stops there:
+// one Escape closes only the popup (focus back on the row), the next closes the panel. The search field owns its
+// Escapes the same way (clear, then fold), and only then is Escape the panel's. A document capture spy (added after
+// app.js's own listeners) proves the page never saw the Escapes the popup or the field kept.
+test('in the Chat run panel the Artifacts tab opens the popup, and Escape closes the popup, then the field, then the panel', async () => {
+  const panelBoot = async () => {
+    const ctx = await boot({
+      fetchHandler: (url, opts) => {
+        if (opts.method === 'HEAD') return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+        return url.includes('/api/runs/p1/artifact?rel=') ? ok({ rel: 'plans/plan.md', text: '# plan' }) : null;
+      },
+    });
+    frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+    frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', phase: 'implement', cycle: 1,
+      stepper: STEPPER(), steps: STEPS(), subAgents: SUBS(), totalCostUsd: 1.5, prompt: 'Add a dark mode toggle.' });
+    for (const a of ARTIFACTS) frame(ctx, { ...a, runId: 'r1' });
+    go(ctx.window, 'chat/new/run/r1/artifacts');
+    await settle(ctx.window, 8);
+    const doc = ctx.window.document;
+    const panel = doc.querySelector('[data-chat-panel]');
+    assert.ok(panel && !panel.hidden, 'the run panel is open');
+    const sec = panel.querySelector('.rd-sec[data-sec="artifacts"]');
+    assert.ok(sec && sec.querySelector('.afb'), 'the panel\'s Artifacts tab is the folder browser');
+    const seen = [];
+    doc.addEventListener('keydown', (e) => { if (e.key === 'Escape') seen.push(e.target); }, true);
+    const esc = () => (doc.activeElement || doc.body).dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    return { ctx, doc, panel, sec, seen, esc };
+  };
+  await checkRows([
+    { name: 'a row opens the popup; Escape closes only it and focus is back on the row; the next Escape closes the panel', run: async () => {
+      const { ctx, doc, panel, sec, seen, esc } = await panelBoot();
+      const hash = ctx.window.location.hash;
+      assert.equal(hash, '#chat/new/run/r1/artifacts');
+      const main = [...sec.querySelectorAll('.afb-main')].find((m) => m.querySelector('.afb-name').textContent === 'plan.md');
+      const key = main.dataset.focusKey;
+      main.focus();
+      click(ctx.window, main);
+      await settle(ctx.window, 8);
+      const v = doc.querySelector('.apv');
+      assert.ok(v, 'the popup opened');
+      assert.equal(v.parentElement, doc.body, 'body-level, not inside the panel');
+      assert.equal(v.querySelector('.apv-title').textContent, 'plan.md');
+      assert.ok(v.contains(doc.activeElement), 'focus is in the popup');
+      esc();
+      await settle(ctx.window);
+      assert.equal(doc.querySelector('.apv'), null, 'Escape closed the popup');
+      assert.equal(panel.hidden, false, 'and left the panel open');
+      assert.equal(ctx.window.location.hash, hash, 'on the same address');
+      assert.equal(seen.length, 0, 'the page never saw the popup\'s Escape');
+      assert.equal(doc.activeElement && doc.activeElement.dataset.focusKey, key, 'focus is back on the row');
+      esc();
+      await settle(ctx.window);
+      assert.equal(panel.hidden, true, 'the next Escape is the panel\'s');
+    } },
+    { name: 'the search field: the first Escape clears it, the second folds it, the third closes the panel', run: async () => {
+      const { ctx, doc, panel, sec, seen, esc } = await panelBoot();
+      const head = sec.querySelector('.afb-head');
+      const btn = sec.querySelector('.afb-sbtn');
+      click(ctx.window, btn);
+      const input = sec.querySelector('.afb-filter');
+      assert.equal(doc.activeElement, input, 'the field has the focus');
+      input.value = 'plan';
+      input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+      await settle(ctx.window);
+      assert.equal(sec.querySelectorAll('.afb-main').length, 1, 'one match');
+      esc();
+      await settle(ctx.window);
+      assert.equal(input.value, '', 'the first Escape cleared the query');
+      assert.ok(head.classList.contains('is-searching'), 'and kept the field open');
+      assert.equal(panel.hidden, false);
+      esc();
+      await settle(ctx.window);
+      assert.equal(head.classList.contains('is-searching'), false, 'the second Escape folded the field');
+      assert.equal(doc.activeElement, btn, 'focus is on the search button');
+      assert.equal(panel.hidden, false, 'the panel is still open');
+      assert.equal(ctx.window.location.hash, '#chat/new/run/r1/artifacts');
+      assert.equal(seen.length, 0, 'the page never saw the field\'s Escapes');
+      esc();
+      await settle(ctx.window);
+      assert.equal(panel.hidden, true, 'the third Escape is the panel\'s');
+    } },
+  ]);
+});
+
+test('a page the History pager loads hands the focus on (the control pressed is gone): the next page\'s control, else the list', async () => {
+  const row = (kind, relPath) => ({ kind, relPath, nodeId: 'implement', stepKey: 'implement#1', cycle: 1 });
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (!url.includes('/api/runs/p1/artifacts')) return null;
+      if (url.includes('offset=4')) return ok({ runId: 'p1', artifacts: [row('deck', 'deck/deck.pdf')], truncated: false });
+      if (url.includes('offset=2')) return ok({ runId: 'p1', artifacts: [row('plan', 'c.md'), row('plan', 'd.md')], truncated: true, nextOffset: 4 });
+      return ok({ runId: 'p1', artifacts: [row('plan', 'a.md'), row('plan', 'b.md')], truncated: true, nextOffset: 2 });
+    },
+  });
+  const doc = ctx.window.document;
+  const sec = doc.createElement('div');
+  doc.body.appendChild(sec);
+  ctx.window.__np.buildHdArtifacts(sec, { id: 'p1' }, { state: {} });
+  await settle(ctx.window, 12);
+  const first = sec.querySelector('.artifact-truncated');
+  first.focus();
+  click(ctx.window, first);
+  await settle(ctx.window, 12);
+  const second = sec.querySelector('.artifact-truncated');
+  assert.ok(second && second !== first, 'a new control for the page after');
+  assert.equal(doc.activeElement, second, 'the focus moved on to it');
+  click(ctx.window, second);
+  await settle(ctx.window, 12);
+  assert.equal(sec.querySelector('.artifact-truncated'), null, 'the last page: no control');
+  assert.ok(sec.contains(doc.activeElement) && doc.activeElement.matches('.afb-folder, .afb-main'), 'the focus is in the list, never <body>');
+});
+
+test('the History pager never takes the focus on its first page, nor from a reader who moved on while a page loaded', async () => {
+  const row = (kind, relPath) => ({ kind, relPath, nodeId: 'implement', stepKey: 'implement#1', cycle: 1 });
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (!url.includes('/api/runs/p1/artifacts')) return null;
+      if (url.includes('offset=2')) return ok({ runId: 'p1', artifacts: [row('plan', 'c.md'), row('plan', 'd.md')], truncated: true, nextOffset: 4 });
+      return ok({ runId: 'p1', artifacts: [row('plan', 'a.md'), row('plan', 'b.md')], truncated: true, nextOffset: 2 });
+    },
+  });
+  const doc = ctx.window.document;
+  const sec = doc.createElement('div');
+  const other = doc.createElement('button');
+  other.textContent = 'elsewhere';
+  doc.body.append(sec, other);
+  if (doc.activeElement && doc.activeElement !== doc.body) doc.activeElement.blur();
+  ctx.window.__np.buildHdArtifacts(sec, { id: 'p1' }, { state: {} });
+  await settle(ctx.window, 12);
+  assert.equal(doc.activeElement, doc.body, 'the first page takes no focus');
+  const first = sec.querySelector('.artifact-truncated');
+  first.focus();
+  click(ctx.window, first);
+  other.focus();                                    // the reader moves on before the page arrives
+  await settle(ctx.window, 12);
+  assert.ok(sec.querySelector('.artifact-truncated') !== first, 'the page arrived');
+  assert.equal(doc.activeElement, other, 'their focus stays where they put it');
+});
+
+// Chat P5 (CONTRACT §3): P1 passes ask-panel a mutable chatDeps; P5 points its openArtifact at the popup viewer, so an
+// artifact chip in the Chat opens the same viewer as the run pages instead of navigating to the run's Artifacts tab.
+test('the Chat opens an artifact in the same popup viewer (chatDeps.openArtifact)', async () => {
+  const asked = [];
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (!url.includes('/api/runs/p1/artifact?rel=')) return null;
+      asked.push(url);
+      return ok({ rel: 'plans/plan.md', text: '# plan' });
+    },
+  });
+  const deps = ctx.window.__np.chat && ctx.window.__np.chat.deps;
+  assert.ok(deps && typeof deps.openArtifact === 'function', 'P1 exposes its chatDeps');
+  const hash = ctx.window.location.hash;
+  deps.openArtifact({ runId: 'p1', pipelineId: 'p1', projectKey: 'proj-00000001' },
+    { kind: 'plan', relPath: 'plans/plan.md', nodeId: 'plan', cycle: 1, bytes: 2048 });
+  await settle(ctx.window, 10);
+  assert.deepEqual(asked, ['/api/runs/p1/artifact?rel=plans%2Fplan.md']);
+  const v = ctx.window.document.querySelector('.apv');
+  assert.ok(v, 'the popup opened');
+  assert.equal(v.querySelector('.apv-title').textContent, 'plan.md');
+  assert.equal(v.querySelector('.apv-meta').textContent, 'plan · cycle 1 · 2.0 KB', 'no stepper here: the node id');
+  assert.equal(ctx.window.location.hash, hash, 'no navigation to the run page');
+  // A run card's ref (P3 artifactRef) carries nodeLabel(nodeId) from its snapshot: the step reads as the run names it.
+  deps.openArtifact({ runId: 'p1', pipelineId: 'p1', nodeLabel: (id) => (id === 'plan' ? 'Planner' : id) },
+    { kind: 'plan', relPath: 'plans/plan.md', nodeId: 'plan', cycle: 1, bytes: 2048 });
+  await settle(ctx.window, 10);
+  assert.equal(ctx.window.document.querySelector('.apv .apv-meta').textContent, 'Planner · cycle 1 · 2.0 KB');
 });

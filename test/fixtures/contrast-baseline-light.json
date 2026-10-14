@@ -130,7 +130,6 @@
   "history-detail-tab-1|text|span.hd-result||rgb(154, 154, 161)|rgb(255,255,255)",
   "history-detail-tab-1|text|span.hd-tab-badge||rgb(154, 154, 161)|rgb(246,246,244)",
   "history-detail-tab-1|text|span.hd-tab-badge||rgb(55, 130, 168)|rgb(222,239,247)",
-  "history-detail-tab-2|text|div.artifact-cycle.hint||rgb(154, 154, 161)|rgb(255,255,255)",
   "history-detail-tab-2|text|span.hd-base.mono||rgb(154, 154, 161)|rgb(255,255,255)",
   "history-detail-tab-2|text|span.hd-clock||rgb(154, 154, 161)|rgb(255,255,255)",
   "history-detail-tab-2|text|span.hd-day||rgb(154, 154, 161)|rgb(255,255,255)",

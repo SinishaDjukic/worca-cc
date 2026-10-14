@@ -711,7 +711,7 @@ test('an Ask session on this run (agent mode, #574) is an ordinary tab with its 
   assert.deepEqual(tabTexts(doc), ['r1 · app', 'Ask · Fix tests · demo · main', 'New terminal']);
 });
 
-// ── shared terminal: Ask's tabs everywhere, the pane follows Ask, a card shows its tab ──────────────────────
+// ── shared terminal: Ask's tabs everywhere, the pane never follows Ask on its own, a card shows its tab ──────
 const ASK = { ...SNAP, id: 't-a', scope: 'project', runId: null, member: null, projectKey: 'demo-0000bbbb', label: 'Ask · Fix tests · demo · main',
   createdBy: 'ask:ask_0000aaaa', createdAt: '2026-10-03T11:00:00.000Z', cwd: '/w/demo' };
 const PROJ_CTX = { view: 'project-detail', projectKey: 'app-0000aaaa' };
@@ -735,43 +735,22 @@ test('Ask\'s tabs show on every page, next to the page\'s own shell, which the p
   assert.equal(run.sent.filter((m) => m.type === 'term-attach').at(-1).sessionId, 't-1');
 });
 
-test('the pane follows Ask: a closed pane opens on Ask\'s tab (once per chat), without taking the keyboard', async () => {
+test('showSession takes no auto mode: an Ask command never opens or switches the pane, so only a card click calls it', async () => {
   const { pane, doc, sent, xt } = makePane({ ctx: RUN_CTX, routes: attachedRoutes({ 'GET /api/terminal': { ...INFO, sessions: [SNAP, ASK] } }) });
-  await pane.showSession('t-a', { auto: true });
-  await tick();
-  assert.equal(pane.isOpen(), true);
-  assert.equal(sent.filter((m) => m.type === 'term-attach').at(-1).sessionId, 't-a');
-  assert.equal(doc.querySelector('.term-tab[aria-selected="true"]').textContent, 'Ask · Fix tests · demo · main');
-  assert.equal(xt.made.focus || 0, 0, 'no focus steal');
-  await pane.onContextChange();
-  await tick();
-  assert.equal(sent.filter((m) => m.type === 'term-attach').at(-1).sessionId, 't-a', 'a page refresh keeps Ask\'s tab');
-  pane.close();
-  await pane.showSession('t-a', { auto: true });
-  await tick();
-  assert.equal(pane.isOpen(), false, 'closed by the user after the first time: a later command of that chat does not reopen it');
-});
-
-test('the pane follows Ask while open, unless the user is typing in another tab', async () => {
-  const ASK2 = { ...ASK, id: 't-b', createdAt: '2026-10-03T12:00:00.000Z' };
-  const { pane, doc, sent } = makePane({ ctx: RUN_CTX, routes: attachedRoutes({ 'GET /api/terminal': { ...INFO, sessions: [SNAP, ASK, ASK2] } }) });
   await pane.open();
   await tick();
-  const ta = doc.createElement('textarea');                // xterm's own input lives in the host
-  doc.querySelector('.term-host').append(ta);
-  ta.focus();
-  await pane.showSession('t-a', { auto: true });
+  assert.equal(sent.filter((m) => m.type === 'term-attach').at(-1).sessionId, 't-1', 'opening the pane shows the page\'s own shell');
+  assert.deepEqual(tabTexts(doc), ['r1 · app', 'Ask · Fix tests · demo · main', 'New terminal'], 'Ask\'s session is an ordinary tab');
+  const focus = xt.made.focus || 0;
+  await pane.showSession('t-a');                            // the card click: the one caller
   await tick();
-  assert.equal(sent.filter((m) => m.type === 'term-attach').at(-1).sessionId, 't-1', 'typing in the run\'s shell: stays');
-  ta.blur();
-  await pane.showSession('t-b', { auto: true });
-  await tick();
-  assert.equal(sent.filter((m) => m.type === 'term-attach').at(-1).sessionId, 't-b');
+  assert.equal(sent.filter((m) => m.type === 'term-attach').at(-1).sessionId, 't-a');
+  assert.ok((xt.made.focus || 0) > focus, 'a card click focuses the tab');
 });
 
-test('a card click (not auto) opens the pane on that tab and focuses it, even after the user closed the pane', async () => {
+test('a card click opens the pane on that tab and focuses it, even after the user closed the pane', async () => {
   const { pane, sent, xt } = makePane({ ctx: { view: 'stats' }, routes: { 'GET /api/terminal': { ...INFO, sessions: [ASK] } } });
-  await pane.showSession('t-a', { auto: true });
+  await pane.showSession('t-a');
   await tick();
   pane.close();
   await pane.showSession('t-a');
@@ -784,12 +763,12 @@ test('a card click (not auto) opens the pane on that tab and focuses it, even af
   assert.equal(sent.filter((m) => m.type === 'term-attach').at(-1).sessionId, 't-a');
 });
 
-test('moving to another page after the pane followed Ask: that page\'s own shell is attached; Ask\'s tab stays a tab', async () => {
+test('moving to another page after a card click showed Ask\'s tab: that page\'s own shell is attached; Ask\'s tab stays a tab', async () => {
   const { pane, doc, sent, env } = makePane({ ctx: RUN_CTX, routes: attachedRoutes({
     'GET /api/terminal': { ...INFO, sessions: [SNAP, ASK, PROJ_SNAP] },
     'GET /api/projects/app-0000aaaa/terminal': { enabled: true, dir: '/p/app', sessions: [PROJ_SNAP] },
   }) });
-  await pane.showSession('t-a', { auto: true });
+  await pane.showSession('t-a');
   await tick();
   assert.equal(sent.filter((m) => m.type === 'term-attach').at(-1).sessionId, 't-a');
   env.ctx = PROJ_CTX;

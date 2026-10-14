@@ -467,7 +467,7 @@ const states = [
     await go('settings/memory/theme-proof');
     await until(`document.querySelector('.settings-pane[data-tab="memory"]:not(.hidden) .mem-editor')`, 'the memory editor');
   }],
-  ['ask-sheet', async () => { await go('new'); await clickSel('.ask-pill'); await until(`document.querySelector('.ask-sheet:not([hidden])')`, 'ask sheet'); }],
+  ['ask-sheet', async () => { await go('chat'); await until(`document.querySelector('[data-view="chat"]:not(.hidden) [data-chat-page] textarea.ask-input')`, 'the Chat page'); }],   // worca Chat: the id is the baseline's key
   ['ask-model-picker', async () => { await clickSel('.ask-model-btn'); await until(`document.querySelector('.ask-pop-model')`, 'model popover'); }, async () => { await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));0`); }],
   ['ask-scope-picker', async () => { await clickSel('.ask-scope-btn'); await until(`document.querySelector('.ask-pop-scope')`, 'scope popover'); }, async () => { await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));0`); await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));0`); }],
   ['rail-collapsed', async () => { await go('new'); await clickSel('#side-toggle'); await until(`document.body.classList.contains('rail-collapsed')`, 'collapsed rail'); }, async () => { await clickSel('#side-toggle'); }],

@@ -36,7 +36,7 @@ const AGENTS = [
 
 async function boot() {
   const server = { workflows: [], guardrails: [{ id: 'permissive', name: 'Permissive', settings: null }], calls: [] };
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/#new' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };

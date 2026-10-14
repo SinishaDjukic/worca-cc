@@ -7,7 +7,8 @@
 // mode answers from recipes.mjs without spawning.
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { normalizingOnEvent } from '../engines/claude-events.mjs';
-import { resolveModelEnv, resolveModelCost } from '../config.mjs';
+import { resolveModelEnv, resolveModelCost, modelCostConfig } from '../config.mjs';
+import { modelFacts, factsBrief, contextText, MODEL_PICK_POLICY } from '../model-tiers.mjs';
 import { bridgeCostFor, forgetBridgeTag } from '../bridge/telemetry.mjs';
 import { safeParseJson } from '../protocol.mjs';
 import { classifyError } from '../recoverable-error.mjs';
@@ -176,8 +177,17 @@ function workspaceSection(workspace, repoLook, repoRoot = null) {
   return lines;
 }
 
-export function buildClassifierSystemPrompt({ agents = [], models = [], humanInLoop = true, repoLook = false, requireModel = false, repoRoot = null, workspace = null } = {}) {
-  const modelLines = models.filter((m) => m && !m.hidden).map((m) => `- ${m.id}${m.label && m.label !== m.id ? ` (${m.label})` : ''}: efforts ${(m.efforts || []).join('/')}`);
+export function buildClassifierSystemPrompt({ agents = [], models = [], humanInLoop = true, repoLook = false, requireModel = false, repoRoot = null, workspace = null, costOf = modelCostConfig } = {}) {
+  // Each offered model with its picking facts (model-tiers.mjs: vendor, price tier, list price, free, the prompt window
+  // and a missing tool-call or vision capability — the tuning guide's free-model and verifier rules name them): the
+  // facts Ask's chat picks with too.
+  const offered = models.filter((m) => m && !m.hidden);
+  const facts = new Map(modelFacts(offered, { costOf }).map((f) => [f.id, f]));
+  const modelLines = offered.map((m) => {
+    const f = facts.get(m.id);
+    const caps = f ? `${f.toolCalls === false ? ' · no tool calls' : ''}${f.vision === false ? ' · no vision' : ''}` : '';
+    return `- ${m.id}${m.label && m.label !== m.id ? ` (${m.label})` : ''}: efforts ${(m.efforts || []).join('/')}${f ? ` · ${factsBrief(f)} · ${contextText(f.context)} context${caps}` : ''}`;
+  });
   return [
     'You design a worca workflow for ONE software task. Reply with exactly one fenced ```json block containing a shape object and nothing else.',
     'Objective: the SMALLEST workflow that still does the work properly. Judge the task carefully — its kind, its size in files and subsystems, how precisely it is already specified, and the cost of a wrong result — and each stage must be justified by the task: extra stages cost time and money, so "reasoning" must name why every stage beyond the minimum is there, and "size" and "signals" must be honest, never inflated to justify a heavier shape.',
@@ -214,7 +224,7 @@ export function buildClassifierSystemPrompt({ agents = [], models = [], humanInL
       ? '## Models (use only these ids; every stage MUST name one of these models — this install has no default model; an effort without a model is rejected)'
       : '## Models (use only these ids; omit both "model" and "effort" to run on the default model — an effort without a model is rejected)',
     ...modelLines,
-    'Tuning guide: planning and review stages deserve the strongest model at high effort; producer stages (checklist, decomposer) the cheapest; the implementer a strong model at medium or high effort; set fanOut only where allowed and only for wide tasks.',
+    `Tuning guide (price tiers as the model lines show them): ${MODEL_PICK_POLICY} Set fanOut only where allowed and only for wide tasks.`,
     'size and signals are shown to the user as chips: keep them short and literal.',
     '',
     humanInLoop

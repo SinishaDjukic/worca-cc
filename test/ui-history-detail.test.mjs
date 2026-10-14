@@ -548,17 +548,62 @@ test('Artifacts tab GETs /api/runs/:id/artifacts, renders per-node groups and dr
     { name: 'the Artifacts tab fetches GET /api/runs/:id/artifacts and renders per-node groups', run: () => {
       assert.ok(tab, 'the Artifacts tab is visible for a run with an indexed artifact');
       assert.ok(asked, 'buildHdArtifacts fetched the attributed plural endpoint');
-      const rows = [...sec.querySelectorAll('.artifact-row')];
+      const rows = [...sec.querySelectorAll('.afb-file')];
       assert.equal(rows.length, 1, 'the fetched artifact renders as a row');
-      assert.equal(rows[0].querySelector('.artifact-name').textContent, 'plan.md');
-      assert.equal(sec.querySelector('.artifact-group-head b').textContent, 'plan',
+      assert.equal(rows[0].querySelector('.afb-name').textContent, 'plan.md');
+      assert.equal(sec.querySelector('.afb-folder.is-step .afb-fname').textContent, 'plan',
         'grouped under its producing node');
     } },
     { name: 'the Artifacts tab drops transient questions rows (deleted file would 404)', run: () => {
-      const rows = [...sec.querySelectorAll('.artifact-row')];
+      const rows = [...sec.querySelectorAll('.afb-file')];
       assert.equal(rows.length, 1, 'only the durable plan row renders; questions is dropped');
-      assert.equal(rows[0].querySelector('.artifact-name').textContent, 'plan.md');
+      assert.equal(rows[0].querySelector('.afb-name').textContent, 'plan.md');
       assert.doesNotMatch(sec.textContent, /questions-x-clarify/, 'no questions row is shown');
     } },
   ]);
+});
+
+// Chat P5: the saved run's Details has the same capture-phase Escape arm as Running (Details → glance). A row opened
+// from its Artifacts tab owns Escape: one press closes the popup and the page stays on the tab.
+test('the History Artifacts tab opens a row in the popup, and Escape closes only the popup', async () => {
+  const detail = { ...DETAIL, artifacts: [{ kind: 'plan', relPath: 'plans/plan.md' }] };
+  const ctx = await bootDetail({
+    detail,
+    arms: (url) => {
+      if (url.endsWith(`/api/runs/${ROW.id}/artifacts`)) {
+        return ok({ runId: ROW.id, artifacts: [{ kind: 'plan', stepKey: 'plan#1', nodeId: 'plan', cycle: 1, relPath: 'plans/plan.md', bytes: 42 }] });
+      }
+      if (url.startsWith(`/api/runs/${ROW.id}/artifact?rel=`)) return ok({ rel: 'plans/plan.md', text: '# plan' });
+      return null;
+    },
+  });
+  await openDetail(ctx, 'details/artifacts');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const hash = ctx.window.location.hash;
+  assert.match(hash, /\/details\/artifacts$/);
+  const main = [...doc.querySelectorAll('#hist-detail .hd-sec[data-sec="artifacts"] .afb-main')]
+    .find((m) => m.querySelector('.afb-name').textContent === 'plan.md');
+  click(ctx.window, main);
+  await settle(ctx.window, 8);
+  assert.ok(doc.querySelector('.apv'), 'the popup opened');
+  (doc.activeElement || doc.body).dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await settle(ctx.window, 4);
+  assert.equal(doc.querySelector('.apv'), null, 'Escape closed the popup');
+  assert.equal(ctx.window.location.hash, hash, 'and left the saved run on its Artifacts tab');
+});
+
+// Refine cycle 2: with a saved run open, an opener that names only the pipeline (the Chat, the Agents tab's rows) reads
+// the step labels from that run's saved state.
+test('with a saved run open, the popup for that run names the step from its saved state', async () => {
+  const stepper = { version: 1, steps: [{ kind: 'agents', nodes: [{ id: 'plan', key: 'plan', uiPhase: 'plan', label: 'Planner' }] }], feedbacks: [] };
+  const ctx = await bootDetail({
+    detail: { ...DETAIL, state: { ...DETAIL.state, stepper } },
+    arms: (url) => (url.startsWith(`/api/runs/${ROW.id}/artifact?rel=`) ? ok({ rel: 'plans/plan.md', text: '# plan' }) : null),
+  });
+  await openDetail(ctx);
+  await settle(ctx.window, 6);
+  await ctx.window.__np.openRunArtifactPopup({ pipelineId: ROW.id }, { kind: 'plan', relPath: 'plans/plan.md', nodeId: 'plan', cycle: 1 });
+  await settle(ctx.window, 8);
+  assert.equal(ctx.window.document.querySelector('.apv .apv-meta').textContent, 'Planner · cycle 1');
 });
