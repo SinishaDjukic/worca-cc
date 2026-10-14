@@ -254,6 +254,30 @@ test('detail Create PR opens the ship-it modal with the summary + branch → bas
   assert.match(modal.querySelector('.shipit-sub').textContent, /Implement Log-UX Review Fixes/);
 });
 
+test('#620: no PR yet, the stored base check shows for the chosen base and hides for another', async () => {
+  const baseCheck = { status: 'conflicts', base: 'feat/log-ux', fileCount: 2, files: ['a.js', 'b.js'], at: new Date().toISOString() };
+  const ctx = await bootShip({ detail: { ...DETAIL, state: { ...DETAIL.state, branch: { ...DETAIL.state.branch, baseCheck } } } });
+  const modal = await openModal(ctx);
+  const line = modal.querySelector('.shipit-basecheck');
+  assert.equal(line.hidden, false);
+  assert.match(line.textContent, /^Conflicts in 2 files with feat\/log-ux \(checked just now\)\. Resolve them first, or open the PR anyway\.$/);
+  assert.ok(line.classList.contains('tone-red'));
+  const sel = baseSelOf(modal);
+  sel.value = 'main';
+  sel.dispatchEvent(new ctx.window.Event('change'));
+  assert.equal(line.hidden, true, 'a check against another base says nothing about this one');
+  sel.value = 'feat/log-ux';
+  sel.dispatchEvent(new ctx.window.Event('change'));
+  assert.equal(line.hidden, false);
+});
+
+test('#620: an up-to-date check shows nothing in the modal', async () => {
+  const baseCheck = { status: 'up-to-date', base: 'feat/log-ux', at: new Date().toISOString() };
+  const ctx = await bootShip({ detail: { ...DETAIL, state: { ...DETAIL.state, branch: { ...DETAIL.state.branch, baseCheck } } } });
+  const modal = await openModal(ctx);
+  assert.equal(modal.querySelector('.shipit-basecheck').hidden, true);
+});
+
 // ---------------------------------------------------------------------------
 // Confirming
 // ---------------------------------------------------------------------------

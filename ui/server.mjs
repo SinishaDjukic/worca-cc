@@ -192,8 +192,10 @@ import { detectBuiltins, builtinLaunch, copyCommandText, findOnPath } from '../s
 import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamples, launcherWarning, lineForPickedApp } from '../src/core/actions/launcher.mjs';
 import { assertNoRawCommand, normalizeStacks, memberAliases, SETUP_ACTION_ID, ActionConfigError } from '../src/core/actions/model.mjs';
 import { parsePortRange } from '../src/core/actions/ports.mjs';
-import { checkoutRun, discardCheckout, membersOfRow, checkoutPathFor, setSetupState, markInterruptedSetups,
-  enforceCheckoutCap, releaseKeptCheckouts, updateBranchRecords, freeBranchCheckout, canon } from '../src/core/checkout.mjs';
+import { checkoutRun, checkoutRunUnderLock, discardCheckout, membersOfRow, checkoutPathFor, setSetupState, markInterruptedSetups,
+  enforceCheckoutCap, releaseKeptCheckouts, updateBranchRecords, withRunLock, freeBranchCheckout, canon } from '../src/core/checkout.mjs';
+import { checkRunBase, settleResolutions, updateRunBranch, pickBaseMember, baseMembersOfRow, assertFinishedRow, assertNotResolving,
+  resolveMark, toRecord, resolveTaskText } from '../src/core/base-conflicts.mjs';
 import { createAskToolServer } from '../src/core/ask/mcp-stdio.mjs';
 import { webMcpEnv as askWebMcpEnv } from '../src/core/ask/spawn.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots, brokerUsageSummary, foldUsageByPerson } from '../src/core/broker-client.mjs';
@@ -281,10 +283,11 @@ import { loadScriptRegistry } from '../src/core/script-registry.mjs';
 import { probePython, pythonRuntimeState } from '../src/core/graph/python-probe.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll, resolveDefaultBranch, worktreePathForBranch,
+  sanitizeBranchName,
 } from '../src/core/worktree.mjs';
 import {
   fetchRemote, remoteInfo, syncStatus, fastForward, resolveSourceRef, commitsBetween, isSafeBranchName, isSafeRemoteName, scrubGitText,
-  INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS,
+  INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, checkBaseMerge, mergeBaseInto, startConflictMerge, branchCheckouts,
 } from '../src/core/git-sync.mjs';
 import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
@@ -294,7 +297,7 @@ import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, lis
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
-import { getWatch, setWatch, createPrWatcher } from '../src/core/pr-watch.mjs';
+import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
@@ -2306,6 +2309,8 @@ const startRunHandler = async (req, res) => {
       ? (Array.isArray(stored.extrasPaths) ? stored.extrasPaths.filter((x) => typeof x === 'string' && fs.existsSync(x)) : [])
       : (sched ? [] : await writeExtras(runId, body.extras));
 
+    // #620 Resolve in a pipeline: the run it resolves. Set in-process by /resolve-pipeline only, never from HTTP.
+    const resolveOf = req._resolveOf && typeof req._resolveOf === 'object' && typeof req._resolveOf.runId === 'string' ? req._resolveOf : null;
     // Run on the source branch (explicit flag — never inferred from feature === source): the run
     // auto-names its hidden branch, so a typed feature name is ignored (and never date-suffixed).
     // A Workspace scan or a memory defragment lands no work: the flag does not apply there.
@@ -2315,6 +2320,7 @@ const startRunHandler = async (req, res) => {
         ? body.sourceBranch.trim() : null,
       feature: !sameAsSource && typeof body.featureBranch === 'string' && body.featureBranch.trim()
         ? body.featureBranch.trim() : null,
+      ...(resolveOf ? { resolves: { runId: resolveOf.runId, member: resolveOf.member || null } } : {}),
       ...(sameAsSource ? { sameAsSource: true } : {}),
     };
     const syncBody = {
@@ -2665,7 +2671,8 @@ const startRunHandler = async (req, res) => {
         entry.events.push(event);
         broadcast(event);
       })
-      .finally(() => { entry.settled = true; afterRunSettled(orch); });
+      // #620: the harness's post-run base check landed after the run's last frame; History re-reads it.
+      .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });
 
     // A scan's launcher needs the card attribution the wizard cannot compute (the key is a hash).
     res.json(scanTarget
@@ -4472,7 +4479,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
       entry.events.push(event);
       broadcast(event);
     })
-    .finally(() => { entry.settled = true; afterRunSettled(orch); });
+    .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });   // #620, as /api/run's
 
   return { ok: true, runId, pipelineId };
 }
@@ -6104,6 +6111,25 @@ function liveRunOnBranch({ projectDir, branch }) {
   return getDb().prepare("SELECT target, project_key, branch, workspace_meta FROM pipelines WHERE status = 'paused' AND archived_at IS NULL")
     .all().some(holds);
 }
+/** A Resolve in a terminal (#620) still open on exactly this project + branch: the run member is marked
+ *  (br.baseResolve via terminal) and the shell it opened is running. A closed terminal no longer holds the
+ *  branch, so a mark left behind never blocks the watcher for good. */
+function terminalResolveOnBranch({ projectDir, branch }) {
+  const dir = canon(projectDir);
+  return terminals.live().some(({ snap }) => {
+    if (!snap.runId || snap.branch !== branch) return false;
+    const row = findPipelineRowById(snap.runId);
+    return !!row && membersOfRow(row).some((m) => m.projectKey === snap.member && m.projectDir && canon(m.projectDir) === dir
+      && m.br?.feature === branch && m.br?.baseResolve?.via === 'terminal');
+  });
+}
+/** Merge-first with no agent (#620's Update branch merge): only a clean merge onto the exact preflight head. */
+async function prWatchMergeBase({ projectDir, branch, base, remote, headSha }) {
+  const c = await checkBaseMerge(projectDir, { base, feature: branch, remote, maxAgeMs: INTERACTIVE_TTL_MS });
+  if (c.status !== 'clean' || c.headSha !== headSha) return { ok: true, merged: false, status: c.status };
+  const r = await mergeBaseInto(projectDir, { feature: branch, baseSha: c.baseSha, headSha, baseRef: c.baseRef, tree: c.tree, remote: c.remote });
+  return r.ok ? { ok: true, merged: true, to: r.to, baseSha: c.baseSha } : { ok: false, kind: r.kind, error: r.error };
+}
 /** The watched PR's origin run: its member project and branch, plus what its fix runs keep (guardrails, the
  *  engine it ran on, a mock run's flag, which only its resume point persists), or null when gone. */
 function prWatchOrigin(w) {
@@ -6134,8 +6160,10 @@ const prWatcher = createPrWatcher({
     push: ({ projectDir, branch, remote }) => pushBranch(projectDir, branch, remote),
     subjects: ({ projectDir, from, to }) => commitSubjects(projectDir, from, to),
     checkMerge: ({ projectDir, ...range }) => checkConflictMerge(projectDir, range),
+    mergeBase: prWatchMergeBase,
   },
-  liveOnBranch: liveRunOnBranch,
+  // A person resolving in a terminal holds the branch like a live run: the watcher waits for them.
+  liveOnBranch: (where) => liveRunOnBranch(where) || terminalResolveOnBranch(where),
   freeCheckout: ({ projectDir, branch }) => freeBranchCheckout({ projectDir, branch, stopServices: stopCheckoutServices, by: 'pr-watch',
     busy: busyActionRunIds([...liveRunIds(), ...[...runs.values()].map((r) => r.pipelineId).filter((id) => id && isFinishingRun(id))]) }),
   startRun: (body, opts) => invokeStartRun(body, null, opts),
@@ -6156,6 +6184,7 @@ const prWatcher = createPrWatcher({
     if (readPrState(pipelineId)?.url !== pr.url) throw new Error('the fix run did not record its pull request');
   },
   notify: (event) => chatNotifier.notifyPrWatch(event),
+  audit: (pipelineId, text) => appendAuditById(pipelineId, text, { actor: 'pr-watch' }),
   onChange: (w) => broadcast(prWatchFrame(w.pipelineId, w.memberKey)),
   log: (m) => console.warn(`[worca-ui] ${m}`),
 });
@@ -7454,6 +7483,198 @@ app.post('/api/push', async (req, res) => {
   const by = actorOf(req);
   appendAuditById(state.id || id, `Pushed \`${b.source}\` to \`${remote}\`${byActor(by)}.`, { actor: by });
   res.json({ ok: true, remote, branch: b.source });
+});
+
+// ---------------------------------------------------------------------------
+// Base conflicts (#620): check a finished run's branches against their fetched base (git merge-tree, no
+// checkout), Update branch (a merge commit, then a fast-forward push when published), and two ways to resolve
+// a conflict: a new run on the existing branch, or the run's terminal with the merge already started.
+// Results live on the branch records (br.baseCheck); base-conflicts.mjs does the work.
+// ---------------------------------------------------------------------------
+const BASE_ERR_STATUS = { NOT_FOUND: 404, MEMBER_REQUIRED: 400, BAD_REQUEST: 400, NOT_FINISHED: 409, UP_TO_DATE: 409,
+  CONFLICTS: 409, NOT_CONFLICTING: 409, NO_BRANCH: 409, DIRTY: 409, IN_USE: 409, MOVED: 409, IDENTITY: 409,
+  BRANCH_CHECKED_OUT: 409, RETAINED: 409, BRANCH_MISSING: 409, TARGET_EXISTS: 409, RESOLVING: 409,
+  UNSUPPORTED_BRANCH: 409, PR_OPEN: 409, PR_FIXING: 409, CHECK_FAILED: 502 };
+function sendBaseError(res, e) {
+  res.status(BASE_ERR_STATUS[e?.code] || 500).json({ error: e?.message || String(e), code: e?.code || 'ERROR',
+    ...(e?.baseCheck ? { baseCheck: e.baseCheck } : {}), ...(e?.holder ? { holder: e.holder } : {}),
+    ...(e?.runId ? { runId: e.runId } : {}) });
+}
+const bodyMember = (req) => (typeof req.body?.member === 'string' && req.body.member ? req.body.member : null);
+const publicMember = ({ tree, ...m }) => m;      // the merge-tree tree id never leaves the server
+const mockOfRow = (row) => { try { return JSON.parse(row.resume_point || 'null')?.mock === true; } catch { return false; } };
+/** D18: a resolve run (its LIVE run UUID, as POST /api/run answered) has not settled yet. A restart forgets it. */
+const resolveRunActive = (runId) => { const e = runs.get(runId); return !!e && !e.settled; };
+/** A member's open pull request (a project run's own), else null. */
+function openPrOfMember(row, m) {
+  const pr = row.target === 'workspace' ? readMemberPrStates(row.id)[m.projectKey] : readPrState(row.id);
+  return pr?.url && pr.state === 'OPEN' ? pr : null;
+}
+/** Watch PR owns an open PR's branch while its fix run starts, runs or publishes: a merge or push from
+ *  here would move the branch under it (the watch would stop as remote-moved). */
+function assertNoPrFix(row, m) {
+  const pr = openPrOfMember(row, m);
+  if (pr && watchActive(getWatch(pr.url))) {
+    throw Object.assign(new Error(`A Watch PR fix run is working on \`${m.br.feature}\`. Wait for it to finish.`), { code: 'PR_FIXING' });
+  }
+}
+
+// POST /api/runs/:id/base-check?projectKey=|workspaceId=|projectDir=  body: { member?, auto? }
+// -> { ok, members:[{ projectKey, name, branch, baseCheck }], settled:{ [projectKey]: { baseCheck, push } } }
+// `auto` is the check the History detail runs on open: it reuses a recent fetch and settles nothing
+// (no push from just looking at a run); Re-check settles.
+app.post('/api/runs/:id/base-check', async (req, res) => {
+  try {
+    const row = runRowForScope(req, res); if (!row) return;
+    assertFinishedRow(row, { isLive: isLiveRun, isFinishing: isFinishingRun });
+    const member = bodyMember(req);
+    if (member && !membersOfRow(row).some((x) => x.projectKey === member)) {
+      return res.status(400).json({ error: 'That project is not part of this run.', code: 'MEMBER_REQUIRED' });
+    }
+    const by = actorOf(req);
+    const auto = req.body?.auto === true;
+    if (!auto) for (const m of baseMembersOfRow(row).filter((x) => !member || x.projectKey === member)) assertNoPrFix(row, m);
+    const { members } = await checkRunBase(row.id, { members: member ? [member] : null, by, maxAgeMs: auto ? INTERACTIVE_TTL_MS : 0 });
+    const settled = auto ? {} : await settleResolutions(row.id, members, { by, isActive: resolveRunActive });
+    emitChanged('pipelines-changed', 'updated');
+    // A settle that found leftover markers recorded `conflicts/markers`: answer what is stored.
+    res.json({ ok: true, members: members.map((m) => ({ ...publicMember(m), baseCheck: settled[m.projectKey]?.baseCheck || m.baseCheck })), settled });
+  } catch (e) { sendBaseError(res, e); }
+});
+
+// POST /api/runs/:id/update-branch?scope  body: { member? } -> { ok, member, branch, from, to, via, baseCheck, push }
+app.post('/api/runs/:id/update-branch', async (req, res) => {
+  try {
+    const row = runRowForScope(req, res); if (!row) return;
+    const r = await updateRunBranch({ id: row.id, member: bodyMember(req), by: actorOf(req), isLive: isLiveRun,
+      isFinishing: isFinishingRun, isActive: resolveRunActive, assertFree: assertNoPrFix });
+    emitChanged('pipelines-changed', 'updated');
+    res.json({ ok: true, ...r });
+  } catch (e) { sendBaseError(res, e); }
+});
+
+/**
+ * startRunHandler as `req`'s caller (identity, drain, every gate), with server-only extras; captures the answer.
+ * Not invokeStartRun: that one sets `_internal`, which means "a scheduled ticket" and needs
+ * `internal.ticket.id`. Object.create keeps the real request's headers/socket for startedByOf and the gates;
+ * startRunHandler reads `req.body` once, at its top (the defragRequest precedent).
+ */
+async function startRunAs(req, body, extra = {}) {
+  let out = { status: 200, body: null };
+  const res = {
+    statusCode: 200,
+    status(code) { this.statusCode = code; return this; },
+    json(payload) { out = { status: this.statusCode, body: payload }; return this; },
+  };
+  await startRunHandler(Object.assign(Object.create(req), { body }, extra), res);
+  return out;
+}
+
+// POST /api/runs/:id/resolve-pipeline?scope  body: { member? } -> { ok, runId } (D5, D11, D12, D17)
+app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
+  try {
+    await withRunLock(req.params.id, async () => {
+    const row = runRowForScope(req, res); if (!row) return;
+    assertFinishedRow(row, { isLive: isLiveRun, isFinishing: isFinishingRun });
+    const m = pickBaseMember(row, bodyMember(req));
+    assertNotResolving(m, resolveRunActive);
+    // An open PR's conflicts belong to Watch PR: its Resolve (the Overview tab's PR row) pushes to the PR.
+    if (openPrOfMember(row, m)) {
+      return res.status(409).json({ error: `\`${m.br.feature}\` has an open pull request: use Resolve on its row in the Overview tab.`, code: 'PR_OPEN' });
+    }
+    // createWorktree reuses the branch only under its sanitized name; any other name would start a NEW branch.
+    if (sanitizeBranchName(m.br.feature) !== m.br.feature) {
+      return res.status(409).json({ error: `A run cannot continue on \`${m.br.feature}\`: its name is not one Worca creates. Resolve it in a terminal.`, code: 'UNSUPPORTED_BRANCH' });
+    }
+    const by = actorOf(req);
+    const c = await checkBaseMerge(m.projectDir, { base: m.br.source, feature: m.br.feature, remote: m.remote, maxAgeMs: INTERACTIVE_TTL_MS });
+    const rec = toRecord(c, by);
+    updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseCheck = rec; });
+    if (c.status !== 'conflicts') {
+      return res.status(409).json({ error: c.status === 'clean' ? 'The merge is clean: use Update branch.' : `Nothing to resolve (${c.status}).`,
+        code: 'NOT_CONFLICTING', baseCheck: rec });
+    }
+    const holders = await branchCheckouts(m.projectDir, m.br.feature);
+    if (holders === null || holders.length) {
+      return res.status(409).json({ error: `\`${m.br.feature}\` is checked out${holders?.[0] ? ` in ${holders[0]}` : ''}. Discard that checkout first: the new run needs its own worktree.`,
+        code: 'BRANCH_CHECKED_OUT', ...(holders?.[0] ? { holder: holders[0] } : {}) });
+    }
+    const body = {
+      projectDir: m.projectDir,
+      title: `Resolve conflicts with ${c.base}: ${row.title || m.br.feature}`.slice(0, 200),
+      prompt: resolveTaskText({ check: rec, feature: m.br.feature, title: row.title, prompt: row.prompt }),
+      // Every conflict fix run is Watch PR's unattended Implement ⇄ Review: no planner re-plans the feature.
+      workflowId: FIX_WORKFLOW_ID,
+      humanInLoop: false,
+      sourceBranch: m.br.source,
+      featureBranch: m.br.feature,
+      syncBeforeStart: false,
+      ...(row.guardrails_id ? { guardrailsId: row.guardrails_id } : {}),
+      engine: runEngineOfRow(row),
+      // #617: a mock run is resolved by a mock run. Best effort: the resume point records `mock: true` while it
+      // exists; when it was cleared, the server's own mock mode decides (startRunHandler's `serverMockMode()`).
+      ...(mockOfRow(row) ? { mock: true } : {}),
+    };
+    // Mark BEFORE the start: the run's own post-run step settles this mark, so it must exist before the run can end.
+    const mark = resolveMark('pipeline', rec, { by });
+    updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseResolve = mark; });
+    let out;
+    try {
+      out = await startRunAs(req, body, { _resolveOf: { runId: row.id, member: m.projectKey } });
+    } catch (e) { out = { status: 500, body: { error: e?.message || String(e) } }; }
+    if (out.status !== 200 || !out.body?.runId) {
+      updateBranchRecords(row.id, [m.projectKey], (br) => { if (br.baseResolve?.at === mark.at && !br.baseResolve.runId) delete br.baseResolve; });
+      return res.status(out.status === 200 ? 500 : out.status).json(out.body || { error: 'the run did not start' });
+    }
+    updateBranchRecords(row.id, [m.projectKey], (br) => { if (br.baseResolve?.at === mark.at) br.baseResolve.runId = out.body.runId; });
+    const where = row.target === 'workspace' ? ` in \`${m.projectName}\`` : '';
+    appendAuditById(row.id, `Started a run to resolve the conflicts with \`${c.baseRef}\` on \`${m.br.feature}\`${where}${byActor(by)}.`, { actor: by });
+    emitChanged('pipelines-changed', 'updated');
+    res.json({ ok: true, runId: out.body.runId });
+    });
+  } catch (e) { sendBaseError(res, e); }
+});
+
+// POST /api/runs/:id/resolve-terminal?scope  body: { member?, cols?, rows? } (no raw fields)
+// -> 201 { session, conflicts, worktreeDir, started } (D4)
+app.post('/api/runs/:id/resolve-terminal', async (req, res) => {
+  if (!requireTerminal(req, res) || !rejectRawTerminalFields(req, res)) return;
+  try {
+    await withRunLock(req.params.id, async () => {
+    const row = runRowForScope(req, res); if (!row) return;
+    assertFinishedRow(row, { isLive: isLiveRun, isFinishing: isFinishingRun });
+    const m = pickBaseMember(row, bodyMember(req));
+    assertNotResolving(m, resolveRunActive);     // else useExisting would link the resolve run's live worktree
+    assertNoPrFix(row, m);
+    const by = actorOf(req);
+    const c = await checkBaseMerge(m.projectDir, { base: m.br.source, feature: m.br.feature, remote: m.remote, maxAgeMs: INTERACTIVE_TTL_MS });
+    const rec = toRecord(c, by);
+    updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseCheck = rec; });
+    if (c.status !== 'conflicts') {
+      return res.status(409).json({ error: c.status === 'clean' ? 'The merge is clean: use Update branch.' : `Nothing to resolve (${c.status}).`, code: 'NOT_CONFLICTING', baseCheck: rec });
+    }
+    // The run's checkout (re-created on demand, #529); a branch already in the person's own clone is linked.
+    const co = await checkoutRunUnderLock({ id: row.id, members: [m.projectKey], by, isLive: isLiveRun, isFinishing: isFinishingRun, useExisting: true });
+    for (const x of co.members.filter((y) => y.state === 'checked-out' && !y.external)) ensureSetup(row.id, x.projectKey, { enabled: actionsEnabledHere(req) });
+    const t = terminalTargets(findPipelineRowById(row.id), { isLive: isLiveRun });
+    const tm = t.members.find((x) => x.projectKey === m.projectKey);
+    if (!tm?.cwd) return res.status(409).json({ error: 'This run has no checkout to open.', code: 'NO_FOLDER' });
+    const merge = await startConflictMerge(tm.cwd, { feature: m.br.feature, baseSha: c.baseSha, baseRef: c.baseRef, remote: c.remote });
+    if (!merge.ok) return res.status(merge.kind === 'failed' ? 500 : 409).json({ error: merge.error, code: merge.kind === 'dirty' ? 'DIRTY' : merge.kind === 'in-use' ? 'IN_USE' : 'MERGE_FAILED' });
+    updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseResolve = resolveMark('terminal', rec, { by }); });
+    const session = await terminals.open({ cwd: tm.cwd, scope: 'run', label: `Resolve conflicts · ${tm.projectName}`, runId: row.id,
+      member: tm.projectKey, projectKey: tm.projectKey, branch: tm.branch, workspace: t.workspace, runLive: false, by,
+      cols: req.body?.cols, rows: req.body?.rows, actionSnaps: activeActionSnaps(row.id) });
+    // The conflict list on screen: a fixed command, typed once the shell reaches its prompt (Ask's runCommand seam).
+    terminals.runCommand(session.id, 'git status', { by, source: 'worca', cwd: tm.cwd }).catch(() => { /* a shell without block marks */ });
+    appendAuditById(row.id, `Started merging \`${c.baseRef}\` into \`${m.br.feature}\` in a terminal${byActor(by)} (${merge.files.length} conflicting file(s)).`, { actor: by });
+    emitChanged('pipelines-changed', 'updated');
+    res.status(201).json({ session, conflicts: merge.files, worktreeDir: tm.cwd, started: merge.started });
+    });
+  } catch (e) {
+    if (e?.code && BASE_ERR_STATUS[e.code]) return sendBaseError(res, e);
+    terminalError(res, e);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -14651,7 +14872,7 @@ export const _testing = {
   broadcast, askFilesRunDir,
   validateResumeTarget, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, prWatchOrigin, prWatchFrame,
+  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
   setAutoRescan(on) { autoRescanOn = on !== false; },
 };
