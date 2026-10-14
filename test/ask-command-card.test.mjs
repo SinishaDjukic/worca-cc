@@ -14,6 +14,7 @@ test('a running command: the command, a live tail, a Stop button', () => {
   c.update({ status: 'running', tail: 'PASS a\nPASS b\n', exitCode: null });
   assert.equal(c.el.querySelector('.ask-cmd-line').textContent, '$ npm test');
   assert.match(c.el.querySelector('.ask-cmd-out').textContent, /PASS b/);
+  assert.equal(c.el.querySelector('.ask-cmd-out').hidden, true, 'the output is folded by default');
   const stop = c.el.querySelector('.ask-cmd-stop');
   assert.equal(stop.hidden, false);
   stop.click();
@@ -36,6 +37,65 @@ test('the live-run warning shows when the card carries one', () => {
   const doc = dom();
   const c = createCommandCard({ doc, card: { ...CARD, warning: 'This pipeline is still running…' }, onStop: () => {} });
   assert.equal(c.el.querySelector('.ask-cmd-warning').hidden, false);
+});
+
+test('the output: folded behind a chevron toggle with its line count; no output, no toggle; a long command is never clamped', () => {
+  const doc = dom(); const toggles = [];
+  const long = `npm test -- ${'--grep very-long-pattern '.repeat(12)}`.trim();
+  const c = createCommandCard({ doc, card: { ...CARD, command: long }, onStop: () => {}, onToggle: (open) => toggles.push(open) });
+  doc.body.appendChild(c.el);
+  assert.equal(c.el.querySelector('.ask-cmd-line').textContent, `$ ${long}`, 'the whole command line');
+  const toggle = c.el.querySelector('button.ask-cmd-toggle');
+  const out = c.el.querySelector('.ask-cmd-out');
+  c.update({ status: 'running', tail: '', exitCode: null });
+  assert.equal(toggle.hidden, true, 'no output: no toggle');
+  assert.equal(out.hidden, true);
+  c.update({ status: 'running', tail: 'PASS a\nPASS b\nPASS c\n', exitCode: null });
+  assert.equal(toggle.hidden, false);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.ok(toggle.querySelector('.ask-cmd-chev'), 'a chevron');
+  assert.equal(toggle.textContent.replace(/›/g, '').trim(), 'Output · 3 lines');
+  assert.equal(out.hidden, true, 'folded by default');
+  toggle.click();
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(out.hidden, false, 'the toggle shows the tail');
+  assert.deepEqual(toggles, [true]);
+  c.update({ status: 'done', tail: 'PASS a\nPASS b\nPASS c\nPASS d', exitCode: 0, truncated: true });
+  assert.equal(out.hidden, false, 'an update keeps it open');
+  assert.equal(toggle.textContent.replace(/›/g, '').trim(), 'Output · last 4 lines', 'a clipped tail says so');
+  toggle.click();
+  assert.equal(out.hidden, true);
+  assert.deepEqual(toggles, [true, false]);
+  c.update({ status: 'done', tail: 'PASS a', exitCode: 0 });
+  assert.equal(out.hidden, true, 'an update keeps it folded');
+  assert.equal(toggle.textContent.replace(/›/g, '').trim(), 'Output · 1 line');
+});
+
+test('the toggle folds the output inside the host\'s keepInPlace(control, change), so the host can hold the toggle still', () => {
+  const doc = dom(); const calls = [];
+  let out = null;
+  const keepInPlace = (control, change) => { const before = out.hidden; change(); calls.push([control, before, out.hidden]); };
+  const c = createCommandCard({ doc, card: CARD, onStop: () => {}, keepInPlace });
+  doc.body.appendChild(c.el);
+  out = c.el.querySelector('.ask-cmd-out');
+  const toggle = c.el.querySelector('.ask-cmd-toggle');
+  c.update({ status: 'running', tail: 'PASS a', exitCode: null });
+  assert.deepEqual(calls, [], 'an update is not a user toggle');
+  toggle.click();
+  toggle.click();
+  assert.deepEqual(calls, [[toggle, true, false], [toggle, false, true]], 'each click opens or folds inside the hook');
+});
+
+test('a card built open (the panel remembers the toggle) shows its output, and an open live card follows the tail', () => {
+  const doc = dom();
+  const c = createCommandCard({ doc, card: CARD, onStop: () => {}, expanded: true });
+  doc.body.appendChild(c.el);
+  const out = c.el.querySelector('.ask-cmd-out');
+  Object.defineProperty(out, 'scrollHeight', { value: 900, configurable: true });
+  c.update({ status: 'running', tail: 'line 1\nline 2', exitCode: null });
+  assert.equal(c.el.querySelector('.ask-cmd-toggle').getAttribute('aria-expanded'), 'true');
+  assert.equal(out.hidden, false);
+  assert.equal(out.scrollTop, 900, 'scrolled to the bottom');
 });
 
 test('the folder label shows the command\'s terminal tab (onShow with the session)', () => {

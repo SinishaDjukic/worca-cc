@@ -81,16 +81,28 @@ export function bearerToken(header) {
  * @param {{remoteMode:boolean, verify:(origin:string, token:string|null) => object|null}} o
  */
 export function decideExtensionRequest(req, { remoteMode, verify }) {
-  const origin = extensionOrigin(req.headers.origin);
+  // The extension names itself in X-Worca-Extension on every call, because Chrome sends an extension's GET WITHOUT an
+  // Origin to a host the extension holds a grant for (activeTab on the tab showing Worca). With no Origin, that header
+  // is the extension origin, under exactly the rules below (loopback Host, allowlist, the token for token routes). A
+  // web page cannot send it cross-origin without a CORS preflight, which only extension origins pass; a request with
+  // no Origin comes from a non-browser local caller, which can already reach the API (S1). Both present and differing:
+  // refused, with no CORS for either.
+  const named = req.headers['x-worca-extension'];
+  const origin = extensionOrigin(req.headers.origin ?? named);
+  if (req.headers.origin != null && named != null && extensionOrigin(named) !== extensionOrigin(req.headers.origin)) {
+    return { kind: 'refuse', origin: null, status: 403, code: 'extension-origin', error: 'forbidden: Origin and X-Worca-Extension disagree' };
+  }
   if (!origin) return { kind: 'pass' };
   const host = String(hostnameOf(req.headers.host) || '').toLowerCase();
   if (!LOCAL_HOSTNAMES.has(host)) return { kind: 'pass' };   // the DNS-rebinding belt holds for extensions too
-  if (remoteMode) {
-    return { kind: 'refuse', origin, status: 403, code: 'extension-remote-mode', error: 'forbidden: the browser extension works with a local Worca only (remote access is on)' };
-  }
   const preflight = req.method === 'OPTIONS';
   const method = preflight ? String(req.headers['access-control-request-method'] || '') : req.method;
   const kind = extensionRouteKind(method, req.path);
+  // Remote mode still answers an allowlisted preflight: every call carries X-Worca-Extension, so even the hello probe
+  // preflights, and a refused preflight makes fetch throw ("not running") instead of reading this refusal.
+  if (remoteMode && !(preflight && kind)) {
+    return { kind: 'refuse', origin, status: 403, code: 'extension-remote-mode', error: 'forbidden: the browser extension works with a local Worca only (remote access is on)' };
+  }
   if (!kind) return { kind: 'refuse', origin, status: 403, code: 'extension-route', error: 'forbidden: this route is not open to the browser extension' };
   if (preflight) return { kind: 'preflight', origin };
   if (kind === 'pair') return { kind: 'allow', origin, extension: null };

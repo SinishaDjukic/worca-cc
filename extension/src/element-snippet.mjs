@@ -55,19 +55,37 @@ export function elementUnder(doc, rect, skip = () => false) {
   return common && common !== doc.documentElement ? common : (doc.body || null);
 }
 
-/** outerHTML of `el` with scripts/styles/frames removed, on* handlers and password values dropped, long attribute values
- *  shortened, then clipped to `max` characters (… marks a cut). */
+const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
+const escText = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\u00a0/g, '&nbsp;');
+const escAttr = (t) => t.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/\u00a0/g, '&nbsp;');
+
+/** outerHTML of `el` with scripts/styles/frames removed, on* handlers and every input's value dropped (passwords,
+ *  hidden CSRF tokens, typed text), long attribute values shortened, then clipped to `max` characters (… marks a cut).
+ *  Serialised straight from the page's DOM with a running budget: nothing is cloned, and the walk stops at the cut, so
+ *  a capture over a huge subtree (a whole page) costs no more than a small one. */
 export function htmlSnippet(el, max = SNIPPET_MAX) {
   if (!el || el.nodeType !== 1) return '';
-  const c = el.cloneNode(true);
-  for (const d of c.querySelectorAll(DROP)) d.remove();
-  for (const n of [c, ...c.querySelectorAll('*')]) {
-    for (const a of [...n.attributes]) {
-      if (/^on/i.test(a.name)) n.removeAttribute(a.name);
-      else if (a.name === 'value' && n.localName === 'input' && String(n.getAttribute('type')).toLowerCase() === 'password') n.removeAttribute('value');
-      else if (a.value.length > ATTR_VALUE_MAX) n.setAttribute(a.name, `${a.value.slice(0, ATTR_VALUE_MAX)}…`);
+  let out = '';
+  const room = () => max + 1 - out.length;          // one character past the cap is enough to know it was cut
+  const add = (t) => { out += t.length > room() ? t.slice(0, Math.max(0, room())) : t; return room() > 0; };
+  const walk = (n, root) => {
+    if (n.nodeType === 3) return add(escText(n.data.slice(0, room())));
+    if (n.nodeType !== 1) return true;              // comments, processing instructions
+    if (!root && n.matches(DROP)) return true;
+    const tag = n.localName;
+    let open = `<${tag}`;
+    for (const at of n.attributes) {
+      if (/^on/i.test(at.name) || (at.name === 'value' && tag === 'input')) continue;
+      const v = at.value.length > ATTR_VALUE_MAX ? `${at.value.slice(0, ATTR_VALUE_MAX)}…` : at.value;
+      open += ` ${at.name}="${escAttr(v)}"`;
+      if (open.length > room()) break;
     }
-  }
-  const html = c.outerHTML.replace(/\s+\n/g, '\n');
+    if (!add(`${open}>`)) return false;
+    if (VOID.has(tag)) return true;
+    for (const c of n.childNodes) if (!walk(c, false)) return false;
+    return add(`</${tag}>`);
+  };
+  walk(el, true);
+  const html = out.replace(/\s+\n/g, '\n');
   return html.length > max ? `${html.slice(0, max)}…` : html;
 }

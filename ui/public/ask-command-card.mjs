@@ -18,7 +18,16 @@ export function pillOf(v) {
   return { text: `exit ${v.exitCode}`, family: v.exitCode === 0 ? 'green' : 'red' };
 }
 
-export function createCommandCard({ doc, card, onStop, onShow = () => {} }) {
+/** The output toggle's words: how many lines the tail holds ("last N" when the server clipped it). */
+function outputLabel(v) {
+  const n = String(v.tail).replace(/\n+$/, '').split('\n').length;
+  return `Output · ${v.truncated ? 'last ' : ''}${n} line${n === 1 ? '' : 's'}`;
+}
+
+/** `expanded` / `onToggle`: the output's fold, held by the panel per blockId so it outlives a rebuild of the card.
+ *  `keepInPlace(control, change)`: a click folds or unfolds inside it, so the host can keep the toggle where it was
+ *  on screen (a transcript pinned to its end would otherwise follow the opened output). */
+export function createCommandCard({ doc, card, onStop, onShow = () => {}, expanded = false, onToggle = () => {}, keepInPlace = (control, change) => change() }) {
   const el = h(doc, 'div', 'ask-card ask-cmd');
   el.dataset.blockId = card.blockId;
   const head = h(doc, 'div', 'ask-cmd-head');
@@ -36,9 +45,30 @@ export function createCommandCard({ doc, card, onStop, onShow = () => {} }) {
   const line = h(doc, 'div', 'ask-cmd-line', `$ ${card.command}`);
   const warning = h(doc, 'div', 'ask-cmd-warning', card.warning || '');
   warning.hidden = !card.warning;
+  // The tail is folded behind this toggle (the head and the command line are the card); no output, no toggle.
+  const toggle = h(doc, 'button', 'ask-cmd-toggle');
+  toggle.type = 'button';
+  toggle.hidden = true;
+  const chev = h(doc, 'span', 'ask-cmd-chev', '›');
+  chev.setAttribute('aria-hidden', 'true');
+  const toggleLabel = h(doc, 'span', 'ask-cmd-toggle-label', '');
+  toggle.append(chev, toggleLabel);
   const out = h(doc, 'pre', 'ask-cmd-out');
-  el.append(head, line, warning, out);
+  out.hidden = true;
+  el.append(head, line, warning, toggle, out);
   let view = null;
+  let open = !!expanded;
+  function paintOutput() {
+    const has = !!out.textContent;
+    toggle.hidden = !has;
+    toggle.setAttribute('aria-expanded', String(open));
+    out.hidden = !has || !open;
+    if (!out.hidden) out.scrollTop = out.scrollHeight;
+  }
+  toggle.addEventListener('click', () => {
+    keepInPlace(toggle, () => { open = !open; paintOutput(); });
+    onToggle(open);
+  });
   return {
     el,
     update(v) {
@@ -50,8 +80,8 @@ export function createCommandCard({ doc, card, onStop, onShow = () => {} }) {
       stop.hidden = !live;
       if (!live) stop.disabled = false;
       out.textContent = v && v.tail ? v.tail : '';
-      out.hidden = !out.textContent;
-      out.scrollTop = out.scrollHeight;
+      toggleLabel.textContent = out.textContent ? outputLabel(v) : '';
+      paintOutput();
       el.classList.toggle('is-live', live);
     },
     get view() { return view; },

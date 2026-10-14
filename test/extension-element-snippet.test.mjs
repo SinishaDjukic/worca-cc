@@ -66,3 +66,38 @@ test('elementUnder: the common ancestor of the sampled points, skipping our own 
   doc.elementsFromPoint = () => [doc.documentElement];
   assert.equal(elementUnder(doc, { x: 0, y: 0, width: 40, height: 40 }), null);
 });
+
+test('htmlSnippet drops the value of EVERY input (hidden CSRF tokens, text fields), not only passwords', () => {
+  const doc = dom('<form id="f"><input type="hidden" name="csrf" value="tok-123"><input name="q" value="secret query"><input type="password" value="hunter2"><input type="submit" value="Go"></form>');
+  const s = htmlSnippet(doc.getElementById('f'));
+  for (const v of ['tok-123', 'secret query', 'hunter2', 'value=']) assert.ok(!s.includes(v), v);
+  assert.match(s, /name="csrf"/, 'the rest of the input stays');
+  assert.equal(doc.querySelector('[name=csrf]').getAttribute('value'), 'tok-123', 'the page is untouched');
+});
+
+test('htmlSnippet never deep-clones the selection: a huge subtree is serialised within the budget', () => {
+  const doc = dom(`<main id="m">${'<section><p class="row">some text here</p></section>'.repeat(20000)}</main>`);
+  const proto = doc.defaultView.Node.prototype;
+  const clone = proto.cloneNode;
+  let cloned = 0;
+  proto.cloneNode = function (...a) { cloned += 1; return clone.apply(this, a); };
+  let visited = 0;
+  const attrs = Object.getOwnPropertyDescriptor(doc.defaultView.Element.prototype, 'attributes');
+  Object.defineProperty(doc.defaultView.Element.prototype, 'attributes', { configurable: true, get() { visited += 1; return attrs.get.call(this); } });
+  try {
+    const s = htmlSnippet(doc.getElementById('m'));
+    assert.equal(cloned, 0, 'no cloneNode');
+    assert.equal(s.length, SNIPPET_MAX + 1);
+    assert.ok(s.endsWith('…'));
+    assert.ok(s.startsWith('<main id="m"><section><p class="row">some text here</p></section>'), s.slice(0, 80));
+    assert.ok(visited < 500, `stopped at the budget (visited ${visited} elements)`);
+  } finally {
+    proto.cloneNode = clone;
+    Object.defineProperty(doc.defaultView.Element.prototype, 'attributes', attrs);
+  }
+});
+
+test('htmlSnippet escapes text and attribute values as outerHTML does, and keeps void elements unclosed', () => {
+  const doc = dom('<div id="e" title="a &quot;b&quot; &amp; c">1 &lt; 2 &amp; <b>bold</b><br><img src="x.png" alt="x"></div>');
+  assert.equal(htmlSnippet(doc.getElementById('e')), doc.getElementById('e').outerHTML);
+});

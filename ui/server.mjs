@@ -1401,19 +1401,20 @@ app.post('/api/ingress/teams/:plugin/:channelId/:token',
 // answered for exactly that origin (never *, never credentials). Also ahead of the body parsers (MIN-108).
 function setExtensionCors(req, res, origin) {
   res.setHeader('Access-Control-Allow-Origin', origin);
-  res.setHeader('Vary', 'Origin');
+  res.setHeader('Vary', 'Origin, X-Worca-Extension');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH');
-  res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-worca-pair-poll');
+  res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-worca-pair-poll, x-worca-extension');
   res.setHeader('Access-Control-Max-Age', '600');
   if (req.headers['access-control-request-private-network'] === 'true') res.setHeader('Access-Control-Allow-Private-Network', 'true');
 }
 app.use((req, res, next) => {
   const d = decideExtensionRequest(req, { remoteMode: REMOTE_MODE, verify: extensionPairing.verify });
   if (d.kind === 'pass') return next();
-  setExtensionCors(req, res, d.origin);
+  if (d.origin) setExtensionCors(req, res, d.origin);   // none for an Origin / X-Worca-Extension mismatch
   if (d.kind === 'preflight') return res.status(204).end();
   if (d.kind === 'refuse') return res.status(d.status).json({ error: d.error, code: d.code });
   req.worcaExtensionRoute = true;
+  req.worcaExtensionOrigin = d.origin;   // Origin, or X-Worca-Extension when Chrome sent none (extension-pairing.mjs)
   req.worcaExtension = d.extension;   // null on a pairing route
   next();
 });
@@ -7970,6 +7971,12 @@ async function requireFsAllowed(req, res, paths) {
   }
   return true;
 }
+// GET answers whether "Choose folder…" can open a native dialog for the viewer, without opening
+// one: the Add project dialog opens on Clone from URL when not. Never on a hosted worca (the dialog
+// would open on the server, not on the viewer's screen).
+app.get('/api/fs/pick-folder', (req, res) => {
+  res.json({ available: !REMOTE_MODE && nativeDialogAvailable() });
+});
 app.post('/api/fs/pick-folder', async (req, res) => {
   try {
     // Limited: a native dialog would open on the server with the whole disk in it; the UI
@@ -11545,7 +11552,7 @@ app.get('/api/extension/hello', (req, res) => {
 app.post('/api/extension/pair', (req, res) => {
   if (!req.worcaExtensionRoute) return res.status(403).json({ error: 'pairing starts in the browser extension', code: 'extension-origin' });
   const body = req.body || {};
-  const r = extensionPairing.request({ origin: extensionOrigin(req.headers.origin), name: body.name, browser: body.browser });
+  const r = extensionPairing.request({ origin: req.worcaExtensionOrigin, name: body.name, browser: body.browser });
   // A replaced request's prompt closes in every Worca tab (the same event approve/deny send).
   for (const requestId of r.replacedRequestIds || []) broadcast({ type: 'extension-pairings-changed', requestId });
   if (!r.ok) return res.status(r.status).json({ error: r.error, code: r.code });
@@ -11555,7 +11562,7 @@ app.post('/api/extension/pair', (req, res) => {
 
 app.get('/api/extension/pair/:requestId', (req, res) => {
   if (!req.worcaExtensionRoute) return res.status(403).json({ error: 'pairing starts in the browser extension', code: 'extension-origin' });
-  const r = extensionPairing.poll(req.params.requestId, { origin: extensionOrigin(req.headers.origin), pollKey: req.headers['x-worca-pair-poll'] });
+  const r = extensionPairing.poll(req.params.requestId, { origin: req.worcaExtensionOrigin, pollKey: req.headers['x-worca-pair-poll'] });
   res.set('Cache-Control', 'no-store').status(r.status).json(r.body);
 });
 

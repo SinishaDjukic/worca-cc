@@ -30,6 +30,7 @@ import { engineOfEntry, chatEngineOf, pickerGroups } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
+import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
@@ -111,13 +112,12 @@ function mmss(ms) {
   const s = Math.max(0, Math.floor((Number.isFinite(ms) ? ms : 0) / 1000));
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
-function clipInput(input) {
+/** A tool row's args: the persisted input as JSON, or the preview of one the server clipped (events.mjs clipJson caps
+ *  both at limits.blockIoMaxChars). Never cut here: the row's CSS clamps it to two lines and the hover holds it all. */
+function toolArgs(input) {
   if (input && input._truncated === true) return String(input.preview ?? '');
   if (input == null) return '';
-  let s = '';
-  try { s = JSON.stringify(input); } catch { s = String(input); }
-  if (s === '{}') return '';
-  return s.length > 60 ? `${s.slice(0, 60)}…` : s;
+  try { return JSON.stringify(input); } catch { return String(input); }
 }
 
 const SCRIPT_TOOL_NAMES = new Set(['list_scripts', 'get_script', 'save_script', 'test_script']);
@@ -126,9 +126,9 @@ const SCRIPT_TOOL_NAMES = new Set(['list_scripts', 'get_script', 'save_script', 
  * The script tools' thread line (scripts-workbench-design.md §9.3): the key instead of a JSON
  * blob, plus what came back once the call finished. `block.script` is stamped by the reducer
  * (events.mjs#scriptToolKey at the call, #scriptResultNote at the result) and persisted with the
- * block, so the line survives a reload and a clipped input. null for every other tool — those
- * keep the op / target / preview shape.
- * @returns {{target: string}|null}  e.g. { target: 'script runTests → blocking, exit 1' }
+ * block, so the line survives a reload and a clipped input. The row already names the tool (test_script), so
+ * this is its args: the key and the outcome. null for every other tool — those show their input.
+ * @returns {{target: string}|null}  e.g. { target: 'runTests → blocking, exit 1' }
  */
 export function scriptToolLine(short, block = {}) {
   if (!SCRIPT_TOOL_NAMES.has(short)) return null;
@@ -141,8 +141,7 @@ export function scriptToolLine(short, block = {}) {
     if (typeof s.status === 'string' && s.status) bits.push(s.status);
     if (Number.isInteger(s.exitCode)) bits.push(`exit ${s.exitCode}`);
   }
-  const noun = short.split('_').slice(1).join(' ');
-  return { target: [noun, key, bits.length ? `→ ${bits.join(', ')}` : ''].filter(Boolean).join(' ') };
+  return { target: [key, bits.length ? `→ ${bits.join(', ')}` : ''].filter(Boolean).join(' ') };
 }
 
 /**
@@ -202,6 +201,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     contexts: [],             // the open chat's topics (thread.contexts), shown in the context popover
     threadsRefresh: null,     // the debounce timer behind the History popover's ask-run-status refetch
     expandedAgents: new Set(),
+    expandedActivity: new Set(), // assistant message ids whose activity body (tool rows, sub-agents) the user opened
     worktrees: [],            // P4 §10: the chat's open worktrees (snapshot-fed)
     // MCP registry §9.4: the chat's picker choices (held here, sent with every message, PATCHed between turns),
     // the last POST /api/ask/mcp-preview body and whether it failed; gen drops a stale response, render repaints
@@ -209,7 +209,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     mcp: { off: { sets: [], members: [] }, preview: null, failed: false, gen: 0, queued: false, render: null, saving: Promise.resolve() },
     commands: new Map(),      // blockId → command card handle (ask-command-card.mjs)
     commandFrames: new Map(), // blockId → the last ask-command view that arrived before its card was built
-    commandsShown: new Set(), // blockIds whose start already showed their terminal tab (shared terminal)
+    commandsOpen: new Set(),  // blockIds whose output the user unfolded (the card's toggle; outlives a rebuild of the card)
     pinned: true,
     wantThread: undefined,    // the chat the page shows or is loading: an id, null = home (a new chat), undefined = none yet
     unread: false,            // what onUnread was last told (the Chat row's dot)
@@ -376,6 +376,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     b.addEventListener('click', onClick);
     return b;
   }
+  /** "+ New chat" — the head's and the History column's: a labelled ghost button (style.css .chat-new-btn). Both carry
+   *  [data-ask-new-btn], which the add-ons' capture-phase listeners read (chat/home-flip.mjs arms the glide,
+   *  chat/intent.mjs drops the intent). Below 1100px the overlay closes first, as after a pick, so the new chat has its
+   *  room and newThread() can focus its composer. */
+  function newChatButton(className) {
+    const b = make('button', `ask-icon-btn chat-new-btn ${className}`);
+    b.type = 'button';
+    b.setAttribute('data-ask-new-btn', '');
+    b.appendChild(svgIcon(ICONS.plus, 14, 2));
+    b.appendChild(make('span', null, 'New chat'));
+    b.addEventListener('click', () => {
+      if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+      newThread();
+      route(null);
+    });
+    return b;
+  }
   /** The History toggle's glyph: a page with a folded corner and lines of text (the saved chats). */
   function historyIcon() {
     return svgIcon(['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z', 'M14 3v4a1 1 0 0 0 1 1h4',
@@ -415,9 +432,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.title = make('div', 'ask-title', 'New chat');
     head.appendChild(el.title);
     head.appendChild(make('span', 'chat-head-spacer'));
-    const newBtn = iconButton('ask-icon-btn chat-head-btn', 'New chat', ICONS.plus, () => { newThread(); route(null); });
-    newBtn.setAttribute('data-ask-new-btn', '');
-    head.appendChild(newBtn);
+    head.appendChild(newChatButton('chat-head-btn'));
     convo.appendChild(head);
 
     el.home = make('div', 'chat-home');
@@ -1381,6 +1396,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(el.historyMeter);
     head.appendChild(buildHistorySearch());
     aside.appendChild(head);
+    // New chat leads the list, outside the body renderHistory repaints: a refresh or a search never drops it.
+    aside.appendChild(newChatButton('chat-history-new'));
     el.historyBody = make('div', 'chat-history-body');
     aside.appendChild(el.historyBody);
     syncHistorySearch();
@@ -4564,7 +4581,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const blockId = String(card.blockId || '');
     const handle = createCommandCard({ doc, card, onStop: (sid) => {
       fetch(`/api/terminal/sessions/${encodeURIComponent(sid)}/stop`, { method: 'POST' }).catch(() => { /* the next frame says what happened */ });
-    }, onShow: (sid) => showTerminal(sid, { auto: false }) });
+    }, onShow: (sid) => showTerminal(sid), expanded: st.commandsOpen.has(blockId), keepInPlace, onToggle: (open) => {
+      if (open) st.commandsOpen.add(blockId); else st.commandsOpen.delete(blockId);
+    } });
     st.commands.set(blockId, handle);
     const early = st.commandFrames.get(blockId);
     if (early) { st.commandFrames.delete(blockId); handle.update(early); }
@@ -4703,32 +4722,33 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     });
   }
 
+  /** A tool row's name and args. Worca's own tools drop their `mcp__worca__` prefix (list_projects), built-ins keep
+   *  their name (Read, Grep). The special cases keep their own args: a registry copy's tool (MCP registry §9.7) is
+   *  named `<copy> · <tool>`; a set skill (skills registry §4.4) shows its qualified name (and its args); a script
+   *  tool (§9.3) its key and outcome — its input is a whole program, so the JSON is worth nothing there. */
+  function toolLine(block) {
+    const mcp = parseMcpToolName(block.name);
+    if (mcp && mcp.server !== 'worca') return { name: `${mcp.server} · ${mcp.tool}`, args: toolArgs(block.input), mcp: true };
+    if (block.name === 'Skill' && block.input && typeof block.input.skill === 'string') {
+      const args = typeof block.input.args === 'string' && block.input.args ? block.input.args : '';
+      return { name: block.name, args: args ? `${block.input.skill} · ${args}` : block.input.skill, mcp: false };
+    }
+    const short = String(block.name || '').replace(/^mcp__worca__/, '');
+    const script = scriptToolLine(short, block);
+    return { name: short, args: script ? script.target : toolArgs(block.input), mcp: false };
+  }
+
   function toolRow(block) {
     const rowEl = make('div', 'ask-tool-row');
     rowEl.dataset.minLevel = 'advanced';            // what the assistant ran, step by step
-    const mcp = parseMcpToolName(block.name);
-    if (mcp && mcp.server !== 'worca') {
-      // A registry copy's tool (MCP registry §9.7): `<copy> · <tool>` in the name cell, then the
-      // input preview — no op cell, since a third-party tool name has no worca verb to show.
-      rowEl.appendChild(make('span', 'ask-tool-mcp', `${mcp.server} · ${mcp.tool}`));
-      rowEl.appendChild(make('span', 'ask-tool-target', clipInput(block.input)));
-    } else if (block.name === 'Skill' && block.input && typeof block.input.skill === 'string') {
-      // Skills registry §4.4: a set skill the turn loaded — `skill`, then its qualified name (and its args).
-      const args = typeof block.input.args === 'string' && block.input.args ? block.input.args : '';
-      rowEl.appendChild(make('span', 'ask-tool-op', 'skill'));
-      rowEl.appendChild(make('span', 'ask-tool-target', args ? `${block.input.skill} · ${args.length > 60 ? `${args.slice(0, 60)}…` : args}` : block.input.skill));
-    } else {
-      const short = String(block.name || '').replace(/^mcp__worca__/, '');
-      const parts = short.split('_');
-      rowEl.appendChild(make('span', 'ask-tool-op', parts[0] || short));
-      // A script tool reads as `test script runTests → blocking, exit 1` (§9.3): the op column
-      // (a fixed 38 px cell) keeps the verb, the target column carries the key and the outcome —
-      // a script's input is a whole program, so the JSON preview is worth nothing there.
-      const script = scriptToolLine(short, block);
-      const target = script ? script.target : parts.slice(1).join(' ');
-      const preview = script ? '' : clipInput(block.input);
-      rowEl.appendChild(make('span', 'ask-tool-target', preview ? (target ? `${target} · ${preview}` : preview) : target));
-    }
+    rowEl.appendChild(make('span', `ask-tool-dot${block.status === 'running' ? ' is-running' : block.status === 'error' ? ' is-error' : ''}`));
+    // The name and the args flow as one text, clamped to two lines by CSS (.ask-tool-target); the hover holds it all.
+    const { name, args, mcp } = toolLine(block);
+    const text = make('span', 'ask-tool-target');
+    text.appendChild(make('span', mcp ? 'ask-tool-name ask-tool-mcp' : 'ask-tool-name', name));
+    if (args) text.append(' ', make('span', 'ask-tool-args', args));
+    text.title = args ? `${name} ${args}` : name;
+    rowEl.appendChild(text);
     const note = block.status === 'error' ? 'error' : block.status === 'running' ? '…' : fmtElapsed(block.durationMs);
     rowEl.appendChild(make('span', 'ask-tool-note', note || ''));
     return rowEl;
@@ -4790,47 +4810,66 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   const isLiveRow = (row) => !!(row && st.model && st.model.live() && st.model.live().messageId === row.id);
 
   /**
-   * The block above the answer, with an `update(row)` that patches it IN PLACE:
-   * the head is re-stated (one line, fixed height), a tool/agent row already on
-   * screen is replaced by its own fresh node, and a new one is appended into its
-   * group. Nothing outside `.ask-activity` is touched, so an ask-label or
-   * ask-block frame can no longer re-create the message around the text being
-   * read (which replayed the entry animation on every frame of a turn).
+   * The block above the answer: one head line (`Done · 7.4s · 19.8k ctx · $0.05`) over a body holding the tool rows
+   * and the sub-agent section. The body is collapsed by default in every state, live turns included, so nothing
+   * jumps when a turn lands; an open body keeps updating live. The head is a button (aria-expanded, a chevron) only
+   * while the body holds rows the current mode shows — tool rows are Advanced, sub-agents Expert (docs/ui-levels.md)
+   * — so a Simple user never gets a toggle that opens nothing. What is open is panel state (st.expandedActivity, by
+   * message id, like st.expandedAgents): it outlives the per-frame sync and a structural repaint.
+   *
+   * `update(row)` patches it IN PLACE: the head is re-stated, a tool/agent row
+   * already on screen is replaced by its own fresh node, and a new one is
+   * appended into its group. Nothing outside `.ask-activity` is touched, so an
+   * ask-label or ask-block frame can no longer re-create the message around the
+   * text being read (which replayed the entry animation on every frame of a turn).
    */
   function buildActivity(row) {
     const activity = make('div', 'ask-activity');
-    const head = make('div', 'ask-activity-head');
-    activity.appendChild(head);
+    let head = make('div', 'ask-activity-head');
+    const body = make('div', 'ask-activity-body');
+    body.hidden = true;
+    activity.append(head, body);
+    let cur = row;
     const toolEls = new Map();     // block id → the row currently rendered for it
     const agentEls = new Map();
     let agents = null;             // the .ask-agents section, once the row has one
     let agentsCount = null;
 
-    function renderHead(r) {
+    function renderHead(r, canOpen) {
       const isLive = isLiveRow(r);
       const stopped = r.status === 'stopped' || r.status === 'error';
       const parts = [];
+      // The head names its state in one word — Thinking, Done, or Stopped after —
+      // and nothing more while the turn is live: the orb row at the bottom of the
+      // message owns the elapsed and the meter, and printing either set twice is
+      // the noise this replaced. A turn that ended badly says so instead of Done;
+      // nothing else marks a stop. A turn that ended before any result, or within
+      // a few ms (a signed-out CLI answers in ~20 ms), has no duration worth
+      // printing: plain Stopped, never a dangling "Stopped after" or "Stopped
+      // after 0.0s". The rest follows on the same line, dot-separated.
       if (isLive) parts.push(make('span', 'ask-activity-label', 'Thinking'));
-      else if (!stopped) parts.push(make('span', 'ask-activity-label', 'Done'));
-      parts.push(make('span', `ask-dot${isLive ? ' ask-dot-run' : r.status === 'error' ? '' : ' ask-dot-done'}`));
-      // The head names its state in one word ahead of the dot — Thinking, Done, or
-      // Stopped after — and nothing more while the turn is live: the orb row at the
-      // bottom of the message owns the elapsed and the meter, and printing either
-      // set twice is the noise this replaced. A turn that ended badly says so
-      // instead of Done; nothing else marks a stop. A turn that ended before any
-      // result, or within a few ms (a signed-out CLI answers in ~20 ms), has no
-      // duration worth printing: plain Stopped, never a dangling "Stopped after"
-      // or "Stopped after 0.0s".
-      if (!isLive) {
+      else {
         const shown = fmtElapsed(r.durationMs);
         const elapsed = shown && shown !== '0.0s' ? shown : '';
-        if (stopped) parts.push(make('span', 'ask-activity-label', elapsed ? 'Stopped after' : 'Stopped'));
-        parts.push(make('span', 'ask-activity-elapsed', elapsed));
-        parts.push(make('span', 'ask-activity-spacer'));
         const meter = [fmtCtx(r.usage && r.usage.ctx), fmtUsd(r.costUsd)].filter(Boolean).join(' · ');
+        parts.push(make('span', 'ask-activity-label', stopped ? (elapsed ? 'Stopped after' : 'Stopped') : 'Done'));
+        if (elapsed) parts.push(stopped ? ' ' : ' · ');
+        parts.push(make('span', 'ask-activity-elapsed', elapsed));
+        if (meter) parts.push(' · ');
         parts.push(make('span', 'ask-activity-meter', meter));
       }
+      if (canOpen) {
+        const chev = make('span', 'ask-activity-chev', '›');
+        chev.setAttribute('aria-hidden', 'true');
+        parts.push(chev);
+      }
       head.replaceChildren(...parts);
+    }
+
+    function toggle() {
+      if (st.expandedActivity.has(cur.id)) st.expandedActivity.delete(cur.id);
+      else st.expandedActivity.add(cur.id);
+      keepInPlace(head, () => sync(cur));
     }
 
     /** Re-render the tracked rows of one kind against `blocks`, in order, inside `host` before `before`. */
@@ -4848,8 +4887,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
 
     function sync(r) {
-      renderHead(r);
+      cur = r;
       const blocks = Array.isArray(r.blocks) ? r.blocks : [];
+      const toolBlocks = blocks.filter((b) => b && b.kind === 'tool');
       const agentBlocks = blocks.filter((b) => b && b.kind === 'agent');
       if (agentBlocks.length && !agents) {
         agents = make('div', 'ask-agents');
@@ -4859,16 +4899,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         agentsCount = make('span', 'ask-agents-count', '');
         cap.appendChild(agentsCount);
         agents.appendChild(cap);
-        activity.appendChild(agents);
+        body.appendChild(agents);
       }
       // Tool rows go before the sub-agent section, so a tool that lands after the
       // first agent still slots into its own group.
-      syncRows(blocks.filter((b) => b && b.kind === 'tool'), toolEls, toolRow, activity, agents);
+      syncRows(toolBlocks, toolEls, toolRow, body, agents);
       if (agents) {
         agentsCount.textContent = String(agentBlocks.length);
         syncRows(agentBlocks, agentEls, agentRow, agents, null);
         if (!agentBlocks.length) { agents.remove(); agents = null; agentsCount = null; }
       }
+      const level = currentLevel(doc);
+      const canOpen = (toolBlocks.length > 0 && levelShows(level, 'advanced')) || (agentBlocks.length > 0 && levelShows(level, 'expert'));
+      const open = canOpen && st.expandedActivity.has(r.id);
+      if (head.tagName !== (canOpen ? 'BUTTON' : 'DIV')) {
+        // Rare (the first row lands, the mode changes): the head becomes a button or stops being one.
+        const next = make(canOpen ? 'button' : 'div', 'ask-activity-head');
+        if (canOpen) { next.type = 'button'; next.addEventListener('click', toggle); }
+        head.replaceWith(next);
+        head = next;
+      }
+      if (canOpen) head.setAttribute('aria-expanded', String(open));
+      renderHead(r, canOpen);
+      body.hidden = !open;
     }
 
     sync(row);
@@ -4966,6 +5019,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // closure below reads the latest one through this, never the captured `row`.
     let cur = row;
     let patch = null;   // the in-place update for an assistant row; null ⇒ update() rebuilds
+    let relevel = null; // re-decides the activity's toggle after a mode change (assistant rows only)
     let renderAnswer = null;
     if (row.role === 'user') {
       // PD6: a synthetic row (a workflow-card event) is a notice, never a bubble — its text is the model-facing event line.
@@ -5046,10 +5100,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // replacing its subtree per tool row is exactly what defeated the browser's
       // scroll anchoring mid-turn.
       patch = (row2) => { cur = row2; activity.update(row2); renderTail(); };
+      relevel = () => activity.update(cur);
     }
     const entry = {
       el: wrap,
       renderAnswer,
+      relevel,
       update(row2) {
         // An assistant row is PATCHED. Rebuilding it handed the column a brand-new
         // `.ask-msg` on every ask-label and every ask-block frame, so the whole
@@ -5271,15 +5327,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     if (frame.type === 'ask-command') {                         // #574: a command card's live state, this chat only
       if (frame.threadId !== st.threadId) return;
+      // Only the card: the terminal pane is never opened or switched for Ask's command (its tab waits there).
       applyCommandFrame(frame.command);
-      // Shared terminal: a command starting in the chat the user is looking at shows its tab in the terminal pane
-      // (the pane decides whether to open or switch); once per block.
-      const c = frame.command;
-      if (st.open && c && c.status === 'running' && typeof c.sessionId === 'string' && !st.commandsShown.has(c.blockId)) {
-        st.commandsShown.add(c.blockId);
-        if (st.commandsShown.size > 200) st.commandsShown.delete(st.commandsShown.values().next().value);
-        showTerminal(c.sessionId, { auto: true });
-      }
       return;
     }
     if (THREADS_REFRESH_FRAMES.has(frame.type)) scheduleThreadsRefresh();
@@ -5431,6 +5480,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (el.jump) el.jump.hidden = st.pinned;
   }
 
+  /** A user toggle (an activity head, a command's output) opens or closes content below its control. The pin was
+   *  written to follow a growing stream: pinned to the end, applyPin() (the next frame, the column's ResizeObserver)
+   *  would follow the opened body and scroll the clicked control off the top. So the control keeps its place on
+   *  screen, and the pin follows the new geometry, as after a user scroll: a body opened past the end leaves it,
+   *  one closed back at the end pins again. */
+  function keepInPlace(control, change) {
+    const t = el.transcript;
+    const before = control.getBoundingClientRect().top;
+    change();
+    const moved = control.getBoundingClientRect().top - before;
+    if (moved) t.scrollTop += moved;
+    st.pinWrite = null;
+    st.pinned = t.scrollHeight - t.scrollTop - t.clientHeight < 24;
+    if (el.jump) el.jump.hidden = st.pinned;
+  }
+
   function jumpToLatest() {
     st.pinned = true;
     el.transcript.scrollTop = el.transcript.scrollHeight;
@@ -5513,6 +5578,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   mountAddons();
   doc.addEventListener('keydown', onDocKeydown, true);
   doc.addEventListener('pointerdown', onDocPointerdown, true);
+  // A mode change (ui-level.mjs applyLevel) re-decides every activity toggle: a mode that hides the rows opens nothing.
+  const onLevelChange = () => { if (st.rowEls) for (const entry of st.rowEls.values()) if (entry.relevel) entry.relevel(); };
+  doc.addEventListener('worca:level', onLevelChange);
   win.addEventListener('resize', onWinResize);
   // MCP registry §9.4: in Auto the page is the scope, so a route change re-previews the picker.
   const onHashChange = () => { if (!st.scope.pinned) scheduleMcpRefresh(); };
@@ -5548,6 +5616,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     orbs.destroy();
     doc.removeEventListener('keydown', onDocKeydown, true);
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
+    doc.removeEventListener('worca:level', onLevelChange);
     win.removeEventListener('resize', onWinResize);
     win.removeEventListener('hashchange', onHashChange);
     if (dockRo) { dockRo.disconnect(); dockRo = null; }

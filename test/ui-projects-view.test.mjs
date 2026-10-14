@@ -157,10 +157,11 @@ test('cancelling the Remove confirm issues no DELETE and keeps the page; the mod
   ]);
 });
 
-test('add: + picks a folder, prefills the basename, and POSTs the project', async () => {
+test('add: Add project opens the dialog, Choose folder… picks a folder, prefills the basename, and POSTs the project', async () => {
   const posts = [];
   const { window } = await boot({
     fetchHandler: (u, opts) => {
+      if (u.includes('/api/fs/pick-folder') && (opts.method || 'GET') === 'GET') return Promise.resolve({ ok: true, status: 200, json: async () => ({ available: true }) });
       if (u.includes('/api/fs/pick-folder')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ status: 'picked', path: '/Users/me/dev/cool-app' }) });
       if (u.includes('/api/projects') && opts.method === 'POST') {
         posts.push(JSON.parse(opts.body));
@@ -175,6 +176,9 @@ test('add: + picks a folder, prefills the basename, and POSTs the project', asyn
   click(window, doc.querySelector('#project-add-btn'));
   await tick(); await tick();
   assert.equal(doc.querySelector('#project-add-modal').classList.contains('hidden'), false, 'add modal should open');
+  assert.equal(doc.querySelector('#proj-add-path').value, '', 'no folder until one is chosen');
+  click(window, doc.querySelector('#proj-add-browse'));
+  await tick(); await tick();
   assert.equal(doc.querySelector('#proj-add-name').value, 'cool-app', 'name prefilled from basename');
   assert.equal(doc.querySelector('#proj-add-path').value, '/Users/me/dev/cool-app');
   click(window, doc.querySelector('#proj-add-save'));

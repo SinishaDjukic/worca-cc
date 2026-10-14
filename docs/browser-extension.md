@@ -28,7 +28,7 @@ load it into your browser yourself (see [Install](#install)).
   the selection, as it does in Worca's own chat, artifacts and diffs. **Explain** answers in a
   popover, and **Send to chat**, **Use this**, **Discuss** and **Go deeper** hand the passage to the
   sidebar. Selecting text alone no longer opens the toolbar; to bring that back, turn on
-  **Settings → Show Pinpoint when I select text** at the bottom of the sidebar.
+  **Settings → Show Pinpoint when I select text** (the Settings button in the chat head, next to **New chat**).
 - **Area capture.** Press **Alt+Shift+S** (or click the camera button) and drag a rectangle on the
   page: the picture goes into the composer as a chip (see [Area capture](#area-capture)).
 - **Running Actions.** When the page is served by a running Worca Action (a run's dev server), a new
@@ -183,6 +183,15 @@ token goes only to the sidebar that is polling for it. Without agent isolation, 
 as your user can call the approve route directly (for example with `curl`, which sends no
 `Origin`). That is the same exposure as the rest of Worca's local API.
 
+**The extension names itself on every request.** Opened on the tab that shows Worca, the sidebar
+holds an `activeTab` grant for Worca's own address, and Chrome then sends its requests there
+without an `Origin` header. So every request also carries `X-Worca-Extension: chrome-extension://<id>`
+(or `moz-extension://<uuid>`). When `Origin` is missing, Worca treats that header as the
+extension's origin, under the same rules: a loopback `Host`, the route allowlist, and the token for
+everything but pairing. A web page cannot send the header cross-origin without a CORS preflight,
+which only extension origins pass, and a request with no `Origin` comes from a local program that
+can already reach the API. A request whose `Origin` and header disagree is refused.
+
 **The token is narrow.** It works only on the routes the sidebar uses: reading the Ask models,
 listing, opening and renaming threads, sending a message and stopping it, Pinpoint, and listing
 projects and workspaces, and looking up whether a page belongs to a running Action (one origin in;
@@ -259,7 +268,8 @@ Firefox's manifest declares that the extension collects no data.
 - **"Worca isn't running".** Nothing answers at the address the sidebar uses. Start Worca with
   `worca ui` (or `npx @worca/app`) and try again.
 - **Worca runs on another port.** The sidebar uses `http://127.0.0.1:4317` by default. Open
-  **Settings** at the bottom of the sidebar, enter `http://127.0.0.1:<port>` or
+  **Settings** (below the message while Worca isn't reachable; once paired, the Settings button in the chat
+  head), enter `http://127.0.0.1:<port>` or
   `http://localhost:<port>` under **Worca address** and click **Save**. Only loopback addresses are accepted. Saving
   forgets the token, so pair again.
 - **"No Ask model is available in Worca".** Ask has no model to answer with. Set one up in Worca
@@ -296,6 +306,28 @@ the viewport picture for an area capture (`captureVisibleTab` needs a real short
 the same image CI uses, so fonts match; the image tag must equal the pinned `@playwright/test`
 version, and a test checks it. Re-render baselines with `e2e:extension:update-linux`, never on a
 Mac.
+
+### Trying a build against another Worca
+
+An extension cannot read environment variables, so the address a fresh install tries is fixed at
+build time. For testing, set one of these when you build:
+
+```bash
+WORCA_EXT_PORT=4327 npm run ext:build                        # http://127.0.0.1:4327
+WORCA_EXT_BASE_URL=http://localhost:4327 npm run ext:build   # a full address; wins over WORCA_EXT_PORT
+WORCA_EXT_PORT=4327 npm run ext:try                          # build Chrome and open it in a throwaway Chromium
+```
+
+- The address must be `http` on `127.0.0.1` or `localhost` (the rule the Worca address field
+  uses). Anything else fails the build with a message naming the variable.
+- It is only the default: an address saved under **Settings → Worca address** still wins.
+- `npm run ext:zip` refuses to run while either variable is set, so a store zip always tries
+  `http://127.0.0.1:4317`.
+- `npm run ext:try` builds `extension/dist/chrome` with the variables, then opens Playwright's
+  Chromium, headed, in a temporary profile with only that build loaded. It opens on a neutral page,
+  not on Worca (to try the sidebar on Worca's own tab, open Worca yourself). Pin the extension from
+  the puzzle icon and click it to open the sidebar. The command runs until you close the browser;
+  the profile is deleted then.
 
 ### The side-panel deviation and the manual check list
 

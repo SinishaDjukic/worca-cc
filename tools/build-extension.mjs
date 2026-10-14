@@ -4,11 +4,13 @@
 //   node tools/build-extension.mjs --browser firefox
 //   node tools/build-extension.mjs --zip                 # + extension/dist/worca-<browser>-<version>.zip
 //   node tools/build-extension.mjs --test --browser chrome   # → extension/dist/chrome-test/ (E2E only: fixture host, open shadow root)
+//   WORCA_EXT_PORT=4327 node tools/build-extension.mjs       # the build's default Worca address (testing; never with --zip)
 import { build } from 'esbuild';
 import { cpSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildManifest, manifestVersion } from '../extension/src/manifest.mjs';
+import { normalizeBaseUrl } from '../extension/src/worca-client.mjs';
 import { sidebarCss, shadowCss } from './extension-css.mjs';
 import { zipDirectory } from './zip.mjs';
 
@@ -32,7 +34,26 @@ export function parseArgs(argv) {
   return o;
 }
 
-export async function buildOne(browser, { test = false, dist = DIST } = {}) {
+const LOOPBACK_HINT = 'http on 127.0.0.1 or localhost, e.g. http://127.0.0.1:4327';
+/** The build's default Worca address from WORCA_EXT_PORT (a port) or WORCA_EXT_BASE_URL (a full URL; wins), or null when
+ *  neither is set. An extension cannot read env vars at runtime, so this is bundled (build-flags.mjs BUILD_BASE_URL).
+ *  The loopback rule is the sidebar's own (normalizeBaseUrl); anything else throws with the variable's name. */
+export function defaultBaseUrlFromEnv(env = process.env) {
+  const url = String(env.WORCA_EXT_BASE_URL ?? '').trim();
+  if (url) {
+    const v = normalizeBaseUrl(url);
+    if (!v) throw new Error(`WORCA_EXT_BASE_URL=${url} is not a local Worca address: use ${LOOPBACK_HINT}`);
+    return v;
+  }
+  const port = String(env.WORCA_EXT_PORT ?? '').trim();
+  if (!port) return null;
+  const n = /^\d+$/.test(port) ? Number(port) : NaN;
+  if (!(n >= 1 && n <= 65535)) throw new Error(`WORCA_EXT_PORT=${port} is not a port (1-65535)`);
+  return `http://127.0.0.1:${n}`;
+}
+
+export async function buildOne(browser, { test = false, dist = DIST, env = process.env } = {}) {
+  const baseUrl = defaultBaseUrlFromEnv(env);
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
   const { version, versionName } = manifestVersion(pkg.version);
   const out = join(dist, test ? `${browser}-test` : browser);
@@ -41,7 +62,7 @@ export async function buildOne(browser, { test = false, dist = DIST } = {}) {
   mkdirSync(join(out, 'icons'), { recursive: true });
   const style = readFileSync(join(ROOT, 'ui/public/style.css'), 'utf8');
   const shadow = shadowCss(style, readFileSync(join(SRC, 'content/shadow.css'), 'utf8'));
-  const define = { __WORCA_EXT_TEST__: JSON.stringify(test), __WORCA_EXT_BROWSER__: JSON.stringify(browser) };
+  const define = { __WORCA_EXT_TEST__: JSON.stringify(test), __WORCA_EXT_BROWSER__: JSON.stringify(browser), __WORCA_EXT_DEFAULT_BASE_URL__: JSON.stringify(baseUrl || '') };
   const shadowPlugin = { name: 'worca-shadow-css', setup(b) {
     b.onResolve({ filter: /^worca:shadow-css$/ }, () => ({ path: 'shadow-css', namespace: 'worca' }));
     b.onLoad({ filter: /.*/, namespace: 'worca' }, () => ({ contents: `export default ${JSON.stringify(shadow)};`, loader: 'js' }));
@@ -67,7 +88,7 @@ export async function buildOne(browser, { test = false, dist = DIST } = {}) {
     const js = readFileSync(join(out, f), 'utf8');
     if (/__worcaTest|__worcaSidebarTest/.test(js)) throw new Error(`${browser}/${f}: a test hook leaked into the production build`);
   }
-  return { out, version: versionName };
+  return { out, version: versionName, baseUrl };
 }
 
 /** PNG width/height from the IHDR chunk (bytes 16–23). */
@@ -79,9 +100,15 @@ export function pngSize(buf) {
 // realpath, as import.meta.url is: a symlinked checkout or tools dir must still run the CLI.
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const o = parseArgs(process.argv.slice(2));
+  // A store zip must try worca's default address, never a tester's.
+  if (o.zip && (process.env.WORCA_EXT_PORT || process.env.WORCA_EXT_BASE_URL)) {
+    console.error('--zip refuses to run while WORCA_EXT_PORT or WORCA_EXT_BASE_URL is set: unset them for a release build');
+    process.exit(2);
+  }
+  try { defaultBaseUrlFromEnv(); } catch (err) { console.error(`build-extension: ${err.message}`); process.exit(1); }
   for (const b of o.browsers) {
-    const { out, version } = await buildOne(b, { test: o.test });
-    console.log(`built ${b}${o.test ? ' (test)' : ''} → ${out}`);
+    const { out, version, baseUrl } = await buildOne(b, { test: o.test });
+    console.log(`built ${b}${o.test ? ' (test)' : ''} → ${out}${baseUrl ? ` (default Worca address ${baseUrl})` : ''}`);
     if (o.zip && !o.test) { const z = join(DIST, `worca-${b}-${version}.zip`); const r = zipDirectory(out, z); console.log(`  zip → ${z} (${r.files} files, ${r.bytes} bytes)`); }
   }
 }

@@ -6,7 +6,7 @@
 import { marked } from 'marked';
 import createDOMPurify from 'dompurify';
 import { api, BROWSER, LEGACY_STORAGE_KEYS, STORAGE_KEYS, TEST_BUILD } from '../ext-api.mjs';
-import { createWorcaClient, DEFAULT_BASE_URL, normalizeBaseUrl } from '../worca-client.mjs';
+import { createWorcaClient, DEFAULT_BASE_URL, normalizeBaseUrl, selfOriginOf } from '../worca-client.mjs';
 import { buildMessageBody, pickModel, validPick, reservedSlots } from '../compose.mjs';
 import { CAPTURE_MAX } from '../page-context.mjs';
 import { COMMANDS } from '../manifest.mjs';
@@ -23,6 +23,7 @@ const st = {
   phase: 'loading', baseUrl: DEFAULT_BASE_URL, token: null, code: null,
   catalog: null, threads: [], threadId: null, model: null,
   quote: null, draft: '', tab: null, withText: false, scope: { pinned: false }, projects: [], workspaces: [], lists: 'loading',
+  scopeNames: new Map(),   // 'p:<key>' | 'w:<id>' -> name, from the last good lists and thread snapshots (a pin's label)
   ws: null, posting: false, error: null,
   sentQuotes: new Map(),   // userMessageId -> quote (this session: the quote rode page-quote.md, M1)
   files: [],               // pending [{name, bytes, dataBase64, attKind, mime, capture?}] (Ask's pendingFiles + capture meta)
@@ -43,7 +44,7 @@ const OFFLINE_RETRY_MS = TEST_BUILD && params.has('retryMs') ? Number(params.get
 const rowEls = new Map();      // messageId -> { el, answer }
 const renderer = createMarkdownRenderer({ doc, load: async () => ({ marked, createDOMPurify }), hljsLoader: null });
 const getConfig = async () => ({ baseUrl: st.baseUrl, token: st.token });
-const client = createWorcaClient({ fetch: (u, o) => fetch(u, o), getConfig });
+const client = createWorcaClient({ fetch: (u, o) => fetch(u, o), getConfig, selfOrigin: selfOriginOf(api.runtime) });
 let bg = null;
 let windowId = null;
 let collectSeq = 0;
@@ -181,6 +182,7 @@ async function startPairing() {
       if (p.status === 'denied') return setPhase('denied');
       if (p.status === 'approved') {
         st.token = p.token;
+        resetActionMatch();
         await api.storage.local.set({ [STORAGE_KEYS.token]: p.token, [STORAGE_KEYS.pairedId]: p.id });
         // Paired, but a follow-up call (e.g. /api/ask/models) may fail. Retry through probe(), which shows
         // "offline"/offlineReason, instead of falling into the outer catch and showing "Connect" again (v7).
@@ -196,6 +198,7 @@ async function startPairing() {
 
 async function forgetToken() {
   st.token = null;
+  resetActionMatch();
   await api.storage.local.remove([STORAGE_KEYS.token, STORAGE_KEYS.pairedId]);
 }
 
@@ -229,6 +232,8 @@ async function loadLists({ show = false } = {}) {
     st.projects = (projects.projects || []).filter((p) => p.exists !== false);
     st.workspaces = workspaces.workspaces || [];
     st.lists = 'ok';
+    for (const p of st.projects) if (p.name) st.scopeNames.set(`p:${p.key}`, p.name);
+    for (const w of st.workspaces) if (w.name) st.scopeNames.set(`w:${w.id}`, w.name);
   } catch {
     if (gen !== listsGen) return;
     st.lists = 'error';
@@ -282,7 +287,7 @@ async function onPairingEnded() {
   await new Promise((res) => setTimeout(res, 2000));
   const s = await api.storage.local.get(STORAGE_KEYS.token);
   if (s[STORAGE_KEYS.token] === used) await forgetToken();
-  else st.token = s[STORAGE_KEYS.token] || null;
+  else { st.token = s[STORAGE_KEYS.token] || null; resetActionMatch(); }
   await probe();   // no token → Connect; the fresh token → paired again
 }
 
@@ -310,6 +315,10 @@ async function openThread(id) {
   st.model = m;
   st.threads = V.upsertThread(st.threads, snap.thread);         // listed, with its current title (review M1)
   const ctx = snap.thread && snap.thread.context;
+  // The thread's context chips name its project/workspace (src/core/ask/contexts.mjs): a pin's label before the lists load.
+  for (const c of (snap.thread && Array.isArray(snap.thread.contexts) ? snap.thread.contexts : [])) {
+    if (c && (c.kind === 'project' || c.kind === 'workspace') && typeof c.id === 'string' && c.label && c.label !== c.id) st.scopeNames.set(`${c.kind[0] === 'p' ? 'p' : 'w'}:${c.id}`, String(c.label));
+  }
   st.scope = ctx && ctx.pinned ? { pinned: true, projectKey: ctx.projectKey || null, workspaceId: ctx.workspaceId || null } : { pinned: false };
   // The thread's own model/effort wins (existing rule). A thread with none yet (one send() just created) keeps the pick.
   if (snap.thread && snap.thread.model) st.pick = pickModel(st.catalog, snap.thread) || st.pick;
@@ -345,6 +354,13 @@ async function send() {
   if (!el) return;
   const text = el.input.value.trim();
   if (!text || busy()) return;
+  // buildMessageBody refuses an over-limit message, but only after a new thread exists: check first, so a refused
+  // send never leaves an empty thread behind (DELETE is not on the allowlist).
+  if (st.files.length + reserved(st.files.some((f) => f.capture)) > ATTACH_MAX_FILES) {
+    st.error = `A message carries at most ${ATTACH_MAX_FILES} attachments, the page context included. Remove a file.`;
+    patchComposer();
+    return;
+  }
   st.posting = true;
   st.error = null;
   patchComposer();
@@ -486,12 +502,13 @@ function openModel(btn) {
   pops.open(btn, 'ask-pop-model', (panel) => V.fillModelPopover(doc, panel, {
     catalog: st.catalog, pick: st.pick, lock: lockEngine(), pane: st.modelPane,
     onModel: (id) => { pops.close({ focusTrigger: false }); void setPick({ model: id, effort: coerceEffort(catalogEntry(id), st.pick && st.pick.effort) }); el?.input.focus(); },
-    onEffort: (eff) => { pops.close({ focusTrigger: false }); void setPick({ model: st.pick.model, effort: eff }); el?.input.focus(); },
+    // No pick when the catalog is empty: nothing to set an effort on.
+    onEffort: (eff) => { pops.close({ focusTrigger: false }); if (st.pick) void setPick({ model: st.pick.model, effort: eff }); el?.input.focus(); },
     onPane: (p) => { st.modelPane = p; pops.rebuild(); },
   }));
 }
 
-const scopeView = () => V.scopeModel({ status: st.lists, projects: st.projects, workspaces: st.workspaces, scope: st.scope });
+const scopeView = () => V.scopeModel({ status: st.lists, projects: st.projects, workspaces: st.workspaces, scope: st.scope, names: st.scopeNames });
 function openScope(btn) {
   pops.open(btn, 'ask-pop-scope', (panel) => V.fillScopePopover(doc, panel, scopeView(), {
     onPick: (v) => { st.scopeChosen = true; pops.close(); void setScope(v); },
@@ -502,19 +519,41 @@ function openScope(btn) {
 
 const actionCache = new Map();   // origin -> {at, match}
 const ACTION_TTL_MS = 30_000;
-/** D7: the running worca Action that serves the tab's origin (one cached lookup per origin). A failure is silent. */
+const ACTION_CACHE_MAX = 50;
+let actionGen = 0;               // bumped by resetActionMatch: a lookup still in flight is dropped
+let actionLoading = null;        // the origin a lookup is running for
+const freshMatch = (origin) => { const hit = actionCache.get(origin); return hit && Date.now() - hit.at < ACTION_TTL_MS ? hit : null; };
+/** Another Worca, or a fresh pairing: no earlier answer applies. */
+function resetActionMatch() {
+  actionGen += 1;
+  actionCache.clear();
+  actionLoading = null;
+  st.actionOrigin = null;
+  st.action = null;
+}
+/** D7: the running worca Action that serves the tab's origin (one cached lookup per origin for ACTION_TTL_MS, the same
+ *  origin included). A failure is silent. */
 async function matchAction() {
   let origin = null;
   try { const u = new URL(st.tab && st.tab.url); origin = /^https?:$/.test(u.protocol) ? u.origin : null; } catch { origin = null; }
-  if (st.phase !== 'paired' || origin === st.actionOrigin) return;   // enterPaired runs it once paired
+  if (st.phase !== 'paired') return;                                  // enterPaired runs it once paired
+  const same = origin === st.actionOrigin;
+  if (same && (!origin || freshMatch(origin) || actionLoading === origin)) return;
   st.actionOrigin = origin;
-  st.action = null;
+  if (!same) st.action = null;                     // the same origin keeps its match while it is asked again
   if (!origin) { patchComposer(); return; }
-  const hit = actionCache.get(origin);
-  let match = hit && Date.now() - hit.at < ACTION_TTL_MS ? hit.match : undefined;
+  const gen = actionGen;
+  const hit = freshMatch(origin);
+  let match = hit ? hit.match : undefined;
   if (match === undefined) {
+    actionLoading = origin;
     try { match = (await client.call(`/api/extension/actions/match?origin=${encodeURIComponent(origin)}`)).match || null; } catch { match = null; }
-    actionCache.set(origin, { at: Date.now(), match });
+    if (gen !== actionGen) return;                 // re-paired or another address meanwhile
+    if (actionLoading === origin) actionLoading = null;
+    const t = Date.now();
+    for (const [o, h] of actionCache) if (t - h.at >= ACTION_TTL_MS) actionCache.delete(o);   // prune what expired
+    actionCache.set(origin, { at: t, match });
+    while (actionCache.size > ACTION_CACHE_MAX) actionCache.delete(actionCache.keys().next().value);
   }
   if (st.actionOrigin !== origin) return;          // the tab moved on meanwhile
   st.action = match;
@@ -593,16 +632,15 @@ function mountPaired() {
   const threads = V.make(doc, 'select', 'wx-select');
   threads.setAttribute('aria-label', 'Chat');
   threads.onchange = () => { if (threads.value) { st.scopeChosen = false; void openThread(threads.value).catch(reportLoadError); } else newChat(); };
-  // worca's Chat head button (ask-panel.mjs: iconButton('ask-icon-btn chat-head-btn', 'New chat', ICONS.plus, …)).
-  const newBtn = V.buildIconButton(doc, 'ask-icon-btn chat-head-btn', 'New chat', V.NEW_CHAT_ICON_PATH, () => newChat());
-  newBtn.setAttribute('data-ask-new-btn', '');
+  // worca's Chat head button (ask-panel.mjs newChatButton('chat-head-btn')): "+ New chat", right after the chat list.
+  const newBtn = V.buildNewChatButton(doc, 'chat-head-btn', () => newChat());
   // Settings (D10): the same disclosure as the state screens, revealed under the head.
   const settingsBtn = V.buildIconButton(doc, 'ask-icon-btn chat-head-btn', 'Settings', V.ICON.settings, () => {
     settings.el.hidden = !settings.el.hidden;
     if (!settings.el.hidden) settings.el.open = true;
   });
   settingsBtn.setAttribute('data-wx-settings-btn', '');
-  head.append(threads, settingsBtn, newBtn);
+  head.append(threads, newBtn, settingsBtn);
   const settings = V.buildSettings(doc, { value: st.baseUrl, onSave: (v) => void saveBaseUrl(v, settings), pinpointOnSelect: st.pinpointOnSelect, onPinpoint: (on) => void setPinpointOnSelect(on) });
   settings.setShortcut(st.pinShortcut);
   settings.el.hidden = true;
@@ -655,20 +693,30 @@ function patchModel() {
   el.modelEffort.hidden = !!(entry && entry.noEffort);
 }
 
+/** The meter and an open context popover, only when the figures changed: every streaming frame lands here. */
 function patchMeter() {
   if (!el) return;
-  V.patchMeter(el, V.meterState(st.model ? st.model.totals() : {}));
+  const s = V.meterState(st.model ? st.model.totals() : {});
+  const key = JSON.stringify(s);
+  if (key === el.meterKey) return;
+  el.meterKey = key;
+  V.patchMeter(el, s);
   if (pops && pops.isOpen(el.ctxBtn)) pops.rebuild();
 }
 
-/** Chips, the sends-note, the error line, Send/Stop — never the textarea (M4). */
+/** Chips, the sends-note, the error line, Send/Stop — never the textarea (M4). The chips are rebuilt only when what
+ *  they show changed (st.quote / st.files are replaced, never mutated), so a focused × survives streaming frames. */
 function patchComposer() {
   if (!el) return;
-  const chips = [];
-  if (st.quote) chips.push(V.buildQuoteChip(doc, st.quote, () => { st.quote = null; patchComposer(); el.input.focus(); }));
-  for (const f of st.files) chips.push(V.buildFileChip(doc, f, () => { st.files = st.files.filter((x) => x !== f); patchComposer(); el.input.focus(); }));
-  chips.push(V.buildPageChip(doc, { title: st.tab && st.tab.title, readable: !!(st.tab && st.tab.readable), on: st.withText }, () => { st.withText = !st.withText; patchComposer(); }));
-  el.chips.replaceChildren(...chips);
+  const chipsKey = [st.quote, st.files, st.tab && st.tab.title, !!(st.tab && st.tab.readable), st.withText];
+  if (!el.chipsKey || chipsKey.some((v, i) => v !== el.chipsKey[i])) {
+    el.chipsKey = chipsKey;
+    const chips = [];
+    if (st.quote) chips.push(V.buildQuoteChip(doc, st.quote, () => { st.quote = null; patchComposer(); el.input.focus(); }));
+    for (const f of st.files) chips.push(V.buildFileChip(doc, f, () => { st.files = st.files.filter((x) => x !== f); patchComposer(); el.input.focus(); }));
+    chips.push(V.buildPageChip(doc, { title: st.tab && st.tab.title, readable: !!(st.tab && st.tab.readable), on: st.withText }, () => { st.withText = !st.withText; patchComposer(); }));
+    el.chips.replaceChildren(...chips);
+  }
   el.chips.hidden = false;
   el.lead.replaceChildren(V.buildSendsNote(doc, st.tab, st.withText, !!st.quote, { screenshots: st.files.filter((f) => f.capture).length, action: st.action }));
   el.msg.textContent = st.error || '';

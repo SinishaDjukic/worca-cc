@@ -30,7 +30,7 @@ export const SIDEBAR_CLASSES = Object.freeze([
   'ask-input', 'ask-composer-msg', 'ask-composer-row', 'ask-composer-spacer', 'ask-send', 'ask-stop',
   'wx-app', 'wx-select', 'wx-page-chip', 'wx-sends', 'wx-card', 'wx-card-t', 'wx-card-k', 'wx-state', 'wx-state-t', 'wx-state-k', 'wx-code',
   'wx-state-actions', 'wx-state-body', 'wx-settings', 'wf-disc', 'wf-disc-body', 'field', 'hint', 'wx-settings-body', 'wx-settings-row',
-  'btn-mini', 'ask-icon-btn', 'chat-head-btn',
+  'btn-mini', 'ask-icon-btn', 'chat-head-btn', 'chat-new-btn',
   // Ask's composer controls and popovers (the sidebar's own composer, D-composer). Emitted but unlisted because no rule
   // targets them on their own (they are styled through their parent): ask-model-btn-label, ask-scope-item,
   // ask-effort-row, ask-effort-item, ask-pane-back.
@@ -172,6 +172,18 @@ export function threadOptions(list, openId) {
  *  file and to the button the Ask panel renders). */
 export const NEW_CHAT_ICON_PATH = ICON.plus;
 
+/** ask-panel.mjs newChatButton: "+ New chat", a labelled ghost button (style.css .ask-icon-btn.chat-new-btn) with a
+ *  decorative plus; the visible label is its name. The markup test pins it to the button the Ask panel renders. */
+export function buildNewChatButton(doc, className, onClick) {
+  const b = make(doc, 'button', `ask-icon-btn chat-new-btn ${className}`);
+  b.type = 'button';
+  b.setAttribute('data-ask-new-btn', '');
+  b.appendChild(svgIcon(doc, NEW_CHAT_ICON_PATH, 14, 2));
+  b.appendChild(make(doc, 'span', null, 'New chat'));
+  b.addEventListener('click', onClick);
+  return b;
+}
+
 /** ask-panel.mjs iconButton (:432), with its svgIcon defaults (17px, stroke 1.9). */
 export function buildIconButton(doc, className, title, d, onClick) {
   const b = make(doc, 'button', className);
@@ -190,14 +202,16 @@ export const ANY_PROJECT_TITLE = 'Worca picks the project from your message';
  * What the picker shows, from the lists' load state and the chat's scope. Pure.
  * → {kind:'loading'|'error', pinned, label} | {kind:'empty'} | {kind:'select', value, pinned, label, projects:[{value,label}], workspaces:[…]}
  * A pinned scope the lists lack (a removed project, or a Worca with none) is still listed, so a chat's pin always shows;
- * while the lists load or fail, the pin is labelled by its raw key.
+ * while the lists load or fail, the pin is labelled by its name from `names` (the last good lists, the thread's context
+ * chips: Map 'p:<key>' | 'w:<id>' -> name), else by its raw key.
  */
-export function scopeModel({ status, projects = [], workspaces = [], scope = null }) {
+export function scopeModel({ status, projects = [], workspaces = [], scope = null, names = null }) {
   const pin = scope && scope.pinned ? (scope.workspaceId ? `w:${scope.workspaceId}` : scope.projectKey ? `p:${scope.projectKey}` : null) : null;
-  if (status === 'loading' || status === 'error') return { kind: status, pinned: !!pin, label: pin ? pin.slice(2) : null };
+  const nameOf = (v) => (names && names.get(v)) || v.slice(2);
+  if (status === 'loading' || status === 'error') return { kind: status, pinned: !!pin, label: pin ? nameOf(pin) : null };
   const P = projects.map((p) => ({ value: `p:${p.key}`, label: p.name || p.key }));
   const W = workspaces.map((w) => ({ value: `w:${w.id}`, label: w.name || w.id }));
-  if (pin && ![...P, ...W].some((o) => o.value === pin)) (pin.startsWith('w:') ? W : P).unshift({ value: pin, label: pin.slice(2) });
+  if (pin && ![...P, ...W].some((o) => o.value === pin)) (pin.startsWith('w:') ? W : P).unshift({ value: pin, label: nameOf(pin) });
   if (!P.length && !W.length) return { kind: 'empty' };
   const hit = pin && [...P, ...W].find((o) => o.value === pin);
   return { kind: 'select', value: pin || 'auto', pinned: !!pin, label: hit ? hit.label : null, projects: P, workspaces: W };

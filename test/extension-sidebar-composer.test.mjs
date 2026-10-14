@@ -292,3 +292,112 @@ test('settings: the paired head reveals Settings; the Pinpoint option is stored'
   await h.flush();
   assert.equal(h.store['worca.pinpointOnSelect'], true);
 });
+
+// ---- review leftovers (run 6680f4ff impl-review cycles 1/2) ------------------------------------------------------
+const uncaught = (h) => { const errs = []; h.win.addEventListener('error', (e) => errs.push(e.error || e.message)); return errs; };
+
+test('effort: with an empty model catalog (no pick), choosing an effort does not throw and stores nothing', async () => {
+  const { route } = rig((p) => (p === '/api/ask/models' ? ok({ models: [], efforts: [] }) : null));
+  const h = await bootSidebar({ storage: STORE, route });
+  const errs = uncaught(h);
+  await h.click(h.$('.ask-model-btn'));
+  await h.click(h.$('.ask-pop-model [data-ask-effort-row]'));
+  await h.click(h.$$('.ask-pop-model .ask-effort-item')[0]);
+  assert.deepEqual(errs, []);
+  assert.equal(h.store['worca.askPick'], undefined);
+  assert.equal(h.$('.ask-pop-model'), null, 'the popover closes');
+});
+
+test('attach: an over-limit message is refused BEFORE a new thread is created (no empty thread left behind)', async () => {
+  const { route, posts } = rig();
+  const h = await bootSidebar({ storage: STORE, route });
+  await pickFiles(h, Array.from({ length: 8 }, (_, i) => new h.win.File(['x'], `n${i}.md`)));   // no page yet: 8 fit
+  assert.equal(fileChips(h).length, 8);
+  await deliverTab(h, TAB);                                                                    // page-context.md makes 9
+  const input = h.$('textarea.ask-input');
+  input.value = 'too much';
+  input.dispatchEvent(new h.win.Event('input', { bubbles: true }));
+  await h.click(h.$('.ask-send'));
+  assert.ok(!h.calls.some((c) => c.startsWith('POST') && c.includes('/api/ask/threads')), h.calls.join('\n'));
+  assert.equal(posts.length, 0);
+  assert.match(h.$('.ask-composer-msg').textContent, /at most 8 attachments/);
+  assert.equal(h.$('textarea.ask-input').value, 'too much', 'the draft stays');
+  assert.equal(h.$('.ask-send').hidden, false, 'not stuck posting');
+});
+
+test('running Action: the match cache honours its TTL on the same origin, and is reset by a re-pair', async () => {
+  const action = { url: 'http://localhost:5173', projectKey: 'acme-web', workspaceId: null, runId: 'r1', runTitle: 'Fix checkout' };
+  let matches = 0;
+  const { route } = rig((p, o, m) => {
+    if (p === MATCH) { matches += 1; return ok({ match: action }); }
+    if (p === '/api/extension/pair' && m === 'POST') return ok({ requestId: 'req1', code: '123456', pollKey: 'pk', expiresAt: 0 });
+    if (p === '/api/extension/pair/req1') return ok({ status: 'approved', token: 'tok2', id: 'ext_2' });
+    return null;
+  });
+  const h = await bootSidebar({ storage: STORE, route });
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  try {
+    await deliverTab(h, { type: 'tab', tabId: 7, readable: true, title: 'Cart', url: 'http://localhost:5173/cart' });
+    assert.equal(matches, 1);
+    await deliverTab(h, { type: 'tab', tabId: 7, readable: true, title: 'Cart 2', url: 'http://localhost:5173/cart?2' });
+    assert.equal(matches, 1, 'fresh: cached');
+    now += 31_000;
+    await deliverTab(h, { type: 'tab', tabId: 7, readable: true, title: 'Cart 3', url: 'http://localhost:5173/cart?3' });
+    assert.equal(matches, 2, 'same origin, but past the TTL: asked again');
+    assert.match(h.$('.wx-sends').textContent, /the running worca run it belongs to/, 'the match stays meanwhile');
+    // Saving an address forgets the pairing; pairing again (a fresh token) must not reuse the old Worca's answer.
+    await h.click(h.$('.chat-head [data-wx-settings-btn]'));
+    const addr = h.doc.getElementById('wx-base-url');
+    addr.value = 'http://127.0.0.1:4889';
+    await h.click(addr.parentNode.querySelector('button'));
+    await h.click([...h.$$('.wx-state-actions button')].find((b) => b.textContent === 'Connect'));
+    await h.tick(1500);
+    assert.ok(h.$('textarea.ask-input'), 'paired again');
+    assert.equal(matches, 3, 're-paired: the cache was reset');
+  } finally { Date.now = realNow; }
+});
+
+test('a chip\'s remove button keeps keyboard focus across composer patches; an open context popover is not rebuilt', async () => {
+  const snap = SNAP(TID);
+  snap.thread.totals = { costUsd: 0.42, ctx: 120400, ctxWindow: 1000000, turns: 1 };
+  const { route } = rig((p, o, m) => (p === `/api/ask/threads/${TID}` && m === 'GET' ? ok(snap) : null), { threads: [{ id: TID, title: 'A' }] });
+  const h = await bootSidebar({ storage: STORE, route });
+  await h.change(h.$('.chat-head select[aria-label="Chat"]'), TID);
+  await pickFiles(h, [new h.win.File(['x'], 'shot.png', { type: 'image/png' })]);
+  const x = h.$('.ask-chip button[aria-label="Remove shot.png"]');
+  x.focus();
+  await h.fromBackground({ type: 'notice', text: 'a streaming frame repaints the composer' });
+  assert.equal(h.$('.ask-chip button[aria-label="Remove shot.png"]'), x, 'the same chip node');
+  assert.equal(h.doc.activeElement, x, 'focus stays on ×');
+  await h.click(h.$('.ask-ctx-ring'));
+  const stat = h.$('.ask-pop-ctx .ask-ctx-stat');
+  await h.fromBackground({ type: 'notice', text: 'another frame' });
+  assert.equal(h.$('.ask-pop-ctx .ask-ctx-stat'), stat, 'the context popover is not rebuilt when its figures did not change');
+});
+
+test('scope: a pinned workspace shows its name (not its raw id) while projects load or fail', async () => {
+  const snap = SNAP(TID);
+  snap.thread.context = { pinned: true, workspaceId: 'ws_1' };
+  snap.thread.contexts = [{ kind: 'workspace', id: 'ws_1', label: 'ACME platform', pinned: true }];
+  const { route } = rig((p, o, m) => (p === '/api/workspaces' ? ok({ error: 'boom' }, 500) : p === `/api/ask/threads/${TID}` && m === 'GET' ? ok(snap) : null), { threads: [{ id: TID, title: 'A' }] });
+  const h = await bootSidebar({ storage: STORE, route });
+  await h.change(h.$('.chat-head select[aria-label="Chat"]'), TID);
+  assert.equal(h.$('.ask-scope-label').textContent, 'ACME platform', 'from the thread snapshot');
+  assert.equal(h.$('.ask-scope-btn').title, 'This chat is pinned to ACME platform');
+});
+
+test('scope: the last good list names a pin while a later reload fails (a reconnect re-reads the lists)', async () => {
+  let fail = false;
+  const { route } = rig((p) => (fail && p === '/api/projects' ? ok({ error: 'boom' }, 500) : null));
+  const h = await bootSidebar({ storage: STORE, route });
+  await h.click(h.$('.ask-scope-btn'));
+  await h.click([...h.$$('.ask-pop-scope .ask-scope-item')].find((x) => x.textContent === 'ACME Web'));
+  assert.equal(h.$('.ask-scope-label').textContent, 'ACME Web');
+  fail = true;
+  h.sockets.at(-1).onclose({ code: 1006 });                                        // the socket drops: probe → enterPaired
+  await h.tick(1500);
+  assert.ok(h.calls.filter((c) => c.includes('/api/projects')).length >= 2, 'the lists were re-read');
+  assert.equal(h.$('.ask-scope-label').textContent, 'ACME Web');
+});

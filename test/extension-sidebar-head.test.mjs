@@ -11,15 +11,18 @@ const PROJECTS = [{ key: 'acme-api', name: 'ACME API' }, { key: 'acme-web', name
 const WORKSPACES = [{ id: 'ws_1', name: 'ACME platform' }];
 const TID = 'askt_00000001';
 
-test('the head keeps the chat list and adds worca\'s New chat icon button; it opens an empty chat, the draft stays', async () => {
+test('the head keeps the chat list and adds worca\'s labelled "+ New chat" button next to it; it opens an empty chat, the draft stays', async () => {
   const h = await bootSidebar({ storage: STORE, route: pairedRoutes((p) => (p === `/api/ask/threads/${TID}` ? ok(SNAP(TID)) : null), { threads: [{ id: TID, title: 'Rate limits' }] }) });
   const chats = h.$('.chat-head select[aria-label="Chat"]');
   assert.ok(chats, 'the chat list stays');
-  const btn = h.$('.chat-head button[aria-label="New chat"]');
+  const btn = h.$('.chat-head button[data-ask-new-btn]');
   assert.ok(btn, 'a New chat button');
-  assert.equal(btn.className, 'ask-icon-btn chat-head-btn');
-  assert.equal(btn.title, 'New chat');
+  assert.equal(btn.className, 'ask-icon-btn chat-new-btn chat-head-btn');
+  assert.equal(btn.textContent, 'New chat', 'a labelled button, not an icon');
+  assert.equal(btn.getAttribute('aria-label'), null, 'the visible label is its name');
+  assert.equal(btn.querySelector('svg').getAttribute('aria-hidden'), 'true');
   assert.equal(btn.querySelector('svg path').getAttribute('d'), 'M12 5v14M5 12h14');
+  assert.equal(chats.nextElementSibling, btn, 'the chat list sits right next to it');
   await h.change(chats, TID);
   assert.equal(h.$$('.ask-msg').length, 1, 'the chat loaded');
   const input = h.$('textarea.ask-input');
@@ -29,6 +32,12 @@ test('the head keeps the chat list and adds worca\'s New chat icon button; it op
   assert.equal(h.$$('.ask-msg').length, 0, 'an empty transcript');
   assert.equal(chats.value, '', 'no chat selected');
   assert.equal(h.$('textarea.ask-input').value, 'half a question', 'the draft stays');
+});
+
+test('every request the sidebar makes names the extension in X-Worca-Extension (no trailing slash)', async () => {
+  const h = await bootSidebar({ storage: STORE, route: pairedRoutes() });
+  assert.ok(h.headers.length >= 5, 'hello, status, models, threads, lists');
+  for (const hd of h.headers) assert.equal(hd['X-Worca-Extension'], 'chrome-extension://wx-test');
 });
 
 // The chat scope is Ask's composer pill + popover (it replaced the head's project picker).

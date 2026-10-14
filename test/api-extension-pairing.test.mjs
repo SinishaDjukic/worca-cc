@@ -91,6 +91,33 @@ test('preflight from an extension origin: exact ACAO, Vary: Origin, never creden
   assert.equal(r.headers['access-control-allow-credentials'], undefined);
   const bad = await call('OPTIONS', '/api/settings', { origin: CHROME, headers: { 'access-control-request-method': 'GET' } });
   assert.equal(bad.status, 403);
+  const x = await call('OPTIONS', '/api/extension/hello', { origin: CHROME, headers: { 'access-control-request-method': 'GET', 'access-control-request-headers': 'x-worca-extension' } });
+  assert.equal(x.status, 204);
+  assert.match(String(x.headers['access-control-allow-headers']), /\bx-worca-extension\b/);
+});
+
+// The sidebar opened on the tab showing Worca: activeTab grants the extension that origin, and Chrome then sends its
+// GETs with no Origin. X-Worca-Extension names it, and the same rules hold (hello, token routes, pairing poll).
+test('no Origin + X-Worca-Extension: hello, the token routes and the pairing poll work as for an Origin; a mismatch is refused', async () => {
+  const xh = (o = CHROME) => ({ 'x-worca-extension': o });
+  const h = await call('GET', '/api/extension/hello', { headers: xh() });
+  assert.deepEqual([h.status, h.body], [200, { worca: true }]);
+  assert.equal((await call('GET', '/api/extension/hello')).body.code, 'extension-origin', 'no Origin, no header: unchanged');
+  const r = await call('POST', '/api/extension/pair', { origin: CHROME_B, body: { name: 'Worca for Chrome', browser: 'chrome' } });
+  assert.equal(r.status, 201);
+  assert.equal((await call('POST', `/api/extension/pair/${r.body.requestId}/approve`)).status, 200);
+  const got = await call('GET', `/api/extension/pair/${r.body.requestId}`, { headers: { ...xh(CHROME_B), 'x-worca-pair-poll': r.body.pollKey } });
+  assert.equal(got.body.status, 'approved', 'the poll is bound to the named origin');
+  const { token } = got.body;
+  const ok = await call('GET', '/api/ask/threads', { token, headers: xh(CHROME_B) });
+  assert.equal(ok.status, 200);
+  assert.ok(Array.isArray(ok.body.threads));
+  assert.equal((await call('GET', '/api/ask/threads', { headers: xh(CHROME_B) })).body.code, 'extension-unpaired');
+  assert.equal((await call('GET', '/api/ask/threads', { token, headers: xh(CHROME) })).status, 401, 'the token is bound to its origin');
+  assert.equal((await call('GET', '/api/settings', { token, headers: xh(CHROME_B) })).body.code, 'extension-route');
+  const mismatch = await call('GET', '/api/ask/threads', { origin: CHROME, token, headers: xh(CHROME_B) });
+  assert.deepEqual([mismatch.status, mismatch.body.code], [403, 'extension-origin']);
+  assert.equal(mismatch.headers['access-control-allow-origin'], undefined);
 });
 
 test('pair → token reaches the allowlist only; cards, commands, HEAD refused; missing/foreign token is 401', async () => {

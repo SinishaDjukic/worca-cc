@@ -8,7 +8,7 @@ let seq = 0;
 const live = { h: null };
 // ext-api.mjs binds `api` ONCE per process, so this one object stays; each harness swaps what it delegates to.
 globalThis.chrome = {
-  runtime: { id: 'wx-test', connect: () => live.h.connect() },
+  runtime: { id: 'wx-test', getURL: (p = '') => `chrome-extension://wx-test/${p}`, connect: () => live.h.connect() },
   windows: { getCurrent: async () => ({ id: 1 }) },
   tabs: { create: (o) => { live.h.tabsCreated.push(o); return Promise.resolve({ id: 99 }); } },
   commands: { getAll: async () => live.h.commands },
@@ -37,7 +37,7 @@ export async function bootSidebar({ storage = {}, route = () => null, commands =
   const dom = new JSDOM('<!doctype html><html lang="en" data-theme="system"><body><div id="app" class="wx-app"></div></body></html>', { url: 'chrome-extension://wx-test/sidebar.html' });
   const w = dom.window;
   const h = {
-    dom, win: w, doc: w.document, store: { ...storage }, posted: [], calls: [], tabsCreated: [], sockets: [], route, commands, bgListeners: [],
+    dom, win: w, doc: w.document, store: { ...storage }, posted: [], calls: [], headers: [], tabsCreated: [], sockets: [], route, commands, bgListeners: [],
     localGet(keys) {
       const out = {};
       for (const k of keys == null ? Object.keys(h.store) : [].concat(keys)) if (k in h.store) out[k] = h.store[k];
@@ -73,6 +73,7 @@ export async function bootSidebar({ storage = {}, route = () => null, commands =
   globalThis.fetch = async (url, opts = {}) => {
     const method = (opts.method || 'GET').toUpperCase();
     const u = new URL(url);
+    h.headers.push(opts.headers || {});
     h.calls.push(`${method} ${u.origin}${u.pathname}${u.search}${opts.body ? ` ${opts.body}` : ''}`);
     const r = h.route(`${u.pathname}${u.search}`, opts, method, u);
     if (r == null || r === OFFLINE) throw new TypeError('fetch failed');

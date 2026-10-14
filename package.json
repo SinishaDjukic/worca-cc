@@ -1,6 +1,6 @@
 {
   "name": "@worca/app",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Worca turns a task into reviewed, merge-ready work. A deterministic multi-agent pipeline that plans, implements and reviews in isolated git worktrees, with quality gates, budgets and a human in the loop. Web UI, CLI and chat.",
   "license": "MIT",
   "author": "Sinisha Djukic",
@@ -78,6 +78,7 @@
     "test:live": "node --disable-warning=ExperimentalWarning test/live/run.mjs",
     "ext:build": "node tools/build-extension.mjs",
     "ext:zip": "node tools/build-extension.mjs --zip",
+    "ext:try": "node tools/try-extension.mjs",
     "ext:lint:firefox": "node tools/build-extension.mjs --browser firefox && web-ext lint --source-dir extension/dist/firefox",
     "e2e:extension": "node tools/build-extension.mjs --test --browser chrome && playwright test -c e2e/extension/playwright.config.mjs",
     "e2e:extension:update-linux": "docker run --rm --platform linux/amd64 -v worca-e2e-node-modules:/nm mcr.microsoft.com/playwright:v1.56.0-noble chown \"$(id -u):$(id -g)\" /nm && docker run --rm --platform linux/amd64 --ipc=host --user \"$(id -u):$(id -g)\" -e HOME=/tmp -v \"$PWD\":/work -v worca-e2e-node-modules:/work/node_modules -w /work mcr.microsoft.com/playwright:v1.56.0-noble bash -lc \"npm ci && npm run e2e:extension -- --update-snapshots\"",

@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildOne } from '../tools/build-extension.mjs';
+import { spawnSync } from 'node:child_process';
+import { buildOne, defaultBaseUrlFromEnv } from '../tools/build-extension.mjs';
 
 test('production builds (chrome, edge, firefox) contain no test hooks', async () => {
   const dist = mkdtempSync(join(tmpdir(), 'wx-build-'));
@@ -43,4 +44,48 @@ test('every bundle loads in Chrome: no Unicode noncharacters (the content script
       }
     }
   } finally { rmSync(dist, { recursive: true, force: true }); }
+});
+
+// Build-time default Worca address (docs/browser-extension.md "Testing against another Worca"): WORCA_EXT_PORT or
+// WORCA_EXT_BASE_URL (wins), loopback http only, bundled through esbuild define; --zip refuses while either is set.
+test('defaultBaseUrlFromEnv: unset → null; a port → 127.0.0.1; a URL wins and is normalised; invalid values throw', () => {
+  assert.equal(defaultBaseUrlFromEnv({}), null);
+  assert.equal(defaultBaseUrlFromEnv({ WORCA_EXT_PORT: '', WORCA_EXT_BASE_URL: '' }), null);
+  assert.equal(defaultBaseUrlFromEnv({ WORCA_EXT_PORT: '4999' }), 'http://127.0.0.1:4999');
+  assert.equal(defaultBaseUrlFromEnv({ WORCA_EXT_BASE_URL: 'http://localhost:5001/' }), 'http://localhost:5001');
+  assert.equal(defaultBaseUrlFromEnv({ WORCA_EXT_PORT: '4999', WORCA_EXT_BASE_URL: 'http://localhost:5001' }), 'http://localhost:5001');
+  for (const port of ['0', '65536', '49x', '-1', '4999.5', 'http://127.0.0.1:4999']) {
+    assert.throws(() => defaultBaseUrlFromEnv({ WORCA_EXT_PORT: port }), /WORCA_EXT_PORT/, port);
+  }
+  for (const url of ['https://127.0.0.1:4999', 'http://worca.example.com:4317', 'http://192.168.1.5:4317', 'nonsense']) {
+    assert.throws(() => defaultBaseUrlFromEnv({ WORCA_EXT_BASE_URL: url }), /WORCA_EXT_BASE_URL.*127\.0\.0\.1.*localhost/, url);
+  }
+});
+
+test('the bundled default: http://127.0.0.1:4317 without the variables, the given address with them', async () => {
+  const dist = mkdtempSync(join(tmpdir(), 'wx-build-'));
+  try {
+    const plain = await buildOne('chrome', { dist, env: {} });
+    for (const f of ['background.js', 'sidebar.js']) {
+      const js = readFileSync(join(plain.out, f), 'utf8');
+      assert.match(js, /http:\/\/127\.0\.0\.1:4317/, f);
+      assert.doesNotMatch(js, /__WORCA_EXT_DEFAULT_BASE_URL__/, `${f}: the define is replaced`);
+    }
+    const custom = await buildOne('chrome', { dist, env: { WORCA_EXT_PORT: '4999' } });
+    for (const f of ['background.js', 'sidebar.js']) assert.match(readFileSync(join(custom.out, f), 'utf8'), /http:\/\/127\.0\.0\.1:4999/, f);
+    await assert.rejects(buildOne('chrome', { dist, env: { WORCA_EXT_BASE_URL: 'http://worca.example.com' } }), /WORCA_EXT_BASE_URL/);
+  } finally { rmSync(dist, { recursive: true, force: true }); }
+});
+
+test('the CLI: an invalid address fails the build with a clear message; --zip refuses while either variable is set', () => {
+  const run = (args, env) => spawnSync(process.execPath, ['tools/build-extension.mjs', ...args], { encoding: 'utf8', env: { ...process.env, WORCA_EXT_PORT: '', WORCA_EXT_BASE_URL: '', ...env } });
+  const bad = run(['--browser', 'chrome'], { WORCA_EXT_PORT: 'nope' });
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /WORCA_EXT_PORT/);
+  for (const env of [{ WORCA_EXT_PORT: '4999' }, { WORCA_EXT_BASE_URL: 'http://127.0.0.1:4999' }]) {
+    const z = run(['--zip', '--browser', 'chrome'], env);
+    assert.equal(z.status, 2, JSON.stringify(env));
+    assert.match(z.stderr, /--zip/);
+    assert.doesNotMatch(z.stdout, /built/, 'refused before building');
+  }
 });

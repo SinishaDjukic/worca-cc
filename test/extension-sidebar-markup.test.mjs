@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
-import { buildQuoteChip, buildRow, buildComposer, buildIconButton, buildFileChip, buildDropOverlay, SEND_ICON_PATH, NEW_CHAT_ICON_PATH, ICON } from '../extension/src/sidebar/sidebar-view.mjs';
+import { buildQuoteChip, buildRow, buildComposer, buildNewChatButton, buildFileChip, buildDropOverlay, SEND_ICON_PATH, NEW_CHAT_ICON_PATH, ICON } from '../extension/src/sidebar/sidebar-view.mjs';
 import { ATTACH_ACCEPT } from '../ui/public/attach-files.mjs';
 import { formatQuotedMessage } from '../ui/public/pinpoint-model.mjs';
 
@@ -62,13 +62,14 @@ test('the quote chip has the Ask panel quote chip skeleton', async () => {
   assert.deepEqual(skeleton(buildQuoteChip(h.doc, { text: 'token bucket', src: 'docs.example.com' }, () => {})), skeleton(ref));
 });
 
-test('the head\'s New chat button is the Chat head\'s: classes, label, glyph (ask-panel.mjs ICONS.plus)', async () => {
+test('the head\'s New chat button is the Chat head\'s (ask-panel.mjs newChatButton): classes, label, glyph', async () => {
   const h = await loaded();
   const ref = h.doc.querySelector('.chat-head [data-ask-new-btn]');
   assert.ok(ref, 'the Ask panel rendered its New chat button');
-  const mine = buildIconButton(h.doc, 'ask-icon-btn chat-head-btn', 'New chat', NEW_CHAT_ICON_PATH, () => {});
-  const attrs = (b) => ({ cls: b.className, title: b.title, label: b.getAttribute('aria-label'), type: b.type, skel: skeleton(b),
-    svg: ['width', 'height', 'viewBox', 'stroke-width'].map((a) => b.querySelector('svg').getAttribute(a)), d: [...b.querySelectorAll('path')].map((p) => p.getAttribute('d')) });
+  const mine = buildNewChatButton(h.doc, 'chat-head-btn', () => {});
+  const attrs = (b) => ({ cls: b.className, title: b.title, label: b.getAttribute('aria-label'), type: b.type, skel: skeleton(b), text: b.textContent,
+    attrs: [...b.attributes].map((a) => a.name).sort(),
+    svg: [...b.querySelector('svg').attributes].map((a) => `${a.name}=${a.value}`).sort(), d: [...b.querySelectorAll('path')].map((p) => p.getAttribute('d')) });
   assert.deepEqual(attrs(mine), attrs(ref));
   assert.equal(/\bplus: '([^']+)'/.exec(readFileSync('ui/public/ask-panel.mjs', 'utf8'))[1], NEW_CHAT_ICON_PATH);
 });

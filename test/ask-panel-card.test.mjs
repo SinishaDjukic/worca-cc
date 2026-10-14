@@ -639,7 +639,7 @@ test('workflow card: openComposer receives the workflowId; dropping the card (ne
   assert.deepEqual(opened, ['wf_x']);
   const graphObservers = ctx.resizeObservers.filter((o) => o.targets.some((t) => t.classList && t.classList.contains('ask-wfcard-graph')));
   assert.equal(graphObservers.length, 1, 'mountStaticGraph observed the graph host');
-  ctx.doc.querySelector('[data-ask-new-btn]').click();
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
   ctx.flush();
   assert.ok(graphObservers[0].disconnected, 'newThread pruned the card and destroyed the mount');
 });

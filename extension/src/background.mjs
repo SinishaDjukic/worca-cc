@@ -8,7 +8,7 @@ import { COMMANDS } from './manifest.mjs';
 import { cropPlan } from './capture-geometry.mjs';
 import { sanitizeCaptureMeta } from './page-context.mjs';
 import { bytesToBase64 } from '../../ui/public/attach-files.mjs';
-import { createWorcaClient, DEFAULT_BASE_URL } from './worca-client.mjs';
+import { createWorcaClient, DEFAULT_BASE_URL, selfOriginOf } from './worca-client.mjs';
 import { servePinpointPort } from './pinpoint-proxy.mjs';
 import { clipQuote } from '../../ui/public/pinpoint-model.mjs';
 
@@ -28,7 +28,7 @@ const getConfig = async () => {
   const s = await api.storage.local.get([STORAGE_KEYS.baseUrl, STORAGE_KEYS.token]);
   return { baseUrl: s[STORAGE_KEYS.baseUrl] || DEFAULT_BASE_URL, token: s[STORAGE_KEYS.token] || null };
 };
-const client = createWorcaClient({ fetch: (u, o) => fetch(u, o), getConfig });
+const client = createWorcaClient({ fetch: (u, o) => fetch(u, o), getConfig, selfOrigin: selfOriginOf(api.runtime) });
 const hostOf = (u) => { try { return new URL(u).hostname; } catch { return ''; } };
 const toSidebar = (windowId, m) => { try { sidebars.get(windowId)?.postMessage(m); } catch { /* closed */ } };
 const toContent = (tabId, m) => { try { const p = contents.get(tabId); if (!p) return false; p.postMessage(m); return true; } catch { return false; } };

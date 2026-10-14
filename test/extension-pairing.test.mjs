@@ -68,6 +68,46 @@ test('decide: preflight only for allowlisted routes; token required on token rou
   assert.equal(head.code, 'extension-route');
 });
 
+// Chrome drops Origin from an extension's GET to a host it holds a grant for (activeTab on Worca's own tab): the
+// extension's X-Worca-Extension header then names it, with exactly the rules an Origin gets.
+test('decide: no Origin + X-Worca-Extension is decided as that extension origin (allowlist, token, Host, remote mode)', () => {
+  const verify = (o, t) => (o === CHROME && t === `${TOKEN_PREFIX}good` ? { id: 'ext_1' } : null);
+  const opts = { remoteMode: false, verify };
+  const x = (h = {}) => ({ 'x-worca-extension': CHROME, ...h });
+  assert.deepEqual(decideExtensionRequest(req('GET', '/api/extension/hello', x()), opts), { kind: 'allow', origin: CHROME, extension: null });
+  assert.equal(decideExtensionRequest(req('GET', '/api/ask/threads', x()), opts).code, 'extension-unpaired');
+  const ok = decideExtensionRequest(req('GET', '/api/ask/threads', x({ authorization: `Bearer ${TOKEN_PREFIX}good` })), opts);
+  assert.deepEqual([ok.kind, ok.origin, ok.extension.id], ['allow', CHROME, 'ext_1']);
+  assert.equal(decideExtensionRequest(req('GET', '/api/settings', x({ authorization: `Bearer ${TOKEN_PREFIX}good` })), opts).code, 'extension-route');
+  assert.equal(decideExtensionRequest(req('GET', '/api/ask/threads', x({ host: 'evil.example' })), opts).kind, 'pass');
+  assert.equal(decideExtensionRequest(req('GET', '/api/extension/hello', x()), { remoteMode: true, verify }).code, 'extension-remote-mode');
+  // Another extension's token does not open the route for this one.
+  const other = 'chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba';
+  assert.equal(decideExtensionRequest(req('GET', '/api/ask/threads', { 'x-worca-extension': other, authorization: `Bearer ${TOKEN_PREFIX}good` }), opts).code, 'extension-unpaired');
+  // A header that is not an extension origin is no extension at all: S1 decides, as before.
+  assert.equal(decideExtensionRequest(req('GET', '/api/extension/hello', { 'x-worca-extension': 'http://127.0.0.1:4317' }), opts).kind, 'pass');
+});
+
+test('decide: Origin and X-Worca-Extension that disagree are refused, without CORS for either', () => {
+  const verify = () => ({ id: 'ext_1' });
+  const opts = { remoteMode: false, verify };
+  const other = 'chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba';
+  for (const origin of [other, 'http://127.0.0.1:4317', 'https://evil.example']) {
+    const r = decideExtensionRequest(req('GET', '/api/extension/hello', { origin, 'x-worca-extension': CHROME }), opts);
+    assert.deepEqual([r.kind, r.status, r.code, r.origin], ['refuse', 403, 'extension-origin', null], origin);
+  }
+  const same = decideExtensionRequest(req('GET', '/api/extension/hello', { origin: CHROME, 'x-worca-extension': CHROME }), opts);
+  assert.equal(same.kind, 'allow');
+});
+
+test('decide: remote mode answers an allowlisted preflight, so the real request reads its extension-remote-mode refusal', () => {
+  const opts = { remoteMode: true, verify: () => null };
+  const pre = (path, method) => decideExtensionRequest(req('OPTIONS', path, { origin: CHROME, 'access-control-request-method': method, 'access-control-request-headers': 'x-worca-extension' }), opts);
+  assert.equal(pre('/api/extension/hello', 'GET').kind, 'preflight');
+  assert.equal(pre('/api/settings', 'GET').code, 'extension-remote-mode');
+  assert.equal(decideExtensionRequest(req('GET', '/api/extension/hello', { origin: CHROME, 'x-worca-extension': CHROME }), opts).code, 'extension-remote-mode');
+});
+
 test('request → approve → poll delivers the token once; the store keeps only its hash at 0600', () => {
   const { p, file } = store();
   const r = p.request({ origin: CHROME, name: 'Worca for Chrome', browser: 'chrome' });

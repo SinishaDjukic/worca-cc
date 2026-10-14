@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeBaseUrl, createWorcaClient, DEFAULT_BASE_URL } from '../extension/src/worca-client.mjs';
+import { normalizeBaseUrl, createWorcaClient, selfOriginOf, DEFAULT_BASE_URL } from '../extension/src/worca-client.mjs';
 
 test('base URL: http on loopback only, normalised to origin', () => {
   assert.equal(normalizeBaseUrl('http://127.0.0.1:4317/'), 'http://127.0.0.1:4317');
@@ -24,4 +24,20 @@ test('sends the bearer token and never credentials', async () => {
   assert.equal(seen.u, 'http://127.0.0.1:4317/api/projects');
   assert.equal(seen.o.headers.Authorization, 'Bearer wex_abc');
   assert.equal(seen.o.credentials, 'omit');
+});
+test('every call names the extension in X-Worca-Extension (Chrome may send no Origin to Worca\'s own tab)', async () => {
+  const seen = [];
+  const c = createWorcaClient({ fetch: async (u, o) => { seen.push(o.headers); return new Response('{}'); }, getConfig: async () => ({ baseUrl: 'http://127.0.0.1:4317', token: null }), selfOrigin: 'chrome-extension://abcdefghijklmnop' });
+  await c.call('/api/extension/hello', { auth: false });
+  await c.call('/api/ask/threads', { method: 'POST', body: {} });
+  for (const h of seen) assert.equal(h['X-Worca-Extension'], 'chrome-extension://abcdefghijklmnop');
+  const bare = createWorcaClient({ fetch: async (u, o) => { seen.push(o.headers); return new Response('{}'); }, getConfig: async () => ({ baseUrl: 'http://127.0.0.1:4317', token: null }) });
+  await bare.call('/api/extension/hello', { auth: false });
+  assert.equal(seen.at(-1)['X-Worca-Extension'], undefined, 'no runtime, no header');
+});
+test('selfOriginOf: runtime.getURL("") without its trailing slash, or null', () => {
+  assert.equal(selfOriginOf({ getURL: (p) => `chrome-extension://abcdefghijklmnop/${p}` }), 'chrome-extension://abcdefghijklmnop');
+  assert.equal(selfOriginOf({ getURL: (p) => `moz-extension://2f1c9a4e-0d4b-4bb3-9a55-6a1f0c3e7d21/${p}` }), 'moz-extension://2f1c9a4e-0d4b-4bb3-9a55-6a1f0c3e7d21');
+  assert.equal(selfOriginOf(undefined), null);
+  assert.equal(selfOriginOf({}), null);
 });
