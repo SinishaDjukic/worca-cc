@@ -315,7 +315,7 @@ const SCHEMA = {
 // The schedule fields propose_run, preview_schedule and propose_schedule_change share: the user's own
 // words in the CLI's forms, read in the user's timezone by schedule-spec.mjs — never a computed instant.
 const SCHEDULE_WHEN = SCHEMA.s('run ONCE at: "02:00" (its next occurrence), "today 22:00", "tomorrow 02:00", "+90m", "+2h", "2026-09-19 02:00", or ISO 8601 with an offset');
-const SCHEDULE_EVERY = SCHEMA.s('REPEAT: "day 03:30", "3 days 02:00", "weekdays 02:00", "weekends 09:00", "mon,wed,fri 02:00", "2 weeks mon 02:00", "month 1 02:00", "month last 02:00"');
+const SCHEDULE_EVERY = SCHEMA.s('REPEAT: "day 03:30", "3 days 02:00", "weekdays 02:00", "weekends 09:00", "mon,wed,fri 02:00", "2 weeks mon 02:00", "month 1 02:00", "month last 02:00"; several a day: "day 09:00,13:00,17:00", "15m", "2h 08:00-20:00", "30m 09:00-18:00 weekdays" (at least 15 minutes apart)');
 const SCHEDULE_UNTIL = SCHEMA.s('every only: last date, YYYY-MM-DD');
 const SCHEDULE_COUNT = SCHEMA.i('every only: stop after this many runs', 1, 1000);
 const SCHEDULE_OVERLAP = SCHEMA.s('every only, when the previous run is still going: skip (default) | queue | start');

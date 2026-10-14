@@ -328,7 +328,7 @@ import {
 } from '../src/core/notifications.mjs';
 import {
   normalizeRule, nextOccurrence, previewOccurrences, describeRule, parseScheduledFor, localDate,
-  isValidTimeZone, formatInstant, OVERLAP_POLICIES, MISSED_POLICIES,
+  isValidTimeZone, formatInstant, occurrenceStamp, OVERLAP_POLICIES, MISSED_POLICIES,
 } from '../src/shared/schedule/recurrence.mjs';
 import { REASON } from '../src/core/failure-policy.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
@@ -2740,11 +2740,12 @@ async function fireTicket(ticket) {
       Object.assign(body, prev);
     }
   }
-  // Every occurrence of a series needs its own feature branch.
+  // Every occurrence of a series needs its own feature branch: the local date, plus the
+  // time when the series runs several times a day.
   if (ticket.scheduleId && typeof body.featureBranch === 'string' && body.featureBranch.trim()) {
     const s = getSchedule(ticket.scheduleId);
-    const day = (s && s.tz ? localDate(Date.parse(ticket.runAt), s.tz) : ticket.runAt.slice(0, 10)).replace(/-/g, '');
-    body.featureBranch = `${body.featureBranch.trim()}-${day}`;
+    const stamp = s && s.rule && s.tz ? occurrenceStamp(Date.parse(ticket.runAt), s.rule) : ticket.runAt.slice(0, 10).replace(/-/g, '');
+    body.featureBranch = `${body.featureBranch.trim()}-${stamp}`;
   }
   // A "Run now" click names its clicker for this one firing (scheduleVerb records it).
   const runNowBy = RUN_NOW_BY.get(ticket.id) || null;
@@ -3023,7 +3024,7 @@ app.get('/api/schedules/after/:id', async (req, res) => {
 app.get('/api/schedules/:id', (req, res) => {
   const found = findScheduleItem(req.params.id);
   if (!found) return res.status(404).json({ error: 'schedule not found' });
-  const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50 }).reverse() : [];
+  const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50, newestFirst: true }) : [];
   res.json({ ...found, item: found.kind === 'once' ? withAfter(found.item) : found.item, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50, reader: notifReader(req) }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
 });
 

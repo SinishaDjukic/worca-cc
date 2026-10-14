@@ -54,7 +54,9 @@ test('readScheduleFlags refuses every bad timed flag with its own message, throu
   await checkRows([
     { name: 'an unreadable --at', run: () => flagsRefused({ at: 'yesterday' }, /cannot read "yesterday"/) },
     { name: 'an --at in the past', run: () => flagsRefused({ at: '2020-01-01 02:00' }, /^--at: .* is in the past$/) },
-    { name: 'a --cron step the subset cannot express', run: () => flagsRefused({ cron: '*/5 * * * *' }, /use --every/) },
+    { name: 'a --cron step under 15 minutes', run: () => flagsRefused({ cron: '*/5 * * * *' }, /at least 15 minutes apart: every 5 minutes is too often/) },
+    { name: 'a --cron month field the subset cannot express', run: () => flagsRefused({ cron: '0 2 * 6 *' }, /use --every/) },
+    { name: 'an --every under 15 minutes', run: () => flagsRefused({ every: '10m' }, /at least 15 minutes apart/) },
     { name: 'an --every with no pattern and time', run: () => flagsRefused({ every: 'fortnightly' }, /--every/) },
     { name: '--wait on a repeating schedule', run: () => flagsRefused({ every: 'day 02:00', wait: true }, /^--wait needs --at: a repeating schedule is started by the Worca server/) },
     { name: 'two timing flags', run: () => flagsRefused({ at: '02:00', every: 'day 02:00' }, /^use one of --at, --every, --cron, --after \(got: --at, --every\)$/) },

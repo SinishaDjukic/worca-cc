@@ -39,13 +39,17 @@ Create one by adding a time to any run command:
   worca --prompt "<task>" --at "tomorrow 02:00"          Run once, later
   worca --prompt "<task>" --at 02:00 --wait               …and hold this terminal until then
   worca --prompt "<task>" --every "weekdays 02:00"        Repeat
-  worca --prompt "<task>" --cron "0 2 * * 1-5"            Repeat (cron subset)
+  worca --prompt "<task>" --every "15m 09:00-18:00 weekdays"   Repeat during the day
+  worca --prompt "<task>" --cron "*/30 9-17 * * 1-5"      Repeat (cron subset)
   worca --prompt "<task>" --after <id> --source-from-previous   Start when another run ends, on its branch
 
   --at <when>          "02:00" (next), "today 22:00", "tomorrow 02:00", "+90m", "+2h",
                        "2026-09-19 02:00", or ISO 8601 with an offset. Local time unless an offset is given.
   --every <pattern>    "day 03:30", "3 days 02:00", "weekdays 02:00", "weekends 09:00",
-                       "mon,thu 02:00", "2 weeks mon 02:00", "month 1 02:00", "month last 02:00"
+                       "mon,thu 02:00", "2 weeks mon 02:00", "month 1 02:00", "month last 02:00";
+                       several a day: "day 09:00,13:00,17:00", "15m", "2h 08:00-20:00", "30m 09:00-18:00 weekdays".
+                       Runs must be at least 15 minutes apart.
+  --cron "<m h dom mon dow>"   minute/hour: numbers, lists, ranges, */N; days: a day-of-week set or one day-of-month
   --until <date>       Last day a repeating schedule may run (YYYY-MM-DD)
   --count <n>          Stop a repeating schedule after n runs
   --overlap <p>        If the previous run is still going: skip (default) | start | queue

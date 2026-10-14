@@ -6475,6 +6475,9 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .sched-inline > *{flex:1 1 0;min-width:0;}
 .sched-inline > input[type="number"]{flex:0 0 92px;}
 .sched-inline > [hidden]{display:none;}
+.sched-range{margin-top:8px;}
+.sched-range > .sched-between{flex:0 0 auto;display:flex;gap:6px;align-items:center;font-size:13px;color:var(--ink-2);}
+.sched-range > .sched-range-dash{flex:0 0 auto;}
 .sched-card .field-grid-2[hidden],.sched-card .field[hidden]{display:none;}
 .sched-sentence{margin:4px 0 8px;padding:13px 15px;border-radius:var(--r-ctrl);background:var(--violet-wash);
   border:1px solid var(--violet-bg);font-size:14px;line-height:1.45;}

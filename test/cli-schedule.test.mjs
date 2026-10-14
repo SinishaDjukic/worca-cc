@@ -84,6 +84,14 @@ test('--every freezes a --file prompt and creates a repeating schedule', async (
   assert.match(c.stdout, /Every Monday and Thursday at 03:30/);
 });
 
+test('--every with a step and a time range prints the sub-daily sentence', async () => {
+  const r = await run(['--project', proj, '--prompt', 'Poll', '--every', '15m 09:00-18:00 weekdays']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /Scheduled sch_[0-9a-f]{8} — Every 15 minutes, 09:00–18:00, weekdays \(Europe\/Berlin\)/);
+  const c = await run(['--project', proj, '--prompt', 'x', '--cron', '*/30 9-17 * * 1-5']);
+  assert.match(c.stdout, /Every 30 minutes, 09:00–17:30, weekdays/);
+});
+
 test('bad schedule flags fail with exit 2 and a usable message, before anything is written', async () => {
   // Every readScheduleFlags message is pinned in-process (test/cli-verbs-inproc.test.mjs). The
   // spawns left: one of them end to end, and the two guards that live in main() itself.

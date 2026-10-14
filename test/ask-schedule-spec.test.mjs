@@ -62,6 +62,14 @@ test('when / every in the user\'s zone (refusals, policies, Settings defaults) a
       assert.deepEqual(scheduleRequestFields(s), { repeat: { rule: s.rule, overlap: 'skip', maxFailures: 5 } });
       assert.deepEqual(scheduleRequestFields({ kind: 'once', runAt: 'x' }), { scheduledFor: 'x' });
     } },
+    { name: 'every: several times a day, and the 15-minute floor', run: async () => {
+      const s = resolveScheduleSpec({ every: '15m 09:00-18:00 weekdays' }, { nowMs: NOW, timeZone: 'Europe/Berlin' }).schedule;
+      assert.deepEqual(s.rule.step, { minutes: 15, from: '09:00', to: '18:00' });
+      assert.equal(s.sentence, 'Every 15 minutes, 09:00–18:00, weekdays');
+      assert.equal(s.next.length, 3);
+      assert.equal(resolveScheduleSpec({ every: 'day 09:00,13:00,17:00' }, { nowMs: NOW, timeZone: 'UTC' }).schedule.sentence, 'Every day at 09:00, 13:00 and 17:00');
+      assert.match(resolveScheduleSpec({ every: '5m' }, { nowMs: NOW }).errors[0], /^every: Runs must be at least 15 minutes apart/);
+    } },
     { name: 'effectiveTimeZone: a known zone is kept; anything else falls back to this machine\'s', run: async () => {
       assert.equal(effectiveTimeZone('America/New_York'), 'America/New_York');
       const local = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';

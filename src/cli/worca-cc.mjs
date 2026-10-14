@@ -325,8 +325,8 @@ Options:
   --at <when>              Run ONCE, later: "02:00", "tomorrow 02:00", "+90m", "2026-09-19 02:00",
                            or ISO 8601 with an offset. Needs a Worca server up at that time — or --wait
   --wait                   With --at: hold this terminal and start the run here when it is due
-  --every <pattern>        Repeat: "day 03:30", "weekdays 02:00", "mon,thu 02:00", "month 1 02:00"
-  --cron "<m h dom mon dow>"   Repeat (cron subset: fixed time + days of week or one day of month)
+  --every <pattern>        Repeat: "day 03:30", "weekdays 02:00", "day 09:00,17:00", "15m 09:00-18:00 weekdays"
+  --cron "<m h dom mon dow>"   Repeat (cron subset: */N, ranges, lists + days of week or one day of month)
                            More schedule options (--until, --count, --overlap, --max-failures,
                            --if-missed, --grace, --tz): worca schedule help
   --after <id>             Start when another run ends: a run id or a scheduled run id (any unique prefix)
