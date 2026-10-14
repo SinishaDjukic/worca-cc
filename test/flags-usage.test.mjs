@@ -10,6 +10,7 @@ import { FLAGS, FLAG_KEY_RE } from '../src/shared/flags/registry.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SCAN = ['ui/public', 'src'];
+const SCAN_FILES = ['ui/server.mjs'];   // the server checks flagEnabled('…') itself
 const EXT = /\.(mjs|js|html)$/;
 const PATTERNS = [
   /\bdata-flag="([^"]*)"/g,
@@ -43,7 +44,7 @@ function scanFlagUses(files) {
 }
 
 test('every flag key used in code is in the registry, well-formed, and every registry flag is used', () => {
-  const files = SCAN.flatMap((d) => walk(join(ROOT, d)));
+  const files = [...SCAN.flatMap((d) => walk(join(ROOT, d))), ...SCAN_FILES.map((f) => join(ROOT, f))];
   assert.ok(files.length > 200, 'the scan sees the tree');
   const uses = scanFlagUses(files);
   const known = new Set(FLAGS.map((f) => f.key));

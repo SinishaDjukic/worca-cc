@@ -19,6 +19,13 @@ A flag is **not a level** and **not a permission**:
 Flags apply to everyone using this Worca. There are no per-user, per-project, percentage or
 remote flags.
 
+## Flags today
+
+| Key | Stage | What it gates |
+|---|---|---|
+| `flagsDemo` | experimental, default off | A note in Settings › Experimental that proves the system end to end. |
+| `keepAwake` | experimental, default off | Stops the OS sleeping on its idle timer while a run has agents working; the display may still turn off. A run waiting on a question, paused or ended does not count, and nothing is held on a container or hosted worca. The UI server holds one child tied to its pid: `caffeinate -i -w <pid>` on macOS, `systemd-inhibit --what=idle` wrapping `tail --pid <pid>` on Linux, a PowerShell child holding `SetThreadExecutionState(ES_CONTINUOUS \| ES_SYSTEM_REQUIRED)` on Windows. A missing tool logs one warning and never affects a run. |
+
 ## Add a flag
 
 ### 1. The registry entry
