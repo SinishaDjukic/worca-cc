@@ -1355,6 +1355,9 @@ export class GraphOrchestrator extends RunHarness {
       // detached workspace run, the member worktree on a detached single run,
       // today's workDir under legacy.
       projectDir: this.runCwd || this.workDir,
+      // The user's own project folder, whose approvals decide the run checkout's committed `.mcp.json` servers on
+      // Claude (claude-runner.mjs). A workspace run's cwd is the run root, which has no `.mcp.json` of a member.
+      mcpjsonProjectDir: this.isWorkspace ? undefined : this.projectDir,
       runRoot: this.runRoot,
       mcpConfigPath: this.mcpConfigPath,
       mcpServerGrants: this.mcpServerGrants,

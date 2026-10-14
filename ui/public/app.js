@@ -18636,8 +18636,8 @@ function schedulePolicyLine() {
   clearTimeout(policyLineTimer);
   policyLineTimer = setTimeout(() => { void paintPolicyLine(); void paintMcpRuns(); void paintMcpjsonHint(); }, 150);
 }
-// A Codex, Copilot or Cursor run leaves out the repository's .mcp.json servers nobody approved: say so before
-// Start, with the project's Sets tab, where Approve is (src/core/mcpjson-approval.mjs).
+// A run leaves out the repository's .mcp.json servers nobody approved, on every engine: say so before Start, with
+// the project's Sets tab, where Approve is (src/core/mcpjson-approval.mjs).
 let mcpjsonHintSeq = 0;
 async function paintMcpjsonHint() {
   if (!el.engineMcpjsonHint) return;
@@ -18645,7 +18645,7 @@ async function paintMcpjsonHint() {
   const scope = currentRunScopeId();
   const key = scope.startsWith('project:') ? scope.slice('project:'.length) : null;
   let names = [];
-  if (key && state.engine !== 'claude') {
+  if (key) {
     try {
       const r = await fetch(`/api/mcp/projects/${encodeURIComponent(key)}/mcpjson`);
       const d = r.ok ? await safeJson(r) : null;
@@ -18656,7 +18656,7 @@ async function paintMcpjsonHint() {
   el.engineMcpjsonHint.hidden = !names.length;
   if (!names.length) return;
   const link = Object.assign(document.createElement('a'), { href: `#projects/${encodeURIComponent(key)}/mcp`, textContent: `Approve ${names.length === 1 ? 'it' : 'them'} on the project’s Sets tab` });
-  el.engineMcpjsonHint.replaceChildren(`${names.length === 1 ? '1 server' : `${names.length} servers`} from the repository’s .mcp.json won’t attach (${names.join(', ')}). `, link);
+  el.engineMcpjsonHint.replaceChildren(`${names.length === 1 ? '1 server' : `${names.length} servers`} from the repository’s .mcp.json won’t start (${names.join(', ')}). `, link);
 }
 /** The models the run will pick: the Agents accordion's selects, else the legacy per-role config. */
 function selectedRunModels() {

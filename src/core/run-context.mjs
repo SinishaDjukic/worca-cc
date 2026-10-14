@@ -989,9 +989,11 @@ export async function mcpjsonApproval(projectDir, homeDir, onError, { managed = 
  * transformed against the worktree the CLI would load them from, and reach the engine like any other server of the
  * run, through the same engine checks (run-harness.mjs _engineMcpWarnings). A server the real dir
  * already defines (the generated definition wins on Claude too, V3(d)) or a root layer took is left as it is. The
- * rest leave the grant list, and the unapproved ones are named once. Mutates `mcp`.
+ * rest leave the grant list, and the unapproved ones are named once. On Claude (`native`) nothing is attached: the
+ * CLI loads the committed file itself, and the runner names the unapproved servers in disabledMcpjsonServers at
+ * every spawn (claude-runner.mjs), so here they only leave the grant list and are named. Mutates `mcp`.
  */
-async function attachCommittedMcp(mcp, { engine, homeDir, platform, onError, warnings }) {
+async function attachCommittedMcp(mcp, { engine, homeDir, platform, onError, warnings, native = false }) {
   const approvals = new Map();
   const unapproved = [];
   for (const c of mcp.committed) {
@@ -1003,6 +1005,7 @@ async function attachCommittedMcp(mcp, { engine, homeDir, platform, onError, war
       if (verdict === 'unapproved') unapproved.push(c.rawName);
       continue;
     }
+    if (native) continue;
     const { def, warnings: tw } = await transformServer(c.name, c.def, c.dir, platform);
     for (const w of tw) warnings.push(w);
     mcp.servers[c.name] = def;
@@ -1011,7 +1014,7 @@ async function attachCommittedMcp(mcp, { engine, homeDir, platform, onError, war
   }
   if (unapproved.length) {
     warnings.push(
-      `engine ${engine}: MCP servers of the committed .mcp.json that Claude Code has not approved are not attached: ${unapproved.join(', ')}. ` +
+      `engine ${engine}: MCP servers of the committed .mcp.json that Claude Code has not approved are not ${native ? 'started' : 'attached'}: ${unapproved.join(', ')}. ` +
       'Approve them on the project\'s Sets tab or in Claude Code, or name them in `enabledMcpjsonServers` (or set `enableAllProjectMcpServers`) in ~/.claude/settings.json or the project\'s untracked .claude/settings.local.json; an approval in the committed .claude/settings.json does not count.',
     );
   }
@@ -1345,7 +1348,7 @@ export async function assembleRunContext({
     nativeMembers: sorted,                 // §5.5.6: every worktree cwd, a missing real dir included
   });
   for (const w of mcp.warnings) warnings.push(w);
-  if (engine && engine !== 'claude' && mcp.committed.length) await attachCommittedMcp(mcp, { engine, homeDir, platform, onError, warnings });
+  if (mcp.committed.length) await attachCommittedMcp(mcp, { engine: engine || 'claude', homeDir, platform, onError, warnings, native: !engine || engine === 'claude' });
   const merged = Object.keys(mcp.servers);
   // Secrets in these definitions reach the run's agents (mcp-secrets.mjs): with the
   // credential broker on they are left out by default, otherwise named.
