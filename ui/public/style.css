@@ -5919,7 +5919,11 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-queue-item.is-editing{border-color:var(--hover-outline);color:var(--ink);}
 .ask-queue-item.is-editing .ask-queue-text{display:none;}
 .ask-queue-item.is-editing .ask-queue-pen{color:var(--ink);}
-.ask-queue-edit{flex:1 1 auto;min-width:0;max-height:120px;margin:0;padding:2px 0;border:0;outline:0;resize:none;background:transparent;color:inherit;font:inherit;line-height:1.4;overflow-y:auto;}
+.ask-queue-item textarea.ask-queue-edit{flex:1 1 auto;width:auto;min-width:0;min-height:0;height:auto;max-height:120px;margin:0;padding:2px 0;
+  border:0;border-radius:0;outline:0;resize:none;background:transparent;color:inherit;font:inherit;line-height:1.4;overflow-y:auto;}
+/* The card's is-editing border is the focus cue; the field itself stays flat. */
+.ask-queue-item textarea.ask-queue-edit:focus{background:transparent;border-color:transparent;}
+.ask-queue-item textarea.ask-queue-edit:focus-visible{outline:none;}
 .ask-queue-ghost{position:absolute;margin:0;pointer-events:none;animation:ask-queue-out .2s cubic-bezier(.65,.02,.28,1) both;}
 .ask-composer :is(.ask-queue-text,.ask-queue-pen,.ask-queue-x,.ask-queue-resume):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-send:disabled,.ask-send:disabled:hover{opacity:.4;cursor:default;box-shadow:none;}
