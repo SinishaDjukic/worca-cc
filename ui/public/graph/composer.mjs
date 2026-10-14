@@ -35,7 +35,7 @@ export const UNDO_LIMIT = 50;
 export const RESERVED_WORKFLOW_ID = 'wf_default';
 /** Every built-in the server lists and refuses to delete: wf_default + the Memory defragment
  *  workflow. Both open read-only here (Save is Save-a-copy). wf_auto never reaches the composer. */
-export const RESERVED_WORKFLOW_IDS = new Set([RESERVED_WORKFLOW_ID, 'wf_memory_defrag']);
+export const RESERVED_WORKFLOW_IDS = new Set([RESERVED_WORKFLOW_ID, 'wf_memory_defrag', 'wf_shape', 'wf_shape_ux']);
 export const isReservedWorkflowId = (id) => RESERVED_WORKFLOW_IDS.has(id);
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));

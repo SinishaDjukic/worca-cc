@@ -672,6 +672,17 @@ async function attachAndDrive(orch, flags, start) {
   // which the header formatter resolves against the manifest.
   orch.on('question', async (payload) => {
     const { id, kind, questions, issues, recovery, agent } = payload;
+    if (kind === 'plan') {
+      // A plan approval needs a person and is answered in the worca app (shape-it-first D2). Pause, so the hold
+      // stays in the resume point. Deferred one microtask, like abandonAnswer (:608): _ask emits `question`
+      // before it parks pendingQuestion.
+      out(c('yellow', `The plan ${payload.plan?.file || ''} is waiting for approval in the worca app; pausing the run.`));
+      queueMicrotask(() => {
+        if (orch.pauseRequested || !orch.state || orch.state.status !== 'running') return;
+        orch.pause();
+      });
+      return;
+    }
     if (flags.auto || !rl) return; // auto mode resolves internally
     answering = true;
     const ctrl = new AbortController();
@@ -2367,7 +2378,8 @@ async function cmdWorkflow(argv) {
       case 'list': {
         // The built-ins (Default, Memory defragment) are not in the user store, so
         // prepend them — mirrors the server/UI, which always show them first.
-        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(await wf.listWorkflows())];
+        const { shapeFirstEnabled } = await import('../core/shape/gate.mjs');
+        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(shapeFirstEnabled() ? [wf.GRAPH_SHAPE_WORKFLOW] : []), ...(await wf.listWorkflows())];
         for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
         return 0;
       }
@@ -3328,6 +3340,12 @@ async function main() {
     const { assertRunnableWorkflow } = await import('../core/workflows.mjs');
     try { row = await assertRunnableWorkflow(flags.workflow); }
     catch (err) { fail(`${err && err.message ? err.message : String(err)}`); }
+  }
+  if (flags.workflow) {
+    const { isShapeWorkflowId } = await import('../core/shape/run.mjs');
+    if (isShapeWorkflowId(flags.workflow)) {
+      fail(`workflow "${flags.workflow}" is started from the worca app (POST /api/run with shape), not the CLI`);
+    }
   }
   {
     const { validateMemoryScope } = await import('../core/memory-sync.mjs');

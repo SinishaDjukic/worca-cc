@@ -6,7 +6,8 @@
 // Readers are injected so unit tests run without a DB.
 import { listProjects as realListProjects } from '../projects.mjs';
 import { listWorkspaces as realListWorkspaces } from '../workspaces.mjs';
-import { listWorkflows as realListWorkflows, GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW } from '../workflows.mjs';
+import { listWorkflows as realListWorkflows, GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW } from '../workflows.mjs';
+import { shapeFirstEnabled } from '../shape/gate.mjs';
 import { classifyLoops } from '../../shared/graph/loops.mjs';
 import { rankNodes } from '../../shared/graph/layout.mjs';
 import { registryPortsFn } from '../graph/registry-ports.mjs';
@@ -100,7 +101,7 @@ export function shapeWorkflow(tpl, registry = {}) {
 }
 
 /**
- * @param {{listProjects?:Function, listWorkspaces?:Function, listWorkflows?:Function, defaultWorkflow?:object, builtinWorkflows?:object[], loadAgentRegistry?:Function}} [deps]
+ * @param {{listProjects?:Function, listWorkspaces?:Function, listWorkflows?:Function, defaultWorkflow?:object, builtinWorkflows?:object[], loadAgentRegistry?:Function, shapeFirst?:Function}} [deps]
  */
 export function createCatalog({
   listProjects = realListProjects,
@@ -109,6 +110,7 @@ export function createCatalog({
   defaultWorkflow = GRAPH_DEFAULT_WORKFLOW,
   builtinWorkflows = [GRAPH_MEMORY_DEFRAG_WORKFLOW],
   loadAgentRegistry = realLoadAgentRegistry,
+  shapeFirst = shapeFirstEnabled,
 } = {}) {
   async function buildCatalog() {
     const [projects, workspaces, workflows] = await Promise.all([listProjects(), listWorkspaces(), listWorkflows()]);
@@ -117,7 +119,8 @@ export function createCatalog({
     // Same order as GET /api/workflows: the graph default, the other built-ins (Memory
     // defragment — spec §7.2 wants the assistant to see it), then saved rows. wf_auto
     // stays out: it has no graph. shapeWorkflow already derives `steps` + `feedbacks`.
-    const builtins = [defaultWorkflow, ...builtinWorkflows];
+    // Shape it first is listed only while its gate is on.
+    const builtins = [defaultWorkflow, ...builtinWorkflows, ...(shapeFirst() ? [GRAPH_SHAPE_WORKFLOW] : [])];
     const builtinIds = new Set(builtins.map((t) => t.id));
     const templates = [
       ...builtins,
