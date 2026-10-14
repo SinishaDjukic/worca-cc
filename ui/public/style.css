@@ -1523,6 +1523,15 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
   background:var(--panel-wash);color:var(--ink);font-family:var(--mono);font-size:11.5px;
   white-space:pre-wrap;word-break:break-all;}
 .retained-banner a,.merge-back-banner a{color:var(--amber-ink);font-weight:700;}
+/* The worktree notice (worktree-notice.mjs) is this banner: amber for retained work, neutral for a live checkout. */
+.retained-banner[data-kind="checkout"]{border-color:var(--line);background:var(--panel-wash);color:var(--ink);}
+.retained-banner[data-kind="checkout"] h4{color:var(--ink);}
+.retained-banner .wt-actions,.retained-banner .wt-member-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.retained-banner .wt-actions{margin-top:10px;}
+.retained-banner .wt-member-actions{margin-top:6px;}
+.retained-banner .wt-since{font-size:11.5px;}
+.retained-banner .wt-manual{margin-top:10px;}
+.retained-banner .wt-manual summary{cursor:pointer;font-weight:600;}
 .hist-empty{color:var(--ink-3);font-size:13px;padding:22px 4px;text-align:center;}
 
 /* ---------- Started-by filter pills (the Runs list's .runs-people row) ---------- */
@@ -3779,23 +3788,23 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-archive:hover:not([disabled]),.pd-remove:hover:not([disabled]){border-color:var(--red);}
 .hd-archive[disabled],.pd-remove[disabled]{opacity:.55;cursor:not-allowed;}
 /* align-items:flex-start, NOT the default stretch: `.badge.hist-retained-badge`
-   (696) and `.hist-discard` (856) are inline-flex with no width, so a stretching
-   column blows both up to the full body width. Only the two BANNERS want the full
-   row — an unstretched `.cost-banner` renders ~738px inside a 1068px column and
-   its own `.cb-actions{justify-content:flex-end}` then right-aligns short of the
-   edge. */
+   (696) is inline-flex with no width, so a stretching column blows it up to the
+   full body width. Only the BANNERS want the full row (the Discard worktree button
+   lives inside the worktree notice now) — an unstretched `.cost-banner` renders
+   ~738px inside a 1068px column and its own `.cb-actions{justify-content:flex-end}`
+   then right-aligns short of the edge. */
 .hd-banners{display:flex;flex-direction:column;align-items:flex-start;gap:12px;}
 /* Both reused banners carry legacy margins from their old hosts —
    `.retained-banner{margin:0 0 18px}` (714) and `.cost-banner{margin-top:12px}`
    (1505) — which double up with this column's own `gap:12px`. Zero them here
    rather than editing the shared rules. */
 .hd-banners .retained-banner,.hd-banners .cost-banner,.hd-banners .merge-back-banner{align-self:stretch;margin:0;}
-/* NOT `.hd-banners:empty` — the container always holds three template children
-   (badge, banner, discard button), just hidden, so :empty never matches and the
-   top margin would always apply. Key the margin off "has a visible child". */
+/* NOT `.hd-banners:empty` — the container always holds its template children
+   (badge, worktree notice, merge-back banner), just hidden, so :empty never matches
+   and the top margin would always apply. Key the margin off "has a visible child". */
 .hd-banners:has(> :not([hidden])){margin-top:18px;}
-/* .hist-discard's existing rules (856-860) are card-scoped only by position; keep
-   them and let the detail banner button ride them unchanged. */
+/* .hist-discard's existing rules (1661-1665) still style the worktree notice's own
+   Discard worktree button, which lives inside the notice. */
 
 /* Destructive confirm (spec §5.2). The id keeps it out of .btn-primary's way with
    no !important. confirmModal removes the class on close, so it never leaks. */
@@ -4968,17 +4977,16 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-graph .run-flow-wrap{margin:0;}
 
 /* ---------- Running detail: banners ---------- */
-/* align-items:flex-start, NOT the default stretch: `.hist-discard` is an
-   inline-flex button with no width and a stretching column would blow it up to
-   the full body width. Only the two BANNERS want the full row. Same shape as
-   .hd-banners. */
+/* align-items:flex-start, NOT the default stretch, as .hd-banners: only the
+   BANNERS want the full row. The container holds the worktree notice only; its
+   Discard worktree button (`.hist-discard`) lives inside the notice. */
 .rd-banners{display:flex;flex-direction:column;align-items:flex-start;gap:12px;}
 /* Both reused banners carry legacy margins from their old hosts —
    `.retained-banner{margin:0 0 18px}` and `.cost-banner{margin-top:12px}` —
    which double up with this column's own gap. */
 .rd-banners .retained-banner,.rd-banners .cost-banner{align-self:stretch;margin:0;}
-/* NOT `:empty` — the container always holds its two template children, just
-   hidden. Key the margin off "has a visible child", as .hd-banners does. */
+/* NOT `:empty` — the container always holds its template child (the worktree
+   notice), just hidden. Key the margin off "has a visible child", as .hd-banners does. */
 .rd-banners:has(> :not([hidden])){margin-top:18px;}
 
 /* ---------- Running detail: question panel ---------- */

@@ -25,7 +25,7 @@ anything.
 ## Rules
 
 1. **A blocking prompt is never hidden.** The cycle gate, the recovery prompt,
-   the cost-pause banner, the retained-work banner and any clarifying question
+   the cost-pause banner, the worktree notice and any clarifying question
    show at every level. A run that waits on a hidden control is a dead run. A
    blocking prompt may be *reworded* for Simple (the cycle gate is), never
    removed. Recovery instructions (the retained-work git commands) count as part
@@ -166,7 +166,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Card (History-level): status, title, elapsed, cost, Stop, Pause/Resume, open; a strip on a waiting or parked run that opens the run page at its question | S |
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
-| Recovery prompt, cycle gate, cost-pause banner, retained-work banner, merge-back banner (a run on its source branch that could not be fast-forwarded) | all |
+| Recovery prompt, cycle gate, cost-pause banner, worktree notice (retained work or a live checkout; only its Actions tab › link is Advanced), merge-back banner (a run on its source branch that could not be fast-forwarded) | all |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
 | Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
 | Resume menu: Resume at HH:MM (when the limit resets) | A |

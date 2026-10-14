@@ -296,13 +296,14 @@ import {
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
-  prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
+  prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
+  uncommittedPatch } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
-import { archivePipeline, restorePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
+import { archivePipeline, restorePipeline, discardRetainedWorktrees, applyRetainedWork } from '../src/core/pipeline-delete.mjs';
 import {
   listWorkspaces, readWorkspace, checkNewWorkspace, scanMemberProblems,
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
@@ -5946,7 +5947,42 @@ app.post('/api/runs/:id/discard-worktree', async (req, res) => {
   if (liveActive) return res.status(409).json({ error: 'cannot discard a running pipeline worktree' });
 
   try {
-    const report = await discardRetainedWorktrees({
+    // The run lock (checkout.mjs) serialises this with Apply to branch, Check out and Discard of the same run.
+    const report = await withRunLock(id, () => discardRetainedWorktrees({
+      workspaceKey: scope.workspaceId || null,
+      key: scope.workspaceId ? null : (scope.projectKey || null),
+      projectDir: (scope.workspaceId || scope.projectKey) ? null : scope.projectDir,
+      id,
+      by: actorOf(req),
+    }));
+    if (!report) return res.status(404).json({ error: 'pipeline not found' });
+    emitChanged('pipelines-changed', 'updated');
+    res.json({ ok: true, ...report });
+  } catch (e) {
+    if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'SNAPSHOT_FAILED') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
+    res.status(500).json({ error: e && e.message ? e.message : String(e) });
+  }
+});
+
+// Apply to branch (the summary card's worktree notice): commit the work a failed end-of-run commit left in
+// the retained worktree(s), then finish what teardown does after a good commit: merge back, release the
+// worktree, base check (pipeline-delete.mjs applyRetainedWork). 200 { ok, applied, failed, remaining, … }
+// when anything applied or nothing was left; 409 { code: 'COMMIT_FAILED', error: git's message, …report }
+// when every commit failed again (the retained state stays).
+app.post('/api/runs/:id/apply-retained', async (req, res) => {
+  const id = req.params.id;
+  const scope = resolveRunScope(req, res);
+  if (!scope) return;
+  const liveActive = [...runs.values()].some((r) =>
+    (r.pipelineId === id || r.id === id) &&
+    ['running', 'starting', 'created', 'pausing'].includes(String(r.status || '').toLowerCase()));
+  if (liveActive || isFinishingRun(id)) {
+    return res.status(409).json({ error: 'cannot apply the work of a running pipeline', code: 'RUNNING' });
+  }
+  try {
+    const report = await applyRetainedWork({
       workspaceKey: scope.workspaceId || null,
       key: scope.workspaceId ? null : (scope.projectKey || null),
       projectDir: (scope.workspaceId || scope.projectKey) ? null : scope.projectDir,
@@ -5954,11 +5990,13 @@ app.post('/api/runs/:id/discard-worktree', async (req, res) => {
       by: actorOf(req),
     });
     if (!report) return res.status(404).json({ error: 'pipeline not found' });
-    emitChanged('pipelines-changed', 'updated');
-    res.json({ ok: true, ...report });
+    if (report.applied.length || report.failed.length) emitChanged('pipelines-changed', 'updated');
+    if (report.failed.length && !report.applied.length) {
+      return res.status(409).json({ ...report, ok: false, code: 'COMMIT_FAILED', error: report.failed.map((f) => f.message).join('\n') });
+    }
+    res.json(report);
   } catch (e) {
-    if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
-    if (e && e.code === 'SNAPSHOT_FAILED') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message, code: 'RUNNING' });
     if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
@@ -6586,6 +6624,37 @@ app.delete('/api/runs/:id/checkout', async (req, res) => {
     emitChanged('pipelines-changed', 'updated');
     res.json(r);
   } catch (e) { sendCheckoutError(res, e); }
+});
+
+// Get the diff (the summary card's worktree notice): a patch of a checkout's uncommitted changes against the
+// folder's own HEAD, built in a TEMPORARY index (git-info uncommittedPatch). The folder's own index is never
+// touched, so it is offered for a linked folder (the person's own clone) and a checkout left mid-merge
+// alike. ?member=<projectKey> picks a workspace member. 200 text/x-diff attachment | 204 nothing
+// uncommitted | 409 NOT_CHECKED_OUT.
+app.get('/api/runs/:id/checkout/diff', async (req, res) => {
+  const row = runRowForScope(req, res); if (!row) return;
+  const recs = checkoutRecordsFor(row)?.members || [];
+  const member = typeof req.query.member === 'string' ? req.query.member.trim() : '';
+  if (!member && recs.length > 1) return badRequest(res, 'member is required for a workspace run');
+  const rec = member ? recs.find((m) => m.projectKey === member) : recs[0];
+  if (!rec) return res.status(409).json({ error: 'This run is not checked out.', code: 'NOT_CHECKED_OUT' });
+  let tmp = null;
+  try {
+    tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'worca-checkout-diff-'));
+    // Against the folder's own HEAD: the run's branch while the folder is on it. A linked folder can be switched
+    // to another branch and stay linked; a branch base would then hand back the run's commits reversed.
+    const out = await uncommittedPatch(rec.worktreeDir, { base: 'HEAD', outFile: path.join(tmp, 'uncommitted.patch') });
+    if (!out.ok) return res.status(500).json({ error: `git ${out.step} failed: ${out.message}`, code: 'DIFF_FAILED' });
+    if (!out.file) return res.status(204).end();
+    const name = `uncommitted-${String(rec.branch || row.id).replace(/[^a-zA-Z0-9._-]+/g, '-')}.patch`;
+    res.setHeader('Content-Disposition', attachmentDisposition(name));
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('text/x-diff').send(await fsp.readFile(out.file));
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ error: e?.message || String(e) });
+  } finally {
+    if (tmp) await fsp.rm(tmp, { recursive: true, force: true }).catch(() => {});
+  }
 });
 
 app.post('/api/runs/:id/setup', async (req, res) => {
