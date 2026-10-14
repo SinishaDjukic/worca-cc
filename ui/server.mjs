@@ -281,6 +281,9 @@ import {
 import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
+import { cache as readinessEvents, getCachedOrEvaluate, readinessSummary } from '../src/core/repo-readiness/cache.mjs';
+import { readinessEnabled } from '../src/core/repo-readiness/evaluate.mjs';
+import { readinessIgnore } from '../src/core/settings.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
@@ -869,6 +872,10 @@ function emitChanged(type, action) {
 metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.action ? e.action : null));
 policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.action ? e.action : null));
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
+readinessEvents.on('changed', (e) => emitChanged('readiness-changed', e && e.projectKey ? e.projectKey : null));
+// A moved HEAD refreshes a project's readiness (fingerprint-guarded; emits readiness-changed when the verdict moves).
+// Only projects already evaluated: there is no startup sweep.
+projectSyncEvents.on('changed', (e) => { void reevaluateReadiness(e && e.projectKey); });
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -5258,6 +5265,53 @@ app.post('/api/projects/:key/sync', syncRoute(async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;
   return syncProjectAction(res, p, req.body || {});
 }));
+const readinessEngine = (p) => resolveRunEngine({ projectDir: p.path, projectKey: p.key }).engine || 'claude';
+// Agent readiness of one registered project. `refresh` re-evaluates past the cache (and refreshes it). Never throws:
+// an evaluation failure answers null (no chip) rather than a 500.
+async function getReadiness(p, { refresh = false } = {}) {
+  try {
+    return await getCachedOrEvaluate({
+      dir: p.path, projectKey: p.key, timeoutMs: INTERACTIVE_TIMEOUT_MS, force: refresh,
+      ignore: readinessIgnore({ projectDir: p.path, projectKey: p.key }),
+      primaryEngine: readinessEngine(p),
+    });
+  } catch (err) {
+    console.error(`[worca-ui] readiness ${p.key}: ${err && err.message ? err.message : err}`);
+    return null;
+  }
+}
+async function reevaluateReadiness(key) {
+  if (!key || !readinessEnabled() || !readinessSummary(key)) return;
+  try {
+    const p = (await listProjects()).find((x) => x.key === key);
+    if (p && p.exists) await getReadiness(p);
+  } catch { /* best effort: the chip catches up on the next Recheck */ }
+}
+// A project just added: evaluate it in the background (like discoverProject) so its chip is warm and the
+// client can nudge about missing agent instructions. Never throws.
+function evaluateAddedProject(dir) {
+  if (!readinessEnabled()) return Promise.resolve();
+  return (async () => {
+    try {
+      const key = projectKey(dir);
+      const p = (await listProjects()).find((x) => x.key === key || x.path === dir);
+      if (!p || !p.exists) return;
+      const report = await getReadiness(p);
+      if (!report) return;
+      emitChanged('readiness-changed', p.key);
+      const engine = readinessEngine(p);
+      if (report.engines && report.engines[engine] && report.engines[engine].level === 'not-ready') {
+        broadcast({ type: 'readiness-added', projectKey: p.key, name: p.name, engine });
+      }
+    } catch { /* best effort */ }
+  })();
+}
+app.get('/api/projects/:key/readiness', async (req, res) => {
+  if (!readinessEnabled()) return res.json({ disabled: true });
+  const p = await tmProject(req, res); if (!p) return;
+  if (!p.exists) return res.json({ readiness: null });          // missing folder: no chip
+  res.json({ readiness: await getReadiness(p, { refresh: req.query.refresh === '1' }) });
+});
 async function syncProjectAction(res, p, body) {
   // A remote NAME from settings only — the body can never name a remote or a URL.
   if (Object.hasOwn(body, 'remote') || Object.hasOwn(body, 'url')) return badRequest(res, 'sync never takes a remote or URL from the request; configure sync.remote');
@@ -7524,7 +7578,9 @@ app.get('/api/branches', async (req, res) => {
 
 app.get('/api/projects', async (_req, res) => {
   try {
-    res.json({ projects: await listProjects() });
+    // readiness: cache-only peek (no evaluation, no I/O) — null until a report is cached.
+    const on = readinessEnabled();
+    res.json({ projects: (await listProjects()).map((p) => ({ ...p, readiness: on ? readinessSummary(p.key) : null })) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -7543,6 +7599,7 @@ app.post('/api/projects', async (req, res) => {
     // Its team policy at once too (MCP registry spec §11.2): removing a project drops its policy cache, so a re-added or
     // re-cloned project's home must not read "no project here follows" (a greyed Team set) until the background discovery.
     discoverPolicy(normalizeProjectPath(body.path), { force: true }).catch(() => { /* offline: the background discovery retries */ });
+    void evaluateAddedProject(normalizeProjectPath(body.path));
     res.json({ projects });
   } catch (err) {
     // addProject only throws on validation (empty/duplicate/not-a-directory), so
@@ -7576,6 +7633,7 @@ app.post('/api/projects/bulk', async (req, res) => {
             emitChanged('team-metrics-changed', 'discovered');
           } catch { /* offline or not a git repo: discovery retries hourly */ }
           await discoverPolicy(p, { force: true }).catch(() => { /* offline: the background discovery retries */ });
+          await evaluateAddedProject(p);
         }
       })();
     }
@@ -7613,6 +7671,7 @@ async function startCloneJob(req) {
         .then(() => emitChanged('team-metrics-changed', 'discovered'))
         .catch(() => { /* offline or not a git repo: discovery retries hourly */ });
       discoverPolicy(project.path, { force: true }).catch(() => { /* offline: the background discovery retries */ });
+      void evaluateAddedProject(project.path);
     } catch (err) {
       Object.assign(job, { state: 'error', code: err instanceof CloneError ? err.code : 'failed', error: err && err.message ? err.message : String(err) });
     }

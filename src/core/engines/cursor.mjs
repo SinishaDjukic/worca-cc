@@ -68,6 +68,10 @@ export const CURSOR_RULE_TERMS = Object.freeze({
 /** The project files Cursor reads from its cwd, relative to it. */
 export const CURSOR_PROJECT_FILES = Object.freeze(['.cursor/cli.json', '.cursor/mcp.json']);
 
+/** The instruction files Cursor reads from its cwd. Empty: the adapter is unverified (see the header), so no
+ *  instruction source is claimed until it is checked against a real cursor-agent. */
+export const CURSOR_INSTRUCTION_FILES = Object.freeze([]);
+
 // ── permission rules ─────────────────────────────────────────────────────────
 
 /** `Bash(curl)`, `Bash(curl:*)`, `Bash(curl *)` -> 'curl'; null for anything Cursor's first-word Shell token cannot say. */

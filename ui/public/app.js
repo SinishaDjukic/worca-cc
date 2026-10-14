@@ -226,6 +226,7 @@ import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/a
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { createFlyout } from './side-flyout.mjs';
+import { renderReadinessChip, readinessAddedToast } from './readiness-chip.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
 import { pageTitle } from './topnav.mjs';
@@ -1467,6 +1468,18 @@ function handleServerMessage(msg) {
     if (hdCommentState && hdCommentState.key === msg.storeKey && hdCommentState.id === msg.pipelineId) {
       pokeOpenDiffTab();
     }
+    return;
+  }
+
+  // The server's frame names the project in `action` (emitChanged(type, action)); a null one has nothing to refetch.
+  if (msg.type === 'readiness-changed') {
+    if (msg.action && currentView() === 'projects') void refreshReadiness(msg.action);
+    return;
+  }
+  // A project just added evaluated not-ready: one nudge per project, opening its breakdown.
+  if (msg.type === 'readiness-added') {
+    const toast = readinessAddedToast(msg, { run: () => openReadinessBreakdown(msg.projectKey) });
+    if (toast) notify(toast);
     return;
   }
 
@@ -11523,6 +11536,279 @@ if (el.projectsSyncAll) {
   });
 }
 
+// ---- Agent readiness: a chip per project row, its breakdown flyout, the ignore list ----------
+// The row chip paints from the cache-only `readiness` summary on GET /api/projects. A project with no
+// summary yet is evaluated once per page load (warmReadiness) and the summaries are re-read after.
+// The flyout shows the full report (GET /api/projects/:key/readiness); `readiness-changed` frames
+// refetch it. Every string in a report is server data: textContent only.
+const readinessReports = {};        // projectKey → last full report
+const readinessChips = new Map();   // projectKey → { chip, menu, fly, engine }: one flyout per project, reused across repaints
+const readinessTried = new Set();   // keys the cold-start warm-up already asked for
+let readinessOff = false;           // GET answered {disabled: true}: no chips, no more asking
+
+async function fetchReadinessReport(key, { refresh = false } = {}) {
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(key)}/readiness${refresh ? '?refresh=1' : ''}`);
+    const data = await safeJson(res);
+    if (data && data.disabled) { readinessOff = true; return null; }
+    const report = res.ok && data && data.readiness ? data.readiness : null;
+    if (report) readinessReports[key] = report;
+    return report;
+  } catch {
+    return null;
+  }
+}
+
+// The row summary of a fresh report, for the engine the project's summary already names.
+function applyReadinessReport(key, report) {
+  const p = projectByKey(key);
+  if (!p || !report) return;
+  const primaryEngine = (p.readiness && p.readiness.primaryEngine) || 'claude';
+  const e = report.engines && report.engines[primaryEngine];
+  p.readiness = { level: (e && e.level) || 'unknown', primaryEngine, failingCount: e && Array.isArray(e.failing) ? e.failing.length : 0 };
+}
+
+async function syncReadinessSummaries() {
+  try {
+    const data = await safeJson(await fetch('/api/projects'));
+    for (const q of (data && Array.isArray(data.projects)) ? data.projects : []) {
+      const p = q && projectByKey(q.key);
+      if (p) p.readiness = q.readiness || null;
+    }
+  } catch { /* keep the summaries we have */ }
+}
+
+async function warmReadiness() {
+  if (readinessOff) return;
+  const cold = state.projects.filter((p) => p && p.key && p.exists && !p.readiness && !readinessTried.has(p.key));
+  if (!cold.length) return;
+  for (const p of cold) readinessTried.add(p.key);
+  for (const p of cold) {
+    if (readinessOff) break;
+    await fetchReadinessReport(p.key);
+  }
+  if (!readinessOff) await syncReadinessSummaries();
+  if (currentShownView === 'projects') paintReadinessChips();
+}
+
+// Re-read one project's report (`refresh` re-evaluates past the server cache) and repaint what shows it:
+// the row chip, the open flyout and the project settings cards (`cards: false` for the card that asked).
+async function refreshReadiness(key, { refresh = false, cards = true } = {}) {
+  const report = await fetchReadinessReport(key, { refresh });
+  if (!report) return;
+  applyReadinessReport(key, report);
+  if (currentShownView === 'projects') paintReadinessChips();
+  const rec = readinessChips.get(key);
+  if (rec && rec.fly.isOpen()) { paintReadinessMenu(key); rec.fly.reposition(); }
+  if (cards) for (const card of document.querySelectorAll('.readiness-settings-card')) if (card.dataset.key === key) void fillReadinessCard(card, key);
+}
+
+// Show the Projects page with one project's breakdown open (the add-project toast's action).
+let readinessOpenOnPaint = null;
+function openReadinessBreakdown(key) {
+  readinessOpenOnPaint = key;
+  if (currentShownView === 'projects') paintReadinessChips();
+  else location.hash = 'projects';
+}
+
+function paintReadinessChips() {
+  for (const item of document.querySelectorAll('#projects-list .pl-item[data-key]')) {
+    const key = item.dataset.key;
+    const p = projectByKey(key);
+    const slot = item.querySelector('.pl-sync');
+    const fresh = readinessOff || !slot ? null : renderReadinessChip(p && p.readiness, { doc: document });
+    let rec = readinessChips.get(key);
+    if (!fresh) { if (rec) rec.chip.remove(); continue; }
+    if (rec) {
+      rec.chip.className = fresh.className;
+      rec.chip.title = fresh.title;
+      rec.chip.replaceChildren(...fresh.childNodes);
+    } else {
+      rec = newReadinessChip(key, fresh);
+      readinessChips.set(key, rec);
+    }
+    slot.appendChild(rec.chip);
+    if (readinessOpenOnPaint === key) { readinessOpenOnPaint = null; rec.chip.click(); }
+  }
+}
+
+// The chip is the flyout's trigger (createFlyout toggles it on click); the menu lives on <body> and is
+// filled when it opens. One per project for the page's life — createFlyout's document listeners are never removed.
+function newReadinessChip(key, chip) {
+  chip.setAttribute('role', 'button');
+  chip.tabIndex = 0;
+  chip.setAttribute('aria-haspopup', 'dialog');
+  const menu = document.createElement('div');
+  menu.className = 'activity-pop readiness-pop';
+  menu.setAttribute('role', 'dialog');
+  menu.setAttribute('aria-label', 'Agent readiness');
+  menu.hidden = true;
+  document.body.appendChild(menu);
+  const rec = { chip, menu, fly: null, engine: 'claude' };
+  rec.fly = createFlyout({ doc: document, win: window, trigger: chip, menu, mode: 'down', onOpen: () => void openReadinessMenu(key) });
+  chip.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    e.preventDefault();
+    e.stopPropagation();
+    chip.click();   // detail 0: createFlyout reads it as a keyboard open
+  });
+  return rec;
+}
+
+async function openReadinessMenu(key) {
+  const rec = readinessChips.get(key);
+  if (!rec) return;
+  const p = projectByKey(key);
+  rec.engine = (p && p.readiness && p.readiness.primaryEngine) || 'claude';
+  if (!readinessReports[key]) {
+    rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'readiness-header', textContent: 'Checking…' }));
+    rec.fly.reposition();
+    await fetchReadinessReport(key);
+  }
+  if (rec.fly.isOpen()) { paintReadinessMenu(key); rec.fly.reposition(); }
+}
+
+function paintReadinessMenu(key) {
+  const rec = readinessChips.get(key);
+  if (!rec) return;
+  const report = readinessReports[key];
+  if (!report) {
+    rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'readiness-header', textContent: 'Readiness could not be read.' }));
+    return;
+  }
+  rec.menu.replaceChildren(buildReadinessMenu(key, report, rec.engine, (name) => { rec.engine = name; paintReadinessMenu(key); }));
+}
+
+// The breakdown for one engine: its failing checks (title, detail, fix, an ignore link), a row per engine
+// that switches the view, and Recheck.
+function buildReadinessMenu(key, report, engine, onEngine) {
+  const frag = document.createDocumentFragment();
+  const eng = (report.engines && report.engines[engine]) || { level: 'unknown', failing: [] };
+  const header = document.createElement('div');
+  header.className = 'readiness-header';
+  header.textContent = `For ${engine}`;
+  frag.appendChild(header);
+  const failing = new Set(eng.failing || []);
+  const rows = (report.checks || []).filter((c) => c.status === 'fail' && failing.has(c.id) && (!c.engine || c.engine === engine));
+  if (eng.locked) {
+    frag.appendChild(Object.assign(document.createElement('div'), { className: 'readiness-check-item', textContent: String(eng.locked) }));
+  } else if (!rows.length) {
+    frag.appendChild(Object.assign(document.createElement('div'), { className: 'readiness-check-item', textContent: eng.level === 'unknown' ? 'No verdict for this engine yet.' : 'Nothing to fix for this engine.' }));
+  }
+  for (const check of rows) {
+    const item = document.createElement('div');
+    item.className = 'readiness-check-item';
+    const title = document.createElement('strong');
+    title.textContent = check.title;
+    item.appendChild(title);
+    if (check.detail) item.appendChild(Object.assign(document.createElement('p'), { textContent: check.detail }));
+    if (check.fix) {
+      const fix = document.createElement('p');
+      fix.appendChild(Object.assign(document.createElement('code'), { textContent: check.fix }));
+      item.appendChild(fix);
+    }
+    const ignore = document.createElement('a');
+    ignore.href = '#';
+    ignore.setAttribute('role', 'menuitem');
+    ignore.textContent = 'Ignore for this project';
+    ignore.addEventListener('click', async (e) => {
+      e.preventDefault();
+      if (await setReadinessIgnore(key, check.id, true)) await refreshReadiness(key, { refresh: true });
+    });
+    item.appendChild(ignore);
+    frag.appendChild(item);
+  }
+  for (const [name, data] of Object.entries(report.engines || {})) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.setAttribute('role', 'menuitem');
+    row.className = `readiness-engine-row ${data.level}`;
+    row.textContent = `${name}: ${data.level}`;
+    if (name === engine) row.setAttribute('aria-current', 'true');
+    row.addEventListener('click', () => onEngine(name));
+    frag.appendChild(row);
+  }
+  const recheck = document.createElement('button');
+  recheck.type = 'button';
+  recheck.className = 'btn btn-ghost btn-mini';
+  recheck.setAttribute('role', 'menuitem');
+  recheck.textContent = 'Recheck';
+  recheck.addEventListener('click', async () => {
+    recheck.disabled = true;
+    await refreshReadiness(key, { refresh: true });
+    recheck.disabled = false;
+  });
+  frag.appendChild(recheck);
+  return frag;
+}
+
+// Add (`ignored`) or drop one check id on the project's own `readiness.ignore` list. Resolves true once
+// the PATCH landed; the other ids on the list, known or not, are kept.
+async function setReadinessIgnore(key, checkId, ignored) {
+  const url = `/api/projects/${encodeURIComponent(key)}/settings`;
+  try {
+    const data = await safeJson(await fetch(url));
+    const own = data && data.own && data.own['readiness.ignore'];
+    const cur = Array.isArray(own) ? own : [];
+    const next = ignored ? [...new Set([...cur, checkId])] : cur.filter((id) => id !== checkId);
+    const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ 'readiness.ignore': next.length ? next : null }) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// The project page's Settings tab: one switch per check — on = skipped for this project.
+function buildReadinessSettingsCard(key) {
+  const card = document.createElement('section');
+  card.className = 'card readiness-settings-card';
+  card.dataset.key = key;
+  void fillReadinessCard(card, key);
+  return card;
+}
+
+async function fillReadinessCard(card, key) {
+  const mine = (card.rdSeq = (card.rdSeq || 0) + 1);
+  const head = Object.assign(document.createElement('h3'), { textContent: 'Agent Readiness' });
+  const hint = Object.assign(document.createElement('small'), { className: 'hint', textContent: 'Switch a check on to skip it for this project.' });
+  const msg = Object.assign(document.createElement('small'), { className: 'hint' });
+  card.replaceChildren(head, hint);
+  const [settings, report] = await Promise.all([
+    fetch(`/api/projects/${encodeURIComponent(key)}/settings`).then(safeJson, () => ({})),
+    readinessReports[key] ? Promise.resolve(readinessReports[key]) : fetchReadinessReport(key),
+  ]);
+  if (mine !== card.rdSeq) return;
+  const own = settings && settings.own && settings.own['readiness.ignore'];
+  const ignored = new Set(Array.isArray(own) ? own : []);
+  const seen = new Set();
+  const checks = ((report && report.checks) || []).filter((c) => !seen.has(c.id) && seen.add(c.id));
+  if (!checks.length) hint.textContent = readinessOff ? 'Agent readiness is switched off.' : 'No readiness report yet.';
+  for (const check of checks) {
+    const label = document.createElement('label');
+    label.className = 'qtune-sw';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'sw-input';
+    input.checked = ignored.has(check.id);
+    input.setAttribute('aria-label', `Skip ${check.title}`);
+    input.addEventListener('change', async () => {
+      msg.textContent = '';
+      const want = input.checked;
+      if (await setReadinessIgnore(key, check.id, want)) {
+        void refreshReadiness(key, { refresh: true, cards: false });
+      } else {
+        input.checked = !want;
+        msg.textContent = 'Could not save.';
+      }
+    });
+    const knob = Object.assign(document.createElement('span'), { className: 'switch switch-sm' });
+    const text = Object.assign(document.createElement('span'), { className: 'qtune-sw-t', textContent: check.title });
+    label.append(input, knob, text);
+    card.appendChild(label);
+  }
+  card.appendChild(msg);
+}
+
 function renderProjectsList() {
   const host = el.projectsList;
   if (!host) return;
@@ -11577,6 +11863,8 @@ function renderProjectsList() {
   paintProjectPolicyCells();
   paintSyncChips();
   void refreshSyncChips();
+  paintReadinessChips();
+  void warmReadiness();
 }
 
 // Fills the .pl-tm chips left by buildProjectRow, and the open project page's team-metrics
@@ -12068,6 +12356,7 @@ function buildPdSettings(sec, key) {
   const host = document.createElement('div'); host.className = 'pd-settings'; sec.appendChild(host);
   mountProjectSettings(host, { projectKey: p.key, projectDir: p.path, onTest: testModelRow });
   sec.appendChild(buildPdNightCard(p));
+  sec.appendChild(buildReadinessSettingsCard(p.key));
 }
 
 // The project's Away mode layer (project_config.extra.nightMode): fields set here beat the
@@ -12727,6 +13016,7 @@ if (el.projectsList) {
     location.hash = `projects/${item.dataset.key}`;
   };
   el.projectsList.addEventListener('click', (e) => {
+    if (e.target.closest && e.target.closest('.pl-rd')) return;   // the readiness chip opens its own flyout, not the page
     const row = e.target.closest && e.target.closest('.pl-row[role="button"]');
     if (row) openRow(row);                              // a chevron click bubbles here too — one open
   });

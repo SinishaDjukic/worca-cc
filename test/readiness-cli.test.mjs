@@ -1,0 +1,155 @@
+// test/readiness-cli.test.mjs — `worca readiness` end to end through the real CLI process.
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve, dirname } from 'node:path';
+import { execSync, spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+import { useTempHome } from './helpers/temp-home.mjs';
+import { writeProjectSettings } from '../src/core/settings-cascade.mjs';
+
+const CLI = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'cli', 'worca-cc.mjs');
+const home = useTempHome(after);
+const scratch = [];
+
+function runCli(args, { env = {}, cwd = process.cwd() } = {}) {
+  return new Promise((res) => {
+    const child = spawn(process.execPath, [CLI, ...args], {
+      env: { ...process.env, WORCA_HOME: home, WORCA_READINESS: '1', ...env },
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (b) => (stdout += b.toString()));
+    child.stderr.on('data', (b) => (stderr += b.toString()));
+    child.on('exit', (code) => res({ code: code ?? 0, stdout, stderr }));
+  });
+}
+
+function tmp() {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ready-cli-')));
+  scratch.push(dir);
+  return dir;
+}
+
+function gitRepo({ files = {} } = {}) {
+  const dir = tmp();
+  for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
+  execSync('git init -q && git config user.email "t@t" && git config user.name "T" && git add -A && git commit --allow-empty -m init -q', { cwd: dir, stdio: 'ignore' });
+  return dir;
+}
+
+after(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
+
+describe('worca readiness', () => {
+  let ready;
+  let notReady;
+  before(() => {
+    ready = gitRepo({ files: { 'AGENTS.md': '# Project\n\nRun `npm test` to test.\n', 'CLAUDE.md': '@AGENTS.md\n', 'package.json': '{"scripts":{"test":"jest"}}' } });
+    notReady = gitRepo();
+  });
+
+  it('exits 0 for a partial repo (warnings only) and lists the warnings', async () => {
+    const r = await runCli(['readiness', '--project', ready]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /^Project: /m);
+    assert.match(r.stdout, /^Engine: claude → partial/m);
+    assert.match(r.stdout, /Warnings:\n  deps\.lockfile: /);
+    assert.doesNotMatch(r.stdout, /Blocker failures/);
+  });
+
+  it('exits 2 and prints blocker failures with their fix for a repo without instructions', async () => {
+    const r = await runCli(['readiness', '--project', notReady]);
+    assert.equal(r.code, 2, r.stderr);
+    assert.match(r.stdout, /Blocker failures:/);
+    assert.match(r.stdout, /instructions\.present \(claude\): /);
+    assert.match(r.stdout, /Add AGENTS\.md/);
+  });
+
+  it('applies the project readiness.ignore list, so a muted blocker no longer fails the exit code', async () => {
+    const muted = gitRepo();
+    const before = await runCli(['readiness', '--project', muted]);
+    assert.equal(before.code, 2, before.stderr);
+    writeProjectSettings({ projectDir: muted }, { 'readiness.ignore': ['instructions.present'] });
+    const after = await runCli(['readiness', '--project', muted]);
+    assert.equal(after.code, 0, after.stdout + after.stderr);
+    assert.doesNotMatch(after.stdout, /instructions\.present/);
+  });
+
+  it('exits 2 for a directory that is not a git repo', async () => {
+    const r = await runCli(['readiness', '--project', tmp()]);
+    assert.equal(r.code, 2, r.stderr);
+    assert.match(r.stdout, /git\.repo: Runs check out a git worktree/);
+  });
+
+  it('--json prints the report', async () => {
+    const r = await runCli(['readiness', '--project', ready, '--json']);
+    assert.equal(r.code, 0, r.stderr);
+    const report = JSON.parse(r.stdout);
+    assert.equal(typeof report.catalogVersion, 'number');
+    assert.ok(report.engines.claude);
+    assert.ok(Array.isArray(report.checks));
+  });
+
+  it('--json keeps the not-ready exit code', async () => {
+    const r = await runCli(['readiness', '--project', notReady, '--json']);
+    assert.equal(r.code, 2);
+    assert.equal(JSON.parse(r.stdout).engines.claude.level, 'not-ready');
+  });
+
+  it('--engine limits the output to one engine', async () => {
+    const r = await runCli(['readiness', '--project', notReady, '--engine', 'codex']);
+    assert.equal(r.code, 2, r.stderr);
+    assert.match(r.stdout, /^Engine: codex → /m);
+    assert.doesNotMatch(r.stdout, /^Engine: claude/m);
+    assert.doesNotMatch(r.stdout, /\(claude\)/);
+  });
+
+  it('--engine with an unknown name exits 1', async () => {
+    const r = await runCli(['readiness', '--project', ready, '--engine', 'nope']);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /unknown engine "nope"/);
+  });
+
+  it('defaults to the current directory', async () => {
+    const r = await runCli(['readiness'], { cwd: ready });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes(ready));
+  });
+
+  it('resolves a registered project by name', async () => {
+    const dir = gitRepo({ files: { 'AGENTS.md': '# x\n', 'CLAUDE.md': '@AGENTS.md\n' } });
+    const added = await runCli(['add', 'ready-by-name', '--path', dir]);
+    assert.equal(added.code, 0, added.stderr);
+    const r = await runCli(['readiness', '--project', 'ready-by-name']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /Project: ready-by-name/);
+  });
+
+  it('exits 1 for a project that does not exist', async () => {
+    const r = await runCli(['readiness', '--project', join(tmpdir(), 'no-such-dir-ready-cli')]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /not found|does not exist/);
+  });
+
+  it('exits 1 for an unknown option', async () => {
+    const r = await runCli(['readiness', '--bogus']);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--bogus/);
+  });
+
+  it('honors the kill switch unless --force', async () => {
+    const off = { env: { WORCA_READINESS: '0' } };
+    const skipped = await runCli(['readiness', '--project', notReady], off);
+    assert.equal(skipped.code, 0);
+    assert.match(skipped.stdout, /disabled/);
+    assert.doesNotMatch(skipped.stdout, /Blocker failures/);
+
+    const forced = await runCli(['readiness', '--project', notReady, '--force'], off);
+    assert.equal(forced.code, 2);
+    assert.match(forced.stdout, /Blocker failures:/);
+  });
+});

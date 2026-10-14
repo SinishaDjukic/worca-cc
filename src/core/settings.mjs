@@ -1292,7 +1292,13 @@ export const SETTING_CHECKS = Object.freeze({
   pct: (value) => isByteCap(value) && value <= 100,
   askMaxTurns: (value) => isAskMaxTurns(value), askMaxBudgetUsd: (value) => value === null || isAskMaxBudget(value),
   skillMount: (value) => SKILL_MOUNTS.includes(value), engine: (value) => MODEL_ENGINES.includes(value), runEngine: (value) => RUN_ENGINES.includes(value),
+  stringArray: (value) => Array.isArray(value) && value.every((item) => typeof item === 'string'),
 });
+/** Check ids the project's readiness report skips (project layer only — no user inheritance). Unknown ids are kept. */
+export function readinessIgnore(scope) {
+  const value = projectOverride('readiness.ignore', scope);
+  return Array.isArray(value) ? value : [];
+}
 
 // ── Title-generation model + hidden built-ins (#422) ─────────────────────────
 // `titleModel` is the catalog id every run/chat title is written with; absent

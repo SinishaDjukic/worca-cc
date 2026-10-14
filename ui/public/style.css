@@ -9170,3 +9170,29 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .branches-new > label.same-src-row{display:flex;margin:8px 0 0;}
 #sameAsSourceHint[hidden]{display:none;}   /* .hint{display:block} beats the UA [hidden] rule */
 #featureBranch:disabled{opacity:.65;cursor:not-allowed;}   /* no global .input:disabled rule exists */
+
+/* Repo-readiness chip (project list) + its flyout and the Settings card. Tones ride the status tokens, so dark mode
+   follows light-dark(); the switches in the card reuse .qtune-sw / .switch. */
+.pl-rd{display:inline-flex;align-items:center;gap:7px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;
+  line-height:1.3;cursor:pointer;user-select:none;}
+.pl-rd .rd-dot{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;}
+.pl-rd.rd-ready{background:var(--green-bg);color:var(--green-ink);}
+.pl-rd.rd-ready .rd-dot{background:var(--green);}
+.pl-rd.rd-partial{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.pl-rd.rd-partial .rd-dot{background:var(--amber);}
+.pl-rd.rd-not-ready{background:var(--red-bg);color:var(--red-ink);}
+.pl-rd.rd-not-ready .rd-dot{background:var(--red);}
+.pl-rd:hover{box-shadow:0 0 0 1px currentColor;}
+.readiness-header{padding:10px 12px;border-bottom:1px solid var(--line);font-size:13px;font-weight:600;color:var(--ink);}
+.readiness-check-item{padding:10px 12px;border-bottom:1px solid var(--line);}
+.readiness-check-item strong{display:block;margin-bottom:2px;}
+.readiness-check-item p{margin:2px 0;font-size:12.5px;color:var(--ink-2);}
+.readiness-check-item code{display:block;margin-top:6px;padding:4px 8px;background:var(--field);border-radius:6px;font-size:12px;word-break:break-all;}
+.readiness-check-item a{display:block;margin-top:6px;color:var(--blue-ink-strong);font-size:12px;cursor:pointer;text-decoration:none;}
+.readiness-check-item a:hover{text-decoration:underline;}
+.readiness-engine-row{padding:8px 12px;border-top:1px solid var(--line);cursor:pointer;font-size:12.5px;}
+.readiness-engine-row:hover{background:var(--field);}
+.readiness-settings-card{padding:16px;border:1px solid var(--line);border-radius:var(--r-card);margin-bottom:16px;}
+.readiness-settings-card h3{margin:0 0 12px;font-size:13px;font-weight:600;}
+.readiness-settings-card label{display:flex;align-items:center;margin-bottom:8px;font-size:12.5px;}
+.readiness-settings-card input[type="checkbox"]{margin-right:8px;}

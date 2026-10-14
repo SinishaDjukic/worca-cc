@@ -12,7 +12,7 @@
 
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
-import { fstatSync } from 'node:fs';
+import { existsSync, fstatSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
@@ -36,7 +36,7 @@ import { projectForm } from '../shared/forms/project.mjs';
 import { createFormAsker } from './forms.mjs';
 import { kindLabel } from '../shared/away-mode/labels.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
-import { effectiveDebugSpawn } from '../core/settings.mjs';
+import { effectiveDebugSpawn, readinessIgnore } from '../core/settings.mjs';
 import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule } from './schedule.mjs';
 import { cmdRuns } from './runs.mjs';
 import { cmdLogs } from './logs.mjs';
@@ -298,6 +298,8 @@ Subcommands:
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
+  readiness [--project <key|path>] [--engine <name>] [--json] [--force]
+                              Check how ready a repo is for agent runs. Exit 0 ready/partial, 2 not-ready, 1 error.
   script <cmd> [...]          Manage and test scripts: list|show|new|rm|test. See: worca script help
   config [get|set|unset]      Budget & cost-limit settings
   ui [start|stop|restart|status]
@@ -1111,6 +1113,82 @@ async function cmdAdd(argv) {
     process.stderr.write(`worca: ${err?.message || err}\n`);
     return 1;
   }
+}
+
+/**
+ * `worca readiness` — evaluate how ready a repo is for agent runs. Prints one line per
+ * failing check with its fix (or the full report with --json). Exit 0 ready/partial,
+ * 2 not-ready (an engine level, or any failing blocker), 1 error. WORCA_READINESS=0
+ * turns the feature off unless --force.
+ */
+async function cmdReadiness(argv) {
+  const err = (msg) => { process.stderr.write(`worca readiness: ${msg}\n`); return 1; };
+  const opts = { project: null, engine: null, json: false, force: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--json') opts.json = true;
+    else if (a === '--force') opts.force = true;
+    else if (a === '--project' || a === '--engine') {
+      const v = argv[++i];
+      if (!v || v.startsWith('--')) return err(`${a} needs a value`);
+      opts[a.slice(2)] = v;
+    } else return err(`unknown option "${a}". Usage: worca readiness [--project <key|path>] [--engine <name>] [--json] [--force]`);
+  }
+
+  const { evaluateReadiness, readinessEnabled } = await import('../core/repo-readiness/evaluate.mjs');
+  if (!opts.force && !readinessEnabled()) {
+    out('Agent readiness checks are disabled (WORCA_READINESS=0). Use --force to run them anyway.');
+    return 0;
+  }
+
+  let dir = process.cwd();
+  let name = null;
+  let key = null;
+  if (opts.project) {
+    const found = (await listProjects()).find((p) => p.key === opts.project || p.name.toLowerCase() === opts.project.toLowerCase());
+    if (found) ({ path: dir, name, key } = found);
+    else dir = resolve(opts.project);
+  }
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) return err(`project not found: ${opts.project || dir} (not a registered project or an existing directory)`);
+  name = name || basename(dir);
+  key = key || projectKey(dir);
+
+  let report;
+  try {
+    report = await evaluateReadiness({
+      dir,
+      projectKey: key,
+      ignore: readinessIgnore({ projectDir: dir, projectKey: key }),
+      primaryEngine: opts.engine || resolveRunEngine({ projectDir: dir, projectKey: key }).engine,
+      timeoutMs: 8000,
+    });
+  } catch (e) {
+    return err(e?.message || String(e));
+  }
+
+  const engineNames = Object.keys(report.engines);
+  if (opts.engine && !engineNames.includes(opts.engine)) return err(`unknown engine "${opts.engine}" (known: ${engineNames.join(', ')})`);
+  const scope = opts.engine ? [opts.engine] : engineNames;
+  const inScope = (row) => row.engines.some((e) => scope.includes(e));
+  const failing = report.checks.filter((r) => r.status === 'fail' && inScope(r));
+  const notReady = scope.some((e) => report.engines[e].level === 'not-ready') || failing.some((r) => r.severity === 'blocker');
+
+  if (opts.json) {
+    out(JSON.stringify(report, null, 2));
+    return notReady ? 2 : 0;
+  }
+
+  out(`Project: ${name} (${dir})`);
+  for (const e of scope) {
+    const { level, locked } = report.engines[e];
+    out(`Engine: ${e} → ${level}${locked ? ` (${locked})` : ''}`);
+  }
+  const line = (r) => `  ${r.id}${r.engine ? ` (${r.engine})` : ''}: ${r.fix}${r.detail ? ` [${r.detail}]` : ''}`;
+  for (const [title, severity] of [['Blocker failures:', 'blocker'], ['Warnings:', 'warn']]) {
+    const rows = failing.filter((r) => r.severity === severity);
+    if (rows.length) out(`\n${title}\n${rows.map(line).join('\n')}`);
+  }
+  return notReady ? 2 : 0;
 }
 
 async function cmdList() {
@@ -3125,7 +3203,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'readiness']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3211,6 +3289,7 @@ async function main() {
     if (sub === 'schedule') return cmdSchedule(rest, { out, c, fail });
     if (sub === 'models') return cmdModels(rest, { out, c, fail });
     if (sub === 'container') return cmdContainer(rest, { out, c, fail });
+    if (sub === 'readiness') return cmdReadiness(rest);
     if (sub === 'broker') {
       // Loaded lazily: the broker is its own process and needs none of the core graph.
       const { runBrokerCli } = await import('../broker/main.mjs');

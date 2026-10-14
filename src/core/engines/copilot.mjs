@@ -43,6 +43,10 @@ import { mcpResultText } from './codex.mjs';
 
 export const COPILOT_DEFAULT_BIN = process.env.WORCA_COPILOT_BIN || 'copilot';
 
+/** The instruction files Copilot reads from its cwd (checked against @github/copilot 1.0.92). It also reads
+ *  `.github/instructions/**\/*.instructions.md` (a glob, not listed here). */
+export const COPILOT_INSTRUCTION_FILES = Object.freeze(['.github/copilot-instructions.md', 'AGENTS.md']);
+
 /** Stored session ids are engine-qualified so a resume never hands a Copilot session to
  *  another engine (or another engine's session to Copilot). */
 export const COPILOT_SESSION_PREFIX = 'copilot:';
