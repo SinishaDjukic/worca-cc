@@ -82,6 +82,7 @@
     "ext:build": "node tools/build-extension.mjs",
     "ext:zip": "node tools/build-extension.mjs --zip",
     "ext:try": "node tools/try-extension.mjs",
+    "demo:extension-video": "node tools/demo/extension-video/record.mjs",
     "prepack": "node tools/build-extension.mjs --pack",
     "ext:lint:firefox": "node tools/build-extension.mjs --browser firefox && web-ext lint --source-dir extension/dist/firefox",
     "e2e:extension": "node tools/build-extension.mjs --test --browser chrome && playwright test -c e2e/extension/playwright.config.mjs",

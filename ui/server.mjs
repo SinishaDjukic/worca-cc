@@ -88,6 +88,7 @@ import { createAwayHoursWatch } from '../src/core/night/hours-watch.mjs';
 import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
 import { validatePinpointInput, runPinpoint, pinpointCwd } from '../src/core/pinpoint.mjs';
+import { demoChunks, demoPinpointReply } from '../src/core/demo-scenario.mjs';
 import { effectiveHumanRateUsd } from '../src/core/human-rate.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
@@ -11659,6 +11660,21 @@ app.post('/api/pinpoint', async (req, res) => {
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
   const send = (o) => { if (!res.writableEnded) res.write(`${JSON.stringify(o)}\n`); };
   if (mock) {
+    // Demo video (tools/demo/extension-video): scripted answers under WORCA_DEMO_SCENARIO; a miss falls through.
+    const demo = demoPinpointReply(v.value.quote);
+    if (demo && (v.value.action === 'explain' ? demo.explain : demo.alternatives)) {
+      if (v.value.action === 'explain') {
+        let gone = false;
+        res.on('close', () => { gone = true; });
+        for (const part of demoChunks(demo.explain)) {
+          if (gone) return;
+          send({ type: 'delta', text: part });
+          if (demo.chunkMs) await new Promise((r) => setTimeout(r, demo.chunkMs));
+        }
+      } else send({ type: 'alternatives', alternatives: demo.alternatives });
+      send({ type: 'done' });
+      return res.end();
+    }
     if (v.value.action === 'explain') {
       // Streamed like a real answer. A MOCK_SLOW quote (the Ask mock's convention, src/core/engines/mock.mjs) spaces
       // the deltas mockSlowMs() apart so a UI test can see a half-written answer and the Stop button.

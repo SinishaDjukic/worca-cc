@@ -12,6 +12,7 @@ import { extractText, extractResultCost } from './claude.mjs';
 import { writeMockSurvey, writeMockUsage, writeMockSynthesis } from '../workspace-scan-mock.mjs';
 import { safeEmit } from './spawn.mjs';
 import { writeMockC4 } from '../c4-mock.mjs';
+import { demoAskReply, demoChunks } from '../demo-scenario.mjs';
 
 export const MOCK_SPAWN_LOG_MAX = 500;
 export const mockSpawnLog = [];
@@ -286,6 +287,30 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
     usage: USAGE, modelUsage: {}, permission_denials: [], terminal_reason: 'completed', result: ANSWER, ...over });
   const MSG1 = 'msg_mock_ask_1';
   const MSG2 = 'msg_mock_ask_2';
+
+  // Demo video (tools/demo/extension-video): a scripted answer instead of "[mock] …", only under WORCA_DEMO_SCENARIO.
+  const demo = demoAskReply(userText);
+  if (demo) {
+    const text = demo.title || demo.answer;
+    const usage = { ...USAGE, ...(demo.usage || {}) };
+    const start = mstart(MSG1);
+    start.event.message.usage = usage;   // message_start carries its message under `event`
+    const answer = atext(MSG1, text);
+    answer.message.usage = usage;
+    const demoFrames = [init, start, ...demoChunks(text).map(delta), answer,
+      { ...mdelta, event: { ...mdelta.event, usage } },
+      result({ result: text, usage, total_cost_usd: demo.costUsd || 0,
+        modelUsage: { mock: { inputTokens: usage.input_tokens, outputTokens: usage.output_tokens, cacheReadInputTokens: usage.cache_read_input_tokens || 0,
+          cacheCreationInputTokens: usage.cache_creation_input_tokens || 0, costUSD: demo.costUsd || 0, contextWindow: 200000 } } })];
+    safeEmit(onEvent, { type: 'session', sessionId: SID });
+    for (const f of demoFrames) {
+      abortIfNeeded(signal);
+      emitRaw(onEvent, f);
+      await new Promise((r) => setTimeout(r, f.type === 'stream_event' ? (demo.chunkMs ?? 60) : 0));
+    }
+    abortIfNeeded(signal);
+    return { text, exitCode: 0 };
+  }
 
   const frames = [init, mstart(MSG1)];
   if (fail) {

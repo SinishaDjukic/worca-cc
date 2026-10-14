@@ -18,7 +18,11 @@ export function manifestVersion(pkgVersion) {
   return { version, versionName: String(pkgVersion) };
 }
 
-export function buildManifest(browser, { version, versionName = version, test = false }) {
+export function buildManifest(browser, { version, versionName = version, test = false, demo = false }) {
+  // demo (tools/demo/extension-video): the sample app on http://localhost:<port> frames sidebar.html. localhost only:
+  // never 127.0.0.1, where Worca runs (a host permission there drops the Origin header the pairing gate needs).
+  const hosts = demo ? { host_permissions: ['http://localhost/*'], web_accessible_resources: [{ resources: ['sidebar.html'], matches: ['http://localhost/*'] }] }
+    : test ? { host_permissions: ['http://fixture.test/*'] } : {};
   const base = {
     manifest_version: 3,
     name: 'Worca',
@@ -29,7 +33,7 @@ export function buildManifest(browser, { version, versionName = version, test = 
     action: { default_title: 'Open Worca', default_icon: { 16: ICONS[16], 32: ICONS[32] } },
     permissions: ['activeTab', 'scripting', 'storage', 'contextMenus'],
     commands: COMMAND_KEYS,
-    ...(test ? { host_permissions: ['http://fixture.test/*'] } : {}),
+    ...hosts,
     content_security_policy: { extension_pages: "script-src 'self'; object-src 'self'" },
   };
   if (browser === 'firefox') {

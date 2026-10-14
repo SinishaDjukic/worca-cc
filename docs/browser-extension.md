@@ -339,6 +339,11 @@ WORCA_EXT_PORT=4327 npm run ext:try                          # build Chrome and 
   the puzzle icon and click it to open the sidebar. The command runs until you close the browser;
   the profile is deleted then.
 
+### Demo video
+
+`npm run demo:extension-video` records a captioned 1920×1080 demo of the extension against a throwaway Worca and a
+sample app. [tools/demo/extension-video/README.md](../tools/demo/extension-video/README.md) covers how it works and its flags.
+
 ### The side-panel deviation and the manual check list
 
 Playwright cannot drive a browser's real side panel. The suite opens the sidebar page as an ordinary

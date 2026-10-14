@@ -40,3 +40,13 @@ test('test builds add only the fixture host (<all_urls> would strip the Origin t
 test('versions are Chrome-legal', () => {
   assert.deepEqual(manifestVersion('1.11.0-rc.2'), { version: '1.11.0', versionName: '1.11.0-rc.2' });
 });
+
+test('demo builds add localhost access and a web-accessible sidebar, nothing else', () => {
+  const m = buildManifest('chrome', { version: '1.0.0', test: true, demo: true });
+  assert.deepEqual(m.host_permissions, ['http://localhost/*']);
+  assert.deepEqual(m.web_accessible_resources, [{ resources: ['sidebar.html'], matches: ['http://localhost/*'] }]);
+  assert.ok(!m.host_permissions.some((h) => /127\.0\.0\.1|<all_urls>/.test(h)), 'never Worca\'s loopback address (Origin header)');
+  const prod = buildManifest('chrome', { version: '1.0.0' });
+  assert.equal(prod.web_accessible_resources, undefined);
+  assert.equal(prod.host_permissions, undefined);
+});

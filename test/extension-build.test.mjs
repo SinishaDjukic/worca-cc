@@ -14,7 +14,7 @@ test('production builds (chrome, edge, firefox) contain no test hooks', async ()
       const { out } = await buildOne(b, { dist });   // buildOne itself throws on a leaked hook
       for (const f of ['background.js', 'content.js', 'sidebar.js']) {
         const js = readFileSync(join(out, f), 'utf8');
-        assert.doesNotMatch(js, /__worcaTest|__worcaSidebarTest|__WORCA_EXT_TEST__/, `${b}/${f}`);
+        assert.doesNotMatch(js, /__worcaTest|__worcaSidebarTest|__WORCA_EXT_TEST__|__WORCA_EXT_DEMO__/, `${b}/${f}`);
         assert.doesNotMatch(js, /vad-web|onnxruntime|ricky0123/, `${b}/${f}: no voice runtime in the extension`);
       }
     }
@@ -116,4 +116,27 @@ test('CLI: --pack refuses before building when a test address is set', () => {
   const t = run(['--pack', '--test'], {});
   assert.equal(t.status, 2);
   assert.doesNotMatch(t.stdout, /built/);
+});
+
+test('demo build: keeps the E2E hooks and the demo manifest; production carries none of it', async () => {
+  const dist = mkdtempSync(join(tmpdir(), 'wx-build-'));
+  try {
+    const { out } = await buildOne('chrome', { demo: true, dist, env: { WORCA_EXT_PORT: '4999' } });
+    assert.match(out, /chrome-demo$/);
+    assert.match(readFileSync(join(out, 'background.js'), 'utf8'), /__worcaTest/);
+    assert.match(readFileSync(join(out, 'sidebar.js'), 'utf8'), /http:\/\/127\.0\.0\.1:4999/);
+    const man = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));
+    assert.deepEqual(man.web_accessible_resources?.[0]?.resources, ['sidebar.html']);
+    const prod = (await buildOne('chrome', { dist, env: {} })).out;
+    for (const f of ['background.js', 'content.js', 'sidebar.js']) {
+      assert.doesNotMatch(readFileSync(join(prod, f), 'utf8'), /__WORCA_EXT_DEMO__|__worcaTest/, f);
+    }
+    assert.equal(JSON.parse(readFileSync(join(prod, 'manifest.json'), 'utf8')).web_accessible_resources, undefined);
+  } finally { rmSync(dist, { recursive: true, force: true }); }
+});
+
+test('--demo is refused with --zip and --pack, and parses on its own', () => {
+  assert.equal(parseArgs(['--demo', '--browser', 'chrome']).demo, true);
+  assert.match(releaseBuildRefusal(parseArgs(['--zip', '--demo']), {}), /--demo/);
+  assert.match(releaseBuildRefusal({ ...parseArgs(['--pack']), demo: true }, {}), /--demo/);
 });

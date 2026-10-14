@@ -5,6 +5,7 @@
 //   node tools/build-extension.mjs --zip                 # + extension/dist/worca-<browser>-<version>.zip
 //   node tools/build-extension.mjs --test --browser chrome   # → extension/dist/chrome-test/ (E2E only: fixture host, open shadow root)
 //   WORCA_EXT_PORT=4327 node tools/build-extension.mjs       # the build's default Worca address (testing; never with --zip)
+//   node tools/build-extension.mjs --demo --browser chrome   # → extension/dist/chrome-demo/ (tools/demo/extension-video only; never released)
 //   node tools/build-extension.mjs --pack                # npm prepack: the three production builds, never a test address
 import { build } from 'esbuild';
 import { cpSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,14 +24,15 @@ export const ICON_SIZES = [16, 32, 48, 128];
 const FONTS = ['poppins-latin-300-normal', 'poppins-latin-400-normal', 'poppins-latin-500-normal', 'poppins-latin-600-normal', 'poppins-latin-700-normal', 'jetbrains-mono-latin-400-normal'];
 
 export function parseArgs(argv) {
-  const o = { browsers: BROWSERS, zip: false, test: false, pack: false };
+  const o = { browsers: BROWSERS, zip: false, test: false, pack: false, demo: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--zip') o.zip = true;
     else if (a === '--test') o.test = true;
+    else if (a === '--demo') o.demo = true;
     else if (a === '--pack') o.pack = true;
     else if (a === '--browser') { const b = argv[++i]; if (!BROWSERS.includes(b) && b !== 'all') { console.error(`unknown browser: ${b}`); process.exit(2); } o.browsers = b === 'all' ? BROWSERS : [b]; }
-    else if (a === '--help') { console.log('usage: build-extension.mjs [--browser chrome|edge|firefox|all] [--zip] [--test] [--pack]'); process.exit(0); }
+    else if (a === '--help') { console.log('usage: build-extension.mjs [--browser chrome|edge|firefox|all] [--zip] [--test] [--demo] [--pack]'); process.exit(0); }
     else { console.error(`unknown argument: ${a}`); process.exit(2); }
   }
   return o;
@@ -40,6 +42,7 @@ export function parseArgs(argv) {
  *  A release build must try worca's default address, never a tester's, and --pack ships all three production builds. */
 export function releaseBuildRefusal(o, env = process.env) {
   if (!o.zip && !o.pack) return null;
+  if (o.demo) return `${o.pack ? '--pack' : '--zip'} builds a release: drop --demo (the demo-video build is never released)`;
   if (o.pack && o.test) return '--pack builds the production extension for the npm package: drop --test';
   if (o.pack && o.browsers.length !== BROWSERS.length) return '--pack always builds chrome, edge and firefox: drop --browser';
   if (env.WORCA_EXT_PORT || env.WORCA_EXT_BASE_URL) {
@@ -66,17 +69,18 @@ export function defaultBaseUrlFromEnv(env = process.env) {
   return `http://127.0.0.1:${n}`;
 }
 
-export async function buildOne(browser, { test = false, dist = DIST, env = process.env } = {}) {
+export async function buildOne(browser, { test = false, demo = false, dist = DIST, env = process.env } = {}) {
+  const hooks = test || demo;   // a demo build drives Pinpoint/capture through the E2E hooks
   const baseUrl = defaultBaseUrlFromEnv(env);
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
   const { version, versionName } = manifestVersion(pkg.version);
-  const out = join(dist, test ? `${browser}-test` : browser);
+  const out = join(dist, demo ? `${browser}-demo` : test ? `${browser}-test` : browser);
   rmSync(out, { recursive: true, force: true });
   mkdirSync(join(out, 'fonts'), { recursive: true });
   mkdirSync(join(out, 'icons'), { recursive: true });
   const style = readFileSync(join(ROOT, 'ui/public/style.css'), 'utf8');
   const shadow = shadowCss(style, readFileSync(join(SRC, 'content/shadow.css'), 'utf8'));
-  const define = { __WORCA_EXT_TEST__: JSON.stringify(test), __WORCA_EXT_BROWSER__: JSON.stringify(browser), __WORCA_EXT_DEFAULT_BASE_URL__: JSON.stringify(baseUrl || '') };
+  const define = { __WORCA_EXT_TEST__: JSON.stringify(hooks), __WORCA_EXT_DEMO__: JSON.stringify(demo), __WORCA_EXT_BROWSER__: JSON.stringify(browser), __WORCA_EXT_DEFAULT_BASE_URL__: JSON.stringify(baseUrl || '') };
   const shadowPlugin = { name: 'worca-shadow-css', setup(b) {
     b.onResolve({ filter: /^worca:shadow-css$/ }, () => ({ path: 'shadow-css', namespace: 'worca' }));
     b.onLoad({ filter: /.*/, namespace: 'worca' }, () => ({ contents: `export default ${JSON.stringify(shadow)};`, loader: 'js' }));
@@ -96,11 +100,11 @@ export async function buildOne(browser, { test = false, dist = DIST, env = proce
   for (const f of FONTS) cpSync(join(ROOT, 'ui/public/fonts', `${f}.woff2`), join(out, 'fonts', `${f}.woff2`));
   // Committed, correctly sized icons: extension/icons/worca-<n>.png, cut once from ui/public/assets/worca-favicon.png with sips.
   for (const s of ICON_SIZES) cpSync(join(ROOT, 'extension/icons', `worca-${s}.png`), join(out, 'icons', `worca-${s}.png`));
-  writeFileSync(join(out, 'manifest.json'), `${JSON.stringify(buildManifest(browser, { version, versionName, test }), null, 2)}\n`);
+  writeFileSync(join(out, 'manifest.json'), `${JSON.stringify(buildManifest(browser, { version, versionName, test: hooks, demo }), null, 2)}\n`);
   // A production bundle never carries the E2E hooks (TEST_BUILD is a define; minifySyntax folds it and drops the branches).
-  if (!test) for (const f of ['background.js', 'content.js', 'sidebar.js']) {
+  if (!hooks) for (const f of ['background.js', 'content.js', 'sidebar.js']) {
     const js = readFileSync(join(out, f), 'utf8');
-    if (/__worcaTest|__worcaSidebarTest/.test(js)) throw new Error(`${browser}/${f}: a test hook leaked into the production build`);
+    if (/__worcaTest|__worcaSidebarTest|__WORCA_EXT_DEMO__/.test(js)) throw new Error(`${browser}/${f}: a test hook leaked into the production build`);
   }
   return { out, version: versionName, baseUrl };
 }
@@ -118,8 +122,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
   if (refusal) { console.error(refusal); process.exit(2); }
   try { defaultBaseUrlFromEnv(); } catch (err) { console.error(`build-extension: ${err.message}`); process.exit(1); }
   for (const b of o.browsers) {
-    const { out, version, baseUrl } = await buildOne(b, { test: o.test });
-    console.log(`built ${b}${o.test ? ' (test)' : ''} → ${out}${baseUrl ? ` (default Worca address ${baseUrl})` : ''}`);
+    const { out, version, baseUrl } = await buildOne(b, { test: o.test, demo: o.demo });
+    console.log(`built ${b}${o.demo ? ' (demo)' : o.test ? ' (test)' : ''} → ${out}${baseUrl ? ` (default Worca address ${baseUrl})` : ''}`);
     if (o.zip && !o.test) { const z = join(DIST, `worca-${b}-${version}.zip`); const r = zipDirectory(out, z); console.log(`  zip → ${z} (${r.files} files, ${r.bytes} bytes)`); }
   }
 }

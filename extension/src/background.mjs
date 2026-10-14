@@ -2,7 +2,7 @@
 // binding (panel-state.mjs), content-script injection (activeTab + scripting), the context menu, the keyboard commands
 // (Pinpoint on request, area capture), the capture itself (captureVisibleTab + an OffscreenCanvas crop), and the
 // Pinpoint proxy (pinpoint-proxy.mjs). Content scripts never get the token; only this file and the sidebar read it.
-import { api, BROWSER, STORAGE_KEYS, TEST_BUILD } from './ext-api.mjs';
+import { api, BROWSER, DEMO_BUILD, STORAGE_KEYS, TEST_BUILD } from './ext-api.mjs';
 import { createPanelState, createPendingCaptures } from './panel-state.mjs';
 import { COMMANDS } from './manifest.mjs';
 import { cropPlan } from './capture-geometry.mjs';
@@ -213,6 +213,8 @@ function onContent(port) {
  *  test hook (setCaptureSource) supplies the viewport PNG (a real Playwright screenshot); the crop is real. */
 let testCaptureSource = null;   // stays null in production: only the TEST_BUILD hook below can set it
 async function captureVisible(windowId) {
+  // Demo-video build: the recorder's clean screenshot (no stage captions/cursor) beats a real capture. Folded away in production.
+  if (DEMO_BUILD && testCaptureSource) return testCaptureSource(windowId);
   try {
     return await api.tabs.captureVisibleTab(windowId, { format: 'png' });
   } catch (err) {
