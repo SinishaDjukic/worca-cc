@@ -23,6 +23,7 @@ import { resolveSourceRef as resolveGitSourceRef } from '../git-sync.mjs';
 import { effectiveSyncSettings } from '../project-sync.mjs';
 import { ENGINE_NAMES, MODEL_ENGINE_NAMES, engineLabel } from '../../shared/engine-switch.mjs';
 import { runsOn } from '../../shared/connections.mjs';
+import { normaliseTags } from '../../shared/run-tags.mjs';
 import { listModels as realListModels, modelCostConfig, modelHasBaseUrlRouting } from '../config.mjs';
 import { resolveRunEngine } from '../settings-cascade.mjs';
 import { cachedPolicyFor } from '../policy/cache.mjs';
@@ -424,6 +425,10 @@ export function createProposalValidator({
       }
     }
 
+    // Run tags (#718): the one normaliser; the card carries the clean list.
+    const tagCheck = normaliseTags(inp.tags);
+    for (const e of tagCheck.errors) errors.push(`tags: ${e}`);
+
     if (errors.length) return fail();
     // Signed out (only the answer the Ask turn already holds — its re-validation's `claudeAuth`, the MCP child's
     // WORCA_ASK_CLAUDE_AUTH; never a probe, so without that answer a plain proposal still reads nothing): a plain
@@ -440,6 +445,8 @@ export function createProposalValidator({
         note: cleanNote(inp.note), attachments: pickCardAttachments(inp.attachmentIds, attachments),
         // Only a scheduled proposal carries the key: a plain run card keeps its shape byte for byte.
         ...(spec.schedule ? { schedule: spec.schedule } : {}),
+        // Likewise a proposal that names run tags.
+        ...(tagCheck.tags.length ? { tags: tagCheck.tags } : {}),
         // Likewise a proposal whose task is a plugin task (an issue), not a brief.
         ...(runSource ? { source: runSource } : {}),
         ...(sourceWarning ? { sourceWarning } : {}),

@@ -28,6 +28,7 @@ import {
   normalizeProjectPath,
 } from '../core/projects.mjs';
 import { projectKey } from '../core/store.mjs';
+import { normaliseTags } from '../shared/run-tags.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal, formatResumeHints } from './render.mjs';
 // Ask forms (spec §8): the prompt FORMATTING lives in render.mjs too (a second import
 // statement, not a longer first one); the field-by-field asker lives in forms.mjs.
@@ -111,6 +112,7 @@ function parseArgs(argv) {
     file: null,
     title: null,
     extras: [],
+    tags: [],
     ui: false,
     model: undefined,
     permissionMode: undefined,
@@ -137,6 +139,7 @@ function parseArgs(argv) {
     '--file',
     '--title',
     '--extras',
+    '--tag',
     '--model',
     '--engine',
     '--permission-mode',
@@ -155,6 +158,7 @@ function parseArgs(argv) {
     '--file': 'file',
     '--title': 'title',
     '--extras': 'extras',
+    '--tag': 'tags',
     '--model': 'model',
     '--engine': 'engine',
     '--permission-mode': 'permissionMode',
@@ -227,6 +231,9 @@ function parseArgs(argv) {
           const p = part.trim();
           if (p) out.extras.push(p);
         }
+      } else if (key === 'tags') {
+        // Repeatable, never comma-split: a value may hold commas ("client:müller & söhne, gmbh").
+        out.tags.push(String(value));
       } else if (key === 'permissionMode' && !PERMISSION_MODES.includes(String(value))) {
         // A pipeline run's mode reaches claude-runner as-is. `dontAsk` is a legitimate
         // headless mode for a REAL run (allowedTools decide what runs); only the
@@ -328,6 +335,7 @@ Options:
   --prompt <text>          Task prompt text
   --file <md>              Markdown file used as the prompt (alternative to --prompt)
   --title <text>           Human-readable run title
+  --tag <tag>              tag the run for cost allocation, e.g. --tag client:acme (repeatable)
   --extras <paths>         Extra files copied into the pipeline's extras/ folder
                            (comma-separated; repeatable)
   --model <m>              Claude model id
@@ -3252,6 +3260,9 @@ async function main() {
   }
 
   const flags = parseArgs(process.argv.slice(2));
+  const tagCheck = normaliseTags(flags.tags);
+  if (tagCheck.errors.length) fail(`--tag: ${tagCheck.errors[0]}`);
+  flags.tags = tagCheck.tags;
 
   if (flags.help) {
     process.stdout.write(HELP);
@@ -3397,6 +3408,7 @@ async function main() {
     auto: flags.auto,
     humanInLoop: flags.humanInLoop === false ? false : undefined,
     ...(flags.nightMode ? { nightMode: true } : {}),
+    ...(flags.tags.length ? { tags: flags.tags } : {}),
   });
 
   if (waitTicketId) {

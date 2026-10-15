@@ -126,6 +126,46 @@ test('--status and --project filter the list; bad/missing --status values exit 2
   ]);
 });
 
+test('--tag filters the list (repeatable, ANDed; a key alone matches any value); a bare --tag exits 2 (#718)', async () => {
+  insertPipeline({ id: 'eee50001', projectKey: 'proj-e-55555555', title: 'Tagged', status: 'done', minutesAgo: 3 });
+  insertPipeline({ id: 'eee50002', projectKey: 'proj-e-55555555', title: 'Untagged', status: 'done', minutesAgo: 4 });
+  getDb().prepare("INSERT INTO run_tags (pipeline_id, key, value) VALUES ('eee50001', 'client', 'acme'), ('eee50001', 'spike', '')").run();
+  await checkRows([
+    { name: 'exact key:value, as --json', run: async () => {
+      const r = await run(['runs', '--tag', 'Client:Acme', '--json']);
+      assert.equal(r.code, 0, r.stderr);
+      const runs = JSON.parse(r.stdout);
+      assert.deepEqual(runs.map((x) => x.id), ['eee50001']);
+      assert.deepEqual(runs[0].tags, ['client:acme', 'spike']);
+    } },
+    { name: 'a key alone, and two ANDed terms (--tag=…)', run: async () => {
+      const r = await run(['runs', '--tag', 'client', '--tag=spike', '--json']);
+      assert.equal(r.code, 0, r.stderr);
+      assert.deepEqual(JSON.parse(r.stdout).map((x) => x.id), ['eee50001']);
+    } },
+    { name: 'the detail --json carries tags too ([] when untagged)', run: async () => {
+      const r = await run(['runs', 'eee50001', '--json']);
+      assert.equal(r.code, 0, r.stderr);
+      assert.deepEqual(JSON.parse(r.stdout).tags, ['client:acme', 'spike']);
+      const u = await run(['runs', 'eee50002', '--json']);
+      assert.deepEqual(JSON.parse(u.stdout).tags, []);
+    } },
+    { name: 'no match', run: async () => {
+      const r = await run(['runs', '--tag', 'client:globex']);
+      assert.equal(r.code, 0, r.stderr);
+      assert.match(r.stdout, /No runs match/);
+    } },
+    { name: 'bare --tag and an invalid tag exit 2', run: async () => {
+      const bare = await run(['runs', '--tag']);
+      assert.equal(bare.code, 2);
+      assert.match(bare.stderr, /--tag needs a value/);
+      const bad = await run(['runs', '--tag', 'client:']);
+      assert.equal(bad.code, 2);
+      assert.match(bad.stderr, /--tag: "client:" needs a value/);
+    } },
+  ]);
+});
+
 test('detail by full id and by unique prefix', async () => {
   seedResults('proj-a', 'aaa10001', { linesAdded: 8, linesRemoved: 0 });
   seedExecutions('aaa10001', 1, { loopWires: 1, loopDeliveries: 2 });

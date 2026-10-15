@@ -243,3 +243,20 @@ test('a CLI defragment run picks up the Settings › Memory pair; --model named 
   assert.match(r.stdout, /Memory defragment model: claude-opus-5-5 \(named at start\)/);
   assert.deepEqual([nDefrag().model, nDefrag().effort], ['claude-opus-5-5', '']);
 });
+
+// ── #718: --tag (repeatable) is normalised before anything starts, and stored on the run ──
+test('--tag: an invalid tag exits 2 before any pipeline row; valid tags are stored normalised', () => {
+  const repo = freshRepo();
+  const before = pipelineCount();
+  const bad = runCli(['--project', repo, '--prompt', 'x', '--tag', 'client:'], repo);
+  assert.equal(bad.status, 2, `${bad.stdout}\n${bad.stderr}`);
+  assert.match(bad.stderr, /--tag: "client:" needs a value/);
+  assert.equal(pipelineCount(), before, 'no pipeline row for the refusal');
+  const ok = runCli(['--project', repo, '--prompt', 'x', '--tag', 'Client: Müller & Söhne, GmbH', '--tag=spike', '--yes'], repo);
+  assert.equal(ok.status, 0, `${ok.stdout}\n${ok.stderr}`);
+  const id = getDb().prepare('SELECT id FROM pipelines ORDER BY rowid DESC LIMIT 1').get().id;
+  const rows = getDb().prepare('SELECT key, value FROM run_tags WHERE pipeline_id = ? ORDER BY key').all(id).map((r) => `${r.key}=${r.value}`);
+  assert.deepEqual(rows, ['client=müller & söhne, gmbh', 'spike=']);
+  const help = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
+  assert.match(help.stdout, /--tag <tag>\s+tag the run for cost allocation/);
+});

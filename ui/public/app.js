@@ -83,7 +83,7 @@ import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS, tagFilterOptions } from './runs-list.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
 // History list card. They stay EXPORTED
@@ -227,7 +227,8 @@ import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdow
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
-import { applyFlags, decorateFlagChips } from './flags.mjs';
+import { applyFlags, decorateFlagChips, flagOn } from './flags.mjs';
+import { createTagInput, tagChip, fetchTagVocabulary } from './tag-input.mjs';
 import { createFlagsView } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
@@ -1515,6 +1516,7 @@ function handleServerMessage(msg) {
       kind: msg.kind || 'run',
       workspaceId: msg.workspaceId || undefined,
       projectNames: Array.isArray(msg.projectNames) && msg.projectNames.length ? msg.projectNames : undefined,
+      tags: Array.isArray(msg.tags) ? msg.tags : undefined,
     });
     updateNavCounts();
     renderPipelineTabs();
@@ -1652,6 +1654,7 @@ function onHello(msg) {
       workspaceId: r0.workspaceId || undefined,
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
       night: r0.night || undefined,
+      tags: Array.isArray(r0.tags) ? r0.tags : undefined,
     });
     // Seed the run's stepper from the hello summary so the live card resolves
     // sub-agents to their real nodes BEFORE any subagent delta paints — closing
@@ -1788,7 +1791,7 @@ function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
   pauseDetail = null, limitEngine = null, limitResetAt = null, runEngine = undefined, startedBy = null, lastAction = null,
-  workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined,
+  workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [],
 }) {
   return {
     runId,
@@ -1811,6 +1814,7 @@ function makeRun({
     workspaceId,
     workspaceName,
     night,                // Away mode on this run: {optIn, override, decisions, flagged, openedAt} (hello / state)
+    tags,                 // run tags (#718): normalised 'key:value' / 'key' strings (hello / run-created)
     // Stable ordering key: assigned once per runId, never bumped by activity
     // and never re-minted if the run is dropped and re-materialized.
     // hello seeds runs in server registration order, so this tracks true
@@ -4235,12 +4239,40 @@ function paintEngineHints() {
     el.engineDefaultHint.hidden = !el.engineDefaultHint.textContent;
   }
 }
+// Run tags (#718): the New run form's chip field, shown while the runTags flag is on. It starts from the
+// project's default tags; once the person edits it, later project changes leave it alone.
+const runTagInput = createTagInput(document, { suggest: fetchTagVocabulary });
+document.getElementById('runTagsField')?.appendChild(runTagInput.el);
+document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  const key = state.runTagsProjectKey;
+  if (!key) return;
+  const label = 'Save as project default';
+  let msg = 'Saved';
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(key)}/tags/defaults`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tags: runTagInput.get() }),
+    });
+    const data = await safeJson(res);
+    if (res.ok) state.runTagDefaults = (data && data.tags) || runTagInput.get();
+    else msg = (data && data.error) || `Could not save (HTTP ${res.status})`;
+  } catch (err) { msg = err && err.message ? err.message : 'Could not save'; }
+  btn.textContent = msg;
+  setTimeout(() => { btn.textContent = label; }, 2000);
+});
+
 let runDefaultsGen = 0;
 async function loadRunDefaults(projectDir) {
   const gen = ++runDefaultsGen;
   let data = null;
   try { const res = await fetch(projectDir ? `/api/run-defaults?projectDir=${encodeURIComponent(projectDir)}` : '/api/run-defaults'); data = res.ok ? await safeJson(res) : null; } catch {}
   if (gen !== runDefaultsGen) return;
+  // Run tags (#718): kept apart from state.runDefaults, which is nulled when the engine is unknown.
+  state.runTagsProjectKey = data?.projectKey ?? null;
+  state.runTagDefaults = data?.tags || [];
+  if (!runTagInput.dirty()) runTagInput.set(state.runTagDefaults);
+  const saveDefault = document.getElementById('runTagsSaveDefault');
+  if (saveDefault) saveDefault.hidden = !state.runTagsProjectKey;
   const prevSteps = JSON.stringify(state.runDefaults?.steps ?? null);
   state.runDefaults = data?.engine && ENGINE_NAMES.includes(data.engine.value) ? data : null;
   if (state.runDefaults && !state.engineTouched) setRunEngine(data.engine.value); else paintEngineHints();
@@ -6629,6 +6661,7 @@ function clearTask(submitted) {
   if (!sameTask(snapshotTask(), submitted)) return;
   lastTask = submitted;
   setTask({ title: '', prompt: '', markdown: '', mdFileName: '', extras: [] });
+  runTagInput.set(state.runTagDefaults || [], { clearText: true });   // #718: the next run starts from the project's defaults again
   el.reuseTask.hidden = false;
 }
 el.reuseTaskBtn.addEventListener('click', () => {
@@ -13177,6 +13210,8 @@ el.form.addEventListener('submit', async (e) => {
     // to be Claude (a failed or stale defaults read must not let the server pick a Codex default).
     engine: state.engine !== 'claude' ? state.engine : (state.runDefaults?.engine?.value === 'claude' ? undefined : 'claude'),
     allowUnguardedEngine: state.engine !== 'claude' && el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
+    // Run tags (#718): omitted when empty, so a legacy body stays byte-identical.
+    tags: flagOn('runTags') && runTagInput.get().length ? runTagInput.get() : undefined,
   };
   // Run on the source branch: a flag on the wire, never a feature name (the run auto-names its hidden branch).
   if (el.sameAsSource && el.sameAsSource.checked) { body.sameAsSource = true; delete body.featureBranch; }
@@ -22386,6 +22421,67 @@ function hdDot() {
   return d;
 }
 
+// Run tags on the finished run page (#718): chips plus "Edit tags" (or "Add tags"), or the open editor,
+// in the landing page's head (the glance) and in Details › Overview. The editor stays in the head it was
+// opened from; the element itself survives a header repaint, so its uncommitted chips are kept.
+let hdTagEditor = null;   // { pipelineId, el, input, host }
+function paintHdTags(screen, record, data) {
+  const hosts = { glance: screen.querySelector('.hd-glance .rd-page-meta'), row2: screen.querySelector('.hd-row2') };
+  for (const host of Object.values(hosts)) host?.querySelector('.hd-tags')?.remove();
+  if (!flagOn('runTags')) return;
+  const st = data.state;
+  const repaint = () => paintHdTags(screen, record, data);
+  for (const [where, host] of Object.entries(hosts)) {
+    if (!host) continue;
+    const box = document.createElement('span');
+    box.className = 'hd-tags';
+    if (hdTagEditor && hdTagEditor.pipelineId === st.id && hdTagEditor.host === where) {
+      box.appendChild(hdTagEditor.el);
+      host.appendChild(box);
+      continue;
+    }
+    const tags = st.tags || [];
+    box.append(...tags.map((t) => tagChip(document, t)));
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'link-btn hd-tags-edit';
+    edit.textContent = tags.length ? 'Edit tags' : 'Add tags';
+    edit.addEventListener('click', () => { hdTagEditor = { ...hdTagEditorFor(st, repaint), host: where }; repaint(); });
+    box.appendChild(edit);
+    host.appendChild(box);
+  }
+}
+function hdTagEditorFor(st, repaint) {
+  const el = document.createElement('span');
+  el.className = 'hd-tags-editor';
+  const input = createTagInput(document, { value: st.tags || [], suggest: fetchTagVocabulary });
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'btn btn-primary btn-mini hd-tags-save';
+  save.textContent = 'Save';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'link-btn hd-tags-cancel';
+  cancel.textContent = 'Cancel';
+  const hint = input.el.querySelector('.tag-input-hint');
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      const res = await fetch(`/api/runs/${encodeURIComponent(st.id)}/tags`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tags: input.get() }),
+      });
+      const json = await safeJson(res);
+      if (res.ok) { st.tags = (json && json.tags) || []; hdTagEditor = null; repaint(); return; }
+      hint.textContent = res.status === 404 ? 'This run no longer exists.' : ((json && json.error) || `Could not save (HTTP ${res.status})`);
+    } catch (err) {
+      hint.textContent = err && err.message ? err.message : 'Could not save';
+    } finally { save.disabled = false; }
+  });
+  cancel.addEventListener('click', () => { hdTagEditor = null; repaint(); });
+  el.append(input.el, save, cancel);
+  return { pipelineId: st.id, el, input };
+}
+
 function paintHdHeaderMeta(screen, record, data) {
   const st = data.state;
   paintAutoBadge(screen.querySelector('.hd-row1 .auto-badge'), st && st.stepper);
@@ -22439,6 +22535,7 @@ function paintHdHeaderMeta(screen, record, data) {
   row2?.querySelector('.person-chip')?.remove();
   const by = personShown(st.startedBy) || personShown(record && record.startedBy);
   if (by && row2) row2.appendChild(personChip(by, st.scheduledFor ? 'Scheduled by' : 'Started by'));
+  paintHdTags(screen, record, data);
   // spec §8: the End card's result chip, repeated in the header meta (History D5
   // untouched — no model/effort). A path links through the keyed artifact route.
   if (st.endReached === true && st.result) {
@@ -29168,7 +29265,7 @@ function loadRunsGroupBy() {
   try { const v = localStorage.getItem(RUNS_GROUP_BY_KEY); return RUNS_GROUPINGS.includes(v) ? v : 'project'; }
   catch { return 'project'; }
 }
-const runsUi = { query: '', filter: loadRunsFilter(), groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false };
+const runsUi = { query: '', tag: '', filter: loadRunsFilter(), groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false };
 
 function histGroupName(p) {
   return (p.target === 'workspace' && p.workspaceName) || p.projectName || p.projectKey || '(unknown project)';
@@ -29223,6 +29320,7 @@ function runsLiveItem(r) {
     pr: terminal ? glancePrInput(rec) : null,
     checks: rec && typeof rec.checks === 'number' ? rec.checks : null,
     files: rec && typeof rec.files === 'number' ? rec.files : null,
+    tags: flagOn('runTags') ? (r.tags || []) : [],
   };
 }
 function runsHistItem(p) {
@@ -29235,6 +29333,7 @@ function runsHistItem(p) {
     checks: typeof p.checks === 'number' ? p.checks : null,
     files: typeof p.files === 'number' ? p.files : null,
     base: baseRowNote(p.baseCheck),
+    tags: flagOn('runTags') ? (p.tags || []) : [],
   };
 }
 function runsSchedItem(t) {
@@ -29246,7 +29345,7 @@ function runsSchedItem(t) {
 
 // pipelineId: a live row painted before its id arrived must repaint once it does (selection
 // and the focus fallbacks below match on it).
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base];
+const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base, (r.tags || []).join(',')];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over (same slot first), then the
@@ -29268,11 +29367,15 @@ function paintRunsList() {
   // state.historyAll (that keeps meaning "active history").
   const archivedView = runsUi.filter === 'archived';
   const histSource = archivedView ? (state.historyArchived || []) : (state.historyAll || []);
+  const liveItems = overviewRuns().map(runsLiveItem);
+  const histItems = histSource.filter(Boolean).map(runsHistItem);
+  paintRunsTagFilter([...liveItems, ...histItems]);
   const model = buildRunsModel({
-    live: overviewRuns().map(runsLiveItem),
-    history: histSource.filter(Boolean).map(runsHistItem),
+    live: liveItems,
+    history: histItems,
     scheduled: schedulesView.upcoming(SCHEDULED_GROUP_WINDOW_MS).map(runsSchedItem),
     person: viewer.shared ? state.historyPerson : '',
+    tag: flagOn('runTags') ? runsUi.tag : '',
     query: runsUi.query, filter: runsUi.filter, groupBy: runsUi.groupBy, collapsed: runsUi.collapsed, now: Date.now(),
   });
   const note = archivedView
@@ -29309,6 +29412,21 @@ function paintRunsList() {
     if (g && typeof g.scrollIntoView === 'function') g.scrollIntoView({ block: 'start' });
   }
 }
+// The Runs list tag filter (#718): every distinct tag on the loaded rows. A chosen tag that is no
+// longer listed falls back to "All tags".
+function paintRunsTagFilter(items) {
+  const sel = document.getElementById('runs-tag');
+  if (!sel) return;
+  const opts = tagFilterOptions(items);
+  if (runsUi.tag && !opts.includes(runsUi.tag)) runsUi.tag = '';
+  const sig = JSON.stringify(opts);
+  if (sel.dataset.sig !== sig) {
+    sel.dataset.sig = sig;
+    sel.replaceChildren(option('', 'All tags'), ...opts.map((t) => option(t, t)));
+  }
+  sel.value = runsUi.tag;
+}
+document.getElementById('runs-tag')?.addEventListener('change', (e) => { runsUi.tag = e.target.value; paintRunsList(); });
 // Frames arrive in bursts (one message fans out to several repaint hooks): paint once.
 let runsPaintQueued = false;
 function scheduleRunsPaint() {
@@ -31846,6 +31964,9 @@ function paintRdHeader(screen, r) {
   screen.querySelector('.rd-page-meta .person-chip')?.remove();
   const starter = personShown(r.startedBy);
   if (starter) screen.querySelector('.rd-page-meta').append(personChip(starter));
+  // Run tags (#718): read-only chips after the person chip, replaced on every paint.
+  for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();
+  if (flagOn('runTags')) screen.querySelector('.rd-page-meta').append(...(r.tags || []).map((t) => tagChip(document, t)));
 
   // Meta: project · started · elapsed · cost · step n/m · step name.
   const meta = screen.querySelector('.rd-meta');
@@ -33705,6 +33826,8 @@ function getPageContext() {
 
 function openNewPipeline(prefill) {
   newPipelinePrefill = prefill || null;
+  // Run tags (#718): marked dirty, so the project defaults loaded by the prefill's project switch keep off them.
+  if (prefill?.tags?.length) runTagInput.set(prefill.tags, { dirty: true });
   // hash already #new fires no hashchange — call showView directly (the
   // nav-click guard at the navLinks handler models this exact case).
   if (location.hash.slice(1) === 'new') showView('new');

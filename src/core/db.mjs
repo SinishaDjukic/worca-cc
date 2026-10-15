@@ -60,7 +60,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 56;
+export const SCHEMA_VERSION = 57;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1033,6 +1033,30 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
 );
 `;
 
+// v57 (#718): run tags. One row per (run, key); the plain tag `spike` is value ''. Written at run
+// creation and by the tag-edit route only — writeState never touches them. pipelines rows are never
+// DELETEd (pipeline-delete.mjs), so the CASCADE is convention, and tags survive archive/restore.
+const RUN_TAGS_DDL = `
+CREATE TABLE IF NOT EXISTS run_tags (
+  pipeline_id TEXT NOT NULL,
+  key         TEXT NOT NULL,
+  value       TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (pipeline_id, key),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_run_tags_key_value ON run_tags (key, value);
+CREATE TABLE IF NOT EXISTS run_tag_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  pipeline_id TEXT NOT NULL,
+  ts          TEXT NOT NULL,
+  actor       TEXT,
+  before_tags TEXT NOT NULL,   -- JSON string[] (normalised)
+  after_tags  TEXT NOT NULL,   -- JSON string[] (normalised)
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_run_tag_events_pipeline ON run_tag_events (pipeline_id, id);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1056,6 +1080,8 @@ const INCREMENTAL_TABLES = {
   pipeline_member_prs: PIPELINE_MEMBER_PRS_DDL,
   pr_watches: PR_WATCH_DDL,
   pr_watch_runs: PR_WATCH_DDL,
+  run_tags:       RUN_TAGS_DDL,
+  run_tag_events: RUN_TAGS_DDL,
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -2137,6 +2163,7 @@ export function migrate(db) {
     if (current < 55) applySchemaV55(db);
     if (current < SCHEMA_VERSION) refreshArchitectureSeed(db);
     if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
+    if (current < 57) db.exec(RUN_TAGS_DDL);         // run tags + tag-edit audit (#718)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

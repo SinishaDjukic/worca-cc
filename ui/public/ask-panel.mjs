@@ -32,6 +32,8 @@ import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64,
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
+import { flagOn } from './flags.mjs';
+import { createTagInput, fetchTagVocabulary } from './tag-input.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
   fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
@@ -3987,6 +3989,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     titleInput.placeholder = 'Run title';
     titleRow.append(titleInput, make('span', 'ask-rp-edit', '✎ click to rename'));
     head.appendChild(titleRow);
+    // Run tags (#718), behind the experimental flag: prefilled from the proposal, sent on Start.
+    const tagInput = flagOn('runTags', doc) ? createTagInput(doc, { value: card.tags || [], suggest: fetchTagVocabulary }) : null;
+    if (tagInput) {
+      const tagRow = make('div', 'ask-rp-tags');
+      tagRow.appendChild(tagInput.el);
+      head.appendChild(tagRow);
+    }
     if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
     rootEl.appendChild(head);
 
@@ -4408,7 +4417,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       renderTarget();
       reloadLane();
     });
-    rootEl.__rp = { local, wfDesc, summary, laneSec, briefSec, brief, titleInput, lane: () => local.lane };   // consumed by later tasks + tests
+    rootEl.__rp = { local, wfDesc, summary, laneSec, briefSec, brief, titleInput, tagInput, lane: () => local.lane };   // consumed by later tasks + tests
     return rootEl;
   }
 
@@ -4423,6 +4432,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Agent memory (§7.3 / B17): the card's scope rides along only while its workflow is still the
     // defragment one — a user who switched the picker to another workflow gets a legacy body.
     if (card.memoryScope && body.workflowId === 'wf_memory_defrag') body.memoryScope = card.memoryScope;
+    const tags = rootEl.__rp?.tagInput ? rootEl.__rp.tagInput.get() : [];
+    if (tags.length) body.tags = tags;                      // none: a legacy body, byte for byte
     const engine = (rootEl.querySelector('.ask-card-engine') || {}).value;
     if (engine) body.engine = engine;                       // none: /api/run's default engine
     // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
@@ -4581,6 +4592,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       engine: (rootEl.querySelector('.ask-card-engine') || {}).value || null,
     };
     if ((rootEl.querySelector('.ask-card-same-source') || {}).checked) p.sameAsSource = true;
+    const tags = rootEl.__rp?.tagInput ? rootEl.__rp.tagInput.get() : (card.tags || []);
+    if (tags.length) p.tags = tags;
     if (local.target === 'workspace') {
       p.workspaceId = rootEl.querySelector('.ask-card-workspace-select').value;
       const src = rootEl.querySelector('.ask-card-source-input');

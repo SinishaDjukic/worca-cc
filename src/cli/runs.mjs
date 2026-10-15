@@ -13,10 +13,12 @@ import { basename } from 'node:path';
 
 import { getDb } from '../core/db.mjs';
 import { listAllPipelines, readPipelineByKey, readStoreMeta } from '../core/artifacts.mjs';
+import { readRunTags } from '../core/run-tags-store.mjs';
 import { readUiInstance } from '../core/ui-instance.mjs';
 import { fmtDur, executionCount, loopDeliveries, formatResumeHints } from './render.mjs';
 import { formatInstant } from '../shared/schedule/recurrence.mjs';
 import { runCostLabel, engineLabel } from '../shared/engine-switch.mjs';
+import { parseTag, hasTag } from '../shared/run-tags.mjs';
 
 export const RUNS_HELP = `worca runs — list and inspect pipeline runs
 
@@ -25,6 +27,8 @@ Usage:
   worca runs --status <s>         Filter by status: created | running | paused |
                                   stopped | interrupted | done
   worca runs --project <name>     Filter by project name or key
+  worca runs --tag <tag>          Filter by tag: client (any value) or client:acme
+                                  (exact); repeatable, every one must match
   worca runs <id>                 One run in detail (any unique prefix)
   worca runs show <id>            One run in detail (same as "worca runs <id>")
   worca runs --json               Machine-readable output (list and detail)
@@ -123,9 +127,19 @@ async function runsList(rest, { out, c, fail }) {
   const status = valueFlag(rest, 'status');
   const project = valueFlag(rest, 'project');
   const json = rest.includes('--json');
+  // --tag is repeatable and ANDed: `client` = any client, `client:acme` = exactly that (#718).
+  const tagQueries = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--tag') {
+      const v = rest[i + 1];
+      if (v === undefined || v.startsWith('-')) fail('--tag needs a value (see: worca runs help)');
+      tagQueries.push(v); i++;
+    } else if (rest[i].startsWith('--tag=')) tagQueries.push(rest[i].slice('--tag='.length));
+  }
+  for (const q of tagQueries) if (parseTag(q).error) fail(`--tag: ${parseTag(q).error}`);
   const unknown = rest.filter((a) => a.startsWith('-')
-    && !['--json', '--status', '--project'].includes(a)
-    && !a.startsWith('--status=') && !a.startsWith('--project='));
+    && !['--json', '--status', '--project', '--tag'].includes(a)
+    && !a.startsWith('--status=') && !a.startsWith('--project=') && !a.startsWith('--tag='));
   if (unknown.length) fail(`unknown option(s): ${unknown.join(' ')} — see: worca runs help`);
   if (status !== null && !STATUSES.includes(String(status).toLowerCase())) {
     fail(`--status must be one of ${STATUSES.join(', ')}, got: ${status}`);
@@ -136,6 +150,7 @@ async function runsList(rest, { out, c, fail }) {
   const runs = entries.filter((e) => {
     if (status !== null && String(e.status || '').toLowerCase() !== String(status).toLowerCase()) return false;
     if (q && !`${e.projectName}`.toLowerCase().includes(q) && !`${e.projectKey}`.toLowerCase().includes(q)) return false;
+    if (tagQueries.length && !tagQueries.every((t) => hasTag(e.tags, t))) return false;
     return true;
   });
 
@@ -237,6 +252,7 @@ async function runsShow(argv, { out, c, fail, unknownVerb = false }) {
       linesRemoved: removed,
       resultPath,
       startedBy,
+      tags: readRunTags(row.id),
       uiUrl: link,
     }, null, 2));
     return 0;

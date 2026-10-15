@@ -346,6 +346,12 @@
                   <input id="title" name="title" class="input" type="text" placeholder="Short name for this run" spellcheck="false" />
                   <small class="hint">Leave empty and Worca will propose one.</small>
                 </div>
+                <!-- Run tags (#718): who the work is for, so its cost can be allocated. Chips from tag-input.mjs. -->
+                <div class="field field-compact run-tags-field" data-flag="runTags" data-flag-chip>
+                  <label>Tags <span class="opt">(optional)</span></label>
+                  <div id="runTagsField"></div>
+                  <small class="hint">Used to allocate cost. <button type="button" class="link-btn" id="runTagsSaveDefault">Save as project default</button></small>
+                </div>
 
                 <!-- Workflow picker (Default + saved) and the engine that runs it, on one row: the
                      workflow takes 60%, the engine 40%. app.js populates the workflows from GET
@@ -687,6 +693,7 @@
                 <button type="button" data-filter="finished" aria-pressed="false">Finished</button>
                 <button type="button" data-filter="needs" aria-pressed="false">Needs you</button>
               </div>
+              <div class="select-wrap runs-tag-wrap" data-flag="runTags"><select id="runs-tag" class="select runs-tag" aria-label="Filter by tag"><option value="">All tags</option></select></div>
               <!-- "Started by" pills, shared deployments only: one scrolling row. Built by renderRunsPeople(). -->
               <div class="hist-filter runs-people" id="historyFilter" role="group" aria-label="Filter runs by who started them" hidden></div>
               <div class="runs-list" id="runs-list" aria-label="Runs"></div>

@@ -39,6 +39,18 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-01-10',
     docs: 'docs/feature-flags.md',
   }),
+  entry({
+    key: 'runTags',
+    title: 'Run tags',
+    description: 'Tag runs (client:acme, team:web) on the New run form, run pages and Runs list, so their cost can be allocated.',
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.11.0',
+    added: '2026-10-15',
+    reviewBy: '2027-01-13',
+    docs: 'docs/feature-flags.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));
