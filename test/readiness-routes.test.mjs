@@ -49,8 +49,8 @@ async function addProject(dir) {
   const { projects } = await res.json();
   return projects.find((p) => p.name === name);
 }
-function freshRepo() {
-  const dir = templateRepo('readiness-routes', { branch: 'main', user: true, files: { 'README.md': '# hi\n' } });
+function freshRepo(files = {}) {
+  const dir = templateRepo('readiness-routes', { branch: 'main', user: true, files: { 'README.md': '# hi\n', ...files } });
   created.push(dir);
   return dir;
 }
@@ -127,7 +127,7 @@ test('GET /api/projects carries a cache-only readiness summary, null until a rep
   const warm = await (await call('GET', '/api/projects')).json();
   const summary = warm.projects.find((x) => x.key === p.key).readiness;
   assert.ok(summary, 'summary appears once cached');
-  assert.equal(summary.primaryEngine, 'claude');
+  assert.deepEqual(Object.keys(summary).sort(), ['applicable', 'failingCount', 'level', 'mustFix', 'passed', 'shouldFix']);
   assert.equal(typeof summary.level, 'string');
   assert.equal(typeof summary.failingCount, 'number');
 });
@@ -162,7 +162,7 @@ test('adding a project evaluates it in the background: a readiness-changed frame
     const list = await (await call('GET', '/api/projects')).json();
     assert.ok(list.projects.find((x) => x.key === p.key).readiness, 'summary is cached without any GET …/readiness');
     const added = await waitFor(() => c.msgs.find((m) => m.type === 'readiness-added' && m.projectKey === p.key));
-    assert.equal(added.engine, 'claude');
+    assert.equal(added.engine, 'Claude Code');
     assert.equal(added.name, p.name);
   } finally {
     c.ws.close();
@@ -188,4 +188,32 @@ test('a project-sync change re-evaluates an already-evaluated project whose HEAD
   } finally {
     c.ws.close();
   }
+});
+
+test('PATCH readiness.tools emits readiness-changed and the summary follows', async () => {
+  const p = await addProject(freshRepo({ 'CLAUDE.md': '# c\n' }));
+  await call('GET', `/api/projects/${p.key}/readiness`);
+  const ready = (await (await call('GET', '/api/projects')).json()).projects.find((x) => x.key === p.key).readiness;
+  assert.equal(ready.level, 'ready');
+  const c = openWs();
+  await c.opened;
+  try {
+    const res = await call('PATCH', `/api/projects/${p.key}/settings`, { 'readiness.tools': { codex: 'used' } });
+    assert.equal(res.status, 200);
+    await waitFor(() => c.msgs.find((m) => m.type === 'readiness-changed' && m.action === p.key));
+    const s = (await (await call('GET', '/api/projects')).json()).projects.find((x) => x.key === p.key).readiness;
+    assert.equal(s.level, 'not-ready');
+    assert.equal(s.failingCount, 1);
+  } finally {
+    c.ws.close();
+  }
+});
+
+test('GET …/readiness judges only used tools: a fresh repo with CLAUDE.md is ready, Codex is unused', async () => {
+  const p = await addProject(freshRepo({ 'CLAUDE.md': '# c\n' }));
+  const { readiness } = await (await call('GET', `/api/projects/${p.key}/readiness`)).json();
+  assert.equal(readiness.level, 'ready');
+  assert.equal(readiness.engines.claude.used, true);
+  assert.equal(readiness.engines.codex.level, 'unused');
+  assert.equal(typeof readiness.checkedAt, 'string');
 });

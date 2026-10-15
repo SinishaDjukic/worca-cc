@@ -5,8 +5,9 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import {
-  cache, getCachedOrEvaluate, readinessSummary,
+  cache, getCachedOrEvaluate, readinessSummary, _setEvaluateForTest,
 } from '../src/core/repo-readiness/cache.mjs';
+import { evaluateReadiness as realEvaluate } from '../src/core/repo-readiness/evaluate.mjs';
 
 function gitDir() {
   const dir = mkdtempSync(join(tmpdir(), 'cache-'));
@@ -38,7 +39,7 @@ describe('getCachedOrEvaluate', () => {
     try {
       const r1 = await getCachedOrEvaluate({ dir, projectKey: 'cache-hit' });
       const r2 = await getCachedOrEvaluate({ dir, projectKey: 'cache-hit' });
-      assert.strictEqual(r1, r2);
+      assert.deepStrictEqual(r1, r2);
     } finally { rmRf(dir); }
   });
 
@@ -49,18 +50,23 @@ describe('getCachedOrEvaluate', () => {
       writeFileSync(join(dir, 'CLAUDE.md'), 'test');
       commitAll(dir);
       const r2 = await getCachedOrEvaluate({ dir, projectKey: 'cache-miss' });
-      assert.notStrictEqual(r1, r2);
+      assert.notDeepStrictEqual(r1.engines.claude, r2.engines.claude);
     } finally { rmRf(dir); }
   });
 
   it('force re-evaluates past an unchanged fingerprint and refreshes the cached entry', async () => {
     const dir = gitDir();
     try {
-      const r1 = await getCachedOrEvaluate({ dir, projectKey: 'cache-force' });
-      const r2 = await getCachedOrEvaluate({ dir, projectKey: 'cache-force', force: true });
-      assert.notStrictEqual(r1, r2);
-      const r3 = await getCachedOrEvaluate({ dir, projectKey: 'cache-force' });
-      assert.strictEqual(r3, r2, 'the forced report is what the cache now serves');
+      let calls = 0;
+      _setEvaluateForTest(async (o) => { calls++; return realEvaluate(o); });
+      try {
+        await getCachedOrEvaluate({ dir, projectKey: 'cache-force' });
+        const r2 = await getCachedOrEvaluate({ dir, projectKey: 'cache-force', force: true });
+        assert.equal(calls, 2);
+        const r3 = await getCachedOrEvaluate({ dir, projectKey: 'cache-force' });
+        assert.equal(calls, 2);
+        assert.equal(r3.checkedAt, r2.checkedAt, 'the forced report is what the cache now serves');
+      } finally { _setEvaluateForTest(null); }
     } finally { rmRf(dir); }
   });
 
@@ -69,18 +75,23 @@ describe('getCachedOrEvaluate', () => {
     try {
       const r1 = await getCachedOrEvaluate({ dir, projectKey: 'cache-ignore' });
       const r2 = await getCachedOrEvaluate({ dir, projectKey: 'cache-ignore', ignore: ['git.repo'] });
-      assert.notStrictEqual(r1, r2);
+      assert.notEqual(r1.checks.find((c) => c.id === 'git.repo').status, 'ignored');
+      assert.equal(r2.checks.find((c) => c.id === 'git.repo').status, 'ignored');
     } finally { rmRf(dir); }
   });
 
   it('dedupes concurrent requests for the same key', async () => {
     const dir = gitDir();
+    let calls = 0;
+    _setEvaluateForTest(async (o) => { calls++; return realEvaluate(o); });
     try {
-      const p1 = getCachedOrEvaluate({ dir, projectKey: 'cache-dedupe' });
-      const p2 = getCachedOrEvaluate({ dir, projectKey: 'cache-dedupe' });
-      assert.strictEqual(p1, p2);
-      assert.strictEqual(await p1, await p2);
-    } finally { rmRf(dir); }
+      const [r1, r2] = await Promise.all([
+        getCachedOrEvaluate({ dir, projectKey: 'cache-dedupe' }),
+        getCachedOrEvaluate({ dir, projectKey: 'cache-dedupe' }),
+      ]);
+      assert.equal(calls, 1);
+      assert.deepStrictEqual(r1, r2);
+    } finally { _setEvaluateForTest(null); rmRf(dir); }
   });
 
   it('emits changed when a level or failing set changes, not otherwise', async () => {
@@ -111,7 +122,6 @@ describe('getCachedOrEvaluate', () => {
       writeFileSync(join(dir, 'other.txt'), 'x');
       commitAll(dir);
       const r3 = await getCachedOrEvaluate({ dir, projectKey: key });
-      assert.notStrictEqual(r2, r3);
       assert.strictEqual(JSON.stringify(r2.engines), JSON.stringify(r3.engines));
       assert.strictEqual(changed.length, before);
     } finally { cache.off('changed', onChanged); rmRf(dir); }
@@ -123,24 +133,39 @@ describe('readinessSummary', () => {
     assert.strictEqual(readinessSummary('nonexistent-key'), null);
   });
 
-  it('returns {level, primaryEngine, failingCount} for a cached key', async () => {
+  it('summarizes the last built report: level and counts, no primaryEngine', async () => {
     const dir = gitDir();
     try {
-      const report = await getCachedOrEvaluate({ dir, projectKey: 'cache-summary', primaryEngine: 'claude' });
+      const report = await getCachedOrEvaluate({ dir, projectKey: 'cache-summary' });
       const summary = readinessSummary('cache-summary');
-      assert.ok(summary);
-      assert.ok(['ready', 'partial', 'not-ready', 'unknown'].includes(summary.level));
-      assert.strictEqual(summary.level, report.engines.claude.level);
-      assert.strictEqual(summary.failingCount, report.engines.claude.failing.length);
-      assert.strictEqual(summary.primaryEngine, 'claude');
+      assert.equal(summary.level, report.level);
+      assert.equal(summary.failingCount, report.counts.mustFix + report.counts.shouldFix);
+      assert.deepEqual(Object.keys(summary).sort(), ['applicable', 'failingCount', 'level', 'mustFix', 'passed', 'shouldFix']);
     } finally { rmRf(dir); }
   });
+});
 
-  it('reports unknown when the primary engine is not in the report', async () => {
+describe('final report on read', () => {
+  it('builds the final report on every read: a usage change needs no re-evaluation', async () => {
     const dir = gitDir();
+    writeFileSync(join(dir, 'CLAUDE.md'), '# c\n');
+    commitAll(dir);
+    let calls = 0;
+    _setEvaluateForTest(async (o) => { calls++; return realEvaluate(o); });
+    const changed = [];
+    const onChanged = (ev) => changed.push(ev);
+    cache.on('changed', onChanged);
     try {
-      await getCachedOrEvaluate({ dir, projectKey: 'cache-noengine', primaryEngine: 'nope' });
-      assert.deepEqual(readinessSummary('cache-noengine'), { level: 'unknown', primaryEngine: 'nope', failingCount: 0 });
-    } finally { rmRf(dir); }
+      const usageA = () => ({ runEngine: 'claude', history: {}, settings: {} });
+      const usageB = () => ({ runEngine: 'claude', history: {}, settings: { codex: 'used' } });
+      const a = await getCachedOrEvaluate({ dir, projectKey: 'k-usage', usage: usageA });
+      const b = await getCachedOrEvaluate({ dir, projectKey: 'k-usage', usage: usageB });
+      assert.equal(calls, 1);
+      assert.equal(a.engines.codex.level, 'unused');
+      assert.equal(b.engines.codex.level, 'not-ready');
+      assert.equal(readinessSummary('k-usage').level, 'not-ready');
+      assert.ok(a.checkedAt && a.checkedAt === b.checkedAt, 'checkedAt is the evaluation time, not the read time');
+      assert.deepEqual(changed, [{ projectKey: 'k-usage' }], 'a usage change that moves the result emits changed');
+    } finally { cache.off('changed', onChanged); _setEvaluateForTest(null); rmRf(dir); }
   });
 });

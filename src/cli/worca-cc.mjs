@@ -298,8 +298,8 @@ Subcommands:
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
-  readiness [--project <key|path>] [--engine <name>] [--json] [--force]
-                              Check how ready a repo is for agent runs. Exit 0 ready/partial, 2 not-ready, 1 error.
+  readiness [--project <key|path>] [--engine <name>]... [--json] [--force]
+                              Check how ready a repo is for the tools it uses. Exit 0 ready/partial, 2 not-ready, 1 error.
   script <cmd> [...]          Manage and test scripts: list|show|new|rm|test. See: worca script help
   config [get|set|unset]      Budget & cost-limit settings
   ui [start|stop|restart|status]
@@ -1116,14 +1116,14 @@ async function cmdAdd(argv) {
 }
 
 /**
- * `worca readiness` — evaluate how ready a repo is for agent runs. Prints one line per
- * failing check with its fix (or the full report with --json). Exit 0 ready/partial,
- * 2 not-ready (an engine level, or any failing blocker), 1 error. WORCA_READINESS=0
- * turns the feature off unless --force.
+ * `worca readiness` — evaluate how ready a repo is for agent runs on the tools it uses (the run engine, run
+ * history, tool files, the project's readiness.tools; or each --engine given). Prints what was judged, the result
+ * and one line per failing check with its fix (or the final report with --json). Exit 0 ready/partial,
+ * 2 not-ready (or any failing blocker), 1 error or unknown. WORCA_READINESS=0 turns the feature off unless --force.
  */
 async function cmdReadiness(argv) {
   const err = (msg) => { process.stderr.write(`worca readiness: ${msg}\n`); return 1; };
-  const opts = { project: null, engine: null, json: false, force: false };
+  const opts = { project: null, engines: [], json: false, force: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') opts.json = true;
@@ -1131,8 +1131,8 @@ async function cmdReadiness(argv) {
     else if (a === '--project' || a === '--engine') {
       const v = argv[++i];
       if (!v || v.startsWith('--')) return err(`${a} needs a value`);
-      opts[a.slice(2)] = v;
-    } else return err(`unknown option "${a}". Usage: worca readiness [--project <key|path>] [--engine <name>] [--json] [--force]`);
+      if (a === '--engine') opts.engines.push(v); else opts.project = v;
+    } else return err(`unknown option "${a}". Usage: worca readiness [--project <key|path>] [--engine <name>]... [--json] [--force]`);
   }
 
   const { evaluateReadiness, readinessEnabled } = await import('../core/repo-readiness/evaluate.mjs');
@@ -1140,6 +1140,10 @@ async function cmdReadiness(argv) {
     out('Agent readiness checks are disabled (WORCA_READINESS=0). Use --force to run them anyway.');
     return 0;
   }
+  const { buildReport, summaryOf } = await import('../core/repo-readiness/report.mjs');
+  const { usedEngines } = await import('../core/repo-readiness/used.mjs');
+  const { usageInputs } = await import('../core/repo-readiness/cache.mjs');
+  const { engineLabel } = await import('../shared/engine-switch.mjs');
 
   let dir = process.cwd();
   let name = null;
@@ -1153,42 +1157,46 @@ async function cmdReadiness(argv) {
   name = name || basename(dir);
   key = key || projectKey(dir);
 
-  let report;
+  let base;
   try {
-    report = await evaluateReadiness({
-      dir,
-      projectKey: key,
-      ignore: readinessIgnore({ projectDir: dir, projectKey: key }),
-      primaryEngine: opts.engine || resolveRunEngine({ projectDir: dir, projectKey: key }).engine,
-      timeoutMs: 8000,
-    });
+    base = await evaluateReadiness({ dir, projectKey: key, ignore: readinessIgnore({ projectDir: dir, projectKey: key }), timeoutMs: 8000 });
   } catch (e) {
     return err(e?.message || String(e));
   }
 
-  const engineNames = Object.keys(report.engines);
-  if (opts.engine && !engineNames.includes(opts.engine)) return err(`unknown engine "${opts.engine}" (known: ${engineNames.join(', ')})`);
-  const scope = opts.engine ? [opts.engine] : engineNames;
-  const inScope = (row) => row.engines.some((e) => scope.includes(e));
+  const engineNames = Object.keys(base.engines);
+  const unknownEngine = opts.engines.find((e) => !engineNames.includes(e));
+  if (unknownEngine) return err(`unknown engine "${unknownEngine}" (known: ${engineNames.join(', ')})`);
+  const usage = opts.engines.length
+    ? Object.fromEntries(engineNames.map((n) => [n, { used: opts.engines.includes(n), setting: 'used', detected: false, reasons: [{ kind: 'setting', text: '--engine' }] }]))
+    : usedEngines({
+      engines: engineNames, files: base.files,
+      ...usageInputs({ projectKey: key, projectDir: dir, runEngine: resolveRunEngine({ projectDir: dir, projectKey: key }).engine || 'claude' }),
+    });
+  const report = buildReport(base, usage);
+  const judged = engineNames.filter((n) => report.engines[n].used);
+  const inScope = (row) => row.scope === 'repository' || judged.includes(row.engine);
   const failing = report.checks.filter((r) => r.status === 'fail' && inScope(r));
-  const notReady = scope.some((e) => report.engines[e].level === 'not-ready') || failing.some((r) => r.severity === 'blocker');
+  const code = report.level === 'not-ready' || failing.some((r) => r.severity === 'blocker') ? 2 : report.level === 'unknown' ? 1 : 0;
 
   if (opts.json) {
     out(JSON.stringify(report, null, 2));
-    return notReady ? 2 : 0;
+    return code;
   }
 
+  const s = summaryOf(report);
+  const why = (n) => (opts.engines.length || !report.engines[n].reasons[0] ? '' : ` (${report.engines[n].reasons[0].text})`);
+  const LEVEL = { ready: 'Ready', partial: 'Partly ready', 'not-ready': 'Not ready', unknown: 'Unknown' };
+  const fixes = [s.mustFix && `${s.mustFix} must fix`, s.shouldFix && `${s.shouldFix} should fix`].filter(Boolean).join(', ');
   out(`Project: ${name} (${dir})`);
-  for (const e of scope) {
-    const { level, locked } = report.engines[e];
-    out(`Engine: ${e} → ${level}${locked ? ` (${locked})` : ''}`);
-  }
-  const line = (r) => `  ${r.id}${r.engine ? ` (${r.engine})` : ''}: ${r.fix}${r.detail ? ` [${r.detail}]` : ''}`;
+  out(`Judged: ${judged.length ? judged.map((n) => `${engineLabel(n)}${why(n)}`).join(', ') : 'no tool'}`);
+  out(`Result: ${LEVEL[report.level] || report.level}.${fixes ? ` ${fixes}.` : ''} ${s.passed} of ${s.applicable} checks pass.`);
+  const line = (r) => `  ${r.id}${r.engine ? ` (${engineLabel(r.engine)})` : ''}: ${r.fix}${r.detail ? ` [${r.detail}]` : ''}`;
   for (const [title, severity] of [['Blocker failures:', 'blocker'], ['Warnings:', 'warn']]) {
     const rows = failing.filter((r) => r.severity === severity);
     if (rows.length) out(`\n${title}\n${rows.map(line).join('\n')}`);
   }
-  return notReady ? 2 : 0;
+  return code;
 }
 
 async function cmdList() {

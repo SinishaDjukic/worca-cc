@@ -42,7 +42,7 @@ describe('readiness integration', () => {
       assert.ok(facts.headSha);
 
       const report = await evaluateReadiness({ dir, projectKey: 'int-pipeline' });
-      assert.equal(report.catalogVersion, 1);
+      assert.equal(report.catalogVersion, 2);
       assert.ok(report.engines);
       assert.ok(Array.isArray(report.checks));
 
@@ -51,12 +51,12 @@ describe('readiness integration', () => {
     } finally { rmRf(dir); }
   });
 
-  it('cache returns the same report object while the fingerprint is unchanged', async () => {
+  it('cache serves the same evaluation while the fingerprint is unchanged', async () => {
     const dir = gitDir();
     try {
       const r1 = await getCachedOrEvaluate({ dir, projectKey: 'int-cache' });
       const r2 = await getCachedOrEvaluate({ dir, projectKey: 'int-cache' });
-      assert.strictEqual(r1, r2);
+      assert.deepStrictEqual(r1, r2);
     } finally { rmRf(dir); }
   });
 
@@ -69,8 +69,8 @@ describe('readiness integration', () => {
       const r1 = await evaluateReadiness({ dir, projectKey: 'int-ignore', ignore: [] });
       const r2 = await evaluateReadiness({ dir, projectKey: 'int-ignore', ignore: ['commands.test'] });
 
-      assert.ok(r1.engines.claude.failing.includes('commands.test'));
-      assert.ok(!r2.engines.claude.failing.includes('commands.test'));
+      assert.ok(r1.repository.failing.includes('commands.test'));
+      assert.ok(!r2.repository.failing.includes('commands.test'));
       assert.ok(r2.checks.some((r) => r.id === 'commands.test' && r.status === 'ignored'));
     } finally { rmRf(dir); }
   });
@@ -101,7 +101,7 @@ describe('readiness integration', () => {
     try {
       const report = await evaluateReadiness({ dir, projectKey: 'int-format' });
 
-      assert.equal(report.catalogVersion, 1);
+      assert.equal(report.catalogVersion, 2);
       assert.equal(typeof report.engines, 'object');
       assert.ok(Array.isArray(report.checks));
 
@@ -111,7 +111,7 @@ describe('readiness integration', () => {
         assert.ok(['blocker', 'warn', 'info'].includes(row.severity));
         assert.ok(['pass', 'fail', 'skip', 'error', 'ignored'].includes(row.status));
         assert.equal(typeof row.fix, 'string');
-        assert.ok(Array.isArray(row.engines));
+        assert.ok(row.scope === 'repository' ? row.engine === undefined : typeof row.engine === 'string');
       }
 
       for (const eng of Object.values(report.engines)) {

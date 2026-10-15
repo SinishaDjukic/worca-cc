@@ -281,7 +281,7 @@ import {
 import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
-import { cache as readinessEvents, getCachedOrEvaluate, readinessSummary } from '../src/core/repo-readiness/cache.mjs';
+import { cache as readinessEvents, getCachedOrEvaluate, readinessSummary, usageInputs as readinessUsage } from '../src/core/repo-readiness/cache.mjs';
 import { readinessEnabled } from '../src/core/repo-readiness/evaluate.mjs';
 import { readinessIgnore } from '../src/core/settings.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
@@ -5265,15 +5265,16 @@ app.post('/api/projects/:key/sync', syncRoute(async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;
   return syncProjectAction(res, p, req.body || {});
 }));
-const readinessEngine = (p) => resolveRunEngine({ projectDir: p.path, projectKey: p.key }).engine || 'claude';
-// Agent readiness of one registered project. `refresh` re-evaluates past the cache (and refreshes it). Never throws:
+const readinessRunEngine = (p) => resolveRunEngine({ projectDir: p.path, projectKey: p.key }).engine || 'claude';
+// Agent readiness of one registered project: the tools it uses are judged (settings, run engine, run history, tool
+// files — read on every call). `refresh` re-evaluates past the cache (and refreshes it). Never throws:
 // an evaluation failure answers null (no chip) rather than a 500.
 async function getReadiness(p, { refresh = false } = {}) {
   try {
     return await getCachedOrEvaluate({
       dir: p.path, projectKey: p.key, timeoutMs: INTERACTIVE_TIMEOUT_MS, force: refresh,
       ignore: readinessIgnore({ projectDir: p.path, projectKey: p.key }),
-      primaryEngine: readinessEngine(p),
+      usage: () => readinessUsage({ projectKey: p.key, projectDir: p.path, runEngine: readinessRunEngine(p) }),
     });
   } catch (err) {
     console.error(`[worca-ui] readiness ${p.key}: ${err && err.message ? err.message : err}`);
@@ -5299,10 +5300,8 @@ function evaluateAddedProject(dir) {
       const report = await getReadiness(p);
       if (!report) return;
       emitChanged('readiness-changed', p.key);
-      const engine = readinessEngine(p);
-      if (report.engines && report.engines[engine] && report.engines[engine].level === 'not-ready') {
-        broadcast({ type: 'readiness-added', projectKey: p.key, name: p.name, engine });
-      }
+      const notReady = Object.entries(report.engines || {}).find(([, e]) => e.used && e.level === 'not-ready');
+      if (notReady) broadcast({ type: 'readiness-added', projectKey: p.key, name: p.name, engine: engineLabel(notReady[0]) });
     } catch { /* best effort */ }
   })();
 }
@@ -5379,6 +5378,10 @@ async function applyProjectSettingsPatch(project, patch) {
   await assertSlotModels(items.filter(({ entry, value }) => entry.family && value).map(({ entry, value }) => ({ id: entry.id, engine: entry.engine, value })), { projectDir: project.path });
   writeProjectSettings({ projectDir: project.path }, patch, { roles });
   emitChanged('settings-changed');
+  // readiness.ignore changes the base report (re-evaluate); readiness.tools only which tools are judged.
+  if (readinessEnabled() && project.key && Object.keys(patch || {}).some((id) => id.startsWith('readiness.'))) {
+    void getReadiness(project, { refresh: Object.hasOwn(patch, 'readiness.ignore') }).then(() => emitChanged('readiness-changed', project.key));
+  }
   return projectSettingsState(project.path);
 }
 

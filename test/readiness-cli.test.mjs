@@ -55,8 +55,7 @@ describe('worca readiness', () => {
   it('exits 0 for a partial repo (warnings only) and lists the warnings', async () => {
     const r = await runCli(['readiness', '--project', ready]);
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /^Project: /m);
-    assert.match(r.stdout, /^Engine: claude → partial/m);
+    assert.match(r.stdout, /^Project: .*\nJudged: Claude Code \(runs use it\)\nResult: Partly ready\. 1 should fix\. \d+ of \d+ checks pass\./m);
     assert.match(r.stdout, /Warnings:\n  deps\.lockfile: /);
     assert.doesNotMatch(r.stdout, /Blocker failures/);
   });
@@ -65,7 +64,8 @@ describe('worca readiness', () => {
     const r = await runCli(['readiness', '--project', notReady]);
     assert.equal(r.code, 2, r.stderr);
     assert.match(r.stdout, /Blocker failures:/);
-    assert.match(r.stdout, /instructions\.present \(claude\): /);
+    assert.match(r.stdout, /^Result: Not ready\. 1 must fix/m);
+    assert.match(r.stdout, /instructions\.present \(Claude Code\): /);
     assert.match(r.stdout, /Add AGENTS\.md/);
   });
 
@@ -97,15 +97,35 @@ describe('worca readiness', () => {
   it('--json keeps the not-ready exit code', async () => {
     const r = await runCli(['readiness', '--project', notReady, '--json']);
     assert.equal(r.code, 2);
-    assert.equal(JSON.parse(r.stdout).engines.claude.level, 'not-ready');
+    const report = JSON.parse(r.stdout);
+    assert.equal(report.level, 'not-ready');
+    assert.equal(report.engines.claude.level, 'not-ready');
+    assert.equal(report.engines.codex.level, 'unused');
   });
 
-  it('--engine limits the output to one engine', async () => {
+  it('--engine judges only the named engine', async () => {
     const r = await runCli(['readiness', '--project', notReady, '--engine', 'codex']);
     assert.equal(r.code, 2, r.stderr);
-    assert.match(r.stdout, /^Engine: codex → /m);
-    assert.doesNotMatch(r.stdout, /^Engine: claude/m);
-    assert.doesNotMatch(r.stdout, /\(claude\)/);
+    assert.match(r.stdout, /^Judged: OpenAI Codex$/m);
+    assert.doesNotMatch(r.stdout, /Claude Code/);
+  });
+
+  it('--engine repeats: every named engine is judged, and either one not ready exits 2', async () => {
+    const claudeOnly = gitRepo({ files: { 'CLAUDE.md': '# c\n' } });
+    const r = await runCli(['readiness', '--project', claudeOnly, '--engine', 'codex', '--engine', 'copilot']);
+    assert.equal(r.code, 2, r.stderr);
+    assert.match(r.stdout, /^Judged: OpenAI Codex, GitHub Copilot$/m);
+    assert.match(r.stdout, /instructions\.present \(OpenAI Codex\)/);
+    assert.match(r.stdout, /instructions\.present \(GitHub Copilot\)/);
+  });
+
+  it('judges only the run engine by default: a repo with CLAUDE.md only is ready', async () => {
+    const claudeOnly = gitRepo({ files: { 'CLAUDE.md': '# c\n' } });
+    const r = await runCli(['readiness', '--project', claudeOnly]);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^Judged: Claude Code \(runs use it\)$/m);
+    assert.match(r.stdout, /^Result: Ready\./m);
+    assert.doesNotMatch(r.stdout, /OpenAI Codex/);
   });
 
   it('--engine with an unknown name exits 1', async () => {

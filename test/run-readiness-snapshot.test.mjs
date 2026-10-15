@@ -39,7 +39,7 @@ describe('writeReadinessSnapshot', () => {
       assert.equal(manifest.readiness.engine, 'claude');
       assert.equal(typeof manifest.readiness.level, 'string');
       assert.ok(Array.isArray(manifest.readiness.failing));
-      assert.equal(manifest.readiness.catalogVersion, 1);
+      assert.equal(manifest.readiness.catalogVersion, 2);
     } finally {
       rmSync(runRoot, { recursive: true, force: true });
       rmSync(projectDir, { recursive: true, force: true });
@@ -54,6 +54,42 @@ describe('writeReadinessSnapshot', () => {
       execSync('git add -A && git commit -m x -q', { cwd: projectDir, stdio: 'ignore' });
       await writeReadinessSnapshot({ runRoot, projectDir, projectKey: 'snap-b', engine: 'codex' });
       assert.equal((await readRunManifest(runRoot)).readiness.engine, 'codex');
+    } finally {
+      rmSync(runRoot, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it('judges the run engine even when the project marks it Not used, and folds in repository failures', async () => {
+    const runRoot = runRootWith({});
+    const projectDir = gitProject();
+    try {
+      writeFileSync(join(projectDir, 'CLAUDE.md'), '# c');
+      writeFileSync(join(projectDir, 'package.json'), '{}');
+      writeFileSync(join(projectDir, 'package-lock.json'), '{}');
+      execSync('git add -A && git commit -m x -q', { cwd: projectDir, stdio: 'ignore' });
+      writeProjectSettings({ projectDir, projectKey: 'snap-u' }, { 'readiness.tools': { codex: 'unused' } });
+      const r = await writeReadinessSnapshot({ runRoot, projectDir, projectKey: 'snap-u', engine: 'codex' });
+      assert.equal(r.engine, 'codex');
+      assert.equal(r.level, 'not-ready');
+      assert.ok(r.failing.includes('instructions.present'));
+      assert.ok(r.failing.includes('commands.test'), 'repository failures are part of the run snapshot');
+    } finally {
+      rmSync(runRoot, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it('a ready tool still records partial when the repository is partial', async () => {
+    const runRoot = runRootWith({});
+    const projectDir = gitProject();
+    try {
+      writeFileSync(join(projectDir, 'CLAUDE.md'), '# c');
+      writeFileSync(join(projectDir, 'package.json'), '{}');
+      writeFileSync(join(projectDir, 'package-lock.json'), '{}');
+      execSync('git add -A && git commit -m x -q', { cwd: projectDir, stdio: 'ignore' });
+      const r = await writeReadinessSnapshot({ runRoot, projectDir, projectKey: 'snap-p', engine: 'claude' });
+      assert.equal(r.level, 'partial');
     } finally {
       rmSync(runRoot, { recursive: true, force: true });
       rmSync(projectDir, { recursive: true, force: true });
@@ -80,7 +116,7 @@ describe('writeReadinessSnapshot', () => {
     const runRoot = runRootWith({});
     const projectDir = gitProject();
     try {
-      await getCachedOrEvaluate({ dir: projectDir, projectKey: 'snap-d', primaryEngine: 'claude', ignore: ['instructions.present'] });
+      await getCachedOrEvaluate({ dir: projectDir, projectKey: 'snap-d', ignore: ['instructions.present'] });
       const chip = readinessSummary('snap-d');
       await writeReadinessSnapshot({ runRoot, projectDir, projectKey: 'snap-d', engine: 'codex', ignore: [] });
       assert.deepEqual(readinessSummary('snap-d'), chip);
