@@ -737,9 +737,10 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       tools,
       config: { ...cfg },
       model: pair ? pair.model : firstDefined(selP.model, legacyP.model, team.model, cfgP.model),
-      // An effort only travels with the model that advertises it: an override
-      // naming its own model must not inherit the lower layer's effort.
-      effort: pair ? pair.effort : firstDefined(selP.effort, legacyP.effort, team.effort, (selP.model || legacyP.model || team.model) ? undefined : cfgP.effort),
+      // An effort only travels with the model that advertises it: an override naming its own model must not
+      // inherit a lower layer's effort — the legacy per-role effort included (a per-run overlay or a node pick
+      // naming a model on wf_default).
+      effort: pair ? pair.effort : (selP.model ? selP.effort : firstDefined(selP.effort, legacyP.effort, team.effort, (legacyP.model || team.model) ? undefined : cfgP.effort)),
       // workspaceFanOut forces fan-out on a workspace run (the generic
       // replacement for the v1 FANOUT_ELIGIBLE key list).
       fanOut: isWorkspace && meta.workspaceFanOut

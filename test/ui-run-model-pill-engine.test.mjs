@@ -43,3 +43,19 @@ test('stepModelByNode keeps only what the run\'s engine ran', async () => {
   assert.deepEqual(window.__np.stepModelByNode(STEPPER, 'claude'), { n1: { model: 'claude-opus-4-8', effort: 'max' }, n3: { model: 'my-proxy', effort: '' } });
   assert.deepEqual(Object.keys(window.__np.stepModelByNode(STEPPER)), ['n1', 'n3'], 'no engine = a Claude run');
 });
+
+test('stepModelByNode marks a node that ran the model its run\'s own overlay set; its pill says "Picked for this run only"', async () => {
+  const { window } = await boot();
+  window.__np._setModels([{ id: 'claude-opus-4-8', label: 'Opus 4.8', engine: 'claude' }]);
+  const stepper = { ...STEPPER, runOverlay: { nodes: { n1: { model: 'CLAUDE-OPUS-4-8', effort: 'max' }, n3: { model: 'claude-haiku-4-5' } } } };
+  const by = window.__np.stepModelByNode(stepper, 'claude');
+  assert.deepEqual(by.n1, { model: 'claude-opus-4-8', effort: 'max', perRun: true });
+  assert.deepEqual(by.n3, { model: 'my-proxy', effort: '' }, 'the cell ran another model (a pinned pair or the run\'s engine won): not marked');
+  assert.match(window.__np.stepModelPillHtml(by.n1), /<span class="sub-model-pill" title="Picked for this run only">/);
+  // Visible too (a title is hover-only: touch, keyboard and screen-reader users never get it), like " · bridged".
+  assert.match(window.__np.stepModelPillHtml(by.n1), />Opus 4\.8 · max · this run<\/span>$/);
+  assert.doesNotMatch(window.__np.stepModelPillHtml(by.n3), /this run/);
+  assert.doesNotMatch(window.__np.stepModelPillHtml(by.n3), /title=/);
+  const fanOnly = window.__np.stepModelByNode({ ...STEPPER, runOverlay: { nodes: { n1: { fanOut: true } } } }, 'claude');
+  assert.equal('perRun' in fanOnly.n1, false, 'an entry naming no model (fan-out only) leaves the model pill unmarked');
+});

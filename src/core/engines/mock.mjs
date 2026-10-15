@@ -12,6 +12,7 @@ import { extractText, extractResultCost } from './claude.mjs';
 import { writeMockSurvey, writeMockUsage, writeMockSynthesis } from '../workspace-scan-mock.mjs';
 import { safeEmit } from './spawn.mjs';
 import { writeMockC4 } from '../c4-mock.mjs';
+import { demoAskReply, demoChunks } from '../demo-scenario.mjs';
 
 export const MOCK_SPAWN_LOG_MAX = 500;
 export const mockSpawnLog = [];
@@ -193,6 +194,11 @@ const COMPOSER_CANVAS_BLOCK_RE = /\[composer canvas\][\s\S]*?\[\/composer canvas
 /** Test seam: holdFrame(frame, index) may return a promise that holds a MOCK_SLOW turn after that
  *  frame until it settles (or the turn is aborted). Unset = the real 300 ms per frame. */
 export const _testing = { holdFrame: null };
+/** MOCK_SLOW's per-frame pace: WORCA_MOCK_SLOW_MS (50–5000, read per call so a test can set it), else 300 ms. */
+export function mockSlowMs() {
+  const n = Number(process.env.WORCA_MOCK_SLOW_MS);
+  return Number.isFinite(n) && n >= 50 && n <= 5000 ? Math.round(n) : 300;
+}
 function untilSettledOrAborted(p, signal) {
   if (!signal) return p;
   if (signal.aborted) return Promise.resolve();
@@ -281,6 +287,30 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
     usage: USAGE, modelUsage: {}, permission_denials: [], terminal_reason: 'completed', result: ANSWER, ...over });
   const MSG1 = 'msg_mock_ask_1';
   const MSG2 = 'msg_mock_ask_2';
+
+  // Demo video (tools/demo/extension-video): a scripted answer instead of "[mock] …", only under WORCA_DEMO_SCENARIO.
+  const demo = demoAskReply(userText);
+  if (demo) {
+    const text = demo.title || demo.answer;
+    const usage = { ...USAGE, ...(demo.usage || {}) };
+    const start = mstart(MSG1);
+    start.event.message.usage = usage;   // message_start carries its message under `event`
+    const answer = atext(MSG1, text);
+    answer.message.usage = usage;
+    const demoFrames = [init, start, ...demoChunks(text).map(delta), answer,
+      { ...mdelta, event: { ...mdelta.event, usage } },
+      result({ result: text, usage, total_cost_usd: demo.costUsd || 0,
+        modelUsage: { mock: { inputTokens: usage.input_tokens, outputTokens: usage.output_tokens, cacheReadInputTokens: usage.cache_read_input_tokens || 0,
+          cacheCreationInputTokens: usage.cache_creation_input_tokens || 0, costUSD: demo.costUsd || 0, contextWindow: 200000 } } })];
+    safeEmit(onEvent, { type: 'session', sessionId: SID });
+    for (const f of demoFrames) {
+      abortIfNeeded(signal);
+      emitRaw(onEvent, f);
+      await new Promise((r) => setTimeout(r, f.type === 'stream_event' ? (demo.chunkMs ?? 60) : 0));
+    }
+    abortIfNeeded(signal);
+    return { text, exitCode: 0 };
+  }
 
   const frames = [init, mstart(MSG1)];
   if (fail) {
@@ -410,7 +440,7 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
     const hold = slow && signal && typeof _testing.holdFrame === 'function' ? _testing.holdFrame(f, i) : null;
     await (hold && typeof hold.then === 'function'
       ? untilSettledOrAborted(hold, signal)
-      : new Promise((r) => setTimeout(r, slow && !_testing.holdFrame ? 300 : 0)));
+      : new Promise((r) => setTimeout(r, slow && !_testing.holdFrame ? mockSlowMs() : 0)));
   }
   abortIfNeeded(signal);
   if (fail || maxTurns || maxBudget) {

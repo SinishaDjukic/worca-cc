@@ -793,9 +793,13 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     return { copy: Boolean(saveAs) || isReservedWorkflowId(tpl.id) || Boolean(plugin), plugin };
   }
 
-  function openSaveDialog({ saveAs = false } = {}) {
+  // `then(workflow)`: runs once after THIS dialog saves (Export… saves first, then exports
+  // the saved row). Every open resets it, so a cancelled one never fires on a later save.
+  let saveThen = null;
+  function openSaveDialog({ saveAs = false, then = null } = {}) {
     if (!hostEls.dialogHost) return null;
     if (dialog) dialog.remove();
+    saveThen = typeof then === 'function' ? then : null;
     const mode = saveMode(saveAs);
     dialog = renderSaveDialog({
       name: mode.copy ? `${tpl.name || 'Untitled'} copy` : (tpl.name || ''),
@@ -863,6 +867,9 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       if (hooks.onSaved) hooks.onSaved(res && res.workflow);
       render();
       notify?.({ tone: 'ok', title: 'Pipeline saved' });
+      const then = saveThen;
+      saveThen = null;
+      if (then && res && res.workflow) then(res.workflow);
       return { ok: true };
     });
     if (r.ok === false && r.error) refuse(r.error);

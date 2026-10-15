@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // tools/test.mjs — `npm test` on macOS, Linux and Windows: a hermetic HOME/WORCA_HOME,
 // the no-real-claude PATH guard, tier selection (test/tiers.json) and duration-balanced
-// shards (test/timings.json, longest-processing-time-first). Replaces the POSIX-only
-// shell one-liner and node's index-modulo --test-shard.
+// shards (test/timings.json, longest-processing-time-first), and --related: only the test files a
+// working-tree change can affect (tools/test-related.mjs). Replaces the POSIX-only shell one-liner
+// and node's index-modulo --test-shard.
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { changedFiles, relatedTests } from './test-related.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const PER_FILE_S = 0.5; // process spawn + imports per file (measured 2026-10-04: ~0.54 s)
@@ -41,7 +43,7 @@ export function planShards(files, timings, n) {
 }
 
 export function parseArgs(argv, env = process.env) {
-  const o = { tier: 'all', shard: null, writeTimings: false, concurrency: null, files: [] };
+  const o = { tier: 'all', shard: null, writeTimings: false, concurrency: null, related: false, base: null, files: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -53,19 +55,30 @@ export function parseArgs(argv, env = process.env) {
     else if (a === '--shard') o.shard = value();
     else if (a === '--concurrency') o.concurrency = Number(value());
     else if (a === '--write-timings') o.writeTimings = true;
+    else if (a === '--related') o.related = true;
+    else if (a === '--base') o.base = value();
     else if (a.startsWith('--')) throw new Error(`unknown flag ${a}`);
     else o.files.push(a.replace(/\\/g, '/'));
   }
   if (!['fast', 'slow', 'all'].includes(o.tier)) throw new Error(`bad --tier "${o.tier}" (want fast|slow|all)`);
   if (o.concurrency !== null && !(Number.isInteger(o.concurrency) && o.concurrency > 0)) throw new Error('--concurrency needs a positive integer');
-  // CI's shard env splits the selected suite; it never applies to an explicit file list.
-  if (!o.shard && !o.files.length) o.shard = env.WORCA_TEST_SHARD || null;
+  if (o.base && !o.related) throw new Error('--base needs --related');
+  if (o.related && o.files.length) throw new Error('--related picks its own files: drop the file list');
+  // CI's shard env splits the selected suite; it never applies to an explicit file list or --related.
+  if (!o.shard && !o.files.length && !o.related) o.shard = env.WORCA_TEST_SHARD || null;
   return o;
 }
 
 function main() {
   let o;
   try { o = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(2); }
+  if (o.related) {
+    let r;
+    try { r = relatedTests(ROOT, changedFiles(ROOT, o.base || 'HEAD')); } catch (e) { console.error(e.message); process.exit(2); }
+    if (r.full) console.log(`related: ${r.reason}, running the full suite`);
+    else if (!r.tests.length) { console.log('related: no test file depends on the changed files'); process.exit(0); }
+    else { console.log(`related: ${r.tests.length} test files`); o.files = r.tests; }
+  }
   const all = o.files.length ? o.files
     : readdirSync(join(ROOT, 'test')).filter((f) => f.endsWith('.mjs')).sort().map((f) => `test/${f}`);
   let files = o.files.length ? all : selectFiles({ all, tier: o.tier, tiers: readJson('test/tiers.json', {}) });
@@ -95,6 +108,7 @@ function main() {
     WORCA_NO_REAL_CLAUDE_LOG: join(testHome, 'real-claude-spawns.log'), // read by the shim and assert-none.mjs
     NODE_OPTIONS: [process.env.NODE_OPTIONS, '--disable-warning=ExperimentalWarning'].filter(Boolean).join(' ') };
   delete env.WORCA_HOST_PID; // a test run is never a worca-hosted child
+  delete env.WORCA_FLAGS; // feature flags (docs/feature-flags.md): a developer's shell flags never reach the suite
   delete env.CLAUDE_CONFIG_DIR; // skillHostFacts reads it (skills registry §4.1): a test never sees the developer's Claude config
   delete env.NODE_TEST_CONTEXT; // set inside a node:test file; run() would then skip every file
   // A developer's own Azure DevOps / push-as-person settings must not open host-lookup gates in tests

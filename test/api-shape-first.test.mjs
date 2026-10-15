@@ -16,11 +16,12 @@ let srv, base, wsBase, runs;
 const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b) });
 const savedMock = process.env.WORCA_MOCK;
+const savedFlags = process.env.WORCA_FLAGS;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function withGate(on, fn) {
-  if (on) process.env.WORCA_SHAPE_FIRST = '1'; else delete process.env.WORCA_SHAPE_FIRST;
-  try { return await fn(); } finally { delete process.env.WORCA_SHAPE_FIRST; }
+  process.env.WORCA_FLAGS = on ? 'shapeFirst' : '-shapeFirst';   // WORCA_FLAGS locks it over settings.json
+  try { return await fn(); } finally { process.env.WORCA_FLAGS = '-shapeFirst'; }
 }
 
 before(async () => {
@@ -39,7 +40,7 @@ after(async () => {
       new Promise((r) => { const t = setTimeout(r, 500); t.unref?.(); }),
     ]);
   }
-  delete process.env.WORCA_SHAPE_FIRST;
+  if (savedFlags === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = savedFlags;
   if (savedMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = savedMock;
 });
 
@@ -77,7 +78,7 @@ function fakePlanRun(id, answer) {
 }
 
 test('gate off: hello says shapeFirst false and the workflow list has no wf_shape', () => withGate(false, async () => {
-  assert.equal((await hello()).features.shapeFirst, false);
+  assert.equal((await hello()).flags.shapeFirst, false);
   const { workflows } = await (await fetch(`${base}/api/workflows`)).json();
   assert.ok(!workflows.some((w) => w.id === 'wf_shape'));
 }));
@@ -99,7 +100,7 @@ test('gate off: shape and the shape workflows are refused before any target is c
 }));
 
 test('gate on: hello says shapeFirst true and wf_shape follows Memory defragment', () => withGate(true, async () => {
-  assert.equal((await hello()).features.shapeFirst, true);
+  assert.equal((await hello()).flags.shapeFirst, true);
   const { workflows } = await (await fetch(`${base}/api/workflows`)).json();
   const ids = workflows.map((w) => w.id);
   assert.equal(ids.indexOf('wf_shape'), ids.indexOf('wf_memory_defrag') + 1);
