@@ -2,7 +2,9 @@
 
 Date: 2026-10-14. Base branch: `dev` (761452f9, 1.11.0). Branches: `feat/shape-it-first-<n>-<slice>`, one PR per slice, stacked.
 Mock (approved): the "Specs in Chat" design canvas, https://claude.ai/artifact/MJk8bfs2cK4YsKTBta5Z2q
-(screens 1–7). Replaces Spec Builder (#678, closed as not planned; PR #679 closed). Some
+(screens 1–7).
+**Revised 2026-10-15** after the first real sliced feature (#718, run tags): §11 records what it showed and the
+decisions D16–D23, which take precedence over §2–§3 where they differ. Replaces Spec Builder (#678, closed as not planned; PR #679 closed). Some
 Spec Builder code on `feat/spec-builder-v2` is reused (§4.6).
 
 ## 1. Goal
@@ -48,7 +50,7 @@ needed (§3.8).
 | D11 | **Run this plan continues the same run** (screen 5). The run card shows Clarify, Plan and Refine as done ("while shaping") and continues into Implement ⇄ Review. The plan file is the run's plan of record. There is no second run and no re-planning. |
 | D12 | **Behind the `shapeFirst` flag, built so it works before #675 lands.** The flag system (#675, `feat/feature-flags`) is still open, so this branch is cut from `dev` and every check goes through **one gate**, never a flag API directly: <ul><li>**Server:** `src/core/shape/gate.mjs` exports `shapeFirstEnabled()` and `requireShapeFirst(req, res)` (answers 404 when off).</li><li>**Client:** `ui/public/chat/shape-gate.mjs` exports `shapeFirstOn()`, read from the WebSocket `hello` frame, which gains `features: { shapeFirst }` (the way it already carries `serverMock`, `ui/server.mjs:748`).</li><li>**Until #675 merges:** the gate reads one temporary switch, the env var `WORCA_SHAPE_FIRST=1` (off when unset). No settings UI and no persisted state, so there is nothing to migrate.</li><li>**When #675 merges:** a follow-up commit adds the registry entry (stage `experimental`, default off, owner, `since`, `reviewBy` ≤ 90 days, docs) and changes only the two gate bodies to `flagEnabled('shapeFirst')` / `flagOn('shapeFirst')`. It also moves the client gates to `data-flag="shapeFirst"` and drops the env var. No call site changes. The `flags-usage` scan then covers the gates.</li></ul>What the gate hides when off: <ul><li>**server:** `POST /api/run` and `propose_run` reject `shape`, the nudge fields are not computed, `wf_shape` is hidden from workflow lists, and the new routes (plan answers, plan save, slice-outline edits) answer 404;</li><li>**client:** the intent chip, the New run link, the nudge and the Plans tab are hidden, and the new chat cards are not registered.</li></ul>**Plan in slices** is behind the same gate, not a flag of its own. The node approval stop (D2) and the checklist review (D7) are generic engine code and need no gate: they only activate for a run that carries `shape`, which only exists when the gate is on. With the gate off, nothing in this spec shows and existing runs behave exactly as today. A run started with it on that is still waiting when it is turned off can still be approved or stopped, so it is never stranded. |
 | D13 | **Plan in slices: sequential runs.** See §3.8. A sliced feature becomes a chain of runs with the existing "Run after" chains (`after` + `sourceFromPrevious`, `src/core/scheduler.mjs:212`): slice 2 starts from slice 1's branch when slice 1 finishes `done`, and so on. This is not the Decomposer: the Decomposer splits **one** plan into parallel tasks inside **one** run. Slices are planned, built, reviewed and shipped one after another. |
-| D14 | **Slices are planned just in time.** The outline is approved once. Slice 1's plan is written and approved before it runs. Each later slice is planned when its predecessor finishes, against the code as it is then, and stops for approval like slice 1 (a per-feature switch, **Approve each slice's plan**, on by default, can turn the later stops off). |
+| D14 | **Slices are planned just in time.** The outline is approved once. Slice 1's plan is written and approved before it runs. Each later slice is planned when its predecessor finishes, against the code as it is then, and stops for approval like slice 1 (a per-feature switch, **Approve each slice's plan**, on by default, can turn the later stops off). **Revised by D19:** later slices skip Clarify and stop only when their plan departs from the outline. |
 | D15 | **A guard against over-splitting** (§3.8): the planner's slicing rules plus a deterministic outline check, and the person can merge slices on the card before approving. |
 
 ## 3. Design
@@ -57,7 +59,8 @@ needed (§3.8).
 
 The composer gets the **Plan it with me** intent (`ui/public/chat/intent.mjs`), with the help
 line "Agree on what gets built before anything runs · ~3 min" and the **New** badge while the
-flag is in beta. Its lead tells the model: "Shape this task first: propose a run with `shape`".
+flag is in beta. Its lead tells the model: "Shape this task first: propose a run with `shape`". The lead is never
+shown in the person's message: the bubble shows the chip and their text only (D21).
 The home's tabs gain **Plans**: the Chat threads with a plan card, newest first, each with its
 state (shaping, waiting for approval, running, done).
 
@@ -167,7 +170,8 @@ A failing outline check offers **Fix** (a `revise`) and the person can still app
   · slices 3–4 waiting" with **Resume slice 2**, **Re-plan the rest**, and **Cancel the rest**.
 
 The thread's plan card becomes a **feature card**: the outline with each slice's state (planned,
-waiting for approval, running, done, PR) and its link.
+waiting for approval, running, done, PR) and its link. **Revised by D16–D17:** the feature has its own
+page, and the Chat card, the run page and the Runs list link to it.
 
 ## 4. Code changes
 
@@ -226,7 +230,8 @@ Spec Builder task source are not reused.
 ## 5. Out of scope
 - Chat drafting a plan without a run (D1 rules it out).
 - Editing the plan as text in the card. Ask for changes in words, or Save and edit the file.
-- Parallel slices. Slices are always sequential.
+- Parallel slices. Slices are sequential in this spec. A follow-up can run slices whose `dependsOn` is
+  empty side by side, since the outline already records it (§11.4).
 - One PR for all slices (decided against: one PR per slice, §3.8).
 - Changes to the Decomposer.
 
@@ -319,3 +324,74 @@ plan's "Decisions (taken while refining)" R1–R17. The ones later slices depend
   `src/core/shape/{check,grounding,run}.mjs`. Grounding is skipped on workspace runs.
 - **Known follow-ups (minor, from slice 1's review):** a `revise` doesn't reset Refine's self-loop
   budget; a pause that lands while a `revise` answer is saved drops its feedback. Slice 2 fixes both.
+
+## 11. Revision after the first real sliced feature (2026-10-15)
+
+Issue #718 (run tags and cost allocation) was planned with **Plan it with me** on the test bundle
+`test/shape-it-first-and-run-progress` (slices 1–4 plus run progress, #732). It was cut into 3 slices.
+Slice 1 finished ($87, of which $62 was shaping), and slice 2 started on its own from slice 1's branch.
+The engine worked. The way it is shown and started did not.
+
+### 11.1 What the run showed
+
+| # | Where | What we saw |
+|---|---|---|
+| F1 | Runs list | The feature is one row ("Run 1 of 3 · Build"), **collapsed**, opened only by a 12 px chevron. Expanded, each member is an underlined link repeating the full feature title. A waiting slice links to `#schedules/once`. |
+| F2 | Runs list | The group is #732's generic "Run after" chain. It never reads `shape_features`, so it knows no slice names and no feature. |
+| F3 | Runs list | When slice 2 started, the run renamed itself ("Implement Statistics Filtering, Grouping, and CSV Export", `generateTitle` in `run-harness.mjs` `_kickoffTitleGeneration`). It then showed **twice**: as its own row under Needs you and as "Run 2 of 3 · Plan" in the group, while it was waiting on a Clarify question. |
+| F4 | Everywhere | One feature, four views, each different: the Runs list group, the run page ("Run 1 of 3" plus a second bar with no slice names), the Chat home Running card (only the workflow graph) and the Chat thread card. Only the last one lists the slices with **Re-plan the rest** and **Cancel the rest**, between the stats and the graph. |
+| F5 | Wording | Five names: "Plan it with me" (tile), "Shape it first" (workflow, start button), "Run 2 of 3" (group), "· 2/3:" (slice titles), "slice 2 of 3 —" (slice brief). |
+| F6 | Chat | The intent's lead shows in the person's message: "Shape this task first: propose a run with `shape`." |
+| F7 | Chat | The proposal card is the whole New run form: about 40 branches, engine, guardrails, and model, fan-out and questions for each of 7 agents. |
+| F8 | Gates | Every slice repeats Clarify, Plan and Refine, and stops again: slice 2 asked a Clarify question on start. A 3-slice feature means 6–9 stops for the person, spread over Chat, Needs you and run pages. |
+| F9 | Run page | A finished slice says "Ready to ship" with no "slice 1 of 3", and nothing says slice 2 builds on its branch, so the merge order is invisible. |
+| F10 | Run page | Perspective checklists list every item of every review cycle, expanded (23 items × 2 cycles, each with its evidence). |
+
+### 11.2 Decisions
+
+| # | Decision |
+|---|---|
+| D16 | **A feature page.** `#feature/<id>` is the one place a sliced feature is shown in full: the title, "1 of 3 slices done", the slices in order (short name, state, PR, "merge after slice 1"), the current slice's progress bar and text from `runProgress`, its open question or plan approval inline, and the actions (**Re-plan the rest**, **Cancel the rest**, **Approve each slice's plan**). It renders the existing `ui/public/shape/feature-view.mjs`. Every other place links to it: the Chat feature card shrinks to one summary line with **Open**, the run page of a slice gets a line "Part of *feature* · slice 2 of 3 →" above the progress bar (replacing the unnamed chain bar), and the Chat home Running card reads "Slice 2 of 3 · *slice title*". |
+| D17 | **Runs list: a feature is one row.** The chain item uses the feature when the chain's first run has one (`featureOfPipeline`): the feature title, "Slice 2 of 3 · Build" (or "Needs you" in amber), open by default while a slice is live or waiting for a person. Members show "1 · Run tags" with the state glyph and PR, never the feature title again. A waiting member opens the feature page, not Schedules. A slice run is never also a row of its own; its "Needs you" lands on the feature row. The server's chain summary (#732, `ui/server.mjs`) gains `feature: { id, title, slices[] }`. |
+| D18 | **Stable slice names.** A run that carries a slice (`shape.feature`) keeps its title: `_kickoffTitleGeneration` skips `generateTitle` for it. The slice's own title is the name shown under the feature; the long "*feature* · k/N: *slice*" form stays only where there is no feature context (Schedules, notifications). |
+| D19 | **Plan once, confirm later.** Replaces D14's per-slice stops. Slices 2…N skip Clarify: the brief carries the feature's answers (slice 1's `clarify.json` answers). Planner and Refine still run against the code as it is. The plan stop holds only when the shape check fails, or when the Planner writes `outline-change.md` because the slice can't be built as outlined. **Approve each slice's plan** stays as a switch, now **off** by default; on, every slice stops as before. A `plan` ask still always waits for a person (§9.1). |
+| D20 | **A small proposal card.** A shaped proposal shows the task brief, project, base branch, perspective chips and the estimate, with one primary button, **Start planning**, plus **Not now**. Engine, guardrails, workflow and the per-agent rows sit under a collapsed **Advanced**. The run-as-is card is unchanged. |
+| D21 | **One vocabulary.** "Plan it with me" is the flow (tile, workflow display name, start button, docs headings). "Plan" is the plan card, "slices" the parts, "feature" the whole. "Shape it first" leaves the UI; internal ids (`wf_shape`, `shape`, `shapeFirst`) stay. The intent's lead is sent to the model but never shown in the bubble, which shows the chip and the person's text. |
+| D22 | **A finished slice knows its place.** Its run page says "Slice 1 of 3 · next: *slice 2* (planning)". Ship it says "Slice 2 builds on this branch: merge this PR first", and the PR body starts with "Part of *feature*: slice 1 of 3" and links to the other slices' PRs. |
+| D23 | **Checklists read at a glance.** The run page shows the latest review cycle only, as one line ("23 met · 0 unmet · 0 n/a"); unmet items are expanded, met items collapsed with their evidence on demand. Earlier cycles sit behind **Earlier cycles**. |
+
+### 11.3 Code changes
+
+- `ui/public/app.js`: the `#feature/<id>` route and view (D16); `runsChainItem` reads `feature` (D17); the slice line on the run page and the Chat home card (D16, D22).
+- `ui/server.mjs`: `feature` on the runs-list chain summary (D17); the existing `GET /api/shape/features/:id` serves the page.
+- `src/core/run-harness.mjs`: no title generation for slice runs (D18).
+- `src/core/shape/features.mjs`: the slice brief carries the feature's Clarify answers; slice tickets start at Plan (D19). `approve_each` defaults to 0.
+- `src/core/shape/check.mjs` and the Planner's slicing block: `outline-change.md` (D19).
+- `ui/public/chat/ask-panel.mjs` / `ui/public/shape/proposal.mjs`: the small card and **Advanced** (D20); the hidden lead (D21).
+- `ui/public/shape/checklist-view.mjs`: latest cycle, collapsed (D23).
+- Ship it and the PR body writer: the slice line and merge order (D22).
+- Wording sweep (D21): `intent.mjs`, the `wf_shape` display name, card buttons, `docs/shape-it-first.md`.
+
+### 11.4 Parallel slices (later, not in this revision)
+
+The outline already records `dependsOn`. A follow-up can start every slice whose `dependsOn` is
+empty at once, each from the base branch with its own PR, and the feature page (D16) shows them side
+by side. It needs a ticket that waits for more than one run (today `after` names one), and the
+Planner told to prefer independent slices where the code allows. Most features, like #718, are
+chains and stay sequential.
+
+### 11.5 Tests
+
+- Runs list: a 3-slice feature is one row, open while live, members named "1 · …"; a started slice is not a second row; its question marks the feature row "Needs you".
+- A slice run keeps its title after start.
+- Slice 2 under D19: no Clarify; no plan stop when the check passes and there is no `outline-change.md`; a stop when either is present; with **Approve each slice's plan** on, a stop always.
+- The proposal card shows **Advanced** collapsed; the sent message shows no lead text.
+- Feature page: states, PR links, merge order, actions; the Chat card and the run page link to it.
+- Checklists: only the latest cycle is open; unmet items are expanded.
+- Real-browser check of the Runs list group and the feature page.
+
+### 11.6 Order of work
+
+D18, D20, D21 and D23 are fixes inside the open slice PRs (#728–#730). D16, D17 and D19 need #730 and
+#732 together, so they come as one more PR after both merge. The mock canvas gets boards for the
+feature page and the Runs list group before that PR is built.
