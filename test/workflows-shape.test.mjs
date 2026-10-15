@@ -164,3 +164,11 @@ test('renderPlanFeedback carries the feedback and the plan file', () => {
   assert.ok(md.includes('`/runs/x/plan.md`'));
   assert.ok(!renderPlanFeedback('x').includes('at `'), 'no plan file, no path');
 });
+
+test('validatePlanAnswer: revise takes an optional source; only check is carried, anything else is a 422', () => {
+  const ok = (raw) => validatePlanAnswer(raw, { revisable: true });
+  assert.deepEqual(ok({ decision: 'revise', feedback: 'x' }).payload, { decision: 'revise', feedback: 'x' });
+  assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'person' }).payload, { decision: 'revise', feedback: 'x' });
+  assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'check' }).payload, { decision: 'revise', feedback: 'x', source: 'check' });
+  assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'bot' }).errors, [{ path: 'source', code: 'invalid', message: 'source must be person or check' }]);
+});

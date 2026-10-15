@@ -139,12 +139,15 @@ test('pause while the plan is held, then resume: the same question comes back an
 
   const saved = readPipelineForResume(h.orch.getState().id);
   assert.deepEqual(saved.resumePoint.shape?.perspectives, SHAPE.perspectives);
+  const questions = saved.state.shapeStats.questions;   // the pause persisted the recorded part
 
   const h2 = start({ projectDir: dir, resume: saved, shape: undefined }, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
   const res = await h2.done;
   assert.equal(res.status, 'done', res.error);
   assert.equal(h2.plans[0].id, 'plan-n_refine-1');
   assert.ok(ran(h2.execs, 'n_impl').length > 0);
+  // rebuilt from row.shape_stats on resume, not counted twice
+  assert.deepEqual(readPipelineForResume(h2.orch.getState().id).state.shapeStats.questions, questions);
 });
 
 test('an unshaped run of a copy of wf_shape never holds (D12)', async () => {
@@ -154,4 +157,35 @@ test('an unshaped run of a copy of wf_shape never holds (D12)', async () => {
   assert.equal(res.status, 'done', res.error);
   assert.equal(h.plans.length, 0);
   assert.ok(ran(h.execs, 'n_impl').length > 0);
+  assert.equal(readPipelineForResume(h.orch.getState().id).state.shapeStats, undefined);
+});
+
+test('D28: an approved shaped run records shapeStats; a fixed plan never adds a round', async () => {
+  const h = start({}, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
+  const res = await h.done;
+  assert.equal(res.status, 'done');
+  assert.deepEqual(h.plans.map((q) => q.id), ['plan-n_refine-1']);
+  assert.ok(Array.isArray(h.plans[0].plan.check.fixed));
+  const { state, row } = readPipelineForResume(h.orch.getState().id);
+  const ss = state.shapeStats;
+  assert.equal(ss.questions.skipped, ss.questions.asked);
+  assert.ok(ss.questions.asked <= 3);
+  assert.deepEqual(ss.revises, []);
+  const c = h.plans[0].plan.check;
+  assert.equal(ss.shapeScore, Math.round((c.passed / c.total) * 1000) / 1000);
+  assert.ok(ss.reviewCycles >= 1);
+  assert.equal(ss.checklist, null);
+  // shaping and building are rounded separately, so allow one rounding step against the total
+  assert.ok(Math.abs(ss.cost.shaping + ss.cost.building - state.totalCostUsd) < 1e-3);
+  assert.ok(row.run_size === null || ['small', 'medium', 'large'].includes(row.run_size));
+});
+
+test('D28: a person revise and a check revise are recorded by round', async () => {
+  const h = start({}, (q, orch) => orch.answer(q.id, q.id === 'plan-n_refine-1'
+    ? { decision: 'revise', feedback: 'Name the table.' }
+    : q.id === 'plan-n_refine-2' ? { decision: 'revise', feedback: 'Fix the check.', source: 'check' } : { decision: 'approve' }));
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const { state } = readPipelineForResume(h.orch.getState().id);
+  assert.deepEqual(state.shapeStats.revises, [{ round: 1, by: 'person' }, { round: 2, by: 'check' }]);
 });

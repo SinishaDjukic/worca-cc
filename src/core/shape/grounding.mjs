@@ -13,7 +13,8 @@ export const LINE_CHECK_MAX_BYTES = 2 * 1024 * 1024;
 const FOLD = process.platform === 'win32' || process.platform === 'darwin';
 
 /**
- * @returns {Promise<Array<{path:string, line?:number, found:boolean, isNew:boolean}>>} one entry per distinct path:line
+ * @returns {Promise<Array<{path:string, line?:number, found:boolean, isNew:boolean, missing?:boolean}>>} one entry per
+ *   distinct path:line; `missing` marks a path that does not exist, cited without :line (D27: fixable)
  */
 export async function checkPaths(markdown, projectDir, { fs = { realpath: fsRealpath, stat: fsStat, readFile: fsReadFile }, fold = FOLD } = {}) {
   const root = projectDir ? await fs.realpath(projectDir).catch(() => null) : null;
@@ -36,7 +37,12 @@ export async function checkPaths(markdown, projectDir, { fs = { realpath: fsReal
         if (!st.isFile()) g.found = false;
         else if (st.size <= LINE_CHECK_MAX_BYTES) g.found = lineCount(String(await fs.readFile(real, 'utf8'))) >= g.line;
       }
-    } catch { g.found = false; }
+    } catch (err) {
+      g.found = false;
+      // D27: the one mechanical case, the path itself does not exist. A :line past the end, a refused path and a
+      // symlink leaving the project never throw here (or are not ENOENT), so they stay unfixable.
+      if (err?.code === 'ENOENT' && g.line == null) g.missing = true;
+    }
   }
   return [...byKey.values()];
 }

@@ -41,6 +41,41 @@ const TOTALS_SELECT = `
     LEFT JOIN (SELECT pipeline_id, SUM(cost_usd) sc, SUM(active_ms) sa
                FROM pipeline_steps GROUP BY pipeline_id) s ON s.pipeline_id = p.id`;
 
+export const RUN_SIZES = Object.freeze(['small', 'medium', 'large']);
+
+// Plan it with me (D28): finished runs started in the window that have a size, shaped (shape_stats set) vs not.
+// Cost and active time fall back to the step sums the way TOTALS_SELECT does; review cycles count the code
+// reviewer's verdicts (reviews.kind = 'impl'), the same source for both groups.
+const SHAPING_SELECT = `
+    SELECT p.run_size AS size, (p.shape_stats IS NOT NULL) AS shaped, COUNT(*) AS runs,
+      AVG(CASE WHEN p.total_cost_usd  > 0 THEN p.total_cost_usd  ELSE COALESCE(s.sc, 0) END) AS cost,
+      AVG(CASE WHEN p.total_active_ms > 0 THEN p.total_active_ms ELSE COALESCE(s.sa, 0) END) AS active,
+      AVG((SELECT COUNT(*) FROM reviews r WHERE r.pipeline_id = p.id AND r.kind = 'impl')) AS cycles
+    FROM pipelines p
+    LEFT JOIN (SELECT pipeline_id, SUM(cost_usd) sc, SUM(active_ms) sa
+               FROM pipeline_steps GROUP BY pipeline_id) s ON s.pipeline_id = p.id
+    WHERE p.status = 'done' AND p.run_size IS NOT NULL
+      AND COALESCE(p.started_at, p.updated_at) >= ?
+      AND COALESCE(p.started_at, p.updated_at) <  ?
+    GROUP BY p.run_size, shaped`;
+
+/** @returns {{groups: Array<{size:string, shaped:object, unshaped:object}>}} sizes with at least one run, in size order */
+export function shapingGroups(fromMs, toMs) {
+  const none = () => ({ runs: 0, avgCostUsd: null, avgActiveMs: null, avgReviewCycles: null });
+  const bySize = new Map(RUN_SIZES.map((size) => [size, { size, shaped: none(), unshaped: none() }]));
+  for (const r of prepare(SHAPING_SELECT).all(new Date(fromMs).toISOString(), new Date(toMs).toISOString())) {
+    const g = bySize.get(r.size);
+    if (!g) continue;
+    g[r.shaped ? 'shaped' : 'unshaped'] = {
+      runs: r.runs,
+      avgCostUsd: roundUsd(r.cost || 0),
+      avgActiveMs: Math.round(Number(r.active || 0)),
+      avgReviewCycles: Math.round(Number(r.cycles || 0) * 10) / 10,
+    };
+  }
+  return { groups: [...bySize.values()].filter((g) => g.shaped.runs || g.unshaped.runs) };
+}
+
 function totalsRow(sql, isoA, isoB) {
   const row = prepare(sql).get(isoA, isoB);
   return {

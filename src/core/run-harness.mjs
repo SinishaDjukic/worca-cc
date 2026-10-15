@@ -34,7 +34,7 @@ import { clearStaleIndexLock, staleIndexLockNote } from './git-lock.mjs';
 import { claimPipelineCommand, discardPendingPipelineCommands, controlCheckIntervalMs } from './pipeline-commands.mjs';
 import {
   assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
-  retainedWorkPatchName,
+  retainedWorkPatchName, sizeOfChange,
 } from './results.mjs';
 import { resolveTaskInput, retryWriteback } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
@@ -141,6 +141,7 @@ import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../shared/mcp-tool
 import { usageLimitSwitches, engineList, engineLabel } from '../shared/engine-switch.mjs';
 import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
+import { shapeRecordFrom, buildShapeStats } from './shape/stats.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -931,6 +932,9 @@ export class RunHarness extends EventEmitter {
     // Shape it first (spec D5): { perspectives } for a shaped run, null otherwise. NOT `this.shape` — the
     // orchestrator's Auto path already uses "shape" for the classifier's shape.
     this.runShape = this.opts.shape || this.resumeOpts?.resumePoint?.shape || null;
+    // Plan it with me D28: the recorded half of shapeStats (questions, revises, score); null on an unshaped run.
+    // A resumed run reads it back from its row (shape_stats).
+    this._shapeRec = this.runShape ? shapeRecordFrom(safeParse(this.resumeOpts?.row?.shape_stats)) : null;
     {
       const wf = this.resumeOpts?.resumePoint?.workflowId || this.workflowId;
       const reason = validateMemoryScope({ workflowId: wf, memoryScope: this.memoryScope, isWorkspace: this.isWorkspace });
@@ -5923,16 +5927,22 @@ export class RunHarness extends EventEmitter {
       // diff-patch.patch is still never written on any path.
       if (noPatch && stage && !listed) return;
       const memory = this.memorySummary();
+      let summary;
       if (members.length === 1 && !this.isWorkspace) {
         if (memory) members[0].results.memory = memory;
         await persistResults(this.pipeline.dir, members[0].results);
         if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches[0].patch);
+        summary = members[0].results.summary;
       } else {
         const perProject = buildPerProject(members);
         const results = { summary: rollupSummary(perProject), perProject, ...(memory ? { memory } : {}) };
         await persistResults(this.pipeline.dir, results);
         if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches.map((p) => `# ${p.key}\n${p.patch}`).join('\n\n'));
+        summary = results.summary;
       }
+      // D28: the run's size for Statistics; _buildResults runs after the terminal persist, so write it again
+      this.state.runSize = sizeOfChange(summary);
+      await this._persist();
     } catch (err) {
       this._log('results', 'warn', `results build failed: ${err.message}`);
     }
@@ -7260,6 +7270,7 @@ export class RunHarness extends EventEmitter {
     if (rpNow && typeof rpNow === 'object' && this._metricsIv) rpNow.interventions = { ...this._metricsIv };
     if (!this.pipeline) return false;
     if (this._rowHandedOff()) return false;
+    if (this._shapeRec) this.state.shapeStats = buildShapeStats(this._shapeRec, this.state.steps);
     try {
       // A paused harness names itself in the saved point (`pausedBy`, written here only, never kept
       // in state): _rowHandedOff reads it back. A resumed run's new harness never writes this token.

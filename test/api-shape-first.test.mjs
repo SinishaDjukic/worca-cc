@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
+import { seedPipeline } from './helpers/db-seed.mjs';
 
 useTempHome(after);
 
@@ -150,18 +151,24 @@ test('gate on: a shaped mock run stops at the plan approval and approving finish
 
 test('gate on: the plan route answers the held id and refuses the rest', () => withGate(true, async () => {
   const calls = [];
-  fakePlanRun('shape-route-run', (qid, payload, by) => { calls.push({ qid, payload, by }); return true; });
+  const answer = (qid, payload, by) => { calls.push({ qid, payload, by }); return true; };
+  fakePlanRun('shape-route-run', answer);
   try {
     let r = await post('/api/runs/shape-route-run/answer', { id: 'plan-n_refine-1', decision: 'approve' });
     assert.equal(r.status, 200, await r.text());
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0].payload, { decision: 'approve' });
 
+    fakePlanRun('shape-route-run', answer);   // the answer settled the held id; hold it again
+    r = await post('/api/runs/shape-route-run/answer', { id: 'plan-n_refine-1', decision: 'revise', feedback: 'f', source: 'check' });
+    assert.equal(r.status, 200, await r.text());
+    assert.deepEqual(calls[1].payload, { decision: 'revise', feedback: 'f', source: 'check' });
+
     r = await post('/api/runs/shape-route-run/answer', { id: 'some-other-id', decision: 'approve' });
     assert.equal(r.status, 409);
     r = await post('/api/runs/no-such-run/answer', { id: 'plan-n_refine-1', decision: 'approve' });
     assert.equal(r.status, 404);
-    assert.equal(calls.length, 1, 'refused answers never reached the run');
+    assert.equal(calls.length, 2, 'refused answers never reached the run');
   } finally { runs.delete('shape-route-run'); }
 }));
 
@@ -184,3 +191,15 @@ test('gate off: a held plan is still answered through POST /api/answer (never st
     assert.equal(calls.length, 1);
   } finally { runs.delete('shape-stranded-run'); }
 }));
+
+const STATS = { questions: { asked: 2, skipped: 1 }, revises: [{ round: 1, by: 'person' }], shapeScore: 0.875,
+  reviewCycles: 2, checklist: null, cost: { shaping: 12.5, building: 30 } };
+
+test('GET /api/runs/:id returns state.shapeStats for a shaped run and no shapeStats for an unshaped one', async () => {
+  const dir = gitDir('shape-stats-detail');
+  const shaped = await seedPipeline(dir, { title: 'shaped', status: 'done', shapeStats: STATS });
+  const plain = await seedPipeline(dir, { title: 'plain', status: 'done' });
+  const get = async (id) => (await fetch(`${base}/api/runs/${id}?projectDir=${encodeURIComponent(dir)}`)).json();
+  assert.deepEqual((await get(shaped.id)).state.shapeStats, STATS);
+  assert.equal('shapeStats' in (await get(plain.id)).state, false);
+});
