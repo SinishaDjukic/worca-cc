@@ -23,7 +23,7 @@ export const EXAMPLE_MS = 3500;
 export const INTENTS = Object.freeze({
   run: Object.freeze({ label: 'New run', icon: 'run', placeholder: 'Describe the task…', lead: 'Propose a pipeline run for this task.' }),
   shape: Object.freeze({ label: 'Plan it with me', icon: 'shape', placeholder: 'Describe the problem…',
-    lead: 'Shape this task first: propose a run with `shape`.', badge: 'New' }),
+    lead: 'Shape this task first: propose a run with `shape`.', badge: 'Experimental' }),
   workflow: Object.freeze({ label: 'Build workflow', icon: 'workflow', placeholder: 'Describe the workflow…', lead: 'Build a workflow from this description.' }),
   schedule: Object.freeze({ label: 'Schedule a run', icon: 'schedule', placeholder: 'What should run, and when?', lead: 'Propose a scheduled run for this.' }),
   track: Object.freeze({ label: 'Track a run', icon: 'track', placeholder: 'Which run? Pick one or type its name', lead: 'Track this run here.' }),
@@ -56,6 +56,17 @@ export function intentText(id, text) {
   if (!known(id)) return body;
   const lead = INTENTS[id].lead;
   return body ? `${lead}\n\n${body}` : lead;
+}
+
+/** The person's sent text split for their bubble (D21): the Plan it with me lead is for the model only, so a message
+ *  that opens with it — alone, or then a blank line — shows the intent chip and the rest. Exact match, ungated: only a
+ *  send made with the gate on can carry it, and a reload renders before the flags arrive. */
+export function splitIntentLead(text) {
+  const s = String(text ?? '');
+  const lead = INTENTS.shape.lead;
+  if (s === lead) return { intent: 'shape', text: '' };
+  if (s.startsWith(`${lead}\n\n`)) return { intent: 'shape', text: s.slice(lead.length + 2) };
+  return { intent: null, text: s };
 }
 
 /**

@@ -156,7 +156,7 @@ be skipped by forgetting it.
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
 | "Set in Advanced mode and still applied" note | S |
 | Target switch, task source (Markdown), source and feature branch; "Run on the source branch" toggle | A |
-| "Not sure what to build yet? Plan it with me in Chat →" under the Markdown source (Shape it first, gated) | A |
+| "Not sure what to build yet? Plan it with me in Chat →" under the Markdown source (Plan it with me, gated) | A |
 | Engine dropdown beside the workflow (greyed-out engines the credential broker refuses) | A — stays visible at every level while a non-Claude engine is picked (rule 2) |
 | Advanced disclosure: guardrails, human in the loop, per-agent model and effort | A |
 | Per-agent fan-out, sub-agent model, questions; feedback-loop max cycles; "Save as workflow defaults"; memory scope | E |
@@ -171,7 +171,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
 | Recovery prompt, cycle gate, cost-pause banner, retained-work banner, merge-back banner (a run on its source branch that could not be fast-forwarded) | all |
-| Plan approval (Shape it first): the plan, its shape check, Run this plan / Send changes / Stop | all (rule 1) |
+| Plan approval (Plan it with me): the plan, its shape check, Run this plan / Send changes / Stop | all (rule 1) |
 | Plan approval extras: perspective chips + Update plan, Fix, Save to plans/ | S |
 | Plan approval: Open in New run | A |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
@@ -312,10 +312,11 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Pinpoint (#669): select text in a chat answer, a Markdown artifact or the Diff tab for Copy · Explain · Alternatives · Disagree · Note / Comment · Quote / Send to chat; the composer's quote chip; an artifact's pending-changes tray (sent back to the run as one direction while it still takes directions); the diff's open-comments tray (Propose fix run) | all — follows the surface it is on |
 | Ask: the run card's Pause / Resume / Stop, its answer receipt, its result (verdict, changes, top changed files) and the composer's "→ run" direction chip | S — the run card's controls, as on the Running card |
 | Ask: the run card's question (clarify, form, cycle gate, recovery, Auto proposal) | all (rule 1) — its own controls keep the run page's levels (Auto proposal Revise A, tunables E) |
-| Ask: Chat home tile "Plan it with me" (Shape it first, gated; help line, New badge) | S |
-| Ask: run card, perspective chips and the Shape it first nudge (open decisions, Run as is / Shape it first with estimates) | S |
+| Ask: Chat home tile "Plan it with me" (gated; help line, Experimental badge) | S |
+| Ask: run card, perspective chips and the Plan it with me nudge (open decisions, Run as is / Plan it with me with estimates) | S |
+| Ask: Plan it with me proposal card — title + label, clamped brief, Project, Base branch, Perspectives, What happens, Advanced (collapsed; its fields keep their own levels), Start planning / Not now / Open in New run | S |
 | Ask: the run card's question, "Answer and draft" / "Skip, draft with defaults" (shaping runs) | all (rule 1) |
-| Ask: live run card, "Clarify ✓ · Plan ✓ · Refine ✓ while shaping", plan file, saved path + Open | S |
+| Ask: live run card, "Clarify ✓ · Plan ✓ · Refine ✓ while planning", plan file, saved path + Open | S |
 | Ask: the run card's agent model label, its artifact chips and "All artifacts", Create pull request / View pull request | A — as on the run page |
 | Ask: the run card's agent "cycle N" label | E — a loop badge |
 | Ask: a proposal's own schedule (the "Schedule" action and its time), schedule-change cards | S — the answer the user asked for |

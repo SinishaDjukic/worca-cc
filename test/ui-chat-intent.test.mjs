@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import {
-  createIntentAddon, installIntentAddon, intentText, INTENTS, EXAMPLES, EXAMPLE_MS, INTENT_ADDON_ID,
+  createIntentAddon, installIntentAddon, intentText, splitIntentLead, INTENTS, EXAMPLES, EXAMPLE_MS, INTENT_ADDON_ID,
 } from '../ui/public/chat/intent.mjs';
 import { composerAddons, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
 import { setShapeFirst } from './helpers/shape-gate.mjs';
@@ -195,7 +195,7 @@ test('every intent: a chip label, an icon, a placeholder and one plain sentence 
 test('Plan it with me (Shape it first): refused while the gate is off; with it on it arms and the send leads with its sentence', () => {
   assert.equal(INTENTS.shape.label, 'Plan it with me');
   assert.equal(INTENTS.shape.help, undefined);
-  assert.equal(INTENTS.shape.badge, 'New');
+  assert.equal(INTENTS.shape.badge, 'Experimental');
   const s = setup();
   try {
     setShapeFirst(false);
@@ -340,4 +340,16 @@ test('the examples rotate through every one of them, then start over', () => {
     assert.equal(s.ph.at(-1), ex);
   }
   assert.equal(EXAMPLES.length, 4);
+});
+
+test('splitIntentLead: the Plan it with me lead is for the model only (D21)', () => {
+  const lead = INTENTS.shape.lead;
+  assert.equal(lead, 'Shape this task first: propose a run with `shape`.', 'the model-facing lead is unchanged');
+  assert.deepEqual(splitIntentLead(`${lead}\n\nUploads fail on large files`), { intent: 'shape', text: 'Uploads fail on large files' });
+  assert.deepEqual(splitIntentLead(lead), { intent: 'shape', text: '' });
+  assert.deepEqual(splitIntentLead(`${lead}\n\n> From plan.md:\n> x\n\nWhy?`), { intent: 'shape', text: '> From plan.md:\n> x\n\nWhy?' });
+  assert.deepEqual(splitIntentLead('Shape this task first please'), { intent: null, text: 'Shape this task first please' });
+  assert.deepEqual(splitIntentLead(`${lead} and more`), { intent: null, text: `${lead} and more` }, 'exact lead only');
+  assert.deepEqual(splitIntentLead(undefined), { intent: null, text: '' });
+  assert.deepEqual(splitIntentLead(`${INTENTS.run.lead}\n\nx`), { intent: null, text: `${INTENTS.run.lead}\n\nx` }, 'other intents unchanged');
 });

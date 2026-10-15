@@ -5528,6 +5528,8 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-msg[data-ask-enter]{animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
 .ask-user-bubble{align-self:flex-end;max-width:78%;padding:10px 14px;border-radius:var(--r-card) var(--r-card) 4px var(--r-card);
   background:var(--field);color:var(--ink);font-size:13.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
+/* Plan it with me (D21): the intent chip above the person's bubble — the lead itself went to the model only. */
+.ask-user-intent{align-self:flex-end;display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink);font:500 11.5px/1 var(--sans);}
 .ask-user-pills{justify-content:flex-end;margin-top:0;}
 .ask-attachment-pill{padding-right:12px;}
 .ask-attachment-thumb-link{display:inline-block;line-height:0;}
@@ -5757,6 +5759,22 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rp-foot .ask-card-not-now{height:34px;padding:0 14px;font-size:12.5px;}
 .ask-rp-foot .ask-card-start{height:36px;padding:0 18px 0 15px;font-size:12.5px;color:var(--on-ink);box-shadow:var(--shadow-pop);}
 .ask-rp-foot .ask-card-start svg{width:11px;height:11px;}
+/* Plan it with me (D20): the small proposal card — clamped brief, the main fields, a collapsed Advanced. */
+.ask-rp-kicker.ask-rp-kicker-shape{color:var(--violet-ink);}
+.ask-rp-shape-main{display:flex;flex-direction:column;gap:10px;}
+.ask-rp-shape-main > .ask-rp-sec{padding:0;border:0;}
+/* On the small card the chips sit in a plain Perspectives field, not in the nudge's amber box (.shape-card). */
+.ask-rp-shape-main .shape-card{padding:0;border:0;background:none;}
+.ask-rp-brief-preview{display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink-2);line-height:1.5;}
+.ask-rp-brief-preview[hidden],.ask-rp-brief-more[hidden],.ask-rp-brief-host[hidden]{display:none;}
+.ask-rp-brief-more{align-self:flex-start;font-size:12px;}
+.ask-rp-shape-what{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;font-size:12.5px;color:var(--ink-2);}
+.ask-rp-adv{border-bottom:1px solid var(--line);}
+.ask-rp-adv > summary{padding:10px 18px;font-size:12px;color:var(--ink-3);overflow-wrap:anywhere;}
+.ask-rp-adv > .ask-rp-why,.ask-rp-adv > .ask-rp-adv-sched{padding:0 18px 12px;}
+.ask-rp-adv > .ask-rp-sec:last-of-type{border-bottom:0;}
+/* With the lane summary gone from the shaped footer, the link keeps Not now and Start planning on the right. */
+.ask-rp-foot .ask-card-open-np.link-btn{margin-right:auto;}
 .ask-rp .ask-card-err{padding:0 18px 10px;}
 .ask-rp .ask-card-scope-warn{margin:12px 18px 0;}
 .ask-pop-at{width:288px;padding:6px;border-radius:var(--r-card);max-height:min(320px,60%);overflow-y:auto;}
@@ -9284,4 +9302,9 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-rc-shaped:empty{display:none;}
 .chat-rc-shaped-stages{color:var(--green-ink);font-weight:500;}
 .chat-rc-shaped-plan,.chat-rc-shaped-saved{font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere;}
-.chat-home-act-badge{padding:1px 7px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;}
+/* Same word as Settings › Experimental; never wraps (the ellipsis is a safety net only). */
+.chat-home-act-badge{max-width:100%;box-sizing:border-box;padding:1px 7px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* Poppins SemiBold "Experimental" is ~81px at 10px: below a 960px home the 4- and 9-column tiles are 64–93px, so only
+   the tile that carries a badge (the gated shape tile) drops its inline padding and the badge goes compact (~61px).
+   After the base rule on purpose: same specificity, so source order makes it win. */
+@container chat-home (max-width:960px){.chat-home-act:has(> .chat-home-act-badge){padding-inline:0;}.chat-home-act-badge{font-size:8.5px;padding:1px 3px;letter-spacing:-.02em;}}

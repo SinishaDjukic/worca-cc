@@ -956,7 +956,7 @@ test('chat run card: an answer whose 200 lands before the question goes away kee
   assert.equal($('.chat-rc-receipt summary').textContent, 'Answer sent · Implementer');
 });
 
-test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · Refine ✓ while shaping", the plan file, Saved to + Open; hidden with the gate off or nothing approved', async () => {
+test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · Refine ✓ while planning", the plan file, Saved to + Open; hidden with the gate off or nothing approved', async () => {
   const SHAPING = (over = {}) => ({ perspectives: ['ux'], rounds: [{ round: 1 }], approved: { round: 1, file: 'docs/plans/2026-10-14-login.md' }, savedTo: null, ...over });
   try {
     await checkRows([
@@ -968,7 +968,7 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
         assert.equal(line.hidden, false);
         assert.equal(line.previousElementSibling, $('.ask-rc-sub'));
         assert.equal(line.nextElementSibling, $('.ask-rc-stats'));
-        assert.equal($('.chat-rc-shaped-stages').textContent, 'Clarify ✓ · Plan ✓ · Refine ✓ while shaping');
+        assert.equal($('.chat-rc-shaped-stages').textContent, 'Clarify ✓ · Plan ✓ · Refine ✓ while planning');
         assert.equal($('.chat-rc-shaped-plan').textContent, 'Plan: 2026-10-14-login.md');
         assert.equal($('.chat-rc-shaped-saved'), null, 'not saved: no Saved to');
         assert.equal($('.chat-rc-shaped-open'), null);

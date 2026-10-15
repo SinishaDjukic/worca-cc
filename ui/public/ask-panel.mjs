@@ -33,7 +33,9 @@ import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 import { shapeFirstOn } from './chat/shape-gate.mjs';
-import { shapeCardExtras } from './shape/proposal.mjs';
+import { INTENTS, splitIntentLead } from './chat/intent.mjs';
+import { homeIcon } from './chat/home-icons.mjs';
+import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
   fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
@@ -2977,6 +2979,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       reset.hidden = true;
       laneSec.appendChild(make('div', 'ask-rp-lane-msg', loadingText || 'Could not load agent settings.'));
       lc.summary.textContent = '';
+      if (lc.onPaint) lc.onPaint(null);
       return;
     }
     // "changed" = rows the user moved off the proposal (Ask Worca's picks are the baseline, not the user's edits).
@@ -3127,6 +3130,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     box.appendChild(foot);
     laneSec.appendChild(box);
     lc.summary.textContent = laneSummary(lane);
+    if (lc.onPaint) lc.onPaint(lane);
   }
 
   /** The stub states. A `started` run — and a `failed` one that HAS a runId — renders the live progress
@@ -4248,9 +4252,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (shapeUi) {
       const setLabel = (b, t) => { const n = [...b.childNodes].find((x) => x.nodeType === 3); if (n) n.textContent = t; else b.append(t); };
       if (card.shape) {
-        setLabel(startBtn, 'Shape it first');           // a shaped card is never scheduled
+        setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
       } else {
-        shapeBtn = make('button', 'ask-card-start ask-card-shape', 'Shape it first');
+        shapeBtn = make('button', 'ask-card-start ask-card-shape', 'Plan it with me');
         shapeBtn.type = 'button';
         shapeBtn.dataset.askCardShape = '';
         shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));
@@ -4259,6 +4263,59 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     foot.append(openNp, summary, dismissBtn, laterBtn, ...(shapeBtn ? [shapeBtn] : []), startBtn);
     rootEl.appendChild(foot);
+
+    // Plan it with me (D20, mock board 13): a shaped card shows the title, the brief clamped, Project, Base branch,
+    // Perspectives and what happens; every other field MOVES, unchanged, into a collapsed Advanced. Moves only: each
+    // control keeps its class, so collectCardBody / startCard read the same values and the request is unchanged.
+    let paintAdvanced = () => {};
+    if (card.shape && shapeUi) {
+      const kicker = eyebrow.querySelector('.ask-rp-kicker');
+      kicker.textContent = 'Plan it with me';
+      kicker.classList.add('ask-rp-kicker-shape');
+      const main = make('div', 'ask-rp-sec ask-rp-shape-main');
+      const preview = make('div', 'ask-rp-brief-preview',
+        card.source ? (card.source.title || card.source.taskId || '') : brief.value);
+      const more = make('button', 'link-btn ask-rp-brief-more', 'Show the full brief');
+      more.type = 'button';
+      more.setAttribute('data-ask-card-brief-more', '');
+      briefSec.hidden = true;
+      more.addEventListener('click', () => { preview.hidden = true; more.hidden = true; briefSec.hidden = false; grow(); });
+      const what = make('div', 'ask-rp-shape-what');
+      what.append(make('span', 'ask-rp-label', 'What happens'), make('span', null, shapeWhatHappens(card.shape)));
+      main.append(preview, more, briefSec, targetHost, rpField('Perspectives', shapeUi.el), what);
+      const adv = doc.createElement('details');
+      adv.className = 'ask-rp-adv disclosure';
+      adv.setAttribute('data-ask-card-advanced', '');
+      const advSum = make('summary', 'ask-rp-adv-sum', 'Advanced');
+      adv.appendChild(advSum);
+      const why = head.querySelector('.ask-rp-why');
+      if (why) adv.appendChild(why);
+      // renderTarget fills this with Feature branch + Run on the source branch on a project target (it rebuilds on every call).
+      local.shapeBranchHost = make('div', 'ask-rp-grid two ask-rp-adv-branch');
+      targetSec.insertBefore(local.shapeBranchHost, wfRow);
+      const sched = make('div', 'ask-rp-adv-sched');
+      sched.appendChild(laterBtn);
+      adv.append(targetSec, laneSec, sched);
+      rootEl.insertBefore(main, err);
+      rootEl.insertBefore(adv, err);
+      openNp.classList.add('link-btn');
+      delete openNp.dataset.minLevel;                       // one of the small card's own controls (D20)
+      foot.replaceChildren(openNp, dismissBtn, startBtn);   // the Advanced summary stands in for the lane summary
+      let advLane = null;
+      paintAdvanced = (lane = advLane) => {
+        advLane = lane;
+        const g = guardSel.selectedOptions[0];
+        advSum.textContent = shapeAdvancedSummary({
+          engine: engineLabel(engineSel.value || (lane && lane.defaultEngine) || ''),
+          guardrails: g ? g.textContent : '',
+          agents: lane ? lane.rows.length : 0,
+          overrides: lane ? laneOverrideCount(lane) : 0,
+        });
+      };
+      guardSel.addEventListener('change', () => paintAdvanced());
+      engineSel.addEventListener('change', () => paintAdvanced());   // the lane reload repaints again once loaded
+      paintAdvanced(null);
+    }
 
     local.projectDir = () => (local.target === 'project' ? ((rootEl.querySelector('.ask-card-project-select') || {}).value || '') : '');
     local.workflowId = () => workflowSel.value || card.workflowId || 'wf_default';
@@ -4300,13 +4357,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           if (srcHint && srcSel.value !== card.sourceBranch) srcHint.textContent = '';
           updateTargetSub();
         });
-        grid.append(rpField('Project', projSel), lvTag(srcField, 'advanced', !!card.sourceBranch),
-          lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch),
-          lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource));
+        const featureField = lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch);
+        const sameField = lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource);
+        if (local.shapeBranchHost) {
+          // Plan it with me (D20): Project and Base branch on the small card, at every level; the rest in Advanced.
+          srcField.querySelector('.ask-rp-label').firstChild.textContent = 'Base branch';
+          grid.classList.add('two');
+          grid.append(rpField('Project', projSel), srcField);
+          local.shapeBranchHost.replaceChildren(featureField, sameField);
+        } else {
+          grid.append(rpField('Project', projSel), lvTag(srcField, 'advanced', !!card.sourceBranch), featureField, sameField);
+        }
         targetHost.appendChild(grid);
         updateTargetSub();
         return;
       }
+      if (local.shapeBranchHost) local.shapeBranchHost.replaceChildren();
       const wsSel = rpSelect('ask-card-workspace-select', 'Workspace');
       const members = make('div', 'ask-card-members');
       const srcInput = doc.createElement('input');
@@ -4358,7 +4424,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // `edits` are per workflow-and-project and are DISCARDED, silently.
     // `saveDefaults`: the card's "Save as project defaults" switch (off by default), kept across lane reloads.
     const laneCtx = { summary, workflowId: () => local.workflowId(), projectDir: () => local.projectDir(),
-      saveDefaults: () => !!local.saveDefaults, setSaveDefaults: (v) => { local.saveDefaults = !!v; } };
+      saveDefaults: () => !!local.saveDefaults, setSaveDefaults: (v) => { local.saveDefaults = !!v; },
+      onPaint: (lane) => paintAdvanced(lane) };
     let laneSeq = 0;
     function reloadLane() {
       const seq = ++laneSeq;
@@ -4424,7 +4491,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       local.options = opts;
       if (card.shape && local.shapeUi) {
         // Shape it first (D9): the workflow is fixed; the server re-derives wf_shape / wf_shape_ux from the chips at start.
-        fillSelect(workflowSel, [{ value: card.workflowId, label: card.workflowName || 'Shape it first' }], card.workflowId);
+        fillSelect(workflowSel, [{ value: card.workflowId, label: card.workflowName || 'Plan it with me' }], card.workflowId);
         workflowSel.disabled = true;
       } else {
         // Auto is not a saved workflow: listed only when Ask Worca proposed it (a plain card keeps its list).
@@ -5304,14 +5371,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (synthetic.length) {
         for (const b of synthetic) wrap.appendChild(buildNotice(b));
       } else {
+        // Plan it with me (D21): the lead went to the model; the bubble shows the intent chip and the person's own text.
+        const own = splitIntentLead(row.text || '');
+        if (own.intent) {
+          const chip = make('div', 'ask-user-intent');
+          chip.append(homeIcon(doc, INTENTS[own.intent].icon, 14), make('span', null, INTENTS[own.intent].label));
+          wrap.appendChild(chip);
+        }
         // Pinpoint (#669): a message that opens with a blockquote shows it as a quote card above the bubble.
-        const { quote, rest } = parseQuotedMessage(row.text || '');
+        const { quote, rest } = parseQuotedMessage(own.text);
         if (quote) {
           const card = make('div', 'ask-user-quote');
           card.append(make('div', 'ask-user-quote-h', quote.src ? `From ${quote.src}` : 'Quoted'), make('div', 'ask-user-quote-t', quote.text));
           wrap.appendChild(card);
         }
-        if (!quote || rest) wrap.appendChild(make('div', 'ask-user-bubble', quote ? rest : (row.text || '')));
+        const bubbleText = quote ? rest : own.text;
+        if (bubbleText || (!quote && !own.intent)) wrap.appendChild(make('div', 'ask-user-bubble', bubbleText));
         const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
         if (atts.length) {
           const pills = make('div', 'extras-pills ask-user-pills');

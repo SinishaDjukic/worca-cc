@@ -10488,7 +10488,7 @@ app.delete('/api/workflows/:id', async (req, res) => {
   if (id === 'wf_default') return badRequest(res, 'the default workflow cannot be deleted');
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return badRequest(res, 'the Memory defragment workflow cannot be deleted');
   if (id === PR_FIX_WORKFLOW_ID) return badRequest(res, 'the PR fix workflow cannot be deleted');
-  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return badRequest(res, 'the Shape it first workflow cannot be deleted');
+  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return badRequest(res, 'the Plan it with me workflow cannot be deleted');
   try {
     const removed = await deleteWorkflow(id); // CONV-1: await
     if (!removed) return res.status(404).json({ error: 'workflow not found' });

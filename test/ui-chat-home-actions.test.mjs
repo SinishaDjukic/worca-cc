@@ -3,6 +3,7 @@
 // Explain a diff open a Live / Finished run picker whose pick prefills a run mention; switched-off features hide.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import {
@@ -35,7 +36,7 @@ test('nine tiles in the mockup order — eight intents and More — each naming 
   const s = setup();
   const tiles = [...s.doc.querySelectorAll('.chat-home-act')];
   assert.deepEqual(tiles.map((b) => b.textContent), ['New run',
-    'Plan it with meNew', 'Build workflow', 'Schedule a run', 'Track a run',
+    'Plan it with meExperimental', 'Build workflow', 'Schedule a run', 'Track a run',
     'Explain a diff', 'Write a script', 'Clone a repo', 'More']);
   assert.deepEqual(tiles.map((b) => b.dataset.minLevel), ['simple', 'simple', 'simple', 'advanced', 'simple', 'advanced', 'simple', 'simple', 'simple']);
   assert.ok(tiles.every((b) => b.type === 'button' && b.querySelector('.chat-ic svg')));
@@ -129,14 +130,14 @@ test('switches: script tools off hides Write a script; Clone has no off switch; 
   assert.equal(actionAvailable('script', {}), true);
 });
 
-test('Plan it with me: hidden until the Shape it first flag is on, with its New badge and no help line; re-pushed flags keep the others', () => {
+test('Plan it with me: hidden until the Shape it first flag is on, with its Experimental badge and no help line; re-pushed flags keep the others', () => {
   const s = setup();
   const t = s.tile('shape');
   assert.equal(t.hidden, true, 'DEFAULT_FLAGS: the gate is off until the hello says otherwise');
   assert.equal(t.dataset.minLevel, 'simple');
   assert.equal(t.querySelector('.chat-home-act-l').textContent, 'Plan it with me');
   assert.equal(t.querySelector('.chat-home-act-help'), null);
-  assert.equal(t.querySelector('.chat-home-act-badge').textContent, 'New');
+  assert.equal(t.querySelector('.chat-home-act-badge').textContent, 'Experimental');
   assert.equal(s.tile('run').querySelector('.chat-home-act-badge'), null);
   s.actions.setFlags({ shapeFirst: false });
   assert.equal(t.hidden, true);
@@ -188,4 +189,22 @@ test('an empty picker closes on Escape from its tile; closing a menu the focus i
   s.actions.closeMenu();                                            // what a scroll of the home does
   assert.equal(s.menu(), null);
   assert.equal(s.doc.activeElement, s.more(), 'back on its tile, never <body>');
+});
+
+test('the tile badge never wraps and has a compact size below a 960px home', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  // Anchored at line start: the container-query line also contains `.chat-home-act-badge{`.
+  const rule = css.match(/^\.chat-home-act-badge\{([^}]*)\}/m)[1];
+  assert.match(rule, /white-space:nowrap/);
+  assert.match(rule, /max-width:100%/);
+  const compact = css.match(/^@container chat-home \(max-width:960px\)\{([^\n]*)\}$/m);
+  assert.ok(compact, 'the compact badge rule exists');
+  assert.match(compact[1], /\.chat-home-act-badge\{font-size:8\.5px;/);
+  // Same specificity as the base rule, so it must come after it to win.
+  assert.ok(compact.index > css.search(/^\.chat-home-act-badge\{/m), 'the compact rule follows the base badge rule');
+  // Flag off, nothing changes: only the tile that carries a badge (the gated shape tile) loses its padding.
+  assert.match(compact[1], /\.chat-home-act:has\(> \.chat-home-act-badge\)\{padding-inline:0;\}/);
+  assert.doesNotMatch(compact[1], /\.chat-home-act\{/, 'no rule for every tile');
+  const narrow = css.match(/^@container chat-home \(max-width:440px\)\{([^\n]*)\}$/m)[1];
+  assert.match(narrow, /\.chat-home-act\{min-height:64px;\}/, 'every other tile keeps today\'s narrow rule');
 });
