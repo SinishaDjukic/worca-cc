@@ -423,6 +423,26 @@ test('Save posts version 2 with the loaded id; Save-as omits it', async () => {
   assert.equal(posts[1].name, 'Copy');
 });
 
+test('Save dialog `then`: runs once with the saved row after THAT dialog saves; a cancelled one never fires later', async () => {
+  const s = await open({ api: { saveWorkflow: async (b) => ({ ok: true, workflow: { id: b.id || 'wf_new', name: b.name } }) } });
+  const got = [];
+  const confirm = () => s.el.dialogHost.querySelector('dialog.save-dialog .sd-confirm').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  s.c.openSaveDialog({ then: (wf) => got.push(wf) });
+  s.el.dialogHost.querySelector('dialog.save-dialog .sd-name').value = 'Exported';
+  confirm();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(got, [{ id: 'wf_t', name: 'Exported' }]);
+  confirm();                                                           // a second save of the same dialog: no repeat
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(got.length, 1);
+  s.c.openSaveDialog({ then: (wf) => got.push(wf) });
+  s.el.dialogHost.querySelector('dialog.save-dialog .sd-cancel').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  s.el.save.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));   // a plain Save afterwards
+  confirm();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(got.length, 1, 'the cancelled export-save never fires on a later plain save');
+});
+
 test('Save dialog: empty name refused client-side, a 422 renders validator issues verbatim and keeps the dialog', async () => {
   await checkRows([
     { name: 'a 422 renders the validator issues verbatim and keeps the dialog open', run: async () => {

@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Acme Pulse — product analytics your whole team will actually read</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-period="annual">
+  <header class="nav">
+    <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"></span>Acme Pulse</a>
+    <nav>
+      <a href="#features">Product</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a class="btn btn--ghost" href="#signup">Sign in</a>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy">
+        <span class="eyebrow">New · Weekly Slack digests</span>
+        <h1>Product analytics your whole team will actually read</h1>
+        <p class="lede">Acme Pulse turns raw events into one clear page a week: what moved, why it moved, and what to try next. No SQL, no dashboard sprawl.</p>
+        <div class="hero-cta">
+          <a class="btn btn--primary btn--lg" href="#signup">Start free trial</a>
+          <a class="btn btn--ghost btn--lg" href="#features">See how it works</a>
+        </div>
+        <p class="muted-note">No credit card required</p>
+      </div>
+      <figure class="hero-card" aria-label="Weekly active users chart">
+        <figcaption>
+          <span>Weekly active users</span>
+          <strong class="num">48,210 <em>+12.4%</em></strong>
+        </figcaption>
+        <svg viewBox="0 0 320 140" role="img" aria-hidden="true">
+          <defs>
+            <linearGradient id="fill" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0" stop-color="#ff8a5c" stop-opacity=".35"/>
+              <stop offset="1" stop-color="#ff8a5c" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path d="M0 112 L32 104 L64 108 L96 88 L128 92 L160 70 L192 76 L224 54 L256 58 L288 36 L320 28 L320 140 L0 140 Z" fill="url(#fill)"/>
+          <path d="M0 112 L32 104 L64 108 L96 88 L128 92 L160 70 L192 76 L224 54 L256 58 L288 36 L320 28" fill="none" stroke="#f0602e" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+          <circle cx="320" cy="28" r="5" fill="#f0602e"/>
+        </svg>
+        <ul class="hero-stats">
+          <li><span>Retention (W4)</span><strong class="num">41%</strong></li>
+          <li><span>Activation</span><strong class="num">63%</strong></li>
+          <li><span>Churn</span><strong class="num">2.1%</strong></li>
+        </ul>
+      </figure>
+    </section>
+
+    <section class="features" id="features">
+      <h2>What you get</h2>
+      <div class="feature-grid">
+        <article class="feature">
+          <span class="feature-icon" aria-hidden="true">◎</span>
+          <h3>One page a week</h3>
+          <p>A digest that leads with what changed, written for people who never open a dashboard.</p>
+        </article>
+        <article class="feature">
+          <span class="feature-icon" aria-hidden="true">↗</span>
+          <h3>Funnels that explain themselves</h3>
+          <p>Every drop-off comes with the segments behind it, so the "why" is one click away.</p>
+        </article>
+        <article class="feature">
+          <span class="feature-icon" aria-hidden="true">✦</span>
+          <h3>Retention, without the math</h3>
+          <p>Cohorts update live and flag the weeks that bend the curve, up or down.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="pricing" id="pricing">
+      <h2>Simple pricing that scales with your team</h2>
+      <div class="billing" data-billing role="group" aria-label="Billing period">
+        <button type="button" data-period="monthly" aria-pressed="false">Monthly</button>
+        <button type="button" data-period="annual" aria-pressed="true">Annual</button>
+      </div>
+      <div class="plans">
+        <article class="plan">
+          <h3>Starter</h3>
+          <p class="price"><span class="num">$0</span> / month</p>
+          <p class="billed">Free forever for small teams</p>
+          <ul><li>Up to 3 seats</li><li>7-day history</li><li>Core dashboards</li></ul>
+          <a class="btn plan-cta" href="#signup">Get started</a>
+        </article>
+        <article class="plan plan--team">
+          <span class="badge">Most popular</span>
+          <h3>Team</h3>
+          <p class="price"><span class="num">$29</span> / seat / month</p>
+          <p class="billed" id="team-billed">Billed annually at $348 — save 20%</p>
+          <ul><li>Unlimited seats</li><li>13-month history</li><li>Funnels &amp; retention</li><li>Slack digests</li></ul>
+          <a class="btn btn--primary plan-cta" href="#signup">Start free trial</a>
+        </article>
+        <article class="plan">
+          <h3>Business</h3>
+          <p class="price"><span class="num">$79</span> / seat / month</p>
+          <p class="billed">Billed annually</p>
+          <ul><li>Everything in Team</li><li>SSO &amp; audit log</li><li>Unlimited history</li><li>Priority support</li></ul>
+          <a class="btn plan-cta" href="#signup">Talk to sales</a>
+        </article>
+      </div>
+      <p class="fineprint">No credit card required · Cancel anytime</p>
+    </section>
+
+    <section class="faq" id="faq">
+      <h2>Questions, answered</h2>
+      <details open>
+        <summary>How long does setup take?</summary>
+        <p>About ten minutes. Drop in the snippet, and your first digest arrives the following Monday.</p>
+      </details>
+      <details>
+        <summary>Can I switch plans later?</summary>
+        <p>Yes. Upgrades are prorated to the day, and downgrades take effect at the next billing date.</p>
+      </details>
+      <details>
+        <summary>Where is my data stored?</summary>
+        <p>In the EU or the US, your choice, encrypted at rest and in transit.</p>
+      </details>
+    </section>
+
+    <section class="signup" id="signup">
+      <div>
+        <h2>Try Acme Pulse free for 14 days</h2>
+        <p>Your first weekly digest lands next Monday.</p>
+      </div>
+      <form onsubmit="return false">
+        <label>Work email <input type="email" placeholder="alex@acme.test" autocomplete="off"></label>
+        <button class="btn btn--primary" type="submit">Start free trial</button>
+        <p class="muted-note">No credit card required</p>
+      </form>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>© 2026 Acme Pulse, Inc.</span>
+    <nav><a href="#top">Privacy</a><a href="#top">Terms</a><a href="#top">Status</a></nav>
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>

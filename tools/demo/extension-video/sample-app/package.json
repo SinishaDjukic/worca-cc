@@ -1,0 +1,1 @@
+{"name":"acme-pulse","private":true,"scripts":{"start":"node serve.mjs"}}

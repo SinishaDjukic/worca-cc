@@ -408,7 +408,7 @@ On a Codex run the helper jobs (titles, the run overview, the PR description, th
 **MCP servers on Codex.** A pipeline's MCP servers attach to its Codex nodes, with these limits:
 
 - Codex takes stdio servers only. A remote (HTTP/SSE) server from the MCP registry refuses the run; one from a project's `.mcp.json` is skipped with a warning.
-- The servers in the checkout's own `.mcp.json` attach only when Claude Code would run them without asking: those named in `enabledMcpjsonServers`, or all of them with `enableAllProjectMcpServers: true`, minus those in `disabledMcpjsonServers`. worca reads these keys from `~/.claude/settings.json` and the project's `.claude/settings.json` and `.claude/settings.local.json`. The run names the servers it leaves out for want of approval. Their `${VAR}` references are filled the way Claude Code fills them, as for any other server on Codex.
+- The servers in the checkout's own `.mcp.json` attach only when Claude Code would run them without asking: those named in `enabledMcpjsonServers`, or all of them with `enableAllProjectMcpServers: true`, minus those in `disabledMcpjsonServers`. An approval counts only where a repository cannot put one: `~/.claude/settings.json`, your answers to Claude Code's own approval prompt (kept for the project in `~/.claude.json`), the project's `.claude/settings.local.json` while git does not track it, and Claude Code's managed settings. Claude Code ignores a repository's own approvals in a folder you have not trusted, and worca cannot tell which folders you trust. The committed `.claude/settings.json` can only restrict: its `disabledMcpjsonServers` and an `enableAllProjectMcpServers: false` still apply. The run names the servers it leaves out for want of approval, and so does New pipeline before Start. The project's **Sets** tab lists the servers with their status, and **Approve** names one in the project's `.claude/settings.local.json`, keeping that file out of git. Their `${VAR}` references are filled the way Claude Code fills them, as for any other server on Codex.
 - Other servers Claude Code loads on its own (user scope, plugins) are not attached on Codex.
 - Codex gives all of a run's servers one shared environment. Copies of a registry server, such as two GitHub copies with their own `GITHUB_TOKEN`, each get their own variable names there, so they attach side by side. Two other servers may not declare the same variable with different values.
 
@@ -501,7 +501,7 @@ There is no sign-in status command, so worca checks only that the binary runs be
 **MCP, sub-agents and skills.**
 
 - A run's MCP servers attach to its Copilot nodes, stdio and remote (HTTP/SSE) alike. `${VAR}` references are filled by Copilot from its own environment, where worca puts the values. They never reach the command line or the config file.
-- The servers in the checkout's own `.mcp.json` attach only when Claude Code would run them without asking, as on Codex: named in `enabledMcpjsonServers`, or all of them with `enableAllProjectMcpServers: true`, minus those in `disabledMcpjsonServers`. The run names the ones it leaves out for want of approval.
+- The servers in the checkout's own `.mcp.json` attach only when Claude Code would run them without asking, as on Codex: named in `enabledMcpjsonServers`, or all of them with `enableAllProjectMcpServers: true`, minus those in `disabledMcpjsonServers`. The run names the ones it leaves out for want of approval. Copilot itself loads a project's `.mcp.json` and `.github/mcp.json` in a folder you trusted, so worca turns off every server in them that it does not attach.
 - Research fan-out uses Copilot's `task` tool. worca defines its read-only investigator as the custom agent `worca-investigator` for each call. The agent carries the run's memory pointers and runs on the node's model.
 - Skills mount at the run checkout's `.agents/skills`, as on Codex, skills from sets included (renamed `<set>-<skill>` on a clash). A set skill's hooks do not run.
 - Helper jobs (titles, overview, PR description, the Auto classifier, the night decider) run with no built-in tool at all. They get only the MCP servers worca hands them (the classifier's and night decider's read-only file tools), and a scrubbed environment.
@@ -558,7 +558,7 @@ click Apply.
 
 | Tool | What it does | How |
 | --- | --- | --- |
-| `list_models` | Every catalog model: source (built-in, user, plugin, team policy), connection (CLI default, env, provider), efforts, and for a bridged model its provider, API, upstream id, limits and readiness. A user entry adds its env, upstream and pricing — credential values masked, `${VAR}` references readable | read |
+| `list_models` | Every catalog model: source (built-in, user, plugin, team policy), connection (CLI default, env, provider), efforts, its picking facts (vendor, price tier, list price, free, prompt window — see [Per-agent models for one run](#per-agent-models-for-one-run)), and for a bridged model its provider, API, upstream id, limits and readiness. A user entry adds its env, upstream and pricing — credential values masked, `${VAR}` references readable | read |
 | `get_providers` | The Providers card's state: Copilot sign-in and notice, each key-based provider's base URL, whether a key is set (and from where), whether it is optional | read |
 | `test_provider` | *Test connection* for one provider | read (contacts it) |
 | `list_copilot_models` | What *Import models…* would list | read (contacts GitHub) |
@@ -586,6 +586,66 @@ click Apply.
 - The chat re-validates every proposal in the server over the real settings (the
   same setters the Models view calls, as a dry run), and applying runs them for
   real.
+
+### Per-agent models for one run
+
+When Ask Worca proposes a run of a saved workflow it can also pick a model and effort for each
+agent step (`propose_run` `nodes`), from the models the run's engine runs:
+
+- **The picking policy** — judgement steps (Plan, Plan Review, Refine Plan, Review
+  Implementation, Bug Root Cause, Deck Review) take the top price tier at high effort, never the
+  premium tier; producers that design (Implementation, Bug Fix, Deck Builder) the strong tier at
+  medium or high effort; mechanical producers (Decompose, Manual Tests Checklist, Bug Report
+  Analysis, Deck Export, Bug Triage Report) the cheapest capable tier at medium effort;
+  tool-driven checks (Manual web UI testing, visual checks) the mid tier with tool calls and
+  vision; any other step (Clarify included) the strong tier at medium effort. Within a tier the
+  cheapest capable model is picked. A premium-tier model (Fable 5.1 today) is picked only when
+  you name that model: it does the work of the top tier at about 2.5× Opus 5.5's list price. A
+  small task scales the tiers down. Anthropic
+  models come first, then OpenAI, then others. A free model is used only on a low-risk producer
+  step, only when it is ready, has tool calls and at least a 64k window — never on a judgement
+  step or as the only Implementation step. A `[1m]` twin shares its base model's price row and is
+  picked only when the context demands it; a model without a tier (a Copilot import, an unpriced
+  provider entry) ranks as the model it serves. A model the catalog marks not ready (its provider
+  is not set up) is never picked unless you ask for it. The Auto classifier follows the same guide.
+- **Price tiers** come from the output list price per million tokens: premium from $40, top from
+  $20, strong from $8, mid from $2, economy below (a free model is economy). A Copilot import is pinned *Free*
+  only so its spend reads $0 (Copilot bills premium requests): it has no token price and no tier,
+  and it is never treated as a free model. `list_models` and the chat's catalog
+  show each model's vendor, tier, list price, free flag and prompt window; a user or plugin entry's
+  own `cost` wins over the list price. Haiku 5.5's prompts over 100k tokens cost 5× its listed rates.
+- **On the card** the Agents section shows each pick beside the project's own setting
+  (*project: …*), marked **Ask Worca** with the reason and the model's facts on hover; a row
+  carrying a pick or an edit has **Use project default** (*Use default* on a workspace card), and
+  **Reset to proposal** brings the picks back. The section shows at every interface mode when the
+  card carries picks.
+- **The picks apply to that run only** — and so does any other change you make in a run card's
+  Agents section. **Start run** (or **Schedule…**: the scheduled run keeps them) sends them with the run
+  (`POST /api/run` `overlay.nodes`), which checks them again — each node must be an agent node of
+  the workflow; each model must be in the catalog, run on the run's engine and offer the effort —
+  and never writes the project's settings. Turn on **Save as project defaults** (project targets
+  only) to save the lane as the project's agent settings first, as before. A workspace card's
+  lane is editable for the run too; it names every pick outright, because the run merges them
+  over its primary member's settings, which the card does not show; an agent a workspace run
+  always fans out shows fan-out on and locked. A **Start run** while the Agents section loads
+  waits for it; one that could not load lists the picks and sends them as proposed. **Open in New run** asks
+  first whenever picks would stay behind: New run starts from the saved settings, so per-run
+  picks do not come along. The run page's model pill ends in *· this run* (*Picked for this run
+  only* on hover) on a node that ran the model the picks set.
+- **Errors and warnings** — `nodes` is refused with Auto (`wf_auto`, which picks at start), the
+  Memory defragment workflow (Settings › Memory owns its model) and a run on the Copilot engine
+  (it runs its own models, none of the catalog's). When Claude Code is not signed in,
+  every agent node needs a model routed through an endpoint or a provider (the chat and the card
+  read the sign-in from the same place, the server, which asks Claude Code only when such a model
+  exists; a proposal without picks then comes back with a note saying so). A model outside the
+  team policy's allowed list is a warning on the card, never a refusal; the run proceeds and is
+  recorded as off-policy, as for any step model. A premium-tier pick is a warning on the card too
+  (*… is a premium model (~2.5× Opus 5.5 list price): keep it only if the user asked for it*): keep
+  it only if you asked for that model. Each warning shows while a pick on the card runs the model
+  it names. An overlay names values and never clears one,
+  so "inherit" over a model the project set itself rides as the workflow default's model when
+  the workflow names one; when it names none, Start refuses it: pick a model, or save it as the
+  project default.
 
 ## Troubleshooting
 

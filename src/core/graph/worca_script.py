@@ -57,8 +57,14 @@ def _reserve_stdout():
 
 # The REAL stdout, reserved before anything can rebind or inherit it: the frame goes here.
 _FRAME_OUT = _reserve_stdout()
-# Appended by api.log(); carried on the frame even when main() then raises.
+# Stays empty: api.log() writes to the real stderr so its lines stream into the run
+# log as they happen (and are already out when main() raises). Kept on the frame
+# for protocol compatibility. Live output is capped at STREAM_MAX (script-runner.mjs),
+# not the 8 MiB frame cap: past it the rest of a very chatty log is cut from the
+# live view, though the head and tail are still in the capture.
 _LOGS = []
+# The real stderr, saved before the user's program can rebind sys.stderr.
+_ERR = sys.stderr
 
 for _stream in (sys.stdin, sys.stderr):
     # Windows consoles default to cp1252; the parent also exports PYTHONIOENCODING
@@ -102,7 +108,8 @@ def _wrap(value):
 
 
 def _log(level, msg):
-    _LOGS.append({'level': str(level), 'msg': str(msg)})
+    _ERR.write('[%s] %s\n' % (level, msg))
+    _ERR.flush()
 
 
 def _load(path):

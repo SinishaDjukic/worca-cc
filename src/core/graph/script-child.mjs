@@ -17,6 +17,11 @@ import { pathToFileURL } from 'node:url';
 // loop open, so the parent's timeout kill was the only way out.
 const outWrite = process.stdout.write.bind(process.stdout);
 const errWrite = process.stderr.write.bind(process.stderr);
+// api.log() lines go straight to stderr (through the real writer) so they stream
+// into the run log as they happen; the frame's `logs` stays empty for protocol
+// compatibility. Live output is capped at STREAM_MAX (script-runner.mjs) while
+// frame logs only shared FRAME_MAX: past the cap the rest of a very chatty log is
+// cut from the live view, though the head and tail are still in the capture.
 const logs = [];
 for (const m of ['log', 'info', 'warn', 'error', 'debug']) {
   console[m] = (...a) => { process.stderr.write(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ') + '\n'); };
@@ -39,7 +44,7 @@ async function main() {
     verdictPath: envelope.verdictPath ?? null,
     node: envelope.node || {},
     execution: envelope.execution || {},
-    log: (level, msg) => { logs.push({ level: String(level), msg: String(msg) }); },
+    log: (level, msg) => { errWrite(`[${String(level)}] ${String(msg)}\n`); },
   };
   const result = await mod.default(api);
   const r = result && typeof result === 'object' ? result : {};

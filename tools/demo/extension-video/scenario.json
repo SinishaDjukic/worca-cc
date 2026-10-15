@@ -1,0 +1,22 @@
+{
+  "chunkMs": 32,
+  "ask": [
+    { "match": "fix the annual price", "title": "Fix the annual price",
+      "answer": "Done in `index.html`: the Team line now reads **Billed annually at $278 — save 20%**.\n\n12 × $29 = $348, so the old line promised a discount it never gave. If you'd rather keep $348, change the copy to *“Billed annually”* and drop the claim.",
+      "costUsd": 0.04, "usage": { "input_tokens": 23810, "output_tokens": 212, "cache_read_input_tokens": 18400, "cache_creation_input_tokens": 0 } },
+    { "match": "what would you fix first", "title": "Review the Acme Pulse pricing page",
+      "answer": "Three things stand out on this page:\n\n1. **The Team price doesn't add up.** “Billed annually at $348 — save 20%” is exactly 12 × $29, so there is no saving. It should be **$278**.\n2. **“Start free trial” is out of line.** It sits lower and slightly right of the other plan buttons, so the most important CTA looks broken.\n3. **“No credit card required” is nearly invisible.** It's light grey on off-white (about 1.6:1). It needs at least 4.5:1 to pass WCAG AA.\n\nI'd fix the price first: it's the one a buyer will notice.",
+      "costUsd": 0.06, "usage": { "input_tokens": 31240, "output_tokens": 296, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 22100 } },
+    { "match": "fix this", "title": "Align the Team plan button",
+      "answer": "That's the Team plan's **Start free trial** button. It has its own offset:\n\n```css\n.plan--team .plan-cta {\n  margin-top: 14px;\n  transform: translateX(6px) translateY(12px);\n}\n```\n\nRemove that rule so it uses the shared `margin-top: auto` like the other plans. I've made the change in `styles.css`: all three buttons now sit on one baseline.",
+      "costUsd": 0.05, "usage": { "input_tokens": 27650, "output_tokens": 188, "cache_read_input_tokens": 23100, "cache_creation_input_tokens": 0 } }
+  ],
+  "pinpoint": [
+    { "match": "$348",
+      "explain": "This line promises a 20% saving on annual billing, but $348 is exactly 12 × $29, the monthly price for a full year. With 20% off, a seat billed annually should cost **$278.40**, usually shown as **$278/yr** (≈ $23/month).",
+      "alternatives": [
+        { "title": "Show the real discount", "detail": "Billed annually at $278 — save 20%.", "tradeoffs": [{ "tone": "ok", "text": "Matches the claim" }, { "tone": "warn", "text": "Lower revenue per seat" }] },
+        { "title": "Drop the claim", "detail": "Billed annually at $348.", "tradeoffs": [{ "tone": "ok", "text": "No price change" }, { "tone": "warn", "text": "Less incentive to commit" }] }
+      ] }
+  ]
+}

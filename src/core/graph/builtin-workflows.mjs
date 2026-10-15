@@ -159,10 +159,11 @@ export const GRAPH_WORKSPACE_SCAN_WORKFLOW = deepFreeze({
   ],
 });
 
-/** The PR fix workflow every Watch PR fix run starts (pr-watch.mjs FIX_WORKFLOW_ID): Implementation
+/** The PR fix workflow every Watch PR fix run and #620's Resolve in a pipeline start (pr-watch.mjs
+ *  FIX_WORKFLOW_ID): Implementation
  *  -> Review Implementation, the blocking review looping back into the implementer. There is no
  *  planner: the task (the fix brief) feeds both plan ports. Reserved like wf_workspace_scan and NEVER
- *  listed — only the PR watcher starts it — so it runs on every home, not only one with a saved row.
+ *  listed — only the server starts it — so it runs on every home, not only one with a saved row.
  *  The id has an underscore so no NAME can slug onto it (slugify maps "_" to "-"). */
 export const PR_FIX_WORKFLOW_ID = 'wf_pr_fix';
 export const PR_FIX_WORKFLOW_NAME = 'PR fix';
