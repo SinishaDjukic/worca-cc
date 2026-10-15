@@ -51,9 +51,11 @@ describe('evaluateReadiness', () => {
       const report = await evaluateReadiness({ dir, projectKey: 'test' });
 
       assert.ok(report);
-      assert.strictEqual(report.catalogVersion, 1);
+      assert.strictEqual(report.catalogVersion, 2);
       assert.ok(typeof report.engines === 'object');
       assert.ok(Array.isArray(report.checks));
+      assert.ok(['ready', 'partial', 'not-ready', 'unknown'].includes(report.repository.level));
+      assert.deepEqual(report.files, {});
 
       assert.ok(report.engines.claude);
       assert.ok(report.engines.codex);
@@ -89,6 +91,7 @@ describe('evaluateReadiness', () => {
         assert.ok(['blocker', 'warn', 'info'].includes(row.severity));
         assert.ok(['pass', 'fail', 'skip', 'error', 'ignored'].includes(row.status));
         assert.ok(typeof row.fix === 'string');
+        assert.ok(row.scope === 'repository' || row.scope === 'tool');
       }
     } finally { rmRf(dir); }
   });
@@ -100,12 +103,12 @@ describe('evaluateReadiness', () => {
       execSync('git add . && git commit -m "x" -q', { cwd: dir, stdio: 'ignore' });
 
       const r1 = await evaluateReadiness({ dir, projectKey: 'test', ignore: [] });
-      const failing1 = r1.engines.claude?.failing || [];
+      const failing1 = r1.repository.failing;
 
       const r2 = await evaluateReadiness({ dir, projectKey: 'test', ignore: ['commands.test'] });
-      const failing2 = r2.engines.claude?.failing || [];
+      const failing2 = r2.repository.failing;
 
-      assert.ok(failing1.length >= failing2.length);
+      assert.ok(failing1.includes('commands.test'));
       assert.ok(!failing2.includes('commands.test'));
     } finally { rmRf(dir); }
   });
@@ -113,13 +116,14 @@ describe('evaluateReadiness', () => {
   it('never throws and reports unknown levels for a missing folder', async () => {
     const report = await evaluateReadiness({ dir: '/nonexistent/path' });
     assert.ok(report);
-    assert.strictEqual(report.catalogVersion, 1);
+    assert.strictEqual(report.catalogVersion, 2);
     for (const eng of Object.values(report.engines)) assert.strictEqual(eng.level, 'unknown');
+    assert.strictEqual(report.repository.level, 'unknown');
   });
 
   it('never throws when called with no arguments', async () => {
     const report = await evaluateReadiness();
-    assert.strictEqual(report.catalogVersion, 1);
+    assert.strictEqual(report.catalogVersion, 2);
     assert.ok(Array.isArray(report.checks));
   });
 
@@ -128,15 +132,17 @@ describe('evaluateReadiness', () => {
     try {
       const report = await evaluateReadiness({ dir, projectKey: 'test', timeoutMs: 1 });
       assert.ok(report);
-      assert.strictEqual(report.catalogVersion, 1);
+      assert.strictEqual(report.catalogVersion, 2);
     } finally { rmRf(dir); }
   });
 
-  it('accepts primaryEngine', async () => {
+  it('reports the tool-specific files it found', async () => {
     const dir = gitDir();
     try {
-      const report = await evaluateReadiness({ dir, projectKey: 'test', primaryEngine: 'claude' });
-      assert.ok(report.engines.claude);
+      writeFileSync(join(dir, 'CLAUDE.md'), '# c');
+      execSync('git add . && git commit -m "x" -q', { cwd: dir, stdio: 'ignore' });
+      const report = await evaluateReadiness({ dir, projectKey: 'test' });
+      assert.deepEqual(report.files, { claude: 'CLAUDE.md' });
     } finally { rmRf(dir); }
   });
 });
