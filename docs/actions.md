@@ -201,6 +201,51 @@ Discard saves uncommitted changes first, as `checkout-discard-<projectKey>-<time
 the run's artifact folder (or `<worca home>/actions/patches/<runId>/`). If that save fails, Discard
 stops and asks before it throws the changes away.
 
+## Conflicts with the base branch
+
+When a run finishes (done, stopped or failed), Worca checks whether its branch still merges into its
+base. It fetches the base from the project's sync remote (`origin/dev`, say). If there is no remote, it
+uses the local base. If the fetch fails, it uses the last fetched copy and says "offline". The check
+runs `git merge-tree` against the branch refs, so no checkout or worktree changes.
+
+The History detail shows a short line under the title for each branch that needs something (one per
+repository in a workspace run). Hover the status for when it was checked. A branch that is up to date
+shows no line.
+
+- **dev is N commits ahead, merges cleanly**: **Update branch** adds a merge commit of the base to
+  the branch.
+- **Conflicts in N files**, with the file list: resolve them in one of two ways.
+  - **Resolve in a pipeline** starts a new run on the same branch. It runs the same unattended
+    Implementation and Review workflow as a Watch PR fix run, with the same conflict brief, plus the
+    listed files and the original task for context.
+  - **Resolve in a terminal** checks the run out (as **Check out** does), starts the merge there with
+    the conflicts left in the files, and opens the run's terminal with `git status`. Fix the files,
+    commit the merge, then click **Re-check**.
+- **Could not check against dev**: the check failed (the reason follows). **Re-check** tries again.
+
+The History list notes "conflicts with dev" or "dev moved" on such runs. The check runs again when a
+resolve run ends, on **Re-check**, and when you open the run's details if the branch was never checked
+or was last checked more than 5 minutes ago. That automatic check reuses a fetch from the last minute
+and pushes nothing: a resolution done in a terminal is finished by **Re-check**. It does not run on a
+timer.
+
+After Update branch or a resolution, a branch that was already published (Publish branch, Ship it, a
+PR) is pushed again with a plain `git push`. Worca never force-pushes: if someone pushed to the branch
+in the meantime, the push is refused and the merge stays local. The header then shows **Push changes**;
+pull their work into the branch first, or that push is refused too. A resolution that still has conflict
+markers (`<<<<<<<`, `>>>>>>>`) on the lines it added is not pushed (the same check Watch PR runs before
+its push); the line reads "Conflict markers left in N files".
+
+When the branch has an open pull request, the pull request owns its conflicts:
+
+- **Resolve in a pipeline** isn't offered. Use **Resolve** on the pull request's row in the Overview tab
+  (see [Watch PR](ui-levels.md)); its fix run pushes to the pull request.
+- **Update branch** and **Resolve in a terminal** stay: Watch PR has neither.
+- While a Watch PR fix run is working on the branch, Update branch, Resolve in a terminal and Re-check
+  are refused until it finishes, so nothing moves the branch under it.
+- The other way round, while a Resolve in a terminal is open on the branch, Watch PR starts no fix run
+  on it. Closing that terminal lets the watch go on.
+
 ## Workspace stacks
 
 A workspace's Actions tab defines **stacks**: one start for actions across members, in order.

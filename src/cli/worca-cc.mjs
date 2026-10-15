@@ -43,6 +43,7 @@ import { cmdLogs } from './logs.mjs';
 import { cmdControl } from './control.mjs';
 import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
+import { cmdExtension } from './extension.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
 } from '../core/ui-instance.mjs';
@@ -300,6 +301,7 @@ Subcommands:
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
   script <cmd> [...]          Manage and test scripts: list|show|new|rm|test. See: worca script help
   config [get|set|unset]      Budget & cost-limit settings
+  flags [list|on|off|reset]   Experimental features: on/off <key>, reset [<key>]
   ui [start|stop|restart|status]
                               Run the web UI (default http://localhost:4317). See: worca ui help
   workflow <cmd> [...]        Export a workflow (Claude Code skill, JSON, or plugin) / import JSON: list|export|import. See: worca workflow help
@@ -312,6 +314,9 @@ Subcommands:
                               See: worca models help
   container <cmd> [...]       Run Worca in a container: init|up|down|status|logs|pull|login|shell|run|where.
                               See: worca container help (docs/docker.md)
+  extension [--browser <b>] [--open]
+                              The browser extension packaged with this Worca: folder, version, install steps.
+                              See: worca extension help (docs/browser-extension.md)
   broker [serve|secrets|revoke --person <email>]
                               The credential broker: holds model keys outside worca's container
                               (docs/credential-broker.md)
@@ -1313,6 +1318,27 @@ async function cmdConfig(argv) {
   } catch (err) {
     fail(err && err.message ? err.message : String(err));
   }
+}
+
+/** `worca flags` — list / turn on / turn off / reset the feature flags (docs/feature-flags.md).
+ *  Thin over src/core/flags.mjs (the same setter as PATCH /api/flags; open tabs pick the change up on
+ *  their next load or reconnect). Exit codes: 0 ok, 2 usage, unknown key or WORCA_FLAGS-locked (fail()). */
+async function cmdFlags(argv) {
+  const { listFlags, setFlags } = await import('../core/flags.mjs');
+  const [verb = 'list', key, ...extra] = argv;
+  const show = () => {
+    for (const f of listFlags()) out(`${f.key}\t${f.on ? 'on' : 'off'}\t${f.stage}\t${f.locked ? 'locked by WORCA_FLAGS' : f.source}`);
+  };
+  const usage = 'Usage: worca flags [list] | on <key> | off <key> | reset [<key>]';
+  if (extra.length) fail(usage);
+  if (verb === 'list') { if (key) fail(usage); show(); return 0; }
+  let patch = null;
+  if ((verb === 'on' || verb === 'off') && key) patch = { [key]: verb === 'on' };
+  else if (verb === 'reset') patch = key ? { [key]: null } : Object.fromEntries(listFlags().filter((f) => !f.locked).map((f) => [f.key, null]));
+  if (!patch) fail(usage);
+  try { await setFlags(patch); } catch (err) { fail(err && err.message ? err.message : String(err)); }
+  show();
+  return 0;
 }
 
 /** `worca resume <pipelineId>` — continue a paused pipeline from its resume point. */
@@ -3137,7 +3163,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3215,6 +3241,7 @@ async function main() {
     if (sub === 'plugin') return cmdPlugin(rest);
     if (sub === 'marketplace') return cmdMarketplace(rest);
     if (sub === 'config') return cmdConfig(rest);
+    if (sub === 'flags') return cmdFlags(rest);
     if (sub === 'ui') return cmdUi(rest);
     if (sub === 'workflow') return cmdWorkflow(rest);
     if (sub === 'script') return flushed(cmdScript(rest));
@@ -3223,6 +3250,7 @@ async function main() {
     if (sub === 'schedule') return cmdSchedule(rest, { out, c, fail });
     if (sub === 'models') return cmdModels(rest, { out, c, fail });
     if (sub === 'container') return cmdContainer(rest, { out, c, fail });
+    if (sub === 'extension') return cmdExtension(rest, { out, c, fail });
     if (sub === 'broker') {
       // Loaded lazily: the broker is its own process and needs none of the core graph.
       const { runBrokerCli } = await import('../broker/main.mjs');

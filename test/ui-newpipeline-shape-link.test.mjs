@@ -1,5 +1,5 @@
 // test/ui-newpipeline-shape-link.test.mjs — Shape it first (slice 2) in the booted app: the New run form's "Plan it
-// with me in Chat" link (gated by the hello's features.shapeFirst, Advanced only) takes the Markdown typed there to the
+// with me in Chat" link (gated by the shapeFirst feature flag, Advanced only) takes the Markdown typed there to the
 // Chat HOME with the `shape` intent armed; the entry is consumed on any Chat entry. A Markdown handoff
 // (openNewPipeline {promptMarkdown}) selects the Markdown source; and the Chat home's gated tile follows a gate that
 // arrives while the home is open, without re-fetching its switches.
@@ -7,7 +7,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootApp } from './helpers/run-page-boot.mjs';
 import { _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
-import { applyShapeFirstHello } from '../ui/public/chat/shape-gate.mjs';
+import { setShapeFirst } from './helpers/shape-gate.mjs';
 
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 const THREAD_ID = 'ask_000000c1';
@@ -32,7 +32,7 @@ function arms({ settings = { chat: { scriptTools: true } }, sources = [] } = {})
   };
 }
 // The gate is the ONE module-level switch app.js and this file share: every test starts with it off.
-beforeEach(() => { applyShapeFirstHello({}); });
+beforeEach(() => { setShapeFirst(false); });
 
 async function boot(o = {}) {
   _resetChatExtensions();                       // app.js re-registers every card and add-on per boot
@@ -40,7 +40,7 @@ async function boot(o = {}) {
   ctx.wsBox.ws.dispatch('open', {});
   return ctx;
 }
-const hello = (ctx, shapeFirst) => ctx.dispatch({ type: 'hello', features: { shapeFirst }, runs: [] });
+const hello = (ctx, shapeFirst) => ctx.dispatch({ type: 'hello', flags: { shapeFirst }, runs: [] });
 const link = (doc) => doc.getElementById('shapeChatLink');
 const intentLabel = (doc) => {
   const chip = doc.querySelector('[data-chat-page] .chat-intent');

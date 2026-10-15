@@ -10,7 +10,7 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { snapshotFromState } from '../ui/public/ask-run-card.mjs';
 import { createChatRunCard, resultWord, answerReceipt, autoChip, midTrunc, progressIdent, runRefOf } from '../ui/public/chat/run-card.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from '../ui/public/ask/registry.mjs';
-import { applyShapeFirstHello } from '../ui/public/chat/shape-gate.mjs';
+import { setShapeFirst } from './helpers/shape-gate.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
@@ -961,7 +961,7 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
   try {
     await checkRows([
       { name: 'an approved plan with the gate on shows the line and the plan file name, between the sub-line and the stats', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $ } = mk();
         card.update(live({ shaping: SHAPING() }));
         const line = $('.chat-rc-shaped');
@@ -974,13 +974,13 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
         assert.equal($('.chat-rc-shaped-open'), null);
       } },
       { name: 'the gate off hides it', run: () => {
-        applyShapeFirstHello({});
+        setShapeFirst(false);
         const { card, $ } = mk();
         card.update(live({ shaping: SHAPING() }));
         assert.equal($('.chat-rc-shaped').hidden, true);
       } },
       { name: 'no shaping, or nothing approved, hides it — and a later snapshot without it hides a shown line', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $ } = mk();
         card.update(live());
         assert.equal($('.chat-rc-shaped').hidden, true);
@@ -992,7 +992,7 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
         assert.equal($('.chat-rc-shaped').hidden, true);
       } },
       { name: 'saved: "Saved to <path>" with an Open button that opens the plan through ctx.openArtifact', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $, calls } = mk();
         card.update(live({ shaping: SHAPING({ savedTo: 'docs/plans/2026-10-14-login.md' }) }));
         assert.equal($('.chat-rc-shaped-saved').textContent, 'Saved to docs/plans/2026-10-14-login.md');
@@ -1008,7 +1008,7 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
         assert.deepEqual(calls[0][2], { relPath: 'docs/plans/2026-10-14-login.md', kind: 'plan' });
       } },
       { name: 'a repaint never stacks a second line', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card } = mk();
         const snap = live({ shaping: SHAPING({ savedTo: 'docs/plans/x.md' }) });
         card.update(snap);
@@ -1018,7 +1018,7 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
       } },
     ]);
   } finally {
-    applyShapeFirstHello({});
+    setShapeFirst(false);
   }
 });
 

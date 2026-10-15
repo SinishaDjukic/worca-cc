@@ -17,4 +17,5 @@
 - [ ] `npm test` passes locally
 - [ ] Docs updated (README, docs/) if behaviour changed
 - [ ] New UI elements are listed in docs/ui-levels.md
+- [ ] New experimental UI is behind a flag (docs/feature-flags.md)
 - [ ] No secrets, keys or tokens in the code, logs or screenshots

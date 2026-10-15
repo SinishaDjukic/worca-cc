@@ -16,7 +16,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, mkdir, writeFile, readFile, realpath, lstat, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 
@@ -735,11 +735,11 @@ const committedWarning = (ws) => ws.filter((w) => /not approved/.test(w));
 
 for (const engine of ['codex', 'copilot', 'cursor']) test(`${engine}: the committed .mcp.json servers Claude Code approved by name join mcp.json; disabled ones never do; unapproved ones are named once`, async () => {
   const { member, home, wt } = await committedMcpMember({
-    user: { enabledMcpjsonServers: ['a'] }, project: { enabledMcpjsonServers: ['b', 'c'] }, local: { disabledMcpjsonServers: ['c'] },
+    user: { enabledMcpjsonServers: ['a'] }, local: { enabledMcpjsonServers: ['b', 'c'], disabledMcpjsonServers: ['c'] },
   });
   const rc = await assemble({ runRoot: await mkRunRoot(), members: [member], homeDir: home, engine, platform: 'darwin' });
   const file = JSON.parse(await readFile(rc.mcpConfigPath, 'utf8')).mcpServers;
-  assert.deepEqual(Object.keys(file).sort(), ['a', 'b'], 'approved in the user and the project layer; c is disabled in the local layer');
+  assert.deepEqual(Object.keys(file).sort(), ['a', 'b'], 'approved in the user and the untracked local layer; c is disabled there too');
   assert.deepEqual(file.b.args, [join(wt, 'srv', 'b.js')], 'resolved against the worktree, where Claude Code would load it');
   assert.deepEqual(rc.mcpServerNames, ['a', 'b'], 'the left-out servers are not granted');
   const w = committedWarning(rc.warnings);
@@ -782,12 +782,51 @@ test('codex: enableAllProjectMcpServers approves every committed server but a di
   assert.match(committedWarning(rcOff.warnings)[0], /: a, b, c, d\. /);
 });
 
-test('codex: a Claude run of the same checkout is unchanged — the committed servers load natively, no mcp.json, no warning', async () => {
+test('claude: the committed servers load natively, no mcp.json; the unapproved ones are named and not granted', async () => {
   const { member, home } = await committedMcpMember({ user: { enabledMcpjsonServers: ['a', 'b'] } });
   const rc = await assemble({ runRoot: await mkRunRoot(), members: [member], homeDir: home, platform: 'darwin' });
   assert.equal(rc.mcpConfigPath, null);
-  assert.deepEqual(rc.mcpServerNames, ['a'], 'the real dir\'s identical `a` is granted, as before');
-  assert.deepEqual(committedWarning(rc.warnings), []);
+  assert.deepEqual(rc.mcpServerNames, ['a'], 'the real dir\'s identical, approved `a` is granted, as before');
+  const [w] = committedWarning(rc.warnings);
+  assert.match(w, /^engine claude: .* are not started: c, d\. /, 'the runner holds them (claude-runner.mjs); the run says so');
+});
+
+test('mcpjsonApproval: the committed .claude/settings.json (and a tracked settings.local.json) can only restrict; user and managed settings approve', async () => {
+  const NO_MANAGED = { managed: [] };
+  // A repository approving its own servers: ignored, as Claude Code ignores it in a folder the user has not trusted.
+  const repo = await committedMcpMember({ project: { enabledMcpjsonServers: ['a'], enableAllProjectMcpServers: true, disabledMcpjsonServers: ['d'] } });
+  const v = await mcpjsonApproval(repo.member.projectDir, repo.home, undefined, NO_MANAGED);
+  assert.equal(v('a'), 'unapproved', 'a committed enabledMcpjsonServers does not approve');
+  assert.equal(v('b'), 'unapproved', 'a committed enableAllProjectMcpServers: true does not approve');
+  assert.equal(v('d'), 'disabled', 'a committed disable still counts');
+  // A settings.local.json the repository tracks is the repository's too.
+  const tracked = await committedMcpMember({ local: { enabledMcpjsonServers: ['a'] } });
+  execFileSync('git', ['init', '-q'], { cwd: tracked.member.projectDir });
+  execFileSync('git', ['add', '-f', '.claude/settings.local.json'], { cwd: tracked.member.projectDir });   // -f: a global gitignore may list it
+  assert.equal((await mcpjsonApproval(tracked.member.projectDir, tracked.home, undefined, NO_MANAGED))('a'), 'unapproved', 'tracked: no approval');
+  execFileSync('git', ['rm', '-q', '--cached', '.claude/settings.local.json'], { cwd: tracked.member.projectDir });
+  assert.equal((await mcpjsonApproval(tracked.member.projectDir, tracked.home, undefined, NO_MANAGED))('a'), 'approved', 'untracked in a repository: approves');
+  // Managed settings approve, and come last.
+  const managedDir = await tmp('worca-cc-rc-managed-');
+  const managed = join(managedDir, 'managed-settings.json');
+  await writeFile(managed, JSON.stringify({ enabledMcpjsonServers: ['c'] }), 'utf8');
+  assert.equal((await mcpjsonApproval(repo.member.projectDir, repo.home, undefined, { managed: [managed] }))('c'), 'approved');
+});
+
+test('mcpjsonApproval: Claude Code\'s own answers in ~/.claude.json projects[<projectDir>] approve and disable', async () => {
+  const { member, home } = await committedMcpMember({});
+  const other = await emptyDir();
+  await writeFile(join(home, '.claude.json'), JSON.stringify({
+    mcpServers: { userOnly: { command: 'x' } },
+    projects: {
+      [member.projectDir]: { enabledMcpjsonServers: ['a', 'b'], disabledMcpjsonServers: ['b'] },
+      [other]: { enabledMcpjsonServers: ['c'] },
+    },
+  }), 'utf8');
+  const v = await mcpjsonApproval(member.projectDir, home, undefined, { managed: [] });
+  assert.equal(v('a'), 'approved', 'approved at Claude Code\'s prompt');
+  assert.equal(v('b'), 'disabled', 'declined at the prompt');
+  assert.equal(v('c'), 'unapproved', 'another project\'s answer does not count');
 });
 
 test('mcpjsonApproval: lists add up across the layers, disabled wins, absent files are silent', async () => {
@@ -796,7 +835,7 @@ test('mcpjsonApproval: lists add up across the layers, disabled wins, absent fil
   assert.equal(verdict('x'), 'disabled');
   assert.equal(verdict('y'), 'approved');
   assert.equal(verdict('z'), 'unapproved');
-  const none = await mcpjsonApproval(await emptyDir(), await emptyDir(), () => assert.fail('absence is silent'));
+  const none = await mcpjsonApproval(await emptyDir(), await emptyDir(), () => assert.fail('absence is silent'), { managed: [] });
   assert.equal(none('x'), 'unapproved');
 });
 
@@ -1585,13 +1624,13 @@ test('registry layer: taken = pre-screen merged ∪ nativeOnly ∪ committed ∪
   const file = JSON.parse(await readFile(rc.mcpConfigPath, 'utf8')).mcpServers;
   assert.deepEqual(Object.keys(file).sort(), ['jira_w', 'sentry_billing'], 'leaky dropped by block mode, native loads natively');
   assert.equal(file.sentry_billing.headers.Authorization, 'Token token=${MCPSECRET_2EB4507A}', 'a resolver ref the screen would flag is kept');
-  assert.deepEqual(rc.mcpServerNames, ['jira_w', 'native', 'sentry_billing'], 'grants follow `written` ∪ nativeOnly');
+  assert.deepEqual(rc.mcpServerNames, ['jira_w', 'sentry_billing'], 'grants follow `written` ∪ nativeOnly; the unapproved committed `native` is held, so not granted');
   assert.ok(!JSON.stringify(await readRunManifest(rr)).includes('sntrys_live_token_value'), 'no secret value reaches run.json');
   const md = await readFile(rc.claudeMdPath, 'utf8');
   assert.match(md, /- `sentry_billing` — Sentry issues and events · set Billing · projects shop\n/);
   assert.match(md, /- `jira_w` — Search and read Jira issues · set General · projects shop \(renamed from `jira`\)/);
   assert.doesNotMatch(md, /`leaky`/, 'the roster lists written ∪ nativeOnly only');
-  assert.match(md, /`native` — from/);
+  assert.doesNotMatch(md, /`native` — from/, 'nor the held committed `native`: it does not start');
 });
 
 test('registry layer: warnings for problem skips, renames, the cap and the broker (D18) — none for off / opted-out', async () => {
@@ -1653,7 +1692,7 @@ test('§5.5.6: a committed .mcp.json server that references ${MCPSECRET_…} loa
   };
   const same = await run({ thief });
   assert.equal(same.calls, 0, 'the resolver never runs: no registry secret enters the spawn env');
-  assert.deepEqual(same.rc.mcpServerNames, ['thief'], 'no registry copy; the native grant is unchanged');
+  assert.deepEqual(same.rc.mcpServerNames, [], 'no registry copy; the unapproved committed `thief` is held, so not granted');
   for (const n of ['thief', 'wtthief']) {
     assert.ok(same.rc.warnings.includes(`MCP server \`${n}\` in a committed .mcp.json references a registry secret (\${MCPSECRET_…}); no registry MCP servers were added to this run.`), n);
   }

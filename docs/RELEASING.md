@@ -157,7 +157,7 @@ like a bad credential.
 ### 3.7 Checklist
 
 - [ ] `name`, `version` (`0.0.1`), `license`, `repository`, `publishConfig.access`
-- [ ] `files` allowlist verified with `npm pack --dry-run`
+- [ ] `files` allowlist verified with `npm pack --dry-run` (it shows `extension/dist/{chrome,edge,firefox}/` and no other `extension/` or `e2e/` path: `node tools/check-pack.mjs`)
 - [ ] Release workflow added, with its own tag prefix and `id-token: write`
 - [ ] Bootstrap publish of `0.0.1` done
 - [ ] Trusted publisher registered on npmjs.com (repo + workflow filename)
@@ -284,6 +284,24 @@ tag. `docs:publish` warns when the newest stable tag has no changelog entry.
   provenance — treat it as a misconfiguration and investigate before anyone
   installs it.
 
+### 4.4 The browser extension in a release
+
+- **npm package.** `prepack` (`node tools/build-extension.mjs --pack`) builds the three production extension
+  builds into `extension/dist/{chrome,edge,firefox}/`, and `files` ships exactly those. The extension source,
+  `e2e/`, `*-test` builds and zips are never packed (`test/extension-packaging.test.mjs`). `--pack` refuses to
+  run while `WORCA_EXT_PORT` or `WORCA_EXT_BASE_URL` is set, so a packed build always tries the default address.
+  The publish job builds and checks the list (`tools/check-pack.mjs --require-extension`) before `npm publish`.
+  `npm ci` must keep installing devDependencies there (esbuild).
+- **GitHub Release assets.** The `release` job runs `npm run ext:zip` and attaches `worca-chrome-<ver>.zip`,
+  `worca-edge-<ver>.zip` and `worca-firefox-<ver>.zip`, with the install note from
+  `.github/release-notes/browser-extension.md` above the generated notes. Firefox's zip is unsigned (no AMO
+  signing yet).
+- **A failed upload** fails the `release` job. gh leaves the release as a draft when an upload fails. Re-attach
+  from a checkout of the tag (`npm ci && npm run ext:zip`):
+  `gh release upload worca-app-v<ver> extension/dist/worca-*-<ver>.zip --clobber`, then
+  `gh release edit worca-app-v<ver> --draft=false`.
+- **Locally**: `npm pack --dry-run` runs `prepack`, so it needs `npm ci` first (esbuild).
+
 ---
 
 ## 5. dist-tags and rc semantics
@@ -371,7 +389,8 @@ dist-tag (`1.3.0`, `1.3`, `1`, `latest` / `1.3.0-rc.1`, `rc`, each with a
 created only after the image job passes, so a broken image fails the release
 the way a failing `npm test` does. npm is already live at that point; an image
 can lag an npm version by one fix-up run of `docker-rebuild.yml`
-(`workflow_dispatch` with the tag).
+(`workflow_dispatch` with the tag). The image also contains the packaged browser extension builds
+(`extension/dist/{chrome,edge,firefox}/`), because it is built from the same `npm pack` output.
 
 `docker-rebuild.yml` rebuilds the newest stable and rc every Monday with fresh
 Debian packages and pushes `<version>-YYYYMMDD` tags while moving the version

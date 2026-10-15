@@ -244,8 +244,9 @@ the small reversible changes it makes directly, and only when you ask.
 Ask Worca finds the issue (`list_task_sources` → `find_tasks` / `get_task`) and proposes a run
 with `source {plugin, sourceId, taskId, profile?, inputs?}` instead of a brief, `workflowId
 "wf_auto"` and `when`. The card shows the task (id, title, link) where the brief would be, and
-starting or scheduling it sends POST /api/run exactly what New pipeline's source pane sends —
-so the run reads the issue as it is when it starts, and can write its result back.
+starting or scheduling it sends POST /api/run what New run's source pane sends (plus, on a saved
+workflow, the per-agent picks Ask Worca proposed for this run as its `overlay`) — so the run reads
+the issue as it is when it starts, and can write its result back.
 - The parent looks the task up once (`src/core/ask/source-spec.mjs checkTask`): a missing task
   refuses the card; a network, rate-limit or timeout failure keeps it with a warning (the run
   fetches it again at start). Only the `listTasks` and `getTask` ops are reachable from Ask.
@@ -255,7 +256,7 @@ so the run reads the issue as it is when it starts, and can write its result bac
   workspace. With human-in-the-loop on (a project's stored switch; a workspace run is on by
   default), an Auto run waits for its proposed workflow to be accepted, which an unattended
   run cannot do by itself — Ask says so.
-- *Open in New Pipeline* is hidden on a tracker-task card: the source pane cannot be pre-filled
+- *Open in New run* is hidden on a tracker-task card: the source pane cannot be pre-filled
   from a card yet.
 
 - **Your words, your clock.** The model passes what you said in the CLI's forms

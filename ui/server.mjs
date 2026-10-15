@@ -21,10 +21,12 @@ import { runsOn } from '../src/shared/connections.mjs';
 
 import { preflightNode } from '../src/core/preflight-node.mjs';
 import { preflightDeps } from '../src/core/preflight-deps.mjs';
+import { committedMcpStatus, approveCommittedMcp } from '../src/core/mcpjson-approval.mjs';
 import { runFolderHosting } from '../src/core/preflight-host.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
 import { selectRunEngine } from '../src/core/engines/index.mjs';
+import { mockSlowMs } from '../src/core/engines/mock.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
@@ -49,7 +51,9 @@ import {
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
-import { renderIndexHtml, INDEX_THEME_ANCHOR } from '../src/core/index-html.mjs';
+import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
+import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError } from '../src/core/flags.mjs';
+import { createKeepAwake, countWorking } from '../src/core/keep-awake.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
   rawProjectsRoot, defaultProjectsRoot, runRootMode, getProjectsRoot,
@@ -85,8 +89,10 @@ import { effectiveNightConfig, nightLayers } from '../src/core/night/effective.m
 import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.mjs';
 import { createAwayHoursWatch } from '../src/core/night/hours-watch.mjs';
 import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
+import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal } from '../src/core/run-overlay.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
 import { validatePinpointInput, runPinpoint, pinpointCwd } from '../src/core/pinpoint.mjs';
+import { demoChunks, demoPinpointReply } from '../src/core/demo-scenario.mjs';
 import { effectiveHumanRateUsd } from '../src/core/human-rate.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
@@ -162,8 +168,13 @@ import { policyCatalogModels } from '../src/core/policy/cache.mjs';
 import { pickFolderNative, pickAppNative, nativeDialogAvailable } from '../src/core/folder-dialog.mjs';
 import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
-  isPeerThisMachine,
+  isPeerThisMachine, LOCAL_HOSTNAMES, hostnameOf,
 } from '../src/core/remote-access.mjs';
+import {
+  createExtensionPairing, decideExtensionRequest, extensionOrigin, EXTENSION_WS_PROTOCOL, TOKEN_PREFIX,
+} from '../src/core/extension-pairing.mjs';
+import { extensionInstallInfo } from '../src/core/extension-package.mjs';
+import { pageOrigin, matchRunningAction } from '../src/core/extension-actions.mjs';
 import { detectDeployment, deploymentFacts } from '../src/core/deployment.mjs';
 import { resolveIdentity, startedByOf, prAttributionFooter, actorOf, isSharedIdentity, byActor } from '../src/core/identity.mjs';
 import { withBillTo, currentBillTo, currentOwner } from '../src/core/billing.mjs';
@@ -184,8 +195,10 @@ import { detectBuiltins, builtinLaunch, copyCommandText, findOnPath } from '../s
 import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamples, launcherWarning, lineForPickedApp } from '../src/core/actions/launcher.mjs';
 import { assertNoRawCommand, normalizeStacks, memberAliases, SETUP_ACTION_ID, ActionConfigError } from '../src/core/actions/model.mjs';
 import { parsePortRange } from '../src/core/actions/ports.mjs';
-import { checkoutRun, discardCheckout, membersOfRow, checkoutPathFor, setSetupState, markInterruptedSetups,
-  enforceCheckoutCap, releaseKeptCheckouts, updateBranchRecords, freeBranchCheckout, canon } from '../src/core/checkout.mjs';
+import { checkoutRun, checkoutRunUnderLock, discardCheckout, membersOfRow, checkoutPathFor, setSetupState, markInterruptedSetups,
+  enforceCheckoutCap, releaseKeptCheckouts, updateBranchRecords, withRunLock, freeBranchCheckout, canon } from '../src/core/checkout.mjs';
+import { checkRunBase, settleResolutions, updateRunBranch, pickBaseMember, baseMembersOfRow, assertFinishedRow, assertNotResolving,
+  resolveMark, toRecord, resolveTaskText } from '../src/core/base-conflicts.mjs';
 import { createAskToolServer } from '../src/core/ask/mcp-stdio.mjs';
 import { webMcpEnv as askWebMcpEnv } from '../src/core/ask/spawn.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots, brokerUsageSummary, foldUsageByPerson } from '../src/core/broker-client.mjs';
@@ -273,10 +286,11 @@ import { loadScriptRegistry } from '../src/core/script-registry.mjs';
 import { probePython, pythonRuntimeState } from '../src/core/graph/python-probe.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll, resolveDefaultBranch, worktreePathForBranch,
+  sanitizeBranchName,
 } from '../src/core/worktree.mjs';
 import {
   fetchRemote, remoteInfo, syncStatus, fastForward, resolveSourceRef, commitsBetween, isSafeBranchName, isSafeRemoteName, scrubGitText,
-  INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS,
+  INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, checkBaseMerge, mergeBaseInto, startConflictMerge, branchCheckouts,
 } from '../src/core/git-sync.mjs';
 import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
@@ -286,7 +300,7 @@ import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, lis
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
-import { getWatch, setWatch, createPrWatcher } from '../src/core/pr-watch.mjs';
+import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
@@ -541,6 +555,15 @@ const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
 const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
 // local | container | hosted (src/core/deployment.mjs): what Ask Worca is told about where it runs.
 const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
+// Experimental keepAwake flag (docs/feature-flags.md): one OS child holds off idle system sleep while
+// any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it wherever a
+// run's status or pendingQuestion changes, and when the flag flips.
+const keepAwake = createKeepAwake({ deployment: DEPLOYMENT, log: (line) => console.warn(line) });
+const KEEP_AWAKE_EVENTS = new Set(['question', 'night-decision', 'done', 'error', 'exec', 'state']);
+function syncKeepAwake() {
+  try { keepAwake.update(flagEnabled('keepAwake') ? countWorking(runs.values()) : 0); }
+  catch (err) { console.error(`[worca-ui] keep-awake update failed: ${err && err.message ? err.message : err}`); }
+}
 const SEEN_SIGN_INS = new Set();
 const SIGN_IN_HINT = REMOTE_ACCESS.identity?.provider === 'issuer'
   ? 'unauthorized: sign in through the identity proxy (your sign-in has expired or is missing)'
@@ -548,6 +571,9 @@ const SIGN_IN_HINT = REMOTE_ACCESS.identity?.provider === 'issuer'
 const HOST_FORBIDDEN = REMOTE_MODE
   ? 'forbidden: host not allowed (see WORCA_ALLOWED_HOSTS)'
   : 'forbidden: worca is a localhost-only tool';
+
+// Browser extension pairings (docs/browser-extension.md). The path resolves per use.
+const extensionPairing = createExtensionPairing({ file: () => path.join(worcaHome(), 'extension-pairings.json') });
 
 /**
  * Who is asking: `{ local: true }` for an in-container caller or when no
@@ -626,10 +652,23 @@ const server = http.createServer(app);
 // Refuse during the upgrade (before any replay is sent): the Host/Origin guard
 // first, then the identity check when remote access is on. The 'connection'
 // handler below re-checks the host guard as a second line.
+/** An extension socket's pairing (from the worca-ext subprotocol), 'refuse', or null = not ours (S1 path decides). */
+function extensionSocketAuth(req) {
+  const origin = extensionOrigin(req.headers.origin);
+  if (!origin || REMOTE_MODE) return null;
+  if (!LOCAL_HOSTNAMES.has(String(hostnameOf(req.headers.host) || '').toLowerCase())) return null;
+  const offered = String(req.headers['sec-websocket-protocol'] || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!offered.includes(EXTENSION_WS_PROTOCOL)) return 'refuse';
+  return extensionPairing.verify(origin, offered.find((p) => p.startsWith(TOKEN_PREFIX)) || null) || 'refuse';
+}
+
 const wss = new WebSocketServer({
   server,
   path: '/ws',
   verifyClient: (info, done) => {
+    const ext = extensionSocketAuth(info.req);
+    if (ext === 'refuse') return done(false, 401);
+    if (ext) { info.req.worcaExtension = ext; return done(true); }
     if (!isLocalRequest(info.req)) return done(false, 403);
     requestIdentity(info.req).then(
       // Keep who this is on the upgrade request: the connection handler reads it to scope
@@ -638,6 +677,9 @@ const wss = new WebSocketServer({
       () => done(false, 503),
     );
   },
+  // The browser extension offers [worca-ext, wex_<token>]: select the name, never echo the token. Other clients offer
+  // no subprotocol, so this is never called for them.
+  handleProtocols: (protocols) => (protocols.has(EXTENSION_WS_PROTOCOL) ? EXTENSION_WS_PROTOCOL : false),
 });
 // ws re-emits the http server's 'error' on the WebSocketServer. With no listener
 // here, an EADDRINUSE on listen() became an unhandled 'error' event and a full
@@ -705,7 +747,28 @@ function closeAtTokenExpiry(ws, who, now = Date.now()) {
   return timer;
 }
 
+/** A paired extension's socket: Ask frames only, no runs, no terminals, no other subscriptions. */
+function acceptExtensionSocket(ws, req) {
+  ws.worcaExtension = req.worcaExtension;
+  ws.worcaViewer = null;
+  ws.terminalAllowed = false;
+  ws.termAttached = new Set();
+  sockets.add(ws);
+  trackHeartbeat(ws);
+  ws.on('close', () => sockets.delete(ws));
+  ws.on('error', () => sockets.delete(ws));
+  send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), ask: askHello(ws) });
+  ws.on('message', (raw) => {
+    let msg = null;
+    try { msg = JSON.parse(String(raw)); } catch { return; }
+    const threadId = msg && msg.type === 'subscribe' && typeof msg.threadId === 'string' ? msg.threadId : null;
+    // askSocketSees refuses composer threads for extension sockets, so a running composer turn is never replayed.
+    if (threadId && askJobs.has(threadId) && askSocketSees(ws, threadId)) replayAskJob(ws, askJobs.get(threadId));
+  });
+}
+
 wss.on('connection', (ws, req) => {
+  if (req.worcaExtension) { acceptExtensionSocket(ws, req); return; }
   // S1: WS upgrades bypass the express middleware chain, so re-apply the
   // loopback guard here (same DNS-rebinding protection as the HTTP routes).
   if (!isLocalRequest(req)) {
@@ -749,7 +812,8 @@ wss.on('connection', (ws, req) => {
   }
   const id = requestedRunId || requestedGenId || requestedBenchId || requestedInstanceId;
 
-  send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), features: { shapeFirst: shapeFirstEnabled() }, runs: summarizeRuns(), ask: askHello(ws) });
+  send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), flags: allFlags(), runs: summarizeRuns(), ask: askHello(ws),
+    extensionPairs: REMOTE_MODE ? [] : extensionPairing.pendingPublic() });
 
   if (id && runs.has(id)) {
     replayEntry(ws, runs.get(id));
@@ -830,7 +894,11 @@ function replayEntry(ws, entry) {
 function broadcast(obj) {
   const text = JSON.stringify(obj);
   const owner = askFrameOwner(obj);
+  const askFrame = !!(obj && typeof obj.type === 'string' && obj.type.startsWith('ask-'));
+  let composer;                                                        // computed lazily, only if an extension socket is open
   for (const ws of sockets) {
+    if (ws.worcaExtension && !askFrame) continue;                       // an extension sees its chat, nothing else
+    if (ws.worcaExtension && (composer ??= askFrameComposer(obj))) continue;   // never a composer thread's frames
     if (owner && ws.worcaViewer && ws.worcaViewer !== owner) continue;   // someone else's Ask thread
     if (ws.readyState === ws.OPEN) {
       try {
@@ -860,6 +928,19 @@ function askFrameOwner(obj) {
   return owner;
 }
 
+// Browser extension: a composer (Workflows editor) thread's frames never reach an extension socket — they would leak
+// its id and streamed text. A thread's mode is fixed at creation and ids are random, so the cache never goes stale.
+const ASK_MODE_CACHE = new Map();   // threadId -> 'composer' | null
+function askFrameComposer(obj) {
+  if (!obj || typeof obj.threadId !== 'string') return false;
+  if (ASK_MODE_CACHE.has(obj.threadId)) return ASK_MODE_CACHE.get(obj.threadId) === 'composer';
+  let mode = null;
+  try { mode = askGetThread(obj.threadId)?.mode || null; } catch { return true; }   // unreadable = do not leak
+  if (ASK_MODE_CACHE.size > 5000) ASK_MODE_CACHE.clear();
+  ASK_MODE_CACHE.set(obj.threadId, mode);
+  return mode === 'composer';
+}
+
 // Fire-and-forget "this entity set changed — refetch your counts" signal. Bare +
 // unbuffered + global, exactly like the history-pr broadcast: every connected tab
 // (including the one that triggered the mutation) gets it and re-reads /api/counts.
@@ -873,6 +954,8 @@ function emitChanged(type, action) {
 metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.action ? e.action : null));
 policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.action ? e.action : null));
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
+// D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
+flagEvents.on('changed', (flags) => { broadcast({ type: 'flags', flags }); syncKeepAwake(); });
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -927,6 +1010,7 @@ function resolvePending(entry, { id = null, reason = 'resolved' } = {}) {
   if (!pq || (id && pq.id !== id)) return false;
   entry.pendingQuestion = null;
   broadcast(bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason }));
+  syncKeepAwake();
   return true;
 }
 
@@ -1185,8 +1269,12 @@ function wireRun(entry) {
       }
 
       record(event);
+      // Only the events that can change status or pendingQuestion; log/token frames are far too
+      // frequent for a flag check (it reads settings.json synchronously).
+      if (KEEP_AWAKE_EVENTS.has(name)) syncKeepAwake();
     });
   }
+  syncKeepAwake();
 }
 
 // ---------------------------------------------------------------------------
@@ -1336,8 +1424,33 @@ app.post('/api/ingress/teams/:plugin/:channelId/:token',
 // from a non-loopback Host used to answer 400 (with a stack) where a valid one
 // answered 403. The ingress webhook above is deliberately mounted EARLIER and
 // stays exempt — it carries its own token check and 256 KB cap.
+//
+// Browser extension (docs/browser-extension.md, src/core/extension-pairing.mjs). S1 below refuses every non-loopback
+// Origin; chrome-extension:// and moz-extension:// are let through HERE ONLY, in local mode, on a loopback Host: the
+// pairing routes (a person approves in this UI) and the token allowlist with that extension's own token. CORS is
+// answered for exactly that origin (never *, never credentials). Also ahead of the body parsers (MIN-108).
+function setExtensionCors(req, res, origin) {
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Vary', 'Origin, X-Worca-Extension');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH');
+  res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-worca-pair-poll, x-worca-extension');
+  res.setHeader('Access-Control-Max-Age', '600');
+  if (req.headers['access-control-request-private-network'] === 'true') res.setHeader('Access-Control-Allow-Private-Network', 'true');
+}
 app.use((req, res, next) => {
-  if (!isLocalRequest(req)) {
+  const d = decideExtensionRequest(req, { remoteMode: REMOTE_MODE, verify: extensionPairing.verify });
+  if (d.kind === 'pass') return next();
+  if (d.origin) setExtensionCors(req, res, d.origin);   // none for an Origin / X-Worca-Extension mismatch
+  if (d.kind === 'preflight') return res.status(204).end();
+  if (d.kind === 'refuse') return res.status(d.status).json({ error: d.error, code: d.code });
+  req.worcaExtensionRoute = true;
+  req.worcaExtensionOrigin = d.origin;   // Origin, or X-Worca-Extension when Chrome sent none (extension-pairing.mjs)
+  req.worcaExtension = d.extension;   // null on a pairing route
+  next();
+});
+
+app.use((req, res, next) => {
+  if (!req.worcaExtensionRoute && !isLocalRequest(req)) {   // S1 itself is unchanged for every other request
     return res.status(403).json({ error: HOST_FORBIDDEN });
   }
   next();
@@ -1585,16 +1698,22 @@ async function pinUiLevel() {
   if (!storedUiLevel()) await setUiLevel(effectiveUiLevel());
 }
 const INDEX_FILE = path.join(PUBLIC_DIR, 'index.html');
-if (!fs.readFileSync(INDEX_FILE, 'utf8').includes(INDEX_THEME_ANCHOR)) {
-  throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
+{
+  const shell = fs.readFileSync(INDEX_FILE, 'utf8');
+  if (!shell.includes(INDEX_THEME_ANCHOR)) throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
+  if (!shell.includes(FLAG_GATES_ANCHOR)) throw new Error(`ui/public/index.html lost its flag-gates anchor ${FLAG_GATES_ANCHOR}`);
 }
 function sendIndex(res) {
   let html;
-  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme(), effectiveUiLevel()); }
+  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme(), effectiveUiLevel(), allFlags()); }
   catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');
   res.set('X-Content-Type-Options', 'nosniff');
+  // Nothing frames the shell. A framed shell lets a third party (an extension, any page) put a decoy over a
+  // security prompt it can trigger, e.g. the browser-extension pairing Approve.
+  res.set('Content-Security-Policy', "frame-ancestors 'none'");
+  res.set('X-Frame-Options', 'DENY');
   return res.send(html);
 }
 // `/index` (express.static's `extensions:['html']`) and `/Index.html` on a case-insensitive
@@ -2179,6 +2298,29 @@ const startRunHandler = async (req, res) => {
     if (engineShape.error) return badRequest(res, engineShape.error);
     const runEngine = engineShape.opts;
 
+    // Per-run agent picks (the Ask run card's lane; docs/models.md "Per-agent models for one run"): `overlay.nodes`
+    // merges PER NODE over the project's saved agent settings for THIS run only and never writes them. Checked here
+    // against the workflow's agent nodes and the catalog the run's engine runs (src/core/run-overlay.mjs — the
+    // propose_run validator's checks); a schedule stores the checked overlay and its ticket fires it verbatim.
+    let runOverlay = null;
+    if (body.overlay !== undefined && body.overlay !== null) {
+      const shape = parseRunOverlay(body.overlay);
+      if (shape.error) return badRequest(res, shape.error);
+      runOverlay = shape.overlay;
+    }
+    if (runOverlay) {
+      const refusal = overlayWorkflowRefusal(workflowRow, { scan: !!scanTarget });
+      if (refusal) return badRequest(res, refusal);
+      if (!internal) {
+        const checked = checkRunOverlay(runOverlay.nodes, {
+          workflow: workflowRow, engine: runEngine.engine || 'claude',
+          models: await listModels(hasWorkspace ? '' : (resolveProjectDir(body.projectDir) || '')),
+        });
+        if (checked.errors.length) return badRequest(res, checked.errors.join('; '));
+        runOverlay = { nodes: checked.nodes };
+      }
+    }
+
     // Budget gate: no new pipelines while the total window is spent (F6).
     const budget = budgetStatus();
     if (budget.blocked && !sched) {
@@ -2196,6 +2338,8 @@ const startRunHandler = async (req, res) => {
       ? (Array.isArray(stored.extrasPaths) ? stored.extrasPaths.filter((x) => typeof x === 'string' && fs.existsSync(x)) : [])
       : (sched ? [] : await writeExtras(runId, body.extras));
 
+    // #620 Resolve in a pipeline: the run it resolves. Set in-process by /resolve-pipeline only, never from HTTP.
+    const resolveOf = req._resolveOf && typeof req._resolveOf === 'object' && typeof req._resolveOf.runId === 'string' ? req._resolveOf : null;
     // Run on the source branch (explicit flag — never inferred from feature === source): the run
     // auto-names its hidden branch, so a typed feature name is ignored (and never date-suffixed).
     // A Workspace scan or a memory defragment lands no work: the flag does not apply there.
@@ -2205,6 +2349,7 @@ const startRunHandler = async (req, res) => {
         ? body.sourceBranch.trim() : null,
       feature: !sameAsSource && typeof body.featureBranch === 'string' && body.featureBranch.trim()
         ? body.featureBranch.trim() : null,
+      ...(resolveOf ? { resolves: { runId: resolveOf.runId, member: resolveOf.member || null } } : {}),
       ...(sameAsSource ? { sameAsSource: true } : {}),
     };
     const syncBody = {
@@ -2290,7 +2435,7 @@ const startRunHandler = async (req, res) => {
           const refusal = await probe.engineStartRefusal();
           if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
         }
-        return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
+        return res.status(202).json(await scheduleRequest({ body: runOverlay ? { ...body, overlay: runOverlay } : body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
       }
       const mcpOptOut = await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws));
 
@@ -2320,6 +2465,7 @@ const startRunHandler = async (req, res) => {
         workflowId,
         template: workflowRow,
         ...(scanTarget && scanTarget.models ? { scanModels: scanTarget.models } : {}),
+        ...(runOverlay ? { overlay: runOverlay } : {}),
         guardrailsId,
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
@@ -2412,7 +2558,9 @@ const startRunHandler = async (req, res) => {
         sched.afterRef = r.after;
       }
       // A schedule stores the pair as checked (the catalog's casing, trimmed): its ticket takes it verbatim.
-      const storedBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
+      const pairBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
+      // …and the overlay as checked (the catalog's casing, each model with its effort): the ticket fires it verbatim.
+      const storedBody = runOverlay ? { ...pairBody, overlay: runOverlay } : pairBody;
       if (sched) {
         // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
         if (runEngine.engine) {
@@ -2456,6 +2604,7 @@ const startRunHandler = async (req, res) => {
         sync,
         humanInLoop,
         ...(memoryScope ? { memoryScope } : {}),
+        ...(runOverlay ? { overlay: runOverlay } : {}),
         claude: {
           permissionMode: stored.permissionMode || 'acceptEdits',
           ...(startPair ? { model: startPair.model, ...(startPair.effort ? { effort: startPair.effort } : {}) } : (stored.model ? { model: stored.model } : {})),
@@ -2508,6 +2657,7 @@ const startRunHandler = async (req, res) => {
       const stillOwn = internal && still && still.block.state === 'scheduled' && still.block.runId === runId;
       if (!still || (still.block.state !== 'proposed' && !stillOwn)) {
         runs.delete(runId);
+        syncKeepAwake();
         return res.status(409).json({ error: `card is no longer proposed (${still ? still.block.state : 'gone'})` });
       }
       try {
@@ -2552,8 +2702,10 @@ const startRunHandler = async (req, res) => {
         entry.status = 'error';
         entry.events.push(event);
         broadcast(event);
+        syncKeepAwake();
       })
-      .finally(() => { entry.settled = true; afterRunSettled(orch); });
+      // #620: the harness's post-run base check landed after the run's last frame; History re-reads it.
+      .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });
 
     // A scan's launcher needs the card attribution the wizard cannot compute (the key is a hash).
     res.json(scanTarget
@@ -3759,6 +3911,7 @@ async function stopRun(runId, by = 'local') {
   entry.status = 'stopped';
   if (entry.pipelineId) cancelScheduledResumes(entry.pipelineId, { by, reason: `the run was stopped${byActor(by || 'local')}` });
   resolvePending(entry, { reason: 'stopped' });
+  syncKeepAwake();
   return { ok: true };
 }
 function pauseRun(runId, by = 'local') {
@@ -3769,6 +3922,7 @@ function pauseRun(runId, by = 'local') {
   entry.lastAction = { kind: 'pause', by: by || 'local', at: new Date().toISOString() };
   entry.status = 'pausing';
   resolvePending(entry, { reason: 'paused' });
+  syncKeepAwake();
 }
 
 /** In-process stops in flight, by pipeline id. A second click, tab or chat command for the same
@@ -3882,6 +4036,7 @@ function settleStaleParked(pipelineId) {
     broadcast(bufferEvent(e, { type: 'state', status, id: pipelineId }));
     broadcast(bufferEvent(e, { type: 'done', status, pipelineDir: null }));
   }
+  syncKeepAwake();
 }
 
 /** The paused entries this server holds whose rows another process settled meanwhile (`worca stop`
@@ -4420,8 +4575,9 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
       entry.status = 'error';
       entry.events.push(event);
       broadcast(event);
+      syncKeepAwake();
     })
-    .finally(() => { entry.settled = true; afterRunSettled(orch); });
+    .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });   // #620, as /api/run's
 
   return { ok: true, runId, pipelineId };
 }
@@ -6053,6 +6209,25 @@ function liveRunOnBranch({ projectDir, branch }) {
   return getDb().prepare("SELECT target, project_key, branch, workspace_meta FROM pipelines WHERE status = 'paused' AND archived_at IS NULL")
     .all().some(holds);
 }
+/** A Resolve in a terminal (#620) still open on exactly this project + branch: the run member is marked
+ *  (br.baseResolve via terminal) and the shell it opened is running. A closed terminal no longer holds the
+ *  branch, so a mark left behind never blocks the watcher for good. */
+function terminalResolveOnBranch({ projectDir, branch }) {
+  const dir = canon(projectDir);
+  return terminals.live().some(({ snap }) => {
+    if (!snap.runId || snap.branch !== branch) return false;
+    const row = findPipelineRowById(snap.runId);
+    return !!row && membersOfRow(row).some((m) => m.projectKey === snap.member && m.projectDir && canon(m.projectDir) === dir
+      && m.br?.feature === branch && m.br?.baseResolve?.via === 'terminal');
+  });
+}
+/** Merge-first with no agent (#620's Update branch merge): only a clean merge onto the exact preflight head. */
+async function prWatchMergeBase({ projectDir, branch, base, remote, headSha }) {
+  const c = await checkBaseMerge(projectDir, { base, feature: branch, remote, maxAgeMs: INTERACTIVE_TTL_MS });
+  if (c.status !== 'clean' || c.headSha !== headSha) return { ok: true, merged: false, status: c.status };
+  const r = await mergeBaseInto(projectDir, { feature: branch, baseSha: c.baseSha, headSha, baseRef: c.baseRef, tree: c.tree, remote: c.remote });
+  return r.ok ? { ok: true, merged: true, to: r.to, baseSha: c.baseSha } : { ok: false, kind: r.kind, error: r.error };
+}
 /** The watched PR's origin run: its member project and branch, plus what its fix runs keep (guardrails, the
  *  engine it ran on, a mock run's flag, which only its resume point persists), or null when gone. */
 function prWatchOrigin(w) {
@@ -6083,8 +6258,10 @@ const prWatcher = createPrWatcher({
     push: ({ projectDir, branch, remote }) => pushBranch(projectDir, branch, remote),
     subjects: ({ projectDir, from, to }) => commitSubjects(projectDir, from, to),
     checkMerge: ({ projectDir, ...range }) => checkConflictMerge(projectDir, range),
+    mergeBase: prWatchMergeBase,
   },
-  liveOnBranch: liveRunOnBranch,
+  // A person resolving in a terminal holds the branch like a live run: the watcher waits for them.
+  liveOnBranch: (where) => liveRunOnBranch(where) || terminalResolveOnBranch(where),
   freeCheckout: ({ projectDir, branch }) => freeBranchCheckout({ projectDir, branch, stopServices: stopCheckoutServices, by: 'pr-watch',
     busy: busyActionRunIds([...liveRunIds(), ...[...runs.values()].map((r) => r.pipelineId).filter((id) => id && isFinishingRun(id))]) }),
   startRun: (body, opts) => invokeStartRun(body, null, opts),
@@ -6105,6 +6282,7 @@ const prWatcher = createPrWatcher({
     if (readPrState(pipelineId)?.url !== pr.url) throw new Error('the fix run did not record its pull request');
   },
   notify: (event) => chatNotifier.notifyPrWatch(event),
+  audit: (pipelineId, text) => appendAuditById(pipelineId, text, { actor: 'pr-watch' }),
   onChange: (w) => broadcast(prWatchFrame(w.pipelineId, w.memberKey)),
   log: (m) => console.warn(`[worca-ui] ${m}`),
 });
@@ -6731,6 +6909,24 @@ app.get('/api/actions/running', (req, res) => {
     const ws = row ? bareWorkspaceKey(row) : null;
     return { ...s, workspaceId: ws, histKey: row ? (ws ? `workspaces/${ws}` : row.project_key) : null, runTitle: row?.title || null };
   }));
+});
+
+// The browser extension's page → running Action lookup (docs/browser-extension.md "Running Actions"). Extension-only and
+// read-only: one origin in, at most {url, projectKey, workspaceId, runId, runTitle} out — never the instance list
+// (pids, ports, stack ids stay on /api/actions/running, which is NOT on the extension allowlist).
+app.get('/api/extension/actions/match', (req, res) => {
+  if (!req.worcaExtension) return res.status(403).json({ error: 'forbidden: this route is for the browser extension', code: 'extension-only' });
+  const origin = pageOrigin(typeof req.query.origin === 'string' ? req.query.origin : '');
+  if (!origin) return badRequest(res, 'origin must be an http(s) origin');
+  try {
+    const match = matchRunningAction(origin, actions.running(), (runId) => {
+      const row = findPipelineRowById(runId);
+      return row ? { title: row.title || null, projectKey: row.project_key || null, workspaceId: bareWorkspaceKey(row) || null } : null;
+    });
+    res.json({ match });
+  } catch (err) {
+    res.status(500).json({ error: String(err && err.message || err) });
+  }
 });
 
 // D28: scope-free stop for the sidebar and the header pill. Not gated by D4, like the scoped stop.
@@ -7394,6 +7590,198 @@ app.post('/api/push', async (req, res) => {
   const by = actorOf(req);
   appendAuditById(state.id || id, `Pushed \`${b.source}\` to \`${remote}\`${byActor(by)}.`, { actor: by });
   res.json({ ok: true, remote, branch: b.source });
+});
+
+// ---------------------------------------------------------------------------
+// Base conflicts (#620): check a finished run's branches against their fetched base (git merge-tree, no
+// checkout), Update branch (a merge commit, then a fast-forward push when published), and two ways to resolve
+// a conflict: a new run on the existing branch, or the run's terminal with the merge already started.
+// Results live on the branch records (br.baseCheck); base-conflicts.mjs does the work.
+// ---------------------------------------------------------------------------
+const BASE_ERR_STATUS = { NOT_FOUND: 404, MEMBER_REQUIRED: 400, BAD_REQUEST: 400, NOT_FINISHED: 409, UP_TO_DATE: 409,
+  CONFLICTS: 409, NOT_CONFLICTING: 409, NO_BRANCH: 409, DIRTY: 409, IN_USE: 409, MOVED: 409, IDENTITY: 409,
+  BRANCH_CHECKED_OUT: 409, RETAINED: 409, BRANCH_MISSING: 409, TARGET_EXISTS: 409, RESOLVING: 409,
+  UNSUPPORTED_BRANCH: 409, PR_OPEN: 409, PR_FIXING: 409, CHECK_FAILED: 502 };
+function sendBaseError(res, e) {
+  res.status(BASE_ERR_STATUS[e?.code] || 500).json({ error: e?.message || String(e), code: e?.code || 'ERROR',
+    ...(e?.baseCheck ? { baseCheck: e.baseCheck } : {}), ...(e?.holder ? { holder: e.holder } : {}),
+    ...(e?.runId ? { runId: e.runId } : {}) });
+}
+const bodyMember = (req) => (typeof req.body?.member === 'string' && req.body.member ? req.body.member : null);
+const publicMember = ({ tree, ...m }) => m;      // the merge-tree tree id never leaves the server
+const mockOfRow = (row) => { try { return JSON.parse(row.resume_point || 'null')?.mock === true; } catch { return false; } };
+/** D18: a resolve run (its LIVE run UUID, as POST /api/run answered) has not settled yet. A restart forgets it. */
+const resolveRunActive = (runId) => { const e = runs.get(runId); return !!e && !e.settled; };
+/** A member's open pull request (a project run's own), else null. */
+function openPrOfMember(row, m) {
+  const pr = row.target === 'workspace' ? readMemberPrStates(row.id)[m.projectKey] : readPrState(row.id);
+  return pr?.url && pr.state === 'OPEN' ? pr : null;
+}
+/** Watch PR owns an open PR's branch while its fix run starts, runs or publishes: a merge or push from
+ *  here would move the branch under it (the watch would stop as remote-moved). */
+function assertNoPrFix(row, m) {
+  const pr = openPrOfMember(row, m);
+  if (pr && watchActive(getWatch(pr.url))) {
+    throw Object.assign(new Error(`A Watch PR fix run is working on \`${m.br.feature}\`. Wait for it to finish.`), { code: 'PR_FIXING' });
+  }
+}
+
+// POST /api/runs/:id/base-check?projectKey=|workspaceId=|projectDir=  body: { member?, auto? }
+// -> { ok, members:[{ projectKey, name, branch, baseCheck }], settled:{ [projectKey]: { baseCheck, push } } }
+// `auto` is the check the History detail runs on open: it reuses a recent fetch and settles nothing
+// (no push from just looking at a run); Re-check settles.
+app.post('/api/runs/:id/base-check', async (req, res) => {
+  try {
+    const row = runRowForScope(req, res); if (!row) return;
+    assertFinishedRow(row, { isLive: isLiveRun, isFinishing: isFinishingRun });
+    const member = bodyMember(req);
+    if (member && !membersOfRow(row).some((x) => x.projectKey === member)) {
+      return res.status(400).json({ error: 'That project is not part of this run.', code: 'MEMBER_REQUIRED' });
+    }
+    const by = actorOf(req);
+    const auto = req.body?.auto === true;
+    if (!auto) for (const m of baseMembersOfRow(row).filter((x) => !member || x.projectKey === member)) assertNoPrFix(row, m);
+    const { members } = await checkRunBase(row.id, { members: member ? [member] : null, by, maxAgeMs: auto ? INTERACTIVE_TTL_MS : 0 });
+    const settled = auto ? {} : await settleResolutions(row.id, members, { by, isActive: resolveRunActive });
+    emitChanged('pipelines-changed', 'updated');
+    // A settle that found leftover markers recorded `conflicts/markers`: answer what is stored.
+    res.json({ ok: true, members: members.map((m) => ({ ...publicMember(m), baseCheck: settled[m.projectKey]?.baseCheck || m.baseCheck })), settled });
+  } catch (e) { sendBaseError(res, e); }
+});
+
+// POST /api/runs/:id/update-branch?scope  body: { member? } -> { ok, member, branch, from, to, via, baseCheck, push }
+app.post('/api/runs/:id/update-branch', async (req, res) => {
+  try {
+    const row = runRowForScope(req, res); if (!row) return;
+    const r = await updateRunBranch({ id: row.id, member: bodyMember(req), by: actorOf(req), isLive: isLiveRun,
+      isFinishing: isFinishingRun, isActive: resolveRunActive, assertFree: assertNoPrFix });
+    emitChanged('pipelines-changed', 'updated');
+    res.json({ ok: true, ...r });
+  } catch (e) { sendBaseError(res, e); }
+});
+
+/**
+ * startRunHandler as `req`'s caller (identity, drain, every gate), with server-only extras; captures the answer.
+ * Not invokeStartRun: that one sets `_internal`, which means "a scheduled ticket" and needs
+ * `internal.ticket.id`. Object.create keeps the real request's headers/socket for startedByOf and the gates;
+ * startRunHandler reads `req.body` once, at its top (the defragRequest precedent).
+ */
+async function startRunAs(req, body, extra = {}) {
+  let out = { status: 200, body: null };
+  const res = {
+    statusCode: 200,
+    status(code) { this.statusCode = code; return this; },
+    json(payload) { out = { status: this.statusCode, body: payload }; return this; },
+  };
+  await startRunHandler(Object.assign(Object.create(req), { body }, extra), res);
+  return out;
+}
+
+// POST /api/runs/:id/resolve-pipeline?scope  body: { member? } -> { ok, runId } (D5, D11, D12, D17)
+app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
+  try {
+    await withRunLock(req.params.id, async () => {
+    const row = runRowForScope(req, res); if (!row) return;
+    assertFinishedRow(row, { isLive: isLiveRun, isFinishing: isFinishingRun });
+    const m = pickBaseMember(row, bodyMember(req));
+    assertNotResolving(m, resolveRunActive);
+    // An open PR's conflicts belong to Watch PR: its Resolve (the Overview tab's PR row) pushes to the PR.
+    if (openPrOfMember(row, m)) {
+      return res.status(409).json({ error: `\`${m.br.feature}\` has an open pull request: use Resolve on its row in the Overview tab.`, code: 'PR_OPEN' });
+    }
+    // createWorktree reuses the branch only under its sanitized name; any other name would start a NEW branch.
+    if (sanitizeBranchName(m.br.feature) !== m.br.feature) {
+      return res.status(409).json({ error: `A run cannot continue on \`${m.br.feature}\`: its name is not one Worca creates. Resolve it in a terminal.`, code: 'UNSUPPORTED_BRANCH' });
+    }
+    const by = actorOf(req);
+    const c = await checkBaseMerge(m.projectDir, { base: m.br.source, feature: m.br.feature, remote: m.remote, maxAgeMs: INTERACTIVE_TTL_MS });
+    const rec = toRecord(c, by);
+    updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseCheck = rec; });
+    if (c.status !== 'conflicts') {
+      return res.status(409).json({ error: c.status === 'clean' ? 'The merge is clean: use Update branch.' : `Nothing to resolve (${c.status}).`,
+        code: 'NOT_CONFLICTING', baseCheck: rec });
+    }
+    const holders = await branchCheckouts(m.projectDir, m.br.feature);
+    if (holders === null || holders.length) {
+      return res.status(409).json({ error: `\`${m.br.feature}\` is checked out${holders?.[0] ? ` in ${holders[0]}` : ''}. Discard that checkout first: the new run needs its own worktree.`,
+        code: 'BRANCH_CHECKED_OUT', ...(holders?.[0] ? { holder: holders[0] } : {}) });
+    }
+    const body = {
+      projectDir: m.projectDir,
+      title: `Resolve conflicts with ${c.base}: ${row.title || m.br.feature}`.slice(0, 200),
+      prompt: resolveTaskText({ check: rec, feature: m.br.feature, title: row.title, prompt: row.prompt }),
+      // Every conflict fix run is Watch PR's unattended Implement ⇄ Review: no planner re-plans the feature.
+      workflowId: FIX_WORKFLOW_ID,
+      humanInLoop: false,
+      sourceBranch: m.br.source,
+      featureBranch: m.br.feature,
+      syncBeforeStart: false,
+      ...(row.guardrails_id ? { guardrailsId: row.guardrails_id } : {}),
+      engine: runEngineOfRow(row),
+      // #617: a mock run is resolved by a mock run. Best effort: the resume point records `mock: true` while it
+      // exists; when it was cleared, the server's own mock mode decides (startRunHandler's `serverMockMode()`).
+      ...(mockOfRow(row) ? { mock: true } : {}),
+    };
+    // Mark BEFORE the start: the run's own post-run step settles this mark, so it must exist before the run can end.
+    const mark = resolveMark('pipeline', rec, { by });
+    updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseResolve = mark; });
+    let out;
+    try {
+      out = await startRunAs(req, body, { _resolveOf: { runId: row.id, member: m.projectKey } });
+    } catch (e) { out = { status: 500, body: { error: e?.message || String(e) } }; }
+    if (out.status !== 200 || !out.body?.runId) {
+      updateBranchRecords(row.id, [m.projectKey], (br) => { if (br.baseResolve?.at === mark.at && !br.baseResolve.runId) delete br.baseResolve; });
+      return res.status(out.status === 200 ? 500 : out.status).json(out.body || { error: 'the run did not start' });
+    }
+    updateBranchRecords(row.id, [m.projectKey], (br) => { if (br.baseResolve?.at === mark.at) br.baseResolve.runId = out.body.runId; });
+    const where = row.target === 'workspace' ? ` in \`${m.projectName}\`` : '';
+    appendAuditById(row.id, `Started a run to resolve the conflicts with \`${c.baseRef}\` on \`${m.br.feature}\`${where}${byActor(by)}.`, { actor: by });
+    emitChanged('pipelines-changed', 'updated');
+    res.json({ ok: true, runId: out.body.runId });
+    });
+  } catch (e) { sendBaseError(res, e); }
+});
+
+// POST /api/runs/:id/resolve-terminal?scope  body: { member?, cols?, rows? } (no raw fields)
+// -> 201 { session, conflicts, worktreeDir, started } (D4)
+app.post('/api/runs/:id/resolve-terminal', async (req, res) => {
+  if (!requireTerminal(req, res) || !rejectRawTerminalFields(req, res)) return;
+  try {
+    await withRunLock(req.params.id, async () => {
+    const row = runRowForScope(req, res); if (!row) return;
+    assertFinishedRow(row, { isLive: isLiveRun, isFinishing: isFinishingRun });
+    const m = pickBaseMember(row, bodyMember(req));
+    assertNotResolving(m, resolveRunActive);     // else useExisting would link the resolve run's live worktree
+    assertNoPrFix(row, m);
+    const by = actorOf(req);
+    const c = await checkBaseMerge(m.projectDir, { base: m.br.source, feature: m.br.feature, remote: m.remote, maxAgeMs: INTERACTIVE_TTL_MS });
+    const rec = toRecord(c, by);
+    updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseCheck = rec; });
+    if (c.status !== 'conflicts') {
+      return res.status(409).json({ error: c.status === 'clean' ? 'The merge is clean: use Update branch.' : `Nothing to resolve (${c.status}).`, code: 'NOT_CONFLICTING', baseCheck: rec });
+    }
+    // The run's checkout (re-created on demand, #529); a branch already in the person's own clone is linked.
+    const co = await checkoutRunUnderLock({ id: row.id, members: [m.projectKey], by, isLive: isLiveRun, isFinishing: isFinishingRun, useExisting: true });
+    for (const x of co.members.filter((y) => y.state === 'checked-out' && !y.external)) ensureSetup(row.id, x.projectKey, { enabled: actionsEnabledHere(req) });
+    const t = terminalTargets(findPipelineRowById(row.id), { isLive: isLiveRun });
+    const tm = t.members.find((x) => x.projectKey === m.projectKey);
+    if (!tm?.cwd) return res.status(409).json({ error: 'This run has no checkout to open.', code: 'NO_FOLDER' });
+    const merge = await startConflictMerge(tm.cwd, { feature: m.br.feature, baseSha: c.baseSha, baseRef: c.baseRef, remote: c.remote });
+    if (!merge.ok) return res.status(merge.kind === 'failed' ? 500 : 409).json({ error: merge.error, code: merge.kind === 'dirty' ? 'DIRTY' : merge.kind === 'in-use' ? 'IN_USE' : 'MERGE_FAILED' });
+    updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseResolve = resolveMark('terminal', rec, { by }); });
+    const session = await terminals.open({ cwd: tm.cwd, scope: 'run', label: `Resolve conflicts · ${tm.projectName}`, runId: row.id,
+      member: tm.projectKey, projectKey: tm.projectKey, branch: tm.branch, workspace: t.workspace, runLive: false, by,
+      cols: req.body?.cols, rows: req.body?.rows, actionSnaps: activeActionSnaps(row.id) });
+    // The conflict list on screen: a fixed command, typed once the shell reaches its prompt (Ask's runCommand seam).
+    terminals.runCommand(session.id, 'git status', { by, source: 'worca', cwd: tm.cwd }).catch(() => { /* a shell without block marks */ });
+    appendAuditById(row.id, `Started merging \`${c.baseRef}\` into \`${m.br.feature}\` in a terminal${byActor(by)} (${merge.files.length} conflicting file(s)).`, { actor: by });
+    emitChanged('pipelines-changed', 'updated');
+    res.status(201).json({ session, conflicts: merge.files, worktreeDir: tm.cwd, started: merge.started });
+    });
+  } catch (e) {
+    if (e?.code && BASE_ERR_STATUS[e.code]) return sendBaseError(res, e);
+    terminalError(res, e);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -8570,6 +8958,7 @@ const settingsState = () => ({
   schedule: scheduleDefaults(),                           // defaults a NEW schedule inherits
   sync: syncDefaults(),                                   // sync before run (#527): instance defaults
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
+  flags: allFlags(),                                      // { key: bool } resolved (docs/feature-flags.md)
   memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
   memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: the built-in's own model
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
@@ -8910,6 +9299,7 @@ function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
             pausedIds.add(e.id);
             e.status = 'pausing';
             resolvePending(e, { reason: 'paused' });
+            syncKeepAwake();
           }
         } catch (err) { console.error(`[worca-ui] drain: could not pause ${e.pipelineId || e.id}: ${err?.message || err}`); }
       }
@@ -9061,6 +9451,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasHideBuiltinKey = has('hideBuiltinModels');
   const hasThemeKey = has('theme');
   const hasUiLevelKey = has('uiLevel');
+  const hasFlagsKey = has('flags');
   const hasAutoKey = has('autoWorkflowModel');
   const hasNightKey = has('nightMode') || has('nightModeToggle');
   const autoModels = hasAutoKey ? await listModels('') : null;
@@ -9162,6 +9553,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('nightModeToggle')) asSettingsField('nightModeToggle', () => assertNightModeToggleInput(body.nightModeToggle));
     if (hasActionsKey) asSettingsField('actions', () => assertActionsInput(body.actions));
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
+    if (hasFlagsKey) asSettingsField('flags', () => checkFlags(body.flags));   // validate + cascade dry run, before anything is written
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -9187,6 +9579,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
     if (hasThemeKey) await setTheme(body.theme);
     if (hasUiLevelKey) await setUiLevel(body.uiLevel);
+    if (hasFlagsKey) await asSettingsField('flags', () => setFlags(body.flags));   // same path as PATCH /api/flags (it broadcasts `flags`)
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
     if (hasPrDescKey) await setPrDescriptionModel(body.prDescriptionModel ?? '', { models: prDescModels });
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
@@ -9213,6 +9606,26 @@ async function applySettingsPatch(body, { person = null } = {}) {
     return { actionsWarnings };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Feature flags (docs/feature-flags.md). GET lists every non-retiring flag; PATCH takes
+// { key: true|false|null } (null = back to the default), applies `requires`, persists and
+// broadcasts a `flags` frame (flagEvents above). 400 unknown key / bad value, 409 env-locked.
+// ---------------------------------------------------------------------------
+const flagsPayload = () => ({
+  flags: listFlags().map((f) => ({ ...f, docsUrl: f.docs && APP_REPO_URL ? `${APP_REPO_URL}/blob/dev/${f.docs}` : null })),
+});
+app.get('/api/flags', (_req, res) => res.json(flagsPayload()));
+app.patch('/api/flags', async (req, res) => {
+  try {
+    await setFlags(req.body);
+    return res.json(flagsPayload());
+  } catch (err) {
+    if (err instanceof FlagError && err.code === 'locked') return res.status(409).json({ error: err.message, code: 'locked', key: err.key });
+    if (err instanceof FlagError) return res.status(400).json({ error: err.message, ...(err.key ? { key: err.key } : {}) });
+    return res.status(500).json({ error: err && err.message ? err.message : 'could not save the flags' });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Per-project model/effort config + custom-model registry. Validation lives in
@@ -10360,6 +10773,7 @@ function askHello(ws = null) {
 
 /** Whether this socket may receive thread `threadId`'s frames (its owner, or not a shared viewer). */
 function askSocketSees(ws, threadId) {
+  if (ws?.worcaExtension) { try { if (askGetThread(threadId)?.mode === 'composer') return false; } catch { return false; } }
   if (!ws || !ws.worcaViewer) return true;
   let owner = null;
   try { owner = askGetThread(threadId)?.createdBy || null; } catch { return true; }
@@ -10422,7 +10836,8 @@ app.get('/api/ask/threads', (req, res) => {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
     const visibleTo = askViewer(req);
-    const mode = req.query.mode === 'composer' ? 'composer' : null;
+    // Browser extension: never lists composer (Workflows editor) threads.
+    const mode = !req.worcaExtension && req.query.mode === 'composer' ? 'composer' : null;
     // q = the History column's search (title or any message's text); the owner and surface filters above still apply.
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     const threads = askListThreads({ limit, visibleTo, mode, query }).map((t) => {
@@ -10489,6 +10904,8 @@ app.delete('/api/ask/threads', async (req, res) => {
 app.post('/api/ask/threads', (req, res) => {
   try {
     const body = req.body || {};
+    // Browser extension: plain Ask threads only — a composer thread carries the Workflows editor's toolset.
+    if (req.worcaExtension && body.mode !== undefined && body.mode !== null) return res.status(403).json({ error: 'the browser extension creates Ask threads only', code: 'extension-route' });
     let title = null;
     if (body.title !== undefined && body.title !== null && body.title !== '') {
       if (typeof body.title !== 'string' || body.title.length > 120) {
@@ -10512,6 +10929,7 @@ app.get('/api/ask/threads/:id', (req, res) => {
   try {
     const thread = askGetThread(id);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
+    if (req.worcaExtension && thread.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
     const job = askInFlight(id);
     res.json({
       // `engine`: the lock the server enforces (D12), so the panel locks on the same answer even when the chat's model
@@ -10574,6 +10992,7 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   try {
+    if (req.worcaExtension && askGetThread(id)?.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
     const body = req.body || {};
     const patch = {};
     // The Ask panel's model · effort picker, moved while this chat is open: the pair
@@ -11110,7 +11529,7 @@ function askSignedIn(req) {
   return who.source === 'local' ? null : who.name;
 }
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined }) {
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null }) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -11190,6 +11609,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
     const { inline, listed } = askSelectInlineAttachments(withText);
     const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id, { signedIn });
+    // Browser extension (docs/browser-extension.md): server-stamped from the request's token, never client-supplied —
+    // the header tells the model the page attachments (context, text, quote) are untrusted web content.
+    if (client) headerCtx.client = client;
     // Context chips: accumulate the project/run/workspace/named page this turn ran in
     // (origin first, deduped; contexts.mjs). Cosmetic — a failure must never fail the turn.
     try { askAddThreadContexts(id, askContextEntries(ctx, headerCtx)); } catch (e) {
@@ -11329,6 +11751,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
   try {
     const thread = askGetThread(id);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
+    if (req.worcaExtension && thread.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
     if (askDeleting.has(id)) return res.status(409).json({ error: 'thread is being deleted' });
     if (askInFlight(id)) return res.status(409).json({ error: 'turn in flight' });
     // Budget gate (F6), same figure /api/run enforces: Ask spend is folded into the
@@ -11428,7 +11851,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     }
 
     if (composerState) askUpdateThread(id, { composer: composerState });
-    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode });
+    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast
@@ -11477,11 +11900,103 @@ app.post('/api/ask/mcp-preview', async (req, res) => {
 app.post('/api/ask/threads/:id/stop', (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
+  if (req.worcaExtension && askGetThread(id)?.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
   const job = askInFlight(id);
   if (job && job.turn && typeof job.turn.stop === 'function') {
     try { job.turn.stop(); } catch { /* best-effort */ }
   }
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Browser extension pairing (docs/browser-extension.md). The extension asks; a person answers in this UI with the
+// 6-digit code both sides show; the extension collects its token once. Approve/deny/revoke/list: this UI only — never
+// an extension (its origin never reaches these routes: extension-route), never another origin, never an agent (with
+// agent isolation on, a loopback browser on this machine is refused too: approve through the published address).
+// ---------------------------------------------------------------------------
+/** Close every extension socket opened with one of these pairings (revoked, or replaced by a re-pair). 4003 sends the
+ *  sidebar back to Connect; its stored token no longer verifies. */
+function closeExtensionSockets(ids) {
+  if (!ids || !ids.length) return;
+  const gone = new Set(ids);
+  for (const ws of sockets) {
+    if (ws.worcaExtension && gone.has(ws.worcaExtension.id)) { try { ws.close(4003, 'extension pairing ended'); } catch { /* closing */ } }
+  }
+}
+
+function extensionUiCaller(req, res) {
+  if (req.worcaExtensionRoute) { res.status(403).json({ error: 'answered in Worca, not by the extension', code: 'extension-route' }); return false; }
+  if (!terminalSameOrigin(req)) { res.status(403).json({ error: 'forbidden: cross-origin request', code: 'extension-origin' }); return false; }
+  if (agentMayBeCaller(req)) { res.status(403).json({ error: 'Browser extensions cannot be paired or revoked from inside the container while agent isolation is on. Open Worca through its published address.', code: 'extension-agent-blocked' }); return false; }
+  return true;
+}
+
+app.get('/api/extension/hello', (req, res) => {
+  if (!req.worcaExtensionRoute) return res.status(403).json({ error: 'for the browser extension', code: 'extension-origin' });
+  res.set('Cache-Control', 'no-store').json({ worca: true });
+});
+
+app.post('/api/extension/pair', (req, res) => {
+  if (!req.worcaExtensionRoute) return res.status(403).json({ error: 'pairing starts in the browser extension', code: 'extension-origin' });
+  const body = req.body || {};
+  const r = extensionPairing.request({ origin: req.worcaExtensionOrigin, name: body.name, browser: body.browser });
+  // A replaced request's prompt closes in every Worca tab (the same event approve/deny send).
+  for (const requestId of r.replacedRequestIds || []) broadcast({ type: 'extension-pairings-changed', requestId });
+  if (!r.ok) return res.status(r.status).json({ error: r.error, code: r.code });
+  broadcast({ type: 'extension-pair-request', request: r.public });   // UI sockets only (extension sockets get ask-* only)
+  res.status(201).json({ requestId: r.requestId, code: r.code, pollKey: r.pollKey, expiresAt: r.expiresAt });
+});
+
+app.get('/api/extension/pair/:requestId', (req, res) => {
+  if (!req.worcaExtensionRoute) return res.status(403).json({ error: 'pairing starts in the browser extension', code: 'extension-origin' });
+  const r = extensionPairing.poll(req.params.requestId, { origin: req.worcaExtensionOrigin, pollKey: req.headers['x-worca-pair-poll'] });
+  res.set('Cache-Control', 'no-store').status(r.status).json(r.body);
+});
+
+app.post('/api/extension/pair/:requestId/:verdict(approve|deny)', (req, res) => {
+  if (!extensionUiCaller(req, res)) return;
+  if (REMOTE_MODE) return res.status(409).json({ error: 'pairing is off while remote access is on', code: 'extension-remote-mode' });
+  try {
+    const r = extensionPairing.resolve(req.params.requestId, req.params.verdict);
+    if (!r.ok) return res.status(r.status).json({ error: r.error, code: r.code });
+    closeExtensionSockets(r.replaced);   // a re-pair rotated the token: sockets opened with the old one go (review m3)
+    broadcast({ type: 'extension-pairings-changed', requestId: req.params.requestId });   // other Worca tabs close their open prompt
+    res.json({ ok: true, state: r.state, ...(r.entry ? { extension: r.entry } : {}) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/extension/pairings', (req, res) => {
+  if (!extensionUiCaller(req, res)) return;
+  if (REMOTE_MODE) return res.json({ remoteMode: true, paired: [], pending: [] });
+  res.json({ remoteMode: false, ...extensionPairing.list() });
+});
+
+// Settings › General › Browser extension › Install (docs/browser-extension.md#install): the extension builds packaged
+// with this Worca, their version and install steps. Read-only and UI-only: NOT on EXTENSION_TOKEN_ROUTES, so a paired
+// extension's token is refused by the extension gate before it gets here; S1 (isLocalRequest) guards everyone else.
+// A hosted Worca answers without server paths (src/core/extension-package.mjs).
+app.get('/api/extension/install', (req, res) => {
+  res.set('Cache-Control', 'no-store').json(extensionInstallInfo({ root: PROJECT_ROOT, remoteMode: REMOTE_MODE, repoUrl: APP_REPO_URL, releaseUrl: APP_INFO.releaseUrl }));
+});
+
+app.delete('/api/extension/pairings/:id', (req, res) => {
+  if (!extensionUiCaller(req, res)) return;
+  try {
+    const gone = extensionPairing.revoke(req.params.id);
+    if (!gone) return res.status(404).json({ error: 'no such paired extension' });
+    closeExtensionSockets([gone.id]);
+    broadcast({ type: 'extension-pairings-changed' });
+    res.json({ ok: true, revoked: gone });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/extension/status', (req, res) => {
+  if (!req.worcaExtension) return res.status(403).json({ error: 'extension token required', code: 'extension-route' });
+  res.json({ paired: true, id: req.worcaExtension.id, name: req.worcaExtension.name, serverMock: serverMockMode(), version: PKG_VERSION });
 });
 
 // ---------------------------------------------------------------------------
@@ -11500,8 +12015,18 @@ const PINPOINT_MOCK = {
     { title: 'Put it behind a flag', detail: 'Keep it, but off by default behind a setting.', tradeoffs: [{ tone: 'ok', text: 'Easy to undo' }, { tone: 'warn', text: 'One more setting' }] },
   ],
 };
+/** The mock Explain answer in ~6 word groups, so the popover streams in mock mode too. */
+function mockPinpointParts(text, n = 6) {
+  const words = String(text).match(/\S+\s*/g) || [];
+  const size = Math.max(1, Math.ceil(words.length / n));
+  const out = [];
+  for (let i = 0; i < words.length; i += size) out.push(words.slice(i, i + size).join(''));
+  return out;
+}
 app.post('/api/pinpoint', async (req, res) => {
-  const v = validatePinpointInput(req.body);
+  // Browser extension: a token holder gets the web framing whatever it sends (docs/browser-extension.md).
+  const input = req.worcaExtension ? { ...(req.body || {}), surface: 'web' } : req.body;
+  const v = validatePinpointInput(input);
   if (!v.ok) return badRequest(res, v.error);
   const budget = budgetStatus();
   if (budget.blocked) return res.status(403).json({ error: 'total cost limit reached', budget });
@@ -11520,8 +12045,37 @@ app.post('/api/pinpoint', async (req, res) => {
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
   const send = (o) => { if (!res.writableEnded) res.write(`${JSON.stringify(o)}\n`); };
   if (mock) {
-    if (v.value.action === 'explain') send({ type: 'delta', text: PINPOINT_MOCK.explain });
-    else send({ type: 'alternatives', alternatives: PINPOINT_MOCK.alternatives });
+    // Demo video (tools/demo/extension-video): scripted answers under WORCA_DEMO_SCENARIO; a miss falls through.
+    const demo = demoPinpointReply(v.value.quote);
+    if (demo && (v.value.action === 'explain' ? demo.explain : demo.alternatives)) {
+      if (v.value.action === 'explain') {
+        let gone = false;
+        res.on('close', () => { gone = true; });
+        for (const part of demoChunks(demo.explain)) {
+          if (gone) return;
+          send({ type: 'delta', text: part });
+          if (demo.chunkMs) await new Promise((r) => setTimeout(r, demo.chunkMs));
+        }
+      } else send({ type: 'alternatives', alternatives: demo.alternatives });
+      send({ type: 'done' });
+      return res.end();
+    }
+    if (v.value.action === 'explain') {
+      // Streamed like a real answer. A MOCK_SLOW quote (the Ask mock's convention, src/core/engines/mock.mjs) spaces
+      // the deltas mockSlowMs() apart so a UI test can see a half-written answer and the Stop button.
+      const slow = /\bMOCK_SLOW\b/.test(v.value.quote);
+      let gone = false;
+      res.on('close', () => { gone = true; });
+      // The web surface is visible in mock mode, so a test can prove an extension's surface:'chat' is forced to 'web'.
+      // The chat surface's text stays exactly PINPOINT_MOCK.explain.
+      const parts = mockPinpointParts(PINPOINT_MOCK.explain);
+      if (v.value.surface === 'web') parts.unshift('(mock · web surface) ');
+      for (const part of parts) {
+        if (gone) return;
+        send({ type: 'delta', text: part });
+        if (slow) await new Promise((r) => setTimeout(r, mockSlowMs()));
+      }
+    } else send({ type: 'alternatives', alternatives: PINPOINT_MOCK.alternatives });
     send({ type: 'done' });
     return res.end();
   }
@@ -13299,6 +13853,33 @@ app.put('/api/mcp/projects/:key', async (req, res) => {
   try { await setProjectAssignment(req.params.key, { sets, includeGeneral }); res.json({ ok: true }); } catch (err) { sendMcpError(res, err); }
 });
 
+// The project's committed `.mcp.json` servers and whether a Codex, Copilot or Cursor run attaches them
+// (src/core/mcpjson-approval.mjs). Approve names them in the project's untracked .claude/settings.local.json.
+async function mcpjsonProject(req, res) {
+  if (!PROJECT_KEY_RE.test(req.params.key)) { badRequest(res, 'invalid project key'); return null; }
+  const p = (await listProjects()).find((x) => x.key === req.params.key);
+  if (!p) { res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' }); return null; }
+  return p;
+}
+app.get('/api/mcp/projects/:key/mcpjson', async (req, res) => {
+  const p = await mcpjsonProject(req, res);
+  if (!p) return;
+  try { res.json(await committedMcpStatus(p.path)); } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
+app.post('/api/mcp/projects/:key/mcpjson/approve', async (req, res) => {
+  const p = await mcpjsonProject(req, res);
+  if (!p) return;
+  const names = req.body?.names;
+  if (!Array.isArray(names) || !names.length || !names.every((n) => typeof n === 'string')) return badRequest(res, 'names must be a non-empty list of server names');
+  try {
+    await approveCommittedMcp(p.path, names);
+    res.json(await committedMcpStatus(p.path));
+  } catch (err) {
+    const status = { UNKNOWN_SERVER: 400, LOCAL_TRACKED: 409, LOCAL_INVALID: 409 }[err?.code] || 500;
+    res.status(status).json({ error: err?.message || String(err), code: err?.code });
+  }
+});
+
 // MCP Team set (MCP registry spec §11.3, §12): consent routes. The definition, values and hash are read
 // from the cached policy, never the body; `expectHash` is only a precondition (409 when it moved on).
 // A home is a lowercase policy slug (the home part of SERVER_ID_RE's `policy:` ids, within its bound: deep subgroups make
@@ -14370,7 +14951,7 @@ if (isMain) {
     // B2: pause the active runs first (bounded), so they come back paused with a resume point.
     drainServer({ reason: signal })
       .then(() => settleShutdownSteps({ chat: () => channelHost.stop(), actions: () => actions.stopAll(), terminals: () => terminals.closeAll(), prWatch: () => prWatcher.runner.stop() }))
-      .finally(() => { clearTimeout(hardExit); process.exit(exitCodeFor(signal)); });
+      .finally(() => { clearTimeout(hardExit); keepAwake.stop(); process.exit(exitCodeFor(signal)); });
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -14454,7 +15035,7 @@ export const _testing = {
   broadcast, askFilesRunDir,
   validateResumeTarget, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, prWatchOrigin, prWatchFrame,
+  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
   setAutoRescan(on) { autoRescanOn = on !== false; },
 };

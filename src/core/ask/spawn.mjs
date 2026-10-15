@@ -27,7 +27,6 @@ import { fileURLToPath } from 'node:url';
 import { RESERVED_KEY_VAR } from '../web-allowlist.mjs';
 import { keepListNames } from '../mcp/keep-list.mjs';
 import { ASK_DENY_RULES } from './deny-rules.mjs';
-import { SHAPE_FIRST_ENV_KEYS } from '../shape/gate.mjs';
 
 /** Absolute path of the worca MCP server script — the `serverPath` of buildMcpConfig (P2 never guesses it). */
 export const ASK_MCP_SERVER_PATH = fileURLToPath(new URL('./mcp-stdio.mjs', import.meta.url));
@@ -247,8 +246,12 @@ function buildCodexAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, re
  *  spawned env-scrubbed, so nothing WORCA_* reaches the child unless it rides mcpServers.env. Forwarded only when set. */
 // WORCA_PROJECTS_ROOT / WORCA_CLONE_ALLOW: propose_clone_project validates against the same projects
 // folder and allowlist the server clones with (neither is a secret; no credential is ever forwarded).
-export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT',
-  'WORCA_CLONE_ALLOW', ...SHAPE_FIRST_ENV_KEYS]);
+export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW',
+  'WORCA_FLAGS']);   // a WORCA_FLAGS lock (the shapeFirst gate's propose_run check) reaches the child too
+/** The parent turn's Claude Code sign-in for the child's propose_run check (proposal.mjs claudeAuth): the child runs
+ *  inside the chat's env, where the chat model's routing (ANTHROPIC_BASE_URL …) reads as a sign-in. Only the probe's
+ *  three answers ride. */
+const authEnv = (state) => (state === 'signed-in' || state === 'signed-out' || state === 'unknown' ? { WORCA_ASK_CLAUDE_AUTH: state } : {});
 
 /** The search key's env var name for one turn, or null. The VALUE never touches disk: the per-turn mcp json sits in
  *  the chat's own cwd (tmp/ask, where a Grep can ignore the Read deny), so the var instead rides the claude process's
@@ -273,7 +276,7 @@ export function webMcpEnv(web) {
  * (path.resolve(process.env.WORCA_HOME) or dirname(worcaHome())) — never
  * worcaHome() itself. The argv twins make the child independent of env forwarding.
  */
-export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null, relay = null, web = null, extraServers = null, commands = null, engine = 'claude', skillRoot = null }) {
+export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null, relay = null, web = null, extraServers = null, commands = null, engine = 'claude', skillRoot = null, claudeAuth = null }) {
   if (!serverPath) throw new Error('buildMcpConfig: serverPath is required');
   if (typeof homeBase !== 'string' || !homeBase.trim()) throw new Error('buildMcpConfig: homeBase is required');
   const base = resolvePath(homeBase);
@@ -302,7 +305,7 @@ export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath
     args: ['--disable-warning=ExperimentalWarning', serverPath, '--home', base, '--thread', thread],
     // WORCA_ASK_READER: the shared sign-in behind this turn (identity.mjs), so the child's
     // notification reads/marks are per person; absent on local/operator deployments.
-    env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread, ...forwarded, ...(typeof reader === 'string' && reader ? { WORCA_ASK_READER: reader } : {}), ...webMcpEnv(web),
+    env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread, ...forwarded, ...authEnv(claudeAuth), ...(typeof reader === 'string' && reader ? { WORCA_ASK_READER: reader } : {}), ...webMcpEnv(web),
       // A Codex chat's child adds read_file / grep / glob (file-deps.mjs) and classifies on Codex (D13, D8).
       ...(engine === 'codex' ? { WORCA_ASK_ENGINE: 'codex' } : {}),
       // A Codex turn's set skills (#635): this message's mount, one more read-only root of read_file / grep / glob. The

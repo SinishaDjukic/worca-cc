@@ -62,6 +62,7 @@ function makeTurn({ thread, user, asst }, over = {}, deps = {}) {
       onOutOfTurn: (f) => outOfTurn.push(f),
       generateTitle: async () => '',
       failedBecauseSignedOut: async () => false,   // never ask the real CLI
+      claudeAuthState: async () => 'unknown',      // nor for the sign-in it hands the MCP child
       ...deps,
     },
   });
@@ -1858,4 +1859,33 @@ test('composer: Ask\'s run, workflow, track and away hooks stand down — a hall
   const blocks = getMessage(s.asst.id).blocks;
   assert.deepEqual(blocks.filter((b) => b.kind !== 'tool').map((b) => [b.kind, b.text || (b.card && b.card.type) || '']), [], 'no card, no notice');
   assert.deepEqual(calls, { validate: 0, track: 0, away: 0 });
+});
+
+test('R-G: one Claude sign-in answer per turn — handed to the MCP child and to the turn\'s own re-validation; the Workflows chat never asks', async () => {
+  const s = seed();
+  let cfg = null;
+  let seen = null;
+  let asked = 0;
+  const { turn } = makeTurn(s, {}, {
+    claudeAuthState: async () => { asked += 1; return 'signed-out'; },
+    validateProposal: async (input, o) => { seen = o; return { ok: true, card: { target: 'project', projectKey: 'demo-00000001', workspaceId: null } }; },
+    runClaudeImpl: async (opts) => {
+      cfg = JSON.parse(readFileSync(opts.mcpConfigPath, 'utf8'));
+      return proposeRun({ projectKey: 'demo-00000001', brief: 'x' })(opts);
+    },
+  });
+  await turn.run();
+  assert.equal(cfg.mcpServers.worca.env.WORCA_ASK_CLAUDE_AUTH, 'signed-out');
+  assert.equal(seen.claudeAuth, 'signed-out', 'the card is checked with the answer the model\'s own call was checked with');
+  assert.equal(asked, 1);
+  const s2 = seed();
+  let cfg2 = null;
+  let asked2 = 0;
+  const c = makeTurn(s2, { composer: { sessionId: 'cs_ab12cd34', docToken: 'd_ab12cd34' } }, {
+    claudeAuthState: async () => { asked2 += 1; return 'signed-out'; },
+    runClaudeImpl: async (opts) => { cfg2 = JSON.parse(readFileSync(opts.mcpConfigPath, 'utf8')); push(opts.onEvent, RESULT()); return { text: '', exitCode: 0 }; },
+  });
+  await c.turn.run();
+  assert.equal(asked2, 0, 'the Workflows chat proposes no runs');
+  assert.equal('WORCA_ASK_CLAUDE_AUTH' in cfg2.mcpServers.worca.env, false);
 });

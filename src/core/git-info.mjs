@@ -1007,20 +1007,32 @@ export async function commitSubjects(projectDir, from, to) {
 }
 
 /**
+ * Leftover conflict markers on lines added between `from` and `to` (`git diff --check` names them; its
+ * whitespace complaints are ignored), optionally only in `files`. Shared by Watch PR's conflict fix and
+ * #620's settle. Returns { ok, markers: ['file:line', …] } | { ok: false, error }.
+ */
+export async function leftoverMarkers(projectDir, { from, to, files = [] } = {}) {
+  if (!projectDir || !from || !to) return { ok: false, error: 'projectDir, from and to are required' };
+  const paths = (files || []).filter((f) => typeof f === 'string' && f && !f.startsWith('-'));
+  const d = await _run('git', ['diff', '--check', from, to, ...(paths.length ? ['--', ...paths] : [])], { cwd: projectDir });
+  if (!d.ok && d.code !== 2) return { ok: false, error: (d.stderr || '').trim() || `git exited ${d.code}` };
+  const markers = String(d.stdout || '').split(/\r?\n/).filter((l) => /: leftover conflict marker$/.test(l))
+    .map((l) => l.replace(/: leftover conflict marker$/, ''));
+  return { ok: true, markers };
+}
+
+/**
  * Did a conflict fix really merge the base? `baseSha` must be an ancestor of `to`, and no line added
- * between `from` (the PR head it started on) and `to` may be a leftover conflict marker
- * (`git diff --check` names them; its whitespace complaints are ignored).
+ * between `from` (the PR head it started on) and `to` may be a leftover conflict marker.
  * Returns { ok, merged, markers: ['file:line', …] }.
  */
 export async function checkConflictMerge(projectDir, { baseSha, from, to } = {}) {
   if (!projectDir || !baseSha || !from || !to) return { ok: false, error: 'projectDir, baseSha, from and to are required' };
   const anc = await _run('git', ['merge-base', '--is-ancestor', baseSha, to], { cwd: projectDir });
   if (!anc.ok && anc.code !== 1) return { ok: false, error: (anc.stderr || '').trim() || `git exited ${anc.code}` };
-  const d = await _run('git', ['diff', '--check', from, to], { cwd: projectDir });
-  if (!d.ok && d.code !== 2) return { ok: false, error: (d.stderr || '').trim() || `git exited ${d.code}` };
-  const markers = String(d.stdout || '').split(/\r?\n/).filter((l) => /: leftover conflict marker$/.test(l))
-    .map((l) => l.replace(/: leftover conflict marker$/, ''));
-  return { ok: true, merged: anc.ok, markers };
+  const m = await leftoverMarkers(projectDir, { from, to });
+  if (!m.ok) return m;
+  return { ok: true, merged: anc.ok, markers: m.markers };
 }
 
 // Test seam: swap the command runner + clear the gh memo. Mirrors server.mjs#_testing.
