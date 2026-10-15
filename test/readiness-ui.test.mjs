@@ -30,10 +30,19 @@ describe('readiness UI: chips in the projects list', () => {
     assert.match(fnSource('renderProjectsList'), /paintReadinessChips\(\)/);
   });
 
-  it('paintReadinessChips renders from the project summary into the row sync column', () => {
+  it('paintReadinessChips renders from the project summary into the title line, after the name', () => {
     const src = fnSource('paintReadinessChips');
     assert.match(src, /renderReadinessChip\(/);
-    assert.match(src, /\.pl-sync/);
+    assert.match(src, /\.pl-rd-slot/);
+    assert.doesNotMatch(src, /\.pl-sync/, 'not the sync column: it wraps under the sync bar and hides with it');
+  });
+
+  it('the title line of a keyed row holds the name, then the chip slot', () => {
+    const src = fnSource('buildProjectRow');
+    assert.match(src, /className = 'pl-title'/);
+    assert.match(src, /className = 'pl-rd-slot'/);
+    assert.match(src, /title\.append\(name, rdSlot\)/);
+    assert.match(src, /main\.append\(title, path\)/);
   });
 
   it('each chip is the trigger of one createFlyout popup', () => {

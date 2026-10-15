@@ -11079,7 +11079,14 @@ function buildProjectRow(p) {
   path.className = 'proj-path';
   appendBreakable(path, p.path);   // a narrow column breaks it after a /, not mid-name
   path.title = p.path;
-  main.append(name, path);
+  // The title line: the name, then the readiness chip (paintReadinessChips fills the slot). A long name pushes
+  // the chip onto the next line instead of cutting the name.
+  const title = document.createElement('div');
+  title.className = 'pl-title';
+  const rdSlot = document.createElement('span');
+  rdSlot.className = 'pl-rd-slot';
+  title.append(name, rdSlot);
+  main.append(title, path);
   row.appendChild(main);
   // #527 / design 2026-10-01: the sync bar's own column (branch | origin status | action). A keyed
   // row's bar is always there; paintSyncChips fills it, and hides it only for a project the
@@ -11618,7 +11625,7 @@ function paintReadinessChips() {
   for (const item of document.querySelectorAll('#projects-list .pl-item[data-key]')) {
     const key = item.dataset.key;
     const p = projectByKey(key);
-    const slot = item.querySelector('.pl-sync');
+    const slot = item.querySelector('.pl-rd-slot');
     const fresh = readinessOff || !slot ? null : renderReadinessChip(p && p.readiness, { doc: document });
     let rec = readinessChips.get(key);
     if (!fresh) { if (rec) rec.chip.remove(); continue; }

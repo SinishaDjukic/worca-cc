@@ -29,6 +29,14 @@ describe('readiness CSS', () => {
     assert.match(body, /cursor:pointer/);
   });
 
+  it('the title line keeps the chip beside the name and wraps it under a long name', () => {
+    const body = ruleBody('#projects-list .pl-title') ?? '';
+    assert.match(body, /display:flex/);
+    assert.match(body, /flex-wrap:wrap/);
+    assert.match(body, /align-items:center/);
+    assert.match(ruleBody('.pl-rd') ?? '', /height:20px/, 'smaller than the name line, so it does not grow the row');
+  });
+
   it('ready uses green tokens, partial amber, not-ready red, unused grey', () => {
     assert.match(ruleBody('.rd-ready') ?? '', /var\(--green-bg\)/);
     assert.match(ruleBody('.rd-ready') ?? '', /var\(--green-ink\)/);
