@@ -1,5 +1,5 @@
 // test/readiness-styles.test.mjs — the project-list readiness chip (.pl-rd), its flyout and the settings card in
-// ui/public/style.css: base chip, dot, tone variants on the design tokens (no raw hex), hover, flyout, settings card.
+// ui/public/style.css: base chip, count disc, tone variants on the design tokens (no raw hex), popover, settings card.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -29,41 +29,40 @@ describe('readiness CSS', () => {
     assert.match(body, /cursor:pointer/);
   });
 
-  it('.rd-dot is a small circle', () => {
-    const body = ruleBody('.pl-rd .rd-dot');
-    assert.ok(body, '.pl-rd .rd-dot rule missing');
-    assert.match(body, /width:\d+px/);
-    assert.match(body, /border-radius:50%/);
+  it('ready uses green tokens, partial amber, not-ready red, unused grey', () => {
+    assert.match(ruleBody('.rd-ready') ?? '', /var\(--green-bg\)/);
+    assert.match(ruleBody('.rd-ready') ?? '', /var\(--green-ink\)/);
+    assert.match(ruleBody('.rd-partial') ?? '', /var\(--amber-bg\)/);
+    assert.match(ruleBody('.rd-partial') ?? '', /var\(--amber-ink-strong\)/);
+    assert.match(ruleBody('.rd-not-ready') ?? '', /var\(--red-bg\)/);
+    assert.match(ruleBody('.rd-not-ready') ?? '', /var\(--red-ink\)/);
+    assert.match(ruleBody('.rd-unused') ?? '', /var\(--field\)/);
   });
 
-  it('ready uses green tokens, partial amber, not-ready red', () => {
-    assert.match(ruleBody('.pl-rd.rd-ready') ?? '', /var\(--green-bg\)/);
-    assert.match(ruleBody('.pl-rd.rd-ready') ?? '', /var\(--green-ink\)/);
-    assert.match(ruleBody('.pl-rd.rd-ready .rd-dot') ?? '', /var\(--green\)/);
-    assert.match(ruleBody('.pl-rd.rd-partial') ?? '', /var\(--amber-bg\)/);
-    assert.match(ruleBody('.pl-rd.rd-partial') ?? '', /var\(--amber-ink-strong\)/);
-    assert.match(ruleBody('.pl-rd.rd-partial .rd-dot') ?? '', /var\(--amber\)/);
-    assert.match(ruleBody('.pl-rd.rd-not-ready') ?? '', /var\(--red-bg\)/);
-    assert.match(ruleBody('.pl-rd.rd-not-ready') ?? '', /var\(--red-ink\)/);
-    assert.match(ruleBody('.pl-rd.rd-not-ready .rd-dot') ?? '', /var\(--red\)/);
-  });
-
-  it('has a hover state', () => {
-    assert.ok(ruleBody('.pl-rd:hover'), '.pl-rd:hover rule missing');
-  });
-
-  it('styles the flyout header, check items and engine rows', () => {
-    for (const sel of ['.readiness-header', '.readiness-check-item', '.readiness-check-item code', '.readiness-check-item a', '.readiness-engine-row']) {
-      assert.ok(ruleBody(sel), `${sel} rule missing`);
+  it('labels have no border, ring or dot', () => {
+    for (const sel of ['.pl-rd', '.pl-rd:hover', '.rd-lbl']) {
+      const body = ruleBody(sel) || '';
+      assert.doesNotMatch(body, /box-shadow|border:/, `${sel} has no ring or border`);
     }
+    assert.ok(!bare.slice(bare.indexOf('.pl-rd{')).includes('.rd-dot'), 'no dot rule in the readiness block (the run page has its own .rd-dot)');
+  });
+
+  it('the count disc is regular weight and uses --panel', () => {
+    const body = ruleBody('.pl-rd .rd-n');
+    assert.match(body, /font-weight:500/);
+    assert.match(body, /color:var\(--panel\)/);
+  });
+
+  it('the popover scrolls its body only, between a fixed head and foot', () => {
+    assert.match(ruleBody('.readiness-pop') ?? '', /display:flex;flex-direction:column/);
+    assert.match(ruleBody('.rp-body') ?? '', /overflow:auto/);
+    assert.match(ruleBody('.rp-body') ?? '', /min-height:0/);
+    assert.match(ruleBody('.rp-head') ?? '', /flex:none/);
+    assert.match(ruleBody('.rp-foot') ?? '', /flex:none/);
   });
 
   it('styles the settings card', () => {
     assert.ok(ruleBody('.readiness-settings-card'), '.readiness-settings-card rule missing');
-  });
-
-  it('reuses the existing qtune switch pattern', () => {
-    assert.ok(bare.includes('.qtune-sw'));
   });
 
   it('the readiness rules use tokens only (no raw colours)', () => {
