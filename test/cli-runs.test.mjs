@@ -212,3 +212,15 @@ test('a paused run: the detail says how to resume; after a usage limit its engin
   assert.doesNotMatch(e.stdout, /continue now/, 'another pause offers no switch');
   assert.doesNotMatch((await run(['runs', 'aaa10001'])).stdout, /Resume with/, 'a finished run has nothing to resume');
 });
+
+test('--json carries shapeStats for a shaped run (Plan it with me D28) and no shapeStats key otherwise', async () => {
+  const STATS = { questions: { asked: 2, skipped: 1 }, revises: [{ round: 1, by: 'person' }], shapeScore: 0.875,
+    reviewCycles: 2, checklist: null, cost: { shaping: 12.5, building: 30 } };
+  insertPipeline({ id: 'eee50001', projectKey: 'proj-e', title: 'shaped run', status: 'done', minutesAgo: 1 });
+  insertPipeline({ id: 'eee50002', projectKey: 'proj-e', title: 'plain run', status: 'done', minutesAgo: 1 });
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify(STATS), 'eee50001');
+  const shaped = JSON.parse((await run(['runs', 'show', 'eee50001', '--json'])).stdout);
+  assert.deepEqual(shaped.shapeStats, STATS);
+  const plain = JSON.parse((await run(['runs', 'show', 'eee50002', '--json'])).stdout);
+  assert.equal('shapeStats' in plain, false);
+});

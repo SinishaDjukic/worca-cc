@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { getStats } from '../src/core/stats.mjs';
+import { getStats, shapingGroups } from '../src/core/stats.mjs';
 import { recordCostDelta, recordAskCostDelta } from '../src/core/cost-budget.mjs';
 import { app, runs } from '../ui/server.mjs';
 
@@ -196,4 +196,42 @@ test('totals carry humanHours and savedUsd = hours × rate − spent; prev too; 
   const all = getStats({ range: 'all', now: NOW });
   assert.equal(all.totals.humanHours, 16.5);
   assert.equal(all.totals.savedUsd, Math.round((16.5 * 35 - all.totals.spentUsd) * 100) / 100);
+});
+
+// Plan it with me (D28): appended last (the tests above count this DB's rows); seeded in February 2026, a month no
+// other test uses.
+const setShape = (id, size, stats) => getDb().prepare('UPDATE pipelines SET run_size = ?, shape_stats = ? WHERE id = ?')
+  .run(size, stats ? JSON.stringify(stats) : null, id);
+
+test('shapingGroups: finished runs with a size, shaped vs unshaped per size', async () => {
+  const mk = async (cost, size, shaped, status = 'done') => {
+    const { id } = await seedPipeline('/tmp/p', { status, totalCostUsd: cost, totalActiveMs: 60000 });
+    setStarted(id, iso(2026, 2, 10));
+    setShape(id, size, shaped ? { reviewCycles: 1 } : null);
+    return id;
+  };
+  await mk(10, 'small', true); await mk(30, 'small', false); await mk(50, 'small', false);
+  await mk(90, 'large', true); await mk(99, 'large', true, 'stopped');   // not finished: left out
+  const { id: unsized } = await seedPipeline('/tmp/p', { status: 'done', totalCostUsd: 7 });
+  setStarted(unsized, iso(2026, 2, 10));                                  // no run_size: left out
+  const from = new Date(2026, 1, 1).getTime(); const to = new Date(2026, 2, 1).getTime();
+  const g = shapingGroups(from, to).groups;
+  assert.deepEqual(g.map((x) => x.size), ['small', 'large']);
+  assert.equal(g[0].shaped.runs, 1);
+  assert.equal(g[0].unshaped.runs, 2);
+  assert.equal(g[0].unshaped.avgCostUsd, 40);
+  assert.equal(g[0].shaped.avgActiveMs, 60000);
+  assert.equal(g[1].shaped.runs, 1);
+  assert.equal(g[1].unshaped.runs, 0);
+  assert.equal(g[1].unshaped.avgCostUsd, null);
+});
+
+test('GET /api/stats: shaping only with the shapeFirst flag on', async () => {
+  const saved = process.env.WORCA_FLAGS;
+  try {
+    process.env.WORCA_FLAGS = '-shapeFirst';
+    assert.equal('shaping' in await (await fetch(`${base}/api/stats?range=month`)).json(), false);
+    process.env.WORCA_FLAGS = 'shapeFirst';
+    assert.ok(Array.isArray((await (await fetch(`${base}/api/stats?range=all`)).json()).shaping.groups));
+  } finally { if (saved === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = saved; }
 });

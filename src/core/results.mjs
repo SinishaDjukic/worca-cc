@@ -159,6 +159,18 @@ export function rollupSummary(perProject) {
   return s;
 }
 
+/** A finished run's size from its results summary (Plan it with me D28): null without line counts or with no change. */
+export function sizeOfChange(summary) {
+  const s = summary && typeof summary === 'object' ? summary : null;
+  if (!s || !Number.isFinite(s.linesAdded) || !Number.isFinite(s.linesRemoved)) return null;
+  const lines = s.linesAdded + s.linesRemoved;
+  const files = (Number(s.filesNew) || 0) + (Number(s.filesChanged) || 0) + (Number(s.filesDeleted) || 0);
+  if (!lines && !files) return null;
+  if (lines <= 150 && files <= 5) return 'small';
+  if (lines <= 800 && files <= 20) return 'medium';
+  return 'large';
+}
+
 /** Write results.json into the pipeline dir and index it (best-effort index). */
 export async function persistResults(pipelineDir, results) {
   if (!pipelineDir || !results) return;

@@ -26,7 +26,7 @@ export function resolveShapeRequest({ shape, workflowId }, { enabled }) {
   const extra = Object.keys(shape || {}).filter((k) => !SHAPE_FIELDS.has(k));
   if (extra.length) return { ok: false, error: `shape has unknown field(s): ${extra.join(', ')}` };
   if (named && !isShapeWorkflowId(named)) {
-    return { ok: false, error: `a shaped run uses the Shape it first workflow (${SHAPE_WORKFLOW_ID}), not "${named}"` };
+    return { ok: false, error: `a shaped run uses the Plan it with me workflow (${SHAPE_WORKFLOW_ID}), not "${named}"` };
   }
   const p = normalizePerspectives(shape?.perspectives ?? [...DEFAULT_PERSPECTIVES]);
   if (!p.ok) return { ok: false, error: p.error };
@@ -49,7 +49,11 @@ export function validatePlanAnswer(raw, { revisable = false, perspectives = null
   if (feedback.length > PLAN_FEEDBACK_MAX) {
     return { ok: false, errors: [{ path: 'feedback', code: 'too-long', message: `feedback is over ${PLAN_FEEDBACK_MAX} characters` }] };
   }
-  const payload = { decision: 'revise', feedback };
+  const source = raw.source === undefined ? 'person' : raw.source;
+  if (source !== 'person' && source !== 'check') {
+    return { ok: false, errors: [{ path: 'source', code: 'invalid', message: 'source must be person or check' }] };
+  }
+  const payload = { decision: 'revise', feedback, ...(source === 'check' ? { source } : {}) };
   if (raw.perspectives !== undefined) {
     const p = normalizePerspectives(raw.perspectives);
     if (!p.ok) return { ok: false, errors: [{ path: 'perspectives', code: 'invalid', message: p.error }] };
