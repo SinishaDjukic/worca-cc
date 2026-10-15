@@ -304,6 +304,8 @@ import { shapeFirstEnabled, requireShapeFirst } from '../src/core/shape/gate.mjs
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
+import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
+  rechainWaiting, replanRest, setApproveEach, stackedPrBase, recordShapePlan, listShapePlans } from '../src/core/shape/features.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
@@ -1184,9 +1186,21 @@ function wireRun(entry) {
         entry.title = payload.title;
       }
 
+      // F49: the feature card shows each slice's live state (liveSliceOf). Reaching or answering a plan ask, or
+      // Clarify's questions, changes no status, so key on everything the view reads. Gated and caught (F42).
+      if (orch.runShape?.slice && (name === 'question' || name === 'state' || name === 'exec' || name === 'done')) {
+        const pq = entry.pendingQuestion;
+        const key = `${entry.status}|${pq ? pq.kind : ''}|${orch.state?.shaping?.approved ? 1 : 0}`;
+        if (key !== entry._featureKey) {
+          entry._featureKey = key;
+          broadcastFeaturesOf(() => [featureOfPipeline(entry.pipelineId)?.featureId].filter(Boolean));
+        }
+      }
+
       record(event);
     });
   }
+  subscribe(orch, 'shape-feature', (p) => broadcastFeature(p && p.id));
 }
 
 // ---------------------------------------------------------------------------
@@ -2099,7 +2113,7 @@ const startRunHandler = async (req, res) => {
     // plan at run start; here we only normalize + reject an unknown id up front
     // so the client gets a clean 400 instead of a mid-run error event.
     // Shape it first (spec D9/D12): `shape` and the shape workflows only while the gate is on.
-    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { enabled: shapeFirstEnabled() });
+    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { enabled: shapeFirstEnabled(), internal: !!internal });
     if (!shapeReq.ok) return badRequest(res, shapeReq.error);
     const { shape } = shapeReq;
     const workflowId = shapeReq.workflowId || 'wf_default';
@@ -2513,6 +2527,7 @@ const startRunHandler = async (req, res) => {
       try {
         askLinkRun(askLink.threadId, { runId, cardId: askLink.cardId, status: entry.status });
         flipCard(askLink.threadId, askLink.cardId, { state: 'started', runId });
+        if (shape) { try { recordShapePlan({ threadId: askLink.threadId, cardId: askLink.cardId, title }); } catch (err) { console.error(`[worca-ui] shape plan record failed: ${err?.message || err}`); } }
         // The card's pending comment ids move onto the link row, keyed by the minted
         // UUID exactly as pipeline_id is before it exists. Consumed one-shot: a card
         // launches at most once. Own try/catch — comment bookkeeping must never
@@ -3091,6 +3106,7 @@ export async function schedulerTick({ now = Date.now() } = {}) {
       staggerMs: SCHEDULER_STAGGER_MS,
     });
     for (const id of [...out.failed, ...out.missed]) releaseAskCard(getTicket(id));
+    broadcastFeaturesOf(() => featuresOfTickets([...out.fired, ...out.missed, ...out.failed]));
     if (out.fired.length || out.missed.length || out.skipped.length || out.failed.length || out.retried.length) {
       emitChanged('schedules-changed', 'tick');
     }
@@ -3932,14 +3948,16 @@ app.post('/api/runs/:id/answer', (req, res) => {
   const runId = req.params.id;
   const entry = runs.get(runId);
   if (!entry) return res.status(404).json({ error: 'unknown run' });
-  const { id, decision, feedback, perspectives } = req.body || {};
+  const { id, decision, feedback, perspectives, edits, approveEach } = req.body || {};
   const pq = entry.pendingQuestion;
   if (!pq || pq.kind !== PLAN_ASK_KIND || !id || pq.id !== id) {
     return res.status(409).json({ error: 'no plan approval with that id is waiting on this run' });
   }
   try {
     answerRun(runId, id, { decision, ...(feedback !== undefined ? { feedback } : {}),
-      ...(perspectives !== undefined ? { perspectives } : {}) }, actorOf(req));
+      ...(perspectives !== undefined ? { perspectives } : {}),
+      ...(edits !== undefined ? { edits } : {}),
+      ...(approveEach !== undefined ? { approveEach } : {}) }, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
     if (err && err.code === 'INVALID_ANSWER') {
@@ -3947,6 +3965,127 @@ app.post('/api/runs/:id/answer', (req, res) => {
     }
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
+});
+
+/** The live overlay featureView needs (L8): the entry driving this pipeline or run (liveRunEntry takes either, F26).
+ *  A settled entry other than `paused` is ignored, so the pipelines row decides done / stopped / error. */
+function liveSliceOf(id) {
+  const e = id ? liveRunEntry(id) : null;
+  if (!e || !e.orch) return null;
+  const status = String(e.status || '');
+  if (SETTLED_RUN.has(status) && status !== 'paused') return null;
+  const pq = e.pendingQuestion;
+  return { runId: e.id, status, waiting: !!(pq && pq.kind === PLAN_ASK_KIND), asking: !!(pq && pq.kind !== PLAN_ASK_KIND),
+    approved: !!e.orch.state?.shaping?.approved };
+}
+function broadcastFeature(id) { if (id && shapeFirstEnabled()) broadcast({ type: 'shape-feature', id }); }
+/** F42: the run-event and tick hooks. Gate first (no query while it is off), and never let a throw escape: in wireRun
+ *  it would drop the run's own done/state frame (record() comes after the hook), in schedulerTick the rest of the tick. */
+function broadcastFeaturesOf(lookup) {
+  if (!shapeFirstEnabled()) return;
+  try { for (const id of lookup()) broadcastFeature(id); }
+  catch (err) { console.error(`[worca-ui] shape-feature broadcast failed: ${err?.message || err}`); }
+}
+/** F29: an async handler never lets a throw escape (Express 4, no unhandledRejection handler). /api/resume's mapping. */
+function shapeRouteError(res, err) {
+  if (res.headersSent) return;
+  if (err instanceof ResumeError) {
+    return res.status(err.status).json(err.body.code === 'engine-refused' ? { ...err.body, error: engineRefusalFor(err.body.error, 'ui') } : err.body);
+  }
+  res.status(500).json({ error: err && err.message ? err.message : String(err) });
+}
+/** featureView/actions' answer: null → 404, {status, error} → that refusal. Returns true when it answered. */
+function shapeRefused(res, out) {
+  if (!out) { res.status(404).json({ error: 'unknown feature' }); return true; }
+  if (out.error) { res.status(out.status || 409).json({ error: out.error }); return true; }
+  return false;
+}
+
+app.get('/api/shape/features/:id', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    // F47: a re-planned feature answers with the feature that carries on; `replanOf` names the one asked for.
+    const cur = currentFeatureId(req.params.id);
+    const view = featureView(cur, { live: liveSliceOf });
+    if (!view) return res.status(404).json({ error: 'unknown feature' });
+    res.json({ ...view, replanOf: cur !== req.params.id ? req.params.id : null });
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+app.post('/api/shape/features/:id/cancel', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const out = cancelRest(req.params.id, { by: actorOf(req) });
+    if (shapeRefused(res, out)) return;
+    emitChanged('schedules-changed', 'canceled');
+    broadcastFeature(req.params.id);
+    res.json({ ok: true, ...out, feature: featureView(req.params.id, { live: liveSliceOf }) });
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+app.post('/api/shape/features/:id/resume', async (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const by = actorOf(req);
+    const out = resumeFeature(req.params.id, { live: liveSliceOf, by });
+    if (shapeRefused(res, out)) return;
+    if (out.action === 'none') return res.status(409).json({ error: 'no slice is stopped' });
+    let runId = null;
+    if (out.action === 'resume') {
+      const r = await resumeRun(out.pipelineId, { by, mock: out.mock === true });
+      runId = r && r.runId ? r.runId : null;
+      rechainWaiting(req.params.id, out.index, { by });     // F30: an interrupted slice already missed its successor
+      emitChanged('schedules-changed', 'updated');
+    } else {
+      emitChanged('schedules-changed', 'created');
+      await schedulerTick();                                  // best effort: null while a tick is busy
+    }
+    broadcastFeature(req.params.id);
+    res.json({ ok: true, ...out, ...(runId ? { runId } : {}) });
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+app.post('/api/shape/features/:id/replan', async (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const out = replanRest(req.params.id, { live: liveSliceOf, by: actorOf(req) });
+    if (shapeRefused(res, out)) return;
+    emitChanged('schedules-changed', 'created');
+    await schedulerTick();
+    broadcastFeature(req.params.id);
+    // A ticket's id is the run id it fires as. It may not be live yet: the client never navigates to it, the
+    // feature view shows "Re-planned" and the Running list picks the run up when it starts.
+    res.json({ ok: true, runId: out.ticketId });
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+app.post('/api/shape/features/:id/approve-each', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const on = req.body && req.body.on;
+    if (typeof on !== 'boolean') return badRequest(res, 'on must be true or false');
+    if (!setApproveEach(req.params.id, on)) return res.status(404).json({ error: 'unknown feature' });
+    broadcastFeature(req.params.id);
+    res.json({ ok: true, approveEach: on });
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+/** A plan row's state when its run is not live: the pipelines row first, then the link row (follow.mjs). */
+const PLAN_STATE = { done: 'done', stopped: 'stopped', error: 'stopped', interrupted: 'stopped', paused: 'paused', starting: 'running', running: 'running' };
+
+app.get('/api/shape/plans', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const rows = listShapePlans({ limit: 30 }).map((p) => {
+      // Before the run's first `state` event the link has no pipeline id yet: fall back to its run id.
+      const live = liveSliceOf(p.pipelineId) || liveSliceOf(p.runId);
+      // liveSliceOf keeps a `paused` entry (F26): show it as paused, not as shaping.
+      const state = live ? (live.status === 'paused' ? 'paused' : live.waiting ? 'waiting' : live.approved ? 'running' : 'shaping')
+        : PLAN_STATE[p.pipelineStatus || p.linkStatus] || 'shaping';
+      return { ...p, state, feature: p.featureId ? featureView(currentFeatureId(p.featureId), { live: liveSliceOf }) : null };
+    });
+    res.json({ plans: rows });
+  } catch (err) { shapeRouteError(res, err); }
 });
 
 const PLAN_TEXT_MAX = 512 * 1024;   // characters (UTF-16 units), not bytes
@@ -6975,9 +7114,13 @@ app.get('/api/pr/remotes', async (req, res) => {
   // chainBaseBranchesOf answers [] for a workspace row, so a member's chain is its own source.
   const walked = chainBaseBranchesOf(resolved.state.id || resolved.id);
   const chain = (walked.length ? walked : (source ? [source] : [])).filter((b) => b !== feature);
-  const defaultBase = chain[0] || null;
-  const rl = await listRemotes(repoDir);
   const pipelineId = resolved.state.id || resolved.id;
+  // L10: a slice's PR stacks on the previous slice's branch until that slice's PR merges. The route is async with
+  // no try/catch (F29): a failed feature lookup keeps the chain-root default instead of rejecting.
+  let stacked = null;
+  try { stacked = stackedPrBase(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
+  const defaultBase = stacked || chain[0] || null;
+  const rl = await listRemotes(repoDir);
   if (!rl.ok) {
     const issue = runSourceIssue(pipelineId, { memberKey: target.memberKey });
     return res.status(500).json({ error: `git remote failed: ${rl.error}`, chain, defaultBase, issue });
@@ -10563,6 +10706,14 @@ app.get('/api/ask/runs/:id', async (req, res) => {
     const entry = liveRunEntry(id);
     const state = readPipelineStateById(entry && entry.pipelineId ? entry.pipelineId : id);
     if (!state) return res.status(404).json({ error: 'run not found' });
+    // Shape it first, plan in slices: state.shaping is in memory only (F46), so a finished or unloaded slice 1 would
+    // lose its feature strip. The feature row is durable. Best effort, and only while the gate is on.
+    if (!state.shaping && shapeFirstEnabled()) {
+      try {
+        const at = featureOfPipeline(state.id);
+        if (at && at.idx === 1) state.shaping = { feature: { id: at.featureId, index: 1 } };
+      } catch { /* the feature tables are best-effort here */ }
+    }
     const extras = await askRunCardExtras(findPipelineRowById(state.id));
     res.json({ state, live: entry ? { runId: entry.id, status: entry.status } : null, extras });
   } catch (err) {

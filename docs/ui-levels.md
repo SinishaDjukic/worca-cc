@@ -171,6 +171,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Plan approval (Shape it first): the plan, its shape check, Run this plan / Send changes / Stop | all (rule 1) |
 | Plan approval extras: perspective chips + Update plan, Fix, Save to plans/ | S |
 | Plan approval: Open in New run | A |
+| Slice outline approval (Plan in slices): the slices, the outline check, Plan slice 1 / Don't slice / Send changes / Stop | all (rule 1) |
+| Slice outline extras: Merge with next, Remove, Fix, "Approve each slice's plan" | S |
 | Run page Overview: Perspective checklists (Shape it first, gated), one group per review cycle — met / unmet / n/a / not reported with evidence; the newest open, older ones folded | S |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
 | Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
@@ -312,6 +314,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: run card, perspective chips and the Shape it first nudge (open decisions, Run as is / Shape it first with estimates) | S |
 | Ask: the run card's question, "Answer and draft" / "Skip, draft with defaults" (shaping runs) | all (rule 1) |
 | Ask: live run card, "Clarify ✓ · Plan ✓ · Refine ✓ while shaping", plan file, saved path + Open | S |
+| Ask: live run card, the feature strip of a sliced plan: progress, each slice's state and PR, Review plan / Answer / Open / Resume slice / Re-plan the rest / Cancel the rest / Open the re-plan, "Approve each slice's plan" | S |
 | Ask: run card result, the checklist tally ("Checklist: 3 met · 1 unmet · 1 n/a") on a finished shaped run | S |
 | Ask: the run card's agent model label, its artifact chips and "All artifacts", Create pull request / View pull request | A — as on the run page |
 | Ask: the run card's agent "cycle N" label | E — a loop badge |
@@ -325,7 +328,8 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: model picker, scope, cost meter, tool rows, branches, guardrails, "Open in New Pipeline" | A |
 | Ask: the chevron on a reply's activity line (`Done · 7.4s · …`) | A when it opens tool rows, E when it opens only sub-agents; the line itself shows at every level |
 | Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E |
-| Chat home: heading, composer, the New run / Build workflow / Track a run / Write a script / Clone a repo tiles, More (Step away), the four tabs and their run tiles, the Workflows and Away mode promos | S |
+| Chat home: heading, composer, the New run / Build workflow / Track a run / Write a script / Clone a repo tiles, More (Step away), the tabs (Needs you, Running, Recent chats, Plans while Shape it first is on, Workflows) and their run tiles, the Workflows and Away mode promos | S |
+| Chat home: the Plans tab (Shape it first, gated): shaped plans newest first with their state, and each sliced feature's card | S |
 | Chat home: the Schedule a run and Explain a diff tiles; More › New workspace, Remember something, Find tasks; the Schedules promo | A — with the page or surface that owns each feature |
 | Chat home: More › Team metrics, Add a model | E — with the Team metrics and Models pages |
 | Getting started: all nine tiles show at every level, ordered Simple → Advanced → Expert; steps 6 and 7 wear "Advanced", steps 8 and 9 "Expert" | S |

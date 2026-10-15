@@ -1,6 +1,7 @@
 // ui/public/shape/plan-body.mjs — the `plan` ask (spec §3.4, D10): Chat's live run card and the run page. With the
 // gate off (deps.extras false) it keeps approve / revise / stop, so a held run is never stranded (D12, S4).
 import { buildPerspectiveChips } from './chips.mjs';
+import { buildCheckRow } from './check-row.mjs';
 import { planStats, perspectiveChangeFeedback, fixFeedback, sectionOwners } from './plan-text.mjs';
 import { perspectiveByKey } from '../../../src/shared/shape/perspectives.mjs';
 import { tagLevel } from '../ui-level.mjs';
@@ -53,19 +54,7 @@ export function renderPlanBody(panel, pq, deps) {
 
   // ---- shape check row (D6): passing chips; each failing check with Fix
   if (check && Array.isArray(check.items)) {
-    const row = h('div', 'plan-check');
-    for (const it of check.items) {
-      if (it.pass) { row.appendChild(h('span', 'plan-check-ok', `✓ ${it.label}`)); continue; }
-      const bad = h('div', 'plan-check-bad');
-      bad.append(h('span', 'plan-check-label', it.label), h('span', 'plan-check-detail', it.detail || ''));
-      if (deps.extras && plan.revisable) {
-        const fix = btn('plan-fix', 'Fix');
-        fix.addEventListener('click', () => send({ decision: 'revise', feedback: fixFeedback(it) }));
-        bad.appendChild(fix);
-      }
-      row.appendChild(bad);
-    }
-    body.appendChild(row);
+    body.appendChild(buildCheckRow(doc, check, { onFix: deps.extras && plan.revisable ? (it) => send({ decision: 'revise', feedback: fixFeedback(it) }) : null }));
   }
 
   // ---- the plan, collapsed to ~40%, with perspective tags and grounding marks

@@ -178,10 +178,13 @@ export function createProposalValidator({
     if (inp.shape != null || isShapeWorkflowId(str(inp.workflowId))) {   // null = absent, as for the other optional fields
       let shapeIn = inp.shape;
       if (shapeIn && typeof shapeIn === 'object' && !Array.isArray(shapeIn)) {
-        const { slices, ...rest } = shapeIn;              // accepted, not honoured until slice 4 (S10)
+        const { slices, ...rest } = shapeIn;
         if (slices !== undefined && slices !== 'auto' && slices !== 'off') errors.push(PROPOSAL_ERRORS.shapeSlices);
-        shapeIn = rest;
+        shapeIn = slices === 'auto' || slices === 'off' ? { ...rest, slices } : rest;
       }
+      // L14: on a shaped proposal the model's assess.size tells the Planner the task was judged large.
+      const size = inp.assess && ['small', 'medium', 'large'].includes(inp.assess.size) ? inp.assess.size : undefined;
+      if (size && shapeIn && typeof shapeIn === 'object' && !Array.isArray(shapeIn) && shapeIn.size === undefined) shapeIn = { ...shapeIn, size };
       // The UX variant named with no perspectives (no shape, or shape: {slices}): keep UX, or resolveShapeRequest's
       // defaults would quietly drop to wf_shape.
       if (str(inp.workflowId) === SHAPE_UX_WORKFLOW_ID

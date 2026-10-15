@@ -240,6 +240,8 @@ import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { applyShapeFirstHello, shapeFirstOn } from './chat/shape-gate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
+import { renderOutlineBody } from './shape/outline-body.mjs';
+import { renderFeature } from './shape/feature-view.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun } from './shape/plan-text.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
@@ -305,6 +307,72 @@ const chatDeps = {
   openRunPanel: (ref, opts) => chatOpenRunPage(ref, opts),
   openArtifact: (ref, artifact) => chatDeps.openRunPanel(ref, { tab: 'artifacts' }),
 };
+
+/** L11: open feature views by id, repainted on `shape-feature` and `schedules-changed`. host -> feature id. */
+const SHAPE_FEATURE_HOSTS = new Map();
+/** F33: Chat's own run panel (chatDeps.openRunPanel is openChatRunPanel once Chat is installed): it stays in Chat.
+ *  The full ref: a run id alone can be a superseded paused copy, or one a restarted server no longer knows. */
+function openShapeRun(ref, projectKey) {
+  const r = { ...(ref.runId ? { runId: ref.runId } : {}), ...(ref.pipelineId ? { pipelineId: ref.pipelineId, projectKey } : {}) };
+  return r.runId || r.pipelineId ? chatDeps.openRunPanel(r) : null;
+}
+async function paintShapeFeature(host) {
+  const id = SHAPE_FEATURE_HOSTS.get(host);
+  if (!id) return;
+  // Bumped on every path, the gate-off one too, so a fetch in flight never lands after the host was cleared.
+  const seq = (host.__shapeSeq = (host.__shapeSeq || 0) + 1);       // the last paint wins (act + WS frames race)
+  if (!shapeFirstOn()) { host.replaceChildren(); host.dataset.painted = ''; host.__shapeWant = null; return; }
+  const r = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
+  const f = r && r.ok ? await r.json().catch(() => null) : null;
+  if (seq !== host.__shapeSeq || SHAPE_FEATURE_HOSTS.get(host) !== id) return;
+  if (!f) {
+    // An unknown feature (404) empties the host. Any other failure keeps the last view and its error line.
+    if (r && r.status === 404) { host.replaceChildren(); host.dataset.painted = ''; host.__shapeShown = null; }
+    return;
+  }
+  // F47: the route follows replaced_by, so f.id can be a newer feature than the host's id. Frames name f.id, and the
+  // actions must reach it.
+  host.__shapeShown = f.id;
+  // A rebuild drops the focus (rule: app-js-repaint-drops-focus): give it back to the same control. An action names
+  // its control itself (F39: in Chromium the disabled button has already lost the focus); a WS repaint reads it.
+  const act = host.__shapeFocus
+    || (host.contains(document.activeElement) && document.activeElement.dataset ? document.activeElement.dataset.act : null);
+  host.__shapeFocus = null;
+  host.replaceChildren(renderFeature(document, f, {
+    confirm: confirmModal,
+    error: host.__shapeErr || null,
+    openSlice: (s) => openShapeRun(s, f.projectKey),
+    openRun: (ref) => openShapeRun(ref, f.projectKey),
+    act: async (action, body, { focus = null } = {}) => {
+      const res = await fetch(`/api/shape/features/${encodeURIComponent(f.id)}/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) }).catch(() => null);
+      const out = res ? await res.json().catch(() => ({})) : {};
+      host.__shapeErr = res && res.ok ? null : (out.error || 'That did not work. Try again.');
+      host.__shapeFocus = focus;
+      await paintShapeFeature(host);                         // carries the error (deps.error) across the rebuild
+      return res && res.ok ? { ok: true } : { ok: false, error: host.__shapeErr };
+    },
+  }));
+  host.dataset.painted = id;
+  if (act) { const again = host.querySelector(`[data-act="${act}"]`); if (again && !again.disabled) again.focus(); }
+}
+/** Mount (or re-point) a host. F41: the run card calls it on every repaint (once a second), so it fetches only when
+ *  the host is pointed at a new id. A pending or failed fetch is not retried from here: `shape-feature`,
+ *  `schedules-changed` and `hello` repaint every host. */
+function mountShapeFeature(host, id) {
+  if (host.__shapeWant === id) return;
+  host.__shapeWant = id;
+  SHAPE_FEATURE_HOSTS.set(host, id);
+  host.__shapeErr = null;
+  paintShapeFeature(host);
+}
+function refreshShapeFeatures(id = null) {
+  for (const [host, fid] of SHAPE_FEATURE_HOSTS) {
+    if (!host.isConnected) { SHAPE_FEATURE_HOSTS.delete(host); continue; }
+    if (!id || fid === id || host.__shapeShown === id) paintShapeFeature(host);
+  }
+}
+chatDeps.mountFeature = mountShapeFeature;                  // the run card reaches it through ask-panel's cardCtx (F33)
+if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, refresh: refreshShapeFeatures };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -1337,6 +1405,15 @@ function handleServerMessage(msg) {
     activityMenu?.schedulesChanged();   // an open Activity refetches its Scheduled tab; a closed one forgets it
     // Chat P4: a paused run in the panel offers "Resume at" off the same tickets.
     if (currentView() === 'schedules' || inRunsView() || crpShowsRun()) void schedulesView.load().then(() => { if (inRunsView()) paintRunsList(); repaintLimitNotices(); });
+    // Last, so even a throw could not cost the Schedules page its refresh. chatHome is null until mountChatHome (F40).
+    refreshShapeFeatures();
+    chatHome?.refreshPlans();
+    return;
+  }
+  // Shape it first: a feature's slices changed (an action, a slice's run, the scheduler tick). L11.
+  if (msg.type === 'shape-feature') {
+    refreshShapeFeatures(msg.id);
+    chatHome?.refreshPlans();
     return;
   }
   if (msg.type === 'notification' || msg.type === 'notifications-changed') {
@@ -1602,6 +1679,7 @@ function onHello(msg) {
   noteBoot(state, msg.bootId, runs);   // a restarted server numbers run events from 1 again
   applyServerMock(msg.serverMock);     // every hello: a restarted server may have changed mode
   applyShapeFirstHello(msg);
+  refreshShapeFeatures();   // a view emptied while the gate was off comes back
   const shapeLink = document.getElementById('shapeChatLink');
   if (shapeLink) shapeLink.hidden = !shapeFirstOn();
   // A gate that arrives while the home is open shows its tile. The spread keeps scripts/tasks: setFlags replaces the set.
@@ -5937,11 +6015,20 @@ registerAskRenderer('workflow', {
 // Shape it first (S4): registered ungated: the only way to answer a run still held when the gate goes off.
 // title/count fill the hidden .qpanel-head (F28); askHeading is what people read. Kept for completeness.
 registerAskRenderer('plan', {
-  title: (pq) => `Plan ready for your approval · v${(pq.plan && pq.plan.round) || 1}`,
-  count: (pq) => { const c = pq.plan && pq.plan.check; return c && Number.isFinite(c.total) ? `Shape ${c.passed}/${c.total}` : null; },
-  render: (panel, pq, ctx) => renderPlanBody(panel, pq, planBodyDeps(ctx)),
+  title: (pq) => (pq.plan && pq.plan.outline ? `Slices ready for your approval · v${pq.plan.round || 1}` : `Plan ready for your approval · v${(pq.plan && pq.plan.round) || 1}`),
+  count: (pq) => { const c = pq.plan && pq.plan.check; return c && Number.isFinite(c.total) ? `${pq.plan.outline ? 'Outline' : 'Shape'} ${c.passed}/${c.total}` : null; },
+  render: (panel, pq, ctx) => (pq.plan && pq.plan.outline
+    ? renderOutlineBody(panel, pq, outlineBodyDeps(ctx))
+    : renderPlanBody(panel, pq, planBodyDeps(ctx))),
   setErrors: (panel, errors) => { if (panel && panel.__plan) panel.__plan.setErrors(errors); },
 });
+
+/** The outline body's deps: the plan body's posting rule (the gate read at post time, S4) and its confirm dialog. */
+function outlineBodyDeps(ctx) {
+  const r = ctx.run;
+  return { doc: ctx.doc, run: r, extras: shapeFirstOn(), confirm: confirmModal,
+    submit: (payload) => postAnswer(r, payload, { plan: shapeFirstOn() }) };
+}
 
 function planBodyDeps(ctx) {
   const r = ctx.run;
@@ -31179,6 +31266,7 @@ function askHeading(r, pq) {
     case 'plan': {                                 // spec §3.4 header: version and shape score
       const p = pq.plan || {};
       const c = p.check;
+      if (p.outline) return `Slices ready for your approval · v${p.round || 1}${c && Number.isFinite(c.total) ? ` · Outline ${c.passed}/${c.total}` : ''}`;
       const score = c && Number.isFinite(c.total) ? ` · Shape ${c.passed}/${c.total}` : '';
       return `Plan ready for your approval · v${p.round || 1}${score}`;
     }
@@ -33651,6 +33739,8 @@ function mountChatHome() {
       // through goRunsList (runsUi.skipRestore), as "Show in Runs" does.
       navigate: (hash) => { const to = String(hash || '').replace(/^#/, ''); if (to === 'runs') goRunsList(); else location.hash = to; },
       level: () => currentLevel(),
+      plans: chatHomePlans,
+      mountFeature: mountShapeFeature,
     },
   });
 }
@@ -33735,6 +33825,12 @@ async function chatHomeThreads() {
   const res = await fetch('/api/ask/threads?limit=6');
   const data = await safeJson(res);
   return res.ok && data && Array.isArray(data.threads) ? data.threads : [];
+}
+/** The Plans tab's rows (gated GET /api/shape/plans): a shaped run per Chat card, with its feature view. */
+async function chatHomePlans() {
+  const res = await fetch('/api/shape/plans');
+  const data = await safeJson(res);
+  return res.ok && data && Array.isArray(data.plans) ? data.plans : [];
 }
 async function chatHomeWorkflows() {
   const [list, all, scripts] = await Promise.all([

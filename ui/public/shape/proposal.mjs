@@ -40,6 +40,10 @@ export function shapeCardExtras(doc, card) {
   return {
     el,
     /** The POST /api/run fields of a shaped start: the server picks wf_shape or wf_shape_ux from the perspectives. */
-    body: () => ({ workflowId: 'wf_shape', shape: { perspectives: chips.value() } }),
+    body: () => ({ workflowId: 'wf_shape', shape: {
+      perspectives: chips.value(),
+      ...(card.shape && card.shape.slices ? { slices: card.shape.slices } : {}),
+      ...((card.shape && card.shape.size) || (card.nudge && card.nudge.size) ? { size: (card.shape && card.shape.size) || card.nudge.size } : {}),
+    } }),
   };
 }

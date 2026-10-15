@@ -858,6 +858,7 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Architecture](docs/ARCHITECTURE.md) — the whole stack in one picture, and how Auto picks a run's topology
 - [Scripts](docs/scripts.md) — script cards that run your own program instead of an agent, the Library's Scripts tab, testing a script by itself
 - [Scheduled runs](docs/scheduled-runs.md) — start a run later, once or on a repeat, from the web UI, the CLI or the API
+- [Shape it first](docs/shape-it-first.md) — plan a task with Worca before it builds, in Chat, and cut a large one into slices
 - [Guardrails](docs/guardrails.md) — per-run policy sets (Permissive, Normal, Strict), enforcement, honest limitations
 - [Workspace map](docs/workspace-map.md) — how a workspace scan maps relations, reviewing them, measuring a scan
 - [Actions](docs/actions.md) — check out a finished run and run the project's commands from Worca

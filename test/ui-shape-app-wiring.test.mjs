@@ -1,0 +1,279 @@
+// test/ui-shape-app-wiring.test.mjs — Shape it first, slice 4: app.js's wiring of the outline ask and the feature
+// view. The `plan` renderer branches on `plan.outline` (run page + askHeading), `mountShapeFeature` paints a host from
+// GET /api/shape/features/:id (idempotent while a fetch is pending or failed, F41), `shape-feature` and
+// `schedules-changed` frames repaint the hosts (F40), a hello brings back a view emptied while the gate was off.
+// Harness: the REAL app.js under jsdom (test/helpers/run-page-boot.mjs); the mount functions are read off
+// window.__shapeFeature, the test seam app.js exposes beside its other window.__* hooks.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { bootApp, runPanel } from './helpers/run-page-boot.mjs';
+
+const GATE = { features: { shapeFirst: true } };
+const click = (ctx, el) => el.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+const res = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
+
+// ---- the outline ask on the run page -------------------------------------------------------------------------------
+
+const RUN_ID = 'run-outline';
+const slice = (id, o = {}) => ({ id, title: `Slice ${id}`, goal: `Make ${id} possible for people`, inScope: ['a'], outOfScope: ['b'],
+  acceptance: ['GET /api/x returns 200'], dependsOn: [], estimate: 'medium', ...o });
+const OUTLINE = { why: 'The change is large.', slices: [slice('s1'), slice('s2', { dependsOn: ['s1'], estimate: 'large' })] };
+const OUTLINE_Q = { id: 'plan-outline-n_plan-1', kind: 'plan',
+  plan: { port: 'plan', round: 1, revisable: true, nodeId: 'n_plan', outline: OUTLINE,
+    check: { ok: true, passed: 5, total: 5, items: [], grounding: [] } } };
+
+function recorder() {
+  const posts = [];
+  const fetchHandler = (url, opts) => {
+    if (url === `/api/runs/${RUN_ID}/answer` || url === '/api/answer') { posts.push({ url, body: JSON.parse(opts.body) }); return res(200, { ok: true }); }
+    return null;
+  };
+  return { posts, fetchHandler };
+}
+
+async function openOutline({ gate = true } = {}) {
+  const r = recorder();
+  const ctx = await bootApp({ fetchHandler: r.fetchHandler });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', ...(gate ? GATE : {}), runs: [{ runId: RUN_ID, title: 'Outline demo', projectDir: '/tmp/p', status: 'running', kind: 'run',
+    startedAt: '2026-01-01T00:00:00Z', shaping: { perspectives: [], rounds: [], approved: null, savedTo: null }, pendingQuestion: OUTLINE_Q }] });
+  ctx.go(`running/${RUN_ID}`);
+  await ctx.settle();
+  return { ctx, panel: runPanel(ctx), ...r };
+}
+
+test('a pending outline ask renders the outline body, with the outline heading', async () => {
+  const { ctx, panel } = await openOutline();
+  assert.ok(panel.querySelector('.outline-body'), 'the outline body is drawn');
+  assert.equal(panel.querySelector('.plan-approve'), null, 'not the plan body');
+  assert.equal(ctx.window.document.querySelector('#run-detail .rd-ask-head').textContent,
+    'Slices ready for your approval · v1 · Outline 5/5');
+});
+
+test('gate on: Plan slice 1 posts the gated answer route', async () => {
+  const { ctx, panel, posts } = await openOutline();
+  click(ctx, panel.querySelector('.outline-approve'));
+  await ctx.settle();
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, `/api/runs/${RUN_ID}/answer`);
+  assert.equal(posts[0].body.decision, 'approve');
+  assert.equal(posts[0].body.approveEach, true);
+});
+
+test('gate off: Plan slice 1 posts /api/answer, and no merge/remove is offered', async () => {
+  const { ctx, panel, posts } = await openOutline({ gate: false });
+  assert.equal(panel.querySelector('.outline-merge'), null);
+  click(ctx, panel.querySelector('.outline-approve'));
+  await ctx.settle();
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, '/api/answer');
+  assert.equal(posts[0].body.runId, RUN_ID);
+  assert.equal(posts[0].body.payload.decision, 'approve');
+});
+
+// ---- the feature view's mount --------------------------------------------------------------------------------------
+
+const FEATURE = (id = 'feat-1', o = {}) => ({ id, title: 'Big change', status: 'active', projectKey: 'proj', done: 1, total: 3, open: true,
+  halted: null, approveEach: true, slices: [
+    { index: 1, title: 'First', state: 'done', pipelineId: 'p1', runId: null },
+    { index: 2, title: 'Second', state: 'planned', pipelineId: null, runId: null },
+    { index: 3, title: 'Third', state: 'planned', pipelineId: null, runId: null },
+  ], ...o });
+
+/** A server stub: features by id, per-id GET handlers, recorded GETs/POSTs. */
+function featureServer() {
+  const s = { features: new Map(), gets: [], posts: [], getHandler: null, postHandler: null };
+  s.fetchHandler = (url, opts) => {
+    const m = /^\/api\/shape\/features\/([^/]+)(?:\/([a-z-]+))?$/.exec(url);
+    if (!m) return null;
+    const id = decodeURIComponent(m[1]);
+    if (m[2]) {
+      s.posts.push({ id, action: m[2], body: JSON.parse(opts.body || '{}') });
+      return s.postHandler ? s.postHandler(id, m[2]) : res(200, { ok: true });
+    }
+    s.gets.push(id);
+    if (s.getHandler) { const r = s.getHandler(id); if (r) return r; }
+    const f = s.features.get(id);
+    return f ? res(200, f) : res(404, { error: 'unknown feature' });
+  };
+  return s;
+}
+
+async function bootFeature({ gate = true, server = featureServer() } = {}) {
+  const ctx = await bootApp({ fetchHandler: server.fetchHandler });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', ...(gate ? GATE : {}), runs: [] });
+  await ctx.settle();
+  const seam = ctx.window.__shapeFeature;
+  const host = () => { const h = ctx.window.document.createElement('div'); ctx.window.document.body.appendChild(h); return h; };
+  return { ctx, server, seam, host };
+}
+
+test('mountShapeFeature paints the host from GET /api/shape/features/:id', async () => {
+  const server = featureServer(); server.features.set('feat-1', FEATURE());
+  const { ctx, seam, host } = await bootFeature({ server });
+  const h = host();
+  seam.mount(h, 'feat-1');
+  await ctx.settle(5);
+  assert.deepEqual(server.gets, ['feat-1']);
+  assert.ok(h.querySelector('.shape-feature'), 'the view is drawn');
+  assert.equal(h.dataset.painted, 'feat-1');
+  assert.equal(h.querySelector('.shape-feature-head').textContent, '1 of 3 slices done');
+});
+
+test('no refetch loop (F41): five mounts with the fetch pending issue one GET; after a 500 none; a frame refetches', async () => {
+  const server = featureServer(); server.features.set('feat-1', FEATURE());
+  let release; server.getHandler = () => new Promise((r) => { release = () => r(res(500, { error: 'boom' })); });
+  const { ctx, seam, host } = await bootFeature({ server });
+  const h = host();
+  for (let i = 0; i < 5; i++) seam.mount(h, 'feat-1');
+  await ctx.settle(2);
+  assert.equal(server.gets.length, 1, 'one GET for five mounts');
+  release();
+  await ctx.settle(5);
+  seam.mount(h, 'feat-1'); seam.mount(h, 'feat-1');
+  await ctx.settle(3);
+  assert.equal(server.gets.length, 1, 'a failed fetch is not retried by a mount');
+  server.getHandler = null;
+  ctx.dispatch({ type: 'shape-feature', id: 'feat-1' });
+  await ctx.settle(5);
+  assert.equal(server.gets.length, 2, 'a shape-feature frame for the id refetches');
+  assert.ok(h.querySelector('.shape-feature'));
+});
+
+test('a shape-feature frame repaints only the hosts of that id; schedules-changed and hello repaint all', async () => {
+  const server = featureServer(); server.features.set('A', FEATURE('A')); server.features.set('B', FEATURE('B'));
+  const { ctx, seam, host } = await bootFeature({ server });
+  seam.mount(host(), 'A'); seam.mount(host(), 'B');
+  await ctx.settle(5);
+  server.gets.length = 0;
+  ctx.dispatch({ type: 'shape-feature', id: 'B' });
+  await ctx.settle(5);
+  assert.deepEqual(server.gets, ['B']);
+  server.gets.length = 0;
+  ctx.dispatch({ type: 'schedules-changed' });
+  await ctx.settle(5);
+  assert.deepEqual(server.gets.sort(), ['A', 'B']);
+  server.gets.length = 0;
+  ctx.dispatch({ type: 'hello', ...GATE, runs: [] });
+  await ctx.settle(5);
+  assert.deepEqual(server.gets.sort(), ['A', 'B']);
+});
+
+test('a failed refetch (500) keeps the last view; a 404 empties the host', async () => {
+  const server = featureServer(); server.features.set('feat-1', FEATURE());
+  const { ctx, seam, host } = await bootFeature({ server });
+  const h = host();
+  seam.mount(h, 'feat-1');
+  await ctx.settle(5);
+  server.getHandler = () => res(500, { error: 'boom' });
+  ctx.dispatch({ type: 'shape-feature', id: 'feat-1' });
+  await ctx.settle(5);
+  assert.ok(h.querySelector('.shape-feature'), 'kept');
+  server.getHandler = null; server.features.delete('feat-1');
+  ctx.dispatch({ type: 'shape-feature', id: 'feat-1' });
+  await ctx.settle(5);
+  assert.equal(h.querySelector('.shape-feature'), null, 'emptied');
+  assert.equal(h.dataset.painted, '');
+});
+
+test('two paints in flight end with the later response', async () => {
+  const server = featureServer();
+  const pending = [];
+  server.getHandler = () => new Promise((r) => pending.push(r));
+  const { ctx, seam, host } = await bootFeature({ server });
+  const h = host();
+  seam.mount(h, 'feat-1');
+  ctx.dispatch({ type: 'shape-feature', id: 'feat-1' });
+  await ctx.settle(2);
+  assert.equal(pending.length, 2);
+  pending[1](res(200, FEATURE('feat-1', { done: 2 })));
+  await ctx.settle(5);
+  pending[0](res(200, FEATURE('feat-1', { done: 1 })));
+  await ctx.settle(5);
+  assert.equal(h.querySelector('.shape-feature-head').textContent, '2 of 3 slices done');
+});
+
+test('successor (F47): a host mounted with A that is answered with B posts to B and repaints on B frames', async () => {
+  const server = featureServer(); server.features.set('A', FEATURE('B', { replanOf: 'A', halted: { index: 2, state: 'stopped', waiting: [3] } }));
+  const { ctx, seam, host } = await bootFeature({ server });
+  const h = host();
+  seam.mount(h, 'A');
+  await ctx.settle(5);
+  click(ctx, h.querySelector('.shape-feature-resume'));
+  await ctx.settle(8);
+  assert.equal(server.posts[0].id, 'B');
+  assert.equal(server.posts[0].action, 'resume');
+  server.gets.length = 0;
+  ctx.dispatch({ type: 'shape-feature', id: 'B' });
+  await ctx.settle(5);
+  assert.deepEqual(server.gets, ['A'], 'the host (still pointed at A) repaints on B');
+});
+
+test('a failed action leaves its error text visible after the repaint that follows', async () => {
+  const server = featureServer(); server.features.set('feat-1', FEATURE('feat-1', { halted: { index: 2, state: 'stopped', waiting: [3] } }));
+  server.postHandler = () => res(409, { error: 'Slice 2 is still going…' });
+  const { ctx, seam, host } = await bootFeature({ server });
+  const h = host();
+  seam.mount(h, 'feat-1');
+  await ctx.settle(5);
+  click(ctx, h.querySelector('.shape-feature-resume'));
+  await ctx.settle(8);
+  const err = h.querySelector('.shape-feature-err');
+  assert.equal(err.hidden, false);
+  assert.equal(err.textContent, 'Slice 2 is still going…');
+});
+
+test('turning the gate off while a fetch is in flight leaves the host empty', async () => {
+  const server = featureServer();
+  let release; server.getHandler = () => new Promise((r) => { release = () => r(res(200, FEATURE())); });
+  const { ctx, seam, host } = await bootFeature({ server });
+  const h = host();
+  seam.mount(h, 'feat-1');
+  await ctx.settle(2);
+  ctx.dispatch({ type: 'hello', runs: [] });
+  await ctx.settle(3);
+  release();
+  await ctx.settle(5);
+  assert.equal(h.querySelector('.shape-feature'), null);
+  assert.equal(h.dataset.painted, '');
+});
+
+test('a hello with the gate back repaints a view emptied while it was off', async () => {
+  const server = featureServer(); server.features.set('feat-1', FEATURE());
+  const { ctx, seam, host } = await bootFeature({ server });
+  const h = host();
+  seam.mount(h, 'feat-1');
+  await ctx.settle(5);
+  ctx.dispatch({ type: 'hello', runs: [] });
+  await ctx.settle(5);
+  assert.equal(h.querySelector('.shape-feature'), null, 'emptied with the gate off');
+  ctx.dispatch({ type: 'hello', ...GATE, runs: [] });
+  await ctx.settle(5);
+  assert.ok(h.querySelector('.shape-feature'), 'back with the gate');
+});
+
+test('focus (F39): after a click on a control that blurs when disabled, the new control with the same data-act has it', async () => {
+  const server = featureServer(); server.features.set('feat-1', FEATURE('feat-1', { halted: { index: 2, state: 'stopped', waiting: [3] } }));
+  const { ctx, seam, host } = await bootFeature({ server });
+  const h = host();
+  seam.mount(h, 'feat-1');
+  await ctx.settle(5);
+  const old = h.querySelector('[data-act="shape-feature-resume"]');
+  const proto = Object.getPrototypeOf(old);
+  const desc = Object.getOwnPropertyDescriptor(proto, 'disabled') || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(proto), 'disabled');
+  Object.defineProperty(old, 'disabled', { configurable: true, get() { return desc.get.call(this); }, set(v) { desc.set.call(this, v); if (v) this.blur(); } });
+  old.focus();
+  click(ctx, old);
+  await ctx.settle(8);
+  const again = h.querySelector('[data-act="shape-feature-resume"]');
+  assert.notEqual(again, old, 'the view was rebuilt');
+  assert.equal(ctx.window.document.activeElement, again);
+});
+
+test('schedules-changed and shape-feature frames do not throw before the Chat home is mounted (F40)', async () => {
+  const { ctx } = await bootFeature();
+  ctx.dispatch({ type: 'schedules-changed' });
+  ctx.dispatch({ type: 'shape-feature', id: 'nope' });
+  await ctx.settle(3);
+});

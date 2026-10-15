@@ -1217,6 +1217,9 @@ test('propose_run: shape and assess exist only while the injected gate is on wit
       assert.equal(s.properties.shape.additionalProperties, false);
       assert.deepEqual(s.properties.shape.properties.perspectives.items.enum, [...PERSPECTIVE_KEYS]);
       assert.deepEqual(s.properties.shape.properties.slices.enum, ['auto', 'off']);
+      assert.match(s.properties.shape.properties.slices.description, /2–5 sequential slices/);
+      assert.doesNotMatch(s.properties.shape.properties.slices.description, /not available yet/);
+      assert.match(s.properties.assess.description, /on every coding run; on a shaped run only `size` is read/);
       assert.equal(s.properties.assess.additionalProperties, false);
       assert.deepEqual(s.properties.assess.required, ['size', 'openDecisions']);
       assert.deepEqual(s.properties.assess.properties.size.enum, ['small', 'medium', 'large']);

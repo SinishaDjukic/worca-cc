@@ -60,7 +60,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 56;
+export const SCHEMA_VERSION = 57;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1033,6 +1033,51 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
 );
 `;
 
+const SHAPE_SLICES_DDL = `
+CREATE TABLE IF NOT EXISTS shape_features (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  project_dir TEXT NOT NULL,
+  origin_pipeline_id TEXT NOT NULL,
+  source_branch TEXT,
+  outline TEXT NOT NULL,
+  request_base TEXT NOT NULL DEFAULT '{}',
+  perspectives TEXT NOT NULL DEFAULT '[]',
+  workflow_id TEXT NOT NULL,
+  approve_each INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'active',
+  proposed INTEGER,
+  merges INTEGER NOT NULL DEFAULT 0,
+  removals INTEGER NOT NULL DEFAULT 0,
+  replaces TEXT,
+  replaced_by TEXT,
+  replan_ticket_id TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS shape_feature_slices (
+  feature_id TEXT NOT NULL,
+  idx INTEGER NOT NULL,
+  slice_id TEXT,
+  title TEXT NOT NULL,
+  ticket_id TEXT,
+  pipeline_id TEXT,
+  PRIMARY KEY (feature_id, idx),
+  FOREIGN KEY (feature_id) REFERENCES shape_features (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_shape_features_origin ON shape_features (origin_pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_shape_feature_slices_pipeline ON shape_feature_slices (pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_shape_feature_slices_ticket ON shape_feature_slices (ticket_id);
+CREATE TABLE IF NOT EXISTS shape_plans (
+  thread_id TEXT NOT NULL,
+  card_id TEXT NOT NULL,
+  title TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (thread_id, card_id)
+);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1056,6 +1101,9 @@ const INCREMENTAL_TABLES = {
   pipeline_member_prs: PIPELINE_MEMBER_PRS_DDL,
   pr_watches: PR_WATCH_DDL,
   pr_watch_runs: PR_WATCH_DDL,
+  shape_features: SHAPE_SLICES_DDL,
+  shape_feature_slices: SHAPE_SLICES_DDL,
+  shape_plans: SHAPE_SLICES_DDL,
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -2137,6 +2185,7 @@ export function migrate(db) {
     if (current < 55) applySchemaV55(db);
     if (current < SCHEMA_VERSION) refreshArchitectureSeed(db);
     if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
+    if (current < 57) db.exec(SHAPE_SLICES_DDL);     // Shape it first: sliced features + Plans
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

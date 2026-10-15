@@ -38,7 +38,7 @@ function mk({ controls = {} } = {}) {
   const dom = trackDom(new JSDOM('<!doctype html><html><body></body></html>'));
   const doc = dom.window.document;
   const calls = [];
-  const ctx = { openRunPanel: (...a) => calls.push(['panel', ...a]), openArtifact: (...a) => calls.push(['artifact', ...a]), announce: (t) => calls.push(['announce', t]) };
+  const ctx = { openRunPanel: (...a) => calls.push(['panel', ...a]), openArtifact: (...a) => calls.push(['artifact', ...a]), announce: (t) => calls.push(['announce', t]), mountFeature: (host, id) => calls.push(['feature', host, id]) };
   const refreshed = [];
   const card = createChatRunCard({ doc, win: dom.window, snapshot: null, ctx, controls, ident: { ...IDENT }, refresh: () => refreshed.push(1) });
   doc.body.appendChild(card.el);
@@ -1015,6 +1015,62 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
         card.update(snap);
         assert.equal(card.el.querySelectorAll('.chat-rc-shaped-stages').length, 1);
         assert.equal(card.el.querySelectorAll('.chat-rc-shaped-open').length, 1);
+      } },
+    ]);
+  } finally {
+    applyShapeFirstHello({});
+  }
+});
+
+test('chat run card: the feature strip mounts the feature card for snap.shaping.feature, gated, right after the stats', async () => {
+  try {
+    await checkRows([
+      { name: 'a feature and the gate on: ctx.mountFeature(host, id); the strip sits right after the stats', run: () => {
+        applyShapeFirstHello({ features: { shapeFirst: true } });
+        const { card, $, calls } = mk();
+        card.update(live({ shaping: { feature: { id: 'feat-1', index: 1, total: 3 } } }));
+        const strip = $('.chat-rc-feature');
+        assert.equal(strip.hidden, false);
+        assert.equal(strip.previousElementSibling, $('.ask-rc-stats'));
+        assert.deepEqual(calls.filter((c) => c[0] === 'feature').map((c) => [c[1], c[2]]), [[strip, 'feat-1']]);
+      } },
+      { name: 'the gate off, or no feature: the strip is hidden and nothing is mounted', run: () => {
+        applyShapeFirstHello({});
+        const off = mk();
+        off.card.update(live({ shaping: { feature: { id: 'feat-1', index: 1 } } }));
+        assert.equal(off.$('.chat-rc-feature').hidden, true);
+        assert.equal(off.calls.filter((c) => c[0] === 'feature').length, 0);
+        applyShapeFirstHello({ features: { shapeFirst: true } });
+        const none = mk();
+        none.card.update(live());
+        assert.equal(none.$('.chat-rc-feature').hidden, true);
+        none.card.update(live({ shaping: { perspectives: [], rounds: [] } }));
+        assert.equal(none.$('.chat-rc-feature').hidden, true);
+        assert.equal(none.calls.filter((c) => c[0] === 'feature').length, 0);
+      } },
+      { name: 'the REST form (feature only, no approved) mounts the strip and leaves .chat-rc-shaped hidden', run: () => {
+        applyShapeFirstHello({ features: { shapeFirst: true } });
+        const { card, $, calls } = mk();
+        card.update(live({ shaping: { feature: { id: 'feat-2', index: 1 } } }));
+        assert.equal($('.chat-rc-shaped').hidden, true);
+        assert.equal($('.chat-rc-feature').hidden, false);
+        assert.equal(calls.filter((c) => c[0] === 'feature').at(-1)[2], 'feat-2');
+        assert.equal($('.chat-rc-shaped').nextElementSibling, $('.ask-rc-stats'), 'the pin: shaped line → stats');
+      } },
+      { name: 'a later snapshot without the feature hides a shown strip', run: () => {
+        applyShapeFirstHello({ features: { shapeFirst: true } });
+        const { card, $ } = mk();
+        card.update(live({ shaping: { feature: { id: 'feat-1', index: 1 } } }));
+        assert.equal($('.chat-rc-feature').hidden, false);
+        card.update(live());
+        assert.equal($('.chat-rc-feature').hidden, true);
+      } },
+      { name: 'a ctx without mountFeature leaves the strip hidden and does not throw', run: () => {
+        applyShapeFirstHello({ features: { shapeFirst: true } });
+        const dom = trackDom(new JSDOM('<!doctype html><html><body></body></html>'));
+        const card = createChatRunCard({ doc: dom.window.document, win: dom.window, snapshot: null, ctx: {}, controls: {}, ident: { ...IDENT }, refresh: () => {} });
+        card.update(live({ shaping: { feature: { id: 'feat-1', index: 1 } } }));
+        assert.equal(card.el.querySelector('.chat-rc-feature').hidden, true);
       } },
     ]);
   } finally {

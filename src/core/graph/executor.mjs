@@ -53,6 +53,7 @@ import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
 import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
+import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
 import { runScriptExecution } from './script-runner.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
@@ -444,6 +445,19 @@ const joinHints = (a, b) => [a, b].map((s) => String(s || '').trim()).filter(Boo
 
 /** The agents whose prompt carries the Perspectives block (spec D5: the planner writes for them, Refine checks them). */
 const PERSPECTIVE_AGENT_KEYS = new Set(['planner', 'refiner']);
+/** Spec §3.8: the agent that may write the slice outline, and the agents that get the slice scope (F15). */
+export const SLICE_PLANNER_KEY = 'planner';
+export const SLICE_SCOPE_AGENT_KEYS = PERSPECTIVE_AGENT_KEYS;
+
+/** The Planner's slicing text: the rules plus a revise note while the outline is open, the flat note after
+ *  Don't slice, '' otherwise. Driven by ctx fields the orchestrator sets, never by ctx.shape alone. */
+function slicingPromptBlock(ctx) {
+  if (ctx.shapeOutlineNote?.decision === 'flat') return FLAT_NOTE;
+  if (!ctx.shapeSlicing) return '';
+  return slicingBlock({ file: ctx.shapeSlicing.file, size: ctx.shapeSlicing.size || null })
+    + (ctx.shapeOutlineNote?.decision === 'revise' ? outlineFeedbackBlock(ctx.shapeOutlineNote.feedback) : '')
+    + mockMarkers({ MOCK_SLICES: ctx.shapeSlicing.file }) + '\n\n';
+}
 /** The node key whose verdict carries the plan's checklist (spec D7). Workspace runs swap it out. */
 export const CHECKLIST_REVIEWER_KEY = 'reviewer';
 
@@ -518,6 +532,10 @@ export function buildAgentPrompt(ctx) {
   const perspectives = PERSPECTIVE_AGENT_KEYS.has(node?.key) && Array.isArray(ctx.shape?.perspectives)
     ? perspectivesBlock(ctx.shape.perspectives, { refiner: node.key === 'refiner' })
     : '';
+  const slicing = node?.key === SLICE_PLANNER_KEY ? slicingPromptBlock(ctx) : '';
+  const sliceScope = SLICE_SCOPE_AGENT_KEYS.has(node?.key) && ctx.shapeSliceScope
+    ? sliceScopeBlock({ ...ctx.shapeSliceScope, refiner: node.key !== SLICE_PLANNER_KEY })
+    : '';
   // Spec D7: the approved plan's R-… items, set by the orchestrator for a shaped run's reviewer only. Driven by the
   // list, never by ctx.shape, so every unshaped and shaped-without-items prompt stays byte-identical.
   const checklist = reviewChecklistBlock(ctx.checklistItems);
@@ -534,6 +552,8 @@ export function buildAgentPrompt(ctx) {
     baseInstruction(meta.runnerType, meta) + '\n\n' +
     (hints ? hints + '\n\n' : '') +
     perspectives +
+    sliceScope +
+    slicing +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
     fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx), engine: node?.engine }) +
     workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed, serial: node?.noSubagents === true }) +

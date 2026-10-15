@@ -2049,6 +2049,13 @@ async function readResultsJson(dir) {
   }
 }
 
+/** A finished run's results.json by pipeline id (null when the row, its dir or the file is missing). */
+export async function readRunResultsById(pipelineId) {
+  const row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(String(pipelineId));
+  if (!row) return null;
+  try { return await readResultsJson(await runDirForRow(row)); } catch { return null; }
+}
+
 /**
  * Per-member facts of a WORKSPACE history row — the eligibility the UI decides on
  * (the row's own branch/survived describe the PRIMARY member only):

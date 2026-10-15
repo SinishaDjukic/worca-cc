@@ -6,7 +6,7 @@ import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 test('fresh DB has PR watch ownership tables', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
-  assert.equal(SCHEMA_VERSION, 56);
+  assert.ok(SCHEMA_VERSION >= 56);
   assert.deepEqual(db.prepare('PRAGMA table_info(pr_watches)').all().map((c) => c.name), [
     'pr_url', 'pipeline_id', 'member_key', 'push_remote', 'enabled', 'status', 'reason',
     'fix_runs', 'active_run_id', 'active_pipeline_id', 'handled', 'pending', 'retry_state',
@@ -38,6 +38,6 @@ test('a DB already holding the PR watch tables at v55 migrates to v56 unchanged'
   db.prepare("INSERT INTO pr_watches(pr_url,pipeline_id,updated_at) VALUES ('https://github.com/o/r/pull/2','origin','now')").run();
   db.exec('PRAGMA user_version = 55');
   migrate(db);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 56);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
   assert.equal(db.prepare('SELECT count(*) n FROM pr_watches').get().n, 1);
 });

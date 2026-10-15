@@ -293,13 +293,21 @@ test('Shape it first: shape / slices / schedule refusal / the gate, and the asse
     { name: 'gate off: workflowId wf_shape is refused (the slice-1 gap)', run: async () => {
       assert.deepEqual(errs(await off({ ...base, workflowId: 'wf_shape' })), ['workflow "wf_shape" is not available on this server']);
     } },
-    { name: 'slices: "off" / "auto" accepted and dropped from the card; anything else refused', run: async () => {
+    { name: 'slices: "off" / "auto" ride the card; anything else refused', run: async () => {
       for (const slices of ['off', 'auto']) {
         const card = ok(await on()({ ...base, shape: { slices } }));
-        assert.equal('slices' in card.shape, false, slices);
+        assert.equal(card.shape.slices, slices);
         assert.equal(card.workflowId, 'wf_shape');
       }
       assert.deepEqual(errs(await on()({ ...base, shape: { slices: 'yes' } })), [PROPOSAL_ERRORS.shapeSlices]);
+    } },
+    { name: 'a shaped proposal carries assess.size on card.shape; without assess or on a bad size there is none', run: async () => {
+      const card = ok(await on()({ ...base, shape: {}, assess: large }));
+      assert.equal(card.shape.size, 'large');
+      assert.equal('size' in ok(await on()({ ...base, shape: {} })).shape, false);
+      assert.equal('size' in ok(await on()({ ...base, shape: {}, assess: { size: 'huge', openDecisions: [] } })).shape, false);
+      const both = ok(await on()({ ...base, shape: { slices: 'off' }, assess: { size: 'medium', openDecisions: [] } }));
+      assert.deepEqual([both.shape.slices, both.shape.size], ['off', 'medium']);
     } },
     { name: 'shape + when is refused: a shaped run waits for the user', run: async () => {
       assert.deepEqual(errs(await on()({ ...base, shape: {}, when: '+90m' })), [PROPOSAL_ERRORS.shapeScheduled]);

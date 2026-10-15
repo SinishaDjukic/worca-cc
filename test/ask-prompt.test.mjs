@@ -860,6 +860,9 @@ test('shape section: after mcp and before commands, only with shape; the default
   assert.match(s, /^## Shape it first\n/);
   for (const phrase of ['shape: { perspectives }', 'at most 3 questions', 'Shape this task first', 'assess: { size, openDecisions, perspectives }',
     'Never give workflowId, when, every or after with shape']) assert.ok(s.includes(phrase), `states: ${phrase}`);
+  for (const phrase of ['planned in slices', "`slices: 'auto'`", "`slices: 'off'`", 'On every propose_run for a coding task, shaped or not',
+    'on a shaped run only its size is read']) assert.ok(s.includes(phrase), `states: ${phrase}`);
+  assert.ok(!s.includes('On every other propose_run'), 'the old contradicting opening is gone');
   assert.ok(!/^\s*\d+\. /m.test(s), 'not a numbered rule');
   for (const key of ['implementer', 'planner', 'refiner', 'reviewer', 'clarify', 'decomposer']) assert.ok(!s.includes(key), `no agent key (${key})`);
 });
