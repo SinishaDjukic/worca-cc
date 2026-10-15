@@ -11744,7 +11744,19 @@ function buildReadinessMenu(key, report) {
   count.type = 'button';
   title.append(count);
   head.append(title);
-  if (LEVEL_WORDS[m.level]) head.append(renderLevelLabel(m.level, { doc: document }));
+  const end = el('div', 'rp-head-end');
+  if (LEVEL_WORDS[m.level]) end.append(renderLevelLabel(m.level, { doc: document }));
+  // Closes this popover like Escape: a pointer click lets go of focus, a key press hands it back to the chip.
+  const close = el('button', 'rp-close', '×');
+  close.type = 'button';
+  close.title = 'Close';
+  close.setAttribute('aria-label', 'Close');
+  close.addEventListener('click', (e) => {
+    const rec = readinessRecs().find((r) => r.menu.contains(close));
+    if (rec) rec.fly.close(e.detail === 0 ? { refocus: true } : { blur: true });
+  });
+  end.append(close);
+  head.append(end);
   frag.append(head);
 
   const body = el('div', 'rp-body');

@@ -138,3 +138,43 @@ test('"Settings" in the header popover, while already on the Settings tab, close
   assert.equal(openPops(doc).length, 0, 'the popover closed');
   assert.equal(doc.activeElement, doc.querySelector(`.readiness-settings-card[data-key="${KEY}"]`), 'focus is on the card');
 });
+
+test('the × in the popover head closes it; from the keyboard, focus goes back to the chip', async () => {
+  const { window } = await boot({ report: NOT_READY });
+  const doc = window.document;
+  await goHash(window, 'projects');
+  await goHash(window, `projects/${KEY}`);
+  const chip = headChip(doc);
+
+  click(window, chip);
+  await settle();
+  let close = openPops(doc)[0].querySelector('.rp-head .rp-close');
+  assert.ok(close, 'a close button in the head');
+  assert.equal(close.getAttribute('aria-label'), 'Close');
+  assert.equal(close.type, 'button');
+  click(window, close);
+  await settle();
+  assert.equal(openPops(doc).length, 0, 'a pointer click closes it');
+  assert.equal(chip.getAttribute('aria-expanded'), 'false');
+
+  chip.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 0 }));   // Enter on the chip
+  await settle();
+  close = openPops(doc)[0].querySelector('.rp-close');
+  close.focus();
+  close.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 0 }));   // Enter on the ×
+  await settle();
+  assert.equal(openPops(doc).length, 0, 'a keyboard press closes it');
+  assert.equal(doc.activeElement, chip, 'focus is back on the chip');
+});
+
+test('the × closes the list chip popover too', async () => {
+  const { window } = await boot({ report: NOT_READY });
+  const doc = window.document;
+  await goHash(window, 'projects');
+  click(window, doc.querySelector(`#projects-list .pl-item[data-key="${KEY}"] .pl-rd`));
+  await settle();
+  click(window, openPops(doc)[0].querySelector('.rp-close'));
+  await settle();
+  assert.equal(openPops(doc).length, 0);
+  assert.equal(window.location.hash, '#projects', 'still on the list');
+});
