@@ -45,6 +45,7 @@ function stackOf(doc) {
  *  mode 'up'    : left = trigger.left; top = trigger.top - menu height - gap (opens upward)
  *  mode 'beside': left = parent.right + 4, or parent.left - width - 4 when there is no room; top = trigger.top - 5
  *  mode 'down'  : left = trigger.right - menu width (right edges aligned); top = trigger.bottom + gap (opens downward)
+ *  mode 'below' : left = trigger.left; top = trigger.bottom + gap; height limited to the room below (never covers the trigger)
  *  Writes menu.style.left/top in px; un-hides the menu first so it can be measured. */
 export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win = globalThis.window, gap = 6, margin = 8 } = {}) {
   menu.hidden = false;
@@ -53,6 +54,14 @@ export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win =
   const vw = win.innerWidth;
   const vh = win.innerHeight;
   const t = trigger.getBoundingClientRect();
+  if (mode === 'below') {
+    const top = t.bottom + gap;
+    const left = Math.max(margin, Math.min(t.left, vw - w - margin));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    menu.style.maxHeight = `${Math.max(120, vh - top - margin)}px`;
+    return;
+  }
   let left;
   let top;
   if (mode === 'up') {

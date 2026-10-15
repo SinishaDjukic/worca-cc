@@ -492,3 +492,23 @@ test('createFlyout: a right-click on the popup (its context menu takes the mouse
   $('out').focus();
   assert.equal(fly.isOpen(), false, 'focus leaving after a right-click still closes it');
 });
+
+test('placeFlyout below: opens under the trigger, left-aligned, and limits its height instead of covering the trigger', () => {
+  const { window } = new JSDOM('<button id="t"></button><div id="m"></div>');
+  const doc = window.document;
+  const trigger = doc.getElementById('t');
+  const menu = doc.getElementById('m');
+  trigger.getBoundingClientRect = () => ({ left: 300, right: 420, top: 600, bottom: 622, width: 120, height: 22 });
+  Object.defineProperty(menu, 'offsetWidth', { value: 460 });
+  Object.defineProperty(menu, 'offsetHeight', { value: 560 });
+  const win = { innerWidth: 1200, innerHeight: 900 };
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  assert.equal(menu.style.left, '300px');
+  assert.equal(menu.style.top, '628px');
+  assert.equal(menu.style.maxHeight, '264px');   // 900 - 628 - 8
+  // Near the right edge it shifts left to stay on screen, never upward.
+  trigger.getBoundingClientRect = () => ({ left: 1000, right: 1120, top: 100, bottom: 122, width: 120, height: 22 });
+  placeFlyout(menu, trigger, { mode: 'below', win });
+  assert.equal(menu.style.left, '732px');        // 1200 - 460 - 8
+  assert.equal(menu.style.top, '128px');
+});
