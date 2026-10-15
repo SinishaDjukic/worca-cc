@@ -24,18 +24,18 @@ function freshRepo() {
 }
 const runCli = (args, extraEnv = {}) => {
   const env = { ...process.env, WORCA_HOME: home, WORCA_MOCK: '1', ...extraEnv };
-  delete env.WORCA_SHAPE_FIRST;
+  env.WORCA_FLAGS = '-shapeFirst';   // locked off over settings.json unless a test turns it on
   Object.assign(env, extraEnv);
   return spawnSync(process.execPath, [CLI, ...args], { env, encoding: 'utf8' });
 };
 const pipelineCount = () => getDb().prepare('SELECT COUNT(*) AS n FROM pipelines').get().n;
 
 for (const workflow of ['wf_shape', 'wf_shape_ux']) {
-  for (const flag of [undefined, '1']) {
-    test(`worca run --workflow ${workflow} is refused (WORCA_SHAPE_FIRST=${flag ?? 'unset'})`, () => {
+  for (const flag of ['-shapeFirst', 'shapeFirst']) {
+    test(`worca run --workflow ${workflow} is refused (WORCA_FLAGS=${flag})`, () => {
       const before = pipelineCount();
       const r = runCli(['--project', freshRepo(), '--prompt', 'demo task', '--workflow', workflow, '--yes'],
-        flag ? { WORCA_SHAPE_FIRST: flag } : {});
+        { WORCA_FLAGS: flag });
       assert.notEqual(r.status, 0, r.stderr + r.stdout);
       assert.match(r.stderr, /is started from the worca app/);
       assert.equal(pipelineCount(), before, 'no pipeline row is created');
@@ -64,11 +64,11 @@ test('the CLI question handler pauses on a `plan` ask, ahead of the auto/no-read
   assert.doesNotMatch(armBody, /orch\.stop\(\)|orch\.answer\(/);
 });
 
-test('worca workflow list shows wf_shape only with WORCA_SHAPE_FIRST=1', () => {
+test('worca workflow list shows wf_shape only with the shapeFirst flag on', () => {
   const off = runCli(['workflow', 'list']);
   assert.equal(off.status, 0, off.stderr + off.stdout);
   assert.ok(!/^wf_shape\t/m.test(off.stdout));
-  const on = runCli(['workflow', 'list'], { WORCA_SHAPE_FIRST: '1' });
+  const on = runCli(['workflow', 'list'], { WORCA_FLAGS: 'shapeFirst' });
   assert.equal(on.status, 0, on.stderr + on.stdout);
   assert.match(on.stdout, /^wf_shape\t/m);
 });

@@ -39,6 +39,18 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-01-10',
     docs: 'docs/feature-flags.md',
   }),
+  entry({
+    key: 'shapeFirst',
+    title: 'Plan it with me',
+    description: 'Shape a task in Chat before it runs: a few questions, a plan you approve, and large tasks cut into slices.',
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.11.0',
+    added: '2026-10-15',
+    reviewBy: '2027-01-13',
+    docs: 'docs/feature-flags.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));

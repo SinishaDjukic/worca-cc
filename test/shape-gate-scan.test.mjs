@@ -1,5 +1,5 @@
-// test/shape-gate-scan.test.mjs — the repo-wide call-site scan for the Shape it first gate (spec D12): one gate
-// module reads the switch, one client module reads the hello feature, the plan route opens with the guard, and every
+// test/shape-gate-scan.test.mjs — the repo-wide call-site scan for the Shape it first gate (spec D12): the flag key
+// is read only by the two gate modules (and listed in the registry), the plan route opens with the guard, and every
 // server read of the built-in shape workflow asks the gate on the same line.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,19 +23,9 @@ const files = ['src', 'ui', 'tools'].flatMap((d) => sourceFiles(join(ROOT, d)))
   .map((f) => ({ rel: relative(ROOT, f).split(sep).join('/'), text: readFileSync(f, 'utf8') }));
 const read = (rel) => files.find((f) => f.rel === rel)?.text ?? '';
 
-test('WORCA_SHAPE_FIRST is mentioned only in the gate module', () => {
-  const hits = files.filter((f) => f.text.includes('WORCA_SHAPE_FIRST')).map((f) => f.rel);
-  assert.deepEqual(hits, ['src/core/shape/gate.mjs']);
-});
-
-test('features.shapeFirst is read only in the client gate module', () => {
-  const hits = files.filter((f) => /\.shapeFirst\b/.test(f.text)).map((f) => f.rel);
-  assert.deepEqual(hits, ['ui/public/chat/shape-gate.mjs']);
-});
-
-test('no file imports src/shared/flags', () => {
-  const hits = files.filter((f) => /^\s*(import|export)\b[^;\n]*from\s+['"][^'"]*shared\/flags(\.mjs)?['"]/m.test(f.text)).map((f) => f.rel);
-  assert.deepEqual(hits, []);
+test('the shapeFirst flag key appears only in the registry and the two gate modules', () => {
+  const hits = files.filter((f) => /['"]shapeFirst['"]/.test(f.text)).map((f) => f.rel).sort();
+  assert.deepEqual(hits, ['src/core/shape/gate.mjs', 'src/shared/flags/registry.mjs', 'ui/public/chat/shape-gate.mjs']);
 });
 
 test("the /api/runs/:id/answer handler's first statement is requireShapeFirst", () => {
