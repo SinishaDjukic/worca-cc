@@ -62,12 +62,12 @@ test('every /api/shape/ handler, async or not, starts with requireShapeFirst', (
   for (const m of found) assert.equal(m[3].trim(), 'if (!requireShapeFirst(req, res)) return;', m[0]);
 });
 
-test('liveSliceOf and broadcastFeature never ask the gate', () => {
+test('liveSliceOf and broadcastFeature never read the flag themselves (only through the gate)', () => {
   const text = read('ui/server.mjs');
   for (const name of ['function liveSliceOf', 'function broadcastFeature(']) {
     const at = text.indexOf(name);
     assert.ok(at >= 0, name);
     const end = text.indexOf('\n}\n', at);
-    assert.ok(!/shapeFirstEnabled\(|requireShapeFirst\(/.test(text.slice(at, end)), name);
+    assert.ok(!/flagEnabled\(/.test(text.slice(at, end)), name);
   }
 });

@@ -231,7 +231,7 @@ test('turning the gate off while a fetch is in flight leaves the host empty', as
   const h = host();
   seam.mount(h, 'feat-1');
   await ctx.settle(2);
-  ctx.dispatch({ type: 'hello', runs: [] });
+  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [] });
   await ctx.settle(3);
   release();
   await ctx.settle(5);
@@ -245,7 +245,7 @@ test('a hello with the gate back repaints a view emptied while it was off', asyn
   const h = host();
   seam.mount(h, 'feat-1');
   await ctx.settle(5);
-  ctx.dispatch({ type: 'hello', runs: [] });
+  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [] });
   await ctx.settle(5);
   assert.equal(h.querySelector('.shape-feature'), null, 'emptied with the gate off');
   ctx.dispatch({ type: 'hello', ...GATE, runs: [] });
