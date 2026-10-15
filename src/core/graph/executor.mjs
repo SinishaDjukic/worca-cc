@@ -792,6 +792,7 @@ export async function runClarifierExecution(ctx) {
   const answersPort = answersPortOf(ports);
   const answersPath = outputs[answersPort?.id]?.path;
   if (!answersPath) throw new Error(`clarifier node "${node?.id}": no json output port to write the questions to`);
+  if (ctx.carriedClarify) return carryClarify(ctx, { node, ports, outputs, answersPath, prompt, meta });
 
   let sessionId;
   ({ sessionId } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools }));
@@ -901,6 +902,22 @@ export async function runClarifierExecution(ctx) {
   await mkdir(dirname(answersPath), { recursive: true }).catch(() => {});
   await writeFile(answersPath, JSON.stringify({ questions, answers }, null, 2) + '\n', 'utf8');
   return { outputs: publishable(ports, outputs), questions, answers, sessionId, prompt, warnings };
+}
+
+/** D19: a later slice publishes the feature's Clarify answers (slice 1's) without spawning or asking. */
+async function carryClarify(ctx, { node, ports, outputs, answersPath, prompt, meta }) {
+  const { questions: q = null, answers: a = null } = ctx.carriedClarify || {};
+  const form = a && a.kind === 'form';
+  const questions = !form && Array.isArray(q?.questions) ? q.questions : [];
+  const answers = !form && Array.isArray(a?.answers) ? a.answers : [];
+  if (ctx.pipelineId) {
+    if (q || a) await writeClarify(ctx.pipelineId, { ...(q ? { questions: q } : {}), ...(a ? { answers: a } : {}) });
+    appendAuditById(ctx.pipelineId, `${meta?.displayName || node?.key || 'Clarify'}: skipped, this slice uses the feature's answers.`);
+  }
+  const file = form ? { form: a.form, version: a.version, values: a.values || {} } : { questions, answers };
+  await mkdir(dirname(answersPath), { recursive: true }).catch(() => {});
+  await writeFile(answersPath, JSON.stringify(file, null, 2) + '\n', 'utf8');
+  return { outputs: publishable(ports, outputs), questions, answers, sessionId: null, prompt, warnings: [] };
 }
 
 /** The night mode decision record behind a clarifier ask (the orchestrator's nightDecision

@@ -60,7 +60,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 57;
+export const SCHEMA_VERSION = 58;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -864,6 +864,10 @@ const INCREMENTAL_COLUMNS = {
                             engine: 'TEXT',          // v53 (#635): the engine the chat is locked to; NULL = before v53 (read from its model)
                             mode: 'TEXT',            // v54 (Workflows view): 'composer' for the editor's chat; NULL = an Ask Worca chat
                             composer: 'TEXT' },      // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
+  shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
+                            ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
+                            shipped_at: 'TEXT' },     // v58: when Ship as ran
+  shape_feature_slices:   { draft_pr_url: 'TEXT' },   // v58 (D24): the PR openSliceDraft opened as a draft
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
   workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
                             policy_project: 'TEXT',     // v32: team-policy home (member absolute path); NULL = no home
@@ -2186,6 +2190,7 @@ export function migrate(db) {
     if (current < SCHEMA_VERSION) refreshArchitectureSeed(db);
     if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
     if (current < 57) db.exec(SHAPE_SLICES_DDL);     // Shape it first: sliced features + Plans
+    // v58 (D24): shape_features ship columns, shape_feature_slices.draft_pr_url — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { SLICE_STATE_LABELS, featureHeadline, renderFeature } from '../ui/public/shape/feature-view.mjs';
+import { SLICE_STATE_LABELS, featureHeadline, renderFeature, renderFeatureSummary, featureSummaryLine } from '../ui/public/shape/feature-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -153,6 +153,11 @@ test('the approve-each switch posts approve-each {on:false}', async () => {
   assert.deepEqual(d.acts[0], { action: 'approve-each', body: { on: false }, opts: { focus: 'shape-feature-approve-each' } });
 });
 
+test('approveEach false (the D19 default) renders an unchecked switch', () => {
+  const { el } = mount(feature({ approveEach: false }));
+  assert.equal(q(el, '.shape-feature-approve-each input').checked, false);
+});
+
 test('an act failure shows the error and re-enables the button', async () => {
   const d = deps({ act: () => Promise.resolve({ ok: false, error: 'Slice 2 is still going…' }) });
   const { el } = mount(halted('stopped', 2, [3]), d);
@@ -257,4 +262,97 @@ test('the section carries the feature id', () => {
   const { el } = mount(feature());
   assert.equal(el.dataset.feature, 'f1');
   assert.ok(!el.classList.contains('is-halted'));
+});
+
+// ---- D16: the feature page (deps.page) and the Chat summary card ---------------------------------------------------
+
+const PAGE = () => ({ ...feature(), status: 'active', total: 3, done: 1, approveEach: false, open: true, halted: null,
+  slices: [
+    { index: 1, title: 'Store tags', state: 'done', pipelineId: 'p1', pr: { url: 'https://github.com/o/r/pull/1', number: 1, state: 'OPEN', draft: true } },
+    { index: 2, title: 'Run tags', state: 'approval', pipelineId: 'p2', runId: 'r2', pr: null },
+    { index: 3, title: 'Cost report', state: 'planned', pipelineId: null, pr: null } ] });
+
+test('page mode: segmented bar, merge first, current slice block, ask host, actions', () => {
+  const asked = [];
+  const painted = [];
+  const { el } = mount(PAGE(), deps({ page: true, progressOf: () => ({ fraction: 0.4, tone: 'amber', text: 'Plan · needs you: a plan approval', label: 'Plan' }),
+    paintProgress: (bar, prog) => painted.push([bar.className, prog.tone]),
+    mountAsk: (host, s) => asked.push([host.className, s.index]) }));
+  assert.ok(el.classList.contains('is-page'));
+  assert.equal(el.querySelector('.shape-feature-bar'), null, 'the segmented bar replaces the single bar');
+  assert.equal(el.querySelectorAll('.shape-feature-seg').length, 3);
+  assert.deepEqual([...el.querySelectorAll('.shape-feature-seg')].map((x) => x.dataset.state), ['done', 'approval', 'planned']);
+  assert.equal(el.querySelector('.shape-feature-slice.is-done .shape-feature-merge').textContent, 'merge first');
+  assert.equal(el.querySelector('.shape-feature-slice.is-done .shape-feature-pr').textContent, 'PR #1 · draft');
+  assert.match(el.querySelector('.shape-feature-current').textContent, /Slice 2 · Run tags/);
+  assert.match(el.querySelector('.shape-feature-current').textContent, /Plan · needs you/);
+  assert.deepEqual(painted, [['run-prog shape-feature-current-bar', 'amber']]);
+  assert.deepEqual(asked, [['shape-feature-ask', 2]]);
+  assert.match(el.querySelector('.shape-feature-order').textContent, /Merge in order/);
+  assert.ok(el.querySelector('.shape-feature-replan') && el.querySelector('.shape-feature-cancel'));
+  assert.equal(el.querySelector('[data-act="shape-feature-approve-each"]').checked, false);
+  assert.equal(el.querySelector('.shape-feature-ship'), null, 'no Ship as before every slice is done');
+});
+
+test('page mode: merge after slice K on a later open PR; merged and closed PRs carry no tag', () => {
+  const pr = (n, state = 'OPEN') => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state });
+  const f = { ...PAGE(), slices: [
+    { index: 1, title: 'A', state: 'done', pipelineId: 'p1', pr: pr(1, 'MERGED') },
+    { index: 2, title: 'B', state: 'done', pipelineId: 'p2', pr: pr(2) },
+    { index: 3, title: 'C', state: 'done', pipelineId: 'p3', pr: pr(3) } ] };
+  const { el } = mount(f, deps({ page: true }));
+  assert.deepEqual([...el.querySelectorAll('.shape-feature-slice')].map((li) => li.querySelector('.shape-feature-merge')?.textContent || null),
+    [null, 'merge first', 'merge after slice 2']);
+});
+
+test('Ship as appears only when all slices are done and not shipped; the default is marked', async () => {
+  const done = { ...PAGE(), status: 'done', done: 3, slices: PAGE().slices.map((s) => ({ ...s, state: 'done' })),
+    ship: { ready: true, mode: null, suggested: 'one', linesAdded: 840, prUrl: null } };
+  const { el, d } = mount(done, deps({ page: true }));
+  const btns = [...el.querySelectorAll('.shape-feature-ship button')];
+  assert.deepEqual(btns.map((b) => b.dataset.act), ['shape-feature-ship-stacked', 'shape-feature-ship-one']);
+  assert.match(el.querySelector('.shape-feature-ship-one').textContent, /suggested/);
+  assert.match(el.querySelector('.shape-feature-ship-why').textContent, /840 lines: one PR is easier to review/);
+  btns[1].click(); await flush();
+  assert.deepEqual(d.acts.at(-1), { action: 'ship', body: { mode: 'one' }, opts: { focus: 'shape-feature-ship-one' } });
+  const shippedSlices = done.slices.map((s) => ({ ...s, pr: s.pr && { ...s.pr, draft: false } }));
+  const shipped = mount({ ...done, slices: shippedSlices, ship: { ...done.ship, mode: 'one', prUrl: 'https://github.com/o/r/pull/9' } }, deps({ page: true })).el;
+  assert.match(shipped.querySelector('.shape-feature-shipped').textContent, /Shipped as one PR · open it/);
+  assert.equal(shipped.querySelector('.shape-feature-shipped a').getAttribute('href'), 'https://github.com/o/r/pull/9');
+  assert.equal(shipped.querySelector('.shape-feature-ship'), null);
+  assert.equal(shipped.querySelector('.shape-feature-pr').textContent, 'PR #1');
+  const stacked = mount({ ...done, ship: { ...done.ship, mode: 'stacked' } }, deps({ page: true })).el;
+  assert.equal(stacked.querySelector('.shape-feature-shipped').textContent, 'Shipped as stacked PRs');
+});
+
+test('a Ship as failure shows its error on a done feature', () => {
+  const done = { ...PAGE(), status: 'done', done: 3, slices: PAGE().slices.map((s) => ({ ...s, state: 'done', pr: s.pr && { ...s.pr, draft: false } })),
+    ship: { ready: true, mode: null, suggested: 'stacked', linesAdded: 2000, prUrl: null } };
+  const { el } = mount(done, deps({ page: true, error: 'could not mark slice 2\'s PR ready' }));
+  assert.equal(el.querySelector('.shape-feature-err').hidden, false);
+  assert.match(el.querySelector('.shape-feature-ship-why').textContent, /2000 lines: stacked PRs keep each review small/);
+});
+
+test('card mode (no deps.page) is unchanged: no segments, no current block, no Ship as', () => {
+  const { el } = mount(PAGE(), deps());
+  assert.equal(el.querySelector('.shape-feature-segs'), null);
+  assert.ok(el.querySelector('.shape-feature-bar'));
+  assert.equal(el.querySelector('.shape-feature-current'), null);
+  assert.equal(el.querySelector('.shape-feature-merge'), null);
+  assert.equal(el.querySelector('.shape-feature-pr').textContent, 'PR #1');
+});
+
+test('summary card: one line, segmented bar, Open feature; needs-you and stopped variants', () => {
+  const open = [];
+  const el = renderFeatureSummary(doc, PAGE(), { openFeature: (id) => open.push(id) });
+  assert.equal(el.querySelector('.shape-feature-sum-line').textContent, 'Plan it with me · Slice 2 needs you');
+  assert.ok(el.classList.contains('is-needs'));
+  assert.equal(el.querySelectorAll('.shape-feature-seg').length, 3);
+  el.querySelector('.shape-feature-sum-open').click();
+  assert.deepEqual(open, [PAGE().id]);
+  const stopped = { ...PAGE(), halted: { index: 2, state: 'stopped', waiting: [3] }, slices: PAGE().slices.map((s) => (s.index === 2 ? { ...s, state: 'stopped' } : s)) };
+  assert.equal(renderFeatureSummary(doc, stopped, { openFeature() {} }).querySelector('.shape-feature-sum-line').textContent,
+    'Plan it with me · Slice 2 stopped · slice 3 waiting');
+  assert.equal(featureSummaryLine({ ...PAGE(), slices: PAGE().slices.map((s) => ({ ...s, state: s.index === 1 ? 'done' : 'planned' })) }),
+    'Plan it with me · 1 of 3 slices done');
 });

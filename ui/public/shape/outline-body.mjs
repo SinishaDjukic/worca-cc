@@ -38,7 +38,7 @@ export function renderOutlineBody(panel, pq, deps) {
   let approveEach = null;
   if (deps.extras) {
     const label = h('label', 'outline-approve-each');
-    approveEach = h('input'); approveEach.type = 'checkbox'; approveEach.checked = plan.approveEach !== false;   // a re-ask keeps the choice
+    approveEach = h('input'); approveEach.type = 'checkbox'; approveEach.checked = plan.approveEach === true;   // D19: off unless chosen; a re-ask keeps the choice
     label.append(approveEach, doc.createTextNode(' Approve each slice\'s plan'));
     body.appendChild(label);
   }

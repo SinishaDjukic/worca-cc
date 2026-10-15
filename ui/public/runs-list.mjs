@@ -188,13 +188,17 @@ export function chainRow(c, now = Date.now()) {
   // The current member's glyph (runsChainItem sets it from the live run: ask | paused | run); a chain
   // that only waits shows the scheduled clock. Every value is a GLYPHS key in this file.
   const icon = cur && cur.state === 'current' ? (cur.icon || 'run') : cur && cur.state === 'waiting' ? 'scheduled' : 'run';
+  // D17: a chain that is a feature opens the feature page.
+  const feature = c.feature && c.feature.id ? { id: String(c.feature.id) } : null;
   return {
-    kind: 'chain', key: `chain:${c.id}`, href: (cur && cur.href) || '#runs',
+    kind: 'chain', key: `chain:${c.id}`,
+    href: feature ? String(c.href || `#feature/${encodeURIComponent(feature.id)}`) : (cur && cur.href) || '#runs',
     runId: (cur && cur.runId) || '', pipelineId: (cur && cur.pipelineId) || '', projectKey: '',
     title: String(c.title || '(untitled)'), status: 'running', icon, word: String(c.text || ''), detail: '',
     groupKey: String(c.groupKey || ''), groupName: String(c.groupName || ''), by: '',
     unread: false, needs: false, time: '', sortMs: now, open: !!c.open,
     progress: { fraction: c.fraction || 0, tone: c.tone || 'blue' },
+    feature,
     members,
     memberKeys: new Set(members.flatMap((m) => [m.pipelineId && `p:${m.pipelineId}`, m.ticketId && `t:${m.ticketId}`, m.runId && `r:${m.runId}`]).filter(Boolean)),
   };
@@ -302,7 +306,7 @@ const cmpDateRows = (a, b) => ((KIND_RANK[a.kind] ?? 3) - (KIND_RANK[b.kind] ?? 
   || (a.kind === 'hist' ? (b.activityMs || 0) - (a.activityMs || 0) : 0);
 
 const NEEDS_RANK = Object.freeze({ ask: 0, paused: 1, fail: 2 });
-export const cmpNeeds = (a, b) => ((NEEDS_RANK[a.icon] ?? 3) - (NEEDS_RANK[b.icon] ?? 3)) || ((b.sortMs || 0) - (a.sortMs || 0));
+export const cmpNeeds = (a, b) => ((NEEDS_RANK[a.needsIcon || a.icon] ?? 3) - (NEEDS_RANK[b.needsIcon || b.icon] ?? 3)) || ((b.sortMs || 0) - (a.sortMs || 0));
 
 /**
  * The list model: { needs: Row[], groups: [{key, name, count, collapsed, rows}], total, searching, filter }.
@@ -326,6 +330,14 @@ export function buildRunsModel({
   const all = [...liveRows, ...schedRows, ...histRows]
     .filter((r) => (!person || r.by === person) && rowMatches(r, query) && rowInFilter(r, shown));
   const chainRows = chains.map((c) => chainRow(c, now));
+  // D17: a feature row needs you exactly when a row it claims does (the same needsYou() rule as the member rows), so
+  // nothing is dropped or invented. `needsIcon` (the needy member's icon) lets cmpNeeds order it like that row; the
+  // row's own `icon` stays the current member's.
+  const featureOf = (r) => chainRows.find((c) => c.feature && rowChainKeys(r).some((k) => c.memberKeys.has(k))) || null;
+  for (const r of all) {
+    const c = r.needs ? featureOf(r) : null;
+    if (c && (!c.needs || (NEEDS_RANK[r.icon] ?? 3) < (NEEDS_RANK[c.needsIcon] ?? 3))) { c.needs = true; c.needsIcon = r.icon; }
+  }
   const placed = new Set();
   const placedRows = [];
   for (const r of all) {
@@ -336,8 +348,12 @@ export function buildRunsModel({
     // The chain sits where its first listed member sat (that row passed the person/search/filter checks).
     placedRows.push({ ...c, groupKey: c.groupKey || r.groupKey, groupName: c.groupName || r.groupName, sortMs: r.sortMs });
   }
-  // Needs you lists the member rows, not the chain row that folds them: a question never hides behind an expander.
-  const needs = all.filter((r) => r.needs).sort(cmpNeeds);
+  // Needs you lists the member rows, not the chain row that folds them (a question never hides behind an expander),
+  // except a feature's: its member rows are left out and the placed feature row stands for them.
+  const needs = [
+    ...all.filter((r) => r.needs && !featureOf(r)),
+    ...placedRows.filter((r) => r.kind === 'chain' && r.feature && r.needs),
+  ].sort(cmpNeeds);
   const groups = new Map();
   for (const r of shown === 'needs' ? [] : placedRows) {
     let g = groups.get(r.groupKey);
@@ -449,7 +465,8 @@ function renderChainRow(doc, r, opts) {
   toggle.className = 'runs-chain-toggle';
   toggle.dataset.chainKey = r.key;
   toggle.setAttribute('aria-expanded', r.open ? 'true' : 'false');
-  toggle.setAttribute('aria-label', `${r.open ? 'Hide' : 'Show'} the ${r.members.length} runs in this chain`);
+  if (r.feature) toggle.dataset.feature = '1';
+  toggle.setAttribute('aria-label', `${r.open ? 'Hide' : 'Show'} the ${r.members.length} ${r.feature ? 'slices in this feature' : 'runs in this chain'}`);
   toggle.appendChild(chevron(doc));
   const list = doc.createElement('ol');
   list.className = 'runs-chain-members';

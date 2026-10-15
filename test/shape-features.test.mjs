@@ -9,12 +9,13 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { writeReview } from '../src/core/artifacts.mjs';
+import { writeReview, writeClarify } from '../src/core/artifacts.mjs';
 import { getTicket, runDueTickets, updateTicket } from '../src/core/scheduler.mjs';
 import {
   createSliceFeature, retireFeaturesOf, sliceRequest, sliceTitle, featureView, currentFeatureId, featureOfPipeline,
   earlierSliceChanges, cancelRest, resumeFeature, rechainWaiting, replanRest, setApproveEach, featureApprovesEach,
-  stackedPrBase, recordShapePlan, listShapePlans, featuresOfTickets,
+  stackedPrBase, recordShapePlan, listShapePlans, featuresOfTickets, featureClarify, chainFeature, sliceOfPipeline, slicePrPreamble,
+  recordShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
 } from '../src/core/shape/features.mjs';
 
 useTempHome(after, 'worca-shape-features-');
@@ -77,8 +78,10 @@ test('sliceTitle and createSliceFeature: row, slice rows, chained tickets', () =
   assert.equal(f.status, 'active');
   assert.equal(f.origin_pipeline_id, pid);
   assert.equal(f.source_branch, 'main');
-  assert.equal(f.approve_each, 1);
+  assert.equal(f.approve_each, 0, 'D19: Approve each is off unless chosen');
   assert.equal(f.created_by, 'ann');
+  const on = mk(2, { approveEach: true });
+  assert.equal(getDb().prepare('SELECT approve_each FROM shape_features WHERE id = ?').get(on.id).approve_each, 1);
 });
 
 test('sliceRequest: model and starter ride internal, engine/mock/guardrailsId at the top level', () => {
@@ -126,8 +129,55 @@ test('retireFeaturesOf cancels open tickets, marks canceled, returns the count',
   assert.equal(retireFeaturesOf('nope'), 0);
 });
 
+test('featureClarify: the origin run\'s clarify row, null when it has none', async () => {
+  const { id, pid } = mk(3);
+  assert.equal(featureClarify(id), null);
+  await writeClarify(pid, { questions: { questions: [{ id: 'q1', question: 'Where?', options: ['A', 'B'] }] },
+    answers: { answers: [{ id: 'q1', question: 'Where?', choice: 'B' }], answeredBy: 'local' } });
+  const c = featureClarify(id);
+  assert.equal(c.answers.answers[0].choice, 'B');
+  assert.equal(featureClarify('feat_missing'), null);
+});
+
+test('chainFeature: the feature of a chain whose first run is slice 1; null for a plain chain', () => {
+  const { id, pid } = mk(3);
+  // tickets(id) returns shape_feature_slices rows: row 0 is slice 1 (ticket_id null), row 1 is slice 2.
+  const members = [{ pipelineId: pid, ticketId: null }, { pipelineId: null, ticketId: tickets(id)[1].ticket_id }];
+  const f = chainFeature(members);
+  assert.equal(f.id, id);
+  assert.equal(f.title, 'Charts');
+  assert.deepEqual(f.slices.map((s) => [s.index, s.title]), [[1, 'Slice 1'], [2, 'Slice 2'], [3, 'Slice 3']]);
+  assert.equal(f.slices[1].ticketId, tickets(id)[1].ticket_id);
+  assert.equal(f.slices[0].pipelineId, pid);
+  assert.equal(chainFeature([{ pipelineId: 'p-plain' }]), null);
+  assert.equal(chainFeature([]), null);
+  assert.equal(chainFeature(null), null);
+  // A chain whose first member is slice 2's ticket (slice 1 already left the chain view) still resolves.
+  assert.equal(chainFeature([{ pipelineId: null, ticketId: tickets(id)[1].ticket_id }]).id, id);
+});
+
+test('sliceOfPipeline: where a run sits in its feature; null for a plain run', () => {
+  const { id, pid } = mk(3);
+  assert.deepEqual(sliceOfPipeline(pid), { featureId: id, title: 'Charts', index: 1, total: 3, sliceTitle: 'Slice 1',
+    state: 'starting', next: { index: 2, title: 'Slice 2', state: 'planned' } });
+  assert.equal(sliceOfPipeline('p-plain'), null);
+});
+
+test('slicePrPreamble: "Part of" line and the other slices\' PRs', () => {
+  const { pid, id } = mk(3);
+  const p2 = pipe('done');
+  getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 2').run(p2, id);
+  getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_state = ? WHERE id = ?').run('https://github.com/o/r/pull/2', 'OPEN', p2);
+  const text = slicePrPreamble(pid);
+  assert.match(text, /^Part of Charts: slice 1 of 3\n\n/);
+  assert.match(text, /- Slice 2, Slice 2: https:\/\/github\.com\/o\/r\/pull\/2/);
+  assert.match(text, /- Slice 3, Slice 3: not opened yet/);
+  assert.doesNotMatch(text, /- Slice 1,/);
+  assert.equal(slicePrPreamble('p-plain'), '');
+});
+
 test('featureApprovesEach / setApproveEach', () => {
-  const a = mk(2);
+  const a = mk(2, { approveEach: true });
   assert.equal(featureApprovesEach(a.id), true);
   assert.equal(setApproveEach(a.id, false), true);
   assert.equal(featureApprovesEach(a.id), false);
@@ -527,4 +577,83 @@ test('listShapePlans joins the link row, the pipelines status and title, and the
   assert.equal(r.threadTitle, 'Thread A');
   assert.equal(r.featureId, a.id);
   assert.equal(listShapePlans({ limit: 1 }).length, 1);
+});
+
+// ---- D24: Ship as (the ship state on the feature, the draft label, the suggestion) ----------------------------------
+
+/** A feature of `n` slices, every slice done as its own pipeline. */
+const doneFeature = (n = 2) => {
+  const pids = [pipe('done')];
+  const f = mk(n, { pipelineId: pids[0] });
+  for (let i = 2; i <= n; i++) {
+    const p = pipe('done');
+    pids.push(p);
+    getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = ?').run(p, f.id, i);
+  }
+  return { ...f, pids };
+};
+const seedResults = async (pid, results) => {
+  const { runDirForRow } = await import('../src/core/artifacts.mjs');
+  const real = await runDirForRow(getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(pid));
+  mkdirSync(real, { recursive: true });
+  writeFileSync(join(real, 'results.json'), JSON.stringify(results));
+};
+
+test('featureView ship: ready only once every slice is done; recordShip sets the mode once', () => {
+  const half = mk(2);
+  assert.equal(featureView(half.id).ship.ready, false, 'slice 2 still planned');
+  const f = doneFeature(2);
+  const v = featureView(f.id);
+  assert.equal(v.status, 'done');
+  assert.deepEqual(v.ship, { ready: true, mode: null, prUrl: null, suggested: null, linesAdded: null });
+  assert.equal(recordShip(f.id, { mode: 'one', prUrl: 'https://github.com/o/r/pull/9' }), true);
+  const shipped = featureView(f.id);
+  assert.equal(shipped.ship.ready, false);
+  assert.equal(shipped.ship.mode, 'one');
+  assert.equal(shipped.ship.prUrl, 'https://github.com/o/r/pull/9');
+  assert.equal(recordShip(f.id, { mode: 'stacked' }), false, 'no overwrite');
+  assert.equal(featureView(f.id).ship.mode, 'one');
+});
+
+test('pr.draft: true after recordSliceDraft with the recorded PR url; false for another url and once shipped', () => {
+  const f = doneFeature(2);
+  const url = 'https://github.com/o/r/pull/3';
+  getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_state = ? WHERE id = ?').run(url, 'OPEN', f.pids[0]);
+  assert.equal(featureView(f.id).slices[0].pr.draft, false);
+  assert.equal(recordSliceDraft(f.pids[0], url), true);
+  assert.equal(featureView(f.id).slices[0].pr.draft, true);
+  assert.equal(featureView(f.id).slices[1].pr, null);
+  recordSliceDraft(f.pids[0], 'https://github.com/o/r/pull/99');
+  assert.equal(featureView(f.id).slices[0].pr.draft, false);
+  recordSliceDraft(f.pids[0], url);
+  recordShip(f.id, { mode: 'stacked' });
+  assert.equal(featureView(f.id).slices[0].pr.draft, false);
+  assert.equal(recordSliceDraft('p-plain', url), false);
+});
+
+test('featureShipSuggestion: one PR under the line limit, stacked from it; a slice with no results counts 0', async () => {
+  assert.equal(ONE_PR_MAX_LINES, 1500);
+  const small = doneFeature(2);
+  await seedResults(small.pids[0], { summary: { linesAdded: 840 } });
+  assert.deepEqual(await featureShipSuggestion(featureView(small.id)), { suggested: 'one', linesAdded: 840 });
+  const big = doneFeature(2);
+  await seedResults(big.pids[0], { summary: { linesAdded: 1200 } });
+  await seedResults(big.pids[1], { summary: { linesAdded: 800 } });
+  assert.deepEqual(await featureShipSuggestion(featureView(big.id)), { suggested: 'stacked', linesAdded: 2000 });
+});
+
+test('featureShipInput: per slice its summary (capped at 600) and its checklist markdown', async () => {
+  const f = doneFeature(2);
+  await writeReview(f.pids[0], 'impl', 1, { summary: 'x'.repeat(700), issues: [] });
+  await writeReview(f.pids[1], 'impl', 1, { summary: 'Second. More text.', issues: [],
+    checklist: [{ id: 'product-1', perspective: 'product', text: 'It works', status: 'pass', note: '' }] });
+  const input = await featureShipInput(featureView(f.id));
+  assert.equal(input.id, f.id);
+  assert.equal(input.title, 'Charts');
+  assert.deepEqual(input.slices.map((s) => [s.index, s.title, s.pipelineId]), [[1, 'Slice 1', f.pids[0]], [2, 'Slice 2', f.pids[1]]]);
+  assert.equal(input.slices[0].summary.length, 600);
+  assert.equal(input.slices[0].checklistMd, '');
+  assert.equal(input.slices[1].summary, 'Second. More text.');
+  assert.match(input.slices[1].checklistMd, /product-1/);
+  assert.ok(Object.hasOwn(input.slices[1], 'pr'));
 });

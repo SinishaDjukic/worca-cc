@@ -72,6 +72,8 @@ test('resolveShapeRequest: the gate is checked before any field', () => {
 
 test('validateOutlineAnswer: approve with no edits', () => {
   assert.deepEqual(validateOutlineAnswer({ decision: 'approve' }, { outline: OUTLINE }),
+    { ok: true, payload: { decision: 'approve', approveEach: false } });
+  assert.deepEqual(validateOutlineAnswer({ decision: 'approve', approveEach: true }, { outline: OUTLINE }),
     { ok: true, payload: { decision: 'approve', approveEach: true } });
 });
 
@@ -86,7 +88,7 @@ test('validateOutlineAnswer: approveEach false is kept, a non-boolean is refused
 test('validateOutlineAnswer: valid edits are kept, bad edits are an error on edits', () => {
   const edits = [{ op: 'merge', id: 'a' }, { op: 'remove', id: 'c' }];
   assert.deepEqual(validateOutlineAnswer({ decision: 'approve', edits }, { outline: OUTLINE }).payload,
-    { decision: 'approve', edits, approveEach: true });
+    { decision: 'approve', edits, approveEach: false });
   for (const bad of [[{ op: 'merge', id: 'zzz' }], [{ op: 'explode', id: 'a' }], 'merge a', [{ op: 'merge', id: 'c' }]]) {
     const r = validateOutlineAnswer({ decision: 'approve', edits: bad }, { outline: OUTLINE });
     assert.equal(r.ok, false, JSON.stringify(bad));

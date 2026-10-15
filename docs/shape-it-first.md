@@ -1,10 +1,10 @@
-# Shape it first
+# Plan it with me
 
 Plan a task with Worca before it builds, in Chat, and cut a large one into slices.
 Nothing here changes a run that does not ask for it: a run without `shape` in its
 request behaves exactly as before.
 
-> **Experimental.** Shape it first is behind a switch until the feature flag ships.
+> **Experimental.** Plan it with me is behind a switch until the feature flag ships.
 > See [Turning it on](#turning-it-on).
 
 ## What it is
@@ -20,7 +20,7 @@ review later checks the code against the checklists the plan ended with.
 
 ## Turning it on
 
-Shape it first is an experimental feature, off by default. Turn on **Plan it with me** in
+Plan it with me is an experimental feature, off by default. Turn on **Plan it with me** in
 Settings › Experimental (the `shapeFirst` feature flag, see [Feature flags](feature-flags.md)),
 or start Worca with `WORCA_FLAGS=shapeFirst`. It takes effect at once, without a restart.
 While it is off, everything below is hidden or refused: the **Plan it
@@ -39,7 +39,7 @@ chips, **Fix**, **Save to plans/**, **Merge with next**, **Remove**.
 - **Plan it with me.** The tile on the Chat home. Describe the task; Worca
   proposes a shaped run on a card.
 - **The nudge.** When Ask Worca judges a task to have open decisions, the run card
-  offers **Shape it first** next to **Run as is**, with an estimate of each.
+  offers **Plan it with me** next to **Run as is**, with an estimate of each.
 - **New run.** The New run page links to the same flow.
 
 ## Questions
@@ -137,11 +137,15 @@ own slice. The PR dialog proposes the previous slice's branch as the base until 
 slice's PR is merged. Turn on "Automatically delete head branches" in the GitHub
 repository so that GitHub retargets the next PR when one merges.
 
-**Approve each slice's plan.** On by default. Every slice's plan waits for you, as
-the first one does. Switch it off on the outline card or on the feature card and a
-later slice's plan is approved by itself, with the shape check still run and an
-audit line recording why. In Away mode a plan always waits for a person. Only a
-person can turn the switch off; a proposal from Ask cannot.
+**Plan once.** Slices 2 and later skip Clarify: they use the answers you gave for
+slice 1. Their planner still writes a plan for its own slice.
+
+**Approve each slice's plan.** Off by default: a later slice's plan stops for you
+only when its shape check fails or the planner says the slice can't be built as
+outlined (it then tells you why on the plan card). Turn it on to review every
+slice's plan. Either way an audit line records what happened, and in Away mode a
+plan always waits for a person. Only a person can change the switch; a proposal
+from Ask cannot.
 
 **The feature card.** Slice 1's live run card in Chat grows a strip for the whole
 feature: progress, each slice's state and its pull request. A slice is planned,
@@ -160,9 +164,26 @@ done, stopped, error, failed, missed or canceled. When a slice halts, the card s
 Resume, Re-plan the rest and Cancel the rest act on an active feature. Re-plan the
 rest also needs every slice to be idle: stop a running one from its own card first.
 
+**The feature page.** Each feature has its own page (`#feature/…`): the slices in
+order with a bar part per slice, each slice's state and pull request, "merge first"
+on the earliest open pull request, the slice in flight with its stage and any
+question or plan approval it waits on, and the actions above. Chat's run card shows
+a one-line summary with **Open feature**, the Runs list shows a feature as one row
+("Slice 2 of 3 · Build", or "Needs you"), and a slice's run page says which feature
+it belongs to and, once done, which slice comes next.
+
+**Ship as.** Each slice opens a draft pull request when it finishes; merge them in
+order, since each slice's branch starts from the one before. When every slice is
+done, the feature page asks how to ship: **Stacked PRs** marks each draft ready for
+review, **One PR** opens one pull request from the last slice's branch into the
+feature's base and closes the slices' drafts with a link to it. The page suggests
+one PR for a feature under about 1,500 added lines. Either way, one entry for the
+feature goes into the project's `CHANGELOG.md` under `## Unreleased`, committed on
+the last slice's branch, so it ships with the feature.
+
 **The Plans tab.** The Chat home lists shaped plans on a **Plans** tab, newest first,
 with their state. A sliced feature's row opens its card underneath. The tab shows
-only while Shape it first is on.
+only while Plan it with me is on.
 
 ## Limits
 
@@ -171,7 +192,7 @@ only while Shape it first is on.
 - Worca does not retarget a stacked PR when an earlier one merges. Use
   "Automatically delete head branches" on GitHub; automatic retargeting is a
   follow-up.
-- A slice is a scheduled run. If its ticket fires while Shape it first is off, the
+- A slice is a scheduled run. If its ticket fires while Plan it with me is off, the
   slice fails ("shape is not available on this server") and can be resumed once the
   switch is back on.
 - Cancel the rest does not stop a slice that is already starting. Stop it from its

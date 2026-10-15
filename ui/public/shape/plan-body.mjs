@@ -35,6 +35,14 @@ export function renderPlanBody(panel, pq, deps) {
   const meta = h('div', 'plan-meta', `${plan.file ? String(plan.file).split(/[\\/]/).pop() : 'Plan'}${score}`);
   body.appendChild(meta);
 
+  // ---- D19: a later slice's planner said the slice can't be built as outlined: that is why this plan stopped
+  if (plan.outlineChange) {
+    const note = h('div', 'shape-plan-outline-change');
+    note.append(h('div', 'shape-plan-outline-change-head', 'The planner says this slice can\'t be built as outlined:'),
+      h('p', 'shape-plan-outline-change-text', String(plan.outlineChange)));
+    body.appendChild(note);
+  }
+
   // ---- perspective chips + Update plan (D4, S5)
   if (deps.extras && plan.revisable) {
     const update = btn('plan-update', 'Update plan'); update.disabled = true;

@@ -113,7 +113,7 @@ export function validateOutlineAnswer(raw, { outline, revisable = false } = {}) 
   const applied = applyOutlineEdits(outline, e.edits);
   if (!applied.ok) return bad('edits', applied.error);
   if (raw.approveEach !== undefined && typeof raw.approveEach !== 'boolean') return bad('approveEach', 'approveEach must be true or false');
-  return { ok: true, payload: { decision: 'approve', ...(e.edits.length ? { edits: e.edits } : {}), approveEach: raw.approveEach !== false } };
+  return { ok: true, payload: { decision: 'approve', ...(e.edits.length ? { edits: e.edits } : {}), approveEach: raw.approveEach === true } };
 }
 
 /** state.shaping of a shaped run; `saved` is the resume point's copy (a resumed run keeps its versions). */

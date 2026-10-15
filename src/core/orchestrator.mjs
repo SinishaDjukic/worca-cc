@@ -32,8 +32,8 @@ import { mockEnabled } from './claude-runner.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { checkPlan } from './shape/check.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
-import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureApprovesEach } from './shape/features.mjs';
-import { checkSlices, applyOutlineEdits, normalizeOutline, OUTLINE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
+import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureApprovesEach, featureClarify } from './shape/features.mjs';
+import { checkSlices, applyOutlineEdits, normalizeOutline, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
 import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
 import { applyChecklist, checklistFindingsMarkdown } from '../shared/shape/review-checklist.mjs';
@@ -1161,15 +1161,22 @@ export class GraphOrchestrator extends RunHarness {
       const check = await this._planCheck(q.plan?.file);
       this._shapingRound(q, check);
       const sl = this.runShape?.slice;
+      const outlineChange = await this._outlineChangeText();
       if (sl && sl.index > 1 && !featureApprovesEach(sl.feature) && !this._nightActiveNow()) {
-        this._log('orchestrator', 'info', `plan approval ${q.id}: approved (Approve each slice's plan is off)`);
-        await appendAudit(this.pipeline.dir, 'Plan approval **approve** (Approve each slice\'s plan is off).').catch(() => {});
-        return { decision: 'approve' };
+        // D19: plan once, confirm later: the plan stops only when its check fails or the planner says the slice
+        // cannot be built as outlined. A missing check (null: it errored) stops too.
+        if (check?.ok === true && !outlineChange) {
+          this._log('orchestrator', 'info', `plan approval ${q.id}: approved (Approve each slice's plan is off)`);
+          await appendAudit(this.pipeline.dir, 'Plan approval **approve** (Approve each slice\'s plan is off).').catch(() => {});
+          return { decision: 'approve' };
+        }
+        const why = outlineChange ? 'the planner says this slice cannot be built as outlined' : 'the shape check did not pass';
+        await appendAudit(this.pipeline.dir, `Plan approval held: ${why}.`).catch(() => {});
       }
       const perspectives = this._shapePerspectives();
       return this._enqueueAsk(() => this._ask({
         id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId,
-        plan: { ...q.plan, nodeId: q.nodeId, check, perspectives },
+        plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(outlineChange ? { outlineChange } : {}) },
         validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives }),
       }));
     })();
@@ -1253,6 +1260,12 @@ export class GraphOrchestrator extends RunHarness {
     const out = {};
     const scope = await this._shapeSliceScope();
     if (scope) out.shapeSliceScope = scope;
+    // D19: a stale outline-change.md from an earlier spawn is not this Planner's. state.shaping.rounds are the PLAN
+    // rounds: once a person was shown a plan in this run, the file is kept, so a revised plan still stops and says why.
+    if (nc.key === SLICE_PLANNER_KEY && this.runShape?.slice?.index > 1 && !ctx.resumeSessionId
+      && !(this.state.shaping?.rounds?.length)) {
+      await rm(join(this.pipeline.dir, OUTLINE_CHANGE_FILE), { force: true });
+    }
     if (nc.key !== SLICE_PLANNER_KEY) return out;
     // F25: ctx is rebuilt after a pause, so the Don't slice note comes from the saved shaping state, not from ctx.
     if (this.state.shaping?.outline?.decided === 'flat') out.shapeOutlineNote = { decision: 'flat' };
@@ -1273,6 +1286,12 @@ export class GraphOrchestrator extends RunHarness {
     return out;
   }
 
+  /** D19: the feature's Clarify answers for a later slice; empty when they cannot be read (Clarify is skipped anyway). */
+  _featureClarify() {
+    try { return featureClarify(this.runShape.slice.feature) || { questions: null, answers: null }; }
+    catch (err) { this._log('orchestrator', 'warn', `slice clarify: cannot read the feature's answers: ${err?.message || err}`); return { questions: null, answers: null }; }
+  }
+
   /** L6: slice k's scope: the outline and what the earlier slices changed, read once per run (D14). */
   async _shapeSliceScope() {
     const sl = this.runShape?.slice;
@@ -1283,8 +1302,16 @@ export class GraphOrchestrator extends RunHarness {
       try { earlier = await earlierSliceChanges(sl.feature, sl.index); }
       catch (err) { this._log('orchestrator', 'warn', `slice scope: cannot read the earlier slices: ${err?.message || err}`); }
     }
-    this._sliceScopeCache = { index: sl.index, total: sl.total, outline: sl.outline, earlier };
+    this._sliceScopeCache = { index: sl.index, total: sl.total, outline: sl.outline, earlier,
+      ...(sl.index > 1 ? { outlineChangeFile: join(this.pipeline.dir, OUTLINE_CHANGE_FILE) } : {}) };
     return this._sliceScopeCache;
+  }
+
+  /** D19: the Planner's note that this slice cannot be built as outlined, or null. */
+  async _outlineChangeText() {
+    if (!(this.runShape?.slice?.index > 1)) return null;
+    try { const t = (await readFile(join(this.pipeline.dir, OUTLINE_CHANGE_FILE), 'utf8')).trim(); return t ? t.slice(0, 4000) : null; }
+    catch { return null; }
   }
 
   /**
@@ -1337,7 +1364,7 @@ export class GraphOrchestrator extends RunHarness {
         id, kind: PLAN_ASK_KIND, nodeId: ctx.nodeId, executionId: ctx.executionId,
         plan: { nodeId: ctx.nodeId, port: 'outline', file, round, revisable, check,
           perspectives: this._shapePerspectives(), outline, ...(error ? { error } : {}), ...(carried ? { edits: carried } : {}),
-          ...(carriedEach === false ? { approveEach: false } : {}) },
+          ...(carriedEach === true ? { approveEach: true } : {}) },          // the card's switch as it was (D19: off by default)
         validate: (r) => validateOutlineAnswer(r, { outline, revisable }),
       }));
       this._checkAbort();
@@ -1369,7 +1396,7 @@ export class GraphOrchestrator extends RunHarness {
         feature = createSliceFeature({
           pipelineId: this.pipeline.id, projectDir: this.projectDir, title: this.state.title || 'Feature',
           outline: applied.outline, proposed: outline.slices.length, merges: applied.merges, removals: applied.removals,
-          approveEach: payload.approveEach !== false, perspectives: this._shapePerspectives(),
+          approveEach: payload.approveEach === true, perspectives: this._shapePerspectives(),
           workflowId: this._shapePerspectives().includes('ux') ? SHAPE_UX_WORKFLOW_ID : SHAPE_WORKFLOW_ID,
           base: this._sliceRequestBase(), replaces: this.runShape?.replaces || null, startedBy: this._runStarter(),
         });
@@ -1377,7 +1404,7 @@ export class GraphOrchestrator extends RunHarness {
         this._log('orchestrator', 'warn', `slices: cannot create the feature: ${err?.message || err}`);
         error = `Could not set up the later slices: ${err?.message || err}. Try again, or choose Don't slice.`;
         carried = payload.edits?.length ? payload.edits : null;   // the card starts from them again (plan.edits)
-        carriedEach = payload.approveEach !== false;              // and from the switch as it was (plan.approveEach)
+        carriedEach = payload.approveEach === true;               // and from the switch as it was (plan.approveEach)
         retry += 1;
         continue;
       }
@@ -1604,6 +1631,10 @@ export class GraphOrchestrator extends RunHarness {
       await this._primeDirections(ctx);
       if (this.runShape && nc.key === CHECKLIST_REVIEWER_KEY) ctx.checklistItems = await this._reviewChecklistItems(ctx);
       if (this.runShape && SLICE_SCOPE_AGENT_KEYS.has(nc.key)) Object.assign(ctx, await this._shapeSliceCtx(nc, ctx));
+      if (this.runShape?.slice?.index > 1 && nc.runnerType === 'clarifier') {
+        // D19: slices 2…N plan once: Clarify publishes the feature's answers instead of asking again.
+        ctx.carriedClarify = this._featureClarify();
+      }
       let result = await this._runNodeAttempts(nc, ctx);
       result = await this._questionsLoop(nc, ctx, result);
       result = await this._outlineLoop(nc, ctx, result);

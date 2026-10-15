@@ -292,7 +292,7 @@ export function runProgress(st, memo = null) {
  * Returns `{ total, index (1-based: the current run, else the next waiting one), fraction,
  * tone, text: "Run 2 of 3 · Build", parts: [{state, fraction, tone}] }`.
  */
-export function chainProgress(members) {
+export function chainProgress(members, { noun = 'Run' } = {}) {
   const list = Array.isArray(members) ? members.filter(Boolean) : [];
   const total = list.length;
   const at = list.findIndex((m) => m.state === 'current');
@@ -305,8 +305,10 @@ export function chainProgress(members) {
   const fraction = total ? parts.reduce((a, p) => a + (p.state === 'failed' ? 0 : p.fraction), 0) / total : 0;
   const cur = at >= 0 ? list[at] : null;
   const index = next >= 0 ? next + 1 : total;
-  const stageWord = cur && cur.progress && cur.progress.label ? ` · ${cur.progress.label}` : '';
+  // D17: a current member that waits for a person turns the text and tone amber.
+  const needs = !!(cur && cur.needs);
+  const stageWord = needs ? ' · Needs you' : cur && cur.progress && cur.progress.label ? ` · ${cur.progress.label}` : '';
   return { total, index, fraction, parts,
-    tone: cur && cur.progress ? cur.progress.tone : 'blue',
-    text: total ? `Run ${index} of ${total}${stageWord}` : '' };
+    tone: needs ? 'amber' : cur && cur.progress ? cur.progress.tone : 'blue',
+    text: total ? `${noun} ${index} of ${total}${stageWord}` : '' };
 }

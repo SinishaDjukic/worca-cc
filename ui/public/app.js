@@ -247,7 +247,8 @@ import { registerDirectionAddon } from './chat/direction.mjs';
 import { shapeFirstOn, onShapeFirstChange } from './chat/shape-gate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
-import { renderFeature } from './shape/feature-view.mjs';
+import { renderFeature, renderFeatureSummary } from './shape/feature-view.mjs';
+import { sliceLineCopy } from './shape/slice-line.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun } from './shape/plan-text.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
@@ -316,6 +317,45 @@ const chatDeps = {
 
 /** L11: open feature views by id, repainted on `shape-feature` and `schedules-changed`. host -> feature id. */
 const SHAPE_FEATURE_HOSTS = new Map();
+/** P11: slice info per pipeline id (GET /api/shape/pipelines/:pid/slice). Not in the map = not asked; null = asked
+ *  (pending, or not a slice). Every caller's onLoad runs when the answer lands (readyEngines' rule): the run page, the
+ *  Chat home and the Ship it dialog can ask for the same pipeline at once. Cleared on shape-feature and
+ *  schedules-changed frames (a slice's next state and PRs change there). */
+const SLICE_INFO = new Map();
+const SLICE_INFO_WAITERS = new Map();      // pipelineId → Set<onLoad>
+function sliceInfoFor(pipelineId, onLoad) {
+  if (!pipelineId || !shapeFirstOn()) return null;
+  const known = SLICE_INFO.get(pipelineId);
+  if (known) return known;
+  if (typeof onLoad === 'function') {
+    if (!SLICE_INFO_WAITERS.has(pipelineId)) SLICE_INFO_WAITERS.set(pipelineId, new Set());
+    SLICE_INFO_WAITERS.get(pipelineId).add(onLoad);
+  }
+  if (SLICE_INFO.has(pipelineId)) return null;   // pending, or not a slice
+  SLICE_INFO.set(pipelineId, null);
+  fetch(`/api/shape/pipelines/${encodeURIComponent(pipelineId)}/slice`)
+    .then((r) => (r && r.ok ? r.json() : null)).catch(() => null)
+    .then((info) => {
+      const waiters = [...(SLICE_INFO_WAITERS.get(pipelineId) || [])]; SLICE_INFO_WAITERS.delete(pipelineId);
+      if (!info || !info.featureId) return;
+      SLICE_INFO.set(pipelineId, info);
+      for (const fn of waiters) { try { fn(info); } catch { /* a repaint hint only */ } }
+    });
+  return null;
+}
+/** D16, D22: the run page's slice line (live and History glances); a fixed host rebuilt in place. */
+function paintSliceLine(host, line) {
+  if (!host) return;
+  host.hidden = !line;
+  host.replaceChildren();
+  if (!line) return;
+  const a = document.createElement('a'); a.className = 'rd-slice-link'; a.href = line.href; a.textContent = line.text;
+  host.appendChild(a);
+  if (line.openFeature) {
+    const b = document.createElement('a'); b.className = 'btn rd-slice-open'; b.href = line.href; b.textContent = 'Open feature';
+    host.appendChild(b);
+  }
+}
 /** F33: Chat's own run panel (chatDeps.openRunPanel is openChatRunPanel once Chat is installed): it stays in Chat.
  *  The full ref: a run id alone can be a superseded paused copy, or one a restarted server no longer knows. */
 function openShapeRun(ref, projectKey) {
@@ -333,7 +373,11 @@ async function paintShapeFeature(host) {
   if (seq !== host.__shapeSeq || SHAPE_FEATURE_HOSTS.get(host) !== id) return;
   if (!f) {
     // An unknown feature (404) empties the host. Any other failure keeps the last view and its error line.
-    if (r && r.status === 404) { host.replaceChildren(); host.dataset.painted = ''; host.__shapeShown = null; }
+    if (r && r.status === 404) {
+      host.replaceChildren(...(host.__shapeMode === 'page'
+        ? [Object.assign(document.createElement('p'), { className: 'feature-page-gone', textContent: 'This feature no longer exists.' })] : []));
+      host.dataset.painted = ''; host.__shapeShown = null; host.__shapeShownView = null;
+    }
     return;
   }
   // F47: the route follows replaced_by, so f.id can be a newer feature than the host's id. Frames name f.id, and the
@@ -344,7 +388,7 @@ async function paintShapeFeature(host) {
   const act = host.__shapeFocus
     || (host.contains(document.activeElement) && document.activeElement.dataset ? document.activeElement.dataset.act : null);
   host.__shapeFocus = null;
-  host.replaceChildren(renderFeature(document, f, {
+  const fullDeps = {
     confirm: confirmModal,
     error: host.__shapeErr || null,
     openSlice: (s) => openShapeRun(s, f.projectKey),
@@ -357,16 +401,21 @@ async function paintShapeFeature(host) {
       await paintShapeFeature(host);                         // carries the error (deps.error) across the rebuild
       return res && res.ok ? { ok: true } : { ok: false, error: host.__shapeErr };
     },
-  }));
+  };
+  // P13: the Chat run card gets the summary; the feature page (D16) the full view with its page extras.
+  host.__shapeShownView = host.__shapeMode === 'page' ? f : null;
+  host.replaceChildren(host.__shapeMode === 'summary'
+    ? renderFeatureSummary(document, f, { openFeature: (fid) => { location.hash = `#feature/${encodeURIComponent(fid)}`; } })
+    : renderFeature(document, f, { ...fullDeps, ...(host.__shapeMode === 'page' ? featurePageDeps(host) : {}) }));
   host.dataset.painted = id;
   if (act) { const again = host.querySelector(`[data-act="${act}"]`); if (again && !again.disabled) again.focus(); }
 }
 /** Mount (or re-point) a host. F41: the run card calls it on every repaint (once a second), so it fetches only when
  *  the host is pointed at a new id. A pending or failed fetch is not retried from here: `shape-feature`,
  *  `schedules-changed` and `hello` repaint every host. */
-function mountShapeFeature(host, id) {
-  if (host.__shapeWant === id) return;
-  host.__shapeWant = id;
+function mountShapeFeature(host, id, { mode = 'full' } = {}) {
+  if (host.__shapeWant === id && host.__shapeMode === mode) return;
+  host.__shapeWant = id; host.__shapeMode = mode;
   SHAPE_FEATURE_HOSTS.set(host, id);
   host.__shapeErr = null;
   paintShapeFeature(host);
@@ -374,11 +423,47 @@ function mountShapeFeature(host, id) {
 function refreshShapeFeatures(id = null) {
   for (const [host, fid] of SHAPE_FEATURE_HOSTS) {
     if (!host.isConnected) { SHAPE_FEATURE_HOSTS.delete(host); continue; }
+    if (host.closest('.view.hidden')) continue;              // the feature page while away: showView repaints it on return
     if (!id || fid === id || host.__shapeShown === id) paintShapeFeature(host);
   }
 }
-chatDeps.mountFeature = mountShapeFeature;                  // the run card reaches it through ask-panel's cardCtx (F33)
-if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, refresh: refreshShapeFeatures };   // test seam
+/** D16: the page's extras: the live slice's stage bar, and its ask in a persistent host (P12). */
+const featureLiveRun = (s) => (s.runId ? runs.get(s.runId) : null) || (s.pipelineId ? latestPipelineRun(s.pipelineId) : null);
+function featureProgress(s) { const r = featureLiveRun(s); return r && isGraphRun(r) ? runDecorFor(r).stageProgress : null; }
+function featurePageDeps(host) {
+  return {
+    page: true,
+    progressOf: featureProgress,
+    paintProgress: (bar, prog) => paintProgressBar(bar, prog),
+    mountAsk: (slot, s) => {
+      // One ask element per page host, moved into each rebuild's slot. chatPaintQuestion rebuilds only when the
+      // question changes and registers the panel in CHAT_QPANELS (postAnswer's busy sweep, 422 marks, clearQpanel).
+      if (!host.__featureAsk) {
+        host.__featureAsk = document.createElement('div');
+        host.__featureAsk.className = 'shape-feature-ask';
+        host.__featureAsk.appendChild(Object.assign(document.createElement('div'), { className: 'qpanel hidden' }));
+      }
+      slot.replaceWith(host.__featureAsk);
+      chatPaintQuestion({ runId: s.runId || null, pipelineId: s.pipelineId || null }, host.__featureAsk);
+    },
+  };
+}
+/** D16: move the feature page's current stage bar on a run frame, without a fetch. */
+function paintFeaturePageProgress(r) {
+  if (currentShownView !== 'feature' || !r || !r.pipelineId) return;
+  const page = document.querySelector('[data-view="feature"] .feature-page');
+  const box = page && page.querySelector('.shape-feature-current');
+  const f = page && page.__shapeShownView;                 // the last view JSON paintShapeFeature drew in page mode
+  const cur = f && box ? f.slices.find((s) => String(s.index) === box.dataset.slice) : null;
+  if (!cur || (cur.pipelineId !== r.pipelineId && cur.runId !== r.runId)) return;
+  const prog = featureProgress(cur);
+  const bar = box.querySelector('.shape-feature-current-bar');
+  const text = box.querySelector('.shape-feature-current-text');
+  bar.hidden = !prog; text.hidden = !prog;
+  if (prog) { paintProgressBar(bar, prog); text.textContent = prog.text; }
+}
+chatDeps.mountFeature = (host, id) => mountShapeFeature(host, id, { mode: 'summary' });   // P13: the Chat run card (F33)
+if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, mountCard: (h, id) => chatDeps.mountFeature(h, id), refresh: refreshShapeFeatures };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -1424,12 +1509,14 @@ function handleServerMessage(msg) {
     // Chat P4: a paused run in the panel offers "Resume at" off the same tickets.
     if (currentView() === 'schedules' || inRunsView() || crpShowsRun()) void schedulesView.load().then(() => { if (inRunsView()) { paintRunsList(); rdRepaintOpenGlance(); } repaintLimitNotices(); });
     // Last, so even a throw could not cost the Schedules page its refresh. chatHome is null until mountChatHome (F40).
+    SLICE_INFO.clear();
     refreshShapeFeatures();
     chatHome?.refreshPlans();
     return;
   }
   // Shape it first: a feature's slices changed (an action, a slice's run, the scheduler tick). L11.
   if (msg.type === 'shape-feature') {
+    SLICE_INFO.clear();
     refreshShapeFeatures(msg.id);
     chatHome?.refreshPlans();
     return;
@@ -1644,6 +1731,7 @@ function handleServerMessage(msg) {
       break;
     case 'state':
       onState(r, msg);
+      paintFeaturePageProgress(r);
       break;
     case 'title':
       onTitle(r, msg);
@@ -21306,6 +21394,16 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   if (!modal.classList.contains('hidden')) return false;  // double-open guard: a second open
                                                           // would stack a second onOk -> two POSTs
   modal.dataset.pipelineId = String((record && record.id) || '');   // Chat P4: whose dialog this is (crpCloseShipItFor)
+  // D22: a slice with a next slice says to merge this PR first. The first open usually finds the cache empty: the
+  // answer fills the note, if the dialog still shows this run.
+  const sliceNote = modal.querySelector('.shipit-slice-note');
+  const paintSliceNote = (info) => {
+    if (!sliceNote) return;
+    sliceNote.hidden = !(info && info.next);
+    sliceNote.textContent = info && info.next ? `Slice ${info.next.index} builds on this branch: merge this PR first.` : '';
+  };
+  const slicePid = String((record && record.id) || '');
+  paintSliceNote(slicePid ? sliceInfoFor(slicePid, (info) => { if (modal.dataset.pipelineId === slicePid) paintSliceNote(info); }) : null);
   if (record.target === 'workspace') return openShipItWsModal(record, data, { link, onClose });
   modal.querySelector('#shipit-repos').hidden = true;   // a previous workspace open may have shown it
   const q = (sel) => modal.querySelector(sel);
@@ -22040,6 +22138,9 @@ function paintHdGlance(screen, record, data) {
   const checks = results ? hdChecks(results) : [];
   const s = results && results.summary;
   const pr = glancePrInput(record);
+  // D16, D22: a finished slice's place in its feature (the line is a fixed host, rebuilt in place: no duplicates).
+  const info = record && record.id ? sliceInfoFor(record.id, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }) : null;
+  paintSliceLine(glance.querySelector('.rd-slice-line'), sliceLineCopy(info, { done: st.status === 'done' }));
   const copy = glanceCopy(run, {
     pill: { text: meta.word }, checks: results ? checks.length : null, lastLine: '',
     pr, files: s ? (s.filesNew || 0) + (s.filesChanged || 0) + (s.filesDeleted || 0) : null,
@@ -29370,7 +29471,7 @@ function loadRunsGroupBy() {
   try { const v = localStorage.getItem(RUNS_GROUP_BY_KEY); return RUNS_GROUPINGS.includes(v) ? v : 'project'; }
   catch { return 'project'; }
 }
-const runsUi = { query: '', filter: loadRunsFilter(), groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false, chainsOpen: new Set() };
+const runsUi = { query: '', filter: loadRunsFilter(), groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false, chainsOpen: new Set(), chainsToggled: new Map() };
 
 function histGroupName(p) {
   return (p.target === 'workspace' && p.workspaceName) || p.projectName || p.projectKey || '(unknown project)';
@@ -29431,7 +29532,10 @@ function runsLiveItem(r) {
 }
 /** P8: a server chain (schedulesView.chains()) as the list's chain item, members overlaid with this tab's live runs. */
 function runsChainItem(c, open) {
-  const members = c.members.map((m) => {
+  // D17: a chain that is a feature shows the feature title and its slices ("1 · Run tags"), and opens the feature page.
+  const feat = c.feature && shapeFirstOn() ? c.feature : null;
+  const featHref = feat ? `#feature/${encodeURIComponent(feat.id)}` : '';
+  const members = c.members.map((m, i) => {
     const r = (m.pipelineId ? latestPipelineRun(m.pipelineId) : null) || (m.ticketId ? runs.get(m.ticketId) || null : null);
     const state = r ? (r.status === 'done' ? 'done' : RD_TERMINAL.includes(r.status) ? 'failed' : 'current') : m.state;
     const progress = r && state === 'current' && isGraphRun(r) ? runDecorFor(r).stageProgress : null;
@@ -29441,11 +29545,26 @@ function runsChainItem(c, open) {
     // The row glyph follows runStatusMeta's order: parked first, then a question.
     const icon = !r || state !== 'current' ? '' : ['paused', 'pausing', 'interrupted'].includes(r.status) ? 'paused'
       : r.pendingQuestion != null ? 'ask' : 'run';
-    return { ...m, pipelineId: m.pipelineId || (r && r.pipelineId) || null, state, progress, href, icon, runId: r ? r.runId : '' };
+    // The amber "Needs you" text only; the Needs-you list membership comes from the model. Same cases as needsYou():
+    // an open question or a pause (`interrupted` is not one).
+    const needs = !!r && state === 'current' && (r.pendingQuestion != null || r.status === 'paused');
+    const slice = feat ? (feat.slices.find((s) => (m.ticketId && s.ticketId === m.ticketId) || (m.pipelineId && s.pipelineId === m.pipelineId)) || feat.slices[i]) : null;
+    return { ...m, pipelineId: m.pipelineId || (r && r.pipelineId) || null, state, progress, icon, needs, runId: r ? r.runId : '',
+      title: slice ? `${slice.index} · ${slice.title}` : m.title,
+      // D17: a slice that has not started opens the feature page; a started one opens its run.
+      href: feat && !r && !m.pipelineId ? featHref : href };
   });
   const first = c.members[0] || {};
   const g = runsGroupFor({ pipelineId: first.pipelineId || '', projectDir: first.projectDir || '', workspaceId: first.workspaceId || '', projectKey: first.projectKey || '' });
-  return { id: c.id, title: c.title, members, open, groupKey: g.key, groupName: g.name, ...chainProgress(members) };
+  return { id: c.id, title: feat ? feat.title : c.title, members, open, groupKey: g.key, groupName: g.name,
+    ...(feat ? { feature: { id: feat.id }, href: featHref } : {}),
+    ...chainProgress(members, feat ? { noun: 'Slice' } : undefined) };
+}
+/** D17: a plain chain is collapsed by default (chainsOpen); a feature row is open by default and a person's toggle
+ *  wins for the session (chainsToggled). */
+function chainOpen(c) {
+  const key = `chain:${c.id}`;
+  return c.feature && shapeFirstOn() ? (runsUi.chainsToggled.has(key) ? runsUi.chainsToggled.get(key) : true) : runsUi.chainsOpen.has(key);
 }
 function runsHistItem(p) {
   return {
@@ -29497,7 +29616,7 @@ function paintRunsList() {
     live: overviewRuns().map(runsLiveItem),
     history: histSource.filter(Boolean).map(runsHistItem),
     scheduled: schedulesView.upcoming(SCHEDULED_GROUP_WINDOW_MS).map(runsSchedItem),
-    chains: schedulesView.chains().map((c) => runsChainItem(c, runsUi.chainsOpen.has(`chain:${c.id}`))),
+    chains: schedulesView.chains().map((c) => runsChainItem(c, chainOpen(c))),
     person: viewer.shared ? state.historyPerson : '',
     query: runsUi.query, filter: runsUi.filter, groupBy: runsUi.groupBy, collapsed: runsUi.collapsed, now: Date.now(),
   });
@@ -29591,7 +29710,8 @@ el.runsList?.addEventListener('click', (e) => {
   if (tog) {
     e.preventDefault();
     const k = tog.dataset.chainKey;
-    if (runsUi.chainsOpen.has(k)) runsUi.chainsOpen.delete(k); else runsUi.chainsOpen.add(k);
+    if (tog.dataset.feature === '1') runsUi.chainsToggled.set(k, tog.getAttribute('aria-expanded') !== 'true');
+    else if (runsUi.chainsOpen.has(k)) runsUi.chainsOpen.delete(k); else runsUi.chainsOpen.add(k);
     paintRunsList();   // the refocus path above puts focus back on the rebuilt toggle
     return;
   }
@@ -31038,7 +31158,11 @@ function paintRdGlance(screen, r) {
   paintGlanceStatus(screen.querySelector('.rd-glance'), copy);
   // Run progress (P2/P4): stopped and error keep today's red glance with no bar.
   paintProgressBar(screen.querySelector('.rd-glance .rd-prog'), prog && prog.tone !== 'red' ? prog : null);
-  paintChainBar(screen.querySelector('.rd-glance .rd-prog-chain'), chainItemFor(live));
+  // D16, D22: a slice names its feature (and, once done, the next slice) instead of the unnamed chain bar.
+  const info = live.pipelineId ? sliceInfoFor(live.pipelineId, () => rdRepaintOpenGlance()) : null;
+  paintSliceLine(screen.querySelector('.rd-glance .rd-slice-line'), sliceLineCopy(info, { done: live.status === 'done' }));
+  const chain = chainItemFor(live);
+  paintChainBar(screen.querySelector('.rd-glance .rd-prog-chain'), chain && (chain.feature || info) ? null : chain);
   // Only while a question waits is the status header a control (see openRunDetail).
   const statusTop = screen.querySelector('.rd-now-top');
   const asking = copy.state === 'ask';
@@ -33110,7 +33234,7 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers'];
+const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature'];
 // One Runs page, three route names: the bare list (#runs) and the two detail routes every
 // deep link already uses (#running/<id>…, #history/<projectKey>/<id>…). All three render
 // the `data-view="runs"` section and light the one Runs nav button.
@@ -33261,6 +33385,8 @@ if (typeof window !== 'undefined') {
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
+  // D16: the feature page lives behind the Plan it with me flag and needs an id; otherwise Chat, as any unknown view.
+  if (name === 'feature' && (!shapeFirstOn() || !param)) return showView('chat', '');
   // A caller that still names a Settings tab that became a page ('settings' + 'providers…')
   // lands on that page: parseSettingsParam would read the unknown tab as General.
   if (name === 'settings') {
@@ -33467,6 +33593,13 @@ function showView(name, param = '') {
     else routeProjectDetail(param);
   }
   if (name === 'chat') enterChatView(param, prevView);
+  if (name === 'feature') {
+    const host = document.querySelector('[data-view="feature"] .feature-page');
+    const id = decodeURIComponent(param);
+    // A re-mount with the same id is a no-op: repaint, to catch up after the time away (the hidden page skips frames).
+    if (host.__shapeWant !== id || host.__shapeMode !== 'page') mountShapeFeature(host, id, { mode: 'page' });
+    else if (prevView !== 'feature') paintShapeFeature(host);
+  }
   if (name === 'workflows') void enterWorkflowsView(param, prevView);
   if (name === 'settings') showSettingsTab(param);
   if (name === 'marketplace') loadPluginsView({ refresh: true });
@@ -34314,7 +34447,9 @@ function chatHomeFinishedHere(hist) {
 function chatHomeTile(r) {
   const g = runsGroupFor({ pipelineId: r.pipelineId || '', projectDir: r.projectDir || '', workspaceId: r.kind === 'workspace-run' ? (r.workspaceId || '') : '' });
   const tpl = r.stepper && r.stepper.template;
-  return { ...askRunSnapshot(r), key: `live:${r.runId}`, project: g.name || '', workflow: (tpl && tpl.name) || '' };
+  const info = r.pipelineId ? sliceInfoFor(r.pipelineId, () => chatHome?.update()) : null;   // the home's own repaint
+  return { ...askRunSnapshot(r), key: `live:${r.runId}`, project: g.name || '', workflow: (tpl && tpl.name) || '',
+    ...(info ? { slice: { index: info.index, total: info.total, title: info.sliceTitle } } : {}) };
 }
 /** A History row that needs you (paused, its run not live in this tab): the tile's stand-in, no graph. */
 function chatHomeHistTile(p) {

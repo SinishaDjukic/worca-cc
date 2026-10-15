@@ -57,7 +57,7 @@ test('gate on: Plan slice 1 posts the gated answer route', async () => {
   assert.equal(posts.length, 1);
   assert.equal(posts[0].url, `/api/runs/${RUN_ID}/answer`);
   assert.equal(posts[0].body.decision, 'approve');
-  assert.equal(posts[0].body.approveEach, true);
+  assert.equal(posts[0].body.approveEach, false, 'D19: Approve each slice\'s plan is off unless ticked');
 });
 
 test('gate off: Plan slice 1 posts /api/answer, and no merge/remove is offered', async () => {
@@ -276,4 +276,82 @@ test('schedules-changed and shape-feature frames do not throw before the Chat ho
   ctx.dispatch({ type: 'schedules-changed' });
   ctx.dispatch({ type: 'shape-feature', id: 'nope' });
   await ctx.settle(3);
+});
+
+// ---- D16: the feature page (#feature/ID) and the Chat run card's summary ------------------------------------------
+
+const PAGE_FEATURE = (o = {}) => FEATURE('feat_1', { approveEach: false, slices: [
+  { index: 1, title: 'Store tags', state: 'done', pipelineId: 'p1', runId: null, pr: null },
+  { index: 2, title: 'Run tags', state: 'approval', pipelineId: 'p2', runId: 'r2', pr: null },
+  { index: 3, title: 'Cost report', state: 'planned', pipelineId: null, runId: null, pr: null },
+], ...o });
+const PLAN_Q = { id: 'plan-n_plan-1', kind: 'plan', nodeId: 'n_plan',
+  plan: { port: 'plan', round: 1, revisable: true, nodeId: 'n_plan', file: '/x/plan.md', check: { ok: false, passed: 3, total: 8, items: [], grounding: [] } } };
+
+async function openFeaturePage({ server = featureServer(), runs = [] } = {}) {
+  const ctx = await bootApp({ fetchHandler: server.fetchHandler });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', ...GATE, runs });
+  await ctx.settle();
+  ctx.go('feature/feat_1');
+  await ctx.settle(6);
+  const page = ctx.window.document.querySelector('[data-view="feature"] .feature-page');
+  return { ctx, server, page };
+}
+
+test('#feature/feat_1 fetches the feature and renders the page view', async () => {
+  const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
+  const { page } = await openFeaturePage({ server });
+  assert.deepEqual(server.gets, ['feat_1']);
+  assert.ok(page.querySelector('.shape-feature.is-page'));
+  assert.equal(page.querySelectorAll('.shape-feature-seg').length, 3);
+});
+
+test('#feature for an unknown id says the feature no longer exists', async () => {
+  const { page } = await openFeaturePage();
+  assert.equal(page.querySelector('.feature-page-gone').textContent, 'This feature no longer exists.');
+});
+
+test('#feature with the gate off falls back to Chat', async () => {
+  const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
+  const ctx = await bootApp({ fetchHandler: server.fetchHandler });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [] });
+  await ctx.settle();
+  ctx.go('feature/feat_1');
+  await ctx.settle(4);
+  assert.deepEqual(server.gets, []);
+  assert.ok(ctx.window.document.querySelector('[data-view="feature"]').classList.contains('hidden'));
+});
+
+test('the page\'s ask host survives a repaint; a state frame moves the bar without a fetch', async () => {
+  const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
+  const { ctx, page } = await openFeaturePage({ server, runs: [{ runId: 'r2', pipelineId: 'p2', title: 'Run tags', projectDir: '/tmp/p',
+    status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z', shaping: { perspectives: [], rounds: [], approved: null, savedTo: null }, pendingQuestion: PLAN_Q }] });
+  const qp = page.querySelector('.shape-feature-current .shape-feature-ask .qpanel');
+  assert.ok(qp, 'the ask host sits in the current slice block');
+  assert.ok(qp.childElementCount > 0 || qp.textContent.length > 0, 'the plan ask is drawn');
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(6);
+  assert.equal(server.gets.length, 2);
+  assert.equal(page.querySelector('.shape-feature-current .shape-feature-ask .qpanel'), qp, 'the same panel: a typed answer survives');
+  ctx.dispatch({ type: 'state', runId: 'r2', status: 'running' });
+  await ctx.settle(4);
+  assert.equal(server.gets.length, 2, 'a state frame does not refetch the feature');
+});
+
+test('the Chat run card mounts the summary and Open feature routes to the page; the Plans tab keeps the full card', async () => {
+  const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
+  const { ctx, seam, host } = await bootFeature({ server });
+  const card = host();
+  seam.mountCard(card, 'feat_1');
+  await ctx.settle(5);
+  assert.ok(card.querySelector('.shape-feature-sum'));
+  assert.equal(card.querySelector('.shape-feature-sum-line').textContent, 'Plan it with me · Slice 2 needs you');
+  click(ctx, card.querySelector('.shape-feature-sum-open'));
+  assert.equal(ctx.window.location.hash, '#feature/feat_1');
+  const plans = host();
+  seam.mount(plans, 'feat_1');
+  await ctx.settle(5);
+  assert.ok(plans.querySelector('.shape-feature') && !plans.querySelector('.shape-feature-sum') && !plans.querySelector('.is-page'));
 });

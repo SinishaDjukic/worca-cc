@@ -3,6 +3,8 @@
 import { isTestable } from './shape.mjs';
 
 export const OUTLINE_FILE = 'slices.json';
+/** D19: a later slice's Planner writes this (in the run's pipeline dir) when the slice cannot be built as outlined. */
+export const OUTLINE_CHANGE_FILE = 'outline-change.md';
 export const OUTLINE_ROUNDS_MAX = 3;
 export const OUTLINE_EDITS_MAX = 20;
 export const SLICES_PREFERRED = Object.freeze({ min: 2, max: 5 });
@@ -202,19 +204,25 @@ export const FLAT_NOTE = '## Do not slice\n\nThis task is planned as one, withou
   + 'to your plan output as usual. Do not write an outline.\n\n';
 
 /** Planner and Refine of slice k (L6). `earlier`: [{index, title, summary, files:string[], more:number}]. */
-export function sliceScopeBlock({ index, total, outline, earlier = [], refiner = false }) {
+export function sliceScopeBlock({ index, total, outline, earlier = [], refiner = false, outlineChangeFile = null }) {
   const s = outline.slices[index - 1] || { title: `slice ${index}` };
   const done = earlier.length
     ? '\nWhat the earlier slices changed (they are merged into the code you see, or on its base branch):\n'
       + earlier.map((e) => `- Slice ${e.index}, ${e.title}: ${e.summary || 'no review summary'}`
         + (e.files.length ? `\n  Files: ${e.files.map((f) => `\`${f}\``).join(', ')}${e.more ? ` (+${e.more} more)` : ''}` : '')).join('\n') + '\n'
     : '';
+  const change = !refiner && outlineChangeFile
+    ? `\nIf slice ${index} cannot be built as the outline describes (a prerequisite an earlier slice did not deliver, a split `
+      + `that no longer fits the code), write why, in a few sentences, to: ${outlineChangeFile}\n`
+      + 'Then plan what can be built. Write that file only in that case: when it exists, a person reviews your plan before '
+      + 'anything is built.\n'
+    : '';
   return `## This is slice ${index} of ${total}\n\n`
     + 'The approved outline:\n\n' + outlineMarkdown(outline, { current: index }) + '\n\n'
     + (refiner
       ? `Judge the plan for slice ${index} only ("${s.title}"). Later slices are out of scope: do not flag their work as missing.\n`
       : `Write the plan for slice ${index} only ("${s.title}"). Later slices are out of scope: do not plan them.\n`)
-    + done + '\n';
+    + done + change + '\n';
 }
 
 /** The task of a slice run (k ≥ 2, or a restarted slice): what its Clarify, Planner and title start from. */
@@ -235,4 +243,24 @@ export function replanBrief({ featureTitle, outline, doneCount }) {
   return `# ${featureTitle}: re-plan the rest\n\n`
     + `These slices are done and merged into the base this run starts from:\n${done}\n\n`
     + `Plan what is left, in slices if it is still large. The earlier outline for the rest was:\n\n${outlineMarkdown(rest)}\n`;
+}
+
+/** D25: insert one feature's entry at the top of `## Unreleased` (created after the first `# ` heading, else at the
+ *  top). A text whose Unreleased section already has this feature's heading comes back unchanged (a retried ship). */
+export function changelogWithFeature(text, { title, slices }) {
+  const firstSentence = (s) => String(s || '').split(/(?<=[.!?])\s/)[0].trim();
+  const entry = `### ${title}\n\n${slices.map((s) => `- ${s.title}${s.summary ? `: ${firstSentence(s.summary)}` : ''}`).join('\n')}\n`;
+  let src = String(text || '');
+  if (src && !src.endsWith('\n')) src += '\n';           // a last line without a newline still matches the regexes below
+  const m = /^## Unreleased[^\n]*\n/m.exec(src);
+  if (m) {
+    const rest = src.slice(m.index + m[0].length);
+    const section = rest.slice(0, (/^## /m.exec(rest) || { index: rest.length }).index);
+    if (section.split('\n').includes(`### ${title}`)) return String(text || '');
+    return `${src.slice(0, m.index + m[0].length)}\n${entry}${rest.replace(/^\n?/, '\n')}`;
+  }
+  const h1 = /^# [^\n]*\n/m.exec(src);
+  const at = h1 ? h1.index + h1[0].length : 0;
+  const head = src.slice(0, at) || '# Changelog\n';
+  return `${head}\n## Unreleased\n\n${entry}${src.slice(at) ? `\n${src.slice(at).replace(/^\n+/, '')}` : ''}`;
 }

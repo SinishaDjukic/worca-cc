@@ -185,6 +185,43 @@ test('_titleGenOpts mirrors the run\'s claude policy: bin + mock travel with the
   assert.equal(o.cwd, orch.projectDir, 'before _setupRunRoot the cwd falls back to projectDir');
 });
 
+// ── D18: a slice started from its ticket keeps the title the ticket set ──────────────────────
+const SLICE_OUTLINE = { why: '', slices: [
+  { id: 's1', title: 'Store tags', goal: '', inScope: [], outOfScope: [], acceptance: ['a'], dependsOn: [], estimate: 'small' },
+  { id: 's2', title: 'Run tags', goal: '', inScope: [], outOfScope: [], acceptance: ['b'], dependsOn: ['s1'], estimate: 'small' } ] };
+
+test('a slice run keeps its title: no title generation, not provisional', async () => {
+  const projectDir = await makeTmpDir();
+  const orch = createOrchestrator({
+    projectDir, prompt: 'slice brief', title: 'Tags · 2/2: Run tags', auto: true, claude: { mock: true },
+    shape: { perspectives: ['product'], slices: 'off', slice: { feature: 'feat_x', index: 2, total: 2, outline: SLICE_OUTLINE } },
+    titleRunClaude: async () => { throw new Error('generateTitle must not run for a slice'); },
+  });
+  orch.pipeline = { id: 'p-slice', promptText: 'slice brief' };
+  orch.state.titleProvisional = true;
+  const seen = [];
+  orch.on('title', (p) => seen.push(p));
+  orch._kickoffTitleGeneration();
+  await orch._titlePromise;
+  assert.equal(seen.length, 0);
+  assert.equal(orch.state.titleProvisional, false, 'the provisional re-kick never fires');
+});
+
+test('slice 1 started without shape.slice but resumed with runShape.slice index 1 still generates its title', async () => {
+  const projectDir = await makeTmpDir();
+  let calls = 0;
+  const orch = createOrchestrator({
+    projectDir, prompt: 'shape brief', auto: true, claude: { mock: true },
+    shape: { perspectives: ['product'], slices: 'on' },
+    titleRunClaude: async () => { calls++; return { text: 'Tags' }; },
+  });
+  orch.runShape = { ...orch.runShape, slice: { feature: 'feat_x', index: 1, total: 2, outline: SLICE_OUTLINE } };
+  orch.pipeline = { id: 'p-slice1', promptText: 'shape brief' };
+  orch._kickoffTitleGeneration();
+  await orch._titlePromise;
+  assert.equal(calls, 1);
+});
+
 // ── Away mode cost visibility (T4): the run-title call is worca's own AI spend during the run ──
 const titleResult = (o) => o.onEvent({ type: 'result', costUsd: 0.0021, raw: { type: 'result', usage: { input_tokens: 90, output_tokens: 8 } } });
 

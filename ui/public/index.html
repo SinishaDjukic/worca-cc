@@ -796,6 +796,7 @@
                         <p class="rd-now-sub"></p>
                       </div>
                     </div>
+                    <div class="rd-slice-line" hidden></div>
                     <div class="run-prog run-prog-chain rd-prog-chain" hidden></div>
                     <div class="run-prog rd-prog" tabindex="0" aria-label="Run progress" hidden></div>
                     <!-- Live view: the running step(s), centred in a fogged graph beside the card
@@ -940,6 +941,7 @@
                    failure, an archive failure); writers resolve it with screen.querySelector. -->
               <div class="hd-error" hidden></div>
               <section class="rd-glance hd-glance" aria-label="Run status">
+                <div class="rd-slice-line" hidden></div>
                 <div class="rd-now">
                   <header class="rd-page-head">
                     <h1 class="rd-page-title" tabindex="-1"></h1>
@@ -1066,6 +1068,9 @@
           </template>
         </section>
         <!-- /view runs -->
+
+        <!-- ===== VIEW: FEATURE (Plan it with me, D16) ===== -->
+        <section class="view hidden" data-view="feature"><div class="feature-page"></div></section>
 
         <!-- ===== VIEW: STATISTICS ===== -->
         <section class="view hidden" data-view="schedules">
@@ -2602,6 +2607,7 @@
           <small class="shipit-closes hint" hidden></small>
         </div>
         <div class="shipit-try" hidden data-min-level="advanced" aria-label="Try it first"></div>
+        <p class="shipit-slice-note" hidden></p>
         <div class="shipit-actions" data-card-actions>
           <button type="button" class="shipit-cancel btn-ghost">Cancel</button>
           <button type="button" class="shipit-ok">Open pull request</button>

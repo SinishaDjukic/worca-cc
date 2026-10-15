@@ -4,9 +4,10 @@
 import { randomUUID } from 'node:crypto';
 import { getDb, tx } from '../db.mjs';                  // node:sqlite: tx(fn), never db.transaction (F23)
 import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf } from '../scheduler.mjs';
-import { readPrState, readPipelineExtras, readRunResultsById } from '../artifacts.mjs';
+import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } from '../artifacts.mjs';
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
+import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 
 const j = (t, d) => { try { return t ? JSON.parse(t) : d; } catch { return d; } };
 const iso = (ms) => new Date(ms).toISOString();
@@ -43,7 +44,7 @@ export function sliceRequest({ feature, index, outline, perspectives, workflowId
  *  slice-1 pipeline: an earlier active feature of the same run is cancelled and marked replanned (§5.3 note). */
 // node:sqlite refuses to bind `undefined`: every bound value has a default.
 export function createSliceFeature({ pipelineId, projectDir, title, outline, proposed = null, merges = 0, removals = 0,
-  approveEach = true, perspectives, workflowId, base = {}, replaces = null, startedBy = null, now = Date.now() }) {
+  approveEach = false, perspectives, workflowId, base = {}, replaces = null, startedBy = null, now = Date.now() }) {
   const db = getDb();
   const id = `feat_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
   const ts = iso(now);
@@ -98,6 +99,14 @@ function markReplaced(oldId, newId, ts) {
     .run(newId, ts, oldId);
 }
 
+/** D19: the feature's Clarify answers: its origin run's (slice 1, or the Re-plan the rest run) clarify row. */
+export function featureClarify(featureId) {
+  const f = getDb().prepare('SELECT origin_pipeline_id FROM shape_features WHERE id = ?').get(String(featureId));
+  if (!f) return null;
+  const row = readClarifyRow(f.origin_pipeline_id);
+  return row && (row.questions || row.answers) ? row : null;
+}
+
 export function featureApprovesEach(id) {
   try { const r = getDb().prepare('SELECT approve_each FROM shape_features WHERE id = ?').get(String(id)); return !r || r.approve_each !== 0; }
   catch { return true; }
@@ -117,7 +126,7 @@ function sliceRows(featureId) {
   return getDb().prepare('SELECT * FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(String(featureId)).map((r) => {
     const ticket = r.ticket_id ? getTicket(r.ticket_id) : null;
     return { index: r.idx, sliceId: r.slice_id, title: r.title, ticketId: r.ticket_id, ticket,
-      pipelineId: r.pipeline_id || ticket?.pipelineId || null };
+      pipelineId: r.pipeline_id || ticket?.pipelineId || null, draftPrUrl: r.draft_pr_url || null };
   });
 }
 
@@ -146,7 +155,9 @@ export function featureView(id, { live = () => null } = {}) {
   const slices = sliceRows(id).map((r) => {
     const state = sliceState(r, live);
     const l = r.pipelineId ? live(r.pipelineId) : null;
-    const pr = r.pipelineId ? readPrState(r.pipelineId) : null;
+    const pr0 = r.pipelineId ? readPrState(r.pipelineId) : null;
+    // D24: the PR openSliceDraft opened as a draft reads "draft" until the feature ships (pr_state stays OPEN, P18).
+    const pr = pr0 ? { ...pr0, draft: !f.ship_mode && !!r.draftPrUrl && r.draftPrUrl === pr0.url } : null;
     const s = f.outline.slices[r.index - 1] || {};
     return { index: r.index, title: r.title, goal: s.goal || '', estimate: s.estimate || null, state,
       runId: l?.runId || null, pipelineId: r.pipelineId, ticketId: r.ticketId, pr };
@@ -155,6 +166,10 @@ export function featureView(id, { live = () => null } = {}) {
   const h = slices.find((s, i) => HALTS.has(s.state) || (i > 0 && STUCK.has(s.state) && slices[i - 1].state === 'done'));
   const waiting = h ? slices.filter((s) => s.index > h.index && (s.state === 'planned' || s.state === 'missed')).map((s) => s.index) : [];
   const status = f.status === 'active' && done === slices.length ? 'done' : f.status;
+  // D24: Ship as once every slice is done, on a feature that is still active and not shipped. The suggestion is
+  // async (featureShipSuggestion); the GET route merges it.
+  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !f.ship_mode,
+    mode: f.ship_mode || null, prUrl: f.ship_pr_url || null, suggested: null, linesAdded: null };
   // The Re-plan the rest run (replanning/replanned): its ticket id is the run id it fires as (ui/server.mjs:2188).
   const rt = f.replan_ticket_id ? getTicket(f.replan_ticket_id) : null;
   const replan = rt ? { ticketId: rt.id, pipelineId: rt.pipelineId || null, runId: rt.pipelineId ? (live(rt.pipelineId)?.runId || null) : null } : null;
@@ -163,8 +178,50 @@ export function featureView(id, { live = () => null } = {}) {
     status, approveEach: f.approve_each !== 0, total: slices.length, done,
     halted: h ? { index: h.index, state: h.state, waiting } : null,
     open: slices.some((s) => ['planned', 'missed'].includes(s.state)),
-    replacedBy: f.replaced_by || null, replan, slices,
+    replacedBy: f.replaced_by || null, replan, slices, ship,
   };
+}
+
+export const ONE_PR_MAX_LINES = 1500;
+
+/** D24: openSliceDraft's draft, so the page can say "draft" (pipelines.pr_state stays OPEN, P18). */
+export function recordSliceDraft(pipelineId, url) {
+  const at = featureOfPipeline(pipelineId);
+  if (!at) return false;
+  return getDb().prepare('UPDATE shape_feature_slices SET draft_pr_url = ? WHERE feature_id = ? AND idx = ?')
+    .run(String(url), at.featureId, at.idx).changes > 0;
+}
+
+/** D24: what Ship as did. Once: a second call changes nothing and answers false. */
+export function recordShip(id, { mode, prUrl = null, now = Date.now() }) {
+  return getDb().prepare('UPDATE shape_features SET ship_mode = ?, ship_pr_url = ?, shipped_at = ?, updated_at = ? WHERE id = ? AND ship_mode IS NULL')
+    .run(mode, prUrl, iso(now), iso(now), String(id)).changes > 0;
+}
+
+/** P17: the Ship as default from the slices' frozen line counts (results.json summary.linesAdded; unknown = 0). Async:
+ *  the run dir lookup is async, so this cannot live in sync featureView. */
+export async function featureShipSuggestion(view) {
+  let added = 0;
+  for (const s of view.slices) {
+    if (!s.pipelineId) continue;
+    try { const res = await readRunResultsById(s.pipelineId); const n = res?.summary?.linesAdded; if (Number.isFinite(n)) added += n; }
+    catch { /* unknown counts as 0 */ }
+  }
+  return { suggested: added < ONE_PR_MAX_LINES ? 'one' : 'stacked', linesAdded: added };
+}
+
+/** D24, D25: what Ship as needs per slice: its PR, its last code review summary (capped as earlierSliceChanges caps
+ *  it) and its checklist markdown. */
+export async function featureShipInput(view) {
+  const slices = [];
+  for (const s of view.slices) {
+    const reviews = s.pipelineId ? readPipelineExtras(s.pipelineId).reviews : [];
+    const last = reviews.filter((v) => v.kind === 'impl' && v.summary).sort((a, b) => a.cycle - b.cycle).at(-1);
+    const cl = latestChecklist(reviews);
+    slices.push({ index: s.index, title: s.title, pipelineId: s.pipelineId, pr: s.pr,
+      summary: last ? last.summary.slice(0, 600) : '', checklistMd: cl ? checklistMarkdown(cl.checklist).trimEnd() : '' });
+  }
+  return { id: view.id, title: view.title, slices };
 }
 
 /** F47: the newest feature in a Re-plan the rest chain (replaced_by), so a host pointed at an old feature shows the
@@ -201,6 +258,44 @@ export function featuresOfTickets(ids) {
   if (!ids.length) return [];
   return getDb().prepare(`SELECT DISTINCT feature_id FROM shape_feature_slices WHERE ticket_id IN (${ids.map(() => '?').join(', ')})`)
     .all(...ids.map(String)).map((r) => r.feature_id);
+}
+
+/** D17: the feature a Run after chain shows, when the chain's first run is one of its slices. */
+export function chainFeature(members) {
+  const m0 = Array.isArray(members) ? members[0] : null;
+  if (!m0) return null;
+  const fid = m0.pipelineId ? featureOfPipeline(m0.pipelineId)?.featureId : m0.ticketId ? featuresOfTickets([m0.ticketId])[0] : null;
+  if (!fid) return null;
+  const f = getDb().prepare('SELECT id, title FROM shape_features WHERE id = ?').get(String(fid));
+  if (!f) return null;
+  return { id: f.id, title: f.title,
+    slices: sliceRows(f.id).map((r) => ({ index: r.index, title: r.title, ticketId: r.ticketId, pipelineId: r.pipelineId })) };
+}
+
+/** D16, D22: where a run sits in its feature, or null. */
+export function sliceOfPipeline(pipelineId, { live = () => null } = {}) {
+  const at = featureOfPipeline(pipelineId);
+  if (!at) return null;
+  const v = featureView(at.featureId, { live });
+  if (!v) return null;
+  const s = v.slices[at.idx - 1];
+  const n = v.slices[at.idx] || null;
+  return { featureId: v.id, title: v.title, index: at.idx, total: v.total, sliceTitle: s ? s.title : '',
+    state: s ? s.state : null, next: n ? { index: n.index, title: n.title, state: n.state } : null };
+}
+
+/** D22: the first lines of a slice's PR body: which feature, which slice, and the other slices' PRs. */
+export function slicePrPreamble(pipelineId) {
+  const at = featureOfPipeline(pipelineId);
+  if (!at) return '';
+  const f = featureRow(at.featureId);
+  if (!f) return '';
+  const rows = sliceRows(f.id);
+  const others = rows.filter((r) => r.index !== at.idx).map((r) => {
+    const pr = r.pipelineId ? readPrState(r.pipelineId) : null;
+    return `- Slice ${r.index}, ${r.title}: ${pr?.url || 'not opened yet'}`;
+  });
+  return `Part of ${f.title}: slice ${at.idx} of ${rows.length}\n\n${others.join('\n')}`;
 }
 
 /** L6, D14: each done earlier slice's last review summary and changed files (results.json), oldest first. */

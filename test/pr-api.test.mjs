@@ -972,3 +972,25 @@ test('POST /api/pr: a gated run without checklist rows is unchanged; a footer-le
   });
   assert.equal(bodyArg(seen), 'Did it.\n\n<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n- [x] **R-qa-1** T. — e');
 });
+
+// D22: a slice's PR body starts with its place in the feature, only while the flag is on.
+test('a slice pipeline\'s PR body starts with "Part of FEATURE: slice 1 of 2" (flag on), and not with the flag off', async () => {
+  const { createSliceFeature } = await import('../src/core/shape/features.mjs');
+  const sl = (n) => ({ id: `s${n}`, title: `Slice ${n}`, goal: '', inScope: [], outOfScope: [], acceptance: [`ok ${n}`], dependsOn: [], estimate: 'M' });
+  const seeded = await seedPipeline(betaRepo, { title: 'Charts · 1/2: Slice 1', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/charts-s1', branchKept: true, commit: 'abc' } });
+  createSliceFeature({ pipelineId: seeded.id, projectDir: betaRepo, title: 'Charts', outline: { why: '', slices: [sl(1), sl(2)] },
+    perspectives: ['product'], workflowId: 'wf_shape' });
+  const bodyOf = (seen) => { const c = seen.find((a) => a[0] === 'gh' && a[1] === 'pr' && a[2] === 'create'); return c[c.indexOf('--body') + 1]; };
+  for (const [flags, starts] of [['shapeFirst', true], ['-shapeFirst', false]]) {
+    await withEnv({ ...NO_ADO, WORCA_FLAGS: flags }, async () => {
+      const seen = [];
+      stubForkRepo(seen);
+      getDb().prepare('UPDATE pipelines SET pr_url = NULL, pr_state = NULL WHERE id = ?').run(seeded.id);
+      const r = await post({ id: seeded.id, projectKey: seeded.key });
+      assert.equal(r.status, 200, await r.clone().text());
+      const body = bodyOf(seen);
+      assert.equal(body.startsWith('Part of Charts: slice 1 of 2\n\n- Slice 2, Slice 2: not opened yet\n\n'), starts, `${flags}: ${body}`);
+    });
+  }
+});

@@ -12,7 +12,8 @@ test('fresh DB is at v57 or later and has the sliced-feature tables', () => {
   for (const c of ['origin_pipeline_id', 'source_branch', 'replan_ticket_id']) {
     assert.ok(cols(db, 'shape_features').includes(c), `shape_features.${c}`);
   }
-  assert.deepEqual(cols(db, 'shape_feature_slices'),
+  // The v57 columns, in order; later versions append (v58: draft_pr_url).
+  assert.deepEqual(cols(db, 'shape_feature_slices').slice(0, 6),
     ['feature_id', 'idx', 'slice_id', 'title', 'ticket_id', 'pipeline_id']);
   assert.deepEqual(cols(db, 'shape_plans'), ['thread_id', 'card_id', 'title', 'created_at']);
 });

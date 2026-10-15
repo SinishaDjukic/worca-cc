@@ -73,7 +73,7 @@ test('Merge with next previews one slice, reads "Plan it as one", and approve po
   assert.equal($$('.outline-remove').length, 0, 'never on the only slice');
   assert.equal($$('.outline-merge').length, 0);
   $('.outline-approve').click();
-  assert.deepEqual(calls.submit, [{ decision: 'approve', edits: [{ op: 'merge', id: 's1' }], approveEach: true }]);
+  assert.deepEqual(calls.submit, [{ decision: 'approve', edits: [{ op: 'merge', id: 's1' }], approveEach: false }]);
 });
 
 test('Remove previews it and approve posts the removal', () => {
@@ -82,7 +82,7 @@ test('Remove previews it and approve posts the removal', () => {
   assert.deepEqual(titles($$), ['Slice s2']);
   assert.match($('.plan-meta').textContent, /^1 slice · v1 · Outline \d\/5$/);
   $('.outline-approve').click();
-  assert.deepEqual(calls.submit, [{ decision: 'approve', edits: [{ op: 'remove', id: 's1' }], approveEach: true }]);
+  assert.deepEqual(calls.submit, [{ decision: 'approve', edits: [{ op: 'remove', id: 's1' }], approveEach: false }]);
 });
 
 test('Undo edits is hidden with no edits, shows after one, and restores', () => {
@@ -96,7 +96,7 @@ test('Undo edits is hidden with no edits, shows after one, and restores', () => 
   assert.equal($('.plan-meta').textContent, '2 slices · v1 · Outline 5/5');
   assert.equal(calls.submit.length, 0, 'undo posts nothing');
   $('.outline-approve').click();
-  assert.deepEqual(calls.submit, [{ decision: 'approve', approveEach: true }]);
+  assert.deepEqual(calls.submit, [{ decision: 'approve', approveEach: false }]);
 });
 
 test('plan.edits on a re-ask starts the preview from them; edits that no longer apply are ignored', () => {
@@ -104,7 +104,7 @@ test('plan.edits on a re-ask starts the preview from them; edits that no longer 
   assert.deepEqual(titles(carried.$$), ['Slice s2']);
   assert.ok(!carried.$('.outline-undo').hidden);
   carried.$('.outline-approve').click();
-  assert.deepEqual(carried.calls.submit, [{ decision: 'approve', edits: [{ op: 'remove', id: 's1' }], approveEach: true }]);
+  assert.deepEqual(carried.calls.submit, [{ decision: 'approve', edits: [{ op: 'remove', id: 's1' }], approveEach: false }]);
 
   const stale = setup({ pq: ask({ edits: [{ op: 'remove', id: 'gone' }] }) });
   assert.deepEqual(titles(stale.$$), ['Slice s1', 'Slice s2']);
@@ -117,15 +117,17 @@ test('plan.edits on a re-ask starts the preview from them; edits that no longer 
   assert.deepEqual(titles(gateOff.$$), ['Slice s1', 'Slice s2'], 'edits are a gated feature');
 });
 
-test('unticking the switch posts approveEach:false; plan.approveEach:false starts it unticked', () => {
+test('the switch starts unticked (D19); ticking it posts approveEach:true; plan.approveEach:true starts it ticked', () => {
   const { $, calls } = setup();
-  assert.equal($('.outline-approve-each input').checked, true);
-  $('.outline-approve-each input').checked = false;
+  assert.equal($('.outline-approve-each input').checked, false);
+  $('.outline-approve-each input').checked = true;
   $('.outline-approve').click();
-  assert.deepEqual(calls.submit, [{ decision: 'approve', approveEach: false }]);
+  assert.deepEqual(calls.submit, [{ decision: 'approve', approveEach: true }]);
 
-  const reask = setup({ pq: ask({ approveEach: false }) });
-  assert.equal(reask.$('.outline-approve-each input').checked, false);
+  const reask = setup({ pq: ask({ approveEach: true }) });
+  assert.equal(reask.$('.outline-approve-each input').checked, true);
+  const off = setup({ pq: ask({ approveEach: false }) });
+  assert.equal(off.$('.outline-approve-each input').checked, false);
 });
 
 test('Don\'t slice posts flat', () => {

@@ -20,23 +20,66 @@ export function featureHeadline(f) {
   return `${f.done} of ${f.total} slices done`;
 }
 
-/** deps: { act(action, body, {focus}) → Promise<{ok, error?}>, openSlice(slice), openRun(ref), confirm, error?: string } */
+const NEEDS = new Set(['approval', 'questions']);
+// The slice in flight on the feature page: sliceState's live states.
+const CURRENT = new Set(['approval', 'questions', 'running', 'shaping', 'starting', 'paused']);
+
+/** The Chat card's one line (board 9). */
+export function featureSummaryLine(f) {
+  const s = f.status === 'active' ? f.slices.find((x) => NEEDS.has(x.state)) : null;
+  return `Plan it with me · ${s ? `Slice ${s.index} needs you` : featureHeadline(f)}`;
+}
+
+/** One part per slice, tinted by its state (style.css: .shape-feature-seg[data-state]). */
+function segBar(h, f) {
+  const bar = h('div', 'shape-feature-segs');
+  bar.setAttribute('role', 'img');
+  bar.setAttribute('aria-label', featureHeadline(f));
+  for (const s of f.slices) { const seg = h('span', 'shape-feature-seg'); seg.dataset.state = s.state; bar.appendChild(seg); }
+  return bar;
+}
+
+/** D16, P13: the Chat run card's summary: one line, the segmented bar and Open feature. deps: { openFeature(id) } */
+export function renderFeatureSummary(doc, f, deps) {
+  const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const needs = f.status === 'active' && f.slices.some((x) => NEEDS.has(x.state));
+  const el = h('section', `shape-feature-sum${needs ? ' is-needs' : ''}${f.halted ? ' is-halted' : ''}`);
+  el.dataset.feature = f.id;
+  el.append(h('div', 'shape-feature-sum-line', featureSummaryLine(f)), segBar(h, f));
+  const open = h('button', 'btn shape-feature-sum-open', 'Open feature'); open.type = 'button'; open.dataset.act = 'shape-feature-sum-open';
+  open.addEventListener('click', () => deps.openFeature(f.id));
+  el.appendChild(open);
+  return el;
+}
+
+/** "merge first" on the earliest open PR, "merge after slice K" on later open ones (D16, D22). */
+function mergeTags(slices) {
+  const open = slices.filter((s) => s.pr && s.pr.url && s.pr.state !== 'MERGED' && s.pr.state !== 'CLOSED');
+  return new Map(open.map((s, i) => [s.index, i === 0 ? 'merge first' : `merge after slice ${open[i - 1].index}`]));
+}
+
+/** deps: { act(action, body, {focus}) → Promise<{ok, error?}>, openSlice(slice), openRun(ref), confirm, error?: string }
+ *  The feature page (D16) adds { page: true, progressOf(slice), paintProgress(bar, prog), mountAsk(slot, slice) }. */
 export function renderFeature(doc, f, deps) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   // data-act names each control, so the host can give the focus back after a repaint (a rebuild drops it). Per-slice
   // controls carry the slice index, so the focus returns to the same slice's button.
   const btn = (cls, text, act = cls.split(' ').pop()) => { const b = h('button', `btn ${cls}`, text); b.type = 'button'; b.dataset.act = act; return b; };
-  const el = h('section', `shape-feature${f.halted ? ' is-halted' : ''}`);
+  const el = h('section', `shape-feature${f.halted ? ' is-halted' : ''}${deps.page ? ' is-page' : ''}`);
   el.dataset.feature = f.id;
   el.appendChild(h('div', 'shape-feature-title', f.title));
   // F47: the host asked for an earlier feature; this is the one its Re-plan the rest started.
   if (f.replanOf) el.appendChild(h('div', 'shape-feature-replanned', 'Re-planned: the slices below replace the earlier outline'));
   el.appendChild(h('div', 'shape-feature-head', featureHeadline(f)));
-  const bar = h('div', 'shape-feature-bar');
-  bar.setAttribute('role', 'progressbar');
-  bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', String(f.total)); bar.setAttribute('aria-valuenow', String(f.done));
-  bar.appendChild(h('span', 'shape-feature-fill')).style.width = `${f.total ? Math.round((f.done / f.total) * 100) : 0}%`;
-  el.appendChild(bar);
+  if (deps.page) el.appendChild(segBar(h, f));
+  else {
+    const bar = h('div', 'shape-feature-bar');
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', String(f.total)); bar.setAttribute('aria-valuenow', String(f.done));
+    bar.appendChild(h('span', 'shape-feature-fill')).style.width = `${f.total ? Math.round((f.done / f.total) * 100) : 0}%`;
+    el.appendChild(bar);
+  }
+  const tags = deps.page ? mergeTags(f.slices) : null;
   const ol = h('ol', 'shape-feature-slices');
   for (const s of f.slices) {
     const li = h('li', `shape-feature-slice is-${s.state}`);
@@ -51,9 +94,10 @@ export function renderFeature(doc, f, deps) {
       li.appendChild(open);
     }
     if (s.pr && s.pr.url) {
-      const a = h('a', 'shape-feature-pr', s.pr.number ? `PR #${s.pr.number}` : 'PR');
+      const a = h('a', 'shape-feature-pr', `${s.pr.number ? `PR #${s.pr.number}` : 'PR'}${deps.page && s.pr.draft ? ' · draft' : ''}`);
       a.href = s.pr.url; a.target = '_blank'; a.rel = 'noopener';
       li.appendChild(a);
+      if (tags && tags.has(s.index)) li.appendChild(h('span', 'shape-feature-merge', tags.get(s.index)));
     }
     ol.appendChild(li);
   }
@@ -79,6 +123,49 @@ export function renderFeature(doc, f, deps) {
     if (!r || !r.ok) { err.textContent = (r && r.error) || 'That did not work. Try again.'; err.hidden = false; }
     if (b.isConnected) b.disabled = false;
   };
+  if (deps.page) {
+    const cur = f.slices.find((s) => CURRENT.has(s.state));
+    if (cur) {
+      const box = h('div', 'shape-feature-current');
+      box.dataset.slice = String(cur.index);
+      box.appendChild(h('div', 'shape-feature-current-title', `Slice ${cur.index} · ${cur.title}`));
+      const prog = deps.progressOf ? deps.progressOf(cur) : null;
+      const bar = h('div', 'run-prog shape-feature-current-bar');
+      const text = h('div', 'shape-feature-current-text', prog ? prog.text : '');
+      bar.hidden = !prog; text.hidden = !prog;
+      if (prog && deps.paintProgress) deps.paintProgress(bar, prog);
+      box.append(bar, text);
+      el.appendChild(box);
+      if (NEEDS.has(cur.state) && deps.mountAsk) {
+        // A slot only: the host swaps in its persistent ask element (P12), so a repaint never wipes a typed answer.
+        const slot = h('div', 'shape-feature-ask');
+        box.appendChild(slot);
+        deps.mountAsk(slot, cur);
+      }
+    }
+    if (f.slices.length > 1) el.appendChild(h('div', 'shape-feature-order', 'Merge in order: each slice\'s branch starts from the one before.'));
+    if (f.ship && f.ship.mode) {
+      const done = h('div', 'shape-feature-shipped', f.ship.mode === 'one' ? 'Shipped as one PR' : 'Shipped as stacked PRs');
+      if (f.ship.prUrl) { const a = h('a', null, ' · open it'); a.href = f.ship.prUrl; a.target = '_blank'; a.rel = 'noopener'; done.appendChild(a); }
+      el.appendChild(done);
+    } else if (f.ship && f.ship.ready) {
+      const box = h('div', 'shape-feature-ship');
+      box.appendChild(h('div', 'shape-feature-ship-head', 'Ship as'));
+      for (const [mode, label] of [['stacked', 'Stacked PRs'], ['one', 'One PR']]) {
+        const b = btn(`shape-feature-ship-${mode}${f.ship.suggested === mode ? ' btn-primary' : ''}`,
+          f.ship.suggested === mode ? `${label} (suggested)` : label, `shape-feature-ship-${mode}`);
+        b.addEventListener('click', () => run('ship', { mode }, b));
+        box.appendChild(b);
+      }
+      if (f.ship.suggested) {
+        box.appendChild(h('div', 'shape-feature-ship-why', f.ship.suggested === 'one'
+          ? `This feature adds ${f.ship.linesAdded} lines: one PR is easier to review.`
+          : `This feature adds ${f.ship.linesAdded} lines: stacked PRs keep each review small.`));
+      }
+      el.appendChild(box);
+    }
+    if (f.status !== 'active') el.appendChild(err);
+  }
   if (f.status === 'active') {
     const foot = h('div', 'shape-feature-actions');
     if (f.halted) {

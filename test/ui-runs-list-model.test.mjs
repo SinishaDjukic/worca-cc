@@ -322,6 +322,70 @@ const chainIt = (extra = {}) => ({
   ], ...extra,
 });
 
+// D17: a chain that is a feature (runsChainItem adds `feature` and `href`).
+const featureChainIt = (extra = {}) => chainIt({
+  id: 'c7', title: 'Run tags and cost allocation', open: true, feature: { id: 'feat_1' }, href: '#feature/feat_1',
+  total: 3, index: 2, text: 'Slice 2 of 3 · Build',
+  members: [
+    { state: 'done', pipelineId: 'p1', ticketId: null, runId: 'r1', title: '1 · Store tags', href: '#running/r1', prUrl: 'https://github.com/o/r/pull/1' },
+    { state: 'current', pipelineId: 'p2', ticketId: 't2', runId: 'r2', title: '2 · Run tags', href: '#running/r2', icon: 'run' },
+    { state: 'waiting', pipelineId: null, ticketId: 't3', title: '3 · Cost report', href: '#feature/feat_1' },
+  ], ...extra });
+
+test('a 3-slice feature is one row, open, short member names, the feature title once', () => {
+  const m = buildRunsModel({
+    live: [liveIt('r1', { pipelineId: 'p1', status: 'done' }), liveIt('r2', { pipelineId: 'p2' })],
+    scheduled: [{ id: 't3', title: 'Run tags and cost allocation · 3/3: Cost report', status: 'scheduled', after: 't2', groupKey: 'emp-00000001', groupName: 'Employee project' }],
+    chains: [featureChainIt()], now: NOW,
+  });
+  const rows = m.groups.flatMap((g) => g.rows);
+  assert.deepEqual(rows.map((r) => r.key), ['chain:c7']);
+  assert.equal(rows[0].href, '#feature/feat_1');
+  assert.equal(rows[0].open, true);
+  assert.deepEqual(rows[0].feature, { id: 'feat_1' });
+  const doc = new JSDOM('<body></body>').window.document;
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m, {}));
+  assert.equal(host.textContent.split('Run tags and cost allocation').length - 1, 1, 'the feature title once');
+  assert.deepEqual([...host.querySelectorAll('.runs-chain-link')].map((a) => a.textContent), ['1 · Store tags', '2 · Run tags', '3 · Cost report']);
+  const toggle = host.querySelector('.runs-chain-toggle');
+  assert.equal(toggle.dataset.feature, '1');
+  assert.equal(toggle.getAttribute('aria-label'), 'Hide the 3 slices in this feature');
+});
+
+test('a started slice waiting on a question is not its own row nor under Needs you: the feature row is', () => {
+  const ask = { kind: 'clarify', step: 'Clarify' };
+  const m = buildRunsModel({
+    live: [liveIt('r2', { pipelineId: 'p2', ask })],
+    chains: [featureChainIt({ text: 'Slice 2 of 3 · Needs you', tone: 'amber',
+      members: featureChainIt().members.map((x) => (x.runId === 'r2' ? { ...x, needs: true, icon: 'ask' } : x)) })],
+    now: NOW,
+  });
+  assert.deepEqual(m.needs.map((r) => r.key), ['chain:c7']);
+  assert.deepEqual(m.groups.flatMap((g) => g.rows).map((r) => r.key), ['chain:c7']);
+  const only = buildRunsModel({ live: [liveIt('r2', { pipelineId: 'p2', ask })], chains: [featureChainIt()], filter: 'needs', now: NOW });
+  assert.deepEqual(only.needs.map((r) => r.key), ['chain:c7'], 'the Needs-you filter too');
+});
+
+test('the feature row needs you exactly when a member row does (one rule): a paused History member counts', () => {
+  const m = buildRunsModel({ history: [histIt('p1', { status: 'paused' })], chains: [featureChainIt()], now: NOW });
+  assert.deepEqual(m.needs.map((r) => r.key), ['chain:c7']);
+  const quiet = buildRunsModel({ live: [liveIt('r2', { pipelineId: 'p2' })], chains: [featureChainIt()], now: NOW });
+  assert.deepEqual(quiet.needs, [], 'nobody needed: the feature row is not added');
+});
+
+test('a non-feature chain is unchanged: its member stays under Needs you; its toggle names runs', () => {
+  const m = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', ask: { kind: 'workflow', step: 'Plan' } })], chains: [chainIt()], now: NOW });
+  assert.deepEqual(m.needs.map((r) => r.key), ['live:r1']);
+  const doc = new JSDOM('<body></body>').window.document;
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m, {}));
+  const toggle = host.querySelector('.runs-chain-toggle');
+  assert.equal(toggle.dataset.feature, undefined);
+  assert.equal(toggle.getAttribute('aria-label'), 'Show the 2 runs in this chain');
+  assert.equal(chainRow(chainIt(), NOW).href, '#running/r1', 'a plain chain links its current member');
+});
+
 test('live row carries its progress; a chain item replaces its member rows with ONE chain row', async () => {
   const m = buildRunsModel({
     live: [liveIt('r1', { pipelineId: 'p1', progress: { fraction: 0.4, tone: 'blue' } }), liveIt('r9')],

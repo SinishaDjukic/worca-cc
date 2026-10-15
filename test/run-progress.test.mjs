@@ -383,6 +383,16 @@ test('small helpers: ordinal, progressWidth, progressTone, askWhat, constants', 
   ]);
 });
 
+test('chainProgress: slice noun and needs you', () => {
+  const m = [{ state: 'done' }, { state: 'current', needs: true, progress: { fraction: 0.3, tone: 'blue', label: 'Plan' } }, { state: 'waiting' }];
+  const p = chainProgress(m, { noun: 'Slice' });
+  assert.equal(p.text, 'Slice 2 of 3 · Needs you');
+  assert.equal(p.tone, 'amber');
+  const quiet = chainProgress(m.map((x) => ({ ...x, needs: false })));
+  assert.equal(quiet.text, 'Run 2 of 3 · Plan');
+  assert.equal(quiet.tone, 'blue');
+});
+
 test('chainProgress: one equal part per run', async () => {
   const cur = (fraction, label = 'Build', tone = 'blue') => ({ state: 'current', progress: { fraction, label, tone } });
   await checkRows([

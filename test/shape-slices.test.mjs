@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  OUTLINE_FILE, OUTLINE_ROUNDS_MAX, OUTLINE_EDITS_MAX, SLICE_IDS, SLICE_LABELS, FLAT_NOTE,
+  OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX, OUTLINE_EDITS_MAX, SLICE_IDS, SLICE_LABELS, FLAT_NOTE,
   normalizeOutline, checkSlices, normalizeEdits, applyOutlineEdits,
-  outlineMarkdown, slicingBlock, outlineFixFeedback, outlineFeedbackBlock, sliceScopeBlock, sliceBrief, replanBrief,
+  outlineMarkdown, slicingBlock, outlineFixFeedback, outlineFeedbackBlock, sliceScopeBlock, sliceBrief, replanBrief, changelogWithFeature,
 } from '../src/shared/shape/slices.mjs';
 import { checkShape, isTestable } from '../src/shared/shape/shape.mjs';
 import { wellShapedPlan } from './helpers/shape-plan.mjs';
@@ -219,6 +219,19 @@ test('sliceScopeBlock marks the slice and switches the sentence for the refiner'
   assert.ok(earlier.includes('- Slice 1, Slice s1: ok\n  Files: `src/a.mjs` (+2 more)'));
 });
 
+test('sliceScopeBlock: outlineChangeFile tells the Planner (never the refiner) when to write it; absent = byte-identical', () => {
+  const o = goodOutline();
+  const base = sliceScopeBlock({ index: 2, total: 2, outline: o });
+  assert.equal(sliceScopeBlock({ index: 2, total: 2, outline: o, outlineChangeFile: null }), base);
+  const plan = sliceScopeBlock({ index: 2, total: 2, outline: o, outlineChangeFile: '/p/outline-change.md' });
+  assert.ok(plan.includes('/p/outline-change.md'));
+  assert.ok(plan.includes('only in that case'));
+  assert.ok(plan.startsWith(base.slice(0, -1)), 'the note is appended after the existing text');
+  const ref = sliceScopeBlock({ index: 2, total: 2, outline: o, refiner: true, outlineChangeFile: '/p/outline-change.md' });
+  assert.equal(ref, sliceScopeBlock({ index: 2, total: 2, outline: o, refiner: true }));
+  assert.equal(OUTLINE_CHANGE_FILE, 'outline-change.md');
+});
+
 test('sliceBrief and replanBrief', () => {
   const o = goodOutline();
   const brief = sliceBrief({ featureTitle: 'Charts', outline: o, index: 2 });
@@ -258,4 +271,20 @@ test('isTestable agrees with checkShape\'s testable on the existing fixture', ()
   assert.equal(isTestable('it works properly'), false);
   assert.equal(isTestable('it works properly and returns 200'), true);
   assert.equal(isTestable(undefined), true);
+});
+
+test('changelogWithFeature (D25): one entry per feature at the top of ## Unreleased', () => {
+  const T = { title: 'T', slices: [{ title: 'A', summary: 'x. More detail here.' }] };
+  assert.equal(changelogWithFeature('', T), '# Changelog\n\n## Unreleased\n\n### T\n\n- A: x.\n');
+  assert.equal(changelogWithFeature('# Changelog\n\n## 1.0.0\n\n- old\n', T),
+    '# Changelog\n\n## Unreleased\n\n### T\n\n- A: x.\n\n## 1.0.0\n\n- old\n');
+  assert.equal(changelogWithFeature('# Changelog\n\n## Unreleased\n\n### Older\n\n- B\n', T),
+    '# Changelog\n\n## Unreleased\n\n### T\n\n- A: x.\n\n### Older\n\n- B\n');
+  const once = changelogWithFeature('', T);
+  assert.equal(changelogWithFeature(once, T), once, 'retry safety: the same feature again changes nothing');
+  const older = '# Changelog\n\n## Unreleased\n\n## 1.0.0\n\n### T\n\n- old\n';
+  assert.notEqual(changelogWithFeature(older, T), older, 'the same title under an older release does not count');
+  assert.equal(changelogWithFeature('# Changelog', T), '# Changelog\n\n## Unreleased\n\n### T\n\n- A: x.\n', 'one heading, not two');
+  assert.equal(changelogWithFeature('', { title: 'T', slices: [{ title: 'A', summary: '' }, { title: 'B' }] }),
+    '# Changelog\n\n## Unreleased\n\n### T\n\n- A\n- B\n');
 });

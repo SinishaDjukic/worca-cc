@@ -291,14 +291,17 @@ import {
 import {
   fetchRemote, remoteInfo, syncStatus, fastForward, resolveSourceRef, commitsBetween, isSafeBranchName, isSafeRemoteName, scrubGitText,
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, checkBaseMerge, mergeBaseInto, startConflictMerge, branchCheckouts,
+  commitFileOnBranch,
 } from '../src/core/git-sync.mjs';
+import { shipFeature, SHIP_MODES } from '../src/core/shape/ship.mjs';
 import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
-  prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
+  prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
+  markPrReady, closePr } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
@@ -319,7 +322,8 @@ import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
-  rechainWaiting, replanRest, setApproveEach, stackedPrBase, recordShapePlan, listShapePlans } from '../src/core/shape/features.mjs';
+  rechainWaiting, replanRest, setApproveEach, stackedPrBase, recordShapePlan, listShapePlans, chainFeature,
+  sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput } from '../src/core/shape/features.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
@@ -3228,16 +3232,32 @@ function liveProbe({ id, pipelineId }) {
   return !!e && !SETTLED_RUN.has(String(e.status || ''));
 }
 
+/** D17: a chain whose first run is a slice carries its feature (gated; a lookup error keeps the plain chain). */
+function withChainFeatures(chains) {
+  if (!shapeFirstEnabled()) return chains;
+  return chains.map((c) => {
+    try { const feature = chainFeature(c.members); return feature ? { ...c, feature } : c; } catch { return c; }
+  });
+}
+
 // Run on the source branch: the merge back happens in teardown, AFTER `done` — the history row a client
 // fetched on `done` predates it, and a chained run waits on it (pipelineGate answers `waiting` until then).
 // orch.run()/orch.resume() settle only after teardown, so refresh both then. Best effort: never the run's outcome.
 const ranMergeBack = (st) => !!st && [st.branch, ...Object.values(st.branches || {})].some((b) => b && b.mergeBack);
+// D24: a slice that settled done opens its draft PR here, after teardown committed the run's work (`done` fires
+// before teardown). First, so it runs whether or not the run merged back. Returns the draft promise (the test awaits it).
 function afterRunSettled(orch) {
+  let draft;
   try {
-    if (!ranMergeBack(orch.getState())) return;
+    const st = orch.getState?.();
+    if (orch.runShape?.slice && st?.status === 'done' && st.id) {
+      draft = openSliceDraft(st.id).catch((err) => console.error(`[worca-ui] slice draft PR failed: ${err?.message || err}`));
+    }
+    if (!ranMergeBack(st)) return draft;
     emitChanged('pipelines-changed', 'updated');
     setTimeout(() => { void schedulerTick(); }, 0);
   } catch { /* a refresh hint only */ }
+  return draft;
 }
 
 let _schedulerBusy = false;
@@ -3351,7 +3371,7 @@ app.get('/api/schedules', (req, res) => {
       schedules: listSchedules({ projectDir, workspaceId }),
       tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter),
       // Run progress (P8): every open "Run after" chain, unscoped (a chain may cross projects).
-      chains: runChains({ isLive: liveProbe }),
+      chains: withChainFeatures(runChains({ isLive: liveProbe })),
       counts: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },
       defaults: scheduleDefaults(),
     });
@@ -4158,14 +4178,26 @@ function shapeRefused(res, out) {
   return false;
 }
 
-app.get('/api/shape/features/:id', (req, res) => {
+app.get('/api/shape/features/:id', async (req, res) => {
   if (!requireShapeFirst(req, res)) return;
   try {
     // F47: a re-planned feature answers with the feature that carries on; `replanOf` names the one asked for.
     const cur = currentFeatureId(req.params.id);
     const view = featureView(cur, { live: liveSliceOf });
     if (!view) return res.status(404).json({ error: 'unknown feature' });
+    // P17: the Ship as default, once every slice is done (async: it reads each slice's results.json).
+    if (view.ship && view.ship.ready) Object.assign(view.ship, await featureShipSuggestion(view));
     res.json({ ...view, replanOf: cur !== req.params.id ? req.params.id : null });
+  } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
+});
+
+// D16, D22: where a run sits in its feature, for the run page line, the Chat home card and Ship it (P11).
+app.get('/api/shape/pipelines/:pid/slice', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const out = sliceOfPipeline(req.params.pid, { live: liveSliceOf });
+    if (!out) return res.status(404).json({ error: 'not a slice' });
+    res.json(out);
   } catch (err) { shapeRouteError(res, err); }
 });
 
@@ -4225,6 +4257,96 @@ app.post('/api/shape/features/:id/approve-each', (req, res) => {
     broadcastFeature(req.params.id);
     res.json({ ok: true, approveEach: on });
   } catch (err) { shapeRouteError(res, err); }
+});
+
+// ── D24, D25: Ship as ─────────────────────────────────────────────────────────────────────────────────────────
+/** The last slice's run, its PR target and the feature's base (the chain root), or { error }. */
+function shipCtxOf(view) {
+  const last = view.slices[view.slices.length - 1];
+  const state = last && last.pipelineId ? readPipelineStateById(last.pipelineId) : null;
+  if (!state) return { error: 'the last slice has no run' };
+  const target = prTargetFor(state);
+  if (target.error) return { error: target.error };
+  if (!target.repoDir || !target.feature) return { error: 'the last slice has no branch to ship' };
+  const base = chainBaseBranchesOf(last.pipelineId)[0] || null;
+  if (!base) return { error: 'the feature has no base branch' };
+  return { state, target, base };
+}
+/** Stacked: a gh slice PR's "Part of …" preamble gets the other slices' current PR links (best effort; Azure keeps its
+ *  body). Any other body is left alone. */
+async function refreshSliceBody(prUrl, pid, repoDir) {
+  if (forgeOfPrUrl(prUrl) === 'azure') return null;
+  const cur = await readPrBody({ projectDir: repoDir, prUrl });
+  if (!cur.ok || !cur.body.startsWith('Part of ')) return null;
+  // The preamble: the "Part of" line, a blank line, the "- Slice" list; it ends at the first blank line after the list.
+  const lines = cur.body.split('\n');
+  let end = 1;
+  while (end < lines.length && lines[end] === '') end += 1;
+  while (end < lines.length && lines[end].startsWith('- Slice ')) end += 1;
+  const fresh = slicePrPreamble(pid);
+  if (!fresh) return null;
+  return editPrBody({ projectDir: repoDir, prUrl, body: [fresh, ...lines.slice(end)].join('\n') });
+}
+const SHIPPING = new Set();     // feature ids with a Ship as in flight (ship_mode is written only at the end)
+app.post('/api/shape/features/:id/ship', async (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  const id = String(req.params.id);
+  try {
+    const mode = req.body && req.body.mode;
+    if (!SHIP_MODES.includes(mode)) return res.status(400).json({ error: 'mode must be stacked or one' });
+    if (SHIPPING.has(id)) return res.status(409).json({ error: 'this feature is already shipping' });
+    const view = featureView(id, { live: liveSliceOf });
+    if (!view) return res.status(404).json({ error: 'unknown feature' });
+    if (view.ship.mode) return res.status(409).json({ error: `this feature was already shipped as ${view.ship.mode === 'one' ? 'one PR' : 'stacked PRs'}` });
+    if (!view.ship.ready) return res.status(409).json({ error: 'every slice must be done before the feature ships' });
+    SHIPPING.add(id);
+    const actor = actorOf(req);
+    try {
+      // A slice whose draft never opened (a CLI-started run, or the auto draft failed at the time) gets its PR now,
+      // the same way; a failure stays visible as shipFeature's "slice K has no pull request yet".
+      let shown = view;
+      if (shown.slices.some((s) => s.pipelineId && !s.pr)) {
+        for (const s of shown.slices) if (s.pipelineId && !s.pr) await openSliceDraft(s.pipelineId);
+        shown = featureView(id, { live: liveSliceOf }) || view;
+      }
+      const input = await featureShipInput(shown);
+      const ctx = shipCtxOf(shown);
+      if (ctx.error) return res.status(409).json({ error: ctx.error });
+      const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000 }, {
+        commitChangelog: (pid, update) => commitFileOnBranch(ctx.target.repoDir, {
+          branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }),
+        push: async () => {
+          const picked = await pickPrRemotes({}, ctx.target.repoDir);
+          if (picked.error) return { ok: false, error: picked.error };
+          const p = await pushBranch(ctx.target.repoDir, ctx.target.feature, picked.pushRemote);
+          return p.ok ? { ok: true } : { ok: false, error: p.stderr };
+        },
+        openOnePr: async ({ pipelineId, title, body }) => {
+          const r = await createRunPr({ id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
+            description: body, title, actor, preamble: false });
+          return r.ok ? { ok: true, url: r.pr.url, existed: !!r.pr.existed } : { ok: false, error: r.error };
+        },
+        adoptOnePr: async ({ url, body }) => {
+          const r = await markPrReady({ prUrl: url });
+          if (!r.ok) return r;
+          if (forgeOfPrUrl(url) !== 'azure') await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
+          return { ok: true };
+        },
+        markReady: (prUrl) => markPrReady({ prUrl }),
+        close: async (prUrl, comment, pid) => {
+          const r = await closePr({ prUrl, comment });
+          if (r.ok) { const pr = readPrState(pid); if (pr && pr.url === prUrl) persistPrState(pid, { ...pr, state: 'CLOSED' }); }
+          return r;
+        },
+        refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
+      });
+      if (!out.ok) return res.status(out.status).json({ error: out.error });
+      recordShip(id, { mode: out.mode, prUrl: out.prUrl });
+      appendAuditById(ctx.state.id, `Feature shipped as ${out.mode === 'one' ? 'one PR' : 'stacked PRs'}${byActor(actor)}${out.prUrl ? `: ${out.prUrl}` : ''}`, { actor });
+      broadcastFeature(id);
+      res.json({ ok: true, mode: out.mode, prUrl: out.prUrl, warnings: out.warnings });
+    } finally { SHIPPING.delete(id); }
+  } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
 });
 
 /** A plan row's state when its run is not live: the pipelines row first, then the link row (follow.mjs). */
@@ -7354,6 +7476,113 @@ app.get('/api/pr/remotes', async (req, res) => {
     chain, defaultBase, branches, baseStatus, issue });
 });
 
+/** D24: a finished slice opens a draft PR for early review (best effort: a failure is an audit line). */
+async function openSliceDraft(pipelineId) {
+  if (!shapeFirstEnabled() || !pipelineId || readPrState(pipelineId)) return null;
+  if (!(await anyPrHost())) return null;
+  const state = readPipelineStateById(pipelineId);
+  if (!state || !state.projectDir) return null;
+  const target = prTargetFor(state);
+  if (target.error || !target.repoDir) return null;
+  // The PR dialog's default base (GET /api/pr/remotes): the chain without the feature branch itself, stacked on the
+  // previous slice's branch until that slice's PR merges.
+  const walked = chainBaseBranchesOf(pipelineId);
+  const chain = (walked.length ? walked : (target.source ? [target.source] : [])).filter((b) => b !== target.feature);
+  let base = null;
+  try { base = stackedPrBase(pipelineId, chain) || chain[0] || null; } catch { base = chain[0] || null; }
+  if (!base) return null;
+  let out = await createRunPr({ id: pipelineId, state, target, base, draft: true });
+  // A forge that refuses drafts (GitHub's free plan for private repositories): open it ready instead.
+  if (!out.ok && /draft/i.test(out.error || '')) out = await createRunPr({ id: pipelineId, state, target, base, draft: false });
+  if (!out.ok) { appendAuditById(pipelineId, `Could not open the slice's pull request: ${out.error}`); return out; }
+  if (out.newDraft) { try { recordSliceDraft(pipelineId, out.pr.url); } catch { /* the "draft" label only */ } }
+  broadcastFeaturesOf(() => { const at = featureOfPipeline(pipelineId); return at ? [at.featureId] : []; });
+  return out;
+}
+
+/**
+ * The pull request part of Ship it, shared by POST /api/pr and the slice paths (D24): branch info, remotes, forge,
+ * push, body, createPr, persist, audit. Never writes a response; the caller does its own checks (the Chat card rule)
+ * first. `remotes` is the dialog's choice ({pushRemote, baseRemote}); `{}` falls back to the saved prefs
+ * (pickPrRemotes). `preamble: false` skips the D22 slice preamble (the combined one-PR body has its own sections).
+ * @returns {Promise<{ok:false, status:number, error:string, kind?:string, forge?:string}
+ *   |{ok:true, pr, newDraft:boolean, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr}>}
+ */
+async function createRunPr({ id, state, target, base, memberKey = null, remotes: chosen = {}, description = '',
+  draft = false, actor = null, title = null, preamble = true }) {
+  const { repoDir, feature, source } = target;
+  if (!repoDir || !feature || !source) return { ok: false, status: 400, error: 'pipeline has no branch info to open a PR' };
+  const picked = await pickPrRemotes(chosen, repoDir);
+  if (picked.error) return { ok: false, status: picked.status, error: picked.error };
+  const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
+  // Always target the chosen base repo explicitly (gh's default-repo guess prefers
+  // a remote named upstream over origin); use the owner:branch head only when the
+  // branch lives in a different repository than the PR (gh matches by head label).
+  const repo = baseR?.slug || null;
+  const crossRepo = !!(pushR?.slug && baseR?.slug && !sameRepo(pushR, baseR));
+  const headOwner = crossRepo ? pushR.owner : null;
+
+  // The base remote's forge opens the PR (no base remote: GitHub's gh, as before). Its own
+  // reason when it cannot; an Azure fork is refused BEFORE anything is pushed.
+  const provider = prProviderFor(baseR);
+  const avail = await provider.available();
+  if (!avail.ok) return { ok: false, status: 409, error: avail.reason, forge: provider.forge };
+  const refusal = azureForkRefusal(pushR, baseR);
+  if (refusal) return { ok: false, status: 422, error: refusal, kind: 'unsupported' };
+
+  // Push (idempotent) -> create PR. All args are passed as an argv array (no shell), so
+  // branch/remote/source names cannot inject.
+  const pushed = await pushBranch(repoDir, feature, pushRemote);
+  if (!pushed.ok) return { ok: false, status: 500, error: `git push failed: ${pushed.stderr}` };
+
+  // A PR opened by a shared bot still names the person behind it (identity.mjs); none for 'local'.
+  const footer = prAttributionFooter(state.startedBy);
+  const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
+  // A run from the Azure Boards source links its work item to the PR.
+  const workItemId = provider.forge === 'azure'
+    ? workItemIdFromSourceRef(findPipelineRowById(pipelineIdForPr)?.source_ref ?? null, baseR) : null;
+  // The run's GitHub issue, closed on merge: after the description, before the footer.
+  const closing = runSourceIssue(pipelineIdForPr, { baseRemote: baseR, memberKey })
+    ? issueClosingLine({ sourceUrl: runSourceUrl(pipelineIdForPr), baseRepo: repo, body: description }) : '';
+  // Spec D7: a shaped run's PR ends with its checklist (the latest review cycle that has one), before the
+  // attribution footer; skipped when the description already carries it. Guarded like runSourceUrl: the branch is
+  // already pushed, so a DB error must not become a failed PR.
+  let cl = null;
+  if (shapeFirstEnabled() && !description.includes(CHECKLIST_PR_MARKER)) {
+    try { cl = latestChecklist(readPipelineExtras(pipelineIdForPr).reviews); } catch { cl = null; }
+  }
+  const checklistMd = cl ? checklistMarkdown(cl.checklist).trimEnd() : '';
+  // D22: a slice's PR starts with its place in the feature and links the other slices' PRs.
+  let lead0 = '';
+  if (preamble && shapeFirstEnabled() && !memberKey) { try { lead0 = slicePrPreamble(pipelineIdForPr); } catch { lead0 = ''; } }
+  const lead = description || state.title || feature;
+  const prBody = lead0 || description || closing || checklistMd || footer
+    ? `${lead0 ? `${lead0}\n\n` : ''}${lead}${closing ? `\n\n${closing}` : ''}${checklistMd ? `\n\n${checklistMd}` : ''}${footer}` : '';
+  const pr = await createPr({
+    projectDir: repoDir, base, head: feature, title: title || state.title || feature, repo, headOwner,
+    baseRemote: baseR, pushRemote: pushR, workItemId, draft,
+    ...(prBody ? { body: prBody } : {}),
+  });
+  if (!pr.ok) {
+    return { ok: false, status: pr.kind === 'unsupported' ? 422 : 500,
+      error: `${provider.label} pull request failed: ${pr.error}`, ...(pr.kind ? { kind: pr.kind } : {}) };
+  }
+  // D6: draft only describes a PR this call created; an existing one is linked as-is.
+  const newDraft = draft && !pr.existed;
+
+  // Persist the PR facts we just learned, so History/stats survive a gh outage. A draft is 'OPEN' too (P18).
+  if (pipelineIdForPr) {
+    const facts = { url: pr.url, number: pr.number ?? prNumberFromUrl(pr.url), state: 'OPEN' };
+    // A workspace member's PR is recorded per member; the row keeps the rollup (stats count the run once).
+    if (memberKey) persistMemberPrState(pipelineIdForPr, memberKey, facts);
+    else persistPrState(pipelineIdForPr, facts);
+    // Who shipped it (the footer names who STARTED the run). No actor: worca opened it (a slice's draft).
+    const where = memberKey ? ` in \`${target.memberName}\`` : '';
+    appendAuditById(pipelineIdForPr, `Pull request ${pr.existed ? 'linked' : (newDraft ? 'opened (draft)' : 'opened')}${where}${byActor(actor)}: ${pr.url}`, { actor });
+  }
+  return { ok: true, pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr };
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/pr  -> push the pipeline's feature branch (if needed) and open a PR
 // against its source branch (or the dialog's `baseBranch`) on the base remote's
@@ -7439,72 +7668,12 @@ app.post('/api/pr', async (req, res) => {
     base = b;
   }
 
-  const picked = await pickPrRemotes(body, repoDir);
-  if (picked.error) return res.status(picked.status).json({ error: picked.error });
-  const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
-  // Always target the chosen base repo explicitly (gh's default-repo guess prefers
-  // a remote named upstream over origin); use the owner:branch head only when the
-  // branch lives in a different repository than the PR (gh matches by head label).
-  const repo = baseR?.slug || null;
-  const crossRepo = !!(pushR?.slug && baseR?.slug && !sameRepo(pushR, baseR));
-  const headOwner = crossRepo ? pushR.owner : null;
-
-  // The base remote's forge opens the PR (no base remote: GitHub's gh, as before). Its own
-  // reason when it cannot; an Azure fork is refused BEFORE anything is pushed.
-  const provider = prProviderFor(baseR);
-  const avail = await provider.available();
-  if (!avail.ok) return res.status(409).json({ error: avail.reason, forge: provider.forge });
-  const refusal = azureForkRefusal(pushR, baseR);
-  if (refusal) return res.status(422).json({ error: refusal, kind: 'unsupported' });
-
-  // Push (idempotent) -> create PR -> read mergeability. All args are passed as
-  // an argv array (no shell), so branch/remote/source names cannot inject.
-  const pushed = await pushBranch(repoDir, feature, pushRemote);
-  if (!pushed.ok) return res.status(500).json({ error: `git push failed: ${pushed.stderr}` });
-
-  // A PR opened by a shared bot still names the person behind it (identity.mjs); none for 'local'.
-  const footer = prAttributionFooter(state.startedBy);
-  const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
-  // A run from the Azure Boards source links its work item to the PR.
-  const workItemId = provider.forge === 'azure'
-    ? workItemIdFromSourceRef(findPipelineRowById(pipelineIdForPr)?.source_ref ?? null, baseR) : null;
-  // The run's GitHub issue, closed on merge: after the description, before the footer.
-  const closing = runSourceIssue(pipelineIdForPr, { baseRemote: baseR, memberKey })
-    ? issueClosingLine({ sourceUrl: runSourceUrl(pipelineIdForPr), baseRepo: repo, body: description }) : '';
-  // Spec D7: a shaped run's PR ends with its checklist (the latest review cycle that has one), before the
-  // attribution footer; skipped when the description already carries it. Guarded like runSourceUrl: this handler
-  // has no try/catch and the branch is already pushed, so a DB error must not become an unhandled rejection.
-  let cl = null;
-  if (shapeFirstEnabled() && !description.includes(CHECKLIST_PR_MARKER)) {
-    try { cl = latestChecklist(readPipelineExtras(pipelineIdForPr).reviews); } catch { cl = null; }
+  const out = await createRunPr({ id, state, target, base, memberKey,
+    remotes: { pushRemote: body.pushRemote, baseRemote: body.baseRemote }, description, draft, actor: actorOf(req) });
+  if (!out.ok) {
+    return res.status(out.status).json({ error: out.error, ...(out.kind ? { kind: out.kind } : {}), ...(out.forge ? { forge: out.forge } : {}) });
   }
-  const checklistMd = cl ? checklistMarkdown(cl.checklist).trimEnd() : '';
-  const lead = description || state.title || feature;
-  const prBody = description || closing || checklistMd || footer
-    ? `${lead}${closing ? `\n\n${closing}` : ''}${checklistMd ? `\n\n${checklistMd}` : ''}${footer}` : '';
-  const pr = await createPr({
-    projectDir: repoDir, base, head: feature, title: state.title || feature, repo, headOwner,
-    baseRemote: baseR, pushRemote: pushR, workItemId, draft,
-    ...(prBody ? { body: prBody } : {}),
-  });
-  if (!pr.ok) {
-    return res.status(pr.kind === 'unsupported' ? 422 : 500)
-      .json({ error: `${provider.label} pull request failed: ${pr.error}`, ...(pr.kind ? { kind: pr.kind } : {}) });
-  }
-  // D6: draft only describes a PR this call created; an existing one is linked as-is.
-  const newDraft = draft && !pr.existed;
-
-  // Persist the PR facts we just learned, so History/stats survive a gh outage.
-  if (pipelineIdForPr) {
-    const facts = { url: pr.url, number: pr.number ?? prNumberFromUrl(pr.url), state: 'OPEN' };
-    // A workspace member's PR is recorded per member; the row keeps the rollup (stats count the run once).
-    if (memberKey) persistMemberPrState(pipelineIdForPr, memberKey, facts);
-    else persistPrState(pipelineIdForPr, facts);
-    // Who clicked Create PR (the footer names who STARTED the run; this names who shipped it).
-    const prBy = actorOf(req);
-    const where = memberKey ? ` in \`${target.memberName}\`` : '';
-    appendAuditById(pipelineIdForPr, `Pull request ${pr.existed ? 'linked' : (newDraft ? 'opened (draft)' : 'opened')}${where}${byActor(prBy)}: ${pr.url}`, { actor: prBy });
-  }
+  const { pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr } = out;
   // Remember the choice for this project (only once a PR was actually created).
   if (remotes.length) {
     try { await setPrRemotePrefs(repoDir, { pushRemote, baseRemote }); } catch { /* best-effort */ }
@@ -15190,5 +15359,6 @@ export const _testing = {
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
+  openSliceDraft, afterRunSettled,
   setAutoRescan(on) { autoRescanOn = on !== false; },
 };

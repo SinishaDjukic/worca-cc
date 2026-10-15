@@ -91,6 +91,12 @@ test('shapeSliceScope reads "Write the plan" on the planner and "Judge the plan"
   assert.ok(!refiner.includes('Write the plan for slice 2 only'));
 });
 
+test('D19: shapeSliceScope.outlineChangeFile reaches the planner prompt only', () => {
+  const scope = { ...SCOPE, outlineChangeFile: '/p/outline-change.md' };
+  assert.ok(buildAgentPrompt({ ...ctxFor('planner'), shapeSliceScope: scope }).includes('/p/outline-change.md'));
+  assert.ok(!buildAgentPrompt({ ...ctxFor('refiner'), shapeSliceScope: scope }).includes('/p/outline-change.md'));
+});
+
 test('the slice scope comes before the slicing block on the planner', () => {
   const prompt = buildAgentPrompt({ ...ctxFor('planner'), shapeSliceScope: SCOPE, shapeSlicing: { file: FILE } });
   assert.ok(prompt.indexOf('## This is slice 2 of 2') < prompt.indexOf('## Plan in slices'));

@@ -7250,6 +7250,12 @@ export class RunHarness extends EventEmitter {
   _kickoffTitleGeneration() {
     const prompt = this.pipeline?.promptText || this.opts.prompt || '';
     const id = this.pipeline?.id;
+    // D18: a slice started from its ticket keeps the title the ticket set (sliceTitle); the UI shows the slice's own
+    // name under its feature. Slice 1's own shaping run gets runShape.slice only at outline approval: it titles as usual.
+    const sl = this.runShape?.slice;
+    if (sl && (sl.index > 1 || this.opts.shape?.slice)) {
+      this.state.titleProvisional = false; this._titlePromise = Promise.resolve(); return;
+    }
     if (!prompt || !id) { this._titlePromise = Promise.resolve(); return; }
     this._titlePromise = Promise.resolve()
       .then(() => generateTitle(prompt, this._titleGenOpts()))
