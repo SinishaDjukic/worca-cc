@@ -66,8 +66,10 @@ describe('readiness UI: popover v2', () => {
   it('opens below the chip', () => {
     assert.match(fnSource('newReadinessChip'), /mode: 'below'/);
   });
-  it('scrolling the page closes it (it is fixed, the chip scrolls away)', () => {
-    assert.match(fnSource('newReadinessChip'), /closeOn: document\.querySelector\('\.main'\)/);
+  it('scrolling the page closes it (it is fixed, the chip scrolls away): the list chip on .main, the header chip on its page', () => {
+    assert.match(fnSource('newReadinessChip'), /closeOn = document\.querySelector\('\.main'\)/);
+    assert.match(fnSource('newReadinessChip'), /createFlyout\(\{[^}]*closeOn,/);
+    assert.match(fnSource('paintReadinessHeadChip'), /newReadinessChip\(key, fresh, \{ closeOn: screen \}\)/);
   });
   it('builds from the pure model and never from innerHTML', () => {
     const src = fnSource('buildReadinessMenu');

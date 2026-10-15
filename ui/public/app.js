@@ -11554,6 +11554,9 @@ if (el.projectsSyncAll) {
 // judged. `readiness-changed` frames refetch it. Every string in a report is server data: textContent only.
 const readinessReports = {};        // projectKey → last full report
 const readinessChips = new Map();   // projectKey → { chip, menu, fly }: one popover per project, reused across repaints
+const readinessHeadChips = new Map();   // projectKey → the same record for the project page header's chip
+/** Every chip record of one project (the list row's and the project page header's), or of all projects. */
+const readinessRecs = (key) => [readinessChips, readinessHeadChips].flatMap((m) => (key ? [m.get(key)] : [...m.values()])).filter(Boolean);
 const readinessTried = new Set();   // keys the cold-start warm-up already asked for
 let readinessOff = false;           // GET answered {disabled: true}: no chips, no more asking
 
@@ -11608,8 +11611,8 @@ async function refreshReadiness(key, { refresh = false, cards = true } = {}) {
   if (!report) return;
   applyReadinessReport(key, report);
   if (currentShownView === 'projects') paintReadinessChips();
-  const rec = readinessChips.get(key);
-  if (rec && rec.fly.isOpen()) { paintReadinessMenu(key); rec.fly.reposition(); }
+  if (projDetail && projDetail.key === key) paintReadinessHeadChip(projDetail.screen, key);
+  for (const rec of readinessRecs(key)) if (rec.fly.isOpen()) { paintReadinessMenu(key, rec); rec.fly.reposition(); }
   if (cards) for (const card of document.querySelectorAll('.readiness-settings-card')) if (card.dataset.key === key) void fillReadinessCard(card, key);
 }
 
@@ -11644,7 +11647,7 @@ function paintReadinessChips() {
 
 // The chip is the flyout's trigger (createFlyout toggles it on click); the menu lives on <body> and is
 // filled when it opens. One per project for the page's life — createFlyout's document listeners are never removed.
-function newReadinessChip(key, chip) {
+function newReadinessChip(key, chip, { closeOn = document.querySelector('.main') } = {}) {
   chip.setAttribute('role', 'button');
   chip.tabIndex = 0;
   chip.setAttribute('aria-haspopup', 'dialog');
@@ -11656,7 +11659,7 @@ function newReadinessChip(key, chip) {
   document.body.appendChild(menu);
   const rec = { chip, menu, fly: null };
   // 'below': under the chip, left-aligned, height limited to the room below; only .rp-body scrolls.
-  rec.fly = createFlyout({ doc: document, win: window, trigger: chip, menu, mode: 'below', closeOn: document.querySelector('.main'), onOpen: () => void openReadinessMenu(key) });
+  rec.fly = createFlyout({ doc: document, win: window, trigger: chip, menu, mode: 'below', closeOn, onOpen: () => void openReadinessMenu(key, rec) });
   chip.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
     e.preventDefault();
@@ -11666,20 +11669,50 @@ function newReadinessChip(key, chip) {
   return rec;
 }
 
-async function openReadinessMenu(key) {
-  const rec = readinessChips.get(key);
-  if (!rec) return;
+// The project page header's chip, beside the name: the list row's chip and popover, kept in its own record. A page
+// opened straight from a link has no summary yet: read the report once, then paint.
+function paintReadinessHeadChip(screen, key) {
+  const slot = screen && screen.querySelector('.pd-rd-slot');
+  if (!slot || !key) return;
+  const p = projectByKey(key);
+  if (p && !p.readiness && !readinessOff && p.exists && !readinessTried.has(key)) {
+    readinessTried.add(key);
+    void refreshReadiness(key, { cards: false });
+  }
+  const fresh = readinessOff ? null : renderReadinessChip(p && p.readiness, { doc: document });
+  let rec = readinessHeadChips.get(key);
+  if (!fresh) { slot.replaceChildren(); return; }
+  if (rec) {
+    rec.chip.className = fresh.className;
+    rec.chip.title = fresh.title;
+    rec.chip.setAttribute('aria-label', fresh.getAttribute('aria-label'));
+    rec.chip.replaceChildren(...fresh.childNodes);
+  } else {
+    rec = newReadinessChip(key, fresh, { closeOn: screen });
+    readinessHeadChips.set(key, rec);
+  }
+  if (rec.chip.parentNode !== slot) slot.replaceChildren(rec.chip);
+}
+
+// The Settings card's "View report": the header chip's popover, opened once this click is over (the flyout closes on
+// a click outside it) and after the header is scrolled into view (it closes on a scroll of the page).
+function openReadinessFromCard(key) {
+  const rec = readinessHeadChips.get(key);
+  if (!rec || !rec.chip.isConnected) return;
+  (rec.chip.closest('.pd-header') || rec.chip).scrollIntoView({ block: 'start' });
+  requestAnimationFrame(() => requestAnimationFrame(() => { if (rec.chip.isConnected) rec.fly.open({ focus: true }); }));
+}
+
+async function openReadinessMenu(key, rec) {
   if (!readinessReports[key]) {
     rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'rp-head', textContent: 'Checking...' }));
     rec.fly.reposition();
     await fetchReadinessReport(key);
   }
-  if (rec.fly.isOpen()) { paintReadinessMenu(key); rec.fly.reposition(); }
+  if (rec.fly.isOpen()) { paintReadinessMenu(key, rec); rec.fly.reposition(); }
 }
 
-function paintReadinessMenu(key) {
-  const rec = readinessChips.get(key);
-  if (!rec) return;
+function paintReadinessMenu(key, rec) {
   const report = readinessReports[key];
   if (!report) {
     rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'rp-head', textContent: 'Readiness could not be read.' }));
@@ -11850,7 +11883,7 @@ async function setReadinessTool(key, engine, value) {
 
 // The popovers live on <body>, outside every view: any hash navigation (Back, a link) closes them.
 function closeReadinessPopovers() {
-  for (const rec of readinessChips.values()) if (rec.fly.isOpen()) rec.fly.close();
+  for (const rec of readinessRecs()) if (rec.fly.isOpen()) rec.fly.close();
 }
 window.addEventListener('hashchange', closeReadinessPopovers);
 
@@ -11858,8 +11891,12 @@ window.addEventListener('hashchange', closeReadinessPopovers);
 let readinessScrollTo = null;
 function openReadinessSettings(key) {
   closeReadinessPopovers();
+  const hash = `projects/${key}/settings`;
+  // Already on that tab (the header chip's popover): no hashchange will refill the card, so go to it now.
+  const card = location.hash === `#${hash}` && [...document.querySelectorAll('.readiness-settings-card')].find((c) => c.dataset.key === key);
+  if (card) { card.scrollIntoView({ block: 'start' }); card.focus({ preventScroll: true }); return; }
   readinessScrollTo = key;
-  location.hash = `projects/${key}/settings`;
+  location.hash = hash;
 }
 
 // The project page's Settings tab: a Detect / Used / Not used control per tool, then one switch per check
@@ -11875,7 +11912,11 @@ function buildReadinessSettingsCard(key) {
 
 async function fillReadinessCard(card, key) {
   const mine = (card.rdSeq = (card.rdSeq || 0) + 1);
-  const head = Object.assign(document.createElement('h3'), { textContent: 'Agent readiness' });
+  const head = document.createElement('div');
+  head.className = 'rs-head';
+  const view = Object.assign(document.createElement('button'), { type: 'button', className: 'rs-view', textContent: 'View report' });
+  view.addEventListener('click', () => openReadinessFromCard(key));
+  head.append(Object.assign(document.createElement('h3'), { textContent: 'Agent readiness' }), view);
   const hint = Object.assign(document.createElement('small'), { className: 'hint', textContent: 'Which tools this project uses. Detect lets Worca decide from runs and files.' });
   const msg = Object.assign(document.createElement('small'), { className: 'hint' });
   card.replaceChildren(head, hint);
@@ -12158,6 +12199,7 @@ function paintProjHeader(screen, p) {
       copy._t = setTimeout(() => { copy.classList.remove('copied'); copy.setAttribute('aria-label', 'Copy path'); }, 1200);
     });
   }
+  paintReadinessHeadChip(screen, p.key);
   const fresh = screen.querySelector('.pd-new');
   fresh.disabled = !p.exists;
   fresh.title = p.exists ? 'Start a pipeline in this project' : 'The folder is missing on disk';

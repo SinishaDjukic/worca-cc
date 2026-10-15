@@ -9190,6 +9190,16 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .rd-not-ready .rd-n{background:var(--red-ink);}
 .rd-lbl{display:inline-flex;align-items:center;flex:none;height:22px;padding:0 10px;border-radius:999px;font-size:11.5px;font-weight:600;white-space:nowrap;}
 
+/* The project page header: the name, then its chip; the slot takes the free width so the header's buttons stay right. */
+.pd-row1:has(.pd-rd-slot) .pd-title{flex:0 1 auto;}
+.pd-row1 .pd-rd-slot{display:inline-flex;align-items:center;flex:1;min-width:0;}
+/* The Settings card's head: its title, and "View report" (the header chip's popover) on the right. */
+.rs-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
+.rs-head h3{margin:0;}
+.rs-view{flex:none;padding:0;border:0;background:none;color:var(--blue-ink-strong);font:500 12.5px/1.4 var(--sans);cursor:pointer;}
+.rs-view:hover{text-decoration:underline;}
+.rs-view:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:3px;}
+
 .readiness-pop{width:460px;display:flex;flex-direction:column;}
 .rp-head{flex:none;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:14px 16px 12px;border-bottom:1px solid var(--line);}
 .rp-title{font-weight:600;font-size:14px;}
@@ -9241,7 +9251,8 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .rp-foot .rp-sp{flex:1;}
 .rp-foot a{color:var(--blue-ink-strong);text-decoration:none;font-weight:500;}
 
-.readiness-settings-card{padding:16px;border:1px solid var(--line);border-radius:var(--r-card);margin-bottom:16px;}
+.readiness-settings-card{padding:16px;border:1px solid var(--line);border-radius:var(--r-card);margin-bottom:16px;
+  scroll-margin-top:90px;}   /* the pinned .pd-tabs (~74px) plus air: "Change in Settings" lands the head below them */
 .readiness-settings-card h3{margin:0 0 4px;font-size:13px;font-weight:600;}
 .rs-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 16px;align-items:center;padding:12px 0;border-top:1px solid var(--line);}
 .rs-row:first-of-type{border-top:0;}

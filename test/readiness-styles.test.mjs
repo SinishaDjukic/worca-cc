@@ -37,6 +37,11 @@ describe('readiness CSS', () => {
     assert.match(ruleBody('.pl-rd') ?? '', /height:20px/, 'smaller than the name line, so it does not grow the row');
   });
 
+  it('going to the Settings card lands its head below the pinned project tabs (74px)', () => {
+    const m = /scroll-margin-top:(\d+)px/.exec(ruleBody('.readiness-settings-card') ?? '');
+    assert.ok(m && Number(m[1]) >= 84, 'scroll-margin-top clears the sticky .pd-tabs');
+  });
+
   it('ready uses green tokens, partial amber, not-ready red, unused grey', () => {
     assert.match(ruleBody('.rd-ready') ?? '', /var\(--green-bg\)/);
     assert.match(ruleBody('.rd-ready') ?? '', /var\(--green-ink\)/);
