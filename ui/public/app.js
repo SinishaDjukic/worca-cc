@@ -11649,7 +11649,7 @@ function newReadinessChip(key, chip) {
   document.body.appendChild(menu);
   const rec = { chip, menu, fly: null };
   // 'below': under the chip, left-aligned, height limited to the room below; only .rp-body scrolls.
-  rec.fly = createFlyout({ doc: document, win: window, trigger: chip, menu, mode: 'below', onOpen: () => void openReadinessMenu(key) });
+  rec.fly = createFlyout({ doc: document, win: window, trigger: chip, menu, mode: 'below', closeOn: document.querySelector('.main'), onOpen: () => void openReadinessMenu(key) });
   chip.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
     e.preventDefault();
@@ -11678,7 +11678,14 @@ function paintReadinessMenu(key) {
     rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'rp-head', textContent: 'Readiness could not be read.' }));
     return;
   }
+  // Keep the reader's place across a repaint (spec 5): which boxes are open and where the body is scrolled.
+  const open = [...rec.menu.querySelectorAll('.rp-more')].map((d) => d.open);
+  const body = rec.menu.querySelector('.rp-body');
+  const top = body ? body.scrollTop : 0;
   rec.menu.replaceChildren(buildReadinessMenu(key, report));
+  rec.menu.querySelectorAll('.rp-more').forEach((d, i) => { if (open[i]) d.open = true; });
+  const next = rec.menu.querySelector('.rp-body');
+  if (next) next.scrollTop = top;
 }
 
 // The popover (spec 5): head with the level and "N of M checks pass"; the tools this project uses; one line naming

@@ -1,7 +1,7 @@
 // src/core/repo-readiness/facts.mjs
 // Pure fact collection over git and the filesystem for the agent-readiness checks.
 // Never throws: failures land in the Facts fields (isRepo / timedOut / partial data).
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
 import { statSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -128,4 +128,29 @@ export function fingerprintOf(facts) {
   return createHash('sha1')
     .update(`${facts?.headSha || ''}\n${status.join('\n')}`)
     .digest('hex');
+}
+
+function gitAsync(dir, args, timeoutMs) {
+  return new Promise((res) => {
+    execFile('git', ['-C', dir, ...args], { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, encoding: 'utf8' },
+      (err, out) => res(err ? null : out));
+  });
+}
+
+/**
+ * fingerprintOf(collectFacts(dir)) from two small async git calls (HEAD, the candidates' porcelain), without the
+ * full collection: the cache's per-read check (cache.mjs). Never throws; a non-repo reads as collectFacts' does.
+ */
+export async function quickFingerprint(dir, { timeoutMs = INTERACTIVE_TIMEOUT_MS } = {}) {
+  const facts = { headSha: null, instructionStatus: {} };
+  const top = await gitAsync(dir, ['rev-parse', '--show-toplevel', 'HEAD'], timeoutMs);
+  if (top !== null) {
+    facts.headSha = top.trim().split('\n')[1] || null;
+    const st = await gitAsync(dir, ['status', '--porcelain', '-z', '--', ...INSTRUCTION_CANDIDATES], timeoutMs);
+    for (const rec of (st || '').split('\0')) {
+      if (rec.length < 4) continue;
+      facts.instructionStatus[rec.slice(3)] = rec.slice(0, 2);
+    }
+  }
+  return fingerprintOf(facts);
 }

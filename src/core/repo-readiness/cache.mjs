@@ -3,7 +3,7 @@
 // fingerprint (HEAD + instruction-file porcelain) or the ignore list changes. The final report
 // (which tools are judged) is built from the base report and usage on every read (report.mjs).
 import { EventEmitter } from 'node:events';
-import { collectFacts, fingerprintOf } from './facts.mjs';
+import { quickFingerprint } from './facts.mjs';
 import { evaluateReadiness as realEvaluate } from './evaluate.mjs';
 import { buildReport, summaryOf } from './report.mjs';
 import { usedEngines, HISTORY_DAYS } from './used.mjs';
@@ -21,8 +21,8 @@ export function _setEvaluateForTest(fn) { evaluate = fn || realEvaluate; }
 const entries = new Map();    // projectKey → {fingerprint, base, evaluatedAt, report}
 const inflight = new Map();   // projectKey → Promise<base>
 
-function cacheKey(dir, ignore, facts) {
-  return `${fingerprintOf(facts)}\n${dir}\n${[...ignore].sort().join(',')}`;
+async function cacheKey(dir, ignore, timeoutMs) {
+  return `${await quickFingerprint(dir, { timeoutMs })}\n${dir}\n${[...ignore].sort().join(',')}`;
 }
 
 // No usage given: judge the default run engine only.
@@ -71,22 +71,25 @@ export async function getCachedOrEvaluate({
   const previous = entries.get(projectKey)?.report ?? null;
   let pending = inflight.get(projectKey);
   if (!pending) {
-    const facts = collectFacts(dir, { timeoutMs });
-    const fingerprint = cacheKey(dir, ignore, facts);
+    // Two small async git calls: a hit never runs the full fact collection.
+    const fingerprint = await cacheKey(dir, ignore, timeoutMs);
+    pending = inflight.get(projectKey);   // another reader may have started one while this one awaited
     const hit = entries.get(projectKey);
-    if (hit && !force && hit.fingerprint === fingerprint) {
+    if (!pending && hit && !force && hit.fingerprint === fingerprint) {
       return finish(projectKey, hit.base, hit.evaluatedAt, usage, previous);
     }
-    pending = evaluate({ dir, projectKey, ignore, timeoutMs })
-      .then((base) => {
-        const evaluatedAt = Date.now();
-        // A partial fact collection must not pin a degraded report to a fingerprint.
-        if (facts.timedOut || facts.error) entries.delete(projectKey);
-        else entries.set(projectKey, { fingerprint, base, evaluatedAt, report: entries.get(projectKey)?.report ?? null });
-        return { base, evaluatedAt };
-      })
-      .finally(() => { inflight.delete(projectKey); });
-    inflight.set(projectKey, pending);
+    if (!pending) {
+      pending = evaluate({ dir, projectKey, ignore, timeoutMs })
+        .then((base) => {
+          const evaluatedAt = Date.now();
+          // A partial fact collection must not pin a degraded report to a fingerprint.
+          if (base.partial) entries.delete(projectKey);
+          else entries.set(projectKey, { fingerprint, base, evaluatedAt, report: entries.get(projectKey)?.report ?? null });
+          return { base, evaluatedAt };
+        })
+        .finally(() => { inflight.delete(projectKey); });
+      inflight.set(projectKey, pending);
+    }
   }
   const { base, evaluatedAt } = await pending;
   return finish(projectKey, base, evaluatedAt, usage, previous);

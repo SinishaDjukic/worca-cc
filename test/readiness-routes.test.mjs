@@ -217,3 +217,20 @@ test('GET …/readiness judges only used tools: a fresh repo with CLAUDE.md is r
   assert.equal(readiness.engines.codex.level, 'unused');
   assert.equal(typeof readiness.checkedAt, 'string');
 });
+
+test('changing the project Run engine re-judges readiness: a readiness-changed frame and the new engine in the summary', async () => {
+  const p = await addProject(freshRepo({ 'CLAUDE.md': '# c\n' }));
+  await call('GET', `/api/projects/${p.key}/readiness`);
+  assert.equal((await (await call('GET', '/api/projects')).json()).projects.find((x) => x.key === p.key).readiness.level, 'ready');
+  const c = openWs();
+  await c.opened;
+  try {
+    const res = await call('PATCH', `/api/projects/${p.key}/settings`, { 'run.engine': 'codex' });
+    assert.equal(res.status, 200);
+    await waitFor(() => c.msgs.find((m) => m.type === 'readiness-changed' && m.action === p.key));
+    const s = (await (await call('GET', '/api/projects')).json()).projects.find((x) => x.key === p.key).readiness;
+    assert.equal(s.level, 'not-ready', 'OpenAI Codex has no AGENTS.md');
+  } finally {
+    c.ws.close();
+  }
+});

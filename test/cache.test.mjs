@@ -169,3 +169,24 @@ describe('final report on read', () => {
     } finally { cache.off('changed', onChanged); _setEvaluateForTest(null); rmRf(dir); }
   });
 });
+
+describe('partial evaluations', () => {
+  it('a partial base report (timed-out or failed facts) is served but never cached', async () => {
+    const dir = gitDir();
+    let calls = 0;
+    _setEvaluateForTest(async (o) => { calls++; return { ...(await realEvaluate(o)), partial: true }; });
+    try {
+      await getCachedOrEvaluate({ dir, projectKey: 'cache-partial' });
+      await getCachedOrEvaluate({ dir, projectKey: 'cache-partial' });
+      assert.equal(calls, 2);
+    } finally { _setEvaluateForTest(null); rmRf(dir); }
+  });
+
+  it('evaluateReadiness marks a timed-out collection partial', async () => {
+    const dir = gitDir();
+    try {
+      assert.equal((await realEvaluate({ dir, projectKey: 'p', timeoutMs: 1 })).partial, true);
+      assert.equal((await realEvaluate({ dir, projectKey: 'p' })).partial, undefined);
+    } finally { rmRf(dir); }
+  });
+});

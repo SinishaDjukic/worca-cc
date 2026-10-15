@@ -26,14 +26,16 @@ function unknownReport() {
 
 /**
  * Evaluate agent readiness of `dir`. Always resolves with the base report
- * `{catalogVersion, checks, repository, engines, files}`; `files` are the tool-specific instruction files (used.mjs).
+ * `{catalogVersion, checks, repository, engines, files, partial?}`; `files` are the tool-specific instruction files (used.mjs).
  */
 export async function evaluateReadiness({ dir, projectKey, ignore = [], timeoutMs = INTERACTIVE_TIMEOUT_MS } = {}) {
   try {
     const facts = collectFacts(dir, { timeoutMs });
     if (facts.error) logError(projectKey, 'facts', facts.error);
     const { checks, repository, engines } = evaluateEngines(facts, { ignore });
-    return { catalogVersion: CATALOG_VERSION, checks, repository, engines, files: toolFiles(facts) };
+    // `partial`: a timed-out or failed collection; the cache serves it but never keeps it.
+    return { catalogVersion: CATALOG_VERSION, checks, repository, engines, files: toolFiles(facts),
+      ...(facts.timedOut || facts.error ? { partial: true } : {}) };
   } catch (e) {
     logError(projectKey, 'evaluate', e);
     return unknownReport();

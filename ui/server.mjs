@@ -876,6 +876,8 @@ readinessEvents.on('changed', (e) => emitChanged('readiness-changed', e && e.pro
 // A moved HEAD refreshes a project's readiness (fingerprint-guarded; emits readiness-changed when the verdict moves).
 // Only projects already evaluated: there is no startup sweep.
 projectSyncEvents.on('changed', (e) => { void reevaluateReadiness(e && e.projectKey); });
+// Team policy can set run.engine for every project.
+policyEvents.on('changed', () => { void reevaluateAllReadiness(); });
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -1087,6 +1089,8 @@ function wireRun(entry) {
       }
       if (name === 'done') {
         entry.status = (payload && payload.status) || 'done';
+        // A finished run adds to the project's run history, a readiness signal (used.mjs).
+        if (entry.projectDir && !entry.workspaceId) void reevaluateReadiness(projectKey(entry.projectDir));
         // Remember the pause reason for summarizeRuns (hello). Reset on every
         // done so a later reasonless finish cannot leave a stale cost banner.
         entry.pauseReason = (payload && payload.reason) || null;
@@ -5281,6 +5285,11 @@ async function getReadiness(p, { refresh = false } = {}) {
     return null;
   }
 }
+// A user or team change to run.engine moves which tool every project judges: re-read each one already evaluated.
+async function reevaluateAllReadiness() {
+  if (!readinessEnabled()) return;
+  try { for (const p of await listProjects()) await reevaluateReadiness(p.key); } catch { /* best effort */ }
+}
 async function reevaluateReadiness(key) {
   if (!key || !readinessEnabled() || !readinessSummary(key)) return;
   try {
@@ -5378,9 +5387,11 @@ async function applyProjectSettingsPatch(project, patch) {
   await assertSlotModels(items.filter(({ entry, value }) => entry.family && value).map(({ entry, value }) => ({ id: entry.id, engine: entry.engine, value })), { projectDir: project.path });
   writeProjectSettings({ projectDir: project.path }, patch, { roles });
   emitChanged('settings-changed');
-  // readiness.ignore changes the base report (re-evaluate); readiness.tools only which tools are judged.
-  if (readinessEnabled() && project.key && Object.keys(patch || {}).some((id) => id.startsWith('readiness.'))) {
-    void getReadiness(project, { refresh: Object.hasOwn(patch, 'readiness.ignore') }).then(() => emitChanged('readiness-changed', project.key));
+  // readiness.ignore changes the base report (re-evaluate); readiness.tools and run.engine only which tools are
+  // judged. The cache emits readiness-changed when the verdict moves (cache.mjs finish()).
+  const keys = Object.keys(patch || {});
+  if (readinessEnabled() && project.key && keys.some((id) => id.startsWith('readiness.') || id === 'run.engine')) {
+    void getReadiness(project, { refresh: Object.hasOwn(patch, 'readiness.ignore') });
   }
   return projectSettingsState(project.path);
 }
@@ -9174,6 +9185,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
+    if (hasRunEngineKey) void reevaluateAllReadiness();   // which tool each project judges follows run.engine
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', () => setUtilityModels(body.utilityModels));
     if (hasAskEngineKey) await asSettingsField('askEngine', () => setAskEngineSetting(body.askEngine));

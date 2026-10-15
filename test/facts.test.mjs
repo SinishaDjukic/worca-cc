@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
-import { collectFacts, fingerprintOf, INSTRUCTION_CANDIDATES, HEAVY_DIRS } from '../src/core/repo-readiness/facts.mjs';
+import { collectFacts, fingerprintOf, quickFingerprint, INSTRUCTION_CANDIDATES, HEAVY_DIRS } from '../src/core/repo-readiness/facts.mjs';
 
 function gitDir() {
   const dir = mkdtempSync(join(tmpdir(), 'readiness-'));
@@ -185,5 +185,21 @@ describe('exports', () => {
   it('HEAVY_DIRS is frozen and includes node_modules', () => {
     assert.ok(HEAVY_DIRS.includes('node_modules'));
     assert.throws(() => { HEAVY_DIRS.push('x'); }, TypeError);
+  });
+});
+
+describe('facts.quickFingerprint', () => {
+  it('equals fingerprintOf(collectFacts) without collecting the rest: clean, modified, untracked, not a repo', async () => {
+    const dir = gitDir();
+    const plain = mkdtempSync(join(tmpdir(), 'qfp-'));
+    try {
+      assert.equal(await quickFingerprint(dir), fingerprintOf(collectFacts(dir)));
+      writeFileSync(join(dir, 'CLAUDE.md'), '# c');
+      assert.equal(await quickFingerprint(dir), fingerprintOf(collectFacts(dir)), 'untracked');
+      execSync('git add -A && git commit -qm c', { cwd: dir, stdio: 'ignore' });
+      writeFileSync(join(dir, 'CLAUDE.md'), '# changed');
+      assert.equal(await quickFingerprint(dir), fingerprintOf(collectFacts(dir)), 'modified');
+      assert.equal(await quickFingerprint(plain), fingerprintOf(collectFacts(plain)), 'not a repo');
+    } finally { rmRf(dir); rmRf(plain); }
   });
 });

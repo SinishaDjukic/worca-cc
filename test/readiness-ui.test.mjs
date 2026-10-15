@@ -57,6 +57,9 @@ describe('readiness UI: popover v2', () => {
   it('opens below the chip', () => {
     assert.match(fnSource('newReadinessChip'), /mode: 'below'/);
   });
+  it('scrolling the page closes it (it is fixed, the chip scrolls away)', () => {
+    assert.match(fnSource('newReadinessChip'), /closeOn: document\.querySelector\('\.main'\)/);
+  });
   it('builds from the pure model and never from innerHTML', () => {
     const src = fnSource('buildReadinessMenu');
     assert.match(src, /readinessMenuModel\(/);
@@ -180,5 +183,14 @@ describe('readiness UI: WebSocket frame', () => {
   it('a refreshed report becomes the row summary with its counts', () => {
     assert.match(fnSource('applyReadinessReport'), /summaryOfClient\(report\)/);
     assert.match(app, /const summaryOfClient = \(r\) => \(\{ level: r\.level, failingCount: r\.counts\.mustFix \+ r\.counts\.shouldFix, \.\.\.r\.counts \}\);/);
+  });
+});
+
+describe('readiness UI: repaint keeps the reader\'s place', () => {
+  it('a repaint keeps which boxes are open and the body scroll (spec 5)', () => {
+    const src = fnSource('paintReadinessMenu');
+    assert.match(src, /\.rp-more/);
+    assert.match(src, /scrollTop/);
+    assert.match(src, /\.open = true/);
   });
 });
