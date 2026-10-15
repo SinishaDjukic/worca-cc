@@ -1293,11 +1293,18 @@ export const SETTING_CHECKS = Object.freeze({
   askMaxTurns: (value) => isAskMaxTurns(value), askMaxBudgetUsd: (value) => value === null || isAskMaxBudget(value),
   skillMount: (value) => SKILL_MOUNTS.includes(value), engine: (value) => MODEL_ENGINES.includes(value), runEngine: (value) => RUN_ENGINES.includes(value),
   stringArray: (value) => Array.isArray(value) && value.every((item) => typeof item === 'string'),
+  toolMap: (value) => !!value && typeof value === 'object' && !Array.isArray(value)
+    && Object.values(value).every((v) => v === 'used' || v === 'unused'),
 });
 /** Check ids the project's readiness report skips (project layer only — no user inheritance). Unknown ids are kept. */
 export function readinessIgnore(scope) {
   const value = projectOverride('readiness.ignore', scope);
   return Array.isArray(value) ? value : [];
+}
+/** The project's per-tool readiness choice: { engine: 'used'|'unused' }; a missing engine is Detect (project layer only). */
+export function readinessTools(scope) {
+  const value = projectOverride('readiness.tools', scope);
+  return SETTING_CHECKS.toolMap(value) ? value : {};
 }
 
 // ── Title-generation model + hidden built-ins (#422) ─────────────────────────
