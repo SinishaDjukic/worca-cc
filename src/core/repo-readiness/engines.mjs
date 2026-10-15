@@ -14,10 +14,14 @@ import { CHECKS } from './checks.mjs';
 const LOCAL_ONLY_FILES = Object.freeze(['CLAUDE.local.md']);
 
 // `committedExempt`: Claude reads the real directory (run-context), not the worktree, so an uncommitted file is fine.
+// `missingFix`: the `instructions.present` fix for this engine (the catalog's fix is the generic fallback).
 const SOURCES = Object.freeze({
-  claude: { files: CLAUDE_INSTRUCTION_FILES, globs: CLAUDE_INSTRUCTION_GLOBS, committedExempt: true },
-  codex: { files: CODEX_INSTRUCTION_FILES, globs: [] },
-  copilot: { files: COPILOT_INSTRUCTION_FILES, globs: [] },
+  claude: {
+    files: CLAUDE_INSTRUCTION_FILES, globs: CLAUDE_INSTRUCTION_GLOBS, committedExempt: true,
+    missingFix: 'Add CLAUDE.md. If other tools are used too, put the instructions in AGENTS.md and add a line `@AGENTS.md` to CLAUDE.md.',
+  },
+  codex: { files: CODEX_INSTRUCTION_FILES, globs: [], missingFix: 'Add AGENTS.md.' },
+  copilot: { files: COPILOT_INSTRUCTION_FILES, globs: [], missingFix: 'Add AGENTS.md or .github/copilot-instructions.md.' },
   cursor: { files: CURSOR_INSTRUCTION_FILES, globs: [] },
 });
 
@@ -112,7 +116,7 @@ export function evaluateEngines(facts, { ignore = [], env = process.env } = {}) 
     ...(engine ? { engine } : {}),
     status: ignoreSet.has(check.id) ? 'ignored' : result.status,
     ...(result.detail === undefined ? {} : { detail: result.detail }),
-    fix: check.fix,
+    fix: (check.id === 'instructions.present' && sourcesOf(engine).missingFix) || check.fix,
   });
 
   const repoRows = CHECKS.filter((c) => c.scope === 'repository').map((c) => row(c, safeRun(c, facts)));

@@ -136,7 +136,7 @@ The catalog has two **scopes**:
 
 | id | Scope | Severity | Fails when | Fix text (abridged) |
 |---|---|---|---|---|
-| `instructions.present` | tool | blocker | none of that engine's instruction sources (§4.4) is tracked or present | Add `AGENTS.md` (read by Codex, Copilot, Cursor) and import it from `CLAUDE.md`. |
+| `instructions.present` | tool | blocker | none of that engine's instruction sources (§4.4) is tracked or present | Per tool. Claude Code: Add `CLAUDE.md`; if other tools are used too, put the instructions in `AGENTS.md` and add a line `@AGENTS.md` to `CLAUDE.md`. OpenAI Codex: Add `AGENTS.md`. GitHub Copilot: Add `AGENTS.md` or `.github/copilot-instructions.md`. |
 | `instructions.committed` | tool (codex, copilot, cursor) | warn | an instruction source for that engine exists on disk but is untracked or has uncommitted changes | Commit it: runs on this engine see only committed files. |
 | `instructions.size` | tool | warn | one of that engine's instruction sources exceeds the effective `contextMaxBytesPerFile`, or their sum exceeds `contextMaxBytesTotal` | Trim it or split into `.claude/rules/*.md`; it is truncated and costs tokens every turn. |
 | `git.repo` | repository | blocker | the folder is not inside a git work tree | Runs check out a git worktree; `git init` and commit. |

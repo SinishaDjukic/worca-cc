@@ -242,7 +242,7 @@ export const CHECKS = Object.freeze([
     title: 'Agent instructions present',
     severity: 'blocker',
     scope: 'tool',
-    fix: 'Add AGENTS.md (read by Codex, Copilot, Cursor) and import it from CLAUDE.md.',
+    fix: 'Add the instruction file this tool reads.',
     run: null,
   },
   {

@@ -86,6 +86,19 @@ describe('engines module', () => {
       });
     });
 
+    it('instructions.present gives each engine its own fix', () => {
+      withRepo(null, (dir) => {
+        const { checks } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+        assert.equal(row(checks, 'instructions.present', 'claude').fix,
+          'Add CLAUDE.md. If other tools are used too, put the instructions in AGENTS.md and add a line `@AGENTS.md` to CLAUDE.md.');
+        assert.equal(row(checks, 'instructions.present', 'codex').fix, 'Add AGENTS.md.');
+        assert.equal(row(checks, 'instructions.present', 'copilot').fix, 'Add AGENTS.md or .github/copilot-instructions.md.');
+        for (const r of perEngineRows(checks).filter((c) => c.id === 'instructions.present')) {
+          assert.doesNotMatch(r.fix, r.engine === 'claude' ? /Codex|Copilot|Cursor/ : /CLAUDE\.md/);
+        }
+      });
+    });
+
     it('a failing warn repository check makes the repository partial, not the engine', () => {
       withRepo((dir) => {
         writeFileSync(join(dir, 'AGENTS.md'), '# a');
