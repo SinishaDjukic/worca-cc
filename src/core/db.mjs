@@ -841,7 +841,10 @@ const INCREMENTAL_COLUMNS = {
                             scheduled_for: 'TEXT', schedule_id: 'TEXT',   // v31: scheduled-run provenance (NULL = started by hand)
                             policy_state: 'TEXT',     // v32: team-policy run state (JSON: home, sha, overrides, exceeded, deviations, reason)
                             human_hours: 'REAL NOT NULL DEFAULT 0',     // v33: Σ pipeline_steps.human_hours (money-saved design §6)
-                            started_by: 'TEXT' },   // v36: who started the run (identity.mjs; NULL = before attribution)
+                            started_by: 'TEXT',   // v36: who started the run (identity.mjs; NULL = before attribution)
+                            // Plan it with me D28, no version of their own (-4-slices owns v57); reconcileSchema adds them
+                            shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
+                            run_size: 'TEXT' },   // small|medium|large from the run's changed lines/files; NULL = unknown
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',

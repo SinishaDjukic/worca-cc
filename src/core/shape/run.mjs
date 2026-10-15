@@ -49,7 +49,11 @@ export function validatePlanAnswer(raw, { revisable = false, perspectives = null
   if (feedback.length > PLAN_FEEDBACK_MAX) {
     return { ok: false, errors: [{ path: 'feedback', code: 'too-long', message: `feedback is over ${PLAN_FEEDBACK_MAX} characters` }] };
   }
-  const payload = { decision: 'revise', feedback };
+  const source = raw.source === undefined ? 'person' : raw.source;
+  if (source !== 'person' && source !== 'check') {
+    return { ok: false, errors: [{ path: 'source', code: 'invalid', message: 'source must be person or check' }] };
+  }
+  const payload = { decision: 'revise', feedback, ...(source === 'check' ? { source } : {}) };
   if (raw.perspectives !== undefined) {
     const p = normalizePerspectives(raw.perspectives);
     if (!p.ok) return { ok: false, errors: [{ path: 'perspectives', code: 'invalid', message: p.error }] };
