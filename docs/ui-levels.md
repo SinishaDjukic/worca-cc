@@ -174,7 +174,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Plan approval (Plan it with me): the plan, its shape check, Run this plan / Send changes / Stop | all (rule 1) |
 | Plan approval extras: perspective chips + Update plan, Fix, Save to plans/ | S |
 | Plan approval: Open in New run | A |
-| Run page Overview: Perspective checklists (Shape it first, gated), one group per review cycle — met / unmet / n/a / not reported with evidence; the newest open, older ones folded | S |
+| Run page Overview: Perspective checklists (Plan it with me, gated): the latest review cycle as one summary line, unmet items open with their evidence, met items behind "Show N met items", earlier cycles behind "Earlier cycles" | S |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
 | Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
 | Resume menu: Resume at HH:MM (when the limit resets) | A |
