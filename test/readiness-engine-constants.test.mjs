@@ -2,8 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CLAUDE_INSTRUCTION_FILES, CLAUDE_INSTRUCTION_GLOBS } from '../src/core/engines/claude.mjs';
 import { CODEX_INSTRUCTION_FILES } from '../src/core/engines/codex.mjs';
-import { COPILOT_INSTRUCTION_FILES } from '../src/core/engines/copilot.mjs';
-import { CURSOR_INSTRUCTION_FILES } from '../src/core/engines/cursor.mjs';
+import { COPILOT_INSTRUCTION_FILES, COPILOT_INSTRUCTION_GLOBS } from '../src/core/engines/copilot.mjs';
+import { CURSOR_INSTRUCTION_FILES, CURSOR_INSTRUCTION_GLOBS } from '../src/core/engines/cursor.mjs';
 
 describe('Engine instruction constants', () => {
   it('Claude exports CLAUDE_INSTRUCTION_FILES and CLAUDE_INSTRUCTION_GLOBS', () => {
@@ -27,16 +27,18 @@ describe('Engine instruction constants', () => {
     assert.throws(() => { CODEX_INSTRUCTION_FILES.push('x'); }, TypeError);
   });
 
-  it('Copilot exports COPILOT_INSTRUCTION_FILES', () => {
-    assert.ok(Array.isArray(COPILOT_INSTRUCTION_FILES));
-    assert.ok(COPILOT_INSTRUCTION_FILES.includes('.github/copilot-instructions.md'));
-    assert.ok(COPILOT_INSTRUCTION_FILES.includes('AGENTS.md'));
+  it('Copilot exports the files and globs the Copilot CLI reads', () => {
+    assert.deepEqual([...COPILOT_INSTRUCTION_FILES].sort(),
+      ['.claude/CLAUDE.md', '.github/copilot-instructions.md', 'AGENTS.md', 'CLAUDE.md', 'GEMINI.md']);
+    assert.deepEqual([...COPILOT_INSTRUCTION_GLOBS], ['.github/instructions/**/*.instructions.md']);
     assert.throws(() => { COPILOT_INSTRUCTION_FILES.push('x'); }, TypeError);
+    assert.throws(() => { COPILOT_INSTRUCTION_GLOBS.push('x'); }, TypeError);
   });
 
-  it('Cursor exports CURSOR_INSTRUCTION_FILES as empty (unverified)', () => {
-    assert.ok(Array.isArray(CURSOR_INSTRUCTION_FILES));
-    assert.strictEqual(CURSOR_INSTRUCTION_FILES.length, 0);
+  it('Cursor exports the files and globs the Cursor CLI reads', () => {
+    assert.deepEqual([...CURSOR_INSTRUCTION_FILES].sort(), ['AGENTS.md', 'CLAUDE.md']);
+    assert.deepEqual([...CURSOR_INSTRUCTION_GLOBS], ['.cursor/rules/**/*.mdc']);
     assert.throws(() => { CURSOR_INSTRUCTION_FILES.push('x'); }, TypeError);
+    assert.throws(() => { CURSOR_INSTRUCTION_GLOBS.push('x'); }, TypeError);
   });
 });

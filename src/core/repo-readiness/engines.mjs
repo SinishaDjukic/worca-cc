@@ -5,8 +5,8 @@ import { listEngines } from '../engines/index.mjs';
 import { engineLocks } from '../engines/readiness.mjs';
 import { CLAUDE_INSTRUCTION_FILES, CLAUDE_INSTRUCTION_GLOBS } from '../engines/claude.mjs';
 import { CODEX_INSTRUCTION_FILES } from '../engines/codex.mjs';
-import { COPILOT_INSTRUCTION_FILES } from '../engines/copilot.mjs';
-import { CURSOR_INSTRUCTION_FILES } from '../engines/cursor.mjs';
+import { COPILOT_INSTRUCTION_FILES, COPILOT_INSTRUCTION_GLOBS } from '../engines/copilot.mjs';
+import { CURSOR_INSTRUCTION_FILES, CURSOR_INSTRUCTION_GLOBS } from '../engines/cursor.mjs';
 import { DEFAULT_CONTEXT_MAX_BYTES_PER_FILE, DEFAULT_CONTEXT_MAX_BYTES_TOTAL } from '../settings.mjs';
 import { CHECKS } from './checks.mjs';
 
@@ -24,8 +24,14 @@ const SOURCES = Object.freeze({
     missingFix: 'Add AGENTS.md (OpenAI Codex and GitHub Copilot read it too) or CLAUDE.md.',
   },
   codex: { files: CODEX_INSTRUCTION_FILES, globs: [], missingFix: 'Add AGENTS.md.' },
-  copilot: { files: COPILOT_INSTRUCTION_FILES, globs: [], missingFix: 'Add AGENTS.md or .github/copilot-instructions.md.' },
-  cursor: { files: CURSOR_INSTRUCTION_FILES, globs: [] },
+  copilot: {
+    files: COPILOT_INSTRUCTION_FILES, globs: COPILOT_INSTRUCTION_GLOBS,
+    missingFix: 'Add AGENTS.md or .github/copilot-instructions.md.',
+  },
+  cursor: {
+    files: CURSOR_INSTRUCTION_FILES, globs: CURSOR_INSTRUCTION_GLOBS,
+    missingFix: 'Add AGENTS.md or a rule in .cursor/rules (a .mdc file).',
+  },
 });
 
 export const DECLARED_ENGINES = Object.freeze(Object.keys(SOURCES));

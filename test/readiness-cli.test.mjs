@@ -111,12 +111,13 @@ describe('worca readiness', () => {
   });
 
   it('--engine repeats: every named engine is judged, and either one not ready exits 2', async () => {
+    // Copilot reads CLAUDE.md; Codex does not.
     const claudeOnly = gitRepo({ files: { 'CLAUDE.md': '# c\n' } });
     const r = await runCli(['readiness', '--project', claudeOnly, '--engine', 'codex', '--engine', 'copilot']);
     assert.equal(r.code, 2, r.stderr);
     assert.match(r.stdout, /^Judged: OpenAI Codex, GitHub Copilot$/m);
     assert.match(r.stdout, /instructions\.present \(OpenAI Codex\)/);
-    assert.match(r.stdout, /instructions\.present \(GitHub Copilot\)/);
+    assert.doesNotMatch(r.stdout, /instructions\.present \(GitHub Copilot\)/);
   });
 
   it('judges only the run engine by default: a repo with CLAUDE.md only is ready', async () => {

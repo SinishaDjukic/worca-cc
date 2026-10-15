@@ -245,16 +245,82 @@ describe('engines module', () => {
       });
     });
 
-    it('skips every cursor tool row (no verified instruction sources)', () => {
+    for (const [what, files] of [
+      ['only a CLAUDE.md', { 'CLAUDE.md': '# c' }],
+      ['only a .claude/CLAUDE.md', { '.claude/CLAUDE.md': '# c' }],
+      ['only a GEMINI.md', { 'GEMINI.md': '# g' }],
+      ['only path instructions', { '.github/instructions/web/ui.instructions.md': '# i' }],
+    ]) {
+      it(`Copilot reads ${what}`, () => {
+        withRepo((dir) => {
+          for (const [p, body] of Object.entries(files)) {
+            mkdirSync(join(dir, p, '..'), { recursive: true });
+            writeFileSync(join(dir, p), body);
+          }
+          commitAll(dir);
+        }, (dir) => {
+          const { checks, engines } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+          assert.equal(row(checks, 'instructions.present', 'copilot').status, 'pass');
+          assert.ok(!engines.copilot.failing.includes('instructions.present'));
+        });
+      });
+    }
+
+    it('Copilot combines its files, so their total counts against the size budget', () => {
+      const big = 'x'.repeat(DEFAULT_CONTEXT_MAX_BYTES_PER_FILE - 100);
       withRepo((dir) => {
-        writeFileSync(join(dir, 'AGENTS.md'), '# a');
+        mkdirSync(join(dir, '.github'));
+        for (const p of ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md', '.github/copilot-instructions.md']) writeFileSync(join(dir, p), big);
+        commitAll(dir);
+      }, (dir) => {
+        const { checks } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+        assert.equal(row(checks, 'instructions.size', 'copilot').status, 'fail');
+        assert.match(row(checks, 'instructions.size', 'copilot').detail, /total/);
+        assert.equal(row(checks, 'instructions.size', 'codex').status, 'pass');
+      });
+    });
+
+    for (const [what, files] of [
+      ['an AGENTS.md', { 'AGENTS.md': '# a' }],
+      ['a CLAUDE.md', { 'CLAUDE.md': '# c' }],
+      ['a project rule', { '.cursor/rules/style.mdc': '---\nalwaysApply: true\n---\n# r' }],
+      ['a nested project rule', { '.cursor/rules/web/ui.mdc': '# r' }],
+    ]) {
+      it(`Cursor reads ${what}`, () => {
+        withRepo((dir) => {
+          for (const [p, body] of Object.entries(files)) {
+            mkdirSync(join(dir, p, '..'), { recursive: true });
+            writeFileSync(join(dir, p), body);
+          }
+          commitAll(dir);
+        }, (dir) => {
+          const { checks, engines } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+          assert.equal(row(checks, 'instructions.present', 'cursor').status, 'pass');
+          assert.equal(engines.cursor.level, 'ready');
+        });
+      });
+    }
+
+    it('Cursor ignores a plain .md file in .cursor/rules and says how to fix it', () => {
+      withRepo((dir) => {
+        mkdirSync(join(dir, '.cursor', 'rules'), { recursive: true });
+        writeFileSync(join(dir, '.cursor', 'rules', 'style.md'), '# r');
         commitAll(dir);
       }, (dir) => {
         const { checks, engines } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
-        const rows = perEngineRows(checks).filter((r) => r.engine === 'cursor');
-        assert.equal(rows.length, 3);
-        for (const r of rows) assert.equal(r.status, 'skip');
-        assert.ok(!engines.cursor.failing.includes('instructions.present'));
+        const r = row(checks, 'instructions.present', 'cursor');
+        assert.equal(r.status, 'fail');
+        assert.equal(r.fix, 'Add AGENTS.md or a rule in .cursor/rules (a .mdc file).');
+        assert.equal(engines.cursor.level, 'not-ready');
+      });
+    });
+
+    it('Cursor runs see only committed files, so an untracked AGENTS.md fails instructions.committed', () => {
+      withRepo((dir) => {
+        writeFileSync(join(dir, 'AGENTS.md'), '# a');
+      }, (dir) => {
+        const { checks } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+        assert.equal(row(checks, 'instructions.committed', 'cursor').status, 'fail');
       });
     });
 

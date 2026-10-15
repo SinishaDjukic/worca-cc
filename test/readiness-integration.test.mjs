@@ -75,11 +75,11 @@ describe('readiness integration', () => {
     } finally { rmRf(dir); }
   });
 
-  it('engine instruction-file constants are non-empty except cursor', () => {
+  it('engine instruction-file constants are non-empty', () => {
     assert.ok(CLAUDE_INSTRUCTION_FILES.length > 0);
     assert.ok(CODEX_INSTRUCTION_FILES.length > 0);
     assert.ok(COPILOT_INSTRUCTION_FILES.length > 0);
-    assert.equal(CURSOR_INSTRUCTION_FILES.length, 0);
+    assert.ok(CURSOR_INSTRUCTION_FILES.length > 0);
   });
 
   it('every non-mock engine has a declared source entry', () => {

@@ -23,6 +23,18 @@
 - The engine `run.engine` resolves to is always judged, even when set to `unused`.
 - Kill switch `WORCA_READINESS=0` keeps working everywhere it works today.
 
+## Sources
+
+Which instruction files each tool reads (spec §4.4). Check these pages before changing an engine's
+instruction list, and cite the page next to the export:
+
+- Claude Code: https://code.claude.com/docs/en/memory#agents-md
+- OpenAI Codex: https://learn.chatgpt.com/docs/agent-configuration/agents-md
+- GitHub Copilot CLI: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions
+- GitHub Copilot in IDEs (not used by runs): https://docs.github.com/en/copilot/how-tos/copilot-in-your-ide/customize-copilot/configure-custom-instructions/add-repository-instructions-in-your-ide
+- Cursor CLI: https://cursor.com/docs/cli/using#rules
+- Cursor rules: https://cursor.com/docs/rules
+
 ## Out of scope (separate follow-up)
 
 - The **team layer** of `readiness.tools` and its Team policy page rows (spec §4.7, §5). Team values go through the policy field schema (`src/core/policy/effective.mjs#FIELDS`) with its own validation and UI; that is its own plan. This plan implements the project layer and leaves `team: null` on the cascade entry.

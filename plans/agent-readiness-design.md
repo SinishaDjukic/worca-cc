@@ -163,10 +163,17 @@ gets `instructions.*` as `skip` and its level from the other checks only.
 
 | Engine | Sources (any one satisfies `instructions.present`) | Export |
 |---|---|---|
-| claude | `CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/rules/*.md`, `CLAUDE.local.md` (the run-context set); with none of `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`, it reads `AGENTS.md` and `.claude/AGENTS.md` instead (Claude Code v2.1.277+, code.claude.com/docs/en/memory#agents-md) | `CLAUDE_INSTRUCTION_FILES` in `engines/claude.mjs` (or reuse run-context's list) |
+| claude | `CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/rules/*.md`, `CLAUDE.local.md` (the run-context set); with none of `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`, it reads `AGENTS.md` and `.claude/AGENTS.md` instead (Claude Code v2.1.277+) | `CLAUDE_INSTRUCTION_FILES` in `engines/claude.mjs` (or reuse run-context's list) |
 | codex | `AGENTS.md`, `AGENTS.override.md` | `CODEX_INSTRUCTION_FILES` in `engines/codex.mjs` |
-| copilot | `.github/copilot-instructions.md`, `.github/instructions/**/*.instructions.md`, `AGENTS.md` | `COPILOT_INSTRUCTION_FILES` in `engines/copilot.mjs` |
-| cursor | `.cursor/rules/**/*.mdc`, `AGENTS.md` | `CURSOR_INSTRUCTION_FILES` in `engines/cursor.mjs` |
+| copilot | `.github/copilot-instructions.md`, `.github/instructions/**/*.instructions.md`, `AGENTS.md`, `CLAUDE.md`, `.claude/CLAUDE.md`, `GEMINI.md`; the CLI combines every one it finds, so all of them count toward the size budget | `COPILOT_INSTRUCTION_FILES`, `COPILOT_INSTRUCTION_GLOBS` in `engines/copilot.mjs` |
+| cursor | `.cursor/rules/**/*.mdc` (a plain `.md` there is ignored), `AGENTS.md`, `CLAUDE.md` at the project root | `CURSOR_INSTRUCTION_FILES`, `CURSOR_INSTRUCTION_GLOBS` in `engines/cursor.mjs` |
+
+Sources for the table (each CLI's own documentation; Worca runs the CLIs, so IDE-only behavior does not count):
+
+- Claude Code: https://code.claude.com/docs/en/memory#agents-md
+- OpenAI Codex: https://learn.chatgpt.com/docs/agent-configuration/agents-md (was developers.openai.com/codex/guides/agents-md); `AGENTS.override.md` replaces `AGENTS.md` in its directory, 32 KiB combined by default (`project_doc_max_bytes`)
+- GitHub Copilot CLI: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions. The IDE page (https://docs.github.com/en/copilot/how-tos/copilot-in-your-ide/customize-copilot/configure-custom-instructions/add-repository-instructions-in-your-ide) lists fewer files per IDE; it does not apply to runs.
+- Cursor CLI: https://cursor.com/docs/cli/using#rules (reads `.cursor/rules`, plus `AGENTS.md` and `CLAUDE.md` at the project root) and https://cursor.com/docs/rules (rule files are `.mdc`; keep each under 500 lines)
 
 **Verify before relying on these.** The adapters state their facts against a named CLI version
 ("checked against @github/copilot 1.0.92", "codex-cli 0.146 and 0.154"). The implementation

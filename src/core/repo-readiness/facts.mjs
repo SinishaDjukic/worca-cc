@@ -14,7 +14,7 @@ const FILE_CAP = 200_000;
 export const INSTRUCTION_CANDIDATES = Object.freeze([
   'CLAUDE.md', '.claude/CLAUDE.md', 'CLAUDE.local.md',
   'AGENTS.md', '.claude/AGENTS.md', 'AGENTS.override.md',
-  '.github/copilot-instructions.md',
+  '.github/copilot-instructions.md', 'GEMINI.md',
 ]);
 
 export const HEAVY_DIRS = Object.freeze([

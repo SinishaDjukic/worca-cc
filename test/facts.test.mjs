@@ -179,6 +179,7 @@ describe('exports', () => {
   it('INSTRUCTION_CANDIDATES is frozen and includes expected files', () => {
     assert.ok(INSTRUCTION_CANDIDATES.includes('CLAUDE.md'));
     assert.ok(INSTRUCTION_CANDIDATES.includes('AGENTS.md'));
+    assert.ok(INSTRUCTION_CANDIDATES.includes('GEMINI.md'));
     assert.throws(() => { INSTRUCTION_CANDIDATES.push('x'); }, TypeError);
   });
 
