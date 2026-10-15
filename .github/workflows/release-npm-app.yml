@@ -40,7 +40,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # No build step: plain Node ESM plus a vanilla HTML/CSS/JS frontend.
+      # No build step for the tests: plain Node ESM plus a vanilla HTML/CSS/JS frontend (the extension is built at pack time).
       - name: Run tests
         env:
           WORCA_TEST_SHARD: ${{ matrix.shard }}/4
@@ -101,6 +101,16 @@ jobs:
             echo "tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
+      # The tarball carries the built browser extension (extension/dist/{chrome,edge,firefox}/,
+      # docs/browser-extension.md). `npm publish` builds it via `prepack`; this step builds it once
+      # up front and checks the packed file list, so a wrong list fails here, before anything is
+      # published. `npm ci` above installs devDependencies (esbuild): never omit them.
+      - name: Build and check the packaged browser extension
+        run: |
+          set -euo pipefail
+          node tools/build-extension.mjs --pack
+          npm pack --dry-run --json --ignore-scripts | node tools/check-pack.mjs --require-extension
+
       # Auth is via OIDC Trusted Publishing (no NPM_TOKEN in this repo).
       # Provenance is generated automatically under OIDC; --provenance makes
       # the requirement explicit so a misconfiguration fails the job instead of
@@ -130,11 +140,38 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The browser extension zips attached to the release (docs/browser-extension.md#install).
+      # ext:zip refuses to run with WORCA_EXT_PORT / WORCA_EXT_BASE_URL set, so these always
+      # try Worca's default address. The tag equals package.json's version (build-and-publish).
+      - name: Build the browser extension zips
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG_NAME#worca-app-v}"
+          npm run ext:zip
+          for b in chrome edge firefox; do
+            test -s "extension/dist/worca-$b-$VERSION.zip" || { echo "::error::extension/dist/worca-$b-$VERSION.zip was not built"; exit 1; }
+          done
+
+      # The notes file is prepended to the generated notes (GitHub's generate_release_notes).
+      # With assets, gh creates a draft, uploads, then publishes; a failed upload exits non-zero
+      # and fails this job (docs/RELEASING.md §4.4 covers re-attaching by hand).
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           VERSION="${TAG_NAME#worca-app-v}"
           PRERELEASE=""
           if echo "$VERSION" | grep -q -- '-rc\.'; then
@@ -142,8 +179,31 @@ jobs:
           fi
           gh release create "$TAG_NAME" \
             --title "@worca/app $VERSION" \
+            --notes-file .github/release-notes/browser-extension.md \
             --generate-notes \
-            $PRERELEASE
+            $PRERELEASE \
+            "extension/dist/worca-chrome-$VERSION.zip" \
+            "extension/dist/worca-edge-$VERSION.zip" \
+            "extension/dist/worca-firefox-$VERSION.zip"
+
+      - name: Check the release carries the three extension zips
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG_NAME#worca-app-v}"
+          gh release view "$TAG_NAME" --json assets,isDraft --jq '.assets[].name' > assets.txt
+          for b in chrome edge firefox; do
+            if ! grep -qx "worca-$b-$VERSION.zip" assets.txt; then
+              echo "::error::worca-$b-$VERSION.zip is missing from the $TAG_NAME release. Attach it: gh release upload $TAG_NAME extension/dist/worca-$b-$VERSION.zip --clobber"
+              exit 1
+            fi
+          done
+          if [ "$(gh release view "$TAG_NAME" --json isDraft --jq .isDraft)" = "true" ]; then
+            echo "::error::the $TAG_NAME release is still a draft (an asset upload failed). Publish it: gh release edit $TAG_NAME --draft=false"
+            exit 1
+          fi
 
   # Tells the worca platform (app.worca.dev) a release is out, so it can email the
   # release newsletter and offer the upgrade to hosted instances. Runs after the

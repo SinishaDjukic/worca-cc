@@ -1,0 +1,41 @@
+/* The Worca sidebar's own layout. Everything visual it shares with Worca (tokens, form controls, Ask, the Chat page
+   shell, Pinpoint) is generated above from ui/public/style.css. */
+html,body{margin:0;height:100%;overflow:hidden;background:var(--panel);}
+.wx-app{position:relative;height:100vh;}
+.wx-app .chat-head{gap:6px;padding:0 10px;}
+.wx-select{flex:1 1 0;min-width:0;width:auto;font-size:13px;padding:6px 30px 6px 10px;}
+.wx-sends{font-size:12px;color:var(--ink-2);padding:0 2px;}
+.wx-page-chip{max-width:100%;cursor:pointer;}
+.wx-page-chip[aria-pressed="true"]{border-color:var(--ink);}
+.wx-page-chip:disabled{opacity:.55;cursor:default;}
+.wx-state{margin:auto;max-width:320px;padding:24px;text-align:center;display:flex;flex-direction:column;gap:10px;min-height:100vh;justify-content:center;box-sizing:border-box;}
+.wx-state-t{margin:0;font-size:17px;font-weight:600;color:var(--ink);}
+.wx-state-k{margin:0;font-size:13px;color:var(--ink-2);}
+.wx-code{font-family:var(--mono);font-size:28px;letter-spacing:.12em;color:var(--ink);padding:10px 0;}
+.wx-state-body{display:flex;flex-direction:column;gap:10px;}
+.wx-state-actions{display:flex;gap:8px;justify-content:center;}
+/* Connection settings: worca's .wf-disc disclosure; a labelled address row (input + compact Save, one height), a hint. */
+.wx-settings{margin-top:14px;border-top:1px solid var(--line);border-bottom:0;text-align:left;}
+.wx-settings-body.field{margin:0;padding:2px 0 0;}
+.wx-settings-body.field > label{margin-bottom:0;font-size:12.5px;}
+.wx-settings-body.wf-disc-body>*+*{margin-top:8px;}
+.wx-settings-row{display:flex;align-items:stretch;gap:6px;}
+.wx-settings-row .input{flex:1 1 auto;min-width:0;width:auto;padding:7px 10px;font-size:13px;}
+.wx-settings-row .btn-mini{flex:none;padding:0 14px;}
+.wx-settings-body .hint{margin-top:6px;}
+/* Ask's composer row at sidebar widths (D14): Ask hides the cost below 480px (phones); a side panel is always that
+   narrow, and the sidebar must show cost + context. Tighter gap instead; the scope pill ellipsizes first. */
+@media (max-width:480px){
+  .wx-app .chat-page .ask-meter-cost{display:inline;}
+  .wx-app .chat-page .ask-composer-row{gap:4px;}
+}
+@media (max-width:360px){ .wx-app .chat-page .ask-composer-row > .ask-meter{display:flex;} }
+@media (max-width:340px){ .wx-app .chat-page .ask-meter-cost{display:none;} }
+.wx-app .chat-page .ask-composer-row > .ask-scope-btn{max-width:120px;}
+/* Settings in the paired shell: under the head, the same disclosure as the state screens. */
+.wx-settings-paired{margin:0;padding:8px 12px;border-top:0;border-bottom:1px solid var(--line);}
+.wx-settings-check{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink);cursor:pointer;}
+.wx-settings .wx-pin-hint{color:var(--ink-2);}
+.wx-card{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel);display:flex;flex-direction:column;gap:6px;}
+.wx-card-t{font-weight:600;color:var(--ink);}
+.wx-card-k{font-size:12px;color:var(--ink-2);}

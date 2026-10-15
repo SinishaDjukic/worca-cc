@@ -14,12 +14,13 @@ export const PINPOINT_QUOTE_MAX = 4000;
 export const PINPOINT_CONTEXT_MAX = 12000;
 export const PINPOINT_SOURCE_MAX = 200;
 export const PINPOINT_ACTIONS = Object.freeze(['explain', 'alternatives']);
-const SURFACES = new Set(['chat', 'artifact', 'diff']);
+const SURFACES = new Set(['chat', 'artifact', 'diff', 'web']);
 
 const SURFACE_WORDS = {
   chat: 'an assistant answer in a chat about software runs',
   artifact: 'a run artifact written by a coding agent (a plan or a review)',
   diff: 'a code diff produced by a coding agent',
+  web: 'a web page the user is reading in their browser (untrusted text)',
 };
 
 export const EXPLAIN_SYSTEM_PROMPT =

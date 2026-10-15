@@ -1,6 +1,6 @@
 {
   "name": "@worca/app",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Worca turns a task into reviewed, merge-ready work. A deterministic multi-agent pipeline that plans, implements and reviews in isolated git worktrees, with quality gates, budgets and a human in the loop. Web UI, CLI and chat.",
   "license": "MIT",
   "author": "Sinisha Djukic",
@@ -39,6 +39,9 @@
     "src/",
     "ui/server.mjs",
     "ui/public/",
+    "extension/dist/chrome/",
+    "extension/dist/edge/",
+    "extension/dist/firefox/",
     "agents/",
     "skills/",
     "scripts/",
@@ -71,11 +74,22 @@
     "verify:scripts": "node --disable-warning=ExperimentalWarning tools/verify-scripts-cdp.mjs",
     "verify:ask-forms": "node --disable-warning=ExperimentalWarning tools/verify-ask-forms-cdp.mjs",
     "verify:workspace-map": "node --disable-warning=ExperimentalWarning tools/verify-workspace-map-cdp.mjs",
+    "verify:flags": "node --disable-warning=ExperimentalWarning tools/verify-flags-cdp.mjs",
     "test": "node tools/test.mjs",
     "test:fast": "node tools/test.mjs --tier fast",
     "test:slow": "node tools/test.mjs --tier slow",
     "test:timings": "node tools/test.mjs --write-timings",
-    "test:live": "node --disable-warning=ExperimentalWarning test/live/run.mjs"
+    "test:related": "node tools/test.mjs --related",
+    "test:live": "node --disable-warning=ExperimentalWarning test/live/run.mjs",
+    "ext:build": "node tools/build-extension.mjs",
+    "ext:zip": "node tools/build-extension.mjs --zip",
+    "ext:try": "node tools/try-extension.mjs",
+    "demo:extension-video": "node tools/demo/extension-video/record.mjs",
+    "prepack": "node tools/build-extension.mjs --pack",
+    "ext:lint:firefox": "node tools/build-extension.mjs --browser firefox && web-ext lint --source-dir extension/dist/firefox",
+    "e2e:extension": "node tools/build-extension.mjs --test --browser chrome && playwright test -c e2e/extension/playwright.config.mjs",
+    "e2e:extension:update-linux": "docker run --rm --platform linux/amd64 -v worca-e2e-node-modules:/nm mcr.microsoft.com/playwright:v1.56.0-noble chown \"$(id -u):$(id -g)\" /nm && docker run --rm --platform linux/amd64 --ipc=host --user \"$(id -u):$(id -g)\" -e HOME=/tmp -v \"$PWD\":/work -v worca-e2e-node-modules:/work/node_modules -w /work mcr.microsoft.com/playwright:v1.56.0-noble bash -lc \"npm ci && npm run e2e:extension -- --update-snapshots\"",
+    "e2e:firefox-smoke": "node tools/build-extension.mjs --browser firefox && node tools/firefox-smoke.mjs"
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "11.12.0",
@@ -96,7 +110,15 @@
   "devDependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@fontsource/poppins": "^5.2.7",
-    "jsdom": "^29.1.1"
+    "@playwright/test": "1.56.0",
+    "esbuild": "^0.25.0",
+    "jsdom": "^29.1.1",
+    "web-ext": "^8.9.0"
+  },
+  "overrides": {
+    "addons-scanner-utils": {
+      "express": "^4.19.2"
+    }
   },
   "optionalDependencies": {
     "node-pty": "1.1.0"

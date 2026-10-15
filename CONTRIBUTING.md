@@ -106,6 +106,13 @@ the relevant smoke script if you touched the engine, workspace, or plugin
 paths) locally before opening or updating a PR, and say so in the PR
 description.
 
+While you work, `npm run test:related` runs only the test files your
+uncommitted changes can affect (`-- --base origin/dev` for everything on your
+branch). It follows imports and the paths tests load by name, and falls back to
+the full suite when you change the runner, its config or `package.json`. It
+can't see every link, so run the full `npm test` once before you hand the
+change over.
+
 ### In a container
 
 The container image ([`docs/docker.md`](docs/docker.md)) is built from the
@@ -159,6 +166,14 @@ hidden; a non-default value stays visible; the mode is a view preference, not a
 permission), how to tag an element, and the catalogue to update.
 `test/ui-levels.test.mjs` fails on a nav item, Settings tab or card, or detail
 tab with no level.
+
+## Feature flags
+
+New experimental UI ships behind a flag, off by default: one entry in
+`src/shared/flags/registry.mjs`, then `data-flag="key"` in markup or `flagOn('key')` in code, and
+`requireFlag('key')` on its routes. Every flag has an owner and a review date at most 90 days out;
+CI fails when a flag is past it or when code names a flag the registry does not have. How to add,
+graduate and remove one: [`docs/feature-flags.md`](docs/feature-flags.md).
 
 ## Pull request workflow
 

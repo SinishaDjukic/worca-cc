@@ -1128,6 +1128,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'titleModel', 'hideBuiltinModels',
   'theme',
   'uiLevel',                                 // interface mode (docs/ui-levels.md)
+  'flags',                                   // feature flags { key: bool } (docs/feature-flags.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
   'prDescriptionModel',                      // the "Ship it?" modal's Generate with AI
   'memoryDefrag',                            // Settings › Memory: the defragment model + effort
@@ -2217,6 +2218,45 @@ export async function setUiLevel(input) {
   else settings.uiLevel = input;
   await persistSettings(settings);
   return { uiLevel: uiLevel() };
+}
+
+// ── Feature flags (docs/feature-flags.md) ────────────────────────────────────
+// settings.json `flags: { [key]: boolean }`, holding only values that differ from the registry
+// default (D2). Resolution (env > settings > default), validation and `requires` live in
+// src/core/flags.mjs; this is only the stored layer.
+const warnedFlags = new Set();
+function warnFlagOnce(path, value) {
+  const id = `${path}:${JSON.stringify(value)}`;
+  if (warnedFlags.has(id)) return;
+  warnedFlags.add(id);
+  console.warn(`[worca] ignoring settings.json ${path} = ${JSON.stringify(value)} (want true or false)`);
+}
+
+/** The STORED flag map: boolean entries only. Unknown KEYS pass through (the resolver warns about them).
+ *  Under node:test it reads {} unless the test sandboxes HOME and opts in (homeGuarded): a developer's
+ *  own flags must never change what a test renders. */
+export function storedFlags() {
+  if (homeGuarded()) return {};
+  const v = readSettings().flags;
+  if (v === undefined) return {};
+  if (!isObj(v)) { warnFlagOnce('flags', v); return {}; }
+  const out = {};
+  for (const [k, b] of Object.entries(v)) {
+    if (typeof b === 'boolean') out[k] = b; else warnFlagOnce(`flags.${k}`, b);
+  }
+  return out;
+}
+
+/** Persist the whole stored flag map; the caller has already dropped defaults and unknown keys. Empty ⇒ the key goes. */
+export async function writeStoredFlags(map) {
+  if (homeGuarded()) {
+    throw new Error('feature-flag write under the node:test runner — sandbox HOME/USERPROFILE '
+      + 'and set WORCA_TEST_ALLOW_HOME_FALLBACK=1 (tests must never touch the real ~/.worca-cc)');
+  }
+  const settings = readSettings();
+  if (isObj(map) && Object.keys(map).length) settings.flags = { ...map };
+  else delete settings.flags;
+  await persistSettings(settings);
 }
 
 // ── Getting started (onboarding) ─────────────────────────────────────────────

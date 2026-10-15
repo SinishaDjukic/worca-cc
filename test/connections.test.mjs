@@ -123,6 +123,7 @@ test('Ask Worca knows the engines: list_models carries harnesses; the prompt kee
   assert.deepEqual(row('gpt-5.5').harnesses, ['codex']);
   assert.deepEqual(row('claude-haiku-4-5').harnesses, ['claude']);
   const prompt = buildSystemPrompt('');
-  assert.match(prompt, /Leave engine out and the run starts on the user's default engine/);
+  assert.match(prompt, /Leave engine out and the run starts on the default engine \(the project's, else the user's, else the team's\)/);
+  assert.equal(prompt.includes("the user's default engine"), false, 'one engine order in the prompt (rule 18, propose_run): project, user, team');
   assert.match(prompt, /never pick a beta engine on your own/);
 });
