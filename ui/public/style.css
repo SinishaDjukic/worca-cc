@@ -9220,7 +9220,6 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-rc-shaped:empty{display:none;}
 .chat-rc-shaped-stages{color:var(--green-ink);font-weight:500;}
 .chat-rc-shaped-plan,.chat-rc-shaped-saved{font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere;}
-.chat-home-act-help{max-width:100%;font-size:10.5px;color:var(--ink-3);overflow-wrap:anywhere;}
 .chat-home-act-badge{padding:1px 7px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;}
 .shape-checklists{margin:12px 0;display:flex;flex-direction:column;gap:6px;}
 .shape-cl-title{font-size:13px;margin:0;color:var(--ink-2);}

@@ -54,7 +54,7 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
   let flags = { ...DEFAULT_FLAGS };
   let menu = null;
 
-  function tile(id, label, icon, help, badge) {
+  function tile(id, label, icon, badge) {
     const b = doc.createElement('button');
     b.type = 'button';
     b.className = 'chat-home-act';
@@ -64,7 +64,6 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
     l.className = 'chat-home-act-l';
     l.textContent = label;
     b.appendChild(l);
-    if (help) { const s = doc.createElement('span'); s.className = 'chat-home-act-help'; s.textContent = help; b.appendChild(s); }
     if (badge) { const s = doc.createElement('span'); s.className = 'chat-home-act-badge'; s.textContent = badge; b.appendChild(s); }
     return b;
   }
@@ -84,7 +83,7 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
   }
 
   for (const id of TILE_INTENTS) {
-    const b = tile(id, INTENTS[id].label, INTENTS[id].icon, INTENTS[id].help, INTENTS[id].badge);
+    const b = tile(id, INTENTS[id].label, INTENTS[id].icon, INTENTS[id].badge);
     b.dataset.intent = id;
     if (PICKERS[id]) {
       b.setAttribute('aria-haspopup', 'menu');
