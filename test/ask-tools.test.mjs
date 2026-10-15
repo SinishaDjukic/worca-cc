@@ -1197,7 +1197,7 @@ test('propose_run: shape and assess exist only while the injected gate is on wit
   const schemaOf = (deps) => createAskTools({ ...fake, ...deps }).list().find((d) => d.name === 'propose_run').inputSchema;
   const today = schemaOf({});
   assert.deepEqual(Object.keys(today.properties), ['projectKey', 'workspaceId', 'workflowId', 'brief', 'source', 'title', 'guardrailsId', 'memoryScope',
-    'engine', 'sourceBranch', 'featureBranch', 'sameAsSource', 'note', 'attachmentIds', 'sourceBranchByKey', 'commentIds',
+    'engine', 'sourceBranch', 'featureBranch', 'sameAsSource', 'note', 'nodes', 'attachmentIds', 'sourceBranchByKey', 'commentIds',
     'when', 'every', 'until', 'count', 'overlap', 'maxFailures', 'after', 'afterPolicy', 'sourceFromPrevious'], 'no deps: today\'s schema');
   assert.deepEqual(today.required, ['brief']);
   await checkRows([
