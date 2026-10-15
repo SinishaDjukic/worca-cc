@@ -171,6 +171,9 @@ export function createRunProgressCard({ doc, ident, onOpen = null }) {
       // and again on every host width change its ResizeObserver sees (the path relayoutCards() never covers).
       graph = mountStaticGraph(graphHost, manifestTemplate(stepper), {
         doc, portsFn: manifestPortsFn(stepper), agents: manifestAgents(stepper), scale: FLOW_SCALE, layout: 'flow',
+        // The model each agent RUNS — its manifest cell (a per-run overlay pick, a project pick, a team default), as the run
+        // page names it (graph/run-hosts.mjs modelOf) — never the template's authored config.model alone.
+        modelOf: (node) => ((stepper.graph.nodes.find((n) => n && n.id === node.id) || {}).model) || (node.config && node.config.model) || '',
         onLayout: redecorate,
       });
       graphSig = sig;

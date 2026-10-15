@@ -139,6 +139,11 @@ test('subagentModelDirective: auto demands a model on every call with the who-ch
       for (const m of SUBAGENT_MODELS) assert.match(text, new RegExp('`' + m + '`'), `offers ${m}`);
       assert.doesNotMatch(text, /haiku/, 'haiku is not on the menu');
       assert.match(text, /WHO CHECKS THE OUTPUT/, 'the rubric keys on verifiability, not apparent difficulty');
+      assert.match(text, /\n- `opus`: [^\n]*analysis whose VERDICT the run depends on and nothing downstream re-checks/,
+        'a verdict nothing re-checks goes to opus');
+      assert.match(text, /\n- `fable`: never on your own judgement — only when the operator names it/, 'fable is the operator\'s call, never the agent\'s');
+      assert.doesNotMatch(text, /- `fable`: analysis/);
+      assert.match(text, /\n\nWhen unsure between two tiers, take the lower one only if you will verify the result yourself\.\n\n$/);
       assert.doesNotMatch(text, /lands in the diff|write the code|apply a known edit/,
         'the tiers describe READ-ONLY investigation — the enclosing fan-out block forbids writing children');
     } },

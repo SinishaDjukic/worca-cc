@@ -642,6 +642,25 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .switch.disabled{opacity:.5;cursor:not-allowed;}
 .switch-row .txt{font-weight:500;}
 
+/* Feature flags (docs/feature-flags.md): the Experimental / Beta chip a flagged element wears (D9),
+   and the Settings › Experimental rows (D8). The gates themselves live in <style id="flag-gates">. */
+.flag-chip{display:inline-flex;align-items:center;margin-left:6px;padding:2px 8px;border-radius:999px;
+  font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;text-decoration:none;
+  background:var(--violet-bg);color:var(--violet-ink);vertical-align:middle;}
+.flag-chip-beta{background:var(--blue-bg);color:var(--blue-ink-strong);}   /* --blue-ink is 3.6:1 on --blue-bg at this size (:1016) */
+.flag-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.flags-warn{margin:0 0 12px;padding:10px 12px;border-radius:10px;background:var(--amber-bg);color:var(--amber-ink);font-weight:500;}
+.flags-host{display:flex;flex-direction:column;}
+.flag-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:14px 0;border-top:1px solid var(--line);}
+.flag-row:first-child{border-top:0;}
+.flag-row-target{background:var(--field);border-radius:10px;padding-left:10px;padding-right:10px;}
+.flag-row-title{font-weight:600;display:flex;align-items:center;gap:8px;}
+.flag-row-desc{margin:4px 0 0;color:var(--ink-2);}
+.flag-row-lock{margin:4px 0 0;color:var(--ink-3);font-size:12px;}
+.flag-row-docs{display:inline-block;margin-top:4px;font-size:12px;}
+.flag-stage-experimental{background:var(--violet-bg);color:var(--violet-ink);}
+.flag-stage-beta{background:var(--blue-bg);color:var(--blue-ink-strong);}
+
 /* ---------- buttons ---------- */
 .actions{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:22px;}
 .btn-ghost{background:var(--surface);border:1.5px solid var(--line-2);color:var(--ink);font-family:inherit;
@@ -4359,6 +4378,24 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .publish-status{margin:0;font-size:12px;}
 .publish-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:22px;}
 
+/* Base conflicts (#620) */
+.hd-base-check[hidden], .hd-base-check [hidden], .shipit-basecheck[hidden] { display: none; }
+.hd-base-members { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+/* One quiet line per branch that needs something: a tone dot, the status text, then compact buttons. */
+.hd-base-member { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font: 500 12.5px var(--sans); color: var(--ink-2); }
+.hd-base-name { color: var(--ink); }
+.hd-base-pill { display: inline-flex; align-items: center; gap: 7px; }
+.hd-base-pill::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; }
+.hd-base-pill.tone-green::before { background: var(--green-ink); }
+.hd-base-pill.tone-blue::before { background: var(--blue-ink); }
+.hd-base-pill.tone-red::before { background: var(--red-ink); }
+.hd-base-pill.tone-amber::before { background: var(--amber-ink); }
+.hd-base-member .btn-mini { padding: 5px 10px; font-size: 12px; }
+.hd-base-msg { flex-basis: 100%; font-size: 12px; }
+.hd-base-msg-err { color: var(--red-ink); }
+.hd-base-files { flex-basis: 100%; margin: 0 0 0 14px; padding: 0; list-style: none; font-size: 12px; color: var(--ink-3); }
+.shipit-basecheck.tone-red { color: var(--red-ink); }
+
 /* The PR description: label, Write / Preview tabs and Generate with AI on one row,
    the textarea (or its rendered preview) under it. Left-aligned inside the centered
    card like the remotes. `.btn` sets display:inline-flex and `.hint` display:block,
@@ -5746,6 +5783,11 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rp-sw input:focus-visible+.ask-rp-knob{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-rp-agents-foot{display:flex;align-items:center;gap:8px;padding:8px 14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-3);}
 .ask-rp-lane-msg{padding:12px 14px;font-size:12px;color:var(--ink-3);}
+.ask-rp-prop{display:inline-block;padding:0 6px;border-radius:999px;background:var(--violet-wash);color:var(--violet-ink);font-weight:700;cursor:help;}
+.ask-rp-row-reset{margin-left:auto;}
+.ask-rp-name small.ask-rp-pickcap{white-space:normal;overflow:visible;}
+.ask-rp-lane-warn{margin:0 0 10px;}
+.ask-rp-agents-foot .ask-rp-ctl{margin-left:auto;}
 .ask-card.ask-rp textarea.ask-rp-brief{width:100%;min-height:150px;max-height:420px;padding:12px 14px;border:1px solid var(--line-2);border-radius:12px;background:var(--field);font-size:13px;line-height:1.6;resize:vertical;}
 .ask-rp-brief-foot{display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11.5px;color:var(--ink-3);flex-wrap:wrap;}
 .ask-rp-brief-foot[hidden],.ask-rp-brief[hidden]{display:none;}   /* a tracker-task card shows the task instead */

@@ -68,6 +68,8 @@ export const ASK_LIMITS = Object.freeze({
   workflowTaskMaxChars: 32_000,            // propose_workflow task text (= classify.mjs TASK_TEXT_CAP)
   workflowNoteMaxChars: 200,               // propose_workflow note shown on the card
   proposalNoteMaxChars: 200,               // propose_run note ("why this shape") shown on the run card
+  proposalReasonMaxChars: 200,             // propose_run nodes[*].reason: why a model fits one agent step (card hover)
+  catalogModelsMax: 48,                    // the system prompt's Models section (catalog.mjs facts, prompt.mjs)
   commentBodyMaxChars: 4000,               // diff_comments.body cap (pinned equal to COMMENT_BODY_MAX)
   // Ask agent mode (#574): commands Ask runs in Worca terminals (src/core/ask/commands.mjs).
   commandsPerThread: 3,                    // running at once per chat
