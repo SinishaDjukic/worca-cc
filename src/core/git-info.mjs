@@ -613,6 +613,54 @@ export function prHeadRef(head, headOwner) {
   return headOwner ? `${headOwner}:${head}` : head;
 }
 
+// ── Marketplace publishing (#717): push access and forks ─────────────────────
+
+/**
+ * Can worca's write credential push to `repo` (OWNER/REPO on github.com)? `gh api repos/O/R` →
+ * `.permissions.push`. A GitHub App installation token gets no `permissions` block → canPush:null
+ * (unknown: the caller tries the push and forks on a refusal). Same credential path as createPr
+ * (githubEnv write, push-as-person when configured). Never throws:
+ * { ok:true, canPush:true|false|null } | { ok:false, error }.
+ */
+export async function ghRepoAccess({ repo } = {}) {
+  const slug = ownerRepo(repo);
+  if (!slug) return { ok: false, error: 'repo is required' };
+  const cred = await githubEnv('write', { repo: slug });
+  if (cred.error) return { ok: false, error: cred.error };
+  const r = await _run('gh', ['api', `repos/${slug}`, '--jq', '.permissions'], { env: cred.env, timeout: 30_000 });
+  if (!r.ok) return { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+  let perms = null;
+  try { perms = JSON.parse(String(r.stdout || '').trim() || 'null'); } catch { perms = null; }
+  return { ok: true, canPush: perms && typeof perms === 'object' ? perms.push === true : null };
+}
+
+/**
+ * Fork `repo` into the credential's account (`POST repos/O/R/forks`; GitHub answers with the
+ * EXISTING fork when there is one, possibly renamed, so the name comes from the answer) and wait
+ * until it serves `repos/<fork>` — forks are created asynchronously and a push right after the
+ * POST can 404. Installation tokens cannot fork: that 403 is returned as the error.
+ * Never throws: { ok:true, owner, repo, slug } | { ok:false, error }.
+ */
+export async function ghForkRepo({ repo, waitMs = 60_000, stepMs = 2_000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  const slug = ownerRepo(repo);
+  if (!slug) return { ok: false, error: 'repo is required' };
+  const cred = await githubEnv('write', { repo: slug });
+  if (cred.error) return { ok: false, error: cred.error };
+  const r = await _run('gh', ['api', '-X', 'POST', `repos/${slug}/forks`, '-F', 'default_branch_only=true', '--jq', '.full_name'],
+    { env: cred.env, timeout: 60_000 });
+  const full = String(r.stdout || '').trim();
+  if (!r.ok || !/^[^/\s]+\/[^/\s]+$/.test(full)) return { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const v = await _run('gh', ['api', `repos/${full}`, '--jq', '.full_name'], { env: cred.env, timeout: 30_000 });
+    if (v.ok && String(v.stdout || '').trim()) break;
+    if (Date.now() >= until) return { ok: false, error: `the fork ${full} was not ready after ${Math.round(waitMs / 1000)} s — try again in a minute` };
+    await sleep(stepMs);
+  }
+  const [owner, name] = full.split('/');
+  return { ok: true, owner, repo: name, slug: full };
+}
+
 /**
  * The repo's git remotes from `git remote -v`, in git's (alphabetical) order.
  * Each entry is { name, fetchUrl, pushUrl, host, owner, repo, slug, forge, org, project } with

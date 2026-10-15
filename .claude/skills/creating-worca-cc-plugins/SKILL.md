@@ -698,6 +698,8 @@ Then push and let users register the repo as a marketplace:
 `worca marketplace add <repo-url>` (or Marketplace › Add marketplace in the UI) →
 install from the Available list or `worca plugin install <name>`.
 Removing a marketplace never removes installed plugins.
+From the UI or `worca workflow export <id> --format plugin --marketplace <id>`, Worca opens the PR for you:
+`plugins/<name>/` plus its `worca-cc-marketplace.json` entry (or `<name>/` at the root when the repo has no index).
 Installs are SHA-pinned; users see a consent inventory listing every agent's tools, every ask form it
 can put on screen with the file types that form may display, every MCP server with its command or URL,
 and every secret you request — so keep all four minimal.

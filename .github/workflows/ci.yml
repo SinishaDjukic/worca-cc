@@ -102,6 +102,7 @@ jobs:
               - 'test/policy-sync.test.mjs'
               - 'test/sync-api.test.mjs'
               - 'test/branches-api-fresh.test.mjs'
+              - 'test/marketplace-publish-flow.test.mjs'
               - 'test/cli-interactive.test.mjs'
               - 'test/cli-schedule-wait.test.mjs'
               - 'test/cli-auto.test.mjs'

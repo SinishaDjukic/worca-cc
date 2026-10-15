@@ -278,6 +278,7 @@ import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import { drainTimeoutMs, autoResumeEnabled, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
+import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
 import {
   saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
 } from '../src/core/workflow-share.mjs';
@@ -10428,16 +10429,46 @@ app.delete('/api/workflows/:id', async (req, res) => {
 function workflowExportErrorStatus(code) {
   if (code === 'NOT_FOUND') return 404;
   if (code === 'BAD_REQUEST' || code === 'UNSUPPORTED' || code === 'MISSING_SKILL') return 400;
-  if (code === 'INVALID_GRAPH') return 422;
+  if (code === 'INVALID_GRAPH' || code === 'VALIDATION_FAILED' || code === 'DISCOVERY_FAILED' || code === 'MARKETPLACE_INVALID') return 422;
   if (code === 'CONFLICT' || code === 'CANCELLED') return 409;
+  // Marketplace export (#717): the remote side failed (clone / fork / push / PR) — not our 500.
+  if (code === 'GIT_FAILED' || code === 'FORK_FAILED' || code === 'PUSH_FAILED' || code === 'PR_FAILED') return 502;
   return 500;
 }
 
 app.post('/api/workflows/:id/export', async (req, res) => {
   const body = req.body || {};
   const destination = body.destination;
-  if (destination !== 'global' && destination !== 'project' && destination !== 'plugin') {
-    return badRequest(res, "destination must be 'global', 'project' or 'plugin'");
+  if (destination !== 'global' && destination !== 'project' && destination !== 'plugin' && destination !== 'marketplace') {
+    return badRequest(res, "destination must be 'global', 'project', 'plugin' or 'marketplace'");
+  }
+  // ── destination 'marketplace' (#717): the plugin goes to a registered marketplace as ONE pull
+  //    request on worca/plugin/<name>. dryRun = Preview (clone, build, validate; push nothing).
+  if (destination === 'marketplace') {
+    if (typeof body.marketplaceId !== 'string' || !MARKETPLACE_ID_RE.test(body.marketplaceId)) {
+      return badRequest(res, 'marketplaceId is required for a marketplace export');
+    }
+    if (!(body.draft === undefined || body.draft === true || body.draft === false)) {
+      return badRequest(res, 'draft must be a boolean');
+    }
+    if (body.keepVersion) {
+      return badRequest(res, 'keepVersion does not apply to a marketplace export (a changed export always bumps the patch version)');
+    }
+    try {
+      const result = await exportWorkflowToMarketplace({
+        workflowId: req.params.id, marketplaceId: body.marketplaceId,
+        pluginName: typeof body.pluginName === 'string' ? body.pluginName : undefined,
+        draft: body.draft === true, dryRun: !!body.dryRun, startedBy: startedByOf(req),
+      });
+      return res.json(result);
+    } catch (err) {
+      return res.status(workflowExportErrorStatus(err && err.code)).json({
+        error: err && err.message ? err.message : String(err),
+        code: err?.code || null,
+        ...(Array.isArray(err?.problems) ? { problems: err.problems } : {}),
+        ...(Array.isArray(err?.errors) ? { errors: err.errors } : {}),
+      });
+    }
   }
   // ── destination 'plugin' (#421): a plugin folder the recipient links/reimports.
   //    Same Plan/Apply shape as the Claude Code export, so the modal renders both.
@@ -13131,6 +13162,13 @@ app.get('/api/marketplaces', (req, res) => {
   try {
     res.json({ marketplaces: withInstalled(listMarketplaces()) });
   } catch (err) { sendPluginError(res, err); }
+});
+
+// Export → Worca plugin → Marketplace (#717): the marketplaces a pull request can go to (GitHub /
+// Azure DevOps remotes inside WORCA_CLONE_ALLOW when set) and the rest with why — from the stored list, no network.
+app.get('/api/marketplaces/publish-targets', (_req, res) => {
+  try { res.json(listPublishTargets()); }
+  catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 
 // Dev-mode link of a LOCAL plugin folder — the `worca plugin link <dir>` path

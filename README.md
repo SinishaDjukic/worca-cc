@@ -230,7 +230,10 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   bundles the pipeline with your own agents and scripts it uses and the
   skills they need — built-in agents are never copied — so the recipient runs
   `worca plugin link <folder>` and picks up edits with
-  `worca plugin reimport <name>`. The CLI does the same with
+  `worca plugin reimport <name>` — or pick **Marketplace** to open a pull
+  request that adds it to a registered team marketplace (one branch
+  `worca/plugin/<name>`, validated with the marketplace's own discovery; from
+  a fork when you cannot push). The CLI does the same with
   `worca workflow list`, `worca workflow export <id> --format json|claude|plugin`
   and `worca workflow import <file>`.
 
@@ -824,6 +827,7 @@ worca --project /path/to/your/project --prompt "demo task" --mock --yes
 worca workflow export wf_my-flow --format json --out my-flow.json
 worca workflow import my-flow.json
 worca workflow export wf_my-flow --format plugin --target ./my-flow-plugin
+worca workflow export wf_my-flow --format plugin --marketplace <id> --dry-run
 
 # scripts: list, scaffold and test a script card — no server needed
 worca script list

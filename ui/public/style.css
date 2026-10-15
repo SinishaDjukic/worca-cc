@@ -1725,6 +1725,9 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .export-choices{display:flex;gap:12px;margin:4px 0 2px 64px;}
 .export-choice{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);cursor:pointer;}
 .export-choice input[type="radio"]{margin:0;}
+.export-pr-preview{margin-top:8px;}
+.export-pr-preview > summary{cursor:pointer;font-size:12px;}
+.export-pr-preview > pre{max-height:240px;overflow:auto;white-space:pre-wrap;font-size:12px;margin:6px 0 0;}
 /* Per-agent fan-out toggle in the New Pipeline rows. */
 .fanout-toggle {
   display: inline-flex;

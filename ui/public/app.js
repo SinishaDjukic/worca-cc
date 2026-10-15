@@ -121,6 +121,7 @@ import {
 import { groupCommentThreads, commentWhen } from './comment-thread.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
 import { exportSlugPreview } from './export-slug.mjs';
+import { fillMarketplaceSelect, marketplaceExportBody, marketplaceNameProblem, marketplacePlanExtras, marketplaceDoneView } from './export-marketplace.mjs';
 import { createCodeEditor } from './code-editor.mjs';
 import { previewAskFromDef, previewFileUrl } from './ask/form-preview.mjs';
 import { projectForm } from '../../src/shared/forms/project.mjs';
@@ -34220,7 +34221,7 @@ async function exportApply(id, opts) { return exportCall(id, opts); }
 // first — one Export… per row instead of one button per format.
 // `planned`: a Preview (dry run) for the CURRENT inputs is on screen. Export runs
 // its own dry run when there is none, so the primary button is never dead.
-const exportModalState = { item: null, format: 'json', destination: 'global', conflicts: [], planned: false };
+const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, conflicts: [], planned: false };
 
 function openExportModal(item) {
   const modal = document.getElementById('export-modal');
@@ -34228,8 +34229,11 @@ function openExportModal(item) {
   exportModalState.item = item;
   exportModalState.format = 'json';
   exportModalState.destination = 'global';
+  exportModalState.pluginDest = 'folder';
+  exportModalState.targets = null;                       // re-read: a marketplace may have been added since
   exportModalState.conflicts = [];
   exportModalState.planned = false;
+  document.getElementById('export-draft').checked = false;   // draft is opt-in per export, never remembered
   document.getElementById('export-slug').value = '';
   document.getElementById('export-folder').value = '';
   document.getElementById('export-plugin-name').value = '';
@@ -34295,11 +34299,16 @@ function exportJsonFilename(id) {
 function exportSyncFormat() {
   const { format, destination } = exportModalState;
   const json = format === 'json', skill = format === 'skill', plugin = format === 'plugin';
+  const market = plugin && exportModalState.pluginDest === 'marketplace';
   const show = (id, on) => document.getElementById(id).classList.toggle('hidden', !on);
   for (const b of document.querySelectorAll('#export-format .seg-btn')) b.classList.toggle('on', b.dataset.format === format);
   for (const b of document.querySelectorAll('#export-dest .seg-btn')) b.classList.toggle('on', b.dataset.dest === destination);
+  for (const b of document.querySelectorAll('#export-plugin-dest .seg-btn')) b.classList.toggle('on', b.dataset.pdest === exportModalState.pluginDest);
   show('export-dest-field', skill);
-  show('export-folder-field', (skill && destination === 'project') || plugin);
+  show('export-plugin-dest-field', plugin);
+  show('export-folder-field', (skill && destination === 'project') || (plugin && !market));
+  show('export-marketplace-field', market);
+  show('export-keep-version-row', plugin && !market);
   document.getElementById('export-folder-label').textContent = plugin ? 'Plugin folder' : 'Folder';
   document.getElementById('export-folder').placeholder = plugin ? '/path/to/my-plugin' : '/path/to/repo';
   show('export-plugin-field', plugin);
@@ -34310,38 +34319,68 @@ function exportSyncFormat() {
   // (dry run); Export runs that dry run itself and writes unless it finds a
   // conflict, which the user then resolves per file before exporting again.
   document.getElementById('export-plan-btn').classList.toggle('hidden', json);
+  document.getElementById('export-plan-btn').disabled = false;
   const apply = document.getElementById('export-apply-btn');
-  apply.textContent = json ? 'Download' : 'Export';
+  apply.textContent = json ? 'Download' : market ? 'Open pull request' : 'Export';
   apply.disabled = false;
   const name = exportModalState.item ? exportModalState.item.name : '';
   document.getElementById('export-subtitle').textContent = json
     ? `Download "${name}" as a JSON file another Worca user can import.`
-    : plugin
-      ? `Export "${name}" as a Worca plugin folder to share with other Worca users.`
-      : `Export "${name}" as a runnable /command skill.`;
+    : market
+      ? `Open a pull request that adds "${name}" to a team marketplace as a Worca plugin.`
+      : plugin
+        ? `Export "${name}" as a Worca plugin folder to share with other Worca users.`
+        : `Export "${name}" as a runnable /command skill.`;
   document.getElementById('export-format-hint').textContent = json
     ? 'The saved graph only — no agents or skills travel with it. The recipient uses Import… in their saved list.'
-    : plugin
-      ? 'Bundles the pipeline, your own agents it uses and the skills they need. Built-in agents are not copied. The recipient runs: worca plugin link <folder>'
-      : 'Writes a SKILL.md plus the agents it dispatches under .claude/, so the pipeline runs inside Claude Code without Worca.';
+    : market
+      ? 'Builds the plugin in a fresh copy of the marketplace, lists it in worca-cc-marketplace.json, validates it (lint, script cases, the marketplace\'s own discovery) and opens one pull request on worca/plugin/<name>.'
+      : plugin
+        ? 'Bundles the pipeline, your own agents it uses and the skills they need. Built-in agents are not copied. The recipient runs: worca plugin link <folder>'
+        : 'Writes a SKILL.md plus the agents it dispatches under .claude/, so the pipeline runs inside Claude Code without Worca.';
+  if (market) void exportLoadTargets();
+}
+const exportIsMarketplace = () => exportModalState.format === 'plugin' && exportModalState.pluginDest === 'marketplace';
+/** Fetch the PR-capable marketplaces once per open, fill the select, and disable Preview/Export when there are none. */
+async function exportLoadTargets() {
+  if (exportModalState.targets === null) {
+    exportModalState.targets = [];
+    try {
+      const r = await fetch('/api/marketplaces/publish-targets');
+      const j = await safeJson(r);
+      if (r.ok) exportModalState.targets = j.targets || [];
+    } catch { /* stays empty: the select says how to add one */ }
+  }
+  const select = document.getElementById('export-marketplace');
+  const n = fillMarketplaceSelect(select, exportModalState.targets, { doc: document, keep: select.value });
+  exportSyncMarketplaceButtons(n);
+}
+function exportSyncMarketplaceButtons(n = (exportModalState.targets || []).length) {
+  if (!exportIsMarketplace()) return;
+  document.getElementById('export-apply-btn').disabled = n === 0;
+  document.getElementById('export-plan-btn').disabled = n === 0;
 }
 /** Plugin names are kebab-case (worca-cc-plugin.json `name`). Derive one from
  *  what the user typed, else from the folder's basename, and say so under the
  *  field — the same look-before-you-export the skill slug has. */
 function exportPluginName() {
   const typed = document.getElementById('export-plugin-name').value.trim();
+  const market = exportIsMarketplace();
   const folder = document.getElementById('export-folder').value.trim().replace(/[\\/]+$/, '');
-  const raw = typed || folder.split(/[\\/]/).pop() || '';
+  const fallback = market ? (exportModalState.item ? exportModalState.item.name : '') : (folder.split(/[\\/]/).pop() || '');
+  const raw = typed || fallback;
   const name = raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
-  return { raw, name, fromFolder: !typed };
+  return { raw, name, fromFolder: !typed && !market, fromPipeline: !typed && market };
 }
 function exportSyncPluginNamePreview() {
-  const { raw, name, fromFolder } = exportPluginName();
+  const { raw, name, fromFolder, fromPipeline } = exportPluginName();
   const el = document.getElementById('export-plugin-name-preview');
   if (!raw) { el.textContent = 'Plugin name: (choose a folder first)'; return; }
-  el.textContent = name
-    ? `Plugin name: ${name}${fromFolder ? ' (from the folder name)' : ''}`
-    : 'Plugin name: needs at least one letter or digit';
+  if (!name) { el.textContent = 'Plugin name: needs at least one letter or digit'; return; }
+  const problem = exportIsMarketplace() ? marketplaceNameProblem({ raw, name }) : '';
+  if (problem) { el.textContent = `${problem} Got "${name}".`; return; }
+  el.textContent = `Plugin name: ${name}${fromFolder ? ' (from the folder name)' : fromPipeline ? ' (from the pipeline name)' : ''}`
+    + (exportIsMarketplace() ? ` · branch worca/plugin/${name}` : '');
 }
 function exportSyncSlugPreview() {
   const raw = document.getElementById('export-slug').value;
@@ -34352,6 +34391,12 @@ function exportSyncSlugPreview() {
 function exportBuildOpts() {
   const dest = exportModalState.destination;
   if (exportModalState.format === 'plugin') {
+    if (exportModalState.pluginDest === 'marketplace') {
+      return marketplaceExportBody({
+        marketplaceId: document.getElementById('export-marketplace').value,
+        pluginName: exportPluginName().name, draft: document.getElementById('export-draft').checked,
+      });
+    }
     const opts = {
       destination: 'plugin',
       pluginDir: document.getElementById('export-folder').value.trim(),
@@ -34442,6 +34487,7 @@ function exportInvalidatePlan() {
   // Export re-plans on its own, so a stale preview never leaves the button dead.
   const applyBtn = document.getElementById('export-apply-btn');
   if (applyBtn) applyBtn.disabled = false;
+  exportSyncMarketplaceButtons();
   exportSay('');
 }
 function bindExportModal() {
@@ -34453,6 +34499,11 @@ function bindExportModal() {
   for (const b of document.querySelectorAll('#export-dest .seg-btn')) {
     b.addEventListener('click', () => { exportModalState.destination = b.dataset.dest; exportInvalidatePlan(); exportSyncFormat(); });
   }
+  for (const b of document.querySelectorAll('#export-plugin-dest .seg-btn')) {
+    // the name fallback changes with the destination (folder basename ↔ pipeline name), so re-render its preview
+    b.addEventListener('click', () => { exportModalState.pluginDest = b.dataset.pdest; exportInvalidatePlan(); exportSyncFormat(); exportSyncPluginNamePreview(); });
+  }
+  document.getElementById('export-marketplace').addEventListener('change', exportInvalidatePlan);
   document.getElementById('export-slug').addEventListener('input', () => { exportSyncSlugPreview(); exportInvalidatePlan(); });
   document.getElementById('export-include-agents').addEventListener('change', exportInvalidatePlan);
   document.getElementById('export-folder').addEventListener('input', exportInvalidatePlan);
@@ -34475,9 +34526,18 @@ function bindExportModal() {
   document.getElementById('export-done-close').addEventListener('click', closeExportModal);
   // Preview: the optional dry run — shows what Export would write, writes nothing.
   document.getElementById('export-plan-btn').addEventListener('click', async () => {
+    const nameProblem = exportIsMarketplace() ? marketplaceNameProblem(exportPluginName()) : '';
+    if (nameProblem) { exportSay(nameProblem, true); return; }
     exportSay('Previewing…');
     try {
       const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
+      if (exportIsMarketplace()) {
+        exportRenderPlan({ ...plan.files, warnings: plan.warnings, conflicts: [] });
+        document.getElementById('export-plan').appendChild(marketplacePlanExtras(plan, { doc: document }));
+        exportSay(plan.status === 'unchanged' ? 'No changes — the marketplace already has this export.'
+          : 'Preview only — nothing is pushed until you click Open pull request.');
+        return;
+      }
       exportRenderPlan(plan);
       exportSay(plan.conflicts.length ? 'Resolve each conflict below, then Export.' : 'Preview only — nothing is written until you click Export.');
     } catch (err) { exportSay(`Preview failed: ${err.message}`, true); }
@@ -34499,6 +34559,20 @@ function bindExportModal() {
         lines: [['File', exportJsonFilename(exportModalState.item.id)], ['Pipeline', exportModalState.item.name]],
         next: 'Send the file to another Worca user — they pick it up with Import… in their saved pipelines. Agents and skills do not travel with it; share a plugin for those.',
       });
+      return;
+    }
+    if (exportIsMarketplace()) {
+      const nameProblem = marketplaceNameProblem(exportPluginName());
+      if (nameProblem) { exportSay(nameProblem, true); return; }
+      exportSay('Building the plugin in a copy of the marketplace, validating, then opening the pull request…');
+      try {
+        const r = await exportApply(exportModalState.item.id, exportBuildOpts());
+        appendLog({ source: 'ui', level: 'info', text: `exported ${exportModalState.item.name} to marketplace ${r.marketplace.name}: ${r.status}${r.prUrl ? ` ${r.prUrl}` : ''}` });
+        exportShowDone(marketplaceDoneView(r, { doc: document }));
+      } catch (err) {
+        exportInvalidatePlan();
+        exportSay(`Export failed: ${err.message}`, true);
+      }
       return;
     }
     exportSay('Exporting…');
