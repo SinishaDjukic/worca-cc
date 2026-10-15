@@ -488,8 +488,17 @@ test('D17: a feature chain is one open row titled by the feature, members "1 · 
   const tog = () => host.querySelector('.runs-chain-toggle');
   assert.equal(tog().getAttribute('aria-expanded'), 'true', 'open by default');
   const links = [...host.querySelectorAll('.runs-chain-link')];
-  assert.deepEqual(links.map((a) => a.textContent), ['1 · Store tags', '2 · Run tags', '3 · Cost report']);
-  assert.deepEqual(links.map((a) => a.getAttribute('href')), ['#running/r1', '#feature/feat_1', '#feature/feat_1']);
+  assert.deepEqual(links.map((a) => a.textContent), ['Open feature →', '1 · Store tags', '2 · Run tags', '3 · Cost report']);
+  assert.deepEqual(links.map((a) => a.getAttribute('href')), ['#feature/feat_1', '#running/r1', '#feature/feat_1', '#feature/feat_1']);
+  // A plain click on the row itself opens and closes the group (no chevron to find) and stays on the page.
+  const hashBefore = window.location.hash;
+  click(window, host.querySelector('.runs-chain .runs-row-title'));
+  await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'false', 'a row click closes it');
+  assert.equal(window.location.hash, hashBefore, 'a row click does not navigate');
+  click(window, host.querySelector('.runs-chain .runs-row-title'));
+  await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'true', 'and opens it again');
   click(window, tog());
   await settle(window);
   assert.equal(tog().getAttribute('aria-expanded'), 'false', 'a person\'s toggle wins');

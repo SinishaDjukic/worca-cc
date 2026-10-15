@@ -347,7 +347,8 @@ test('a 3-slice feature is one row, open, short member names, the feature title 
   const host = doc.createElement('div');
   host.append(...renderRunsList(doc, m, {}));
   assert.equal(host.textContent.split('Run tags and cost allocation').length - 1, 1, 'the feature title once');
-  assert.deepEqual([...host.querySelectorAll('.runs-chain-link')].map((a) => a.textContent), ['1 · Store tags', '2 · Run tags', '3 · Cost report']);
+  assert.deepEqual([...host.querySelectorAll('.runs-chain-link')].map((a) => a.textContent), ['Open feature →', '1 · Store tags', '2 · Run tags', '3 · Cost report']);
+  assert.equal(host.querySelector('.runs-chain-open-feature a').getAttribute('href'), '#feature/feat_1', 'the feature page is the first item');
   const toggle = host.querySelector('.runs-chain-toggle');
   assert.equal(toggle.dataset.feature, '1');
   assert.equal(toggle.getAttribute('aria-label'), 'Hide the 3 slices in this feature');

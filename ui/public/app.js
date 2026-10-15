@@ -29706,7 +29706,13 @@ function paintRunsSelection() {
 // Rows are links (#running/<id>, #history/<key>/<id>, #schedules) so a modifier click can
 // open a tab; a plain click routes in place. Group heads fold (D10).
 el.runsList?.addEventListener('click', (e) => {
-  const tog = e.target.closest && e.target.closest('.runs-chain-toggle');
+  let tog = e.target.closest && e.target.closest('.runs-chain-toggle');
+  // A plain click anywhere on a chain row opens or closes it, like the chevron; a modifier click still opens the
+  // row's link (the feature page, or the chain's current run) in a new tab.
+  const chainRow = !tog && e.target.closest && e.target.closest('a.runs-row-chain');
+  if (chainRow && (e.button || 0) === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+    tog = chainRow.parentElement && chainRow.parentElement.querySelector(':scope > .runs-chain-toggle');
+  }
   if (tog) {
     e.preventDefault();
     const k = tog.dataset.chainKey;

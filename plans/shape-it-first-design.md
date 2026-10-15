@@ -352,7 +352,7 @@ The engine worked. The way it is shown and started did not.
 | # | Decision |
 |---|---|
 | D16 | **A feature page.** `#feature/<id>` is the one place a sliced feature is shown in full: the title, "1 of 3 slices done", the slices in order (short name, state, PR, "merge after slice 1"), the current slice's progress bar and text from `runProgress`, its open question or plan approval inline, and the actions (**Re-plan the rest**, **Cancel the rest**, **Approve each slice's plan**). It renders the existing `ui/public/shape/feature-view.mjs`. Every other place links to it: the Chat feature card shrinks to one summary line with **Open**, the run page of a slice gets a line "Part of *feature* · slice 2 of 3 →" above the progress bar (replacing the unnamed chain bar), and the Chat home Running card reads "Slice 2 of 3 · *slice title*". |
-| D17 | **Runs list: a feature is one row.** The chain item uses the feature when the chain's first run has one (`featureOfPipeline`): the feature title, "Slice 2 of 3 · Build" (or "Needs you" in amber), open by default while a slice is live or waiting for a person. Members show "1 · Run tags" with the state glyph and PR, never the feature title again. A waiting member opens the feature page, not Schedules. A slice run is never also a row of its own; its "Needs you" lands on the feature row. The server's chain summary (#732, `ui/server.mjs`) gains `feature: { id, title, slices[] }`. |
+| D17 | **Runs list: a feature is one row.** The chain item uses the feature when the chain's first run has one (`featureOfPipeline`): the feature title, "Slice 2 of 3 · Build" (or "Needs you" in amber), open by default while a slice is live or waiting for a person. Members show "1 · Run tags" with the state glyph and PR, never the feature title again. A plain click anywhere on the row opens or closes it (no chevron to find; a modifier click opens the feature page in a new tab), and the first item inside is **Open feature**. A waiting member opens the feature page, not Schedules. A slice run is never also a row of its own; its "Needs you" lands on the feature row. The server's chain summary (#732, `ui/server.mjs`) gains `feature: { id, title, slices[] }`. |
 | D18 | **Stable slice names.** A run that carries a slice (`shape.feature`) keeps its title: `_kickoffTitleGeneration` skips `generateTitle` for it. The slice's own title is the name shown under the feature; the long "*feature* · k/N: *slice*" form stays only where there is no feature context (Schedules, notifications). |
 | D19 | **Plan once, confirm later.** Replaces D14's per-slice stops. Slices 2…N skip Clarify: the brief carries the feature's answers (slice 1's `clarify.json` answers). Planner and Refine still run against the code as it is. The plan stop holds only when the shape check fails, or when the Planner writes `outline-change.md` because the slice can't be built as outlined. **Approve each slice's plan** stays as a switch, now **off** by default; on, every slice stops as before. A `plan` ask still always waits for a person (§9.1). |
 | D20 | **A small proposal card.** A shaped proposal shows the task brief, project, base branch, perspective chips and the estimate, with one primary button, **Start planning**, plus **Not now**. Engine, guardrails, workflow and the per-agent rows sit under a collapsed **Advanced**. The run-as-is card is unchanged. |
@@ -402,10 +402,10 @@ The fixes go onto the open branches, so each PR carries its own fix. `feat/run-p
 
 | Branch (PR) | Decisions |
 |---|---|
-| `feat/shape-it-first-1-engine` (#708) | D27, D28 (recording and `shapeStats`) |
+| `feat/shape-it-first-1-engine` (#708) | D27, D28 (recording, `shapeStats` and the Statistics group) |
 | `feat/shape-it-first-2-chat` (#728) | D20, D21, D26, the nudge estimate (D28) |
 | `feat/shape-it-first-3-checklists` (#729) | D23 |
-| `feat/shape-it-first-4-slices` (#730) | D16, D17, D18, D19, D22, D24, D25, the Statistics group (D28) |
+| `feat/shape-it-first-4-slices` (#730) | D16, D17, D18, D19, D22, D24, D25 |
 
 Each lower branch is merged forward after its fix (1 → 2 → 3 → 4), and the test bundle
 `test/shape-it-first-and-run-progress` is rebuilt from slice 4 when all four are green.

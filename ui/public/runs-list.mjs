@@ -472,6 +472,17 @@ function renderChainRow(doc, r, opts) {
   list.className = 'runs-chain-members';
   list.hidden = !r.open;
   if (r.open) {
+    // The row itself toggles the group (a plain click), so the feature page is the first item inside.
+    if (r.feature) {
+      const li = doc.createElement('li');
+      li.className = 'runs-chain-member runs-chain-open-feature';
+      const link = doc.createElement('a');
+      link.className = 'runs-chain-link';
+      link.setAttribute('href', r.href);
+      link.textContent = 'Open feature →';
+      li.appendChild(link);
+      list.appendChild(li);
+    }
     for (const m of r.members) {
       const li = doc.createElement('li');
       li.className = `runs-chain-member is-${m.state}`;
