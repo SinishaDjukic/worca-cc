@@ -16,6 +16,7 @@ const LOCAL_ONLY_FILES = Object.freeze(['CLAUDE.local.md']);
 // `committedExempt`: Claude reads the real directory (run-context), not the worktree, so an uncommitted file is fine.
 // `fallback`: files the engine reads only when none of `files` exists (globs do not count): Claude Code reads
 // AGENTS.md when there is no CLAUDE.md, .claude/CLAUDE.md or CLAUDE.local.md (code.claude.com/docs/en/memory#agents-md).
+// `firstNonEmpty`: the engine reads only the first of `files` that has content (Codex: AGENTS.override.md, then AGENTS.md).
 // `missingFix`: the `instructions.present` fix for this engine (the catalog's fix is the generic fallback).
 const SOURCES = Object.freeze({
   claude: {
@@ -23,7 +24,7 @@ const SOURCES = Object.freeze({
     fallback: ['AGENTS.md', '.claude/AGENTS.md'],
     missingFix: 'Add AGENTS.md (OpenAI Codex and GitHub Copilot read it too) or CLAUDE.md.',
   },
-  codex: { files: CODEX_INSTRUCTION_FILES, globs: [], missingFix: 'Add AGENTS.md.' },
+  codex: { files: CODEX_INSTRUCTION_FILES, globs: [], firstNonEmpty: true, missingFix: 'Add AGENTS.md.' },
   copilot: {
     files: COPILOT_INSTRUCTION_FILES, globs: COPILOT_INSTRUCTION_GLOBS,
     missingFix: 'Add AGENTS.md or .github/copilot-instructions.md.',
@@ -56,12 +57,15 @@ function globMatches(src, facts) {
   return [...facts.trackedSet].filter((p) => res.some((re) => re.test(p)));
 }
 
+const exists = (p, facts) => facts.trackedSet?.has(p) || facts.sizes?.[p] !== undefined;
+
 /** The literal instruction files the engine reads that exist: tracked, or present on disk. Its fallback files only when none of its own exists. */
 function presentFiles(src, facts) {
-  const exists = (p) => facts.trackedSet?.has(p) || facts.sizes?.[p] !== undefined;
-  const own = src.files.filter(exists);
-  return own.length ? own : (src.fallback || []).filter(exists);
+  const own = src.files.filter((p) => exists(p, facts));
+  if (src.firstNonEmpty) return own.filter((p) => facts.sizes?.[p] !== 0).slice(0, 1);
+  return own.length ? own : (src.fallback || []).filter((p) => exists(p, facts));
 }
+
 
 const kb = (n) => `${Math.round(n / 1024)} KB`;
 
@@ -71,6 +75,8 @@ const TOOL = Object.freeze({
     if (!hasSources(src)) return { status: 'skip' };
     const found = [...presentFiles(src, facts), ...globMatches(src, facts)];
     if (found.length) return { status: 'pass', detail: `${found.slice(0, 2).join(', ')} found` };
+    const empty = src.firstNonEmpty ? src.files.filter((p) => facts.sizes?.[p] === 0) : [];
+    if (empty.length) return { status: 'fail', detail: `${empty.join(', ')} ${empty.length > 1 ? 'are' : 'is'} empty` };
     return { status: 'fail', detail: `none of ${[...src.files, ...src.globs, ...(src.fallback || [])].join(', ')} found` };
   },
   'instructions.committed': (src, facts) => {

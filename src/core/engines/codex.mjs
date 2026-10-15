@@ -34,8 +34,9 @@ import { scopeLauncherEnv } from '../mcp/launch.mjs';
 
 export const CODEX_DEFAULT_BIN = process.env.WORCA_CODEX_BIN || 'codex';
 
-/** The instruction files Codex reads from its cwd (checked against codex-cli 0.146/0.154). */
-export const CODEX_INSTRUCTION_FILES = Object.freeze(['AGENTS.md', 'AGENTS.override.md']);
+/** The instruction files Codex reads from its cwd (checked against codex-cli 0.146/0.154), in its order: Codex
+ *  reads only the first non-empty one per directory (learn.chatgpt.com/docs/agent-configuration/agents-md). */
+export const CODEX_INSTRUCTION_FILES = Object.freeze(['AGENTS.override.md', 'AGENTS.md']);
 
 /** Stored session ids are engine-qualified so a resume never hands a codex
  *  thread to claude (or a claude session to codex). */

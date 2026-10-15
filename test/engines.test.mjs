@@ -266,6 +266,55 @@ describe('engines module', () => {
       });
     }
 
+    it('Codex reads only AGENTS.override.md when it has content, so AGENTS.md does not count for Codex', () => {
+      withRepo((dir) => {
+        writeFileSync(join(dir, 'AGENTS.override.md'), '# o');
+        writeFileSync(join(dir, 'AGENTS.md'), 'x'.repeat(DEFAULT_CONTEXT_MAX_BYTES_PER_FILE + 1));
+        commitAll(dir);
+      }, (dir) => {
+        const { checks } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+        assert.equal(row(checks, 'instructions.present', 'codex').detail, 'AGENTS.override.md found');
+        assert.equal(row(checks, 'instructions.size', 'codex').status, 'pass');
+      });
+    });
+
+    it('Codex skips an empty AGENTS.override.md and reads AGENTS.md', () => {
+      withRepo((dir) => {
+        writeFileSync(join(dir, 'AGENTS.override.md'), '');
+        writeFileSync(join(dir, 'AGENTS.md'), '# a');
+        commitAll(dir);
+      }, (dir) => {
+        const { checks } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+        assert.equal(row(checks, 'instructions.present', 'codex').detail, 'AGENTS.md found');
+      });
+    });
+
+    it('Codex skips an empty AGENTS.md, so it is missing for Codex', () => {
+      withRepo((dir) => {
+        writeFileSync(join(dir, 'AGENTS.md'), '');
+        commitAll(dir);
+      }, (dir) => {
+        const { checks, engines } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+        const r = row(checks, 'instructions.present', 'codex');
+        assert.equal(r.status, 'fail');
+        assert.equal(r.detail, 'AGENTS.md is empty');
+        assert.equal(engines.codex.level, 'not-ready');
+      });
+    });
+
+    it('Codex reads an untracked AGENTS.override.md locally only, so instructions.committed flags it', () => {
+      withRepo((dir) => {
+        writeFileSync(join(dir, 'AGENTS.md'), '# a');
+        commitAll(dir);
+        writeFileSync(join(dir, 'AGENTS.override.md'), '# o');
+      }, (dir) => {
+        const { checks } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+        const r = row(checks, 'instructions.committed', 'codex');
+        assert.equal(r.status, 'fail');
+        assert.match(r.detail, /^AGENTS\.override\.md not committed/);
+      });
+    });
+
     it('Copilot combines its files, so their total counts against the size budget', () => {
       const big = 'x'.repeat(DEFAULT_CONTEXT_MAX_BYTES_PER_FILE - 100);
       withRepo((dir) => {

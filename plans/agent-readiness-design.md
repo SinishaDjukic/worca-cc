@@ -164,7 +164,7 @@ gets `instructions.*` as `skip` and its level from the other checks only.
 | Engine | Sources (any one satisfies `instructions.present`) | Export |
 |---|---|---|
 | claude | `CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/rules/*.md`, `CLAUDE.local.md` (the run-context set); with none of `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`, it reads `AGENTS.md` and `.claude/AGENTS.md` instead (Claude Code v2.1.277+) | `CLAUDE_INSTRUCTION_FILES` in `engines/claude.mjs` (or reuse run-context's list) |
-| codex | `AGENTS.md`, `AGENTS.override.md` | `CODEX_INSTRUCTION_FILES` in `engines/codex.mjs` |
+| codex | `AGENTS.override.md`, else `AGENTS.md`: Codex reads only the first non-empty one per directory, so an empty file counts as missing and only the file it reads is sized and checked for commit | `CODEX_INSTRUCTION_FILES` in `engines/codex.mjs` |
 | copilot | `.github/copilot-instructions.md`, `.github/instructions/**/*.instructions.md`, `AGENTS.md`, `CLAUDE.md`, `.claude/CLAUDE.md`, `GEMINI.md`; the CLI combines every one it finds, so all of them count toward the size budget | `COPILOT_INSTRUCTION_FILES`, `COPILOT_INSTRUCTION_GLOBS` in `engines/copilot.mjs` |
 | cursor | `.cursor/rules/**/*.mdc` (a plain `.md` there is ignored), `AGENTS.md`, `CLAUDE.md` at the project root | `CURSOR_INSTRUCTION_FILES`, `CURSOR_INSTRUCTION_GLOBS` in `engines/cursor.mjs` |
 
