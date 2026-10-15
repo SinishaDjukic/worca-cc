@@ -9287,9 +9287,10 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-home-act-badge{padding:1px 7px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;}
 .shape-checklists{margin:12px 0;display:flex;flex-direction:column;gap:6px;}
 .shape-cl-title{font-size:13px;margin:0;color:var(--ink-2);}
-.shape-cl-cycle{border:1px solid var(--line);border-radius:var(--r-ctrl);padding:6px 10px;background:var(--panel);}
-.shape-cl-caption{cursor:pointer;font-size:12px;color:var(--ink-2);}
-.shape-cl-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;}
+.shape-cl-cycle{border:1px solid var(--line);border-radius:var(--r-ctrl);padding:6px 10px;background:var(--panel);
+  display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
+.shape-cl-caption{margin:0;font-size:12px;font-weight:600;color:var(--ink-2);}
+.shape-cl-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;align-self:stretch;}
 .shape-cl-item{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;font-size:12px;}
 .shape-cl-status{font-weight:600;min-width:84px;}
 .shape-cl-item.st-met .shape-cl-status{color:var(--green-ink);}
@@ -9297,6 +9298,11 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .shape-cl-item.st-na .shape-cl-status{color:var(--ink-3);}
 .shape-cl-id{font-family:var(--mono);}
 .shape-cl-evidence{flex-basis:100%;padding-left:90px;color:var(--ink-2);overflow-wrap:anywhere;}
+.shape-cl-toggle{font-size:12px;display:inline-flex;align-items:center;gap:4px;}
+.shape-cl-toggle .chev{display:inline-block;transition:transform .2s;text-decoration:none;}
+.shape-cl-toggle[aria-expanded="true"] .chev{transform:rotate(180deg);}
+.shape-cl-earlier{display:flex;flex-direction:column;gap:6px;align-self:stretch;}
 @media (max-width:480px){.shape-cl-evidence{padding-left:0;}}
+@media (prefers-reduced-motion:reduce){.shape-cl-toggle .chev{transition:none;}}
 .chat-rc-checklist{font-size:12px;color:var(--green-ink);margin:4px 0;}
 .chat-rc-checklist.is-open{color:var(--red-ink);}

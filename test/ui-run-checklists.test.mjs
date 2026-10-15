@@ -22,14 +22,18 @@ const hello = (ctx, features, run) => {
 };
 const host = (ctx) => ctx.window.document.querySelector('#run-detail .rd-sec[data-sec="overview"] .rd-checklists');
 
-test('a done run shows one group per review cycle on its Overview, with the gate on', async () => {
+test('a done run shows the latest review cycle on its Overview, earlier ones folded, with the gate on', async () => {
   try {
     const ctx = await bootApp({ fetchHandler });
     hello(ctx, { shapeFirst: true }, RUN);
     ctx.go('running/r1/details/overview');
     await ctx.settle(8);
     assert.equal(host(ctx).hidden, false);
-    assert.equal(host(ctx).querySelectorAll('.shape-checklists .shape-cl-cycle').length, 2);
+    const root = host(ctx).querySelector('.shape-checklists');
+    assert.equal(root.querySelector(':scope > .shape-cl-cycle .shape-cl-caption').textContent,
+      'Review cycle 2 · 1 met · 0 unmet · 0 n/a');
+    assert.equal(root.querySelector('.shape-cl-earlier-btn .shape-cl-toggle-label').textContent, 'Earlier cycles (1)');
+    assert.equal(root.querySelector('.shape-cl-earlier').hidden, true);
   } finally {
     setShapeFirst(false);
   }
