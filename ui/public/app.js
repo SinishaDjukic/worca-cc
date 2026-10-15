@@ -132,6 +132,7 @@ import {
 } from './plugins-view.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
+import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
@@ -217,6 +218,7 @@ import {
   freshSyncState, ago, listRowModel, projectBarModel, wsRollupModel, ffRefusalCopy, syncStageLabel, fetchedAgo, isSyncableBranchName,
   runOutcomeModel, openSyncDialog, chooseSyncRefusal,
 } from './branch-sync.mjs';
+import { baseCheckModel, baseRowNote } from './base-check.mjs';
 import { describeRule, formatInstant } from '../../src/shared/schedule/recurrence.mjs';
 import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, kindShort, awayAnswerRows, awayAnswerCounts, checksFirst, awayAnswersSummary, decidedByText, awayAskCaption } from '../../src/shared/away-mode/labels.mjs';
 import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
@@ -225,6 +227,8 @@ import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdow
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
+import { applyFlags, decorateFlagChips } from './flags.mjs';
+import { createFlagsView } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
@@ -238,7 +242,7 @@ import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.m
 import { activeAgents } from './ask-run-card.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
-import { applyShapeFirstHello, shapeFirstOn } from './chat/shape-gate.mjs';
+import { shapeFirstOn, onShapeFirstChange } from './chat/shape-gate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
 import { renderFeature } from './shape/feature-view.mjs';
@@ -476,6 +480,7 @@ const el = {
   engineSelect: $('#engineSelect'),
   engineHint: $('#engine-hint'),
   engineDefaultHint: $('#engine-default-hint'),
+  engineMcpjsonHint: $('#engine-mcpjson-hint'),
   engineRefusal: $('#engineRefusal'),
   engineRefusalText: $('#engineRefusalText'),
   engineAllowRow: $('#engineAllowRow'),
@@ -669,6 +674,11 @@ const el = {
   // Memory view (Settings tab; the Projects expanders mount their own hosts)
   memoryHost: $('#memory-host'),
   memoryMsg: $('#memory-msg'),
+
+  // Experimental (Settings tab; docs/feature-flags.md)
+  flagsHost: $('#flags-host'),
+  flagsMsg: $('#flags-msg'),
+  flagsReset: $('#flags-reset'),
 
   // Models view
   modelsList: $('#models-list'),
@@ -1327,6 +1337,12 @@ function handleServerMessage(msg) {
     onHello(msg);
     refreshRunningActions();
     if (terminalPane) terminalPane.onHello(msg);
+    if (Array.isArray(msg.extensionPairs)) msg.extensionPairs.forEach((r) => void promptExtensionPair(r));
+    return;
+  }
+  if (msg.type === 'flags') {                 // D6: a flag changed (Settings in any tab, or the API)
+    applyFlags(msg.flags);
+    if (flagsTabCtl && currentView() === 'settings' && currentSettingsTab === 'experimental') void flagsTabCtl.load();
     return;
   }
 
@@ -1416,6 +1432,8 @@ function handleServerMessage(msg) {
     chatHome?.refreshPlans();
     return;
   }
+  if (msg.type === 'extension-pair-request') { void promptExtensionPair(msg.request); return; }
+  if (msg.type === 'extension-pairings-changed') { pairRequestResolved(msg.requestId); void paintExtensionPairings(); return; }
   if (msg.type === 'notification' || msg.type === 'notifications-changed') {
     if (msg.type === 'notification') alerts.onScheduleNotification(msg.notification);
     refreshAllCounts();
@@ -1669,6 +1687,17 @@ function handleServerMessage(msg) {
   if (crp.waiting && crp.want && msg.runId && (msg.runId === crp.want.id || (runs.get(msg.runId) || {}).pipelineId === crp.want.id)) crpRetryPending();
 }
 
+// Shape it first's UI that nothing else rebuilds: the New run link and the Chat home tile. Run on every hello and
+// whenever the flag flips (Settings › Experimental, or a `flags` frame).
+function syncShapeFirstUi() {
+  refreshShapeFeatures();   // a view emptied while the gate was off comes back
+  const shapeLink = document.getElementById('shapeChatLink');
+  if (shapeLink) shapeLink.hidden = !shapeFirstOn();
+  // The spread keeps scripts/tasks: setFlags replaces the set.
+  if (chatHome && lastChatHomeFlags) chatHome.update({ flags: { ...lastChatHomeFlags, shapeFirst: shapeFirstOn() } });
+}
+onShapeFirstChange(syncShapeFirstUi);
+
 // hello greeting carries the server's authoritative run list. We upsert each
 // into our map, backfill-subscribe to non-terminal runs whose buffer we don't
 // yet have, and refresh whatever view is showing.
@@ -1678,12 +1707,8 @@ function onHello(msg) {
   const rebooted = !!(msg.bootId && state.serverBootId && state.serverBootId !== msg.bootId);
   noteBoot(state, msg.bootId, runs);   // a restarted server numbers run events from 1 again
   applyServerMock(msg.serverMock);     // every hello: a restarted server may have changed mode
-  applyShapeFirstHello(msg);
-  refreshShapeFeatures();   // a view emptied while the gate was off comes back
-  const shapeLink = document.getElementById('shapeChatLink');
-  if (shapeLink) shapeLink.hidden = !shapeFirstOn();
-  // A gate that arrives while the home is open shows its tile. The spread keeps scripts/tasks: setFlags replaces the set.
-  if (chatHome && lastChatHomeFlags) chatHome.update({ flags: { ...lastChatHomeFlags, shapeFirst: shapeFirstOn() } });
+  if (msg.flags) applyFlags(msg.flags);  // every hello: a frame missed while the socket was down, or a restart with a new WORCA_FLAGS
+  syncShapeFirstUi();
   // A restarted server lists only the runs IT started, and nothing below drops the old ones: mark
   // every entry stale, and the upserts below clear the ones it lists. The saved run's bar skips a
   // stale entry (hdPipelineRun), which would otherwise offer a Pause / Stop the server answers
@@ -2869,7 +2894,19 @@ function wfvShellActions() {
       catch (e) { notify({ tone: 'err', title: `${f.name} is not valid JSON: ${e.message}` }); return; }
       await gvImportWorkflowObject(obj);
     },
-    exportCurrent: () => { const t = gvComposer.template(); if (t.id) openExportModal({ id: t.id, name: t.name || t.id }); },
+    // Export reads the SAVED row by id, so an unsaved canvas (new, or edited since its save) is saved
+    // first and the export follows; a blank canvas has nothing to export — open the saved list instead.
+    exportCurrent: () => {
+      const t = gvComposer.template();
+      const exportRow = (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id });
+      if (t.id && !gvComposer.isDirty()) { exportRow(t); return; }
+      if (gvComposer.isPristine()) {
+        wfvSetLibraryOpen(true); wfvLibrary?.open('workflows');
+        notify({ tone: 'info', title: 'Pick a pipeline to export', detail: 'Each saved pipeline has an Export button in the Library.' });
+        return;
+      }
+      gvComposer.openSaveDialog({ then: exportRow });
+    },
     newAgent: () => { location.hash = 'workflows/agents/new'; },
     newScript: () => { location.hash = 'workflows/scripts/new'; },
     afterRender: () => {
@@ -12353,11 +12390,13 @@ function buildPdMemory(sec, key) {
 // opts.danger tints the title and the OK button red for a destructive action
 // (opt-in). `done` always clears every opt-in again — the modal is shared, and
 // neither the tint nor a leftover field may leak into the next, harmless call.
+let modalGen = 0;
 function modalShell({
   title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel',
   checkbox = null, danger = false, fields = null, messageTone = null,
 } = {}) {
   return new Promise((resolve) => {
+    modalGen += 1;   // the extension pair prompt checks this to detect a confirm opened over it (see promptExtensionPair)
     el.confirmTitle.textContent = title;
     el.confirmTitle.classList.toggle('danger', !!danger);
     // message: a string, or parts [text | { strong: text }] so the variable bits (a branch, a command)
@@ -13816,6 +13855,8 @@ async function loadSettings() {
     refreshBudget();
     paintChatSettings(data.chat);
     paintCredentials();
+    void paintExtensionInstall();
+    void paintExtensionPairings();
     loadAskHistory();
     setSettingsLoadMsg('');
   } catch (e) { setSettingsLoadMsg(e.message || 'network error'); }
@@ -13834,6 +13875,147 @@ async function paintCredentials() {
   card.hidden = !data || data.enabled !== true;
   if (card.hidden) return;
   host.replaceChildren(renderCredentials(data));
+}
+
+// Settings → Browser extension → Install (docs/browser-extension.md#install). The tab follows the browser Worca is
+// open in until the user picks another one.
+let extensionInstallBrowser = null;
+async function paintExtensionInstall() {
+  const host = document.getElementById('extensionInstallHost');
+  if (!host) return;
+  let data = null;
+  try { const r = await fetch('/api/extension/install'); data = r.ok ? await r.json() : null; } catch { data = null; }
+  const browser = extensionInstallBrowser || detectBrowser(navigator.userAgent);
+  host.replaceChildren(renderExtensionInstall(data, { doc: document, browser }));
+}
+
+document.getElementById('extensionInstallHost')?.addEventListener('click', async (e) => {
+  const tab = e.target.closest('[data-xi-browser]');
+  if (tab) {
+    extensionInstallBrowser = tab.dataset.xiBrowser;
+    selectInstallBrowser(e.currentTarget, extensionInstallBrowser);
+    return;
+  }
+  const copy = e.target.closest('[data-copy-path]');
+  if (!copy) return;
+  const text = copy.dataset.copyPath;
+  let ok = false;
+  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); ok = true; } else ok = legacyCopy(text); } catch { ok = legacyCopy(text); }
+  if (ok) flashCopyBtn(copy, 'Copied');
+  else reportStatus(null, '', 'Could not copy the path: select it and copy it by hand.', 'err');
+});
+
+// Settings → Browser extension (docs/browser-extension.md).
+async function paintExtensionPairings() {
+  const host = document.getElementById('extensionPairingsHost');
+  if (!host) return;
+  let data = null;
+  try { const r = await fetch('/api/extension/pairings'); data = r.ok ? await r.json() : null; } catch { data = null; }
+  if (data) { host.replaceChildren(renderExtensionPairings(data, { doc: document })); return; }
+  const p = document.createElement('p');
+  p.className = 'xp-empty';
+  p.textContent = 'Could not load the paired browser extensions.';
+  host.replaceChildren(p);
+}
+// The server's refusal text (403 extension-agent-blocked, 409 extension-remote-mode, 404 expired/replaced …), or null.
+async function extensionCallError(url, init) {
+  try {
+    const r = await fetch(url, init);
+    if (r.ok) return null;
+    const body = await r.json().catch(() => ({}));
+    return body.error || `Worca refused (${r.status})`;
+  } catch { return 'Worca did not answer'; }
+}
+
+document.getElementById('extensionPairingsHost')?.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-revoke]');
+  if (!b) return;
+  const ok = await confirmModal({ title: 'Revoke browser extension', message: `Revoke “${b.dataset.name}”?\nIt stops working at once; pair it again from its sidebar.`, confirmLabel: 'Revoke', danger: true });
+  if (!ok) return;
+  b.disabled = true;
+  const err = await extensionCallError(`/api/extension/pairings/${encodeURIComponent(b.dataset.revoke)}`, { method: 'DELETE' });
+  if (err) reportStatus(null, '', `Could not revoke the extension: ${err}`, 'err');
+  void paintExtensionPairings();
+});
+
+// A pairing request from the extension: approve only when its code matches.
+// confirmModal is ONE shared modal (modalShell): a second call while it is open overwrites its text and stacks
+// listeners, so one Approve would resolve every stacked call — approving requests whose code was never shown, or
+// confirming an unrelated open dialog (e.g. a delete). The pair prompt is the first confirm the SERVER opens, so
+// prompts run strictly one at a time, and each waits until no other confirm is open.
+const extensionPrompts = new Set();
+const latestPairByOrigin = new Map();   // origin -> newest requestId: the server keeps one pending request per origin
+let extensionPairQueue = Promise.resolve();
+const confirmModalFree = async () => {
+  while (el.confirmModal && !el.confirmModal.classList.contains('hidden')) await new Promise((res) => setTimeout(res, 250));
+};
+function promptExtensionPair(r) {
+  if (!r || !r.requestId || extensionPrompts.has(r.requestId)) return;
+  // A framed shell (the server sends frame-ancestors 'none', but an old browser may ignore it) could have a decoy
+  // laid over Approve: never ask there. The request stays pending for an unframed Worca tab.
+  if (window.self !== window.top) return;
+  extensionPrompts.add(r.requestId);
+  latestPairByOrigin.set(r.origin, r.requestId);
+  extensionPairQueue = extensionPairQueue.then(async () => {
+    // Waiting for a free modal stops the pair prompt from opening ON TOP of another confirm. It does not stop a
+    // user-initiated confirm from opening on top of the pair prompt (e.g. deleteProject awaits a fetch, then calls
+    // confirmModal). In that case one OK click resolves both. So the answer counts only when no other modalShell call
+    // opened while this prompt was showing (modalGen unchanged). Otherwise the prompt asks again.
+    for (;;) {
+      await confirmModalFree();
+      if (r.expiresAt && r.expiresAt <= Date.now()) return;   // expired while it waited in the queue
+      if (latestPairByOrigin.get(r.origin) !== r.requestId) return;   // replaced by a newer request from the same extension
+      if (resolvedPairRequests.has(r.requestId)) return;   // approved or denied in another Worca tab
+      const pending = confirmModal({
+        title: 'Connect a browser extension?',
+        message: [`${r.name} (${browserLabel(r.browser)}) wants to use this Worca.\nExtension id: ${r.origin}\n\nCode: `,
+          { strong: formatPairCode(r.code) },
+          '\n\nApprove only if the Worca sidebar in your browser shows the same code. The extension will be able to chat with Ask Worca, explain selected text on web pages and list your projects and workspaces.'],
+        confirmLabel: 'Approve',
+      });
+      const gen = modalGen;   // the Promise executor ran synchronously, so modalGen now counts THIS prompt
+      openPairPrompt = r.requestId;
+      openPairGen = gen;
+      // modalShell focuses OK. This modal opens without a user action, so a stray Enter typed into the
+      // composer must not approve: deny is the default (Esc and Enter both land on Cancel).
+      el.confirmCancel.focus();
+      // Close the prompt when its request ends elsewhere (another tab answered it, or the 2 min TTL ran out). Clicking
+      // Cancel resolves `pending`, and the `closedElsewhere` check below then sends nothing.
+      // Never click Cancel while another dialog covers the prompt (modalGen moved): that click would cancel the
+      // user's own dialog. Once the cover closes, the `modalGen !== gen` path re-checks expiry and resolvedPairRequests.
+      const expiry = r.expiresAt ? setTimeout(() => { if (pairPromptUncovered(r.requestId)) el.confirmCancel.click(); }, Math.max(0, r.expiresAt - Date.now())) : null;
+      // A promptModal opened over this prompt and submitted with Enter hides the shared modal without resolving
+      // `pending` (modalShell handles Enter only for the dialog that has fields). Seeing the modal
+      // hidden under an open prompt, resolve it as Cancel; modalGen has moved, so the loop asks again.
+      const watch = setInterval(() => {
+        if (openPairPrompt === r.requestId && el.confirmModal.classList.contains('hidden')) el.confirmCancel.click();
+      }, 250);
+      const ok = await pending;
+      clearTimeout(expiry);
+      clearInterval(watch);
+      openPairPrompt = null;
+      if (modalGen !== gen) continue;   // another confirm covered this one: its answer is not the person's answer
+      const closedElsewhere = resolvedPairRequests.has(r.requestId) || (r.expiresAt && r.expiresAt <= Date.now());
+      if (closedElsewhere) return;
+      const err = await extensionCallError(`/api/extension/pair/${encodeURIComponent(r.requestId)}/${ok ? 'approve' : 'deny'}`, { method: 'POST' });
+      if (err && ok) reportStatus(null, '', `The extension was not approved: ${err}`, 'err');
+      void paintExtensionPairings();
+      return;
+    }
+  }).catch(() => {}).finally(() => extensionPrompts.delete(r.requestId));
+}
+// `extension-pairings-changed` carries the requestId it resolved (the approve/deny routes broadcast
+// `{ type:'extension-pairings-changed', requestId }`). A prompt for it that is still open in this tab closes without
+// answering.
+const resolvedPairRequests = new Set();
+let openPairPrompt = null;
+let openPairGen = 0;   // modalGen when the open pair prompt was shown
+const pairPromptUncovered = (requestId) => openPairPrompt === requestId && modalGen === openPairGen;
+function pairRequestResolved(requestId) {
+  if (!requestId) return;
+  resolvedPairRequests.add(requestId);
+  // Also fired for a request replaced by a newer one from the same extension.
+  if (pairPromptUncovered(requestId)) el.confirmCancel.click();
 }
 
 async function paintChatSettings(prefs) {
@@ -15685,6 +15867,18 @@ function globalDefragHost() {
   const picked = path ? state.projects.find((x) => x && x.path === path) : null;
   const p = picked || state.projects.find((x) => x && x.exists && x.key) || null;
   return p && p.key ? { key: p.key, name: p.name } : null;
+}
+
+// Settings › Experimental (docs/feature-flags.md): one controller, made on first entry; a chip's
+// '#settings/experimental/<key>' lands on that flag's row.
+let flagsTabCtl = null;
+function loadFlagsTab(sub = '') {
+  if (!el.flagsHost) return;
+  if (!flagsTabCtl) {
+    flagsTabCtl = createFlagsView({ host: el.flagsHost, msgEl: el.flagsMsg, resetBtn: el.flagsReset,
+      api: (method, body) => mcpApi(method, '/api/flags', body), confirm: confirmModal });
+  }
+  void flagsTabCtl.load(sub ? safeDecode(sub) : '');
 }
 
 async function loadMemoryTab(sub = '') {
@@ -18626,7 +18820,29 @@ let policyLineSeq = 0;
 function schedulePolicyLine() {
   if (!el.policyLine) return;
   clearTimeout(policyLineTimer);
-  policyLineTimer = setTimeout(() => { void paintPolicyLine(); void paintMcpRuns(); }, 150);
+  policyLineTimer = setTimeout(() => { void paintPolicyLine(); void paintMcpRuns(); void paintMcpjsonHint(); }, 150);
+}
+// A run leaves out the repository's .mcp.json servers nobody approved, on every engine: say so before Start, with
+// the project's Sets tab, where Approve is (src/core/mcpjson-approval.mjs).
+let mcpjsonHintSeq = 0;
+async function paintMcpjsonHint() {
+  if (!el.engineMcpjsonHint) return;
+  const seq = ++mcpjsonHintSeq;
+  const scope = currentRunScopeId();
+  const key = scope.startsWith('project:') ? scope.slice('project:'.length) : null;
+  let names = [];
+  if (key) {
+    try {
+      const r = await fetch(`/api/mcp/projects/${encodeURIComponent(key)}/mcpjson`);
+      const d = r.ok ? await safeJson(r) : null;
+      names = (d?.servers || []).filter((s) => s.status === 'unapproved').map((s) => s.name);
+    } catch {}
+  }
+  if (seq !== mcpjsonHintSeq) return;
+  el.engineMcpjsonHint.hidden = !names.length;
+  if (!names.length) return;
+  const link = Object.assign(document.createElement('a'), { href: `#projects/${encodeURIComponent(key)}/mcp`, textContent: `Approve ${names.length === 1 ? 'it' : 'them'} on the project’s Sets tab` });
+  el.engineMcpjsonHint.replaceChildren(`${names.length === 1 ? '1 server' : `${names.length} servers`} from the repository’s .mcp.json won’t start (${names.join(', ')}). `, link);
 }
 /** The models the run will pick: the Agents accordion's selects, else the legacy per-role config. */
 function selectedRunModels() {
@@ -20976,6 +21192,8 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
       modal.querySelector('.shipit-base').textContent = '';
       modal.querySelector('.shipit-summary').hidden = false;
     }
+    const paintBaseCheck = () => modal._paintShipBase?.();   // #620: the pick may name another base now
+    paintBaseCheck();
     // Confirm may already have been pressed (okBtn disabled = POST in flight, sent
     // without the fields): paint the list, but keep it locked until that POST settles.
     setShipItRemotesDisabled(modal, modal.querySelector('.shipit-ok').disabled);
@@ -20995,8 +21213,8 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
     paintBaseWarn();
     // Property assignment, not addEventListener: re-runs per open without stacking.
     pushSel.onchange = paintHint;
-    baseSel.onchange = () => { if (chain.length) paintBranches(); paintHint(); paintBaseWarn(); };
-    branchSel.onchange = () => { paintHint(); paintBaseWarn(); };
+    baseSel.onchange = () => { if (chain.length) paintBranches(); paintHint(); paintBaseWarn(); paintBaseCheck(); };
+    branchSel.onchange = () => { paintHint(); paintBaseWarn(); paintBaseCheck(); };
   } catch {
     /* remotes unavailable: block stays hidden, POST omits the fields */
   }
@@ -21101,6 +21319,22 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   q('.shipit-del').textContent = removed != null ? `−${removed}` : '';   // U+2212 — a COUNT
   q('.shipit-branch').textContent = record.branch || '';
   q('.shipit-base').textContent = record.sourceBranch || '';
+  // #620: the local conflict check before a PR exists (the forge pill takes over once one does). Re-run by
+  // loadShipItRemotes when the base pick appears or changes.
+  const paintShipBase = () => {
+    const el = q('.shipit-basecheck'); if (!el) return;
+    const rec = (data && data.state && data.state.branch && data.state.branch.baseCheck) || record.baseCheck || null;
+    const show = !!rec && rec.base === shipItChosenBase(modal, record) && (rec.status === 'conflicts' || rec.status === 'clean');
+    el.hidden = !show;
+    if (!show) return;
+    const md = baseCheckModel(rec);
+    el.className = `hint shipit-basecheck tone-${md.tone}`;
+    el.textContent = rec.status === 'conflicts'
+      ? `${md.label} with ${rec.base} (${md.when}). Resolve them first, or open the PR anyway.`
+      : `${md.label} (${md.when}). Update branch first to test against it.`;
+  };
+  modal._paintShipBase = paintShipBase;
+  paintShipBase();
   // Spec §5.10: omit the whole summary line when there is nothing to summarize.
   // (No `&& !record.branch` term: histPrEligible gates BOTH doors into this modal
   // and requires `branch`, so that clause could never be false.)
@@ -21358,6 +21592,15 @@ function buildShipItRepoRow(member, summary, canShip) {
   row.branchWrap.appendChild(row.branchSel);
   line.append(b, arrow, row.baseLabel, row.branchWrap);
   el.appendChild(line);
+  // #620: this member's stored conflict check (the History row summary), while no PR exists.
+  const bc = member.baseCheck;
+  if (bc && bc.status === 'conflicts') {
+    const md = baseCheckModel(bc);
+    const note = document.createElement('small');
+    note.className = `hint shipit-basecheck tone-${md.tone}`;
+    note.textContent = `${md.label} with ${bc.base}${md.when ? ` (${md.when})` : ''}. Resolve them first, or open the PR anyway.`;
+    el.appendChild(note);
+  }
   row.remotesBox = document.createElement('div');
   row.remotesBox.className = 'shipit-repo-remotes';
   row.remotesBox.hidden = true;
@@ -21515,6 +21758,8 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     `This opens a pull request in each repository ${record.title || record.id} changed and puts them up for review.`;
   q('.shipit-summary').hidden = true;                 // the single-repo summary/remotes stay out of the way
   q('.shipit-remotes').hidden = true;
+  q('.shipit-basecheck').hidden = true;               // #620: each repo row carries its own line instead
+  modal._paintShipBase = null;
   list.replaceChildren();
   const rows = [];
   for (const m of members) {
@@ -21761,6 +22006,7 @@ function hdSyncPr(projectKey, id, row) {
   if (row) histDetailState.record = row;   // a deep link's minimal record upgrades to the real row
   paintHdPr(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdOvPrs(histDetailState.screen.querySelector('.hd-ov-prs'), histDetailState.record);
+  paintHdBase(histDetailState.screen, histDetailState.record, histDetailState.data);   // an open PR owns the pipeline Resolve
   paintHdAfter(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdGlance(histDetailState.screen, histDetailState.record, histDetailState.data);
 }
@@ -22813,6 +23059,163 @@ function hdSetArchiveGate(btn, retained) {
   btn.title = retained ? 'Recover or discard the retained uncommitted work before archiving.' : '';
 }
 
+// Base conflicts (#620): one line per branch from the loaded detail (data.state), Re-check / Update branch /
+// Resolve in a pipeline / Resolve in a terminal. Idempotent (re-run by refreshHdFromRow); handlers are properties.
+const BASE_FINISHED = new Set(['done', 'stopped', 'error']);
+
+/** [{ key, name, rec, resolving, prOpen }] from the detail state; a row-level summary newer than the detail wins
+ *  (no file list then). `prOpen`: the branch has an open PR, whose Overview row owns the pipeline Resolve. */
+function hdBaseMembers(record, data) {
+  const st = (data && data.state) || {};
+  const newer = (a, b) => (b && (!a || Date.parse(b.at || '') > Date.parse(a.at || '')) ? b : a);
+  if (st.target === 'workspace') {
+    const names = new Map((st.projects || []).map((p) => [p.projectKey, p.projectName]));
+    const rows = new Map(((record && record.members) || []).map((m) => [m.memberKey, m]));
+    return Object.entries(st.branches || {}).filter(([, br]) => br && br.feature && br.branchKept !== false && !br.branchDeleted)
+      .map(([key, br]) => ({ key, name: names.get(key) || key, rec: newer(br.baseCheck, rows.get(key) && rows.get(key).baseCheck),
+        resolving: !!br.baseResolve, prOpen: prStateOf(rows.get(key) && rows.get(key).pr) === 'OPEN' }));
+  }
+  const br = st.branch || {};
+  return br.feature ? [{ key: null, name: null, rec: newer(br.baseCheck, record && record.baseCheck), resolving: !!br.baseResolve,
+    prOpen: prStateOf(record && record.pr) === 'OPEN' }] : [];
+}
+
+function paintHdBase(screen, record, data) {
+  const box = screen.querySelector('.hd-base-check');
+  const list = box && box.querySelector('.hd-base-members');
+  if (!box || !list) return;
+  if (hdBaseMsgsFor !== record.id) { hdBaseMsgs.clear(); hdBaseMsgsFor = record.id; }
+  const status = String((data && data.state && data.state.status) || record.status || '').toLowerCase();
+  const members = BASE_FINISHED.has(status) && record.id ? hdBaseMembers(record, data) : [];
+  // Only branches that need something show a line: up to date and not-yet-checked stay quiet (the
+  // check runs on open), unless an action's result or a pending resolution has something to say.
+  const shown = members.filter((m) => hdBaseNeedsLine(m));
+  box.hidden = !shown.length;
+  list.replaceChildren(...shown.map((m) => hdBaseItem(screen, record, data, m)));
+  if (members.length) hdBaseAuto(screen, record, data, members);
+}
+
+/** The check runs by itself once per open of the detail when a branch was never checked, or was checked
+ *  over BASE_AUTO_MS ago. Quiet: no result line, a failed request leaves the stored line as it was. */
+const BASE_AUTO_MS = 5 * 60_000;
+let hdBaseAutoFor = null;          // the run whose open may still auto-check (setupHdActions arms it)
+
+function hdBaseAuto(screen, record, data, members) {
+  if (hdBaseAutoFor !== record.id) return;
+  const stale = (rec) => !rec || !(Date.now() - Date.parse(rec.at || '') < BASE_AUTO_MS);
+  if (!members.some((m) => stale(m.rec))) return;
+  hdBaseAutoFor = null;
+  const ws = data && data.state && data.state.target === 'workspace';
+  fetch(`/api/runs/${encodeURIComponent(record.id)}/base-check?${runActionQuery(record.projectDir || null, record).toString()}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto: true }) })
+    .then(async (res) => {
+      const d = res.ok ? await safeJson(res) : null;
+      if (!d || !Array.isArray(d.members)) return;
+      for (const x of d.members) hdBaseStore(data, ws ? x.projectKey : null, x.baseCheck);
+      if (hdBaseMsgsFor === record.id) paintHdBase(screen, record, data);   // still this run's detail
+    })
+    .catch(() => {});
+}
+
+function hdBaseNeedsLine(m) {
+  const st = baseCheckModel(m.rec).status;
+  return !['none', 'up-to-date', 'no-branch'].includes(st) || m.resolving || hdBaseMsgs.has(m.key || '');
+}
+
+function hdBaseItem(screen, record, data, m) {
+  const md = baseCheckModel(m.rec);
+  const li = document.createElement('li');
+  li.className = 'hd-base-member';
+  if (m.key) li.dataset.memberKey = m.key;
+  const el = (tag, cls, text) => { const x = document.createElement(tag); x.className = cls; if (text) x.textContent = text; return x; };
+  if (m.name) li.append(el('span', 'hd-base-name mono', m.name));
+  const pill = el('span', `hd-base-pill tone-${md.tone}`, md.label);
+  if (md.when) pill.title = md.when;
+  li.append(pill);
+  // The house small ghost button, compact as in other inline rows; advanced-level like Publish branch
+  // (index.html), while the status line shows at every level. Gated like static markup: dataset.minLevel.
+  const btn = (cls, text, show, fn) => { const b = el('button', `${cls} btn btn-ghost btn-mini`, text); b.type = 'button'; b.hidden = !show;
+    b.dataset.minLevel = 'advanced'; b.onclick = () => fn(b); return b; };
+  // The check runs on open, so Re-check is only offered where it does something more: after a failed
+  // check, and to finish a resolution (it settles and pushes; the automatic check does not).
+  const recheck = md.status === 'error' || m.resolving;
+  li.append(
+    btn('hd-base-update', 'Update branch', md.canUpdate, (b) => hdBaseAction(screen, record, data, m, 'update-branch', b)),
+    // An open PR's pipeline fix is Watch PR's Resolve, on the PR row in the Overview tab: it pushes to the PR.
+    btn('hd-base-pipeline', 'Resolve in a pipeline', md.canResolve && !m.prOpen, (b) => hdBaseAction(screen, record, data, m, 'resolve-pipeline', b)),
+    btn('hd-base-terminal', 'Resolve in a terminal', md.canResolve, (b) => hdBaseAction(screen, record, data, m, 'resolve-terminal', b)),
+    btn('hd-base-recheck', 'Re-check', recheck, (b) => hdBaseAction(screen, record, data, m, 'base-check', b)),
+  );
+  // D19: the last action's result or refusal for this member (kept across repaints by member key).
+  const msg = hdBaseMsgs.get(m.key || '');
+  if (msg) li.append(el('span', `hd-base-msg hint${msg.err ? ' hd-base-msg-err' : ''}`, msg.text));
+  if (md.files.length) {
+    const ul = el('ul', 'hd-base-files mono');
+    ul.append(...md.files.map((f) => el('li', '', f)), ...(md.more ? [el('li', 'hint', `…and ${md.more} more`)] : []));
+    li.append(ul);
+  }
+  return li;
+}
+
+/** Per-member result lines of the open detail. Cleared when another run's detail opens (paintHdBase, above). */
+const hdBaseMsgs = new Map();
+let hdBaseMsgsFor = null;
+
+/** Write a fresh record into the loaded detail so a repaint shows it. */
+function hdBaseStore(data, key, rec) {
+  const st = data && data.state; if (!st || !rec) return;
+  if (st.target === 'workspace') { if (st.branches && st.branches[key]) st.branches[key].baseCheck = rec; }
+  else if (st.branch) st.branch.baseCheck = rec;
+}
+
+/** The loaded detail learns of a resolution the server just marked, so Re-check shows without a reload. */
+function hdBaseMarkResolving(data, key) {
+  const st = data && data.state; if (!st) return;
+  const br = st.target === 'workspace' ? st.branches && st.branches[key] : st.branch;
+  if (br && !br.baseResolve) br.baseResolve = { via: 'terminal' };
+}
+
+const BASE_ACTION_TITLE = { 'base-check': 'Could not check the branch', 'update-branch': 'Could not update the branch',
+  'resolve-pipeline': 'Could not start the resolve run', 'resolve-terminal': 'Could not open the terminal' };
+
+async function hdBaseAction(screen, record, data, m, action, button) {
+  button.disabled = true;
+  const say = (text, err = false) => hdBaseMsgs.set(m.key || '', { text, err });
+  hdBaseMsgs.delete(m.key || '');
+  try {
+    const qs = runActionQuery(record.projectDir || null, record);
+    const body = { ...(m.key ? { member: m.key } : {}), ...(action === 'resolve-terminal' ? { cols: 100, rows: 30 } : {}) };
+    const res = await fetch(`/api/runs/${encodeURIComponent(record.id)}/${action}?${qs.toString()}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await safeJson(res);
+    if (d && d.baseCheck) hdBaseStore(data, m.key, d.baseCheck);          // refusals carry the fresh check too
+    if (!res.ok) throw new Error((d && d.error) || `HTTP ${res.status}`);
+    if (action === 'base-check') {
+      for (const x of d.members || []) hdBaseStore(data, m.key ? x.projectKey : null, x.baseCheck);
+      const s = d.settled && Object.values(d.settled)[0];
+      if (s && s.push) say(s.push.pushed ? `Resolved and pushed to ${s.push.remote}.` : s.push.error ? `Resolved; the push failed: ${s.push.error}` : 'Resolved.', !!s.push.error);
+    }
+    if (action === 'update-branch') {
+      const p = d.push || {};
+      say(p.pushed ? `Merged and pushed to ${p.remote}.` : p.error ? `Merged; the push failed: ${p.error}` : 'Merged locally (the branch is not published).', !!p.error);
+    }
+    if (action === 'resolve-pipeline' && d.runId) { location.hash = `running/${d.runId}`; return; }
+    if (action === 'resolve-terminal' && d.session) {
+      hdBaseMarkResolving(data, m.key);              // the server marked it: Re-check now settles it
+      say(`Merge started: ${(d.conflicts || []).length} conflicting file(s). Commit it in the terminal, then Re-check.`);
+      terminalPane?.showSession(d.session.id);
+    }
+  } catch (err) {
+    say(`${BASE_ACTION_TITLE[action]}: ${err.message}`, true);
+  } finally {
+    button.disabled = false;
+    paintHdBase(screen, record, data);
+    // A merge (Update branch, or a resolution Re-check settled) moves the branch: when its push did not
+    // go through, the header's publish button turns into Push changes.
+    if (action === 'update-branch' || action === 'base-check') paintHdPublish(screen, record, data);
+  }
+}
+
 function setupHdActions(screen, record, data) {
   const st = data.state;
   const retained = paintHdBanners(screen, record, data);
@@ -23063,6 +23466,8 @@ function setupHdActions(screen, record, data) {
   paintHdPr(screen, record, data);
   paintHdAfter(screen, record, data);
   paintHdPublish(screen, record, data);
+  hdBaseAutoFor = record.id;
+  paintHdBase(screen, record, data);
 }
 
 // Re-run only the IDEMPOTENT painters after the open detail's real list row
@@ -23251,6 +23656,14 @@ function refreshHdFromRow() {
   // another tab, the CLI or chat): its header, banners and tabs read the loaded detail, so load it again.
   const loaded = String((histDetailState.data.state && histDetailState.data.state.status) || '').toLowerCase();
   if (HD_RESUMABLE.has(loaded) && RD_TERMINAL.includes(String(row.status || '').toLowerCase()) && reloadHistDetail()) return;
+  // History rows intentionally carry only base-check summaries. If one is newer than the loaded detail,
+  // rehydrate the detail instead of replacing its authoritative conflicting-file list with that summary.
+  const st = histDetailState.data.state || {};
+  const newerBaseCheck = (summary, full) => summary && (!full || Date.parse(summary.at || '') > Date.parse(full.at || ''));
+  const baseChanged = st.target === 'workspace'
+    ? (row.members || []).some((m) => newerBaseCheck(m.baseCheck, st.branches?.[m.memberKey]?.baseCheck))
+    : newerBaseCheck(row.baseCheck, st.branch?.baseCheck);
+  if (baseChanged && reloadHistDetail()) return;
   histDetailState.record = row;
   const { screen, data } = histDetailState;
   paintHdHeaderMeta(screen, row, data);
@@ -23259,6 +23672,7 @@ function refreshHdFromRow() {
   refreshHistResumeGating();
   paintHdPr(screen, row, data);                         // idempotent; re-binds btn.onclick
   paintHdAfter(screen, row, data);
+  paintHdBase(screen, row, data);                       // #620: a post-run check that landed after the open
   paintHdLive(screen, row, data);
   paintHdGlance(screen, row, data);   // the head's project/day/clock line re-reads the record
   refreshHdOverviewTab();   // the one tab body that reads mutable record fields
@@ -27732,7 +28146,13 @@ function stepModelByNode(stepper, runEngine = 'claude') {
     if (!n || n.kind !== 'agent' || !n.id || typeof n.model !== 'string' || !n.model) continue;
     const entry = modelById(n.model);
     if (entry && !runsOn(entry, runEngine)) continue;
-    out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '' };
+    // A node that ran the model the run's own overlay set (the Ask run card's per-agent picks, manifest.runOverlay) says
+    // so on its pill — not when another model ran (a pinned Memory pair or the run's engine won), and never for an entry
+    // naming only fan-out or questions.
+    const ov = stepper.runOverlay && stepper.runOverlay.nodes && typeof stepper.runOverlay.nodes === 'object' && Object.hasOwn(stepper.runOverlay.nodes, n.id)
+      ? stepper.runOverlay.nodes[n.id] : null;
+    const perRun = !!(ov && typeof ov.model === 'string' && ov.model && typeof n.model === 'string' && ov.model.toLowerCase() === n.model.toLowerCase());
+    out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '', ...(perRun ? { perRun: true } : {}) };
   }
   return out;
 }
@@ -27746,8 +28166,10 @@ function stepModelPillHtml(sel) {
   const m = modelById(sel.model);
   // "· bridged" (model-bridge-design.md §8.6): the node ran through worca's own
   // bridge — the catalog knows, the manifest does not.
-  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '') + (m && m.bridged ? ' · bridged' : '');
-  return `<span class="sub-model-pill">${escapeHtml(text)}</span>`;
+  // " · this run": the model came from the run's own per-run picks (manifest.runOverlay) — said in the text, like
+  // " · bridged", because a title is hover-only (touch, keyboard and screen-reader users never get it).
+  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '') + (m && m.bridged ? ' · bridged' : '') + (sel.perRun ? ' · this run' : '');
+  return `<span class="sub-model-pill"${sel.perRun ? ' title="Picked for this run only"' : ''}>${escapeHtml(text)}</span>`;
 }
 
 // Neutral count badge for how many times an agent / sub-agent invoked the graphify
@@ -28999,6 +29421,7 @@ function runsHistItem(p) {
     archived: !!p.archived,
     checks: typeof p.checks === 'number' ? p.checks : null,
     files: typeof p.files === 'number' ? p.files : null,
+    base: baseRowNote(p.baseCheck),
   };
 }
 function runsSchedItem(t) {
@@ -29010,7 +29433,7 @@ function runsSchedItem(t) {
 
 // pipelineId: a live row painted before its id arrived must repaint once it does (selection
 // and the focus fallbacks below match on it).
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName];
+const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over (same slot first), then the
@@ -32696,7 +33119,7 @@ document.addEventListener('worca:level', () => {
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'runs', 'ask', 'guardrails', 'memory'];
+const SETTINGS_TABS = ['general', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
 // Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
 // it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
 const SETTINGS_FORM_TABS = ['general', 'runs', 'ask'];
@@ -32753,6 +33176,12 @@ function rewriteHash([view, param]) {
 }
 // Test hook: lets a test call the router the way an in-app caller does.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { showView });
+// CDP proofs (D12): flip a flag through the real API; every tab follows through the `flags` frame.
+if (typeof window !== 'undefined') {
+  window.__np = Object.assign(window.__np || {}, {
+    flags: { set: (key, on) => mcpApi('PATCH', '/api/flags', { [key]: on }) },
+  });
+}
 // The Settings tab currently painted, so the leave-guards below can fire on a
 // TAB transition and not only on a view transition.
 let currentSettingsTab = null;
@@ -33033,6 +33462,7 @@ function showSettingsTab(param = '') {
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
+  if (tab === 'experimental') loadFlagsTab(sub);
 }
 
 // A link to one card ('#settings/runs/actions', '#models/engine'): scroll to the
@@ -33082,6 +33512,12 @@ let syncingHash = false;
 // Boot paint of the account menu's mode row / Settings card. Here, not beside levelCtl: a first paint can
 // dispatch worca:level, whose banner repaint reads currentShownView (declared just above).
 levelCtl.paint();
+// Feature flags: the shell came with them (data-flags + #flag-gates); a page restored from a stale
+// cache corrects itself from the server (D6), and static [data-flag-chip] markup gets its chip (D9).
+decorateFlagChips(document);
+void mcpApi('GET', '/api/flags').then((r) => {
+  if (r.ok && r.data && Array.isArray(r.data.flags)) applyFlags(Object.fromEntries(r.data.flags.map((f) => [f.key, f.on])));
+});
 // Renderers that branch on the mode. Registered here (after levelListeners exists); every callee
 // is a hoisted function declaration.
 onLevelChange(() => { refreshNewPipelinePickers(); });     // Simple lists Auto + Default only

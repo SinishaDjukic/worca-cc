@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootApp } from './helpers/run-page-boot.mjs';
-import { applyShapeFirstHello } from '../ui/public/chat/shape-gate.mjs';
+import { setShapeFirst } from './helpers/shape-gate.mjs';
 
 const REVIEWS = [
   { kind: 'impl', cycle: 1, issues: [], summary: '', checklist: [{ id: 'R-qa-1', perspective: 'qa', text: 't', status: 'unmet', evidence: 'x' }] },
@@ -18,7 +18,7 @@ const fetchHandler = (url) => {
 };
 const hello = (ctx, features, run) => {
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', ...(features ? { features } : {}), runs: [run] });
+  ctx.dispatch({ type: 'hello', ...(features ? { flags: features } : {}), runs: [run] });
 };
 const host = (ctx) => ctx.window.document.querySelector('#run-detail .rd-sec[data-sec="overview"] .rd-checklists');
 
@@ -31,12 +31,12 @@ test('a done run shows one group per review cycle on its Overview, with the gate
     assert.equal(host(ctx).hidden, false);
     assert.equal(host(ctx).querySelectorAll('.shape-checklists .shape-cl-cycle').length, 2);
   } finally {
-    applyShapeFirstHello({});
+    setShapeFirst(false);
   }
 });
 
 test('the gate off hides the group', async () => {
-  applyShapeFirstHello({});
+  setShapeFirst(false);
   const ctx = await bootApp({ fetchHandler });
   hello(ctx, null, RUN);
   ctx.go('running/r1/details/overview');
@@ -58,6 +58,6 @@ test('a live run that is not shaping never fetches the run data for the group', 
     assert.equal(count(), before);
     assert.equal(host(ctx).hidden, true);
   } finally {
-    applyShapeFirstHello({});
+    setShapeFirst(false);
   }
 });

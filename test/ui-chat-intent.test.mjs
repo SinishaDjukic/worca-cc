@@ -11,7 +11,7 @@ import {
   createIntentAddon, installIntentAddon, intentText, INTENTS, EXAMPLES, EXAMPLE_MS, INTENT_ADDON_ID,
 } from '../ui/public/chat/intent.mjs';
 import { composerAddons, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
-import { applyShapeFirstHello } from '../ui/public/chat/shape-gate.mjs';
+import { setShapeFirst } from './helpers/shape-gate.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const DEFAULT_PH = 'Ask about any run, agent, or project…';   // P1's resting placeholder (setPlaceholder(null))
@@ -198,11 +198,11 @@ test('Plan it with me (Shape it first): refused while the gate is off; with it o
   assert.equal(INTENTS.shape.badge, 'New');
   const s = setup();
   try {
-    applyShapeFirstHello({});
+    setShapeFirst(false);
     assert.equal(s.ctl.set('shape'), false, 'gate off (the default): no intent');
     assert.equal(s.ctl.current(), null);
     assert.equal(s.chip(), null);
-    applyShapeFirstHello({ features: { shapeFirst: true } });
+    setShapeFirst(true);
     assert.equal(s.ctl.set('shape'), true);
     assert.equal(s.ctl.current(), 'shape');
     assert.equal(s.chip().querySelector('.chat-intent-l').textContent, 'Plan it with me');
@@ -211,7 +211,7 @@ test('Plan it with me (Shape it first): refused while the gate is off; with it o
     assert.ok(sent.startsWith(INTENTS.shape.lead), sent);
     assert.equal(sent, `${INTENTS.shape.lead}\n\nUploads fail on large files`);
   } finally {
-    applyShapeFirstHello({});
+    setShapeFirst(false);
   }
 });
 

@@ -10,7 +10,7 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { snapshotFromState } from '../ui/public/ask-run-card.mjs';
 import { createChatRunCard, resultWord, answerReceipt, autoChip, midTrunc, progressIdent, runRefOf } from '../ui/public/chat/run-card.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from '../ui/public/ask/registry.mjs';
-import { applyShapeFirstHello } from '../ui/public/chat/shape-gate.mjs';
+import { setShapeFirst } from './helpers/shape-gate.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
@@ -961,7 +961,7 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
   try {
     await checkRows([
       { name: 'an approved plan with the gate on shows the line and the plan file name, between the sub-line and the stats', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $ } = mk();
         card.update(live({ shaping: SHAPING() }));
         const line = $('.chat-rc-shaped');
@@ -974,13 +974,13 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
         assert.equal($('.chat-rc-shaped-open'), null);
       } },
       { name: 'the gate off hides it', run: () => {
-        applyShapeFirstHello({});
+        setShapeFirst(false);
         const { card, $ } = mk();
         card.update(live({ shaping: SHAPING() }));
         assert.equal($('.chat-rc-shaped').hidden, true);
       } },
       { name: 'no shaping, or nothing approved, hides it — and a later snapshot without it hides a shown line', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $ } = mk();
         card.update(live());
         assert.equal($('.chat-rc-shaped').hidden, true);
@@ -992,7 +992,7 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
         assert.equal($('.chat-rc-shaped').hidden, true);
       } },
       { name: 'saved: "Saved to <path>" with an Open button that opens the plan through ctx.openArtifact', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $, calls } = mk();
         card.update(live({ shaping: SHAPING({ savedTo: 'docs/plans/2026-10-14-login.md' }) }));
         assert.equal($('.chat-rc-shaped-saved').textContent, 'Saved to docs/plans/2026-10-14-login.md');
@@ -1008,7 +1008,7 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
         assert.deepEqual(calls[0][2], { relPath: 'docs/plans/2026-10-14-login.md', kind: 'plan' });
       } },
       { name: 'a repaint never stacks a second line', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card } = mk();
         const snap = live({ shaping: SHAPING({ savedTo: 'docs/plans/x.md' }) });
         card.update(snap);
@@ -1018,7 +1018,7 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
       } },
     ]);
   } finally {
-    applyShapeFirstHello({});
+    setShapeFirst(false);
   }
 });
 
@@ -1026,7 +1026,7 @@ test('chat run card: the feature strip mounts the feature card for snap.shaping.
   try {
     await checkRows([
       { name: 'a feature and the gate on: ctx.mountFeature(host, id); the strip sits right after the stats', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $, calls } = mk();
         card.update(live({ shaping: { feature: { id: 'feat-1', index: 1, total: 3 } } }));
         const strip = $('.chat-rc-feature');
@@ -1035,12 +1035,12 @@ test('chat run card: the feature strip mounts the feature card for snap.shaping.
         assert.deepEqual(calls.filter((c) => c[0] === 'feature').map((c) => [c[1], c[2]]), [[strip, 'feat-1']]);
       } },
       { name: 'the gate off, or no feature: the strip is hidden and nothing is mounted', run: () => {
-        applyShapeFirstHello({});
+        setShapeFirst(false);
         const off = mk();
         off.card.update(live({ shaping: { feature: { id: 'feat-1', index: 1 } } }));
         assert.equal(off.$('.chat-rc-feature').hidden, true);
         assert.equal(off.calls.filter((c) => c[0] === 'feature').length, 0);
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const none = mk();
         none.card.update(live());
         assert.equal(none.$('.chat-rc-feature').hidden, true);
@@ -1049,7 +1049,7 @@ test('chat run card: the feature strip mounts the feature card for snap.shaping.
         assert.equal(none.calls.filter((c) => c[0] === 'feature').length, 0);
       } },
       { name: 'the REST form (feature only, no approved) mounts the strip and leaves .chat-rc-shaped hidden', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $, calls } = mk();
         card.update(live({ shaping: { feature: { id: 'feat-2', index: 1 } } }));
         assert.equal($('.chat-rc-shaped').hidden, true);
@@ -1058,7 +1058,7 @@ test('chat run card: the feature strip mounts the feature card for snap.shaping.
         assert.equal($('.chat-rc-shaped').nextElementSibling, $('.ask-rc-stats'), 'the pin: shaped line → stats');
       } },
       { name: 'a later snapshot without the feature hides a shown strip', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $ } = mk();
         card.update(live({ shaping: { feature: { id: 'feat-1', index: 1 } } }));
         assert.equal($('.chat-rc-feature').hidden, false);
@@ -1066,7 +1066,7 @@ test('chat run card: the feature strip mounts the feature card for snap.shaping.
         assert.equal($('.chat-rc-feature').hidden, true);
       } },
       { name: 'a ctx without mountFeature leaves the strip hidden and does not throw', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const dom = trackDom(new JSDOM('<!doctype html><html><body></body></html>'));
         const card = createChatRunCard({ doc: dom.window.document, win: dom.window, snapshot: null, ctx: {}, controls: {}, ident: { ...IDENT }, refresh: () => {} });
         card.update(live({ shaping: { feature: { id: 'feat-1', index: 1 } } }));
@@ -1074,7 +1074,7 @@ test('chat run card: the feature strip mounts the feature card for snap.shaping.
       } },
     ]);
   } finally {
-    applyShapeFirstHello({});
+    setShapeFirst(false);
   }
 });
 
@@ -1122,7 +1122,7 @@ test('chat run card result region: the checklist tally of a shaped run (spec D7)
   try {
     await checkRows([
       { name: 'unmet: the tally line reads out the counts and is open', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $ } = mk();
         card.update(done(ex({ met: 1, unmet: 1, na: 0, missing: 0, total: 2 })));
         const el = $('.chat-rc-checklist');
@@ -1130,32 +1130,32 @@ test('chat run card result region: the checklist tally of a shaped run (spec D7)
         assert.ok(el.classList.contains('is-open'));
       } },
       { name: 'all met: not open', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $ } = mk();
         card.update(done(ex({ met: 2, unmet: 0, na: 1, missing: 0, total: 3 })));
         assert.ok(!$('.chat-rc-checklist').classList.contains('is-open'));
       } },
       { name: 'not reported counts as open and is named', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $ } = mk();
         card.update(done(ex({ met: 1, unmet: 0, na: 0, missing: 1, total: 2 })));
         assert.equal($('.chat-rc-checklist').textContent, 'Checklist: 1 met · 0 unmet · 0 n/a · 1 not reported');
         assert.ok($('.chat-rc-checklist').classList.contains('is-open'));
       } },
       { name: 'gate off: no line', run: () => {
-        applyShapeFirstHello({});
+        setShapeFirst(false);
         const { card, $ } = mk();
         card.update(done(ex({ met: 1, unmet: 1, na: 0, missing: 0, total: 2 })));
         assert.equal($('.chat-rc-checklist'), null);
       } },
       { name: 'no checklist: no line', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $ } = mk();
         card.update(done(ex(null)));
         assert.equal($('.chat-rc-checklist'), null);
       } },
     ]);
   } finally {
-    applyShapeFirstHello({});
+    setShapeFirst(false);
   }
 });

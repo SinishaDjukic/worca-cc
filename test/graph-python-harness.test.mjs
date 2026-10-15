@@ -72,7 +72,8 @@ def main(api):
   assert.equal(frame.ok, true);
   assert.equal(frame.summary, 'ok 2');
   assert.deepEqual(frame.verdict, { issues: [] });
-  assert.deepEqual(frame.logs, [{ level: 'info', msg: 'wrote Py card' }]);
+  assert.deepEqual(frame.logs, [], 'api.log() streams on stderr; the frame carries none');
+  assert.match(r.err, /^\[info\] wrote Py card$/m);
   assert.equal(readFileSync(join(r.dir, 'out.md'), 'utf8'), '# out\n');
 });
 
@@ -114,7 +115,8 @@ def main(api):
   assert.equal(frame.ok, false);
   assert.equal(frame.error.message, 'no package.json in cwd');
   assert.match(frame.error.stack, /ValueError: no package\.json in cwd/);
-  assert.deepEqual(frame.logs, [{ level: 'warn', msg: 'about to fail' }]);
+  assert.deepEqual(frame.logs, []);
+  assert.match(r.err, /^\[warn\] about to fail$/m, 'a line logged before the raise is already out');
 });
 
 test('print() goes to stderr; stdout stays exactly one frame', { skip }, async () => {
@@ -199,7 +201,8 @@ def main(api):
     return {'summary': 's', 'outputs': {'out': {'value': {1, 2}}}}
 `, envelopeFor());
   assert.equal(set.code, 0, set.err);
-  assert.deepEqual(JSON.parse(set.out), { ok: false, logs: [{ level: 'info', msg: 'before' }],
+  assert.match(set.err, /^\[info\] before$/m);
+  assert.deepEqual(JSON.parse(set.out), { ok: false, logs: [],
     error: { message: 'frame is not serializable: Object of type set is not JSON serializable' } });
   const nan = await runHarness(`
 def main(api):
@@ -256,6 +259,7 @@ test('the page`s new-python-script template is a program THIS harness accepts', 
   // must be green on the first bench run before a character is typed (p1c-T09).
   const r = await runHarness(SCRIPT_TEMPLATES.python, (dir) => ({ ...envelopeFor()(dir), outputs: {}, verdictPath: null }));
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(JSON.parse(r.out), { ok: true, logs: [{ level: 'info', msg: 'hello from a worca script' }], summary: 'ok' });
+  assert.deepEqual(JSON.parse(r.out), { ok: true, logs: [], summary: 'ok' });
+  assert.match(r.err, /^\[info\] hello from a worca script$/m);
   assert.match(SCRIPT_TEMPLATES.python, /^def main\(api\):$/m, 'the entry point the harness requires');
 });

@@ -20,8 +20,10 @@ review later checks the code against the checklists the plan ended with.
 
 ## Turning it on
 
-Set `WORCA_SHAPE_FIRST=1` in the environment of the Worca server until the feature
-flag ships. While it is off, everything below is hidden or refused: the **Plan it
+Shape it first is an experimental feature, off by default. Turn on **Plan it with me** in
+Settings › Experimental (the `shapeFirst` feature flag, see [Feature flags](feature-flags.md)),
+or start Worca with `WORCA_FLAGS=shapeFirst`. It takes effect at once, without a restart.
+While it is off, everything below is hidden or refused: the **Plan it
 with me** tile, the nudge on a run card, the **Plans** tab, the `shape` field on
 `POST /api/run` (it answers "shape is not available on this server") and every
 `/api/shape/…` route (404).

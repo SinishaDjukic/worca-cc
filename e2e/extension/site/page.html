@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Rate limits — ACME API docs</title></head>
+<body>
+  <nav>Home · Guides · Reference</nav>
+  <main>
+    <h1>Rate limits</h1>
+    <p id="para">The ACME API uses a token bucket per API key. Each bucket refills at 10 tokens per second and holds at most 100 tokens.</p>
+    <p>When a bucket is empty, requests fail with HTTP 429 until it refills.</p>
+  </main>
+</body></html>

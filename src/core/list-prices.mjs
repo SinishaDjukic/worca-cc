@@ -34,6 +34,12 @@ export const CODEX_PRICES = Object.freeze({
   'gpt-5.3-codex-spark': [0.5, 3],
 });
 
+/** Ids whose list price depends on the prompt's length: past `aboveTokens` every rate is `multiplier`× the row above
+ *  (the row is the short-prompt tier). Display facts only (model-tiers.mjs) — the cost estimates keep the row. */
+export const LONG_PROMPT_PRICING = Object.freeze({
+  'claude-haiku-5-5': Object.freeze({ aboveTokens: 100_000, multiplier: 5 }),
+});
+
 /** The list-price row for a model id (`[1m]` twins and dated ids map to their base), or null. */
 export function listPriceFor(modelId) {
   const id = typeof modelId === 'string' ? modelId.trim().toLowerCase() : '';

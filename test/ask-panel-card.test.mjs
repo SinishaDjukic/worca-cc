@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { applyShapeFirstHello } from '../ui/public/chat/shape-gate.mjs';
+import { setShapeFirst } from './helpers/shape-gate.mjs';
 
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
@@ -70,7 +70,7 @@ function apiHandler(recorder = {}) {
     if (path.startsWith(`/api/ask/threads/${TID}/attachments/`)) return { ok: false, status: 404, json: async () => ({ error: 'attachment not found' }) };
     if (recorder.laneFail && path === '/api/agents') return { ok: false, status: 500, json: async () => ({ error: 'boom' }) };
     if (path === '/api/workflows/wf_default' || path === '/api/workflows/wf_review') return { ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: path.split('/').pop(), name: path.endsWith('wf_review') ? 'Review only' : 'Default' }) };
-    if (path === '/api/agents') return { ok: true, status: 200, json: async () => ({ agents: AGENTS, mockWriterRoles: [] }) };
+    if (path === '/api/agents') return { ok: true, status: 200, json: async () => ({ agents: recorder.agents || AGENTS, mockWriterRoles: [] }) };
     if (path === '/api/config' && method === 'GET') {
       recorder.configGets = [...(recorder.configGets || []), url];
       return { ok: true, status: 200, json: async () => configBody(recorder) };
@@ -377,6 +377,7 @@ test('ask-panel-card: an edited tunable on a pinned lane row re-sends the projec
   };
   const ctx = await openWithCard(MEM_CARD, rec, { fetchHandler: handler });
   const lane = await laneOf(ctx);
+  saveAsDefaults(ctx);
   const implFan = lane.querySelector('.ask-rp-tile[data-node-id="n_impl"] [data-ctl="fanOut"]');
   implFan.checked = false;
   implFan.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
@@ -420,6 +421,8 @@ test('ask-panel-card v2: the lane renders one tile per agent with effective valu
       assert.equal(plan2.querySelector('.ask-rp-eff button.on').textContent, 'high', 'model change picks the second effort the model offers');
       assert.equal(plan2.querySelector('.ask-rp-eff button[disabled]').textContent, 'xhigh', 'efforts the model lacks are disabled');
       assert.match(lane.querySelector('.ask-rp-sec-sub').textContent, /you changed 1 agent · 1 override/);
+      assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /Changes apply to this run only/, 'a card edit rides this run; nothing is saved');
+      saveAsDefaults(ctx);
       assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /Edits become this project's defaults for Default/);
       assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Haiku 4.5 ×1 · Opus 5.5 ×1 · inherit ×1 · 1 fan-out');
       lane.querySelector('.ask-rp-mini').click();
@@ -429,23 +432,31 @@ test('ask-panel-card v2: the lane renders one tile per agent with effective valu
   ]);
 });
 
-test('ask-panel-card v2: workspace target → lane read-only from the built-in catalog (D6)', async () => {
+test('ask-panel-card v2: workspace target → the lane edits THIS run (built-in catalog); Save as project defaults is off and locked (D6)', async () => {
   const rec = {};
   const ctx = await openWithCard(WS_CARD, rec);
   const lane = await laneOf(ctx);
   assert.ok(rec.configGets.some((u) => u === '/api/config'), 'no projectDir for a workspace');
-  const controls = [...lane.querySelectorAll('select,input,button.ask-rp-effbtn')];
-  assert.ok(controls.length > 5, 'the tiles rendered');
-  for (const c of controls) assert.equal(c.disabled, true);
-  assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /per project/);
+  const sel = lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model');
+  assert.equal(sel.disabled, false, 'a per-run pick needs no project');
+  const save = lane.querySelector('[data-ctl="saveDefaults"]');
+  assert.deepEqual([save.disabled, save.checked], [true, false]);
+  assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /apply to this run only — agent defaults are per project/);
+  sel.value = 'claude-haiku-4-5';
+  sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal(rec.configWrites, undefined, 'a workspace run writes no config');
+  assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_plan: { model: 'claude-haiku-4-5', effort: 'high' } } });
 });
 
-test('ask-panel-card v2: Start writes every edited row (pruned) BEFORE /api/run — per-role for wf_default, per-node (PATCH) for a saved workflow', async () => {
+test('ask-panel-card v2: with "Save as project defaults" on, Start writes every edited row (pruned) BEFORE /api/run — per-role for wf_default, per-node (PATCH) for a saved workflow', async () => {
   await checkRows([
     { name: 'ask-panel-card v2: Start writes every edited row (pruned) BEFORE /api/run — per-role for wf_default, per-node otherwise', run: async () => {
       const rec = {};
       const ctx = await openWithCard(PROJECT_CARD, rec);
       const lane = await laneOf(ctx);
+      saveAsDefaults(ctx);
       const planSel = lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model');
       planSel.value = 'claude-haiku-4-5';
       planSel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
@@ -462,6 +473,7 @@ test('ask-panel-card v2: Start writes every edited row (pruned) BEFORE /api/run 
       const rec = {};
       const ctx = await openWithCard({ ...PROJECT_CARD, workflowId: 'wf_review', workflowName: 'Review only' }, rec);
       const lane = await laneOf(ctx);
+      saveAsDefaults(ctx);
       const b = [...lane.querySelectorAll('.ask-rp-tile[data-node-id="n_impl"] .ask-rp-effbtn')].find((x) => x.textContent === 'max');
       b.click();
       ctx.doc.querySelector('[data-ask-card-start]').click();
@@ -496,6 +508,7 @@ test('ask-panel-card v2: the lane follows the run engine — Codex models only o
         configWorkflows: { wf_review: { nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high' } }, feedbacks: {} } } };
       const ctx = await openWithCard({ ...PROJECT_CARD, workflowId: 'wf_review', workflowName: 'Review only' }, rec);
       const lane = await laneOf(ctx);
+      saveAsDefaults(ctx);
       assert.equal(lane.querySelector('.ask-rp-tile[data-node-id="n_impl"] .ask-rp-model').value, '', 'the Claude pick shows as inherit on Codex');
       const fan = lane.querySelector('.ask-rp-tile[data-node-id="n_impl"] [data-ctl="fanOut"]');
       fan.checked = !fan.checked;
@@ -515,6 +528,7 @@ test('ask-panel-card v2: nothing starts when the config write fails or the extra
       const rec = { configResponse: { ok: false, status: 400, json: async () => ({ error: 'model "claude-haiku-4-5" does not support effort "max"' }) } };
       const ctx = await openWithCard(PROJECT_CARD, rec);
       const lane = await laneOf(ctx);
+      saveAsDefaults(ctx);
       const sel = lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model');
       sel.value = 'claude-haiku-4-5';
       sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
@@ -528,6 +542,7 @@ test('ask-panel-card v2: nothing starts when the config write fails or the extra
       const rec = {};
       const ctx = await openWithCard({ ...PROJECT_CARD, attachments: [{ id: 'att_00000001', name: 'big.pdf', bytes: 100 * 1024 * 1024 + 1, kind: 'binary' }] }, rec);
       const lane = await laneOf(ctx);
+      saveAsDefaults(ctx);
       const sel = lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model');
       sel.value = 'claude-haiku-4-5';
       sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
@@ -548,11 +563,12 @@ test('ask-panel-card v2: nothing starts when the config write fails or the extra
   ]);
 });
 
-test('ask-panel-card v2: Open in New Pipeline saves the edits too, then hands over', async () => {
+test('ask-panel-card v2: with "Save as project defaults" on, Open in New Pipeline saves the edits too, then hands over', async () => {
   const rec = {};
   const handed = [];
   const ctx = await openWithCard(PROJECT_CARD, rec, { openNewPipeline: (p) => handed.push(p) });
   const lane = await laneOf(ctx);
+  saveAsDefaults(ctx);
   const sel = lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model');
   sel.value = 'claude-haiku-4-5';
   sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
@@ -610,6 +626,7 @@ test('ask-panel-card v2: Open in New Pipeline disables itself for its async path
   const handed = [];
   const ctx = await openWithCard(PROJECT_CARD, rec, { openNewPipeline: (p) => handed.push(p) });
   const lane = await laneOf(ctx);
+  saveAsDefaults(ctx);
   const sel = lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model');
   sel.value = 'claude-haiku-4-5';
   sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
@@ -1116,8 +1133,8 @@ const NUDGE = { reason: 'decisions', size: 'large', openDecisions: ['Storage eng
   estimates: { asIs: null, shaped: null, same: false }, asIsAuto: false };
 const NUDGED_CARD = { ...PROJECT_CARD, nudge: NUDGE };
 const SHAPED_CARD = { ...PROJECT_CARD, workflowId: 'wf_shape', workflowName: 'Shape it first', shape: { perspectives: ['architect'] } };
-const gateOn = () => applyShapeFirstHello({ features: { shapeFirst: true } });
-const gateOff = () => applyShapeFirstHello({});
+const gateOn = () => setShapeFirst(true);
+const gateOff = () => setShapeFirst(false);
 // GET /api/workflows while the gate is on: wf_shape is listed, wf_shape_ux never is.
 const shapeListed = (rec) => { const base = apiHandler(rec); return (url, opts) => (url === '/api/workflows'
   ? { ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_shape', name: 'Shape it first' }] }) }
@@ -1253,5 +1270,246 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       assert.equal(startLabel(cardEl.querySelector('[data-ask-card-start]')), 'Start run');
       assert.equal(cardEl.querySelector('.ask-card-workflow').disabled, false);
     }),
+  ]);
+});
+
+// ── Ask Worca's per-agent picks (card.nodes) ride the lane as THIS run's overlay — never a config write ──
+const NODES_CARD = { ...PROJECT_CARD, workflowId: 'wf_review', workflowName: 'Review only',
+  nodes: {
+    n_plan: { model: 'claude-opus-5-5', effort: 'high', reason: 'Plans the auth change: a judgement step', facts: 'anthropic · top tier · $4/$20 per Mtok' },
+    n_rev: { model: 'claude-haiku-4-5', effort: 'medium', reason: 'A one-file diff' },
+  } };
+const tileOf = (lane, id) => lane.querySelector(`.ask-rp-tile[data-node-id="${id}"]`);
+function saveAsDefaults(ctx) {
+  const sw = ctx.doc.querySelector('.ask-rp-lane [data-ctl="saveDefaults"]');
+  sw.checked = true;
+  sw.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+}
+
+test('ask-panel-card: card.nodes pre-fills the lane — marker with the reason, the project setting beside it, per-row reset, Reset to proposal, summary count', async () => {
+  const ctx = await openWithCard(NODES_CARD);
+  const lane = await laneOf(ctx);
+  assert.equal(lane.dataset.levelKeep, '1', 'the picks apply at Start, so the lane shows at every mode');
+  const plan = tileOf(lane, 'n_plan');
+  assert.equal(plan.querySelector('.ask-rp-model').value, 'claude-opus-5-5');
+  assert.equal(plan.querySelector('.ask-rp-eff button.on').textContent, 'high');
+  const mark = plan.querySelector('.ask-rp-prop');
+  assert.equal(mark.textContent, 'Ask Worca');
+  assert.equal(mark.title, 'Proposed by Ask Worca for this run — Plans the auth change: a judgement step — anthropic · top tier · $4/$20 per Mtok');
+  assert.deepEqual([mark.tabIndex, mark.getAttribute('aria-label')], [0, mark.title], 'the reason reaches keyboard and screen-reader users too');
+  assert.equal(plan.querySelector('.ask-rp-name small').textContent, 'Ask Worca · step 1 · project: inherit');
+  assert.ok(!plan.classList.contains('mod'), 'a proposed pick is not the user\'s edit');
+  assert.equal(tileOf(lane, 'n_rev').querySelector('.ask-rp-eff button.on').textContent, 'medium');
+  assert.equal(tileOf(lane, 'n_impl').querySelector('.ask-rp-prop'), null, 'a node the proposal does not name');
+  assert.equal(tileOf(lane, 'n_impl').querySelector('.ask-rp-row-reset'), null, 'nothing to reset');
+  assert.match(lane.querySelector('.ask-rp-sec-sub').textContent, /^Ask Worca picked 2 agents for this run · 2 overrides of the workflow defaults$/);
+  assert.equal(lane.querySelector('.ask-rp-mini').hidden, true, 'nothing to reset to the proposal yet');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Opus 5.5 ×2 · Haiku 4.5 ×1 · 1 fan-out · 2 picked by Ask Worca');
+  plan.querySelector('.ask-rp-row-reset').click();
+  const plan2 = tileOf(lane, 'n_plan');
+  assert.equal(plan2.querySelector('.ask-rp-model').value, '', 'back to the project\'s own setting');
+  assert.ok(plan2.classList.contains('mod'), 'moved off the proposal');
+  assert.equal(plan2.querySelector('.ask-rp-m').textContent, 'project default');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · inherit ×1 · Opus 5.5 ×1 · Haiku 4.5 ×1 · 1 fan-out · 1 picked by Ask Worca');
+  assert.equal(lane.querySelector('.ask-rp-mini').hidden, false);
+  lane.querySelector('.ask-rp-mini').click();
+  assert.equal(tileOf(lane, 'n_plan').querySelector('.ask-rp-model').value, 'claude-opus-5-5', 'Reset to proposal brings the pick back');
+  assert.ok(tileOf(lane, 'n_plan').querySelector('.ask-rp-prop'));
+});
+
+test('ask-panel-card: Start sends the lane rows that differ from the project as THIS run\'s overlay and writes no config', async () => {
+  await checkRows([
+    { name: 'the proposal alone', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard(NODES_CARD, rec);
+      await laneOf(ctx);
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.deepEqual(rec.order, ['run'], 'no config write');
+      assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high' }, n_rev: { model: 'claude-haiku-4-5', effort: 'medium' } } });
+    } },
+    { name: 'plus a user edit on another agent (fan-out off): the flag rides alone, model and effort stay the project\'s', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard(NODES_CARD, rec);
+      const lane = await laneOf(ctx);
+      const fan = tileOf(lane, 'n_impl').querySelector('[data-ctl="fanOut"]');
+      fan.checked = false;
+      fan.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].overlay.nodes.n_impl, { fanOut: false });
+      assert.equal(rec.configWrites, undefined);
+    } },
+    { name: 'a card without picks and without edits sends no overlay key', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, workflowId: 'wf_review', workflowName: 'Review only' }, rec);
+      await laneOf(ctx);
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal('overlay' in rec.runBodies[0], false);
+    } },
+  ]);
+});
+
+test('ask-panel-card: with "Save as project defaults" on, Start persists the picks first (D1) and sends no overlay', async () => {
+  const rec = {};
+  const ctx = await openWithCard(NODES_CARD, rec);
+  await laneOf(ctx);
+  saveAsDefaults(ctx);
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 8; i++) await ctx.tick();
+  assert.deepEqual(rec.order, ['config:PATCH', 'config:PATCH', 'run']);
+  assert.deepEqual(rec.configWrites[0].body, { projectDir: '/repos/proj', workflowId: 'wf_review', nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high', fanOut: null, askQuestions: null, subagentModel: '' } } });
+  assert.equal('overlay' in rec.runBodies[0], false);
+});
+
+test('ask-panel-card: the picks follow the run engine — on a Codex run the Claude picks are healed away and nothing is sent', async () => {
+  const rec = { runEngine: 'codex', extraModels: [GPT] };
+  const ctx = await openWithCard({ ...NODES_CARD, warnings: ['W'] }, rec);
+  const lane = await laneOf(ctx);
+  assert.equal(lane.querySelector('.ask-rp-prop'), null);
+  assert.equal(lane.querySelector('.ask-rp-lane-warn'), null, 'no pick is laid in, so no policy word about one');
+  assert.equal(lane.dataset.levelKeep, undefined, 'no pick is laid in: the lane is Expert-only again');
+  assert.equal(tileOf(lane, 'n_plan').querySelector('.ask-rp-model').value, '');
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal('overlay' in rec.runBodies[0], false);
+});
+
+test('ask-panel-card: Open in New run with per-run picks and the switch off asks first, then hands over WITHOUT writing config', async () => {
+  const rec = {};
+  const handed = [];
+  const asked = [];
+  const ctx = await openWithCard(NODES_CARD, rec, { openNewPipeline: (p) => handed.push(p), confirm: async (o) => { asked.push(o); return true; } });
+  await laneOf(ctx);
+  ctx.doc.querySelector('[data-ask-card-open-np]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].title, 'Open New run without the agent picks?');
+  assert.equal(rec.configWrites, undefined);
+  assert.equal(handed.length, 1);
+  const rec2 = {};
+  const handed2 = [];
+  const ctx2 = await openWithCard(NODES_CARD, rec2, { openNewPipeline: (p) => handed2.push(p), confirm: async () => false });
+  await laneOf(ctx2);
+  ctx2.doc.querySelector('[data-ask-card-open-np]').click();
+  for (let i = 0; i < 6; i++) await ctx2.tick();
+  assert.equal(handed2.length, 0, 'cancelled: the card stays');
+  assert.equal(rec2.configWrites, undefined);
+});
+
+test('ask-panel-card: "inherit" over the project\'s own pick cannot ride one run — Start says so and sends nothing', async () => {
+  const rec = { configWorkflows: { wf_review: { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high' } }, feedbacks: {} } } };
+  const ctx = await openWithCard({ ...PROJECT_CARD, workflowId: 'wf_review', workflowName: 'Review only' }, rec);
+  const lane = await laneOf(ctx);
+  const sel = tileOf(lane, 'n_plan').querySelector('.ask-rp-model');
+  assert.equal(sel.value, 'claude-opus-5-5', 'the project\'s pick');
+  sel.value = '';
+  sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal(rec.runBodies, undefined);
+  assert.match(ctx.doc.querySelector('.ask-card-err').textContent, /^Plan: "inherit" over this project's own model only works as a project default/);
+});
+
+test('ask-panel-card: the proposal\'s team-policy warnings show above the agents', async () => {
+  const w = "The reviewer's model claude-haiku-4-5 is not in the allowed list (claude-opus-5-5). The run still starts with it.";
+  const ctx = await openWithCard({ ...NODES_CARD, warnings: [w] });
+  const lane = await laneOf(ctx);
+  assert.deepEqual([...lane.querySelectorAll('.ask-rp-lane-warn')].map((n) => n.textContent), [w]);
+});
+
+test('ask-panel-card: on a workspace card a standing pick is sent outright, even when it equals the built-in default — the run merges over its primary member', async () => {
+  const rec = {};
+  const ctx = await openWithCard({ ...WS_CARD, nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high', reason: 'A wide change' } } }, rec);
+  const lane = await laneOf(ctx);
+  const impl = tileOf(lane, 'n_impl');
+  assert.ok(impl.querySelector('.ask-rp-prop'), 'the pick stands');
+  assert.match(impl.querySelector('.ask-rp-name small').textContent, / · default: Opus 5\.5 · high$/, 'no project to compare with');
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal(rec.configWrites, undefined);
+  assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high' } } });
+});
+
+test('ask-panel-card: a Start whose lane never loaded still sends Ask Worca\'s picks as proposed — the run API checks them', async () => {
+  const rec = { laneFail: true };
+  const ctx = await openWithCard(NODES_CARD, rec);
+  await laneOf(ctx);
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high' }, n_rev: { model: 'claude-haiku-4-5', effort: 'medium' } } });
+});
+
+test('ask-panel-card: "subs: default" over the project\'s own sub-agent pick rides as auto — what an unset node runs', async () => {
+  const rec = { configWorkflows: { wf_review: { nodes: { n_impl: { subagentModel: 'opus' } }, feedbacks: {} } } };
+  const ctx = await openWithCard({ ...PROJECT_CARD, workflowId: 'wf_review', workflowName: 'Review only' }, rec);
+  const lane = await laneOf(ctx);
+  const sub = tileOf(lane, 'n_impl').querySelector('.ask-rp-subagent');
+  assert.equal(sub.value, 'opus', 'the project\'s pick');
+  sub.value = '';
+  sub.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal(ctx.doc.querySelector('.ask-card-err').textContent, '');
+  assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_impl: { subagentModel: 'auto' } } });
+});
+
+test('ask-panel-card: on a workspace card an agent the workspace run always fans out shows fan-out on and locked', async () => {
+  const agents = AGENTS.map((a) => (a.key === 'implementer' ? { ...a, workspaceFanOut: true } : a));
+  const ctx = await openWithCard(WS_CARD, { agents });
+  const lane = await laneOf(ctx);
+  const fan = tileOf(lane, 'n_impl').querySelector('[data-ctl="fanOut"]');
+  assert.deepEqual([fan.checked, fan.disabled, fan.closest('.ask-rp-ctl').title], [true, true, 'A workspace run fans this agent out over its projects']);
+  assert.equal(tileOf(lane, 'n_plan').querySelector('[data-ctl="fanOut"]').disabled, false, 'an agent without workspaceFanOut stays editable');
+  const ctx2 = await openWithCard(PROJECT_CARD, { agents });
+  const lane2 = await laneOf(ctx2);
+  assert.equal(tileOf(lane2, 'n_impl').querySelector('[data-ctl="fanOut"]').disabled, false, 'a project run fans out as the lane says');
+});
+
+test('ask-panel-card: on a workspace card another edit on a picked agent keeps Ask Worca\'s model in the overlay', async () => {
+  const rec = {};
+  const ctx = await openWithCard({ ...WS_CARD, nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high', reason: 'A wide change' } } }, rec);
+  const lane = await laneOf(ctx);
+  const fan = tileOf(lane, 'n_impl').querySelector('[data-ctl="fanOut"]');
+  fan.checked = false;
+  fan.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high', fanOut: false } } });
+});
+
+test('ask-panel-card: a Start while the lane reloads for another engine waits for it — the Claude picks are healed away, never sent unhealed', async () => {
+  const rec = { extraModels: [GPT] };
+  const ctx = await openWithCard(NODES_CARD, rec);
+  await laneOf(ctx);
+  const eng = ctx.doc.querySelector('.ask-card-engine');
+  eng.value = 'codex';
+  eng.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 10; i++) await ctx.tick();
+  assert.equal(rec.runBodies[0].engine, 'codex');
+  assert.equal('overlay' in rec.runBodies[0], false);
+});
+
+test('ask-panel-card: Open in New run asks before leaving picks behind that are no edits — a workspace pick equal to its built-in row, a lane that never loaded', async () => {
+  await checkRows([
+    { name: 'a workspace pick equal to its built-in row (no Save switch to offer there)', run: async () => {
+      const asked = [];
+      const ctx = await openWithCard({ ...WS_CARD, nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high' } } }, {}, { openNewPipeline: () => {}, confirm: async (o) => { asked.push(o); return false; } });
+      await laneOf(ctx);
+      ctx.doc.querySelector('[data-ask-card-open-np]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(asked.length, 1);
+      assert.doesNotMatch(asked[0].message, /Save as project defaults/);
+    } },
+    { name: 'a lane that never loaded', run: async () => {
+      const asked = [];
+      const ctx = await openWithCard(NODES_CARD, { laneFail: true }, { openNewPipeline: () => {}, confirm: async (o) => { asked.push(o); return false; } });
+      await laneOf(ctx);
+      ctx.doc.querySelector('[data-ask-card-open-np]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(asked.length, 1);
+    } },
   ]);
 });

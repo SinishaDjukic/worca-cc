@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootApp, runPanel } from './helpers/run-page-boot.mjs';
 
-const GATE = { features: { shapeFirst: true } };
+const GATE = { flags: { shapeFirst: true } };
 const click = (ctx, el) => el.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
 const res = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 
@@ -35,7 +35,7 @@ async function openOutline({ gate = true } = {}) {
   const r = recorder();
   const ctx = await bootApp({ fetchHandler: r.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', ...(gate ? GATE : {}), runs: [{ runId: RUN_ID, title: 'Outline demo', projectDir: '/tmp/p', status: 'running', kind: 'run',
+  ctx.dispatch({ type: 'hello', flags: { shapeFirst: !!gate }, runs: [{ runId: RUN_ID, title: 'Outline demo', projectDir: '/tmp/p', status: 'running', kind: 'run',
     startedAt: '2026-01-01T00:00:00Z', shaping: { perspectives: [], rounds: [], approved: null, savedTo: null }, pendingQuestion: OUTLINE_Q }] });
   ctx.go(`running/${RUN_ID}`);
   await ctx.settle();
@@ -102,7 +102,7 @@ function featureServer() {
 async function bootFeature({ gate = true, server = featureServer() } = {}) {
   const ctx = await bootApp({ fetchHandler: server.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', ...(gate ? GATE : {}), runs: [] });
+  ctx.dispatch({ type: 'hello', flags: { shapeFirst: !!gate }, runs: [] });
   await ctx.settle();
   const seam = ctx.window.__shapeFeature;
   const host = () => { const h = ctx.window.document.createElement('div'); ctx.window.document.body.appendChild(h); return h; };

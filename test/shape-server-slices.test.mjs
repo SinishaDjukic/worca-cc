@@ -23,11 +23,12 @@ const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b) });
 const get = (p) => fetch(`${base}${p}`);
 const savedMock = process.env.WORCA_MOCK;
+const savedFlags = process.env.WORCA_FLAGS;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function withGate(on, fn) {
-  if (on) process.env.WORCA_SHAPE_FIRST = '1'; else delete process.env.WORCA_SHAPE_FIRST;
-  try { return await fn(); } finally { delete process.env.WORCA_SHAPE_FIRST; }
+  process.env.WORCA_FLAGS = on ? 'shapeFirst' : '-shapeFirst';   // WORCA_FLAGS locks it over settings.json
+  try { return await fn(); } finally { process.env.WORCA_FLAGS = '-shapeFirst'; }
 }
 
 before(async () => {
@@ -55,7 +56,7 @@ after(async () => {
       new Promise((r) => { const t = setTimeout(r, 500); t.unref?.(); }),
     ]);
   }
-  delete process.env.WORCA_SHAPE_FIRST;
+  if (savedFlags === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = savedFlags;
   if (savedMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = savedMock;
   rmSync(project, { recursive: true, force: true });
 });

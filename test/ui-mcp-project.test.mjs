@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
-import { renderResolution, mountProjectMcp, paintMcpResolution, paintAskMcpBlock } from '../ui/public/mcp-view.mjs';
+import { renderResolution, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, paintCommittedMcp } from '../ui/public/mcp-view.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -65,6 +65,47 @@ test('the MCP resolution table (copy · set link · status, skip reasons) for a 
       assert.equal(host.querySelectorAll('.mcp-res-row').length, 4);
       const js = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
       assert.match(js, /paintMcpResolution\(mcp, \{ target: \{ workspaceId: id \}/, 'buildWdOverview paints it');
+    } },
+  ]);
+});
+
+test('project MCP tab: the repository\'s .mcp.json servers with their status, Approve on an unapproved one, nothing when there are none', async () => {
+  const committed = (servers, canApprove = true) => {
+    const calls = [];
+    let data = { servers, canApprove, error: null };
+    const api = async (method, path, body) => {
+      calls.push([method, path, body]);
+      if (method === 'POST') { data = { ...data, servers: data.servers.map((s) => (body.names.includes(s.name) ? { ...s, status: 'approved' } : s)) }; }
+      return { ok: true, status: 200, data };
+    };
+    return { api, calls };
+  };
+  await checkRows([
+    { name: 'rows with status; Approve only on the unapproved one; clicking it POSTs and repaints', run: async () => {
+      const sec = doc.createElement('div');
+      const { api, calls } = committed([{ name: 'db', status: 'unapproved' }, { name: 'docs', status: 'approved' }, { name: 'old', status: 'disabled' }]);
+      await paintCommittedMcp(sec, { key: 'billing-1a2b3c4d', api, doc });
+      assert.deepEqual(calls[0], ['GET', '/api/mcp/projects/billing-1a2b3c4d/mcpjson', undefined]);
+      assert.match(sec.querySelector('h2').textContent, /\.mcp\.json/);
+      const rows = [...sec.querySelectorAll('.mcp-res-row')];
+      assert.deepEqual(rows.map((r) => r.querySelector('.mono').textContent), ['db', 'docs', 'old']);
+      assert.match(rows[0].textContent, /not approved/);
+      assert.deepEqual([...sec.querySelectorAll('button')].map((b) => b.dataset.approve), ['db']);
+      sec.querySelector('button').click();
+      await settle();
+      assert.deepEqual(calls[1], ['POST', '/api/mcp/projects/billing-1a2b3c4d/mcpjson/approve', { names: ['db'] }]);
+      assert.equal(sec.querySelectorAll('button').length, 0, 'repainted: approved now');
+    } },
+    { name: 'a tracked settings.local.json: no Approve, says where to approve instead', run: async () => {
+      const sec = doc.createElement('div');
+      await paintCommittedMcp(sec, { key: 'k', api: committed([{ name: 'db', status: 'unapproved' }], false).api, doc });
+      assert.equal(sec.querySelectorAll('button').length, 0);
+      assert.match(sec.textContent, /~\/\.claude\/settings\.json/);
+    } },
+    { name: 'no .mcp.json servers: the card is not shown', run: async () => {
+      const sec = doc.createElement('div');
+      await paintCommittedMcp(sec, { key: 'k', api: committed([]).api, doc });
+      assert.equal(sec.children.length, 0);
     } },
   ]);
 });

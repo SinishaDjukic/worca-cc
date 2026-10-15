@@ -43,7 +43,7 @@ async function openPlan({ gate = true, row = {}, ...rec } = {}) {
   const r = recorder(rec);
   const ctx = await bootApp({ fetchHandler: r.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', ...(gate ? { features: { shapeFirst: true } } : {}), runs: [runRow(row)] });
+  ctx.dispatch({ type: 'hello', flags: { shapeFirst: !!gate }, runs: [runRow(row)] });
   ctx.go(`running/${RUN_ID}`);
   await ctx.settle();
   return { ctx, panel: runPanel(ctx), ...r };
@@ -84,7 +84,7 @@ test('gate off: approve posts /api/answer', async () => {
 
 test('gate on at render, then a hello turns it off: approve posts /api/answer (D12)', async () => {
   const { ctx, panel, posts } = await openPlan();
-  ctx.dispatch({ type: 'hello', runs: [runRow()] });
+  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [runRow()] });
   await ctx.settle();
   assert.equal(runPanel(ctx), panel, 'the panel is not rebuilt on the same question');
   click(ctx, panel.querySelector('.plan-approve'));

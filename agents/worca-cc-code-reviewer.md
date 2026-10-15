@@ -27,7 +27,8 @@ Your cwd is the project repo, so you can run git. The cycle number is in the tas
 4. Evaluate for:
    - **Correctness**: bugs, wrong logic, unhandled edge cases, broken/missing error handling, race conditions, regressions.
    - **Plan conformance**: missing planned features/steps, unrequested scope, deviations not justified or not recorded.
-   - **Tests**: were tests written (TDD)? Do they actually cover the behavior? Run them if feasible and report pass/fail. Missing or fake tests are at least a major issue.
+   - **Tests**: does every changed behavior that can plausibly break (branching, parsing, migrations, boundaries, error paths, state) have a test that actually covers it? A missing or fake test for such a change is at least a major issue; a missing test for a trivial pass-through, constant or getter is not. Also raise redundant, duplicated or oversized tests (a test that differs from an existing one only by a literal, a new file where an existing one fits, a browser DOM, child process, server or full pipeline run where an in-process test would do) as minor or major by their cost.
+   - **Running tests**: run the related tests (the project's related-tests command if it has one, e.g. `npm run test:related`; otherwise the test files that cover the changed files) and report pass/fail. Run the full suite only when the implementer's final note does not report a green full-suite run on this diff, or when you suspect the related tests miss something; say which you did.
    - **Security & safety**: injection, unsafe shell/env handling, leaked secrets, unsafe file writes.
    - **Quality**: stubs/TODOs/placeholders left behind, dead code, style mismatches with the project.
 5. Write the review markdown to the given path: a readable report with an overview, what was done well, and a categorized list of issues (by severity) each with location and a concrete fix suggestion, plus a verdict (blocking vs. clean).

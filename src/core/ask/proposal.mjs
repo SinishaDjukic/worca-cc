@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
 import { listProjects as realListProjects } from '../projects.mjs';
 import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, WORKSPACE_KEY_RE } from '../workspaces.mjs';
-import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertRunnableWorkflow } from '../workflows.mjs';
+import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertRunnableWorkflow, GRAPH_MEMORY_DEFRAG_WORKFLOW } from '../workflows.mjs';
 import { readGuardrailSet as realReadGuardrailSet } from '../guardrail-store.mjs';
 import { validateMemoryScope } from '../memory-sync.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, AUTO_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
@@ -21,7 +21,20 @@ import { resolveProfile as realResolveProfile } from '../source-bindings.mjs';
 import { listProfileIds as realListProfileIds } from '../plugin-config.mjs';
 import { resolveSourceRef as resolveGitSourceRef } from '../git-sync.mjs';
 import { effectiveSyncSettings } from '../project-sync.mjs';
-import { ENGINE_NAMES } from '../../shared/engine-switch.mjs';
+import { ENGINE_NAMES, MODEL_ENGINE_NAMES, engineLabel } from '../../shared/engine-switch.mjs';
+import { runsOn } from '../../shared/connections.mjs';
+import { listModels as realListModels, modelCostConfig, modelHasBaseUrlRouting } from '../config.mjs';
+import { resolveRunEngine } from '../settings-cascade.mjs';
+import { cachedPolicyFor } from '../policy/cache.mjs';
+import { fieldsForRun, deviationsFor } from '../policy/effective.mjs';
+import { autoModelsFor } from '../auto/runnable.mjs';
+import { probeClaudeAuth } from '../preflight.mjs';
+import { parseOverlayNodes, checkRunOverlay } from '../run-overlay.mjs';
+import { modelFacts, factsLine } from '../model-tiers.mjs';
+import { listPriceFor } from '../list-prices.mjs';
+
+// What a premium-tier pick is priced against on the card: Opus 5.5, the top tier's flagship (output USD per Mtok).
+const OPUS_LIST_OUTPUT = (listPriceFor('claude-opus-5-5') || {}).output || 20;
 import { resolveShapeRequest, isShapeWorkflowId } from '../shape/run.mjs';
 import { shapeFirstEnabled } from '../shape/gate.mjs';
 import { nudgeFor } from '../shape/nudge.mjs';
@@ -52,7 +65,39 @@ export const PROPOSAL_ERRORS = Object.freeze({
   missingSource: (v, remote) => `sourceBranch "${v}" exists neither locally nor on ${remote}`,
   shapeSlices: 'shape.slices must be "auto" or "off"',
   shapeScheduled: 'Shape it first starts now and waits for the user to approve its plan: drop when / every / after',
+  nodesAuto: 'nodes needs a saved workflow — Auto (wf_auto) picks its agents and their models when the run starts',
+  nodesDefrag: 'the Memory defragment workflow takes its model from Settings › Memory — omit nodes',
+  // An engine that owns no catalog models (Copilot) runs its own: no pick can ever run on it.
+  nodesEngine: (engine) => `nodes: the ${engineLabel(engine)} engine runs its own models — omit nodes for a run on it`,
+  nodeNoModel: (id) => `node ${JSON.stringify(String(id).slice(0, 64))}: a pick needs a model`,
+  signedOutPick: (id, model) => `node ${JSON.stringify(String(id).slice(0, 64))}: ${model} needs the Claude Code sign-in, which this install lacks — pick a model routed through an endpoint or provider`,
+  // Not an error: a WARNING on the card for a pick in the premium tier (model-tiers.mjs TIERS). It names the model id
+  // as a word of its own — the card keeps a warning only while a pick carries a model it names (ask-panel.mjs).
+  premiumPick: (role, f) => `The ${role}'s model ${f.id}${f.label && f.label !== f.id ? ` (${f.label})` : ''} is a premium model (~${Math.round((f.price.output / OPUS_LIST_OUTPUT) * 10) / 10}× Opus 5.5 list price): keep it only if the user asked for it.`,
+  // Not an error: a NOTE on an accepted plain proposal (the project's own settings may already route every agent).
+  signedOutPlain: 'Claude Code is not signed in on this install: unless this project\'s own agent settings already name models routed through an endpoint or provider, a run of this card on Claude Code fails at its first agent. Say so, then propose again with nodes naming such a model for every agent node (rule 18) and tell the user the new card replaces this one.',
 });
+
+// The keys a propose_run `nodes` entry may carry (run-overlay.mjs checks model, effort and subagentModel).
+const PROPOSAL_NODE_KEYS = Object.freeze(['model', 'effort', 'subagentModel', 'reason']);
+/** The three answers of preflight.mjs probeClaudeAuth. */
+const AUTH_STATES = new Set(['signed-in', 'signed-out', 'unknown']);
+
+/**
+ * Claude Code's sign-in as propose_run's per-agent picks need it (auto/runnable.mjs autoModelsFor): signed out, every
+ * agent node must name a model routed through an endpoint or provider — so only a catalog holding a Claude-run routed
+ * model can turn the answer into a verdict. Without one no `claude auth status` is spawned ('unknown' narrows nothing);
+ * with one the configured binary answers (preflight's 60 s cache; 'unknown' in mock mode). The Ask turn asks this once
+ * per turn and hands the answer to its MCP child and its own re-validation. Never throws.
+ */
+export async function proposalClaudeAuth({ listModels = realListModels, routed = modelHasBaseUrlRouting, probe = probeClaudeAuth, env = process.env } = {}) {
+  try {
+    const all = await listModels('');
+    if (!(Array.isArray(all) ? all : []).some((m) => m && typeof m.id === 'string' && runsOn(m, 'claude') && routed(m.id))) return 'unknown';
+    const r = await probe({ bin: env.WORCA_CLAUDE_BIN || env.ORCH_CLAUDE_BIN || 'claude' });
+    return r && AUTH_STATES.has(r.state) ? r.state : 'unknown';
+  } catch { return 'unknown'; }
+}
 
 const CARD_HEX_RE = /^card_([0-9a-f]{8})$/;
 // Characters git refuses inside a ref name: ASCII control chars, space, DEL and ~ ^ : ? * [ \
@@ -95,9 +140,9 @@ export function pickCardAttachments(ids, rows) {
 // as two words), runs of whitespace collapse, then the cap. Written with
 // escapes — never a raw byte.
 const NOTE_BREAK_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
-function cleanNote(v) {
+function cleanNote(v, max = ASK_LIMITS.proposalNoteMaxChars) {
   if (typeof v !== 'string') return null;
-  const s = v.replace(NOTE_BREAK_RE, ' ').replace(/\s+/g, ' ').trim().slice(0, ASK_LIMITS.proposalNoteMaxChars);
+  const s = v.replace(NOTE_BREAK_RE, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
   return s || null;
 }
 
@@ -129,14 +174,88 @@ export function createProposalValidator({
   // validator built on fake readers never reads run history; the module singleton below binds the real one.
   shapeFirst = shapeFirstEnabled,
   estimate = null,
+  // Per-agent picks (`nodes`, docs/models.md "Per-agent models for one run"): the catalog, the run's engine when the
+  // proposal names none (the same cascade POST /api/run and the card's /api/run-defaults use), Claude Code's sign-in,
+  // the team policy (cache only) and the entries' own cost. Read ONLY for a proposal that carries `nodes`.
+  listModels = realListModels,
+  resolveEngine = ({ projectDir = null, workspace = false } = {}) => { try { return resolveRunEngine({ projectDir, workspace }).engine; } catch { return 'claude'; } },
+  routed = modelHasBaseUrlRouting,
+  // The Ask MCP child runs inside the chat's env, where the chat model's routing (ANTHROPIC_BASE_URL …) reads as a
+  // sign-in: the turn hands its own answer down (spawn.mjs WORCA_ASK_CLAUDE_AUTH) and passes it to its re-validation
+  // (validateProposal's `claudeAuth`). Elsewhere (a relayed chat, any other caller) proposalClaudeAuth answers.
+  claudeAuth = async () => {
+    const handed = process.env.WORCA_ASK_CLAUDE_AUTH;
+    return AUTH_STATES.has(handed) ? handed : proposalClaudeAuth({ listModels, routed });
+  },
+  policyFields = ({ projectDir = null, policyProject = null } = {}) => {
+    try { const p = cachedPolicyFor(projectDir || policyProject); return p ? fieldsForRun(p.doc, { workspaceRun: !projectDir }) : {}; } catch { return {}; }
+  },
+  costOf = modelCostConfig,
 } = {}) {
+  /** propose_run `nodes` → { nodes, errors, warnings }: the run API's check (run-overlay.mjs) on the catalog the run's
+   *  engine runs, plus Ask's own: signed out, every agent node needs a model the install can run (auto/runnable.mjs,
+   *  the Auto classifier's rule); a pick outside the team policy's allowed models is a WARNING (deviationsFor), and so is a
+   *  pick in the premium tier (MODEL_PICK_POLICY: only when the user names that model). */
+  async function checkNodes(nodes, { wf, target, engine, policyHome, auth = null }) {
+    const runEngine = engine || resolveEngine(target.target === 'workspace' ? { workspace: true } : { projectDir: target.projectDir });
+    if (!MODEL_ENGINE_NAMES.includes(runEngine)) return { nodes: {}, errors: [PROPOSAL_ERRORS.nodesEngine(runEngine)], warnings: [] };
+    let all = [];
+    try { all = await listModels(target.projectDir || ''); } catch { all = []; }
+    let usable = null;
+    if (runEngine === 'claude') {
+      // Readiness (needsSignIn) is left out: the MCP child's env lacks `${VAR}` provider keys, so it would read a
+      // provider model "not ready" that the parent and the run can use — both processes must answer alike.
+      const claudeModels = all.filter((m) => m && runsOn(m, 'claude')).map(({ needsSignIn: _ready, ...m }) => m);
+      // The turn's answer when it passed one (validateProposal's claudeAuth), else the reader's.
+      const runnable = autoModelsFor(claudeModels, { auth: AUTH_STATES.has(auth) ? auth : await claudeAuth(), routed });
+      if (runnable.requireModel) usable = new Set(runnable.models.map((m) => String(m.id).toLowerCase()));
+    }
+    const checked = checkRunOverlay(nodes, { workflow: wf, models: all, engine: runEngine, requireModel: !!usable });
+    const errors = [...checked.errors];
+    // Only a model the claude engine runs can need its sign-in: another engine's model already has its own error.
+    const known = new Set(all.filter((m) => m && typeof m.id === 'string' && runsOn(m, 'claude')).map((m) => m.id.toLowerCase()));
+    for (const [id, t] of Object.entries(checked.nodes)) {
+      if (!t.model && t.effort === undefined) errors.push(PROPOSAL_ERRORS.nodeNoModel(id));
+      else if (usable && t.model && known.has(t.model.toLowerCase()) && !usable.has(t.model.toLowerCase())) errors.push(PROPOSAL_ERRORS.signedOutPick(id, t.model));
+    }
+    // Readiness stays out of the facts for the same reason it stays out of the rule above: the MCP child reads a
+    // `${VAR}`-keyed provider model "not ready", the parent does not — the model's result and the card must agree
+    // (the lane's model menu marks a pick that needs sign-in itself).
+    const facts = new Map(modelFacts(all.filter((m) => m && typeof m === 'object').map(({ needsSignIn: _ready, ...m }) => m), { costOf })
+      .map((f) => [f.id.toLowerCase(), f]));
+    const out = {};
+    for (const [id, t] of Object.entries(checked.nodes)) {
+      const reason = cleanNote(nodes[id] && nodes[id].reason, ASK_LIMITS.proposalReasonMaxChars);
+      const f = t.model ? facts.get(t.model.toLowerCase()) : null;
+      out[id] = { ...t, ...(reason ? { reason } : {}), ...(f ? { facts: factsLine(f) } : {}) };
+    }
+    const keyOf = new Map((Array.isArray(wf.nodes) ? wf.nodes : []).filter((n) => n && n.kind === 'agent').map((n) => [n.id, n.key]));
+    let warnings = [];
+    try {
+      const stepModels = Object.entries(out).filter(([, t]) => t.model).map(([id, t]) => ({ role: keyOf.get(id) || id, model: t.model }));
+      warnings = deviationsFor(policyFields({ projectDir: target.projectDir, policyProject: policyHome }) || {}, { stepModels })
+        // The run records a per-run pick as off-policy too (run-harness.mjs _resolvePolicy, run-overlay.mjs overlayStepModels).
+        .filter((d) => d && typeof d.code === 'string' && d.code.startsWith('model:'))
+        .map((d) => String(d.text));
+    } catch { warnings = []; }
+    // Outside the policy read: a policy that cannot be read drops its own word, never this one.
+    for (const [id, t] of Object.entries(out)) {
+      const f = t.model ? facts.get(t.model.toLowerCase()) : null;
+      if (!f || f.tier !== 'premium') continue;
+      const w = PROPOSAL_ERRORS.premiumPick(keyOf.get(id) || id, f);
+      if (!warnings.includes(w)) warnings.push(w);
+    }
+    return { nodes: out, errors, warnings };
+  }
   /**
    * @param {object} input  the propose_run tool input
    * @param {{cardId?:string|null, timeZone?:string|null, nowMs?:number, scheduleDefaults?:object}} [opts]  the server passes the
    *   minted card id (feature-branch uniqueness); timeZone is the user's (the schedule fields are read in it)
    * @returns {Promise<{ok:true, card:object}|{ok:false, errors:string[]}>}
    */
-  async function validateProposal(input, { cardId = null, attachments = [], timeZone = null, nowMs = Date.now(), scheduleDefaults = {}, lookupTask = null } = {}) {
+  // `claudeAuth`: the sign-in answer the Ask turn handed its MCP child (turn.mjs _onProposal), so the card is checked
+  // with the answer the model's own call was checked with.
+  async function validateProposal(input, { cardId = null, attachments = [], timeZone = null, nowMs = Date.now(), scheduleDefaults = {}, lookupTask = null, claudeAuth: authAnswer = null } = {}) {
     const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
     const errors = [];
     const fail = () => ({ ok: false, errors });
@@ -148,6 +267,7 @@ export function createProposalValidator({
     if (projectKeyIn && workspaceIdIn) { errors.push(PROPOSAL_ERRORS.bothTargets); return fail(); }
     if (!projectKeyIn && !workspaceIdIn) { errors.push(PROPOSAL_ERRORS.noTarget); return fail(); }
     let target;
+    let policyHome = null;   // a workspace's policy home: the member whose team policy governs its runs
     if (projectKeyIn) {
       const p = (await listProjects()).find((x) => x.key === projectKeyIn);
       if (!p) { errors.push(PROPOSAL_ERRORS.unknownProject(projectKeyIn)); return fail(); }
@@ -168,6 +288,7 @@ export function createProposalValidator({
         members.push({ projectKey: keys[i], projectDir: dir, projectName: basename(dir) });
       }
       members.sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0)); // primary first (ui/server.mjs:897)
+      policyHome = typeof ws.policyProject === 'string' && paths.includes(ws.policyProject) ? ws.policyProject : null;
       target = { target: 'workspace', projectKey: null, projectName: null, projectDir: null,
         workspaceId: ws.id, workspaceName: ws.name, members };
     }
@@ -233,6 +354,26 @@ export function createProposalValidator({
     if (inp.engine !== undefined && inp.engine !== null && inp.engine !== '') {
       const e = typeof inp.engine === 'string' ? inp.engine.trim().toLowerCase() : '';
       if (ENGINE_NAMES.includes(e)) engine = e; else errors.push(PROPOSAL_ERRORS.unknownEngine(String(inp.engine)));
+    }
+
+    // ── per-agent picks (`nodes`): a per-run overlay over the project's agent settings ──
+    // The SAME checks POST /api/run runs on the card's overlay (run-overlay.mjs over auto/classify.mjs checkShapeModels
+    // and connections.mjs runsOn), plus Ask's own (checkNodes). Only a card with picks carries `nodes` / `warnings`.
+    let cardNodes = null;
+    let cardWarnings = [];
+    if (inp.nodes !== undefined && inp.nodes !== null) {
+      const parsed = parseOverlayNodes(inp.nodes, { what: 'nodes', keys: PROPOSAL_NODE_KEYS });
+      if (parsed.error) errors.push(...parsed.errors);
+      else if (parsed.nodes && wf) {
+        if (wf.auto === true || wf.id === 'wf_auto') errors.push(PROPOSAL_ERRORS.nodesAuto);
+        else if (wf.id === GRAPH_MEMORY_DEFRAG_WORKFLOW.id) errors.push(PROPOSAL_ERRORS.nodesDefrag);
+        else {
+          const r = await checkNodes(parsed.nodes, { wf, target, engine, policyHome, auth: authAnswer });
+          errors.push(...r.errors);
+          cardNodes = r.nodes;
+          cardWarnings = r.warnings;
+        }
+      }
     }
 
     // ── task source (source-spec.mjs): a reference the run fetches at start ──
@@ -333,8 +474,17 @@ export function createProposalValidator({
     }
 
     if (errors.length) return fail();
+    // Signed out (only the answer the Ask turn already holds — its re-validation's `claudeAuth`, the MCP child's
+    // WORCA_ASK_CLAUDE_AUTH; never a probe, so without that answer a plain proposal still reads nothing): a plain
+    // proposal of a saved workflow whose run is on Claude Code is told so, beside the card — the chat cannot learn it any
+    // other way before the run dies. The engine is the one the run would take (the same cascade as checkNodes).
+    const handed = AUTH_STATES.has(authAnswer) ? authAnswer : process.env.WORCA_ASK_CLAUDE_AUTH;
+    const plainSavedRun = handed === 'signed-out' && !cardNodes && wf.auto !== true && wf.id !== 'wf_auto' && wf.id !== GRAPH_MEMORY_DEFRAG_WORKFLOW.id;
+    const signedOutNote = plainSavedRun
+      && (engine || resolveEngine(target.target === 'workspace' ? { workspace: true } : { projectDir: target.projectDir })) === 'claude';
     return {
       ok: true,
+      ...(signedOutNote ? { notes: [PROPOSAL_ERRORS.signedOutPlain] } : {}),
       card: { ...target, workflowId: wf.id, workflowName: wf.name, guardrailsId, memoryScope, brief, title, sourceBranch, featureBranch, sourceBranchByKey,
         note: cleanNote(inp.note), attachments: pickCardAttachments(inp.attachmentIds, attachments),
         // Only a scheduled proposal carries the key: a plain run card keeps its shape byte for byte.
@@ -346,6 +496,10 @@ export function createProposalValidator({
         ...(engine ? { engine } : {}),
         // Only when the source is remote-only, behind its remote or unverifiable (offline).
         ...(sourceRef ? { sourceRef } : {}),
+        // Only a proposal with per-agent picks: { nodeId: { model, effort, subagentModel?, reason?, facts? } } and the
+        // team policy's warnings about them (run cards are pinned).
+        ...(cardNodes && Object.keys(cardNodes).length ? { nodes: cardNodes } : {}),
+        ...(cardWarnings.length ? { warnings: cardWarnings } : {}),
         // Only a card proposing a run on its source branch carries the key (run cards are pinned).
         ...(sameAsSource ? { sameAsSource: true } : {}),
         // Only a shaped card / a nudged card carries these (run cards are pinned).

@@ -41,7 +41,7 @@ async function openShaping({ gate = true, shaping = SHAPING, status = 200 } = {}
   ctx.wsBox.ws.dispatch('open', {});
   ctx.dispatch({
     type: 'hello',
-    ...(gate ? { features: { shapeFirst: true } } : {}),
+    flags: { shapeFirst: !!gate },
     runs: [{ runId: RUN_ID, title: 'Shape demo', projectDir: '/tmp/p', status: 'running', kind: 'run',
       startedAt: '2026-01-01T00:00:00Z', ...(shaping ? { shaping } : {}), pendingQuestion: QUESTIONS }],
   });
