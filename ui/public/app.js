@@ -226,7 +226,7 @@ import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/a
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { createFlyout } from './side-flyout.mjs';
-import { renderReadinessChip, readinessAddedToast } from './readiness-chip.mjs';
+import { renderReadinessChip, readinessAddedToast, readinessMenuModel, renderLevelLabel, LEVEL_WORDS } from './readiness-chip.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
 import { pageTitle } from './topnav.mjs';
@@ -1473,7 +1473,11 @@ function handleServerMessage(msg) {
 
   // The server's frame names the project in `action` (emitChanged(type, action)); a null one has nothing to refetch.
   if (msg.type === 'readiness-changed') {
-    if (msg.action && currentView() === 'projects') void refreshReadiness(msg.action);
+    // Repaint whatever shows this project's readiness: the Projects list (chip, open popover) or a settings card.
+    const key = msg.action;
+    const shown = key && (currentView() === 'projects'
+      || [...document.querySelectorAll('.readiness-settings-card')].some((c) => c.dataset.key === key));
+    if (shown) void refreshReadiness(key);
     return;
   }
   // A project just added evaluated not-ready: one nudge per project, opening its breakdown.
@@ -11536,13 +11540,13 @@ if (el.projectsSyncAll) {
   });
 }
 
-// ---- Agent readiness: a chip per project row, its breakdown flyout, the ignore list ----------
+// ---- Agent readiness: a chip per project row, its popover, the ignore list and the per-tool setting ----------
 // The row chip paints from the cache-only `readiness` summary on GET /api/projects. A project with no
 // summary yet is evaluated once per page load (warmReadiness) and the summaries are re-read after.
-// The flyout shows the full report (GET /api/projects/:key/readiness); `readiness-changed` frames
-// refetch it. Every string in a report is server data: textContent only.
+// The popover shows the final report (GET /api/projects/:key/readiness): only the tools the project uses are
+// judged. `readiness-changed` frames refetch it. Every string in a report is server data: textContent only.
 const readinessReports = {};        // projectKey → last full report
-const readinessChips = new Map();   // projectKey → { chip, menu, fly, engine }: one flyout per project, reused across repaints
+const readinessChips = new Map();   // projectKey → { chip, menu, fly }: one popover per project, reused across repaints
 const readinessTried = new Set();   // keys the cold-start warm-up already asked for
 let readinessOff = false;           // GET answered {disabled: true}: no chips, no more asking
 
@@ -11559,13 +11563,12 @@ async function fetchReadinessReport(key, { refresh = false } = {}) {
   }
 }
 
-// The row summary of a fresh report, for the engine the project's summary already names.
+// The row summary of a fresh report (the server's summaryOf, report.mjs).
+const summaryOfClient = (r) => ({ level: r.level, failingCount: r.counts.mustFix + r.counts.shouldFix, ...r.counts });
 function applyReadinessReport(key, report) {
   const p = projectByKey(key);
-  if (!p || !report) return;
-  const primaryEngine = (p.readiness && p.readiness.primaryEngine) || 'claude';
-  const e = report.engines && report.engines[primaryEngine];
-  p.readiness = { level: (e && e.level) || 'unknown', primaryEngine, failingCount: e && Array.isArray(e.failing) ? e.failing.length : 0 };
+  if (!p || !report || !report.counts) return;
+  p.readiness = summaryOfClient(report);
 }
 
 async function syncReadinessSummaries() {
@@ -11644,8 +11647,9 @@ function newReadinessChip(key, chip) {
   menu.setAttribute('aria-label', 'Agent readiness');
   menu.hidden = true;
   document.body.appendChild(menu);
-  const rec = { chip, menu, fly: null, engine: 'claude' };
-  rec.fly = createFlyout({ doc: document, win: window, trigger: chip, menu, mode: 'down', onOpen: () => void openReadinessMenu(key) });
+  const rec = { chip, menu, fly: null };
+  // 'below': under the chip, left-aligned, height limited to the room below; only .rp-body scrolls.
+  rec.fly = createFlyout({ doc: document, win: window, trigger: chip, menu, mode: 'below', onOpen: () => void openReadinessMenu(key) });
   chip.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
     e.preventDefault();
@@ -11658,10 +11662,8 @@ function newReadinessChip(key, chip) {
 async function openReadinessMenu(key) {
   const rec = readinessChips.get(key);
   if (!rec) return;
-  const p = projectByKey(key);
-  rec.engine = (p && p.readiness && p.readiness.primaryEngine) || 'claude';
   if (!readinessReports[key]) {
-    rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'readiness-header', textContent: 'Checking…' }));
+    rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'rp-head', textContent: 'Checking...' }));
     rec.fly.reposition();
     await fetchReadinessReport(key);
   }
@@ -11673,72 +11675,127 @@ function paintReadinessMenu(key) {
   if (!rec) return;
   const report = readinessReports[key];
   if (!report) {
-    rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'readiness-header', textContent: 'Readiness could not be read.' }));
+    rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'rp-head', textContent: 'Readiness could not be read.' }));
     return;
   }
-  rec.menu.replaceChildren(buildReadinessMenu(key, report, rec.engine, (name) => { rec.engine = name; paintReadinessMenu(key); }));
+  rec.menu.replaceChildren(buildReadinessMenu(key, report));
 }
 
-// The breakdown for one engine: its failing checks (title, detail, fix, an ignore link), a row per engine
-// that switches the view, and Recheck.
-function buildReadinessMenu(key, report, engine, onEngine) {
+// The popover (spec 5): head with the level and "N of M checks pass"; the tools this project uses; one line naming
+// the tools that are not judged; failing repository checks; the passed and ignored boxes; a fixed foot.
+// Every string from the report is server data: textContent only.
+function buildReadinessMenu(key, report) {
+  const m = readinessMenuModel(report, { engineLabel });
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
   const frag = document.createDocumentFragment();
-  const eng = (report.engines && report.engines[engine]) || { level: 'unknown', failing: [] };
-  const header = document.createElement('div');
-  header.className = 'readiness-header';
-  header.textContent = `For ${engine}`;
-  frag.appendChild(header);
-  const failing = new Set(eng.failing || []);
-  const rows = (report.checks || []).filter((c) => c.status === 'fail' && failing.has(c.id) && (!c.engine || c.engine === engine));
-  if (eng.locked) {
-    frag.appendChild(Object.assign(document.createElement('div'), { className: 'readiness-check-item', textContent: String(eng.locked) }));
-  } else if (!rows.length) {
-    frag.appendChild(Object.assign(document.createElement('div'), { className: 'readiness-check-item', textContent: eng.level === 'unknown' ? 'No verdict for this engine yet.' : 'Nothing to fix for this engine.' }));
-  }
-  for (const check of rows) {
-    const item = document.createElement('div');
-    item.className = 'readiness-check-item';
-    const title = document.createElement('strong');
-    title.textContent = check.title;
-    item.appendChild(title);
-    if (check.detail) item.appendChild(Object.assign(document.createElement('p'), { textContent: check.detail }));
-    if (check.fix) {
-      const fix = document.createElement('p');
-      fix.appendChild(Object.assign(document.createElement('code'), { textContent: check.fix }));
-      item.appendChild(fix);
+
+  const head = el('div', 'rp-head');
+  const title = el('div', 'rp-title', 'Agent readiness');
+  const p = projectByKey(key);
+  title.append(el('span', 'rp-sub', p ? p.name : key));
+  const count = el('button', 'rp-count', m.countLine);
+  count.type = 'button';
+  title.append(count);
+  head.append(title);
+  if (LEVEL_WORDS[m.level]) head.append(renderLevelLabel(m.level, { doc: document }));
+  frag.append(head);
+
+  const body = el('div', 'rp-body');
+  const sec = (h, note) => { const s = el('div', 'rp-sec'); s.append(el('h3', '', h)); if (note) s.append(el('span', '', note)); return s; };
+
+  body.append(sec('Tools this project uses'));
+  for (const t of m.tools) {
+    const row = el('div', 'rp-tool');
+    const name = el('span', 'rp-tool-n', t.label);
+    if (t.reason) name.append(' ', el('small', '', `(${t.reason})`));
+    row.append(name);
+    if (LEVEL_WORDS[t.level]) row.append(renderLevelLabel(t.level, { doc: document }));
+    if (t.detail) row.append(el('span', 'rp-tool-d', t.detail));
+    if (t.fix) row.append(el('span', 'rp-tool-f', t.fix));
+    if (t.runs) {
+      row.append(el('span', 'rp-hint', 'Runs use this tool. To stop judging it, change the engine in Settings.'));
+    } else {
+      const btn = el('button', 'rp-act', 'Not used here');
+      btn.type = 'button';
+      btn.setAttribute('role', 'menuitem');
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const prev = await setReadinessTool(key, t.name, 'unused');
+        if (prev === null) { btn.disabled = false; notify({ tone: 'err', title: `Could not save. ${t.label} is still judged.` }); return; }
+        await refreshReadiness(key);
+        notify({ tone: 'info', title: `${t.label} marked as not used`, key: `readiness-unused-${key}-${t.name}`,
+          action: { label: 'Undo', run: async () => { if ((await setReadinessTool(key, t.name, prev)) !== null) await refreshReadiness(key); } } });
+      });
+      row.append(btn);
     }
-    const ignore = document.createElement('a');
-    ignore.href = '#';
-    ignore.setAttribute('role', 'menuitem');
-    ignore.textContent = 'Ignore for this project';
-    ignore.addEventListener('click', async (e) => {
-      e.preventDefault();
-      if (await setReadinessIgnore(key, check.id, true)) await refreshReadiness(key, { refresh: true });
-    });
-    item.appendChild(ignore);
-    frag.appendChild(item);
+    body.append(row);
   }
-  for (const [name, data] of Object.entries(report.engines || {})) {
-    const row = document.createElement('button');
-    row.type = 'button';
-    row.setAttribute('role', 'menuitem');
-    row.className = `readiness-engine-row ${data.level}`;
-    row.textContent = `${name}: ${data.level}`;
-    if (name === engine) row.setAttribute('aria-current', 'true');
-    row.addEventListener('click', () => onEngine(name));
-    frag.appendChild(row);
+  if (m.notJudged.length) {
+    const line = el('div', 'rp-notjudged', `Not judged: ${m.notJudged.join(', ')}. `);
+    const link = el('a', '', 'Change in Settings');
+    link.href = `#projects/${key}/settings`;
+    link.addEventListener('click', (e) => { e.preventDefault(); openReadinessSettings(key); });
+    line.append(link);
+    body.append(line);
   }
-  const recheck = document.createElement('button');
+
+  body.append(sec('Repository', 'Applies to every tool'));
+  const GROUP = { blocker: 'Must fix', warn: 'Should fix', info: 'Advice' };
+  for (const sev of ['blocker', 'warn', 'info']) {
+    for (const c of m.failing[sev]) {
+      const row = el('div', 'rp-chk');
+      const dot = el('span', `rp-sev ${sev}`);
+      dot.setAttribute('aria-label', GROUP[sev]);
+      const ign = el('button', 'rp-ign', 'Ignore');
+      ign.type = 'button';
+      ign.addEventListener('click', async () => { if (await setReadinessIgnore(key, c.id, true)) await refreshReadiness(key, { refresh: true }); });
+      row.append(dot, el('span', 'rp-chk-t', c.title), ign);
+      if (c.detail) row.append(el('span', 'rp-chk-d', c.detail));
+      row.append(el('span', 'rp-chk-f', c.fix));
+      body.append(row);
+    }
+  }
+
+  const box = (lead, text) => {
+    const d = el('details', 'rp-more');
+    const s = el('summary');
+    s.append(el('span', lead), el('span', '', text), el('span', 'rp-chev'));
+    d.append(s);
+    return d;
+  };
+  const passedBox = box('rp-tick', `${m.passed.length} checks pass`);
+  const list = el('ul');
+  for (const it of m.passed) { const li = el('li'); li.append(el('b', '', it.title), el('span', '', it.detail)); list.append(li); }
+  passedBox.append(list);
+  body.append(passedBox);
+  count.addEventListener('click', () => { passedBox.open = true; passedBox.scrollIntoView({ block: 'nearest' }); passedBox.querySelector('summary').focus(); });
+
+  if (m.ignored.length) {
+    const ignBox = box('rp-gdot', `${m.ignored.length} ignored for this project`);
+    const ul = el('ul');
+    for (const it of m.ignored) {
+      const li = el('li');
+      const back = el('button', 'rp-ign', 'Stop ignoring');
+      back.type = 'button';
+      back.addEventListener('click', async () => { if (await setReadinessIgnore(key, it.id, false)) await refreshReadiness(key, { refresh: true }); });
+      li.append(el('b', '', it.title), back);
+      ul.append(li);
+    }
+    ignBox.append(ul);
+    body.append(ignBox);
+  }
+  frag.append(body);
+
+  const foot = el('div', 'rp-foot');
+  const when = el('span', '', report.checkedAt ? `Checked ${ago(report.checkedAt)}` : '');
+  const settings = el('a', '', 'Settings');
+  settings.href = `#projects/${key}/settings`;
+  settings.addEventListener('click', (e) => { e.preventDefault(); openReadinessSettings(key); });
+  const recheck = el('button', 'btn btn-ghost btn-mini', 'Recheck');
   recheck.type = 'button';
-  recheck.className = 'btn btn-ghost btn-mini';
-  recheck.setAttribute('role', 'menuitem');
-  recheck.textContent = 'Recheck';
-  recheck.addEventListener('click', async () => {
-    recheck.disabled = true;
-    await refreshReadiness(key, { refresh: true });
-    recheck.disabled = false;
-  });
-  frag.appendChild(recheck);
+  recheck.addEventListener('click', async () => { recheck.disabled = true; await refreshReadiness(key, { refresh: true }); recheck.disabled = false; });
+  foot.append(when, el('span', 'rp-sp'), settings, recheck);
+  frag.append(foot);
   return frag;
 }
 
@@ -11756,6 +11813,35 @@ async function setReadinessIgnore(key, checkId, ignored) {
   } catch {
     return false;
   }
+}
+
+// Set one tool's readiness choice ('used' | 'unused' | 'detect') on the project's own readiness.tools map.
+// Resolves to the previous choice (for Undo), or null when the PATCH failed.
+async function setReadinessTool(key, engine, value) {
+  const url = `/api/projects/${encodeURIComponent(key)}/settings`;
+  try {
+    const data = await safeJson(await fetch(url));
+    const own = data && data.own && data.own['readiness.tools'];
+    const cur = own && typeof own === 'object' && !Array.isArray(own) ? { ...own } : {};
+    const prev = cur[engine] || 'detect';
+    if (value === 'detect') delete cur[engine]; else cur[engine] = value;
+    const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 'readiness.tools': Object.keys(cur).length ? cur : null }) });
+    if (!res.ok) return null;
+    return prev;
+  } catch {
+    return null;
+  }
+}
+
+// The project's Settings tab, scrolled to the Agent readiness card.
+function openReadinessSettings(key) {
+  for (const rec of readinessChips.values()) if (rec.fly.isOpen()) rec.fly.close();
+  location.hash = `projects/${key}/settings`;
+  requestAnimationFrame(() => {
+    const card = [...document.querySelectorAll('.readiness-settings-card')].find((c) => c.dataset.key === key);
+    if (card) { card.scrollIntoView({ block: 'center' }); card.focus({ preventScroll: true }); }
+  });
 }
 
 // The project page's Settings tab: one switch per check — on = skipped for this project.

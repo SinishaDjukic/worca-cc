@@ -18,7 +18,7 @@ function fnSource(name) {
 
 describe('readiness UI: chips in the projects list', () => {
   it('imports the chip renderer statically', () => {
-    assert.match(app, /import \{ renderReadinessChip, readinessAddedToast \} from '\.\/readiness-chip\.mjs';/);
+    assert.match(app, /import \{ renderReadinessChip, readinessAddedToast, readinessMenuModel, renderLevelLabel, LEVEL_WORDS \} from '\.\/readiness-chip\.mjs';/);
   });
 
   it('turns a readiness-added frame into the one-time toast', () => {
@@ -45,20 +45,54 @@ describe('readiness UI: chips in the projects list', () => {
   });
 });
 
-describe('readiness UI: breakdown flyout', () => {
-  it('lists failing checks of the primary engine with title, detail and fix as text', () => {
-    const src = fnSource('buildReadinessMenu');
-    assert.match(src, /failing/);
-    assert.match(src, /\.fix/);
-    assert.doesNotMatch(src, /innerHTML/, 'check text is server data: textContent only');
+describe('readiness UI: popover v2', () => {
+  it('opens below the chip', () => {
+    assert.match(fnSource('newReadinessChip'), /mode: 'below'/);
   });
-
-  it('offers an ignore link per failing check and a Recheck button', () => {
+  it('builds from the pure model and never from innerHTML', () => {
     const src = fnSource('buildReadinessMenu');
-    assert.match(src, /Ignore for this project/);
-    assert.match(src, /Recheck/);
+    assert.match(src, /readinessMenuModel\(/);
+    assert.doesNotMatch(src, /innerHTML/);
   });
+  it('has a fixed head, a scrolling body and a fixed foot', () => {
+    const src = fnSource('buildReadinessMenu');
+    for (const cls of ['rp-head', 'rp-body', 'rp-foot']) assert.match(src, new RegExp(cls));
+  });
+  it('offers "Not used here" with an Undo toast that restores the previous value', () => {
+    const src = fnSource('buildReadinessMenu');
+    assert.match(src, /Not used here/);
+    assert.match(src, /setReadinessTool\(key, t\.name, 'unused'\)/);
+    assert.match(src, /label: 'Undo'/);
+    assert.match(src, /setReadinessTool\(key, t\.name, prev\)/);
+  });
+  it('the run engine gets the hint instead of the button', () => {
+    assert.match(fnSource('buildReadinessMenu'), /Runs use this tool\. To stop judging it, change the engine in Settings\./);
+  });
+  it('the not-judged line links to project settings', () => {
+    const src = fnSource('buildReadinessMenu');
+    assert.match(src, /Not judged: /);
+    assert.match(src, /Change in Settings/);
+    assert.match(src, /openReadinessSettings\(key\)/);
+  });
+  it('the header count opens the passed box', () => {
+    const src = fnSource('buildReadinessMenu');
+    assert.match(src, /const count = el\('button', 'rp-count'/);
+    assert.match(src, /count\.addEventListener\('click', \(\) => \{ passedBox\.open = true/);
+  });
+  it('ignored checks can be restored from the popover', () => {
+    assert.match(fnSource('buildReadinessMenu'), /Stop ignoring/);
+  });
+  it('no middle dot in any readiness copy', () => {
+    for (const name of ['buildReadinessMenu', 'fillReadinessCard']) assert.doesNotMatch(fnSource(name), /·/);
+  });
+  it('setReadinessTool writes the whole map and returns the previous value', () => {
+    const src = fnSource('setReadinessTool');
+    assert.match(src, /'readiness\.tools'/);
+    assert.match(src, /return prev/);
+  });
+});
 
+describe('readiness UI: ignore list and recheck', () => {
   it('ignoring a check PATCHes the project settings with the extended readiness.ignore list', () => {
     const src = fnSource('setReadinessIgnore');
     assert.match(src, /\/settings`/);
@@ -68,6 +102,11 @@ describe('readiness UI: breakdown flyout', () => {
 
   it('recheck re-evaluates past the cache', () => {
     assert.match(fnSource('fetchReadinessReport'), /refresh=1/);
+    assert.match(fnSource('buildReadinessMenu'), /Recheck[\s\S]{0,300}refresh: true/);
+  });
+
+  it('an error toast uses the err tone', () => {
+    assert.match(fnSource('buildReadinessMenu'), /tone: 'err'/);
   });
 });
 
@@ -92,5 +131,17 @@ describe('readiness UI: WebSocket frame', () => {
     const block = app.slice(i, i + 900);
     assert.match(block, /refreshReadiness\(/);
     assert.match(block, /return;/);
+  });
+
+  it('readiness-changed also repaints an open popover or a settings card outside the Projects page', () => {
+    const i = app.indexOf("msg.type === 'readiness-changed'");
+    const block = app.slice(i, i + 600);
+    assert.match(block, /readiness-settings-card/);
+    assert.doesNotMatch(block, /currentView\(\) === 'projects'\) void refreshReadiness/);
+  });
+
+  it('a refreshed report becomes the row summary with its counts', () => {
+    assert.match(fnSource('applyReadinessReport'), /summaryOfClient\(report\)/);
+    assert.match(app, /const summaryOfClient = \(r\) => \(\{ level: r\.level, failingCount: r\.counts\.mustFix \+ r\.counts\.shouldFix, \.\.\.r\.counts \}\);/);
   });
 });
