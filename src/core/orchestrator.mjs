@@ -49,6 +49,7 @@ import { defragSlotPair, utilityModelFor } from './settings-cascade.mjs';
 import { resolveDefragModel, agentPairText } from './memory-defrag-model.mjs';
 import { describeScanModels } from './workspace-scan-run.mjs';
 import { assembleShape, normalizeShape, ShapeError } from '../shared/graph/assemble.mjs';
+import { blockingIssues } from '../shared/graph/verdict.mjs';
 import { RECIPE_SHAPES } from './auto/recipes.mjs';
 import { fingerprintProject, fingerprintWorkspace } from './auto/fingerprint.mjs';
 import { classifyTask, ClassifierError } from './auto/classify.mjs';
@@ -135,6 +136,7 @@ export class GraphOrchestrator extends RunHarness {
       wireDeliveries: {},        // {[wireId]: n}
       tokens: {},                // {'<node>.<port>': {seq,type,path,firedAt}}
       gate: null,                // {wireId, fromNode, toNode, askId} | null
+      progressFacts: { tasks: {}, reviews: {} },   // run progress (P2): {tasks:{[nodeId]: total}, reviews:{[nodeId]: {pass, blocking}}}
     });
   }
 
@@ -2117,6 +2119,9 @@ export class GraphOrchestrator extends RunHarness {
     // nobody reviewed, so the row is SKIPPED; the run log + state.warnings carry it.
     if (this.pipeline && ctx.verdict?.path && result?.verdict && !result.verdict.missing) {
       await writeReview(this.pipeline.id, this._verdictKind(nc, ctx), ctx.ordinal, result.verdict);
+      // Run progress (P5): the latest pass's blocking count — "Review · 2nd pass, fixing 2 issues".
+      this.state.progressFacts ||= { tasks: {}, reviews: {} };
+      this.state.progressFacts.reviews[ctx.nodeId] = { pass: ctx.ordinal || 1, blocking: blockingIssues(result.verdict).length };
     }
     const seen = new Set();
     for (const port of ctx.ports?.outputs || []) {
@@ -2577,6 +2582,9 @@ export class GraphOrchestrator extends RunHarness {
     }));
     writeDecomposition(this.pipeline.id, resolved);
     const count = resolved.reduce((n, ph) => n + ph.tasks.length, 0);
+    // Run progress (P2): the decomposition's whole size. A slice row's taskTotal is its phase's only.
+    this.state.progressFacts ||= { tasks: {}, reviews: {} };
+    this.state.progressFacts.tasks[node.id] = count;
     await appendAudit(this.pipeline.dir,
       `${node.id}: expanded into ${resolved.length} phase(s), ${count} task(s).`).catch(() => {});
     return { phases: resolved };

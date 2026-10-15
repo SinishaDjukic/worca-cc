@@ -9,6 +9,7 @@
 //   view.showTab(tab)    'activity' (default) | 'once' | 'repeating' — the route's param
 //   view.loadFeed()      feed only (`notification`, `notifications-changed`)
 //   view.upcoming(ms)    tickets due within `ms` — the Running view's Scheduled group
+//   view.chains()        the server's after-ticket chains (last load())
 //   view.tickets() / noteTicket(t) / forgetTicket(id)   every ticket; upsert one by id; drop one
 //   view.destroy()       stop the countdown tick
 
@@ -87,7 +88,7 @@ export const SCHEDULE_TABS = ['activity', 'once', 'repeating'];
  */
 export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repeatingHost, subEl = null, msgEl = null, deps }) {
   const tz = browserTimeZone();
-  const model = { schedules: [], tickets: [], counts: {}, defaults: { graceMin: 360, ifMissed: 'run', maxFailures: 3 }, feed: [], filter: 'all', loaded: false, tab: 'activity' };
+  const model = { schedules: [], tickets: [], chains: [], counts: {}, defaults: { graceMin: 360, ifMissed: 'run', maxFailures: 3 }, feed: [], filter: 'all', loaded: false, tab: 'activity' };
   let timer = null;
 
   // #555: an action's result is a toast through deps.notify; 'err-inline' (what load()/loadFeed() report) stays on msgEl.
@@ -417,6 +418,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       const data = await api('GET', '/api/schedules');
       model.schedules = Array.isArray(data.schedules) ? data.schedules : [];
       model.tickets = Array.isArray(data.tickets) ? data.tickets : [];
+      model.chains = Array.isArray(data.chains) ? data.chains : [];
       model.counts = data.counts || {};
       if (data.defaults) model.defaults = data.defaults;
       model.loaded = true;
@@ -458,6 +460,8 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     },
     /** Every ticket the server listed (scheduled, firing, missed) — unlike upcoming(), none is dropped for being far out. */
     tickets() { return model.tickets; },
+    /** The after-ticket chains the server listed with the last load(). */
+    chains() { return model.chains; },
     /** Upsert a ticket by id (an optimistic add before the next load). */
     noteTicket(t) {
       const i = model.tickets.findIndex((x) => x.id === t.id);

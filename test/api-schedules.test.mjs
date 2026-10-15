@@ -545,3 +545,17 @@ test('chain: B (sameAsSource + sourceFromPrevious) after a same-branch A commits
   assert.equal(bb.source, main, 'A merged back, so "A\'s branch" is A\'s source');
   assert.equal(bb.mergeBack.merged, true);
 });
+
+test('GET /api/schedules carries the open "Run after" chains, and drops a chain once all its members are done', async () => {
+  seedPipelineRow({ id: 'ch000001', title: 'Chain root', status: 'running', projectKey: projectKey(dir), startedAt: new Date().toISOString() });
+  const b = await (await post('/api/run', { projectDir: dir, prompt: 'B', title: 'Chain next', mock: true, after: { kind: 'pipeline', id: 'ch000001' } })).json();
+  const open = await get('/api/schedules');
+  assert.ok(Array.isArray(open.chains));
+  const chain = open.chains.find((c) => c.id === 'p:ch000001');
+  assert.ok(chain, 'the open chain is listed');
+  assert.deepEqual(chain.members.map((m) => [m.pipelineId, m.ticketId, m.state]), [['ch000001', null, 'current'], [null, b.runId, 'waiting']]);
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = 'ch000001'").run();
+  getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id = ?").run(b.runId);
+  const settledChains = await get('/api/schedules');
+  assert.equal(settledChains.chains.some((c) => c.id === 'p:ch000001'), false);
+});

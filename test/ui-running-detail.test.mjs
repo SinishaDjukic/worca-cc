@@ -125,10 +125,15 @@ const HISTORY_ROW = {
 };
 
 async function bootRunning({ budget = okBudget(), rows = [HISTORY_ROW] } = {}) {
-  const box = { budget, rows };
+  const box = { budget, rows, chains: [], schedulesFail: false };
   // boot(): ({url, fetchHandler}) -> {window, calls, recv}, socket already open.
   const ctx = await boot({
     fetchHandler: (url) => {
+      if (url.endsWith('/api/schedules')) {
+        return box.schedulesFail
+          ? Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) })
+          : ok({ schedules: [], tickets: [], counts: {}, chains: box.chains });
+      }
       if (url.endsWith('/api/history/pr')) return ok({ ok: true });
       if (url.endsWith('/api/history')) return ok({ pipelines: box.rows, ghAvailable: false });
       if (url.endsWith('/api/budget')) return ok(box.budget);
@@ -1371,4 +1376,149 @@ test('Agents (live): a sub-agent type named like an Object member keeps its own 
   await settle(window);
   assert.deepEqual([...secOf(window, 'agents').querySelectorAll('.rd-ag-row .agent-type-pill')].map((p) => p.textContent),
     ['constructor', 'toString', '__proto__']);
+});
+
+// --- run progress (P5): the bar on the run page --------------------------------
+test('the run page carries the progress bar, its P5 line, and no chain bar for a single run', async () => {
+  const ctx = await bootRunning();
+  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1 });
+  go(ctx.window, 'running/r1');
+  await settle(ctx.window, 6);
+  const screen = ctx.window.document.querySelector('#run-detail');
+  const bar = screen.querySelector('.rd-glance .rd-prog');
+  assert.ok(bar, 'the bar lives in the glance');
+  assert.equal(bar.hidden, false, 'a live graph run shows it');
+  assert.ok(bar.querySelector('.run-prog-fill'), 'painted by paintProgressBar');
+  assert.equal(screen.querySelector('.rd-glance .rd-prog-chain').hidden, true, 'a single run has no overall bar (P8)');
+  const sub = screen.querySelector('.rd-now-sub').textContent;
+  assert.equal(sub, 'Implementer', 'line 2 is the P5 line (no stages: the running node), not "Step: …"');
+  assert.equal(screen.querySelector('.rd-meta .rd-step').textContent, 'Implementer', 'the header step segment carries the same P5 text');
+});
+
+test('a stopped run keeps the red glance with no bar (P2/P4)', async () => {
+  const ctx = await bootRunning();
+  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'error', stepper: V2_MANIFEST, steps: V2_STEPS(), subAgents: [], totalCostUsd: 1 });
+  go(ctx.window, 'running/r1');
+  await settle(ctx.window, 6);
+  const screen = ctx.window.document.querySelector('#run-detail');
+  assert.equal(screen.querySelector('.rd-glance .rd-prog').hidden, true);
+});
+
+async function openProgressRun(over = {}) {
+  const ctx = await bootRunning();
+  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1, ...over });
+  go(ctx.window, 'running/r1');
+  await settle(ctx.window, 6);
+  return { ctx, screen: ctx.window.document.querySelector('#run-detail') };
+}
+
+test('a question turns the run page bar amber and the status line says what needs you (P4/P5)', async () => {
+  const { ctx, screen } = await openProgressRun();
+  const bar = screen.querySelector('.rd-glance .rd-prog');
+  assert.equal(bar.dataset.tone, 'blue');
+  assert.ok(bar.querySelector('.run-prog-fill'));
+  frame(ctx, { type: 'question', runId: 'r1', ...clarify() });
+  await settle(ctx.window, 6);
+  assert.equal(screen.querySelector('.rd-glance .rd-prog').dataset.tone, 'amber');
+  assert.match(screen.querySelector('.rd-now-sub').textContent, /needs you/i);
+});
+
+test('a finished run that reached the end paints a full green bar', async () => {
+  const { ctx, screen } = await openProgressRun();
+  const steps = V2_STEPS().map((s) => ({ ...s, status: 'done' }));
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'done', endReached: true, stepper: V2_MANIFEST, steps, active: [], subAgents: [], totalCostUsd: 1 });
+  await settle(ctx.window, 6);
+  const bar = screen.querySelector('.rd-glance .rd-prog');
+  assert.equal(bar.hidden, false);
+  assert.equal(bar.dataset.tone, 'green');
+  assert.equal(bar.querySelector('.run-prog-fill').style.width, '100%');
+});
+
+test('the progress tone equals the status family for every status, with and without a question', async () => {
+  for (const status of ['running', 'paused', 'pausing', 'interrupted', 'done', 'stopped', 'error']) {
+    const { ctx } = await openProgressRun();
+    const np = ctx.window.__np;
+    // A question frame sticks to the run, so each status is checked without it first, then with it.
+    for (const pendingQuestion of [false, true]) {
+      frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status, stepper: V2_MANIFEST, steps: V2_STEPS(), active: [], subAgents: [], totalCostUsd: 1 });
+      if (pendingQuestion) frame(ctx, { type: 'question', runId: 'r1', ...clarify() });
+      const r = np.getRun('r1');
+      assert.equal(Boolean(r.pendingQuestion), pendingQuestion, `${status}: the question frame reached the run`);
+      assert.equal(np.runDecorFor(r).stageProgress.tone, np.runStatusMeta(r).family, `${status} ${pendingQuestion ? '+ question' : ''}`);
+    }
+  }
+});
+
+test('a staged manifest reads "<Stage> · …" on the glance line and the header, never "Step:" (P5)', async () => {
+  const staged = JSON.parse(JSON.stringify(V2_MANIFEST));
+  staged.graph.nodes[0].progressStage = 'build';
+  const { screen } = await openProgressRun({ stepper: staged });
+  const sub = screen.querySelector('.rd-now-sub').textContent;
+  assert.equal(sub, 'Build · Implementer');
+  assert.ok(!/^Step/.test(sub));
+  assert.equal(screen.querySelector('.rd-meta .rd-step').textContent, 'Build · Implementer');
+  assert.equal(screen.querySelector('.rd-glance .rd-prog').dataset.tone, 'blue');
+});
+
+// --- run progress (P8): the chain's overall bar on the run page ---------------
+const STAGED_V2 = () => {
+  const m = JSON.parse(JSON.stringify(V2_MANIFEST));
+  m.graph.nodes[0].progressStage = 'build';
+  return m;
+};
+const CHAIN_OF_THREE = () => [{ id: 'p:p0', title: 'Chain', members: [
+  { pipelineId: 'p0', ticketId: null, state: 'done', title: 'Zero', projectDir: PROJECT },
+  { pipelineId: 'p1', ticketId: null, state: 'current', title: 'Add dark mode', projectDir: PROJECT },
+  { pipelineId: null, ticketId: 'tick3', state: 'waiting', title: 'Third', projectDir: PROJECT },
+] }];
+
+async function openChainRun(ctx) {
+  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: STAGED_V2(), steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1 });
+  go(ctx.window, 'running/r1');
+  await settle(ctx.window, 8);
+  return ctx.window.document.querySelector('#run-detail');
+}
+
+test('a run in a chain of three paints the overall bar: 3 parts, the first green, "Run 2 of 3 · Build"', async () => {
+  const ctx = await bootRunning();
+  ctx.box.chains = CHAIN_OF_THREE();
+  const screen = await openChainRun(ctx);
+  const chain = screen.querySelector('.rd-glance .rd-prog-chain');
+  assert.equal(chain.hidden, false);
+  assert.equal(chain.querySelector('.run-chain-label').textContent, 'Run 2 of 3 · Build');
+  const parts = [...chain.querySelectorAll('.run-chain-part')];
+  assert.equal(parts.length, 3);
+  assert.equal(parts[0].dataset.state, 'done');
+  assert.equal(parts[0].dataset.tone, 'green');
+  assert.equal(parts[0].firstElementChild.style.width, '100%');
+  assert.equal(parts[1].dataset.state, 'current');
+  assert.equal(parts[2].dataset.state, 'waiting');
+});
+
+test('chain freshness: no chain at first, a schedules-changed frame then shows the bar', async () => {
+  const ctx = await bootRunning();
+  const screen = await openChainRun(ctx);
+  assert.equal(screen.querySelector('.rd-glance .rd-prog-chain').hidden, true);
+  ctx.box.chains = CHAIN_OF_THREE();
+  frame(ctx, { type: 'schedules-changed' });
+  await settle(ctx.window, 8);
+  assert.equal(screen.querySelector('.rd-glance .rd-prog-chain').hidden, false);
+});
+
+test('a failing /api/schedules is not refetched by repaints; the chain bar stays hidden', async () => {
+  const ctx = await bootRunning();
+  ctx.box.schedulesFail = true;
+  const screen = await openChainRun(ctx);
+  const asked = ctx.calls.filter((c) => c.url.endsWith('/api/schedules')).length;
+  assert.ok(asked >= 1, 'the chain lookup asked');
+  for (let i = 0; i < 3; i++) {
+    frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: STAGED_V2(), steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1 + i });
+    await settle(ctx.window, 4);
+  }
+  assert.equal(ctx.calls.filter((c) => c.url.endsWith('/api/schedules')).length, asked, 'repaints do not refetch a failing lookup');
+  assert.equal(screen.querySelector('.rd-glance .rd-prog-chain').hidden, true);
 });

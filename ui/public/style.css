@@ -4596,6 +4596,21 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-row-body{min-width:0;display:flex;flex-direction:column;gap:2px;}
 .runs-row-title{font:500 13.5px/1.3 var(--sans);overflow-wrap:anywhere;}   /* wraps, as in the mockup */
 .runs-row-sub{font-size:12px;font-weight:300;color:var(--ink-2);}
+/* P7: the Runs list's 3px line, live rows only. */
+.runs-row-prog{display:block;height:3px;margin-top:5px;border-radius:2px;background:var(--field);overflow:hidden;}
+.runs-row-prog > i{display:block;height:100%;width:0;background:var(--blue);transition:width .6s ease;}
+.runs-row-prog[data-tone="amber"] > i{background:var(--amber);}
+.runs-row-prog[data-tone="green"] > i{background:var(--green);}
+.runs-row-prog[data-tone="red"] > i{background:var(--red);}
+.runs-chain{position:relative;}
+.runs-chain-toggle{position:absolute;top:8px;right:6px;border:0;background:none;color:var(--ink-3);padding:4px;cursor:pointer;}
+.runs-chain-toggle[aria-expanded="true"] .runs-chev{transform:rotate(180deg);}
+.runs-chain-members{list-style:none;margin:0 0 6px 30px;padding:0;font-size:12px;}
+.runs-chain-member{display:flex;gap:6px;align-items:baseline;padding:2px 0;color:var(--ink-2);}
+.runs-chain-member.is-done .runs-chain-glyph{color:var(--green-ink);}
+.runs-chain-member.is-current .runs-chain-glyph{color:var(--blue-ink);}
+.runs-chain-member.is-failed .runs-chain-glyph{color:var(--red-ink);}
+.runs-chain-pr{margin-left:auto;color:var(--blue-ink);}
 .runs-note{margin:0;padding:18px 12px;color:var(--ink-2);font-size:13px;text-align:center;}
 .runs-note-err{color:var(--red-ink);}
 .runs-pane{position:relative;min-width:0;min-height:0;background:var(--bg);}
@@ -4748,6 +4763,34 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
    for it, while the header and the panel keep their 544px measure and do not move. */
 .rd-glance:has(> .rd-questions:not([hidden])){max-width:1216px;}
 .rd-glance:has(> .rd-questions:not([hidden])) > :is(.rd-now,.rd-sheet,.rd-night-sec){width:100%;max-width:544px;align-self:center;}
+/* Run progress (spec 2026-10-14 P2/P4/P7/P8/P11). Fill colours are the status families (runStatusMeta). */
+.run-prog{position:relative;margin-top:10px;outline:none;}
+.run-prog[hidden]{display:none;}
+.run-prog-track,.run-chain-track{position:relative;height:6px;border-radius:999px;background:var(--field);overflow:hidden;}
+.run-prog-fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:inherit;background:var(--blue);transition:width .6s ease;}
+.run-prog[data-tone="amber"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="amber"] .run-prog-fill{background:var(--amber);}
+.run-prog[data-tone="green"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="green"] .run-prog-fill{background:var(--green);}
+.run-prog[data-tone="red"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="red"] .run-prog-fill{background:var(--red);}
+.run-prog-tick{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--surface);}
+.run-prog-marks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-top:5px;font-size:11px;color:var(--ink-3);}
+.run-prog-mark[data-state="done"]{color:var(--ink-2);}
+.run-prog-mark[data-state="current"]{color:var(--ink);font-weight:600;}
+.run-prog-mark[data-state="skipped"]{opacity:.5;}
+.run-prog-detail{display:none;position:absolute;z-index:20;bottom:calc(100% + 6px);left:0;min-width:240px;padding:10px 12px;
+  border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);color:var(--ink-2);font-size:12px;}
+.run-prog:hover > .run-prog-detail,.run-prog:focus-within > .run-prog-detail{display:block;}
+.run-prog:focus-visible .run-prog-track{box-shadow:0 0 0 2px var(--blue-line);}
+.run-prog-stages,.run-prog-agents{list-style:none;margin:0;padding:0;}
+.run-prog-agents{padding-left:12px;color:var(--ink-3);}
+.run-prog-stage.is-current > .run-prog-stage-name,.run-prog-agent.is-current{color:var(--ink);font-weight:600;}
+.run-prog.is-compact{margin-top:10px;}
+.run-prog.is-compact .run-prog-marks{display:none;}
+.ask-rc-prog{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* P8: the chain's overall bar — equal parts, finished green, the current one filling. */
+.run-chain-label{font-size:11px;color:var(--ink-3);margin-bottom:4px;}
+.run-chain-track{display:flex;gap:3px;background:none;}
+.run-chain-part{position:relative;flex:1 1 0;height:6px;border-radius:999px;background:var(--field);overflow:hidden;}
+@media (prefers-reduced-motion: reduce){.run-prog-fill,.runs-row-prog > i{transition:none;}}
 .rd-now{display:flex;flex-direction:column;gap:18px;}
 /* The run's name is the page's subject: the largest type on it. */
 .rd-page-head{min-width:0;}
@@ -4771,9 +4814,11 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .rd-page-branch.copied .ico-check{display:inline;color:var(--green-ink);}
 /* The card's head: the status line top left, the Live view switch (app.js paintRdLive)
    top right, level with the state word. */
-.rd-sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;min-width:0;}
-.rd-sheet-head > .rd-now-top{flex:1 1 auto;}
-.rd-sheet-head > .rd-live-row{flex:none;height:23px;}   /* the state word's line box (18px × 1.3) */
+.rd-sheet-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;min-width:0;}
+.rd-sheet-head > .rd-now-top{grid-area:1 / 1;}
+.rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:23px;margin-left:16px;}   /* the state word's line box (18px × 1.3) */
+/* The progress bars take the card's full width, under the status line (a flex row squeezed them to ~128px). */
+.rd-sheet-head > .run-prog{grid-column:1 / -1;}
 /* The status line: what is happening now. A state word, then what it concerns. */
 .rd-now-top{display:flex;align-items:center;gap:12px;min-width:0;}
 .rd-orb{flex:none;display:flex;}
