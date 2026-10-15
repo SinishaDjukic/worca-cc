@@ -9226,7 +9226,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .rp-more summary .rp-chev{margin-left:auto;flex:none;width:8px;height:8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-2px);}
 .rp-more[open] summary .rp-chev{transform:rotate(225deg) translateY(-1px);}
 .rp-tick{flex:none;position:relative;width:7px;height:12px;}
-.rp-tick::before{content:"";position:absolute;left:0;top:2px;width:9px;height:5px;border-left:1.6px solid var(--green);border-bottom:1.6px solid var(--green);transform:rotate(-45deg);}
+.rp-tick::before{content:"";position:absolute;left:2px;top:0;width:4px;height:9px;border-right:1.6px solid var(--green);border-bottom:1.6px solid var(--green);transform:rotate(45deg);}
 .rp-gdot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--ink-3);}
 .rp-more ul{list-style:none;margin:0 10px;padding:0 0 8px;}
 .rp-more li{margin-left:15px;padding:6px 0;border-top:1px solid var(--line-2);}
