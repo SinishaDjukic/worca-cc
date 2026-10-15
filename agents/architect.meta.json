@@ -1,6 +1,7 @@
 {
   "key": "architect",
   "metaVersion": 2,
+  "progressStage": "plan",
   "mockRole": "c4-architect",
   "humanEffort": {
     "hours": 6

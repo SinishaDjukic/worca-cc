@@ -153,6 +153,9 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       // alone — the workflow row is never re-read after the run starts.
       cell.subagentModel = over.subagentModel ?? cfg.subagentModel ?? '';
       cell.subagentEffort = over.subagentEffort ?? cfg.subagentEffort ?? '';
+      // Run progress: the stage rides the manifest like color/icon, so a run (and a resume,
+      // which rebuilds the manifest from the registry) never needs the live registry for it.
+      if (meta?.progressStage) cell.progressStage = meta.progressStage;
     }
     if (node.kind === 'script') {
       cell.color = meta?.color || '';

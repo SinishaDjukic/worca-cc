@@ -932,10 +932,10 @@ test('a v2 run page: progress reads numerically, .rd-step names what runs (no st
       assert.equal(banners.querySelector('.run-warn').hidden, false);
       np.paintQuiescenceBanner(banners, { quiescent: false });
       assert.equal(banners.querySelector('.run-warn').hidden, true);
-      assert.equal(np.progressText(r), '1/1 done');
+      assert.equal(np.progressText(r), 'Finished', 'the P5 line supersedes the "n/m done" counter (spec 2026-10-14 P12)');
       assert.equal(np.histCountsLine({ ...r, stepper: MANIFEST }), '1 execution · 2 loop deliveries');
       const v1 = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
-      assert.equal(np.progressText(v1), '', 'v1 runs have no numeric progress');
+      assert.equal(np.progressText(v1), '', 'v1 runs have no progress line');
     } },
     { name: 'the detail header .rd-step names what runs on a v2 run, with no step count', run: async () => {
       const window = await bootApp();

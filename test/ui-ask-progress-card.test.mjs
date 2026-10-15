@@ -221,7 +221,7 @@ test('ui-ask-progress-card: a started card goes live from the run store, repaint
   await settle(ctx.window);
   assert.equal(el.querySelector('.ask-rc-pill').textContent, 'Planner', 'the newest active agent, Running-list parity');
   assert.equal(el.querySelector('.ask-rc-pill').className, 'ask-rc-pill st-violet');
-  assert.equal(el.querySelector('.ask-rc-prog').textContent, '0/2 agents');
+  assert.equal(el.querySelector('.ask-rc-prog').textContent, 'Planner', 'the P5 text replaces "n/m agents" for a graph run');
   assert.equal(el.querySelector('.ask-rc-sub').textContent, 'proj · #abcd1234');
   const stage = el.querySelector('.chat-rc-graph .gv-stage');   // Chat P3: the registered chat run card (Workflows well)
   assert.ok(stage, 'the workflow graph is mounted from the live stepper');

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   rowTime, liveRowState, histRowState, schedRowState, countNeedsYou,
-  buildRunsModel, rowSub, isRowSelected, renderRunsList, rowInFilter, dateBucket, RUNS_FILTERS, DATE_BUCKETS,
+  buildRunsModel, rowSub, isRowSelected, renderRunsList, rowInFilter, dateBucket, RUNS_FILTERS, DATE_BUCKETS, chainRow,
 } from '../ui/public/runs-list.mjs';
 
 const NOW = new Date(2026, 8, 30, 15, 0).getTime();           // Wed Sep 30 2026, 15:00 local
@@ -310,4 +310,115 @@ test('group by date: sections in order, empty ones dropped, History by last acti
   const doc = new JSDOM('').window.document;
   const heads = renderRunsList(doc, m).filter((n) => n.classList.contains('runs-group')).map((n) => n.dataset.groupKey);
   assert.deepEqual(heads, ['date:today', 'date:yesterday', 'date:older']);
+});
+
+// ---- Run progress in the list (P7 thin line, P8 chain row) ----
+const chainIt = (extra = {}) => ({
+  id: 'c1', title: 'First run', open: false, groupKey: 'emp-00000001', groupName: 'Employee project',
+  total: 2, index: 1, fraction: 0.25, tone: 'blue', text: 'Run 1 of 2 · Build',
+  members: [
+    { state: 'current', pipelineId: 'p1', ticketId: null, runId: 'r1', title: 'First run', href: '#running/r1', icon: 'run' },
+    { state: 'waiting', pipelineId: null, ticketId: 't2', title: 'Second run', href: '#schedules/once' },
+  ], ...extra,
+});
+
+test('live row carries its progress; a chain item replaces its member rows with ONE chain row', async () => {
+  const m = buildRunsModel({
+    live: [liveIt('r1', { pipelineId: 'p1', progress: { fraction: 0.4, tone: 'blue' } }), liveIt('r9')],
+    scheduled: [{ id: 't2', title: 'Second run', status: 'scheduled', after: 'p1', groupKey: 'emp-00000001', groupName: 'Employee project' }],
+    chains: [chainIt()], now: NOW,
+  });
+  const rows = m.groups.flatMap((g) => g.rows);
+  assert.deepEqual(rows.map((r) => r.key), ['chain:c1', 'live:r9']);
+  const c = rows[0];
+  assert.equal(c.kind, 'chain');
+  assert.equal(c.title, 'First run');
+  assert.equal(c.word, 'Run 1 of 2 · Build');
+  assert.deepEqual(c.progress, { fraction: 0.25, tone: 'blue' });
+  assert.equal(c.icon, 'run');
+  assert.equal(m.groups[0].rows[1].progress, null);
+  assert.equal(buildRunsModel({ live: [liveIt('r1', { progress: { fraction: 0.4, tone: 'blue' } })], now: NOW }).groups[0].rows[0].progress.fraction, 0.4);
+});
+
+test('Needs you keeps listing a chain member that asks, folded or not, under every filter', () => {
+  const args = { live: [liveIt('r1', { pipelineId: 'p1', ask: { kind: 'workflow', step: 'Plan' } })], chains: [chainIt()], now: NOW };
+  const m = buildRunsModel(args);
+  assert.deepEqual(m.needs.map((r) => r.key), ['live:r1']);
+  assert.deepEqual(m.groups.flatMap((g) => g.rows).map((r) => r.key), ['chain:c1'], 'the group still folds it');
+  const only = buildRunsModel({ ...args, filter: 'needs' });
+  assert.deepEqual(only.needs.map((r) => r.key), ['live:r1']);
+  assert.equal(countNeedsYou({ live: [{ pipelineId: 'p1', status: 'running', ask: true }] }), 1);
+});
+
+test('a chain of three is ONE row (Run 2 of 3) that expands to ✓ ● ○ members', () => {
+  const doc = new JSDOM('<body></body>').window.document;
+  const chain = chainIt({ open: true, total: 3, index: 2, text: 'Run 2 of 3 · Plan', members: [
+    { state: 'done', pipelineId: 'p0', title: 'Zero', href: '#history/k/p0' },
+    { state: 'current', pipelineId: 'p1', runId: 'r1', title: 'First run', href: '#running/r1', icon: 'run' },
+    { state: 'waiting', ticketId: 't2', title: 'Second run', href: '#schedules/once' }] });
+  const m = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1' })], history: [histIt('p0')], chains: [chain], now: NOW });
+  const rows = m.groups.flatMap((g) => g.rows);
+  assert.deepEqual(rows.map((r) => r.key), ['chain:c1'], 'the done History member folds in too');
+  assert.equal(rows[0].word, 'Run 2 of 3 · Plan');
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m, {}));
+  assert.deepEqual([...host.querySelectorAll('.runs-chain-glyph')].map((g) => g.textContent), ['✓', '●', '○']);
+  assert.deepEqual(host.querySelector('.runs-row-chain').dataset.memberKeys.split(' ').sort(), ['p:p0', 'p:p1', 'r:r1', 't:t2'],
+    'the row carries its member keys so the selection repaint can rebuild them from the DOM');
+});
+
+test('the chain row glyph follows the current member: ask, paused, else scheduled while it only waits', () => {
+  const iconOf = (members) => chainRow(chainIt({ members }), NOW).icon;
+  const cur = (icon) => [{ state: 'current', pipelineId: 'p1', runId: 'r1', title: 'A', href: '#running/r1', icon }];
+  assert.equal(iconOf(cur('ask')), 'ask');
+  assert.equal(iconOf(cur('paused')), 'paused');
+  assert.equal(iconOf(cur(undefined)), 'run');
+  assert.equal(iconOf([{ state: 'waiting', ticketId: 't2', title: 'B', href: '#schedules/once' }]), 'scheduled');
+});
+
+test('filter Finished with a chain: the done member keeps the chain row alive, a live-only chain is dropped', () => {
+  const doneChain = chainIt({ members: [
+    { state: 'done', pipelineId: 'p0', title: 'Zero', href: '#history/k/p0' },
+    { state: 'waiting', ticketId: 't2', title: 'Second', href: '#schedules/once' }] });
+  const m = buildRunsModel({ history: [histIt('p0')], chains: [doneChain], filter: 'finished', now: NOW });
+  assert.deepEqual(m.groups.flatMap((g) => g.rows).map((r) => r.key), ['chain:c1']);
+  const live = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1' })], chains: [chainIt()], filter: 'finished', now: NOW });
+  assert.deepEqual(live.groups.flatMap((g) => g.rows), []);
+});
+
+test('a chain marks its group live and is selected by any member pipeline/run', () => {
+  const m = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', groupKey: 'g', groupName: 'G' })], history: [histIt('h1')], chains: [chainIt({ groupKey: 'g', groupName: 'G' })], now: NOW });
+  assert.equal(m.groups[0].key, 'g', 'live-first');
+  const row = m.groups[0].rows[0];
+  assert.equal(isRowSelected(row, { pipelineId: 'p1' }), true);
+  assert.equal(isRowSelected(row, { runId: 'r1' }), true);
+  assert.equal(isRowSelected(row, { runId: 'zz' }), false);
+  assert.equal(dateBucket(row, NOW), 'today');
+});
+
+test('the thin line is painted under live and chain rows only while live; a chain toggle expands its members', () => {
+  const dom = new JSDOM('<body></body>');
+  const doc = dom.window.document;
+  const m = buildRunsModel({
+    live: [liveIt('r1', { pipelineId: 'p1', progress: { fraction: 0.4, tone: 'blue' } }),
+      liveIt('r2', { status: 'done', progress: { fraction: 1, tone: 'green' } })],
+    chains: [chainIt({ open: true, members: [
+      { state: 'done', pipelineId: 'p0', title: 'Zero', href: '#history/k/p0', prUrl: 'https://x.test/1' },
+      { state: 'current', pipelineId: 'p1', runId: 'r1', title: 'First run', href: '#running/r1', icon: 'run' }] })],
+    now: NOW,
+  });
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m, { lineFrom: new Map([['chain:c1', '10%']]) }));
+  assert.equal(host.querySelectorAll('.runs-row-prog').length, 1, 'ended live row has no line');
+  assert.equal(host.querySelector('.runs-chain .runs-row-prog > i').style.width, '10%');
+  const tog = host.querySelector('.runs-chain-toggle');
+  assert.equal(tog.getAttribute('aria-expanded'), 'true');
+  assert.equal(tog.dataset.chainKey, 'chain:c1');
+  assert.equal(host.querySelectorAll('.runs-chain-member').length, 2);
+  assert.equal(host.querySelector('.runs-chain-pr').getAttribute('href'), 'https://x.test/1');
+  const closed = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1' })], chains: [chainIt()], now: NOW });
+  const h2 = doc.createElement('div');
+  h2.append(...renderRunsList(doc, closed, {}));
+  assert.equal(h2.querySelector('.runs-chain-members').hidden, true);
+  assert.equal(h2.querySelectorAll('.runs-chain-member').length, 0);
 });

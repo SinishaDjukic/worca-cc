@@ -8,6 +8,7 @@ import { decorFromState, applyDecor, manifestTemplate, manifestPortsFn, manifest
 import { mountStaticGraph } from './graph/view.mjs';
 import { FLOW_SCALE } from './graph/model.mjs';
 import { engineReportsCost } from '../../src/shared/engine-switch.mjs';
+import { runProgress } from '../../src/shared/run-progress.mjs';
 
 export const PROGRESS_CARD_TYPE = 'progress';
 /** app.js isTerminalStatus's set, verbatim (app.js:4304-4306). */
@@ -66,6 +67,7 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     elapsedMs: Number(state.totalActiveMs) || 0,
     costUsd: engineReportsCost(state.runEngine) ? (Number(state.totalCostUsd) || 0) : null,   // null: cost unknown (Cursor), never $0.00
     progress: decor ? decor.progress : null,
+    stageProgress: graph ? runProgress(state) : null,   // a frozen state is final: no memo
     active: decor ? activeAgents(decor, state.stepper) : [],   // a v1 row names no agent even when state.active is set
     stepper: graph ? state.stepper : null,
     decor,
