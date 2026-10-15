@@ -4,7 +4,7 @@ Date: 2026-10-14. Base branch: `dev` (761452f9, 1.11.0). Branches: `feat/shape-i
 Mock (approved): the "Specs in Chat" design canvas, https://claude.ai/artifact/MJk8bfs2cK4YsKTBta5Z2q
 (screens 1–7).
 **Revised 2026-10-15** after the first real sliced feature (#718, run tags): §11 records what it showed and the
-decisions D16–D23, which take precedence over §2–§3 where they differ. Replaces Spec Builder (#678, closed as not planned; PR #679 closed). Some
+decisions D16–D28, which take precedence over §2–§3 where they differ. Replaces Spec Builder (#678, closed as not planned; PR #679 closed). Some
 Spec Builder code on `feat/spec-builder-v2` is reused (§4.6).
 
 ## 1. Goal
@@ -359,6 +359,11 @@ The engine worked. The way it is shown and started did not.
 | D21 | **One vocabulary.** "Plan it with me" is the flow (tile, workflow display name, start button, docs headings). "Plan" is the plan card, "slices" the parts, "feature" the whole. "Shape it first" leaves the UI; internal ids (`wf_shape`, `shape`, `shapeFirst`) stay. The intent's lead is sent to the model but never shown in the bubble, which shows the chip and the person's text. |
 | D22 | **A finished slice knows its place.** Its run page says "Slice 1 of 3 · next: *slice 2* (planning)". Ship it says "Slice 2 builds on this branch: merge this PR first", and the PR body starts with "Part of *feature*: slice 1 of 3" and links to the other slices' PRs. |
 | D23 | **Checklists read at a glance.** The run page shows the latest review cycle only, as one line ("23 met · 0 unmet · 0 n/a"); unmet items are expanded, met items collapsed with their evidence on demand. Earlier cycles sit behind **Earlier cycles**. |
+| D24 | **Ship as stacked PRs or one PR, chosen at the end.** The slice branches are one line (each starts from the previous one), so both need no re-run. Each slice opens a **draft** PR when it finishes, for early review. When the last slice is done, the feature page asks **Ship as: stacked PRs / one PR**. Stacked: the drafts become ready in merge order. One PR: the last slice's branch into the base branch, its body one section per slice (summary, checklist, link to the slice's closed draft); the drafts are closed with a link to it. The default is one PR when the feature adds fewer than ~1,500 lines, stacked above. |
+| D25 | **One changelog entry per feature.** When a feature ships, Worca writes one entry for it (from the slices' PR bodies) into the project's unreleased changelog, the way `worca-changelog` writes one per run. Versions and release tags stay project-level and are out of scope here (a separate "Prepare release" issue). |
+| D26 | **The chip says "Experimental".** The tile's badge and every other place that marks the feature use the flag's stage name, "Experimental", the same word as Settings › Experimental. "New" is dropped. |
+| D27 | **Mechanical shape-check failures fix themselves.** A failing check that needs no judgement (`grounded`: a path missing its `(new)` mark; `noPlaceholders` on an empty heading) is fixed deterministically on the plan file before the approval stop, and the card says what was fixed. Only checks that need judgement (`testable`, `decisions`) offer **Fix**, which still re-runs the Planner. On #718 the mechanical case cost one extra Plan and Refine (about $30). |
+| D28 | **Measure it from day one (§7).** Each shaped run records, on the run: questions asked and skipped, revise count and why (person or check), shape score at approval, review cycles, checklist met/unmet/n.a., shaping cost vs building cost, and for a feature the slices proposed, merged and removed. `GET /api/runs/:id` returns it as `shapeStats`; Statistics gets a "Plan it with me" row group comparing shaped runs with unshaped runs of the same size. The nudge's estimate includes the shaping cost (Plan and Refine dominate: $62 of $87 on #718), calibrated from these records once 5 shaped runs exist. |
 
 ### 11.3 Code changes
 
@@ -392,6 +397,15 @@ chains and stay sequential.
 
 ### 11.6 Order of work
 
-D18, D20, D21 and D23 are fixes inside the open slice PRs (#728–#730). D16, D17 and D19 need #730 and
-#732 together, so they come as one more PR after both merge. The mock canvas gets boards for the
-feature page and the Runs list group before that PR is built.
+The fixes go onto the open branches, so each PR carries its own fix. `feat/run-progress` (#732) is merged into
+`feat/shape-it-first-4-slices` (#730), because D17 builds on its chain view: **#732 merges before #730.**
+
+| Branch (PR) | Decisions |
+|---|---|
+| `feat/shape-it-first-1-engine` (#708) | D27, D28 (recording and `shapeStats`) |
+| `feat/shape-it-first-2-chat` (#728) | D20, D21, D26, the nudge estimate (D28) |
+| `feat/shape-it-first-3-checklists` (#729) | D23 |
+| `feat/shape-it-first-4-slices` (#730) | D16, D17, D18, D19, D22, D24, D25, the Statistics group (D28) |
+
+Each lower branch is merged forward after its fix (1 → 2 → 3 → 4), and the test bundle
+`test/shape-it-first-and-run-progress` is rebuilt from slice 4 when all four are green.
