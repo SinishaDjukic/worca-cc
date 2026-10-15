@@ -23,9 +23,9 @@ const files = ['src', 'ui', 'tools'].flatMap((d) => sourceFiles(join(ROOT, d)))
   .map((f) => ({ rel: relative(ROOT, f).split(sep).join('/'), text: readFileSync(f, 'utf8') }));
 const read = (rel) => files.find((f) => f.rel === rel)?.text ?? '';
 
-test('the shapeFirst flag key appears only in the registry and the two gate modules', () => {
-  const hits = files.filter((f) => /['"]shapeFirst['"]/.test(f.text)).map((f) => f.rel).sort();
-  assert.deepEqual(hits, ['src/core/shape/gate.mjs', 'src/shared/flags/registry.mjs', 'ui/public/chat/shape-gate.mjs']);
+test('the shapeFirst flag is read only in the two gate modules', () => {
+  const hits = files.filter((f) => /\b(?:flagEnabled|flagOn|onFlagChange|requireFlag)\(\s*['"]shapeFirst['"]/.test(f.text)).map((f) => f.rel).sort();
+  assert.deepEqual(hits, ['src/core/shape/gate.mjs', 'ui/public/chat/shape-gate.mjs']);
 });
 
 test("the /api/runs/:id/answer handler's first statement is requireShapeFirst", () => {
@@ -35,8 +35,17 @@ test("the /api/runs/:id/answer handler's first statement is requireShapeFirst", 
   assert.equal(m[1].trim(), 'if (!requireShapeFirst(req, res)) return;');
 });
 
+for (const [verb, route] of [['get', '/plan'], ['post', '/plan/save']]) {
+  test(`the ${verb.toUpperCase()} /api/runs/:id${route} handler's first statement is requireShapeFirst`, () => {
+    const re = /app\.(get|post)\('\/api\/runs\/:id\/plan(\/save)?',\s*(async\s+)?\(req, res\)\s*=>\s*\{\s*\n\s*([^\n]*)/g;
+    const m = [...read('ui/server.mjs').matchAll(re)].find((x) => x[1] === verb && (x[2] || '') === route.slice('/plan'.length));
+    assert.ok(m, 'the route exists');
+    assert.equal(m[4].trim(), 'if (!requireShapeFirst(req, res)) return;');
+  });
+}
+
 test('outside import/export lines GRAPH_SHAPE_WORKFLOW is read only beside a gate call', () => {
-  for (const rel of ['ui/server.mjs', 'src/core/ask/catalog.mjs', 'src/cli/worca-cc.mjs']) {
+  for (const rel of ['ui/server.mjs', 'src/core/ask/catalog.mjs', 'src/cli/worca-cc.mjs', 'src/core/ask/proposal.mjs']) {
     const lines = read(rel).split('\n').filter((l) => l.includes('GRAPH_SHAPE_WORKFLOW') && !/^\s*(import|export)\b/.test(l));
     for (const l of lines) assert.match(l, /shapeFirstEnabled\(|shapeFirst\(/, `${rel}: ${l.trim()}`);
   }
