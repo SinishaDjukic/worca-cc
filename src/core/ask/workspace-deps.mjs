@@ -11,7 +11,7 @@ import { basename } from 'node:path';
 import { listProjects } from '../projects.mjs';
 import {
   readWorkspace, updateWorkspace, addWorkspaceMembers, removeWorkspaceMember,
-  checkNewWorkspace, planMembersAdd, planMemberRemove, planWorkspaceRename,
+  checkNewWorkspace, planMembersAdd, planMemberRemove, planWorkspaceRename, removeImpactFor,
 } from '../workspaces.mjs';
 import { projectKey } from '../store.mjs';
 import { getDb } from '../db.mjs';
@@ -19,7 +19,7 @@ import { listSchedules, getSchedule, listTickets, getTicket } from '../scheduler
 import { workspaceMetricsStatus } from '../metrics/sync.mjs';
 import { workspacePolicyStatus } from '../policy/sync.mjs';
 import { createWorkspaceWithHomes } from '../workspace-scan-run.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
+import { isWorkspaceScanWorkflow } from '../graph/builtin-workflows.mjs';
 import { createWorkspaceChangeValidator } from './workspace-proposal.mjs';
 
 /** A run that owns the workspace, by its pipeline row (any process: CLI, another UI) — any run
@@ -29,9 +29,9 @@ import { createWorkspaceChangeValidator } from './workspace-proposal.mjs';
 function liveRun(workspaceId) {
   const rows = getDb().prepare(
     "SELECT status, json_extract(CASE WHEN json_valid(stepper) THEN stepper END, '$.template.id') AS wf FROM pipelines WHERE workspace_key = ? AND archived_at IS NULL AND status IN ('created', 'starting', 'running', 'pausing', 'paused')",
-  ).all(workspaceId).filter((r) => r.status !== 'paused' || r.wf === WORKSPACE_SCAN_WORKFLOW_ID);
+  ).all(workspaceId).filter((r) => r.status !== 'paused' || isWorkspaceScanWorkflow(r.wf));
   if (!rows.length) return null;
-  return rows.every((r) => r.wf === WORKSPACE_SCAN_WORKFLOW_ID) ? 'scan' : 'run';
+  return rows.every((r) => isWorkspaceScanWorkflow(r.wf)) ? 'scan' : 'run';
 }
 
 /** The workspace's open schedules and one-off scheduled runs, with the per-member bits of their stored request. */
@@ -72,6 +72,7 @@ export const validateWorkspaceChange = createWorkspaceChangeValidator({
   liveRun: async (id) => liveRun(id),
   scheduled: async (id) => scheduled(id),
   homeStatus,
+  removeImpact: async (id, path, opts) => removeImpactFor(id, path, opts),
 });
 
 /**

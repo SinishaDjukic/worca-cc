@@ -2,10 +2,11 @@
 // neighbourhood, streaming, and the enrich hook through joinMap (wsmap P7).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, readFile, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { loadMemberGraph, mergeWorkspaceGraph, workspaceGraphEnricher } from '../src/core/workspace-map/graph.mjs';
+import { loadMemberGraph, mergeWorkspaceGraph, pruneWorkspaceGraph, workspaceGraphEnricher } from '../src/core/workspace-map/graph.mjs';
 import { joinMap } from '../src/core/workspace-map/join.mjs';
 import { LIMITS } from '../src/shared/workspace-map/limits.mjs';
 import { entryId } from '../src/shared/workspace-map/ids.mjs';
@@ -211,4 +212,38 @@ test('workspaceGraphEnricher through joinMap: context, coverage, map.graph and t
   assert.equal(broken.graph.mode, 'none');
   assert.match(broken.errors.at(-1), /^graph: .*ENOENT/);
   assert.ok(!broken.errors.some((x) => x.includes('hunter2x')), 'map.errors never carries a raw secret');
+});
+
+test('pruneWorkspaceGraph drops a member: its nodes, every link with an end in it (bridges included); keeps the rest as merged', async () => {
+  const src = out('prune-src.json');
+  const merged = await mergeWorkspaceGraph(mapOf(), { members, outPath: src });
+  assert.equal(merged.mode, 'full');
+  const before = await readJson(src);
+  assert.ok(before.nodes.some((x) => x.repo === 'c'), 'c is in the merged graph (its member stub at least)');
+  const r = await pruneWorkspaceGraph(src, { keep: ['a', 'b', 's'], outPath: out('prune-out.json') });
+  assert.ok(r, 'pruned');
+  const g = await readJson(out('prune-out.json'));
+  assert.deepEqual(Object.keys(g), ['directed', 'multigraph', 'graph', 'nodes', 'links']);
+  assert.equal(g.nodes.some((x) => x.repo === 'c'), false, 'no node of c');
+  assert.equal(g.links.some((l) => String(l.source).startsWith('c::') || String(l.target).startsWith('c::')), false, 'no link touching c');
+  assert.deepEqual(g.graph.members, before.graph.members.filter((k) => k !== 'c'));
+  assert.equal(g.graph.workspace, 'Shop', 'the rest of the meta is kept');
+  assert.equal(r.nodes, g.nodes.length);
+  assert.equal(r.bridges, g.links.filter((l) => l.relation === 'cross_repo_uses').length);
+  assert.equal(r.bridges, 2, 'E1 (a→b) and E4 (s→b) are left; E2 (a→c) is gone');
+  assert.deepEqual(g.nodes.filter((x) => x.repo === 'a'), before.nodes.filter((x) => x.repo === 'a'), 'a kept node for node');
+  assert.equal(existsSync(src), true, 'the source is never touched');
+});
+
+test('pruneWorkspaceGraph returns null and writes nothing for a missing, garbage, too-large or empty-after-prune graph', async () => {
+  assert.equal(await pruneWorkspaceGraph(out('nope.json'), { keep: ['a'], outPath: out('o1.json') }), null);
+  await writeFile(out('bad.json'), '{not json');
+  assert.equal(await pruneWorkspaceGraph(out('bad.json'), { keep: ['a'], outPath: out('o2.json') }), null);
+  await writeFile(out('only-c.json'), JSON.stringify({ directed: false, multigraph: false, graph: { members: ['c'] }, nodes: [{ id: 'c::1', repo: 'c' }], links: [] }));
+  assert.equal(await pruneWorkspaceGraph(out('only-c.json'), { keep: ['a'], outPath: out('o3.json') }), null);
+  assert.equal(await pruneWorkspaceGraph(out('only-c.json'), { keep: ['c'], outPath: out('o4.json'), maxBytes: 10 }), null);
+  for (const o of ['o1.json', 'o2.json', 'o3.json', 'o4.json']) {
+    assert.equal(existsSync(out(o)), false, `${o} not left behind`);
+    assert.equal(existsSync(`${out(o)}.tmp`), false, `${o}.tmp not left behind`);
+  }
 });

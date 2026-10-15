@@ -40,6 +40,10 @@ test('scanRunTitle / scanRunPrompt name the workspace and every member', () => {
   assert.match(p, /# Workspace: Platform/);
   assert.doesNotMatch(p, /re-scan/);
   assert.match(scanRunPrompt({ name: 'Platform', projectNames: ['api', 'web'], rescan: true }), /re-scan/);
+  assert.equal(scanRunTitle('Platform', { partial: true }), 'Workspace partial re-scan: Platform');
+  const partial = scanRunPrompt({ name: 'Platform', projectNames: ['api', 'web'], rescan: true, partial: true });
+  assert.match(partial, /partial re-scan after a member was removed/);
+  assert.doesNotMatch(partial, /describe the code as it is now/);
 });
 
 test('checkNewWorkspace validates like createWorkspace and returns the future id', async () => {
@@ -100,4 +104,28 @@ test('finalize refuses to save a scan of a member set the workspace no longer ha
   const now = await readWorkspace(ws.id);
   const ok = await finalizeWorkspaceScan({ workspaceId: ws.id, name: 'Moved On', projectPaths: now.projectPaths, pipelineDir: await pipelineDirWith(DESC) });
   assert.equal(ok.outcome, 'updated', 'a scan of the current set saves');
+});
+
+test('a partial re-scan of a set that changed again is refused (SET_CHANGED); the stored map and overrides stay', async () => {
+  const { removeWorkspaceMember, saveWorkspaceScanResult, readWorkspaceMap, addWorkspaceManualEdge } = await import('../src/core/workspaces.mjs');
+  const { sampleMap } = await import('./helpers/wsmap-stored.mjs');
+  const [a, b, c, d] = [await freshRepo(), await freshRepo(), await freshRepo(), await freshRepo()];
+  const ws = await createWorkspace({ name: 'Partial Moved On', projectPaths: [a, b, c, d] });
+  const key = (p) => ws.projectKeys[ws.projectPaths.indexOf(p)];
+  const s = sampleMap({ keys: [key(a), key(b)], names: ['a', 'b'], name: ws.name });
+  for (const [p, nm] of [[c, 'c'], [d, 'd']]) s.map.members.push({ ...s.map.members[0], key: key(p), name: nm });
+  await saveWorkspaceScanResult(ws.id, { map: s.map, synthesis: s.synthesis });
+  await addWorkspaceManualEdge(ws.id, { from: key(a), to: key(b), kind: 'http', display: 'zz-keep' });
+  await removeWorkspaceMember(ws.id, d);                    // the partial run starts for [a, b, c] …
+  const started = await readWorkspace(ws.id);
+  const pruned = await readWorkspaceMap(ws.id);
+  await removeWorkspaceMember(ws.id, c);                    // … and another removal lands while it runs
+  const dir = await pipelineDirWith('# Workspace: x\n');   // cleaned up by the file's `after`; writes workspace-scan.md
+  await writeFile(join(dir, 'workspace-map.json'), JSON.stringify(pruned.map));
+  await writeFile(join(dir, 'synthesis.json'), JSON.stringify({ ...pruned.synthesis, overview: 'stale partial' }));
+  const res = await finalizeWorkspaceScan({ workspaceId: ws.id, name: ws.name, projectPaths: started.projectPaths, pipelineDir: dir });
+  assert.equal(res.code, 'SET_CHANGED');
+  const now = await readWorkspaceMap(ws.id);
+  assert.notEqual(now.synthesis.overview, 'stale partial');
+  assert.deepEqual(now.overrides.manual.map((m) => m.display), ['zz-keep']);
 });
