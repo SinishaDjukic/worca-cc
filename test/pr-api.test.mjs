@@ -934,14 +934,14 @@ test('POST /api/pr appends the latest perspective checklist after the Closes lin
 
   let seen = [];
   stubForkRepo(seen);
-  await withEnv({ WORCA_SHAPE_FIRST: '1' }, async () => {
+  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
     assert.equal((await post({ projectKey: betaKey, id, body: 'Did it.', ...FORK })).status, 200);
   });
   assert.equal(bodyArg(seen), `Did it.\n\nCloses #42\n\n${section}${footer}`, 'only cycle 2 is used');
 
   seen = [];
   stubForkRepo(seen);
-  await withEnv({ WORCA_SHAPE_FIRST: '' }, async () => {
+  await withEnv({ WORCA_FLAGS: '-shapeFirst' }, async () => {
     assert.equal((await post({ projectKey: betaKey, id, body: 'Did it.', ...FORK })).status, 200);
   });
   assert.equal(bodyArg(seen), `Did it.\n\nCloses #42${footer}`, 'gate off: today\'s body');
@@ -949,7 +949,7 @@ test('POST /api/pr appends the latest perspective checklist after the Closes lin
   seen = [];
   stubForkRepo(seen);
   const own = 'Mine.\n\n<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n- [x] done';
-  await withEnv({ WORCA_SHAPE_FIRST: '1' }, async () => {
+  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
     assert.equal((await post({ projectKey: betaKey, id, body: own, ...FORK })).status, 200);
   });
   assert.equal(bodyArg(seen), `${own}\n\nCloses #42${footer}`, 'a description that carries the marker is left alone');
@@ -959,7 +959,7 @@ test('POST /api/pr: a gated run without checklist rows is unchanged; a footer-le
   const { writeReview } = await import('../src/core/artifacts.mjs');
   let seen = [];
   stubForkRepo(seen);
-  await withEnv({ WORCA_SHAPE_FIRST: '1' }, async () => {
+  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
     assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
   });
   assert.equal(bodyArg(seen), 'Did it.', 'no rows: byte-identical');
@@ -967,7 +967,7 @@ test('POST /api/pr: a gated run without checklist rows is unchanged; a footer-le
   await writeReview(betaId, 'impl', 1, { issues: [], summary: '', checklist: [{ id: 'R-qa-1', perspective: 'qa', text: 'T.', status: 'met', evidence: 'e' }] });
   seen = [];
   stubForkRepo(seen);
-  await withEnv({ WORCA_SHAPE_FIRST: '1' }, async () => {
+  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
     assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
   });
   assert.equal(bodyArg(seen), 'Did it.\n\n<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n- [x] **R-qa-1** T. — e');

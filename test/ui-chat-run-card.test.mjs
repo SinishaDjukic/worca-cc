@@ -1066,7 +1066,7 @@ test('chat run card result region: the checklist tally of a shaped run (spec D7)
   try {
     await checkRows([
       { name: 'unmet: the tally line reads out the counts and is open', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $ } = mk();
         card.update(done(ex({ met: 1, unmet: 1, na: 0, missing: 0, total: 2 })));
         const el = $('.chat-rc-checklist');
@@ -1074,32 +1074,32 @@ test('chat run card result region: the checklist tally of a shaped run (spec D7)
         assert.ok(el.classList.contains('is-open'));
       } },
       { name: 'all met: not open', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $ } = mk();
         card.update(done(ex({ met: 2, unmet: 0, na: 1, missing: 0, total: 3 })));
         assert.ok(!$('.chat-rc-checklist').classList.contains('is-open'));
       } },
       { name: 'not reported counts as open and is named', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $ } = mk();
         card.update(done(ex({ met: 1, unmet: 0, na: 0, missing: 1, total: 2 })));
         assert.equal($('.chat-rc-checklist').textContent, 'Checklist: 1 met · 0 unmet · 0 n/a · 1 not reported');
         assert.ok($('.chat-rc-checklist').classList.contains('is-open'));
       } },
       { name: 'gate off: no line', run: () => {
-        applyShapeFirstHello({});
+        setShapeFirst(false);
         const { card, $ } = mk();
         card.update(done(ex({ met: 1, unmet: 1, na: 0, missing: 0, total: 2 })));
         assert.equal($('.chat-rc-checklist'), null);
       } },
       { name: 'no checklist: no line', run: () => {
-        applyShapeFirstHello({ features: { shapeFirst: true } });
+        setShapeFirst(true);
         const { card, $ } = mk();
         card.update(done(ex(null)));
         assert.equal($('.chat-rc-checklist'), null);
       } },
     ]);
   } finally {
-    applyShapeFirstHello({});
+    setShapeFirst(false);
   }
 });
