@@ -156,7 +156,7 @@ test('engine: a scheduled resume on another engine stores it, fires on it, and a
   const { runId: ticketId } = await r.json();
   const t = getDb().prepare('SELECT title, request FROM scheduled_runs WHERE id = ?').get(ticketId);
   assert.equal(JSON.parse(t.request).internal.resumeEngine, 'codex');
-  assert.match(t.title, / on Codex$/, 'Schedules names the engine');
+  assert.match(t.title, / on OpenAI Codex$/, 'Schedules names the engine');
   getDb().prepare('UPDATE scheduled_runs SET run_at = ? WHERE id = ?').run(new Date(Date.now() - 1000).toISOString(), ticketId);
   assert.ok((await schedulerTick()).fired.includes(ticketId));
   const entry = [...runs.values()].find((e) => e.pipelineId === id);

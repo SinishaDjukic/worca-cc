@@ -61,7 +61,7 @@ test('list_settings rows: user scope lists the Settings page, never a secret, a 
   for (const id of ids) assert.ok(!/^(root|projectsRoot|actions|askWeb|chat\.scriptTools|chat\.channels|nightMode|providers|speech)(\.|$)/.test(id), `never listed: ${id}`);
   const theme = out.settings.find((r) => r.id === 'theme');
   assert.deepEqual(theme, { id: 'theme', label: 'Theme', group: 'General', value: 'System (default)', stored: null, allowed: '"system" | "light" | "dark" | null (default)' });
-  assert.equal(out.settings.find((r) => r.id === 'models.claude.steps.planner').label, 'Planner model (Claude)');   // engineLabel('claude')
+  assert.equal(out.settings.find((r) => r.id === 'models.claude.steps.planner').label, 'Planner model (Claude Code)');   // engineLabel('claude')
   assert.deepEqual(out.excluded, SETTING_EXCLUSIONS.map((e) => e.what));
   assert.deepEqual((await reg.list({ scope: 'user', query: 'sync.' })).settings.map((r) => r.id), ['sync.beforeRun', 'sync.onDiverged', 'sync.remote', 'sync.refreshMinutes']);
 });

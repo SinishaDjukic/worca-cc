@@ -20,8 +20,8 @@ test('every engine but Claude is in beta', () => {
   assert.equal(isBetaEngine('codex'), true);
   assert.equal(isBetaEngine('claude'), false);
   assert.equal(isBetaEngine(null), false);
-  assert.equal(engineChoiceLabel('codex'), 'Codex (beta)');
-  assert.equal(engineChoiceLabel('claude'), 'Claude');
+  assert.equal(engineChoiceLabel('codex'), 'OpenAI Codex (beta)');
+  assert.equal(engineChoiceLabel('claude'), 'Claude Code');
 });
 
 test('Settings marks Codex as beta: the engine options and the Codex card heading', () => {
@@ -29,10 +29,10 @@ test('Settings marks Codex as beta: the engine options and the Codex card headin
   const doc = dom.window.document;
   renderEngineSection(doc.getElementById('h'), { level: 'user', catalog: CATALOG, roles: [], fields: {} });
   const optionText = (root, id) => root.querySelector(`[data-setting="${id}"] select option[value="codex"]`).textContent;
-  assert.equal(optionText(doc.getElementById('h'), 'run.engine'), 'Codex (beta)');
+  assert.equal(optionText(doc.getElementById('h'), 'run.engine'), 'OpenAI Codex (beta)');
   const badge = (engine) => doc.querySelector(`.engine-card[data-engine="${engine}"] h3 .beta-badge`);
   assert.equal(badge('codex')?.textContent, 'Beta');
   assert.equal(badge('claude'), null);
   renderAskEngineSection(doc.getElementById('a'), { catalog: CATALOG });
-  assert.equal(optionText(doc.getElementById('a'), 'askEngine'), 'Codex (beta)');
+  assert.equal(optionText(doc.getElementById('a'), 'askEngine'), 'OpenAI Codex (beta)');
 });

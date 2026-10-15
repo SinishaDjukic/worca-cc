@@ -349,7 +349,7 @@ test('list: Codex built-ins have their own group; a Codex custom model carries a
   assert.deepEqual([...sec.querySelectorAll('.mv-builtin.mv-codex')].map((r) => r.dataset.id), ['gpt-5.5']);
   assert.match(sec.querySelector('.mv-summary').textContent, /gpt-5\.5 — all efforts/);
   const card = el.querySelector('.mv-card[data-id="gpt-5.5-tuned"]');
-  assert.equal(card.querySelector('.mv-engine').textContent, 'Codex');
+  assert.equal(card.querySelector('.mv-engine').textContent, 'OpenAI Codex');
   assert.match(card.querySelector('.mv-summary').textContent, /low · high/);
   assert.equal(el.querySelectorAll('.mv-builtin:not(.mv-codex)').length, 2);
 });
@@ -381,7 +381,7 @@ test('editor: the engine swaps the efforts and hides env for Codex; collect send
   assert.equal(edit.querySelector('.mv-env').closest('.mv-field').hidden, true);
 });
 
-test('editor: a new model picks its connection first; through a provider it is Claude Code\'s, and an OpenAI Responses endpoint runs on Codex too', () => {
+test('editor: a new model picks its connection first; through a provider it is Claude Code\'s, and an OpenAI Responses endpoint runs on OpenAI Codex too', () => {
   const providers = { openai: { configured: false, keySet: false, keyOptional: false } };
   const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, providers });
   const conn = el.querySelector('.mv-conn');
@@ -392,7 +392,7 @@ test('editor: a new model picks its connection first; through a provider it is C
   assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-rb').value), ['direct', 'env', 'provider']);
   assert.equal(shown[0].querySelector('.mv-conn-mode-title').textContent, "A harness's own sign-in");
   assert.equal(signin.hidden, false, 'the sign-in asks which harness');
-  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on Codex only/);
+  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on OpenAI Codex only/);
   // Through a provider the entry is Claude Code's: the sign-in leaves, the efforts are Claude Code's list.
   conn.querySelector('.mv-conn-mode-rb[value="provider"]').checked = true;
   applyConnectionModeIn(el);

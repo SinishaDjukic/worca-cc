@@ -50,7 +50,7 @@ test('renderRunSkills: names as agents call them, skips with reasons, the person
   ]);
   const none = { ...MOUNT, base: null, layer: { blocked: 'engine-no-skill-mount', text: skillLayerText('engine-no-skill-mount', 'codex') } };
   assert.deepEqual(texts(renderRunSkills(none, { doc })).slice(1), [
-    "skills from sets not loaded: Codex reads skills from the run's .agents/skills mount, and this run has none",
+    "skills from sets not loaded: OpenAI Codex reads skills from the run's .agents/skills mount, and this run has none",
     'skipped: billing:quiet (Billing — switched off in the set)',
   ]);
 });

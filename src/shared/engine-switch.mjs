@@ -15,9 +15,9 @@
  *   beta      still in beta: every engine picker marks it (taking it out of beta is this one flag)
  */
 export const ENGINES = Object.freeze({
-  claude: Object.freeze({ label: 'Claude', models: true, cost: true, helpers: true, beta: false }),
-  codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true }),
-  copilot: Object.freeze({ label: 'Copilot', models: false, cost: false, helpers: true, beta: true }),
+  claude: Object.freeze({ label: 'Claude Code', models: true, cost: true, helpers: true, beta: false }),
+  codex: Object.freeze({ label: 'OpenAI Codex', models: true, cost: true, helpers: true, beta: true }),
+  copilot: Object.freeze({ label: 'GitHub Copilot', models: false, cost: false, helpers: true, beta: true }),
   cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true }),
 });
 

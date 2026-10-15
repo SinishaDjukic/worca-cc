@@ -31,7 +31,7 @@ test('readiness: with the broker on, every engine but Claude is not ready (broke
   resetEngineReadiness();
   const boom = async () => { throw new Error('spawned'); };
   const list = await engineReadiness({ preflights: { claude: async () => ({}), codex: boom, copilot: boom, cursor: boom }, mock: true, force: true });
-  assert.deepEqual(list.find((e) => e.name === 'claude'), { name: 'claude', label: 'Claude', ready: true, reason: null });
+  assert.deepEqual(list.find((e) => e.name === 'claude'), { name: 'claude', label: 'Claude Code', ready: true, reason: null });
   for (const name of ['codex', 'copilot', 'cursor']) {
     const e = list.find((x) => x.name === name);
     assert.equal(e.ready, false, name);

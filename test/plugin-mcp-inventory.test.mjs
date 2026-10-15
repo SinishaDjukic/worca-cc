@@ -74,5 +74,5 @@ test('consent modal: listed servers, nothing when none, "unknown — refresh" fo
 test('consent modal: a Codex model says so', () => {
   const entry = { name: 'acme-models', repoUrl: 'https://github.com/acme/m', sha: 'a1b2c3d4e5f6' };
   const el = renderInstallConsent(entry, { models: [{ id: 'acme-codex', label: 'Acme Codex', engine: 'codex', envKeys: [], baseUrl: null }, { id: 'acme-claude', label: 'Acme', envKeys: [], baseUrl: null }] }, { doc });
-  assert.deepEqual([...el.querySelectorAll('.pl-engine')].map((n) => n.textContent), ['Codex']);
+  assert.deepEqual([...el.querySelectorAll('.pl-engine')].map((n) => n.textContent), ['OpenAI Codex']);
 });
