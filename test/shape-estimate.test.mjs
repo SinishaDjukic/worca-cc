@@ -5,7 +5,7 @@ import { mkdtemp, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { estimateGraph, estimateChoices, stepHistory, ESTIMATE_MIN_SAMPLES } from '../src/core/shape/estimate.mjs';
+import { estimateGraph, estimateChoices, stepHistory, ESTIMATE_MIN_SAMPLES, PLANNING_AGENTS } from '../src/core/shape/estimate.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, AUTO_WORKFLOW_STUB,
@@ -20,15 +20,22 @@ function fakeHistory(agents, { n = 3 } = {}) {
   return new Map(agents.map((a) => [a, { cost: [...cost], ms: [...ms] }]));
 }
 
-test('estimateGraph: sums per-agent medians over the agent nodes', () => {
+test('estimateGraph: sums per-agent medians, split into planning (clarify, planner, refiner) and build', () => {
+  assert.deepEqual(PLANNING_AGENTS, ['clarify', 'planner', 'refiner']);
   const got = estimateGraph(GRAPH_DEFAULT_WORKFLOW, fakeHistory(DEFAULT_AGENTS));
-  assert.deepEqual(got, { costUsd: 10, minutes: 10, samples: 3 });
+  assert.deepEqual(got, { costUsd: 10, planningUsd: 6, buildUsd: 4, minutes: 10, samples: 3 });
+});
+
+test('estimateGraph: a graph with no planning agent has planningUsd 0', () => {
+  const history = new Map([['implementer', { cost: [1, 2, 3], ms: [60_000, 60_000, 60_000] }]]);
+  const wf = { nodes: [{ id: 'n', kind: 'agent', key: 'implementer' }] };
+  assert.deepEqual(estimateGraph(wf, history), { costUsd: 2, planningUsd: 0, buildUsd: 2, minutes: 1, samples: 3 });
 });
 
 test('estimateGraph: even sample count takes the mean of the middle two; cost rounds to cents', () => {
   const history = new Map([['planner', { cost: [0.111, 0.222, 0.333, 0.444], ms: [1000, 2000, 3000, 4000] }]]);
   const wf = { nodes: [{ id: 'n', kind: 'agent', key: 'planner' }] };
-  assert.deepEqual(estimateGraph(wf, history), { costUsd: 0.28, minutes: 1, samples: 4 });
+  assert.deepEqual(estimateGraph(wf, history), { costUsd: 0.28, planningUsd: 0.28, buildUsd: 0, minutes: 1, samples: 4 });
 });
 
 test('estimateGraph: minutes is at least 1', () => {
@@ -54,27 +61,27 @@ test('estimateGraph: no number without enough history', () => {
   assert.equal(estimateGraph(GRAPH_DEFAULT_WORKFLOW, null), null, 'no history at all');
 });
 
-test('estimateChoices: same agents -> same: true, one shared figure', () => {
+test('estimateChoices: Plan it with me includes its planning, the same agents give the same honest figure', () => {
   const history = fakeHistory(DEFAULT_AGENTS);
   const got = estimateChoices({ asIs: GRAPH_DEFAULT_WORKFLOW, shaped: GRAPH_SHAPE_WORKFLOW }, { history });
-  assert.equal(got.same, true);
+  assert.equal('same' in got, false);
   assert.deepEqual(got.asIs, got.shaped);
-  assert.deepEqual(got.asIs, { costUsd: 10, minutes: 10, samples: 3 });
+  assert.deepEqual(got.shaped, { costUsd: 10, planningUsd: 6, buildUsd: 4, minutes: 10, samples: 3 });
+  assert.ok(got.shaped.planningUsd > 0, 'the shaped estimate includes planning');
 });
 
-test('estimateChoices: different agents -> same: false', () => {
+test('estimateChoices: the UX workflow adds its build agents', () => {
   const history = fakeHistory([...DEFAULT_AGENTS, 'manualTestsChecklist', 'manualWebUiTesting']);
   const got = estimateChoices({ asIs: GRAPH_DEFAULT_WORKFLOW, shaped: GRAPH_SHAPE_UX_WORKFLOW }, { history });
-  assert.equal(got.same, false);
-  assert.deepEqual(got.shaped, { costUsd: 14, minutes: 14, samples: 3 });
+  assert.deepEqual(got.shaped, { costUsd: 14, planningUsd: 6, buildUsd: 8, minutes: 14, samples: 3 });
 });
 
-test('estimateChoices: the Auto stub has no estimate and is never "same"', () => {
+test('estimateChoices: the Auto stub has no estimate', () => {
   const history = fakeHistory(DEFAULT_AGENTS);
   const got = estimateChoices({ asIs: AUTO_WORKFLOW_STUB, shaped: GRAPH_SHAPE_WORKFLOW }, { history });
-  assert.equal(got.same, false);
+  assert.equal('same' in got, false);
   assert.equal(got.asIs, null);
-  assert.deepEqual(got.shaped, { costUsd: 10, minutes: 10, samples: 3 });
+  assert.deepEqual(got.shaped, { costUsd: 10, planningUsd: 6, buildUsd: 4, minutes: 10, samples: 3 });
 });
 
 const homes = [];

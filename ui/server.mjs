@@ -137,7 +137,7 @@ import { validateMcpOff, resolveAskMcp, askMcpPromptInput, askMcpPreview, askMcp
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
-import { getStats, budgetWindowSavings } from '../src/core/stats.mjs';
+import { getStats, budgetWindowSavings, shapingGroups } from '../src/core/stats.mjs';
 import {
   enableTeamMetrics, setRecordMyRuns, flushSlug, flushAll, flushProject, scheduleFlush, discoverProject,
   discoverAll, scanMembers, routeWorkspaceMembers, projectMetricsStatus, startTeamMetricsBackground,
@@ -4118,14 +4118,14 @@ app.post('/api/answer', (req, res) => {
 });
 
 // POST /api/runs/:id/answer  -> answer the run's plan approval stop (shape-it-first D2/D10)
-// body: { id, decision: 'approve'|'revise'|'stop', feedback? }. 404 while the shapeFirst gate is off — a run
+// body: { id, decision: 'approve'|'revise'|'stop', feedback?, source? }. 404 while the shapeFirst gate is off — a run
 // already held then is still answered through POST /api/answer (never stranded, D12).
 app.post('/api/runs/:id/answer', (req, res) => {
   if (!requireShapeFirst(req, res)) return;
   const runId = req.params.id;
   const entry = runs.get(runId);
   if (!entry) return res.status(404).json({ error: 'unknown run' });
-  const { id, decision, feedback, perspectives, edits, approveEach } = req.body || {};
+  const { id, decision, feedback, perspectives, edits, approveEach, source } = req.body || {};
   const pq = entry.pendingQuestion;
   if (!pq || pq.kind !== PLAN_ASK_KIND || !id || pq.id !== id) {
     return res.status(409).json({ error: 'no plan approval with that id is waiting on this run' });
@@ -4134,7 +4134,8 @@ app.post('/api/runs/:id/answer', (req, res) => {
     answerRun(runId, id, { decision, ...(feedback !== undefined ? { feedback } : {}),
       ...(perspectives !== undefined ? { perspectives } : {}),
       ...(edits !== undefined ? { edits } : {}),
-      ...(approveEach !== undefined ? { approveEach } : {}) }, actorOf(req));
+      ...(approveEach !== undefined ? { approveEach } : {}),
+      ...(source !== undefined ? { source } : {}) }, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
     if (err && err.code === 'INVALID_ANSWER') {
@@ -5384,6 +5385,8 @@ app.get('/api/stats', async (req, res) => {
   // Credential broker: model spend per person in the same window, as the broker metered it
   // (the authoritative figure: it saw every request). Absent with the broker off.
   if (brokerEnabled()) stats.byPerson = await statsByPerson(stats.windowStartMs, stats.windowEndMs);
+  // Plan it with me (D28): shaped vs unshaped runs of the same size. Absent with the flag off.
+  if (shapeFirstEnabled()) stats.shaping = shapingGroups(stats.range === 'all' ? 0 : stats.windowStartMs, stats.windowEndMs);
   res.json(stats);
 });
 
@@ -10812,7 +10815,7 @@ app.delete('/api/workflows/:id', async (req, res) => {
   if (id === 'wf_default') return badRequest(res, 'the default workflow cannot be deleted');
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return badRequest(res, 'the Memory defragment workflow cannot be deleted');
   if (id === PR_FIX_WORKFLOW_ID) return badRequest(res, 'the PR fix workflow cannot be deleted');
-  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return badRequest(res, 'the Shape it first workflow cannot be deleted');
+  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return badRequest(res, 'the Plan it with me workflow cannot be deleted');
   try {
     const removed = await deleteWorkflow(id); // CONV-1: await
     if (!removed) return res.status(404).json({ error: 'workflow not found' });

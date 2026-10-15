@@ -25,3 +25,14 @@ test('found, missing, (new), :line; outside paths are never stat\'ed', async () 
   assert.ok(stats.length > 0 && stats.every((p) => !p.endsWith(`${sep}etc${sep}passwd`) && !p.startsWith(out)));
   assert.deepEqual(['', 'a', 'a\n', 'a\nb', 'a\nb\n'].map(lineCount), [0, 1, 1, 2, 2]);
 });
+
+test('missing is set only for a path that does not exist, cited without :line', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'shape-ground-missing-'));
+  await mkdir(join(dir, 'src'));
+  await writeFile(join(dir, 'src', 'a.mjs'), 'one\n');
+  const md = '## Code layout\n- `src/a.mjs`\n- `src/a.mjs:9`\n- `src/gone.mjs`\n- `src/gone.mjs:2`\n- `src/../../etc/passwd`\n';
+  const g = await checkPaths(md, dir);
+  assert.deepEqual(g.map((x) => [x.path, x.line ?? null, x.missing === true]), [
+    ['src/a.mjs', null, false], ['src/a.mjs', 9, false], ['src/gone.mjs', null, true],
+    ['src/gone.mjs', 2, false], ['src/../../etc/passwd', null, false]]);
+});

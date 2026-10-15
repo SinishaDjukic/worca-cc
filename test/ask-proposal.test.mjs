@@ -28,7 +28,7 @@ const deps = {
         ? { id, name: 'NoGit', description: '', projectPaths: ['/p/demo'], projectKeys: ['demo-00000001'], exists: [true] }
         : null),
   readWorkflow: async (id) => (id === 'wf_default' ? { id, name: 'Default' } : id === 'wf_review' ? { id, name: 'Review only' }
-    : id === 'wf_shape' || id === 'wf_shape_ux' ? { id, name: 'Shape it first' }
+    : id === 'wf_shape' || id === 'wf_shape_ux' ? { id, name: 'Plan it with me' }
     : id === 'wf_memory_defrag' ? { id: 'wf_memory_defrag', name: 'Memory defragment', version: 2, domain: 'shared', nodes: [], wires: [] } : null),
   // The runnable gate rides the same seam: derive it from the fake reader so the
   // two can never disagree about which ids exist.
@@ -314,22 +314,22 @@ test('Shape it first: shape / slices / schedule refusal / the gate, and the asse
     } },
     { name: 'shape + workflowId wf_default is refused', run: async () => {
       assert.deepEqual(errs(await on()({ ...base, shape: {}, workflowId: 'wf_default' })),
-        ['a shaped run uses the Shape it first workflow (wf_shape), not "wf_default"']);
+        ['a shaped run uses the Plan it with me workflow (wf_shape), not "wf_default"']);
     } },
     { name: 'gate off: shape refused, assess ignored (no nudge)', run: async () => {
       assert.deepEqual(errs(await off({ ...base, shape: {} })), ['shape is not available on this server']);
       const card = ok(await off({ ...base, assess: large }));
       assert.equal('nudge' in card, false);
     } },
-    { name: 'assess large → card nudge with the injected estimates; a throwing estimate → nulls, same:false', run: async () => {
-      const est = { asIs: { costUsd: 1, minutes: 5, samples: 3 }, shaped: { costUsd: 2, minutes: 9, samples: 3 }, same: false };
+    { name: 'assess large → card nudge with the injected estimates; a throwing estimate → nulls', run: async () => {
+      const est = { asIs: { costUsd: 1, minutes: 5, samples: 3 }, shaped: { costUsd: 2, minutes: 9, samples: 3 } };
       const card = ok(await on({ estimate: async () => est })({ ...base, assess: large }));
       assert.equal(card.nudge.reason, 'large');
       assert.deepEqual(card.nudge.estimates, est);
       assert.equal(card.nudge.asIsAuto, false);
       assert.equal('shape' in card, false);
       const thrown = ok(await on({ estimate: async () => { throw new Error('no history'); } })({ ...base, assess: large }));
-      assert.deepEqual(thrown.nudge.estimates, { asIs: null, shaped: null, same: false });
+      assert.deepEqual(thrown.nudge.estimates, { asIs: null, shaped: null });
     } },
     { name: 'assess.perspectives with ux → the estimate is asked for GRAPH_SHAPE_UX_WORKFLOW; otherwise GRAPH_SHAPE_WORKFLOW', run: async () => {
       const seen = [];

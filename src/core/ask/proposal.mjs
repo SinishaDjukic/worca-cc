@@ -64,7 +64,7 @@ export const PROPOSAL_ERRORS = Object.freeze({
   byKeyProjectOnly: 'sourceBranchByKey is only valid for a workspace',
   missingSource: (v, remote) => `sourceBranch "${v}" exists neither locally nor on ${remote}`,
   shapeSlices: 'shape.slices must be "auto" or "off"',
-  shapeScheduled: 'Shape it first starts now and waits for the user to approve its plan: drop when / every / after',
+  shapeScheduled: 'Plan it with me starts now and waits for the user to approve its plan: drop when / every / after',
   nodesAuto: 'nodes needs a saved workflow — Auto (wf_auto) picks its agents and their models when the run starts',
   nodesDefrag: 'the Memory defragment workflow takes its model from Settings › Memory — omit nodes',
   // An engine that owns no catalog models (Copilot) runs its own: no pick can ever run on it.
@@ -463,7 +463,7 @@ export function createProposalValidator({
     const nudgeBase = !shape && !spec.schedule && shapeFirst() ? nudgeFor(inp.assess) : null;
     let nudge = null;
     if (nudgeBase && !errors.length) {
-      let estimates = { asIs: null, shaped: null, same: false };
+      let estimates = { asIs: null, shaped: null };
       // The shaped run would be wf_shape_ux when the nudge picks UX (resolveShapeRequest); it has the manual-test agents.
       // The gate call sits on the line itself: the call-site scan reads the shape graph's lines one by one (§13).
       const shapedWf = shapeFirst() && nudgeBase.perspectives.includes('ux') ? GRAPH_SHAPE_UX_WORKFLOW : GRAPH_SHAPE_WORKFLOW;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { checkPlan } from '../src/core/shape/check.mjs';
@@ -46,4 +46,36 @@ test('without perspectives the architect/qa checklist items name a perspective t
   const { dir, file } = await project();
   const r = await checkPlan(file, { projectDir: dir });
   assert.equal(byId(r, 'checklists').pass, false);
+});
+
+const UNMARKED = (md) => md.replace('lives in `src/charts.mjs` (new).', 'lives in `src/charts.mjs`.');
+
+test('D27: a missing path without (new) is fixed in the plan file; fixed lists it and the check passes', async () => {
+  const { dir, file } = await project();
+  await writeFile(file, UNMARKED(wellShapedPlan()));
+  const r = await checkPlan(file, { projectDir: dir, perspectives: PERSPECTIVES });
+  assert.deepEqual(r.fixed, [{ check: 'paths', detail: 'marked src/charts.mjs (new)' }]);
+  assert.equal(r.ok, true);
+  assert.equal(r.passed, 8);
+  assert.match(await readFile(file, 'utf8'), /lives in `src\/charts\.mjs` \(new\)\./);
+});
+
+test('D27: a judgement check still fails after the mechanical fix', async () => {
+  const { dir, file } = await project();
+  await writeFile(file, UNMARKED(wellShapedPlan({ failing: 'testable' })));
+  const r = await checkPlan(file, { projectDir: dir, perspectives: PERSPECTIVES });
+  assert.equal(r.fixed.length, 1);
+  assert.equal(byId(r, 'paths').pass, true);
+  assert.equal(byId(r, 'testable').pass, false);
+  assert.equal(r.ok, false);
+});
+
+test('D27: a clean plan has fixed [] and its file is not rewritten; workspace runs (projectDir null) never fix', async () => {
+  const { dir, file } = await project();
+  const before = await readFile(file, 'utf8');
+  assert.deepEqual((await checkPlan(file, { projectDir: dir, perspectives: PERSPECTIVES })).fixed, []);
+  assert.equal(await readFile(file, 'utf8'), before);
+  await writeFile(file, UNMARKED(before));
+  assert.deepEqual((await checkPlan(file, { projectDir: null, perspectives: PERSPECTIVES })).fixed, []);
+  assert.equal(await readFile(file, 'utf8'), UNMARKED(before));
 });

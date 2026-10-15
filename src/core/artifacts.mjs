@@ -1404,11 +1404,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null } 
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1418,6 +1418,8 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null } 
         tools=excluded.tools,
         resume_point=excluded.resume_point,
         outcome=excluded.outcome,
+        shape_stats=COALESCE(excluded.shape_stats, shape_stats),
+        run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
     `).run(toPipelineRow(obj));
@@ -1920,6 +1922,9 @@ function toPipelineRow(o) {
     source_ref: s(o.sourceMeta),
     guardrails_id: o.guardrailsId ?? null,
     started_by: o.startedBy ?? null,
+    // Plan it with me D28: a writer without them (an unshaped run, a pre-results persist) keeps the column (COALESCE)
+    shape_stats: o.shapeStats ? s(o.shapeStats) : null,
+    run_size: o.runSize ?? null,
     // §5.9 outcome: the derived run-level v2 facts, so a rehydrated state matches
     // a live one. NULL for a v1 run (nothing to say), so v1 rows are unchanged.
     outcome: (o.engine === 2 || o.endReached !== undefined || (typeof o.runEngine === 'string' && o.runEngine !== 'claude'))
@@ -2578,6 +2583,8 @@ function rowToState(row) {
   state.limitEngine = typeof rp?.limitEngine === 'string' ? rp.limitEngine : null;
   state.limitResetAt = typeof rp?.limitResetAt === 'string' ? rp.limitResetAt : null;
   state.runEngine = runEngineOfRow(row);
+  // Plan it with me D28: only a shaped run carries shapeStats (run_size is write-only: Statistics reads the column)
+  if (row.shape_stats) state.shapeStats = j(row.shape_stats, null);
   const outcome = j(row.outcome, null);
   if (outcome) {
     state.engine = 2;

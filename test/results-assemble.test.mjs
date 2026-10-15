@@ -1,7 +1,7 @@
 // test/results-assemble.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bucketFiles, selectKeyChecks, splitNitpicks, linkIssues, assembleResults }
+import { bucketFiles, selectKeyChecks, splitNitpicks, linkIssues, assembleResults, sizeOfChange }
   from '../src/core/results.mjs';
 
 test('bucketFiles splits new vs changed and sums lines', () => {
@@ -86,4 +86,17 @@ test('assembleResults adds the latest checklist tally only when a review carries
     { kind: 'impl', cycle: 1, issues: [], summary: '', checklist: cl1 },
     { kind: 'impl', cycle: 2, issues: [], summary: '', checklist: cl2 }] });
   assert.deepEqual(out.checklist, { met: 1, unmet: 0, na: 1, missing: 0, total: 2, cycle: 2 });
+});
+
+test('sizeOfChange: small/medium/large from lines and files; null without counts or with no change', () => {
+  const sz = (a, r, f) => sizeOfChange({ linesAdded: a, linesRemoved: r, filesNew: 0, filesChanged: f, filesDeleted: 0 });
+  assert.equal(sz(100, 50, 5), 'small');
+  assert.equal(sz(100, 51, 5), 'medium');
+  assert.equal(sz(10, 0, 6), 'medium');
+  assert.equal(sz(800, 0, 20), 'medium');
+  assert.equal(sz(801, 0, 1), 'large');
+  assert.equal(sz(10, 0, 21), 'large');
+  assert.equal(sz(0, 0, 0), null);
+  assert.equal(sizeOfChange(null), null);
+  assert.equal(sizeOfChange({ filesChanged: 2 }), null);
 });

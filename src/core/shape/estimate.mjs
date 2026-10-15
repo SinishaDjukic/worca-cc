@@ -31,22 +31,29 @@ export function stepHistory({ sinceDays = ESTIMATE_HISTORY_DAYS, now = Date.now(
 
 const agentKeys = (wf) => (Array.isArray(wf?.nodes) ? wf.nodes : []).filter((n) => n && n.kind === 'agent' && n.key).map((n) => n.key);
 
-/** @returns {null|{costUsd:number, minutes:number, samples:number}} */
+/** The planning agents (Clarify, Plan, Refine): the nudge shows their share apart from the build (D28). */
+export const PLANNING_AGENTS = Object.freeze(['clarify', 'planner', 'refiner']);
+const PLANNING = new Set(PLANNING_AGENTS);
+const cents = (x) => Math.round(x * 100) / 100;
+
+/** @returns {null|{costUsd:number, planningUsd:number, buildUsd:number, minutes:number, samples:number}} */
 export function estimateGraph(wf, history) {
   const keys = agentKeys(wf);
   if (!keys.length || !history) return null;
-  let cost = 0; let ms = 0; let samples = Infinity;
+  let cost = 0; let planning = 0; let ms = 0; let samples = Infinity;
   for (const k of keys) {
     const h = history.get(k);
     if (!h || h.cost.length < ESTIMATE_MIN_SAMPLES) return null;
-    cost += median(h.cost); ms += median(h.ms); samples = Math.min(samples, h.cost.length);
+    const c = median(h.cost);
+    cost += c; if (PLANNING.has(k)) planning += c;
+    ms += median(h.ms); samples = Math.min(samples, h.cost.length);
   }
-  return { costUsd: Math.round(cost * 100) / 100, minutes: Math.max(1, Math.round(ms / 60_000)), samples };
+  return { costUsd: cents(cost), planningUsd: cents(planning), buildUsd: cents(cost - planning),
+    minutes: Math.max(1, Math.round(ms / 60_000)), samples };
 }
 
-/** History has no workflow column (F9), so two graphs with the same agents always sum to the same figure: `same`
- *  tells the card to show one build estimate, not two equal numbers that look like a comparison (S3). */
+/** Both choices' figures, each split into planning and build (D28): history has no workflow column (F9), so two graphs
+ *  with the same agents give the same figure — shown on both, since each now says what it covers. */
 export function estimateChoices({ asIs, shaped }, { history = stepHistory() } = {}) {
-  const a = agentKeys(asIs).sort().join(','); const s = agentKeys(shaped).sort().join(',');
-  return { asIs: estimateGraph(asIs, history), shaped: estimateGraph(shaped, history), same: a !== '' && a === s };
+  return { asIs: estimateGraph(asIs, history), shaped: estimateGraph(shaped, history) };
 }

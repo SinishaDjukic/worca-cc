@@ -585,7 +585,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const sh = s && s.shaping;
     if (sh && sh.approved && shapeFirstOn()) {
       const name = String(sh.approved.file || '').split(/[\\/]/).pop();
-      shapedEl.replaceChildren(h('span', 'chat-rc-shaped-stages', 'Clarify ✓ · Plan ✓ · Refine ✓ while shaping'),
+      shapedEl.replaceChildren(h('span', 'chat-rc-shaped-stages', 'Clarify ✓ · Plan ✓ · Refine ✓ while planning'),
         h('span', 'chat-rc-shaped-plan', `Plan: ${name}`));
       if (sh.savedTo) {
         const open = button('chat-rc-shaped-open');

@@ -31,6 +31,7 @@ import { probePython } from './graph/python-probe.mjs';
 import { mockEnabled } from './claude-runner.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { checkPlan } from './shape/check.mjs';
+import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
 import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureApprovesEach, featureClarify } from './shape/features.mjs';
 import { checkSlices, applyOutlineEdits, normalizeOutline, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
@@ -1157,8 +1158,9 @@ export class GraphOrchestrator extends RunHarness {
       );
     }
     this._planRevise = null;
+    let check = null;
     const asked = (async () => {
-      const check = await this._planCheck(q.plan?.file);
+      check = await this._planCheck(q.plan?.file);
       this._shapingRound(q, check);
       const sl = this.runShape?.slice;
       const outlineChange = await this._outlineChangeText();
@@ -1198,9 +1200,12 @@ export class GraphOrchestrator extends RunHarness {
           // Keep the real cause: the run rethrows _graphError, else a generic 'a graph execution failed'.
           try { await writeFile(path, renderPlanFeedback(payload.feedback, q.plan.file), 'utf8'); }
           catch (err) { this._planRevise = null; this._graphError ||= err; throw err; }
+          this._shapeRec?.revises.push({ round: q.plan.round, by: payload.source === 'check' ? 'check' : 'person' });
           this._log('orchestrator', 'info', `plan approval ${q.id}: revise (${path})`);
           return { decision: 'revise', path };
         }
+        // D28: the approved round's shape score
+        if (payload?.decision === 'approve' && this._shapeRec) this._shapeRec.shapeScore = shapeScoreOf(check);
         return payload;                              // { decision:'approve' } | { decision:'withdrawn' }
       },
       (err) => {
@@ -1880,7 +1885,15 @@ export class GraphOrchestrator extends RunHarness {
         : undefined,
       runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
       resumeSessionId: this._takeResumeSession(executionId),
-      ask: (q) => this._enqueueAsk(() => this._ask(q)),
+      ask: (q) => this._enqueueAsk(() => this._ask(q)).then((payload) => {
+        // D28: the legacy Clarify questions ask (the one maxQuestions caps); a form ask has no question list
+        if (this._shapeRec && q?.kind === 'clarify') {
+          const c = clarifyCounts(q.questions, payload);
+          this._shapeRec.questions.asked += c.asked;
+          this._shapeRec.questions.skipped += c.skipped;
+        }
+        return payload;
+      }),
       // Who answered question `id` (identity.mjs actor; answer() records it) — the clarifier
       // stores it with the answer and audits it.
       answeredBy: (id) => this.answeredBy(id),
