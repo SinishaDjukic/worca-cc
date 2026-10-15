@@ -11834,29 +11834,35 @@ async function setReadinessTool(key, engine, value) {
   }
 }
 
-// The project's Settings tab, scrolled to the Agent readiness card.
-function openReadinessSettings(key) {
+// The popovers live on <body>, outside every view: any hash navigation (Back, a link) closes them.
+function closeReadinessPopovers() {
   for (const rec of readinessChips.values()) if (rec.fly.isOpen()) rec.fly.close();
+}
+window.addEventListener('hashchange', closeReadinessPopovers);
+
+// The project's Settings tab, scrolled to the Agent readiness card once that card has filled (fillReadinessCard).
+let readinessScrollTo = null;
+function openReadinessSettings(key) {
+  closeReadinessPopovers();
+  readinessScrollTo = key;
   location.hash = `projects/${key}/settings`;
-  requestAnimationFrame(() => {
-    const card = [...document.querySelectorAll('.readiness-settings-card')].find((c) => c.dataset.key === key);
-    if (card) { card.scrollIntoView({ block: 'center' }); card.focus({ preventScroll: true }); }
-  });
 }
 
-// The project page's Settings tab: one switch per check — on = skipped for this project.
+// The project page's Settings tab: a Detect / Used / Not used control per tool, then one switch per check
+// (on = skipped for this project).
 function buildReadinessSettingsCard(key) {
   const card = document.createElement('section');
   card.className = 'card readiness-settings-card';
   card.dataset.key = key;
+  card.tabIndex = -1;   // openReadinessSettings focuses it
   void fillReadinessCard(card, key);
   return card;
 }
 
 async function fillReadinessCard(card, key) {
   const mine = (card.rdSeq = (card.rdSeq || 0) + 1);
-  const head = Object.assign(document.createElement('h3'), { textContent: 'Agent Readiness' });
-  const hint = Object.assign(document.createElement('small'), { className: 'hint', textContent: 'Switch a check on to skip it for this project.' });
+  const head = Object.assign(document.createElement('h3'), { textContent: 'Agent readiness' });
+  const hint = Object.assign(document.createElement('small'), { className: 'hint', textContent: 'Which tools this project uses. Detect lets Worca decide from runs and files.' });
   const msg = Object.assign(document.createElement('small'), { className: 'hint' });
   card.replaceChildren(head, hint);
   const [settings, report] = await Promise.all([
@@ -11864,11 +11870,49 @@ async function fillReadinessCard(card, key) {
     readinessReports[key] ? Promise.resolve(readinessReports[key]) : fetchReadinessReport(key),
   ]);
   if (mine !== card.rdSeq) return;
+  const CHOICES = [['detect', 'Detect'], ['used', 'Used'], ['unused', 'Not used']];
+  for (const [name, e] of Object.entries((report && report.engines) || {})) {
+    if (e.level === 'locked') continue;
+    const runs = (e.reasons || []).some((r) => r.kind === 'run-engine');
+    const row = document.createElement('div');
+    row.className = 'rs-row';
+    row.append(Object.assign(document.createElement('span'), { className: 'rs-name', textContent: engineLabel(name) }));
+    const seg = document.createElement('div');
+    seg.className = 'seg seg-sm';
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', engineLabel(name));
+    for (const [v, label] of CHOICES) {
+      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: label });
+      b.setAttribute('aria-pressed', String(e.setting === v));
+      b.classList.toggle('on', e.setting === v);
+      if (runs && v === 'unused') { b.disabled = true; b.title = 'Runs use this tool'; }
+      b.addEventListener('click', async () => {
+        if (b.disabled || e.setting === v) return;
+        msg.textContent = '';
+        for (const x of seg.children) x.disabled = true;
+        const prev = await setReadinessTool(key, name, v);
+        if (prev === null) msg.textContent = 'Could not save.';
+        void refreshReadiness(key, { cards: true });
+      });
+      seg.append(b);
+    }
+    row.append(seg);
+    const finds = e.detectedReason ? `Detect finds: ${e.detectedReason}` : 'Detect finds nothing';
+    const judged = e.used ? `Judged: ${LEVEL_WORDS[e.level] || e.level}.` : 'Not judged.';
+    row.append(Object.assign(document.createElement('span'), { className: 'rs-find', textContent: `${finds}. ${judged}` }));
+    if (runs) row.append(Object.assign(document.createElement('span'), { className: 'rs-note', textContent: 'Runs use this tool, so it is always judged. To stop, change the Run engine setting.' }));
+    card.append(row);
+  }
+  if (readinessScrollTo === key && card.isConnected) {
+    readinessScrollTo = null;
+    requestAnimationFrame(() => { card.scrollIntoView({ block: 'start' }); card.focus({ preventScroll: true }); });
+  }
   const own = settings && settings.own && settings.own['readiness.ignore'];
   const ignored = new Set(Array.isArray(own) ? own : []);
   const seen = new Set();
   const checks = ((report && report.checks) || []).filter((c) => !seen.has(c.id) && seen.add(c.id));
   if (!checks.length) hint.textContent = readinessOff ? 'Agent readiness is switched off.' : 'No readiness report yet.';
+  else card.append(Object.assign(document.createElement('small'), { className: 'hint rs-skip', textContent: 'Switch a check on to skip it for this project.' }));
   for (const check of checks) {
     const label = document.createElement('label');
     label.className = 'qtune-sw';

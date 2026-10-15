@@ -61,6 +61,10 @@ describe('readiness CSS', () => {
     assert.match(ruleBody('.rp-foot') ?? '', /flex:none/);
   });
 
+  it('the skip switches in the settings card stack one per line', () => {
+    assert.match(ruleBody('.readiness-settings-card .qtune-sw') ?? '', /display:flex/);
+  });
+
   it('styles the settings card', () => {
     assert.ok(ruleBody('.readiness-settings-card'), '.readiness-settings-card rule missing');
   });

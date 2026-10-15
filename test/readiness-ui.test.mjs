@@ -46,6 +46,14 @@ describe('readiness UI: chips in the projects list', () => {
 });
 
 describe('readiness UI: popover v2', () => {
+  it('a hash navigation (Back, a link) closes an open popover: it lives on <body>, outside every view', () => {
+    assert.match(app, /addEventListener\('hashchange', closeReadinessPopovers\)/);
+    assert.match(fnSource('closeReadinessPopovers'), /rec\.fly\.isOpen\(\)\) rec\.fly\.close\(\)/);
+  });
+  it('Change in Settings scrolls to the card once the card has filled, not before', () => {
+    assert.match(fnSource('openReadinessSettings'), /readinessScrollTo = key/);
+    assert.match(fnSource('fillReadinessCard'), /readinessScrollTo === key[\s\S]{0,200}scrollIntoView/);
+  });
   it('opens below the chip', () => {
     assert.match(fnSource('newReadinessChip'), /mode: 'below'/);
   });
@@ -118,9 +126,38 @@ describe('readiness UI: project settings card', () => {
   it('the card toggles each check through readiness.ignore with a switch', () => {
     assert.match(fnSource('buildReadinessSettingsCard'), /readiness-settings-card/);
     const src = fnSource('fillReadinessCard');
-    assert.match(src, /Agent Readiness/);
+    assert.match(src, /'Agent readiness'/);
     assert.match(src, /type = 'checkbox'/);
     assert.match(src, /setReadinessIgnore\(/);
+  });
+});
+
+describe('readiness UI: settings card v2', () => {
+  it('one three-way control per tool', () => {
+    const src = fnSource('fillReadinessCard');
+    assert.match(src, /seg seg-sm/);
+    for (const w of ["'Detect'", "'Used'", "'Not used'"]) assert.ok(src.includes(w), w);
+    assert.match(src, /aria-pressed/);
+  });
+  it('says what Detect finds and whether the tool is judged', () => {
+    const src = fnSource('fillReadinessCard');
+    assert.match(src, /Detect finds: /);
+    assert.match(src, /Detect finds nothing/);
+    assert.match(src, /Not judged\./);
+  });
+  it('the run engine cannot be set to Not used', () => {
+    const src = fnSource('fillReadinessCard');
+    assert.match(src, /Runs use this tool, so it is always judged\. To stop, change the Run engine setting\./);
+    assert.match(src, /disabled = true/);
+  });
+  it('a choice writes through setReadinessTool', () => {
+    assert.match(fnSource('fillReadinessCard'), /setReadinessTool\(key, name, v\)/);
+  });
+  it('the chosen button is marked on, like every .seg', () => {
+    assert.match(fnSource('fillReadinessCard'), /classList\.toggle\('on', e\.setting === v\)/);
+  });
+  it('the card can take focus when Settings is opened from the popover', () => {
+    assert.match(fnSource('buildReadinessSettingsCard'), /tabIndex = -1/);
   });
 });
 

@@ -9246,4 +9246,6 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .rs-row .seg{grid-row:1 / span 2;grid-column:2;}
 .rs-row .seg button:disabled{color:var(--ink-3);cursor:not-allowed;opacity:.6;}
 .rs-note{grid-column:1 / -1;font-size:12px;color:var(--ink-3);}
+.readiness-settings-card .rs-skip{display:block;margin:12px 0 8px;padding-top:12px;border-top:1px solid var(--line);}
+.readiness-settings-card .qtune-sw{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12.5px;}
 @media (max-width:560px){.rs-row{grid-template-columns:minmax(0,1fr);}.rs-row .seg{grid-row:auto;grid-column:1;justify-self:start;}}
