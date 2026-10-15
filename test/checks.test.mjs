@@ -6,10 +6,6 @@ const byId = (id) => CHECKS.find((c) => c.id === id);
 const pkg = (scripts) => JSON.stringify({ scripts });
 
 describe('checks catalog', () => {
-  it('exports CATALOG_VERSION = 1', () => {
-    assert.strictEqual(CATALOG_VERSION, 1);
-  });
-
   it('exports a frozen CHECKS array with 12 entries', () => {
     assert.ok(Array.isArray(CHECKS));
     assert.strictEqual(CHECKS.length, 12);
@@ -18,18 +14,14 @@ describe('checks catalog', () => {
     }, TypeError);
   });
 
-  it('each check has required fields: id, title, severity, engines, fix, run', () => {
+  it('each check has required fields: id, title, severity, scope, fix, run', () => {
     for (const c of CHECKS) {
       assert.ok(typeof c.id === 'string');
       assert.ok(typeof c.title === 'string');
       assert.ok(['blocker', 'warn', 'info'].includes(c.severity));
-      assert.ok(
-        c.engines === 'all' ||
-          c.engines === 'perEngine' ||
-          Array.isArray(c.engines),
-      );
       assert.ok(typeof c.fix === 'string');
-      assert.ok(typeof c.run === 'function');
+      // tool checks run per engine in engines.mjs
+      assert.ok(c.scope === 'tool' ? c.run === null : typeof c.run === 'function', c.id);
     }
   });
 
@@ -75,68 +67,15 @@ describe('checks catalog', () => {
       ].sort(),
     );
   });
-
-  it('perEngine checks are: instructions.present, instructions.committed', () => {
-    const perEngine = CHECKS.filter((c) => c.engines === 'perEngine').map(
-      (c) => c.id,
-    );
-    assert.deepStrictEqual(
-      perEngine.sort(),
-      ['instructions.present', 'instructions.committed'].sort(),
-    );
-  });
 });
 
 describe('check results', () => {
   it('git.repo check: pass for a repo, fail otherwise', () => {
     const repoCheck = byId('git.repo');
-    assert.deepStrictEqual(repoCheck.run({ isRepo: true }), { status: 'pass' });
+    assert.deepStrictEqual(repoCheck.run({ isRepo: true }), { status: 'pass', detail: 'Runs check out a worktree of this repository' });
     const res = repoCheck.run({ isRepo: false });
     assert.strictEqual(res.status, 'fail');
     assert.strictEqual(typeof res.detail, 'string');
-  });
-
-  it('perEngine checks have a skip run (engines.mjs evaluates them)', () => {
-    for (const id of ['instructions.present', 'instructions.committed']) {
-      const check = byId(id);
-      assert.strictEqual(check.engines, 'perEngine');
-      assert.deepStrictEqual(check.run({}), { status: 'skip' });
-    }
-  });
-
-  it('instructions.size check: skip if no files, pass if OK, fail if over limit', () => {
-    const check = byId('instructions.size');
-
-    assert.deepStrictEqual(check.run({ sizes: {}, truncated: false }), {
-      status: 'skip',
-    });
-    assert.deepStrictEqual(
-      check.run({ sizes: { 'CLAUDE.md': 100 }, truncated: true }),
-      { status: 'skip' },
-    );
-    assert.deepStrictEqual(
-      check.run({ sizes: { 'CLAUDE.md': 10000 }, truncated: false }),
-      { status: 'pass' },
-    );
-
-    const result1 = check.run({
-      sizes: { 'CLAUDE.md': 30000 },
-      truncated: false,
-    });
-    assert.strictEqual(result1.status, 'fail');
-    assert.ok(result1.detail.includes('CLAUDE.md'));
-
-    const result2 = check.run({
-      sizes: {
-        'CLAUDE.md': 20000,
-        'AGENTS.md': 20000,
-        'a.md': 20000,
-        'b.md': 20000,
-      },
-      truncated: false,
-    });
-    assert.strictEqual(result2.status, 'fail');
-    assert.ok(result2.detail.includes('80000'));
   });
 
   it('instructions.single-source: pass if CLAUDE.md and AGENTS.md reference each other', () => {
@@ -568,9 +507,39 @@ describe('repo.map', () => {
 
 describe('purity', () => {
   it('every check returns a known status for an empty facts object', () => {
-    for (const c of CHECKS) {
+    for (const c of CHECKS.filter((x) => x.scope === 'repository')) {
       const res = c.run({});
       assert.ok(['pass', 'fail', 'skip', 'error'].includes(res.status), c.id);
     }
+  });
+});
+
+describe('catalog v2: scopes and pass details', () => {
+  it('is version 2 and every check has a scope', () => {
+    assert.equal(CATALOG_VERSION, 2);
+    for (const c of CHECKS) assert.ok(c.scope === 'repository' || c.scope === 'tool', `${c.id} scope`);
+  });
+
+  it('the three instruction checks are tool scope, the rest repository', () => {
+    const tool = CHECKS.filter((c) => c.scope === 'tool').map((c) => c.id).sort();
+    assert.deepEqual(tool, ['instructions.committed', 'instructions.present', 'instructions.size']);
+  });
+
+  it('a passing repository check says what it found', () => {
+    const facts = {
+      isRepo: true, trackedSet: new Set(['package.json', 'package-lock.json']), tracked: ['package.json', 'package-lock.json'],
+      manifests: { 'package.json': JSON.stringify({ scripts: { test: 'node --test', build: 'tsc', lint: 'eslint .' } }) },
+      texts: {}, sizes: {}, heavyPresent: ['node_modules'], heavyIgnored: { node_modules: true },
+    };
+    for (const c of CHECKS.filter((x) => x.scope === 'repository')) {
+      const r = c.run(facts);
+      if (r.status === 'pass') assert.ok(typeof r.detail === 'string' && r.detail.length > 0, `${c.id} pass detail`);
+    }
+  });
+
+  it('commands.test names the script it found', () => {
+    const c = CHECKS.find((x) => x.id === 'commands.test');
+    const r = c.run({ manifests: { 'package.json': JSON.stringify({ scripts: { test: 'node --test' } }) }, texts: {} });
+    assert.deepEqual(r, { status: 'pass', detail: '`npm test` in package.json' });
   });
 });

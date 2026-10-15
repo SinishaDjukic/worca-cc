@@ -1,11 +1,7 @@
 // Pure catalog of repository-readiness checks: facts in, {status, detail?} out.
-// No I/O. `status` is 'pass' | 'fail' | 'skip' | 'error'; 'ignored' is applied later.
-import {
-  DEFAULT_CONTEXT_MAX_BYTES_PER_FILE,
-  DEFAULT_CONTEXT_MAX_BYTES_TOTAL,
-} from '../settings.mjs';
-
-export const CATALOG_VERSION = 1;
+// No I/O. `status` is 'pass' | 'fail' | 'skip' | 'error'; 'ignored' is applied later. A pass says what it found.
+// `scope`: 'repository' checks run once here; 'tool' checks run per engine in engines.mjs (`run: null`).
+export const CATALOG_VERSION = 2;
 
 const SECRET_RES = [
   /(^|\/)\.env$/,
@@ -105,18 +101,19 @@ function hasEcoManifest(f) {
 function ecoPass(f, kind) {
   const m = f.manifests;
   const tracked = (p) => !!f.trackedSet?.has(p);
-  const pass = { status: 'pass' };
+  const pass = (detail) => ({ status: 'pass', detail });
 
   if (has(m, 'go.mod')) {
-    if (kind !== 'lint') return pass;
-    if (tracked('.golangci.yml') || tracked('.golangci.yaml')) return pass;
+    if (kind !== 'lint') return pass('implied by go.mod');
+    if (tracked('.golangci.yml')) return pass('.golangci.yml is tracked');
+    if (tracked('.golangci.yaml')) return pass('.golangci.yaml is tracked');
   }
-  if (has(m, 'Cargo.toml')) return pass;
+  if (has(m, 'Cargo.toml')) return pass('implied by Cargo.toml');
   if (
     (has(m, 'pom.xml') || has(m, 'build.gradle') || has(m, 'build.gradle.kts')) &&
     kind !== 'lint'
   ) {
-    return pass;
+    return pass('implied by the build file');
   }
   if (has(m, 'pyproject.toml')) {
     const py = m['pyproject.toml'];
@@ -127,7 +124,7 @@ function ecoPass(f, kind) {
         tracked('tox.ini') ||
         tracked('noxfile.py')
       ) {
-        return pass;
+        return pass('pytest/tox/nox configured in pyproject.toml');
       }
     } else if (kind === 'lint') {
       if (
@@ -135,7 +132,7 @@ function ecoPass(f, kind) {
         tracked('.flake8') ||
         tracked('ruff.toml')
       ) {
-        return pass;
+        return pass('a linter configured in pyproject.toml');
       }
     } else {
       return { status: 'skip' };
@@ -154,20 +151,24 @@ function commandCheck(f, kind) {
   if (pkgTxt !== undefined) {
     const s = parsePkg(pkgTxt)?.scripts || {};
     if (kind === 'test' && s.test && s.test !== DEFAULT_TEST) {
-      return { status: 'pass' };
+      return { status: 'pass', detail: '`npm test` in package.json' };
     }
-    if (kind === 'build' && s.build) return { status: 'pass' };
-    if (kind === 'lint' && (s.lint || s.format || s.check)) {
-      return { status: 'pass' };
+    if (kind === 'build' && s.build) return { status: 'pass', detail: '`npm run build` in package.json' };
+    const lintScript = ['lint', 'format', 'check'].find((n) => s[n]);
+    if (kind === 'lint' && lintScript) {
+      return { status: 'pass', detail: `\`npm run ${lintScript}\` in package.json` };
     }
   }
   if (makeTxt !== undefined) {
     const t = makeTargets(makeTxt);
-    if (MAKE_TARGETS[kind].some((x) => t.has(x))) return { status: 'pass' };
+    const target = MAKE_TARGETS[kind].find((x) => t.has(x));
+    if (target) return { status: 'pass', detail: `\`make ${target}\` in the Makefile` };
   }
   const eco = ecoPass(f, kind);
   if (eco?.status === 'pass') return eco;
-  if (instructionMentions(f, kind)) return { status: 'pass' };
+  if (instructionMentions(f, kind)) {
+    return { status: 'pass', detail: `a ${kind} command is named in the instructions` };
+  }
   // 'not applicable' only holds when nothing else could have supplied the command
   if (eco && pkgTxt === undefined && makeTxt === undefined) return eco;
   return { status: 'fail', detail: `no ${kind} command discoverable` };
@@ -180,7 +181,10 @@ function lockfileCheck(f) {
   const missing = present.filter(
     ([, locks]) => !locks.some((l) => f.trackedSet.has(l)),
   );
-  if (!missing.length) return { status: 'pass' };
+  if (!missing.length) {
+    const found = present.map(([, locks]) => locks.find((l) => f.trackedSet.has(l)));
+    return { status: 'pass', detail: `${found.join(', ')} committed` };
+  }
   return {
     status: 'fail',
     detail: missing
@@ -211,7 +215,9 @@ function repoMapCheck(f) {
     const base = d.slice(d.lastIndexOf('/') + 1);
     return new RegExp(`(?<![\\w.-])${escapeRe(base)}(?![\\w-])`).test(text);
   }).length;
-  if (mentioned * 2 >= dirs.size) return { status: 'pass' };
+  if (mentioned * 2 >= dirs.size) {
+    return { status: 'pass', detail: `the instructions name ${mentioned} of ${dirs.size} packages` };
+  }
   return {
     status: 'fail',
     detail: `instructions mention ${mentioned} of ${dirs.size} packages`,
@@ -224,64 +230,42 @@ export const CHECKS = Object.freeze([
     id: 'git.repo',
     title: 'Git repository',
     severity: 'blocker',
-    engines: 'all',
+    scope: 'repository',
     fix: 'Runs check out a git worktree. Run `git init` and commit.',
     run: (f) =>
       f.isRepo
-        ? { status: 'pass' }
+        ? { status: 'pass', detail: 'Runs check out a worktree of this repository' }
         : { status: 'fail', detail: 'not a git work tree' },
   },
   {
     id: 'instructions.present',
     title: 'Agent instructions present',
     severity: 'blocker',
-    engines: 'perEngine',
+    scope: 'tool',
     fix: 'Add AGENTS.md (read by Codex, Copilot, Cursor) and import it from CLAUDE.md.',
-    // perEngine checks are evaluated by engines.mjs, not by this `run`.
-    run: () => ({ status: 'skip' }),
+    run: null,
   },
   {
     id: 'instructions.committed',
     title: 'Instructions committed',
     severity: 'warn',
-    engines: 'perEngine',
+    scope: 'tool',
     fix: 'Commit it: runs on this engine see only committed files.',
-    run: () => ({ status: 'skip' }),
+    run: null,
   },
   {
     id: 'instructions.size',
     title: 'Instructions within size budget',
     severity: 'warn',
-    engines: 'all',
+    scope: 'tool',
     fix: 'Trim it or split into .claude/rules/*.md; it is truncated and costs tokens every turn.',
-    run: (f) => {
-      if (f.truncated) return { status: 'skip' };
-      const sizes = Object.entries(f.sizes ?? {});
-      if (!sizes.length) return { status: 'skip' };
-      const over = sizes.filter(
-        ([, n]) => n > DEFAULT_CONTEXT_MAX_BYTES_PER_FILE,
-      );
-      if (over.length) {
-        return {
-          status: 'fail',
-          detail: `${over[0][0]} exceeds ${DEFAULT_CONTEXT_MAX_BYTES_PER_FILE} bytes`,
-        };
-      }
-      const total = sizes.reduce((a, [, n]) => a + n, 0);
-      if (total > DEFAULT_CONTEXT_MAX_BYTES_TOTAL) {
-        return {
-          status: 'fail',
-          detail: `instruction files total ${total} bytes`,
-        };
-      }
-      return { status: 'pass' };
-    },
+    run: null,
   },
   {
     id: 'instructions.single-source',
     title: 'Single source of truth',
     severity: 'info',
-    engines: 'all',
+    scope: 'repository',
     fix: 'Keep one source: put content in AGENTS.md and @AGENTS.md from CLAUDE.md.',
     run: (f) => {
       const tracked = (p) => f.trackedSet?.has(p);
@@ -293,7 +277,7 @@ export const CHECKS = Object.freeze([
         mentions(instructionText(f, 'CLAUDE.md'), 'AGENTS.md') ||
         mentions(instructionText(f, 'AGENTS.md'), 'CLAUDE.md')
       ) {
-        return { status: 'pass' };
+        return { status: 'pass', detail: 'CLAUDE.md and AGENTS.md reference each other' };
       }
       return {
         status: 'fail',
@@ -305,7 +289,7 @@ export const CHECKS = Object.freeze([
     id: 'commands.test',
     title: 'Test command discoverable',
     severity: 'warn',
-    engines: 'all',
+    scope: 'repository',
     fix: 'Add a test script/target, or name the command in the instruction file.',
     run: (f) => commandCheck(f, 'test'),
   },
@@ -313,7 +297,7 @@ export const CHECKS = Object.freeze([
     id: 'commands.build',
     title: 'Build command discoverable',
     severity: 'info',
-    engines: 'all',
+    scope: 'repository',
     fix: 'Add a build script/target, or name it in the instruction file.',
     run: (f) => commandCheck(f, 'build'),
   },
@@ -321,7 +305,7 @@ export const CHECKS = Object.freeze([
     id: 'commands.lint',
     title: 'Lint command discoverable',
     severity: 'info',
-    engines: 'all',
+    scope: 'repository',
     fix: 'Add a lint/format script/target, or name it in the instruction file.',
     run: (f) => commandCheck(f, 'lint'),
   },
@@ -329,7 +313,7 @@ export const CHECKS = Object.freeze([
     id: 'deps.lockfile',
     title: 'Lockfile committed',
     severity: 'warn',
-    engines: 'all',
+    scope: 'repository',
     fix: "Commit the lockfile so an agent's install matches CI.",
     run: (f) => lockfileCheck(f),
   },
@@ -337,35 +321,35 @@ export const CHECKS = Object.freeze([
     id: 'ignore.heavy-dirs',
     title: 'Heavy dirs ignored',
     severity: 'warn',
-    engines: 'all',
+    scope: 'repository',
     fix: '.gitignore it; agents read and grep it otherwise.',
     run: (f) => {
       if (!f.heavyPresent?.length) return { status: 'skip' };
       const leaked = f.heavyPresent.filter((d) => !f.heavyIgnored?.[d]);
       return leaked.length
         ? { status: 'fail', detail: `${leaked.join(', ')} not ignored` }
-        : { status: 'pass' };
+        : { status: 'pass', detail: `${f.heavyPresent.join(', ')} in .gitignore` };
     },
   },
   {
     id: 'secrets.tracked-names',
     title: 'No secret-looking tracked files',
     severity: 'warn',
-    engines: 'all',
+    scope: 'repository',
     fix: 'Remove it and rotate it: agents read the file and send it to the model provider.',
     run: (f) => {
       if (!f.tracked) return { status: 'skip' };
       const hit = f.tracked.find((p) => SECRET_RES.some((re) => re.test(p)));
       return hit
         ? { status: 'fail', detail: `${hit} is tracked` }
-        : { status: 'pass' };
+        : { status: 'pass', detail: 'No .env, key or certificate files are tracked' };
     },
   },
   {
     id: 'repo.map',
     title: 'Monorepo map present',
     severity: 'info',
-    engines: 'all',
+    scope: 'repository',
     fix: 'Add a short map of the packages to the instruction file.',
     run: (f) => repoMapCheck(f),
   },

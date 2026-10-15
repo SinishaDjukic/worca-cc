@@ -86,16 +86,17 @@ describe('engines module', () => {
       });
     });
 
-    it('is partial when only a warn check fails', () => {
+    it('a failing warn repository check makes the repository partial, not the engine', () => {
       withRepo((dir) => {
         writeFileSync(join(dir, 'AGENTS.md'), '# a');
         writeFileSync(join(dir, 'package.json'), '{}');
         writeFileSync(join(dir, 'package-lock.json'), '{}');
         commitAll(dir);
       }, (dir) => {
-        const { engines } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
-        assert.equal(engines.codex.level, 'partial');
-        assert.ok(engines.codex.failing.includes('commands.test'));
+        const { engines, repository } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+        assert.equal(repository.level, 'partial');
+        assert.ok(repository.failing.includes('commands.test'));
+        assert.equal(engines.codex.level, 'ready');
       });
     });
 
@@ -126,10 +127,10 @@ describe('engines module', () => {
       }, (dir) => {
         const facts = collectFacts(dir);
         const r1 = evaluateEngines(facts, { ignore: [], env: NO_LOCKS });
-        assert.ok(r1.engines.codex.failing.includes('commands.test'));
+        assert.ok(r1.repository.failing.includes('commands.test'));
         const r2 = evaluateEngines(facts, { ignore: ['commands.test'], env: NO_LOCKS });
-        assert.ok(!r2.engines.codex.failing.includes('commands.test'));
-        assert.equal(r2.engines.codex.level, 'ready'); // the remaining failures are info-only
+        assert.ok(!r2.repository.failing.includes('commands.test'));
+        assert.equal(r2.repository.level, 'ready'); // the remaining failures are info-only
         assert.equal(r2.checks.find((r) => r.id === 'commands.test').status, 'ignored');
       });
     });
@@ -161,38 +162,39 @@ describe('engines module', () => {
       });
     });
 
-    it('emits one row per declared engine per perEngine check, scoped to that engine', () => {
+    it('emits one row per declared engine per tool check, scoped to that engine', () => {
       withRepo(null, (dir) => {
         const { checks } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
         const rows = perEngineRows(checks);
-        assert.equal(rows.length, 2 * DECLARED_ENGINES.length);
-        for (const id of ['instructions.present', 'instructions.committed']) {
+        assert.equal(rows.length, 3 * DECLARED_ENGINES.length);
+        for (const id of ['instructions.present', 'instructions.committed', 'instructions.size']) {
           for (const name of DECLARED_ENGINES) {
             const r = row(checks, id, name);
             assert.ok(r, `${id} for ${name}`);
-            assert.deepEqual(r.engines, [name]);
+            assert.equal(r.scope, 'tool');
           }
         }
       });
     });
 
-    it('shared rows carry the applicable engine list and no engine field', () => {
+    it('repository rows appear once, with no engine field', () => {
       withRepo(null, (dir) => {
         const { checks } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
-        const shared = checks.find((r) => r.id === 'git.repo');
-        assert.equal(shared.engine, undefined);
-        assert.deepEqual(shared.engines, [...DECLARED_ENGINES]);
+        const shared = checks.filter((r) => r.id === 'git.repo');
+        assert.equal(shared.length, 1);
+        assert.equal(shared[0].engine, undefined);
+        assert.equal(shared[0].scope, 'repository');
       });
     });
 
-    it('skips every cursor perEngine row (no verified instruction sources)', () => {
+    it('skips every cursor tool row (no verified instruction sources)', () => {
       withRepo((dir) => {
         writeFileSync(join(dir, 'AGENTS.md'), '# a');
         commitAll(dir);
       }, (dir) => {
         const { checks, engines } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
         const rows = perEngineRows(checks).filter((r) => r.engine === 'cursor');
-        assert.equal(rows.length, 2);
+        assert.equal(rows.length, 3);
         for (const r of rows) assert.equal(r.status, 'skip');
         assert.ok(!engines.cursor.failing.includes('instructions.present'));
       });
@@ -298,3 +300,48 @@ describe('engines module', () => {
     });
   });
 });
+
+describe('evaluateEngines v2', () => {
+  it('returns repository and per-engine tool levels separately', () => {
+    withRepo((dir) => { writeFileSync(join(dir, 'CLAUDE.md'), '# x\n'); commitAll(dir); }, (dir) => {
+      const r = evaluateEngines(collectFacts(dir), { env: {} });
+      assert.equal(r.engines.claude.level, 'ready');
+      assert.equal(r.engines.codex.level, 'not-ready');            // no AGENTS.md
+      assert.deepEqual(r.engines.codex.failing, ['instructions.present']);
+      assert.ok(['ready', 'partial'].includes(r.repository.level));
+      assert.ok(r.checks.every((c) => c.scope === 'repository' ? c.engine === undefined : typeof c.engine === 'string'));
+    });
+  });
+
+  it('instructions.size is judged per engine on that engine\'s own files', () => {
+    withRepo((dir) => {
+      writeFileSync(join(dir, 'CLAUDE.md'), '# small\n');
+      writeFileSync(join(dir, 'AGENTS.md'), 'x'.repeat(60 * 1024));
+      commitAll(dir);
+    }, (dir) => {
+      const r = evaluateEngines(collectFacts(dir), { env: {} });
+      const size = (e) => r.checks.find((c) => c.id === 'instructions.size' && c.engine === e);
+      assert.equal(size('claude').status, 'pass');
+      assert.equal(size('codex').status, 'fail');
+      assert.match(size('codex').detail, /AGENTS\.md/);
+    });
+  });
+
+  it('a passing tool check carries a detail', () => {
+    withRepo((dir) => { writeFileSync(join(dir, 'CLAUDE.md'), '# x\n'); commitAll(dir); }, (dir) => {
+      const r = evaluateEngines(collectFacts(dir), { env: {} });
+      const present = r.checks.find((c) => c.id === 'instructions.present' && c.engine === 'claude');
+      assert.deepEqual([present.status, present.detail], ['pass', 'CLAUDE.md found']);
+    });
+  });
+
+  it('git.repo failing makes every level unknown', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'norepo-'));
+    try {
+      const r = evaluateEngines(collectFacts(dir), { env: {} });
+      assert.equal(r.repository.level, 'unknown');
+      for (const e of Object.values(r.engines)) assert.equal(e.level, 'unknown');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+

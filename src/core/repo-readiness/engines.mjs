@@ -1,11 +1,13 @@
-// Per-engine view of the readiness checks: which instruction files each engine reads, the perEngine check
-// rows (one per engine), the ignore list, and the resulting level. Pure over facts (+ env for engine locks).
+// Per-engine view of the readiness checks: which instruction files each engine reads, the tool-scope check
+// rows (one per engine), the repository rows (once), the ignore list, and the resulting levels.
+// Pure over facts (+ env for engine locks).
 import { listEngines } from '../engines/index.mjs';
 import { engineLocks } from '../engines/readiness.mjs';
 import { CLAUDE_INSTRUCTION_FILES, CLAUDE_INSTRUCTION_GLOBS } from '../engines/claude.mjs';
 import { CODEX_INSTRUCTION_FILES } from '../engines/codex.mjs';
 import { COPILOT_INSTRUCTION_FILES } from '../engines/copilot.mjs';
 import { CURSOR_INSTRUCTION_FILES } from '../engines/cursor.mjs';
+import { DEFAULT_CONTEXT_MAX_BYTES_PER_FILE, DEFAULT_CONTEXT_MAX_BYTES_TOTAL } from '../settings.mjs';
 import { CHECKS } from './checks.mjs';
 
 // Untracked by convention, so never part of `instructions.committed`.
@@ -46,10 +48,14 @@ function presentFiles(src, facts) {
   return src.files.filter((p) => facts.trackedSet?.has(p) || facts.sizes?.[p] !== undefined);
 }
 
-const PER_ENGINE = Object.freeze({
+const kb = (n) => `${Math.round(n / 1024)} KB`;
+
+// Tool-scope checks: run once per engine, on that engine's own instruction files.
+const TOOL = Object.freeze({
   'instructions.present': (src, facts) => {
     if (!hasSources(src)) return { status: 'skip' };
-    if (presentFiles(src, facts).length || globMatches(src, facts).length) return { status: 'pass' };
+    const found = [...presentFiles(src, facts), ...globMatches(src, facts)];
+    if (found.length) return { status: 'pass', detail: `${found.slice(0, 2).join(', ')} found` };
     return { status: 'fail', detail: `none of ${[...src.files, ...src.globs].join(', ')} found` };
   },
   'instructions.committed': (src, facts) => {
@@ -61,7 +67,17 @@ const PER_ENGINE = Object.freeze({
     const notCommitted = files.filter((p) => !facts.trackedSet.has(p) || facts.instructionStatus?.[p]);
     return notCommitted.length
       ? { status: 'fail', detail: `${notCommitted.join(', ')} not committed` }
-      : { status: 'pass' };
+      : { status: 'pass', detail: `${files.join(', ')} committed` };
+  },
+  'instructions.size': (src, facts) => {
+    if (!hasSources(src) || facts.truncated) return { status: 'skip' };
+    const sizes = presentFiles(src, facts).map((p) => [p, facts.sizes?.[p]]).filter(([, n]) => typeof n === 'number');
+    if (!sizes.length) return { status: 'skip' };
+    const over = sizes.find(([, n]) => n > DEFAULT_CONTEXT_MAX_BYTES_PER_FILE);
+    if (over) return { status: 'fail', detail: `${over[0]} is ${kb(over[1])}, over the ${kb(DEFAULT_CONTEXT_MAX_BYTES_PER_FILE)} limit` };
+    const total = sizes.reduce((a, [, n]) => a + n, 0);
+    if (total > DEFAULT_CONTEXT_MAX_BYTES_TOTAL) return { status: 'fail', detail: `instruction files total ${kb(total)}` };
+    return { status: 'pass', detail: `under the ${kb(DEFAULT_CONTEXT_MAX_BYTES_PER_FILE)} limit` };
   },
 });
 
@@ -75,69 +91,48 @@ function safeRun(check, facts) {
   }
 }
 
-const appliesList = (check, engineNames) => (check.engines === 'all' ? [...engineNames] : check.engines.filter((n) => engineNames.includes(n)));
-const rowApplies = (row, name) => row.engines.includes(name);
-
-function makeRow(check, scope, result, ignoreSet) {
-  return {
-    id: check.id,
-    title: check.title,
-    severity: check.severity,
-    ...scope,
-    status: ignoreSet.has(check.id) ? 'ignored' : result.status,
-    ...(result.detail === undefined ? {} : { detail: result.detail }),
-    fix: check.fix,
-  };
-}
-
-/** One row per (perEngine check, engine): `engines: [name]` plus `engine: name`. */
-function runPerEngine(facts, engines, ignoreSet) {
-  const flatRows = [];
-  const byEngine = Object.fromEntries(engines.map((n) => [n, []]));
-  for (const check of CHECKS) {
-    if (check.engines !== 'perEngine') continue;
-    const impl = PER_ENGINE[check.id];
-    for (const name of engines) {
-      const result = impl ? safeRun({ run: (f) => impl(sourcesOf(name), f) }, facts) : { status: 'skip' };
-      const row = makeRow(check, { engines: [name], engine: name }, result, ignoreSet);
-      flatRows.push(row);
-      byEngine[name].push(row);
-    }
-  }
-  return { flatRows, byEngine };
-}
-
-function levelFor(name, sharedRows, engineRows, facts, ignoreSet) {
-  const repo = sharedRows.find((r) => r.id === 'git.repo');
-  if (facts.error || repo?.status === 'fail') return { level: 'unknown', failing: [] };
-  const applicable = [...sharedRows.filter((r) => r.engine === undefined && rowApplies(r, name)), ...(engineRows ?? [])]
-    .filter((r) => !ignoreSet.has(r.id) && r.status !== 'ignored');
-  // 'error' and 'skip' never count as failures.
-  const failing = applicable.filter((r) => r.status === 'fail');
+// 'error' and 'skip' never count as failures; an ignored check never counts.
+function levelOf(rows, ignoreSet) {
+  const failing = rows.filter((r) => r.status === 'fail' && !ignoreSet.has(r.id));
   const level = failing.some((r) => r.severity === 'blocker') ? 'not-ready'
     : failing.some((r) => r.severity === 'warn') ? 'partial' : 'ready';
   return { level, failing: failing.map((r) => r.id) };
 }
 
-/** Full report rows plus a level per engine. An engine locked by the broker is `unknown` with the lock reason. */
+/**
+ * The base report: repository rows (once), tool rows (one per engine), the repository level and a tool level per
+ * engine. Which engines are used is not decided here (used.mjs / report.mjs). A locked engine is `unknown`.
+ */
 export function evaluateEngines(facts, { ignore = [], env = process.env } = {}) {
   const ignoreSet = new Set(ignore);
   const engines = listEngines().map((e) => e.name).filter((n) => n !== 'mock');
   const lockedBy = new Map(engineLocks(env).map((l) => [l.name, l.reason]));
+  const row = (check, result, engine) => ({
+    id: check.id, title: check.title, scope: check.scope, severity: check.severity,
+    ...(engine ? { engine } : {}),
+    status: ignoreSet.has(check.id) ? 'ignored' : result.status,
+    ...(result.detail === undefined ? {} : { detail: result.detail }),
+    fix: check.fix,
+  });
 
-  const rows = [];
-  for (const check of CHECKS) {
-    if (check.engines === 'perEngine') continue;
-    rows.push(makeRow(check, { engines: appliesList(check, engines) }, safeRun(check, facts), ignoreSet));
+  const repoRows = CHECKS.filter((c) => c.scope === 'repository').map((c) => row(c, safeRun(c, facts)));
+  const toolRows = {};
+  for (const name of engines) {
+    toolRows[name] = CHECKS.filter((c) => c.scope === 'tool').map((c) => {
+      const impl = TOOL[c.id];
+      return row(c, impl ? safeRun({ run: (f) => impl(sourcesOf(name), f) }, facts) : { status: 'skip' }, name);
+    });
   }
-  const perEngine = runPerEngine(facts, engines, ignoreSet);
-  rows.push(...perEngine.flatRows);
 
+  const broken = !!facts.error || repoRows.find((r) => r.id === 'git.repo')?.status === 'fail';
+  const unknown = { level: 'unknown', failing: [] };
   const out = {};
   for (const name of engines) {
-    out[name] = lockedBy.has(name)
-      ? { level: 'unknown', failing: [], locked: lockedBy.get(name) }
-      : levelFor(name, rows, perEngine.byEngine[name], facts, ignoreSet);
+    out[name] = lockedBy.has(name) ? { ...unknown, locked: lockedBy.get(name) } : broken ? unknown : levelOf(toolRows[name], ignoreSet);
   }
-  return { engines: out, checks: rows };
+  return {
+    checks: [...repoRows, ...engines.flatMap((n) => toolRows[n])],
+    repository: broken ? unknown : levelOf(repoRows, ignoreSet),
+    engines: out,
+  };
 }
