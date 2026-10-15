@@ -14,11 +14,14 @@ import { CHECKS } from './checks.mjs';
 const LOCAL_ONLY_FILES = Object.freeze(['CLAUDE.local.md']);
 
 // `committedExempt`: Claude reads the real directory (run-context), not the worktree, so an uncommitted file is fine.
+// `fallback`: files the engine reads only when none of `files` exists (globs do not count): Claude Code reads
+// AGENTS.md when there is no CLAUDE.md, .claude/CLAUDE.md or CLAUDE.local.md (code.claude.com/docs/en/memory#agents-md).
 // `missingFix`: the `instructions.present` fix for this engine (the catalog's fix is the generic fallback).
 const SOURCES = Object.freeze({
   claude: {
     files: CLAUDE_INSTRUCTION_FILES, globs: CLAUDE_INSTRUCTION_GLOBS, committedExempt: true,
-    missingFix: 'Add CLAUDE.md. If other tools are used too, put the instructions in AGENTS.md and add a line `@AGENTS.md` to CLAUDE.md.',
+    fallback: ['AGENTS.md', '.claude/AGENTS.md'],
+    missingFix: 'Add AGENTS.md (OpenAI Codex and GitHub Copilot read it too) or CLAUDE.md.',
   },
   codex: { files: CODEX_INSTRUCTION_FILES, globs: [], missingFix: 'Add AGENTS.md.' },
   copilot: { files: COPILOT_INSTRUCTION_FILES, globs: [], missingFix: 'Add AGENTS.md or .github/copilot-instructions.md.' },
@@ -47,9 +50,11 @@ function globMatches(src, facts) {
   return [...facts.trackedSet].filter((p) => res.some((re) => re.test(p)));
 }
 
-/** The literal instruction files that exist for this engine: tracked, or present on disk. */
+/** The literal instruction files the engine reads that exist: tracked, or present on disk. Its fallback files only when none of its own exists. */
 function presentFiles(src, facts) {
-  return src.files.filter((p) => facts.trackedSet?.has(p) || facts.sizes?.[p] !== undefined);
+  const exists = (p) => facts.trackedSet?.has(p) || facts.sizes?.[p] !== undefined;
+  const own = src.files.filter(exists);
+  return own.length ? own : (src.fallback || []).filter(exists);
 }
 
 const kb = (n) => `${Math.round(n / 1024)} KB`;
@@ -60,7 +65,7 @@ const TOOL = Object.freeze({
     if (!hasSources(src)) return { status: 'skip' };
     const found = [...presentFiles(src, facts), ...globMatches(src, facts)];
     if (found.length) return { status: 'pass', detail: `${found.slice(0, 2).join(', ')} found` };
-    return { status: 'fail', detail: `none of ${[...src.files, ...src.globs].join(', ')} found` };
+    return { status: 'fail', detail: `none of ${[...src.files, ...src.globs, ...(src.fallback || [])].join(', ')} found` };
   },
   'instructions.committed': (src, facts) => {
     if (!hasSources(src) || src.committedExempt || !facts.trackedSet) return { status: 'skip' };

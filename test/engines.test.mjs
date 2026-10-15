@@ -8,6 +8,7 @@ import {
   evaluateEngines, DECLARED_ENGINES,
 } from '../src/core/repo-readiness/engines.mjs';
 import { collectFacts } from '../src/core/repo-readiness/facts.mjs';
+import { DEFAULT_CONTEXT_MAX_BYTES_PER_FILE } from '../src/core/settings.mjs';
 
 function gitDir() {
   const dir = mkdtempSync(join(tmpdir(), 'eng-'));
@@ -86,15 +87,59 @@ describe('engines module', () => {
       });
     });
 
+    it('Claude Code reads AGENTS.md when the repo has no CLAUDE.md', () => {
+      withRepo((dir) => {
+        writeFileSync(join(dir, 'AGENTS.md'), '# a');
+        commitAll(dir);
+      }, (dir) => {
+        const { checks, engines } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+        const r = row(checks, 'instructions.present', 'claude');
+        assert.equal(r.status, 'pass');
+        assert.match(r.detail, /^AGENTS\.md/);
+        assert.ok(!engines.claude.failing.includes('instructions.present'));
+      });
+    });
+
+    it('Claude Code reads .claude/AGENTS.md when the repo has no CLAUDE.md', () => {
+      withRepo((dir) => {
+        mkdirSync(join(dir, '.claude'), { recursive: true });
+        writeFileSync(join(dir, '.claude', 'AGENTS.md'), '# a');
+        commitAll(dir);
+      }, (dir) => {
+        const { checks } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+        assert.equal(row(checks, 'instructions.present', 'claude').status, 'pass');
+      });
+    });
+
+    it('with a CLAUDE.md, Claude Code skips AGENTS.md, so its size does not count for Claude Code', () => {
+      withRepo((dir) => {
+        writeFileSync(join(dir, 'CLAUDE.md'), '# c');
+        writeFileSync(join(dir, 'AGENTS.md'), 'x'.repeat(DEFAULT_CONTEXT_MAX_BYTES_PER_FILE + 1));
+        commitAll(dir);
+      }, (dir) => {
+        const { checks } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+        assert.equal(row(checks, 'instructions.present', 'claude').detail, 'CLAUDE.md found');
+        assert.equal(row(checks, 'instructions.size', 'claude').status, 'pass');
+        assert.equal(row(checks, 'instructions.size', 'codex').status, 'fail');
+      });
+    });
+
+    it('the Claude Code miss lists AGENTS.md among the files it looked for', () => {
+      withRepo(null, (dir) => {
+        const { checks } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
+        assert.match(row(checks, 'instructions.present', 'claude').detail, /AGENTS\.md/);
+      });
+    });
+
     it('instructions.present gives each engine its own fix', () => {
       withRepo(null, (dir) => {
         const { checks } = evaluateEngines(collectFacts(dir), { env: NO_LOCKS });
         assert.equal(row(checks, 'instructions.present', 'claude').fix,
-          'Add CLAUDE.md. If other tools are used too, put the instructions in AGENTS.md and add a line `@AGENTS.md` to CLAUDE.md.');
+          'Add AGENTS.md (OpenAI Codex and GitHub Copilot read it too) or CLAUDE.md.');
         assert.equal(row(checks, 'instructions.present', 'codex').fix, 'Add AGENTS.md.');
         assert.equal(row(checks, 'instructions.present', 'copilot').fix, 'Add AGENTS.md or .github/copilot-instructions.md.');
         for (const r of perEngineRows(checks).filter((c) => c.id === 'instructions.present')) {
-          assert.doesNotMatch(r.fix, r.engine === 'claude' ? /Codex|Copilot|Cursor/ : /CLAUDE\.md/);
+          if (r.engine !== 'claude') assert.doesNotMatch(r.fix, /CLAUDE\.md/);
         }
       });
     });

@@ -136,7 +136,7 @@ The catalog has two **scopes**:
 
 | id | Scope | Severity | Fails when | Fix text (abridged) |
 |---|---|---|---|---|
-| `instructions.present` | tool | blocker | none of that engine's instruction sources (§4.4) is tracked or present | Per tool. Claude Code: Add `CLAUDE.md`; if other tools are used too, put the instructions in `AGENTS.md` and add a line `@AGENTS.md` to `CLAUDE.md`. OpenAI Codex: Add `AGENTS.md`. GitHub Copilot: Add `AGENTS.md` or `.github/copilot-instructions.md`. |
+| `instructions.present` | tool | blocker | none of that engine's instruction sources (§4.4) is tracked or present | Per tool. Claude Code: Add `AGENTS.md` (OpenAI Codex and GitHub Copilot read it too) or `CLAUDE.md`. OpenAI Codex: Add `AGENTS.md`. GitHub Copilot: Add `AGENTS.md` or `.github/copilot-instructions.md`. |
 | `instructions.committed` | tool (codex, copilot, cursor) | warn | an instruction source for that engine exists on disk but is untracked or has uncommitted changes | Commit it: runs on this engine see only committed files. |
 | `instructions.size` | tool | warn | one of that engine's instruction sources exceeds the effective `contextMaxBytesPerFile`, or their sum exceeds `contextMaxBytesTotal` | Trim it or split into `.claude/rules/*.md`; it is truncated and costs tokens every turn. |
 | `git.repo` | repository | blocker | the folder is not inside a git work tree | Runs check out a git worktree; `git init` and commit. |
@@ -163,7 +163,7 @@ gets `instructions.*` as `skip` and its level from the other checks only.
 
 | Engine | Sources (any one satisfies `instructions.present`) | Export |
 |---|---|---|
-| claude | `CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/rules/*.md`, `CLAUDE.local.md` (the run-context set) | `CLAUDE_INSTRUCTION_FILES` in `engines/claude.mjs` (or reuse run-context's list) |
+| claude | `CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/rules/*.md`, `CLAUDE.local.md` (the run-context set); with none of `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`, it reads `AGENTS.md` and `.claude/AGENTS.md` instead (Claude Code v2.1.277+, code.claude.com/docs/en/memory#agents-md) | `CLAUDE_INSTRUCTION_FILES` in `engines/claude.mjs` (or reuse run-context's list) |
 | codex | `AGENTS.md`, `AGENTS.override.md` | `CODEX_INSTRUCTION_FILES` in `engines/codex.mjs` |
 | copilot | `.github/copilot-instructions.md`, `.github/instructions/**/*.instructions.md`, `AGENTS.md` | `COPILOT_INSTRUCTION_FILES` in `engines/copilot.mjs` |
 | cursor | `.cursor/rules/**/*.mdc`, `AGENTS.md` | `CURSOR_INSTRUCTION_FILES` in `engines/cursor.mjs` |

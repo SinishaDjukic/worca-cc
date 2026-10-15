@@ -13,7 +13,7 @@ const FILE_CAP = 200_000;
 // instructions.* checks. Kept broad; engines.mjs decides which belong to which engine.
 export const INSTRUCTION_CANDIDATES = Object.freeze([
   'CLAUDE.md', '.claude/CLAUDE.md', 'CLAUDE.local.md',
-  'AGENTS.md', 'AGENTS.override.md',
+  'AGENTS.md', '.claude/AGENTS.md', 'AGENTS.override.md',
   '.github/copilot-instructions.md',
 ]);
 

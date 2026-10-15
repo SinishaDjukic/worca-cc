@@ -66,7 +66,7 @@ describe('worca readiness', () => {
     assert.match(r.stdout, /Blocker failures:/);
     assert.match(r.stdout, /^Result: Not ready\. 1 must fix/m);
     assert.match(r.stdout, /instructions\.present \(Claude Code\): /);
-    assert.match(r.stdout, /instructions\.present \(Claude Code\): Add CLAUDE\.md\. /);
+    assert.match(r.stdout, /instructions\.present \(Claude Code\): Add AGENTS\.md \(OpenAI Codex and GitHub Copilot read it too\) or CLAUDE\.md\./);
   });
 
   it('applies the project readiness.ignore list, so a muted blocker no longer fails the exit code', async () => {
