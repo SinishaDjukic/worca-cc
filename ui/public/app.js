@@ -14884,7 +14884,14 @@ function paintTagsTab() {
   if (sw) { sw.checked = enforceLocked ? tagsTeam?.enforce === true : tagsLocal.enforceTags === true; sw.disabled = enforceLocked; }
   if (note) { note.hidden = !tagsTeam; note.textContent = tagsTeam ? `Set by your team (${tagsTeam.home}).` : ''; }
   if (save) save.hidden = dimsLocked && enforceLocked;
+  paintTagsEnforceNone();
   settingsCardPainted('tagDimsSave');
+}
+// The switch on with no tag ticked Mandatory requires nothing: say so, so turning it on never looks like it did nothing.
+function paintTagsEnforceNone() {
+  const sw = document.getElementById('tagsEnforce');
+  const hint = document.getElementById('tagsEnforceNone');
+  if (sw && hint) hint.hidden = !sw.checked || tagDimsEditor.get().some((d) => d.required);
 }
 function paintTagDimsSettings(data) {
   tagsLocal = { tagDimensions: Array.isArray(data?.tagDimensions) ? data.tagDimensions : [], enforceTags: data?.enforceTags === true };
@@ -14900,8 +14907,12 @@ async function loadTagsTeam() {
   paintTagsTab();
 }
 const tagDimsCard = () => document.getElementById('tag-dims-settings-card');
-document.getElementById('tagsEnforce')?.addEventListener('change', () => document.getElementById('tagDimsEditor')
-  ?.dispatchEvent(new Event('input', { bubbles: true })));          // marks the card dirty (the tracker listens for input)
+document.getElementById('tagsEnforce')?.addEventListener('change', () => {
+  paintTagsEnforceNone();
+  document.getElementById('tagDimsEditor')?.dispatchEvent(new Event('input', { bubbles: true }));   // marks the card dirty (the tracker listens for input)
+});
+// A Mandatory tick, a row added or removed: the hint follows (the editor's own inputs bubble input / change / click).
+for (const ev of ['input', 'change', 'click']) document.getElementById('tagDimsEditor')?.addEventListener(ev, () => paintTagsEnforceNone());
 document.getElementById('tagDimsSave')?.addEventListener('click', (e) => {
   const body = {};
   if (!document.getElementById('tagsEnforce').disabled) body.enforceTags = document.getElementById('tagsEnforce').checked;

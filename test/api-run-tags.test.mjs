@@ -58,6 +58,7 @@ before(async () => {
   base = `http://127.0.0.1:${srv.address().port}`;
   repo = gitDir('run-tags');
   await addProject({ name: 'run-tags', path: repo });
+  await post('/api/settings', { flags: { runTags: true } });   // experimental, off by default: these tests are about it on
 });
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
@@ -192,7 +193,8 @@ test('GET /api/tag-dimensions: none by default, the Settings list after a POST, 
 
 // ── Enforced tags (slice 4A): pre-fill, then refuse a missing mandatory tag or an off-list value ──
 const CCD = { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true };
-const enforce = (dims, on = true) => post('/api/settings', { tagDimensions: dims, enforceTags: on });
+// runTags is experimental (off by default): enforcement only applies with it on.
+const enforce = (dims, on = true) => post('/api/settings', { tagDimensions: dims, enforceTags: on, flags: { runTags: true } });
 // The default identity is a real person here, so a cc run in one test would pre-fill the next one
 // (last value used): clearing drops the stored cc tags too.
 const clear = async () => {
