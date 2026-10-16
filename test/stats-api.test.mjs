@@ -214,6 +214,18 @@ test('totals carry humanHours and savedUsd = hours × rate − spent; prev too; 
   assert.equal(all.totals.savedUsd, Math.round((16.5 * 35 - all.totals.spentUsd) * 100) / 100);
 });
 
+test('a reply\'s next-prompt suggestion books its own ledger row on the reply id: one more cost, not one more turn', () => {
+  const before = getStats({ range: 'all', now: NOW }).totals.ask;
+  recordAskCostDelta({ threadId: 'ask_aaaaaaaa', messageId: 'askm_00000001', amountUsd: 0.01,
+    tokens: 30, model: 'claude-haiku-4-5', tsMs: +new Date(2026, 7, 3, 12) });
+  recordAskCostDelta({ threadId: 'ask_aaaaaaaa', messageId: 'askm_00000009', amountUsd: 0.02,
+    tokens: 300, model: 'claude-opus-5-5', tsMs: +new Date(2026, 7, 3, 13) });
+  const now = getStats({ range: 'all', now: NOW }).totals.ask;
+  assert.equal(now.turns, before.turns + 1, 'the suggestion row is the same turn');
+  assert.equal(now.sessions, before.sessions);
+  assert.equal(now.spendUsd, Math.round((before.spendUsd + 0.03) * 1e6) / 1e6);
+});
+
 test('GET /api/stats byTag: tagGroups with the configured keys first; a bad tagKey → 400; no byTag → null', async () => {
   let res = await fetch(`${base}/api/stats?range=month&byTag=1&tagKey=cc`);
   assert.equal(res.status, 200);

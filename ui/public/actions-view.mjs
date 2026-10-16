@@ -432,6 +432,25 @@ export function historyActionBadges(p, running) {
   return out;
 }
 
+/**
+ * Discard (Worca's own checkout) or Unlink (a linked folder): the Actions tab's confirm copy and DELETE,
+ * shared with the summary card's worktree notice (app.js) so both say and do exactly the same. A Discard whose
+ * snapshot fails asks again before forcing. Resolves the last `api` answer, or null when the person cancelled.
+ */
+export async function releaseCheckout({ api, url, members, external = false, dir = '', confirm }) {
+  if (external) {
+    if (!(await confirm({ title: 'Stop using this folder?', message: ['Running services stop first. ', { strong: dir || 'the folder' }, ' stays exactly as it is.'], confirmLabel: 'Unlink' }))) return null;
+    return api('DELETE', url, { members });
+  }
+  if (!(await confirm({ title: 'Discard the checkout?', message: 'Running services stop first. Uncommitted changes are saved as a patch in the run\'s files.', danger: true, confirmLabel: 'Discard' }))) return null;
+  let r = await api('DELETE', url, { members });
+  if (!r.ok && r.data?.code === 'SNAPSHOT_FAILED') {
+    if (!(await confirm({ title: 'Saving the uncommitted changes failed', message: 'Discard anyway? Uncommitted changes in the checkout will be lost.', danger: true, confirmLabel: 'Discard anyway' }))) return null;
+    r = await api('DELETE', url, { members, force: true });
+  }
+  return r;
+}
+
 /** The live Actions tab: fetches the run model, renders the card, follows action-* frames. */
 export function createActionsController({ runId, scopeQuery, api, ws, host, doc, confirm, navigate, onModel }) {
   const st = { model: null, dead: false, lastSeq: new Map(), logs: new Map(), queued: new Set(), subscribed: new Set(), notice: null };
@@ -495,18 +514,13 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
     },
     onUnlink: async (member) => {
       const m = (st.model?.members || []).find((x) => x.projectKey === member);
-      const dir = m?.checkout?.worktreeDir || 'the folder';
-      if (!(await confirm({ title: 'Stop using this folder?', message: ['Running services stop first. ', { strong: dir }, ' stays exactly as it is.'], confirmLabel: 'Unlink' }))) return;
-      await after(await api('DELETE', `${base}/checkout${q}`, { members: [member] }));
+      const r = await releaseCheckout({ api, url: `${base}/checkout${q}`, members: [member], external: true,
+        dir: m?.checkout?.worktreeDir || 'the folder', confirm });
+      if (r) await after(r);
     },
     onDiscard: async (members) => {
-      if (!(await confirm({ title: 'Discard the checkout?', message: 'Running services stop first. Uncommitted changes are saved as a patch in the run\'s files.', danger: true, confirmLabel: 'Discard' }))) return;
-      let r = await api('DELETE', `${base}/checkout${q}`, { members });
-      if (!r.ok && r.data?.code === 'SNAPSHOT_FAILED') {
-        if (!(await confirm({ title: 'Saving the uncommitted changes failed', message: 'Discard anyway? Uncommitted changes in the checkout will be lost.', danger: true, confirmLabel: 'Discard anyway' }))) return;
-        r = await api('DELETE', `${base}/checkout${q}`, { members, force: true });
-      }
-      await after(r);
+      const r = await releaseCheckout({ api, url: `${base}/checkout${q}`, members, confirm });
+      if (r) await after(r);
     },
     onStart: async (member, actionId) => {
       const r = await api('POST', `${base}/actions/${encodeURIComponent(actionId)}/start${q}`, { member });
