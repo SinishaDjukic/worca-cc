@@ -35,6 +35,7 @@ const STATS_FIXTURE = {
     windowStartMs: 0, windowEndMs: Date.now() + 4 * 86400000, msUntilReset: 4 * 86400000,
     windowSpendUsd: 3.5, allTimeSpendUsd: 3.5, remainingUsd: null, blocked: false },
   series: [{ bucketStartMs: Date.now() - 2 * 86400000, spentUsd: 3.5, finished: 2, stopped: 1, failed: 0 }],
+  people: [], filtered: false, groups: null,
 };
 
 async function boot({ fetchHandler } = {}) {
@@ -179,4 +180,37 @@ test('while Statistics is open, pipelines-changed, ask-done and ask-error refetc
       assert.ok(calls.length > afterDone, 'ask-error refetches too — an error turn can carry recorded spend');
     } },
   ]);
+});
+
+test('Last month, Group by and Custom drive the /api/stats query', async () => {
+  const ctx = await boot();                    // calls[] records every /api/stats URL
+  await ctx.showStats();
+  const doc = ctx.window.document;
+  doc.querySelector('#stats-range [data-range="lastMonth"]').click(); await ctx.tick();
+  assert.ok(ctx.calls.some((u) => u.includes('range=lastMonth')));
+  const group = doc.getElementById('stats-group');
+  group.value = 'person'; group.dispatchEvent(new ctx.window.Event('change')); await ctx.tick(); await ctx.tick();
+  assert.ok(ctx.calls.some((u) => u.includes('groupBy=person')));
+  doc.querySelector('#stats-range [data-range="custom"]').click(); await ctx.tick(); await ctx.tick();
+  assert.equal(doc.getElementById('stats-custom').hidden, false);
+  const before = ctx.calls.length;
+  doc.getElementById('stats-from').value = '2026-08-09';
+  doc.getElementById('stats-to').value = '2026-08-01';
+  doc.getElementById('stats-to').dispatchEvent(new ctx.window.Event('change')); await ctx.tick(); await ctx.tick();
+  assert.equal(ctx.calls.length, before, 'no request while To is before From');
+  assert.equal(doc.getElementById('stats-custom-err').hidden, false);
+  assert.equal(doc.getElementById('stats-to').getAttribute('aria-invalid'), 'true');
+  doc.getElementById('stats-to').value = '2026-08-31';
+  doc.getElementById('stats-to').dispatchEvent(new ctx.window.Event('change')); await ctx.tick(); await ctx.tick();
+  assert.ok(ctx.calls.at(-1).includes('from=2026-08-09&to=2026-08-31'), 'a valid pair refetches');
+  assert.equal(doc.getElementById('stats-custom-err').hidden, true);
+  assert.equal(doc.getElementById('stats-to').hasAttribute('aria-invalid'), false);
+});
+
+test('narrow widths: the range control wraps and a grouped table scrolls inside its card', () => {
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  assert.match(css, /#stats-range\{[^}]*flex-wrap:wrap/, 'six range buttons must wrap, not run off-screen');
+  // A grid item keeps min-width:auto, so the 1fr track grows to the table's
+  // min-content width and .people-scroll never scrolls; min-width:0 caps it.
+  assert.match(css, /\.people-grid>\*\{min-width:0;\}/);
 });

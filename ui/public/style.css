@@ -2854,7 +2854,13 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 #plugin-modal .card:has(.grv-editor){max-width:960px;width:min(94vw,960px);}
 
 /* ---------- Statistics view ---------- */
-.stats-filter{display:flex;margin-bottom:18px;}
+.stats-filter{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:18px;}
+/* Six range buttons no longer fit a narrow screen on one line. */
+#stats-range{flex-wrap:wrap;}
+.stats-custom{display:inline-flex;gap:6px;align-items:center;}
+.stats-scope .tag-input{min-width:240px;}
+.groups-table tr.groups-row-none td,.groups-table tr.groups-row-ask td{color:var(--ink-3);font-style:italic;}
+.groups-table tfoot td{font-weight:500;border-top:1px solid var(--line);padding:8px 10px 8px 0;}
 .stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;}
 .stat-tile{padding:18px 20px;}
 .stat-label{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12.5px;font-weight:600;}
@@ -2877,6 +2883,8 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .chart-card{padding:20px 22px;}
 /* Stats › By person (credential broker): one full-width card, a table with a share bar. */
 .people-grid{grid-template-columns:1fr;}
+/* Without this the card grows to the table's width on narrow screens instead of scrolling. */
+.people-grid>*{min-width:0;}
 .people-scroll{overflow-x:auto;}
 .people-table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;}
 .people-table th{text-align:left;font-weight:500;color:var(--ink-3);font-size:12px;padding:6px 10px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap;}

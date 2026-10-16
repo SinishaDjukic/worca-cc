@@ -5401,21 +5401,28 @@ app.get('/api/counts', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/stats?range=today|week|month|all  -> the Statistics view payload (§6.9).
-// Pure DB reads; an unknown range is the caller's fault, so getStats' RangeError
-// maps to 400 while anything else keeps bubbling to the error handler.
+// GET /api/stats?range=today|week|month|lastMonth|custom|all[&from&to][&tag…][&person][&groupBy]
+//   -> the Statistics view payload (§6.9). A bad range/filter/groupBy is the caller's fault: getStats'
+//   RangeError maps to 400. The broker's per-person card is skipped while a filter is active (it
+//   cannot be narrowed by tag).
 app.get('/api/stats', async (req, res) => {
+  const str = (v) => (typeof v === 'string' && v ? v : null);
   let stats;
   try {
-    const range = typeof req.query.range === 'string' && req.query.range ? req.query.range : 'month';
-    stats = getStats({ range });
+    const q = req.query;
+    stats = getStats({
+      range: str(q.range) || 'month',
+      from: str(q.from), to: str(q.to),
+      filter: { tags: q.tag == null ? [] : [].concat(q.tag), person: str(q.person) },
+      groupBy: str(q.groupBy),
+    });
   } catch (err) {
     if (err instanceof RangeError) return badRequest(res, err.message);
-    throw err;
+    return res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
   // Credential broker: model spend per person in the same window, as the broker metered it
   // (the authoritative figure: it saw every request). Absent with the broker off.
-  if (brokerEnabled()) stats.byPerson = await statsByPerson(stats.windowStartMs, stats.windowEndMs);
+  if (brokerEnabled() && !stats.filtered) stats.byPerson = await statsByPerson(stats.windowStartMs, stats.windowEndMs);
   // Shaper (D28): shaped vs unshaped runs of the same size. Absent with the flag off.
   if (shapeFirstEnabled()) stats.shaping = shapingGroups(stats.range === 'all' ? 0 : stats.windowStartMs, stats.windowEndMs);
   res.json(stats);
