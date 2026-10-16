@@ -1,0 +1,86 @@
+/* film.css — stage + kit chrome. Scene CSS lives in scenes/<id>.css and must prefix every rule with
+   [data-scene="<id>"] (see promo-kit/CONTRACT.md). No CSS animations or transitions anywhere: the clock is F.seek(). */
+@font-face { font-family: 'Poppins'; font-weight: 300; src: url('fonts/poppins-latin-300-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Poppins'; font-weight: 400; src: url('fonts/poppins-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Poppins'; font-weight: 500; src: url('fonts/poppins-latin-500-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Poppins'; font-weight: 600; src: url('fonts/poppins-latin-600-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Poppins'; font-weight: 700; src: url('fonts/poppins-latin-700-normal.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 400; src: url('fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2'); }
+
+:root {
+  --paper: #F1F1EF;        /* the stage paper (fluency's blank check compares against it) */
+  --paper-2: #E9E8E4;
+  --panel: #FFFFFF;
+  --ink: #19191B; --ink-2: #5C5C63; --ink-3: #9A9AA1;
+  --line: #E3E3E0;
+  --green: #5BAE5B; --peach: #EFA63C; --red: #E76A5A; --iris: #5B56C9;
+  --clay: #D9805F; --clay-dark: #B8603F;   /* mascot body */
+  --sans: 'Poppins', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+*, *::before, *::after { box-sizing: border-box; animation: none !important; transition: none !important; }
+html, body { margin: 0; height: 100%; background: #0d0d0e; overflow: hidden; }
+body { font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased; }
+
+#viewport { position: fixed; inset: 0; display: grid; place-items: center; }
+#stage {
+  position: relative; width: 1920px; height: 1080px; overflow: hidden; flex: none;
+  background: var(--paper); transform-origin: 50% 50%;
+  background-image: radial-gradient(circle at 1px 1px, rgba(25,25,27,.075) 1px, transparent 1.4px);
+  background-size: 28px 28px;
+}
+body.export #viewport { display: block; }
+body.export #stage { transform: none !important; }
+
+.f-scenes, .f-scene, .f-scene-bg, .f-overlay { position: absolute; inset: 0; }
+.f-scene { overflow: hidden; }
+.f-world { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+.f-overlay { pointer-events: none; }
+
+/* plates: the product's real UI captured with alpha. The capture keeps the component's own shadow. */
+.f-plate { position: absolute; left: 0; top: 0; }
+.f-plate-img { position: absolute; left: 0; top: 0; display: block; user-select: none; image-rendering: auto; }
+
+/* captions: the reference films' black pill */
+.f-caption {
+  position: absolute; left: 50%; white-space: nowrap;
+  background: #111113; color: #fff; font: 600 30px/1 var(--sans); letter-spacing: -0.01em;
+  padding: 18px 30px 19px; border-radius: 999px;
+  box-shadow: 0 10px 30px -10px rgba(0,0,0,.45);
+}
+.f-caption em { font-style: normal; color: #F2B37E; }
+
+/* chapter card */
+.f-chapter {
+  position: absolute; inset: 0; background: var(--paper); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 26px; z-index: 50;
+  background-image: radial-gradient(circle at 1px 1px, rgba(25,25,27,.075) 1px, transparent 1.4px);
+  background-size: 28px 28px;
+}
+.f-chapter-num {
+  font: 500 26px/1 var(--mono); color: var(--ink); background: #fff; border: 1.5px solid var(--ink);
+  padding: 10px 16px; border-radius: 999px;
+}
+.f-chapter-title { font: 700 112px/1.05 var(--sans); letter-spacing: -0.035em; color: var(--ink); text-align: center; max-width: 1600px; }
+.f-chapter-word { display: inline-block; overflow: hidden; vertical-align: top; padding: 0 0.12em 0.08em; margin: 0 -0.02em; }
+.f-chapter-word > span { display: inline-block; }
+
+/* cursor */
+.f-cursor { position: absolute; left: 0; top: 0; width: 28px; height: 28px; margin: -3px 0 0 -5px; z-index: 40;
+  filter: drop-shadow(0 3px 5px rgba(0,0,0,.25)); }
+.f-cursor svg { display: block; }
+.f-cursor-ring { position: absolute; left: -17px; top: -17px; width: 44px; height: 44px; border-radius: 50%;
+  border: 3px solid rgba(25,25,27,.55); }
+
+.f-placeholder {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 40px 60px; border-radius: 24px;
+  background: #fff; border: 2px dashed var(--ink-3); font: 500 34px/1.5 var(--mono); color: var(--ink-2); text-align: center;
+}
+
+/* dev HUD */
+#hud { position: fixed; left: 12px; bottom: 10px; font: 12px/1.4 var(--mono); color: #bbb; z-index: 99; pointer-events: none; }
+body.export #hud, body.nohud #hud { display: none; }
+#scrub { position: fixed; left: 0; right: 0; bottom: 0; height: 6px; background: #222; z-index: 98; cursor: pointer; }
+#scrub i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--clay); }
+#scrub b { position: absolute; top: 0; bottom: 0; width: 1px; background: #555; }
+body.export #scrub { display: none; }

@@ -1,0 +1,67 @@
+{
+  "key": "promoReview",
+  "metaVersion": 2,
+  "mockRole": "generic-verifier",
+  "promptHints": "Run fluency and snap, read full-res frames at every narrated beat, and judge sync (\u00b10.5 s), legibility at 1080p, mascots (never over narrated text, no arms), no humans, no real identities or paths, and truthfulness against promo/product.md. Only critical and major findings block. Pipeline directory: {pipelineDir}. Cycle: {cycle}.",
+  "verdict": {
+    "filename": "promo-review-cycle{cycle}.json"
+  },
+  "inputs": [
+    {
+      "id": "film",
+      "type": "md"
+    },
+    {
+      "id": "storyboard",
+      "type": "md",
+      "required": false
+    },
+    {
+      "id": "timeline",
+      "type": "json",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "pass",
+      "type": "void",
+      "when": "clean"
+    },
+    {
+      "id": "findings",
+      "type": "md",
+      "when": "blocking",
+      "filename": "promo-review-cycle{cycle}.md",
+      "artifactKind": "promo-review"
+    },
+    {
+      "id": "review",
+      "type": "md",
+      "when": "always",
+      "filename": "promo-review-cycle{cycle}.md",
+      "artifactKind": "promo-review",
+      "extraFiles": [
+        {
+          "kind": "promo-sheet",
+          "glob": "promo/review-sheet-*.jpg"
+        }
+      ]
+    }
+  ],
+  "domain": "video",
+  "displayName": "Promo: review",
+  "description": "Watches the film frame by frame: the narrated feature on screen on its word, text legible at 1080p, no pops, flashes or frozen holds, mascots never over the text being read, no humans, no real names or paths, and nothing the product does not do. Only critical and major findings send it back.",
+  "color": "blue",
+  "icon": "<circle cx=\"10.5\" cy=\"10.5\" r=\"6\"/><path d=\"M15 15l5 5\" stroke-linecap=\"round\"/><path d=\"M8 10.6l1.8 1.8 3.3-3.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "agentFile": "worca-cc-promo-review.md",
+  "requiresAssets": [
+    "promo-kit"
+  ],
+  "runnerType": "verifier",
+  "fanOut": true,
+  "asksQuestions": false,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 77
+}
