@@ -256,11 +256,11 @@ test('a paused run: the detail says how to resume; after a usage limit its engin
 test('--json carries shapeStats for a shaped run (Shaper D28) and no shapeStats key otherwise', async () => {
   const STATS = { questions: { asked: 2, skipped: 1 }, revises: [{ round: 1, by: 'person' }], shapeScore: 0.875,
     reviewCycles: 2, checklist: null, cost: { shaping: 12.5, building: 30 } };
-  insertPipeline({ id: 'eee50001', projectKey: 'proj-e', title: 'shaped run', status: 'done', minutesAgo: 1 });
-  insertPipeline({ id: 'eee50002', projectKey: 'proj-e', title: 'plain run', status: 'done', minutesAgo: 1 });
-  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify(STATS), 'eee50001');
-  const shaped = JSON.parse((await run(['runs', 'show', 'eee50001', '--json'])).stdout);
+  insertPipeline({ id: 'fff50001', projectKey: 'proj-f', title: 'shaped run', status: 'done', minutesAgo: 1 });
+  insertPipeline({ id: 'fff50002', projectKey: 'proj-f', title: 'plain run', status: 'done', minutesAgo: 1 });
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify(STATS), 'fff50001');
+  const shaped = JSON.parse((await run(['runs', 'show', 'fff50001', '--json'])).stdout);
   assert.deepEqual(shaped.shapeStats, STATS);
-  const plain = JSON.parse((await run(['runs', 'show', 'eee50002', '--json'])).stdout);
+  const plain = JSON.parse((await run(['runs', 'show', 'fff50002', '--json'])).stdout);
   assert.equal('shapeStats' in plain, false);
 });
