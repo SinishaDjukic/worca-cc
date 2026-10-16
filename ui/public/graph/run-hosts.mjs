@@ -26,7 +26,7 @@ export const HINT_TEXT = 'drag to pan · ⌘/ctrl+scroll to zoom';
 export const NAV_INSET = 54;
 /** The cluster's three buttons: [data-nav, label, glyph]. The glyphs are the
  *  composer's (ui/public/index.html #gv-nav) so both canvases read identically. */
-const NAV_BTNS = [
+export const NAV_BTNS = [
   ['in', 'Zoom in', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"></path></svg>'],
   ['out', 'Zoom out', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12h14" stroke-linecap="round"></path></svg>'],
   ['center', 'Fit graph to view', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="2.5"></rect><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"></circle></svg>'],
