@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   SHAPE_ATTENTION, isShapingRun, planStats, perspectiveChangeFeedback, fixFeedback, sectionOwners, defaultAnswers,
+  planSummary, checkLine, unmetLine, fixAllFeedback, approveLabel, shaperWait,
 } from '../ui/public/shape/plan-text.mjs';
 import { buildPerspectiveChips } from '../ui/public/shape/chips.mjs';
 import { PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
@@ -119,4 +120,44 @@ test('chips: collapsed shows only picked chips plus a "+ N more" button that exp
   more.click();
   assert.equal(chips(el).length, PERSPECTIVES.length);
   assert.equal(el.querySelector('.shape-chip-more'), null);
+});
+
+test('planSummary: Problem and goal first paragraph, markdown stripped, capped at 280', () => {
+  assert.equal(planSummary('# T\n\nIntro.\n\n## 1. Problem and goal\nWe **ship** the [card](x).\nSecond line.\n\nLater.\n'),
+    'We ship the card. Second line.');
+  assert.equal(planSummary('# T\n\nJust a preamble.\n\n## Decisions\n| a | b |\n'), 'Just a preamble.');
+  assert.equal(planSummary('## Problem and goal\n```\ncode\n```\n- one\n- two\n'), 'one two');
+  const long = planSummary(`## Problem and goal\n${'word '.repeat(200)}`);
+  assert.ok(long.length <= 280 && long.endsWith('…'));
+  assert.equal(planSummary(''), '');
+  assert.equal(planSummary('## Problem and goal\nUse `snake_case` and *one* of 2*3.\n'), 'Use snake_case and one of 2*3.');
+});
+
+test('checkLine and unmetLine name the count and the short check names', () => {
+  const check = { ok: false, passed: 5, total: 8, items: [
+    { id: 'sections', label: 'S', pass: false }, { id: 'decisions', label: 'D', pass: false },
+    { id: 'tests', label: 'T', pass: false }, { id: 'paths', label: 'P', pass: true }] };
+  assert.equal(checkLine(check), 'Shape 5/8 · 3 to fix');
+  assert.equal(unmetLine(check), '3 checks unmet: sections, decisions, testing');
+  assert.equal(checkLine({ passed: 8, total: 8, items: [] }), 'Shape 8/8');
+  assert.equal(unmetLine({ items: [{ id: 'paths', pass: false }] }), '1 check unmet: paths');
+  assert.equal(unmetLine({ items: [] }), '');
+});
+
+test('fixAllFeedback: one failure equals fixFeedback; several are listed', () => {
+  const a = { label: 'A', pass: false, detail: 'x' }; const b = { label: 'B', pass: false }; const ok = { label: 'C', pass: true };
+  assert.equal(fixAllFeedback([a, ok]), fixFeedback(a));
+  assert.equal(fixAllFeedback([a, b, ok]), 'The shape check fails 2 checks:\n- "A": x\n- "B"\nFix the plan so these checks pass.');
+});
+
+test('approveLabel names the outcome; shaperWait only for Shaper steps with the gate on', () => {
+  assert.equal(approveLabel({}), 'Approve and build');
+  assert.equal(approveLabel({ outline: { slices: [] } }), 'Approve the slices');
+  const shaped = (pq) => ({ shaping: { rounds: [] }, pendingQuestion: pq });
+  assert.equal(shaperWait(shaped({ kind: 'plan' }), true), 'plan');
+  assert.equal(shaperWait(shaped({ kind: 'questions', questions: [] }), true), 'clarify');
+  for (const kind of ['form', 'gate', 'recovery', 'workflow']) assert.equal(shaperWait(shaped({ kind }), true), null, kind);
+  assert.equal(shaperWait(shaped({ kind: 'plan' }), false), null, 'gate off');
+  assert.equal(shaperWait({ pendingQuestion: { kind: 'plan' } }, true), null, 'unshaped');
+  assert.equal(shaperWait(shaped(null), true), null, 'nothing pending');
 });

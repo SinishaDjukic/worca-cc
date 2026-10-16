@@ -171,8 +171,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
 | Recovery prompt, cycle gate, cost-pause banner, retained-work banner, merge-back banner (a run on its source branch that could not be fast-forwarded) | all |
-| Plan approval (Shaper): the plan, its shape check, Run this plan / Send changes / Stop | all (rule 1) |
-| Plan approval extras: perspective chips + Update plan, Fix, Save to plans/ | S |
+| Plan approval (Shaper): one decision card — summary, folded shape check, Approve and build / Ask for changes / Full plan / ⋯ (Save to plans/); with the gate off: Run this plan / Send changes / Stop | all (rule 1) |
+| Plan approval extras: perspectives "edit" (chips + Update plan), Fix all, Save to plans/ | S |
 | Plan approval: Open in New run | A |
 | Run page Overview: Perspective checklists (Shaper, gated): the latest review cycle as one summary line, unmet items open with their evidence, met items behind "Show N met items", earlier cycles behind "Earlier cycles" | S |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
