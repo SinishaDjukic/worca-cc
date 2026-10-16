@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 // propose_workflow with — both pure (no DB, no spawn).
 import { mockShapeFor } from '../auto/recipes.mjs';
 import { normalizeShape } from '../../shared/graph/assemble.mjs';
+import { extractChecklist } from '../../shared/shape/checklist.mjs';
 import { extractText, extractResultCost } from './claude.mjs';
 import { writeMockSurvey, writeMockUsage, writeMockSynthesis } from '../workspace-scan-mock.mjs';
 import { safeEmit } from './spawn.mjs';
@@ -517,7 +518,7 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
       text = await mockClarify(m, cycle, onEvent);
       break;
     case 'planner-plan':
-      text = await mockPlannerPlan(m, onEvent);
+      text = await mockPlannerPlan(m, onEvent, prompt);
       break;
     case 'refiner':
       text = await mockRefiner(m, cycle, onEvent);
@@ -851,19 +852,29 @@ async function mockDeckAudit(m, cycle, onEvent) {
   return JSON.stringify(review);
 }
 
-async function mockPlannerPlan(m, onEvent) {
+/** Shape it first: the checklist prefixes a Perspectives block asks for (`R-arch-1`, `R-qa-1`, …), in order. */
+export function mockChecklistPrefixes(prompt) {
+  const out = [];
+  for (const x of String(prompt || '').matchAll(/`R-([a-z]+)-1`/g)) if (!out.includes(x[1])) out.push(x[1]);
+  return out;
+}
+
+async function mockPlannerPlan(m, onEvent, prompt = '') {
   const out = m.MOCK_OUT;
   const base = m.MOCK_BASE || 'feature';
   await emitLog(onEvent, '[mock] planner writing initial plan with code snippet');
   if (!out) return '[mock] planner-plan: no MOCK_OUT given';
-  const md = mockPlanMarkdown(base, 1);
+  const md = mockPlanMarkdown(base, 1, mockChecklistPrefixes(prompt));
   await ensureDir(out);
   await writeFile(out, md, 'utf8');
   safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
   return `[mock] plan written to ${out}`;
 }
 
-function mockPlanMarkdown(base, version) {
+export function mockPlanMarkdown(base, version, prefixes = []) {
+  // Under a heading no perspective owns, so the shape check's `checklists` result is unchanged.
+  const checklists = prefixes.map((p) =>
+    `## Mock checklist (${p})\n\n### Checklist\n\n- [ ] R-${p}-1 The mock feature rejects an empty input with a clear error.\n\n`).join('');
   return (
     `# Plan: ${base} (v${version})\n\n` +
     `## Overview\n\n` +
@@ -886,6 +897,7 @@ function mockPlanMarkdown(base, version) {
     `import assert from 'node:assert';\n` +
     `assert.equal(feature('  hi '), 'hi');\n` +
     '```\n\n' +
+    checklists +
     `## Clarifications (Q&A)\n\n` +
     `- **Q:** How should the feature handle invalid input?\n` +
     `  - **A:** Fail fast with a clear error\n`
@@ -1075,6 +1087,17 @@ async function mockReviewer(m, cycle, onEvent) {
             },
           ],
         };
+
+  // Shape it first (C10): report the plan's checklist when it has one. Cycle 1 leaves the first item unmet, so the
+  // checklist loops once; cycle 2 meets it and marks the last item n/a.
+  let items = [];
+  if (m.MOCK_IN) { try { items = extractChecklist(await readFile(m.MOCK_IN, 'utf8')); } catch { items = []; } }
+  if (items.length) {
+    const met = (id) => ({ id, status: 'met', evidence: 'test/feature.test.mjs (mock)' });
+    review.checklist = items.map((it, i) => (cycle <= 1
+      ? (i === 0 ? { id: it.id, status: 'unmet', evidence: 'mock: no test covers it yet' } : met(it.id))
+      : (i === items.length - 1 && items.length > 1 ? { id: it.id, status: 'na', evidence: 'mock: does not apply here' } : met(it.id))));
+  }
 
   if (mdPath) {
     const md =

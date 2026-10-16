@@ -11,7 +11,8 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { GRAPH_SHAPE_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
-import { readPipelineForResume } from '../src/core/artifacts.mjs';
+import { readPipelineForResume, readPipelineExtras } from '../src/core/artifacts.mjs';
+import { hasBlocking } from '../src/shared/graph/verdict.mjs';
 import { getDb } from '../src/core/db.mjs';
 
 useTempHome(after);
@@ -281,4 +282,33 @@ test('D28: a person revise and a check revise are recorded by round', async () =
   assert.equal(res.status, 'done', res.error);
   const { state } = readPipelineForResume(h.orch.getState().id);
   assert.deepEqual(state.shapeStats.revises, [{ round: 1, by: 'person' }, { round: 2, by: 'check' }]);
+});
+
+test('a shaped run with checklists: the reviewer reports the plan items, the rows keep them, results.json tallies the last (spec D7)', async () => {
+  const h = start({}, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const id = h.orch.getState().id;
+  const impl = readPipelineExtras(id).reviews.filter((r) => r.kind === 'impl');
+  assert.deepEqual(impl.map((r) => r.cycle), [1, 2], 'the checklist adds no cycle (C10)');
+  const [c1, c2] = impl;
+  assert.deepEqual(c1.checklist.map((c) => [c.id, c.status]), [['R-arch-1', 'unmet'], ['R-qa-1', 'met']]);
+  for (const c of c1.checklist) assert.ok(c.perspective && c.text, 'the merged row keeps perspective and text');
+  assert.ok(c1.issues.some((i) => i.severity === 'major' && i.title.startsWith('R-arch-1 not met')));
+  assert.deepEqual(c2.checklist.map((c) => [c.id, c.status]), [['R-arch-1', 'met'], ['R-qa-1', 'na']]);
+  assert.equal(hasBlocking(c2), false);
+  const results = JSON.parse(await readFile(join(h.orch.pipeline.dir, 'results.json'), 'utf8'));
+  assert.deepEqual(results.checklist, { met: 1, unmet: 0, na: 1, missing: 0, total: 2, cycle: 2 });
+});
+
+test('the unshaped copy of wf_shape stores no checklist and results.json has none (spec D7)', async () => {
+  const wf = await writeGraphWorkflow({ id: 'wf_shape_copy_cl', name: 'Shape copy', nodes: GRAPH_SHAPE_WORKFLOW.nodes, wires: GRAPH_SHAPE_WORKFLOW.wires });
+  const h = start({ workflowId: wf.id || 'wf_shape_copy_cl', shape: undefined });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const rows = readPipelineExtras(h.orch.getState().id).reviews.filter((r) => r.kind === 'impl');
+  assert.ok(rows.length > 0);
+  for (const r of rows) assert.equal(Object.hasOwn(r, 'checklist'), false);
+  const results = JSON.parse(await readFile(join(h.orch.pipeline.dir, 'results.json'), 'utf8'));
+  assert.equal(Object.hasOwn(results, 'checklist'), false);
 });

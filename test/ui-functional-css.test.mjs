@@ -105,6 +105,8 @@ const ROWS = [
   // The top bar's Activity popover and its badge (side-flyout.mjs and activity-menu.mjs toggle `hidden`).
   ...['.activity-pop', '.topnav-badge'].map((sel) => [sel, 'ui-activity-topnav: a closed popover, a zero badge']),
   ['.tsearch-pop', 'ui-topnav-search: the top bar search\'s closed listbox'],
+  // The Perspective checklists' folded met items and earlier cycles (shape/checklist-view.mjs toggles `hidden`).
+  ...['.shape-cl-list', '.shape-cl-earlier'].map((sel) => [sel, 'Shaper checklists: folded items stay folded']),
   // (.log-filters .log-f-exec and the checkbox/radio inputs are type/descendant selectors: the
   //  Step 3 row "every element index.html ships with `hidden` stays hidden" covers them.)
 ];

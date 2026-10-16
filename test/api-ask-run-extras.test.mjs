@@ -122,3 +122,11 @@ test('runCardResults: checks add up across projects; churn counts removals; exac
   assert.equal(six.extras.artifacts.length, RUN_CARD_ARTIFACTS);
   assert.equal(six.extras.moreArtifacts, false, 'every artifact is already a chip');
 });
+
+test('runCardResults passes a single-project checklist tally through as numbers, and never a workspace one (spec D7)', () => {
+  const summary = { filesNew: 0, filesChanged: 0 };
+  const cl = { met: '1', unmet: 1, na: 0, missing: 2, total: 4, cycle: 2 };
+  assert.deepEqual(runCardResults({ summary, checklist: cl }).checklist, { met: 1, unmet: 1, na: 0, missing: 2, total: 4 });
+  assert.equal(Object.hasOwn(runCardResults({ summary }), 'checklist'), false);
+  assert.equal(Object.hasOwn(runCardResults({ summary, perProject: { 'a-00000001': {} }, checklist: cl }), 'checklist'), false);
+});
