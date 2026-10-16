@@ -4609,6 +4609,9 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-chain-member{display:flex;gap:6px;align-items:baseline;padding:2px 0;color:var(--ink-2);}
 .runs-chain-member.is-done .runs-chain-glyph{color:var(--green-ink);}
 .runs-chain-member.is-current .runs-chain-glyph{color:var(--blue-ink);}
+/* The slice that is working pulses (blue, as the running pills and the progress line; green is "done"). */
+.runs-chain-member.is-live .runs-chain-glyph{display:inline-block;animation:wr-pulse 1.6s ease-in-out infinite;}
+@media (prefers-reduced-motion: reduce){.runs-chain-member.is-live .runs-chain-glyph{animation:none;}}
 .runs-chain-member.is-failed .runs-chain-glyph{color:var(--red-ink);}
 .runs-chain-pr{margin-left:auto;color:var(--blue-ink);}
 .runs-note{margin:0;padding:18px 12px;color:var(--ink-2);font-size:13px;text-align:center;}

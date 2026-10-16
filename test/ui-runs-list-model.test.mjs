@@ -432,6 +432,21 @@ test('a chain of three is ONE row (Run 2 of 3) that expands to ✓ ● ○ membe
     'the row carries its member keys so the selection repaint can rebuild them from the DOM');
 });
 
+test('only a current member that is working pulses (is-live): not one that asks or is paused', () => {
+  const doc = new JSDOM('<body></body>').window.document;
+  const liveOf = (icon) => {
+    const chain = chainIt({ open: true, members: [
+      { state: 'done', pipelineId: 'p0', title: 'Zero', href: '#history/k/p0' },
+      { state: 'current', pipelineId: 'p1', runId: 'r1', title: 'A', href: '#running/r1', icon }] });
+    const host = doc.createElement('div');
+    host.append(...renderRunsList(doc, buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1' })], chains: [chain], now: NOW }), {}));
+    return [...host.querySelectorAll('.runs-chain-member')].map((li) => li.classList.contains('is-live'));
+  };
+  assert.deepEqual(liveOf('run'), [false, true]);
+  assert.deepEqual(liveOf('ask'), [false, false]);
+  assert.deepEqual(liveOf('paused'), [false, false]);
+});
+
 test('the chain row glyph follows the current member: ask, paused, else scheduled while it only waits', () => {
   const iconOf = (members) => chainRow(chainIt({ members }), NOW).icon;
   const cur = (icon) => [{ state: 'current', pipelineId: 'p1', runId: 'r1', title: 'A', href: '#running/r1', icon }];

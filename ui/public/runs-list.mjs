@@ -485,7 +485,8 @@ function renderChainRow(doc, r, opts) {
     }
     for (const m of r.members) {
       const li = doc.createElement('li');
-      li.className = `runs-chain-member is-${m.state}`;
+      // Pulses only while the slice works: a current one that asks or is paused (icon ask | paused) stays still.
+      li.className = `runs-chain-member is-${m.state}${m.state === 'current' && m.icon === 'run' ? ' is-live' : ''}`;
       li.append(textEl(doc, 'span', 'runs-chain-glyph', MEMBER_GLYPH[m.state] || '○'));
       const link = doc.createElement('a');
       link.className = 'runs-chain-link';
