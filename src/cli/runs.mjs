@@ -246,6 +246,7 @@ async function runsShow(argv, { out, c, fail, unknownVerb = false }) {
       activeMs: Number(row.total_active_ms) || 0,
       executions,
       loopDeliveries: loops,
+      ...(st.shapeStats ? { shapeStats: st.shapeStats } : {}),
       sourceBranch: (branch && branch.source) || null,
       featureBranch: (branch && branch.feature) || null,
       linesAdded: added,

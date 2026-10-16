@@ -9,7 +9,7 @@ import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, WORKSPA
 import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertRunnableWorkflow, GRAPH_MEMORY_DEFRAG_WORKFLOW } from '../workflows.mjs';
 import { readGuardrailSet as realReadGuardrailSet } from '../guardrail-store.mjs';
 import { validateMemoryScope } from '../memory-sync.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, AUTO_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { sanitizeBranchName, suggestBranchName } from '../worktree.mjs';
 import { sanitizeTitle } from '../title.mjs';
 import { ASK_LIMITS } from './limits.mjs';
@@ -36,6 +36,11 @@ import { listPriceFor } from '../list-prices.mjs';
 
 // What a premium-tier pick is priced against on the card: Opus 5.5, the top tier's flagship (output USD per Mtok).
 const OPUS_LIST_OUTPUT = (listPriceFor('claude-opus-5-5') || {}).output || 20;
+import { resolveShapeRequest, isShapeWorkflowId } from '../shape/run.mjs';
+import { shapeFirstEnabled } from '../shape/gate.mjs';
+import { nudgeFor } from '../shape/nudge.mjs';
+import { estimateChoices } from '../shape/estimate.mjs';
+import { DEFAULT_PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
 
 export const PROPOSAL_ERRORS = Object.freeze({
   bothTargets: 'provide workspaceId OR projectKey, not both',
@@ -59,6 +64,8 @@ export const PROPOSAL_ERRORS = Object.freeze({
   byKeyUnknown: (k) => `sourceBranchByKey has an unknown project key: ${k}`,
   byKeyProjectOnly: 'sourceBranchByKey is only valid for a workspace',
   missingSource: (v, remote) => `sourceBranch "${v}" exists neither locally nor on ${remote}`,
+  shapeSlices: 'shape.slices must be "auto" or "off"',
+  shapeScheduled: 'Shaper starts now and waits for the user to approve its plan: drop when / every / after',
   nodesAuto: 'nodes needs a saved workflow — Auto (wf_auto) picks its agents and their models when the run starts',
   nodesDefrag: 'the Memory defragment workflow takes its model from Settings › Memory — omit nodes',
   // An engine that owns no catalog models (Copilot) runs its own: no pick can ever run on it.
@@ -143,7 +150,7 @@ function cleanNote(v, max = ASK_LIMITS.proposalNoteMaxChars) {
 function safeIds(plugin) { try { return realListProfileIds(plugin); } catch { return []; } }
 
 /**
- * @param {{listProjects?:Function, readWorkspace?:Function, readWorkflow?:Function, assertRunnableWorkflow?:Function, readGuardrailSet?:Function, isGitRepo?:Function, pathExists?:Function}} [deps]
+ * @param {{listProjects?:Function, readWorkspace?:Function, readWorkflow?:Function, assertRunnableWorkflow?:Function, readGuardrailSet?:Function, isGitRepo?:Function, pathExists?:Function, shapeFirst?:Function, estimate?:Function|null}} [deps]
  */
 export function createProposalValidator({
   listProjects = realListProjects,
@@ -164,6 +171,10 @@ export function createProposalValidator({
   // validator built on fake dirs never asks git; the module singleton below binds the real one.
   resolveSourceRef = null,
   remoteName = () => 'origin',
+  // Shape it first: the gate (spec D12), and the nudge's as-is / shaped estimates — null by default, so a
+  // validator built on fake readers never reads run history; the module singleton below binds the real one.
+  shapeFirst = shapeFirstEnabled,
+  estimate = null,
   // Per-agent picks (`nodes`, docs/models.md "Per-agent models for one run"): the catalog, the run's engine when the
   // proposal names none (the same cascade POST /api/run and the card's /api/run-defaults use), Claude Code's sign-in,
   // the team policy (cache only) and the entries' own cost. Read ONLY for a proposal that carries `nodes`.
@@ -283,8 +294,32 @@ export function createProposalValidator({
         workspaceId: ws.id, workspaceName: ws.name, members };
     }
 
+    // ── Shape it first (spec D9): the card proposes wf_shape (wf_shape_ux with UX); the gate refuses it when off ──
+    let shape = null;
+    let shapedWorkflowId = null;
+    if (inp.shape != null || isShapeWorkflowId(str(inp.workflowId))) {   // null = absent, as for the other optional fields
+      let shapeIn = inp.shape;
+      if (shapeIn && typeof shapeIn === 'object' && !Array.isArray(shapeIn)) {
+        const { slices, ...rest } = shapeIn;
+        if (slices !== undefined && slices !== 'auto' && slices !== 'off') errors.push(PROPOSAL_ERRORS.shapeSlices);
+        shapeIn = slices === 'auto' || slices === 'off' ? { ...rest, slices } : rest;
+      }
+      // L14: on a shaped proposal the model's assess.size tells the Planner the task was judged large.
+      const size = inp.assess && ['small', 'medium', 'large'].includes(inp.assess.size) ? inp.assess.size : undefined;
+      if (size && shapeIn && typeof shapeIn === 'object' && !Array.isArray(shapeIn) && shapeIn.size === undefined) shapeIn = { ...shapeIn, size };
+      // The UX variant named with no perspectives (no shape, or shape: {slices}): keep UX, or resolveShapeRequest's
+      // defaults would quietly drop to wf_shape.
+      if (str(inp.workflowId) === SHAPE_UX_WORKFLOW_ID
+        && (shapeIn === undefined || (shapeIn && typeof shapeIn === 'object' && !Array.isArray(shapeIn) && !('perspectives' in shapeIn)))) {
+        shapeIn = { ...(shapeIn || {}), perspectives: [...DEFAULT_PERSPECTIVES, 'ux'] };
+      }
+      const r = resolveShapeRequest({ shape: shapeIn, workflowId: inp.workflowId }, { enabled: shapeFirst() });
+      if (!r.ok) errors.push(r.error);
+      else { shape = r.shape; shapedWorkflowId = r.workflowId; }
+    }
+
     // ── workflow ───────────────────────────────────────────────────────────
-    const workflowId = str(inp.workflowId) || 'wf_default';
+    const workflowId = shapedWorkflowId || str(inp.workflowId) || 'wf_default';
     let wf = null;
     try { wf = await assertRunnableWorkflow(workflowId); }
     catch (err) { errors.push(err && err.message ? err.message : PROPOSAL_ERRORS.unknownWorkflow(workflowId)); }
@@ -428,6 +463,19 @@ export function createProposalValidator({
     // Run tags (#718): the one normaliser; the card carries the clean list.
     const tagCheck = normaliseTags(inp.tags);
     for (const e of tagCheck.errors) errors.push(`tags: ${e}`);
+    if (shape && spec.schedule) errors.push(PROPOSAL_ERRORS.shapeScheduled);
+    const nudgeBase = !shape && !spec.schedule && shapeFirst() ? nudgeFor(inp.assess) : null;
+    let nudge = null;
+    if (nudgeBase && !errors.length) {
+      let estimates = { asIs: null, shaped: null };
+      // The shaped run would be wf_shape_ux when the nudge picks UX (resolveShapeRequest); it has the manual-test agents.
+      // The gate call sits on the line itself: the call-site scan reads the shape graph's lines one by one (§13).
+      const shapedWf = shapeFirst() && nudgeBase.perspectives.includes('ux') ? GRAPH_SHAPE_UX_WORKFLOW : GRAPH_SHAPE_WORKFLOW;
+      if (typeof estimate === 'function') {
+        try { estimates = (await estimate({ asIs: wf, shaped: shapedWf })) || estimates; } catch { /* no history here (MCP child): no numbers */ }
+      }
+      nudge = { ...nudgeBase, estimates, asIsAuto: wf?.id === AUTO_WORKFLOW_ID };
+    }
 
     if (errors.length) return fail();
     // Signed out (only the answer the Ask turn already holds — its re-validation's `claudeAuth`, the MCP child's
@@ -459,7 +507,10 @@ export function createProposalValidator({
         ...(cardNodes && Object.keys(cardNodes).length ? { nodes: cardNodes } : {}),
         ...(cardWarnings.length ? { warnings: cardWarnings } : {}),
         // Only a card proposing a run on its source branch carries the key (run cards are pinned).
-        ...(sameAsSource ? { sameAsSource: true } : {}) },
+        ...(sameAsSource ? { sameAsSource: true } : {}),
+        // Only a shaped card / a nudged card carries these (run cards are pinned).
+        ...(shape ? { shape } : {}),
+        ...(nudge ? { nudge } : {}) },
     };
   }
   return { validateProposal };
@@ -470,4 +521,5 @@ export const validateProposal = createProposalValidator({
   resolveSourceRef: (dir, name, { projectKey } = {}) =>
     resolveGitSourceRef(dir, name, { remote: effectiveSyncSettings(projectKey).remote }),
   remoteName: (projectKey) => effectiveSyncSettings(projectKey).remote,
+  estimate: (wfs) => estimateChoices(wfs),
 }).validateProposal;

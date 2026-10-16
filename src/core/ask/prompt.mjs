@@ -340,6 +340,16 @@ export function renderCodexSkillsSection(s) {
   return L.join('\n');
 }
 
+/** Shape it first (spec D9): propose_run's shape and assess fields, only while the gate is on. */
+export function renderShapeSection() {
+  return [
+    '## Shaper',
+    'propose_run takes `shape: { perspectives }` to start the run on the Shaper workflow: it asks at most 3 questions, writes the plan for the picked perspectives, and the run waits for the user to approve the plan before anything is built. Use it when the message starts with "Shape this task first", or when the user asks to plan or agree on the work before it is built. perspectives: product (always on) plus the 2–4 of architect, qa, ux, security, devops, release that fit. Never give workflowId, when, every or after with shape.',
+    'A large shaped task may be planned in slices (separate pull requests, one after another): keep `slices: \'auto\'` (or leave it out) when the user asks for that or the task is large, and give `slices: \'off\'` when they ask to keep it as one.',
+    'On every propose_run for a coding task, shaped or not, give `assess: { size, openDecisions, perspectives }` (on a shaped run only its size is read: it tells the run the task was judged large): size as you judged it (rule 4); openDecisions = the decisions the brief leaves open that change what gets built and that the repo cannot answer (short phrases, at most 6, [] when none). The card uses it to offer Shaper; do not ask the user these decisions yourself.',
+  ].join('\n');
+}
+
 /** Agent mode (#574): the command tools' section, only for a turn that has them. */
 export function renderCommandsSection() {
   return [
@@ -360,15 +370,17 @@ export function renderCommandsSection() {
  *  Memory is NOT in the prompt (native-rules revision): the files load from the turn's --add-dir
  *  mount, so the prefix-cached prompt never changes with the store. `scripts` (W20) and `web`
  *  (docs/guardrails.md "Web access") are the host-dependent parts: null keeps the prompt byte-identical to a chat
- *  without script or web tools. `commands` (agent mode, #574) appends the commands section last. */
-export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local', web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
+ *  without script or web tools. `shape` (Shape it first, spec D9) adds its section after mcp. `commands` (agent mode,
+ *  #574) appends the commands section last. */
+export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local', web = null, mcp = null, commands = false, engine = 'claude', shape = false } = {}) {
   const own = engine === 'codex' ? codexSystemRules() : ASK_SYSTEM_RULES;
   const rules = deployment === 'container' || deployment === 'hosted' ? `${own}\n${ASK_HOSTING_RULE}` : own;
   const base = `${rules}\n\n${renderCatalog(catalog)}`;
   const withScripts = scripts ? `${base}\n\n${renderScriptsSection(scripts)}` : base;
   const withWeb = web && web.enabled === true ? `${withScripts}\n\n${renderWebSection(web, { engine })}` : withScripts;
   const withMcp = mcp && mcp.copies.length ? `${withWeb}\n\n${renderMcpSection(mcp)}` : withWeb;
-  return commands ? `${withMcp}\n\n${renderCommandsSection()}` : withMcp;
+  const withShape = shape ? `${withMcp}\n\n${renderShapeSection()}` : withMcp;
+  return commands ? `${withShape}\n\n${renderCommandsSection()}` : withShape;
 }
 
 /** Composer rule 12's image/PDF sentence; buildComposerSystemPrompt swaps it for its Codex form (D16). */
