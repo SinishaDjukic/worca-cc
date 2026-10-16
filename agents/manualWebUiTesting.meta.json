@@ -1,6 +1,7 @@
 {
   "key": "manualWebUiTesting",
   "metaVersion": 2,
+  "progressStage": "review",
   "mockRole": "manual-web-ui-testing",
   "promptHints": "Execute the manual test checklist against the running web UI using the Playwright tools. Severity calibration: a failing manual case is at least major.",
   "verdict": { "filename": "webui-review-cycle{cycle}.json" },

@@ -4314,12 +4314,25 @@ export class RunHarness extends EventEmitter {
     };
     try {
       if (retained) return await notMerged('commit-failed', 'the run\'s last changes could not be committed');
-      if (this.state.status !== 'done') return await notMerged('not-done', `the run ended ${this.state.status || 'early'}`);
       // The PROJECT dir (the user's checkout), never the run worktree: syncStatus's "checked out here"
       // is that dir's own HEAD.
       const dir = resolve(this.memberByKey.get(key)?.projectDir || this.projectDir);
       const tip = await this._git(['rev-parse', '--verify', '--quiet', `refs/heads/${info.branch}^{commit}`], { cwd: dir, ignoreAbort: true });
       const to = tip.ok ? tip.stdout.trim() : '';
+      if (this.state.status !== 'done') {
+        // A run that ended before committing anything left nothing behind: the source already holds all of it
+        // (merged, 0 commits), so no "not merged back" warning and the caller drops the empty hidden branch.
+        const ahead = to ? await this._git(['rev-list', '--count', `refs/heads/${source}..${to}`], { cwd: dir, ignoreAbort: true }) : null;
+        if (ahead && ahead.ok && ahead.stdout.trim() === '0') {
+          branchRecord.mergeBack = { merged: true, sha: to, commits: 0, at };
+          this._log('worktree', 'info', `${key}: nothing to merge back into ${source} (the run ended ${this.state.status || 'early'} with no commits)`);
+          if (this.pipeline) {
+            await appendAudit(this.pipeline.dir, `Nothing to merge back into \`${source}\` (\`${key}\`): the run made no commits.`).catch(() => {});
+          }
+          return true;
+        }
+        return await notMerged('not-done', `the run ended ${this.state.status || 'early'}`);
+      }
       if (!to) return await notMerged('failed', `could not read ${info.branch}`);
       const r = await fastForwardTo(dir, { base: source, to, message: `worca: fast-forward ${source} to run ${this.pipeline?.id || ''}` });
       if (!r.ok) return await notMerged(r.kind, r.error, r.paths);

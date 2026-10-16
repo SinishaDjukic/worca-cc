@@ -217,7 +217,7 @@ test('controller: a finished run paints from its persisted state once read — t
   const built = ctl.build(BLOCK, ctx);
   doc.body.appendChild(built.el);
   await settle();
-  assert.equal(built.el.querySelector('.ask-rc-prog').textContent, '2/2 agents');
+  assert.equal(built.el.querySelector('.ask-rc-prog').textContent, 'Finished');
   assert.equal(built.el.querySelectorAll('.chat-rc-graph .node.is-skipped').length, 0);
   built.dispose();
 });

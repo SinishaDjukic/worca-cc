@@ -1,6 +1,7 @@
 {
   "key": "workspaceReviewer",
   "metaVersion": 2,
+  "progressStage": "review",
   "mockRole": "workspace-reviewer",
   "workspaceVariantOf": "reviewer",
   "promptHints": "Review what was implemented across the member projects against the plan.\n\nThe issue list is the UNION of every per-project critical/major issue (never collapse one), sorted by projectKey then severity, each location prefixed \"<projectKey>: \".",

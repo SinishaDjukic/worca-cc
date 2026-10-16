@@ -382,7 +382,7 @@ import {
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
   resolveAfterRef, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
-  chainBaseBranchesOf, resumeTicketsFor, cancelResumeTicketsFor,
+  chainBaseBranchesOf, resumeTicketsFor, cancelResumeTicketsFor, runChains,
 } from '../src/core/scheduler.mjs';
 import {
   onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
@@ -3336,6 +3336,8 @@ app.get('/api/schedules', (req, res) => {
     res.json({
       schedules: listSchedules({ projectDir, workspaceId }),
       tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter),
+      // Run progress (P8): every open "Run after" chain, unscoped (a chain may cross projects).
+      chains: runChains({ isLive: liveProbe }),
       counts: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },
       defaults: scheduleDefaults(),
     });

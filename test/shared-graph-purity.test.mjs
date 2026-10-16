@@ -23,7 +23,7 @@ test('src/shared/** is non-empty (required core files exist) and pure, relative-
   await checkRows([
     { name: 'src/shared/graph holds the shared core (the guard is never vacuous)', run: () => {
       const names = walk(SHARED).map((f) => posix(path.relative(SHARED, f)));
-      for (const required of ['graph/constants.mjs', 'graph/verdict.mjs', 'forms/schema.mjs', 'workspace-map/limits.mjs']) {
+      for (const required of ['graph/constants.mjs', 'graph/verdict.mjs', 'forms/schema.mjs', 'workspace-map/limits.mjs', 'run-progress.mjs']) {
         assert.ok(names.includes(required), `src/shared/${required} must exist`);
       }
     } },
