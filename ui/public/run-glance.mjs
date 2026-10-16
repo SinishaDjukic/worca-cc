@@ -174,8 +174,11 @@ export function glanceState(run) {
  * open one: no gh, a workspace run, the branch is gone), 'NONE' / null (none yet, one can
  * be opened). `files` is how many files the run changed (null while unknown).
  * A finished run also names its own glyph in `icon` (renderOrb), one per headline.
+ * `limitNote` ("resets 18:00") replaces "resume to continue" on a usage-limit pause.
+ * `progress` is runProgress's result: while the run runs or waits for you, its `text` ("Build · task 2 of 4")
+ * is line 2, in place of the step names. An open preflight with nothing running still names itself.
  */
-export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr = null, files = null } = {}) {
+export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr = null, files = null, limitNote = '', progress = null } = {}) {
   const state = glanceState(run);
   const now = nowRows(run);
   const names = now.map((x) => x.label);
@@ -194,6 +197,7 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
       const who = pq.nodeId ? nodeLabel(run.stepper, pq.nodeId) : (names[0] || '');
       const wait = 'Waiting for you';
       // The step alone: the panel right below says what it asks and why.
+      if (progress && progress.text) return line(wait, '', progress.text);
       if (pq.kind === 'workflow') return line(wait, '', 'Review the workflow');
       if (who) return line(wait, '', `Step: ${who}`);
       const what = { form: 'Input needed', gate: 'A decision', recovery: 'A step failed' };
@@ -207,7 +211,7 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
       const text = pill && pill.text ? String(pill.text) : '';
       const reason = text.replace(/^Paused\s*·\s*/, '');
       const why = reason && reason !== text ? reason : '';
-      return line('Paused', '', why ? `${cap(why)} · resume to continue` : 'Resume to continue where it left off');
+      return line('Paused', '', why ? `${cap(why)} · ${limitNote || 'resume to continue'}` : 'Resume to continue where it left off');
     }
     case 'done': {
       const p = String(pr || '').toUpperCase();
@@ -236,6 +240,7 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
     default:
       // The state word alone; the line under it names what runs (no time: the facts
       // row carries the run's time, and a second, unlabelled one read as a contradiction).
+      if (progress && progress.text && (now.length || !preflightOpen(run))) return line('Running', '', progress.text);
       if (now.length > 1) return line('Running', '', `Steps: ${join(names)}`);
       if (now.length === 1) return line('Running', '', `Step: ${names[0]}`);
       // Nothing of the workflow runs yet: the preflight, and what it is doing.

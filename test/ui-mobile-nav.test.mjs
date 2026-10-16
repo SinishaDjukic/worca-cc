@@ -167,7 +167,7 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
     } },
     { name: 'phone: a route closes the drawer and names the page in the bar; the account menu does not', run: async () => {
       const body = window.document.body;
-      assert.equal($('#topnav-title').textContent, 'New run');
+      assert.equal($('#topnav-title').textContent, 'Chat');
       click('#mbar-menu');
       click('#side-acct');
       assert.equal($('#acct-menu').hidden, false, 'the account menu opens inside the drawer');

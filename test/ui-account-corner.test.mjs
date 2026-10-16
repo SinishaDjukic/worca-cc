@@ -1,7 +1,8 @@
 // test/ui-account-corner.test.mjs — the account corner at the foot of the sidebar and the menu it
 // opens, booted for real (index.html + app.js under jsdom): the menu's order and roles, opening and
 // closing (outside click, Escape, a route), the keyboard, the Interface mode side menu, the spend
-// card's free-request row, and the stylesheet rules that keep the corner whole on the rail.
+// card's free-request row, the stylesheet rules that keep the corner whole on the rail, and the
+// mockup's look (row icons, the Appearance row, the padded sheet with its inset hairlines).
 // Who the corner names is test/ui-attribution.test.mjs; the spend ring and card are
 // test/ui-budget-indicator.test.mjs; the away row is test/ui-night-mode.test.mjs.
 import { test, afterEach } from 'node:test';
@@ -64,6 +65,7 @@ async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access'
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await settle();
   const doc = window.document;
+  doc.activeElement?.blur?.();                         // the Chat page focused its composer at boot; start these rows with focus free
   const $ = (id) => doc.getElementById(id);
   const click = (el, detail = 1) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, detail }));
   // Keys go where focus is, as in a browser (the menu reads its arrows on itself; Escape is the document's).
@@ -155,7 +157,7 @@ test('the account menu: its order and roles (spend card · Signed in as · Inter
       assert.deepEqual([...menu.children].map((el) => el.id || el.className),
         ['acct-spend', 'acct-id', 'msect', 'msect', 'msect theme-sect']);
       assert.deepEqual([...menu.querySelectorAll('.msect')].map((s) => [s.getAttribute('role'), [...s.children].map((b) => b.id)]),
-        [['group', ['acct-lvl', 'acct-settings']], ['group', ['acct-away']], ['group', ['acct-theme']]], 'each run of rows is its own white card');
+        [['group', ['acct-lvl', 'acct-settings']], ['group', ['acct-away']], ['group', ['acct-theme-k', 'acct-theme']]], 'each run of rows is its own section; Appearance leads its icons');
       assert.deepEqual([...menu.querySelectorAll('[role^="menuitem"]')].map((b) => b.id || b.dataset.themeMode || b.className),
         ['mc-btn', 'mi mc-free', 'acct-lvl', 'acct-settings', 'acct-away', 'system', 'light', 'dark'], 'Details, the free row, the three rows, then the three icons');
       assert.deepEqual([...$('acct-theme').querySelectorAll('button')].map((b) => [b.getAttribute('role'), b.getAttribute('aria-label'), b.textContent.trim()]),
@@ -310,4 +312,46 @@ test('the identity card is named by its visible heading, not by a second copy of
   assert.equal(card.getAttribute('role'), 'group');
   assert.equal(card.hasAttribute('aria-label'), false);
   assert.equal($(card.getAttribute('aria-labelledby')).textContent, 'Signed in as');
+});
+
+test('the mockup rows: Interface mode and Settings lead with their own icon; Appearance is a visible label beside its icons', async () => {
+  const { $ } = await boot();
+  for (const id of ['acct-lvl', 'acct-settings', 'acct-away']) {
+    const row = $(id);
+    const icons = row.querySelectorAll('.mi-ic');
+    assert.equal(icons.length, 1, `${id}: one icon`);
+    assert.equal(row.firstElementChild, icons[0], `${id}: the icon leads the row`);
+    assert.equal(icons[0].getAttribute('aria-hidden'), 'true', `${id}: the icon is decoration`);
+  }
+  assert.ok($('acct-lvl').querySelector('.mi-ic circle') && $('acct-settings').querySelector('.mi-ic path'), 'the sliders and the gear are drawn, not empty boxes');
+  assert.deepEqual([...$('acct-lvl').children].map((el) => el.getAttribute('class')), ['mi-ic', 'mi-lbl', 'mi-val', 'mi-chev'], 'the value and the chevron stay');
+  const sect = $('acct-theme').parentElement;
+  assert.equal(sect.hasAttribute('aria-label'), false, 'named once, by the visible label');
+  const label = $(sect.getAttribute('aria-labelledby'));
+  assert.equal(label.textContent, 'Appearance');
+  assert.equal(label.nextElementSibling, $('acct-theme'), 'the label sits left of the icons');
+  assert.equal(label.hasAttribute('role'), false, 'the arrows never stop on it');
+});
+
+test('stylesheet: the account menu is the mockup\'s padded sheet: inset hairlines, a grey spend panel, a pill button and a one-row Appearance', () => {
+  const rule = (sel) => { const m = css.match(new RegExp(`(?:^|[\\s,}])${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`)); return m ? m[1] : null; };
+  assert.match(rule('.nav-fly.acct-menu') || '', /padding:6px;/, 'padding round the content');
+  assert.doesNotMatch(css, /\.acct-menu > :not\(\[hidden\]\) ~ :not\(\[hidden\]\)\{[^}]*border-top/, 'no full-width border between sections');
+  assert.match(rule('.acct-menu > :not([hidden]) ~ :not([hidden])') || '', /margin-top:9px;/, '4px, the 1px hairline, 4px');
+  assert.match(rule('.acct-menu > :not([hidden]) ~ :not([hidden])::before') || '', /top:-5px;left:6px;right:6px;height:1px;background:var\(--line\);/, 'the hairline stops short of the edges');
+  assert.match(rule('.mcard') || '', /border-radius:10px;background:var\(--field\);/, 'the cards are inset grey panels');
+  assert.match(rule('.mc-title') || '', /font:600 /, 'a semibold title');
+  assert.match(rule('.mc-btn') || '', /border-radius:999px;/, 'Details is a pill');
+  assert.match(rule('.mc-rows dd') || '', /font:600 [^;]*var\(--sans\);/, 'semibold sans figures');
+  assert.doesNotMatch(rule('.mc-rows dd') || '', /--mono/);
+  assert.equal(rule('.mc-rows dd.pos'), null, 'Saved is ink, as the mockup shows');
+  assert.match(rule('.mc-free:first-child') || '', /margin-top:0;padding-top:0;border-top:0;/, 'the free row alone in the card opens on no rule');
+  for (const [sel, ink] of [['.mc-rows dd.warn', 'amber'], ['.mc-free[data-tone="warn"] .mi-val', 'amber'], ['.mc-rows dd.over', 'red'],
+    ['.mc-free[data-tone="over"] .mi-val', 'red'], ['.mc-note', 'red']]) {
+    assert.match(rule(sel) || '', new RegExp(`color:var\\(--${ink}-ink-strong\\);`), `${sel}: the -strong ink keeps 4.5:1 on the grey panel`);
+  }
+  assert.match(rule('.mi') || '', /height:32px;/);
+  assert.match(rule('.msect.theme-sect') || '', /flex-direction:row;align-items:center;justify-content:space-between;/, 'Appearance is one row');
+  assert.match(rule('.theme-ic') || '', /width:30px;/, 'a compact segmented control, not a full-width track');
+  assert.doesNotMatch(rule('.theme-ic') || '', /flex:1;/);
 });

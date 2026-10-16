@@ -1,6 +1,7 @@
 {
   "key": "refiner",
   "metaVersion": 2,
+  "progressStage": "plan",
   "mockRole": "refiner",
   "promptHints": "Read the current plan, critically review it INCLUDING its code snippets, then write an improved version and a machine-readable review.\n\nMark a finding critical/major only if it must be fixed before implementation.",
   "wantsRequest": true,

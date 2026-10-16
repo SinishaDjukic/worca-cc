@@ -1,6 +1,6 @@
 // test/ui-projects-bulk-add.test.mjs
-// JSDOM tests for adding several projects at once from the Projects view: native multi-pick
-// -> review list -> POST /api/projects/bulk -> partial success reported per row and in #projects-msg.
+// JSDOM tests for adding several projects at once from the Projects view: Add project -> the dialog's
+// Choose folder… (native multi-pick) -> review list -> POST /api/projects/bulk -> partial success reported per row and in #projects-msg.
 // (boot/WSStub/tick/click/goProjects/PROJECTS: copied from test/ui-projects-view.test.mjs)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,6 +38,8 @@ async function boot({ fetchHandler } = {}) {
   window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
   window.fetch = (url, opts) => {
     const u = String(url);
+    // A local worca: a native folder picker exists, so Add project opens the dialog on its Folder tab.
+    if (u.includes('/api/fs/pick-folder') && ((opts && opts.method) || 'GET') === 'GET') return Promise.resolve({ ok: true, status: 200, json: async () => ({ available: true }) });
     if (fetchHandler) { const r = fetchHandler(u, opts || {}); if (r) return r; }
     if (u.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: PROJECTS }) });
     if (u.includes('/api/history')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: [], ghAvailable: false }) });
@@ -62,9 +64,17 @@ async function goProjects(window) {
   await tick(); await tick();
 }
 
+// Add project opens the dialog; its Choose folder… opens the native picker (#649).
+async function addAndChoose(window) {
+  click(window, window.document.querySelector('#project-add-btn'));
+  await tick(); await tick();
+  click(window, window.document.querySelector('#proj-add-browse'));
+  await tick(); await tick();
+}
+
 const json = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 
-test('Add project with several picked folders opens the review; an already-registered folder starts unticked', async () => {
+test('Add project → Choose folder… with several picked folders opens the review; an already-registered folder starts unticked', async () => {
   const { window } = await boot({
     fetchHandler: (u) => (u.includes('/api/fs/pick-folder')
       ? json({ status: 'picked', path: '/Users/me/dev/cool', paths: ['/Users/me/dev/cool', '/Users/me/dev/alpha', '/Users/me/dev/zed'] })
@@ -72,9 +82,8 @@ test('Add project with several picked folders opens the review; an already-regis
   });
   await goProjects(window);
   const doc = window.document;
-  click(window, doc.querySelector('#project-add-btn'));
-  await tick(); await tick();
-  assert.ok(doc.querySelector('#project-add-modal').classList.contains('hidden'), 'single dialog not used');
+  await addAndChoose(window);
+  assert.ok(doc.querySelector('#project-add-modal').classList.contains('hidden'), 'the single dialog gives way to the review');
   assert.ok(!doc.querySelector('#project-bulk-modal').classList.contains('hidden'));
   const rows = [...doc.querySelectorAll('#proj-bulk-list .pb-row')];
   assert.equal(rows.length, 3);
@@ -106,8 +115,7 @@ test('partial success: added rows lock, skipped rows show the reason, a rename +
   });
   await goProjects(window);
   const doc = window.document;
-  click(window, doc.querySelector('#project-add-btn'));
-  await tick(); await tick();
+  await addAndChoose(window);
   click(window, doc.querySelector('#proj-bulk-save'));
   await tick(); await tick(); await tick();
   assert.equal(posts[0].projects.length, 2);
@@ -141,8 +149,7 @@ test('unticking every row disables Add; Escape closes without a request', async 
   });
   await goProjects(window);
   const doc = window.document;
-  click(window, doc.querySelector('#project-add-btn'));
-  await tick(); await tick();
+  await addAndChoose(window);
   for (const cb of doc.querySelectorAll('#proj-bulk-list .pb-include')) { cb.checked = false; cb.dispatchEvent(new window.Event('change', { bubbles: true })); }
   assert.equal(doc.querySelector('#proj-bulk-save').disabled, true);
   doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -151,17 +158,16 @@ test('unticking every row disables Add; Escape closes without a request', async 
   assert.equal(doc.querySelector('#projects-msg').textContent, '', 'nothing added, nothing skipped -> no message');
 });
 
-test('one native pick keeps the single Add dialog; several picks (from Add project or Choose folder…) open the review list', async () => {
+test('one native pick fills the single Add dialog; several picks from Choose folder… open the review list', async () => {
   // Each row boots with its own pick-folder answer (one path, then two).
   await checkRows([
-    { name: 'a single native pick keeps the single Add dialog (unchanged flow)', run: async () => {
+    { name: 'a single native pick fills the Add dialog it was chosen from', run: async () => {
       const { window } = await boot({
         fetchHandler: (u) => (u.includes('/api/fs/pick-folder') ? json({ status: 'picked', path: '/Users/me/dev/solo', paths: ['/Users/me/dev/solo'] }) : null),
       });
       await goProjects(window);
       const doc = window.document;
-      click(window, doc.querySelector('#project-add-btn'));
-      await tick(); await tick();
+      await addAndChoose(window);
       assert.ok(!doc.querySelector('#project-add-modal').classList.contains('hidden'));
       assert.equal(doc.querySelector('#proj-add-path').value, '/Users/me/dev/solo');
       assert.ok(doc.querySelector('#project-bulk-modal').classList.contains('hidden'));
@@ -187,8 +193,7 @@ test('project names from the folder go in as text, never HTML', async () => {
   });
   await goProjects(window);
   const doc = window.document;
-  click(window, doc.querySelector('#project-add-btn'));
-  await tick(); await tick();
+  await addAndChoose(window);
   assert.equal(doc.querySelector('#proj-bulk-list img'), null);
   assert.equal(doc.querySelector('#proj-bulk-list .pb-path').textContent, '/p/<img src=x>');
 });

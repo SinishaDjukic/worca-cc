@@ -31,7 +31,7 @@ import { refreshAskMemoryMount } from './memory-deps.mjs';
 import { materializeSkillMount } from '../skills-registry/mount.mjs';
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
 import { renderSkillsSection, renderCodexSkillsSection, codexSkillNames } from './prompt.mjs';
-import { validateProposal } from './proposal.mjs';
+import { validateProposal, proposalClaudeAuth } from './proposal.mjs';
 import { validateMetricsChange } from './metrics-deps.mjs';
 import { validateAwayChange } from './away-deps.mjs';
 import { validatePolicyChange } from './policy-deps.mjs';
@@ -44,7 +44,7 @@ import { createWebValidator } from './web-proposal.mjs';
 import { validateScheduleChange } from './schedule-deps.mjs';
 import { lookupTask } from './source-deps.mjs';
 import { effectiveTimeZone } from './schedule-spec.mjs';
-import { scheduleDefaults } from '../settings.mjs';
+import { scheduleDefaults, chatPrefs } from '../settings.mjs';
 import { ASK_ENGINES } from '../model-env.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
@@ -58,12 +58,16 @@ import { mentionedRefs } from './contexts.mjs';
 import {
   newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, ASK_ID_RE,
 } from './store.mjs';
-import { recordAskCostDelta } from '../cost-budget.mjs';
+import { budgetStatus, recordAskCostDelta } from '../cost-budget.mjs';
+import { generateSuggestion, suggestionModel, claimSuggestion, releaseSuggestion, cancelSuggestion, SUGGESTION_TIMEOUT_MS } from './suggest.mjs';
 import { setPendingCardComments } from '../diff-comments.mjs';
 
 export function createAskTurn(opts) { return new AskTurn(opts); }
 
 const TERMINAL = new Set(['done', 'stopped', 'error']);
+// worca Chat P2 (review P2-1): what a sub-agent's chat-action call asked for, in the "Not applied: …" notice.
+const SUB_ACTION_WORDS = Object.freeze({ change_setting: 'change a setting', pause_run: 'pause a run', resume_run: 'resume a run',
+  propose_stop_run: 'stop a run', send_direction: 'send a direction to a run', propose_pull_request: 'open a pull request' });
 
 // The classified notice's raw-detail cap — the runner's own reject is already
 // tail-capped tighter than this; the slice(-N) here only bounds the unusual
@@ -126,6 +130,7 @@ class AskTurn extends EventEmitter {
     skills = null,
     agentMode = true,
     composer = null,
+    suggest = false,
     deps = {},
   } = {}) {
     super();
@@ -164,6 +169,11 @@ class AskTurn extends EventEmitter {
     this.agentMode = agentMode !== false;
     // Workflows chat (D13): the page session + open document its composer cards are stamped with; null on an Ask chat.
     this.composer = composer && typeof composer === 'object' ? { sessionId: composer.sessionId || null, docToken: composer.docToken || null } : null;
+    // Next-prompt suggestion (ask-suggestion): the server sets it for a user's message (never an event turn). Off by
+    // default, so a turn built without it — every test fixture — never spawns the suggestion call.
+    this.suggest = suggest === true;
+    this.suggestionPromise = Promise.resolve();   // stored for test determinism, never awaited by run()
+    this._replyText = '';                         // the finished reply's text (set in _complete), the suggestion's input
     this.commands = null;
     this.assistantMessageId = assistantMessageId;
     this.userMessageId = userMessageId;
@@ -204,6 +214,9 @@ class AskTurn extends EventEmitter {
         finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments,
         ...(deps.store || {}),
       },
+      // Claude Code's sign-in for propose_run's per-agent picks, asked once per turn (proposal.mjs proposalClaudeAuth: a
+      // probe only when the catalog holds a Claude-run routed model).
+      claudeAuthState: deps.claudeAuthState ?? proposalClaudeAuth,
       validateProposal: deps.validateProposal ?? validateProposal,
       revalidateWorkflow: deps.revalidateWorkflow ?? revalidateWorkflowProposal,
       validateMetricsChange: deps.validateMetricsChange ?? validateMetricsChange,
@@ -222,9 +235,19 @@ class AskTurn extends EventEmitter {
       lookupTask: deps.lookupTask === undefined ? lookupTask : deps.lookupTask,
       trackRun: deps.trackRun ?? null,
       awaySwitch: deps.awaySwitch ?? null,
+      // worca Chat P2: (req, {threadId}) => {ok, block?:{state, card}, notice?} — ui/server.mjs askChatActions.apply. null = none.
+      chatAction: deps.chatAction ?? null,
       // Conversation chips: (refs) → resolved chip entries (ui/server.mjs resolveAskMentions). null = none.
       resolveMentions: deps.resolveMentions ?? null,
       generateTitle: deps.generateTitle ?? generateTitle,
+      generateSuggestion: deps.generateSuggestion ?? generateSuggestion,
+      suggestionModel: deps.suggestionModel ?? suggestionModel,
+      // Read per kickoff: a Settings save reaches the very next suggestion.
+      suggestionsEnabled: deps.suggestionsEnabled ?? (() => chatPrefs().suggestions !== false),
+      budgetStatus: deps.budgetStatus ?? budgetStatus,
+      claimSuggestion: deps.claimSuggestion ?? claimSuggestion,
+      releaseSuggestion: deps.releaseSuggestion ?? releaseSuggestion,
+      cancelSuggestion: deps.cancelSuggestion ?? cancelSuggestion,
       askLimits: deps.askLimits ?? askLimits,
       limits: deps.limits ?? ASK_LIMITS,
       resolveModelEnv: deps.resolveModelEnv ?? resolveModelEnv,
@@ -321,7 +344,8 @@ class AskTurn extends EventEmitter {
       try { attachments = (typeof d.store.listAttachments === 'function' && d.store.listAttachments(this.threadId)) || []; } catch { attachments = []; }
       let defaults = {};
       try { defaults = d.scheduleDefaults() || {}; } catch { defaults = {}; }
-      const r = await d.validateProposal(inp, { cardId, attachments, timeZone: this.timeZone, nowMs: d.now(), scheduleDefaults: defaults, lookupTask: d.lookupTask });
+      // The sign-in answer this turn handed its MCP child (run()): the card is checked as the model's own call was.
+      const r = await d.validateProposal(inp, { cardId, attachments, timeZone: this.timeZone, nowMs: d.now(), scheduleDefaults: defaults, lookupTask: d.lookupTask, ...(this.claudeAuth ? { claudeAuth: this.claudeAuth } : {}) });
       if (r && r.ok) {
         // #397 guardrail: a proposal targeting a DIFFERENT project/workspace than
         // the pinned one is accepted but flagged — the card renders the mismatch
@@ -354,7 +378,8 @@ class AskTurn extends EventEmitter {
     if (!r || r.ok !== true || typeof r.blockId !== 'string') return;
     const card = { type: 'command', blockId: r.blockId, sessionId: r.sessionId, seq: r.seq, command: String(r.command || '').slice(0, 4000),
       folder: r.folder || null, cwd: r.cwd || null, warning: r.warning || null };
-    const block = this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'command', card });
+    // textAt: the card sits in the answer where the command ran, not below it.
+    const block = this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'command', textAt: this.reducer.textLength(), card });
     if (block) this._persistBlocks();
   }
 
@@ -393,7 +418,40 @@ class AskTurn extends EventEmitter {
     // One closing mark, never two: the paused line already ends "(Marked runs wait too.)".
     const line = String(r?.line ?? '').trim();
     this.reducer.addBlock({ kind: 'notice', text: r?.ok ? `Done — ${/[.!?)]$/.test(line) ? line : `${line}.`}` : `Could not change Away mode${req.kind === 'run' ? ' on this run' : ''}: ${r?.error || 'unknown error'}` });
+    // worca Chat P2 (U1): the switch changed something — a receipt with Revert follows the line.
+    if (r?.ok && r.receipt && typeof r.receipt === 'object') this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'applied', card: r.receipt });
     this._persistBlocks();
+  }
+
+  /** worca Chat P2 (U1, R6–R10): a chat-action RESULT. The child validated (or, for pause_schedule / resume_schedule,
+   *  already acted); deps.chatAction (ui/server.mjs → action-deps.mjs) applies it and hands back the receipt or the
+   *  card — or a notice saying why not. A child refusal or an isError result already reached the model as text.
+   *  `sub` (review P2-1): a sub-agent's call — never applied; the reply says so, so nobody believes it happened. Its
+   *  pause_schedule / resume_schedule already acted in the child, so those still get their receipt. */
+  async _onChatAction(name, text, isError, sub = false) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const scheduleVerb = name === 'pause_schedule' || name === 'resume_schedule';
+    if (sub && !scheduleVerb) {
+      const notice = this.reducer.addBlock({ kind: 'notice', text: `Not applied: a sub-agent asked to ${SUB_ACTION_WORDS[name] || 'act'} — ask again in this chat` });
+      if (notice) this._persistBlocks();
+      return;
+    }
+    if (typeof this.deps.chatAction !== 'function') return;
+    let req = null;
+    if (scheduleVerb) {
+      if (out.schedule && typeof out.schedule === 'object') req = { kind: name === 'pause_schedule' ? 'schedule-pause' : 'schedule-resume', schedule: out.schedule };
+    } else if (out.requested && typeof out.requested === 'object') req = out.requested;
+    if (!req) return;
+    let r;
+    try { r = await this.deps.chatAction(req, { threadId: this.threadId }); }
+    catch (err) { r = { ok: false, notice: `Could not do that: ${err?.message || err}` }; }
+    const block = r && r.ok && r.block && r.block.card
+      ? this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: r.block.state || 'applied', card: r.block.card })
+      : this.reducer.addBlock({ kind: 'notice', text: (r && r.notice) || 'Could not do that: unknown error' });
+    if (block) this._persistBlocks();                          // null after finish() — too late for this reply
   }
 
   /**
@@ -663,7 +721,8 @@ class AskTurn extends EventEmitter {
     if (isError) return;
     let out = null;
     try { out = JSON.parse(text); } catch { out = null; }
-    const card = composerCardFrom(name, out, this.composer);
+    // An Ask chat (no composer session) stamps its pinned scope on a graph card: its Save event names that target.
+    const card = composerCardFrom(name, out, this.composer, this.composer ? {} : { target: this.pinnedScope });
     if (!card) return;
     if (!this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'proposed', card })) return;   // finished reducer
     this._persistBlocks();
@@ -746,6 +805,7 @@ class AskTurn extends EventEmitter {
       onTrackRun: this.composer ? null : ({ input, isError }) => this._onTrackRun(input, isError),
       onRunCommand: ({ text, isError }) => this._onRunCommand(text, isError),
       onAwaySwitch: this.composer ? null : ({ text, isError }) => this._onAwaySwitch(text, isError),
+      onChatAction: this.composer ? null : ({ name, text, isError, sub }) => this._onChatAction(name, text, isError, sub === true),
       onMetricsProposal: ({ input, text, isError }) => this._onMetricsProposal(input, text, isError),
       onAwayProposal: ({ input, text, isError }) => this._onAwayProposal(input, text, isError),
       onPolicyProposal: ({ input, text, isError }) => this._onPolicyProposal(input, text, isError),
@@ -924,6 +984,7 @@ class AskTurn extends EventEmitter {
       });
     }
     const summary = this.reducer.finish();
+    this._replyText = typeof summary.text === 'string' ? summary.text : '';
     const finalStatus = kind === 'error' ? 'error' : status;
     // Already AUTHORITATIVE: the reducer applied this turn's per-model cost
     // override (the `resolveCost` hook in _makeReducer), so this one value is
@@ -1097,6 +1158,8 @@ class AskTurn extends EventEmitter {
     if (this.status !== 'created') return { status: this.status };
     this.status = 'running';
     const d = this.deps;
+    // A new turn on this thread makes the previous reply's suggestion stale (it may still be writing).
+    try { d.cancelSuggestion(this.threadId); } catch { /* best effort */ }
     this._makeReducer();
     // §4.6: a Codex chat names the registry servers it does not get, once per chat (the server decides "once").
     if (this.mcpCodexNote) this.reducer.addBlock({ kind: 'notice', text: CODEX_MCP_NOTE, mcpCodex: true });
@@ -1107,6 +1170,9 @@ class AskTurn extends EventEmitter {
     let timer = null;
     let mcpConfigPath = null;
     let out;
+    // propose_run's per-agent picks check Claude Code's sign-in: asked now, so a probe overlaps the mounts below. The
+    // Workflows chat proposes no runs and never asks. Never rejects.
+    const authAsk = this.composer ? null : Promise.resolve().then(() => d.claudeAuthState()).catch(() => 'unknown');
     try {
       // R-G: ONE scratch dir for all threads, RAW home base (never worcaHome()
       // itself — it already ends in /.worca-cc), per-message config json.
@@ -1140,10 +1206,15 @@ class AskTurn extends EventEmitter {
       this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(skillRoot ? { skillRoot } : {}) }) : null;
       // Agent mode never rides the relay: relay mode is agent isolation, where the terminal refuses agent callers.
       this.commands = !this.relay && this.agentMode && d.commandBridge ? d.commandBridge({ threadId: this.threadId }) : null;
+      // One sign-in answer per turn: handed to the MCP child (spawn.mjs WORCA_ASK_CLAUDE_AUTH) and used by _onProposal,
+      // so the model and the card get one verdict however long the turn runs. A relayed chat runs its tools here, in
+      // this process (preflight's cache), so its child gets nothing.
+      this.claudeAuth = authAsk ? await authAsk : null;
+      const claudeAuth = this.relay ? null : this.claudeAuth;
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.engine === 'codex' ? { engine: 'codex' } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.engine === 'codex' ? { engine: 'codex' } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group: the
         // scratch dir is setgid worca-share (2770), so 0640 reaches the agent users and nobody
@@ -1175,6 +1246,7 @@ class AskTurn extends EventEmitter {
       if (this.commands) { try { this.commands.dispose(); } catch { /* already gone */ } this.commands = null; }
     }
     this._kickoffTitle();
+    this._kickoffSuggestion();
     return out;
   }
 
@@ -1356,5 +1428,49 @@ class AskTurn extends EventEmitter {
         }
       })
       .catch(() => { /* generateTitle already swallows; final backstop */ });
+  }
+
+  /** The next-prompt suggestion (ask-suggestion): one cheap, tool-less, out-of-turn call after a turn that finished
+   *  cleanly. Fire-and-forget like the title; holds no turn slot (settleJob already released it). Cancellable: a new
+   *  turn on the thread aborts it (run() → cancelSuggestion), and so does its own 30 s timeout. The frame is live-only
+   *  and tagged with this reply's id, so the panel drops it once anything newer happened. Its cost is Ask spend. */
+  _kickoffSuggestion() {
+    if (!this.suggest || this.status !== 'done' || this.mock || this.composer) return;
+    const d = this.deps;
+    let model = null;
+    try {
+      if (!d.suggestionsEnabled() || d.budgetStatus().blocked) return;
+      model = d.suggestionModel(this.engine);
+    } catch { return; }
+    if (!model) return;
+    const ctl = d.claimSuggestion(this.threadId);
+    const signal = AbortSignal.any([ctl.signal, AbortSignal.timeout(SUGGESTION_TIMEOUT_MS)]);
+    this.suggestionPromise = Promise.resolve()
+      .then(() => d.generateSuggestion({ userText: this.firstText, replyText: this._replyText }, {
+        cwd: this.scratchDir || join(d.worcaHome(), 'tmp', 'ask'),
+        model,
+        ...(this.engine === 'codex' ? { engine: 'codex' } : {}),
+        tools: [], strictMcpConfig: true, settingSources: ['project'],
+        disableSlashCommands: true, envScrub: true, envAllowlist: [],
+        permissionMode: 'dontAsk',
+        signal,
+        onCost: ({ costUsd, usage, model: m }) => {
+          try {
+            d.recordAskCost({
+              threadId: this.threadId, messageId: this.assistantMessageId, amountUsd: costUsd,
+              tokens: ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens']
+                .reduce((a, k) => a + (Number(usage?.[k]) || 0), 0),
+              model: m || model, tsMs: d.now(),
+            });
+          } catch { /* ledger append is best-effort */ }
+        },
+        onError: (err) => console.warn(`[worca-ask] thread ${this.threadId}: suggestion failed (model ${model}): ${err?.message || err} — the default placeholder stays`),
+      }))
+      .then((text) => {
+        if (!text || ctl.signal.aborted) return;
+        try { d.onOutOfTurn({ type: 'ask-suggestion', messageId: this.assistantMessageId, text }); } catch { /* sink */ }
+      })
+      .catch(() => { /* generateSuggestion never throws; final backstop */ })
+      .finally(() => { try { d.releaseSuggestion(this.threadId, ctl); } catch { /* best effort */ } });
   }
 }

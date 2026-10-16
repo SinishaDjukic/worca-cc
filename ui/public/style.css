@@ -54,6 +54,7 @@
   --green-ink-strong:light-dark(#2C7535,#8FD48F);  /* sidebar Saved figure: 4.79:1 on --line (the spend card's hover fill); --green-ink is 4.48:1 */
   --peach-bg:light-dark(#FCEEDA,#33261A);  --peach:#EFA63C;  --peach-ink:light-dark(#B5751A,#F2B96A);
   --red-bg:light-dark(#FBE3E0,#34201D);    --red:#E76A5A;    --red-ink:light-dark(#C5483A,#F08C7E);
+  --red-ink-strong:light-dark(#B23F33,#F08C7E);   /* red text on a --field panel (the account menu's spend card): 5.3:1 (--red-ink is 4.45:1) */
   --blue-bg:light-dark(#DEEFF7,#1A2A33);   --blue:#5BA6CC;   --blue-ink:light-dark(#3782A8,#86C4E3);
   --blue-ink-strong:light-dark(#2B6A8C,#86C4E3);   /* inline link text at small sizes: 5.9:1 on white (--blue-ink is 3.8:1) */
   --violet-bg:light-dark(#EAE6F8,#262336); --violet:#8C7FD6; --violet-ink:light-dark(#6353B8,#B3A8EE);
@@ -79,6 +80,9 @@
   --card-glass-line:light-dark(rgba(24,24,27,.10),rgba(255,255,255,.09));
   --glass:light-dark(rgba(255,255,255,.55),rgba(34,34,32,.55));
   --glass-line:light-dark(rgba(24,24,27,.08),rgba(255,255,255,.08));
+  /* worca Chat (mockup 2026-10-10): a card's lift off the white page, and the glass composer's float. */
+  --shadow-card:0 1px 2px light-dark(rgba(24,24,27,.04),rgba(0,0,0,.3)),0 2px 8px light-dark(rgba(24,24,27,.05),rgba(0,0,0,.25));
+  --shadow-glass:0 2px 6px light-dark(rgba(24,24,27,.05),rgba(0,0,0,.3)),0 12px 32px light-dark(rgba(24,24,27,.10),rgba(0,0,0,.4));
 
   /* Question/ask amber wash (design §9, C3). --amber-bg is the SOLID amber; this
      is the pale field it sits on, with its line and the radio ring. */
@@ -121,6 +125,7 @@
   --shadow-sheet:0 18px 60px light-dark(rgba(25,25,27,.14),rgba(0,0,0,.65)),0 2px 6px light-dark(rgba(25,25,27,.06),rgba(0,0,0,.4));
   --shadow-hover:0 6px 18px light-dark(rgba(25,25,27,.10),rgba(0,0,0,.55));
   --shadow-menu:0 12px 34px light-dark(rgba(25,25,27,.12),rgba(0,0,0,.6));
+  --shadow-dock:0 -8px 24px light-dark(rgba(25,25,27,.08),rgba(0,0,0,.45));   /* a panel docked at the bottom (step log drawer) */
   --knob-shadow:0 1px 3px light-dark(rgba(0,0,0,.18),rgba(0,0,0,.6));
   --ask-dock-clearance:96px;
 
@@ -637,6 +642,25 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .switch.disabled{opacity:.5;cursor:not-allowed;}
 .switch-row .txt{font-weight:500;}
 
+/* Feature flags (docs/feature-flags.md): the Experimental / Beta chip a flagged element wears (D9),
+   and the Settings › Experimental rows (D8). The gates themselves live in <style id="flag-gates">. */
+.flag-chip{display:inline-flex;align-items:center;margin-left:6px;padding:2px 8px;border-radius:999px;
+  font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;text-decoration:none;
+  background:var(--violet-bg);color:var(--violet-ink);vertical-align:middle;}
+.flag-chip-beta{background:var(--blue-bg);color:var(--blue-ink-strong);}   /* --blue-ink is 3.6:1 on --blue-bg at this size (:1016) */
+.flag-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.flags-warn{margin:0 0 12px;padding:10px 12px;border-radius:10px;background:var(--amber-bg);color:var(--amber-ink);font-weight:500;}
+.flags-host{display:flex;flex-direction:column;}
+.flag-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:14px 0;border-top:1px solid var(--line);}
+.flag-row:first-child{border-top:0;}
+.flag-row-target{background:var(--field);border-radius:10px;padding-left:10px;padding-right:10px;}
+.flag-row-title{font-weight:600;display:flex;align-items:center;gap:8px;}
+.flag-row-desc{margin:4px 0 0;color:var(--ink-2);}
+.flag-row-lock{margin:4px 0 0;color:var(--ink-3);font-size:12px;}
+.flag-row-docs{display:inline-block;margin-top:4px;font-size:12px;}
+.flag-stage-experimental{background:var(--violet-bg);color:var(--violet-ink);}
+.flag-stage-beta{background:var(--blue-bg);color:var(--blue-ink-strong);}
+
 /* ---------- buttons ---------- */
 .actions{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:22px;}
 .btn-ghost{background:var(--surface);border:1.5px solid var(--line-2);color:var(--ink);font-family:inherit;
@@ -1039,32 +1063,37 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 
 /* ---- run-detail variant: the ask cards of the "Worca Ask Cards Redesign" canvas ---- */
 /* Every kind reads as a white card here; clarify and form go further below (a card per
-   question, a pill footer). NO `animation` here: Task 6 already put `animation:wr-rise …`
-   on the `.rd-questions` WRAPPER (and neutralizes it under reduced motion). Animating
+   question, a pill footer). The chat run card's question (`.chat-rc-q`, ui/public/chat/
+   run-card.mjs) shares every rule that draws the card, so the two mounts read alike; its one
+   column, padding and amber line are in the "Chat P3: run card" block.
+   NO `animation` here: Task 6 already put `animation:wr-rise …` on the `.rd-questions`
+   WRAPPER (and neutralizes it under reduced motion). Animating
    the child too nests the two transforms — 20px of travel and opacity squared.
    `margin-top:0` also stays where Task 6 put it (its EOF rule comes LATER in the
    file, so it still wins); this rule must not restate it. */
-.rd-questions .qpanel{padding:28px 32px;background:var(--panel);
+:is(.rd-questions,.chat-rc-q) .qpanel{padding:28px 32px;background:var(--panel);
   border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow);}
 /* Clarify and form stack their own cards — each question, or the form — with the footer
    as a pill bar beneath them, so the panel itself draws nothing. */
-.rd-questions .qpanel:is([data-kind="clarify"],[data-kind="form"]){display:flex;flex-direction:column;gap:14px;
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="clarify"],[data-kind="form"]){display:flex;flex-direction:column;gap:14px;
   padding:0;background:none;border:0;border-radius:0;box-shadow:none;}
-.rd-questions .qpanel[data-kind="form"] .qbody{gap:14px;margin-top:0;}
+:is(.rd-questions,.chat-rc-q) .qpanel[data-kind="form"] .qbody{gap:14px;margin-top:0;}
 /* A waiting question sits BELOW the run's panel, which never changes: a heading that says
    what is asked, then the panel. Its own header row (title + count badge) would repeat
    the heading, so it goes. The amber disc and its glyph are the two pseudo-elements. */
-.rd-ask-head{position:relative;display:flex;align-items:center;min-height:36px;margin:0;padding:0 4px 0 52px;
+:is(.rd-ask-head,.chat-rc-q-head){position:relative;display:flex;align-items:center;min-height:36px;margin:0;padding:0 4px 0 52px;
   font:600 18px/1.35 var(--sans);letter-spacing:-.01em;color:var(--ink);overflow-wrap:anywhere;
   scroll-margin-top:84px;}   /* the sticky bar (~61px) plus air: "go to the questions" lands the heading below it */
-.rd-ask-head::before{content:'';position:absolute;left:4px;top:50%;width:36px;height:36px;margin-top:-18px;
+:is(.rd-ask-head,.chat-rc-q-head)::before{content:'';position:absolute;left:4px;top:50%;width:36px;height:36px;margin-top:-18px;
   border-radius:50%;background:var(--amber-bg);}
-.rd-ask-head::after{content:'';position:absolute;left:13px;top:50%;width:18px;height:18px;margin-top:-9px;
+:is(.rd-ask-head,.chat-rc-q-head)::after{content:'';position:absolute;left:13px;top:50%;width:18px;height:18px;margin-top:-9px;
   background:var(--amber-ink);
   -webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'><path d='M9.2 9.2a2.9 2.9 0 0 1 5.6 1c0 1.9-2.8 2.4-2.8 4.3'/><path d='M12 18.4v.1'/></svg>") center/contain no-repeat;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'><path d='M9.2 9.2a2.9 2.9 0 0 1 5.6 1c0 1.9-2.8 2.4-2.8 4.3'/><path d='M12 18.4v.1'/></svg>") center/contain no-repeat;}
 /* a failed step is not a question: the red disc and an exclamation mark */
-.rd-questions:has(> .qpanel[data-kind="recovery"]) .rd-ask-head::before{background:var(--red-bg);}
-.rd-questions:has(> .qpanel[data-kind="recovery"]) .rd-ask-head::after{background:var(--red-ink);
+.rd-questions:has(> .qpanel[data-kind="recovery"]) .rd-ask-head::before,
+.chat-rc-q:has(> .chat-rc-qbody > .qpanel[data-kind="recovery"]) .chat-rc-q-head::before{background:var(--red-bg);}
+.rd-questions:has(> .qpanel[data-kind="recovery"]) .rd-ask-head::after,
+.chat-rc-q:has(> .chat-rc-qbody > .qpanel[data-kind="recovery"]) .chat-rc-q-head::after{background:var(--red-ink);
   -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'><path d='M12 6.5v7'/><path d='M12 17.6v.1'/></svg>");mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'><path d='M12 6.5v7'/><path d='M12 17.6v.1'/></svg>");}
 /* While a question waits, the status header leads to it: a borderless row, so the hover fill. */
 .rd-now-top.is-link{cursor:pointer;margin:-8px -12px;padding:8px 12px;border-radius:var(--r-ctrl);transition:background .15s;}
@@ -1076,7 +1105,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .rd-questions .qpanel-head b{font-size:15px;color:var(--ink);}
 .rd-questions .qpanel-head .qcount{font-weight:600;font-size:11.5px;padding:5px 12px;}
 /* One card per question: the question on the left, its answers on the right. */
-.rd-questions .qblock{display:grid;grid-template-columns:380px minmax(0,1fr);grid-template-rows:auto 1fr;column-gap:56px;row-gap:8px;align-items:start;
+:is(.rd-questions,.chat-rc-q) .qblock{display:grid;grid-template-columns:380px minmax(0,1fr);grid-template-rows:auto 1fr;column-gap:56px;row-gap:8px;align-items:start;
   padding:28px 32px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow);}
 /* The number over the question. The text node is an anonymous grid item that cannot be
    placed, so the grid is one column: the number (and, once answered, the pill beside
@@ -1084,33 +1113,33 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    the card's second row is 1fr: an item crossing a flexible track is left out of the
    auto row's sizing, so a long question grows the 1fr row instead of spreading the
    options apart. Medium, not semibold: a question can run a whole paragraph. */
-.rd-questions .qtext{grid-column:1;grid-row:1 / span 2;display:grid;grid-template-columns:minmax(0,1fr);row-gap:12px;
+:is(.rd-questions,.chat-rc-q) .qtext{grid-column:1;grid-row:1 / span 2;display:grid;grid-template-columns:minmax(0,1fr);row-gap:12px;
   margin:0;font-weight:500;font-size:16px;line-height:1.5;letter-spacing:-.005em;}
-.rd-questions .qtext .qn{grid-area:1 / 1;justify-self:start;width:22px;height:22px;font-size:11.5px;margin-top:0;}
+:is(.rd-questions,.chat-rc-q) .qtext .qn{grid-area:1 / 1;justify-self:start;width:22px;height:22px;font-size:11.5px;margin-top:0;}
 /* Answered: read off the picked state the renderer already keeps, so no extra markup (a
    night-mode recommendation preselected with data-preset is not an answer yet). The
    pill shares the number's cell, pushed past the 22px circle. */
-.rd-questions .qblock:has(.qopt.sel:not([data-preset]),.qfree.has) .qtext::after{content:'Answered';grid-area:1 / 1;justify-self:start;
+:is(.rd-questions,.chat-rc-q) .qblock:has(.qopt.sel:not([data-preset]),.qfree.has) .qtext::after{content:'Answered';grid-area:1 / 1;justify-self:start;
   align-self:center;margin-left:32px;padding:3px 10px;border-radius:999px;background:var(--green-bg);color:var(--green-ink);
   font-size:11.5px;font-weight:600;line-height:1.4;letter-spacing:0;}
-.rd-questions .qopts{grid-column:2;gap:8px;margin:0;padding-left:0;}
-.rd-questions .qopt{min-height:52px;gap:14px;padding:11px 16px 11px 12px;border-radius:12px;font-size:14.5px;line-height:1.5;}
-.rd-questions .qopt::before{width:28px;height:28px;border-radius:8px;font-size:12px;}
+:is(.rd-questions,.chat-rc-q) .qopts{grid-column:2;gap:8px;margin:0;padding-left:0;}
+:is(.rd-questions,.chat-rc-q) .qopt{min-height:52px;gap:14px;padding:11px 16px 11px 12px;border-radius:12px;font-size:14.5px;line-height:1.5;}
+:is(.rd-questions,.chat-rc-q) .qopt::before{width:28px;height:28px;border-radius:8px;font-size:12px;}
 /* Night mode: the confidence bar keeps its indent under the bigger key (28px + 14px gap). */
-.rd-questions .qopt .qconf{flex-basis:calc(100% - 42px);margin-left:42px}
+:is(.rd-questions,.chat-rc-q) .qopt .qconf{flex-basis:calc(100% - 42px);margin-left:42px}
 /* "Write your own" is the last tile: dashed until it holds a value, a pencil where the
    options have their key, its text lined up with theirs (1.5 + 12 + 28 + 14 = 55.5px). */
-.rd-questions .qblock > .qfree{grid-column:2;margin-left:0;width:100%;min-height:52px;padding:11px 16px 11px 54px;
+:is(.rd-questions,.chat-rc-q) .qblock > .qfree{grid-column:2;margin-left:0;width:100%;min-height:52px;padding:11px 16px 11px 54px;
   border-radius:12px;border-style:dashed;border-color:var(--line-2);font-size:14.5px;line-height:1.5;
   background-color:var(--canvas-2);background-repeat:no-repeat;background-position:19px center;background-size:14px 14px;
   background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239A9AA1' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3z'/></svg>");}
-.rd-questions .qblock > .qfree:is(:focus,.has){border-style:solid;border-color:var(--ink);background-color:var(--panel);
+:is(.rd-questions,.chat-rc-q) .qblock > .qfree:is(:focus,.has){border-style:solid;border-color:var(--ink);background-color:var(--panel);
   box-shadow:0 0 0 3px var(--line);}
 /* one card (gate, recovery, workflow): the actions sit across its foot, under a rule */
-.rd-questions .qpanel-foot{margin-top:24px;padding-top:20px;border-top:1px solid var(--line);}
-.rd-questions .qpanel-foot .btn-go{padding:14px 26px;font-size:14px;gap:9px;}
+:is(.rd-questions,.chat-rc-q) .qpanel-foot{margin-top:24px;padding-top:20px;border-top:1px solid var(--line);}
+:is(.rd-questions,.chat-rc-q) .qpanel-foot .btn-go{padding:14px 26px;font-size:14px;gap:9px;}
 /* a stack of cards (clarify, form): the footer is a pill bar of its own beneath them */
-.rd-questions .qpanel:is([data-kind="clarify"],[data-kind="form"]) .qpanel-foot{margin-top:0;padding:10px 10px 10px 26px;
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="clarify"],[data-kind="form"]) .qpanel-foot{margin-top:0;padding:10px 10px 10px 26px;
   background:var(--panel);border:1px solid var(--line);border-radius:999px;box-shadow:var(--shadow);}
 
 /* "N of M answered" (§5.4): left slot of the footer, submit on the right. The
@@ -1188,7 +1217,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .qcancel:hover{background:var(--red-bg);}
 .qcancel:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .qopen[hidden]{display:none;}
-.rd-questions .qanswered{font:600 14px var(--sans);color:var(--ink);}   /* the pill bar's lead, not a mono aside */
+:is(.rd-questions,.chat-rc-q) .qanswered{font:600 14px var(--sans);color:var(--ink);}   /* the pill bar's lead, not a mono aside */
 
 /* ---------- Ask forms (agent-ask-forms design §6.1) ---------- */
 /* The declarative widget catalog, inside the same amber .qpanel wash. Every
@@ -1403,15 +1432,15 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .af-pane[hidden]{display:none;}
 
 /* the detail screen scales the family up to the ask-card tiles, like `.rd-questions .qopt` does */
-.rd-questions .af-form{gap:24px;margin-top:16px;}
-.rd-questions .af-label{font-size:14px;}
-.rd-questions .af-choice{min-height:52px;gap:14px;padding:12px 16px 12px 12px;border-radius:12px;font-size:14.5px;}
-.rd-questions .af-inp{padding:13px 16px;border-radius:12px;font-size:14.5px;}
+:is(.rd-questions,.chat-rc-q) .af-form{gap:24px;margin-top:16px;}
+:is(.rd-questions,.chat-rc-q) .af-label{font-size:14px;}
+:is(.rd-questions,.chat-rc-q) .af-choice{min-height:52px;gap:14px;padding:12px 16px 12px 12px;border-radius:12px;font-size:14.5px;}
+:is(.rd-questions,.chat-rc-q) .af-inp{padding:13px 16px;border-radius:12px;font-size:14.5px;}
 /* the form is the run page's one ask card (the panel around it draws nothing) */
-.rd-questions .qpanel[data-kind="form"] .af-form{padding:28px 32px;background:var(--panel);
+:is(.rd-questions,.chat-rc-q) .qpanel[data-kind="form"] .af-form{padding:28px 32px;background:var(--panel);
   border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow);}
-.rd-questions .af-gal-card img{height:148px;}
-.rd-questions .af-pdf-frame{height:640px;}
+:is(.rd-questions,.chat-rc-q) .af-gal-card img{height:148px;}
+:is(.rd-questions,.chat-rc-q) .af-pdf-frame{height:640px;}
 
 /* readonly (History): the controls stay, greyed, and nothing hints why */
 .af-readonly .af-choice,.af-readonly .af-inp,.af-readonly .af-icon-btn{opacity:.78;}
@@ -1443,31 +1472,31 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    the right, the buttons across the foot. With nothing to show on the right — a gate
    with no issues, a recovery with no message — the decision takes the width. After the
    .sev-* stripe rules above, so equal specificity lands on the neutral border. */
-.rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]){display:grid;grid-template-columns:380px minmax(0,1fr);
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]){display:grid;grid-template-columns:380px minmax(0,1fr);
   column-gap:56px;align-items:start;}
-.rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]):not(:has(> .issues,> .issue-detail)){grid-template-columns:minmax(0,1fr);}
-.rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > .gate-intro{grid-column:1;margin:0;font-size:14.5px;line-height:1.65;color:var(--ink);}
-.rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > .gate-intro::before{content:'Decision';display:block;margin-bottom:10px;
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]):not(:has(> .issues,> .issue-detail)){grid-template-columns:minmax(0,1fr);}
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > .gate-intro{grid-column:1;margin:0;font-size:14.5px;line-height:1.65;color:var(--ink);}
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > .gate-intro::before{content:'Decision';display:block;margin-bottom:10px;
   font:600 12px var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);}
-.rd-questions .qpanel[data-kind="recovery"] > .gate-intro::before{content:'What to do';}
-.rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > :is(.issues,.issue-detail){grid-column:2;}
-.rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > .qpanel-foot{grid-column:1 / -1;}
-.rd-questions .gate-actions .btn{flex:0 0 auto;padding:14px 24px;font-size:14px;}
-.rd-questions .issues{margin:0;gap:8px;}
-.rd-questions .qpanel[data-kind="gate"] > .issues::before{content:'What the reviewer still sees';
+:is(.rd-questions,.chat-rc-q) .qpanel[data-kind="recovery"] > .gate-intro::before{content:'What to do';}
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > :is(.issues,.issue-detail){grid-column:2;}
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > .qpanel-foot{grid-column:1 / -1;}
+:is(.rd-questions,.chat-rc-q) .gate-actions .btn{flex:0 0 auto;padding:14px 24px;font-size:14px;}
+:is(.rd-questions,.chat-rc-q) .issues{margin:0;gap:8px;}
+:is(.rd-questions,.chat-rc-q) .qpanel[data-kind="gate"] > .issues::before{content:'What the reviewer still sees';
   font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);}
 /* an issue: its severity in a column of its own, the text beside it, no coloured stripe */
-.rd-questions .issue{display:grid;grid-template-columns:92px minmax(0,1fr);column-gap:16px;row-gap:3px;padding:14px 16px;
+:is(.rd-questions,.chat-rc-q) .issue{display:grid;grid-template-columns:92px minmax(0,1fr);column-gap:16px;row-gap:3px;padding:14px 16px;
   border-color:var(--line);border-left-width:1px;border-radius:12px;}
-.rd-questions .issue-head{display:contents;}
-.rd-questions .issue-sev{grid-column:1;grid-row:1;justify-self:start;padding:3px 9px;font-size:11.5px;font-weight:600;
+:is(.rd-questions,.chat-rc-q) .issue-head{display:contents;}
+:is(.rd-questions,.chat-rc-q) .issue-sev{grid-column:1;grid-row:1;justify-self:start;padding:3px 9px;font-size:11.5px;font-weight:600;
   letter-spacing:0;text-transform:capitalize;}
-.rd-questions :is(.issue-title,.issue > .issue-detail,.issue-loc){grid-column:2;}
-.rd-questions .issue-title{font-size:14.5px;line-height:1.45;}
-.rd-questions .issue > .issue-detail{margin:0;font-size:13.5px;line-height:1.6;}
-.rd-questions .issue-loc{margin-top:0;font-size:12px;color:var(--ink-2);}
+:is(.rd-questions,.chat-rc-q) :is(.issue-title,.issue > .issue-detail,.issue-loc){grid-column:2;}
+:is(.rd-questions,.chat-rc-q) .issue-title{font-size:14.5px;line-height:1.45;}
+:is(.rd-questions,.chat-rc-q) .issue > .issue-detail{margin:0;font-size:13.5px;line-height:1.6;}
+:is(.rd-questions,.chat-rc-q) .issue-loc{margin-top:0;font-size:12px;color:var(--ink-2);}
 /* the model's own words, verbatim */
-.rd-questions .qpanel[data-kind="recovery"] > .issue-detail{margin:0;padding:16px 18px;background:var(--field);
+:is(.rd-questions,.chat-rc-q) .qpanel[data-kind="recovery"] > .issue-detail{margin:0;padding:16px 18px;background:var(--field);
   border:1px solid var(--line);border-radius:12px;font:12.5px/1.7 var(--mono);color:var(--ink);white-space:pre-wrap;}
 /* narrow screens: the question (or the decision) over its answers */
 @media (max-width:1080px){
@@ -1502,15 +1531,26 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 /* ---------- Retained-work banner (the saved run's page) ---------- */
 .retained-banner{margin:0 0 18px;padding:16px 18px;border:1.5px solid var(--amber);
   border-radius:var(--r-card);background:var(--amber-bg);color:var(--amber-ink);font-size:12.5px;line-height:1.55;}
-.retained-banner[hidden]{display:none;}
-.retained-banner h4{margin:0 0 6px;font-size:14px;color:var(--amber-ink);}
-.retained-banner p{margin:5px 0;}
-.retained-banner ul{margin:9px 0;padding-left:20px;}
-.retained-banner li+li{margin-top:8px;}
-.retained-banner code{display:block;margin-top:4px;padding:7px 9px;border-radius:8px;
+.merge-back-banner{margin:0 0 18px;padding:16px 18px;border:1.5px solid var(--amber);
+  border-radius:var(--r-card);background:var(--amber-bg);color:var(--amber-ink);font-size:12.5px;line-height:1.55;}
+.retained-banner[hidden],.merge-back-banner[hidden]{display:none;}
+.retained-banner h4,.merge-back-banner h4{margin:0 0 6px;font-size:14px;color:var(--amber-ink);}
+.retained-banner p,.merge-back-banner p{margin:5px 0;}
+.retained-banner ul,.merge-back-banner ul{margin:9px 0;padding-left:20px;}
+.retained-banner li+li,.merge-back-banner li+li{margin-top:8px;}
+.retained-banner code,.merge-back-banner code{display:block;margin-top:4px;padding:7px 9px;border-radius:8px;
   background:var(--panel-wash);color:var(--ink);font-family:var(--mono);font-size:11.5px;
   white-space:pre-wrap;word-break:break-all;}
-.retained-banner a{color:var(--amber-ink);font-weight:700;}
+.retained-banner a,.merge-back-banner a{color:var(--amber-ink);font-weight:700;}
+/* The worktree notice (worktree-notice.mjs) is this banner: amber for retained work, neutral for a live checkout. */
+.retained-banner[data-kind="checkout"]{border-color:var(--line);background:var(--panel-wash);color:var(--ink);}
+.retained-banner[data-kind="checkout"] h4{color:var(--ink);}
+.retained-banner .wt-actions,.retained-banner .wt-member-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.retained-banner .wt-actions{margin-top:10px;}
+.retained-banner .wt-member-actions{margin-top:6px;}
+.retained-banner .wt-since{font-size:11.5px;}
+.retained-banner .wt-manual{margin-top:10px;}
+.retained-banner .wt-manual summary{cursor:pointer;font-weight:600;}
 .hist-empty{color:var(--ink-3);font-size:13px;padding:22px 4px;text-align:center;}
 
 /* ---------- Started-by filter pills (the Runs list's .runs-people row) ---------- */
@@ -3191,40 +3231,46 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 
 /* The menu opens upward from the corner, Interface mode's side menu beside it: two .nav-fly
    popups (side-flyout.mjs keeps them inside the viewport). The menu is one white sheet (the
-   popups' --panel, so it stands off the grey sidebar) whose sections — the spend card, the
-   identity card and each .msect run of rows — sit flat on it, a 1px --line hairline between
-   each shown section and the next; it scrolls on a short window. Small grey text is --ink-2;
-   a row's hover is --hover. */
-.nav-fly.acct-menu{width:258px;max-height:calc(100vh - 16px);overflow-y:auto;gap:0;padding:0;}
-.acct-menu > :not([hidden]) ~ :not([hidden]){border-top:1px solid var(--line);}
+   popups' --panel, so it stands off the grey sidebar) with 12px corners and 6px of padding
+   round its sections. The spend card and the identity card are inset --field panels with 10px
+   corners; each .msect run of rows sits on the sheet, its 32px rows led by a 16px --ink-2 icon.
+   Between each shown section and the next: 4px, a 1px --line hairline that stops 6px short of
+   the content on both sides, 4px (a card straight after the spend card gets a 6px gap instead).
+   Appearance is one row: its label left, a compact segmented control right. The menu scrolls
+   on a short window. Small grey text is --ink-2; amber and red figures on a card take the
+   -strong inks (--amber-ink and --red-ink fall under 4.5:1 on --field); a row's hover is --hover. */
+.nav-fly.acct-menu{width:258px;max-height:calc(100vh - 16px);overflow-y:auto;gap:0;padding:6px;}
+.acct-menu > :not([hidden]) ~ :not([hidden]){position:relative;margin-top:9px;}
+.acct-menu > :not([hidden]) ~ :not([hidden])::before{content:"";position:absolute;top:-5px;left:6px;right:6px;height:1px;background:var(--line);}
+.acct-menu > .acct-spend:not([hidden]) + .id-card:not([hidden]){margin-top:6px;}
+.acct-menu > .acct-spend:not([hidden]) + .id-card:not([hidden])::before{content:none;}
 .nav-fly.lvl-menu{width:236px;max-height:calc(100vh - 16px);overflow-y:auto;}
-.mcard{display:flex;flex-direction:column;padding:12px 15px 13px;}
-.mc-head{display:flex;align-items:center;gap:8px;min-height:26px;margin-bottom:8px;}
+.mcard{display:flex;flex-direction:column;padding:10px 12px;border-radius:10px;background:var(--field);}
+.mc-head{display:flex;align-items:center;gap:8px;min-height:24px;margin-bottom:8px;}
 .mini-ring{width:18px;height:18px;flex:none;transform:rotate(-90deg);}
 .mini-ring circle{fill:none;stroke-width:2.6;}
 .mini-ring .trk{stroke:var(--line-2);}
 .mini-ring .arc{stroke:var(--ink);stroke-linecap:round;}
 .spend-card[data-spend="warn"] .mini-ring .arc{stroke:var(--amber);}
 .spend-card[data-spend="over"] .mini-ring .arc{stroke:var(--red);stroke-linecap:butt;}
-.mc-title{flex:1;min-width:0;font:500 13px/1.2 var(--sans);color:var(--ink);}
-.mc-btn{flex:none;height:26px;padding:0 10px;border:1px solid var(--line-2);border-radius:7px;background:var(--panel);
+.mc-title{flex:1;min-width:0;font:600 12.5px/1.2 var(--sans);color:var(--ink);}
+.mc-btn{flex:none;height:24px;padding:0 10px;border:1px solid var(--line-2);border-radius:999px;background:var(--surface);
   color:var(--ink);font:500 11.5px/1 var(--sans);cursor:pointer;}
 .mc-btn:hover{border-color:var(--ink-3);}
 .mc-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .mc-btn.solid{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
-.mc-rows{margin:0;display:grid;grid-template-columns:1fr auto;gap:5px 12px;}
-.mc-rows dt{font:400 12px/1.3 var(--sans);color:var(--ink-2);}
-.mc-rows dd{margin:0;text-align:right;font:500 12px/1.3 var(--mono);color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;}
-.mc-rows dd.pos{color:var(--green-ink-strong);}
-.mc-rows dd.warn{color:var(--amber-ink);}
-.mc-rows dd.over{color:var(--red-ink);}
-.mc-note{margin:8px 0 0;font:400 11px/1.35 var(--sans);color:var(--red-ink);}
+.mc-rows{margin:0;display:grid;grid-template-columns:1fr auto;gap:0 12px;}
+.mc-rows dt{font:400 12px/22px var(--sans);color:var(--ink-2);}
+.mc-rows dd{margin:0;text-align:right;font:600 13px/22px var(--sans);color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.mc-rows dd.warn{color:var(--amber-ink-strong);}
+.mc-rows dd.over{color:var(--red-ink-strong);}
+.mc-note{margin:8px 0 0;font:400 11px/1.35 var(--sans);color:var(--red-ink-strong);}
 .mc-k{margin-bottom:4px;font:400 11px/1.3 var(--sans);color:var(--ink-2);}
-.id-card b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 12.5px/1.3 var(--sans);color:var(--ink);}
+.id-card b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 12.5px/1.3 var(--sans);color:var(--ink);}
 .id-card small{font:400 11px/1.35 var(--sans);color:var(--ink-2);}
-.msect{display:flex;flex:none;flex-direction:column;gap:1px;padding:5px;}
-.mi{display:flex;flex:none;align-items:center;gap:9px;width:100%;height:31px;padding:0 10px;border:0;border-radius:8px;background:transparent;
-  color:var(--ink);font:400 12.5px/1 var(--sans);text-align:left;cursor:pointer;white-space:nowrap;}
+.msect{display:flex;flex:none;flex-direction:column;}
+.mi{display:flex;flex:none;align-items:center;gap:10px;width:100%;height:32px;padding:0 9px;border:0;border-radius:8px;background:transparent;
+  color:var(--ink);font:400 13px/1 var(--sans);text-align:left;cursor:pointer;white-space:nowrap;}
 .mi:hover,.mi[aria-expanded="true"]{background:var(--hover);}
 .mi:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .mi[aria-current="page"]{font-weight:500;}
@@ -3233,27 +3279,33 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    clip them at the row's line-height:1 (the .nav label rule does the same). */
 .mi-lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;line-height:1.4;}
 .mi-val{flex:none;font:400 12px/1 var(--sans);color:var(--ink-2);}
-.mi-chev{width:14px;height:14px;flex:none;margin-right:-2px;fill:none;stroke:var(--ink-2);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.mi-chev{width:14px;height:14px;flex:none;margin-left:2px;fill:none;stroke:var(--ink-2);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
 .mi-ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.mi .mi-ic{color:var(--ink-2);}
 .mi-hint{flex:none;font:400 11px/1 var(--sans);color:var(--ink-2);}
 .away-item[data-state="away"]{background:var(--violet-bg);color:var(--violet-ink);font-weight:500;}
-.away-item[data-state="away"] .mi-hint{color:var(--violet-ink);}
-/* Appearance at the foot of the menu: three icon segments (System · Light · Dark) on one --field
-   track, the picked one raised like .seg button.on. */
-.msect.theme-sect{padding:8px 10px 10px;}
-.theme-seg{display:flex;gap:2px;padding:3px;border-radius:9px;background:var(--field);}
-.theme-ic{display:flex;flex:1;align-items:center;justify-content:center;height:26px;padding:0;border:0;border-radius:7px;
+.away-item[data-state="away"] .mi-ic,.away-item[data-state="away"] .mi-hint{color:var(--violet-ink);}
+/* Appearance at the foot of the menu, one 40px row: the label in the icons' column, then three
+   30px icon segments (System · Light · Dark) on a compact --field track, the picked one raised. */
+.msect.theme-sect{flex-direction:row;align-items:center;justify-content:space-between;gap:10px;height:40px;padding:0 4px 0 9px;}
+.theme-k{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 13px/1.4 var(--sans);color:var(--ink);}
+.theme-seg{display:flex;flex:none;padding:2px;border-radius:9px;background:var(--field);}
+.theme-ic{display:flex;flex:none;align-items:center;justify-content:center;width:30px;height:26px;padding:0;border:0;border-radius:7px;
   background:transparent;color:var(--ink-2);cursor:pointer;}
+.theme-ic .mi-ic{width:14px;height:14px;}
 .theme-ic:hover{color:var(--ink);}
-.theme-ic.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-soft);}
+.theme-ic.on{background:var(--surface);color:var(--ink);box-shadow:var(--knob-shadow);}
 .theme-ic:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.mc-free{height:auto;margin-top:8px;padding:8px 0 0;border-top:1px solid var(--line);border-radius:0;}
+/* The free-request row closes the spend card: a --line-2 rule (--line fades on the --field panel),
+   then the label and the count in the Spent row's type. Alone in the card it needs no rule. */
+.mc-free{height:auto;margin-top:8px;padding:8px 0 0;border-top:1px solid var(--line-2);border-radius:0;}
+.mc-free:first-child{margin-top:0;padding-top:0;border-top:0;}
 .mc-free:hover{background:transparent;}
 .mc-free .mi-lbl{font-size:12px;color:var(--ink-2);}
 .mc-free:hover .mi-lbl{color:var(--ink);}
-.mc-free .mi-val{font:500 12px/1.3 var(--mono);color:var(--ink);font-variant-numeric:tabular-nums;}
-.mc-free[data-tone="warn"] .mi-val{color:var(--amber-ink);}
-.mc-free[data-tone="over"] .mi-val{color:var(--red-ink);}
+.mc-free .mi-val{font:600 13px/1.3 var(--sans);color:var(--ink);font-variant-numeric:tabular-nums;}
+.mc-free[data-tone="warn"] .mi-val{color:var(--amber-ink-strong);}
+.mc-free[data-tone="over"] .mi-val{color:var(--red-ink-strong);}
 .lv-opt{display:grid;grid-template-columns:18px 1fr 16px;gap:2px 9px;align-items:start;width:100%;padding:8px 9px;border:0;border-radius:8px;
   background:transparent;color:var(--ink-2);font-family:inherit;text-align:left;cursor:pointer;}
 .lv-opt:hover{background:var(--field);}
@@ -3299,6 +3351,28 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-providers--broker .mv-cp-signin,.mv-providers--broker .mv-cp-signout,.mv-providers--broker .mv-cp-quota-refresh,
 .mv-providers--broker .mv-cp-quota,.mv-providers--broker .mv-pv-test,.mv-providers--broker .mv-field:has(.mv-pv-key){display:none;}
 .mv-broker-note{display:block;margin:6px 0 12px;}
+
+/* ---------- Browser extension pairings (Settings → General; docs/browser-extension.md) ---------- */
+.xp-list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none;}
+.xp-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);}
+.xp-main{flex:1 1 auto;min-width:0;}
+.xp-name{font-weight:500;color:var(--ink);}
+.xp-meta{font-size:12px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.xp-empty{margin:0;font-size:13px;color:var(--ink-2);}
+.xp-row .xp-revoke{padding:7px 14px;font-size:12.5px;}
+.xi{display:flex;flex-direction:column;gap:10px;margin-bottom:18px;}
+.xi-head{margin:0;font-size:13px;font-weight:600;color:var(--ink);}
+.xi-tabs{align-self:flex-start;}
+.xi-panel{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);}
+.xi-panel[hidden]{display:none;}
+.xi-path-row{display:flex;align-items:center;gap:10px;min-width:0;}
+.xi-path{flex:1 1 auto;min-width:0;font-family:var(--mono, 'JetBrains Mono', monospace);font-size:12.5px;color:var(--ink);background:var(--field);border-radius:8px;padding:7px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.xi-path-row .xi-copy{flex:none;padding:7px 14px;font-size:12.5px;}
+.xi-steps{margin:0;padding-left:20px;font-size:13px;color:var(--ink);display:flex;flex-direction:column;gap:2px;}
+.xi-note{margin:0;font-size:13px;color:var(--ink-2);}
+.xi-cmd{align-self:flex-start;font-family:var(--mono, 'JetBrains Mono', monospace);font-size:12.5px;color:var(--ink);background:var(--field);border-radius:8px;padding:5px 10px;}
+.xi-meta{margin:0;font-size:12px;color:var(--ink-2);}
+.xi-link{color:var(--ink);text-decoration:underline;text-underline-offset:2px;}
 
 /* About card rows. .about-val and .about-link share specificity on one anchor, so
    .about-link must stay AFTER .about-val (test/ui-settings-about.test.mjs pins it). */
@@ -3733,23 +3807,23 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-archive:hover:not([disabled]),.pd-remove:hover:not([disabled]){border-color:var(--red);}
 .hd-archive[disabled],.pd-remove[disabled]{opacity:.55;cursor:not-allowed;}
 /* align-items:flex-start, NOT the default stretch: `.badge.hist-retained-badge`
-   (696) and `.hist-discard` (856) are inline-flex with no width, so a stretching
-   column blows both up to the full body width. Only the two BANNERS want the full
-   row — an unstretched `.cost-banner` renders ~738px inside a 1068px column and
-   its own `.cb-actions{justify-content:flex-end}` then right-aligns short of the
-   edge. */
+   (696) is inline-flex with no width, so a stretching column blows it up to the
+   full body width. Only the BANNERS want the full row (the Discard worktree button
+   lives inside the worktree notice now) — an unstretched `.cost-banner` renders
+   ~738px inside a 1068px column and its own `.cb-actions{justify-content:flex-end}`
+   then right-aligns short of the edge. */
 .hd-banners{display:flex;flex-direction:column;align-items:flex-start;gap:12px;}
 /* Both reused banners carry legacy margins from their old hosts —
    `.retained-banner{margin:0 0 18px}` (714) and `.cost-banner{margin-top:12px}`
    (1505) — which double up with this column's own `gap:12px`. Zero them here
    rather than editing the shared rules. */
-.hd-banners .retained-banner,.hd-banners .cost-banner{align-self:stretch;margin:0;}
-/* NOT `.hd-banners:empty` — the container always holds three template children
-   (badge, banner, discard button), just hidden, so :empty never matches and the
-   top margin would always apply. Key the margin off "has a visible child". */
+.hd-banners .retained-banner,.hd-banners .cost-banner,.hd-banners .merge-back-banner{align-self:stretch;margin:0;}
+/* NOT `.hd-banners:empty` — the container always holds its template children
+   (badge, worktree notice, merge-back banner), just hidden, so :empty never matches
+   and the top margin would always apply. Key the margin off "has a visible child". */
 .hd-banners:has(> :not([hidden])){margin-top:18px;}
-/* .hist-discard's existing rules (856-860) are card-scoped only by position; keep
-   them and let the detail banner button ride them unchanged. */
+/* .hist-discard's existing rules (1661-1665) still style the worktree notice's own
+   Discard worktree button, which lives inside the notice. */
 
 /* Destructive confirm (spec §5.2). The id keeps it out of .btn-primary's way with
    no !important. confirmModal removes the class on close, so it never leaks. */
@@ -3809,7 +3883,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-diff .diff-del{color:var(--hd-count-del);}
 @media (max-width:900px){.hd-diff{grid-template-columns:1fr;}}
 .hd-diff-list,.hd-diff-pane{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
-.hd-diff-pane,.ask-md,.code-editor{
+.hd-diff-pane,.ask-md,.code-editor,.apv{
   --hd-syntax-comment:light-dark(#5B6167,#8B949E);
   --hd-syntax-keyword:light-dark(#B31D28,#FF7B72);
   --hd-syntax-type:light-dark(#9A3E00,#FFA657);
@@ -4203,10 +4277,10 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 /* ---------- History detail: PR controls + the "Ship it?" modal ---------- */
 /* Detail-header PR controls (spec §5.2: black pill). `.hd-pr-link`'s pill, its removed
    underline and its open/merged colours live beside .hist-merge. */
-.hd-pr{padding:9px 18px;border:1.5px solid var(--ink);border-radius:999px;background:var(--ink);
+.hd-pr,.hd-push{padding:9px 18px;border:1.5px solid var(--ink);border-radius:999px;background:var(--ink);
   font:600 12.5px var(--sans);color:var(--on-ink);cursor:pointer;flex:0 0 auto;}
-.hd-pr[hidden]{display:none;}
-.hd-pr:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);transform:translateY(-1px);}
+.hd-pr[hidden],.hd-push[hidden]{display:none;}
+.hd-pr:hover,.hd-push:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);transform:translateY(-1px);}
 .hd-pr-link{flex:0 0 auto;font:600 12.5px var(--sans);}
 .hd-pr-link[hidden]{display:none;}
 /* Workspace runs: one line per member repo under the header row. */
@@ -4313,6 +4387,24 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .publish-status{margin:0;font-size:12px;}
 .publish-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:22px;}
 
+/* Base conflicts (#620) */
+.hd-base-check[hidden], .hd-base-check [hidden], .shipit-basecheck[hidden] { display: none; }
+.hd-base-members { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+/* One quiet line per branch that needs something: a tone dot, the status text, then compact buttons. */
+.hd-base-member { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font: 500 12.5px var(--sans); color: var(--ink-2); }
+.hd-base-name { color: var(--ink); }
+.hd-base-pill { display: inline-flex; align-items: center; gap: 7px; }
+.hd-base-pill::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; }
+.hd-base-pill.tone-green::before { background: var(--green-ink); }
+.hd-base-pill.tone-blue::before { background: var(--blue-ink); }
+.hd-base-pill.tone-red::before { background: var(--red-ink); }
+.hd-base-pill.tone-amber::before { background: var(--amber-ink); }
+.hd-base-member .btn-mini { padding: 5px 10px; font-size: 12px; }
+.hd-base-msg { flex-basis: 100%; font-size: 12px; }
+.hd-base-msg-err { color: var(--red-ink); }
+.hd-base-files { flex-basis: 100%; margin: 0 0 0 14px; padding: 0; list-style: none; font-size: 12px; color: var(--ink-3); }
+.shipit-basecheck.tone-red { color: var(--red-ink); }
+
 /* The PR description: label, Write / Preview tabs and Generate with AI on one row,
    the textarea (or its rendered preview) under it. Left-aligned inside the centered
    card like the remotes. `.btn` sets display:inline-flex and `.hint` display:block,
@@ -4400,7 +4492,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    `.hd-diff-file` already has its own (inset) ring and is not repeated here. */
 .hd-tab:focus-visible,.hd-back:focus-visible,.hd-resume:focus-visible,.pd-tab:focus-visible,.pd-back:focus-visible,.pd-new:focus-visible,.pd-history:focus-visible,.pd-remove:focus-visible,.pd-sec:focus-visible,.proj-open:focus-visible,.pd-ov-link:focus-visible,
 .hd-more:focus-visible,.hd-report:focus-visible,
-.hd-archive:focus-visible,.hd-pr:focus-visible,.hd-pr-link:focus-visible,
+.hd-archive:focus-visible,.hd-pr:focus-visible,.hd-push:focus-visible,.hd-pr-link:focus-visible,
 .hd-branch-copy:focus-visible,.hd-sec:focus-visible,.shipit-ok:focus-visible,.shipit-cancel:focus-visible{
   outline:2px solid var(--ink);outline-offset:2px;}
 
@@ -4513,6 +4605,21 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-row-body{min-width:0;display:flex;flex-direction:column;gap:2px;}
 .runs-row-title{font:500 13.5px/1.3 var(--sans);overflow-wrap:anywhere;}   /* wraps, as in the mockup */
 .runs-row-sub{font-size:12px;font-weight:300;color:var(--ink-2);}
+/* P7: the Runs list's 3px line, live rows only. */
+.runs-row-prog{display:block;height:3px;margin-top:5px;border-radius:2px;background:var(--field);overflow:hidden;}
+.runs-row-prog > i{display:block;height:100%;width:0;background:var(--blue);transition:width .6s ease;}
+.runs-row-prog[data-tone="amber"] > i{background:var(--amber);}
+.runs-row-prog[data-tone="green"] > i{background:var(--green);}
+.runs-row-prog[data-tone="red"] > i{background:var(--red);}
+.runs-chain{position:relative;}
+.runs-chain-toggle{position:absolute;top:8px;right:6px;border:0;background:none;color:var(--ink-3);padding:4px;cursor:pointer;}
+.runs-chain-toggle[aria-expanded="true"] .runs-chev{transform:rotate(180deg);}
+.runs-chain-members{list-style:none;margin:0 0 6px 30px;padding:0;font-size:12px;}
+.runs-chain-member{display:flex;gap:6px;align-items:baseline;padding:2px 0;color:var(--ink-2);}
+.runs-chain-member.is-done .runs-chain-glyph{color:var(--green-ink);}
+.runs-chain-member.is-current .runs-chain-glyph{color:var(--blue-ink);}
+.runs-chain-member.is-failed .runs-chain-glyph{color:var(--red-ink);}
+.runs-chain-pr{margin-left:auto;color:var(--blue-ink);}
 .runs-note{margin:0;padding:18px 12px;color:var(--ink-2);font-size:13px;text-align:center;}
 .runs-note-err{color:var(--red-ink);}
 .runs-pane{position:relative;min-width:0;min-height:0;background:var(--bg);}
@@ -4665,6 +4772,34 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
    for it, while the header and the panel keep their 544px measure and do not move. */
 .rd-glance:has(> .rd-questions:not([hidden])){max-width:1216px;}
 .rd-glance:has(> .rd-questions:not([hidden])) > :is(.rd-now,.rd-sheet,.rd-night-sec){width:100%;max-width:544px;align-self:center;}
+/* Run progress (spec 2026-10-14 P2/P4/P7/P8/P11). Fill colours are the status families (runStatusMeta). */
+.run-prog{position:relative;margin-top:10px;outline:none;}
+.run-prog[hidden]{display:none;}
+.run-prog-track,.run-chain-track{position:relative;height:6px;border-radius:999px;background:var(--field);overflow:hidden;}
+.run-prog-fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:inherit;background:var(--blue);transition:width .6s ease;}
+.run-prog[data-tone="amber"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="amber"] .run-prog-fill{background:var(--amber);}
+.run-prog[data-tone="green"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="green"] .run-prog-fill{background:var(--green);}
+.run-prog[data-tone="red"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="red"] .run-prog-fill{background:var(--red);}
+.run-prog-tick{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--surface);}
+.run-prog-marks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-top:5px;font-size:11px;color:var(--ink-3);}
+.run-prog-mark[data-state="done"]{color:var(--ink-2);}
+.run-prog-mark[data-state="current"]{color:var(--ink);font-weight:600;}
+.run-prog-mark[data-state="skipped"]{opacity:.5;}
+.run-prog-detail{display:none;position:absolute;z-index:20;bottom:calc(100% + 6px);left:0;min-width:240px;padding:10px 12px;
+  border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);color:var(--ink-2);font-size:12px;}
+.run-prog:hover > .run-prog-detail,.run-prog:focus-within > .run-prog-detail{display:block;}
+.run-prog:focus-visible .run-prog-track{box-shadow:0 0 0 2px var(--blue-line);}
+.run-prog-stages,.run-prog-agents{list-style:none;margin:0;padding:0;}
+.run-prog-agents{padding-left:12px;color:var(--ink-3);}
+.run-prog-stage.is-current > .run-prog-stage-name,.run-prog-agent.is-current{color:var(--ink);font-weight:600;}
+.run-prog.is-compact{margin-top:10px;}
+.run-prog.is-compact .run-prog-marks{display:none;}
+.ask-rc-prog{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* P8: the chain's overall bar — equal parts, finished green, the current one filling. */
+.run-chain-label{font-size:11px;color:var(--ink-3);margin-bottom:4px;}
+.run-chain-track{display:flex;gap:3px;background:none;}
+.run-chain-part{position:relative;flex:1 1 0;height:6px;border-radius:999px;background:var(--field);overflow:hidden;}
+@media (prefers-reduced-motion: reduce){.run-prog-fill,.runs-row-prog > i{transition:none;}}
 .rd-now{display:flex;flex-direction:column;gap:18px;}
 /* The run's name is the page's subject: the largest type on it. */
 .rd-page-head{min-width:0;}
@@ -4688,9 +4823,11 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .rd-page-branch.copied .ico-check{display:inline;color:var(--green-ink);}
 /* The card's head: the status line top left, the Live view switch (app.js paintRdLive)
    top right, level with the state word. */
-.rd-sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;min-width:0;}
-.rd-sheet-head > .rd-now-top{flex:1 1 auto;}
-.rd-sheet-head > .rd-live-row{flex:none;height:23px;}   /* the state word's line box (18px × 1.3) */
+.rd-sheet-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;min-width:0;}
+.rd-sheet-head > .rd-now-top{grid-area:1 / 1;}
+.rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:23px;margin-left:16px;}   /* the state word's line box (18px × 1.3) */
+/* The progress bars take the card's full width, under the status line (a flex row squeezed them to ~128px). */
+.rd-sheet-head > .run-prog{grid-column:1 / -1;}
 /* The status line: what is happening now. A state word, then what it concerns. */
 .rd-now-top{display:flex;align-items:center;gap:12px;min-width:0;}
 .rd-orb{flex:none;display:flex;}
@@ -4904,17 +5041,16 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-graph .run-flow-wrap{margin:0;}
 
 /* ---------- Running detail: banners ---------- */
-/* align-items:flex-start, NOT the default stretch: `.hist-discard` is an
-   inline-flex button with no width and a stretching column would blow it up to
-   the full body width. Only the two BANNERS want the full row. Same shape as
-   .hd-banners. */
+/* align-items:flex-start, NOT the default stretch, as .hd-banners: only the
+   BANNERS want the full row. The container holds the worktree notice only; its
+   Discard worktree button (`.hist-discard`) lives inside the notice. */
 .rd-banners{display:flex;flex-direction:column;align-items:flex-start;gap:12px;}
 /* Both reused banners carry legacy margins from their old hosts —
    `.retained-banner{margin:0 0 18px}` and `.cost-banner{margin-top:12px}` —
    which double up with this column's own gap. */
 .rd-banners .retained-banner,.rd-banners .cost-banner{align-self:stretch;margin:0;}
-/* NOT `:empty` — the container always holds its two template children, just
-   hidden. Key the margin off "has a visible child", as .hd-banners does. */
+/* NOT `:empty` — the container always holds its template child (the worktree
+   notice), just hidden. Key the margin off "has a visible child", as .hd-banners does. */
 .rd-banners:has(> :not([hidden])){margin-top:18px;}
 
 /* ---------- Running detail: question panel ---------- */
@@ -5299,6 +5435,7 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
   .side-toggle{display:none;}
 }
 @media (max-width:760px){
+  .rd-ov-state .limit-resume{flex-basis:100%;width:100%}
   .mbar-menu{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 auto;
     width:40px;height:40px;padding:0;border:0;border-radius:12px;background:transparent;color:var(--ink);cursor:pointer;}
   .mbar-menu svg{width:22px;height:22px;}
@@ -5342,23 +5479,11 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 }
 
 /* ---------- Ask Worca (spec §10.3-§10.6; tokens only, no hex) ---------- */
-/* Fixed full-height dock over the content column; children restore pointer
-   events. z-40 sits above sticky tab lists (5) and below .viewer-modal (50)
-   and #confirm-modal (60) so page modals dim the sheet and confirmModal stays
-   reusable. Left offsets track the rail: 254px expanded, 60px collapsed
-   (.sidebar / .sidebar.collapsed own those widths). */
-.ask-dock{position:fixed;top:0;bottom:0;right:0;left:254px;z-index:40;pointer-events:none;
-  display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
-  padding:0 28px 26px;transition:left .2s cubic-bezier(.65,.02,.28,1);}
-body.rail-collapsed .ask-dock{left:60px;}
-/* On phones the sidebar is an off-canvas drawer (Responsive nav tiers) while
-   .collapsed may still be present — restate the higher-specificity selector or left:60px wins. */
-@media (max-width:760px){
-  .ask-dock,body.rail-collapsed .ask-dock{left:0;}
-}
+/* The chat lives in the Chat page (worca Chat P1 section at the end of this file); these rules style what is
+   inside it — the transcript, the composer, the cards and the popovers. */
 
-/* ── Terminal pane (GitHub issue 573): the right side of every page. Opening it shifts the page, the Ask
-   dock and the toasts left of it; --term-w is set by the pane's resize handle (default 460px). ── */
+/* ── Terminal pane (GitHub issue 573): the right side of every page. Opening it shifts the page and the toasts
+   left of it; --term-w is set by the pane's resize handle (default 460px). ── */
 .term-pane{position:fixed;top:0;right:0;bottom:0;width:var(--term-w,460px);z-index:39;display:flex;flex-direction:column;
   background:var(--panel);border-left:1px solid var(--line);box-shadow:var(--shadow-sheet);
   /* xterm's 16 ANSI colours (terminal-pane.mjs reads them through probes). Each theme takes its own tone of a
@@ -5374,7 +5499,6 @@ body.rail-collapsed .ask-dock{left:60px;}
   --term-ansi-white:var(--ink-2);                               --term-ansi-bright-white:var(--ink);}
 .term-pane[hidden]{display:none;}
 body.term-open .app{margin-right:var(--term-w,460px);}
-body.term-open .ask-dock{right:var(--term-w,460px);}
 body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 /* The opener: an icon button in the run bar and the project page's title row, at their controls' height. */
 .term-opener{display:inline-flex;align-items:center;justify-content:center;flex:none;width:36px;height:36px;padding:0;box-sizing:border-box;color:var(--ink-2);}
@@ -5420,101 +5544,11 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .term-host{flex:1;min-height:0;min-width:0;padding:0;border:0;}
 .term-sel-probe{display:none;background:var(--blue-bg);}
 .term-ansi-probe{display:none;}
-@media (max-width:760px){ body.term-open .app{margin-right:0;} .term-pane{width:100vw;} body.term-open .ask-dock{right:0;} body.term-open .toasts{right:12px;}
-  /* The dock (z-40) sits over the full-width pane (z-39): its pill would cover the terminal's input row. */
-  body.term-open .ask-dock>.ask-pill{display:none;}
+@media (max-width:760px){ body.term-open .app{margin-right:0;} .term-pane{width:100vw;} body.term-open .toasts{right:12px;}
  }
 
-/* The launcher: a 48px round icon button in the dock's bottom-right corner, taken out of the dock's flex flow
-   so the sheet's centring and size do not change. Coming back from a closed sheet (display:none -> flex) replays
-   the pop-in; hiding stays instant. The label is kept for screen readers, the shortcut lives in the tooltip. */
-.ask-pill{pointer-events:auto;position:absolute;right:24px;bottom:calc(24px + env(safe-area-inset-bottom,0px));
-  display:flex;align-items:center;justify-content:center;width:48px;height:48px;padding:0;box-sizing:border-box;
-  border:1.5px solid var(--line-2);border-radius:50%;background:var(--panel);color:var(--ink);cursor:pointer;
-  box-shadow:var(--shadow-pop);animation:ask-pill-pop .22s cubic-bezier(.34,1.56,.64,1);
-  transition:transform .16s ease-out,border-color .16s ease-out,box-shadow .16s ease-out;}
-.ask-pill:hover{border-color:var(--hover-outline);transform:translateY(-2px) scale(1.04);box-shadow:var(--shadow-sheet);}
-.ask-pill:active{transform:scale(.94);}
-.ask-pill:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.ask-pill[hidden]{display:none;}
-@keyframes ask-pill-pop{from{opacity:0;transform:scale(.6)}to{opacity:1;transform:scale(1)}}
-.ask-pill-label{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;
-  clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0;}
-/* "Thinking" on the collapsed button: a thin violet conic ring turns round it while the mark morphs into the orb
-   (below). Toggled with the .is-live class by ask-panel.mjs updateSendStop(). It fades in on the morph's .52s and
-   out on its .8s; a transition reads its timing from the AFTER-change style, so the live rule carries the first. */
-.ask-pill::before{content:"";position:absolute;inset:-3.5px;border-radius:50%;pointer-events:none;opacity:0;
-  background:conic-gradient(from 0deg,transparent 0%,var(--violet) 100%);
-  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 2px),var(--ink) calc(100% - 1.5px));
-  mask:radial-gradient(farthest-side,transparent calc(100% - 2px),var(--ink) calc(100% - 1.5px));
-  transition:opacity .8s cubic-bezier(.22,1,.36,1);}
-.ask-pill.is-live::before{opacity:1;transition-duration:.52s;animation:ask-ring 1.6s linear infinite;}
-@keyframes ask-ring{to{transform:rotate(360deg)}}
-/* The unread dot: a turn ended while the sheet was closed (.has-unread, ask-panel.mjs). Scales in once. */
-.ask-pill.has-unread::after{content:"";position:absolute;top:1px;right:1px;width:10px;height:10px;border-radius:50%;
-  background:var(--violet);box-shadow:0 0 0 2px var(--panel);animation:ask-dot-in .24s cubic-bezier(.34,1.56,.64,1);}
-@keyframes ask-dot-in{from{transform:scale(0)}to{transform:scale(1)}}
-/* The tooltip: left of the button, vertically centred on it (8px gap). Shown by ask-panel.mjs (.is-shown): after a
-   400ms hover, at once on keyboard focus. Touch devices never show it. */
-.ask-tip{position:absolute;right:calc(24px + 48px + 8px);bottom:calc(24px + 24px + env(safe-area-inset-bottom,0px));
-  display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:var(--r-ctrl);
-  background:var(--ink);color:var(--panel);font:500 12.5px/1.2 var(--sans);white-space:nowrap;
-  opacity:0;pointer-events:none;transform:translate(4px,50%);
-  transition:opacity .12s ease-out,transform .12s ease-out;}
-.ask-tip.is-shown{opacity:1;transform:translate(0,50%);}
-@media (hover:none){.ask-tip{display:none;}}
-@media (max-width:760px){
-  .ask-pill{right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));}
-  .ask-tip{right:calc(16px + 48px + 8px);bottom:calc(16px + 24px + env(safe-area-inset-bottom,0px));}
-}
-.ask-pill-logo{width:26px;height:26px;border-radius:50%;display:inline-block;flex:0 0 auto;background:var(--ink);
-  -webkit-mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;-webkit-mask-mode:luminance;
-  mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
-/* The mark slot: the masked logo and the pill's own thinking orb stacked in one
-   26px host. A CSS mask clips children, so the orb is a SIBLING of the masked
-   span, absolutely stacked on it; the host is what the button's flex centring
-   sizes, so nothing moves. The morph between them is these
-   transitions, keyed off .is-live: lighting shrinks and fades the mark while
-   the orb fades in (.52s — the canvas grows its dots out of the centre on the
-   same clock, thinking-orb morphTo, so no CSS scale on the orb: a scaled
-   canvas would blur them); resting is the slow, eased-out way back (.8s, over
-   the wave's .45s fade). A transition reads its timing from the AFTER-change
-   style, so the live rules carry the morph-in duration and the rest rules the
-   morph-back one. Under prefers-reduced-motion the `*{transition:none}`
-   blanket makes this an instant swap and the orb snaps its tween too; no rule
-   of its own is needed. */
-.ask-pill-mark{position:relative;width:26px;height:26px;flex:0 0 auto;display:inline-block;line-height:0;}
-.ask-pill-mark>.ask-pill-logo{position:absolute;inset:0;
-  transition:opacity .8s cubic-bezier(.22,1,.36,1),transform .8s cubic-bezier(.22,1,.36,1);}
-.ask-pill-mark>.ask-orb{position:absolute;inset:0;opacity:0;transition:opacity .8s cubic-bezier(.22,1,.36,1);}
-.ask-pill.is-live .ask-pill-mark>.ask-pill-logo{opacity:0;transform:scale(.35);
-  transition-duration:.52s;transition-timing-function:cubic-bezier(.4,0,.7,.2);}
-.ask-pill.is-live .ask-pill-mark>.ask-orb{opacity:1;transition-duration:.52s;transition-timing-function:cubic-bezier(.2,.7,.3,1);}
-
-/* Content cap. The sheet grows to the full dock, what is INSIDE it does not: the
-   transcript column and the composer box share --ask-col-max and centre under it,
-   so at the default 821px sheet nothing moves and a wide sheet reads as a column.
-   --ask-col-inset is the box's distance from the sheet edge (the band padding until
-   the cap bites, then the centring remainder) — the composer popovers stay children
-   of the sheet (their max-height:70% means the sheet's height) and anchor to it.
-   --ask-box-top is the sheet bottom → box top distance with an empty one-line
-   composer: 14px band padding + box (1 border + 8 padding + ~36 textarea + 4 gap +
-   31 row + 8 padding + 1 border); the jump pill and the popovers float above it. */
-.ask-sheet{pointer-events:auto;position:relative;display:flex;flex-direction:column;overflow:hidden;
-  width:min(821px,100%);height:min(669px,calc(100% - 20px));max-width:100%;max-height:calc(100% - 20px);
-  --ask-col-max:880px;--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;
-  background:var(--panel);
-  border:1px solid var(--line-2);border-radius:var(--r-card);
-  box-shadow:var(--shadow-sheet);
-  animation:wr-rise .26s cubic-bezier(.2,.7,.3,1) both;}
-.ask-sheet[hidden]{display:none;}
-
-.ask-header{display:flex;align-items:center;gap:10px;padding:13px 14px 13px 16px;border-bottom:1px solid var(--line);}
-.ask-header-logo{width:20px;height:20px;border-radius:50%;display:inline-block;flex:0 0 auto;background:var(--ink);
-  -webkit-mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;-webkit-mask-mode:luminance;
-  mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
 .ask-title{font-weight:600;font-size:13px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.ask-header-spacer,.ask-composer-spacer,.ask-activity-spacer,.ask-card-actions-spacer{flex:1 1 auto;}
+.ask-composer-spacer,.ask-card-actions-spacer{flex:1 1 auto;}
 .ask-scope-btn{display:inline-flex;align-items:center;gap:5px;max-width:180px;height:30px;flex:none;padding:0 9px;
   border:1px solid var(--line);border-radius:999px;background:none;color:var(--ink-3);
   font:inherit;font-size:11.5px;cursor:pointer;}
@@ -5552,21 +5586,25 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-attachment-thumb-link{display:inline-block;line-height:0;}
 .ask-attachment-thumb{max-width:180px;max-height:130px;border-radius:8px;border:1px solid var(--line);display:block;}
 
-.ask-activity{border-left:1.5px solid var(--line);padding:2px 0 2px 14px;display:flex;flex-direction:column;gap:7px;}
-.ask-activity-head{display:flex;align-items:center;gap:9px;min-width:0;}
+.ask-activity{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0;}
+/* One line, `Done · 7.4s · 19.8k ctx · $0.05`, the chevron last when there are rows to open: a button then
+   (a div when there is nothing to open), so the UA's button look is reset here. */
+.ask-activity-head{display:inline-block;max-width:100%;padding:0;border:0;border-radius:6px;background:none;
+  font:inherit;font-size:12px;line-height:1.5;color:var(--ink-3);text-align:left;}
+button.ask-activity-head{cursor:pointer;}
+button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hover .ask-activity-chev{color:var(--ink);}
+.ask-activity-head:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-activity-chev{display:inline-block;margin-left:6px;font-size:14px;line-height:1;color:var(--ink-2);transition:transform .15s;}
+.ask-activity-head[aria-expanded="true"] .ask-activity-chev{transform:rotate(90deg);}
+/* The open body: a rounded inset panel holding the tool rows, then the sub-agents. */
+.ask-activity-body{align-self:stretch;display:flex;flex-direction:column;gap:6px;min-width:0;padding:10px 14px;
+  border-radius:11px;background:var(--field);}
 .ask-dot{width:6px;height:6px;flex:0 0 6px;border-radius:50%;background:var(--seq);}
 .ask-dot-run{background:var(--violet);animation:wr-pulse 1.6s ease-in-out infinite;}
 .ask-dot-done{background:var(--green);animation:none;}
 .ask-dot-live{background:var(--green);}
-.ask-activity-label{font-weight:500;font-size:12px;color:var(--ink-2);white-space:nowrap;}
-.ask-activity-elapsed{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
-.ask-activity-meter{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);white-space:nowrap;}
-/* The live turn is marked by the orb at the bottom of the message, so the head
-   dot only has to say running-or-not: green while the turn is live, grey once
-   it has landed. Scoped to the head — the sub-agent rows keep their own
-   violet/green vocabulary. */
-.ask-activity-head .ask-dot-run{background:var(--green);}
-.ask-activity-head .ask-dot-done{background:var(--seq);}
+.ask-activity-label{font-weight:500;color:var(--ink-2);white-space:nowrap;}
+.ask-activity-elapsed,.ask-activity-meter{font-variant-numeric:tabular-nums;white-space:nowrap;}
 
 /* ---------- Ask Worca: the live thinking row (bottom of the last message) --- */
 .ask-thinking{display:flex;align-items:center;gap:12px;min-width:0;padding:2px 0 0;}
@@ -5581,27 +5619,28 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
   animation:ask-shimmer 2.4s linear infinite;}
 .ask-thinking-meter{font-family:var(--mono);font-size:11px;color:var(--seq);white-space:nowrap;}
 @keyframes ask-shimmer{from{background-position:180% 0;}to{background-position:-60% 0;}}
-/* The `.ask-dock *` blanket at the end of this file already kills the sweep;
+/* The `.chat-page *` blanket at the end of this file already kills the sweep;
    this only restores a legible fill under the clipped background. */
 @media (prefers-reduced-motion: reduce){
   .ask-thinking-label{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--ink-2);}
-  /* Pseudo-elements do not inherit the dock blanket's `animation:none`, so the ring and the dot are named: the
-     states still show, as a static violet ring and a dot, without movement. */
-  .ask-pill.is-live::before{animation:none;transition:none;background:var(--violet);}
-  .ask-pill.has-unread::after{animation:none;}
 }
-.ask-tool-row{display:flex;align-items:center;gap:9px;min-width:0;}
-.ask-tool-op{width:38px;flex:0 0 38px;font-family:var(--mono);font-size:10px;letter-spacing:.06em;
-  text-transform:uppercase;color:var(--ink-3);}
-.ask-tool-target{min-width:0;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.ask-tool-note{flex:0 0 auto;font-family:var(--mono);font-size:10.5px;color:var(--seq);}
-.ask-tool-mcp{flex:0 1 auto;min-width:0;max-width:65%;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:11.5px;font-weight:500;color:var(--ink);white-space:nowrap;}
+/* A tool row: a dot, the name (mono ink) and its args (muted) as one text clamped to two lines, the duration right. */
+.ask-tool-row{display:flex;align-items:flex-start;gap:10px;min-width:0;font-family:var(--mono);font-size:11.5px;line-height:1.55;}
+.ask-tool-dot{flex:0 0 5px;width:5px;height:5px;margin-top:calc(.775em - 2.5px);border-radius:50%;background:var(--seq);}
+.ask-tool-dot.is-running{background:var(--violet);animation:wr-pulse 1.6s ease-in-out infinite;}
+.ask-tool-dot.is-error{background:var(--red);}
+.ask-tool-target{flex:1 1 auto;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;overflow-wrap:anywhere;}
+.ask-tool-name{color:var(--ink);}
+.ask-tool-mcp{font-weight:500;}
+.ask-tool-args{color:var(--ink-2);word-break:break-all;}
+.ask-tool-note{flex:0 0 auto;margin-left:auto;font-size:10.5px;color:var(--ink-2);white-space:nowrap;}
 
-.ask-agents{margin-top:3px;display:flex;flex-direction:column;gap:2px;}
-.ask-agents-cap{display:flex;align-items:center;gap:8px;padding:2px 0 3px;font-weight:600;font-size:9.5px;
+/* Inside the activity body: the agent rows' 7px inset (their hover wash) hangs into the panel padding, so their dots
+   line up with the tool rows' dots and their status with the durations. */
+.ask-agents{margin:3px -7px 0;display:flex;flex-direction:column;gap:2px;}
+.ask-agents-cap{display:flex;align-items:center;gap:8px;padding:2px 7px 3px;font-weight:600;font-size:9.5px;
   letter-spacing:.12em;text-transform:uppercase;color:var(--seq);}
-.ask-agents-count{padding:1px 6px;border-radius:999px;background:var(--field);color:var(--ink-3);
+.ask-agents-count{padding:1px 6px;border-radius:999px;background:var(--panel);color:var(--ink-2);
   font-family:var(--mono);font-weight:400;font-size:9.5px;letter-spacing:0;text-transform:none;}
 .ask-agent-row{display:flex;align-items:center;gap:9px;width:100%;padding:5px 7px;border:0;border-radius:9px;
   background:transparent;text-align:left;cursor:pointer;font-family:inherit;transition:.15s;}
@@ -5660,7 +5699,8 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
   color:var(--ink-2);font-family:inherit;font-weight:600;font-size:11px;cursor:pointer;transition:.15s;}
 .ask-card-seg-btn.on{background:var(--ink);border-color:var(--ink);color:var(--panel);}
 .ask-card-target{display:flex;flex-direction:column;gap:10px;}
-.ask-card :is(select,input[type="text"],textarea){font-size:12.5px;padding:8px 11px;border-radius:10px;}
+/* Not inside a chat run card's question: its fields keep the Runs page's own metrics. :where() adds no weight. */
+.ask-card :is(select,input[type="text"],textarea):where(:not(.chat-rc-q *)){font-size:12.5px;padding:8px 11px;border-radius:10px;}
 .ask-card textarea.ask-card-brief{min-height:0;height:auto;max-height:160px;resize:none;line-height:1.5;}
 .ask-card-members{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
 .ask-card-members-src summary{font-weight:600;font-size:10.5px;color:var(--ink-3);cursor:pointer;}
@@ -5751,6 +5791,11 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-rp-sw input:focus-visible+.ask-rp-knob{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-rp-agents-foot{display:flex;align-items:center;gap:8px;padding:8px 14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-3);}
 .ask-rp-lane-msg{padding:12px 14px;font-size:12px;color:var(--ink-3);}
+.ask-rp-prop{display:inline-block;padding:0 6px;border-radius:999px;background:var(--violet-wash);color:var(--violet-ink);font-weight:700;cursor:help;}
+.ask-rp-row-reset{margin-left:auto;}
+.ask-rp-name small.ask-rp-pickcap{white-space:normal;overflow:visible;}
+.ask-rp-lane-warn{margin:0 0 10px;}
+.ask-rp-agents-foot .ask-rp-ctl{margin-left:auto;}
 .ask-card.ask-rp textarea.ask-rp-brief{width:100%;min-height:150px;max-height:420px;padding:12px 14px;border:1px solid var(--line-2);border-radius:12px;background:var(--field);font-size:13px;line-height:1.6;resize:vertical;}
 .ask-rp-brief-foot{display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11.5px;color:var(--ink-3);flex-wrap:wrap;}
 .ask-rp-brief-foot[hidden],.ask-rp-brief[hidden]{display:none;}   /* a tracker-task card shows the task instead */
@@ -5899,6 +5944,15 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-wfcard-warn{font-size:13px;line-height:1.5;color:var(--amber-ink);background:var(--amber-wash);border:1px solid var(--amber-line);border-radius:10px;padding:8px 12px;}
 .ask-wfcard-meta{margin-top:8px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;}
 @media (prefers-reduced-motion: reduce){.ask-wfcard-graph{transition:none;}}
+/* ---------- the canvas well (ui/public/graph/proposal-host.mjs): a chat card's graph as the Workflows canvas draws it ---------- */
+/* The nav never prevents pointerdown (a press must still click a chip), so a drag-pan would select card text: like .gv-canvas. */
+.gv-well{user-select:none;-webkit-user-select:none;}
+.gv-well .gv-stage,.gv-well .gv-world .node{cursor:grab;}
+.gv-well .gv-stage.panning,.gv-well .gv-stage.panning *{cursor:grabbing !important;}
+.gv-well > .gv-nav{right:12px;bottom:12px;}
+/* Only the well outgrows a build card's 760px text column (.ask-ccard): up to the chat card width, centred on the column.
+   An Auto card (.ask-card) is that wide already (.chat-convo .ask-msg > .ask-card). */
+.chat-convo .ask-ccard .ask-wfcard-graph.gv-well{width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
 
 /* ---------- workflow card build (ui/public/auto-build.mjs; mockup §B/§F motion) ---------- */
 .ask-wfcard-graph .gv-world .node{transition:opacity .28s cubic-bezier(.2,.7,.3,1),translate .28s cubic-bezier(.2,.7,.3,1);}
@@ -5968,6 +6022,40 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-composer-msg{font-size:11.5px;color:var(--red-ink);padding:0 6px;}
 .ask-composer-msg[hidden]{display:none;}
 .ask-composer-row{display:flex;align-items:center;gap:8px;position:relative;}
+/* The queue: messages sent while a reply runs, stacked above the box, oldest card nearest the input. */
+.ask-queue{width:100%;max-width:var(--ask-col-max);margin:0 auto 6px;display:flex;flex-direction:column;gap:4px;}
+.ask-queue[hidden]{display:none;}
+.ask-queue-bar{display:flex;align-items:center;gap:8px;padding:0 6px;font-size:11.5px;color:var(--ink-3);}
+.ask-queue-resume{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink);font:inherit;font-size:11.5px;padding:2px 10px;cursor:pointer;transition:.15s;}
+.ask-queue-resume:hover{border-color:var(--hover-outline);}
+.ask-queue-resume[hidden]{display:none;}
+.ask-queue-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;}
+.ask-queue-item{display:flex;align-items:center;gap:6px;padding:4px 4px 4px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink-2);font-size:12.5px;transition:transform .2s cubic-bezier(.65,.02,.28,1),opacity .15s;}
+.ask-queue-item.is-entering{animation:ask-queue-in .16s ease-out backwards;}
+.ask-queue-item.is-sending{opacity:.55;}
+.ask-queue-text{flex:1 1 auto;min-width:0;padding:2px 0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+.ask-queue-text:disabled{cursor:default;}
+.ask-queue-meta{flex:none;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.ask-queue-x{flex:none;width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--ink-3);cursor:pointer;transition:.15s;}
+.ask-queue-x:hover{color:var(--ink);background:var(--hover);}
+.ask-queue-x:disabled{visibility:hidden;}
+.ask-queue-pen{flex:none;display:grid;place-items:center;width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--ink-3);cursor:pointer;transition:.15s;}
+.ask-queue-pen:hover{color:var(--ink);background:var(--hover);}
+.ask-queue-pen:disabled{visibility:hidden;}
+.ask-queue-item.is-editing{border-color:var(--hover-outline);color:var(--ink);}
+.ask-queue-item.is-editing .ask-queue-text{display:none;}
+.ask-queue-item.is-editing .ask-queue-pen{color:var(--ink);}
+.ask-queue-item textarea.ask-queue-edit{flex:1 1 auto;width:auto;min-width:0;min-height:0;height:auto;max-height:120px;margin:0;padding:2px 0;
+  border:0;border-radius:0;outline:0;resize:none;background:transparent;color:inherit;font:inherit;line-height:1.4;overflow-y:auto;}
+/* The card's is-editing border is the focus cue; the field itself stays flat. */
+.ask-queue-item textarea.ask-queue-edit:focus{background:transparent;border-color:transparent;}
+.ask-queue-item textarea.ask-queue-edit:focus-visible{outline:none;}
+.ask-queue-ghost{position:absolute;margin:0;pointer-events:none;animation:ask-queue-out .2s cubic-bezier(.65,.02,.28,1) both;}
+.ask-composer :is(.ask-queue-text,.ask-queue-pen,.ask-queue-x,.ask-queue-resume):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-send:disabled,.ask-send:disabled:hover{opacity:.4;cursor:default;box-shadow:none;}
+@keyframes ask-queue-in{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+@keyframes ask-queue-out{from{opacity:1;transform:none;}to{opacity:0;transform:translateY(-18px);}}
+@media (prefers-reduced-motion: reduce){.ask-queue-item,.ask-queue-item.is-entering,.ask-queue-ghost{animation:none;transition:none;}}
 .ask-meter{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10.5px;
   color:var(--ink-3);white-space:nowrap;}
 .ask-meter-cost{color:var(--ink-2);}
@@ -6017,7 +6105,6 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 
 .ask-pop{position:absolute;z-index:3;background:var(--panel);border:1px solid var(--line-2);
   padding:6px;box-shadow:var(--shadow-menu);border-radius:var(--r-card);}
-.ask-pop-threads{top:46px;right:76px;width:326px;}
 /* The composer popovers hug the box (--ask-col-inset, see .ask-sheet) and float
    just above it (--ask-box-top). */
 .ask-pop-scope{left:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:300px;max-height:min(420px,70%);overflow-y:auto;}
@@ -6114,13 +6201,8 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-model-tag.is-key{flex:0 0 auto;max-width:none;background:var(--green-bg);color:var(--green-ink);}
 .ask-model-item .ask-model-name{flex:0 1 auto;min-width:4.5ch;overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap;}
-/* The threads list is the only scrollport in a popover: /api/ask/threads returns up
-   to 50 rows and .ask-sheet clips (overflow:hidden), so without a cap the tail is
-   unreachable. 360px caps it on a tall window; the vh term keeps it inside the sheet
-   on a short one -- the popover starts 46px down and the sheet is 100vh - 46px at most.
-   The radius clips the rows so they do not bleed over the panel's own corners. */
-.ask-threads-list{max-height:min(360px,calc(100vh - 200px));overflow-y:auto;overscroll-behavior:contain;
-  border-radius:10px;}
+/* A History group's rows (worca Chat P1): the column's body is the scrollport, so a group never scrolls on its own. */
+.ask-threads-list{display:flex;flex-direction:column;gap:1px;}
 .ask-thread-row{display:flex;align-items:center;border-radius:10px;}
 .ask-thread-row:hover{background:var(--hover);}
 .ask-thread-pick{flex:1 1 auto;min-width:0;padding:8px 4px 8px 10px;border-radius:10px;}
@@ -6129,8 +6211,8 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
    the mono and the 10px come from .ask-thread-meter; nowrap is what now keeps it
    on one line, flex:0 0 auto having gone with the left-edge column. */
 .ask-thread-when{font-weight:700;color:var(--ink);white-space:nowrap;}
-/* Scoped to the threads rows -- .ask-dot elsewhere (agents popover, agent rows,
-   the activity head) keeps showing its --seq dot. Here a dot means "this chat is
+/* Scoped to the threads rows -- .ask-dot elsewhere (agents popover, agent rows)
+   keeps showing its --seq dot. Here a dot means "this chat is
    live", so an idle row shows none; display, not visibility, so the 6px slot and
    the row's 10px gap collapse with it and the title moves to the left edge.
    Two independent arms: green = the chat's own turn is thinking, violet = the
@@ -6160,41 +6242,6 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-runinfo-elapsed{flex:none;margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--seq);white-space:nowrap;}
 .ask-wt-row .ask-runinfo-sub.ask-wt-path{cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;}
 .ask-wt-row .ask-thread-trash{flex:none;}
-
-/* Resize grips (spec §10.3 addendum). Invisible edge zones INSIDE the sheet —
-   overflow:hidden would clip anything outside it — that only change the cursor;
-   a 2px inset line appears on hover and stays while dragging (.is-active). No
-   bottom grip: the sheet is bottom-anchored. ask-panel.mjs applies the user's
-   size as inline width/height and clamps it to the dock; the max-* pair on
-   .ask-sheet above is the backstop that keeps a stale inline size inside the
-   dock (the rail collapsing changes the dock width without a window resize).
-   The floor (JS-only, the stylesheet default 821×669: the sheet grows, never
-   shrinks) is not a CSS min-* on purpose — that would overflow narrow viewports
-   that width:min(821px,100%) handles today.
-   Corners: the sheet clips at its rounded corner (inner radius = --r-card minus
-   the 1px border), so a square corner grip's straight inset lines fall almost
-   entirely outside the clip and only a ~3px sliver ever shows. Each corner is
-   therefore exactly one radius wide and carries the same outer radius, so its
-   inset shadow bends along the arc, flush with the border like the straight
-   edges; the straight grips start where the arc ends (--ask-corner). */
-.ask-resize{position:absolute;z-index:5;background:transparent;touch-action:none;--ask-grip:transparent;
-  --ask-corner:calc(var(--r-card) - 1px);transition:box-shadow .15s;}
-.ask-resize:hover{--ask-grip:var(--ink-3);}
-.ask-resize.is-active{--ask-grip:var(--ink);}
-.ask-resize-n{top:0;left:var(--ask-corner);right:var(--ask-corner);height:6px;cursor:ns-resize;box-shadow:inset 0 2px 0 var(--ask-grip);}
-.ask-resize-e{top:var(--ask-corner);right:0;bottom:var(--ask-corner);width:6px;cursor:ew-resize;box-shadow:inset -2px 0 0 var(--ask-grip);}
-.ask-resize-w{top:var(--ask-corner);left:0;bottom:var(--ask-corner);width:6px;cursor:ew-resize;box-shadow:inset 2px 0 0 var(--ask-grip);}
-.ask-resize-ne{top:0;right:0;width:var(--ask-corner);height:var(--ask-corner);cursor:nesw-resize;
-  border-top-right-radius:var(--ask-corner);box-shadow:inset -2px 2px 0 var(--ask-grip);}
-.ask-resize-nw{top:0;left:0;width:var(--ask-corner);height:var(--ask-corner);cursor:nwse-resize;
-  border-top-left-radius:var(--ask-corner);box-shadow:inset 2px 2px 0 var(--ask-grip);}
-.ask-sheet.is-resizing{user-select:none;}
-/* The ne corner grip (one radius square, z-index:5) overlaps the top-right
-   corner of the header's last icon button (30×30 at padding 13px/14px): the
-   buttons sit above the grips so a click there still closes/opens instead of
-   starting a resize, and a hurried double-click never resets the size. The
-   grip's visible band hugs the border, well outside the button box. */
-.ask-header .ask-icon-btn{position:relative;z-index:6;}
 
 /* ---------- run progress card (ui/public/ask-run-card.mjs; the live view of a pipeline run in the transcript) ----------
    Stateless: every value is repainted from the app's run store or GET /api/ask/runs/:id. Tokens only.
@@ -6259,14 +6306,15 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-cmd-line{font-family:var(--mono);font-size:12px;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;}
 .ask-cmd-warning{padding:7px 10px;border-left:3px solid var(--amber-line);border-radius:6px;background:var(--field);color:var(--ink);font-size:12px;}
 .ask-cmd-warning[hidden]{display:none;}
+/* The output is folded behind this toggle (no output, no toggle); the chevron turns down when it is open. */
+.ask-cmd-toggle{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;padding:0;border:0;border-radius:4px;background:none;
+  color:var(--ink-2);font:inherit;font-size:12px;cursor:pointer;}
+.ask-cmd-toggle:hover{color:var(--ink);}
+.ask-cmd-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-cmd-chev{display:inline-block;font-size:14px;line-height:1;transition:transform .15s;}
+.ask-cmd-toggle[aria-expanded="true"] .ask-cmd-chev{transform:rotate(90deg);}
 .ask-cmd-out{margin:0;max-height:16em;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font-family:var(--mono);font-size:11.5px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;}
 .ask-cmd-out[hidden]{display:none;}
-/* The composer's Agent switch: the shared .switch, scaled to the 30px pill. */
-.ask-agent-btn[hidden]{display:none;}
-.ask-agent-btn .switch{width:26px;height:16px;flex:none;cursor:inherit;}
-.ask-agent-btn .switch::after{top:2px;left:2px;width:12px;height:12px;}
-.ask-agent-btn .switch.on::after{left:12px;}
-.ask-agent-btn[aria-pressed="true"]{color:var(--ink);}
 .ask-rc-graph{position:relative;margin-top:14px;min-height:120px;overflow:hidden;border:1px solid var(--line);border-radius:12px;cursor:pointer;
   background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;transition:height .24s cubic-bezier(.2,.7,.3,1);}
 .ask-rc-graph[hidden]{display:none;}
@@ -6816,6 +6864,8 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .new-sched{margin-right:auto;padding:9px 12px;border-radius:12px;background:var(--canvas-2);border:1px solid var(--line);}
 .new-sched[hidden]{display:none;}
 .new-sched .link-btn{font-size:12px;}
+.reuse-task{margin:8px 0 0;}
+.reuse-task .link-btn{font-size:12px;}
 #start-btn-clock[hidden],#start-btn-play[hidden]{display:none;}
 /* a proposal Ask Worca scheduled (propose_run when / every): the line above the footer */
 .ask-card-sched-proposed{margin:0 18px 12px;padding:10px 12px;border-radius:12px;background:var(--canvas-2);border:1px solid var(--line);}
@@ -6995,9 +7045,9 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
      Tasks 3/6/7/8 and silently rot the day one of them is renamed. The run-graph's
      own reduced-motion block (:1253-1258) is unaffected — it substitutes
      box-shadows, and only its redundant `animation:none` is overridden. */
-  /* Ask Worca: every element inside the dock, same blanket rationale as the
+  /* Ask Worca: every element inside the Chat page, same blanket rationale as the
      .run-shell one below. */
-  .ask-dock *{animation:none !important;}
+  .chat-page *{animation:none !important;}
   .run-shell *{animation:none !important;}
   .proj-shell *{animation:none !important;}
 }
@@ -7427,14 +7477,6 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .run-strip .rchip.is-error,.run-strip .rchip.is-stopped{color:var(--red-ink);}
 
 /* ---------- per-step artifacts (Phase 3 UI) ---------- */
-/* Run-level grouped browser (Running + History "Artifacts" tab): one card per
-   node, a step header, and clickable artifact rows. Mirrors the .rd-ag-group card
-   shell so the two detail tabs read as one system. */
-.artifact-group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
-.artifact-group + .artifact-group{margin-top:14px;}
-.artifact-group-head{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:15px 20px;border-bottom:1px solid var(--line);}
-.artifact-group-head b{font-size:13.5px;font-weight:600;letter-spacing:-.01em;}
-.artifact-cycle{padding:8px 20px 0;font-size:10.5px;letter-spacing:.02em;text-transform:uppercase;color:var(--ink-3);}
 .artifact-empty{padding:18px 20px;color:var(--ink-2);}
 
 /* Per-node affordance inside an Agents-tab group card. */
@@ -7456,19 +7498,14 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .artifact-bulk-toggle{display:flex;align-items:center;gap:10px;width:100%;text-align:left;
   appearance:none;border:none;background:transparent;cursor:pointer;
   padding:11px 20px;font:500 12.5px var(--sans);color:var(--ink-2);}
-.artifact-group .artifact-bulk-toggle{border-top:1px solid var(--line);}
-.artifact-group-head + .artifact-bulk-toggle,.artifact-cycle + .artifact-bulk-toggle{border-top:none;}
 .artifact-bulk-toggle:hover{background:var(--hover);color:var(--ink);}
 .artifact-bulk-toggle::after{content:"▸";margin-left:auto;font-size:10px;color:var(--ink-3);}
 .artifact-bulk-toggle[aria-expanded="true"]::after{content:"▾";}
 .artifact-list .artifact-bulk-toggle{padding:8px 12px;border:1px solid var(--line-2);border-radius:10px;background:var(--field);}
 .artifact-bulk-list{display:flex;flex-direction:column;}
 .artifact-bulk-list[hidden]{display:none;}
-.artifact-group .artifact-bulk-list .artifact-row{padding-left:32px;}
 
 /* A single clickable artifact row (kind chip · name · byte size). */
-.artifact-group .artifact-row{border-top:1px solid var(--line);}
-.artifact-group-head + .artifact-row,.artifact-cycle + .artifact-row{border-top:none;}
 .artifact-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;
   appearance:none;border:none;background:transparent;cursor:pointer;
   padding:11px 20px;font:500 12.5px var(--sans);color:var(--ink);}
@@ -8132,13 +8169,43 @@ button.act-srow-name{cursor:pointer}
 .engine-card-status{display:block;color:var(--ink-2);font-size:12px;margin:0 0 6px}
 .engine-card-status:empty{display:none}
 
+/* Step log drawer (log-drawer.mjs): a step's log docked under the workflow graph, sticky at the
+   bottom of the viewport so the graph stays in view above it. Height: dragged / arrow keys on
+   the handle (--wf-log-h, kept per browser), else 40% of the viewport within 200–480px.
+   z-index 10: above the graph's zoom cluster (.gv-nav, 6), below menus and modals. */
+.wf-log-drawer{position:sticky;bottom:0;z-index:10;flex:none;margin-top:14px;display:flex;flex-direction:column;
+  height:var(--wf-log-h,clamp(200px,40vh,480px));background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r-card) var(--r-card) 0 0;box-shadow:var(--shadow-dock);}
+.wf-log-drawer[hidden]{display:none;}
+.wf-log-resize{flex:none;position:relative;height:10px;cursor:ns-resize;touch-action:none;}
+.wf-log-resize::before{content:'';position:absolute;left:50%;top:4px;width:36px;height:3px;margin-left:-18px;
+  border-radius:2px;background:var(--line);}
+.wf-log-resize:hover::before,.wf-log-resize:focus-visible::before{background:var(--ink-3);}
+.wf-log-resize:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.wf-log-head{flex:none;display:flex;align-items:center;gap:8px;padding:0 10px 8px 16px;border-bottom:1px solid var(--line);}
+.wf-log-title{font-size:13px;font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.wf-log-live{font:700 10px/1.4 var(--mono);text-transform:uppercase;letter-spacing:.04em;padding:1px 7px;border-radius:999px;
+  background:var(--green-bg);color:var(--green-ink);}
+.wf-log-live[hidden]{display:none;}
+.wf-log-spacer{flex:1;}
+.wf-log-close{width:28px;height:28px;border:0;border-radius:6px;background:none;color:var(--ink-2);font-size:18px;line-height:1;cursor:pointer;}
+.wf-log-close:hover{background:var(--hover);color:var(--ink);}
+.wf-log-close:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.wf-log-drawer .log.wf-log-body{flex:1;min-height:0;max-height:none;border:0;border-radius:0;padding:10px 16px;}
+.wf-log-drawer .log.wf-log-body:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+/* The card the drawer shows (aria-current, not a class: the contrast baselines key on the class list). */
+.run-flow.gv-host .gv-world .node[aria-current="true"],.hd-graph .run-node[aria-current="true"]{outline:2px solid var(--blue);outline-offset:3px;}
+@media (max-width:760px){
+  .wf-log-drawer{height:var(--wf-log-h,50vh);}
+}
+
 /* ========================================================================== */
 /* Workflows view (full screen): the canvas card and the Library card side by  */
 /* side; every control floats over the canvas in small 40px bars             */
 /* (composer-mockup.html base + canvas CSS). Prefix wfv- (chrome), wfl-        */
 /* (Library), wfc- (chat).                                                     */
 /* ========================================================================== */
-body.view-workflows .sidebar,body.view-workflows #topnav,body.view-workflows > .ask-dock{display:none !important;}
+body.view-workflows .sidebar,body.view-workflows #topnav{display:none !important;}
 body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:column;}
 .view[data-view="workflows"]{flex:1 1 auto;min-height:0;position:relative;}
 .wfv{position:absolute;inset:0;display:flex;gap:8px;padding:8px;background:var(--bg);font-size:12.5px;}
@@ -8355,18 +8422,26 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfc-msg{font-size:12.5px;line-height:1.5;color:var(--ink);}
 .wfc-u{align-self:flex-end;max-width:82%;padding:6px 11px;border-radius:13px 13px 4px 13px;background:var(--field);border:1px solid var(--line);}
 .wfc-a{display:flex;flex-direction:column;gap:6px;}
-/* The worca orb (dot-orb.mjs) in the input row: drawn in the canvas's own colour, so it follows the theme. */
+/* The worca orb (dot-orb.mjs) in the input row and in Ask's live row (.ask-orb): drawn in the canvas's own colour, so it
+   follows the theme. */
 .dot-orb{display:block;flex:none;color:var(--ink);}
 .wfc-text{color:var(--ink);}
 .wfc-tool{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--ink-2);}
 .wfc-tool.is-error{color:var(--red-ink);}
-/* The running reply's first line: what it is doing, in the Ask panel's shimmer. */
-.wfc-act{height:22px;display:flex;align-items:center;min-width:0;font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;}
+/* What the running reply does, right above the orb (chat-dock.mjs paintLive), in the Ask panel's shimmer: a line over the
+   input row while open; collapsed, a chip floating over the pill with its text above the orb. */
+.wfc-act{height:28px;box-sizing:border-box;display:flex;align-items:center;min-width:0;padding:6px 12px 0 10px;font-size:12px;color:var(--ink-3);
+  white-space:nowrap;overflow:hidden;animation:wfcActIn .18s ease-out;}
+.wfc-act[hidden]{display:none;}
+.wfc-shell:not([data-open="true"]) .wfc-act{position:absolute;left:0;bottom:calc(100% + 8px);max-width:100%;padding:0 12px 0 9px;
+  border:1px solid var(--line);border-radius:999px;background:var(--panel);box-shadow:var(--shadow-soft);}
+@keyframes wfcActIn{from{opacity:0;transform:translateY(4px);}}
 .wfc-act-l{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-weight:500;
-  background:linear-gradient(100deg,var(--ink-3) 0%,var(--ink-3) 34%,var(--ink) 50%,var(--ink-3) 66%,var(--ink-3) 100%);
+  background:linear-gradient(100deg,var(--ink-2) 0%,var(--ink-2) 34%,var(--ink) 50%,var(--ink-2) 66%,var(--ink-2) 100%);
   background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
   animation:ask-shimmer 2.4s linear infinite;}
 @media (prefers-reduced-motion: reduce){
+  .wfc-act{animation:none;}
   .wfc-act-l{animation:none;background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--ink-2);}
 }
 .wfc-err{margin:0;color:var(--red-ink);font-size:11.5px;}
@@ -8396,6 +8471,9 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfc-actions .wfv-btn{height:26px;padding:0 10px;border:1px solid var(--line-2);font-size:11.5px;}
 .wfc-actions .wfv-btn-primary{border-color:var(--ink);}
 .wfc :is(.wfv-btn,.wfc-link)[aria-disabled="true"]{opacity:.55;cursor:default;}
+.ask-ccard :is(.wfv-btn,.wfc-link)[aria-disabled="true"]{opacity:.55;cursor:default;}
+.ask-ccard{margin:6px 0;max-width:760px;font-size:12.5px;line-height:1.5;}
+.ask-ccard .ask-wfcard-body{margin:4px 0;}
 .wfc-suggest{display:flex;flex-wrap:wrap;gap:6px;}
 .wfc-chip-btn{height:26px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink);font:500 11.5px/24px var(--sans);cursor:pointer;}
 :is(.wfc-ibtn,.wfc-scope,.wfc-sel,.wfc-link,.wfc-chip-btn):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
@@ -8426,3 +8504,832 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfc-uthumb-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 @media (max-width:760px){.wfc-shell,.wfc-shell[data-open="true"]{--wfc-w:calc(100vw - 72px);}.wfc-title{display:none;}}
 @media (prefers-reduced-motion:reduce){.wfc-shell{transition:none;}.gv-world .node.wfc-enter{animation:none;}#wfc-send.is-ready:hover{transform:none;}}
+
+/* ===== Chat P1: shell ===== */
+/* worca Chat P1 (ask-panel.mjs): the composer's add-on lead row (worca Chat CONTRACT §2) — chips other plans mount;
+   empty, it takes no room. */
+.chat-composer-lead{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:2px 4px 0;}
+.chat-composer-lead:empty{display:none;}
+/* The page (worca Chat P1): it fills the content column — .main stops scrolling and gives up its gutter, the section
+   takes the rest, and the page is a row: history column · conversation · run panel slot (P4 sets its width). */
+body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
+.view[data-view="chat"]{flex:1 1 auto;min-height:0;position:relative;}
+.chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--panel);--chat-text-max:760px;--chat-card-max:1040px;}
+.chat-page[data-history="closed"] .chat-history{display:none;}
+/* The conversation column: the cap tokens the transcript column, the composer box and the jump pill read. */
+.chat-convo{position:relative;flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;--ask-col-max:var(--chat-text-max);--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;}
+.chat-head{flex:none;display:flex;align-items:center;gap:8px;height:52px;padding:0 14px;box-sizing:border-box;border-bottom:1px solid var(--line);}
+.chat-head .ask-title{font-size:13.5px;}
+.chat-head-spacer{flex:1 1 auto;}
+.chat-head-btn{flex:none;}
+/* History: the menu toggle's 32px square (.side-toggle) with a page-of-text glyph; the open column keeps the wash. */
+.chat-head-btn.chat-history-toggle{width:32px;height:32px;border-radius:8px;}
+.chat-history-toggle > svg{width:20px;height:20px;flex:none;}
+.chat-history-toggle:hover,.chat-history-toggle[aria-pressed="true"]{background:var(--field);color:var(--ink);}
+.chat-page[data-view="home"] .chat-head [data-ask-new-btn]{visibility:hidden;}
+/* New chat (ask-panel.mjs newChatButton): the ghost .ask-icon-btn widened for its plus glyph and label. */
+.ask-icon-btn.chat-new-btn{width:auto;gap:6px;padding:0 10px 0 8px;font:500 12.5px/1 var(--sans);white-space:nowrap;}
+.chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(24px,8vh,80px) 16px 32px;}
+.chat-hero-slot{width:100%;max-width:var(--chat-text-max);}
+.chat-hero-slot .ask-composer{padding:0;--ask-col-inset:0px;}
+.chat-page[data-view="thread"] .chat-home{display:none;}
+.chat-page[data-view="home"] .ask-transcript,.chat-page[data-view="home"] .chat-dock{display:none;}
+/* The dock floats over the transcript (worca Chat mockup 2026-10-10): the transcript scrolls under the glass composer
+   to the page's bottom edge and keeps the dock's height as bottom clearance (ask-panel.mjs mirrors it into
+   --chat-dock-h). Only the composer's own parts take the pointer, so the transcript beside the box stays usable; a
+   short fade under the box keeps text from running into the page edge. No z-index: a stacking context here would
+   trap a Getting started ring (.guide-target) under the guide scrim. */
+.chat-dock{position:absolute;left:0;right:0;bottom:0;pointer-events:none;}
+.chat-dock::before{content:"";position:absolute;left:0;right:0;bottom:0;height:56px;background:linear-gradient(to bottom,color-mix(in srgb,var(--panel) 0%,transparent),var(--panel) 72%);pointer-events:none;}
+.chat-dock > .ask-composer{pointer-events:none;}
+.chat-dock > .ask-jump,.chat-dock > .ask-composer > *{pointer-events:auto;}
+/* The jump pill rides the dock's top edge (ask-panel.mjs puts it in the dock): it never covers a draft that grew. */
+.chat-dock > .ask-jump{bottom:calc(100% - 1px);}
+/* Cards may be wider than the 760px text column: up to 1040px, centred on it (the transcript's container width).
+   The transcript is its own stacking context, so a card's raised parts (the graph's expand button) scroll under the
+   dock, not over it. */
+.chat-convo .ask-transcript{container-type:inline-size;isolation:isolate;padding-bottom:calc(var(--chat-dock-h,120px) + 8px);}
+/* The composer is frosted glass (mockup .cp-pill): a translucent fill that blurs what scrolls under it, a hairline and
+   a soft float. A Getting started step that rings a control in it drops the blur: a backdrop filter makes a stacking
+   context, and the ring (.guide-target, z 45) must reach above the guide scrim (z 44). */
+.chat-page .ask-composer-box{border-color:var(--glass-line);border-radius:22px;background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);box-shadow:var(--shadow-glass);}
+.chat-hero-slot .ask-composer-box{border-radius:24px;}
+.chat-page .ask-composer-box:has(.guide-target){-webkit-backdrop-filter:none;backdrop-filter:none;}
+.chat-convo .ask-msg > :is(.ask-card,.ask-card-stub){width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
+/* The composer's popovers ride the composer (ask-panel.mjs openPopover): above the box in the dock, under it on
+   home, and never sized against the composer's own height. On home the cap is 100vh less .chat-home's 8vh top padding. */
+.chat-page .ask-composer{--ask-box-top:calc(100% - 10px);}
+.chat-page .ask-composer > .ask-pop{max-height:min(420px,calc(100vh - 240px));}
+.chat-page[data-view="home"] .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(92vh - 230px));}
+.chat-panel{flex:none;min-width:0;min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--panel);}
+.chat-panel[hidden]{display:none;}
+/* The Chat row's unread dot (a .nav-count, so the rail parks it in the square's corner) and the logo links. */
+.nav-count.nav-dot{width:8px;height:8px;padding:0;border-radius:50%;background:var(--violet);}
+.sidebar.collapsed .nav-count.nav-dot{top:6px;right:8px;}
+.brand a.logo:focus-visible,.brand a.logo-mark:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:6px;}
+/* Toasts clear the docked composer (the shared --ask-dock-clearance is 96px; the dock's box starts ~103-120px up). */
+body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
+/* The composer row never pushes Send out of the box: a pinned scope's long name gives way first (its label
+   ellipsizes), the buttons keep their size, the model label stays on one line. Phones also drop the least needed parts. */
+.chat-page .ask-composer-row > .ask-scope-btn{flex:0 1 auto;min-width:0;}
+.chat-page .ask-scope-btn > svg{flex:none;}
+.chat-page .ask-composer-row > :is(.ask-icon-btn,.ask-meter,.ask-model-btn,.ask-voice){flex:none;}
+.chat-page .ask-model-btn{white-space:nowrap;}
+@media (max-width:480px){
+  .chat-page .ask-meter-cost,.chat-page .ask-voice-caret,.chat-page .ask-model-btn-effort{display:none;}
+}
+@media (max-width:360px){
+  .chat-page .ask-composer-row{gap:4px;}
+  .chat-page .ask-composer-row > .ask-meter{display:none;}
+}
+/* History (ask-panel.mjs buildHistory): a 264px push column; below 1100px an overlay over the page with a scrim. Rows
+   reuse the .ask-thread-* rules; the trash shows on hover and focus (always on touch). */
+.chat-history{flex:0 0 264px;width:264px;min-width:0;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;border-right:1px solid var(--line);background:var(--panel);}
+.chat-history:focus{outline:none;}
+/* A row is a list item, not a menu item: keyboard focus draws a ring (inside: the column body is a scroller), not the hover wash. */
+.chat-history .ask-thread-pick:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.chat-history-head{position:relative;flex:none;display:flex;align-items:center;gap:8px;height:52px;padding:0 44px 0 14px;box-sizing:border-box;border-bottom:1px solid var(--line);}
+.chat-history-title{font-weight:600;font-size:13px;color:var(--ink);transition:opacity .16s,visibility .16s;}
+.chat-history-head.is-searching .chat-history-title{opacity:0;visibility:hidden;}
+.chat-history-meter{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+/* The search (buildHistorySearch), the Workflows Library's look: folded, the box is just its button right of the meter;
+   open, its left edge slides over the title and the meter's resting place, the field fills it and the meter rides at
+   its end. */
+.chat-history-sbox{position:absolute;top:calc(50% - 15px);right:8px;left:calc(100% - 38px);height:30px;display:flex;align-items:center;gap:4px;overflow:hidden;transition:left .24s cubic-bezier(.2,.8,.2,1);}
+.chat-history-head.is-searching .chat-history-sbox{left:8px;}
+.chat-history-search-btn{flex:0 0 auto;width:30px;height:30px;display:grid;place-items:center;padding:0;border:0;border-radius:9px;background:none;color:var(--ink-2);cursor:pointer;}
+.chat-history-search-btn svg{width:16px;height:16px;}
+.chat-history-search-btn:hover{background:var(--hover);color:var(--ink);}
+.chat-history-search-btn[aria-expanded="true"]:not(:hover){background:none;color:var(--ink);}
+/* Inside: the box clips (overflow:hidden) a ring drawn outside the button. */
+.chat-history-search-btn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.chat-history-search-input{flex:1 1 auto;min-width:0;height:30px;padding:0 4px;border:0;background:none;color:var(--ink);font:inherit;font-size:14px;opacity:0;transition:opacity .18s;-webkit-appearance:none;appearance:none;}
+.chat-history-head.is-searching .chat-history-search-input{opacity:1;}
+.chat-history-search-input:focus{outline:none;}
+.chat-history-search-input::placeholder{color:var(--ink-2);}
+.chat-history-search-input::-webkit-search-cancel-button{display:none;}
+.chat-history-sbox .chat-history-meter{flex:none;margin-left:0;padding-right:4px;}
+@media (prefers-reduced-motion:reduce){.chat-history-sbox,.chat-history-title,.chat-history-search-input{transition:none;}}
+/* A search hit in a message: the server's excerpt under the title. */
+.chat-history .ask-thread-match{font-size:11.5px;color:var(--ink-2);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;overflow-wrap:anywhere;}
+/* The column's New chat leads the list as a fixed first row: the rows' inset (the body's 6px), their 10px text start and radius. */
+.chat-history-new.chat-new-btn{flex:none;justify-content:flex-start;height:34px;margin:6px 6px 0;padding:0 10px;border-radius:10px;}
+.chat-history-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:6px;}
+.chat-history-group + .chat-history-group{margin-top:6px;}
+.chat-history-group-label{padding:8px 10px 4px;font-weight:600;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);}
+.chat-history-empty{padding:12px 10px;font-size:12px;color:var(--ink-3);}
+.ask-thread-row.is-current{background:var(--field);}
+.ask-thread-dot.ask-dot-wait{display:block;background:var(--amber);}
+.ask-thread-dot.ask-dot-live+.ask-thread-dot.ask-dot-wait{margin-left:-6px;}
+.chat-history .ask-thread-trash{opacity:0;}
+.chat-history .ask-thread-row:hover .ask-thread-trash,.chat-history .ask-thread-trash:focus{opacity:1;}
+@media (hover:none){.chat-history .ask-thread-trash{opacity:1;}}
+.chat-scrim{display:none;}
+@media (max-width:1099px){
+  .chat-history{position:absolute;top:0;bottom:0;left:0;z-index:6;width:min(300px,86vw);box-shadow:var(--shadow-sheet);}
+  .chat-scrim:not([hidden]){display:block;position:absolute;inset:0;z-index:5;background:var(--scrim-soft);}
+}
+
+/* ===== Chat P2: Action cards ===== */
+/* Receipts (act, then undo), the stop warning and the pull-request offer (ui/public/chat/action-cards.mjs), on the Ask
+   card chrome. Emphasis is a background wash, never an edge line. Text colours keep 4.5:1 in both themes. */
+.ask-rcard .ask-mcard-title,.ask-prcard .ask-mcard-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.ask-rcard :is(.ask-mcard-before,.ask-mcard-target){color:var(--ink-2);}
+.ask-rcard-change{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-family:var(--mono);font-size:12px;min-width:0;}
+.ask-rcard-change .ask-mcard-before{overflow-wrap:anywhere;}
+.ask-rcard-change .ask-mcard-after{color:var(--ink);overflow-wrap:anywhere;}
+.ask-rcard-text{font-size:13px;line-height:1.5;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;}
+.ask-rcard-note{font-size:12px;color:var(--ink-2);}
+.ask-rcard-note:empty{display:none;}
+.ask-rcard.is-reverted .ask-rcard-change .ask-mcard-after{color:var(--ink-2);font-weight:400;}
+:is(.ask-rcard,.ask-prcard) .ask-mcard-arrow{color:var(--ink-2);}
+.ask-actcard-stub{color:var(--ink-2);overflow-wrap:anywhere;}
+:is(.ask-rcard,.ask-stopcard,.ask-prcard) .ask-card-not-now:disabled{opacity:.55;cursor:default;background:transparent;color:var(--ink-2);}
+.ask-stopcard-ident{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.ask-stopcard-title{font-weight:600;color:var(--ink);overflow-wrap:anywhere;}
+.ask-stopcard-branch,.ask-prcard-branch code{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);overflow-wrap:anywhere;}
+.ask-stopcard-copy{padding:8px 10px;border-radius:8px;background:var(--red-bg);color:var(--ink);font-size:12.5px;}
+.ask-stopcard-done{font-weight:600;color:var(--ink-2);}
+.ask-stopcard .ask-card-start.is-danger:hover{box-shadow:var(--shadow-hover);}
+.ask-prcard-branch{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;min-width:0;}
+.ask-prcard-stat{font-size:12px;color:var(--ink-2);}
+.ask-prcard-links{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;}
+.ask-prcard-link{color:var(--blue-ink-strong);}
+.ask-prcard-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px;}
+
+/* ===== Chat P3: run card ===== */
+/* The chat run card (ui/public/chat/run-card.mjs). It keeps the Ask progress card's look (.ask-rc-* above) and adds
+   the Workflows graph well, the inline question, the result region and the run controls. The well is a
+   .run-flow-wrap > .run-flow host, so the run monitor's status rings, pips, ants and their reduced-motion rules
+   (.run-flow.gv-host …) apply unchanged — no status rule is restated here. Dots only behind the graph (U8). Tokens
+   only, so light and dark both work; no coloured left-edge lines (emphasis is a wash or a chip). */
+/* A white card lifted off the white page by a soft shadow (worca Chat mockup 2026-10-10: .cd). */
+.ask-card.chat-rc{gap:0;border-radius:16px;box-shadow:var(--shadow-card);}
+.chat-rc .ask-rc-sub{display:flex;align-items:center;gap:8px;min-width:0;}
+.chat-rc-where{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.chat-rc-auto{flex:0 0 auto;display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink);font-family:var(--sans);font-size:10.5px;font-weight:600;}
+.chat-rc-auto[hidden]{display:none;}
+.chat-rc-chev{margin-left:2px;}
+/* An agent chip never runs out of a narrow card: the name and a long model id ellipsize (the model first), the cycle
+   label never shrinks. The model label is --ink-2: --ink-3 on the chip wash is 2.47:1 in light. */
+.chat-rc-agent{max-width:100%;}
+.chat-rc-agent-name{white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.chat-rc-agent-model{min-width:0;flex:0 100000 auto;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);font-family:var(--mono);font-size:10.5px;font-weight:500;}
+.chat-rc-agent-cycle{flex:none;padding:0 6px;border-radius:999px;background:var(--field);color:var(--ink-2);font-family:var(--mono);font-size:10px;font-weight:600;}
+.run-flow-wrap.chat-rc-well{margin:14px 0 0;overflow:hidden;height:var(--run-host-h,240px);}
+.chat-rc-well[hidden]{display:none;}
+.run-flow-wrap.chat-rc-well.is-deciding{height:auto;}
+.chat-rc-deciding{padding:28px 16px;text-align:center;color:var(--ink-2);font-size:12.5px;}
+.chat-rc-deciding[hidden]{display:none;}
+.gv-wrap-card .run-flow.gv-host .gv-stage,.gv-wrap-card .run-flow.gv-host .gv-world .node{cursor:grab;}
+.gv-wrap-card .run-flow.gv-host .gv-stage.panning,.gv-wrap-card .run-flow.gv-host .gv-stage.panning *{cursor:grabbing !important;}
+/* A card binds no footer accordion, row or result link (the panel is where you drill in): the expert footer bands
+   paint, but take no pointer — no pointer cursor, no hover wash, and a press is the stage's pan. */
+.gv-wrap-card .run-flow.gv-host .gv-world .xtoggle,.gv-wrap-card .run-flow.gv-host .gv-world .xrow,.gv-wrap-card .run-flow.gv-host .gv-world .xresult a{pointer-events:none;cursor:inherit;}
+.chat-rc-expand{position:absolute;top:10px;right:10px;z-index:5;display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);color:var(--ink-2);cursor:pointer;}
+.chat-rc-expand:hover{color:var(--ink);background:var(--hover);}
+.chat-rc-expand:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.chat-rc-expand[hidden]{display:none;}
+.chat-rc-q{margin-top:14px;}
+.chat-rc-q[hidden]{display:none;}
+/* The question is the Runs page's ask card: the `:is(.rd-questions,.chat-rc-q)` rules of the questions panel block draw
+   it (white cards on var(--panel), never the base .qpanel's amber wash; the tiles, fields, issues and pill footer), and
+   the heading is `.rd-ask-head`'s (its disc and glyph, red for a failed step) at the run side panel's 15px. */
+.chat-rc-q-head{margin-bottom:10px;font-size:15px;}
+.chat-rc-q-head[hidden]{display:none;}
+.chat-rc-qbody[hidden]{display:none;}
+.chat-rc-q .qpanel{margin-top:0;padding:16px;}
+.chat-rc-q .qpanel-head{display:none;}
+/* A ~390px card: one column, as the run side panel's (.crp .rd-questions below) — no head gap above the body, the
+   question over its answers, the decision over its issues, a severity chip over its text, and answer buttons that wrap
+   as whole buttons onto the next row ("Accept & run", "Cancel run"); a label wider than the whole row ("Don't approve
+   another cycle and continue" at 360–390 px) wraps inside its button, never out of the card. */
+.chat-rc-q .qpanel .qbody,.chat-rc-q .qpanel .qbody > :first-child{margin-top:0;}
+.chat-rc-q .qblock{grid-template-columns:minmax(0,1fr);grid-template-rows:none;column-gap:0;padding:16px;}
+.chat-rc-q .qtext{grid-row:auto;margin-bottom:6px;}
+.chat-rc-q :is(.qopts,.qblock > .qfree){grid-column:1;}
+.chat-rc-q .qpanel[data-kind="form"] .af-form{padding:16px;}
+.chat-rc-q .qpanel:is([data-kind="gate"],[data-kind="recovery"]){grid-template-columns:minmax(0,1fr);row-gap:16px;column-gap:0;}
+.chat-rc-q .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > :is(.issues,.issue-detail){grid-column:1;}
+.chat-rc-q .gate-actions .btn{flex:0 1 auto;max-width:100%;white-space:normal;text-wrap:balance;}
+.chat-rc-q .issue{grid-template-columns:minmax(0,1fr);}
+.chat-rc-q .issue-sev{grid-row:auto;align-self:start;margin-bottom:4px;}
+.chat-rc-q :is(.issue-title,.issue > .issue-detail,.issue-loc){grid-column:1;}
+/* A failed step's own words are mono and pre-wrap: a long JSON or URL token breaks inside the card, never past its edge. */
+.chat-rc-q .qpanel[data-kind="recovery"] > .issue-detail{overflow-wrap:anywhere;}
+.chat-rc-q .qpanel-foot{flex-wrap:wrap;row-gap:8px;}
+.chat-rc-q .qpanel-foot > button{max-width:100%;white-space:normal;text-wrap:balance;}
+/* No amber wash in the question: the boxes the Runs page fills with it inside a card (a form's group, a workflow's
+   "Round N revised" echo and its proposal warnings) sit on the card's white; their own amber line, and a warning's amber
+   ink, stay the cue. */
+.chat-rc-q :is(.qnote,.af-grp,.ask-wfcard-warn){background:var(--panel);}
+/* The cards' 1px line is amber here (the Runs page draws var(--line)): the panel (gate, recovery, workflow), each
+   question and the pill footer (clarify), the form and the pill footer (form). Its ONE place — drop this rule for the
+   Runs page's grey line, or swap the token. */
+.chat-rc-q :is(.qpanel,.qblock),.chat-rc-q .qpanel:is([data-kind="clarify"],[data-kind="form"]) .qpanel-foot,.chat-rc-q .qpanel[data-kind="form"] .af-form{border-color:var(--amber-line);}
+.chat-rc-q-err{margin-top:8px;font-size:12px;color:var(--red-ink);}
+.chat-rc-q-err[hidden]{display:none;}
+.chat-rc-receipt{padding:9px 12px;border-radius:10px;background:var(--field);color:var(--ink-2);font-size:12.5px;}
+.chat-rc-receipt[hidden]{display:none;}
+.chat-rc-receipt summary{cursor:pointer;font-weight:600;color:var(--ink);}
+.chat-rc-receipt summary:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:6px;}
+.chat-rc-receipt-list{margin:8px 0 0;padding-left:18px;}
+.chat-rc-receipt-list[hidden]{display:none;}
+.chat-rc-result{margin-top:14px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--field);}
+.chat-rc-result[hidden]{display:none;}
+.chat-rc-res-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;}
+.chat-rc-res-glyph{flex:0 0 auto;display:grid;place-items:center;width:34px;height:34px;border-radius:10px;}
+.chat-rc-res-glyph.tone-green{background:var(--green-bg);color:var(--h-green-ink);}
+.chat-rc-res-glyph.tone-blue{background:var(--blue-bg);color:var(--h-blue-ink);}
+.chat-rc-res-glyph.tone-violet{background:var(--violet-bg);color:var(--violet-ink);}
+.chat-rc-res-glyph.tone-red{background:var(--red-bg);color:var(--red-ink);}
+.chat-rc-res-text{flex:1 1 200px;min-width:0;}
+.chat-rc-res-title{font-weight:600;font-size:14px;color:var(--ink);}
+.chat-rc-res-sub{margin-top:2px;font-size:12px;color:var(--ink-2);}
+.chat-rc-res-churn{flex:0 0 auto;margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);}
+/* The status inks on the result's --field and on a hovered row: plain --green-ink / --red-ink measure 4.03–4.45:1 in
+   light; 15 % ink lifts them past 4.5:1 in both themes (the token blocks stay the only colour literals). */
+.chat-rc-add{color:color-mix(in srgb, var(--green-ink) 85%, var(--ink));}
+.chat-rc-del{color:color-mix(in srgb, var(--red-ink) 85%, var(--ink));}
+.chat-rc-files{display:flex;flex-direction:column;gap:2px;margin:12px 0 0;padding:0;list-style:none;}
+.chat-rc-file{display:flex;align-items:center;gap:10px;width:100%;padding:5px 8px;border:0;border-radius:8px;background:transparent;color:var(--ink);font-family:var(--mono);font-size:11.5px;text-align:left;cursor:pointer;}
+.chat-rc-file:hover{background:var(--hover);}
+.chat-rc-file:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.chat-rc-file-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.chat-rc-arts{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
+.chat-rc-art{max-width:240px;height:24px;padding:0 9px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink-2);font-family:var(--mono);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+.chat-rc-art:hover{color:var(--ink);border-color:var(--line-2);}
+.chat-rc-art.is-more{font-family:var(--sans);font-weight:600;}
+.chat-rc-art:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.chat-rc-res-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px;}
+.chat-rc-res-err{margin-right:auto;font-size:12px;color:color-mix(in srgb, var(--red-ink) 85%, var(--ink));}
+.chat-rc-res-err[hidden]{display:none;}
+.chat-rc-create-pr,.chat-rc-view-pr{display:inline-flex;align-items:center;height:30px;padding:0 14px;border:0;border-radius:999px;background:var(--ink);color:var(--panel);font:inherit;font-weight:600;font-size:12px;text-decoration:none;white-space:nowrap;cursor:pointer;}
+.chat-rc-create-pr:hover,.chat-rc-view-pr:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
+.chat-rc-create-pr:disabled{opacity:.5;cursor:default;}
+.chat-rc-create-pr:focus-visible,.chat-rc-view-pr:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.chat-rc-foot{display:flex;align-items:center;gap:8px;margin-top:14px;}
+.chat-rc-foot[hidden]{display:none;}
+.chat-rc-btn{height:30px;padding:0 14px;border:1.5px solid var(--line-2);border-radius:999px;background:var(--panel);color:var(--ink);font:inherit;font-weight:600;font-size:12px;cursor:pointer;}
+.chat-rc-btn:hover{background:var(--hover);}
+.chat-rc-btn:disabled{opacity:.5;cursor:default;}
+.chat-rc-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.chat-rc-stop{border-color:color-mix(in srgb, var(--red) 55%, var(--line-2));color:var(--red-ink);}
+/* A hovered Stop keeps the panel under its red ink (4.81:1; on --hover it is 4.03:1) — the run page's red .rd-stop:hover border. */
+.chat-rc-stop:hover{background:var(--panel);border-color:var(--red);}
+.chat-rc-stop[hidden]{display:none;}
+.chat-rc-err{font-size:12px;color:var(--red-ink);}
+.chat-rc-err[hidden]{display:none;}
+/* While Auto decides, the empty graph host keeps .run-flow's 66px/52px padding: hide it, and no dots behind text (U8). */
+.chat-rc-well.is-deciding > .chat-rc-graph{display:none;}
+.run-flow-wrap.chat-rc-well.is-deciding{background-image:none;}
+/* A narrow card (390px) wraps the head instead of pushing "Open run ›" out of the card. */
+.chat-rc .ask-rc-head{flex-wrap:wrap;height:auto;min-height:28px;row-gap:6px;}
+.chat-rc .ask-rc-open{margin-left:auto;}
+/* A receipt with no answer list has nothing to expand. */
+.chat-rc-receipt:not(:has(> .chat-rc-receipt-list:not([hidden]))) > summary{list-style:none;cursor:default;}
+.chat-rc-receipt:not(:has(> .chat-rc-receipt-list:not([hidden]))) > summary::-webkit-details-marker{display:none;}
+@media (prefers-reduced-motion:reduce){
+  .ask-card.chat-rc{animation:none;}
+  .chat-rc.is-live .ask-rc-dot,.chat-rc .ask-rc-agent-dot{animation:none;}
+}
+/* Chat P3: the composer's "→ <run title>" chip (ui/public/chat/direction.mjs). On = a blue wash + ring on the
+   composer, never a coloured edge line. */
+.chat-dir{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;row-gap:4px;min-width:0;}
+.chat-dir-chip{display:inline-flex;align-items:center;gap:5px;max-width:240px;height:26px;padding:0 10px;border:1px solid var(--line-2);border-radius:999px;background:var(--panel);color:var(--ink-2);font:inherit;font-size:12px;font-weight:600;cursor:pointer;}
+.chat-dir-chip:hover{color:var(--ink);background:var(--hover);}
+.chat-dir-chip:disabled{opacity:.6;cursor:default;}
+.chat-dir-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.chat-dir-chip.is-on{background:var(--blue-bg);border-color:var(--blue);color:var(--h-blue-ink);}
+.chat-dir-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.chat-dir-err{font-size:11.5px;color:var(--red-ink);}
+.chat-dir-err[hidden]{display:none;}
+.ask-composer.is-direction .ask-composer-box{box-shadow:var(--shadow-glass),0 0 0 2px color-mix(in srgb, var(--blue) 45%, transparent);}
+.ask-composer.is-direction textarea.ask-input::placeholder{white-space:nowrap;overflow:hidden;}
+
+/* ===== Chat P4: run panel ===== */
+/* The Chat page's right panel (app.js "Chat P4: the run panel"): the run pages' OWN screens (.rd live,
+   .hd saved) dressed by data-presentation="panel" — Details only, the bar on top, the header and tabs
+   scrolling under it with the tab row pinned. Plain backgrounds: the only dots in here are the Workflow
+   tab's own .run-flow-wrap (U8). Width max(440px, 44% of the Chat page, 700px); a full-screen sheet
+   below 900px. The waiting question is an amber wash, never an edge line. */
+.chat-page[data-panel="open"] .chat-panel{flex:none;display:flex;flex-direction:column;min-width:0;min-height:0;
+  width:max(440px,min(44%,700px));margin:8px;border:1px solid var(--line);border-radius:16px;
+  background:var(--bg);box-shadow:var(--shadow);overflow:hidden;animation:crp-in .24s cubic-bezier(.2,.7,.3,1) backwards;}
+/* Focus moves to the panel itself when it opens (tabindex -1): no ring around the whole panel. */
+.chat-page[data-panel="open"] .chat-panel:focus{outline:none;}
+@keyframes crp-in{from{opacity:0;transform:translateX(16px);}}
+@keyframes crp-up{from{opacity:0;transform:translateY(24px);}}
+.crp{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;container:crp / inline-size;}
+.crp-msg{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 8px 12px 16px;border-bottom:1px solid var(--line);}
+.crp-msg-text{margin:0;color:var(--ink-2);font-size:13.5px;}
+.crp-host{flex:1 1 auto;min-height:0;position:relative;overflow:hidden;}
+.crp-host:empty{display:none;}
+.crp-host > :is(.rd,.hd)[data-presentation="panel"]{height:100%;display:flex;flex-direction:column;}
+.crp :is(.rd-bar,.hd-bar){position:static;flex:none;gap:8px;padding:8px 8px 8px 16px;}
+/* One row at every panel width: the bar's empty middle goes (the name is the Details header's), the controls take
+   the row, and the Away mode pill gives way (the select keeps its value; the full page shows the pill). */
+.crp :is(.rd-bar,.hd-bar) > .rd-bar-mid{display:none;}
+.crp .rd-bar-end{flex:1 1 auto;flex-wrap:nowrap;margin-left:auto;}
+.crp .rd-bar .rd-night-pill{display:none;}
+/* A paused run's Resume split is wider than Pause: the Away select gives way first (down to 72px; its aria-label
+   names it) rather than Open full page and Close dropping onto a second row. */
+.crp .rd-bar-end > .rd-night-wrap{flex:0 1 auto;min-width:72px;}
+.crp .rd-bar .rd-night{flex:1 1 auto;width:100%;min-width:0;}
+.crp :is(.rd-to-run,.hd-to-run,.term-opener){display:none;}
+.crp :is(.rd > .rd-error,.hd > .hd-error){flex:none;margin:8px 16px 0;}
+.crp :is(.rd-details,.hd-details){flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;}
+.crp :is(.rd-header,.hd-header){margin:12px 16px 0;padding:16px 18px 14px;}
+.crp :is(.rd-row1,.hd-row1){flex-wrap:wrap;gap:8px 10px;}
+.crp :is(.rd-title,.hd-title){flex:1 1 100%;font-size:18px;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;}
+.crp :is(.rd-body,.hd-body){padding:0 16px 24px;}
+.crp :is(.rd-tabs,.hd-tabs){top:0;gap:6px;padding:12px 0 10px;}
+.crp :is(.rd-tab,.hd-tab){gap:7px;padding:7px 12px;font-size:12.5px;}
+.crp .crp-head{display:flex;flex-direction:column;gap:12px;margin:12px 16px 0;}
+.crp .crp-head > :is(.rd-banners,.hd-banners){margin-top:0;}
+.crp .crp-head > :is(.rd-banners,.hd-banners):not(:has(> :not([hidden]))){display:none;}
+.crp .crp-head > .rd-questions{margin:0;padding:14px;border:1px solid var(--amber-line);border-radius:var(--r-card);background:var(--amber-wash-2);}
+.crp .crp-head > .rd-questions .qpanel-head{display:none;}
+.crp .rd-ask-head{font-size:15px;scroll-margin-top:12px;}
+.crp .rd-questions .qblock{grid-template-columns:minmax(0,1fr);grid-template-rows:none;column-gap:0;padding:16px;}
+.crp .rd-questions .qtext{grid-row:auto;margin-bottom:6px;}
+.crp .rd-questions :is(.qopts,.qblock > .qfree){grid-column:1;}
+.crp .rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]){grid-template-columns:minmax(0,1fr);row-gap:16px;column-gap:0;}
+.crp .rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > :is(.issues,.issue-detail){grid-column:1;}
+/* Gate and recovery answers wrap inside the card (a long label is wider than a 440px panel), and an issue's
+   severity chip sits above its text. */
+.crp .rd-questions .gate-actions .btn{flex:0 1 auto;max-width:100%;white-space:normal;text-wrap:balance;}
+.crp .rd-questions .issue{grid-template-columns:minmax(0,1fr);}
+.crp .rd-questions .issue-sev{grid-row:auto;align-self:start;margin-bottom:4px;}
+.crp .rd-questions :is(.issue-title,.issue > .issue-detail,.issue-loc){grid-column:1;}
+.crp .rd-questions .qpanel-foot{flex-wrap:wrap;row-gap:8px;}
+.crp .hd-diff{grid-template-columns:minmax(0,1fr);}
+/* The Logs filter row wraps in the panel: kept on one row, a 451px panel cut its selects to "all sour", "all le". */
+.crp .log-filters{flex-wrap:wrap;row-gap:6px;}
+.crp .log-filters select.log-f{flex:0 0 auto;}
+.crp-bar-btns{display:inline-flex;align-items:center;gap:2px;}
+.crp :is(.crp-full,.crp-close){display:inline-grid;place-items:center;width:32px;height:32px;padding:0;border-radius:8px;}
+.crp :is(.crp-full,.crp-close):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* The panel leaves the conversation as little as ~385px (901-1100px windows, or 1500px with the history column open):
+   the composer row drops the same parts P1 drops on a phone, so Send stays in the box and the scope keeps its label. */
+.chat-page[data-panel="open"] .chat-convo{container:chat-convo / inline-size;}
+@container chat-convo (max-width:520px){
+  .chat-page .ask-meter-cost,.chat-page .ask-voice-caret,.chat-page .ask-model-btn-effort{display:none;}
+}
+@container chat-convo (max-width:420px){
+  .chat-page .ask-composer-row{gap:4px;}
+  .chat-page .ask-composer-row > .ask-meter{display:none;}
+}
+/* A narrow panel: the bar's buttons go icon-only (their words stay for screen readers), then the tab badges go. */
+@container crp (max-width:560px){
+  .crp :is(.rd-bar,.hd-bar) :is(.rd-btn-label,.hd-btn-label){position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
+  .crp :is(.rd-tab,.hd-tab) > svg{display:none;}
+}
+@container crp (max-width:520px){
+  .crp :is(.rd-tab,.hd-tab){padding:6px 10px;}
+}
+@container crp (max-width:420px){
+  .crp :is(.rd-tab-badge,.hd-tab-badge){display:none;}
+  .crp .rd-bar-end{gap:4px;}
+}
+@media (max-width:900px){
+  .chat-page[data-panel="open"] .chat-panel{position:fixed;inset:0;z-index:44;width:auto;margin:0;border:0;border-radius:0;animation-name:crp-up;}
+}
+@media (prefers-reduced-motion:reduce){
+  .chat-page[data-panel="open"] .chat-panel{animation:none;}
+}
+
+/* ===== Chat P5: artifacts ===== */
+/* Artifact viewer (apv-, artifacts/viewer.mjs): a body-level popup whose root is also a .viewer-modal (so every
+   "a dialog is up" check yields to it); .apv lifts it above the other .viewer-modals (50), below the confirm
+   dialog (60). The head carries the file, its step · cycle · size, ←/→, Download, Full screen and Close; .is-full fills
+   the screen (Fullscreen API) or the window (fallback); .is-info (no preview) always fills the window. */
+.apv{position:fixed;inset:0;z-index:55;display:grid;place-items:center;padding:24px;background:var(--scrim);}
+.apv-card{width:min(980px,100%);max-height:88vh;min-height:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow-sheet);overflow:hidden;animation:apvIn .14s ease-out;}
+.apv-card:focus{outline:none;}
+@keyframes apvIn{from{opacity:0;transform:scale(.985);}to{opacity:1;transform:none;}}
+.apv-card:has(.apv-stage:is(.kind-c4,.kind-html,.kind-pdf)){width:min(1320px,100%);}
+.apv-head{display:flex;align-items:center;gap:12px;flex:0 0 auto;min-height:56px;padding:8px 10px 8px 18px;border-bottom:1px solid var(--line);}
+.apv-titles{flex:1 1 auto;min-width:0;}
+.apv-title{margin:0;font-size:14px;font-weight:600;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.apv-meta{margin:2px 0 0;font-size:11.5px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.apv-actions{display:flex;align-items:center;gap:2px;flex:0 0 auto;}
+.apv-ib{width:30px;height:30px;display:grid;place-items:center;border:0;border-radius:9px;background:none;color:var(--ink-2);cursor:pointer;}
+.apv-ib:hover,.apv-ib[aria-pressed="true"]{background:var(--hover);color:var(--ink);}
+.apv-ib:disabled{opacity:.4;cursor:default;background:none;}
+.apv-ib svg,.apv-btn svg{width:16px;height:16px;flex:0 0 auto;}
+.apv-pos{min-width:44px;text-align:center;font-size:11.5px;color:var(--ink-2);}
+.apv .mono{font-family:var(--mono);}
+.apv-btn{height:30px;display:inline-flex;align-items:center;gap:6px;margin:0 4px;padding:0 11px;border:1px solid var(--line-2);border-radius:9px;background:none;color:var(--ink);font:500 12.5px/1 var(--sans);cursor:pointer;white-space:nowrap;}
+.apv-btn:hover{background:var(--hover);}
+.apv-btn-primary{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
+.apv-btn-primary:hover{background:var(--ink);opacity:.86;}
+:is(.apv-ib,.apv-btn):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.apv-note{margin:0;padding:8px 18px;background:var(--red-bg);color:var(--ink);font-size:12.5px;}
+.apv-body{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;padding:16px 18px 18px;}
+.apv-body:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.apv-stage.artifact-view{max-height:none;overflow:visible;}
+.apv-stage :is(.artifact-text,.artifact-json,.artifact-diff){padding:14px 16px;background:var(--canvas-2);border:1px solid var(--line);border-radius:12px;}
+.apv-stage iframe{display:block;width:100%;height:min(72vh,860px);aspect-ratio:auto;border:0;border-radius:12px;background:var(--bg);}
+.apv-stage embed{display:block;width:100%;height:min(72vh,860px);border-radius:12px;}
+.apv-stage.kind-image{text-align:center;}
+.apv-stage.kind-image img{max-height:72vh;}
+.apv-stage.kind-image.zoomed img{max-height:none;}
+.apv-stage audio{display:block;width:100%;}
+.apv-stage video{display:block;max-width:100%;max-height:72vh;margin:0 auto;border-radius:12px;background:var(--canvas-2);}
+/* ONE scroller in the popup: .apv-body, the Tab stop whose ↑/↓/←/→/PgDn a keyboard user drives. A long code line, a
+   wide diff or a big table widens the stage instead of scrolling inside a box no key reaches; a markdown code block
+   wraps. */
+.apv-code,.apv-stage .artifact-diff{white-space:pre;overflow-x:visible;word-break:normal;width:max-content;min-width:100%;box-sizing:border-box;}
+.apv-stage .artifact-markdown pre{overflow-x:visible;white-space:pre-wrap;word-break:break-word;}
+.apv-code :is(.hljs-comment,.hljs-quote,.hljs-punctuation){color:var(--hd-syntax-comment);}
+.apv-code :is(.hljs-keyword,.hljs-operator,.hljs-meta,.hljs-deletion){color:var(--hd-syntax-keyword);}
+.apv-code :is(.hljs-type,.hljs-built_in,.hljs-attr,.hljs-attribute,.hljs-selector-class,.hljs-selector-id,.hljs-selector-tag){color:var(--hd-syntax-type);}
+.apv-code :is(.hljs-string,.hljs-regexp,.hljs-addition){color:var(--hd-syntax-string);}
+.apv-code :is(.hljs-number,.hljs-literal,.hljs-symbol,.hljs-bullet,.hljs-variable,.hljs-template-variable){color:var(--hd-syntax-literal);}
+.apv-code :is(.hljs-title,.hljs-section,.hljs-name){color:var(--hd-syntax-title);}
+.apv-code :is(.hljs-comment,.hljs-quote){font-style:italic;}
+/* The shared diff and markdown renderers' light colours fall under AA on the popup's --canvas-2 / --field
+   (meta 2.7, hunk and del 3.9, links 4.3): the History diff pane's choices. */
+.apv-stage .artifact-diff-line:is(.meta,.hunk){color:var(--ink-2);}
+.apv-stage .artifact-diff-line.del{color:var(--ink);}
+.apv-stage .artifact-markdown a{color:var(--blue-ink-strong);}
+.apv-wrap{display:block;width:0;height:0;overflow:hidden;}
+.apv-table-wrap{overflow:clip;width:max-content;min-width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;}
+.apv-csv{border-collapse:collapse;font:12px/1.5 var(--mono);color:var(--ink);}
+.apv-csv :is(th,td){padding:5px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;}
+/* The header sticks to .apv-body, the popup's one scroller: a sticky box rests inside its 16px top padding, so it is
+   pulled up over it — all but the 2px the body's focus ring is drawn in. */
+.apv-csv th{position:sticky;top:-14px;background:var(--field);font-weight:600;}
+.apv-loading,.apv-error{margin:24px 0;text-align:center;font-size:13px;color:var(--ink-2);}
+.apv-error{color:var(--red-ink);}
+.apv:is(.is-full,.is-info){padding:0;}
+.apv:is(.is-full,.is-info) .apv-card{width:100vw;max-width:none;height:100vh;max-height:none;border:0;border-radius:0;}
+.apv:is(.is-full,.is-info) .apv-body{display:flex;flex-direction:column;}
+.apv:is(.is-full,.is-info) .apv-stage{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
+.apv.is-full .apv-stage :is(iframe,embed,worca-c4){flex:1 1 auto;height:auto;min-height:0;}
+/* Full screen: the stage is a flex column, so an image would stretch to its width and lose its height cap — fit it
+   (contain) instead; a click (.zoomed) shows it at its own size, scrolled. A video fills the width, letterboxed. */
+.apv.is-full .apv-stage.kind-image{align-items:center;justify-content:center;}
+.apv.is-full .apv-stage.kind-image img{max-width:100%;max-height:100%;min-height:0;object-fit:contain;}
+.apv.is-full .apv-stage.kind-image.zoomed{align-items:flex-start;justify-content:flex-start;}
+.apv.is-full .apv-stage.kind-image.zoomed img{flex:none;max-width:none;max-height:none;}
+.apv.is-full .apv-stage video{width:100%;max-height:100%;min-height:0;object-fit:contain;}
+.apv-info{margin:auto;max-width:440px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;}
+.apv-info-ic{width:56px;height:56px;display:grid;place-items:center;border-radius:14px;background:var(--field);color:var(--ink-2);}
+.apv-info-ic svg{width:28px;height:28px;}
+.apv-info-name{margin:4px 0 0;font:600 15px/1.35 var(--mono);color:var(--ink);word-break:break-all;}
+.apv-info-note{margin:0;font-size:13px;color:var(--ink-2);}
+.apv-facts{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:8px 0 6px;text-align:left;font-size:12.5px;}
+.apv-facts dt{color:var(--ink-2);}
+.apv-facts dd{margin:0;color:var(--ink);word-break:break-all;}
+@media (max-width:760px){.apv{padding:0;}.apv-card{width:100vw;height:100vh;max-height:none;border:0;border-radius:0;}.apv-btn span{display:none;}.apv-btn{padding:0 8px;}}
+@media (max-width:480px){.apv-head{flex-wrap:wrap;row-gap:2px;padding:8px 10px 6px 14px;}.apv-titles{flex:1 1 100%;}.apv-title,.apv-meta{white-space:normal;overflow-wrap:anywhere;}.apv-actions{margin-left:auto;}}
+@media (prefers-reduced-motion:reduce){.apv-card{animation:none;}}
+
+/* Artifact browser (afb-, artifacts/browser.mjs): the Workflows Library's folder look on a plain panel — a header whose
+   search slides over the count, step folders that open in place, cycle and burst subfolders, roomy file rows with a
+   hover Download. No dotted background (dots only behind graphs). */
+.afb-host{min-width:0;}
+.afb{display:flex;flex-direction:column;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
+.afb-head{position:relative;display:flex;align-items:center;gap:2px;height:46px;flex:0 0 auto;padding:0 8px 0 16px;border-bottom:1px solid var(--line);}
+.afb-title{margin:0 auto 0 0;font-size:13.5px;font-weight:600;transition:opacity .16s,visibility .16s;}
+.afb-head.is-searching .afb-title{opacity:0;visibility:hidden;}
+.afb-sbox{position:absolute;top:8px;right:8px;left:calc(100% - 38px);height:30px;display:flex;align-items:center;gap:4px;overflow:hidden;transition:left .24s cubic-bezier(.2,.8,.2,1);}
+.afb-head.is-searching .afb-sbox{left:8px;}
+.afb-ib{flex:0 0 auto;width:30px;height:30px;display:grid;place-items:center;border:0;border-radius:9px;background:none;color:var(--ink-2);cursor:pointer;}
+.afb-ib:hover,.afb-ib[aria-expanded="true"]{background:var(--hover);color:var(--ink);}
+.afb-ib svg{width:16px;height:16px;}
+.afb-filter{flex:1 1 auto;min-width:0;height:30px;padding:0 4px;border:0;background:none;color:var(--ink);font:inherit;font-size:14px;opacity:0;transition:opacity .18s;-webkit-appearance:none;appearance:none;}
+.afb-head.is-searching .afb-filter{opacity:1;}
+.afb-filter:focus{outline:none;box-shadow:inset 0 -2px 0 var(--ink);}
+.afb-filter::placeholder{color:var(--ink-2);}
+.afb-filter::-webkit-search-cancel-button{display:none;}
+.afb-list{min-height:0;overflow:auto;padding:6px 8px 10px;}
+.afb-folder{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:10px 10px 10px 6px;border:0;border-radius:10px;background:none;color:var(--ink);font:500 14.5px/1.3 var(--sans);text-align:left;cursor:pointer;}
+.afb-folder:hover{background:var(--field);}
+.afb-folder svg{flex:0 0 auto;width:20px;height:20px;color:var(--ink-2);stroke-width:1.6;}
+.afb-folder .afb-chev{width:14px;height:14px;stroke-width:2;}
+.afb-folder[aria-expanded="true"] .afb-chev{transform:rotate(90deg);}
+.afb-folder:is(.is-cycle,.is-bulk){min-height:36px;padding:7px 10px 7px 6px;font-size:13.5px;}
+.afb-folder.is-bulk .afb-fname{font-family:var(--mono);font-size:12.5px;}
+.afb-fname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.afb-fn{flex:0 0 auto;font-size:12px;color:var(--ink-2);}
+.afb .mono{font-family:var(--mono);}
+.afb-fold{padding:0 0 6px 20px;}
+.afb-file{position:relative;display:flex;align-items:center;border-radius:10px;}
+.afb-main{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:12px;padding:8px 42px 8px 8px;border:0;border-radius:10px;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.afb-main:hover{background:var(--field);}
+.afb-ic{flex:0 0 auto;width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--field);color:var(--ink-2);}
+.afb-main:hover .afb-ic{background:var(--panel);}
+.afb-ic svg{width:15px;height:15px;}
+.afb-txt{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px;}
+.afb-l1{display:flex;align-items:center;gap:6px;min-width:0;}
+.afb-name{display:flex;min-width:0;white-space:nowrap;font:500 13px/1.3 var(--mono);color:var(--ink);}
+.afb-stem{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:pre;}
+.afb-ext{flex:none;}
+.afb-cyc{flex:0 0 auto;height:19px;padding:0 7px;border-radius:999px;background:var(--field);color:var(--ink-2);font-size:11px;line-height:19px;}
+.afb-where{font-size:11.5px;line-height:1.35;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.afb-size{flex:0 0 auto;font-size:12px;color:var(--ink-2);}
+.afb-dl{position:absolute;right:6px;top:50%;width:30px;height:30px;margin-top:-15px;display:grid;place-items:center;border:0;border-radius:9px;background:none;color:var(--ink-2);cursor:pointer;opacity:0;}
+.afb-dl svg{width:16px;height:16px;}
+.afb-dl:hover{background:var(--hover);color:var(--ink);}
+.afb-file:hover .afb-dl,.afb-file:focus-within .afb-dl{opacity:1;}
+@media (hover:none){.afb-dl{opacity:1;}}
+:is(.afb-folder,.afb-main,.afb-dl,.afb-ib):focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.afb-empty{margin:18px 10px;color:var(--ink-2);text-align:center;font-size:13px;}
+@media (prefers-reduced-motion:reduce){.afb-sbox,.afb-title,.afb-filter{transition:none;}}
+
+/* ===== Chat Pinpoint (#669) ===== */
+/* Pinpoint (#669, pinpoint.mjs / pinpoint-surfaces.mjs): the floating toolbar over a selected span, the Explain /
+   Alternatives / Disagree · Note · Comment popovers, the CSS highlights (no DOM is rewritten), the artifact tray with its
+   margin markers, the diff's fix-run tray, the composer's quote chip and quoted user messages. Tokens only. */
+::highlight(pinpoint-active){background-color:color-mix(in srgb,var(--blue) 22%,transparent);}
+::highlight(pinpoint-pending){background-color:var(--amber-bg);text-decoration:underline solid var(--amber) 1.5px;}
+::highlight(pinpoint-hot){background-color:color-mix(in srgb,var(--amber) 34%,transparent);}
+::highlight(pinpoint-comment){background-color:var(--violet-wash);text-decoration:underline dotted var(--violet) 1.5px;}
+
+.pp-bar{position:fixed;z-index:70;display:flex;align-items:center;gap:1px;height:38px;padding:4px;background:var(--panel);
+  border:1px solid var(--line-2);border-radius:12px;box-shadow:var(--shadow-menu);font:500 12.5px/1 var(--sans);color:var(--ink);
+  animation:pp-in .16s cubic-bezier(.22,1,.36,1);}
+.pp-bar.pp-below{animation-name:pp-inb;}
+@keyframes pp-in{from{opacity:0;transform:translateY(4px) scale(.97);}}
+@keyframes pp-inb{from{opacity:0;transform:translateY(-4px) scale(.97);}}
+.pp-i{flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+.pp-b{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;min-width:28px;padding:0;border:0;border-radius:8px;
+  background:transparent;color:var(--ink-2);font:inherit;white-space:nowrap;cursor:pointer;transition:background .12s,color .12s;}
+.pp-b.pp-lab{padding:0 9px 0 7px;color:var(--ink);}
+.pp-b:hover,.pp-b[aria-expanded="true"]{background:var(--hover);color:var(--ink);}
+.pp-b:focus-visible,.pp-mi:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.pp-b.pp-ok,.pp-b.pp-ok:hover{color:var(--green-ink);}
+.pp-sep{width:1px;align-self:stretch;margin:5px 3px;background:var(--line-2);}
+.pp-arr{position:absolute;bottom:-6px;width:10px;height:10px;margin-left:-5px;background:var(--panel);transform:rotate(45deg);
+  border-right:1px solid var(--line-2);border-bottom:1px solid var(--line-2);}
+.pp-bar.pp-below .pp-arr{bottom:auto;top:-6px;border:0;border-left:1px solid var(--line-2);border-top:1px solid var(--line-2);}
+.pp-more{position:absolute;right:0;min-width:180px;padding:4px;background:var(--panel);border:1px solid var(--line-2);border-radius:12px;box-shadow:var(--shadow-menu);}
+.pp-mi{display:flex;align-items:center;gap:9px;width:100%;height:30px;padding:0 9px;border:0;border-radius:7px;background:transparent;
+  color:var(--ink);font:500 12.5px var(--sans);text-align:left;cursor:pointer;}
+.pp-mi:hover{background:var(--hover);}
+.pp-mi kbd{margin-left:auto;font:500 10.5px var(--mono);color:var(--ink-3);}
+
+.pp-pop{position:fixed;z-index:71;display:flex;flex-direction:column;box-sizing:border-box;width:min(360px,calc(100vw - 16px));background:var(--panel);border:1px solid var(--line-2);border-radius:14px;
+  box-shadow:var(--shadow-pop);font:400 13px/1.6 var(--sans);color:var(--ink);animation:pp-inb .18s cubic-bezier(.22,1,.36,1);}
+.pp-pop.pp-above{animation-name:pp-in;}
+.pp-pop.pp-wide{width:min(380px,calc(100vw - 16px));}
+.pp-parr{position:absolute;top:-6px;width:10px;height:10px;margin-left:-5px;background:var(--panel);transform:rotate(45deg);
+  border-left:1px solid var(--line-2);border-top:1px solid var(--line-2);}
+.pp-pop.pp-above .pp-parr{top:auto;bottom:-6px;border:0;border-right:1px solid var(--line-2);border-bottom:1px solid var(--line-2);}
+.pp-ph{flex:none;display:flex;align-items:center;gap:8px;min-width:0;padding:11px 10px 0 14px;}
+.pp-ph>.pp-i{color:var(--ink-2);}
+.pp-ph b{flex:none;font-size:12.5px;font-weight:600;}
+.pp-pq{flex:1;min-width:0;font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-pq.mono{font:500 11.5px var(--mono);}
+.pp-x{display:grid;place-items:center;flex:none;width:24px;height:24px;border:0;border-radius:7px;background:transparent;color:var(--ink-3);
+  font:500 14px/1 var(--sans);cursor:pointer;transition:background .12s,color .12s;}
+.pp-x:hover{background:var(--hover);color:var(--ink);}
+.pp-eb{max-height:300px;min-height:0;overflow:auto;padding:8px 14px 14px;text-wrap:pretty;scrollbar-width:thin;}
+.pp-eb p{margin:0 0 8px;}
+.pp-eb p:last-child{margin:0;}
+.pp-pop code{font:500 .86em var(--mono);padding:.1em .35em;border-radius:5px;background:var(--field);}
+.pp-pf{flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:40px;padding:7px 10px 7px 14px;border-top:1px solid var(--line);
+  font-size:12px;color:var(--ink-3);}
+.pp-pf-r{display:inline-flex;align-items:center;gap:6px;}
+.pp-pf.pp-keys{justify-content:flex-start;gap:6px;}
+.pp-deeper{border:0;background:transparent;padding:0;font:500 12px var(--sans);color:var(--blue-ink);cursor:pointer;text-underline-offset:3px;}
+.pp-deeper:hover{text-decoration:underline;}
+.pp-kbd{display:inline-flex;align-items:center;height:18px;padding:0 5px;border:1px solid var(--line-2);border-bottom-width:2px;border-radius:5px;
+  font:500 10.5px/1 var(--mono);color:var(--ink-2);}
+.pp-stop{height:24px;padding:0 9px;border-radius:7px;border:1px solid var(--line-2);background:var(--panel);font:500 11.5px var(--sans);color:var(--ink);cursor:pointer;}
+.pp-stop:hover{background:var(--field);}
+.pp-shimmer{background:linear-gradient(90deg,var(--ink-3) 0%,var(--ink-3) 40%,var(--ink) 50%,var(--ink-3) 60%,var(--ink-3) 100%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:pp-shimmer 1.6s linear infinite;}
+@keyframes pp-shimmer{from{background-position:110% 0;}to{background-position:-110% 0;}}
+.pp-err{margin:0;color:var(--red-ink);font-size:12.5px;}
+.pp-err[hidden]{display:none;}
+.pp-loading{margin:0;padding:4px 4px 8px;font-size:12.5px;}
+
+.pp-alts{display:flex;flex-direction:column;gap:8px;padding:10px;min-height:0;overflow:auto;scrollbar-width:thin;}
+.pp-alt{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;
+  transition:border-color .14s,box-shadow .14s;}
+.pp-alt.is-on{border-color:var(--ink-3);box-shadow:0 0 0 3px var(--field);}
+.pp-alt-h{display:flex;align-items:center;gap:8px;}
+.pp-alt-n{font:500 11px var(--mono);color:var(--ink-3);}
+.pp-alt-t{font-size:13px;font-weight:600;}
+.pp-alt-d{font-size:12.5px;line-height:1.55;}
+.pp-tags{display:flex;flex-wrap:wrap;gap:6px;}
+.pp-tag{padding:1px 7px;border-radius:6px;font-size:11px;font-weight:500;line-height:18px;}
+.pp-tag[data-t="ok"]{background:var(--green-bg);color:var(--green-ink);}
+.pp-tag[data-t="warn"]{background:var(--amber-bg);color:var(--amber-ink);}
+.pp-tag[data-t="bad"]{background:var(--red-bg);color:var(--red-ink);}
+.pp-alt-a{display:flex;gap:6px;margin-top:2px;}
+.pp-btn{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border-radius:8px;border:1px solid var(--line-2);background:var(--panel);
+  font:500 12px var(--sans);color:var(--ink);cursor:pointer;transition:background .12s,opacity .12s,transform .1s;}
+.pp-btn:hover{background:var(--field);}
+.pp-btn:active{transform:scale(.97);}
+.pp-btn:disabled{opacity:.45;cursor:default;}
+.pp-btn.pp-pri{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
+.pp-btn.pp-pri:hover{opacity:.88;}
+.pp-btn.pp-ghost{border-color:transparent;color:var(--ink-2);}
+
+.pp-cmp{display:flex;flex-direction:column;gap:10px;padding:12px;}
+.pp-cmp .pp-ph{padding:0 0 0 2px;}
+.pp-chips{display:flex;flex-wrap:wrap;gap:6px;}
+.pp-chip{display:inline-flex;align-items:center;height:24px;padding:0 9px;border-radius:12px;border:1px solid var(--line-2);background:transparent;
+  font:500 11.5px var(--sans);color:var(--ink-2);cursor:pointer;transition:background .12s,color .12s,border-color .12s;}
+.pp-chip:hover{border-color:var(--ink-3);color:var(--ink);}
+.pp-chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
+.pp-ta{display:block;width:100%;box-sizing:border-box;min-height:58px;max-height:160px;padding:9px 11px;border-radius:10px;border:1px solid var(--line-2);
+  background:var(--field);font:400 13px/1.5 var(--sans);color:var(--ink);resize:none;outline:none;transition:border-color .12s,box-shadow .12s,background .12s;}
+.pp-ta::placeholder{color:var(--ink-3);}
+.pp-ta:focus{background:var(--panel);border-color:var(--ink-3);box-shadow:0 0 0 3px var(--field);}
+.pp-cf{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.pp-hint{font-size:11.5px;color:var(--ink-3);}
+.pp-send{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border:0;border-radius:10px;background:var(--ink);color:var(--on-ink);
+  font:500 12.5px var(--sans);cursor:pointer;transition:opacity .12s,transform .1s;}
+.pp-send:hover:not(:disabled){opacity:.88;}
+.pp-send:disabled{opacity:.35;cursor:default;}
+
+/* the artifact: markers in a right margin; the tray sticks to the bottom of the viewer's scroller */
+.apv-stage.pp-doc{position:relative;padding-right:34px;}
+.pp-marks{position:absolute;top:0;right:4px;bottom:0;width:20px;pointer-events:none;}
+.pp-mk{position:absolute;right:0;display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:var(--amber-bg);
+  box-shadow:inset 0 0 0 1px var(--amber);color:var(--amber-ink);font:600 10.5px/1 var(--sans);pointer-events:auto;cursor:pointer;
+  transition:transform .2s cubic-bezier(.22,1,.36,1);}
+.pp-mk:hover,.pp-mk.is-hot{transform:scale(1.12);}
+.pp-tray{margin:14px 0 0;border-radius:12px;background:var(--panel);border:1px solid var(--line-2);box-shadow:var(--shadow-card);overflow:hidden;}
+.apv-body>.pp-tray{position:sticky;bottom:0;}
+.pp-tray[hidden]{display:none;}
+.pp-tray-h{display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 8px 4px 14px;}
+.pp-tray-h b{font-size:13px;font-weight:600;}
+.pp-tray-h span{font-size:12px;color:var(--ink-3);}
+.pp-tray-h .pp-fold{margin-left:auto;transition:transform .24s cubic-bezier(.22,1,.36,1);}
+.pp-tray.is-folded .pp-fold{transform:rotate(180deg);}
+.pp-tray.is-folded .pp-rows{display:none;}
+.pp-rows{display:flex;flex-direction:column;max-height:180px;overflow:auto;padding:0 6px 6px;}
+.pp-row{display:grid;grid-template-columns:20px 84px minmax(0,1fr) minmax(0,1.3fr) 24px;gap:10px;align-items:center;min-height:34px;
+  padding:3px 4px 3px 8px;border-radius:8px;font-size:12.5px;cursor:default;transition:background .12s;}
+.pp-tray-diff .pp-row{grid-template-columns:20px 84px minmax(0,1fr) minmax(0,1.6fr);}
+.pp-row:hover,.pp-row.is-hot{background:var(--field);}
+.pp-row.pp-flash{animation:pp-flash 1.2s ease;}
+@keyframes pp-flash{0%,40%{background:var(--amber-bg);}}
+.pp-n{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--amber-bg);box-shadow:inset 0 0 0 1px var(--amber);
+  color:var(--amber-ink);font:600 10.5px/1 var(--sans);}
+.pp-kind{justify-self:start;padding:1px 7px;border-radius:6px;font-size:11px;font-weight:500;line-height:18px;white-space:nowrap;}
+.pp-kind[data-k="disagree"]{background:var(--red-bg);color:var(--red-ink);}
+.pp-kind[data-k="alt"]{background:var(--blue-bg);color:var(--blue-ink);}
+.pp-kind[data-k="note"]{background:var(--violet-wash);color:var(--violet-ink);}
+.pp-kind[data-k="comment"]{background:var(--slate-bg);color:var(--slate-ink);}
+.pp-rq{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-rq.mono{font:400 11.5px var(--mono);}
+.pp-rt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-row .pp-x{opacity:0;}
+.pp-row:hover .pp-x,.pp-row .pp-x:focus-visible{opacity:1;}
+.pp-gone{color:var(--ink-3);font-style:italic;}
+.pp-tray-note{margin:0;padding:0 14px 8px;font-size:12px;color:var(--ink-2);}
+.pp-tray-f{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 12px;border-top:1px solid var(--line);}
+.pp-sp{flex:1;}
+.pp-hintl{flex:1;min-width:180px;margin:0;font-size:12px;color:var(--ink-3);}
+.pp-tray-diff{margin-top:12px;}
+@media (max-width:620px){
+  .pp-row{grid-template-columns:20px 80px minmax(0,1fr) 24px;}
+  .pp-tray-diff .pp-row{grid-template-columns:20px 80px minmax(0,1fr);}
+  .pp-rq{display:none;}
+}
+
+/* the chat: the composer's quote chip and a quoted user message */
+.ask-chip.ask-chip-quote{display:flex;align-items:flex-start;max-width:none;width:100%;font-family:var(--sans);font-size:12px;background:var(--panel);}
+.ask-chip-quote-m{flex:1;min-width:0;}
+.ask-chip-quote-k{font:500 11px/1.4 var(--sans);color:var(--ink-3);}
+.ask-chip-quote-t{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;color:var(--ink);white-space:pre-wrap;}
+.ask-chip-quote-t.mono{font:400 11.5px/1.5 var(--mono);}
+.ask-user-quote{align-self:flex-end;display:flex;flex-direction:column;gap:2px;max-width:min(78%,600px);padding:7px 12px 8px;border-radius:12px;
+  box-shadow:inset 0 0 0 1px var(--line);font-size:12.5px;line-height:1.5;}
+.ask-user-quote-h{font-size:11px;font-weight:500;color:var(--ink-3);}
+.ask-user-quote-t{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere;}
+
+@media (prefers-reduced-motion: reduce){
+  .pp-bar,.pp-pop,.pp-row.pp-flash,.pp-shimmer{animation:none;}
+  .pp-shimmer{color:var(--ink-3);background:none;}
+  .pp-mk,.pp-tray-h .pp-fold{transition:none;}
+}
+
+/* ===== Chat P6: home ===== */
+/* The Chat home (ui/public/chat/home*.mjs, intent.mjs): the heading on the flat --panel page, the quick actions, the
+   tabs (Needs you · Running · Recent chats · Workflows) with run tiles, the promos and the composer's intent chip.
+   Tokens only — every colour token is light-dark(), so both themes follow; emphasis is a wash or a chip, never a
+   coloured left edge; dots only behind graphs (the tile well, the workflow thumbnails). */
+/* No stacking context on the home (no isolation, no z-index): the Getting started "Ask Worca" tour rings .ask-input and
+   .ask-send in the hero slot, and its .guide-target (z 45) must reach above the fixed .guide-scrim (z 44). Every child
+   stays positioned (no z-index), so the containing blocks of their absolute descendants do not change. */
+.chat-home{position:relative;}
+.chat-home > *{position:relative;}
+.chat-home-title{margin:0 0 18px;text-align:center;color:var(--ink);font:600 30px/1.2 var(--sans);letter-spacing:-.01em;}
+.chat-home-body{container:chat-home / inline-size;display:flex;flex-direction:column;gap:24px;width:100%;max-width:1040px;margin:20px auto 32px;box-sizing:border-box;}
+.chat-ic{display:inline-grid;place-items:center;flex:none;line-height:0;}
+.chat-ic svg{width:100%;height:100%;}
+/* Quick actions: all 8 tiles (7 intents + More) in one row above a 640px container (8 × 72px + gaps), 4 per row
+   below it. auto-fit: a level-gated or switched-off tile collapses its track instead of leaving a hole. */
+.chat-home-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));gap:8px;}
+.chat-home-act{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-width:0;min-height:78px;padding:10px 6px;box-sizing:border-box;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);color:var(--ink);font:500 12px/1.25 var(--sans);text-align:center;cursor:pointer;}
+.chat-home-act:hover{border-color:var(--hover-outline);}
+.chat-home-act > .chat-ic{color:var(--ink-2);}
+.chat-home-act-l{max-width:100%;overflow-wrap:anywhere;}
+/* Tabs: one sliding underline under the selected tab (moved by home-lists.mjs moveInk). */
+.chat-home-tablist{position:relative;display:flex;gap:4px;box-shadow:inset 0 -1px 0 var(--line);overflow-x:auto;scrollbar-width:none;}
+.chat-home-tab{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 10px;border:0;background:none;color:var(--ink-2);font:500 13px/1 var(--sans);white-space:nowrap;cursor:pointer;}
+.chat-home-tab:hover,.chat-home-tab[aria-selected="true"]{color:var(--ink);}
+.chat-home-tab-n{min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);font:600 11px/18px var(--sans);text-align:center;}
+.chat-home-ink{position:absolute;left:0;bottom:0;width:0;height:2px;border-radius:2px;background:var(--ink);transition:transform .22s cubic-bezier(.22,1,.36,1),width .22s cubic-bezier(.22,1,.36,1);}
+.chat-home-panel{min-height:120px;padding-top:14px;}
+.chat-home-empty{margin:0;padding:28px 0;text-align:center;color:var(--ink-2);font-size:13px;}
+/* Run tiles: the title button stretches over the tile; Answer sits above that overlay. Pill and button text on the
+   tinted washes uses the strong inks (AA in light: --X-ink on --X-bg reads 3.3–3.9:1 there). */
+.chat-home-runs{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;}
+.chat-run-tile{position:relative;display:flex;flex-direction:column;gap:10px;min-width:0;padding:12px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);}
+.chat-run-tile:hover{border-color:var(--hover-outline);}
+.chat-run-tile.is-need{background:var(--amber-wash);border-color:var(--amber-line);}
+.chat-run-tile[aria-busy="true"]{opacity:.7;}
+/* The pill wraps under a long title rather than cutting either ("Waiting for your answer" is the status itself). */
+.chat-run-tile-head{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px 10px;min-width:0;}
+.chat-run-tile-tt{display:flex;flex:1 1 180px;flex-direction:column;gap:2px;min-width:0;}
+.chat-run-tile-open{max-width:100%;padding:0;border:0;background:none;color:var(--ink);font:600 13.5px/1.3 var(--sans);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+.chat-run-tile-open::after{content:"";position:absolute;inset:0;z-index:1;border-radius:inherit;}
+.chat-run-tile-open:focus-visible{outline:none;}
+.chat-run-tile:has(.chat-run-tile-open:focus-visible){outline:2px solid var(--ink);outline-offset:2px;}
+.chat-run-tile-sub{color:var(--ink-2);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-run-tile-pill{display:inline-flex;align-items:center;gap:6px;flex:none;max-width:100%;height:22px;padding:0 9px;box-sizing:border-box;border-radius:999px;font:500 11.5px/22px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-run-tile-pt{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.chat-run-tile-dot{width:6px;height:6px;flex:none;border-radius:50%;background:currentColor;}
+.chat-run-tile-pill.st-peach{background:var(--peach-bg);color:var(--h-peach-ink);}
+.chat-run-tile-pill.st-amber{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.chat-run-tile-pill.st-green{background:var(--green-bg);color:var(--green-ink);}
+.chat-run-tile-pill.st-red{background:var(--red-bg);color:color-mix(in srgb,var(--red-ink) 80%,var(--ink));}
+.chat-run-tile-pill.st-blue{background:var(--blue-bg);color:var(--h-blue-ink);}
+.chat-run-tile-pill.st-violet{background:var(--violet-bg);color:var(--violet-ink);}
+.chat-run-tile .run-flow-wrap.chat-run-tile-well{height:176px;margin:0;overflow:hidden;border-radius:calc(var(--r-card) - 4px);}
+.chat-run-tile.is-nograph .chat-run-tile-well{display:none;}
+.chat-run-tile-note{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--ink-2);font-size:12px;}
+.chat-run-tile-foot{display:flex;align-items:center;gap:10px;min-width:0;margin-top:auto;}
+.chat-run-tile-stats{flex:1;min-width:0;color:var(--ink-2);font:12px/1.3 var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-run-tile-answer{position:relative;z-index:2;height:28px;padding:0 12px;border:1px solid var(--amber-line);border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);font:600 12px/26px var(--sans);cursor:pointer;}
+.chat-run-tile-answer:hover{border-color:var(--amber);}
+/* Recent chats */
+.chat-home-chats{display:flex;flex-direction:column;gap:2px;margin:0;padding:0;list-style:none;}
+.chat-home-chat{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:10px;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.chat-home-chat:hover{background:var(--hover);}
+.chat-home-dot{width:8px;height:8px;flex:none;border-radius:50%;background:var(--line-2);}
+.chat-home-dot.is-think{background:var(--green);animation:chatHomePulse 1.4s ease-in-out infinite;}
+.chat-home-dot.is-wait{background:var(--amber);}
+.chat-home-dot.is-live{background:var(--violet);}
+@keyframes chatHomePulse{50%{opacity:.35;}}
+.chat-home-chat-col{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0;}
+.chat-home-chat-t{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-home-chat-m{color:var(--ink-2);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-home-chev{color:var(--ink-2);opacity:0;transition:opacity .15s;}
+.chat-home-chat:hover .chat-home-chev,.chat-home-chat:focus-visible .chat-home-chev{opacity:1;}
+/* Workflows: the Library's thumbnail in a dotted well; its white cards follow the theme here. */
+.chat-home-wfs{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;}
+.chat-home-wf{display:flex;flex-direction:column;gap:6px;min-width:0;padding:10px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.chat-home-wf:hover{border-color:var(--hover-outline);}
+.chat-home-wf-tb{display:grid;place-items:center;height:112px;overflow:hidden;border-radius:8px;background-color:var(--canvas-2);background-image:radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;}
+.chat-home-wf-tb svg{width:100%;height:100%;}
+.chat-home-wf-tb rect{fill:var(--panel);stroke:var(--w-void);}
+.chat-home-wf-n{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-home-wf-m{color:var(--ink-2);font-size:11.5px;}
+.chat-home-more-link{align-self:flex-start;margin-top:10px;padding:0;border:0;background:none;color:var(--blue-ink-strong);font:500 12.5px/1.4 var(--sans);cursor:pointer;}
+.chat-home-more-link:hover{text-decoration:underline;}
+/* Promos: static token gradients (a wash), no accent edge. */
+.chat-home-promos{display:flex;flex-direction:column;gap:10px;}
+.chat-home-promos-h{margin:0;color:var(--ink-2);font:600 12px/1.3 var(--sans);letter-spacing:.06em;text-transform:uppercase;}
+.chat-home-promo-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;}
+.chat-home-promo{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;padding:14px;border:1px solid var(--line);border-radius:var(--r-card);color:var(--ink);}
+.chat-home-promo[data-promo="workflows"]{background:linear-gradient(135deg,var(--violet-bg),var(--panel) 75%);}
+.chat-home-promo[data-promo="away"]{background:linear-gradient(135deg,var(--amber-bg),var(--panel) 75%);}
+.chat-home-promo[data-promo="schedules"]{background:linear-gradient(135deg,var(--blue-bg),var(--panel) 75%);}
+.chat-home-promo-t{font-size:13.5px;font-weight:600;}
+.chat-home-promo-d{color:var(--ink-2);font-size:12px;}
+.chat-home-promo-b{margin-top:4px;height:28px;padding:0 12px;border:1px solid var(--line-2);border-radius:999px;background:var(--panel);color:var(--ink);font:500 12px/26px var(--sans);cursor:pointer;}
+.chat-home-promo-b:hover{border-color:var(--hover-outline);}
+/* The composer's intent chip (in P1's lead row). */
+.chat-intent{display:inline-flex;align-items:center;gap:6px;flex:none;max-width:220px;height:26px;padding:0 3px 0 9px;box-sizing:border-box;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink);font:500 12px/1 var(--sans);}
+.chat-intent-l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-intent-x{display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:none;color:inherit;cursor:pointer;}
+.chat-intent-x:hover{background:color-mix(in srgb,var(--violet) 18%,transparent);}
+:is(.chat-home-act,.chat-run-tile-answer,.chat-home-tab-n,.chat-run-tile-note)[hidden]{display:none;}
+:is(.chat-home-act,.chat-home-tab,.chat-home-panel,.chat-home-chat,.chat-home-wf,.chat-home-promo-b,.chat-run-tile-answer,.chat-intent-x,.chat-home-more-link):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* The tab strip scrolls sideways (overflow-x:auto clips y too, at the tabs' own 36px): the ring goes inside the tab. */
+.chat-home-tab:focus-visible{outline-offset:-2px;border-radius:6px;}
+/* A long rotating example never wraps to a clipped second line in the one-row hero composer (390px). */
+.chat-hero-slot .ask-input::placeholder{white-space:nowrap;overflow:hidden;}
+@container chat-home (max-width:640px){.chat-home-actions{grid-template-columns:repeat(4,minmax(0,1fr));}.chat-home-promo-row{grid-template-columns:1fr;}}
+@container chat-home (max-width:440px){.chat-home-runs{grid-template-columns:1fr;}.chat-home-wfs{grid-template-columns:repeat(2,minmax(0,1fr));}.chat-home-act{min-height:64px;}}
+@media (max-width:760px){.chat-home-title{font-size:24px;margin-bottom:14px;}}
+@media (prefers-reduced-motion: reduce){
+  .chat-home-ink,.chat-home-chev{transition:none;}
+  .chat-home-dot.is-think{animation:none;}
+}
+
+/* `.branches-new > label{display:block}` would otherwise win over `.switch-row{display:flex}` and collapse the switch. */
+.branches-new > label.same-src-row{display:flex;margin:8px 0 0;}
+#sameAsSourceHint[hidden]{display:none;}   /* .hint{display:block} beats the UA [hidden] rule */
+#featureBranch:disabled{opacity:.65;cursor:not-allowed;}   /* no global .input:disabled rule exists */

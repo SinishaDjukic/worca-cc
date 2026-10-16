@@ -34,7 +34,7 @@ import { clearStaleIndexLock, staleIndexLockNote } from './git-lock.mjs';
 import { claimPipelineCommand, discardPendingPipelineCommands, controlCheckIntervalMs } from './pipeline-commands.mjs';
 import {
   assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
-  retainedWorkPatchName,
+  retainedWorkPatchName, sizeOfChange,
 } from './results.mjs';
 import { resolveTaskInput, retryWriteback } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
@@ -76,10 +76,10 @@ import {
   isValidSourceRef, snapshotWorktreePatch, listLocalBranches, worktreeHead, deleteBranchIfAt,
   reusedBranchBase, isAncestor,
 } from './worktree.mjs';
-import { syncBaseForRun, ensureLocalBranch, fetchRemote, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS } from './git-sync.mjs';
+import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS } from './git-sync.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
-import { classifyError, rateLimitHint, brokerHint, freeDailyHint } from './recoverable-error.mjs';
+import { classifyError, rateLimitHint, brokerHint, freeDailyHint, limitResetAt } from './recoverable-error.mjs';
 import { CODEX_DEFAULT_MODEL, CODEX_COMMAND_RULE_REACH } from './engines/codex.mjs';
 import { CURSOR_PROJECT_FILES, cursorOwns, excludeLine } from './engines/cursor.mjs';
 import { helperEngineFor } from './model-env.mjs';
@@ -103,6 +103,7 @@ import { recordRunMetrics } from './metrics/record.mjs';
 // per-run state, and the off-policy findings the run log names at start.
 import { resolveProjectPolicy, resolveWorkspacePolicy } from './policy/sync.mjs';
 import { fieldsForRun, effectiveCap, deviationsFor, mcpDeviations } from './policy/effective.mjs';
+import { overlayStepModels } from './run-overlay.mjs';
 import { writePolicyState, hasPipelineOverride, readTotalAck } from './policy/state.mjs';
 import { installedPluginsMap, WORCA_VERSION as POLICY_WORCA_VERSION } from './policy/local.mjs';
 import { readSettings as readRawSettings } from './settings.mjs';
@@ -130,6 +131,7 @@ import { redactSecrets } from '../shared/workspace-map/redact.mjs';
 import { effectiveNightConfig } from './night/effective.mjs';
 import { nightState, decideDelayMs, nightAnchorMs, runAllowed } from './night/activation.mjs';
 import { decideAsk } from './night/decider.mjs';
+import { PLAN_ASK_KIND } from './shape/run.mjs';
 import { runNightAnalysis, readMemoryText } from './night/analysis.mjs';
 import { resolveDeciderPair } from './night/decider-model.mjs';
 import { writeNightDecision, countNightDecisions, nightCounts, nightGateCycles, nightSpendSinceUsd } from './night/store.mjs';
@@ -139,6 +141,7 @@ import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../shared/mcp-tool
 import { usageLimitSwitches, engineList, engineLabel } from '../shared/engine-switch.mjs';
 import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
+import { shapeRecordFrom, buildShapeStats } from './shape/stats.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -208,9 +211,14 @@ function hasPermissionRules(rules) {
   return !!rules && Object.values(rules).some((a) => Array.isArray(a) && a.length);
 }
 
+/** #620: the `branch.resolves` marker of a Resolve-in-a-pipeline run, or null. */
+const validResolves = (r) => (r && typeof r === 'object' && typeof r.runId === 'string' && r.runId
+  ? { runId: r.runId, member: typeof r.member === 'string' && r.member ? r.member : null } : null);
+
 /** The parenthetical of a workspace member's teardown audit line. Scan + kept wording is
  *  unchanged; an unchanged member's dropped branch says why. */
-function memberBranchNote(branch, { readOnly, dropped }) {
+function memberBranchNote(branch, { readOnly, dropped, merged = false }) {
+  if (merged) return `deleted branch \`${branch}\` — merged back into its source`;
   if (readOnly) return `deleted branch \`${branch}\``;
   if (dropped) return `deleted branch \`${branch}\` — no changes`;
   return `kept branch \`${branch}\``;
@@ -853,7 +861,15 @@ export class RunHarness extends EventEmitter {
     this.branchOpts = {
       source: (this.opts.branch && this.opts.branch.source) || null,
       feature: (this.opts.branch && this.opts.branch.feature) || null,
+      // #620: a "Resolve in a pipeline" run names the run it resolves (server-only, never from HTTP).
+      resolves: validResolves(this.opts.branch && this.opts.branch.resolves),
     };
+    // Run on the source branch (branch.sameAsSource, explicit — never inferred from feature === source):
+    // the run still works on a hidden, auto-named branch (a typed feature name is ignored) and
+    // fast-forwards `source` onto it at teardown (_mergeBack).
+    if (this.opts.branch && this.opts.branch.sameAsSource === true) {
+      this.branchOpts = { ...this.branchOpts, feature: null, sameAsSource: true };
+    }
     // Sync before run (#527): absent → disabled, so the CLI, resume and every existing caller
     // keep today's behaviour; the UI server passes per-member options on a fresh start.
     this.syncOpts = runSyncOptions(this.opts.sync);
@@ -895,6 +911,8 @@ export class RunHarness extends EventEmitter {
     this.pauseReason = null;                 // WHY the run paused: 'cost_pipeline'|'cost_total'|'error'|<usage-limit line>|null
     this.pauseDetail = null;                 // the human detail behind pauseReason ('error': the clipped message)
     this.limitEngine = null;                 // 'usage_limit' only: the engine whose own limit it is (_pauseFor)
+    this.limitResetAt = null;                // ISO: when the usage limit behind this pause resets (D3)
+    this._autoLimitResumes = 0;              // D7: automatic limit resumes in a row (reset by a manual resume or a finished step)
     // Team metrics (§4.4 interventions). Resume runs on a NEW instance, so the counters are
     // stamped into the persisted resume point at every pause and re-seeded in resume().
     // pausedMs: time the run spent parked (paused, or dead between a crash and its resume);
@@ -911,6 +929,12 @@ export class RunHarness extends EventEmitter {
     // it back from its resume point — the resume sites pass no run options (B10). The API and the
     // CLI validated already; this throw is the programming-error backstop (never a 400).
     this.memoryScope = this.opts.memoryScope || this.resumeOpts?.resumePoint?.memoryScope || null;
+    // Shape it first (spec D5): { perspectives } for a shaped run, null otherwise. NOT `this.shape` — the
+    // orchestrator's Auto path already uses "shape" for the classifier's shape.
+    this.runShape = this.opts.shape || this.resumeOpts?.resumePoint?.shape || null;
+    // Shaper D28: the recorded half of shapeStats (questions, revises, score); null on an unshaped run.
+    // A resumed run reads it back from its row (shape_stats).
+    this._shapeRec = this.runShape ? shapeRecordFrom(safeParse(this.resumeOpts?.row?.shape_stats)) : null;
     {
       const wf = this.resumeOpts?.resumePoint?.workflowId || this.workflowId;
       const reason = validateMemoryScope({ workflowId: wf, memoryScope: this.memoryScope, isWorkspace: this.isWorkspace });
@@ -988,6 +1012,7 @@ export class RunHarness extends EventEmitter {
       pauseReason: null,   // mirrors this.pauseReason so getState() (a deep clone of state) carries it live
       pauseDetail: null,   // mirrors this.pauseDetail
       limitEngine: null,   // mirrors this.limitEngine: the engine whose usage limit paused the run
+      limitResetAt: null,  // mirrors this.limitResetAt: when that usage limit resets (ISO)
       // Sub-agent lifecycle records (rides the existing `state` snapshot; mirrored to
       // the sub_agents table). Each: { id, label, nodeId, stepIndex, cycle, stepKey,
       // status, startedAt, finishedAt, durationMs?, tokens?, costUsd? };
@@ -1166,6 +1191,7 @@ export class RunHarness extends EventEmitter {
     if (pq.kind === 'workflow') line = `Workflow proposal **${d === 'decline' ? 'declined' : d || 'answered'}**`;
     else if (pq.kind === 'gate') line = `Gate **${d || 'answered'}**`;
     else if (pq.kind === 'recovery') line = `Recovery decision **${d || 'answered'}**`;
+    else if (pq.kind === PLAN_ASK_KIND) line = `Plan approval **${d || 'answered'}**`;
     if (!line) return;
     appendAudit(this.pipeline.dir, `${line}${byActor(by)}.`, { actor: by }).catch(() => {});
   }
@@ -1181,14 +1207,16 @@ export class RunHarness extends EventEmitter {
    * rule every _pauseFor site follows). Mirrored onto state so every
    * `state` event and getState() carry it. @returns {boolean} true when recorded
    */
-  _setPauseReason(reason, detail = null, limitEngine = null) {
+  _setPauseReason(reason, detail = null, limitEngine = null, limitResetAt = null) {
     if (this.pauseReason) return false;
     this.pauseReason = String(reason);
     this.pauseDetail = detail == null || detail === '' ? null : String(detail);
     this.limitEngine = limitEngine || null;
+    this.limitResetAt = limitResetAt || null;
     this.state.pauseReason = this.pauseReason;
     this.state.pauseDetail = this.pauseDetail;
     this.state.limitEngine = this.limitEngine;
+    this.state.limitResetAt = this.limitResetAt;
     return true;
   }
 
@@ -1196,9 +1224,11 @@ export class RunHarness extends EventEmitter {
     this.pauseReason = null;
     this.pauseDetail = null;
     this.limitEngine = null;
+    this.limitResetAt = null;
     this.state.pauseReason = null;
     this.state.pauseDetail = null;
     this.state.limitEngine = null;
+    this.state.limitResetAt = null;
   }
 
   /**
@@ -1246,7 +1276,15 @@ export class RunHarness extends EventEmitter {
     const conn = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? this._limitConnection(nc) : null;
     const limitEngine = conn?.kind === 'signin' ? (this.claude.engine || 'claude') : null;
     const limitText = conn && conn.kind !== 'signin' && !detail ? `${connectionLabel({ connection: conn })} limit — ${text}` : text;
-    this._setPauseReason(reason, limitText, limitEngine);
+    // D3/D11: when the limit comes back, read from the RAW message (`text` may be the OpenRouter
+    // hint or carry a connection label). Independent of limitEngine: a shell/setup-site limit has none.
+    const resetMs = reason === REASON.USAGE_LIMIT ? limitResetAt(err) : null;
+    const recorded = this._setPauseReason(reason, limitText, limitEngine,
+      resetMs != null ? new Date(resetMs).toISOString() : null);
+    // First writer wins: a sibling's unwind that lost the race logs nothing.
+    if (recorded && reason === REASON.USAGE_LIMIT && resetMs == null) {
+      this._log(where, 'info', 'usage-limit reset time not recognised', meta);
+    }
     let audit;
     if (reason === REASON.ERROR) {
       audit = ctx
@@ -1655,6 +1693,7 @@ export class RunHarness extends EventEmitter {
       if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
         await this._teardownRunRoot().catch(() => {});
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
+        await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
       }
       await this.logWriter.close().catch(() => {}); // flush + stop timer (last, to capture teardown logs)
     }
@@ -1774,6 +1813,9 @@ export class RunHarness extends EventEmitter {
       };
       // The saved point carries the pause that produced it; a resumed run is running.
       this._clearPauseReason();
+      // D7: only a resume the server made for a usage limit continues the streak.
+      const prevAuto = Number.isSafeInteger(rp.autoLimitResumes) ? rp.autoLimitResumes : 0;
+      this._autoLimitResumes = this.opts.autoLimitResume ? prevAuto + 1 : 0;
       this.state.lastAction = null;
       this._recordAction('resume', this.opts.resumedBy || null);
       // Rehydrate the run's selection BEFORE re-resolving so resume enforces the
@@ -1951,6 +1993,7 @@ export class RunHarness extends EventEmitter {
       if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
         await this._teardownRunRoot().catch(() => {});
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
+        await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
       }
       await this.logWriter.close().catch(() => {}); // flush + stop timer (last, to capture teardown logs)
     }
@@ -2176,7 +2219,10 @@ export class RunHarness extends EventEmitter {
     } finally {
       this._stopHeartbeat();
       // resume()'s teardown on a stop: commit the work onto the kept branch, remove the checkout.
-      if (reattached) await this._teardownRunRoot().catch(() => {});
+      if (reattached) {
+        await this._teardownRunRoot().catch(() => {});
+        await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));   // #620
+      }
       await this.logWriter.close().catch(() => {}); // last, to capture the teardown's log lines
     }
   }
@@ -2264,6 +2310,14 @@ export class RunHarness extends EventEmitter {
    */
   async _setupRunRoot({ replay = false } = {}) {
     this.state.branches = this.state.branches || {};      // belt-and-braces for resumed/legacy shapes
+    // ONE flag per run. A resume passes no opts.branch: a replay reads it back from any persisted
+    // member record (pending or final), so every member — and the resolvers below — agree.
+    if (!this.branchOpts.sameAsSource
+        && [this.state.branch, ...Object.values(this.state.branches)].some((b) => b && b.sameAsSource === true)) {
+      this.branchOpts = { ...this.branchOpts, feature: null, sameAsSource: true };
+    }
+    // Never for a read-only Workspace scan or a memory defragment: neither lands work anywhere.
+    const sameAsSource = this.branchOpts.sameAsSource === true && !this._isWorkspaceScan() && !this.memoryScope;
     // A resume REPLAY keeps the mode the row recorded — never the live flag — unless
     // the paused run never got far enough to record one (then this IS run()'s read).
     if (!replay || !this._modeRecorded) this.runRootMode = runRootMode(); // §10 flag, read ONCE, here, per pipeline
@@ -2323,7 +2377,16 @@ export class RunHarness extends EventEmitter {
               && sanitizeBranchName(featureRaw) === sanitizeBranchName(source)) {
             throw markTerminal(new Error(`featureBranch and sourceBranch both resolve to "${sanitizeBranchName(source)}" — they must differ`));
           }
-          const synced = await this._syncMemberBase(m, source, { replay, fellBack });
+          const synced = await this._syncMemberBase(m, source, { replay, fellBack, sameAsSource });
+          // Run on the source branch: the work is fast-forwarded into `source` at teardown, so it must
+          // be a real local branch — never a workspace member's silent fallback, a tag or a SHA.
+          // isSafeBranchName: the merge back's syncStatus refuses any other name (bad-base), after all the work.
+          if (sameAsSource && (fellBack || !isSafeBranchName(source)
+              || !(await listLocalBranches(resolve(m.projectDir))).includes(source))) {
+            throw markTerminal(new Error(fellBack
+              ? `Run on the source branch: ${m.projectName || m.projectKey} has no branch "${(m.branch && m.branch.source) || this.branchOpts.source}" to commit onto`
+              : `Run on the source branch needs a local branch to commit onto; "${source}" is not one (a tag, a commit, a missing branch, or a name with characters worca will not fast-forward)`));
+          }
           const startRef = synced.startRef || (pending && pending.startRef) || null;
           // createWorktree's feature == source guard compares NAMES; a startRef SHA slips past it,
           // and feature `dev` off source `dev` would reuse the shared `dev` itself.
@@ -2364,7 +2427,8 @@ export class RunHarness extends EventEmitter {
             ...(startRef ? { startRef } : {}),
             ...(baseMoved ? { baseMoved: true } : {}),
             ...(reuseBase ? { diffBase: reuseBase.sha, diffBaseFrom: reuseBase.against } : {}),
-            ...(syncRecord ? { sync: syncRecord } : {}) };
+            ...(syncRecord ? { sync: syncRecord } : {}),
+            ...(sameAsSource ? { sameAsSource: true } : {}) };
           const info = await createWorktree({
             projectDir: resolve(m.projectDir),              // the REAL dir: git runs here
             pipelineId: this.pipeline.id,
@@ -2406,7 +2470,9 @@ export class RunHarness extends EventEmitter {
                                                 ...(baseSha ? { baseSha } : {}),
                                                 ...(!freshStart && diffBase ? { diffBase, diffBaseFrom: recreated ? null : (reuseBase?.against || null) } : {}),
                                                 ...(keptStart ? { startRef: keptStart } : {}),
-                                                ...(syncRecord ? { sync: syncRecord } : {}) };
+                                                ...(syncRecord ? { sync: syncRecord } : {}),
+                                                ...(this.branchOpts.resolves ? { resolves: this.branchOpts.resolves } : {}),
+                                                ...(sameAsSource ? { sameAsSource: true } : {}) };
           const short = (s) => String(s).slice(0, 10);
           if ((freshStart || recreated) && diffBase && (baseMoved || (checkoutHead && diffBase !== checkoutHead))) {
             await appendAudit(this.pipeline.dir, `Diff base for \`${m.projectKey}\` moved to the run's start \`${short(diffBase)}\`.`).catch(() => {});
@@ -2523,6 +2589,9 @@ export class RunHarness extends EventEmitter {
     let metricsRecord = null;
     try { const tm = readTeamMetricsPrefs(projectKey(this.projectDir)); metricsRecord = tm ? tm.record !== false : null; } catch { /* optional */ }
     const stepModels = Object.entries(this.stepModels || {}).map(([role, sel]) => ({ role, model: sel?.model }));
+    // A per-run overlay's picks (the Ask run card) run on their nodes: an off-policy one is recorded like a role's
+    // (the manifest is in state before this runs, and restored on resume; deviationsFor counts a model once).
+    stepModels.push(...overlayStepModels(this.state && this.state.stepper));
     const deviations = deviationsFor(fields, {
       guardrailsId: this.guardrailsId, guardrailSet: this.guardrails ? { settings: this.guardrails } : null,
       stepModels, installed, worcaVersion: POLICY_WORCA_VERSION, metricsRecord,
@@ -3987,7 +4056,8 @@ export class RunHarness extends EventEmitter {
     const namedOk = !!named && (await isValidSourceRef(dir, named));
     const source = namedOk ? named : await resolveDefaultBranch(dir);
     const fellBack = !!named && !namedOk;          // _syncMemberBase never syncs a fallback (D9)
-    const feature = (m.branch && m.branch.feature) || this.branchOpts.feature || null;
+    const feature = this.branchOpts.sameAsSource ? null
+      : ((m.branch && m.branch.feature) || this.branchOpts.feature || null);
     const featureRaw = feature
       ? sanitizeBranchName(`${feature}-${slugify(m.projectName)}`)
       : suggestBranchName({
@@ -4117,18 +4187,19 @@ export class RunHarness extends EventEmitter {
     // so it rides neither the retained-work snapshot nor an outlived checkout.
     await removeInjectedPaths(info.worktreeDir, injected);
     const retained = await this._recordCommitFailure(commit, { info, branchRecord: this.state.branch });
+    const merged = await this._mergeBack(key, info, this.state.branch, { retained });
     if (retained) {
       await this._snapshotRetained(info);
       this.workDir = this.projectDir;
       await this._persist().catch(() => {});
       return;
     }
-    // branch:null — the branch is always kept (done/error/stopped alike); only the
-    // disposable checkout is removed.
+    // branch:null — the branch is kept (done/error/stopped alike), except after a merge back:
+    // the source then holds the same commit and the hidden branch is redundant.
     const res = await removeWorktree({
       projectDir: this.projectDir,
       worktreeDir: info.worktreeDir,
-      branch: null,
+      branch: merged ? info.branch : null,
       force: true,
     });
     for (const s of res.steps.filter((x) => !x.ok)) {
@@ -4137,13 +4208,13 @@ export class RunHarness extends EventEmitter {
     if (this.pipeline) {
       await appendAudit(
         this.pipeline.dir,
-        `Worktree removed at \`${info.worktreeDir}\` (kept branch \`${info.branch}\`).`,
+        `Worktree removed at \`${info.worktreeDir}\` (${merged ? 'deleted' : 'kept'} branch \`${info.branch}\`).`,
       ).catch(() => {});
     }
     // Reflect the post-teardown reality in state for any late observer.
     if (this.state.branch) {
       this.state.branch.worktreeRemoved = true;
-      this.state.branch.branchKept = true;
+      this.state.branch.branchKept = !merged;
     }
     this.workDir = this.projectDir;
     await this._persist().catch(() => {});
@@ -4170,32 +4241,35 @@ export class RunHarness extends EventEmitter {
       const commit = await this._commitWork(info, branchRecord,
         { excludePathspecs: this._excludePathspecs(projectKey_), forcePaths: ec.forced, unstagePaths: ec.owned });
       await removeInjectedPaths(info.worktreeDir, this._injectedFor(projectKey_, info.worktreeDir));
-      if (await this._recordCommitFailure(commit, { key: projectKey_, info, branchRecord })) {
+      const retained = await this._recordCommitFailure(commit, { key: projectKey_, info, branchRecord });
+      const merged = await this._mergeBack(projectKey_, info, branchRecord, { retained });
+      if (retained) {
         anyRetained = true;
         await this._snapshotRetained(info, projectKey_);
         this.workDirs.delete(projectKey_);
         continue;
       }
       const readOnly = this._isWorkspaceScan();   // D5: a scan leaves no branch behind
+      const dropBranch = readOnly || merged;
       const res = await removeWorktree({
         projectDir: resolve(this.memberByKey.get(projectKey_)?.projectDir || this.projectDir),
         worktreeDir: info.worktreeDir,
-        branch: readOnly ? info.branch : null,
+        branch: dropBranch ? info.branch : null,
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
         this._log('worktree', 'warn', `teardown ${projectKey_} ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
       }
-      const dropped = !readOnly && await this._dropUnchangedMemberBranch(projectKey_, info, branchRecord);
+      const dropped = !dropBranch && await this._dropUnchangedMemberBranch(projectKey_, info, branchRecord);
       if (this.pipeline) {
         await appendAudit(
           this.pipeline.dir,
-          `Worktree \`${projectKey_}\` removed at \`${info.worktreeDir}\` (${memberBranchNote(info.branch, { readOnly, dropped })}).`,
+          `Worktree \`${projectKey_}\` removed at \`${info.worktreeDir}\` (${memberBranchNote(info.branch, { readOnly, dropped, merged })}).`,
         ).catch(() => {});
       }
       if (branchRecord) {
         branchRecord.worktreeRemoved = true;
-        branchRecord.branchKept = !readOnly && !dropped;
+        branchRecord.branchKept = !dropBranch && !dropped;
       }
       this.workDirs.delete(projectKey_);
     }
@@ -4206,6 +4280,62 @@ export class RunHarness extends EventEmitter {
     this.branchInfo = null;
     this.workDir = this.projectDir;
     await this._persist().catch(() => {});
+  }
+
+  /**
+   * Run on the source branch (branch.sameAsSource): fast-forward the member's source to the hidden
+   * branch this run committed on — only for a `done` run whose work committed (D4). Records
+   * branchRecord.mergeBack ({ merged:true, sha, commits, at } | { merged:false, kind, reason, at }) and
+   * returns true when the source now holds the work (the caller then deletes the hidden branch).
+   * false, recording nothing, for every other run. Never throws: a throw in the teardown loop would
+   * skip its final _persist.
+   */
+  async _mergeBack(key, info, branchRecord, { retained = false } = {}) {
+    if (!branchRecord || branchRecord.sameAsSource !== true || this._isWorkspaceScan()) return false;
+    const source = branchRecord.source;
+    const at = new Date().toISOString();
+    const notMerged = async (kind, reason, paths = null) => {
+      // paths: the worktree(s) holding the source checked out (kind in-use): the banner's commands run there.
+      branchRecord.mergeBack = { merged: false, kind, reason, at, ...(Array.isArray(paths) && paths.length ? { paths } : {}) };
+      this._log('worktree', 'warn', `${key}: not merged back into ${source} (${kind}): ${reason}`);
+      if (this.pipeline) {
+        await appendAudit(this.pipeline.dir, `Not merged back into \`${source}\` (\`${key}\`): ${reason}. The work stays on \`${info.branch}\`.`).catch(() => {});
+      }
+      return false;
+    };
+    try {
+      if (retained) return await notMerged('commit-failed', 'the run\'s last changes could not be committed');
+      // The PROJECT dir (the user's checkout), never the run worktree: syncStatus's "checked out here"
+      // is that dir's own HEAD.
+      const dir = resolve(this.memberByKey.get(key)?.projectDir || this.projectDir);
+      const tip = await this._git(['rev-parse', '--verify', '--quiet', `refs/heads/${info.branch}^{commit}`], { cwd: dir, ignoreAbort: true });
+      const to = tip.ok ? tip.stdout.trim() : '';
+      if (this.state.status !== 'done') {
+        // A run that ended before committing anything left nothing behind: the source already holds all of it
+        // (merged, 0 commits), so no "not merged back" warning and the caller drops the empty hidden branch.
+        const ahead = to ? await this._git(['rev-list', '--count', `refs/heads/${source}..${to}`], { cwd: dir, ignoreAbort: true }) : null;
+        if (ahead && ahead.ok && ahead.stdout.trim() === '0') {
+          branchRecord.mergeBack = { merged: true, sha: to, commits: 0, at };
+          this._log('worktree', 'info', `${key}: nothing to merge back into ${source} (the run ended ${this.state.status || 'early'} with no commits)`);
+          if (this.pipeline) {
+            await appendAudit(this.pipeline.dir, `Nothing to merge back into \`${source}\` (\`${key}\`): the run made no commits.`).catch(() => {});
+          }
+          return true;
+        }
+        return await notMerged('not-done', `the run ended ${this.state.status || 'early'}`);
+      }
+      if (!to) return await notMerged('failed', `could not read ${info.branch}`);
+      const r = await fastForwardTo(dir, { base: source, to, message: `worca: fast-forward ${source} to run ${this.pipeline?.id || ''}` });
+      if (!r.ok) return await notMerged(r.kind, r.error, r.paths);
+      branchRecord.mergeBack = { merged: true, sha: r.to, commits: r.commits, at };
+      this._log('worktree', 'info', `${key}: merged back into ${source} (${r.commits} commit(s), now ${r.to.slice(0, 10)})`);
+      if (this.pipeline) {
+        await appendAudit(this.pipeline.dir, `Merged back: \`${source}\` fast-forwarded to \`${r.to.slice(0, 10)}\` (${r.commits} commit(s), \`${key}\`).`).catch(() => {});
+      }
+      return true;
+    } catch (err) {
+      return notMerged('failed', (err && err.message) || String(err));
+    }
   }
 
   /**
@@ -4277,6 +4407,7 @@ export class RunHarness extends EventEmitter {
       // (4) remove what worca-cc injected, so nothing can be committed dangling or
       // outlive the run root. An engine config file worca did not write stays (_injectedFor).
       await removeInjectedPaths(wt, this._injectedFor(key, wt));
+      const merged = await this._mergeBack(key, info, branchRecord, { retained });
       if (retained) {
         await this._snapshotRetained(info, key);
         retainedMembers.push({
@@ -4291,27 +4422,29 @@ export class RunHarness extends EventEmitter {
         continue;
       }
       // (5) remove the checkout. The branch is kept — except on a read-only Workspace scan
-      // (D5), and except for a workspace member this run never changed ("affected only").
+      // (D5), a workspace member this run never changed ("affected only"), and after a merge
+      // back (the source now holds the same commit).
       const readOnly = this._isWorkspaceScan();   // D5: a scan leaves no branch behind
+      const dropBranch = readOnly || merged;
       const res = await removeWorktree({
         projectDir: resolve(this.memberByKey.get(key)?.projectDir || this.projectDir),
         worktreeDir: wt,
-        branch: readOnly ? info.branch : null,
+        branch: dropBranch ? info.branch : null,
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
         this._log('worktree', 'warn', `teardown ${key} ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
       }
-      const dropped = !readOnly && await this._dropUnchangedMemberBranch(key, info, branchRecord);
+      const dropped = !dropBranch && await this._dropUnchangedMemberBranch(key, info, branchRecord);
       if (this.pipeline) {
         await appendAudit(
           this.pipeline.dir,
-          `Worktree \`${key}\` removed at \`${wt}\` (${memberBranchNote(info.branch, { readOnly, dropped })}).`,
+          `Worktree \`${key}\` removed at \`${wt}\` (${memberBranchNote(info.branch, { readOnly, dropped, merged })}).`,
         ).catch(() => {});
       }
       if (branchRecord) {
         branchRecord.worktreeRemoved = true;
-        branchRecord.branchKept = !readOnly && !dropped;
+        branchRecord.branchKept = !dropBranch && !dropped;
       }
       this.workDirs.delete(key);
     }
@@ -4465,6 +4598,12 @@ export class RunHarness extends EventEmitter {
     if (!kept) return;
     // _teardownRunRoot already _persist()ed the pre-checkout branch record. keepAfterRun stamped the
     // checkout with a targeted UPDATE, so mirror it into memory: a later _persist() must not erase it.
+    await this._mirrorBranchRecords();
+  }
+
+  /** A targeted UPDATE (checkout.mjs updateBranchRecords) wrote branch records: copy them into memory so a later
+   *  _persist() (writeState re-serializes branch / workspace_meta) never erases them. */
+  async _mirrorBranchRecords() {
     const { findPipelineRowById } = await import('./artifacts.mjs');
     const row = findPipelineRowById(this.state.id);
     const parse = (t) => { try { return typeof t === 'string' ? JSON.parse(t) : t; } catch { return null; } };
@@ -4475,6 +4614,14 @@ export class RunHarness extends EventEmitter {
       const br = parse(row.branch);
       if (br) this.state.branch = br;
     }
+  }
+
+  /** #620 (D9): after teardown the branch holds the run's final commit; check it against its fetched base. */
+  async _checkBaseAfterRun() {
+    if (this._isWorkspaceScan() || !this.state.id || !['done', 'stopped', 'error'].includes(this.state.status)) return;
+    const { afterRunBaseCheck } = await import('./base-conflicts.mjs');   // lazy, like checkout.mjs
+    await afterRunBaseCheck(this.state.id, { log: (m) => this._log('git', 'info', m) });
+    await this._mirrorBranchRecords();
   }
 
   /** A Workspace scan run (wf_workspace_scan on a workspace target) is READ-ONLY: nothing is
@@ -4527,7 +4674,7 @@ export class RunHarness extends EventEmitter {
     const primary = this.isWorkspace ? this.state.branches?.[this.members[0]?.projectKey] : null;
     this.state.branch.branchKept = primary && typeof primary.branchKept === 'boolean'
       ? primary.branchKept
-      : !this._isWorkspaceScan();
+      : !this._isWorkspaceScan() && this.state.branch.mergeBack?.merged !== true;   // merged back: the hidden branch is gone
     if (primary?.branchDeleted) this.state.branch.branchDeleted = primary.branchDeleted;
   }
 
@@ -4996,7 +5143,7 @@ export class RunHarness extends EventEmitter {
    * Freezes the active-time clock while blocked on the user (active-time-only).
    * @returns {Promise<any>} the answer payload
    */
-  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow,
+  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow, plan,
     askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
@@ -5029,6 +5176,7 @@ export class RunHarness extends EventEmitter {
       ...(deliveryNo != null ? { deliveryNo } : {}),
       ...(holdNo != null ? { holdNo } : {}),
       ...(workflow !== undefined ? { workflow } : {}),
+      ...(plan !== undefined ? { plan } : {}),
       // The ask-form envelope (spec §4, ruling X1) rides the EXISTING 'question'
       // frame — no new transport, no new slot. `id` (already emitted above) is the
       // ANSWER token; `askId` is the route-safe file token and they are never
@@ -5044,7 +5192,8 @@ export class RunHarness extends EventEmitter {
     try {
       // A night-eligible --yes run hands the ask to night mode: it is answered through the
       // same pendingQuestion + answer() path below (delay 0), so it is attributed and audited.
-      if (this.auto && !this._nightOwnsAuto({ kind, origin })) {
+      // A plan approval needs a person (spec D2): --yes never answers it and Away mode never decides it.
+      if (this.auto && kind !== PLAN_ASK_KIND && !this._nightOwnsAuto({ kind, origin })) {
         if (kind === 'recovery') {
           // Auto mode handles recovery in _recover before ever calling _ask;
           // this is a defensive fallback so an auto run can never hang. Giving up
@@ -5074,10 +5223,10 @@ export class RunHarness extends EventEmitter {
         this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null };
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
-        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, form, version, answerSchema, autoValues, nodeId, agent, origin };
-        try {
-          this._nightArm(nq);
-        } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
+        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, form, version, answerSchema, autoValues, nodeId, agent, origin };
+        if (kind !== PLAN_ASK_KIND) {
+          try { this._nightArm(nq); } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
+        }
       });
     } finally {
       this._nightDisarm();
@@ -5791,16 +5940,22 @@ export class RunHarness extends EventEmitter {
       // diff-patch.patch is still never written on any path.
       if (noPatch && stage && !listed) return;
       const memory = this.memorySummary();
+      let summary;
       if (members.length === 1 && !this.isWorkspace) {
         if (memory) members[0].results.memory = memory;
         await persistResults(this.pipeline.dir, members[0].results);
         if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches[0].patch);
+        summary = members[0].results.summary;
       } else {
         const perProject = buildPerProject(members);
         const results = { summary: rollupSummary(perProject), perProject, ...(memory ? { memory } : {}) };
         await persistResults(this.pipeline.dir, results);
         if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches.map((p) => `# ${p.key}\n${p.patch}`).join('\n\n'));
+        summary = results.summary;
       }
+      // D28: the run's size for Statistics; _buildResults runs after the terminal persist, so write it again
+      this.state.runSize = sizeOfChange(summary);
+      await this._persist();
     } catch (err) {
       this._log('results', 'warn', `results build failed: ${err.message}`);
     }
@@ -7128,6 +7283,7 @@ export class RunHarness extends EventEmitter {
     if (rpNow && typeof rpNow === 'object' && this._metricsIv) rpNow.interventions = { ...this._metricsIv };
     if (!this.pipeline) return false;
     if (this._rowHandedOff()) return false;
+    if (this._shapeRec) this.state.shapeStats = buildShapeStats(this._shapeRec, this.state.steps);
     try {
       // A paused harness names itself in the saved point (`pausedBy`, written here only, never kept
       // in state): _rowHandedOff reads it back. A resumed run's new harness never writes this token.
@@ -7268,6 +7424,13 @@ export class RunHarness extends EventEmitter {
       // starter, pipelines.started_by), so the billing and attribution stay theirs.
       if (this.pauseReason === REASON.DRAIN && this._drainResumeAs) rp.resumeAs = this._drainResumeAs;
       else delete rp.resumeAs;
+      // D3/D7: only a usage-limit pause carries a reset time and the automatic-resume streak (like
+      // resumeAs for drain). Any other pause deletes both, so a point rebuilt from the consumed one
+      // (_pauseForFailure's ...source, the re-arm at :1903) never keeps a stale value.
+      if (this.pauseReason === REASON.USAGE_LIMIT && this.limitResetAt) rp.limitResetAt = this.limitResetAt;
+      else delete rp.limitResetAt;
+      if (this.pauseReason === REASON.USAGE_LIMIT && this._autoLimitResumes > 0) rp.autoLimitResumes = this._autoLimitResumes;
+      else delete rp.autoLimitResumes;
       // The token this pause is written with (_persist stamps it into the saved point as `pausedBy`).
       this._pauseToken ||= randomUUID();
     }
@@ -7297,6 +7460,7 @@ export class RunHarness extends EventEmitter {
       reason: this.pauseReason || null,
       detail: this.pauseDetail || null,
       limitEngine: this.limitEngine || null,
+      limitResetAt: this.limitResetAt || null,
     };
     this._emit('done', payload);
     return { ...payload };
@@ -7590,7 +7754,7 @@ export class RunHarness extends EventEmitter {
    * onDiverged 'fail' (never a pause: resuming cannot fix a divergence).
    * Never on a replay/resume, a read-only scan, or a memory-defrag run.
    */
-  async _syncMemberBase(m, source, { replay = false, fellBack = false } = {}) {
+  async _syncMemberBase(m, source, { replay = false, fellBack = false, sameAsSource = false } = {}) {
     const cfg = this.syncOpts.memberFor(m.projectKey);
     if (!cfg.enabled || replay || this._isWorkspaceScan() || this.memoryScope) return {};
     const attr = { nodeId: 'sync', executionId: SYNC_EXECUTION_ID };
@@ -7643,6 +7807,23 @@ export class RunHarness extends EventEmitter {
     await appendAudit(this.pipeline.dir, `Sync \`${m.projectKey}\`: ${source} ${r.result}${r.reason ? ` (${r.reason})` : ''}` +
       `${r.commits ? `, ${r.commits} commit(s)` : ''}${r.to ? ` → \`${String(r.to).slice(0, 10)}\`` : ''}` +
       ` (onDiverged ${cfg.onDiverged}, from ${cfg.policySource}).`).catch(() => {});
+    // Run on the source branch: the run fast-forwards `source` onto its own work at the end, so it must
+    // START from `source` itself, brought up to date. A diverged base (either policy) or a remote start
+    // (dirty checkout, a checkout in another worktree, onDiverged 'origin') leaves `source` behind —
+    // refuse now (terminal: resuming never syncs) instead of a merge back that cannot work. Before the
+    // diverged block, so its "choose Start from origin" advice never reaches such a run.
+    if (sameAsSource && (r.result === 'diverged' || r.startRef)) {
+      this._syncStageFailed = true;
+      const why = r.reason || r.result;
+      // No worktreeDir: previousBranchesOf never waits on this record (D9).
+      this.state.branches[m.projectKey] = { source, sync: record, sameAsSource: true };
+      const fix = why === 'dirty' ? `commit or stash the uncommitted changes in ${mdir}`
+        : why === 'diverged' ? `${source} has local commits ${cfg.remote}/${source} lacks: push or reconcile them`
+        : why === 'in-use' ? `${source} is checked out in another worktree: switch that worktree to another branch`
+        : 'see the Sync log';
+      throw markTerminal(new Error(`Sync: could not fast-forward ${source} to ${cfg.remote}/${source} (${why}). ` +
+        `A run on the source branch must start from an up-to-date ${source}; ${fix}, then start again.`));
+    }
     if (r.result === 'diverged') {
       // Keep the refusal on the run (header Sync button, Ask get_run): the terminal run's persisted
       // state.branch is mirrored from this before the setup-failure throw. No worktreeDir, so

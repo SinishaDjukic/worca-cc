@@ -56,22 +56,24 @@ export function scheduleTrace(trace, { win = globalThis, mode = 'task' } = {}) {
 }
 
 /**
- * Reveal a mounted proposal's graph in placement order. `handle` = renderAutoProposal's return (its `graph` view is
- * mountStaticGraph's handle: flowLayout().order, nodeEl, wiresEl, world, template). Returns cancel() — which LANDS
- * everything (used when the card element is dropped mid-build).
+ * Reveal a mounted proposal's graph in placement order. `handle` = renderAutoProposal's return: `order` (the
+ * placement order — a canvas well's reading order, a flow view's rows) and its `graph` view (nodeEl, wiresEl, world,
+ * template; flowLayout().order when the handle names no order). Returns cancel() — which LANDS everything (used when
+ * the card element is dropped mid-build).
  */
 export function playAssembly(handle, { win = globalThis, onDone = null } = {}) {
   const view = handle && handle.graph;
+  // A canvas well has no flow layout (flowLayout() is null): reading it alone would land every build at once.
+  const order = view ? (Array.isArray(handle.order) && handle.order.length ? handle.order : (view.flowLayout()?.order || [])) : [];
   const land = () => {
     if (view) {
-      for (const id of (view.flowLayout()?.order || [])) view.nodeEl(id)?.classList.remove('is-hid');
+      for (const id of order) view.nodeEl(id)?.classList.remove('is-hid');
       for (const p of view.wiresEl.querySelectorAll('path.wire.is-hid')) p.classList.remove('is-hid');
       for (const b of view.world.querySelectorAll('.wbadge.is-hid')) b.classList.remove('is-hid');
     }
     handle?.parts?.match?.classList.remove('is-hid');
     handle?.parts?.loops?.classList.remove('is-hid');
   };
-  const order = view ? (view.flowLayout()?.order || []) : [];
   if (!view || !order.length || prefersReducedMotion(win)) { land(); if (onDone) onDone(); return () => {}; }
   const wires = [...view.wiresEl.querySelectorAll('path.wire[data-wire-id]')];   // committed wires only (the ghost has no id)
   const badges = [...view.world.querySelectorAll('.wbadge')];

@@ -105,6 +105,7 @@ export function createGraphView(host, {
   order = null,          // flow only: agent ids in dispatch order (a host may pass the proposal's `order[]`)
   describe = mode === 'edit', // the agent/script description footer (edit hosts; run cards keep their run footer)
   modelLabel = null,          // (modelId) => display label for the label row's meta ('' hides it)
+  modelOf = null,             // (node) => the model id the label row names (default: the authored node.config.model)
   onTransform = null,         // called after EVERY transform write (the composer re-tiles its dot grid off it)
 } = {}) {
   const win = doc.defaultView || globalThis;
@@ -233,8 +234,8 @@ export function createGraphView(host, {
     if (KEYED_KINDS.includes(node.kind)) {
       const meta = agents[node.key] || null;                // the MERGED key -> meta index (agents + scripts)
       const script = node.kind === 'script';
-      const model = !script && !hasBand && node.config && node.config.model
-        ? String((modelLabel && modelLabel(node.config.model)) || node.config.model) : '';
+      const id = script || hasBand ? '' : (modelOf ? modelOf(node) : node.config && node.config.model) || '';
+      const model = id ? String((modelLabel && modelLabel(id)) || id) : '';
       return {
         fam: (meta && meta.color) || (script ? 'amber' : 'blue'),
         title: (meta && meta.displayName) || node.key || node.id,
@@ -494,7 +495,11 @@ export function createGraphView(host, {
     const tt = h('span', 'tt', l.title);
     tt.title = l.title;                                   // an ellipsised name keeps its tooltip
     const kids = [tile, tt];
-    if (l.meta) kids.push(h('span', l.mono ? 'lm mono' : 'lm', l.meta));
+    if (l.meta) {
+      const lm = h('span', l.mono ? 'lm mono' : 'lm', l.meta);
+      lm.title = l.meta;                                  // an ellipsised model keeps its full name too
+      kids.push(lm);
+    }
     const run = lab.querySelector(':scope > .nrun');      // a run's dur · cost (setNodeChrome) survives a repaint
     lab.replaceChildren(...kids, ...(run ? [run] : []));
   }
@@ -1125,6 +1130,17 @@ export function createGraphView(host, {
       }
       if (current) render(source || current, {});
     },
+    /** Swap the registry for a repaint of the label rows and description footers ONLY (a chat well's descriptions
+     *  land after the first paint). Footer heights are fixed (DESC_H / CAP_H), so no card moves and no wire
+     *  re-routes — unlike setAgents, which re-renders and rewrites every wire's class. */
+    repaintMeta(next) {
+      agents = next || {};
+      if (!ctx) return;
+      for (const [id, el] of nodeEls) {
+        const node = ctx.byId.get(id);
+        if (node) { paintLabel(el, node); paintFoot(el, node); }
+      }
+    },
     destroy() {
       for (const n of navs.splice(0)) n.destroy();
       if (movingTimer) { win.clearTimeout(movingTimer); movingTimer = null; }
@@ -1151,9 +1167,9 @@ export function thumbnailFor(template, portsFn, { width = 240, height = 96 } = {
  *  `.gv-static .node` is pointer-events:none in style.css. */
 export function mountStaticGraph(host, template, {
   doc = globalThis.document, portsFn, agents = {}, width = 0, viewport = null,
-  scale = 1, layout = 'auto', band = null, order = null, onLayout = null,
+  scale = 1, layout = 'auto', band = null, order = null, onLayout = null, modelOf = null,
 } = {}) {
-  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents, viewport, scale, layout, band, order });
+  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents, viewport, scale, layout, band, order, modelOf });
   view.render(template, {});
   const isFlow = layout === 'flow';
   const widthOf = () => host.clientWidth || width || 0;

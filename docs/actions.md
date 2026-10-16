@@ -16,12 +16,14 @@ a ready check and a live log come with them.
 | --- | --- |
 | Run page and History detail › **Actions** tab | Check out / Discard, setup state, each action's Start / Stop, ports, Open link and log; Open in editor, terminal, file manager; Copy command |
 | Run Overview › actions strip, Ship It › **Try it first** | The same actions, one click from the result |
+| Run page and History detail › summary card **worktree notice** | Shown whenever a live worktree holds the run's branch: a checkout (Discard or Unlink, Get the diff, Actions tab) or work kept after a failed end-of-run commit (Apply to branch, recovery patch, Discard worktree). Every level |
 | Project page › **Actions** tab | The project's setup command, its actions and the built-in buttons |
 | Workspace page › **Actions** tab | Stacks: one click starts actions across several member projects |
 | Header pill, sidebar **Running actions** rows | Every service still running, each with a Stop button; on the collapsed rail one tile with the count opens them. Shown at every level, only while something runs |
 | Settings › Runs › **Actions** | Keep policy, port range, editor and terminal, checkout cap |
 
-The tabs, strips and the Settings card are Advanced (see [ui-levels.md](ui-levels.md)).
+The tabs, strips and the Settings card are Advanced (see [ui-levels.md](ui-levels.md)). The worktree
+notice is not: it shows at every level, because it explains refusals anyone can hit.
 
 A run can be checked out when it ended `done`, `stopped` or `error`, is not archived, has a feature
 branch, and kept no uncommitted work of its own. Paused and interrupted runs are refused: resume or
@@ -38,6 +40,47 @@ else (usually your own clone), Check out cannot make a copy, so the card shows t
   policy never touch it.
 - Setup does not run there by itself. **Run setup** on the card runs it when you want.
 - **Unlink** stops using the folder. It stays exactly as it is.
+
+## The worktree notice on the summary card
+
+Git keeps a branch in one folder at a time. While a live worktree holds a finished run's branch, Check out,
+Archive and a new run on that branch are refused. The run's summary card, on the run page and in History,
+says so with a notice under the status line, at every interface level. For a workspace run it lists the
+members concerned. There are two cases.
+
+**Checked out.** You pressed Check out, or linked your own folder ("Use that folder"). The notice shows the
+folder and since when, and offers:
+
+- **Discard** for Worca's own checkout, or **Unlink** for your folder. It is the same flow and confirm as
+  the Actions tab: running services stop first, and Discard saves uncommitted changes as a patch.
+- **Get the diff**: downloads a patch of the folder's uncommitted changes (edits, deletions, new files git
+  does not ignore) against its last commit, which is the run's branch while the folder is on it. It is read-only. The patch is built in a temporary git index,
+  so nothing in the folder is staged or changed: not in your own folder, and not in a checkout left
+  mid-merge, whose conflicts stay unresolved. A clean folder answers "Nothing uncommitted".
+- **Actions tab ›**: this link alone is Advanced, like the tab.
+
+**Work kept after a failed commit.** At the end of a run Worca commits the agents' work onto the run's
+branch. If that commit fails (a hook, signing, a stale `index.lock`, a full disk), the worktree is kept
+with the work staged but **not on the branch**. A pull request opened now would not include it; the card's
+headline does not change, so read the notice. It offers:
+
+- **Apply to branch**: commits the staged work in that worktree, exactly as the end of the run would have.
+  It tries the repository's identity, then a local one. For a detached run it tries once more with commit
+  hooks off, as the run's own teardown did. Then it removes the worktree (the branch is kept) and refreshes
+  the base check. Check out and Create pull request then work as for any finished run. For a run on its
+  source branch, Apply also fast-forwards the source branch onto the work and deletes the run's hidden
+  branch. If the source moved on in the meantime, the merge-back notice explains how to merge by hand. If
+  the commit fails again, nothing changes and git's message is shown.
+- **Download the recovery patch**: the snapshot saved when the work was kept.
+- **Discard worktree**: saves a recovery patch of anything uncommitted, then removes the worktree. The
+  branch and the run's history stay.
+
+Once the worktree itself is gone, nothing holds the branch and the notice does not show. The recovery patch
+stays in the run's Artifacts tab, for `git apply` by hand.
+
+API: `GET /api/runs/<id>/checkout/diff?<scope>[&member=<projectKey>]` (200 patch, 204 nothing uncommitted)
+and `POST /api/runs/<id>/apply-retained?<scope>` (409 `COMMIT_FAILED` with git's message when every commit
+failed again).
 
 ## The action model
 
@@ -200,6 +243,51 @@ neither is the run just checked out. Empty means no cap.
 Discard saves uncommitted changes first, as `checkout-discard-<projectKey>-<timestamp>.patch` in
 the run's artifact folder (or `<worca home>/actions/patches/<runId>/`). If that save fails, Discard
 stops and asks before it throws the changes away.
+
+## Conflicts with the base branch
+
+When a run finishes (done, stopped or failed), Worca checks whether its branch still merges into its
+base. It fetches the base from the project's sync remote (`origin/dev`, say). If there is no remote, it
+uses the local base. If the fetch fails, it uses the last fetched copy and says "offline". The check
+runs `git merge-tree` against the branch refs, so no checkout or worktree changes.
+
+The History detail shows a short line under the title for each branch that needs something (one per
+repository in a workspace run). Hover the status for when it was checked. A branch that is up to date
+shows no line.
+
+- **dev is N commits ahead, merges cleanly**: **Update branch** adds a merge commit of the base to
+  the branch.
+- **Conflicts in N files**, with the file list: resolve them in one of two ways.
+  - **Resolve in a pipeline** starts a new run on the same branch. It runs the same unattended
+    Implementation and Review workflow as a Watch PR fix run, with the same conflict brief, plus the
+    listed files and the original task for context.
+  - **Resolve in a terminal** checks the run out (as **Check out** does), starts the merge there with
+    the conflicts left in the files, and opens the run's terminal with `git status`. Fix the files,
+    commit the merge, then click **Re-check**.
+- **Could not check against dev**: the check failed (the reason follows). **Re-check** tries again.
+
+The History list notes "conflicts with dev" or "dev moved" on such runs. The check runs again when a
+resolve run ends, on **Re-check**, and when you open the run's details if the branch was never checked
+or was last checked more than 5 minutes ago. That automatic check reuses a fetch from the last minute
+and pushes nothing: a resolution done in a terminal is finished by **Re-check**. It does not run on a
+timer.
+
+After Update branch or a resolution, a branch that was already published (Publish branch, Ship it, a
+PR) is pushed again with a plain `git push`. Worca never force-pushes: if someone pushed to the branch
+in the meantime, the push is refused and the merge stays local. The header then shows **Push changes**;
+pull their work into the branch first, or that push is refused too. A resolution that still has conflict
+markers (`<<<<<<<`, `>>>>>>>`) on the lines it added is not pushed (the same check Watch PR runs before
+its push); the line reads "Conflict markers left in N files".
+
+When the branch has an open pull request, the pull request owns its conflicts:
+
+- **Resolve in a pipeline** isn't offered. Use **Resolve** on the pull request's row in the Overview tab
+  (see [Watch PR](ui-levels.md)); its fix run pushes to the pull request.
+- **Update branch** and **Resolve in a terminal** stay: Watch PR has neither.
+- While a Watch PR fix run is working on the branch, Update branch, Resolve in a terminal and Re-check
+  are refused until it finishes, so nothing moves the branch under it.
+- The other way round, while a Resolve in a terminal is open on the branch, Watch PR starts no fix run
+  on it. Closing that terminal lets the watch go on.
 
 ## Workspace stacks
 

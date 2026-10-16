@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { checkRows } from './helpers/rows.mjs';
+import { paintProgressBar } from '../ui/public/run-progress-bar.mjs';
 
 import {
   UI_LEVELS, LEVEL_INFO, normalizeLevel, levelShows, levelAtLeast, currentLevel, tagLevel, keepVisible,
@@ -133,6 +134,24 @@ test('level helpers: ordered/cumulative with unknown -> expert, levelAtLeast rea
   ]);
 });
 
+// ── run progress ──────────────────────────────────────────────────────────────
+
+test('run progress bars are Simple (no data-min-level); only the hover breakdown is Advanced', () => {
+  const doc = new JSDOM(html).window.document;
+  const tpl = [...doc.querySelectorAll('template')].find((t) => t.content.querySelector('.rd-prog'));
+  assert.ok(tpl, 'the run page template carries the progress hosts');
+  const prog = { mode: 'stages', fraction: 0.4, tone: 'blue', stages: [], passes: 0, text: 'Build' };
+  for (const sel of ['.rd-prog', '.rd-prog-chain']) {
+    const host = tpl.content.querySelector(sel);
+    assert.ok(host, `${sel} is in the shell`);
+    assert.equal(host.hasAttribute('data-min-level'), false, `${sel} carries no data-min-level`);
+  }
+  const host = tpl.content.querySelector('.rd-prog');
+  paintProgressBar(host, prog);
+  assert.equal(host.hasAttribute('data-min-level'), false, 'painting does not gate the bar');
+  assert.equal(host.querySelector('.run-prog-detail').dataset.minLevel, 'advanced', 'the hover breakdown is Advanced');
+});
+
 // ── the CSS gate ──────────────────────────────────────────────────────────────
 
 test('the stylesheet gates exactly the three cumulative cases, and honours data-level-keep', () => {
@@ -209,7 +228,7 @@ test('levelCardsHtml escapes and marks exactly one card checked', () => {
 
 test('blocking prompts are never under a gated ancestor in the shell', () => {
   const doc = shell();
-  for (const sel of ['#run-detail-tpl']) {
+  for (const sel of ['#run-detail-tpl', '#hist-detail-tpl']) {
     const tpl = doc.querySelector(sel).content;
     for (const q of tpl.querySelectorAll('.qpanel, .cost-banner, .retained-banner, .rd-questions')) {
       assert.equal(minLevelFor(q), 'simple', `${sel} ${q.className} must show at every level`);

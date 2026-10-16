@@ -34,8 +34,9 @@ const OPAQUE_TYPES = Object.freeze({
   '.zip': 'application/zip', '.tar': 'application/x-tar',
 });
 /** What an HTML artifact loads relatively (kit scripts, styles, fonts, media).
- *  Streamed by the raw route so a deck's <script src="deck-stage.js"> resolves;
- *  never a viewer kind of their own (js/css view as text, the rest as binary). */
+ *  Streamed by the raw route so a deck's <script src="deck-stage.js"> resolves.
+ *  Viewer kinds: js/css view as text, audio/video play inline (the artifact viewer's players), .avif is an image,
+ *  fonts are binary (download only). */
 const SUBRESOURCE_TYPES = Object.freeze({
   '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
   '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.otf': 'font/otf',
@@ -53,9 +54,9 @@ const SUBRESOURCE_TYPES = Object.freeze({
 export const TEXT_EXTENSIONS = Object.freeze(Object.keys(TEXT_TYPES));
 export const BINARY_EXTENSIONS = Object.freeze(Object.keys(BINARY_TYPES));
 /** Viewer kinds that must never be decoded as UTF-8 text. */
-export const BINARY_KINDS = Object.freeze(new Set(['image', 'pdf', 'binary']));
-/** Viewer kinds the raw-bytes route may stream (binary = download only). */
-export const RAW_KINDS = Object.freeze(new Set(['image', 'pdf', 'html', 'binary']));
+export const BINARY_KINDS = Object.freeze(new Set(['image', 'pdf', 'binary', 'audio', 'video']));
+/** Viewer kinds the raw-bytes route may stream (binary = download only; audio/video play inline in the viewer). */
+export const RAW_KINDS = Object.freeze(new Set(['image', 'pdf', 'html', 'binary', 'audio', 'video']));
 
 /** ARTIFACT kinds (the `kind` column, not a viewer kind) that are indexed but
  *  never listed as a row a human is asked to open. Two families:
@@ -113,7 +114,7 @@ function extOf(pathname) {
   return dot <= 0 ? '' : base.slice(dot).toLowerCase();
 }
 
-/** markdown | json | diff | text | image | pdf | html | binary. Unknown → text (today's behaviour). */
+/** markdown | json | diff | text | image | pdf | html | audio | video | binary. Unknown → text (today's behaviour). */
 export function viewerKindFor(pathname) {
   const e = extOf(pathname);
   if (e === '.md' || e === '.markdown') return 'markdown';
@@ -123,7 +124,13 @@ export function viewerKindFor(pathname) {
   if (e === '.html' || e === '.htm') return 'html';
   if (e === '.svg' || (has(BINARY_TYPES, e) && BINARY_TYPES[e].startsWith('image/'))) return 'image';
   if (has(OPAQUE_TYPES, e)) return 'binary';
-  if (has(SUBRESOURCE_TYPES, e) && !SUBRESOURCE_TYPES[e].startsWith('text/')) return 'binary';   // fonts, media
+  if (has(SUBRESOURCE_TYPES, e)) {
+    const mime = SUBRESOURCE_TYPES[e];
+    if (mime.startsWith('image/')) return 'image';            // .avif
+    if (mime.startsWith('audio/')) return 'audio';            // played inline by the artifact viewer
+    if (mime.startsWith('video/')) return 'video';
+    if (!mime.startsWith('text/')) return 'binary';           // fonts
+  }
   return 'text';
 }
 

@@ -187,3 +187,12 @@ test('the port readers are exported for script-meta; noPromptFields refuses as/d
   assert.equal(errors.at(-1), 'at least one output port is required');
   assert.deepEqual(readVerdict({ filename: 'v.json' }, err), { filename: 'v.json' });
 });
+
+test('progressStage: plan|build|review copy through, anything else is an error, absent stays absent', () => {
+  for (const stage of ['plan', 'build', 'review']) {
+    assert.deepEqual(errs(base({ progressStage: stage })), []);
+    assert.equal(normalizeAgentMeta(base({ progressStage: stage })).meta.progressStage, stage);
+  }
+  assert.ok(errs(base({ progressStage: 'ship' })).includes('progressStage must be one of plan, build, review'));
+  assert.equal('progressStage' in normalizeAgentMeta(base()).meta, false);
+});

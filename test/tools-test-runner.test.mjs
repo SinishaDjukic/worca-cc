@@ -121,3 +121,13 @@ test('ci.yml engine filter lists every slow-tier entry of tiers.json', () => {
   const { slow } = JSON.parse(readFileSync(new URL('./tiers.json', import.meta.url), 'utf8'));
   for (const g of slow) assert.ok(yml.includes(`- '${g}'`), `ci.yml engine filter is missing ${g}`);
 });
+
+test('parseArgs --related: takes --base, refuses --base alone and a file list, and never reads the shard env', () => {
+  assert.deepEqual(
+    (({ related, base, shard, files }) => ({ related, base, shard, files }))(parseArgs(['--related', '--base', 'origin/dev'], { WORCA_TEST_SHARD: '1/4' })),
+    { related: true, base: 'origin/dev', shard: null, files: [] },
+  );
+  assert.throws(() => parseArgs(['--base', 'origin/dev']), /--base needs --related/);
+  assert.throws(() => parseArgs(['--related', 'test/a.test.mjs']), /drop the file list/);
+  assert.throws(() => parseArgs(['--related', '--base']), /--base needs a value/);
+});

@@ -94,6 +94,7 @@ export function summarizeRequest(req) {
     memoryScope: r.memoryScope || null,
     mock: !!r.mock,
     extras: Array.isArray(r.internal?.extrasPaths) ? r.internal.extrasPaths.length : 0,
+    ...(r.sameAsSource === true ? { sameAsSource: true } : {}),
   };
 }
 
@@ -431,7 +432,27 @@ export function afterRefOf(id) {
     projectKey: p.target === 'project' ? p.project_key : null, workspaceId: p.workspace_key || null, scheduleId: null };
 }
 
-function pipelineGate(row, { policy, isLive }) {
+// Run on the source branch (branch.sameAsSource): the work lands on the source in teardown, AFTER the row
+// reads `done` (run-harness persists `done`, emits it, then tears down). Pending = a DONE row (only a done
+// run merges back; an interrupted one gets no teardown until it is resumed) with a member record that has
+// a worktree and no mergeBack yet; a record without a worktreeDir (a setup failure) never gets a teardown.
+// Bounded from the row's last write: a host killed mid-teardown must not hold its dependents forever.
+const MERGE_BACK_WAIT_MS = 10 * 60_000;
+function mergeBackPending(row, now = Date.now()) {
+  if (!row || row.status !== 'done') return false;
+  const records = row.target === 'workspace'
+    ? Object.values(parseJson(row.workspace_meta, null)?.branches || {})
+    : [parseJson(row.branch, null)];
+  if (!records.some((b) => b && b.sameAsSource === true && b.worktreeDir && !b.mergeBack)) return false;
+  const age = now - Date.parse(row.updated_at);
+  return !(age >= MERGE_BACK_WAIT_MS);   // no updated_at (NaN) → still within the bound
+}
+/** The branch a finished run's work is on: its feature branch — or its source once that branch is gone
+ *  again: dropped at teardown as unchanged (branchKept:false), or merged back by a run on its source branch. */
+const workBranchOf = (b) => (!b ? null
+  : (b.branchKept === false || (b.sameAsSource === true && b.mergeBack && b.mergeBack.merged === true)) ? b.source : b.feature);
+
+function pipelineGate(row, { policy, isLive, now = Date.now() }) {
   const base = { pipelineId: row.id, title: row.title, status: row.status };
   // Archive (DELETE /api/runs/:id -> pipeline-delete.mjs) never DELETEs the row: it stamps archived_at and
   // removes the branch, the worktree and the artifacts. For a chain that IS spec D9's removed predecessor:
@@ -439,6 +460,9 @@ function pipelineGate(row, { policy, isLive }) {
   // start them — or fail them on a vanished ref. Archive refuses a live run, so this sits above isLive.
   if (row.archived_at) return { state: 'gone', reason: 'was archived', ...base };
   if ((isLive && isLive({ id: row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status)) return { state: 'waiting', ...base };
+  // A run on its source branch is not finished until its merge back is: a dependent started now would
+  // branch off the source before that run's work lands on it.
+  if (mergeBackPending(row, now)) return { state: 'waiting', ...base };
   if (row.status === 'done') return { state: 'ok', ...base };
   if (BAD_PIPELINE_REASON[row.status]) return policy === 'any' ? { state: 'ok', ...base } : { state: 'bad', reason: BAD_PIPELINE_REASON[row.status], ...base };
   return { state: 'waiting', ...base };   // an unknown status: keep waiting rather than guess
@@ -464,34 +488,36 @@ export function predecessorState(after, { policy = 'done', now = Date.now(), isL
     }
     const row = pipelineRefRow(t.pipelineId);
     if (!row) return { state: 'gone', reason: 'was removed', ...base };
-    return { ...pipelineGate(row, { policy, isLive: isLive ? (q) => isLive({ id: t.id, pipelineId: q.pipelineId }) : null }), title: t.title || row.title };
+    return { ...pipelineGate(row, { policy, isLive: isLive ? (q) => isLive({ id: t.id, pipelineId: q.pipelineId }) : null, now }), title: t.title || row.title };
   }
   const row = pipelineRefRow(after.id);
   if (!row) return { state: 'gone', reason: 'was removed', pipelineId: null, title: null, status: null };
-  return pipelineGate(row, { policy, isLive });
+  return pipelineGate(row, { policy, isLive, now });
 }
 
 /** The feature branch(es) a finished pipeline left, in POST /api/run's own field names.
- *  A workspace member whose branch was dropped at teardown (it changed nothing —
- *  `branchKept:false`) chains from the source it started from instead: the dropped
- *  branch no longer exists, and fireTicket would refuse the whole run for it. */
-export function previousBranchesOf(pipelineId) {
+ *  A member whose branch is gone again chains from the source it started from: dropped at teardown
+ *  as unchanged (`branchKept:false` — the dropped branch no longer exists, and fireTicket would refuse
+ *  the whole run for it), or merged back by a run on its source branch. `{ pending: true }` while a
+ *  run on its source branch is still merging back (the gate waits on that; this is the backstop for
+ *  a forced ticket, which skips the gate). */
+export function previousBranchesOf(pipelineId, { now = Date.now() } = {}) {
   const row = pipelineRefRow(pipelineId);
   if (!row) return null;
+  if (mergeBackPending(row, now)) return { pending: true };
   if (row.target === 'workspace') {
     const meta = parseJson(row.workspace_meta, null);
     const branches = meta && meta.branches && typeof meta.branches === 'object' ? meta.branches : null;
     if (!branches) return null;
     const byKey = {};
     for (const [key, b] of Object.entries(branches)) {
-      if (!b) continue;
-      const name = b.branchKept === false ? b.source : b.feature;
-      if (typeof name === 'string' && name) byKey[key] = name;
+      const br = workBranchOf(b);
+      if (typeof br === 'string' && br) byKey[key] = br;
     }
     return Object.keys(byKey).length ? { sourceBranchByKey: byKey } : null;
   }
-  const b = parseJson(row.branch, null);
-  return b && typeof b.feature === 'string' && b.feature ? { sourceBranch: b.feature } : null;
+  const br = workBranchOf(parseJson(row.branch, null));
+  return typeof br === 'string' && br ? { sourceBranch: br } : null;
 }
 
 /** Open tickets that wait for the given run — what a cancel or an archive would strand. */
@@ -553,6 +579,98 @@ export function chainBaseBranchesOf(pipelineId) {
     cur = predId;
   }
   return chain;
+}
+
+// ── run progress: chains (spec 2026-10-14 run-progress P8) ───────────────────
+
+const CHAIN_TICKET_SQL = 'SELECT id, title, status, after_kind, after_id, pipeline_id, project_key, project_dir, workspace_id, created_at FROM scheduled_runs';
+const CHAIN_PIPELINE_SQL = 'SELECT id, title, status, target, project_key, workspace_key, pr_url FROM pipelines WHERE id = ?';
+const WAITING_TICKET = new Set(['scheduled', 'firing']);
+const PR_URL_RE = /^https:\/\/\S+$/i;   // the expander makes it a link: never a javascript:/data: href
+
+/**
+ * Every "Run after" chain with a run still going or waiting, root first. A chain is one tree of
+ * `after` links (a ticket waits on a ticket or a pipeline; a fired ticket IS its pipeline), read in
+ * pre-order with siblings by creation time: a plain line reads in its own order, a fork lists each
+ * branch whole. A link whose predecessor ticket was purged starts its own chain; a hand-made cycle
+ * has no root and is never listed. Read-only.
+ * Member: { ticketId, pipelineId, title, state: done|current|waiting|failed, prUrl, historyKey, projectKey, workspaceId, projectDir }.
+ * @param {{isLive?: (q:{id:string, pipelineId:string|null}) => boolean}} [opts]
+ * @returns {Array<{id:string, title:string|null, members:object[]}>}
+ */
+export function runChains({ isLive = null } = {}) {
+  const db = getDb();
+  const linked = db.prepare(`${CHAIN_TICKET_SQL} WHERE after_id IS NOT NULL ORDER BY created_at ASC, id ASC`).all();
+  if (!linked.length) return [];
+  const tickets = new Map(linked.map((t) => [t.id, t]));
+  const ticketRow = (id) => {
+    if (!tickets.has(id)) tickets.set(id, db.prepare(`${CHAIN_TICKET_SQL} WHERE id = ?`).get(String(id)) || null);
+    return tickets.get(id);
+  };
+  const keyOf = (t) => (t.pipeline_id ? `p:${t.pipeline_id}` : `t:${t.id}`);
+  const nodes = new Map();
+  const node = (key) => {
+    if (!nodes.has(key)) nodes.set(key, { key, ticket: null, pipelineId: key.startsWith('p:') ? key.slice(2) : null, parent: null, children: [] });
+    return nodes.get(key);
+  };
+  for (const t of linked) {
+    const self = node(keyOf(t));
+    self.ticket = t;
+    let parentKey;
+    if (t.after_kind === 'ticket') {
+      const pt = ticketRow(t.after_id);
+      if (!pt) continue;
+      parentKey = keyOf(pt);
+      const p = node(parentKey);
+      if (!p.ticket) p.ticket = pt;
+    } else parentKey = `p:${t.after_id}`;
+    if (parentKey === self.key || self.parent) continue;
+    self.parent = parentKey;
+    node(parentKey).children.push(self.key);
+  }
+  const created = (n) => (n.ticket && n.ticket.created_at) || '';
+  const member = (n) => {
+    const t = n.ticket;
+    const row = n.pipelineId ? db.prepare(CHAIN_PIPELINE_SQL).get(n.pipelineId) || null : null;
+    let state;
+    if (n.pipelineId) {
+      if (!row) state = 'failed';
+      else if ((isLive && isLive({ id: t ? t.id : row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status)) state = 'current';
+      else if (row.status === 'done') state = 'done';
+      else if (BAD_PIPELINE_REASON[row.status]) state = 'failed';
+      else state = 'current';                      // an unknown status: still going (pipelineGate's reading)
+    } else if (WAITING_TICKET.has(t.status)) state = 'waiting';
+    else if (t.status === 'fired') state = 'current';   // fired, its pipeline not linked yet
+    else state = 'failed';                              // canceled | skipped | failed | missed
+    const projectKey = (row && row.target === 'project' ? row.project_key : null) || (t && t.project_key) || null;
+    return {
+      ticketId: t ? t.id : null, pipelineId: n.pipelineId, title: (t && t.title) || (row && row.title) || null, state,
+      prUrl: row && typeof row.pr_url === 'string' && PR_URL_RE.test(row.pr_url) ? row.pr_url : null,
+      // The `#history/<key>/<id>` key, exactly as listAllPipelines builds it (artifacts.mjs ~2339).
+      historyKey: !row ? null : row.target === 'workspace' && row.workspace_key ? `workspaces/${row.workspace_key}` : row.project_key || null,
+      projectKey, workspaceId: (row && row.workspace_key) || (t && t.workspace_id) || null, projectDir: (t && t.project_dir) || null,
+    };
+  };
+  const out = [];
+  const seen = new Set();
+  for (const root of nodes.values()) {
+    if (root.parent) continue;
+    const order = [];
+    const walk = (n) => {
+      if (!n || seen.has(n.key) || order.length >= CHAIN_DEPTH_CAP) return;
+      seen.add(n.key);
+      order.push(n);
+      n.children.map((k) => nodes.get(k))
+        .sort((a, b) => created(a).localeCompare(created(b)) || a.key.localeCompare(b.key))
+        .forEach(walk);
+    };
+    walk(root);
+    if (order.length < 2) continue;
+    const members = order.map(member);
+    if (!members.some((m) => m.state === 'current' || m.state === 'waiting')) continue;
+    out.push({ id: root.key, title: members[0].title, members });
+  }
+  return out;
 }
 
 /**

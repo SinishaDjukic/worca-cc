@@ -155,11 +155,11 @@ test('the started card learns its pipeline id from the thread run links and re-r
   ctx.panel.destroy();
 });
 
-test('Open run closes the sheet and navigates; a started run that failed keeps the card with the reason', async () => {
+test('Open run only routes (the route hides the page); a started run that failed keeps the card with the reason', async () => {
   const store = fakeStore({ 'run-uuid-1': live() });
   const ctx = await openWith([STARTED], { store });
   ctx.doc.querySelector('a.ask-rc-open').click();
-  assert.equal(ctx.panel.isOpen(), false);
+  assert.equal(ctx.panel.isOpen(), true, 'Open run closes nothing itself');
   assert.equal(ctx.window.location.hash, '#running/run-uuid-1');
   ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: { id: MID, threadId: TID, seq: 2, role: 'assistant', text: 'ok', status: 'done', createdAt: 't',
     blocks: [{ ...STARTED, state: 'failed', error: 'Preflight failed' }] } });

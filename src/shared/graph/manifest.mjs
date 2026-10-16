@@ -144,7 +144,9 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       cell.color = meta?.color || '';
       cell.icon = sanitizeIcon(meta?.icon);
       cell.model = over.model ?? cfg.model ?? '';
-      cell.effort = over.effort ?? cfg.effort ?? '';
+      // The resolver names an agent node's effort on purpose (undefined = none: an effort only travels with the model
+      // that named it, workflows.mjs), so the template's own effort is a fallback only when no resolution was handed in.
+      cell.effort = Object.hasOwn(over, 'effort') ? (over.effort ?? '') : (cfg.effort ?? '');
       cell.askQuestions = !!(over.askQuestions ?? cfg.askQuestions ?? meta?.questionsDefault ?? false);
       cell.awaitAll = !!(over.awaitAll ?? cfg.awaitAll ?? false);
       cell.fanOut = !!(over.fanOut ?? cfg.fanOut ?? meta?.fanOut ?? false);
@@ -153,6 +155,9 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       // alone — the workflow row is never re-read after the run starts.
       cell.subagentModel = over.subagentModel ?? cfg.subagentModel ?? '';
       cell.subagentEffort = over.subagentEffort ?? cfg.subagentEffort ?? '';
+      // Run progress: the stage rides the manifest like color/icon, so a run (and a resume,
+      // which rebuilds the manifest from the registry) never needs the live registry for it.
+      if (meta?.progressStage) cell.progressStage = meta.progressStage;
     }
     if (node.kind === 'script') {
       cell.color = meta?.color || '';

@@ -15,9 +15,9 @@ walk from the first hop, so a replayed guide explains every stop again.
 | # | Tile | Done when (derived) | Guide (each row is a hop; the first that applies is lit) |
 |---|---|---|---|
 | 1 | Connect Claude Code | the configured `claude` binary resolves on the server's `PATH` (`WORCA_CLAUDE_BIN` honoured; the Windows npm-shim case uses preflight's probe) and `claude auth status` does not report it signed out (preflight `probeClaudeAuth`: remembered 60 s; mock mode and auth env vars skip it; an unknown answer never un-ticks) | a dialog with the install command, the `/login` step, and **Check again** (a fresh sign-in check) |
-| 2 | Add your first project | one project is registered | sidebar › **Projects** → **Add project** (the native folder chooser opens; it is ringed again if that is cancelled) → in the dialog: the **path** → the **name** → **Add project** → the new row (Done) |
+| 2 | Add your first project | one project is registered | sidebar › **Projects** → **Add project** (the Add project dialog opens; **Choose folder…** opens the native folder chooser) → in the dialog: the **path** → the **name** → **Add project** → the new row (Done) |
 | 3 | Watch a run end to end | any pipeline reached `done` | (no project: the Add project walk of 2, then on) → sidebar › **New pipeline** → project select → prompt → **Mock mode** → **Start run** → sidebar › **Running** (skipped when the app already routed there) → the run's **card** (Done) |
-| 4 | Ask Worca about a run | one Ask thread exists | the **Ask Worca** dock pill (skipped while the sheet is open) → the input box (suggests a question) → **Send** → the transcript, where the answer lands (Done) |
+| 4 | Ask Worca about a run | one Ask thread exists | sidebar › **Chat** → the input box (suggests a question) → **Send** → the transcript, where the answer lands (Done) |
 | 5 | Run a real pipeline | any pipeline with spend above zero | as 3, but after the project: the **Workflow** picker ("choose a built-in workflow"; Auto is the one state it asks to change), then prompt → Mock (only ringed when it is on) → **Start run** → Running → the run's card (Done) |
 | 6 | Explore the built-in workflows | a project has a persisted picker choice (`project_config.active_workflow_id`, Auto included) | sidebar › **Workflows** → the **Library** toggle (only when the Library is closed) → the selector's **Workflows** tab → the folder holding **Default**, expanded in place (its domain, when Workflows has more than one; while a search is open, the header's close button first, which closes the search) → the **Default** row (opens it on the canvas) → the **canvas** (the cards and the wires; Next) → the **chat** (what it can change; Next) → **Back** (leaves the editor) → the top bar's **New run** → the project select (the pick is saved per project) → the **Workflow** picker (the user's own pick, a `change`, never the value a project loads) → prompt → **Start run** (Mock is mentioned, not rung) → Running → the run's card (Done) |
 | 7 | Group projects into a workspace | one workspace exists | (fewer than two projects: the Add project walk) → sidebar › **Workspaces** → **Create workspace** → in the wizard: **name** → two to 40 **projects** (a note warns past 10, a stronger one past 20) → (the **Models** column: scan agent and project agents, default Sonnet · medium) → **Scan interconnections** — the scan runs as a pipeline you can follow under **Running**; the workspace appears when it finishes, its relations on the **Map** tab |
@@ -28,7 +28,7 @@ Every tour runs to the thing its tile promises, never to the first click of a
 multi-step action: a project registered, a run on its card under Running, the
 answer in the transcript, a workspace saved, team metrics enabled, a policy home
 on its own page. A hop that
-opens something (a dialog, the Ask sheet, the wizard, the side panel) is skipped
+opens something (a dialog, the wizard, the side panel) is skipped
 while it is open and lit again if it is closed.
 
 Getting to another view is itself a hop: the sidebar entry (or the compact
@@ -109,9 +109,9 @@ it → know the workflows → real work → scale.
   Interface mode dialog open (Settings › General › **Change…**), the hop rings
   its card instead, then **Done**.
 
-Layering: the spotlight sits above the Ask dock (z 40) and below every
+Layering: the spotlight sits below every
 `.viewer-modal` (z 50), so a dialog the target opens simply covers it. Targets
-inside a stacking context the class cannot escape (the Ask dock) are lifted with
+inside a stacking context the class cannot escape (the Workflows stage) are lifted with
 their ancestor (`lift`). `pointer` mode (no scrim, above the modal layer) exists
 for targets inside an open dialog.
 

@@ -28,7 +28,7 @@ The original user request (in the task header), any attached files, and the cycl
    - **Correctness**: would the plan's approach actually work? Wrong APIs, broken logic, unhandled edge cases, incorrect snippets.
    - **Completeness**: does it cover the whole request? Missing steps, missing tests, unaddressed requirements or scope.
    - **Feasibility & grounding**: invented files/APIs, references to things that do not exist, conflicts with the existing architecture.
-   - **Testability**: does each step describe a concrete, testable change (TDD)? A plan with no real tests is at least a major issue.
+   - **Testability**: does each step that can plausibly break (branching, parsing, migrations, boundaries, error paths, state) come with a concrete test? A plan with no real tests for such steps is at least a major issue. Do not demand tests for trivial steps, and raise tests the plan over-scopes (a new test file where an existing one fits, a browser DOM, child process, server or full pipeline run where an in-process test would do) as minor.
    - **Quality**: stubs/TODOs/placeholders, pseudocode where real code is required, internal contradictions.
 4. Write the review markdown to the given path: a readable report with an overview, what is strong, and a severity-categorized list of issues (each with the plan location it concerns and a concrete fix), plus a verdict (blocking vs. clean).
 5. Write `plan-review-cycleN.json` mirroring the issues for the orchestrator to gate on.

@@ -259,11 +259,11 @@ test('New run opens #new from any page, a started run\'s page included, and is n
   } })));
 });
 
-test('the sidebar has no New run row: 12 pages, Runs first; New run is the top bar\'s button', () => {
+test('the sidebar has no New run row: 13 pages, Chat first; New run is the top bar\'s button', () => {
   const doc = new JSDOM(html).window.document;
   assert.equal(doc.querySelector('.nav [data-nav="new"]'), null);
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 12);
-  assert.equal(doc.querySelector('.nav').firstElementChild.dataset.nav, 'runs');
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 13);
+  assert.equal(doc.querySelector('.nav').firstElementChild.dataset.nav, 'chat');
 });
 
 // ---- phones (<=760px) ----
@@ -337,7 +337,7 @@ test('#topnav-title names the open page on every route', async () => {
   const { $, go, recv } = await boot();
   recv({ type: 'hello', runs: [live('r1')] });
   await settle();
-  assert.equal($('#topnav-title').textContent, 'New run', 'the boot page');
+  assert.equal($('#topnav-title').textContent, 'Chat', 'the boot page');
   await checkRows([
     ['stats', 'Statistics'], ['runs', 'Runs'], ['running/r1', 'Runs'], ['history/proj-00000001/p1', 'Runs'],
     ['settings', 'Settings'], ['settings/memory', 'Settings'], ['getting-started', 'Getting started'],

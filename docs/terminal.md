@@ -133,20 +133,18 @@ time. Blocks and audit rows are kept. `GET /api/terminal/audit?runId=<id>` lists
 
 ## Ask Worca (agent mode)
 
-With the **Agent** switch on (in the Ask composer, on by default for every chat), Ask Worca can run shell
-commands in Worca terminals to check and finish work: tests, builds, linters, `git status`, and file
-changes through commands when you ask for them. It runs in a run's folder, a project's own folder, or the
-chat's pinned project. Turn the switch off and the next turn has no command tools; a command that is
-already running keeps running and still reports.
+Every Ask Worca chat is in agent mode wherever the host allows it (there is no per-chat switch): Ask Worca
+can run shell commands in Worca terminals to check and finish work: tests, builds, linters, `git status`,
+and file changes through commands when you ask for them. It runs in a run's folder, a project's own folder,
+or the chat's pinned project.
 
 - **A shared terminal.** Ask opens its own terminals, labeled `Ask · <chat title> · <folder>`, at most 3
   per chat. Their tabs show in this pane on every page, next to the page's own terminal, with the same
   live output, and you can type in them. Ask never types into a terminal you opened.
-  - **The pane follows Ask.** When Ask starts a command in the chat you have open, the pane shows that
-    tab: the first command of a chat opens a closed pane (close it, and that chat's later commands leave
-    it closed); an open pane switches to the tab unless you are typing in another one. It never takes
-    the keyboard. Click the folder on a command card to show its tab and type there. Moving to another
-    page brings back that page's own terminal; Ask's tab stays a tab.
+  - **Ask's tab waits for you.** A command Ask starts never opens the pane, never switches its tab and
+    never takes the keyboard: it shows live in the chat, and its tab is in this pane when you open it.
+    Click the folder on a command card to show its tab and type there. Moving to another page brings
+    back that page's own terminal; Ask's tab stays a tab.
   - **Your commands in Ask's tab.** They never wake the chat. Your next message carries a line in its
     context listing what you ran there since then (command, exit code, block id, redacted like other
     command text, the newest 3), so "I ran the migration, continue" works, and Ask can read the output.
@@ -160,10 +158,11 @@ already running keeps running and still reports.
     Ask reuses one of its terminals for another folder only if you have not typed there for 10 minutes.
   - **Idle close.** An Ask terminal closes after 10 idle minutes (your typing and commands there count
     as activity) and when the chat is deleted.
-- **In the chat.** Each command shows as a card with its live output and a **Stop** button. When a command
-  ends, the chat wakes with `[worca event] terminal block <id> exited <code>`, unless Ask already saw the
-  end while it waited. Ask can also list and read the commands you ran here (`list_blocks`), so "why did
-  this fail?" works on your own commands.
+- **In the chat.** Each command shows as a card with the whole command line and a **Stop** button. Its
+  live output is folded: click **Output** (it counts the lines) to show it; it stays open as it grows.
+  When a command ends, the chat wakes with `[worca event] terminal block <id> exited <code>`, unless
+  Ask already saw the end while it waited. Ask can also list and read the commands you ran here
+  (`list_blocks`), so "why did this fail?" works on your own commands.
 - **Environment.** Ask's shells start from a cleaned environment: `PATH`, `HOME`, locale, proxy and CA
   variables and `SSH_AUTH_SOCK`, and nothing else from the server. No model, GitHub or server tokens. Your
   shell rc files (`.bashrc`, `.zshrc`, `.zshenv`) are not loaded, so tools put on `PATH` only there (nvm,
@@ -185,7 +184,7 @@ already running keeps running and still reports.
   `source: ask` on the block. Opening an Ask terminal on a run adds "Terminal opened by Ask Worca" to the
   run's audit.
 - **Where it is off.** On a hosted Worca, agent mode follows the terminal: off unless
-  `WORCA_TERMINAL_REMOTE=1`. With agent isolation on, agent mode is off (and the switch is hidden): the
+  `WORCA_TERMINAL_REMOTE=1`. With agent isolation on, agent mode is off: the
   shell would run as the server user, not the agent user. Only bash and zsh record commands, so a terminal
   with another shell (sh, fish, cmd.exe) cannot run Ask's commands.
 

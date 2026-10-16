@@ -740,7 +740,7 @@ test('read_attachment as="text": converted, redacted and paged; the converter\'s
       assert.equal(r.truncated, false, 'paging truncation is separate');
       assert.equal(r.title, null);
       assert.equal(seen[0].baseUrl, null, 'no base URL: an attachment has no origin');
-      assert.ok(seen[0].opts.maxChars >= ASK_LIMITS.attachment.maxBytesPerFile, 'maxChars covers a full 512 KB text attachment');
+      assert.ok(seen[0].opts.maxChars >= ASK_LIMITS.attachment.maxBytesPerFile, 'maxChars covers a full 100 MB text attachment');
     } },
   ]);
 });
@@ -1188,4 +1188,11 @@ test('isByteArtifact agrees with the shared artifact-kind table', () => {
   }
   assert.equal(isByteArtifact('Makefile'), false, 'no extension is not bytes');
   assert.equal(isByteArtifact('shots/S01.PNG'), true, 'the extension match is case-insensitive');
+});
+
+test('an Ask chat with a composer bundle lists the drafts and the graph proposal right after its other tools — never the canvas tools', () => {
+  const names = createAskTools({ ...fake, composer: {} }).list().map((d) => d.name);
+  assert.deepEqual(names.slice(names.indexOf('get_task') + 1), ['build_workflow', 'draft_agent', 'draft_script', 'get_agent', 'get_workflow']);
+  for (const n of ['get_canvas', 'edit_canvas']) assert.equal(names.includes(n), false, n);
+  assert.ok(names.includes('propose_run') && names.includes('propose_workflow'), 'Ask keeps its own proposals');
 });

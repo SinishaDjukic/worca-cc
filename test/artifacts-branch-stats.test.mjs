@@ -263,3 +263,39 @@ test('a remote-started run diffs from its recorded baseSha; without startRef it 
     await rm(r2, { recursive: true, force: true });
   }
 });
+
+test('rowToHistoryEntry: a same-branch run carries sameAsSource + mergeBack; other runs keep their shape', async () => {
+  const { listPipelines } = await import('../src/core/artifacts.mjs');
+  const same = await seedPipeline(repo, { title: 'Same', status: 'done', startedAt: '2026-06-01T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/feat-1', sameAsSource: true,
+      mergeBack: { merged: false, kind: 'dirty', reason: 'main is checked out in /x with 1 uncommitted change(s)', at: 't' } } });
+  const plain = await seedPipeline(repo, { title: 'Plain', status: 'done', startedAt: '2026-06-01T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/feat-1' } });
+  const rows = await listPipelines(repo);
+  const s = rows.find((r) => r.id === same.id);
+  assert.equal(s.sameAsSource, true);
+  assert.equal(s.mergeBack.merged, false);
+  assert.deepEqual(s.mergeBack.members.map((m) => [m.source, m.branch, m.merged, m.kind]), [['main', 'worca-cc/feat-1', false, 'dirty']]);
+  const p = rows.find((r) => r.id === plain.id);
+  assert.equal('sameAsSource' in p, false);
+  assert.equal('mergeBack' in p, false);
+});
+
+test('rowToHistoryEntry: a "not merged back" member whose work has landed (or whose branch is gone) no longer warns', async () => {
+  const { listPipelines } = await import('../src/core/artifacts.mjs');
+  // worca-cc/landed points at main's own tip: someone merged it by hand (or the source caught up).
+  spawnSync('git', ['branch', '-f', 'worca-cc/landed', 'main'], { cwd: repo });
+  const notMb = { merged: false, kind: 'diverged', reason: 'main has new commits since the run started', at: 't' };
+  const landed = await seedPipeline(repo, { title: 'Landed', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/landed', sameAsSource: true, mergeBack: notMb } });
+  const gone = await seedPipeline(repo, { title: 'Gone', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/deleted-after-merge', sameAsSource: true, mergeBack: notMb } });
+  const open = await seedPipeline(repo, { title: 'Open', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/feat-1', sameAsSource: true, mergeBack: notMb } });
+  const rows = await listPipelines(repo);
+  const at = (id) => rows.find((r) => r.id === id).mergeBack;
+  assert.equal(at(landed.id).merged, true, 'the branch is already in main');
+  assert.equal(at(gone.id).merged, true, 'the branch the card points at no longer exists');
+  assert.equal(at(open.id).merged, false, 'a branch still ahead of main keeps the card');
+  assert.equal(at(open.id).members[0].kind, 'diverged');
+});

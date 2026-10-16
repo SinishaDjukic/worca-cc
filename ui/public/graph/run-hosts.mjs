@@ -26,7 +26,7 @@ export const HINT_TEXT = 'drag to pan · ⌘/ctrl+scroll to zoom';
 export const NAV_INSET = 54;
 /** The cluster's three buttons: [data-nav, label, glyph]. The glyphs are the
  *  composer's (ui/public/index.html #gv-nav) so both canvases read identically. */
-const NAV_BTNS = [
+export const NAV_BTNS = [
   ['in', 'Zoom in', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"></path></svg>'],
   ['out', 'Zoom out', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12h14" stroke-linecap="round"></path></svg>'],
   ['center', 'Fit graph to view', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="2.5"></rect><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"></circle></svg>'],
@@ -38,6 +38,13 @@ export const FOCUS_PAD = 24;
  *  (style.css `.rd-live .run-flow-wrap` mask) is clear up to the same fraction of
  *  its radius, so a fit never parks a running step in the mist at the edges. */
 export const FOCUS_CLEAR = 0.6;
+/** Chat P3 `card` host (the chat run card's graph well, U9): the Workflows rendering at a chat zoom. The well width
+ *  picks the zoom between CARD_ZOOM_MIN and CARD_ZOOM (CARD_ZOOM_NARROW under CARD_NARROW_W px); a graph wider than
+ *  that pans instead of shrinking further. The zoom picks the well height, clamped CARD_MIN_H..CARD_MAX_H on the
+ *  wrap's --run-host-h. The camera follows the running nodes unless the user panned or zoomed less than
+ *  CARD_FOLLOW_IDLE_MS ago. */
+export const CARD_ZOOM = 0.74, CARD_ZOOM_NARROW = 0.6, CARD_ZOOM_MIN = 0.5, CARD_NARROW_W = 640;
+export const CARD_MIN_H = 200, CARD_MAX_H = 480, CARD_PAD = 16, CARD_FOLLOW_IDLE_MS = 5000;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 /** The nodes the Live view frames: the running steps; else the step a pause or
@@ -65,15 +72,18 @@ const nodeSig = (stepper) => manifestNodes(stepper).map((n) => n.id).join(',');
 
 export function mountRunGraph(hostEl, opts = {}) {
   const { mode = 'monitor', doc = hostEl.ownerDocument, raf = null, viewport = null,
-    onRowClick = null, onGateClick = null, onResultClick = null, nodeClicks = false } = opts;
+    onRowClick = null, onGateClick = null, onResultClick = null, nodeClicks = false, modelLabel = null, now = () => Date.now() } = opts;
   const wrap = hostEl.closest('.run-flow-wrap') || hostEl.parentElement || hostEl;
   const win = doc.defaultView || globalThis;
-  const isStatic = mode === 'static', isFocus = mode === 'focus', isMonitor = !isStatic && !isFocus;
-  const zoomMin = 0.3, zoomMax = isMonitor ? 1.6 : 1;
+  const isStatic = mode === 'static', isFocus = mode === 'focus', isCard = mode === 'card';
+  const isMonitor = !isStatic && !isFocus && !isCard;
+  const zoomMin = 0.3, zoomMax = isMonitor ? 1.6 : isCard ? CARD_ZOOM : 1;
   const cardLinks = nodeClicks && isMonitor && !!onRowClick;   // only a monitor host takes clicks
 
   let view = null, stepper = null, decor = null, runId = null, expanded = null, ro = null, lastFit = null, bound = false, nav = null;
-  let focus = [];   // focus hosts: the node ids the camera frames (focusNodeIds)
+  let focus = [];   // focus + card hosts: the node ids the camera frames (focusNodeIds)
+  let touchedAt = 0;   // card hosts: when the user last panned or zoomed (0 = not since this run's first fit)
+  let followPending = false;   // card hosts: the running node moved while the user was looking around — follow when idle
   // The last width `view.readRect()` reported. A host inside a `display:none`
   // subtree (compact density, a closed detail) measures 0×0, and both fitters
   // BAIL on that rather than poison the transform / --run-host-h with it; the
@@ -194,9 +204,50 @@ export function mountRunGraph(hostEl, opts = {}) {
     view.setTransform({ x: f.x + (r.width - cw) / 2, y: f.y + (r.height - ch) / 2, z: f.z });
   }
 
+  /** Card hosts: false while the user panned or zoomed less than CARD_FOLLOW_IDLE_MS ago — the camera stays put. */
+  function cardFollows() { return !touchedAt || now() - touchedAt >= CARD_FOLLOW_IDLE_MS; }
+  // Card (the chat run card's well): the width picks the zoom (CARD_ZOOM_MIN..CARD_ZOOM), the zoom picks the well
+  // height (CARD_MIN_H..CARD_MAX_H on --run-host-h). An axis that fits is centred; a longer one frames the followed
+  // nodes, clamped so the camera never shows past either end of the graph.
+  function fitCard() {
+    const r = view.readRect();
+    if (!(r.width > 0)) return;                 // hidden host (0×0): nothing to fit into
+    const b = view.bounds(CARD_PAD);
+    if (!b) return;
+    const top = r.width < CARD_NARROW_W ? CARD_ZOOM_NARROW : CARD_ZOOM;
+    const z = clamp(r.width / b.w, Math.min(CARD_ZOOM_MIN, top), top);
+    const hostH = clamp(Math.round(b.h * z), CARD_MIN_H, CARD_MAX_H);
+    wrap.style.setProperty('--run-host-h', `${hostH}px`);
+    const f = focus.length ? view.bounds(FOCUS_PAD, focus) : null;
+    const place = (span, lo, size, fLo, fSize) => {
+      const s = size * z;
+      if (s <= span) return (span - s) / 2 - lo * z;              // fits: centred
+      if (fLo == null) return -lo * z;                             // nothing to follow: the start edge
+      return clamp(span / 2 - (fLo + fSize / 2) * z, span - (lo * z + s), -lo * z);
+    };
+    view.setTransform({
+      x: place(r.width, b.x, b.w, f ? f.x : null, f ? f.w : 0),
+      y: place(hostH, b.y, b.h, f ? f.y : null, f ? f.h : 0),
+      z,
+    });
+  }
+
+  /** Card hosts: a user pan or zoom keeps the graph in the well — fitCard's rule per axis: an axis that fits stays
+   *  centred, a longer one never shows past either end of the graph. */
+  function clampCard(t) {
+    const r = view.readRect();
+    const b = view.bounds(CARD_PAD);
+    if (!b || !(r.width > 0) || !(r.height > 0)) return t;
+    const axis = (v, span, lo, size) => {
+      const s = size * t.z;
+      return s <= span ? (span - s) / 2 - lo * t.z : clamp(v, span - (lo * t.z + s), -lo * t.z);
+    };
+    return { x: axis(t.x, r.width, b.x, b.w), y: axis(t.y, r.height, b.y, b.h), z: t.z };
+  }
+
   function fit() {
     if (!view || !stepper) return;
-    if (isFocus) fitFocus(); else if (isStatic) fitStatic(); else fitMonitor(true);
+    if (isFocus) fitFocus(); else if (isStatic) fitStatic(); else if (isCard) fitCard(); else fitMonitor(true);
     lastFit = view.getTransform();
     paintNav();
   }
@@ -205,12 +256,19 @@ export function mountRunGraph(hostEl, opts = {}) {
     if (!view || !stepper || !isMonitor) return;
     fitMonitor(false);
   }
-  /** Re-fit while the user has not touched the view; otherwise only re-size the host. */
-  function refit() { if (untouched()) fit(); else sizeHost(); }
+  /** Re-fit while the user has not touched the view; otherwise only re-size the host. A card host re-fits once the
+   *  user has left it alone for CARD_FOLLOW_IDLE_MS (its well height is part of that fit). */
+  function refit() {
+    if (isCard) { if (cardFollows()) fit(); return; }
+    if (untouched()) fit(); else sizeHost();
+  }
 
   function paint() {
     if (!view || !decor) return;
     applyDecor(view, { ...decor, expanded });
+    // A card binds no footer accordion or result link (the panel is where you drill in): the strips applyDecor builds
+    // are no tab stops there, or a keyboard walk through the chat stops at every run node of every graph.
+    if (isCard) for (const n of hostEl.querySelectorAll('.xtoggle, .xresult a')) n.setAttribute('tabindex', '-1');
   }
 
   function mount() {
@@ -219,20 +277,33 @@ export function mountRunGraph(hostEl, opts = {}) {
     // padding box, not the wrap — `.gv-host` / `.gv-wrap-*` (style.css) reset it.
     hostEl.classList.add('gv-host');
     wrap.classList.add('gv-wrap', `gv-wrap-${mode}`);
-    // A focus host renders its cards as the static one does: look, don't touch.
-    view = createGraphView(hostEl, { mode: isFocus ? 'static' : mode, doc, raf, viewport,
-      portsFn: manifestPortsFn(stepper), agents: manifestAgents(stepper), zoomMin, zoomMax });
+    // A focus host renders its cards as the static one does: look, don't touch. A card host is a pannable stage:
+    // the view's monitor mode (cards take pointer events; the nav binds drag + ⌘/ctrl-wheel zoom).
+    view = createGraphView(hostEl, { mode: isFocus ? 'static' : isCard ? 'monitor' : mode, doc, raf, viewport,
+      portsFn: manifestPortsFn(stepper), agents: manifestAgents(stepper), zoomMin, zoomMax,
+      // The label row names the model the step RAN with: the manifest cell's resolved `model`
+      // (project node pick > team default > authored), not the template's authored config.model.
+      modelOf: (node) => (manifestNodes(stepper).find((n) => n.id === node.id) || {}).model || (node.config && node.config.model) || '',
+      modelLabel });
     // The view never auto-binds a nav: monitor hosts ask for one. There is no
     // engagement state any more — a plain wheel is always the page's (D2) — and
     // onTransform is how a wheel zoom or a drag repaints the cluster.
     if (isMonitor) view.createNav({ onTransform: paintNav });
+    // A card host has no cluster: a user pan or zoom pauses the follow (cardFollows) and stays inside the well.
+    if (isCard) {
+      view.createNav({ onTransform: (t) => {
+        touchedAt = now();
+        const c = clampCard(t);
+        if (c.x !== t.x || c.y !== t.y) view.setTransform(c);   // a programmatic write never re-enters the nav
+      } });
+    }
   }
 
   function update(nextRunId, nextStepper, nextDecor) {
     const runChanged = nextRunId !== runId;
     const structural = !view || runChanged || nodeSig(nextStepper) !== nodeSig(stepper);
     const sameBag = !structural && nextDecor === decor;
-    if (runChanged) { runId = nextRunId; expanded = null; lastFit = null; focus = []; }   // one node open per surface; a new run is a new build
+    if (runChanged) { runId = nextRunId; expanded = null; lastFit = null; focus = []; touchedAt = 0; followPending = false; }   // one node open per surface; a new run is a new build
     // A node-set change needs a view whose portsFn/headers read the NEW manifest.
     if (view && structural && nodeSig(nextStepper) !== nodeSig(stepper)) { view.destroy(); view = null; lastFit = null; }
     stepper = nextStepper; decor = nextDecor;
@@ -250,6 +321,20 @@ export function mountRunGraph(hostEl, opts = {}) {
       const moved = next.join(',') !== focus.join(',');
       focus = next;
       if (structural || revealed || moved) fit();
+      return;
+    }
+    if (isCard) {
+      // Follow the running nodes (focusNodeIds) — unless the user is looking somewhere else (cardFollows). A move seen
+      // inside the idle window is remembered (followPending), so the first update after it catches up even when the
+      // running node has not changed again since.
+      // A card binds no node keys (the panel is where you drill in): the stage and the cards are no tab stops, so a
+      // keyboard walk through the chat does not stop at every card of every graph. Expand is the card's way in.
+      if (structural) for (const n of [view.stage, ...hostEl.querySelectorAll('.node[tabindex]')]) n.setAttribute('tabindex', '-1');
+      const next = focusNodeIds(decor, focus);
+      const moved = next.join(',') !== focus.join(',');
+      focus = next;
+      if (moved && !cardFollows()) followPending = true;
+      if (structural || revealed || ((moved || followPending) && cardFollows())) { followPending = false; fit(); }
       return;
     }
     if ((structural || revealed) && untouched()) fit();
@@ -270,7 +355,7 @@ export function mountRunGraph(hostEl, opts = {}) {
         const tt = el.querySelector('.nlabel .tt');
         el.setAttribute('role', 'link');
         el.tabIndex = 0;
-        el.setAttribute('aria-label', `Show the live log of ${tt ? tt.textContent : el.dataset.nodeId}`);
+        el.setAttribute('aria-label', `Show the log of ${tt ? tt.textContent : el.dataset.nodeId} below the workflow`);
       } else {
         el.removeAttribute('role');
         el.removeAttribute('tabindex');
@@ -319,9 +404,28 @@ export function mountRunGraph(hostEl, opts = {}) {
         });
       }
     }
+    // A card host (the chat run card): a plain vertical wheel stays the chat's scroll; shift+wheel or a mostly
+    // horizontal wheel (trackpads) pans along the graph; ⌘/ctrl+wheel is the nav's zoom. The gate pip reports out
+    // (the card scrolls to its own question).
+    if (isCard) {
+      on(hostEl, 'wheel', (e) => {
+        if (!view || e.ctrlKey || e.metaKey) return;
+        const dx = e.shiftKey ? (e.deltaX || e.deltaY) : (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : 0);
+        if (!dx) return;
+        e.preventDefault();
+        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? (view.readRect().width || 400) : 1;
+        const t = view.getTransform();
+        view.setTransform(clampCard({ x: t.x - dx * unit, y: t.y, z: t.z }));
+        touchedAt = now();
+      }, { passive: false });
+      on(hostEl, 'click', (e) => {
+        const gate = e.target.closest && e.target.closest('.ngate');
+        if (gate && onGateClick) onGateClick(gate.dataset.wireId);
+      });
+    }
     // jsdom has no ResizeObserver — guard through the document's window (P5's idiom).
     if (typeof win.ResizeObserver === 'function') {
-      ro = new win.ResizeObserver(() => { if (isMonitor) refit(); else fit(); });
+      ro = new win.ResizeObserver(() => { if (isMonitor || isCard) refit(); else fit(); });
       ro.observe(wrap);
     }
   }
@@ -335,7 +439,9 @@ export function mountRunGraph(hostEl, opts = {}) {
     if (nav) { nav.remove(); nav = null; }
     if (view) { view.destroy(); view = null; }   // view.destroy() tears every nav down
     hostEl.classList.remove('gv-host');
-    wrap.classList.remove('gv-wrap', 'gv-wrap-static', 'gv-wrap-monitor', 'gv-wrap-focus');
+    wrap.classList.remove('gv-wrap', 'gv-wrap-static', 'gv-wrap-monitor', 'gv-wrap-focus', 'gv-wrap-card');
+    touchedAt = 0;
+    followPending = false;
     wrap.style.removeProperty('--run-host-h');
     hostEl.style.width = '';
     hostEl.innerHTML = '';

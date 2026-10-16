@@ -9,6 +9,8 @@
 //   view.showTab(tab)    'activity' (default) | 'once' | 'repeating' — the route's param
 //   view.loadFeed()      feed only (`notification`, `notifications-changed`)
 //   view.upcoming(ms)    tickets due within `ms` — the Running view's Scheduled group
+//   view.chains()        the server's after-ticket chains (last load())
+//   view.tickets() / noteTicket(t) / forgetTicket(id)   every ticket; upsert one by id; drop one
 //   view.destroy()       stop the countdown tick
 
 import { formatInstant, formatCountdown } from '../../src/shared/schedule/recurrence.mjs';
@@ -86,7 +88,7 @@ export const SCHEDULE_TABS = ['activity', 'once', 'repeating'];
  */
 export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repeatingHost, subEl = null, msgEl = null, deps }) {
   const tz = browserTimeZone();
-  const model = { schedules: [], tickets: [], counts: {}, defaults: { graceMin: 360, ifMissed: 'run', maxFailures: 3 }, feed: [], filter: 'all', loaded: false, tab: 'activity' };
+  const model = { schedules: [], tickets: [], chains: [], counts: {}, defaults: { graceMin: 360, ifMissed: 'run', maxFailures: 3 }, feed: [], filter: 'all', loaded: false, tab: 'activity' };
   let timer = null;
 
   // #555: an action's result is a toast through deps.notify; 'err-inline' (what load()/loadFeed() report) stays on msgEl.
@@ -138,7 +140,8 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       item.after ? row('After', `${(item.after.title || item.after.id.slice(0, 8))} · ${afterWord(item.after)}`) : null,
       item.after ? row('If it fails', item.after.policy === 'any' ? 'Start anyway' : 'Do not start') : null,
       item.sourceFromPrevious ? row('Source branch', 'the run before it') : null,
-      row('Feature branch', item.summary.featureBranch ? (item.kind === 'recurring' ? `${item.summary.featureBranch}-<date>` : item.summary.featureBranch) : ''),
+      row('Feature branch', item.summary.sameAsSource ? 'none — commits onto the source branch'
+        : (item.summary.featureBranch ? (item.kind === 'recurring' ? `${item.summary.featureBranch}-<date>` : item.summary.featureBranch) : '')),
       row('Guardrails', item.summary.guardrailsId && item.summary.guardrailsId !== 'permissive' ? item.summary.guardrailsId : ''),
       row('Extra files', item.summary.extras ? String(item.summary.extras) : ''),
       item.after ? null : row('If Worca is not running', item.ifMissed === 'skip' ? 'Skip it' : `Start it late, at most ${item.graceMin >= 60 && item.graceMin % 60 === 0 ? `${item.graceMin / 60} h` : `${item.graceMin} min`}`),
@@ -415,6 +418,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       const data = await api('GET', '/api/schedules');
       model.schedules = Array.isArray(data.schedules) ? data.schedules : [];
       model.tickets = Array.isArray(data.tickets) ? data.tickets : [];
+      model.chains = Array.isArray(data.chains) ? data.chains : [];
       model.counts = data.counts || {};
       if (data.defaults) model.defaults = data.defaults;
       model.loaded = true;
@@ -454,6 +458,17 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       const limit = Date.now() + ms;
       return model.tickets.filter((t) => t.status === 'missed' || (t.after && (t.status === 'scheduled' || t.status === 'firing')) || Date.parse(t.runAt) <= limit);
     },
+    /** Every ticket the server listed (scheduled, firing, missed) — unlike upcoming(), none is dropped for being far out. */
+    tickets() { return model.tickets; },
+    /** The after-ticket chains the server listed with the last load(). */
+    chains() { return model.chains; },
+    /** Upsert a ticket by id (an optimistic add before the next load). */
+    noteTicket(t) {
+      const i = model.tickets.findIndex((x) => x.id === t.id);
+      if (i < 0) model.tickets.push(t);
+      else model.tickets[i] = t;
+    },
+    forgetTicket(id) { model.tickets = model.tickets.filter((t) => t.id !== id); },
     ticketRow,
     isLoaded: () => model.loaded,
     destroy() { clearInterval(timer); timer = null; },

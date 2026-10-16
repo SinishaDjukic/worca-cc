@@ -43,6 +43,7 @@ import { cmdLogs } from './logs.mjs';
 import { cmdControl } from './control.mjs';
 import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
+import { cmdExtension } from './extension.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
 } from '../core/ui-instance.mjs';
@@ -122,6 +123,7 @@ function parseArgs(argv) {
     install: null,
     sourceBranch: undefined,
     featureBranch: undefined,
+    onSourceBranch: false,
     memoryScope: undefined,
     after: undefined,
     afterAny: false,
@@ -204,6 +206,7 @@ function parseArgs(argv) {
     }
     if (arg === '--after-any') { out.afterAny = true; continue; }
     if (arg === '--source-from-previous') { out.sourceFromPrevious = true; continue; }
+    if (arg === '--on-source-branch') { out.onSourceBranch = true; continue; }
 
     let inlineValue;
     const eq = arg.indexOf('=');
@@ -242,6 +245,10 @@ function parseArgs(argv) {
       fail(`Unknown flag: ${arg}`);
     }
     out._.push(arg);
+  }
+  if (out.onSourceBranch && out.featureBranch) fail('--on-source-branch and --branch cannot both be given');
+  if (!out.onSourceBranch && out.featureBranch && out.sourceBranch && out.featureBranch === out.sourceBranch) {
+    fail(`--branch and --source-branch are both "${out.sourceBranch}": add --on-source-branch (without --branch) to commit onto it, or pick another --branch`);
   }
   return out;
 }
@@ -294,6 +301,7 @@ Subcommands:
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
   script <cmd> [...]          Manage and test scripts: list|show|new|rm|test. See: worca script help
   config [get|set|unset]      Budget & cost-limit settings
+  flags [list|on|off|reset]   Experimental features: on/off <key>, reset [<key>]
   ui [start|stop|restart|status]
                               Run the web UI (default http://localhost:4317). See: worca ui help
   workflow <cmd> [...]        Export a workflow (Claude Code skill, JSON, or plugin) / import JSON: list|export|import. See: worca workflow help
@@ -306,6 +314,9 @@ Subcommands:
                               See: worca models help
   container <cmd> [...]       Run Worca in a container: init|up|down|status|logs|pull|login|shell|run|where.
                               See: worca container help (docs/docker.md)
+  extension [--browser <b>] [--open]
+                              The browser extension packaged with this Worca: folder, version, install steps.
+                              See: worca extension help (docs/browser-extension.md)
   broker [serve|secrets|revoke --person <email>]
                               The credential broker: holds model keys outside worca's container
                               (docs/credential-broker.md)
@@ -331,6 +342,8 @@ Options:
                            run restructures (--workflow wf_memory_defrag needs it; no --prompt needed)
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
+  --on-source-branch       Commit onto the source branch itself: the run works on a hidden branch and
+                           fast-forwards the source to it when it finishes (not with --branch)
   --mock                   Offline mock mode (no claude, no tokens)
   --at <when>              Run ONCE, later: "02:00", "tomorrow 02:00", "+90m", "2026-09-19 02:00",
                            or ISO 8601 with an offset. Needs a Worca server up at that time — or --wait
@@ -664,6 +677,17 @@ async function attachAndDrive(orch, flags, start) {
   // which the header formatter resolves against the manifest.
   orch.on('question', async (payload) => {
     const { id, kind, questions, issues, recovery, agent } = payload;
+    if (kind === 'plan') {
+      // A plan approval needs a person and is answered in the worca app (shape-it-first D2). Pause, so the hold
+      // stays in the resume point. Deferred one microtask, like abandonAnswer (:608): _ask emits `question`
+      // before it parks pendingQuestion.
+      out(c('yellow', `The plan ${payload.plan?.file || ''} is waiting for approval in the worca app; pausing the run.`));
+      queueMicrotask(() => {
+        if (orch.pauseRequested || !orch.state || orch.state.status !== 'running') return;
+        orch.pause();
+      });
+      return;
+    }
     if (flags.auto || !rl) return; // auto mode resolves internally
     answering = true;
     const ctrl = new AbortController();
@@ -1294,6 +1318,27 @@ async function cmdConfig(argv) {
   } catch (err) {
     fail(err && err.message ? err.message : String(err));
   }
+}
+
+/** `worca flags` — list / turn on / turn off / reset the feature flags (docs/feature-flags.md).
+ *  Thin over src/core/flags.mjs (the same setter as PATCH /api/flags; open tabs pick the change up on
+ *  their next load or reconnect). Exit codes: 0 ok, 2 usage, unknown key or WORCA_FLAGS-locked (fail()). */
+async function cmdFlags(argv) {
+  const { listFlags, setFlags } = await import('../core/flags.mjs');
+  const [verb = 'list', key, ...extra] = argv;
+  const show = () => {
+    for (const f of listFlags()) out(`${f.key}\t${f.on ? 'on' : 'off'}\t${f.stage}\t${f.locked ? 'locked by WORCA_FLAGS' : f.source}`);
+  };
+  const usage = 'Usage: worca flags [list] | on <key> | off <key> | reset [<key>]';
+  if (extra.length) fail(usage);
+  if (verb === 'list') { if (key) fail(usage); show(); return 0; }
+  let patch = null;
+  if ((verb === 'on' || verb === 'off') && key) patch = { [key]: verb === 'on' };
+  else if (verb === 'reset') patch = key ? { [key]: null } : Object.fromEntries(listFlags().filter((f) => !f.locked).map((f) => [f.key, null]));
+  if (!patch) fail(usage);
+  try { await setFlags(patch); } catch (err) { fail(err && err.message ? err.message : String(err)); }
+  show();
+  return 0;
 }
 
 /** `worca resume <pipelineId>` — continue a paused pipeline from its resume point. */
@@ -2359,7 +2404,8 @@ async function cmdWorkflow(argv) {
       case 'list': {
         // The built-ins (Default, Memory defragment) are not in the user store, so
         // prepend them — mirrors the server/UI, which always show them first.
-        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(await wf.listWorkflows())];
+        const { shapeFirstEnabled } = await import('../core/shape/gate.mjs');
+        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(shapeFirstEnabled() ? [wf.GRAPH_SHAPE_WORKFLOW] : []), ...(await wf.listWorkflows())];
         for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
         return 0;
       }
@@ -3117,7 +3163,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3195,6 +3241,7 @@ async function main() {
     if (sub === 'plugin') return cmdPlugin(rest);
     if (sub === 'marketplace') return cmdMarketplace(rest);
     if (sub === 'config') return cmdConfig(rest);
+    if (sub === 'flags') return cmdFlags(rest);
     if (sub === 'ui') return cmdUi(rest);
     if (sub === 'workflow') return cmdWorkflow(rest);
     if (sub === 'script') return flushed(cmdScript(rest));
@@ -3203,6 +3250,7 @@ async function main() {
     if (sub === 'schedule') return cmdSchedule(rest, { out, c, fail });
     if (sub === 'models') return cmdModels(rest, { out, c, fail });
     if (sub === 'container') return cmdContainer(rest, { out, c, fail });
+    if (sub === 'extension') return cmdExtension(rest, { out, c, fail });
     if (sub === 'broker') {
       // Loaded lazily: the broker is its own process and needs none of the core graph.
       const { runBrokerCli } = await import('../broker/main.mjs');
@@ -3321,6 +3369,12 @@ async function main() {
     try { row = await assertRunnableWorkflow(flags.workflow); }
     catch (err) { fail(`${err && err.message ? err.message : String(err)}`); }
   }
+  if (flags.workflow) {
+    const { isShapeWorkflowId } = await import('../core/shape/run.mjs');
+    if (isShapeWorkflowId(flags.workflow)) {
+      fail(`workflow "${flags.workflow}" is started from the worca app (POST /api/run with shape), not the CLI`);
+    }
+  }
   {
     const { validateMemoryScope } = await import('../core/memory-sync.mjs');
     const reason = validateMemoryScope({ workflowId: flags.workflow || 'wf_default', memoryScope: flags.memoryScope, isWorkspace: false });
@@ -3350,7 +3404,7 @@ async function main() {
     workflowId: flags.workflow || undefined,
     template: row,
     memoryScope: flags.memoryScope || undefined,
-    branch: { source: flags.sourceBranch, feature: flags.featureBranch },
+    branch: { source: flags.sourceBranch, feature: flags.featureBranch, ...(flags.onSourceBranch ? { sameAsSource: true } : {}) },
     claude: {
       permissionMode: flags.permissionMode,
       model: flags.model,

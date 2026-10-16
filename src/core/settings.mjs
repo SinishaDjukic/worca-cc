@@ -17,6 +17,8 @@
 //                            to CLI runs with no restart. A NON-EMPTY WORCA_DEBUG_SPAWN
 //                            in the process environment overrides it (power-user
 //                            override); this module never writes process.env.
+//   resumeAfterUsageLimit  — opt-in boolean (default false): schedule a usage-limit pause's
+//                            resume for just after the limit resets, unattended.
 //   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
 //   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
 //   costLimitResetPeriod   — total-budget window, 'weekly' | 'monthly' (default).
@@ -966,8 +968,9 @@ const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused', 'away', 'prWa
  * enabled (an absent "<plugin>/<channelId>" key means enabled — presence with
  * {enabled:false} is the opt-out record); `scriptTools` (scripts-workbench W20) is the
  * chat's "Create and run scripts" switch and defaults ON, so only a stored false ever
- * takes save_script / test_script away.
- * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean}}
+ * takes save_script / test_script away. `suggestions` is Ask Worca's next-prompt ghost text after
+ * each reply (one cheap model call per reply), default ON as well.
+ * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean}}
  */
 export function chatPrefs() {
   const raw = readSettings().chat;
@@ -978,13 +981,14 @@ export function chatPrefs() {
   for (const [key, v] of Object.entries(chat.channels && typeof chat.channels === 'object' ? chat.channels : {})) {
     channels[key] = { enabled: v?.enabled !== false };
   }
-  return { notify, channels, scriptTools: chat.scriptTools !== false };
+  // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
+  return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false };
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?, away?},
- * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean}. Unknown
- * notify keys and a non-boolean scriptTools are rejected (400 at the API layer);
+ * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean}.
+ * Unknown notify keys and a non-boolean scriptTools / suggestions are rejected (400 at the API layer);
  * channels merge per key.
  */
 export async function setChatPrefs(patch = {}) {
@@ -994,6 +998,8 @@ export async function setChatPrefs(patch = {}) {
   }
   const hasScriptTools = Object.prototype.hasOwnProperty.call(patch, 'scriptTools');
   if (hasScriptTools && typeof patch.scriptTools !== 'boolean') throw new Error('chat scriptTools must be true or false');
+  const hasSuggestions = Object.prototype.hasOwnProperty.call(patch, 'suggestions');
+  if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1006,6 +1012,7 @@ export async function setChatPrefs(patch = {}) {
       },
     } : {}),
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
+    ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
   };
   await persistSettings(settings);
   return chatPrefs();
@@ -1122,9 +1129,11 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'askMaxTurns', 'askMaxBudgetUsd',
   'askWeb',                                  // Ask Worca web access { enabled, allowedDomains, search }
   'debugSpawnEnabled',
+  'resumeAfterUsageLimit',
   'titleModel', 'hideBuiltinModels',
   'theme',
   'uiLevel',                                 // interface mode (docs/ui-levels.md)
+  'flags',                                   // feature flags { key: bool } (docs/feature-flags.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
   'prDescriptionModel',                      // the "Ship it?" modal's Generate with AI
   'memoryDefrag',                            // Settings › Memory: the defragment model + effort
@@ -1511,6 +1520,33 @@ export async function setDebugSpawnEnabled(input) {
   else settings.debugSpawnEnabled = input;
   await persistSettings(settings);
   return { debugSpawnEnabled: debugSpawnEnabled() };
+}
+
+// ── Resume after a usage limit (opt-in) ──────────────────────────────────────
+export const DEFAULT_RESUME_AFTER_USAGE_LIMIT = false;
+
+/** @throws {Error} unless `input` is a boolean (the route and the setter share this). */
+export function assertResumeAfterUsageLimitInput(input) {
+  if (!isBool(input)) throw new Error('resumeAfterUsageLimit must be true or false');
+}
+
+/** D6: schedule a usage-limit pause's resume for just after the reset, unattended. */
+export function resumeAfterUsageLimit() {
+  const v = readSettings().resumeAfterUsageLimit;
+  if (v === undefined) return DEFAULT_RESUME_AFTER_USAGE_LIMIT;
+  if (isBool(v)) return v;
+  console.warn(`[worca] invalid resumeAfterUsageLimit ${JSON.stringify(v)} — using the default (${DEFAULT_RESUME_AFTER_USAGE_LIMIT})`);
+  return DEFAULT_RESUME_AFTER_USAGE_LIMIT;
+}
+
+/** @throws {Error} unless `input` is a boolean. */
+export async function setResumeAfterUsageLimit(input) {
+  assertResumeAfterUsageLimitInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_RESUME_AFTER_USAGE_LIMIT) delete settings.resumeAfterUsageLimit;
+  else settings.resumeAfterUsageLimit = input;
+  await persistSettings(settings);
+  return { resumeAfterUsageLimit: resumeAfterUsageLimit() };
 }
 
 // ---------------------------------------------------------------------------
@@ -2176,6 +2212,45 @@ export async function setUiLevel(input) {
   return { uiLevel: uiLevel() };
 }
 
+// ── Feature flags (docs/feature-flags.md) ────────────────────────────────────
+// settings.json `flags: { [key]: boolean }`, holding only values that differ from the registry
+// default (D2). Resolution (env > settings > default), validation and `requires` live in
+// src/core/flags.mjs; this is only the stored layer.
+const warnedFlags = new Set();
+function warnFlagOnce(path, value) {
+  const id = `${path}:${JSON.stringify(value)}`;
+  if (warnedFlags.has(id)) return;
+  warnedFlags.add(id);
+  console.warn(`[worca] ignoring settings.json ${path} = ${JSON.stringify(value)} (want true or false)`);
+}
+
+/** The STORED flag map: boolean entries only. Unknown KEYS pass through (the resolver warns about them).
+ *  Under node:test it reads {} unless the test sandboxes HOME and opts in (homeGuarded): a developer's
+ *  own flags must never change what a test renders. */
+export function storedFlags() {
+  if (homeGuarded()) return {};
+  const v = readSettings().flags;
+  if (v === undefined) return {};
+  if (!isObj(v)) { warnFlagOnce('flags', v); return {}; }
+  const out = {};
+  for (const [k, b] of Object.entries(v)) {
+    if (typeof b === 'boolean') out[k] = b; else warnFlagOnce(`flags.${k}`, b);
+  }
+  return out;
+}
+
+/** Persist the whole stored flag map; the caller has already dropped defaults and unknown keys. Empty ⇒ the key goes. */
+export async function writeStoredFlags(map) {
+  if (homeGuarded()) {
+    throw new Error('feature-flag write under the node:test runner — sandbox HOME/USERPROFILE '
+      + 'and set WORCA_TEST_ALLOW_HOME_FALLBACK=1 (tests must never touch the real ~/.worca-cc)');
+  }
+  const settings = readSettings();
+  if (isObj(map) && Object.keys(map).length) settings.flags = { ...map };
+  else delete settings.flags;
+  await persistSettings(settings);
+}
+
 // ── Getting started (onboarding) ─────────────────────────────────────────────
 // Two machine-wide flags, nothing more: which steps are DONE is derived from
 // product state by src/core/onboarding.mjs and never stored. `hidden` is the
@@ -2233,16 +2308,27 @@ export function scheduleDefaults() {
 }
 
 /**
- * Persist any subset of the schedule defaults; '' / null clears a key back to its
- * default. The whole patch is validated before anything is written.
+ * Validate a schedule-defaults patch ('' / null clear a key). The setter and Ask's change_setting (worca Chat P2)
+ * share it, so both refuse with the same words.
  * @throws {Error} on the first invalid value
  */
-export async function setScheduleDefaults(patch = {}) {
+export function assertScheduleDefaultsInput(patch = {}) {
   const has = (k) => Object.prototype.hasOwnProperty.call(patch, k);
   const clear = (v) => v === '' || v === null || v === undefined;
   if (has('graceMin') && !clear(patch.graceMin) && !isGraceMin(patch.graceMin)) throw new Error('scheduleGraceMin must be a whole number of minutes from 0 to 10080');
   if (has('ifMissed') && !clear(patch.ifMissed) && !SCHEDULE_IF_MISSED.includes(patch.ifMissed)) throw new Error(`scheduleIfMissed must be one of ${SCHEDULE_IF_MISSED.join(' | ')}`);
   if (has('maxFailures') && !clear(patch.maxFailures) && !isMaxFailures(patch.maxFailures)) throw new Error('scheduleMaxFailures must be a whole number from 0 to 100');
+}
+
+/**
+ * Persist any subset of the schedule defaults; '' / null clears a key back to its
+ * default. The whole patch is validated before anything is written.
+ * @throws {Error} on the first invalid value
+ */
+export async function setScheduleDefaults(patch = {}) {
+  assertScheduleDefaultsInput(patch);
+  const has = (k) => Object.prototype.hasOwnProperty.call(patch, k);
+  const clear = (v) => v === '' || v === null || v === undefined;
   const settings = readSettings();
   const put = (key, v) => { if (clear(v)) delete settings[key]; else settings[key] = v; };
   if (has('graceMin')) put('scheduleGraceMin', patch.graceMin);

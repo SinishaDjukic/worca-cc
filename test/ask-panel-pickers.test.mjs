@@ -404,7 +404,7 @@ test('ask-panel-pickers: delete asks first — confirm DELETEs and clears the cu
       assert.deepEqual(confirms[0], { title: 'Delete this chat?', message: '“Stored” and its transcript are removed. This cannot be undone.', confirmLabel: 'Delete', danger: true });
       assert.ok(ctx.fetchCalls.some((c) => c.url === `/api/ask/threads/${TID}` && c.opts.method === 'DELETE'));
       assert.equal(ctx.storage.getItem('worca-cc.ask.thread'), null);
-      assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Ask Worca', 'back to an empty thread');
+      assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'New chat', 'back to an empty thread');
       assert.equal(ctx.doc.activeElement, ctx.doc.querySelector('textarea.ask-input'), 'focus returns to the textarea');
     } },
     { name: 'ask-panel-pickers: declining the confirm sends no DELETE', run: async () => {
@@ -426,8 +426,8 @@ test('ask-panel-pickers: New chat clears the thread; the next send creates a fre
   ctx.panel.open();
   await ctx.tick(); await ctx.tick(); await ctx.tick();
   assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Stored');
-  ctx.doc.querySelector('[data-ask-new-btn]').click();
-  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Ask Worca');
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'New chat');
   assert.equal(ctx.storage.getItem('worca-cc.ask.thread'), null);
   ctx.doc.querySelector('textarea.ask-input').value = 'fresh start';
   ctx.doc.querySelector('[data-ask-send]').click();
@@ -444,20 +444,22 @@ test('ask-panel-pickers: ask-history-cleared closes the popover and resets the a
   ctx.panel.open();
   await ctx.tick(); await ctx.tick(); await ctx.tick();
   assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Stored');
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();
+  ctx.doc.querySelector('[data-ask-model-btn]').click();
   await ctx.tick();
-  assert.ok(ctx.doc.querySelector('.ask-pop-threads'), 'History popover open');
+  assert.ok(ctx.doc.querySelector('.ask-pop-model'), 'a popover is open');
   const fetchesBefore = ctx.fetchCalls.length;
   ctx.panel.pushServerFrame({ type: 'ask-history-cleared' });
   ctx.flush();
-  assert.equal(ctx.doc.querySelector('.ask-pop-threads'), null, 'popover closed');
+  assert.equal(ctx.doc.querySelector('.ask-pop'), null, 'popover closed');
+  assert.equal(ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-row').length, 0, 'the History column emptied');
+  assert.equal(ctx.doc.querySelector('.chat-history-empty').textContent, 'No saved chats.');
   assert.equal(ctx.storage.getItem('worca-cc.ask.thread'), null, 'stored thread forgotten');
-  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Ask Worca');
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'New chat');
   assert.equal(ctx.fetchCalls.length, fetchesBefore, 'no fetch — the rows are gone server-side');
   // With no active thread the frame is inert.
   ctx.panel.pushServerFrame({ type: 'ask-history-cleared' });
   ctx.flush();
-  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Ask Worca');
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'New chat');
   assert.equal(ctx.fetchCalls.length, fetchesBefore);
 });
 
@@ -624,7 +626,7 @@ test('ask-panel-pickers: thread switch shows each thread\'s stored model; a mode
       ctx.panel.open();
       await settle(ctx);
       assert.deepEqual(pickerShows(ctx), ['Opus 4.8', 'max']);
-      ctx.doc.querySelector('[data-ask-new-btn]').click();
+      ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
       assert.deepEqual(pickerShows(ctx), ['Haiku 4.5', 'medium']);
       assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.model')), { model: 'claude-haiku-4-5', effort: 'medium' });
     } },

@@ -15,7 +15,7 @@ import {
   dependentsOfWorkflow, dueTickets, runDueTickets, recordOutcome, recoverScheduler, purgeScheduler,
   scheduleCounts, summarizeRequest, RETRY_BACKOFF_MIN, AFTER_RUN_AT,
   afterRefOf, predecessorState, previousBranchesOf, dependentsOfRun, resolveAfterRef,
-  chainBaseBranchesOf, markTicketFired, cancelResumeTicketsFor,
+  chainBaseBranchesOf, markTicketFired, cancelResumeTicketsFor, runChains,
 } from '../src/core/scheduler.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { listNotifications, unreadCount } from '../src/core/notifications.mjs';
@@ -700,6 +700,121 @@ test('chainBaseBranchesOf: walks a from-its-branch chain root first, stops at a 
   ]);
 });
 
+// ── runChains: the open "Run after" chains, root first (run progress P8) ───────
+test('runChains: lists each open chain in pre-order with member states, links only https PRs, and survives forks, cycles and purged links', async () => {
+  const setPr = (id, url) => getDb().prepare('UPDATE pipelines SET pr_url = ? WHERE id = ?').run(url, id);
+  const setStatus = (id, status) => getDb().prepare('UPDATE pipelines SET status = ? WHERE id = ?').run(status, id);
+  // A ticket after `after` created at `now`; fired into `pipelineId` when given, else left waiting.
+  const chainTicket = (title, after, now, pipelineId = null) => {
+    const t = createTicket({ projectDir: DIR, title, request: REQ, after, now });
+    if (pipelineId) markTicketFired(t.id, { pipelineId, now });
+    return t;
+  };
+  await checkRows([
+    { name: 'a line of three reads [p1 done (PR), p2 current, t3 waiting] as one chain rooted at p1', run: () => {
+      clearTables();
+      chainRun('p0000001', 'dev', 'nb1');
+      setPr('p0000001', 'https://github.com/acme/app/pull/7');
+      chainRun('p0000002', 'nb1', 'nb2');
+      setStatus('p0000002', 'running');
+      const t2 = chainFire('p0000002', { kind: 'pipeline', id: 'p0000001' });
+      const t3 = createTicket({ projectDir: DIR, title: 'third', request: REQ, after: { kind: 'ticket', id: t2.id }, now: T0 });
+      const chains = runChains();
+      assert.equal(chains.length, 1);
+      assert.equal(chains[0].id, 'p:p0000001');
+      assert.equal(chains[0].title, 'p0000001');
+      assert.deepEqual(chains[0].members.map((m) => [m.pipelineId, m.state]), [['p0000001', 'done'], ['p0000002', 'current'], [null, 'waiting']]);
+      assert.equal(chains[0].members[0].prUrl, 'https://github.com/acme/app/pull/7');
+      assert.equal(chains[0].members[1].prUrl, null);
+      assert.equal(chains[0].members[2].ticketId, t3.id);
+    } },
+    { name: 'a javascript: pr_url yields prUrl null', run: () => {
+      clearTables();
+      chainRun('p0000011', 'dev', 'nb1');
+      setPr('p0000011', 'javascript:alert(1)');
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, after: { kind: 'pipeline', id: 'p0000011' }, now: T0 });
+      assert.equal(runChains()[0].members[0].prUrl, null);
+    } },
+    { name: 'every member done or failed yields no chain', run: () => {
+      clearTables();
+      chainRun('p0000021', 'dev', 'nb1');
+      chainRun('p0000022', 'nb1', 'nb2');
+      setStatus('p0000022', 'error');
+      chainFire('p0000022', { kind: 'pipeline', id: 'p0000021' });
+      assert.deepEqual(runChains(), []);
+    } },
+    { name: 'a single run with no after link yields no chain; a waiting ticket after a done run yields a chain of 2', run: () => {
+      clearTables();
+      chainRun('p0000031', 'dev', 'nb1');
+      assert.deepEqual(runChains(), []);
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, after: { kind: 'pipeline', id: 'p0000031' }, now: T0 });
+      const chains = runChains();
+      assert.equal(chains.length, 1);
+      assert.deepEqual(chains[0].members.map((m) => m.state), ['done', 'waiting']);
+    } },
+    { name: 'a fork lists the older branch before the newer one, each whole', run: () => {
+      clearTables();
+      chainRun('p0000041', 'dev', 'nb1');
+      chainRun('p0000042', 'nb1', 'nb2');
+      chainRun('p0000043', 'nb1', 'nb3');
+      // The newer ticket is created first in code order but later in time.
+      chainTicket('newer', { kind: 'pipeline', id: 'p0000041' }, T0 + MIN, 'p0000043');
+      chainTicket('older', { kind: 'pipeline', id: 'p0000041' }, T0, 'p0000042');
+      createTicket({ projectDir: DIR, title: 'tail', request: REQ, after: { kind: 'pipeline', id: 'p0000041' }, now: T0 + 2 * MIN });
+      setStatus('p0000043', 'running');
+      const chains = runChains();
+      assert.equal(chains.length, 1);
+      assert.deepEqual(chains[0].members.slice(0, 3).map((m) => m.pipelineId), ['p0000041', 'p0000042', 'p0000043']);
+      assert.equal(chains[0].members.length, 4);
+    } },
+    { name: 'a hand-made cycle has no root and is not listed', run: () => {
+      clearTables();
+      const x = createTicket({ projectDir: DIR, title: 'x', request: REQ, after: { kind: 'pipeline', id: 'zzzzzzzz' }, now: T0 });
+      const y = createTicket({ projectDir: DIR, title: 'y', request: REQ, after: { kind: 'ticket', id: x.id }, now: T0 });
+      getDb().prepare("UPDATE scheduled_runs SET after_kind = 'ticket', after_id = ? WHERE id = ?").run(y.id, x.id);
+      assert.deepEqual(runChains(), []);
+    } },
+    { name: 'isLive turns a bad-status row current; without it the same row is failed', run: () => {
+      clearTables();
+      chainRun('p0000051', 'dev', 'nb1');
+      setStatus('p0000051', 'interrupted');
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, after: { kind: 'pipeline', id: 'p0000051' }, now: T0 });
+      assert.equal(runChains({ isLive: (q) => q.pipelineId === 'p0000051' })[0].members[0].state, 'current');
+      assert.equal(runChains()[0].members[0].state, 'failed');
+    } },
+    { name: 'a purged predecessor ticket makes the dependent its own root', run: () => {
+      clearTables();
+      chainRun('p0000061', 'dev', 'nb1');
+      chainRun('p0000062', 'nb1', 'nb2');
+      setStatus('p0000062', 'running');
+      chainFire('p0000062', { kind: 'ticket', id: 'purged-ticket' });
+      createTicket({ projectDir: DIR, title: 'after-62', request: REQ, after: { kind: 'pipeline', id: 'p0000062' }, now: T0 });
+      const chains = runChains();
+      assert.equal(chains.length, 1);
+      assert.equal(chains[0].id, 'p:p0000062');
+      assert.deepEqual(chains[0].members.map((m) => m.state), ['current', 'waiting']);
+    } },
+    { name: 'a fired ticket with pipeline_id NULL is current, with its ticketId', run: () => {
+      clearTables();
+      chainRun('p0000071', 'dev', 'nb1');
+      const t = createTicket({ projectDir: DIR, title: 'fired', request: REQ, after: { kind: 'pipeline', id: 'p0000071' }, now: T0 });
+      getDb().prepare("UPDATE scheduled_runs SET status = 'fired' WHERE id = ?").run(t.id);
+      const m = runChains()[0].members[1];
+      assert.equal(m.state, 'current');
+      assert.equal(m.pipelineId, null);
+      assert.equal(m.ticketId, t.id);
+    } },
+    { name: 'a workspace pipeline member has historyKey workspaces/<key>', run: () => {
+      clearTables();
+      seedPipelineRow({ id: 'p0000081', title: 'ws', status: 'running', target: 'workspace', workspaceKey: 'wk1', projectKey: 'workspaces-wk1', startedAt: new Date(T0).toISOString() });
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, after: { kind: 'pipeline', id: 'p0000081' }, now: T0 });
+      const m = runChains()[0].members[0];
+      assert.equal(m.historyKey, 'workspaces/wk1');
+      assert.equal(m.workspaceId, 'wk1');
+    } },
+  ]);
+});
+
 // ── scheduled resume (v44) ──────────────────────────────────────────────────
 
 test('a resume ticket stores its target on the column and in the request marker, and cannot be chained after another run', () => {
@@ -755,4 +870,39 @@ test('a paused usage limit an engine hit says it can continue now on the other e
     "paused (usage limit): You've hit your usage limit — resume on Claude or Cursor to continue now.",
     'paused (usage limit): free requests used up',
   ]);
+});
+
+test('a same-branch predecessor: the gate waits while its merge back is pending (bounded); previousBranchesOf → source once merged, hidden branch otherwise', () => {
+  const pk = projectKey(DIR);
+  const fresh = new Date().toISOString();
+  const seed = (id, branch, updatedAt = fresh, status = 'done') => { seedPipelineRow({ id, projectKey: pk, status, updatedAt, branch }); return id; };
+  const merged = seed('sab-merged', { source: 'main', feature: 'worca-cc/h-1', worktreeDir: '/w/1', sameAsSource: true, mergeBack: { merged: true, sha: 'a'.repeat(40) } });
+  const failed = seed('sab-failed', { source: 'main', feature: 'worca-cc/h-2', worktreeDir: '/w/2', sameAsSource: true, mergeBack: { merged: false, kind: 'dirty' } });
+  const tearing = seed('sab-tearing', { source: 'main', feature: 'worca-cc/h-3', worktreeDir: '/w/3', sameAsSource: true });
+  const crashed = seed('sab-crashed', { source: 'main', feature: 'worca-cc/h-4', worktreeDir: '/w/4', sameAsSource: true },
+    new Date(Date.now() - 11 * 60_000).toISOString());   // its host died between `done` and teardown
+  const setupFailed = seed('sab-setup', { source: 'main', sync: { result: 'remote-start' }, sameAsSource: true });
+  const plain = seed('sab-plain', { source: 'main', feature: 'worca-cc/p-5' });
+  // Resumable, so it gets no teardown until a resume: only a `done` run merges back.
+  const interrupted = seed('sab-interrupted', { source: 'main', feature: 'worca-cc/h-6', worktreeDir: '/w/6', sameAsSource: true }, fresh, 'interrupted');
+  assert.deepEqual(previousBranchesOf(merged), { sourceBranch: 'main' });
+  assert.deepEqual(previousBranchesOf(failed), { sourceBranch: 'worca-cc/h-2' });
+  assert.deepEqual(previousBranchesOf(tearing), { pending: true });
+  assert.deepEqual(previousBranchesOf(crashed), { sourceBranch: 'worca-cc/h-4' }, 'bounded: past MERGE_BACK_WAIT_MS the hidden branch is the answer');
+  assert.equal(previousBranchesOf(setupFailed), null, 'no worktree → nothing to wait for: "left no branch", never a wait forever');
+  assert.deepEqual(previousBranchesOf(plain), { sourceBranch: 'worca-cc/p-5' }, 'unchanged for every other run');
+  assert.deepEqual(previousBranchesOf(interrupted), { sourceBranch: 'worca-cc/h-6' }, 'never pending: an interrupted run merges nothing back');
+  const gate = (id) => predecessorState({ kind: 'pipeline', id }).state;
+  assert.equal(gate(tearing), 'waiting', 'a done same-branch run still merging back holds EVERY dependent (no attempt, no retry_at)');
+  assert.equal(gate(merged), 'ok');
+  assert.equal(gate(failed), 'ok');
+  assert.equal(gate(crashed), 'ok');
+  assert.equal(gate(setupFailed), 'ok');
+  assert.equal(gate(plain), 'ok', 'unchanged for every other run');
+  assert.equal(gate(interrupted), 'bad', 'answered at once, as for any interrupted predecessor today (BAD_PIPELINE_REASON)');
+});
+
+test('summarizeRequest: sameAsSource only when set', () => {
+  assert.equal(summarizeRequest({ sameAsSource: true }).sameAsSource, true);
+  assert.equal('sameAsSource' in summarizeRequest({}), false);
 });

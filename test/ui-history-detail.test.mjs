@@ -13,8 +13,9 @@ import assert from 'node:assert/strict';
 import {
   boot, settle, KEY, ROW, DETAIL, PAUSED_DETAIL, COMMIT_FAILED_DETAIL, RESULTS, retainedRow,
   blockedBudget, ok, fail, bootDetail, openDetail, deliverRows, click, TABS_DETAIL, tabsOf, secOf,
-  badgeOf, confirmDialog,
+  badgeOf, confirmDialog, go,
 } from './helpers/history-detail-boot.mjs';
+import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 // ---------------------------------------------------------------------------
@@ -366,7 +367,7 @@ test('discarding the retained worktree clears the banner and re-enables Archive,
       await settle(ctx.window, 5);
 
       assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true);
-      assert.equal(doc.querySelector('#hist-detail .hist-discard').hidden, true);
+      assert.equal(doc.querySelector('#hist-detail .hist-discard'), null);
       assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
       // A discard is not an archive: the run stays listed.
       assert.ok(doc.querySelector(`#runs-list .runs-row[data-kind="hist"][data-pipeline-id="${ROW.id}"]`),
@@ -386,7 +387,7 @@ test('discarding the retained worktree clears the banner and re-enables Archive,
       // discarding must act on the authoritative row, not on an inferred retention.
       assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, false);
       assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, true);
-      assert.equal(doc.querySelector('#hist-detail .hist-discard').hidden, true,
+      assert.equal(doc.querySelector('#hist-detail .hist-discard'), null,
         'a provisional retention binds no Discard');
 
       // (2) the row agrees: the worktree really is still there
@@ -548,17 +549,261 @@ test('Artifacts tab GETs /api/runs/:id/artifacts, renders per-node groups and dr
     { name: 'the Artifacts tab fetches GET /api/runs/:id/artifacts and renders per-node groups', run: () => {
       assert.ok(tab, 'the Artifacts tab is visible for a run with an indexed artifact');
       assert.ok(asked, 'buildHdArtifacts fetched the attributed plural endpoint');
-      const rows = [...sec.querySelectorAll('.artifact-row')];
+      const rows = [...sec.querySelectorAll('.afb-file')];
       assert.equal(rows.length, 1, 'the fetched artifact renders as a row');
-      assert.equal(rows[0].querySelector('.artifact-name').textContent, 'plan.md');
-      assert.equal(sec.querySelector('.artifact-group-head b').textContent, 'plan',
+      assert.equal(rows[0].querySelector('.afb-name').textContent, 'plan.md');
+      assert.equal(sec.querySelector('.afb-folder.is-step .afb-fname').textContent, 'plan',
         'grouped under its producing node');
     } },
     { name: 'the Artifacts tab drops transient questions rows (deleted file would 404)', run: () => {
-      const rows = [...sec.querySelectorAll('.artifact-row')];
+      const rows = [...sec.querySelectorAll('.afb-file')];
       assert.equal(rows.length, 1, 'only the durable plan row renders; questions is dropped');
-      assert.equal(rows[0].querySelector('.artifact-name').textContent, 'plan.md');
+      assert.equal(rows[0].querySelector('.afb-name').textContent, 'plan.md');
       assert.doesNotMatch(sec.textContent, /questions-x-clarify/, 'no questions row is shown');
     } },
   ]);
+});
+
+// Chat P5: the saved run's Details has the same capture-phase Escape arm as Running (Details → glance). A row opened
+// from its Artifacts tab owns Escape: one press closes the popup and the page stays on the tab.
+test('the History Artifacts tab opens a row in the popup, and Escape closes only the popup', async () => {
+  const detail = { ...DETAIL, artifacts: [{ kind: 'plan', relPath: 'plans/plan.md' }] };
+  const ctx = await bootDetail({
+    detail,
+    arms: (url) => {
+      if (url.endsWith(`/api/runs/${ROW.id}/artifacts`)) {
+        return ok({ runId: ROW.id, artifacts: [{ kind: 'plan', stepKey: 'plan#1', nodeId: 'plan', cycle: 1, relPath: 'plans/plan.md', bytes: 42 }] });
+      }
+      if (url.startsWith(`/api/runs/${ROW.id}/artifact?rel=`)) return ok({ rel: 'plans/plan.md', text: '# plan' });
+      return null;
+    },
+  });
+  await openDetail(ctx, 'details/artifacts');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const hash = ctx.window.location.hash;
+  assert.match(hash, /\/details\/artifacts$/);
+  const main = [...doc.querySelectorAll('#hist-detail .hd-sec[data-sec="artifacts"] .afb-main')]
+    .find((m) => m.querySelector('.afb-name').textContent === 'plan.md');
+  click(ctx.window, main);
+  await settle(ctx.window, 8);
+  assert.ok(doc.querySelector('.apv'), 'the popup opened');
+  (doc.activeElement || doc.body).dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await settle(ctx.window, 4);
+  assert.equal(doc.querySelector('.apv'), null, 'Escape closed the popup');
+  assert.equal(ctx.window.location.hash, hash, 'and left the saved run on its Artifacts tab');
+});
+
+// Refine cycle 2: with a saved run open, an opener that names only the pipeline (the Chat, the Agents tab's rows) reads
+// the step labels from that run's saved state.
+test('with a saved run open, the popup for that run names the step from its saved state', async () => {
+  const stepper = { version: 1, steps: [{ kind: 'agents', nodes: [{ id: 'plan', key: 'plan', uiPhase: 'plan', label: 'Planner' }] }], feedbacks: [] };
+  const ctx = await bootDetail({
+    detail: { ...DETAIL, state: { ...DETAIL.state, stepper } },
+    arms: (url) => (url.startsWith(`/api/runs/${ROW.id}/artifact?rel=`) ? ok({ rel: 'plans/plan.md', text: '# plan' }) : null),
+  });
+  await openDetail(ctx);
+  await settle(ctx.window, 6);
+  await ctx.window.__np.openRunArtifactPopup({ pipelineId: ROW.id }, { kind: 'plan', relPath: 'plans/plan.md', nodeId: 'plan', cycle: 1 });
+  await settle(ctx.window, 8);
+  assert.equal(ctx.window.document.querySelector('.apv .apv-meta').textContent, 'Planner · cycle 1');
+});
+
+// ---------------------------------------------------------------------------
+// The worktree notice (summary card): a checkout, a linked folder, Apply to branch
+// ---------------------------------------------------------------------------
+
+const checkoutRow = (member = {}) => ({ ...ROW, checkout: { members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: ROW.branch,
+  at: '2026-10-14T09:00:00Z', policy: 'on-demand', setup: { status: 'ok' }, ...member }] } });
+const noticeOf = (doc) => doc.querySelector('#hist-detail .hd-glance .retained-banner');
+const buttonsOf = (el) => [...el.querySelectorAll('button')].map((b) => b.textContent);
+
+test('worktree notice: a checked-out run says where and why, at every level, and blocks Archive', async () => {
+  const ctx = await bootDetail({ rows: [checkoutRow()] });
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const n = noticeOf(doc);
+  assert.equal(n.hidden, false);
+  assert.equal(n.dataset.kind, 'checkout');
+  assert.equal(n.getAttribute('role'), 'status');
+  assert.equal(n.closest('[data-min-level]'), null, 'never level-gated');
+  assert.match(n.textContent, /Checked out in a worktree/);
+  assert.match(n.textContent, /Worktree: \/tmp\/co/);
+  assert.match(n.textContent, /Check out, Archive and a new run on this branch are refused/);
+  assert.deepEqual(buttonsOf(n), ['Discard', 'Get the diff', 'Actions tab ›']);
+  const archive = doc.querySelector('#hist-detail .hd-archive');
+  assert.equal(archive.disabled, true);
+  assert.match(archive.title, /Discard the checkout/);
+});
+
+test('worktree notice: Discard uses the Actions tab\'s confirm and DELETE, then the notice goes', async () => {
+  const calls = [];
+  const ctx = await bootDetail({
+    rows: [checkoutRow()],
+    arms: (url, opts = {}) => {
+      if (!url.includes(`/api/runs/${ROW.id}/checkout`) || url.includes('/diff')) return null;
+      calls.push([opts.method, url, opts.body ? JSON.parse(opts.body) : null]);
+      return ok({ removed: [KEY], patches: [], unlinked: [] });
+    },
+  });
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  click(ctx.window, [...noticeOf(doc).querySelectorAll('button')].find((b) => b.textContent === 'Discard'));
+  await settle(ctx.window, 2);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Discard the checkout?');
+  await confirmDialog(ctx.window);
+  await settle(ctx.window, 6);
+  assert.deepEqual(calls.filter((c) => c[0] === 'DELETE'), [['DELETE', `/api/runs/${ROW.id}/checkout?projectKey=${KEY}`, { members: [KEY] }]]);
+  assert.equal(noticeOf(doc).hidden, true);
+  assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
+});
+
+test('worktree notice: a linked folder offers Unlink; Get the diff on a clean folder says so', async () => {
+  const ctx = await bootDetail({
+    rows: [checkoutRow({ worktreeDir: '/Users/ada/app', external: true, policy: 'external' })],
+    arms: (url) => (url.includes(`/api/runs/${ROW.id}/checkout/diff?`) ? Promise.resolve({ ok: true, status: 204, json: async () => ({}) }) : null),
+  });
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const n = noticeOf(doc);
+  assert.match(n.textContent, /Linked to your folder/);
+  assert.deepEqual(buttonsOf(n), ['Unlink', 'Get the diff', 'Actions tab ›']);
+  click(ctx.window, [...n.querySelectorAll('button')].find((b) => b.textContent === 'Get the diff'));
+  await settle(ctx.window, 4);
+  const req = ctx.calls.find((c) => c.url.includes('/checkout/diff'));
+  assert.match(req.url, new RegExp(`projectKey=${KEY}&member=${KEY}`));
+  assert.equal(lastToast(doc).title, 'Nothing uncommitted');
+});
+
+test('worktree notice: Apply to branch commits the retained work and clears the notice', async () => {
+  let posted = null;
+  const ctx = await bootDetail({
+    rows: [retainedRow()],
+    arms: (url, opts = {}) => {
+      if (!url.includes('/apply-retained')) return null;
+      posted = [opts.method, url];
+      return ok({ ok: true, id: ROW.id, applied: [{ projectKey: KEY, branch: ROW.branch, sha: 'abcdef0123456789', committed: true, hooksBypassed: false }],
+        failed: [], remaining: 0, worktrees: ['/tmp/wt'], runRoot: null, warnings: [] });
+    },
+  });
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const n = noticeOf(doc);
+  assert.equal(n.dataset.kind, 'retained');
+  assert.match(n.textContent, /A pull request opened now would not include them/);
+  const actionsGets = () => ctx.calls.filter((c) => c.url.includes(`/api/runs/${ROW.id}/actions`)).length;
+  const getsBefore = actionsGets();
+  click(ctx.window, n.querySelector('.wt-apply'));
+  await settle(ctx.window, 2);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Apply the work to the branch?');
+  await confirmDialog(ctx.window);
+  await settle(ctx.window, 6);
+  assert.deepEqual(posted, ['POST', `/api/runs/${ROW.id}/apply-retained?projectKey=${KEY}`]);
+  assert.equal(noticeOf(doc).hidden, true);
+  assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
+  assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Work applied to the branch',
+    detail: `Committed abcdef0123 on ${ROW.branch}.`, action: '' });
+  assert.ok(actionsGets() > getsBefore, 'the Actions model is refetched: it no longer offers the released worktree');
+});
+
+test('worktree notice: a commit that fails again keeps the notice and shows git\'s message', async () => {
+  const ctx = await bootDetail({
+    rows: [retainedRow()],
+    arms: (url) => (url.includes('/apply-retained')
+      ? fail(409, { ok: false, code: 'COMMIT_FAILED', error: 'lint failed: 3 errors', applied: [],
+        failed: [{ projectKey: KEY, branch: ROW.branch, step: 'commit', message: 'lint failed: 3 errors' }], remaining: 1 })
+      : null),
+  });
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  click(ctx.window, noticeOf(doc).querySelector('.wt-apply'));
+  await confirmDialog(ctx.window);
+  await settle(ctx.window, 6);
+  assert.equal(noticeOf(doc).hidden, false, 'the retained state stays');
+  const t = lastToast(doc);
+  assert.equal(t.tone, 'err');
+  assert.equal(t.title, 'The commit failed again');
+  assert.equal(t.detail, 'lint failed: 3 errors');
+});
+
+test('worktree notice: after a discard, a cache-warm row (no retainedWork key) does not bring back a provisional notice', async () => {
+  const ctx = await bootDetail({
+    rows: [], detail: structuredClone(COMMIT_FAILED_DETAIL), deepLink: true,
+    arms: (url) => (url.includes('/discard-worktree') ? ok({ ok: true, remaining: 0, patches: [] }) : null),
+  });
+  await settle(ctx.window, 5);
+  const doc = ctx.window.document;
+  await deliverRows(ctx, [retainedRow()]);
+  click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+  await confirmDialog(ctx.window);
+  await settle(ctx.window, 6);
+  assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true);
+  const { retainedWork: _gone, ...cacheWarm } = ROW;
+  await deliverRows(ctx, [cacheWarm]);
+  assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true, 'hdForgetRetained: the stale commitFailed stamp is released');
+  assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
+});
+
+test('worktree notice: Unlink uses the linked folder\'s own confirm and only unlinks', async () => {
+  const calls = [];
+  const ctx = await bootDetail({
+    rows: [checkoutRow({ worktreeDir: '/Users/ada/app', external: true, policy: 'external' })],
+    arms: (url, opts = {}) => {
+      if (!url.includes(`/api/runs/${ROW.id}/checkout?`)) return null;
+      calls.push([opts.method, url, opts.body ? JSON.parse(opts.body) : null]);
+      return ok({ removed: [], patches: [], unlinked: [KEY] });
+    },
+  });
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  click(ctx.window, [...noticeOf(doc).querySelectorAll('button')].find((b) => b.textContent === 'Unlink'));
+  await settle(ctx.window, 2);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Stop using this folder?');
+  await confirmDialog(ctx.window);
+  await settle(ctx.window, 6);
+  assert.deepEqual(calls, [['DELETE', `/api/runs/${ROW.id}/checkout?projectKey=${KEY}`, { members: [KEY] }]]);
+  assert.equal(noticeOf(doc).hidden, true);
+  assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Folder unlinked', detail: 'The folder stays as it was.', action: '' });
+});
+
+test('worktree notice: an unchanged row repainted keeps the same button nodes (D14)', async () => {
+  const ctx = await bootDetail({ rows: [checkoutRow()] });
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const before = noticeOf(doc).querySelector('button');
+  await deliverRows(ctx, [checkoutRow()]);
+  assert.equal(noticeOf(doc).querySelector('button'), before, 'a button replaced between press and release drops its click');
+  assert.equal(before.isConnected, true);
+});
+
+test('worktree notice: a workspace run names each member, and Get the diff asks for that member', async () => {
+  const ws = { ...ROW, target: 'workspace', projectKey: 'workspaces/ws1', projectDir: null,
+    members: [{ memberKey: 'app-11111111', name: 'App' }, { memberKey: 'api-22222222', name: 'API' }],
+    checkout: { members: [
+      { projectKey: 'app-11111111', worktreeDir: '/tmp/a', branch: ROW.branch, at: '2026-10-14T09:00:00Z' },
+      { projectKey: 'api-22222222', worktreeDir: '/tmp/b', branch: ROW.branch, at: '2026-10-14T09:00:00Z', external: true }] } };
+  const ctx = await bootDetail({
+    rows: [ws],
+    arms: (url) => {
+      if (new URL(url, 'http://localhost:4317').pathname === `/api/workspaces/ws1/runs/${ROW.id}`) return ok(DETAIL);
+      return url.includes('/checkout/diff') ? Promise.resolve({ ok: true, status: 204, json: async () => ({}) }) : null;
+    },
+  });
+  go(ctx.window, `history/workspaces/ws1/${ROW.id}`);
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const n = noticeOf(doc);
+  assert.equal(n.hidden, false);
+  assert.deepEqual([...n.querySelectorAll('.wt-members strong')].map((s) => s.textContent), ['App', 'API']);
+  assert.deepEqual(buttonsOf(n), ['Discard', 'Get the diff', 'Unlink', 'Get the diff', 'Actions tab ›']);
+  click(ctx.window, n.querySelectorAll('button')[1]);
+  await settle(ctx.window, 4);
+  assert.match(ctx.calls.find((c) => c.url.includes('/checkout/diff')).url, /\?workspaceId=ws1&member=app-11111111$/);
 });

@@ -11,7 +11,7 @@
 // state.steps[] IS the execution ledger: one row per execution, key ===
 // executionId. There is no separate executions[] array.
 import { join, isAbsolute, extname } from 'node:path';
-import { rm, readFile, readdir, access, stat } from 'node:fs/promises';
+import { rm, readFile, readdir, access, stat, writeFile } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
 import { runsOn } from '../shared/connections.mjs';
 
@@ -30,6 +30,10 @@ import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-met
 import { probePython } from './graph/python-probe.mjs';
 import { mockEnabled } from './claude-runner.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
+import { checkPlan } from './shape/check.mjs';
+import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
+import { PLAN_ASK_KIND, validatePlanAnswer, renderPlanFeedback } from './shape/run.mjs';
+import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
 import { serialQueue, measureCodeCursor, collectStepEvidence } from './graph/human-evidence.mjs';
@@ -42,6 +46,7 @@ import { defragSlotPair, utilityModelFor } from './settings-cascade.mjs';
 import { resolveDefragModel, agentPairText } from './memory-defrag-model.mjs';
 import { describeScanModels } from './workspace-scan-run.mjs';
 import { assembleShape, normalizeShape, ShapeError } from '../shared/graph/assemble.mjs';
+import { blockingIssues } from '../shared/graph/verdict.mjs';
 import { RECIPE_SHAPES } from './auto/recipes.mjs';
 import { fingerprintProject, fingerprintWorkspace } from './auto/fingerprint.mjs';
 import { classifyTask, ClassifierError } from './auto/classify.mjs';
@@ -124,6 +129,7 @@ export class GraphOrchestrator extends RunHarness {
       wireDeliveries: {},        // {[wireId]: n}
       tokens: {},                // {'<node>.<port>': {seq,type,path,firedAt}}
       gate: null,                // {wireId, fromNode, toNode, askId} | null
+      progressFacts: { tasks: {}, reviews: {} },   // run progress (P2): {tasks:{[nodeId]: total}, reviews:{[nodeId]: {pass, blocking}}}
     });
   }
 
@@ -152,8 +158,19 @@ export class GraphOrchestrator extends RunHarness {
     // this class). resume() never calls this hook: the manifest froze the pair on the node.
     const defrag = this.memoryScope ? await this._defragAgentPair() : null;
     const scan = this._scanModelPins();
+    // A per-run overlay (POST /api/run `overlay`, checked by the route: the Ask run card's per-agent picks) merges PER
+    // NODE over the project layer for THIS run only — never with `ignoreProjectOverrides`, which is Auto's own tuning.
+    // A model always names its effort ('' = the model's default) so a stored effort never rides under it (resolveGraph
+    // merges per key): the route's check names it, but a firing schedule ticket's re-parse drops the '' — Auto's
+    // proposal uses the same form (auto/proposal.mjs).
+    const rawNodes = this.opts && this.opts.overlay && typeof this.opts.overlay === 'object' ? this.opts.overlay.nodes : null;
+    const overlayNodes = rawNodes && typeof rawNodes === 'object' && !Array.isArray(rawNodes)
+      ? Object.fromEntries(Object.entries(rawNodes).filter(([, e]) => e && typeof e === 'object' && !Array.isArray(e))
+        .map(([id, e]) => [id, typeof e.model === 'string' && e.model && e.effort === undefined ? { ...e, effort: '' } : { ...e }]))
+      : {};
+    const overlay = Object.keys(overlayNodes).length ? { nodes: overlayNodes } : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
-      engine: this.claude.engine || 'claude', isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
+      engine: this.claude.engine || 'claude', isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
       ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}),
     });
     this._adoptResolvedGraph(resolved);
@@ -180,6 +197,9 @@ export class GraphOrchestrator extends RunHarness {
     const manifest = buildGraphManifest(this.resolved.template, this.resolved.agentsByKey, {
       overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires }, scripts: this.resolved.scriptsByKey,
     });
+    // What THIS run was told to use over the project's settings, beside the cells it resolved to (the run page marks
+    // those pills "this run only"; resume reads the cells, never this).
+    if (overlay) manifest.runOverlay = { nodes: structuredClone(overlay.nodes) };
     return {
       manifest,
       agentKeys: new Set(this.resolved.agentKeys),
@@ -854,6 +874,8 @@ export class GraphOrchestrator extends RunHarness {
       onAsk: (q) => this._schedulerAsk(q),
       // The scheduler's log is ONE-ARG (`log(QUIESCENCE_WARNING)`, scheduler.mjs:936).
       log: (line, attrs = null) => this._log('orchestrator', 'warn', String(line), attrs),
+      // Shape it first (spec D2/D12): node approval stops are armed only for a run that carries `shape`.
+      approvalStops: Boolean(this.runShape),
     });
     this._scheduler = sched;
     if (resume && this._resumeSnapshot) {
@@ -962,6 +984,7 @@ export class GraphOrchestrator extends RunHarness {
       guardrailsId: this.guardrailsId,
       ...(this.mcpOptOut?.length ? { mcpOptOut: [...this.mcpOptOut] } : {}),   // MCP registry §6.2: resume re-resolves minus it
       memoryScope: this.memoryScope || null,   // agent memory §7.3: a paused defrag resumes with ONE scope (B10)
+      ...(this.runShape ? { shape: this.runShape } : {}),
       checkpointRef: this.checkpointRef || null,
       checkpointRefs: { ...this.checkpointRefs },
       workspace: this.isWorkspace ? { projects: this._workspaceProjects() } : null,
@@ -1092,6 +1115,7 @@ export class GraphOrchestrator extends RunHarness {
    * and reattach() re-asks it on resume. On stop the scheduler is aborted.
    */
   _schedulerAsk(q) {
+    if (q.kind === PLAN_ASK_KIND) return this._planAsk(q);
     return this._enqueueAsk(() => this._ask(q)).then(
       (payload) => {
         if (q.kind === 'gate') return payload?.decision === 'another' ? 'another' : 'continue';
@@ -1105,6 +1129,59 @@ export class GraphOrchestrator extends RunHarness {
     );
   }
 
+  _planAsk(q) {
+    let check = null;
+    const asked = (async () => {
+      check = await this._planCheck(q.plan?.file);
+      return this._enqueueAsk(() => this._ask({
+        id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId,
+        plan: { ...q.plan, nodeId: q.nodeId, check },
+        validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true }),
+      }));
+    })();
+    return asked.then(
+      async (payload) => {
+        if (payload?.decision === 'stop') {
+          this._log('orchestrator', 'info', `plan approval ${q.id}: stop`);
+          this.stop(this.answeredBy(q.id));
+          this._scheduler?.abort();
+          return new Promise(() => {});
+        }
+        if (payload?.decision === 'revise') {
+          const path = join(this.pipeline.dir, `plan-feedback-${q.plan.round}.md`);
+          // Keep the real cause: the run rethrows _graphError, else a generic 'a graph execution failed'.
+          try { await writeFile(path, renderPlanFeedback(payload.feedback, q.plan.file), 'utf8'); }
+          catch (err) { this._graphError ||= err; throw err; }
+          this._shapeRec?.revises.push({ round: q.plan.round, by: payload.source === 'check' ? 'check' : 'person' });
+          this._log('orchestrator', 'info', `plan approval ${q.id}: revise (${path})`);
+          return { decision: 'revise', path };
+        }
+        // D28: the approved round's shape score
+        if (payload?.decision === 'approve' && this._shapeRec) this._shapeRec.shapeScore = shapeScoreOf(check);
+        return payload;                              // { decision:'approve' } | { decision:'withdrawn' }
+      },
+      (err) => {
+        if (isPause(err) || this.pauseRequested) this._scheduler?.pause();
+        else this._scheduler?.abort();
+        return new Promise(() => {});
+      },
+    );
+  }
+
+  /** checkPlan for this run: grounded in the run's checkout; a workspace run skips grounding (paths are per member). */
+  async _planCheck(file) {
+    try {
+      return await checkPlan(file, {
+        projectDir: this.isWorkspace ? null : (this.runCwd || this.projectDir),
+        // checkShape alone defaults to ['product'], which fails every R-arch/R-qa item.
+        perspectives: this.runShape?.perspectives || [...DEFAULT_PERSPECTIVES],
+      });
+    } catch (err) {
+      this._log('orchestrator', 'warn', `shape check failed for ${file}: ${err?.message || err}`);
+      return null;
+    }
+  }
+
   /** Resolve the queued question, if any, without an answer. Used on End arrival:
    *  a gate ask resolves to `continue` (a no-op — the scheduler already withdrew
    *  it), and a clarify/questions ask resolves to EMPTY answers, which the
@@ -1114,7 +1191,7 @@ export class GraphOrchestrator extends RunHarness {
     if (!pq) return false;
     this.pendingQuestion = null;
     this._log('orchestrator', 'info', `End reached — withdrawing pending ${pq.kind} "${pq.id}"`);
-    pq.resolve(pq.kind === 'gate' ? { decision: 'continue' } : { answers: [] });
+    pq.resolve(pq.kind === 'gate' ? { decision: 'continue' } : pq.kind === PLAN_ASK_KIND ? { decision: 'withdrawn' } : { answers: [] });
     return true;
   }
 
@@ -1341,6 +1418,9 @@ export class GraphOrchestrator extends RunHarness {
       // detached workspace run, the member worktree on a detached single run,
       // today's workDir under legacy.
       projectDir: this.runCwd || this.workDir,
+      // The user's own project folder, whose approvals decide the run checkout's committed `.mcp.json` servers on
+      // Claude (claude-runner.mjs). A workspace run's cwd is the run root, which has no `.mcp.json` of a member.
+      mcpjsonProjectDir: this.isWorkspace ? undefined : this.projectDir,
       runRoot: this.runRoot,
       mcpConfigPath: this.mcpConfigPath,
       mcpServerGrants: this.mcpServerGrants,
@@ -1358,6 +1438,7 @@ export class GraphOrchestrator extends RunHarness {
       pipelineId: this.pipeline.id,
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
+      shape: this.runShape,
       memoryBlock: this.memoryBlock || '',              // §4.3: the pointer block, rendered once per mount (names the WRITABLE dirs)
       memoryMount: this.memory?.mount || null,          // the WRITABLE copy: <pipeline.dir>/memory (agents, the defrag mock and tests write here; runOpts passes it as --add-dir)
       memoryRules: this.memory?.rules || null,          // the read-only rules copy inside the cwd (tests read it; agents never write it)
@@ -1417,7 +1498,15 @@ export class GraphOrchestrator extends RunHarness {
         : undefined,
       runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
       resumeSessionId: this._takeResumeSession(executionId),
-      ask: (q) => this._enqueueAsk(() => this._ask(q)),
+      ask: (q) => this._enqueueAsk(() => this._ask(q)).then((payload) => {
+        // D28: the legacy Clarify questions ask (the one maxQuestions caps); a form ask has no question list
+        if (this._shapeRec && q?.kind === 'clarify') {
+          const c = clarifyCounts(q.questions, payload);
+          this._shapeRec.questions.asked += c.asked;
+          this._shapeRec.questions.skipped += c.skipped;
+        }
+        return payload;
+      }),
       // Who answered question `id` (identity.mjs actor; answer() records it) — the clarifier
       // stores it with the answer and audits it.
       answeredBy: (id) => this.answeredBy(id),
@@ -1681,11 +1770,15 @@ export class GraphOrchestrator extends RunHarness {
    *    after the last phase (_finishComposite).
    */
   async _afterExecution(nc, ctx, result) {
+    this._autoLimitResumes = 0;   // D7: real progress ends an automatic-resume streak
     // `missing` = the verifier never wrote its verdict (MAJ-10). Persisting that as
     // a zero-issue row makes History render a genuine-looking clean review of work
     // nobody reviewed, so the row is SKIPPED; the run log + state.warnings carry it.
     if (this.pipeline && ctx.verdict?.path && result?.verdict && !result.verdict.missing) {
       await writeReview(this.pipeline.id, this._verdictKind(nc, ctx), ctx.ordinal, result.verdict);
+      // Run progress (P5): the latest pass's blocking count — "Review · 2nd pass, fixing 2 issues".
+      this.state.progressFacts ||= { tasks: {}, reviews: {} };
+      this.state.progressFacts.reviews[ctx.nodeId] = { pass: ctx.ordinal || 1, blocking: blockingIssues(result.verdict).length };
     }
     const seen = new Set();
     for (const port of ctx.ports?.outputs || []) {
@@ -2146,6 +2239,9 @@ export class GraphOrchestrator extends RunHarness {
     }));
     writeDecomposition(this.pipeline.id, resolved);
     const count = resolved.reduce((n, ph) => n + ph.tasks.length, 0);
+    // Run progress (P2): the decomposition's whole size. A slice row's taskTotal is its phase's only.
+    this.state.progressFacts ||= { tasks: {}, reviews: {} };
+    this.state.progressFacts.tasks[node.id] = count;
     await appendAudit(this.pipeline.dir,
       `${node.id}: expanded into ${resolved.length} phase(s), ${count} task(s).`).catch(() => {});
     return { phases: resolved };

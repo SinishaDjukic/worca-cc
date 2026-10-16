@@ -51,9 +51,7 @@ test('the column is 254px and never scrolls itself; #side-scroll is the one scro
   assert.match(ruleBody('.brand .logo-mark'), /width:26px;height:26px;/);
 });
 
-test('the Ask dock and the phone drawer follow the new widths; no 298 / 76px literal is left', () => {
-  assert.match(ruleBody('.ask-dock'), /left:254px;/);
-  assert.equal(ruleBody('body.rail-collapsed .ask-dock'), 'left:60px;');
+test('the phone drawer follows the new widths; no 298 / 76px literal is left', () => {
   assert.match(css, /\.sidebar\{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min\(254px,86vw\);/);
   // The Ask threads popover's right:76px sits on the right edge: it is not the rail.
   const rest = css.replace('.ask-pop-threads{top:46px;right:76px;', '');
@@ -86,9 +84,10 @@ test('the open page is a soft grey fill and hover the lighter field grey; nothin
   assert.equal(ruleBody('.nav button.active .nav-count'), null, 'no white-on-wash count: the fill is light now');
 });
 
-test('the first group has no label: "Activity" is gone, Build, Add-ons and Manage remain; Runs leads the nav', () => {
+test('the first group has no label: "Activity" is gone, Build, Add-ons and Manage remain; Chat leads the nav, Runs right under it', () => {
   assert.deepEqual([...doc.querySelectorAll('.nav .nav-sect')].map((s) => s.textContent.trim()), ['Build', 'Add-ons', 'Manage']);
-  assert.equal(doc.querySelector('.nav').firstElementChild.dataset.nav, 'runs');
+  assert.equal(doc.querySelector('.nav').firstElementChild.dataset.nav, 'chat');
+  assert.equal(doc.querySelector('.nav').firstElementChild.nextElementSibling.dataset.nav, 'runs');
 });
 
 test('New run has no sidebar row (the top bar\'s button opens it): no "+" tile, no nav-new, no nav-cta anywhere', () => {

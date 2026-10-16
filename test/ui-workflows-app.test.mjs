@@ -1772,3 +1772,15 @@ test('the Workflows tour survives a Library search query: ✕ on the open search
     await tick(2);
   }
 });
+
+test('Ask\'s graph card: Open in Workflows opens the graph on the canvas as a NEW unsaved workflow', async () => {
+  const { window: w } = await boot();
+  await w.__wfv.openBuildFromAsk({ name: 'Bug fix', domain: 'coding', wires: [],
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_end', kind: 'end', x: 300, y: 0, config: {} }] });
+  for (let i = 0; i < 12; i += 1) await tick();
+  assert.equal(w.location.hash, '#workflows');
+  const c = w.__gv().c;
+  assert.equal(c.template().name, 'Bug fix');
+  assert.equal(c.template().id, '', 'a NEW workflow: no id');
+  assert.equal(c.isDirty(), true, 'unsaved');
+});
