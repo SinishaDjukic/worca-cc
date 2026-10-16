@@ -230,7 +230,7 @@ import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisibl
 import { applyFlags, decorateFlagChips, flagOn } from './flags.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor } from './tag-input.mjs';
 import { normaliseTags, formatTag } from '../../src/shared/run-tags.mjs';
-import { missingRequired, splitByDimensions, tagGroupOptions, dimensionLabel } from '../../src/shared/tag-dimensions.mjs';
+import { missingRequired, splitByDimensions, tagGroupOptions, dimensionLabel, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
@@ -1104,7 +1104,8 @@ function applyBudgetToNewView() {
   const start = document.getElementById('start-btn');
   if (!note || !start) return;
   const blocked = !!(b && b.blocked);
-  start.disabled = blocked || startSubmitInFlight;
+  const tagReason = runTagGate();
+  start.disabled = blocked || startSubmitInFlight || !!tagReason;
   note.hidden = !blocked;
   if (blocked) {
     const w = b.resetPeriod === 'weekly' ? 'week' : 'month';
@@ -1114,7 +1115,7 @@ function applyBudgetToNewView() {
     note.textContent = msg;
     start.title = msg;
   } else {
-    start.title = '';
+    start.title = tagReason || '';
   }
 }
 
@@ -4268,31 +4269,44 @@ document.getElementById('runTagsField')?.appendChild(runTagInput.el);
 // dimension keys; the free-form field keeps every other key. Required only warns, never blocks.
 let runTagDims = createDimensionSlots(document, []);
 document.getElementById('runTagDimsField')?.appendChild(runTagDims.el);
-state.tagDims = { source: null, home: null, dims: [] };
+state.tagDims = { source: null, home: null, dims: [], enforce: false };
 
-function paintRunTagDimsWarn() {
+/** Enforced tags (D12, D19): the one-line reason Start is disabled, or null. The server sends enforce only with runTags on. */
+function runTagGate() {
+  if (!state.tagDims?.enforce) return null;
+  return tagsProblemText(state.tagDims.dims, normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags);
+}
+/** The line under the tag field: enforced → the reason Start is off (or a server 422's `reason`); else today's warning. */
+function paintRunTagDimsWarn(reason = null) {
   const warn = document.getElementById('runTagDimsWarn');
   if (!warn) return;
-  const missing = flagOn('runTags') ? missingRequired(state.tagDims.dims, [...runTagInput.get(), ...runTagDims.get()]) : [];
-  warn.hidden = !missing.length;
-  warn.textContent = missing.length
-    ? `${missing.map((d) => d.label).join(', ')} ${missing.length > 1 ? 'are' : 'is'} required${state.tagDims.source === 'policy' ? ' by team policy' : ''}. You can still start the run; it will be recorded.`
-    : '';
+  const gate = reason || runTagGate();
+  if (state.tagDims.enforce || reason) {
+    warn.hidden = !gate; warn.textContent = gate || ''; warn.classList.toggle('err', !!gate);
+  } else {
+    const missing = flagOn('runTags') ? missingRequired(state.tagDims.dims, [...runTagInput.get(), ...runTagDims.get()]) : [];
+    warn.hidden = !missing.length;
+    warn.textContent = missing.length
+      ? `${missing.map((d) => d.label).join(', ')} ${missing.length > 1 ? 'are' : 'is'} required${state.tagDims.source === 'policy' ? ' by team policy' : ''}. You can still start the run; it will be recorded.`
+      : '';
+    warn.classList.remove('err');
+  }
+  applyBudgetToNewView();                 // Start follows the gate
 }
 /** Rebuild the slots for a new target. Painted whatever the flag: the .run-tags-field CSS gate hides it when runTags is off. */
 function paintRunTagDims(info, tags) {
-  state.tagDims = info && Array.isArray(info.dims) ? info : { source: null, home: null, dims: [] };
+  state.tagDims = info && Array.isArray(info.dims) ? info : { source: null, home: null, dims: [], enforce: false };
   const dims = state.tagDims.dims;
   const typed = runTagDims.dirty() ? runTagDims.get() : [];          // keep what the user typed into a slot
   const next = createDimensionSlots(document, dims, { value: [...tags, ...typed] });
-  next.onChange(paintRunTagDimsWarn);
+  next.onChange(() => paintRunTagDimsWarn());
   runTagDims.el.replaceWith(next.el);
   runTagDims = next;
   const host = document.getElementById('runTagDimsField');
   if (host) host.hidden = !dims.length;
   paintRunTagDimsWarn();
 }
-runTagInput.onChange(paintRunTagDimsWarn);
+runTagInput.onChange(() => paintRunTagDimsWarn());
 
 // Fetch the current target's dimensions and repaint. Its own generation counter, so a workspace
 // switch does not have to re-run loadRunDefaults (and its engine defaults).
@@ -4308,7 +4322,9 @@ async function refreshRunTagDims() {
   if (gen !== runTagDimsGen) return;
   const { slots, rest } = splitByDimensions(state.runTagDefaults || [], info?.dims || []);
   if (!runTagInput.dirty()) runTagInput.set(rest);
-  paintRunTagDims(info, Object.entries(slots).map(([key, value]) => formatTag({ key, value })));
+  // D4: the server's pre-fill (project default → Default → last used) when it sent one.
+  const slotTags = Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
+  paintRunTagDims(info, slotTags);
 }
 document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (e) => {
   const btn = e.currentTarget;
@@ -6733,7 +6749,7 @@ function clearTask(submitted) {
   { // #718: the next run starts from the project's defaults again, the dimension keys in their slots
     const { slots, rest } = splitByDimensions(state.runTagDefaults || [], state.tagDims.dims);
     runTagInput.set(rest, { clearText: true });
-    runTagDims.set(Object.entries(slots).map(([key, value]) => formatTag({ key, value })));
+    runTagDims.set(Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value })));
     paintRunTagDimsWarn();
   }
   el.reuseTask.hidden = false;
@@ -13372,8 +13388,8 @@ el.form.addEventListener('submit', async (e) => {
     return { ok: false };
   };
   const submittedTask = snapshotTask();   // #687: cleared once the server accepts it
-  // Tag dimensions: a required key left empty still starts the run; the toast says it is recorded.
-  const missingTagDims = flagOn('runTags') ? missingRequired(state.tagDims.dims, body.tags || []) : [];
+  // Tag dimensions: unenforced, a required key left empty still starts the run; the toast says it is recorded.
+  const missingTagDims = flagOn('runTags') && !state.tagDims.enforce ? missingRequired(state.tagDims.dims, body.tags || []) : [];
   const missingTagText = missingTagDims.length ? `Missing required tag: ${missingTagDims.map((d) => d.label).join(', ')} (recorded on the run).` : '';
 
   await withButton(el.startBtn, async () => {
@@ -13435,6 +13451,12 @@ el.form.addEventListener('submit', async (e) => {
         showEngineRefusal(data);
         return notStarted(data.overridable ? 'Tick Allow unguarded to run anyway, or pick Claude.' : (data.error || 'The engine cannot run this.'));
       }
+      // Enforced tags (D13): the server's reason goes under the tag field, not into a card alert.
+      if (res.status === 422 && data?.fields?.tags) {
+        startSubmitInFlight = false;
+        paintRunTagDimsWarn(data.fields.tags);
+        return { ok: false };
+      }
       if (!res.ok || !data.runId) {
         startSubmitInFlight = false;
         // The alert title already says "Run not started" / "Not scheduled".
@@ -13481,7 +13503,7 @@ el.form.addEventListener('submit', async (e) => {
       return notStarted(`Error: ${err.message}`);
     }
   }, { busy: scheduling ? 'Scheduling…' : 'Starting…', done: scheduling ? 'Scheduled' : 'Started',
-    idleDisabled: () => !!budgetState.budget?.blocked || startSubmitInFlight });
+    idleDisabled: () => !!budgetState.budget?.blocked || startSubmitInFlight || !!runTagGate() });
 });
 
 // #555: card alerts for New pipeline go into #run-form, directly above its own action row
@@ -14536,16 +14558,48 @@ document.getElementById('schedIfMissed')?.addEventListener('change', (e) => {
   if (grace) grace.disabled = e.target.value !== 'run';
 });
 
-// Settings › Runs › Tag dimensions: the local list (a run target's team policy list wins over it).
+// Settings › Tags: the local tag rows and "Require mandatory tags" (a team policy that sets either locks it, D8).
 const tagDimsEditor = createDimensionEditor(document, { value: [] });
 document.getElementById('tagDimsEditor')?.appendChild(tagDimsEditor.el);
-function paintTagDimsSettings(data) {
-  tagDimsEditor.set(Array.isArray(data?.tagDimensions) ? data.tagDimensions : []);
+let tagsTeam = null;            // { home, dims, enforce } | null — GET /api/tag-dimensions (machine-wide)
+let tagsLocal = { tagDimensions: [], enforceTags: false };
+
+function paintTagsTab() {
+  const note = document.getElementById('tagsTeamNote');
+  const sw = document.getElementById('tagsEnforce');
+  const save = document.getElementById('tagDimsSave');
+  const dimsLocked = !!tagsTeam?.dims;
+  const enforceLocked = dimsLocked || tagsTeam?.enforce != null;
+  tagDimsEditor.set(dimsLocked ? tagsTeam.dims : tagsLocal.tagDimensions);
+  tagDimsEditor.setLocked(dimsLocked);          // after set(): set() re-creates the rows
+  if (sw) { sw.checked = enforceLocked ? tagsTeam?.enforce === true : tagsLocal.enforceTags === true; sw.disabled = enforceLocked; }
+  if (note) { note.hidden = !tagsTeam; note.textContent = tagsTeam ? `Set by your team (${tagsTeam.home}).` : ''; }
+  if (save) save.hidden = dimsLocked && enforceLocked;
   settingsCardPainted('tagDimsSave');
 }
+function paintTagDimsSettings(data) {
+  tagsLocal = { tagDimensions: Array.isArray(data?.tagDimensions) ? data.tagDimensions : [], enforceTags: data?.enforceTags === true };
+  paintTagsTab();
+}
+async function loadTagsTeam() {
+  // safeJson answers {} on a bad body, so `?.team ?? null` covers it.
+  let next = null;
+  try { const r = await fetch('/api/tag-dimensions'); next = r.ok ? ((await safeJson(r))?.team ?? null) : null; } catch { next = null; }
+  // Runs on every visit to the tab: repaint only when the lock changed, so unsaved edits survive a tab switch.
+  if (JSON.stringify(next) === JSON.stringify(tagsTeam)) return;
+  tagsTeam = next;
+  paintTagsTab();
+}
 const tagDimsCard = () => document.getElementById('tag-dims-settings-card');
-document.getElementById('tagDimsSave')?.addEventListener('click', (e) => postSettingsCard({ tagDimensions: tagDimsEditor.get() },
-  { card: tagDimsCard(), button: e.currentTarget, paint: (d) => { paintTagDimsSettings(d); allTagDimsCache = null; }, dirty: settingsCardDirty('tagDimsSave') }));
+document.getElementById('tagsEnforce')?.addEventListener('change', () => document.getElementById('tagDimsEditor')
+  ?.dispatchEvent(new Event('input', { bubbles: true })));          // marks the card dirty (the tracker listens for input)
+document.getElementById('tagDimsSave')?.addEventListener('click', (e) => {
+  const body = {};
+  if (!document.getElementById('tagsEnforce').disabled) body.enforceTags = document.getElementById('tagsEnforce').checked;
+  if (!tagsTeam?.dims) body.tagDimensions = tagDimsEditor.get();
+  postSettingsCard(body, { card: tagDimsCard(), button: e.currentTarget,
+    paint: (d) => { paintTagDimsSettings(d); allTagDimsCache = null; }, dirty: settingsCardDirty('tagDimsSave') });
+});
 settingsCardDirty('tagDimsSave');
 
 // Settings › Runs › Sync before run (#527): the instance defaults every project inherits.
@@ -33207,7 +33261,7 @@ const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'adv
 const VIEW_TITLES = Object.freeze({
   chat: 'Chat', stats: 'Statistics', workflows: 'Workflows', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'team-metrics': 'Team metrics', 'team-policy': 'Team policy',
-  guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca',
+  guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca', tags: 'Tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules',
 });
@@ -33254,10 +33308,10 @@ document.addEventListener('worca:level', () => {
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
+const SETTINGS_TABS = ['general', 'tags', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
 // Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
 // it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
-const SETTINGS_FORM_TABS = ['general', 'runs', 'ask'];
+const SETTINGS_FORM_TABS = ['general', 'tags', 'runs', 'ask'];
 const settingsPanes = $$('[data-view="settings"] .settings-pane');
 // Old addresses keep working. The hashchange listener DROPS a view it does not know
 // and parseSettingsParam reads an unknown tab as General, so without this map a
@@ -33284,6 +33338,7 @@ function parseSettingsParam(param = '') {
   const i = param.indexOf('/');
   const tab = i === -1 ? param : param.slice(0, i);
   const sub = i === -1 ? '' : param.slice(i + 1);
+  if (tab === 'tags' && !flagOn('runTags')) return ['general', ''];   // the Tags tab exists only while runTags is on
   return SETTINGS_TABS.includes(tab) ? [tab, sub] : ['general', ''];
 }
 // The canonical param for a tab: General is plain '#settings', never '#settings/general'.
@@ -33590,6 +33645,7 @@ function showSettingsTab(param = '') {
     // '#settings/runs/actions' and the like: a link to one card (the Actions tab's "Set one in Settings").
     void loadSettings().then(() => focusSettingsCard(settingsPanes.find((p) => p.dataset.tab === tab), sub));
   }
+  if (tab === 'tags') void loadTagsTeam();
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);

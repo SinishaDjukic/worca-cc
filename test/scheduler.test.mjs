@@ -732,6 +732,17 @@ test('runDueTickets: start() answering skip marks the ticket skipped with a feed
   assert.equal(n.severity, 'info');
 });
 
+test('a skipped series occurrence records Last: skipped, plans the next one and does not count as a failure', async () => {
+  const { schedule, ticket } = createSchedule({ title: 'S', projectDir: DIR, request: REQ, rule: nightly, now: T0 });
+  const out = await runDueTickets({ now: Date.parse(ticket.runAt), start: async () => ({ ok: false, skip: true, error: 'Add Cost centre to start' }) });
+  assert.deepEqual(out.skipped, [ticket.id]);
+  assert.equal(getTicket(ticket.id).failReason, 'Add Cost centre to start');
+  const after = getSchedule(schedule.id);
+  assert.equal(after.lastResult, 'skipped');
+  assert.equal(after.failureStreak, 0);
+  assert.equal(listTickets({ scheduleId: schedule.id }).filter((t) => t.status === 'scheduled').length, 1);
+});
+
 test('cancelResumeTicketsFor cancels only that pipeline’s open tickets and audits the reason', () => {
   const a = createTicket({ projectDir: DIR, title: 'A', runAtMs: T0 + HOUR, request: { internal: { resumePipelineId: 'pl_1' } }, resumePipelineId: 'pl_1', now: T0 });
   const b = createTicket({ projectDir: DIR, title: 'B', runAtMs: T0 + HOUR, request: { internal: { resumePipelineId: 'pl_2' } }, resumePipelineId: 'pl_2', now: T0 });

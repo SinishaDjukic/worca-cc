@@ -38,7 +38,9 @@ import { createFormAsker } from './forms.mjs';
 import { kindLabel } from '../shared/away-mode/labels.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
 import { effectiveDebugSpawn } from '../core/settings.mjs';
-import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule } from './schedule.mjs';
+import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule, resolveAfterId } from './schedule.mjs';
+import { applyTagRules } from '../core/tag-dimensions.mjs';
+import { inheritedTagsAtCreation } from '../core/scheduler.mjs';
 import { cmdRuns } from './runs.mjs';
 import { cmdLogs } from './logs.mjs';
 import { cmdControl } from './control.mjs';
@@ -3373,6 +3375,13 @@ async function main() {
     const reason = validateMemoryScope({ workflowId: flags.workflow || 'wf_default', memoryScope: flags.memoryScope, isWorkspace: false });
     if (reason) fail(reason);
   }
+  // Enforced tags (D14): project-only, no identity (no last-used source); the server's message, exit 2.
+  // A Run after with no --tag checks the tags the chain will inherit and stores none (D9a, like tagGate).
+  const inherits = !!flags.after && !flags.tags.length;
+  const tagBase = inherits ? inheritedTagsAtCreation(resolveAfterId(flags.after, fail)) : flags.tags;
+  const tagGate = await applyTagRules({ projectDir, tags: tagBase, person: null });
+  if (tagGate.error) fail(tagGate.error);
+  if (tagGate.enforced && !inherits) flags.tags = tagGate.tags;      // requestFromFlags and buildOrch both read flags.tags
 
   // Scheduled runs: write the ticket (or the repeating schedule) and exit — unless --wait
   // holds this terminal, in which case the run starts HERE, through the path below.
@@ -3414,6 +3423,7 @@ async function main() {
   if (waitTicketId) {
     const code = await waitAndRun({
       ticketId: waitTicketId, tz: spec.tz, out, c,
+      retag: (tags) => { flags.tags = tags; },
       drive: async (onPipelineId) => {
         const o = await buildOrch();
         o.on('state', (st) => { if (st && typeof st.id === 'string' && st.id) onPipelineId(st.id); });

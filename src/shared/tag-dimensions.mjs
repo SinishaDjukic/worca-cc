@@ -1,8 +1,9 @@
 // src/shared/tag-dimensions.mjs — tag dimensions: optional, configured keys ({ key, label,
 // values?, required? }) from team policy (runs.tagDimensions) or user Settings. Browser-safe: the
-// server, the harness, the policy registry and the web UI all read this module. Required is a
-// warning only; nothing here blocks a run.
-import { parseTag, TAG_KEY_RE } from './run-tags.mjs';
+// server, the harness, the policy registry and the web UI all read this module. Required warns; with
+// enforcement on (Settings › Tags or team policy runs.enforceTags) a start is refused while a mandatory
+// tag has no value after pre-fill (prefillTags).
+import { parseTag, formatTag, normaliseTags, TAG_KEY_RE } from './run-tags.mjs';
 
 export const MAX_DIMENSIONS = 10;
 export const MAX_DIMENSION_VALUES = 50;
@@ -13,7 +14,7 @@ const clean = (s) => String(s ?? '').normalize('NFC').replace(/[\u0000-\u001f\u0
 
 /** One raw entry → { dim } or { error }. */
 export function normaliseDimension(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'a tag dimension is { key, label, values?, required? }' };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'a tag dimension is { key, label, values?, required?, default? }' };
   const key = clean(raw.key).toLowerCase().replace(/ /g, '-');
   if (!TAG_KEY_RE.test(key)) return { error: `"${key}": a tag name is letters, digits, ".", "_" or "-" (up to 32)` };
   const label = clean(raw.label);
@@ -29,7 +30,17 @@ export function normaliseDimension(raw) {
   }
   if (values.length > MAX_DIMENSION_VALUES) return { error: `${key}: at most ${MAX_DIMENSION_VALUES} values` };
   if (raw.required != null && typeof raw.required !== 'boolean') return { error: `${key}: required must be true or false` };
-  return { dim: { key, label, values, required: raw.required === true } };
+  let def = '';
+  if (raw.default != null && raw.default !== '') {
+    if (typeof raw.default !== 'string') return { error: `${key}: the default must be text` };
+    if (raw.default.trim()) {
+      const r = parseTag(`${key}:${raw.default}`);
+      if (r.error) return { error: `${key}: ${r.error}` };
+      if (values.length && !values.includes(r.tag.value)) return { error: `${key}: the default must be one of its values` };
+      def = r.tag.value;
+    }
+  }
+  return { dim: { key, label, values, required: raw.required === true, ...(def ? { default: def } : {}) } };
 }
 
 /** A list → { dims, errors }: bad entries are dropped one error each; the first entry of a key wins. */
@@ -48,6 +59,56 @@ export function normaliseDimensions(list) {
 }
 
 const tagOf = (t) => { const r = parseTag(t); return r.error ? null : r.tag; };
+
+/** The last non-empty value of `key` in a tag list, or null (one value per key; the last wins, like normaliseTags). */
+const valueOf = (tags, key) => {
+  let v = null;
+  for (const t of tags || []) { const g = tagOf(t); if (g && g.key === key && g.value) v = g.value; }
+  return v;
+};
+const allowed = (d, v) => !!v && (!d.values?.length || d.values.includes(v));
+
+/**
+ * Pre-fill (D4): each dimension the tags give no value takes, in order, the project's default for its key,
+ * its own Default, then — mandatory ones only — the person's last value. Off-list candidates are passed
+ * over. Never overwrites a value. Returns a normalised list (sorted, one per key).
+ */
+export function prefillTags(dims, tags, { projectDefaults = [], lastUsed = [] } = {}) {
+  const add = [];
+  for (const d of dims || []) {
+    if (valueOf(tags, d.key)) continue;
+    const v = [valueOf(projectDefaults, d.key), d.default || null, d.required ? valueOf(lastUsed, d.key) : null].find((x) => allowed(d, x));
+    if (v) add.push(formatTag({ key: d.key, value: v }));
+  }
+  return normaliseTags([...(tags || []), ...add]).tags;
+}
+
+/** Enforcement check: mandatory dimensions with no value, and values outside a dimension's list. */
+export function tagProblems(dims, tags) {
+  const missing = []; const outside = [];
+  for (const d of dims || []) {
+    const v = valueOf(tags, d.key);
+    if (v && d.values?.length && !d.values.includes(v)) outside.push({ dim: d, value: v });
+    else if (!v && d.required) missing.push(d);
+  }
+  return { missing, outside };
+}
+
+const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+
+/** The one-line reason a start is refused (D12), or null. */
+export function tagsProblemText(dims, tags) {
+  const { missing, outside } = tagProblems(dims, tags);
+  if (missing.length) return `Add ${andList(missing.map((d) => d.label))} to start`;
+  if (outside.length) { const { dim, value } = outside[0]; return `${dim.label} "${value}" is not one of its values (${dim.values.join(', ')})`; }
+  return null;
+}
+
+/** Settings › Tags: a label's default key ('Cost centre' → 'cost-centre'); '' when nothing usable is left. */
+export function keyFromLabel(label) {
+  const k = clean(label).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 32).replace(/-+$/, '');
+  return TAG_KEY_RE.test(k) ? k : '';
+}
 
 /** Required dimensions with no tag of their key in `tags`. */
 export function missingRequired(dims, tags) {

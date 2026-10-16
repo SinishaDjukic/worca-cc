@@ -74,7 +74,7 @@ import {
   memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
   workspaceScanModels, setWorkspaceScanModels, assertWorkspaceScanInput,
   scheduleDefaults, setScheduleDefaults,
-  userTagDimensions, setUserTagDimensions,
+  userTagDimensions, setUserTagDimensions, userEnforceTags, setUserEnforceTags,
   nightModeSettings, setNightMode, nightModeToggle, nightModeHereSince, setNightModeToggle, assertNightModeToggleInput,
   awayPerPerson, nightModeToggleFor, nightModeHereSinceFor, setPersonNightModeToggle,
   actionsSettings, setActionsSettings, assertActionsInput,
@@ -319,8 +319,8 @@ import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModel
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
 import { editRunTags, readRunTags, tagVocabulary } from '../src/core/run-tags-store.mjs';
 import { normaliseTags, describeTagChange, parseTag } from '../src/shared/run-tags.mjs';
-import { normaliseDimensions } from '../src/shared/tag-dimensions.mjs';
-import { dimensionsForTarget, allTagDimensions } from '../src/core/tag-dimensions.mjs';
+import { normaliseDimensions, prefillTags } from '../src/shared/tag-dimensions.mjs';
+import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, prefillSources } from '../src/core/tag-dimensions.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
@@ -381,7 +381,7 @@ import {
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
   resolveAfterRef, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
-  chainBaseBranchesOf, resumeTicketsFor, cancelResumeTicketsFor,
+  chainBaseBranchesOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation,
 } from '../src/core/scheduler.mjs';
 import {
   onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
@@ -2091,6 +2091,21 @@ function askTrackRun(threadId, input, pin) {
 // body (workspace):      { workspaceId, prompt?, ... } — mutually exclusive with
 //                        projectDir (§2.6). Single-project behavior is byte-identical.
 // ---------------------------------------------------------------------------
+/**
+ * Enforced run tags (D9, D9a, D10, D13): pre-fill, then refuse a missing mandatory tag or an off-list value
+ * with 422 { error, fields: { tags } }. Returns true when it answered. On pass, body.tags holds the filled
+ * list (so a schedule stores it) — except a Run after that names no tags, which keeps inheriting.
+ */
+async function tagGate(res, body, { projectDir = null, workspaceId = null, startedBy = null, after = null, exempt = false }) {
+  if (exempt) return false;
+  const inherits = !!after && body.tags === undefined;
+  const base = inherits ? inheritedTagsAtCreation(after) : (Array.isArray(body.tags) ? body.tags : []);
+  const g = await applyTagRules({ projectDir, workspaceId, tags: base, person: startedBy });
+  if (g.error) { res.status(422).json({ error: g.error, fields: { tags: g.error } }); return true; }
+  if (g.enforced && !inherits) body.tags = g.tags;
+  return false;
+}
+
 const startRunHandler = async (req, res) => {
   // B2: a draining server starts nothing new (the scan arm and the scheduler come through here too).
   if (DRAIN.on) return res.status(503).json(DRAIN_REFUSAL);
@@ -2279,6 +2294,9 @@ const startRunHandler = async (req, res) => {
       tags = t.tags;
       body.tags = tags;
     }
+    // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
+    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
+      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
@@ -2433,6 +2451,8 @@ const startRunHandler = async (req, res) => {
         if (!r.ok) return badRequest(res, r.error);
         sched.afterRef = r.after;
       }
+      if (await tagGate(res, body, { workspaceId: ws.id, startedBy, after: sched?.afterRef || null, exempt: tagExempt })) return;
+      if (Array.isArray(body.tags)) tags = body.tags;
       if (sched) {
         // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
         if (runEngine.engine) {
@@ -2567,6 +2587,9 @@ const startRunHandler = async (req, res) => {
         if (!r.ok) return badRequest(res, r.error);
         sched.afterRef = r.after;
       }
+      // Enforced tags (D9): before pairBody / storedBody copy body, so a schedule stores the pre-filled list.
+      if (await tagGate(res, body, { projectDir, startedBy, after: sched?.afterRef || null, exempt: tagExempt })) return;
+      if (Array.isArray(body.tags)) tags = body.tags;
       // A schedule stores the pair as checked (the catalog's casing, trimmed): its ticket takes it verbatim.
       const pairBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
       // …and the overlay as checked (the catalog's casing, each model with its effort): the ticket fires it verbatim.
@@ -3216,6 +3239,17 @@ async function fireTicket(ticket) {
   // A "Run now" click names its clicker for this one firing (scheduleVerb records it).
   const runNowBy = RUN_NOW_BY.get(ticket.id) || null;
   RUN_NOW_BY.delete(ticket.id);
+  // Enforced tags (D11): saved at creation; a firing fills only what became mandatory since (after #718
+  // inheritance above), then re-checks. A start it would refuse is SKIPPED with the reason — never started
+  // untagged, and never a failure (the handler gate exempts fired tickets, D10).
+  const tagCheck = await applyTagRules({
+    projectDir: ticket.workspaceId ? null : (body.projectDir || ticket.projectDir || null),
+    workspaceId: ticket.workspaceId || null,
+    tags: Array.isArray(body.tags) ? body.tags : [],
+    person: runNowBy || (body.internal && body.internal.startedBy) || null,
+  });
+  if (tagCheck.error) return { ok: false, skip: true, error: tagCheck.error };
+  if (tagCheck.enforced) body.tags = tagCheck.tags;
   const out = await invokeStartRun(body, { ticket, ...(runNowBy ? { runNowBy } : {}) });
   if (out.status === 200 && out.body && out.body.runId) return { ok: true };
   const error = (out.body && out.body.error) || `the run could not be started (HTTP ${out.status})`;
@@ -3259,7 +3293,7 @@ export async function schedulerTick({ now = Date.now() } = {}) {
       isLive: liveProbe,
       staggerMs: SCHEDULER_STAGGER_MS,
     });
-    for (const id of [...out.failed, ...out.missed]) releaseAskCard(getTicket(id));
+    for (const id of [...out.failed, ...out.missed, ...out.skipped]) releaseAskCard(getTicket(id));
     if (out.fired.length || out.missed.length || out.skipped.length || out.failed.length || out.retried.length) {
       emitChanged('schedules-changed', 'tick');
     }
@@ -5491,7 +5525,7 @@ app.get('/api/projects/:key/sync/settings', syncRoute(async (req, res) => {
   res.json(syncPrefsView(p.key));
 }));
 
-// Run tags (#718): the project's default tags, a New run form prefill only (never applied by the server).
+// Run tags (#718): the project's default tags, a New run form prefill (the server applies them only as an enforced-tags pre-fill source).
 app.get('/api/projects/:key/tags/defaults', async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;
   res.json({ tags: readProjectDefaultTags(p.key) });
@@ -5532,7 +5566,14 @@ app.get('/api/tag-dimensions', async (req, res) => {
   const projectDir = rawDir ? resolveProjectDir(rawDir) : null;
   if (rawDir && !projectDir) return badRequest(res, 'invalid projectDir');
   try {
-    res.json(projectDir || workspaceId ? await dimensionsForTarget({ projectDir, workspaceId }) : await allTagDimensions());
+    if (projectDir || workspaceId) {
+      const info = await dimensionsForTarget({ projectDir, workspaceId });
+      // D4: the form's pre-fill, dimension keys only (the form keeps project defaults for other keys itself).
+      // D19: enforce is flag-aware here, so the client gate needs no flag check of its own.
+      const prefill = prefillTags(info.dims, [], prefillSources({ projectDir, person: startedByOf(req) }));
+      return res.json({ ...info, enforce: flagEnabled('runTags') && info.enforce === true, prefill });
+    }
+    res.json({ ...(await allTagDimensions()), team: await teamTagPolicy() });
   } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
 });
 function syncPrefsView(key) {
@@ -8965,7 +9006,8 @@ const settingsState = () => ({
   hideBuiltinModels: hideBuiltinModels(),
   theme: storedTheme(),                                   // system | light | dark (dark-mode design §6)
   schedule: scheduleDefaults(),                           // defaults a NEW schedule inherits
-  tagDimensions: userTagDimensions(),                     // Settings › Runs › Tag dimensions (local; a team policy's list wins)
+  tagDimensions: userTagDimensions(),                     // Settings › Tags › Tag dimensions (local; a team policy's list wins)
+  enforceTags: userEnforceTags(),                         // Settings › Tags (local; a team policy's runs.enforceTags wins)
   sync: syncDefaults(),                                   // sync before run (#527): instance defaults
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
   flags: allFlags(),                                      // { key: bool } resolved (docs/feature-flags.md)
@@ -9568,6 +9610,9 @@ async function applySettingsPatch(body, { person = null } = {}) {
       const { errors } = normaliseDimensions(body.tagDimensions ?? []);
       if (errors.length) throw Object.assign(new Error(errors[0]), { code: 'BAD_TAG_DIMENSIONS' });
     });
+    if (has('enforceTags')) asSettingsField('enforceTags', () => {
+      if (typeof body.enforceTags !== 'boolean') throw Object.assign(new Error('enforceTags must be true or false'), { code: 'BAD_ENFORCE_TAGS' });
+    });
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -9608,13 +9653,14 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('nightModeToggle') && !(await setPersonNightModeToggle(person, body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
     if (has('sync')) await setSyncDefaults(body.sync);
     if (has('tagDimensions')) await asSettingsField('tagDimensions', () => setUserTagDimensions(body.tagDimensions));
+    if (has('enforceTags')) await asSettingsField('enforceTags', () => setUserEnforceTags(body.enforceTags));
     // Live runs re-evaluate their open question against the new night settings.
     if (hasNightKey) for (const e of runs.values()) e.orch?.nightConfigChanged?.();
     if (hasActionsKey) { await setActionsSettings(body.actions); builtinsDetected = null; }   // re-detect the built-ins lazily
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;

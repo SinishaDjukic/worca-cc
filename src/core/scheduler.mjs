@@ -31,6 +31,7 @@ import { projectKey } from './store.mjs';
 import { addNotification, resolveNotifications } from './notifications.mjs';
 import { usageLimitSwitches, engineList } from '../shared/engine-switch.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
+import { readRunTags } from './run-tags-store.mjs';
 import {
   normalizeRule, nextOccurrence, describeRule, OVERLAP_POLICIES, MISSED_POLICIES,
 } from '../shared/schedule/recurrence.mjs';
@@ -520,6 +521,25 @@ export function previousBranchesOf(pipelineId, { now = Date.now() } = {}) {
   return typeof br === 'string' && br ? { sourceBranch: br } : null;
 }
 
+const AFTER_TAG_HOPS = 10;
+/**
+ * D9a: the tags a Run after ticket that names none will inherit when it fires (#718 reads the
+ * predecessor's run tags then). A pipeline → its tags; a ticket → its own stored tags, else its
+ * run's tags, else its own predecessor's. [] when nothing is known yet.
+ */
+export function inheritedTagsAtCreation(after) {
+  let cur = after;
+  for (let hop = 0; cur && cur.id && hop < AFTER_TAG_HOPS; hop++) {
+    if (cur.kind === 'pipeline') return readRunTags(cur.id);
+    const t = getTicket(cur.id, { withRequest: true });   // a plain getTicket has no `request`
+    if (!t) return [];
+    if (Array.isArray(t.request?.tags)) return t.request.tags;
+    if (t.pipelineId) return readRunTags(t.pipelineId);
+    cur = t.after;
+  }
+  return [];
+}
+
 /** Open tickets that wait for the given run — what a cancel or an archive would strand. */
 export function dependentsOfRun({ ticketId = null, pipelineId = null } = {}) {
   const ids = [];
@@ -889,6 +909,22 @@ export function dueTickets({ now = Date.now() } = {}) {
  *   isLive({id,pipelineId}) -> boolean   (optional: the host's in-memory run view)
  * Returns a summary { fired, missed, skipped, failed, retried, waiting }.
  */
+/**
+ * Park a due ticket as skipped with its reason (info feed item). A series occurrence also records
+ * Last: skipped and plans the next one; a one-shot drops its stage, like the failure arm. Not a
+ * failure: the streak is untouched.
+ */
+export function skipTicket(t, reason, { now = Date.now(), schedule = t.scheduleId ? getSchedule(t.scheduleId) : null } = {}) {
+  touchTicket(t.id, "status = 'skipped', fail_reason = ?, forced = 0", [reason], now);
+  addNotification({
+    kind: 'skipped', severity: 'info', scheduleId: t.scheduleId, ticketId: t.id,
+    pipelineId: t.resumePipelineId || null, projectDir: t.projectDir, title: t.title,
+    message: `was skipped: ${reason}.`, now: new Date(now),
+  });
+  if (schedule) { setLastResult(schedule.id, 'skipped', now); materializeNext(schedule.id, { now }); }
+  else removeStage(t.id);
+}
+
 export async function runDueTickets({
   now = Date.now(), start, isLive = null, pid = process.pid, host = hostname(), pidAlive = defaultPidAlive,
   onlyOwned = false, staggerMs = 0, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -972,12 +1008,7 @@ export async function runDueTickets({
     // (Mirrors the overlap-skip arm above; 'skipped' is a known terminal status —
     // TICKET_STATUSES / purgeScheduler.)
     if (res && res.skip) {
-      touchTicket(t.id, "status = 'skipped', fail_reason = ?, forced = 0", [(res && res.error) || 'no longer applies'], now);
-      addNotification({
-        kind: 'skipped', severity: 'info', scheduleId: t.scheduleId, ticketId: t.id,
-        pipelineId: t.resumePipelineId || null, projectDir: t.projectDir, title: t.title,
-        message: `was skipped: ${(res && res.error) || 'no longer applies'}.`, now: new Date(now),
-      });
+      skipTicket(t, (res && res.error) || 'no longer applies', { now, schedule });
       out.skipped.push(t.id);
       continue;
     }

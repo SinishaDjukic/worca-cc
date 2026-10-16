@@ -66,7 +66,8 @@ export const FIELDS = Object.freeze([
   { key: 'run.humanInLoop', group: 'runs', label: 'Human in the loop', help: 'Applies until the project sets its own switch.', type: 'bool', kinds: ['default'] },
   { key: 'metrics.record', group: 'runs', label: 'Record runs to team metrics', help: 'Expected on: the Projects cell hints when "Include my runs" is off.', type: 'bool', kinds: ['soft'] },
   { key: 'worca.minVersion', group: 'runs', label: 'Minimum Worca version', help: 'An older client shows a banner and logs a note.', type: 'semver', kinds: ['soft'] },
-  { key: 'runs.tagDimensions', group: 'runs', label: 'Tag dimensions', help: 'Keys every run is asked for (like a cost centre), with allowed values. Required only warns and is recorded; a run is never blocked.', type: 'tagDimensions', kinds: ['soft'] },
+  { key: 'runs.tagDimensions', group: 'runs', label: 'Tag dimensions', help: 'Keys every run is asked for (like a cost centre), with allowed values and a default. Mandatory keys warn; with "Require mandatory tags" on they block a start.', type: 'tagDimensions', kinds: ['soft'] },
+  { key: 'runs.enforceTags', group: 'runs', label: 'Require mandatory tags', help: 'On: a run cannot start while a mandatory tag has no value after pre-fill, or a tag is outside its values.', type: 'bool', kinds: ['soft'] },
   // Away mode (src/core/night/*): `night: true` makes validateValue run the night leaf's own
   // field rules after the base-type check, so the rules live in one place. Labels: src/shared/away-mode/labels.mjs.
   { key: 'night.enabled', group: 'night', label: FIELD_LABELS.enabled.label, help: FIELD_LABELS.enabled.hint || 'On: All runs. Off: Only runs I marked.', type: 'bool', kinds: ['default'], night: true },

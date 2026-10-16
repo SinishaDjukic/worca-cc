@@ -15,8 +15,9 @@ import {
   heartbeatTicket, releaseTicket, markTicketFired, setTicketPipeline, recordOutcome,
   createSchedule, listSchedules, pauseSchedule, resumeSchedule, skipNext, runScheduleNow,
   deleteSchedule, scheduleStageDir,
-  resolveAfterRef, afterRefOf, predecessorState, previousBranchesOf,
+  resolveAfterRef, afterRefOf, predecessorState, previousBranchesOf, skipTicket,
 } from '../core/scheduler.mjs';
+import { applyTagRules } from '../core/tag-dimensions.mjs';
 import { getDb } from '../core/db.mjs';
 import { listNotifications, markAllRead, unreadCount, addNotification } from '../core/notifications.mjs';
 import { scheduleDefaults } from '../core/settings.mjs';
@@ -297,7 +298,15 @@ export async function createFromFlags(flags, { projectDir, extras, promptText, s
  * @param {(onPipelineId:(id:string)=>void) => Promise<{code:number, status:string}>} o.drive
  * @returns {Promise<number>} exit code
  */
-export async function waitAndRun({ ticketId, tz, out, c, drive, pollMs = 5000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+export async function waitAndRun({
+  ticketId, tz, out, c, drive, pollMs = 5000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  // Enforced tags (D14): re-checked after the claim, like a server firing. getTicket(id) omits `request`.
+  checkTags = (t) => {
+    const full = getTicket(t.id, { withRequest: true });
+    return applyTagRules({ projectDir: t.projectDir, tags: Array.isArray(full?.request?.tags) ? full.request.tags : [], person: null });
+  },
+  retag = () => {},
+}) {
   let released = false;
   const onSigint = () => {
     if (released) return;
@@ -337,6 +346,9 @@ export async function waitAndRun({ ticketId, tz, out, c, drive, pollMs = 5000, s
   }
   released = true; // from here the run's own Ctrl+C ladder (pause/stop) is in charge
   const t = getTicket(ticketId);
+  const tagGate = await checkTags(t);
+  if (tagGate.error) { skipTicket(t, tagGate.error); out(c('red', `worca: ${tagGate.error}`)); return 2; }
+  if (tagGate.enforced) retag(tagGate.tags);
   const late = Date.now() - Date.parse(t.runAt);
   markTicketFired(ticketId);
   if (!t.forced && late > 5 * 60_000) {

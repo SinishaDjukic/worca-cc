@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normaliseDimensions, missingRequired, splitByDimensions, mergeDimensions, dimensionLabel, tagGroupOptions, MAX_DIMENSIONS } from '../src/shared/tag-dimensions.mjs';
+import { prefillTags, tagProblems, tagsProblemText, keyFromLabel } from '../src/shared/tag-dimensions.mjs';
 
 test('normaliseDimensions: keeps good entries, one error per bad entry, first key wins', () => {
   const { dims, errors } = normaliseDimensions([
@@ -51,4 +52,48 @@ test('mergeDimensions + labels + group options', () => {
     { value: 'tag:cc', text: 'Group by Cost centre' }, { value: 'tag:spike', text: 'Group by tag: spike' },
   ]);
   assert.deepEqual(tagGroupOptions([], ['client']), [{ value: 'tag:client', text: 'Group by tag: client' }]);
+});
+
+const CC = { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true };
+const CLIENT = { key: 'client', label: 'Client', values: [], required: false };
+
+test('normaliseDimension: default is optional, squashed, and must be one of the values when there are values', () => {
+  assert.deepEqual(normaliseDimensions([{ key: 'cc', label: 'Cost centre', values: ['4410'], default: ' 4410 ' }]).dims,
+    [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: false, default: '4410' }]);
+  assert.deepEqual(normaliseDimensions([{ key: 'client', label: 'Client', default: 'ACME' }]).dims[0].default, 'acme');
+  assert.equal('default' in normaliseDimensions([{ key: 'client', label: 'Client', default: '' }]).dims[0], false);
+  assert.equal('default' in normaliseDimensions([{ key: 'client', label: 'Client' }]).dims[0], false);
+  assert.match(normaliseDimensions([{ key: 'cc', label: 'Cost centre', values: ['4410'], default: '9999' }]).errors[0], /cc: the default must be one of its values/);
+  assert.match(normaliseDimensions([{ key: 'cc', label: 'Cost centre', default: 7 }]).errors[0], /cc: the default must be text/);
+});
+
+test('prefillTags: project default → Default → last used (mandatory only); filled keys are never overwritten', () => {
+  const dims = [{ ...CC, default: '4420' }, { ...CLIENT, default: 'acme' }];
+  assert.deepEqual(prefillTags(dims, [], { projectDefaults: ['cc:4410'], lastUsed: [] }), ['cc:4410', 'client:acme']);
+  assert.deepEqual(prefillTags(dims, [], {}), ['cc:4420', 'client:acme']);
+  assert.deepEqual(prefillTags([CC], [], { lastUsed: ['cc:4420'] }), ['cc:4420']);
+  assert.deepEqual(prefillTags([CLIENT], [], { lastUsed: ['client:globex'] }), [], 'last used never fills an optional tag');
+  assert.deepEqual(prefillTags([CC], ['cc:4420', 'spike'], { projectDefaults: ['cc:4410'] }), ['cc:4420', 'spike']);
+  assert.deepEqual(prefillTags([CC], ['cc'], { projectDefaults: ['cc:4410'] }), ['cc:4410'], 'a plain key has no value yet');
+});
+
+test('prefillTags: a candidate outside the values is passed over for the next source', () => {
+  assert.deepEqual(prefillTags([CC], [], { projectDefaults: ['cc:9999'], lastUsed: ['cc:4420'] }), ['cc:4420']);
+  assert.deepEqual(prefillTags([CC], [], { projectDefaults: ['cc:9999'] }), []);
+});
+
+test('tagProblems / tagsProblemText: missing before off-list, labels joined', () => {
+  const two = [CC, { ...CLIENT, required: true }];
+  assert.equal(tagsProblemText(two, []), 'Add Cost centre and Client to start');
+  assert.equal(tagsProblemText([CC], ['cc:9999']), 'Cost centre "9999" is not one of its values (4410, 4420)');
+  assert.equal(tagsProblemText([CC], ['cc:4410']), null);
+  assert.equal(tagsProblemText([CLIENT], ['client:anything']), null, 'no values = free text');
+  assert.deepEqual(tagProblems([CC], ['cc']).missing.map((d) => d.key), ['cc']);
+});
+
+test('keyFromLabel: lower-case, dashes, valid key characters only, at most 32', () => {
+  assert.equal(keyFromLabel('Cost centre'), 'cost-centre');
+  assert.equal(keyFromLabel('  Team / Squad!! '), 'team-squad');
+  assert.equal(keyFromLabel('x'.repeat(40)).length, 32);
+  assert.equal(keyFromLabel('!!!'), '');
 });
