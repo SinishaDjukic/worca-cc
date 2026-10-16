@@ -36,17 +36,17 @@ export const WORKSPACE_SYNTHESIS_FILE = 'synthesis.json';
 export const WORKSPACE_GRAPH_FILE = 'workspace-graph.json';
 
 /** @param {string} name */
-export function scanRunTitle(name) {
-  return `Workspace scan: ${name}`;
+export function scanRunTitle(name, { partial = false } = {}) {
+  return partial ? `Workspace partial re-scan: ${name}` : `Workspace scan: ${name}`;
 }
 
 /**
  * The scan run's request: the task node's prompt, kept in the run's History and bound to the extract
  * card's `task` input (no card reads its text). Its `Length budget:` line names the ceiling the render
  * card enforces (scanDescriptionBudget).
- * @param {{name:string, projectNames?:string[], rescan?:boolean}} opts
+ * @param {{name:string, projectNames?:string[], rescan?:boolean, partial?:boolean}} opts
  */
-export function scanRunPrompt({ name, projectNames = [], rescan = false } = {}) {
+export function scanRunPrompt({ name, projectNames = [], rescan = false, partial = false } = {}) {
   const n = projectNames.length;
   const lines = [
     `Scan the interconnections of the workspace "${name}".`,
@@ -55,7 +55,8 @@ export function scanRunPrompt({ name, projectNames = [], rescan = false } = {}) 
     // D23: the description's soft ceiling grows with the member count (src/shared/workspace-size.mjs).
     `Length budget: up to ~${scanDescriptionBudget(n)} lines (${n} member projects) — an upper guideline, not a target: never pad to reach it, and never drop a real relation to stay under it.`,
   ];
-  if (rescan) lines.push('This is a re-scan: describe the code as it is now.');
+  if (partial) lines.push('This is a partial re-scan after a member was removed: the map is the stored one, pruned; rewrite the overview and coordination notes for the members left.');
+  else if (rescan) lines.push('This is a re-scan: describe the code as it is now.');
   return lines.join('\n\n');
 }
 

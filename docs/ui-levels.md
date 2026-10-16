@@ -260,7 +260,7 @@ inside the view.
 | Projects list, add, project page Overview, remove | S |
 | Project Memory tab (view and edit files) | A |
 | Project page Actions tab | A |
-| Workspaces list, create wizard, workspace page Overview (projects, description, re-scan, delete) | A |
+| Workspaces list, create wizard, workspace page Overview (projects, the Remove confirm's re-scan choice and recommendation, description, re-scan, delete) | A |
 | Workspace page Map tab (coverage, graph, edges, confirm / reject / clear, add / delete manual edges, Regenerate description) | A |
 | Workspace page Actions tab | A |
 | Memory health, Defragment, snapshot restore | E — the health card stays visible when overdue or failing |

@@ -9,7 +9,7 @@ import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, WORKSPA
 import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertRunnableWorkflow, GRAPH_MEMORY_DEFRAG_WORKFLOW } from '../workflows.mjs';
 import { readGuardrailSet as realReadGuardrailSet } from '../guardrail-store.mjs';
 import { validateMemoryScope } from '../memory-sync.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
+import { isWorkspaceScanWorkflow } from '../graph/builtin-workflows.mjs';
 import { sanitizeBranchName, suggestBranchName } from '../worktree.mjs';
 import { sanitizeTitle } from '../title.mjs';
 import { ASK_LIMITS } from './limits.mjs';
@@ -289,7 +289,7 @@ export function createProposalValidator({
     catch (err) { errors.push(err && err.message ? err.message : PROPOSAL_ERRORS.unknownWorkflow(workflowId)); }
     // The Workspace scan starts only through the Workspaces routes (D2): POST /api/run refuses it,
     // so a card for it could never start.
-    if (wf && wf.id === WORKSPACE_SCAN_WORKFLOW_ID) { errors.push(PROPOSAL_ERRORS.scanWorkflow); wf = null; }
+    if (wf && isWorkspaceScanWorkflow(wf.id)) { errors.push(PROPOSAL_ERRORS.scanWorkflow); wf = null; }
 
     // ── memoryScope (agent memory §7.3): the same gate as POST /api/run ──────
     let memoryScope = null;
