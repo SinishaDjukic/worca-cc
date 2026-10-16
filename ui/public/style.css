@@ -418,6 +418,10 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
 .path-row{display:flex;gap:9px;align-items:center;}
 .path-row input{flex:1 1 auto;min-width:0;}
 .path-row .btn{flex:0 0 auto;white-space:nowrap;}
+/* stacked variant (Add project → Folder): the input gets its own full-width line, buttons below */
+.path-row.path-row-stacked{flex-direction:column;align-items:stretch;gap:0;}
+.path-row-stacked input{width:100%;}
+.path-row-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:8px;}
 
 /* segmented toggle */
 .seg{display:inline-flex;background:var(--field);border-radius:12px;padding:4px;gap:4px;}

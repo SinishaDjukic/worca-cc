@@ -2617,10 +2617,12 @@
           </div>
           <div class="field">
             <label for="proj-add-path">Folder</label>
-            <div class="path-row">
+            <div class="path-row path-row-stacked">
               <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" />
-              <button type="button" id="proj-add-browse" class="btn btn-ghost btn-mini" title="Pick the project folder">Choose folder&hellip;</button>
-              <button type="button" id="proj-add-browse-many" class="btn btn-ghost btn-mini" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
+              <div class="path-row-actions">
+                <button type="button" id="proj-add-browse" class="btn btn-ghost btn-mini" title="Pick the project folder">Choose folder&hellip;</button>
+                <button type="button" id="proj-add-browse-many" class="btn btn-ghost btn-mini" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
+              </div>
             </div>
           </div>
         </div>
