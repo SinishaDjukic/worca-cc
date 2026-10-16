@@ -1159,7 +1159,7 @@ const shapeRow = (name, run) => ({ name, run: async () => { try { await run(); }
 
 test('ask-panel-card: Shape it first on the run proposal card', async () => {
   await checkRows([
-    shapeRow('gate on + card.nudge: "Shape it first" posts shape and wf_shape; "Run anyway" posts neither', async () => {
+    shapeRow('gate on + card.nudge: "Shape it first" posts shape and wf_shape; "Run as is" posts neither', async () => {
       gateOn();
       const rec = {};
       const ctx = await openWithCard(NUDGED_CARD, rec);
@@ -1170,7 +1170,7 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       assert.equal(shapeBtn.textContent, 'Shaper');
       const startBtn = cardEl.querySelector('[data-ask-card-start]');
       assert.equal(shapeBtn.nextElementSibling, startBtn, 'Shape it first sits before Start');
-      assert.equal(startLabel(startBtn), 'Run anyway');
+      assert.equal(startLabel(startBtn), 'Run as is');
       shapeBtn.click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(rec.runBodies[0].workflowId, 'wf_shape');

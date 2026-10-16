@@ -4258,7 +4258,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         shapeBtn.type = 'button';
         shapeBtn.dataset.askCardShape = '';
         shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));
-        setLabel(startBtn, 'Run anyway');
+        setLabel(startBtn, 'Run as is');                 // D32: the choice card's own words, never "anyway"
       }
     }
     foot.append(openNp, summary, dismissBtn, laterBtn, ...(shapeBtn ? [shapeBtn] : []), startBtn);

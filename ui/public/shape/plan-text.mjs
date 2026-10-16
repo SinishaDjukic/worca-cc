@@ -1,5 +1,6 @@
 // ui/public/shape/plan-text.mjs — pure helpers of the plan and question cards (spec §3.3, §3.4).
-import { SECTIONS, perspectiveByKey, ownersOf } from '../../../src/shared/shape/perspectives.mjs';
+import { SECTIONS, perspectiveByKey, ownersOf, splitSections } from '../../../src/shared/shape/perspectives.mjs';
+import { askKindOf } from '../ask/registry.mjs';
 
 export const SHAPE_ATTENTION = '~3 min of your time now';
 
@@ -46,4 +47,59 @@ export function defaultAnswers(pq) {
       return { id: q.id, question: q.question || '', choice };
     }),
   };
+}
+
+/** The card's 2–3 lines (D30): the first paragraph of Problem and goal, else the first prose paragraph. */
+export function planSummary(md, max = 280) {
+  const prose = (text) => String(text || '').split(/\n\s*\n/)
+    .map((p) => p.split('\n')
+      .filter((l) => l.trim() && !/^\s*(#|\||[-*_]{3,}\s*$)/.test(l))
+      .map((l) => l.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '').trim())
+      .join(' ').trim())
+    .find(Boolean) || '';
+  const secs = splitSections(String(md || ''));
+  const problem = secs.find((s) => s.key === 'problem');
+  let text = problem ? prose(problem.text) : '';
+  if (!text) for (const s of secs) { text = prose(s.text); if (text) break; }
+  // Strip paired markup only, so `snake_case` and `2*3` survive.
+  text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/`([^`]*)`/g, '$1')
+    .replace(/(\*\*|__)(.+?)\1/g, '$2').replace(/(^|[^\w*])[*_]([^*_\n]+)[*_](?![\w*])/g, '$1$2')
+    .replace(/\s+/g, ' ').trim();
+  return text.length > max ? `${text.slice(0, max - 1).replace(/\s+\S*$/, '')}…` : text;
+}
+
+const CHECK_SHORT = Object.freeze({ sections: 'sections', testable: 'measurable criteria', decisions: 'decisions',
+  paths: 'paths', tests: 'testing', placeholders: 'placeholders', checklists: 'checklists', grounded: 'grounding' });
+const failing = (check) => (check && Array.isArray(check.items) ? check.items : []).filter((it) => !it.pass);
+
+/** "Shape 5/8 · 3 to fix" — the card's one check line (D30). */
+export function checkLine(check) {
+  const n = failing(check).length;
+  const score = check && Number.isFinite(check.total) ? `Shape ${check.passed}/${check.total}` : 'Shape check';
+  return n ? `${score} · ${n} to fix` : score;
+}
+
+/** "3 checks unmet: sections, decisions, testing" — under the buttons when the check fails (D32). */
+export function unmetLine(check) {
+  const bad = failing(check);
+  if (!bad.length) return '';
+  return `${bad.length} check${bad.length === 1 ? '' : 's'} unmet: ${bad.map((it) => CHECK_SHORT[it.id] || it.label || it.id).join(', ')}`;
+}
+
+/** One revise for every failing check (D32 "Fix all"); a single failure reads as today's fixFeedback. */
+export function fixAllFeedback(items) {
+  const bad = (Array.isArray(items) ? items : []).filter((it) => !it.pass);
+  if (bad.length === 1) return fixFeedback(bad[0]);
+  return `The shape check fails ${bad.length} checks:\n${bad.map((it) => `- "${it.label}"${it.detail ? `: ${it.detail}` : ''}`).join('\n')}\n`
+    + 'Fix the plan so these checks pass.';
+}
+
+/** The primary names its outcome, never "anyway" (D32). */
+export const approveLabel = (plan) => (plan && plan.outline ? 'Approve the slices' : 'Approve and build');
+
+/** A shaped run waiting on Shaper's own step (Clarify or the plan): the run page's waiting layout. Null otherwise. */
+export function shaperWait(r, gateOn) {
+  if (!gateOn || !isShapingRun(r) || !r.pendingQuestion) return null;
+  const k = askKindOf(r.pendingQuestion);
+  return k === 'plan' || k === 'clarify' ? k : null;
 }
