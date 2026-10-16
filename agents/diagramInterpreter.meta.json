@@ -1,0 +1,28 @@
+{
+  "key": "diagramInterpreter",
+  "metaVersion": 2,
+  "humanEffort": { "hours": 4 },
+  "mockRole": "planner-plan",
+  "promptHints": "Interpret the diagram (an attached PlantUML/draw.io file, or the @startuml block in the request) and write a complete, build-ready implementation plan from it. Every step must trace back to a diagram element. It MUST contain concrete code snippets for the features and MUST end with a \"## Clarifications (Q&A)\" section reproducing the questions and the user answers below so the reviewer can see them.",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "explore",
+  "inputs": [
+    { "id": "task", "type": "md" },
+    { "id": "answers", "type": "json", "required": false, "as": "answers" },
+    { "id": "revise", "type": "md", "required": false, "loop": true,
+      "directive": "## Revise to address the review\n\nA reviewer found issues with the previous plan. Re-read the diagram and re-plan from scratch (cold start), addressing EVERY critical and major finding in the review below. Preserve the \"## Diagram trace\" and \"## Clarifications (Q&A)\" sections." }
+  ],
+  "outputs": [{ "id": "plan", "type": "md", "filename": "{base}{vsuffix}.md", "store": "project" }],
+  "domain": "coding",
+  "displayName": "Interpret diagram",
+  "description": "Reads a PlantUML or draw.io diagram (activity/flow, sequence, state, class/component) and turns it into the implementation plan, every step traced to a diagram element.",
+  "color": "violet",
+  "icon": "<rect x=\"3\" y=\"3.5\" width=\"7\" height=\"5\" rx=\"1\"/><rect x=\"14\" y=\"15.5\" width=\"7\" height=\"5\" rx=\"1\"/><path d=\"M6.5 8.5v5a2 2 0 0 0 2 2H14\" stroke-linecap=\"round\" fill=\"none\"/>",
+  "agentFile": "worca-cc-diagram-interpreter.md",
+  "runnerType": "producer",
+  "fanOut": true,
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 65
+}

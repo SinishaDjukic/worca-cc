@@ -28,6 +28,8 @@ import { GRAPH_PRESENTATION_WORKFLOW, presentationGraphFingerprint, PRESENTATION
   from './graph/presentation-workflow.mjs';
 import { GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS }
   from './graph/architecture-workflow.mjs';
+import { GRAPH_DIAGRAM_WORKFLOW, diagramGraphFingerprint, DIAGRAM_SHIPPED_FINGERPRINTS }
+  from './graph/diagram-workflow.mjs';
 
 const _require = createRequire(import.meta.url);
 let _DatabaseSync; // cached node:sqlite DatabaseSync ctor (lazy-loaded once)
@@ -60,7 +62,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 56;
+export const SCHEMA_VERSION = 57;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1523,6 +1525,11 @@ function applySchemaV55(db) {
   seedShippedWorkflow(db, GRAPH_ARCHITECTURE_WORKFLOW);
 }
 
+/** v57: seed the shipped Diagram → Plan workflow (V41's shape for a third shipped graph). */
+function applySchemaV57(db) {
+  seedShippedWorkflow(db, GRAPH_DIAGRAM_WORKFLOW);
+}
+
 /** INSERT OR IGNORE one shipped v2 workflow row (see applySchemaV41). */
 function seedShippedWorkflow(db, t) {
   if (!presentationSeedable(db)) return;
@@ -1561,6 +1568,11 @@ function refreshPresentationSeed(db) {
 /** The Architecture (C4) seed's refresh — the same rules, its own shipped shapes. */
 function refreshArchitectureSeed(db) {
   refreshShippedSeed(db, GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS);
+}
+
+/** The Diagram → Plan seed's refresh: the same rules, its own shipped shapes. */
+function refreshDiagramSeed(db) {
+  refreshShippedSeed(db, GRAPH_DIAGRAM_WORKFLOW, diagramGraphFingerprint, DIAGRAM_SHIPPED_FINGERPRINTS);
 }
 
 function refreshShippedSeed(db, t, fingerprint, shipped) {
@@ -2137,6 +2149,10 @@ export function migrate(db) {
     if (current < 55) applySchemaV55(db);
     if (current < SCHEMA_VERSION) refreshArchitectureSeed(db);
     if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
+    // The shipped Diagram → Plan workflow: one-shot seed at its own rung, refresh on every bump
+    // (the Presentation seed's two halves). If dev claims 57 first, move both to the next free rung.
+    if (current < 57) applySchemaV57(db);
+    if (current < SCHEMA_VERSION) refreshDiagramSeed(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

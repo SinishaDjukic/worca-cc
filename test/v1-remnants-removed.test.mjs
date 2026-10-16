@@ -104,6 +104,7 @@ const KEY_ALLOW = new Set([
   'src/core/engines/mock.mjs',     // MOCK_WRITER_ROLES: the offline mock's role table
   'src/core/graph/seed-templates.mjs',
   'src/core/graph/builtin-workflows.mjs',
+  'src/core/graph/diagram-workflow.mjs', // the Diagram → Plan seed: wf_default's node keys (data)
   'src/core/auto/recipes.mjs',   // Auto recipes: prompt + mock data (D23 — the ONE Auto module that may name agents)
 ]);
 
