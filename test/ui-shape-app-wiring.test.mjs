@@ -347,7 +347,7 @@ test('the Chat run card mounts the summary and Open feature routes to the page; 
   seam.mountCard(card, 'feat_1');
   await ctx.settle(5);
   assert.ok(card.querySelector('.shape-feature-sum'));
-  assert.equal(card.querySelector('.shape-feature-sum-line').textContent, 'Plan it with me · Slice 2 needs you');
+  assert.equal(card.querySelector('.shape-feature-sum-line').textContent, 'Shaper · Slice 2 needs you');
   click(ctx, card.querySelector('.shape-feature-sum-open'));
   assert.equal(ctx.window.location.hash, '#feature/feat_1');
   const plans = host();

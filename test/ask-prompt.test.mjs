@@ -857,7 +857,7 @@ test('shape section: after mcp and before commands, only with shape; the default
   assert.equal(buildSystemPrompt(cat, { shape: true }), `${plain}\n\n${renderShapeSection()}`);
   assert.equal(buildSystemPrompt(cat, { shape: true, commands: true }), `${plain}\n\n${renderShapeSection()}\n\n${renderCommandsSection()}`, 'commands stay last');
   const s = renderShapeSection();
-  assert.match(s, /^## Plan it with me\n/);
+  assert.match(s, /^## Shaper\n/);
   for (const phrase of ['shape: { perspectives }', 'at most 3 questions', 'Shape this task first', 'assess: { size, openDecisions, perspectives }',
     'Never give workflowId, when, every or after with shape']) assert.ok(s.includes(phrase), `states: ${phrase}`);
   for (const phrase of ['planned in slices', "`slices: 'auto'`", "`slices: 'off'`", 'On every propose_run for a coding task, shaped or not',

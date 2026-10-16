@@ -345,14 +345,14 @@ test('card mode (no deps.page) is unchanged: no segments, no current block, no S
 test('summary card: one line, segmented bar, Open feature; needs-you and stopped variants', () => {
   const open = [];
   const el = renderFeatureSummary(doc, PAGE(), { openFeature: (id) => open.push(id) });
-  assert.equal(el.querySelector('.shape-feature-sum-line').textContent, 'Plan it with me · Slice 2 needs you');
+  assert.equal(el.querySelector('.shape-feature-sum-line').textContent, 'Shaper · Slice 2 needs you');
   assert.ok(el.classList.contains('is-needs'));
   assert.equal(el.querySelectorAll('.shape-feature-seg').length, 3);
   el.querySelector('.shape-feature-sum-open').click();
   assert.deepEqual(open, [PAGE().id]);
   const stopped = { ...PAGE(), halted: { index: 2, state: 'stopped', waiting: [3] }, slices: PAGE().slices.map((s) => (s.index === 2 ? { ...s, state: 'stopped' } : s)) };
   assert.equal(renderFeatureSummary(doc, stopped, { openFeature() {} }).querySelector('.shape-feature-sum-line').textContent,
-    'Plan it with me · Slice 2 stopped · slice 3 waiting');
+    'Shaper · Slice 2 stopped · slice 3 waiting');
   assert.equal(featureSummaryLine({ ...PAGE(), slices: PAGE().slices.map((s) => ({ ...s, state: s.index === 1 ? 'done' : 'planned' })) }),
-    'Plan it with me · 1 of 3 slices done');
+    'Shaper · 1 of 3 slices done');
 });

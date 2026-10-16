@@ -377,13 +377,13 @@ export function createAskTools(deps) {
   const PERSPECTIVE_LIST = { type: 'array', items: { type: 'string', enum: [...(deps.perspectiveKeys || [])] } };
   const SHAPE_PROPS = shapeOn ? {
     shape: { type: 'object', additionalProperties: false,
-      description: 'Plan it with me: the run asks at most 3 questions, writes the plan for these perspectives and waits for the user to approve it before anything is built. The workflow is picked for you: leave workflowId out. Never with when, every or after.',
+      description: 'Shaper: the run asks at most 3 questions, writes the plan for these perspectives and waits for the user to approve it before anything is built. The workflow is picked for you: leave workflowId out. Never with when, every or after.',
       properties: {
         perspectives: { ...PERSPECTIVE_LIST, description: 'product is always on; add the 2–4 that fit the task' },
         slices: { type: 'string', enum: ['auto', 'off'], description: 'plan in slices: "auto" (the default) lets the run cut a large task into 2–5 sequential slices, each its own run and pull request; "off" plans it as one' },
       } },
     assess: { type: 'object', additionalProperties: false, required: ['size', 'openDecisions'],
-      description: 'your judgement of the task, on every coding run; on a shaped run only `size` is read: the card offers Plan it with me when it is large or leaves 2+ decisions open',
+      description: 'your judgement of the task, on every coding run; on a shaped run only `size` is read: the card offers Shaper when it is large or leaves 2+ decisions open',
       properties: {
         size: { type: 'string', enum: ['small', 'medium', 'large'] },
         openDecisions: { type: 'array', items: { type: 'string' }, maxItems: 6,

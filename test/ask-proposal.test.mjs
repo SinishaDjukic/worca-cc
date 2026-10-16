@@ -28,7 +28,7 @@ const deps = {
         ? { id, name: 'NoGit', description: '', projectPaths: ['/p/demo'], projectKeys: ['demo-00000001'], exists: [true] }
         : null),
   readWorkflow: async (id) => (id === 'wf_default' ? { id, name: 'Default' } : id === 'wf_review' ? { id, name: 'Review only' }
-    : id === 'wf_shape' || id === 'wf_shape_ux' ? { id, name: 'Plan it with me' }
+    : id === 'wf_shape' || id === 'wf_shape_ux' ? { id, name: 'Shaper' }
     : id === 'wf_memory_defrag' ? { id: 'wf_memory_defrag', name: 'Memory defragment', version: 2, domain: 'shared', nodes: [], wires: [] } : null),
   // The runnable gate rides the same seam: derive it from the fake reader so the
   // two can never disagree about which ids exist.
@@ -314,7 +314,7 @@ test('Shape it first: shape / slices / schedule refusal / the gate, and the asse
     } },
     { name: 'shape + workflowId wf_default is refused', run: async () => {
       assert.deepEqual(errs(await on()({ ...base, shape: {}, workflowId: 'wf_default' })),
-        ['a shaped run uses the Plan it with me workflow (wf_shape), not "wf_default"']);
+        ['a shaped run uses the Shaper workflow (wf_shape), not "wf_default"']);
     } },
     { name: 'gate off: shape refused, assess ignored (no nudge)', run: async () => {
       assert.deepEqual(errs(await off({ ...base, shape: {} })), ['shape is not available on this server']);

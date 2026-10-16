@@ -33,7 +33,7 @@ export function shapeCardExtras(doc, card) {
     asIs.append(h('b', null, 'Run as is'), h('span', null, 'The run decides these itself and may stop to ask you mid-run.'),
       h('span', 'shape-est', n.asIsAuto ? 'Auto picks the workflow at start' : money(est.asIs)));
     const shaped = h('div', 'shape-choice primary');
-    shaped.append(h('b', null, 'Plan it with me'),
+    shaped.append(h('b', null, 'Shaper'),
       h('span', null, 'Up to 3 questions now, then a plan you approve before anything is built.'),
       h('span', 'shape-est', `${money(est.shaped)} · ${SHAPE_ATTENTION}`));
     choices.append(asIs, shaped);

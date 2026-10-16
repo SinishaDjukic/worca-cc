@@ -43,7 +43,7 @@ const TOTALS_SELECT = `
 
 export const RUN_SIZES = Object.freeze(['small', 'medium', 'large']);
 
-// Plan it with me (D28): finished runs started in the window that have a size, shaped (shape_stats set) vs not.
+// Shaper (D28): finished runs started in the window that have a size, shaped (shape_stats set) vs not.
 // Cost and active time fall back to the step sums the way TOTALS_SELECT does; review cycles count the code
 // reviewer's verdicts (reviews.kind = 'impl'), the same source for both groups.
 const SHAPING_SELECT = `

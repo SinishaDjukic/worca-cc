@@ -198,7 +198,7 @@ test('totals carry humanHours and savedUsd = hours × rate − spent; prev too; 
   assert.equal(all.totals.savedUsd, Math.round((16.5 * 35 - all.totals.spentUsd) * 100) / 100);
 });
 
-// Plan it with me (D28): appended last (the tests above count this DB's rows); seeded in February 2026, a month no
+// Shaper (D28): appended last (the tests above count this DB's rows); seeded in February 2026, a month no
 // other test uses.
 const setShape = (id, size, stats) => getDb().prepare('UPDATE pipelines SET run_size = ?, shape_stats = ? WHERE id = ?')
   .run(size, stats ? JSON.stringify(stats) : null, id);

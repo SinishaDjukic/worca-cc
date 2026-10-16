@@ -1132,12 +1132,12 @@ test('ask-panel-card: the Engine field — Default sends none, a proposed engine
 const NUDGE = { reason: 'decisions', size: 'large', openDecisions: ['Storage engine'], perspectives: ['architect'],
   estimates: { asIs: null, shaped: null }, asIsAuto: false };
 const NUDGED_CARD = { ...PROJECT_CARD, nudge: NUDGE };
-const SHAPED_CARD = { ...PROJECT_CARD, workflowId: 'wf_shape', workflowName: 'Plan it with me', shape: { perspectives: ['architect'] } };
+const SHAPED_CARD = { ...PROJECT_CARD, workflowId: 'wf_shape', workflowName: 'Shaper', shape: { perspectives: ['architect'] } };
 const gateOn = () => setShapeFirst(true);
 const gateOff = () => setShapeFirst(false);
 // GET /api/workflows while the gate is on: wf_shape is listed, wf_shape_ux never is.
 const shapeListed = (rec) => { const base = apiHandler(rec); return (url, opts) => (url === '/api/workflows'
-  ? { ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_shape', name: 'Plan it with me' }] }) }
+  ? { ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_shape', name: 'Shaper' }] }) }
   : base(url, opts)); };
 const startLabel = (el) => [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('');
 // A thread whose snapshot already holds the card: a hello's resync re-renders the chat from it.
@@ -1167,7 +1167,7 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       assert.ok(cardEl.querySelector('.shape-card'), 'the nudge renders');
       assert.equal(cardEl.querySelector('.shape-card').nextElementSibling.querySelector('.ask-rp-sec-title').textContent, 'Where it runs');
       const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
-      assert.equal(shapeBtn.textContent, 'Plan it with me');
+      assert.equal(shapeBtn.textContent, 'Shaper');
       const startBtn = cardEl.querySelector('[data-ask-card-start]');
       assert.equal(shapeBtn.nextElementSibling, startBtn, 'Shape it first sits before Start');
       assert.equal(startLabel(startBtn), 'Run anyway');
@@ -1289,7 +1289,7 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       for (let i = 0; i < 4; i++) await ctx.tick();
       ctx.flush();
       const cardEl = ctx.doc.querySelector('.ask-card');
-      assert.equal(cardEl.querySelector('.ask-rp-kicker').textContent, 'Plan it with me');
+      assert.equal(cardEl.querySelector('.ask-rp-kicker').textContent, 'Shaper');
       const main = cardEl.querySelector('.ask-rp-shape-main');
       assert.equal(main.querySelector('.ask-rp-brief-preview').textContent, 'Fix the login bug');
       assert.equal(main.querySelector('[data-ask-card-brief-more]').textContent, 'Show the full brief');
@@ -1325,7 +1325,7 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
   ]);
 });
 
-// Plan it with me (D21): the intent lead goes to the model; the person's bubble shows the chip and their own text.
+// Shaper (D21): the intent lead goes to the model; the person's bubble shows the chip and their own text.
 const LEAD = 'Shape this task first: propose a run with `shape`.';
 async function openThread(messages) {
   const base = apiHandler({});
@@ -1340,10 +1340,10 @@ async function openThread(messages) {
 }
 const userMsg = (seq, text) => ({ id: `askm_u000000${seq}`, threadId: TID, seq, role: 'user', text, blocks: [], status: null, createdAt: 't' });
 
-test('a stored Plan it with me message shows the chip and the person\'s text, never the lead (gate off too)', async () => {
+test('a stored Shaper message shows the chip and the person\'s text, never the lead (gate off too)', async () => {
   const ctx = await openThread([userMsg(1, `${LEAD}\n\nUploads fail on large files`), userMsg(2, LEAD), userMsg(3, 'plain')]);
   const rows = [...ctx.doc.querySelectorAll('.ask-msg-user')];
-  assert.equal(rows[0].querySelector('.ask-user-intent').textContent, 'Plan it with me');
+  assert.equal(rows[0].querySelector('.ask-user-intent').textContent, 'Shaper');
   assert.equal(rows[0].querySelector('.ask-user-bubble').textContent, 'Uploads fail on large files');
   assert.equal(rows[1].querySelector('.ask-user-bubble'), null, 'a lead-only message has no empty bubble');
   assert.equal(rows[2].querySelector('.ask-user-intent'), null);

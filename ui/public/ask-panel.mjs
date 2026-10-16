@@ -4254,7 +4254,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (card.shape) {
         setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
       } else {
-        shapeBtn = make('button', 'ask-card-start ask-card-shape', 'Plan it with me');
+        shapeBtn = make('button', 'ask-card-start ask-card-shape', 'Shaper');
         shapeBtn.type = 'button';
         shapeBtn.dataset.askCardShape = '';
         shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));
@@ -4264,13 +4264,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     foot.append(openNp, summary, dismissBtn, laterBtn, ...(shapeBtn ? [shapeBtn] : []), startBtn);
     rootEl.appendChild(foot);
 
-    // Plan it with me (D20, mock board 13): a shaped card shows the title, the brief clamped, Project, Base branch,
+    // Shaper (D20, mock board 13): a shaped card shows the title, the brief clamped, Project, Base branch,
     // Perspectives and what happens; every other field MOVES, unchanged, into a collapsed Advanced. Moves only: each
     // control keeps its class, so collectCardBody / startCard read the same values and the request is unchanged.
     let paintAdvanced = () => {};
     if (card.shape && shapeUi) {
       const kicker = eyebrow.querySelector('.ask-rp-kicker');
-      kicker.textContent = 'Plan it with me';
+      kicker.textContent = 'Shaper';
       kicker.classList.add('ask-rp-kicker-shape');
       const main = make('div', 'ask-rp-sec ask-rp-shape-main');
       const preview = make('div', 'ask-rp-brief-preview',
@@ -4360,7 +4360,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const featureField = lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch);
         const sameField = lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource);
         if (local.shapeBranchHost) {
-          // Plan it with me (D20): Project and Base branch on the small card, at every level; the rest in Advanced.
+          // Shaper (D20): Project and Base branch on the small card, at every level; the rest in Advanced.
           srcField.querySelector('.ask-rp-label').firstChild.textContent = 'Base branch';
           grid.classList.add('two');
           grid.append(rpField('Project', projSel), srcField);
@@ -4491,7 +4491,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       local.options = opts;
       if (card.shape && local.shapeUi) {
         // Shape it first (D9): the workflow is fixed; the server re-derives wf_shape / wf_shape_ux from the chips at start.
-        fillSelect(workflowSel, [{ value: card.workflowId, label: card.workflowName || 'Plan it with me' }], card.workflowId);
+        fillSelect(workflowSel, [{ value: card.workflowId, label: card.workflowName || 'Shaper' }], card.workflowId);
         workflowSel.disabled = true;
       } else {
         // Auto is not a saved workflow: listed only when Ask Worca proposed it (a plain card keeps its list).
@@ -5372,7 +5372,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (synthetic.length) {
         for (const b of synthetic) wrap.appendChild(buildNotice(b));
       } else {
-        // Plan it with me (D21): the lead went to the model; the bubble shows the intent chip and the person's own text.
+        // Shaper (D21): the lead went to the model; the bubble shows the intent chip and the person's own text.
         const own = splitIntentLead(row.text || '');
         if (own.intent) {
           const chip = make('div', 'ask-user-intent');

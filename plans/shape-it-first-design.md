@@ -4,7 +4,7 @@ Date: 2026-10-14. Base branch: `dev` (761452f9, 1.11.0). Branches: `feat/shape-i
 Mock (approved): the "Specs in Chat" design canvas, https://claude.ai/artifact/MJk8bfs2cK4YsKTBta5Z2q
 (screens 1–7).
 **Revised 2026-10-15** after the first real sliced feature (#718, run tags): §11 records what it showed and the
-decisions D16–D28, which take precedence over §2–§3 where they differ. Replaces Spec Builder (#678, closed as not planned; PR #679 closed). Some
+decisions D16–D29, which take precedence over §2–§3 where they differ. Replaces Spec Builder (#678, closed as not planned; PR #679 closed). Some
 Spec Builder code on `feat/spec-builder-v2` is reused (§4.6).
 
 ## 1. Goal
@@ -44,7 +44,7 @@ needed (§3.8).
 | D5 | **The planner writes for the perspectives.** The run request carries `shape: { perspectives: [...] }`. The planner's prompt (`buildAgentPrompt`, `src/core/graph/executor.mjs:482`) gains a **Perspectives** block: the sections each picked perspective owns, and "end each section that makes claims with a `### Checklist` of 1–8 `- [ ] R-<p>-<n>` items, one verifiable statement each". Refine checks them too. Runs without `shape` are unchanged. |
 | D6 | **Shape check and grounding marks, deterministic.** Ported from Spec Builder (`shape.mjs`, `grounding.mjs`): sections present, testable criteria, decisions decided, repo paths found or marked `(new)`, tests named, no placeholders, checklists present, grounded (at least 3 found paths for a medium or large task). It runs on the plan before the approval stop and its result rides on the `plan` ask. The plan card shows it (screen 4). **Fix** is a `revise` answer naming the failing checks. A failing check doesn't block **Run this plan**; the button reads **Run anyway**. |
 | D7 | **Checklists travel into review.** Spec Builder's V14–V16, unchanged in substance: the reviewer's task header lists every `R-…` item. The reviewer's JSON gains `checklist: [{ id, status: met \| unmet \| na, evidence }]`. An `unmet` item, or a `met` one without evidence, becomes a **major** issue through the existing `hasBlocking` path. A review that omits `checklist` when the plan had items counts as one major issue. The run page shows a **Perspective checklists** group per review cycle. The PR description Worca writes ends with the ticked list and its evidence. |
-| D8 | **When Chat offers it.** Three ways in, one flow: <ul><li>**The intent chip "Plan it with me"** in the Chat composer (screen 1), next to New run;</li><li>**the nudge on a run proposal** (screen 2): when `propose_run` would start a task that is thin (the Auto classifier's `taskKind` is `prompt` and it finds open decisions) or large (`size: large`), the card shows **Shape it first** next to **Run as is**, with each one's estimate from the existing estimator;</li><li>**New run** (screen 6): one link under the Markdown source, "Not sure what to build yet? Plan it with me in Chat →". New run gets no new task source.</li></ul>A small, clear task gets the normal run card with no nudge. |
+| D8 | **When Chat offers it.** Three ways in, one flow: <ul><li>**The intent chip "Shaper"** in the Chat composer (screen 1), next to New run;</li><li>**the nudge on a run proposal** (screen 2): when `propose_run` would start a task that is thin (the Auto classifier's `taskKind` is `prompt` and it finds open decisions) or large (`size: large`), the card shows **Shape it first** next to **Run as is**, with each one's estimate from the existing estimator;</li><li>**New run** (screen 6): one link under the Markdown source, "Not sure what to build yet? Shaper in Chat →". New run gets no new task source.</li></ul>A small, clear task gets the normal run card with no nudge. |
 | D9 | **`propose_run` gains `shape`.** `shape: { perspectives?: string[], slices?: 'auto' \| 'off' }`. When present, the card proposes `wf_shape` (the workflow choice is fixed). `validateProposal` checks the perspective keys. Without `shape`, `propose_run` is unchanged. |
 | D10 | **The plan card's actions** (screen 4): <ul><li>**Run this plan**: `approve`;</li><li>**Update plan** (after a perspective change), **Fix**, or a typed message: `revise`;</li><li>**Save to plans/**: writes the approved Markdown to `plans/<slug>-design.md` in the project's checkout. It never overwrites without asking and never commits;</li><li>**Open in New run**: prefills New run's Markdown source with the plan, Workflow Auto. A complete plan then skips Clarify, Plan and Refine through the existing `plan-complete-*` recipes;</li><li>**Stop**: stops the run.</li></ul>Each revise posts a new version of the card (v1, v2, …); older versions collapse. |
 | D11 | **Run this plan continues the same run** (screen 5). The run card shows Clarify, Plan and Refine as done ("while shaping") and continues into Implement ⇄ Review. The plan file is the run's plan of record. There is no second run and no re-planning. |
@@ -57,7 +57,7 @@ needed (§3.8).
 
 ### 3.1 Chat home (screen 1)
 
-The composer gets the **Plan it with me** intent (`ui/public/chat/intent.mjs`), with the help
+The composer gets the **Shaper** intent (`ui/public/chat/intent.mjs`), with the help
 line "Agree on what gets built before anything runs · ~3 min" and the **New** badge while the
 flag is in beta. Its lead tells the model: "Shape this task first: propose a run with `shape`". The lead is never
 shown in the person's message: the bubble shows the chip and their text only (D21).
@@ -202,7 +202,7 @@ page, and the Chat card, the run page and the Runs list link to it.
   estimates) from the classifier.
 
 ### 4.4 Chat UI (`ui/public/chat`)
-- `intent.mjs`: the **Plan it with me** intent.
+- `intent.mjs`: the **Shaper** intent.
 - New cards via `registerChatCard`: `run-questions` (§3.3), `plan` (§3.4), `slices` and `feature`
   (§3.8).
 - `ask-panel.mjs` run card: the nudge (§3.2) and the `shape` field in `collectCardBody`.
@@ -327,7 +327,7 @@ plan's "Decisions (taken while refining)" R1–R17. The ones later slices depend
 
 ## 11. Revision after the first real sliced feature (2026-10-15)
 
-Issue #718 (run tags and cost allocation) was planned with **Plan it with me** on the test bundle
+Issue #718 (run tags and cost allocation) was planned with **Shaper** on the test bundle
 `test/shape-it-first-and-run-progress` (slices 1–4 plus run progress, #732). It was cut into 3 slices.
 Slice 1 finished ($87, of which $62 was shaping), and slice 2 started on its own from slice 1's branch.
 The engine worked. The way it is shown and started did not.
@@ -356,14 +356,15 @@ The engine worked. The way it is shown and started did not.
 | D18 | **Stable slice names.** A run that carries a slice (`shape.feature`) keeps its title: `_kickoffTitleGeneration` skips `generateTitle` for it. The slice's own title is the name shown under the feature; the long "*feature* · k/N: *slice*" form stays only where there is no feature context (Schedules, notifications). |
 | D19 | **Plan once, confirm later.** Replaces D14's per-slice stops. Slices 2…N skip Clarify: the brief carries the feature's answers (slice 1's `clarify.json` answers). Planner and Refine still run against the code as it is. The plan stop holds only when the shape check fails, or when the Planner writes `outline-change.md` because the slice can't be built as outlined. **Approve each slice's plan** stays as a switch, now **off** by default; on, every slice stops as before. A `plan` ask still always waits for a person (§9.1). |
 | D20 | **A small proposal card.** A shaped proposal shows the task brief, project, base branch, perspective chips and the estimate, with one primary button, **Start planning**, plus **Not now**. Engine, guardrails, workflow and the per-agent rows sit under a collapsed **Advanced**. The run-as-is card is unchanged. |
-| D21 | **One vocabulary.** "Plan it with me" is the flow (tile, workflow display name, start button, docs headings). "Plan" is the plan card, "slices" the parts, "feature" the whole. "Shape it first" leaves the UI; internal ids (`wf_shape`, `shape`, `shapeFirst`) stay. The intent's lead is sent to the model but never shown in the bubble, which shows the chip and the person's text. |
+| D21 | **One vocabulary.** "Plan it with me" is the flow (tile, workflow display name, start button, docs headings). "Plan" is the plan card, "slices" the parts, "feature" the whole. "Shape it first" leaves the UI; internal ids (`wf_shape`, `shape`, `shapeFirst`) stay. The intent's lead is sent to the model but never shown in the bubble, which shows the chip and the person's text. Renamed to "Shaper" by D29. |
 | D22 | **A finished slice knows its place.** Its run page says "Slice 1 of 3 · next: *slice 2* (planning)". Ship it says "Slice 2 builds on this branch: merge this PR first", and the PR body starts with "Part of *feature*: slice 1 of 3" and links to the other slices' PRs. |
 | D23 | **Checklists read at a glance.** The run page shows the latest review cycle only, as one line ("23 met · 0 unmet · 0 n/a"); unmet items are expanded, met items collapsed with their evidence on demand. Earlier cycles sit behind **Earlier cycles**. |
 | D24 | **Ship as stacked PRs or one PR, chosen at the end.** The slice branches are one line (each starts from the previous one), so both need no re-run. Each slice opens a **draft** PR when it finishes, for early review. When the last slice is done, the feature page asks **Ship as: stacked PRs / one PR**. Stacked: the drafts become ready in merge order. One PR: the last slice's branch into the base branch, its body one section per slice (summary, checklist, link to the slice's closed draft); the drafts are closed with a link to it. The default is one PR when the feature adds fewer than ~1,500 lines, stacked above. |
 | D25 | **One changelog entry per feature.** When a feature ships, Worca writes one entry for it (from the slices' PR bodies) into the project's unreleased changelog, the way `worca-changelog` writes one per run. Versions and release tags stay project-level and are out of scope here (a separate "Prepare release" issue). |
 | D26 | **The chip says "Experimental".** The tile's badge and every other place that marks the feature use the flag's stage name, "Experimental", the same word as Settings › Experimental. "New" is dropped. |
 | D27 | **Mechanical shape-check failures fix themselves.** A failing check that needs no judgement (`grounded`: a path missing its `(new)` mark; `noPlaceholders` on an empty heading) is fixed deterministically on the plan file before the approval stop, and the card says what was fixed. Only checks that need judgement (`testable`, `decisions`) offer **Fix**, which still re-runs the Planner. On #718 the mechanical case cost one extra Plan and Refine (about $30). |
-| D28 | **Measure it from day one (§7).** Each shaped run records, on the run: questions asked and skipped, revise count and why (person or check), shape score at approval, review cycles, checklist met/unmet/n.a., shaping cost vs building cost, and for a feature the slices proposed, merged and removed. `GET /api/runs/:id` returns it as `shapeStats`; Statistics gets a "Plan it with me" row group comparing shaped runs with unshaped runs of the same size. The nudge's estimate includes the shaping cost (Plan and Refine dominate: $62 of $87 on #718), calibrated from these records once 5 shaped runs exist. |
+| D28 | **Measure it from day one (§7).** Each shaped run records, on the run: questions asked and skipped, revise count and why (person or check), shape score at approval, review cycles, checklist met/unmet/n.a., shaping cost vs building cost, and for a feature the slices proposed, merged and removed. `GET /api/runs/:id` returns it as `shapeStats`; Statistics gets a "Shaper" row group comparing shaped runs with unshaped runs of the same size. The nudge's estimate includes the shaping cost (Plan and Refine dominate: $62 of $87 on #718), calibrated from these records once 5 shaped runs exist. |
+| D29 | **Shaper.** The flow is called "Shaper" (2026-10-16): the flag title, the Chat tile and intent chip, the start button, the workflow display name, the proposal kicker, the feature-page line, the Statistics card and the docs. Shorter than "Plan it with me", and it matches the code (`shape`, `wf_shape`, shaped runs). The New run link reads "Not sure what to build yet? Try Shaper in Chat →". Internal ids stay; the vocabulary scan refuses both old names. |
 
 ### 11.3 Code changes
 
@@ -402,10 +403,10 @@ The fixes go onto the open branches, so each PR carries its own fix. `feat/run-p
 
 | Branch (PR) | Decisions |
 |---|---|
-| `feat/shape-it-first-1-engine` (#708) | D27, D28 (recording, `shapeStats` and the Statistics group) |
-| `feat/shape-it-first-2-chat` (#728) | D20, D21, D26, the nudge estimate (D28) |
-| `feat/shape-it-first-3-checklists` (#729) | D23 |
-| `feat/shape-it-first-4-slices` (#730) | D16, D17, D18, D19, D22, D24, D25 |
+| `feat/shape-it-first-1-engine` (#708) | D27, D28 (recording, `shapeStats` and the Statistics group), D29 |
+| `feat/shape-it-first-2-chat` (#728) | D20, D21, D26, the nudge estimate (D28), D29 |
+| `feat/shape-it-first-3-checklists` (#729) | D23, D29 |
+| `feat/shape-it-first-4-slices` (#730) | D16, D17, D18, D19, D22, D24, D25, D29 |
 
 Each lower branch is merged forward after its fix (1 → 2 → 3 → 4), and the test bundle
 `test/shape-it-first-and-run-progress` is rebuilt from slice 4 when all four are green.

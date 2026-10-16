@@ -77,7 +77,7 @@ test('the link takes the Markdown to the Chat HOME (not the last chat), in the c
   assert.equal(ctx.window.location.hash, '#chat');
   assert.equal(doc.querySelector('[data-chat-page]').dataset.view, 'home');
   assert.equal(composer(doc).value, '# Spec\nAdd a dark mode toggle.');
-  assert.equal(intentLabel(doc), 'Plan it with me');
+  assert.equal(intentLabel(doc), 'Shaper');
 });
 
 test('the entry is consumed on any Chat entry: opening an existing chat instead arms nothing, nor does a later home visit', async () => {
@@ -111,7 +111,7 @@ test('leaving Chat drops an armed intent: link → home, Back to New run, then t
   doc.getElementById('promptMarkdown').value = 'Some spec';
   doc.getElementById('shapeChatLinkBtn').click();
   await ctx.settle(8);
-  assert.equal(intentLabel(doc), 'Plan it with me', 'the link armed home');
+  assert.equal(intentLabel(doc), 'Shaper', 'the link armed home');
   ctx.go('new');                                 // Back
   await ctx.settle(6);
   ctx.go('chat');                                // the Chat row
@@ -128,7 +128,7 @@ test('leaving Chat drops an intent a home tile armed (Runs and back)', async () 
   await ctx.settle(8);
   doc.querySelector('.chat-home-act[data-intent="shape"]').click();
   await ctx.settle(2);
-  assert.equal(intentLabel(doc), 'Plan it with me');
+  assert.equal(intentLabel(doc), 'Shaper');
   ctx.go('runs');
   await ctx.settle(4);
   ctx.go('chat/new');

@@ -42,7 +42,7 @@ export function resolveShapeRequest({ shape, workflowId }, { enabled, internal =
   const extra = Object.keys(shape || {}).filter((k) => !allowed(k));
   if (extra.length) return { ok: false, error: `shape has unknown field(s): ${extra.join(', ')}` };
   if (named && !isShapeWorkflowId(named)) {
-    return { ok: false, error: `a shaped run uses the Plan it with me workflow (${SHAPE_WORKFLOW_ID}), not "${named}"` };
+    return { ok: false, error: `a shaped run uses the Shaper workflow (${SHAPE_WORKFLOW_ID}), not "${named}"` };
   }
   const p = normalizePerspectives(shape?.perspectives ?? [...DEFAULT_PERSPECTIVES]);
   if (!p.ok) return { ok: false, error: p.error };

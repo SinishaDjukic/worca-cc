@@ -1,4 +1,4 @@
-// test/shape-vocabulary-scan.test.mjs — D21: no user-visible "Shape it first" / "while shaping" in the files this
+// test/shape-vocabulary-scan.test.mjs — D21, D29: no user-visible "Shape it first" / "Plan it with me" / "while shaping" in the files this
 // feature ships. Comments are stripped first (internal ids and comments may keep the old name).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +7,7 @@ import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const OLD = /Shape it first|while shaping/i;
+const OLD = /Shape it first|Plan it with me|while shaping/i;
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage', 'vendor']);   // as test/shape-gate-scan.test.mjs
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -22,7 +22,7 @@ function walk(dir, out = []) {
 const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '')
   .split('\n').map((l) => (/^\s*\/\//.test(l) ? '' : l.replace(/\s\/\/\s.*$/, ''))).join('\n');
 
-test('no user-visible "Shape it first" or "while shaping" in ui/, src/ or the docs this branch ships', () => {
+test('no user-visible "Shape it first", "Plan it with me" or "while shaping" in ui/, src/ or the docs this branch ships', () => {
   const files = [...walk(join(ROOT, 'ui')), ...walk(join(ROOT, 'src'))];
   const hits = [];
   for (const f of files) {
@@ -39,4 +39,5 @@ test('the scan strips comments but not strings', () => {
   assert.equal(OLD.test(code("// Shape it first: a comment\nconst a = 1; // Shape it first\n/* Shape it first */")), false);
   assert.equal(OLD.test(code("const s = 'Shape it first';")), true);
   assert.equal(OLD.test(code("fetch('http://x/y'); const s = 'while shaping';")), true);
+  assert.equal(OLD.test(code("const s = 'Plan it with me';")), true);
 });

@@ -27,7 +27,7 @@ const CURRENT = new Set(['approval', 'questions', 'running', 'shaping', 'startin
 /** The Chat card's one line (board 9). */
 export function featureSummaryLine(f) {
   const s = f.status === 'active' ? f.slices.find((x) => NEEDS.has(x.state)) : null;
-  return `Plan it with me · ${s ? `Slice ${s.index} needs you` : featureHeadline(f)}`;
+  return `Shaper · ${s ? `Slice ${s.index} needs you` : featureHeadline(f)}`;
 }
 
 /** One part per slice, tinted by its state (style.css: .shape-feature-seg[data-state]). */

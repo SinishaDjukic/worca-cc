@@ -1,10 +1,10 @@
-# Plan it with me
+# Shaper
 
 Plan a task with Worca before it builds, in Chat, and cut a large one into slices.
 Nothing here changes a run that does not ask for it: a run without `shape` in its
 request behaves exactly as before.
 
-> **Experimental.** Plan it with me is behind a switch until the feature flag ships.
+> **Experimental.** Shaper is behind a switch until the feature flag ships.
 > See [Turning it on](#turning-it-on).
 
 ## What it is
@@ -20,7 +20,7 @@ review later checks the code against the checklists the plan ended with.
 
 ## Turning it on
 
-Plan it with me is an experimental feature, off by default. Turn on **Plan it with me** in
+Shaper is an experimental feature, off by default. Turn on **Shaper** in
 Settings › Experimental (the `shapeFirst` feature flag, see [Feature flags](feature-flags.md)),
 or start Worca with `WORCA_FLAGS=shapeFirst`. It takes effect at once, without a restart.
 While it is off, everything below is hidden or refused: the **Plan it
@@ -36,10 +36,10 @@ chips, **Fix**, **Save to plans/**, **Merge with next**, **Remove**.
 
 ## Three ways in
 
-- **Plan it with me.** The tile on the Chat home. Describe the task; Worca
+- **Shaper.** The tile on the Chat home. Describe the task; Worca
   proposes a shaped run on a card.
 - **The nudge.** When Ask Worca judges a task to have open decisions, the run card
-  offers **Plan it with me** next to **Run as is**, with an estimate of each.
+  offers **Shaper** next to **Run as is**, with an estimate of each.
 - **New run.** The New run page links to the same flow.
 
 ## Questions
@@ -183,7 +183,7 @@ the last slice's branch, so it ships with the feature.
 
 **The Plans tab.** The Chat home lists shaped plans on a **Plans** tab, newest first,
 with their state. A sliced feature's row opens its card underneath. The tab shows
-only while Plan it with me is on.
+only while Shaper is on.
 
 ## Limits
 
@@ -192,7 +192,7 @@ only while Plan it with me is on.
 - Worca does not retarget a stacked PR when an earlier one merges. Use
   "Automatically delete head branches" on GitHub; automatic retargeting is a
   follow-up.
-- A slice is a scheduled run. If its ticket fires while Plan it with me is off, the
+- A slice is a scheduled run. If its ticket fires while Shaper is off, the
   slice fails ("shape is not available on this server") and can be resumed once the
   switch is back on.
 - Cancel the rest does not stop a slice that is already starting. Stop it from its

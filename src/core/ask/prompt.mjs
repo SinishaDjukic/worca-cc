@@ -329,10 +329,10 @@ export function renderCodexSkillsSection(s) {
 /** Shape it first (spec D9): propose_run's shape and assess fields, only while the gate is on. */
 export function renderShapeSection() {
   return [
-    '## Plan it with me',
-    'propose_run takes `shape: { perspectives }` to start the run on the Plan it with me workflow: it asks at most 3 questions, writes the plan for the picked perspectives, and the run waits for the user to approve the plan before anything is built. Use it when the message starts with "Shape this task first", or when the user asks to plan or agree on the work before it is built. perspectives: product (always on) plus the 2–4 of architect, qa, ux, security, devops, release that fit. Never give workflowId, when, every or after with shape.',
+    '## Shaper',
+    'propose_run takes `shape: { perspectives }` to start the run on the Shaper workflow: it asks at most 3 questions, writes the plan for the picked perspectives, and the run waits for the user to approve the plan before anything is built. Use it when the message starts with "Shape this task first", or when the user asks to plan or agree on the work before it is built. perspectives: product (always on) plus the 2–4 of architect, qa, ux, security, devops, release that fit. Never give workflowId, when, every or after with shape.',
     'A large shaped task may be planned in slices (separate pull requests, one after another): keep `slices: \'auto\'` (or leave it out) when the user asks for that or the task is large, and give `slices: \'off\'` when they ask to keep it as one.',
-    'On every propose_run for a coding task, shaped or not, give `assess: { size, openDecisions, perspectives }` (on a shaped run only its size is read: it tells the run the task was judged large): size as you judged it (rule 4); openDecisions = the decisions the brief leaves open that change what gets built and that the repo cannot answer (short phrases, at most 6, [] when none). The card uses it to offer Plan it with me; do not ask the user these decisions yourself.',
+    'On every propose_run for a coding task, shaped or not, give `assess: { size, openDecisions, perspectives }` (on a shaped run only its size is read: it tells the run the task was judged large): size as you judged it (rule 4); openDecisions = the decisions the brief leaves open that change what gets built and that the repo cannot answer (short phrases, at most 6, [] when none). The card uses it to offer Shaper; do not ask the user these decisions yourself.',
   ].join('\n');
 }
 

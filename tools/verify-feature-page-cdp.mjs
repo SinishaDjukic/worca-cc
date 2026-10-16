@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// tools/verify-feature-page-cdp.mjs — headless-Chrome proof of Plan it with me's feature views (D16, D17): a 3-slice
+// tools/verify-feature-page-cdp.mjs — headless-Chrome proof of Shaper's feature views (D16, D17): a 3-slice
 // feature is ONE open row in the Runs list (members "1 · …", no row of its own for slice 2's run, the row links to
 // #feature/ID), and #feature/ID renders the full-width page (segmented bar, "merge first", the actions, Approve each
 // unchecked). NOT part of `npm test`: it needs Chrome. Screenshots of both land in a temp dir; their paths are printed.
