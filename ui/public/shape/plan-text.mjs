@@ -72,10 +72,10 @@ const CHECK_SHORT = Object.freeze({ sections: 'sections', testable: 'measurable 
   paths: 'paths', tests: 'testing', placeholders: 'placeholders', checklists: 'checklists', grounded: 'grounding' });
 const failing = (check) => (check && Array.isArray(check.items) ? check.items : []).filter((it) => !it.pass);
 
-/** "Shape 5/8 · 3 to fix" — the card's one check line (D30). */
-export function checkLine(check) {
+/** "Shape 5/8 · 3 to fix" — the card's one check line (D30); the outline card passes 'Outline'. */
+export function checkLine(check, name = 'Shape') {
   const n = failing(check).length;
-  const score = check && Number.isFinite(check.total) ? `Shape ${check.passed}/${check.total}` : 'Shape check';
+  const score = check && Number.isFinite(check.total) ? `${name} ${check.passed}/${check.total}` : `${name} check`;
   return n ? `${score} · ${n} to fix` : score;
 }
 
