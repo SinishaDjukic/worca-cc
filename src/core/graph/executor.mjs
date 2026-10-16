@@ -51,6 +51,7 @@ import {
 } from '../phases.mjs';
 import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
+import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
 import { runScriptExecution } from './script-runner.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
@@ -436,6 +437,13 @@ function substituteHints(raw, ctx) {
     .replace(/\{diffInstruction\}/g, () => changesInstruction(ctx));
 }
 
+/** The sidecar hints, then the node's own `config.promptHints` (spec D3). A node without its own hints gets
+ *  exactly the sidecar string (substituteHints trims), so every existing prompt is byte-identical. */
+const joinHints = (a, b) => [a, b].map((s) => String(s || '').trim()).filter(Boolean).join('\n\n');
+
+/** The agents whose prompt carries the Perspectives block (spec D5: the planner writes for them, Refine checks them). */
+const PERSPECTIVE_AGENT_KEYS = new Set(['planner', 'refiner']);
+
 /**
  * The decomposition contract, rendered for ANY node whose output is wired into an
  * `expands` input (graph-derived — no key is named): where the task files go and what
@@ -503,7 +511,10 @@ export function buildAgentPrompt(ctx) {
 
   const relative = detachedWorkspace(ctx);
   const routed = ctxEndpointRouted(ctx);
-  const hints = substituteHints(meta.promptHints, ctx);
+  const hints = substituteHints(joinHints(meta.promptHints, node?.config?.promptHints), ctx);
+  const perspectives = PERSPECTIVE_AGENT_KEYS.has(node?.key) && Array.isArray(ctx.shape?.perspectives)
+    ? perspectivesBlock(ctx.shape.perspectives, { refiner: node.key === 'refiner' })
+    : '';
   const title = meta.displayName || node?.key || node?.id || 'agent';
   const siblings = ctx.slice ? siblingsBlock(ctx.slice.siblings) : '';
   const answersBlock = (ports.inputs || []).some((p) => p?.as === 'answers')
@@ -515,6 +526,7 @@ export function buildAgentPrompt(ctx) {
     '\n## What to do\n\n' +
     baseInstruction(meta.runnerType, meta) + '\n\n' +
     (hints ? hints + '\n\n' : '') +
+    perspectives +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
     fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx), engine: node?.engine }) +
     workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed, serial: node?.noSubagents === true }) +
@@ -820,6 +832,15 @@ export async function runClarifierExecution(ctx) {
     }
     questions = gate.questions;               // the downgrade takes the legacy arm below
     sessionId = gate.sessionId ?? sessionId;
+  }
+
+  // Shape it first (spec D3): a node may cap its questions below the protocol's 8. normalizeClarify already
+  // dropped the invalid ones, so this keeps the FIRST N valid questions, in the agent's order. Placed after the
+  // form arm so a form downgraded to questions is capped too.
+  const cap = Number(node?.config?.maxQuestions);
+  if (Number.isInteger(cap) && cap >= 1 && questions.length > cap) {
+    warnings.push(`${node.id}: Clarify asked ${questions.length} questions; keeping the first ${cap}`);
+    questions = questions.slice(0, cap);
   }
 
   let answers = [];

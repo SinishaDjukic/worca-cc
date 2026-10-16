@@ -11,7 +11,7 @@
 // state.steps[] IS the execution ledger: one row per execution, key ===
 // executionId. There is no separate executions[] array.
 import { join, isAbsolute, extname } from 'node:path';
-import { rm, readFile, readdir, access, stat } from 'node:fs/promises';
+import { rm, readFile, readdir, access, stat, writeFile } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
 import { runsOn } from '../shared/connections.mjs';
 
@@ -30,6 +30,10 @@ import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-met
 import { probePython } from './graph/python-probe.mjs';
 import { mockEnabled } from './claude-runner.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
+import { checkPlan } from './shape/check.mjs';
+import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
+import { PLAN_ASK_KIND, validatePlanAnswer, renderPlanFeedback } from './shape/run.mjs';
+import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
 import { serialQueue, measureCodeCursor, collectStepEvidence } from './graph/human-evidence.mjs';
@@ -870,6 +874,8 @@ export class GraphOrchestrator extends RunHarness {
       onAsk: (q) => this._schedulerAsk(q),
       // The scheduler's log is ONE-ARG (`log(QUIESCENCE_WARNING)`, scheduler.mjs:936).
       log: (line, attrs = null) => this._log('orchestrator', 'warn', String(line), attrs),
+      // Shape it first (spec D2/D12): node approval stops are armed only for a run that carries `shape`.
+      approvalStops: Boolean(this.runShape),
     });
     this._scheduler = sched;
     if (resume && this._resumeSnapshot) {
@@ -978,6 +984,7 @@ export class GraphOrchestrator extends RunHarness {
       guardrailsId: this.guardrailsId,
       ...(this.mcpOptOut?.length ? { mcpOptOut: [...this.mcpOptOut] } : {}),   // MCP registry §6.2: resume re-resolves minus it
       memoryScope: this.memoryScope || null,   // agent memory §7.3: a paused defrag resumes with ONE scope (B10)
+      ...(this.runShape ? { shape: this.runShape } : {}),
       checkpointRef: this.checkpointRef || null,
       checkpointRefs: { ...this.checkpointRefs },
       workspace: this.isWorkspace ? { projects: this._workspaceProjects() } : null,
@@ -1108,6 +1115,7 @@ export class GraphOrchestrator extends RunHarness {
    * and reattach() re-asks it on resume. On stop the scheduler is aborted.
    */
   _schedulerAsk(q) {
+    if (q.kind === PLAN_ASK_KIND) return this._planAsk(q);
     return this._enqueueAsk(() => this._ask(q)).then(
       (payload) => {
         if (q.kind === 'gate') return payload?.decision === 'another' ? 'another' : 'continue';
@@ -1121,6 +1129,59 @@ export class GraphOrchestrator extends RunHarness {
     );
   }
 
+  _planAsk(q) {
+    let check = null;
+    const asked = (async () => {
+      check = await this._planCheck(q.plan?.file);
+      return this._enqueueAsk(() => this._ask({
+        id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId,
+        plan: { ...q.plan, nodeId: q.nodeId, check },
+        validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true }),
+      }));
+    })();
+    return asked.then(
+      async (payload) => {
+        if (payload?.decision === 'stop') {
+          this._log('orchestrator', 'info', `plan approval ${q.id}: stop`);
+          this.stop(this.answeredBy(q.id));
+          this._scheduler?.abort();
+          return new Promise(() => {});
+        }
+        if (payload?.decision === 'revise') {
+          const path = join(this.pipeline.dir, `plan-feedback-${q.plan.round}.md`);
+          // Keep the real cause: the run rethrows _graphError, else a generic 'a graph execution failed'.
+          try { await writeFile(path, renderPlanFeedback(payload.feedback, q.plan.file), 'utf8'); }
+          catch (err) { this._graphError ||= err; throw err; }
+          this._shapeRec?.revises.push({ round: q.plan.round, by: payload.source === 'check' ? 'check' : 'person' });
+          this._log('orchestrator', 'info', `plan approval ${q.id}: revise (${path})`);
+          return { decision: 'revise', path };
+        }
+        // D28: the approved round's shape score
+        if (payload?.decision === 'approve' && this._shapeRec) this._shapeRec.shapeScore = shapeScoreOf(check);
+        return payload;                              // { decision:'approve' } | { decision:'withdrawn' }
+      },
+      (err) => {
+        if (isPause(err) || this.pauseRequested) this._scheduler?.pause();
+        else this._scheduler?.abort();
+        return new Promise(() => {});
+      },
+    );
+  }
+
+  /** checkPlan for this run: grounded in the run's checkout; a workspace run skips grounding (paths are per member). */
+  async _planCheck(file) {
+    try {
+      return await checkPlan(file, {
+        projectDir: this.isWorkspace ? null : (this.runCwd || this.projectDir),
+        // checkShape alone defaults to ['product'], which fails every R-arch/R-qa item.
+        perspectives: this.runShape?.perspectives || [...DEFAULT_PERSPECTIVES],
+      });
+    } catch (err) {
+      this._log('orchestrator', 'warn', `shape check failed for ${file}: ${err?.message || err}`);
+      return null;
+    }
+  }
+
   /** Resolve the queued question, if any, without an answer. Used on End arrival:
    *  a gate ask resolves to `continue` (a no-op — the scheduler already withdrew
    *  it), and a clarify/questions ask resolves to EMPTY answers, which the
@@ -1130,7 +1191,7 @@ export class GraphOrchestrator extends RunHarness {
     if (!pq) return false;
     this.pendingQuestion = null;
     this._log('orchestrator', 'info', `End reached — withdrawing pending ${pq.kind} "${pq.id}"`);
-    pq.resolve(pq.kind === 'gate' ? { decision: 'continue' } : { answers: [] });
+    pq.resolve(pq.kind === 'gate' ? { decision: 'continue' } : pq.kind === PLAN_ASK_KIND ? { decision: 'withdrawn' } : { answers: [] });
     return true;
   }
 
@@ -1377,6 +1438,7 @@ export class GraphOrchestrator extends RunHarness {
       pipelineId: this.pipeline.id,
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
+      shape: this.runShape,
       memoryBlock: this.memoryBlock || '',              // §4.3: the pointer block, rendered once per mount (names the WRITABLE dirs)
       memoryMount: this.memory?.mount || null,          // the WRITABLE copy: <pipeline.dir>/memory (agents, the defrag mock and tests write here; runOpts passes it as --add-dir)
       memoryRules: this.memory?.rules || null,          // the read-only rules copy inside the cwd (tests read it; agents never write it)
@@ -1436,7 +1498,15 @@ export class GraphOrchestrator extends RunHarness {
         : undefined,
       runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
       resumeSessionId: this._takeResumeSession(executionId),
-      ask: (q) => this._enqueueAsk(() => this._ask(q)),
+      ask: (q) => this._enqueueAsk(() => this._ask(q)).then((payload) => {
+        // D28: the legacy Clarify questions ask (the one maxQuestions caps); a form ask has no question list
+        if (this._shapeRec && q?.kind === 'clarify') {
+          const c = clarifyCounts(q.questions, payload);
+          this._shapeRec.questions.asked += c.asked;
+          this._shapeRec.questions.skipped += c.skipped;
+        }
+        return payload;
+      }),
       // Who answered question `id` (identity.mjs actor; answer() records it) — the clarifier
       // stores it with the answer and audits it.
       answeredBy: (id) => this.answeredBy(id),

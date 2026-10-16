@@ -1,7 +1,7 @@
 // test/results-assemble.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bucketFiles, selectKeyChecks, splitNitpicks, linkIssues, assembleResults }
+import { bucketFiles, selectKeyChecks, splitNitpicks, linkIssues, assembleResults, sizeOfChange }
   from '../src/core/results.mjs';
 
 test('bucketFiles splits new vs changed and sums lines', () => {
@@ -74,4 +74,17 @@ test('assembleResults is deterministic (byte-identical)', () => {
   assert.equal(r.summary.blockingIssues, 1);
   assert.equal(r.summary.filesNew, 1);
   assert.equal(r.keyThingsToCheck[0].file, 'b.ts'); // linked
+});
+
+test('sizeOfChange: small/medium/large from lines and files; null without counts or with no change', () => {
+  const sz = (a, r, f) => sizeOfChange({ linesAdded: a, linesRemoved: r, filesNew: 0, filesChanged: f, filesDeleted: 0 });
+  assert.equal(sz(100, 50, 5), 'small');
+  assert.equal(sz(100, 51, 5), 'medium');
+  assert.equal(sz(10, 0, 6), 'medium');
+  assert.equal(sz(800, 0, 20), 'medium');
+  assert.equal(sz(801, 0, 1), 'large');
+  assert.equal(sz(10, 0, 21), 'large');
+  assert.equal(sz(0, 0, 0), null);
+  assert.equal(sizeOfChange(null), null);
+  assert.equal(sizeOfChange({ filesChanged: 2 }), null);
 });

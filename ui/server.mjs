@@ -138,7 +138,7 @@ import { validateMcpOff, resolveAskMcp, askMcpPromptInput, askMcpPreview, askMcp
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
-import { getStats, budgetWindowSavings } from '../src/core/stats.mjs';
+import { getStats, budgetWindowSavings, shapingGroups } from '../src/core/stats.mjs';
 import {
   enableTeamMetrics, setRecordMyRuns, flushSlug, flushAll, flushProject, scheduleFlush, discoverProject,
   discoverAll, scanMembers, routeWorkspaceMembers, projectMetricsStatus, startTeamMetricsBackground,
@@ -315,7 +315,9 @@ import {
   addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash,
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
+import { shapeFirstEnabled, requireShapeFirst } from '../src/core/shape/gate.mjs';
+import { resolveShapeRequest, PLAN_ASK_KIND } from '../src/core/shape/run.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
@@ -2214,8 +2216,11 @@ const startRunHandler = async (req, res) => {
     // orchestrator resolves topology + per-project run-config into an executable
     // plan at run start; here we only normalize + reject an unknown id up front
     // so the client gets a clean 400 instead of a mid-run error event.
-    const workflowId =
-      typeof body.workflowId === 'string' && body.workflowId.trim() ? body.workflowId.trim() : 'wf_default';
+    // Shape it first (spec D9/D12): `shape` and the shape workflows only while the gate is on.
+    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { enabled: shapeFirstEnabled() });
+    if (!shapeReq.ok) return badRequest(res, shapeReq.error);
+    const { shape } = shapeReq;
+    const workflowId = shapeReq.workflowId || 'wf_default';
     // ONE gate for every run entry point, ONE status: unknown (today's text) and
     // archived (the upgrade explanation the UI shows verbatim) answer 400 through
     // badRequest. A graph row runs on the graph engine — createOrchestratorFor
@@ -2472,6 +2477,7 @@ const startRunHandler = async (req, res) => {
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
+        ...(shape ? { shape } : {}),
       });
 
       entry = {
@@ -2607,6 +2613,7 @@ const startRunHandler = async (req, res) => {
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
+        ...(shape ? { shape } : {}),
       });
 
       entry = {
@@ -4073,6 +4080,30 @@ app.post('/api/answer', (req, res) => {
   }
 });
 
+// POST /api/runs/:id/answer  -> answer the run's plan approval stop (shape-it-first D2/D10)
+// body: { id, decision: 'approve'|'revise'|'stop', feedback?, source? }. 404 while the shapeFirst gate is off — a run
+// already held then is still answered through POST /api/answer (never stranded, D12).
+app.post('/api/runs/:id/answer', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  const runId = req.params.id;
+  const entry = runs.get(runId);
+  if (!entry) return res.status(404).json({ error: 'unknown run' });
+  const { id, decision, feedback, source } = req.body || {};
+  const pq = entry.pendingQuestion;
+  if (!pq || pq.kind !== PLAN_ASK_KIND || !id || pq.id !== id) {
+    return res.status(409).json({ error: 'no plan approval with that id is waiting on this run' });
+  }
+  try {
+    answerRun(runId, id, { decision, ...(feedback !== undefined ? { feedback } : {}), ...(source !== undefined ? { source } : {}) }, actorOf(req));
+    res.json({ ok: true });
+  } catch (err) {
+    if (err && err.code === 'INVALID_ANSWER') {
+      return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
+    }
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // POST /api/stop  -> abort a live run, or stop a paused one for good
 // body: { runId } | { pipelineId } | { runId, pipelineId }
@@ -5054,6 +5085,8 @@ app.get('/api/stats', async (req, res) => {
   // Credential broker: model spend per person in the same window, as the broker metered it
   // (the authoritative figure: it saw every request). Absent with the broker off.
   if (brokerEnabled()) stats.byPerson = await statsByPerson(stats.windowStartMs, stats.windowEndMs);
+  // Shaper (D28): shaped vs unshaped runs of the same size. Absent with the flag off.
+  if (shapeFirstEnabled()) stats.shaping = shapingGroups(stats.range === 'all' ? 0 : stats.windowStartMs, stats.windowEndMs);
   res.json(stats);
 });
 
@@ -10366,9 +10399,11 @@ app.get('/api/workflows', async (req, res) => {
       const all = await listWorkflows({ includeArchived: true });
       return res.json({ workflows: all.filter((w) => w.archivedAt) });
     }
-    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, ...listWorkflows() ]. The
-    // built-ins are never persisted rows (listWorkflows filters their ids), so none appears twice.
-    res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(await listWorkflows())] });
+    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, then the Shape it first built-in while
+    // the shapeFirst gate is on, then the saved rows ]. The built-ins are never persisted rows (listWorkflows
+    // filters their ids), so none appears twice.
+    res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW,
+      ...(shapeFirstEnabled() ? [GRAPH_SHAPE_WORKFLOW] : []), ...(await listWorkflows())] });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -10498,6 +10533,7 @@ app.delete('/api/workflows/:id', async (req, res) => {
   if (id === 'wf_default') return badRequest(res, 'the default workflow cannot be deleted');
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return badRequest(res, 'the Memory defragment workflow cannot be deleted');
   if (id === PR_FIX_WORKFLOW_ID) return badRequest(res, 'the PR fix workflow cannot be deleted');
+  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return badRequest(res, 'the Shape it first workflow cannot be deleted');
   try {
     const removed = await deleteWorkflow(id); // CONV-1: await
     if (!removed) return res.status(404).json({ error: 'workflow not found' });

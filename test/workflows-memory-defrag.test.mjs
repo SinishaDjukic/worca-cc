@@ -26,7 +26,7 @@ test('wf_memory_defrag: the deep-frozen constant (one agent node, report → res
       assert.deepEqual(wf.nodes.map((n) => [n.id, n.kind, n.key ?? null]), [['n_task', 'task', null], ['n_defrag', 'agent', 'memoryDefragmenter'], ['n_end', 'end', null]]);
       assert.deepEqual(wf.wires.map((w) => `${w.from.node}.${w.from.port}->${w.to.node}.${w.to.port}`), ['n_task.task->n_defrag.task', 'n_defrag.report->n_end.result']);
       assert.ok(Object.isFrozen(wf) && Object.isFrozen(wf.nodes[1]) && Object.isFrozen(wf.wires[0].from), 'deepFreeze, not Object.freeze');
-      assert.deepEqual([...RESERVED_WORKFLOW_IDS], ['wf_default', 'wf_auto', 'wf_memory_defrag', 'wf_workspace_scan', 'wf_pr_fix']);
+      assert.deepEqual([...RESERVED_WORKFLOW_IDS], ['wf_default', 'wf_auto', 'wf_memory_defrag', 'wf_workspace_scan', 'wf_pr_fix', 'wf_shape', 'wf_shape_ux']);
       for (const id of ['wf_default', 'wf_auto', 'wf_memory_defrag', 'wf_workspace_scan', 'wf_pr_fix']) assert.equal(isReservedWorkflowId(id), true, id);
       assert.equal(isReservedWorkflowId('wf_memory-defrag'), false);
     } },
@@ -85,7 +85,7 @@ test('the composer treats every graph built-in as read-only (Save is Save-a-copy
   // The composer keeps its OWN twin of the reserved set (a Set, not the core Array): without a
   // pin, shrinking it back to just wf_default would let the UI overwrite the shipped built-in.
   const composer = await import('../ui/public/graph/composer.mjs');
-  assert.deepEqual([...composer.RESERVED_WORKFLOW_IDS].sort(), ['wf_default', 'wf_memory_defrag']);
+  assert.deepEqual([...composer.RESERVED_WORKFLOW_IDS].sort(), ['wf_default', 'wf_memory_defrag', 'wf_shape', 'wf_shape_ux']);
   assert.equal(composer.isReservedWorkflowId('wf_memory_defrag'), true);
   assert.equal(composer.isReservedWorkflowId('wf_auto'), false, 'wf_auto never reaches the composer');
   assert.equal(composer.isReservedWorkflowId('wf_memory-defrag'), false);
