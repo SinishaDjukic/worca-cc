@@ -36,7 +36,7 @@ While the `runTags` feature flag is on, three chips replace the Group by select:
 - **By person**: the person table on its own (one row per starter, `(unknown person)` for runs with
   no named starter, an `Ask Worca` row, a `Total` footer equal to the Spent tile), with Export CSV.
 - **By tag**: one table per tag key. Configured tag dimensions (team policy `runs.tagDimensions` or
-  Settings › Runs › Tag dimensions) come first, read by label ("Cost centre"), even when no run in
+  Settings › Tags) come first, read by label ("Cost centre"), even when no run in
   the range carries them. Every other key follows when a run in the range carries it, by spend.
   Each table lists the values by spend, then **Untagged**, then **Ask Worca** (absent while a
   filter is active), and a **Total** footer equal to the Spent tile. Share is an integer percent;

@@ -115,31 +115,39 @@ function slots(dims, opts) {
   return { s, window, doc: window.document };
 }
 
-test('dimension slots: one per dimension, datalist of allowed values, get/set/missing', () => {
+test('dimension slots: a select of the allowed values, a text input without values; get/set/missing', () => {
   const { s, window, doc } = slots(DIMS);
   const els = [...doc.querySelectorAll('.tag-dim-slot')];
   assert.deepEqual(els.map((e) => e.querySelector('.tag-dim-label').textContent), ['Cost centre', 'Client']);
   assert.equal(els[0].querySelector('.tag-dim-req').textContent, 'required');
-  const input = els[0].querySelector('.tag-dim-input');
-  assert.equal(input.getAttribute('aria-label'), 'Cost centre');
-  assert.deepEqual([...doc.getElementById(input.getAttribute('list')).querySelectorAll('option')].map((o) => o.value), ['4410', '4420']);
+  const sel = els[0].querySelector('.tag-dim-input');
+  assert.equal(sel.tagName, 'SELECT');
+  assert.equal(sel.getAttribute('aria-label'), 'Cost centre');
+  assert.deepEqual([...sel.querySelectorAll('option')].map((o) => o.value), ['', '4410', '4420']);
+  assert.equal(doc.querySelector('datalist'), null, 'a select replaces the datalist');
+  assert.equal(els[1].querySelector('.tag-dim-input').tagName, 'INPUT');
   assert.deepEqual(s.missing().map((d) => d.key), ['cc']);
   assert.equal(s.dirty(), false);
-  input.value = '4410'; input.dispatchEvent(new window.Event('input'));
+  sel.value = '4410'; sel.dispatchEvent(new window.Event('change'));
   assert.deepEqual(s.get(), ['cc:4410']);
   assert.deepEqual(s.missing(), []);
   assert.equal(s.dirty(), true);
   s.set(['client:acme', 'spike']);
   assert.deepEqual(s.get(), ['client:acme']);
   assert.equal(s.dirty(), false);
+  s.set(['cc:9999']);
+  assert.equal(sel.value, '', 'an off-list value leaves the select blank');
 });
 
-test('dimension slots: an invalid value is flagged and not returned', () => {
+test('dimension slots: an invalid value is flagged and not returned; set() clears the hint', () => {
   const { s, window, doc } = slots(DIMS);
-  const input = doc.querySelector('.tag-dim-input');
+  const input = doc.querySelector('.tag-dim-slot[data-key="client"] .tag-dim-input');
   input.value = 'x'.repeat(65); input.dispatchEvent(new window.Event('input'));
   assert.equal(input.getAttribute('aria-invalid'), 'true');
+  assert.notEqual(doc.querySelector('.tag-dim-slot[data-key="client"] .tag-dim-hint').textContent, '');
   assert.deepEqual(s.get(), []);
+  s.set([]);
+  assert.equal(doc.querySelector('.tag-dim-slot[data-key="client"] .tag-dim-hint').textContent, '');
 });
 
 test('no dimensions → an empty, hidden slot row', () => {
@@ -148,15 +156,59 @@ test('no dimensions → an empty, hidden slot row', () => {
   assert.equal(doc.querySelectorAll('.tag-dim-slot').length, 0);
 });
 
-test('dimension editor: empty state has no rows; add/remove/get', () => {
+function editor(value = []) {
   const { window } = new JSDOM('<!doctype html><div id="h"></div>');
-  const ed = createDimensionEditor(window.document, { value: [] });
+  const ed = createDimensionEditor(window.document, { value });
+  window.document.getElementById('h').appendChild(ed.el);
+  return { ed, window, doc: window.document };
+}
+const typeValue = (window, row, v, key = 'Enter') => {
+  const vin = row.querySelector('.tag-value-input');
+  vin.value = v; vin.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true }));
+};
+
+test('dimension editor (Settings › Tags): a table; empty has no rows; add, key from label, values, Default, Mandatory, remove', () => {
+  const { ed, window } = editor();
+  assert.deepEqual([...ed.el.querySelectorAll('thead th')].map((th) => th.textContent), ['Tag', 'Values', 'Default', 'Mandatory', '']);
   assert.equal(ed.el.querySelectorAll('.tag-dim-row').length, 0);
   ed.el.querySelector('.tag-dim-add').click();
   const row = ed.el.querySelector('.tag-dim-row');
-  row.querySelector('.tag-dim-key').value = 'cc'; row.querySelector('.tag-dim-label-input').value = 'Cost centre';
-  row.querySelector('.tag-dim-values').value = '4410, 4420'; row.querySelector('.tag-dim-required').checked = true;
-  assert.deepEqual(ed.get(), [{ key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true }]);
+  const label = row.querySelector('.tag-dim-label-input');
+  label.value = 'Cost centre'; label.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(row.querySelector('.tag-dim-key').value, 'cost-centre');
+  assert.equal(row.querySelector('.tag-dim-default').tagName, 'INPUT', 'no values: Default is free text');
+  typeValue(window, row, '4410');
+  typeValue(window, row, '4420, 4430', ',');
+  assert.equal(row.querySelector('.tag-value-mirror').value, '4410\n4420\n4430');
+  row.querySelector('.tag-x[aria-label="Remove 4430"]').click();
+  assert.equal(row.querySelector('.tag-value-mirror').value, '4410\n4420');
+  const def = row.querySelector('.tag-dim-default');
+  assert.equal(def.tagName, 'SELECT');
+  assert.deepEqual([...def.options].map((o) => o.value), ['', '4410', '4420']);
+  def.value = '4420'; def.dispatchEvent(new window.Event('change', { bubbles: true }));
+  typeValue(window, row, '4440');
+  assert.equal(row.querySelector('.tag-dim-default').value, '4420', 'Default keeps its value while it is still listed');
+  row.querySelector('.tag-x[aria-label="Remove 4420"]').click();
+  assert.equal(row.querySelector('.tag-dim-default').value, '', 'a removed value leaves Default blank');
+  row.querySelector('.tag-dim-required').checked = true;
+  const key = row.querySelector('.tag-dim-key');
+  key.value = 'cc'; key.dispatchEvent(new window.Event('input', { bubbles: true }));
+  label.value = 'Cost center'; label.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(key.value, 'cc', 'an edited key no longer follows the label');
+  assert.deepEqual(ed.get(), [{ key: 'cc', label: 'Cost center', values: ['4410', '4440'], required: true }]);
   row.querySelector('.tag-dim-remove').click();
   assert.deepEqual(ed.get(), []);
+});
+
+test('dimension editor: set() paints rows with their Default; setLocked disables everything and hides add/remove', () => {
+  const { ed } = editor([{ key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true, default: '4420' }]);
+  const row = ed.el.querySelector('.tag-dim-row');
+  assert.equal(row.querySelector('.tag-dim-key').value, 'cc');
+  assert.equal(row.querySelector('.tag-dim-default').value, '4420');
+  assert.deepEqual(ed.get(), [{ key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true, default: '4420' }]);
+  ed.setLocked(true);
+  assert.ok([...ed.el.querySelectorAll('.tag-dim-row input, .tag-dim-row select')].every((i) => i.disabled));
+  assert.ok([...ed.el.querySelectorAll('.tag-x')].every((b) => b.disabled));
+  assert.ok([...ed.el.querySelectorAll('.tag-dim-remove')].every((b) => b.hidden));
+  assert.equal(ed.el.querySelector('.tag-dim-add').hidden, true);
 });

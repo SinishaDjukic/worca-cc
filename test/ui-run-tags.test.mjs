@@ -21,7 +21,7 @@ const ok = (body, status = 200) => ({ ok: status < 400, status, json: async () =
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const flagsOn = (window) => applyFlags({ runTags: true }, window.document);
 
-async function bootForm({ tagsFor = () => [], dims = null } = {}) {
+async function bootForm({ tagsFor = () => [], dims = null, runResponse = null } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -47,7 +47,11 @@ async function bootForm({ tagsFor = () => [], dims = null } = {}) {
     if (u.includes('/api/projects')) return Promise.resolve(ok({ projects: PROJECTS }));
     if (u.includes('/api/workspaces')) return Promise.resolve(ok({ workspaces: [] }));
     if (u.includes('/api/branches')) return Promise.resolve(ok({ branches: ['dev'], current: 'dev' }));
-    if (u.endsWith('/api/run') && method === 'POST') { posted.push(JSON.parse(opts.body)); return Promise.resolve(ok({ runId: `r${posted.length}` })); }
+    if (u.endsWith('/api/run') && method === 'POST') {
+      posted.push(JSON.parse(opts.body));
+      if (runResponse) { const { status, body } = runResponse(posted.length); return Promise.resolve(ok(body, status)); }
+      return Promise.resolve(ok({ runId: `r${posted.length}` }));
+    }
     return Promise.resolve(ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [] }));
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
@@ -186,16 +190,81 @@ test('No dimensions configured: no slot UI beyond the free-form field', async ()
   assert.doesNotMatch(ctx.doc.querySelector('#run-form').textContent, /Cost centre/);
 });
 
-test('Policy Cost centre (required): one slot; start without it succeeds and warns', async () => {
-  const ctx = await bootForm({ dims: () => ({ source: 'policy', home: 'acme/web', dims: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }] }) });
+test('the Tags label follows the policy: "(optional)" while it is off, "mandatory tags required" while it is on', async () => {
+  const opt = (ctx) => ctx.doc.querySelector('.run-tags-field .opt').textContent;
+  const cc = [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }];
+  const none = await bootForm({ dims: () => ({ source: null, home: null, dims: [] }) });
+  flagsOn(none.window);
+  assert.equal(opt(none), '(optional)', 'no dimensions: optional');
+  const off = await bootForm({ dims: () => ({ source: 'settings', home: null, enforce: false, dims: cc }) });
+  flagsOn(off.window);
+  assert.equal(opt(off), '(optional)', 'policy off: optional, even with a tag ticked Mandatory');
+  const on = await bootForm({ dims: () => ({ source: 'settings', home: null, enforce: true, dims: cc }) });
+  flagsOn(on.window);
+  assert.equal(opt(on), '· mandatory tags required', 'policy on: the field says so');
+  const onNoneTicked = await bootForm({ dims: () => ({ source: 'settings', home: null, enforce: true, dims: [{ ...cc[0], required: false }] }) });
+  flagsOn(onNoneTicked.window);
+  assert.equal(opt(onNoneTicked), '(optional)', 'policy on but no tag ticked Mandatory: still optional');
+});
+
+test('policy off: a run without a tag ticked Mandatory starts quietly — no warning, nothing blocked', async () => {
+  const ctx = await bootForm({ dims: () => ({ source: 'policy', home: 'acme/web', enforce: false, dims: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }] }) });
   flagsOn(ctx.window);
-  const slots = [...ctx.doc.querySelectorAll('#runTagDimsField .tag-dim-slot')];
-  assert.deepEqual(slots.map((s) => s.querySelector('.tag-dim-label').textContent), ['Cost centre']);
+  assert.equal(ctx.doc.getElementById('runTagDimsWarn').hidden, true, 'no "is required" warning under the field');
   const body = await submit(ctx);
-  assert.equal(body.tags, undefined, 'the run is posted with no tags — never blocked');
+  assert.equal(body.tags, undefined, 'the run is posted with no tags');
   const toast = [...ctx.doc.querySelectorAll('.toast')].at(-1);
-  assert.match(toast.textContent, /Missing required tag: Cost centre/);
-  assert.match(toast.className, /warn/);
+  assert.doesNotMatch(toast.textContent, /Missing required tag/);
+  assert.doesNotMatch(toast.className, /warn/);
+});
+
+test('enforced: a pre-filled mandatory tag shows as a chosen value; Start is enabled and posts it', async () => {
+  const ctx = await bootForm({ dims: () => ({ source: 'settings', home: null, enforce: true, prefill: ['cc:4410'],
+    dims: [{ key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true }] }) });
+  flagsOn(ctx.window);
+  const sel = ctx.doc.querySelector('.tag-dim-slot[data-key="cc"] select');
+  assert.equal(sel.value, '4410');
+  assert.equal(ctx.doc.getElementById('start-btn').disabled, false);
+  const body = await submit(ctx);
+  assert.deepEqual(body.tags, ['cc:4410']);
+});
+
+test('enforced: nothing to pre-fill → Start disabled with "Add Cost centre to start" under the field; picking enables it', async () => {
+  const ctx = await bootForm({ dims: () => ({ source: 'settings', home: null, enforce: true, prefill: [],
+    dims: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }] }) });
+  flagsOn(ctx.window);
+  const start = ctx.doc.getElementById('start-btn');
+  const warn = ctx.doc.getElementById('runTagDimsWarn');
+  assert.equal(start.disabled, true);
+  assert.equal(start.title, 'Add Cost centre to start');
+  assert.equal(warn.textContent, 'Add Cost centre to start');
+  assert.equal(warn.hidden, false);
+  const sel = ctx.doc.querySelector('.tag-dim-slot[data-key="cc"] select');
+  sel.value = '4410'; sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  assert.equal(start.disabled, false);
+  assert.equal(start.title, '');
+  assert.equal(warn.hidden, true);
+});
+
+test('a 422 with fields.tags shows the reason under the tag field, not a card alert', async () => {
+  const reason = 'Cost centre "9999" is not one of its values (4410)';
+  const ctx = await bootForm({ dims: () => ({ source: 'settings', home: null, enforce: false, prefill: [], dims: [] }),
+    runResponse: () => ({ status: 422, body: { error: reason, fields: { tags: reason } } }) });
+  flagsOn(ctx.window);
+  await submit(ctx);
+  const warn = ctx.doc.getElementById('runTagDimsWarn');
+  assert.equal(warn.textContent, reason);
+  assert.equal(warn.hidden, false);
+  assert.equal([...ctx.doc.querySelectorAll('.card-alert')].some((n) => n.textContent.includes(reason)), false, 'no card alert carries it');
+  assert.equal(ctx.doc.getElementById('start-btn').disabled, false, 'the button is usable again');
+});
+
+test('runTags off: no slots shown, Start enabled, no tags posted (unchanged)', async () => {
+  const ctx = await bootForm({ dims: () => ({ source: 'settings', home: null, enforce: false, prefill: ['cc:4410'],
+    dims: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }] }) });
+  assert.equal(ctx.doc.getElementById('start-btn').disabled, false);
+  const body = await submit(ctx);
+  assert.equal(body.tags, undefined);
 });
 
 test('A filled slot rides the body with the free-form tags; a default cc:4410 lands in the slot', async () => {

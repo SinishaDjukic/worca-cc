@@ -1146,7 +1146,8 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
   'askEngine', 'askModels',                  // Ask Worca's engine for new chats and its model per engine (user-only, D17)
-  'tagDimensions',                           // Settings › Runs › Tag dimensions [{ key, label, values, required }]
+  'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
+  'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
 ]);
 
 let projectLayerReader = null;
@@ -2340,7 +2341,7 @@ export async function setScheduleDefaults(patch = {}) {
   return scheduleDefaults();
 }
 
-/** Local tag dimensions (Settings › Runs): used when the run target's team policy sets none. Never throws. */
+/** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */
 export function userTagDimensions() {
   if (homeGuarded()) return [];
   return normaliseDimensions(readSettings().tagDimensions).dims;
@@ -2354,6 +2355,21 @@ export async function setUserTagDimensions(list) {
   if (dims.length) settings.tagDimensions = dims; else delete settings.tagDimensions;
   await persistSettings(settings);
   return userTagDimensions();
+}
+
+/** Settings › Tags › "Require mandatory tags to start a run" (local; a team policy's runs.enforceTags wins). */
+export function userEnforceTags() {
+  if (homeGuarded()) return false;
+  return readSettings().enforceTags === true;
+}
+
+/** true/false; false removes the key. Throws { code: 'BAD_ENFORCE_TAGS' } before any write. */
+export async function setUserEnforceTags(v) {
+  if (typeof v !== 'boolean') throw Object.assign(new Error('enforceTags must be true or false'), { code: 'BAD_ENFORCE_TAGS' });
+  const settings = readSettings();
+  if (v) settings.enforceTags = true; else delete settings.enforceTags;
+  await persistSettings(settings);
+  return userEnforceTags();
 }
 
 // ── Sync before run (#527) ─────────────────────────────────────────────────

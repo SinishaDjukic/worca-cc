@@ -80,3 +80,14 @@ export function tagVocabulary() {
   }
   return { keys: [...keys.values()].sort((a, b) => b.count - a.count || (a.key < b.key ? -1 : 1)), values };
 }
+
+/** Pre-fill source (D5): this person's newest pipeline in the project that has tags → its tags; [] without one. */
+export function lastUsedTags(projectKey, person) {
+  if (!projectKey || !person) return [];
+  const row = getDb().prepare(`
+    SELECT p.id FROM pipelines p
+    WHERE p.project_key = ? AND p.started_by = ?
+      AND EXISTS (SELECT 1 FROM run_tags t WHERE t.pipeline_id = p.id)
+    ORDER BY p.started_at DESC LIMIT 1`).get(projectKey, person);
+  return row ? readRunTags(row.id) : [];
+}

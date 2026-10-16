@@ -792,9 +792,10 @@ function valueControl(doc, meta, entry, row) {
       const key = h(doc, 'input', 'input tp-add tp-dim-key'); key.type = 'text'; key.placeholder = 'key (cc)'; key.setAttribute('aria-label', 'Key');
       const label = h(doc, 'input', 'input tp-dim-label'); label.type = 'text'; label.placeholder = 'label (Cost centre)'; label.setAttribute('aria-label', 'Label');
       const values = h(doc, 'input', 'input tp-dim-values'); values.type = 'text'; values.placeholder = 'allowed values, comma-separated (optional)'; values.setAttribute('aria-label', 'Allowed values');
+      const def = h(doc, 'input', 'input tp-dim-default'); def.type = 'text'; def.placeholder = 'default (optional)'; def.setAttribute('aria-label', 'Default');
       const req = h(doc, 'label', 'check-row'); const cb = h(doc, 'input', 'tp-dim-required'); cb.type = 'checkbox'; req.append(cb, ' Required');
       const b = h(doc, 'button', 'btn btn-ghost btn-mini tp-add-btn', '+ add'); b.type = 'button';
-      add.append(key, label, values, req, b); wrap.append(add);
+      add.append(key, label, values, def, req, b); wrap.append(add);
       break;
     }
     default: wrap.append(h(doc, 'span', 'muted', '—'));
@@ -809,7 +810,7 @@ const mcpChip = (e) => (e.plugin ? `${e.server} · ${e.plugin}`
 const chipLabel = (meta) => (it) => (meta.type === 'plugins' ? `${it.name}${it.minVersion ? ` ≥ ${it.minVersion}` : ''}${it.marketplace ? ` (${it.marketplace})` : ''}`
   : meta.type === 'steps' ? `${it.role} ${it.model || '·'}${it.effort ? ` / ${it.effort}` : ''}` : meta.type === 'mcpServers' ? mcpChip(it)
   : meta.type === 'skills' ? `${it.skill} · ${it.plugin}`
-  : meta.type === 'tagDimensions' ? `${it.label} (${it.key})${it.values?.length ? ` · ${it.values.join(', ')}` : ''}${it.required ? ' · required' : ''}` : String(it));
+  : meta.type === 'tagDimensions' ? `${it.label} (${it.key})${it.values?.length ? ` · ${it.values.join(', ')}` : ''}${it.default ? ` · default ${it.default}` : ''}${it.required ? ' · required' : ''}` : String(it));
 const LIST_TYPES = ['string[]', 'plugins', 'steps', 'mcpServers', 'skills', 'tagDimensions'];
 /** "acme/deploy-checklist" → { plugin, skill }: the plugin manifest's name rule and the Agent Skills name rule, each
  *  ≤ 64 (checked where it is read). Publish runs the full rules again (plugins.required, one name per Team set). */
@@ -984,10 +985,11 @@ function wireEditor(doc, root, registry) {
           key: row.querySelector('.tp-dim-key').value, label: row.querySelector('.tp-dim-label').value,
           values: row.querySelector('.tp-dim-values').value.split(',').map((s) => s.trim()).filter(Boolean),
           required: row.querySelector('.tp-dim-required').checked,
+          default: row.querySelector('.tp-dim-default').value,
         });
         if (!dim) return;
         const i = items.findIndex((x) => x.key === dim.key); if (i >= 0) items[i] = dim; else items.push(dim);
-        for (const s of ['.tp-dim-key', '.tp-dim-label', '.tp-dim-values']) row.querySelector(s).value = '';
+        for (const s of ['.tp-dim-key', '.tp-dim-label', '.tp-dim-values', '.tp-dim-default']) row.querySelector(s).value = '';
         row.querySelector('.tp-dim-required').checked = false;
       } else {
         const val = row.querySelector('.tp-add').value.trim();

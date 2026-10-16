@@ -135,7 +135,7 @@ test('project default tags: PUT, GET and /api/run-defaults; changing them leaves
   assert.deepEqual(none.tags, []);
   assert.equal((await call('PUT', `/api/projects/${key}/tags/defaults`, { tags: ['client:'] })).status, 400);
   assert.equal((await call('PUT', `/api/projects/${key}/tags/defaults`, {})).status, 400);
-  // The server never applies them: a body without tags still starts an untagged run.
+  // With enforcement off, the server never applies them: a body without tags still starts an untagged run.
   const plain = await startTagged({});
   assert.deepEqual(readRunTags(plain.pipelineId), []);
   await call('PUT', `/api/projects/${key}/tags/defaults`, { tags: [] });
@@ -181,11 +181,175 @@ test('a resumed run\'s live entry carries the run\'s tags', async () => {
 });
 
 test('GET /api/tag-dimensions: none by default, the Settings list after a POST, 400 on a NUL projectDir', async () => {
-  assert.deepEqual(await get('/api/tag-dimensions'), { dims: [] });
+  assert.deepEqual(await get('/api/tag-dimensions'), { dims: [], team: null });
   const saved = await post('/api/settings', { tagDimensions: [{ key: 'cc', label: 'Cost centre' }] });
   assert.equal(saved.status, 200);
   try {
     assert.deepEqual((await get('/api/tag-dimensions')).dims, [{ key: 'cc', label: 'Cost centre', values: [], required: false }]);
     assert.equal((await fetch(`${base}/api/tag-dimensions?projectDir=%00`)).status, 400);
   } finally { await post('/api/settings', { tagDimensions: [] }); }
+});
+
+// ── Enforced tags (slice 4A): pre-fill, then refuse a missing mandatory tag or an off-list value ──
+const CCD = { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true };
+const enforce = (dims, on = true) => post('/api/settings', { tagDimensions: dims, enforceTags: on });
+// The default identity is a real person here, so a cc run in one test would pre-fill the next one
+// (last value used): clearing drops the stored cc tags too.
+const clear = async () => {
+  await post('/api/settings', { tagDimensions: [], enforceTags: false });
+  getDb().prepare("DELETE FROM run_tags WHERE key = 'cc'").run();
+};
+const withIdentity = (t) => {
+  const prev = process.env.WORCA_IDENTITY_HEADER;
+  process.env.WORCA_IDENTITY_HEADER = 'X-Forwarded-Email';
+  t.after(() => { if (prev === undefined) delete process.env.WORCA_IDENTITY_HEADER; else process.env.WORCA_IDENTITY_HEADER = prev; });
+};
+const postAs = (body, email) => fetch(`${base}/api/run`, { method: 'POST', headers: { ...JSONH, 'x-forwarded-email': email },
+  body: JSON.stringify({ projectDir: repo, prompt: 'x', mock: true, ...body }) });
+
+test('enforced: a missing mandatory tag with no default anywhere → 422 with fields.tags; nothing starts', async () => {
+  await enforce([CCD]);
+  try {
+    const before = runs.size;
+    const r = await post('/api/run', { projectDir: repo, prompt: 'x', mock: true });
+    assert.equal(r.status, 422);
+    assert.deepEqual(await r.json(), { error: 'Add Cost centre to start', fields: { tags: 'Add Cost centre to start' } });
+    assert.equal(runs.size, before);
+  } finally { await clear(); }
+});
+
+test('enforced: an off-list value → 422 even when the tag is optional', async () => {
+  await enforce([{ ...CCD, required: false }]);
+  try {
+    const r = await post('/api/run', { projectDir: repo, prompt: 'x', mock: true, tags: ['cc:9999'] });
+    assert.equal(r.status, 422);
+    assert.match((await r.json()).fields.tags, /Cost centre "9999" is not one of its values/);
+  } finally { await clear(); }
+});
+
+test('enforced: pre-fill runs first — the Default, then the project default wins over it', async () => {
+  await enforce([{ ...CCD, default: '4420' }]);
+  const key = projectKey(repo);
+  try {
+    let e = await startTagged({});
+    assert.deepEqual(readRunTags(e.pipelineId), ['cc:4420']);
+    await call('PUT', `/api/projects/${key}/tags/defaults`, { tags: ['cc:4410'] });
+    e = await startTagged({});
+    assert.deepEqual(readRunTags(e.pipelineId), ['cc:4410']);
+  } finally {
+    await call('PUT', `/api/projects/${key}/tags/defaults`, { tags: [] });
+    await clear();
+  }
+});
+
+test('enforced: the last value this person used in this project fills a mandatory tag', async (t) => {
+  withIdentity(t);
+  const first = await postAs({ tags: ['cc:4410'] }, 'ana@x.io');
+  assert.ok(first.ok, String(first.status));
+  await untilSettled((await first.json()).runId);
+  await enforce([CCD]);
+  try {
+    const again = await postAs({}, 'ana@x.io');
+    assert.ok(again.ok, String(again.status));
+    const e = await untilSettled((await again.json()).runId);
+    assert.deepEqual(readRunTags(e.pipelineId), ['cc:4410']);
+    const other = await postAs({}, 'bo@x.io');
+    assert.equal(other.status, 422);
+  } finally { await clear(); }
+});
+
+test('enforced: schedule creation is refused with 422 and stores the pre-filled list when it passes', async () => {
+  await enforce([CCD]);
+  try {
+    const bad = await post('/api/run', { projectDir: repo, prompt: 'x', mock: true, scheduledFor: inFuture(60_000) });
+    assert.equal(bad.status, 422);
+    await enforce([{ ...CCD, default: '4410' }]);
+    const ok = await post('/api/run', { projectDir: repo, prompt: 'x', mock: true, scheduledFor: inFuture(60_000) });
+    assert.equal(ok.status, 202);
+    const { runId } = await ok.json();
+    const req = JSON.parse(getDb().prepare('SELECT request FROM scheduled_runs WHERE id = ?').get(runId).request);
+    assert.deepEqual(req.tags, ['cc:4410']);
+  } finally { await clear(); }
+});
+
+test('enforced: a ticket whose tag became mandatory with no default is skipped at firing, with the reason (not failed)', async () => {
+  const ok = await post('/api/run', { projectDir: repo, prompt: 'x', mock: true, scheduledFor: inFuture(1500) });
+  const { runId } = await ok.json();
+  await enforce([CCD]);
+  try {
+    await schedulerTick({ now: Date.now() + 2000 });
+    const row = getDb().prepare('SELECT status, fail_reason FROM scheduled_runs WHERE id = ?').get(runId);
+    assert.deepEqual({ ...row }, { status: 'skipped', fail_reason: 'Add Cost centre to start' });
+    const { notifications } = await get('/api/notifications');
+    assert.ok(notifications.some((n) => n.ticketId === runId && /was skipped: Add Cost centre to start/.test(n.message)));
+  } finally { await clear(); }
+});
+
+test('enforced: a ticket whose tag became mandatory WITH a default fires with it filled', async () => {
+  const ok = await post('/api/run', { projectDir: repo, prompt: 'x', mock: true, scheduledFor: inFuture(1500) });
+  const { runId } = await ok.json();
+  await enforce([{ ...CCD, default: '4420' }]);
+  try {
+    await schedulerTick({ now: Date.now() + 2000 });
+    const entry = await untilSettled(runId);
+    assert.deepEqual(readRunTags(entry.pipelineId), ['cc:4420']);
+  } finally { await clear(); }
+});
+
+test('enforced: Run after with no tags of its own still inherits the parent tags (#718) and is checked against them', async (t) => {
+  withIdentity(t);
+  // Parents run as someone else, so the default identity has no last cc value to pre-fill from.
+  const startAs = async (tags) => untilSettled((await (await postAs({ tags }, 'parent@x.io')).json()).runId);
+  const parent = await startAs(['cc:4410']);
+  const untagged = await startAs([]);
+  const parentTicket = await post('/api/run', { projectDir: repo, prompt: 'x', mock: true, scheduledFor: inFuture(60_000), tags: ['cc:4420'] });
+  assert.equal(parentTicket.status, 202);
+  const ticketParentId = (await parentTicket.json()).runId;
+  await enforce([CCD]);
+  try {
+    const r = await post('/api/run', { projectDir: repo, prompt: 'next', mock: true, after: { kind: 'pipeline', id: parent.pipelineId } });
+    assert.equal(r.status, 202);
+    const made = await r.json();
+    assert.equal(JSON.parse(getDb().prepare('SELECT request FROM scheduled_runs WHERE id = ?').get(made.runId).request).tags, undefined);
+    const refused = await post('/api/run', { projectDir: repo, prompt: 'next', mock: true, after: { kind: 'pipeline', id: untagged.pipelineId } });
+    assert.equal(refused.status, 422);
+    assert.equal((await refused.json()).error, 'Add Cost centre to start');
+    const now = await post(`/api/schedules/${made.runId}/run-now`);
+    assert.equal(now.status, 200, JSON.stringify(await now.clone().json()));
+    assert.deepEqual(readRunTags((await untilSettled(made.runId)).pipelineId), ['cc:4410']);
+    // A ticket parent: its stored request's tags count (getTicket(…, { withRequest: true })).
+    const onTicket = await post('/api/run', { projectDir: repo, prompt: 'next', mock: true, after: { kind: 'ticket', id: ticketParentId } });
+    assert.equal(onTicket.status, 202, JSON.stringify(await onTicket.clone().json()));
+  } finally { await clear(); }
+});
+
+test('enforcement off: required only warns — the run starts untagged (today)', async () => {
+  await enforce([CCD], false);
+  try { const e = await startTagged({}); assert.deepEqual(readRunTags(e.pipelineId), []); } finally { await clear(); }
+});
+
+test('runTags flag off: enforcement is ignored entirely', async () => {
+  await enforce([CCD]);
+  await post('/api/settings', { flags: { runTags: false } });
+  try { const e = await startTagged({}); assert.ok(e.pipelineId); }
+  finally { await post('/api/settings', { flags: { runTags: true } }); await clear(); }
+});
+
+test('enforced: a memory defrag start is exempt (system start)', async () => {
+  await enforce([CCD]);
+  try {
+    const r = await post('/api/run', { projectDir: repo, workflowId: 'wf_memory_defrag', memoryScope: 'project', guardrailsId: 'normal', prompt: 'Defragment.', scheduledFor: inFuture(86_400_000) });
+    assert.equal(r.status, 202, JSON.stringify(await r.clone().json()));
+  } finally { await clear(); }
+});
+
+test('GET /api/tag-dimensions: per target adds enforce + prefill; machine-wide adds team', async () => {
+  await enforce([{ ...CCD, default: '4420' }]);
+  try {
+    const t = await get(`/api/tag-dimensions?projectDir=${encodeURIComponent(repo)}`);
+    assert.equal(t.enforce, true);
+    assert.deepEqual(t.prefill, ['cc:4420']);
+    const all = await get('/api/tag-dimensions');
+    assert.equal(all.team, null);
+  } finally { await clear(); }
 });
