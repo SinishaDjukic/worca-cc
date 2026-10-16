@@ -39,7 +39,7 @@ const live = (runId, extra = {}) => ({ runId, title: runId, projectDir: PROJECT,
   startedAt: '10:00:00', pendingQuestion: null, ...extra });
 
 // `setup(window)` runs before app.js loads: a stub its module-load wiring must see goes there.
-async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [{ name: 'proj', path: PROJECT, exists: true }], history = HIST, archived = [ARCH], setup } = {}) {
+async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [{ name: 'proj', path: PROJECT, exists: true }], history = HIST, archived = [ARCH], chains = [], setup } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
   const { window } = dom;
   windows.push(window);
@@ -64,7 +64,7 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
     if (/\/api\/history\/[^/]+\/cccc0009$/.test(s)) return ok({ state: { title: 'Archived thing', status: 'done', steps: [], stepper: null, archivedAt: ARCH.archivedAt } });
     if (s.includes('/api/runs/cccc0009/restore')) return ok({ ok: true, id: 'cccc0009', restored: true, warnings: [] });
     if (s.includes('/api/workspaces')) return ok({ workspaces: [] });
-    if (s.endsWith('/api/schedules')) return ok({ schedules: [], tickets: [], counts: {} });
+    if (s.endsWith('/api/schedules')) return ok({ schedules: [], tickets: [], counts: {}, chains });
     return ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [], pipelines: 0, projects: 0, workspaces: 0 });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
@@ -444,4 +444,151 @@ test('a deep-linked archived run on a cold feed repairs its stub record once the
   assert.doesNotMatch(meta.textContent, /\(no project\)/, 'the stub never sticks');
   assert.match(meta.textContent, /proj/);
   assert.equal(doc.querySelector('#hist-detail .rd-page-title').textContent, 'Archived thing');
+});
+
+test('a "Run after" chain is one row with a thin line; its toggle opens the members and keeps focus', async () => {
+  const chains = [{ id: 'p:pchain01', title: 'Chain root', members: [
+    { pipelineId: 'pchain01', ticketId: null, state: 'current', title: 'Chain root', projectDir: PROJECT },
+    { pipelineId: null, ticketId: 'tick0002', state: 'waiting', title: 'Chain next', projectDir: PROJECT },
+  ] }];
+  const { window, doc, recv } = await boot({ chains, history: [] });
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pchain01' })] });
+  go(window, 'runs'); await settle(window);
+  const host = doc.getElementById('runs-list');
+  assert.equal(host.querySelectorAll('.runs-chain').length, 1, 'the live member is replaced by ONE chain row');
+  assert.equal(host.querySelectorAll('.runs-row[data-run-id="r1"]').length, 1);
+  assert.ok(host.querySelector('.runs-chain .runs-row-prog'), 'the overall thin line');
+  assert.match(host.querySelector('.runs-chain .runs-row-sub').textContent, /^Run 1 of 2/);
+  const tog = () => host.querySelector('.runs-chain-toggle');
+  assert.equal(tog().getAttribute('aria-expanded'), 'false');
+  tog().focus();
+  click(window, tog());
+  await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'true');
+  assert.equal(host.querySelectorAll('.runs-chain-member').length, 2);
+  assert.equal(doc.activeElement, tog(), 'focus returns to the rebuilt toggle');
+});
+
+test('D17: a feature chain is one open row titled by the feature, members "1 · Store tags", the row and a waiting slice open the feature page', async () => {
+  const chains = [{ id: 'p:pslice01', title: 'Tags · 1/3: Store tags', members: [
+    { pipelineId: 'pslice01', ticketId: null, state: 'current', title: 'Tags · 1/3: Store tags', projectDir: PROJECT },
+    { pipelineId: null, ticketId: 'tslice02', state: 'waiting', title: 'Tags · 2/3: Run tags', projectDir: PROJECT },
+    { pipelineId: null, ticketId: 'tslice03', state: 'waiting', title: 'Tags · 3/3: Cost report', projectDir: PROJECT },
+  ], feature: { id: 'feat_1', title: 'Tags', slices: [
+    { index: 1, title: 'Store tags', ticketId: null, pipelineId: 'pslice01' },
+    { index: 2, title: 'Run tags', ticketId: 'tslice02', pipelineId: null },
+    { index: 3, title: 'Cost report', ticketId: 'tslice03', pipelineId: null } ] } }];
+  const { window, doc, recv } = await boot({ chains, history: [] });
+  recv({ type: 'hello', flags: { shapeFirst: true }, runs: [live('r1', { pipelineId: 'pslice01' })] });
+  go(window, 'runs'); await settle(window);
+  const host = doc.getElementById('runs-list');
+  assert.equal(host.querySelectorAll('.runs-chain').length, 1);
+  assert.equal(host.querySelector('.runs-chain .runs-row').getAttribute('href'), '#feature/feat_1');
+  assert.match(host.querySelector('.runs-chain .runs-row-sub').textContent, /^Slice 1 of 3/);
+  const tog = () => host.querySelector('.runs-chain-toggle');
+  assert.equal(tog().getAttribute('aria-expanded'), 'true', 'open by default');
+  const links = [...host.querySelectorAll('.runs-chain-link')];
+  assert.deepEqual(links.map((a) => a.textContent), ['Open feature →', '1 · Store tags', '2 · Run tags', '3 · Cost report']);
+  assert.deepEqual(links.map((a) => a.getAttribute('href')), ['#feature/feat_1', '#running/r1', '#feature/feat_1', '#feature/feat_1']);
+  // A plain click on the row itself opens and closes the group (no chevron to find) and stays on the page.
+  const hashBefore = window.location.hash;
+  click(window, host.querySelector('.runs-chain .runs-row-title'));
+  await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'false', 'a row click closes it');
+  assert.equal(window.location.hash, hashBefore, 'a row click does not navigate');
+  click(window, host.querySelector('.runs-chain .runs-row-title'));
+  await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'true', 'and opens it again');
+  click(window, tog());
+  await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'false', 'a person\'s toggle wins');
+  recv({ type: 'state', runId: 'r1', status: 'running' });
+  await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'false', 'and holds across repaints');
+  // A slice waiting for a person: amber "Needs you" on the feature row.
+  recv({ type: 'question', runId: 'r1', question: { id: 'q1', kind: 'clarify', questions: [] } });
+  await settle(window);
+  assert.match(host.querySelector('.runs-chain .runs-row-sub').textContent, /^Slice 1 of 3 · Needs you/);
+  click(window, tog());
+  await settle(window);
+  const member1 = host.querySelectorAll('.runs-chain-member:not(.runs-chain-open-feature)')[0];
+  assert.ok(member1.classList.contains('is-needs'), 'the asking slice is amber');
+  assert.ok(!member1.classList.contains('is-live'), 'and does not pulse');
+});
+
+test('a state frame and a schedules-changed frame keep the chain toggle focused, and a repaint without a text change keeps the thin line element', async () => {
+  const chains = [{ id: 'p:pchain01', title: 'Chain root', members: [
+    { pipelineId: 'pchain01', ticketId: null, state: 'current', title: 'Chain root', projectDir: PROJECT },
+    { pipelineId: null, ticketId: 'tick0002', state: 'waiting', title: 'Chain next', projectDir: PROJECT },
+  ] }];
+  const { window, doc, recv } = await boot({ chains, history: [] });
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pchain01' })] });
+  go(window, 'runs'); await settle(window);
+  const host = doc.getElementById('runs-list');
+  const tog = () => host.querySelector('.runs-chain-toggle');
+  const fill = () => host.querySelector('.runs-chain .runs-row-prog > i');
+  const before = fill();
+  tog().focus();
+  recv({ type: 'state', runId: 'r1', id: 'pchain01', status: 'running', steps: [], subAgents: [], totalCostUsd: 1 });
+  await settle(window);
+  assert.equal(doc.activeElement, tog(), 'focus survives a state frame');
+  assert.strictEqual(fill(), before, 'the thin line element is reused when the row text did not change');
+  recv({ type: 'schedules-changed' });
+  await settle(window);
+  assert.equal(doc.activeElement, tog(), 'focus survives schedules-changed');
+});
+
+const STAGED = () => ({ version: 2, template: { id: 'wf', name: 'WF' }, graph: { nodes: [
+  { id: 'n_plan', kind: 'agent', key: 'planner', label: 'Planner', progressStage: 'plan', ports: { inputs: [], outputs: [], await: true } },
+  { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementer', progressStage: 'build', ports: { inputs: [], outputs: [], await: true } },
+], wires: [] } });
+const STAGED_STEPS = () => [
+  { key: 'x:n_plan:1', executionId: 'x:n_plan:1', nodeId: 'n_plan', ordinal: 1, kind: 'cycle', cycle: 1, status: 'done' },
+  { key: 'x:n_impl:1', executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, kind: 'cycle', cycle: 1, status: 'start' },
+];
+
+test('a plain live run with a staged manifest paints the thin line and the P5 stage text in the list', async () => {
+  const { window, doc, recv } = await boot({ history: [] });
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'p1' })] });
+  recv({ type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: STAGED(), steps: STAGED_STEPS(),
+    active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }], subAgents: [], totalCostUsd: 0 });
+  go(window, 'runs'); await settle(window);
+  const row = doc.querySelector('#runs-list .runs-row[data-run-id="r1"]');
+  assert.ok(row.querySelector('.runs-row-prog > i'), 'the thin line');
+  assert.match(row.querySelector('.runs-row-sub').textContent, /Build · Implementer/);
+});
+
+test('a ticket-born live chain member (server pipelineId null) shows its tone in the chain row, and a question turns it amber', async () => {
+  const chains = [{ id: 't:tick0001', title: 'Born from a ticket', members: [
+    { pipelineId: null, ticketId: 'tick0001', state: 'current', title: 'Born from a ticket', projectDir: PROJECT },
+    { pipelineId: null, ticketId: 'tick0002', state: 'waiting', title: 'Next', projectDir: PROJECT },
+  ] }];
+  const { window, doc, recv } = await boot({ chains, history: [] });
+  recv({ type: 'hello', runs: [live('tick0001', { pipelineId: 'pfirst01' })] });
+  recv({ type: 'state', runId: 'tick0001', id: 'pfirst01', status: 'running', stepper: STAGED(), steps: STAGED_STEPS(),
+    active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }], subAgents: [], totalCostUsd: 0 });
+  go(window, 'runs'); await settle(window);
+  const host = doc.getElementById('runs-list');
+  const bar = () => host.querySelector('.runs-chain .runs-row-prog');
+  assert.ok(bar(), 'the chain row carries the overall line');
+  assert.notEqual(bar().dataset.tone, 'amber');
+  recv({ type: 'question', runId: 'tick0001', kind: 'questions', questions: [{ id: 'q1', question: 'Which one?' }] });
+  await settle(window);
+  assert.equal(bar().dataset.tone, 'amber');
+});
+
+test('chain freshness: no chains at first, then a schedules-changed frame folds the member into a chain row', async () => {
+  const chains = [];
+  const { window, doc, recv } = await boot({ chains, history: [] });
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pchain01' })] });
+  go(window, 'runs'); await settle(window);
+  const host = doc.getElementById('runs-list');
+  assert.equal(host.querySelectorAll('.runs-chain').length, 0);
+  chains.push({ id: 'p:pchain01', title: 'Chain root', members: [
+    { pipelineId: 'pchain01', ticketId: null, state: 'current', title: 'Chain root', projectDir: PROJECT },
+    { pipelineId: null, ticketId: 'tick0002', state: 'waiting', title: 'Chain next', projectDir: PROJECT },
+  ] });
+  recv({ type: 'schedules-changed' });
+  await settle(window);
+  assert.equal(host.querySelectorAll('.runs-chain').length, 1);
 });

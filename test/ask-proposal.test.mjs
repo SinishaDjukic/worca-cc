@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { createProposalValidator, isSyntacticRef, PROPOSAL_ERRORS, pickCardAttachments } from '../src/core/ask/proposal.mjs';
+import { GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 
 const dirA = mkdtempSync(join(tmpdir(), 'worca-ask-prop-a-'));
 const dirB = mkdtempSync(join(tmpdir(), 'worca-ask-prop-b-'));
@@ -27,6 +28,7 @@ const deps = {
         ? { id, name: 'NoGit', description: '', projectPaths: ['/p/demo'], projectKeys: ['demo-00000001'], exists: [true] }
         : null),
   readWorkflow: async (id) => (id === 'wf_default' ? { id, name: 'Default' } : id === 'wf_review' ? { id, name: 'Review only' }
+    : id === 'wf_shape' || id === 'wf_shape_ux' ? { id, name: 'Shaper' }
     : id === 'wf_memory_defrag' ? { id: 'wf_memory_defrag', name: 'Memory defragment', version: 2, domain: 'shared', nodes: [], wires: [] } : null),
   // The runnable gate rides the same seam: derive it from the fake reader so the
   // two can never disagree about which ids exist.
@@ -272,4 +274,96 @@ test('sameAsSource: a card carries it only when true; a non-boolean is an error'
   const bad = await validateProposal({ projectKey: 'demo-00000001', brief: 'x', sameAsSource: 'yes' }, { cardId: 'card_3f2a9c01' });
   assert.equal(bad.ok, false);
   assert.ok(bad.errors.some((e) => /sameAsSource/.test(e)));
+});
+
+// Shape it first (spec D9): `shape` proposes wf_shape (wf_shape_ux with UX); `assess` nudges a plain card.
+test('Shape it first: shape / slices / schedule refusal / the gate, and the assess nudge with its estimates', async () => {
+  const on = (extra = {}) => createProposalValidator({ ...deps, shapeFirst: () => true, ...extra }).validateProposal;
+  const off = createProposalValidator({ ...deps, shapeFirst: () => false }).validateProposal;
+  const base = { projectKey: 'demo-00000001', brief: 'x' };
+  const large = { size: 'large', openDecisions: [] };
+  await checkRows([
+    { name: 'gate on: shape → card shape and wf_shape; ux in perspectives → wf_shape_ux', run: async () => {
+      const card = ok(await on()({ ...base, shape: {} }));
+      assert.equal(card.workflowId, 'wf_shape');
+      assert.deepEqual(card.shape, { perspectives: ['product', 'architect', 'qa'] });
+      const ux = ok(await on()({ ...base, shape: { perspectives: ['product', 'ux'] } }));
+      assert.equal(ux.workflowId, 'wf_shape_ux');
+      assert.ok(ux.shape.perspectives.includes('ux'));
+    } },
+    { name: 'workflowId wf_shape_ux without perspectives keeps the UX variant (no shape, or shape {slices})', run: async () => {
+      for (const extra of [{}, { shape: { slices: 'off' } }]) {
+        const card = ok(await on()({ ...base, workflowId: 'wf_shape_ux', ...extra }));
+        assert.equal(card.workflowId, 'wf_shape_ux', JSON.stringify(extra));
+        assert.ok(card.shape.perspectives.includes('ux'), JSON.stringify(extra));
+      }
+    } },
+    { name: 'gate off: workflowId wf_shape is refused (the slice-1 gap)', run: async () => {
+      assert.deepEqual(errs(await off({ ...base, workflowId: 'wf_shape' })), ['workflow "wf_shape" is not available on this server']);
+    } },
+    { name: 'slices: "off" / "auto" ride the card; anything else refused', run: async () => {
+      for (const slices of ['off', 'auto']) {
+        const card = ok(await on()({ ...base, shape: { slices } }));
+        assert.equal(card.shape.slices, slices);
+        assert.equal(card.workflowId, 'wf_shape');
+      }
+      assert.deepEqual(errs(await on()({ ...base, shape: { slices: 'yes' } })), [PROPOSAL_ERRORS.shapeSlices]);
+    } },
+    { name: 'a shaped proposal carries assess.size on card.shape; without assess or on a bad size there is none', run: async () => {
+      const card = ok(await on()({ ...base, shape: {}, assess: large }));
+      assert.equal(card.shape.size, 'large');
+      assert.equal('size' in ok(await on()({ ...base, shape: {} })).shape, false);
+      assert.equal('size' in ok(await on()({ ...base, shape: {}, assess: { size: 'huge', openDecisions: [] } })).shape, false);
+      const both = ok(await on()({ ...base, shape: { slices: 'off' }, assess: { size: 'medium', openDecisions: [] } }));
+      assert.deepEqual([both.shape.slices, both.shape.size], ['off', 'medium']);
+    } },
+    { name: 'shape + when is refused: a shaped run waits for the user', run: async () => {
+      assert.deepEqual(errs(await on()({ ...base, shape: {}, when: '+90m' })), [PROPOSAL_ERRORS.shapeScheduled]);
+    } },
+    { name: 'shape + workflowId wf_default is refused', run: async () => {
+      assert.deepEqual(errs(await on()({ ...base, shape: {}, workflowId: 'wf_default' })),
+        ['a shaped run uses the Shaper workflow (wf_shape), not "wf_default"']);
+    } },
+    { name: 'gate off: shape refused, assess ignored (no nudge)', run: async () => {
+      assert.deepEqual(errs(await off({ ...base, shape: {} })), ['shape is not available on this server']);
+      const card = ok(await off({ ...base, assess: large }));
+      assert.equal('nudge' in card, false);
+    } },
+    { name: 'assess large → card nudge with the injected estimates; a throwing estimate → nulls', run: async () => {
+      const est = { asIs: { costUsd: 1, minutes: 5, samples: 3 }, shaped: { costUsd: 2, minutes: 9, samples: 3 } };
+      const card = ok(await on({ estimate: async () => est })({ ...base, assess: large }));
+      assert.equal(card.nudge.reason, 'large');
+      assert.deepEqual(card.nudge.estimates, est);
+      assert.equal(card.nudge.asIsAuto, false);
+      assert.equal('shape' in card, false);
+      const thrown = ok(await on({ estimate: async () => { throw new Error('no history'); } })({ ...base, assess: large }));
+      assert.deepEqual(thrown.nudge.estimates, { asIs: null, shaped: null });
+    } },
+    { name: 'assess.perspectives with ux → the estimate is asked for GRAPH_SHAPE_UX_WORKFLOW; otherwise GRAPH_SHAPE_WORKFLOW', run: async () => {
+      const seen = [];
+      const v = on({ estimate: async (wfs) => { seen.push(wfs); return null; } });
+      ok(await v({ ...base, assess: { ...large, perspectives: ['product', 'ux'] } }));
+      ok(await v({ ...base, assess: large }));
+      assert.equal(seen[0].shaped, GRAPH_SHAPE_UX_WORKFLOW);
+      assert.equal(seen[1].shaped, GRAPH_SHAPE_WORKFLOW);
+      assert.equal(seen[1].asIs.id, 'wf_default');
+    } },
+    { name: 'no nudge for a scheduled card, nor for a failing one', run: async () => {
+      let n = 0;
+      const v = on({ estimate: async () => { n += 1; return null; } });
+      assert.equal('nudge' in ok(await v({ ...base, assess: large, when: '+90m' })), false);
+      errs(await v({ ...base, assess: large, guardrailsId: 'permissive' }));
+      assert.equal(n, 0);
+    } },
+    { name: 'shape: null is absent: a plain run card, no error', run: async () => {
+      const card = ok(await on()({ ...base, shape: null }));
+      assert.equal(card.workflowId, 'wf_default');
+      assert.equal('shape' in card, false);
+    } },
+    { name: 'the pinned key set is unchanged without shape / assess (gate on)', run: async () => {
+      const card = ok(await on()(base));
+      assert.deepEqual(Object.keys(card).sort(), ['attachments', 'brief', 'featureBranch', 'guardrailsId', 'members', 'memoryScope', 'note', 'projectDir', 'projectKey', 'projectName',
+        'sourceBranch', 'sourceBranchByKey', 'target', 'title', 'workflowId', 'workflowName', 'workspaceId', 'workspaceName']);
+    } },
+  ]);
 });

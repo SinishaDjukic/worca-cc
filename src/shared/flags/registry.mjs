@@ -40,6 +40,18 @@ export const FLAGS = Object.freeze([
     docs: 'docs/feature-flags.md',
   }),
   entry({
+    key: 'shapeFirst',
+    title: 'Shaper',
+    description: 'Shape a task in Chat before it runs: a few questions, a plan you approve, and large tasks cut into slices.',
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.11.0',
+    added: '2026-10-15',
+    reviewBy: '2027-01-13',
+    docs: 'docs/shape-it-first.md',
+  }),
+  entry({
     key: 'runTags',
     title: 'Run tags',
     description: 'Tag runs (client:acme, team:web) on the New run form, run pages, Runs list, Statistics and Team metrics, with optional tag dimensions from team policy or Settings.',

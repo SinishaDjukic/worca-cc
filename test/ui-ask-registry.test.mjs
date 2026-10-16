@@ -20,6 +20,11 @@ test('askKindOf reproduces the legacy ladder, including the issues-array arm', (
   assert.equal(askKindOf({}), 'clarify');
 });
 
+test('askKindOf routes a plan ask to the plan renderer, not the clarify catch-all', () => {
+  assert.equal(askKindOf({ kind: 'plan' }), 'plan');
+  assert.equal(askKindOf({ kind: 'plan', issues: [] }), 'plan', 'plan wins over the issues-array gate arm');
+});
+
 test('register/lookup: last wins, missing members are filled, junk is ignored', () => {
   registerAskRenderer('zz-probe', { render: () => 'first' });
   registerAskRenderer('zz-probe', { render: () => 'second' });

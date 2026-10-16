@@ -841,7 +841,10 @@ const INCREMENTAL_COLUMNS = {
                             scheduled_for: 'TEXT', schedule_id: 'TEXT',   // v31: scheduled-run provenance (NULL = started by hand)
                             policy_state: 'TEXT',     // v32: team-policy run state (JSON: home, sha, overrides, exceeded, deviations, reason)
                             human_hours: 'REAL NOT NULL DEFAULT 0',     // v33: Σ pipeline_steps.human_hours (money-saved design §6)
-                            started_by: 'TEXT' },   // v36: who started the run (identity.mjs; NULL = before attribution)
+                            started_by: 'TEXT',   // v36: who started the run (identity.mjs; NULL = before attribution)
+                            // Shaper D28, no version of their own (-4-slices owns v57); reconcileSchema adds them
+                            shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
+                            run_size: 'TEXT' },   // small|medium|large from the run's changed lines/files; NULL = unknown
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -864,6 +867,10 @@ const INCREMENTAL_COLUMNS = {
                             engine: 'TEXT',          // v53 (#635): the engine the chat is locked to; NULL = before v53 (read from its model)
                             mode: 'TEXT',            // v54 (Workflows view): 'composer' for the editor's chat; NULL = an Ask Worca chat
                             composer: 'TEXT' },      // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
+  shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
+                            ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
+                            shipped_at: 'TEXT' },     // v58: when Ship as ran
+  shape_feature_slices:   { draft_pr_url: 'TEXT' },   // v58 (D24): the PR openSliceDraft opened as a draft
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
   workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
                             policy_project: 'TEXT',     // v32: team-policy home (member absolute path); NULL = no home
@@ -1057,6 +1064,51 @@ CREATE TABLE IF NOT EXISTS run_tag_events (
 CREATE INDEX IF NOT EXISTS idx_run_tag_events_pipeline ON run_tag_events (pipeline_id, id);
 `;
 
+const SHAPE_SLICES_DDL = `
+CREATE TABLE IF NOT EXISTS shape_features (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  project_dir TEXT NOT NULL,
+  origin_pipeline_id TEXT NOT NULL,
+  source_branch TEXT,
+  outline TEXT NOT NULL,
+  request_base TEXT NOT NULL DEFAULT '{}',
+  perspectives TEXT NOT NULL DEFAULT '[]',
+  workflow_id TEXT NOT NULL,
+  approve_each INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'active',
+  proposed INTEGER,
+  merges INTEGER NOT NULL DEFAULT 0,
+  removals INTEGER NOT NULL DEFAULT 0,
+  replaces TEXT,
+  replaced_by TEXT,
+  replan_ticket_id TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS shape_feature_slices (
+  feature_id TEXT NOT NULL,
+  idx INTEGER NOT NULL,
+  slice_id TEXT,
+  title TEXT NOT NULL,
+  ticket_id TEXT,
+  pipeline_id TEXT,
+  PRIMARY KEY (feature_id, idx),
+  FOREIGN KEY (feature_id) REFERENCES shape_features (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_shape_features_origin ON shape_features (origin_pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_shape_feature_slices_pipeline ON shape_feature_slices (pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_shape_feature_slices_ticket ON shape_feature_slices (ticket_id);
+CREATE TABLE IF NOT EXISTS shape_plans (
+  thread_id TEXT NOT NULL,
+  card_id TEXT NOT NULL,
+  title TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (thread_id, card_id)
+);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1080,6 +1132,9 @@ const INCREMENTAL_TABLES = {
   pipeline_member_prs: PIPELINE_MEMBER_PRS_DDL,
   pr_watches: PR_WATCH_DDL,
   pr_watch_runs: PR_WATCH_DDL,
+  shape_features: SHAPE_SLICES_DDL,
+  shape_feature_slices: SHAPE_SLICES_DDL,
+  shape_plans: SHAPE_SLICES_DDL,
   run_tags:       RUN_TAGS_DDL,
   run_tag_events: RUN_TAGS_DDL,
   night_decisions:   NIGHT_DECISIONS_DDL,
@@ -2163,6 +2218,8 @@ export function migrate(db) {
     if (current < 55) applySchemaV55(db);
     if (current < SCHEMA_VERSION) refreshArchitectureSeed(db);
     if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
+    if (current < 57) db.exec(SHAPE_SLICES_DDL);     // Shape it first: sliced features + Plans
+    // v58 (D24): shape_features ship columns, shape_feature_slices.draft_pr_url — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 59) db.exec(RUN_TAGS_DDL);         // run tags + tag-edit audit (#718); 57-58 are Shaper's (#708, #730)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');

@@ -104,6 +104,7 @@ const KEY_ALLOW = new Set([
   'src/core/engines/mock.mjs',     // MOCK_WRITER_ROLES: the offline mock's role table
   'src/core/graph/seed-templates.mjs',
   'src/core/graph/builtin-workflows.mjs',
+  'src/core/graph/executor.mjs',   // PERSPECTIVE_AGENT_KEYS: the planner/refiner prompts carry the Shape Perspectives block (data)
   'src/core/auto/recipes.mjs',   // Auto recipes: prompt + mock data (D23 — the ONE Auto module that may name agents)
 ]);
 

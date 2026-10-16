@@ -11,15 +11,19 @@
 // the send), which is where the home arms its hero → dock glide (onSend).
 import { registerComposerAddon } from './extensions.mjs';
 import { homeIcon } from './home-icons.mjs';
+import { shapeFirstOn } from './shape-gate.mjs';
 
 export const INTENT_ADDON_ID = 'intent';
 export const EXAMPLE_MS = 3500;
 
 /** Each intent: chip label + icon, the placeholder while it is set, the sentence the sent text starts with, and —
- *  where the composer could not be sent empty otherwise — the text a quick action leaves in it (`prefill`).
+ *  where the composer could not be sent empty otherwise — the text a quick action leaves in it (`prefill`). A tile's
+ *  `badge` shows under its label on the home. Shaper (`shape`) is Shape it first's, gated.
  *  Every one is a real Ask Worca capability (src/core/ask/tools.mjs — the map is in home-actions.mjs). */
 export const INTENTS = Object.freeze({
   run: Object.freeze({ label: 'New run', icon: 'run', placeholder: 'Describe the task…', lead: 'Propose a pipeline run for this task.' }),
+  shape: Object.freeze({ label: 'Shaper', icon: 'shape', placeholder: 'Describe the problem…',
+    lead: 'Shape this task first: propose a run with `shape`.', badge: 'Experimental' }),
   workflow: Object.freeze({ label: 'Build workflow', icon: 'workflow', placeholder: 'Describe the workflow…', lead: 'Build a workflow from this description.' }),
   schedule: Object.freeze({ label: 'Schedule a run', icon: 'schedule', placeholder: 'What should run, and when?', lead: 'Propose a scheduled run for this.' }),
   track: Object.freeze({ label: 'Track a run', icon: 'track', placeholder: 'Which run? Pick one or type its name', lead: 'Track this run here.' }),
@@ -54,9 +58,20 @@ export function intentText(id, text) {
   return body ? `${lead}\n\n${body}` : lead;
 }
 
+/** The person's sent text split for their bubble (D21): the Shaper lead is for the model only, so a message
+ *  that opens with it — alone, or then a blank line — shows the intent chip and the rest. Exact match, ungated: only a
+ *  send made with the gate on can carry it, and a reload renders before the flags arrive. */
+export function splitIntentLead(text) {
+  const s = String(text ?? '');
+  const lead = INTENTS.shape.lead;
+  if (s === lead) return { intent: 'shape', text: '' };
+  if (s.startsWith(`${lead}\n\n`)) return { intent: 'shape', text: s.slice(lead.length + 2) };
+  return { intent: null, text: s };
+}
+
 /**
  * @param {{ win?: { setInterval, clearInterval }, onSend?: () => void, examples?: string[], intervalMs?: number }} o
- * @returns {{ addon: { id: string, mount(leadEl, ctx) }, set(id, { focus }?): boolean, clear({ focus }?): void, current(): string|null }}
+ * @returns {{ addon: { id: string, mount(leadEl, ctx) }, set(id, { focus }?): boolean, clear({ focus }?): void, leave(): void, current(): string|null }}
  */
 export function createIntentAddon({ win = globalThis, onSend = null, examples = EXAMPLES, intervalMs = EXAMPLE_MS } = {}) {
   let current = null;
@@ -65,6 +80,7 @@ export function createIntentAddon({ win = globalThis, onSend = null, examples = 
 
   function set(id, { focus = true } = {}) {
     if (!known(id)) return false;
+    if (id === 'shape' && !shapeFirstOn()) return false;
     current = id;
     pending = null;
     for (const m of mounts) m.paint(focus);
@@ -75,6 +91,10 @@ export function createIntentAddon({ win = globalThis, onSend = null, examples = 
     if (current == null) return;
     current = null;
     for (const m of mounts) m.paint(focus);
+  }
+  /** The Chat page was left (app.js showView): an intent no send carries never outlives the visit. */
+  function leave() {
+    if (!pending) clear();
   }
 
   function mount(leadEl, ctx = {}) {
@@ -211,7 +231,7 @@ export function createIntentAddon({ win = globalThis, onSend = null, examples = 
     return handle;
   }
 
-  return { addon: Object.freeze({ id: INTENT_ADDON_ID, mount }), set, clear, current: () => current };
+  return { addon: Object.freeze({ id: INTENT_ADDON_ID, mount }), set, clear, leave, current: () => current };
 }
 
 /** Create the controller and register its add-on (CONTRACT §2). app.js calls this BEFORE createAskPanel. */

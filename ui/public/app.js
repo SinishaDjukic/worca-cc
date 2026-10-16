@@ -82,6 +82,8 @@ import { createLogDrawer } from './log-drawer.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
+import { runProgress, chainProgress, progressWidth } from '../../src/shared/run-progress.mjs';
+import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS, tagFilterGroups } from './runs-list.mjs';
@@ -247,6 +249,15 @@ import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.m
 import { activeAgents } from './ask-run-card.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
+import { shapeFirstOn, onShapeFirstChange } from './chat/shape-gate.mjs';
+import { renderPlanBody } from './shape/plan-body.mjs';
+import { renderOutlineBody } from './shape/outline-body.mjs';
+import { renderFeature, renderFeatureSummary, featureWhere } from './shape/feature-view.mjs';
+import { sliceLineCopy } from './shape/slice-line.mjs';
+import { decorateShapingQuestions } from './shape/questions.mjs';
+import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
+import { renderChecklistGroups } from './shape/checklist-view.mjs';
+import { toggleMenu } from './workflows/menu.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
 import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
@@ -322,10 +333,164 @@ const pinpointDraft = (quote, text) => openChat({ text, quote });
 let chatPanelRouter = null;    // (segments: ['<runId>', '<tab>'?]) => void — [] closes the panel
 let chatPanelContext = null;   // () => ({ runId?, pipelineId?, projectDir?, projectKey?, workspaceId?, runPage?, diffPath? })
 let chatEntryPending = false;  // openChat() is routing to a bare #chat: enterChatView reopens the LAST chat, not an unread one
+let pendingShapeEntry = null;   // the New run link (§3.6): {text}, armed once Chat home is open
+let lastChatHomeFlags = null;   // the switches chatHomeFlags last read: onHello re-pushes them with the gate, no fetch
 const chatDeps = {
   openRunPanel: (ref, opts) => chatOpenRunPage(ref, opts),
   openArtifact: (ref, artifact) => chatDeps.openRunPanel(ref, { tab: 'artifacts' }),
 };
+
+/** L11: open feature views by id, repainted on `shape-feature` and `schedules-changed`. host -> feature id. */
+const SHAPE_FEATURE_HOSTS = new Map();
+/** P11: slice info per pipeline id (GET /api/shape/pipelines/:pid/slice). Not in the map = not asked; null = asked
+ *  (pending, or not a slice). Every caller's onLoad runs when the answer lands (readyEngines' rule): the run page, the
+ *  Chat home and the Ship it dialog can ask for the same pipeline at once. Cleared on shape-feature and
+ *  schedules-changed frames (a slice's next state and PRs change there). */
+const SLICE_INFO = new Map();
+const SLICE_INFO_WAITERS = new Map();      // pipelineId → Set<onLoad>
+function sliceInfoFor(pipelineId, onLoad) {
+  if (!pipelineId || !shapeFirstOn()) return null;
+  const known = SLICE_INFO.get(pipelineId);
+  if (known) return known;
+  if (typeof onLoad === 'function') {
+    if (!SLICE_INFO_WAITERS.has(pipelineId)) SLICE_INFO_WAITERS.set(pipelineId, new Set());
+    SLICE_INFO_WAITERS.get(pipelineId).add(onLoad);
+  }
+  if (SLICE_INFO.has(pipelineId)) return null;   // pending, or not a slice
+  SLICE_INFO.set(pipelineId, null);
+  fetch(`/api/shape/pipelines/${encodeURIComponent(pipelineId)}/slice`)
+    .then((r) => (r && r.ok ? r.json() : null)).catch(() => null)
+    .then((info) => {
+      const waiters = [...(SLICE_INFO_WAITERS.get(pipelineId) || [])]; SLICE_INFO_WAITERS.delete(pipelineId);
+      if (!info || !info.featureId) return;
+      SLICE_INFO.set(pipelineId, info);
+      for (const fn of waiters) { try { fn(info); } catch { /* a repaint hint only */ } }
+    });
+  return null;
+}
+/** D16, D22: the run page's slice line (live and History glances); a fixed host rebuilt in place. */
+function paintSliceLine(host, line) {
+  if (!host) return;
+  host.hidden = !line;
+  host.replaceChildren();
+  if (!line) return;
+  const a = document.createElement('a'); a.className = 'rd-slice-link'; a.href = line.href; a.textContent = line.text;
+  host.appendChild(a);
+  if (line.openFeature) {
+    const b = document.createElement('a'); b.className = 'btn rd-slice-open'; b.href = line.href; b.textContent = 'Open feature';
+    host.appendChild(b);
+  }
+}
+/** F33: Chat's own run panel (chatDeps.openRunPanel is openChatRunPanel once Chat is installed): it stays in Chat.
+ *  The full ref: a run id alone can be a superseded paused copy, or one a restarted server no longer knows. */
+function openShapeRun(ref, projectKey) {
+  const r = { ...(ref.runId ? { runId: ref.runId } : {}), ...(ref.pipelineId ? { pipelineId: ref.pipelineId, projectKey } : {}) };
+  return r.runId || r.pipelineId ? chatDeps.openRunPanel(r) : null;
+}
+async function paintShapeFeature(host) {
+  const id = SHAPE_FEATURE_HOSTS.get(host);
+  if (!id) return;
+  // Bumped on every path, the gate-off one too, so a fetch in flight never lands after the host was cleared.
+  const seq = (host.__shapeSeq = (host.__shapeSeq || 0) + 1);       // the last paint wins (act + WS frames race)
+  if (!shapeFirstOn()) { host.replaceChildren(); host.dataset.painted = ''; host.__shapeWant = null; return; }
+  // The page's first paint of this feature: say so while it loads, not a blank page (a busy server takes seconds).
+  if (host.__shapeMode === 'page' && host.dataset.painted !== id) {
+    host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-loading', textContent: 'Loading feature…' }));
+  }
+  const r = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
+  const f = r && r.ok ? await r.json().catch(() => null) : null;
+  if (seq !== host.__shapeSeq || SHAPE_FEATURE_HOSTS.get(host) !== id) return;
+  if (!f) {
+    // An unknown feature (404) empties the host. Any other failure keeps the last view and its error line.
+    if (r && r.status === 404) {
+      host.replaceChildren(...(host.__shapeMode === 'page'
+        ? [Object.assign(document.createElement('p'), { className: 'feature-page-gone', textContent: 'This feature no longer exists.' })] : []));
+      host.dataset.painted = ''; host.__shapeShown = null; host.__shapeShownView = null;
+    } else if (host.querySelector('.feature-page-loading')) {
+      host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-gone', textContent: 'Could not load this feature. Reload to try again.' }));
+    }
+    return;
+  }
+  // F47: the route follows replaced_by, so f.id can be a newer feature than the host's id. Frames name f.id, and the
+  // actions must reach it.
+  host.__shapeShown = f.id;
+  // A rebuild drops the focus (rule: app-js-repaint-drops-focus): give it back to the same control. An action names
+  // its control itself (F39: in Chromium the disabled button has already lost the focus); a WS repaint reads it.
+  const act = host.__shapeFocus
+    || (host.contains(document.activeElement) && document.activeElement.dataset ? document.activeElement.dataset.act : null);
+  host.__shapeFocus = null;
+  const fullDeps = {
+    confirm: confirmModal,
+    error: host.__shapeErr || null,
+    openSlice: (s) => openShapeRun(s, f.projectKey),
+    openRun: (ref) => openShapeRun(ref, f.projectKey),
+    act: async (action, body, { focus = null } = {}) => {
+      const res = await fetch(`/api/shape/features/${encodeURIComponent(f.id)}/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) }).catch(() => null);
+      const out = res ? await res.json().catch(() => ({})) : {};
+      host.__shapeErr = res && res.ok ? null : (out.error || 'That did not work. Try again.');
+      host.__shapeFocus = focus;
+      await paintShapeFeature(host);                         // carries the error (deps.error) across the rebuild
+      return res && res.ok ? { ok: true } : { ok: false, error: host.__shapeErr };
+    },
+  };
+  // P13: the Chat run card gets the summary; the feature page (D16) the full view with its page extras.
+  host.__shapeShownView = host.__shapeMode === 'page' ? f : null;
+  host.replaceChildren(host.__shapeMode === 'summary'
+    ? renderFeatureSummary(document, f, { openFeature: (fid) => { location.hash = `#feature/${encodeURIComponent(fid)}`; } })
+    : renderFeature(document, f, { ...fullDeps, ...(host.__shapeMode === 'page' ? featurePageDeps(host) : {}) }));
+  host.dataset.painted = id;
+  if (act) { const again = host.querySelector(`[data-act="${act}"]`); if (again && !again.disabled) again.focus(); }
+}
+/** Mount (or re-point) a host. F41: the run card calls it on every repaint (once a second), so it fetches only when
+ *  the host is pointed at a new id. A pending or failed fetch is not retried from here: `shape-feature`,
+ *  `schedules-changed` and `hello` repaint every host. */
+function mountShapeFeature(host, id, { mode = 'full' } = {}) {
+  if (host.__shapeWant === id && host.__shapeMode === mode) return;
+  host.__shapeWant = id; host.__shapeMode = mode;
+  SHAPE_FEATURE_HOSTS.set(host, id);
+  host.__shapeErr = null;
+  paintShapeFeature(host);
+}
+function refreshShapeFeatures(id = null) {
+  for (const [host, fid] of SHAPE_FEATURE_HOSTS) {
+    if (!host.isConnected) { SHAPE_FEATURE_HOSTS.delete(host); continue; }
+    if (host.closest('.view.hidden')) continue;              // the feature page while away: showView repaints it on return
+    if (!id || fid === id || host.__shapeShown === id) paintShapeFeature(host);
+  }
+}
+/** D16: the page's extras: the live slice's progress (for the "you are here" line), and its ask in a persistent host (P12). */
+const featureLiveRun = (s) => (s.runId ? runs.get(s.runId) : null) || (s.pipelineId ? latestPipelineRun(s.pipelineId) : null);
+function featureProgress(s) { const r = featureLiveRun(s); return r && isGraphRun(r) ? runDecorFor(r).stageProgress : null; }
+function featurePageDeps(host) {
+  return {
+    page: true,
+    progressOf: featureProgress,
+    mountAsk: (slot, s) => {
+      // One ask element per page host, moved into each rebuild's slot. chatPaintQuestion rebuilds only when the
+      // question changes and registers the panel in CHAT_QPANELS (postAnswer's busy sweep, 422 marks, clearQpanel).
+      if (!host.__featureAsk) {
+        host.__featureAsk = document.createElement('div');
+        host.__featureAsk.className = 'shape-feature-ask';
+        host.__featureAsk.appendChild(Object.assign(document.createElement('div'), { className: 'qpanel hidden' }));
+      }
+      slot.replaceWith(host.__featureAsk);
+      chatPaintQuestion({ runId: s.runId || null, pipelineId: s.pipelineId || null }, host.__featureAsk);
+    },
+  };
+}
+/** D33: move the feature page's "you are here" line on a run frame, without a fetch. */
+function paintFeaturePageProgress(r) {
+  if (currentShownView !== 'feature' || !r || !r.pipelineId) return;
+  const page = document.querySelector('[data-view="feature"] .feature-page');
+  const box = page && page.querySelector('.shape-feature-current');
+  const head = page && page.querySelector('.shape-feature.is-page .shape-feature-head');
+  const f = page && page.__shapeShownView;                 // the last view JSON paintShapeFeature drew in page mode
+  const cur = f && box ? f.slices.find((s) => String(s.index) === box.dataset.slice) : null;
+  if (!cur || !head || (cur.pipelineId !== r.pipelineId && cur.runId !== r.runId)) return;
+  head.textContent = featureWhere(f, featureProgress(cur));
+}
+chatDeps.mountFeature = (host, id) => mountShapeFeature(host, id, { mode: 'summary' });   // P13: the Chat run card (F33)
+if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, mountCard: (h, id) => chatDeps.mountFeature(h, id), refresh: refreshShapeFeatures };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -1369,7 +1534,18 @@ function handleServerMessage(msg) {
     refreshAllCounts();
     activityMenu?.schedulesChanged();   // an open Activity refetches its Scheduled tab; a closed one forgets it
     // Chat P4: a paused run in the panel offers "Resume at" off the same tickets.
-    if (currentView() === 'schedules' || inRunsView() || crpShowsRun()) void schedulesView.load().then(() => { if (inRunsView()) paintRunsList(); repaintLimitNotices(); });
+    if (currentView() === 'schedules' || inRunsView() || crpShowsRun()) void schedulesView.load().then(() => { if (inRunsView()) { paintRunsList(); rdRepaintOpenGlance(); } repaintLimitNotices(); });
+    // Last, so even a throw could not cost the Schedules page its refresh. chatHome is null until mountChatHome (F40).
+    SLICE_INFO.clear();
+    refreshShapeFeatures();
+    chatHome?.refreshPlans();
+    return;
+  }
+  // Shape it first: a feature's slices changed (an action, a slice's run, the scheduler tick). L11.
+  if (msg.type === 'shape-feature') {
+    SLICE_INFO.clear();
+    refreshShapeFeatures(msg.id);
+    chatHome?.refreshPlans();
     return;
   }
   if (msg.type === 'extension-pair-request') { void promptExtensionPair(msg.request); return; }
@@ -1583,6 +1759,7 @@ function handleServerMessage(msg) {
       break;
     case 'state':
       onState(r, msg);
+      paintFeaturePageProgress(r);
       break;
     case 'title':
       onTitle(r, msg);
@@ -1628,6 +1805,17 @@ function handleServerMessage(msg) {
   if (crp.waiting && crp.want && msg.runId && (msg.runId === crp.want.id || (runs.get(msg.runId) || {}).pipelineId === crp.want.id)) crpRetryPending();
 }
 
+// Shape it first's UI that nothing else rebuilds: the New run link and the Chat home tile. Run on every hello and
+// whenever the flag flips (Settings › Experimental, or a `flags` frame).
+function syncShapeFirstUi() {
+  refreshShapeFeatures();   // a view emptied while the gate was off comes back
+  const shapeLink = document.getElementById('shapeChatLink');
+  if (shapeLink) shapeLink.hidden = !shapeFirstOn();
+  // The spread keeps scripts/tasks: setFlags replaces the set.
+  if (chatHome && lastChatHomeFlags) chatHome.update({ flags: { ...lastChatHomeFlags, shapeFirst: shapeFirstOn() } });
+}
+onShapeFirstChange(syncShapeFirstUi);
+
 // hello greeting carries the server's authoritative run list. We upsert each
 // into our map, backfill-subscribe to non-terminal runs whose buffer we don't
 // yet have, and refresh whatever view is showing.
@@ -1638,6 +1826,7 @@ function onHello(msg) {
   noteBoot(state, msg.bootId, runs);   // a restarted server numbers run events from 1 again
   applyServerMock(msg.serverMock);     // every hello: a restarted server may have changed mode
   if (msg.flags) applyFlags(msg.flags);  // every hello: a frame missed while the socket was down, or a restart with a new WORCA_FLAGS
+  syncShapeFirstUi();
   // A restarted server lists only the runs IT started, and nothing below drops the old ones: mark
   // every entry stale, and the upserts below clear the ones it lists. The saved run's bar skips a
   // stale entry (hdPipelineRun), which would otherwise offer a Pause / Stop the server answers
@@ -1678,6 +1867,7 @@ function onHello(msg) {
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
       night: r0.night || undefined,
       tags: Array.isArray(r0.tags) ? r0.tags : undefined,
+      shaping: r0.shaping || null,
     });
     // Seed the run's stepper from the hello summary so the live card resolves
     // sub-agents to their real nodes BEFORE any subagent delta paints — closing
@@ -1710,6 +1900,16 @@ function onHello(msg) {
       }
     }
     // Terminal runs (done|error|stopped) are simply excluded from liveRuns().
+  }
+  // A restarted server never re-listed these: a run the old process was running died with it. Without this it reads
+  // as running (spinner, live cost) until a page reload; History (reloaded below) has its real state. A paused run
+  // keeps its pause: the new server can resume it.
+  if (rebooted) {
+    for (const r of runs.values()) {
+      if (!r.staleBoot || !['starting', 'running', 'pausing'].includes(r.status)) continue;
+      r.status = 'interrupted';
+      r.pendingQuestion = null;
+    }
   }
 
   pokeAskRuns(null, 'hello');
@@ -1815,6 +2015,7 @@ function makeRun({
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
   pauseDetail = null, limitEngine = null, limitResetAt = null, runEngine = undefined, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [],
+  shaping = null,
 }) {
   return {
     runId,
@@ -1838,6 +2039,7 @@ function makeRun({
     workspaceName,
     night,                // Away mode on this run: {optIn, override, decisions, flagged, openedAt} (hello / state)
     tags,                 // run tags (#718): normalised 'key:value' / 'key' strings (hello / run-created)
+    shaping,              // Shape it first: {perspectives, rounds, approved, savedTo} on a shaping run (hello / state), or null
     // Stable ordering key: assigned once per runId, never bumped by activity
     // and never re-minted if the run is dropped and re-materialized.
     // hello seeds runs in server registration order, so this tracks true
@@ -1884,7 +2086,23 @@ function upsertRun(partial) {
     }
     r.staleBoot = false;   // every caller relays the current server: it knows this runId
   }
+  dropSupersededPaused(r);
   return r;
+}
+
+// A resume runs under a NEW runId. resumeRunFromCard drops the old paused copy when THIS tab resumed it; a resume
+// from elsewhere (the usage-limit auto-resume, another tab, the feature page) only shows up as the new run going
+// live, so drop the older paused/interrupted copies of its pipeline here — the server evicts the same lineage
+// (ui/server.mjs, /api/resume). Without this the copy lingers as a phantom "Paused" row under Needs you.
+function dropSupersededPaused(r) {
+  if (!r || !r.pipelineId || (r.status !== 'starting' && r.status !== 'running')) return;
+  for (const [id, e] of runs) {
+    if (id === r.runId || e.pipelineId !== r.pipelineId || (e.status !== 'paused' && e.status !== 'interrupted')) continue;
+    if ((e.orderKey || 0) > (r.orderKey || 0)) continue;   // a resurrected stale frame never evicts a newer copy
+    alerts.onResolved(alertRun(e));
+    runs.delete(id);
+    if (state.selectedRunId === id) state.selectedRunId = '';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2312,6 +2530,7 @@ function addNightDecisions(r, list) {
 
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
+  if (msg.shaping && typeof msg.shaping === 'object') r.shaping = msg.shaping;
   if (msg.startedAt) r.startedAt = msg.startedAt;
   // The harness mirrors startedBy onto its state (creation-immutable), so a live card
   // learns who started the run from the first state snapshot.
@@ -2324,6 +2543,7 @@ function onState(r, msg) {
   // hello snapshot, i.e. after a page reload — and /api/resume keys on it.
   // Guard: id-less pre-createPipeline snapshots must not clobber a captured id.
   if (typeof msg.id === 'string' && msg.id) r.pipelineId = msg.id;
+  dropSupersededPaused(r);
   if (msg && msg.branch && typeof msg.branch === 'object') {
     // Keep the WHOLE branch record, not just .feature: the detail header's
     // `base →` row needs .source, and the retained-work banner needs
@@ -2364,7 +2584,7 @@ function onState(r, msg) {
   // omits the field (older runs / partial snapshots) leaves the delta-built array.
   r.subAgents = msg.subAgents || r.subAgents;
   // v2 run-level outcome fields (ignored by v1 runs, which never send them).
-  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate']) {
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts']) {
     if (msg[k] !== undefined) r[k] = msg[k];
   }
   // Skills registry §6 board 9: the run's set skills (run-harness state.skillMount) for its Overview.
@@ -6055,7 +6275,11 @@ registerAskRenderer('clarify', {
     // The ACTIVE agent names the panel (the v1 phase vocabulary is gone).
     : `${(activeNodes(ctx.run)[0] || {}).label || 'Pipeline'} needs your input`),
   count: (pq) => { const n = realQuestions(pq).length; return `${n} question${n === 1 ? '' : 's'}`; },
-  render: (panel, pq, ctx) => renderClarifyBody(ctx.run, panel, pq),
+  // title: unchanged. The visible "A few questions before the plan" heading is askHeading's.
+  render: (panel, pq, ctx) => {
+    renderClarifyBody(ctx.run, panel, pq);
+    if (shapeFirstOn() && isShapingRun(ctx.run)) decorateShapingQuestions(panel, pq, ctx);
+  },
   // `panel` is null only for a caller that has no panel node; r._answers is the
   // no-panel fallback renderClarifyBody keeps writing.
   collect: (panel) => ({
@@ -6078,6 +6302,51 @@ registerAskRenderer('workflow', {
   count: () => 'workflow',
   render: (panel, pq, ctx) => renderWorkflowBody(ctx.run, panel, pq),
 });
+// Shape it first (S4): registered ungated: the only way to answer a run still held when the gate goes off.
+// title/count fill the hidden .qpanel-head (F28); askHeading is what people read. Kept for completeness.
+registerAskRenderer('plan', {
+  title: (pq) => (pq.plan && pq.plan.outline ? `Slices ready for your approval · v${pq.plan.round || 1}` : `Plan ready for your approval · v${(pq.plan && pq.plan.round) || 1}`),
+  count: (pq) => { const c = pq.plan && pq.plan.check; return c && Number.isFinite(c.total) ? `${pq.plan.outline ? 'Outline' : 'Shape'} ${c.passed}/${c.total}` : null; },
+  render: (panel, pq, ctx) => (pq.plan && pq.plan.outline
+    ? renderOutlineBody(panel, pq, outlineBodyDeps(ctx))
+    : renderPlanBody(panel, pq, planBodyDeps(ctx))),
+  setErrors: (panel, errors) => { if (panel && panel.__plan) panel.__plan.setErrors(errors); },
+});
+
+/** The outline body's deps: the plan body's posting rule (the gate read at post time, S4) and its confirm dialog. */
+function outlineBodyDeps(ctx) {
+  const r = ctx.run;
+  return { doc: ctx.doc, run: r, extras: shapeFirstOn(), confirm: confirmModal,
+    submit: (payload) => postAnswer(r, payload, { plan: shapeFirstOn() }) };
+}
+
+function planBodyDeps(ctx) {
+  const r = ctx.run;
+  const extras = shapeFirstOn();
+  const runUrl = (tail) => `/api/runs/${encodeURIComponent(r.runId)}${tail}`;
+  return {
+    doc: document, run: r, extras,
+    fetchPlan: (round) => (extras
+      ? fetch(runUrl(`/plan${round ? `?round=${encodeURIComponent(round)}` : ''}`)).then((res) => (res.ok ? res.json() : null)).catch(() => null)
+      : Promise.resolve(null)),
+    markdown: { ensure: bindMarkdownReady, render: (t) => hdMarkdown.render(t) },
+    // The route is chosen when the answer is POSTED: the panel is rebuilt only when the question id changes, and a hello
+    // can turn the gate off in between. The gated route would then answer 404 and strand the run (D12).
+    submit: (payload) => postAnswer(r, payload, { plan: shapeFirstOn() }),
+    openFull: () => {
+      // openRunArtifactPopup rejects only a falsy artifact; {relPath:''} would open an empty viewer.
+      const file = r.pendingQuestion && r.pendingQuestion.plan ? r.pendingQuestion.plan.file : '';
+      if (file) openRunArtifactPopup({ pipelineId: r.pipelineId || null, runId: r.runId }, { relPath: file, kind: 'plan' });
+    },
+    // makeRun defaults a missing title to '(untitled)': never prefill that string.
+    openInNewRun: (text) => openNewPipeline({ target: 'project', projectDir: r.projectDir, workflowId: 'wf_auto',
+      promptMarkdown: text, title: r.title && r.title !== '(untitled)' ? r.title : '' }),
+    savePlan: (overwrite) => fetch(runUrl('/plan/save'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overwrite }) }).then(async (res) => ({ status: res.status, body: await safeJson(res) }))
+      .catch(() => null),
+    confirm: (opts) => confirmModal(opts),
+  };
+}
 
 // Gather the answer from the panel that was submitted and POST it. The shape is
 // the registered renderer's business; a renderer that returns null has refused
@@ -6098,7 +6367,7 @@ function submitAnswer(r, panel = null) {
 // Returns TRUE only when the POST came back 200 — the workflow panel's Revise
 // echo is recorded off that, so a failed send never claims a round the server
 // never saw. Every other caller ignores the return.
-async function postAnswer(r, payload) {
+async function postAnswer(r, payload, { plan = false } = {}) {
   if (!r || !r.pendingQuestion) return false;
   // Re-entrancy guard: an answer is already in flight for this run. Without
   // this a synthetic/double click (or a re-triggered handler) could fire a
@@ -6113,11 +6382,15 @@ async function postAnswer(r, payload) {
   r._answering = true;
 
   try {
-    const res = await fetch('/api/answer', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ runId, id, payload }),
-    });
+    const res = plan
+      // Shape it first (S4): the gated plan route while the gate is on; /api/answer otherwise, so a held run is never stranded.
+      ? await fetch(`/api/runs/${encodeURIComponent(runId)}/answer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...payload }) })
+      : await fetch('/api/answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId, id, payload }),
+      });
     // Gate 3 said no. That is an ANSWER outcome, not a transport failure: the
     // question stays open, the panel keeps every typed value, and the renderer
     // marks the offending fields. pendingQuestion is deliberately untouched.
@@ -6674,6 +6947,14 @@ el.mdFile.addEventListener('change', async () => {
   } catch (e) {
     el.mdFileName.textContent = `failed to read: ${e.message}`;
   }
+});
+
+// Shape it first's New run link (§3.6): the Markdown goes to the Chat home with Shaper armed.
+document.getElementById('shapeChatLinkBtn')?.addEventListener('click', () => {
+  pendingShapeEntry = { text: el.promptMarkdown ? el.promptMarkdown.value.trim() : '' };
+  // The link lives on #new, and enterChatView swaps #chat/new to #chat at once, so the address is never already
+  // #chat/new here: this always fires a hashchange. Home: `head` is set, so no last-chat pick.
+  location.hash = 'chat/new';
 });
 
 // Selected extra files live in this array, not in the <input>: a FileList is
@@ -21599,6 +21880,16 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   if (!modal.classList.contains('hidden')) return false;  // double-open guard: a second open
                                                           // would stack a second onOk -> two POSTs
   modal.dataset.pipelineId = String((record && record.id) || '');   // Chat P4: whose dialog this is (crpCloseShipItFor)
+  // D22: a slice with a next slice says to merge this PR first. The first open usually finds the cache empty: the
+  // answer fills the note, if the dialog still shows this run.
+  const sliceNote = modal.querySelector('.shipit-slice-note');
+  const paintSliceNote = (info) => {
+    if (!sliceNote) return;
+    sliceNote.hidden = !(info && info.next);
+    sliceNote.textContent = info && info.next ? `Slice ${info.next.index} builds on this branch: merge this PR first.` : '';
+  };
+  const slicePid = String((record && record.id) || '');
+  paintSliceNote(slicePid ? sliceInfoFor(slicePid, (info) => { if (modal.dataset.pipelineId === slicePid) paintSliceNote(info); }) : null);
   if (record.target === 'workspace') return openShipItWsModal(record, data, { link, onClose });
   modal.querySelector('#shipit-repos').hidden = true;   // a previous workspace open may have shown it
   const q = (sel) => modal.querySelector(sel);
@@ -21822,6 +22113,17 @@ function rdRepaintOpenGlance(pipelineId = null) {
   if (pipelineId && r.pipelineId !== pipelineId) return;
   paintRdBanners(runDetailState.screen, r);   // the worktree notice reads these rows too (checkout, retained work)
   paintRdGlance(runDetailState.screen, r);
+}
+
+/** The open chain `r` belongs to, as a runsChainItem; null for a single run (P8: no overall bar). */
+function chainItemFor(r) {
+  if (!r || !(r.pipelineId || r.runId)) return null;
+  if (!schedulesView.isLoaded()) {
+    if (!chainsAsked) { chainsAsked = true; void withWorkspaces().then(() => schedulesView.load()).then(() => rdRepaintOpenGlance()).catch(() => {}); }
+    return null;
+  }
+  const c = schedulesView.chains().find((x) => x.members.some((m) => (r.pipelineId && m.pipelineId === r.pipelineId) || m.ticketId === r.runId));
+  return c ? runsChainItem(c, false) : null;
 }
 
 /** Some PR host is reachable (gh, or an Azure DevOps token); the Ship-it modal and the server name the
@@ -22323,6 +22625,9 @@ function paintHdGlance(screen, record, data) {
   const checks = results ? hdChecks(results) : [];
   const s = results && results.summary;
   const pr = glancePrInput(record);
+  // D16, D22: a finished slice's place in its feature (the line is a fixed host, rebuilt in place: no duplicates).
+  const info = record && record.id ? sliceInfoFor(record.id, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }) : null;
+  paintSliceLine(glance.querySelector('.rd-slice-line'), sliceLineCopy(info, { done: st.status === 'done' }));
   const copy = glanceCopy(run, {
     pill: { text: meta.word }, checks: results ? checks.length : null, lastLine: '',
     pr, files: s ? (s.filesNew || 0) + (s.filesChanged || 0) + (s.filesDeleted || 0) : null,
@@ -25779,6 +26084,10 @@ function buildHdOverview(sec, record, data) {
     paintActionsStrip(strip, record.id, runActionQuery(record.projectDir, record).toString());
   }
   if (checks.length) wrap.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
+  if (shapeFirstOn()) {   // spec D7: the same groups as the run page
+    const cl = renderChecklistGroups(document, data.reviews);
+    if (cl) wrap.appendChild(cl);
+  }
 
   // 2) Stat cards.
   const grid = document.createElement('div');
@@ -27101,6 +27410,24 @@ function paintRunSkills(host, mount) {
   host.replaceChildren(...(card ? [card] : []));
 }
 
+/** Spec D7: the Overview's Perspective checklists, from the saved review rows. While the run is live it
+ *  re-fetches when its status or a node's state moves (a review cycle finished); a live run that is not shaping
+ *  never fetches for it. */
+function paintRdChecklists(host, run) {
+  if (!shapeFirstOn()) { host.hidden = true; host.replaceChildren(); delete host.dataset.sig; return; }
+  const live = !RD_TERMINAL.includes(run.status);
+  if (live && !isShapingRun(run)) { host.hidden = true; return; }
+  const sig = `${run.status}|${JSON.stringify(run.nodeStatus || {})}`;
+  if (host.dataset.sig === sig) return;
+  host.dataset.sig = sig;
+  void rdLoadData(run, { force: live }).then((data) => {
+    if (!host.isConnected || host.dataset.sig !== sig) return;
+    const el = renderChecklistGroups(document, data && data.reviews);
+    host.hidden = !el;
+    host.replaceChildren(...(el ? [el] : []));
+  });
+}
+
 function buildRdOverview(sec, ctx) {
   sec.innerHTML = '';
   const wrap = document.createElement('div');
@@ -27117,14 +27444,17 @@ function buildRdOverview(sec, ctx) {
   strip.hidden = true;
   const skills = tagLevel(document.createElement('div'), 'advanced');   // the set skills it got (§6 board 9)
   skills.className = 'hd-ov-skills-host';
-  wrap.append(banner, strip, grid, skills, rdOvTask(ctx.run));
+  const checklists = document.createElement('div');   // Perspective checklists (spec D7)
+  checklists.className = 'rd-checklists';
+  checklists.hidden = true;
+  wrap.append(banner, strip, grid, checklists, skills, rdOvTask(ctx.run));
   sec.appendChild(wrap);
   const paintStrip = (run) => {
     const on = isTerminalStatus(run.status) && !!run.pipelineId;
     strip.hidden = !on;
     if (on && strip.dataset.runId !== run.pipelineId) paintActionsStrip(strip, run.pipelineId, rdScopeQuery(run));
   };
-  const paint = (c) => { rdOvStateBanner(banner, c.run); paintStrip(c.run); rdOvStats(grid, c.run); paintRunSkills(skills, c.run.skillMount); };
+  const paint = (c) => { rdOvStateBanner(banner, c.run); paintStrip(c.run); rdOvStats(grid, c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
   paint(ctx);
   sec.__update = paint;
 }
@@ -28006,8 +28336,10 @@ function graphModelLabel(id) { return id ? (modelById(id)?.label || id) : null; 
 function runDecorFor(r, mode = 'monitor') {
   const seq = r._decorSeq || 0;
   if (!r._decorCache || r._decorCache.seq !== seq) {
-    r._decorCache = { seq, views: new Map(),
-      decor: decorFromState(r, { live: isLive(r), now: Date.now(), subsOf: (id) => subAgentsForNode(r, id), lastLines: liveLinesOf(r), modelLabel: graphModelLabel }) };
+    const decor = decorFromState(r, { live: isLive(r), now: Date.now(), subsOf: (id) => subAgentsForNode(r, id), lastLines: liveLinesOf(r), modelLabel: graphModelLabel });
+    // Run progress (P3): the memo lives on the RUN, not the per-generation bag, so the fill never drops.
+    r._progressMemo ||= { fraction: 0, stage: 0 };
+    r._decorCache = { seq, views: new Map(), decor: { ...decor, stageProgress: runProgress(r, r._progressMemo) } };
   }
   const cache = r._decorCache;
   let bag = cache.views.get(mode);
@@ -28032,11 +28364,10 @@ function paintQuiescenceBanner(host, decor) {
   el.hidden = !show;
 }
 
-/** `3/6 done` — D15 forbids a bar, not a number. '' on a v1 run. */
+/** The P5 line ("Build · task 2 of 4"); supersedes the D15 "3/6 done" counter (spec 2026-10-14 P12). '' on a v1 run. */
 function progressText(r) {
   if (!isGraphRun(r)) return '';
-  const { done, total } = runDecorFor(r).progress;
-  return `${done}/${total} done`;
+  return runDecorFor(r).stageProgress.text;
 }
 
 // ---- Ask Worca run store (spec seam 2): the chat's progress cards read the SAME run models the Running list
@@ -28051,11 +28382,13 @@ function askRunSnapshot(r) {
     title: r.title || '', projectKey: null, workspaceId: r.workspaceId || null, projectDir: r.projectDir || '',
     projectNames: Array.isArray(r.projectNames) ? r.projectNames : null,
     status: r.status, pauseReason: r.pauseReason || null, pendingQuestion: r.pendingQuestion || null,
+    ...(r.shaping ? { shaping: r.shaping } : {}),
     live: isLive(r), terminal: !!r._finished || isTerminalStatus(r.status),
     startedAt: r.startedAt || null, elapsedMs: liveTotalMs(r.steps, Date.now()),
     costUsd: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,   // null: cost unknown (Cursor), never $0.00
     // Chat P3 (U10): activeNodes' model + effort, named through the catalog, plus the execution's cycle.
     progress: decor ? decor.progress : null, active: graph ? activeAgents(decor, r.stepper, { modelLabel: graphModelLabel }) : [],
+    stageProgress: decor ? decor.stageProgress : null,
     stepper: graph ? r.stepper : null, decor,
     // Chat P3 (CONTRACT §5): the chat run card's extra facts. A live run model holds no results.json numbers,
     // artifact rows or PR — the card reads those over REST once the run is over (GET /api/ask/runs/:id `extras`).
@@ -29538,7 +29871,7 @@ function buildHdArtifacts(sec, record, data) {
 
 
 // Frontier step for the compact card row (design §4.3): DONE agent nodes over
-// agent nodes (D15: a number, never a bar), the active-node copy, and the active
+// agent nodes (a count, not the bar; the run progress bar is src/shared/run-progress.mjs, spec 2026-10-14 P12 supersedes D15), the active-node copy, and the active
 // node's `model · effort` caption. Every run is a graph run now.
 function runStepLabel(r) {
   const d = runDecorFor(r);
@@ -29668,7 +30001,7 @@ function loadRunsGroupBy() {
   try { const v = localStorage.getItem(RUNS_GROUP_BY_KEY); return RUNS_GROUPINGS.includes(v) ? v : 'project'; }
   catch { return 'project'; }
 }
-const runsUi = { query: '', tag: '', filter: loadRunsFilter(), groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false };
+const runsUi = { query: '', tag: '', filter: loadRunsFilter(), groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false, chainsOpen: new Set(), chainsToggled: new Map() };
 
 function histGroupName(p) {
   return (p.target === 'workspace' && p.workspaceName) || p.projectName || p.projectKey || '(unknown project)';
@@ -29712,12 +30045,15 @@ function runsLiveItem(r) {
   const terminal = RD_TERMINAL.includes(r.status);
   const rec = terminal && r.pipelineId ? rdHistoryRecord(r) : null;
   const failed = r.status === 'error' ? ledgerRows(r).filter((x) => x.status === 'error').pop() : null;
+  const prog = isGraphRun(r) ? runDecorFor(r).stageProgress : null;
   return {
     runId: r.runId, pipelineId: r.pipelineId || '', title: r.title, status: r.status,
     // nodeLabel(null, id) returns the raw node id ("n3 review"): name the step only with a manifest.
-    ask: pq != null ? { kind: pq.kind || '', step: pq.nodeId && r.stepper ? nodeLabel(r.stepper, pq.nodeId) : '' } : null,
+    ask: pq != null ? { kind: pq.kind || '', step: pq.nodeId && r.stepper ? nodeLabel(r.stepper, pq.nodeId) : '',
+      outline: !!(pq.plan && (pq.plan.outline || pq.plan.port === 'outline')) } : null,
     pauseReason: r.pauseReason || '', limitEngine: r.limitEngine || null, limitNote: limitRowNote(r), unread: isLingering(r),
-    step: r.status === 'running' && pq == null ? runsStepWord(r) : '',
+    step: r.status === 'running' && pq == null ? (prog && prog.text ? prog.text : runsStepWord(r)) : '',
+    progress: prog && !RD_TERMINAL.includes(r.status) ? { fraction: prog.fraction, tone: prog.tone } : null,
     failedStep: failed && failed.nodeId ? nodeLabel(r.stepper, failed.nodeId) : '',
     startedAt: r.startedAt, groupKey: g.key, groupName: g.name, by: runsPersonKey(r.startedBy),
     pr: terminal ? glancePrInput(rec) : null,
@@ -29725,6 +30061,44 @@ function runsLiveItem(r) {
     files: rec && typeof rec.files === 'number' ? rec.files : null,
     tags: flagOn('runTags') ? (r.tags || []) : [],
   };
+}
+/** P8: a server chain (schedulesView.chains()) as the list's chain item, members overlaid with this tab's live runs. */
+function runsChainItem(c, open) {
+  // D17: a chain that is a feature shows the feature title and its slices ("1 · Run tags"), and opens the feature page.
+  const feat = c.feature && shapeFirstOn() ? c.feature : null;
+  const featHref = feat ? `#feature/${encodeURIComponent(feat.id)}` : '';
+  const members = c.members.map((m, i) => {
+    const r = (m.pipelineId ? latestPipelineRun(m.pipelineId) : null) || (m.ticketId ? runs.get(m.ticketId) || null : null);
+    const state = r ? (r.status === 'done' ? 'done' : RD_TERMINAL.includes(r.status) ? 'failed' : 'current') : m.state;
+    const progress = r && state === 'current' && isGraphRun(r) ? runDecorFor(r).stageProgress : null;
+    const href = r ? `#running/${r.runId}`
+      : m.pipelineId && m.historyKey ? `#history/${m.historyKey}/${m.pipelineId}`
+      : m.ticketId ? '#schedules/once' : '#runs';
+    // The row glyph follows runStatusMeta's order: parked first, then a question.
+    const icon = !r || state !== 'current' ? '' : ['paused', 'pausing', 'interrupted'].includes(r.status) ? 'paused'
+      : r.pendingQuestion != null ? 'ask' : 'run';
+    // The amber "Needs you" text only; the Needs-you list membership comes from the model. Same cases as needsYou():
+    // an open question or a pause (`interrupted` is not one).
+    const needs = !!r && state === 'current' && (r.pendingQuestion != null || r.status === 'paused');
+    // D33: an open question, whether or not the run is also paused: the member's dot turns amber.
+    const asks = !!r && state === 'current' && r.pendingQuestion != null;
+    const slice = feat ? (feat.slices.find((s) => (m.ticketId && s.ticketId === m.ticketId) || (m.pipelineId && s.pipelineId === m.pipelineId)) || feat.slices[i]) : null;
+    return { ...m, pipelineId: m.pipelineId || (r && r.pipelineId) || null, state, progress, icon, needs, asks, runId: r ? r.runId : '',
+      title: slice ? `${slice.index} · ${slice.title}` : m.title,
+      // D17: a slice that has not started opens the feature page; a started one opens its run.
+      href: feat && !r && !m.pipelineId ? featHref : href };
+  });
+  const first = c.members[0] || {};
+  const g = runsGroupFor({ pipelineId: first.pipelineId || '', projectDir: first.projectDir || '', workspaceId: first.workspaceId || '', projectKey: first.projectKey || '' });
+  return { id: c.id, title: feat ? feat.title : c.title, members, open, groupKey: g.key, groupName: g.name,
+    ...(feat ? { feature: { id: feat.id }, href: featHref } : {}),
+    ...chainProgress(members, feat ? { noun: 'Slice' } : undefined) };
+}
+/** D17: a plain chain is collapsed by default (chainsOpen); a feature row is open by default and a person's toggle
+ *  wins for the session (chainsToggled). */
+function chainOpen(c) {
+  const key = `chain:${c.id}`;
+  return c.feature && shapeFirstOn() ? (runsUi.chainsToggled.has(key) ? runsUi.chainsToggled.get(key) : true) : runsUi.chainsOpen.has(key);
 }
 function runsHistItem(p) {
   return {
@@ -29748,13 +30122,18 @@ function runsSchedItem(t) {
 
 // pipelineId: a live row painted before its id arrived must repaint once it does (selection
 // and the focus fallbacks below match on it).
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base, (r.tags || []).join(',')];
+// `r.progress ? 1 : 0`: the line's presence is structural; its fraction/tone are patched in place (paintRunsProgress).
+// A member's icon and asks: the fields its dot reads, so a paused member that gains a question (icon stays 'paused')
+// repaints amber.
+const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base, (r.tags || []).join(','),
+  r.progress ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.href, m.icon, !!m.asks])] : 0];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over (same slot first), then the
 // selected row stands in; a focused group head is found by its group.
-function runsFocusTarget(host, { key, slot, pid, group }) {
+function runsFocusTarget(host, { key, slot, pid, group, chain }) {
   const q = (sel) => host.querySelector(sel);
+  if (chain) return q(`.runs-chain-toggle[data-chain-key="${cssEscape(chain)}"]`);
   if (group) return q(`.runs-group-head[data-group-key="${cssEscape(group)}"]`);
   if (!key) return null;
   const k = cssEscape(key);
@@ -29777,6 +30156,7 @@ function paintRunsList() {
     live: liveItems,
     history: histItems,
     scheduled: schedulesView.upcoming(SCHEDULED_GROUP_WINDOW_MS).map(runsSchedItem),
+    chains: schedulesView.chains().map((c) => runsChainItem(c, chainOpen(c))),
     person: viewer.shared ? state.historyPerson : '',
     tag: flagOn('runTags') ? runsUi.tag : '',
     query: runsUi.query, filter: runsUi.filter, groupBy: runsUi.groupBy, collapsed: runsUi.collapsed, now: Date.now(),
@@ -29798,10 +30178,19 @@ function paintRunsList() {
     const a = document.activeElement;
     if (a && host.contains(a)) {
       refocus = { key: a.dataset.rowKey || '', slot: a.dataset.slot || 'group',
-        pid: a.dataset.pipelineId || '', group: a.dataset.rowKey ? '' : (a.dataset.groupKey || '') };
+        pid: a.dataset.pipelineId || '', group: a.dataset.rowKey ? '' : (a.dataset.groupKey || ''),
+        chain: a.classList.contains('runs-chain-toggle') ? (a.dataset.chainKey || '') : '' };
     }
-    host.replaceChildren(...renderRunsList(document, model, { emptyText: 'No runs yet. Start one from New run.', note }));
+    // P2: each live line's current width, by row key, so its rebuilt twin starts where this one is.
+    const lineFrom = new Map();
+    for (const i of host.querySelectorAll('.runs-row-prog > i')) {
+      const k = i.closest('.runs-row')?.dataset.rowKey;
+      if (k && !lineFrom.has(k) && i.style.width) lineFrom.set(k, i.style.width);
+    }
+    host.replaceChildren(...renderRunsList(document, model, { emptyText: 'No runs yet. Start one from New run.', note, lineFrom }));
+    if (lineFrom.size) void host.offsetWidth;   // commit the start widths, so the patch below transitions
   }
+  paintRunsProgress(host, model);   // P2/P7: fraction + tone, in place
   paintRunsSelection();   // before the focus restore: its last fallback is the selected row
   if (refocus) {
     const back = runsFocusTarget(host, refocus);
@@ -29837,6 +30226,17 @@ function paintRunsTagFilter(items) {
   sel.value = runsUi.tag;
 }
 document.getElementById('runs-tag')?.addEventListener('change', (e) => { runsUi.tag = e.target.value; paintRunsList(); });
+/** P2/P7: move every thin line to its fraction/tone IN PLACE — a rebuild would restart the glide. */
+function paintRunsProgress(host, model) {
+  const rows = [...model.needs, ...model.groups.flatMap((g) => (g.collapsed ? [] : g.rows))];
+  for (const r of rows) {
+    if (!r.progress) continue;
+    for (const line of host.querySelectorAll(`.runs-row[data-row-key="${cssEscape(r.key)}"] .runs-row-prog`)) {
+      line.dataset.tone = r.progress.tone || 'blue';
+      line.firstElementChild.style.width = progressWidth(r.progress.fraction);
+    }
+  }
+}
 // Frames arrive in bursts (one message fans out to several repaint hooks): paint once.
 let runsPaintQueued = false;
 function scheduleRunsPaint() {
@@ -29858,7 +30258,8 @@ function paintRunsSelection() {
   if (!host) return;
   const sel = runsSelection();
   for (const a of host.querySelectorAll('.runs-row')) {
-    const row = { kind: a.dataset.kind, runId: a.dataset.runId || '', pipelineId: a.dataset.pipelineId || '', projectKey: a.dataset.projectKey || '' };
+    const row = { kind: a.dataset.kind, runId: a.dataset.runId || '', pipelineId: a.dataset.pipelineId || '', projectKey: a.dataset.projectKey || '',
+      memberKeys: new Set((a.dataset.memberKeys || '').split(' ').filter(Boolean)) };
     const on = isRowSelected(row, sel);
     a.classList.toggle('selected', on);
     if (on) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current');
@@ -29868,6 +30269,21 @@ function paintRunsSelection() {
 // Rows are links (#running/<id>, #history/<key>/<id>, #schedules) so a modifier click can
 // open a tab; a plain click routes in place. Group heads fold (D10).
 el.runsList?.addEventListener('click', (e) => {
+  let tog = e.target.closest && e.target.closest('.runs-chain-toggle');
+  // A plain click anywhere on a chain row opens or closes it, like the chevron; a modifier click still opens the
+  // row's link (the feature page, or the chain's current run) in a new tab.
+  const chainRow = !tog && e.target.closest && e.target.closest('a.runs-row-chain');
+  if (chainRow && (e.button || 0) === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+    tog = chainRow.parentElement && chainRow.parentElement.querySelector(':scope > .runs-chain-toggle');
+  }
+  if (tog) {
+    e.preventDefault();
+    const k = tog.dataset.chainKey;
+    if (tog.dataset.feature === '1') runsUi.chainsToggled.set(k, tog.getAttribute('aria-expanded') !== 'true');
+    else if (runsUi.chainsOpen.has(k)) runsUi.chainsOpen.delete(k); else runsUi.chainsOpen.add(k);
+    paintRunsList();   // the refocus path above puts focus back on the rebuilt toggle
+    return;
+  }
   const head = e.target.closest && e.target.closest('.runs-group-head');
   if (head) { toggleRunsGroup(head.dataset.groupKey || ''); return; }
   const a = e.target.closest && e.target.closest('a.runs-row');
@@ -30492,6 +30908,38 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
     if (r && r.pipelineId) location.hash = `#new/after/${r.pipelineId}`;
   });
 
+  // D30: "Run details ›" opens Results, How it ran and the graph while a shaped run waits on the person.
+  screen.querySelector('.rd-wait-more').addEventListener('click', (e) => {
+    const glance = screen.querySelector('.rd-glance');
+    const open = !glance.hasAttribute('data-wait-open');
+    glance.toggleAttribute('data-wait-open', open);
+    e.currentTarget.setAttribute('aria-expanded', String(open));
+  });
+
+  // D31: a shaped run's ⋯ drives the bar controls CSS hides — the same select, button and pane.
+  screen.querySelector('.rd-bar-more').addEventListener('click', (e) => {
+    const anchor = e.currentTarget;
+    const ns = screen.querySelector('.rd-night');
+    const after = screen.querySelector('.rd-after');
+    const items = [];
+    if (ns && !ns.closest('.rd-night-wrap').hidden) {
+      const pill = screen.querySelector('.rd-night-pill');
+      items.push({ header: 'Away mode on this run' });
+      for (const o of RUN_SWITCH_OPTIONS) {
+        const on = ns.value === o.value;
+        items.push({ label: o.label, title: o.tip, checked: on, hint: on && pill ? pill.textContent : '',
+          onSelect: () => { if (on) return; ns.value = o.value; ns.dispatchEvent(new Event('change')); } });
+      }
+      items.push({ sep: true });
+    }
+    if (after && !after.hidden && levelAtLeast('advanced')) {
+      items.push({ label: after.querySelector('.rd-btn-label').textContent, title: after.title, onSelect: () => after.click() });
+    }
+    // The Chat panel hides the terminal opener on purpose (.crp .term-opener): no Terminal item there either.
+    if (screen.dataset.presentation !== 'panel') items.push({ label: 'Terminal', onSelect: () => terminalPane?.toggle() });
+    toggleMenu({ doc: document, anchor, items, align: 'end', label: 'More for this run' });
+  });
+
   const r = runs.get(runId);
   if (r) repaintRunDetail(r);
   else {                                                         // deep link before hello
@@ -30570,6 +31018,7 @@ function paintRunDetail(r) {
   if (isGraphRun(r)) paintQuiescenceBanner(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
   paintRdGraph(screen, r);
   paintRdQuestions(screen, r);
+  paintShaperWait(screen, r);
   paintRdGlance(screen, r);
   paintNightDecisions(screen, r);
 }
@@ -31300,13 +31749,22 @@ function paintRdGlance(screen, r) {
   }
   const live = r;
   r = terminal ? rdGlanceRun(r) : r;
+  const prog = isGraphRun(live) ? runDecorFor(live).stageProgress : null;
   const copy = glanceCopy(r, {
     pill: statusPill(live), checks: rdChecksCount(live), lastLine: rdLastLine(live), limitNote: limitRowNote(live),
     pr: terminal ? glancePrInput(rdHistoryRecord(live)) : null, files: terminal ? rdFilesChanged(live) : null,
+    progress: prog,
   });
   screen.dataset.glance = copy.state;
 
   paintGlanceStatus(screen.querySelector('.rd-glance'), copy);
+  // Run progress (P2/P4): stopped and error keep today's red glance with no bar.
+  paintProgressBar(screen.querySelector('.rd-glance .rd-prog'), prog && prog.tone !== 'red' ? prog : null);
+  // D16, D22: a slice names its feature (and, once done, the next slice) instead of the unnamed chain bar.
+  const info = live.pipelineId ? sliceInfoFor(live.pipelineId, () => rdRepaintOpenGlance()) : null;
+  paintSliceLine(screen.querySelector('.rd-glance .rd-slice-line'), sliceLineCopy(info, { done: live.status === 'done' }));
+  const chain = chainItemFor(live);
+  paintChainBar(screen.querySelector('.rd-glance .rd-prog-chain'), chain && (chain.feature || info) ? null : chain);
   // Only while a question waits is the status header a control (see openRunDetail).
   const statusTop = screen.querySelector('.rd-now-top');
   const asking = copy.state === 'ask';
@@ -32022,9 +32480,19 @@ function paintRdResult(screen, r, { glance = 'run', trailCount = 0 } = {}) {
 // The heading over a waiting question on the glance: what is asked, by which step. It
 // replaces the panel's own header row (title + count badge).
 function askHeading(r, pq) {
+  // Shape it first: a shaping run's Clarify reads as the step before the plan (spec §3.3).
+  if (askKindOf(pq) === 'clarify' && shapeFirstOn() && isShapingRun(r)) return 'A few questions before the plan';
   const who = pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '';
   const n = Array.isArray(pq.questions) ? pq.questions.length : (Array.isArray(pq.issues) ? pq.issues.length : 1);
   switch (pq.kind) {
+    case 'plan': {                                 // spec §3.4; D30: the gate on says whose turn it is
+      const p = pq.plan || {};
+      if (shapeFirstOn()) return p.outline ? 'Your turn: approve the slices' : 'Your turn: approve the plan';
+      const c = p.check;
+      if (p.outline) return `Slices ready for your approval · v${p.round || 1}${c && Number.isFinite(c.total) ? ` · Outline ${c.passed}/${c.total}` : ''}`;
+      const score = c && Number.isFinite(c.total) ? ` · Shape ${c.passed}/${c.total}` : '';
+      return `Plan ready for your approval · v${p.round || 1}${score}`;
+    }
     case 'workflow': return 'Review the workflow';
     case 'form': return pq.title ? String(pq.title) : (who ? `${who} needs your input` : 'Your input is needed');
     case 'gate': return who ? `${who} needs a decision` : 'A decision is needed';
@@ -32033,6 +32501,27 @@ function askHeading(r, pq) {
       if (!who) return n > 1 ? `${n} questions` : 'A question';
       return n > 1 ? `${n} questions from ${who}` : `A question from ${who}`;
   }
+}
+
+/** D30: a shaped run waiting on Shaper's own step puts its card first and folds Results / How it ran. */
+function paintShaperWait(screen, r) {
+  const glance = screen.querySelector('.rd-glance');
+  const host = screen.querySelector('.rd-questions');
+  if (!glance || !host) return;
+  const wait = shaperWait(r, shapeFirstOn());
+  if (wait) glance.dataset.shaperWait = wait;
+  else { delete glance.dataset.shaperWait; glance.removeAttribute('data-wait-open'); }
+  const more = screen.querySelector('.rd-wait-more');
+  if (more) {
+    more.hidden = !wait;
+    more.setAttribute('aria-expanded', String(!!wait && glance.hasAttribute('data-wait-open')));
+  }
+  // The Chat panel moved .rd-questions into its own head (presentRunScreenInPanel): leave it there.
+  if (host.parentElement !== glance) return;
+  const now = glance.querySelector(':scope > .rd-now');
+  const night = glance.querySelector(':scope > .rd-night-sec');
+  if (wait && now && host.previousElementSibling !== now) now.after(host);
+  else if (!wait && night && host.nextElementSibling !== night) night.before(host);
 }
 
 function paintRdQuestions(screen, r) {
@@ -32389,8 +32878,9 @@ function paintRdHeader(screen, r) {
   // Guard on `name`, not on `n`: runStepLabel always returns n >= 1, so `step.n`
   // can never be falsy and an unresolvable node would render `step 1/7 · ` with a
   // dangling separator.
+  const prog = isGraphRun(r) ? runDecorFor(r).stageProgress : null;
   const stepText = isGraphRun(r) && step
-    ? (RD_TERMINAL.includes(r.status) || isPaused(r) ? '' : (nowRows(r).map((x) => x.label).join(' · ') || (preflightOpen(r) ? 'Preflight' : '') || step.name || ''))   // names what runs, never a count (graphs loop and branch)
+    ? (RD_TERMINAL.includes(r.status) || isPaused(r) ? '' : (prog && prog.text ? prog.text : (nowRows(r).map((x) => x.label).join(' · ') || (preflightOpen(r) ? 'Preflight' : '') || step.name || '')))   // the P5 line; names what runs, never a count (graphs loop and branch)
     : (step && step.name ? `step ${step.n}/${step.m} · ${step.name}` : '');
   const segs = [
     ['rd-project', projectName(r.projectDir), false],
@@ -32463,9 +32953,15 @@ function paintRdHeader(screen, r) {
   const stopBtn = screen.querySelector('.rd-stop');
   // Hidden iff the run is OVER. A paused/pausing run keeps both controls: it is parked,
   // not finished. An interrupted one keeps no Stop: it is only ever resumed.
-  pauseBtn.hidden = terminal;
+  // D30: Pause goes while a shaped run waits on the person (a paused run keeps it: it is Resume there).
+  pauseBtn.hidden = terminal || (!!shaperWait(r, shapeFirstOn()) && !paused);
   // An interrupted run is never stopped — it stays resumable (stop-paused.mjs refuses it).
   stopBtn.hidden = terminal || r.status === 'interrupted';
+  // D31: a shaped run's bar folds Away mode, Run after and the terminal into one ⋯ (CSS hides the three).
+  const shapedBar = shapeFirstOn() && isShapingRun(r);
+  screen.querySelector('.rd-bar')?.toggleAttribute('data-shaped', shapedBar);
+  const barMore = screen.querySelector('.rd-bar-more');
+  if (barMore) barMore.hidden = !shapedBar;
   // Run after this one (the list card's old schedule-after button): a pipeline run with a pipeline
   // id, in every state. A finished run is followed up, as on the saved run's bar (paintHdAfter).
   const afterBtn = screen.querySelector('.rd-after');
@@ -32553,7 +33049,8 @@ function paintRdHeader(screen, r) {
       }
       ns.closest('.rd-night-wrap').title = RUN_SWITCH_TIP;
     }
-    if (document.activeElement !== ns) ns.value = (r.night && r.night.override) || 'auto';
+    // A ⋯ menu pick leaves focus on ⋯: the change handler disables the select for its whole POST (D31).
+    if (document.activeElement !== ns && !ns.disabled) ns.value = (r.night && r.night.override) || 'auto';
     paintRdAwayPill(screen, r);
   }
 }
@@ -33375,7 +33872,7 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers'];
+const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature'];
 // One Runs page, three route names: the bare list (#runs) and the two detail routes every
 // deep link already uses (#running/<id>…, #history/<projectKey>/<id>…). All three render
 // the `data-view="runs"` section and light the one Runs nav button.
@@ -33526,6 +34023,8 @@ if (typeof window !== 'undefined') {
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
+  // D16: the feature page lives behind the Shaper flag and needs an id; otherwise Chat, as any unknown view.
+  if (name === 'feature' && (!shapeFirstOn() || !param)) return showView('chat', '');
   // A caller that still names a Settings tab that became a page ('settings' + 'providers…')
   // lands on that page: parseSettingsParam would read the unknown tab as General.
   if (name === 'settings') {
@@ -33569,8 +34068,12 @@ function showView(name, param = '') {
   // Same guard for the composer: unbind its keyboard and cancel any live gesture
   // so Delete/arrows/⌘Z can never edit the graph from another view.
   if (currentShownView === 'workflows' && name !== 'workflows') workflowsExit();
-  // worca Chat: leaving hides the page (voice stops, popovers close); the panel keeps its chat for the way back.
-  if (currentShownView === 'chat' && name !== 'chat') askPanel?.close();
+  // worca Chat: leaving hides the page (voice stops, popovers close); the panel keeps its chat for the way back. An
+  // armed intent no send carries is dropped, so a later visit never finds it armed.
+  if (currentShownView === 'chat' && name !== 'chat') {
+    askPanel?.close();
+    chatIntent.leave();
+  }
   // Leaving the wizard resets it (a scan, once started, is a run on Running — nothing to abort).
   if (currentShownView === 'workspace-create' && name !== 'workspace-create') resetWizard();
   // Settings is tabbed, so its two body-level overlays must be torn down on a TAB
@@ -33728,6 +34231,13 @@ function showView(name, param = '') {
     else routeProjectDetail(param);
   }
   if (name === 'chat') enterChatView(param, prevView);
+  if (name === 'feature') {
+    const host = document.querySelector('[data-view="feature"] .feature-page');
+    const id = decodeURIComponent(param);
+    // A re-mount with the same id is a no-op: repaint, to catch up after the time away (the hidden page skips frames).
+    if (host.__shapeWant !== id || host.__shapeMode !== 'page') mountShapeFeature(host, id, { mode: 'page' });
+    else if (prevView !== 'feature') paintShapeFeature(host);
+  }
   if (name === 'workflows') void enterWorkflowsView(param, prevView);
   if (name === 'settings') showSettingsTab(param);
   if (name === 'marketplace') loadPluginsView({ refresh: true });
@@ -34019,6 +34529,12 @@ function enterChatView(param = '', prevView = null) {
     }
   }
   askPanel?.open({ threadId });
+  // The New run link's entry: consumed on ANY Chat entry, so a stale one (home never reached) can't arm a later visit.
+  if (pendingShapeEntry) {
+    const { text } = pendingShapeEntry;
+    pendingShapeEntry = null;
+    if (!threadId && chatIntent.set('shape', { focus: true }) && text) chatPrefill(text);
+  }
   if (typeof chatPanelRouter === 'function') {
     try { chatPanelRouter(parts[1] === 'run' ? parts.slice(2) : []); } catch (e) { console.warn('[worca] the chat panel route failed', e); }
   }
@@ -34266,12 +34782,13 @@ async function applyAskPrefill() {
   setRunTarget(p.target === 'workspace' ? 'workspace' : 'project');
   // The card's engine pick (none: the defaults the project change loads decide). Touched, so they keep off it.
   if (p.engine) { state.engineTouched = true; setRunEngine(p.engine); }
-  // force the prompt source — the three-step reset of the segment handler
+  // pick the source from the prefill (a Markdown handoff, else the prompt) — the three-step reset of the segment handler
+  const src = typeof p.promptMarkdown === 'string' ? 'markdown' : 'prompt';
   state.activePluginSource = null;
-  el.sourceRadios.forEach((r) => { r.checked = r.value === 'prompt'; });
+  el.sourceRadios.forEach((r) => { r.checked = r.value === src; });
   document.querySelectorAll('#source-seg button[data-src]').forEach((b) => {
-    b.classList.toggle('on', b.dataset.src === 'prompt');
-    b.setAttribute('aria-pressed', String(b.dataset.src === 'prompt')); // the real handlers keep it: :4662/:4666 (static), :4692 (plugin buttons)
+    b.classList.toggle('on', b.dataset.src === src);
+    b.setAttribute('aria-pressed', String(b.dataset.src === src)); // the real handlers keep it: :4662/:4666 (static), :4692 (plugin buttons)
   });
   document.querySelectorAll('#source-seg button[data-plugin-src]').forEach((b) => {
     b.classList.remove('on');
@@ -34291,7 +34808,8 @@ async function applyAskPrefill() {
     // AWAITED: onProjectChanged → loadConfig → loadWorkflowsInto/loadGuardrailsInto — un-awaited, that tail lands after our own awaits and resets both pickers.
     await onProjectChanged();
   }
-  el.prompt.value = p.prompt || '';
+  el.prompt.value = src === 'prompt' ? (p.prompt || '') : '';
+  if (el.promptMarkdown) el.promptMarkdown.value = src === 'markdown' ? p.promptMarkdown : el.promptMarkdown.value;
   refreshMentionHighlights();
   const titleInput = document.getElementById('title');
   if (titleInput) titleInput.value = p.title || '';
@@ -34504,6 +35022,8 @@ function mountChatHome() {
       // through goRunsList (runsUi.skipRestore), as "Show in Runs" does.
       navigate: (hash) => { const to = String(hash || '').replace(/^#/, ''); if (to === 'runs') goRunsList(); else location.hash = to; },
       level: () => currentLevel(),
+      plans: chatHomePlans,
+      mountFeature: mountShapeFeature,
     },
   });
 }
@@ -34567,7 +35087,9 @@ function chatHomeFinishedHere(hist) {
 function chatHomeTile(r) {
   const g = runsGroupFor({ pipelineId: r.pipelineId || '', projectDir: r.projectDir || '', workspaceId: r.kind === 'workspace-run' ? (r.workspaceId || '') : '' });
   const tpl = r.stepper && r.stepper.template;
-  return { ...askRunSnapshot(r), key: `live:${r.runId}`, project: g.name || '', workflow: (tpl && tpl.name) || '' };
+  const info = r.pipelineId ? sliceInfoFor(r.pipelineId, () => chatHome?.update()) : null;   // the home's own repaint
+  return { ...askRunSnapshot(r), key: `live:${r.runId}`, project: g.name || '', workflow: (tpl && tpl.name) || '',
+    ...(info ? { slice: { index: info.index, total: info.total, title: info.sliceTitle } } : {}) };
 }
 /** A History row that needs you (paused, its run not live in this tab): the tile's stand-in, no graph. */
 function chatHomeHistTile(p) {
@@ -34588,6 +35110,12 @@ async function chatHomeThreads() {
   const res = await fetch('/api/ask/threads?limit=6');
   const data = await safeJson(res);
   return res.ok && data && Array.isArray(data.threads) ? data.threads : [];
+}
+/** The Plans tab's rows (gated GET /api/shape/plans): a shaped run per Chat card, with its feature view. */
+async function chatHomePlans() {
+  const res = await fetch('/api/shape/plans');
+  const data = await safeJson(res);
+  return res.ok && data && Array.isArray(data.plans) ? data.plans : [];
 }
 async function chatHomeWorkflows() {
   const [list, all, scripts] = await Promise.all([
@@ -34610,6 +35138,9 @@ async function chatHomeFlags() {
     const data = await safeJson(res);
     if (res.ok && data && Array.isArray(data.sources)) out.tasks = data.sources.some((s) => s && s.type === 'plugin');
   } catch { /* none known */ }
+  // Read after the awaits: a boot's first load, started before the hello, would otherwise keep a stale gate.
+  out['shapeFirst'] = shapeFirstOn();
+  lastChatHomeFlags = { ...out };
   return out;
 }
 /** A quick action's prefill: an empty composer takes the text as is (a trailing space kept, the caret at the end);
@@ -34682,6 +35213,8 @@ pinpoint.addSurface(askPanel.root, {
 // render already has it (the section is still hidden here: the visit starts when the route shows it).
 mountChatHome();
 askRunStore.subscribe((runId, type) => { if (type !== 'log') chatHome?.update(); });   // a log line changes no tile
+
+let chainsAsked = false;   // module-level, ABOVE the boot showView (TDZ: app-js-boot-route-before-async)
 
 // Boot: parse view + optional param so a reload on a deep link (#running/<id>)
 // restores the Running view instead of silently resetting to Chat (worca Chat U5: the app's home).
