@@ -64,7 +64,7 @@ export const PROPOSAL_ERRORS = Object.freeze({
   byKeyProjectOnly: 'sourceBranchByKey is only valid for a workspace',
   missingSource: (v, remote) => `sourceBranch "${v}" exists neither locally nor on ${remote}`,
   shapeSlices: 'shape.slices must be "auto" or "off"',
-  shapeScheduled: 'Plan it with me starts now and waits for the user to approve its plan: drop when / every / after',
+  shapeScheduled: 'Shaper starts now and waits for the user to approve its plan: drop when / every / after',
   nodesAuto: 'nodes needs a saved workflow — Auto (wf_auto) picks its agents and their models when the run starts',
   nodesDefrag: 'the Memory defragment workflow takes its model from Settings › Memory — omit nodes',
   // An engine that owns no catalog models (Copilot) runs its own: no pick can ever run on it.

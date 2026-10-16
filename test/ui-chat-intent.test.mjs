@@ -192,8 +192,8 @@ test('every intent: a chip label, an icon, a placeholder and one plain sentence 
   assert.deepEqual(Object.keys(INTENTS).filter((id) => INTENTS[id].prefill), ['away']);
 });
 
-test('Plan it with me (Shape it first): refused while the gate is off; with it on it arms and the send leads with its sentence', () => {
-  assert.equal(INTENTS.shape.label, 'Plan it with me');
+test('Shaper (Shape it first): refused while the gate is off; with it on it arms and the send leads with its sentence', () => {
+  assert.equal(INTENTS.shape.label, 'Shaper');
   assert.equal(INTENTS.shape.help, undefined);
   assert.equal(INTENTS.shape.badge, 'Experimental');
   const s = setup();
@@ -205,7 +205,7 @@ test('Plan it with me (Shape it first): refused while the gate is off; with it o
     setShapeFirst(true);
     assert.equal(s.ctl.set('shape'), true);
     assert.equal(s.ctl.current(), 'shape');
-    assert.equal(s.chip().querySelector('.chat-intent-l').textContent, 'Plan it with me');
+    assert.equal(s.chip().querySelector('.chat-intent-l').textContent, 'Shaper');
     assert.equal(s.input.placeholder, 'Describe the problem…');
     const sent = s.handle.transformSend('Uploads fail on large files');
     assert.ok(sent.startsWith(INTENTS.shape.lead), sent);
@@ -342,7 +342,7 @@ test('the examples rotate through every one of them, then start over', () => {
   assert.equal(EXAMPLES.length, 4);
 });
 
-test('splitIntentLead: the Plan it with me lead is for the model only (D21)', () => {
+test('splitIntentLead: the Shaper lead is for the model only (D21)', () => {
   const lead = INTENTS.shape.lead;
   assert.equal(lead, 'Shape this task first: propose a run with `shape`.', 'the model-facing lead is unchanged');
   assert.deepEqual(splitIntentLead(`${lead}\n\nUploads fail on large files`), { intent: 'shape', text: 'Uploads fail on large files' });

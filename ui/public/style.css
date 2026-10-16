@@ -5528,7 +5528,7 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-msg[data-ask-enter]{animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
 .ask-user-bubble{align-self:flex-end;max-width:78%;padding:10px 14px;border-radius:var(--r-card) var(--r-card) 4px var(--r-card);
   background:var(--field);color:var(--ink);font-size:13.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
-/* Plan it with me (D21): the intent chip above the person's bubble — the lead itself went to the model only. */
+/* Shaper (D21): the intent chip above the person's bubble — the lead itself went to the model only. */
 .ask-user-intent{align-self:flex-end;display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink);font:500 11.5px/1 var(--sans);}
 .ask-user-pills{justify-content:flex-end;margin-top:0;}
 .ask-attachment-pill{padding-right:12px;}
@@ -5759,7 +5759,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rp-foot .ask-card-not-now{height:34px;padding:0 14px;font-size:12.5px;}
 .ask-rp-foot .ask-card-start{height:36px;padding:0 18px 0 15px;font-size:12.5px;color:var(--on-ink);box-shadow:var(--shadow-pop);}
 .ask-rp-foot .ask-card-start svg{width:11px;height:11px;}
-/* Plan it with me (D20): the small proposal card — clamped brief, the main fields, a collapsed Advanced. */
+/* Shaper (D20): the small proposal card — clamped brief, the main fields, a collapsed Advanced. */
 .ask-rp-kicker.ask-rp-kicker-shape{color:var(--violet-ink);}
 .ask-rp-shape-main{display:flex;flex-direction:column;gap:10px;}
 .ask-rp-shape-main > .ask-rp-sec{padding:0;border:0;}

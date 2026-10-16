@@ -6608,7 +6608,7 @@ el.mdFile.addEventListener('change', async () => {
   }
 });
 
-// Shape it first's New run link (§3.6): the Markdown goes to the Chat home with Plan it with me armed.
+// Shape it first's New run link (§3.6): the Markdown goes to the Chat home with Shaper armed.
 document.getElementById('shapeChatLinkBtn')?.addEventListener('click', () => {
   pendingShapeEntry = { text: el.promptMarkdown ? el.promptMarkdown.value.trim() : '' };
   // The link lives on #new, and enterChatView swaps #chat/new to #chat at once, so the address is never already
