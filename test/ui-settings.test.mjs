@@ -150,3 +150,21 @@ test('Settings › Tags: a values-only edit makes the card dirty and saves the n
   for (let i = 0; i < 6 && !posts.length; i++) await tick();
   assert.deepEqual(posts.at(-1).tagDimensions[0].values, ['4410', '4420']);
 });
+
+test('Settings › Tags: the switch is off by default; on with no tag ticked Mandatory, a hint says runs are not blocked', async () => {
+  const { window, doc } = await openTags();
+  const sw = doc.getElementById('tagsEnforce');
+  const hint = doc.getElementById('tagsEnforceNone');
+  assert.equal(sw.checked, false, 'off by default');
+  assert.equal(hint.hidden, true, 'off: no hint');
+  sw.click();
+  assert.equal(hint.hidden, false, 'on, nothing Mandatory: the hint shows');
+  assert.equal(hint.textContent, 'No tag is marked Mandatory yet, so runs are not blocked.');
+  const card = doc.getElementById('tag-dims-settings-card');
+  card.querySelector('.tag-dim-add').click();
+  const row = card.querySelector('.tag-dim-row');
+  const label = row.querySelector('.tag-dim-label-input');
+  label.value = 'Client'; label.dispatchEvent(new window.Event('input', { bubbles: true }));
+  row.querySelector('.tag-dim-required').click();
+  assert.equal(hint.hidden, true, 'a Mandatory tag: the hint goes');
+});
