@@ -16,10 +16,10 @@ const ticketAt = (id, ms, extra = {}) => ({ id, kind: 'once', scheduleId: null, 
 const SOON = ticketAt('t_soon', 3600_000);
 const WEEK = ticketAt('t_week', 3 * 86400_000, { resumePipelineId: 'p_1' });
 
-async function mount() {
+async function mount(extra = {}) {
   globalThis.fetch = async (url) => {
     const key = String(url).split('?')[0];
-    const body = key === '/api/schedules' ? { schedules: [], tickets: [SOON, WEEK], counts: {} } : { notifications: [], unread: 0 };
+    const body = key === '/api/schedules' ? { schedules: [], tickets: [SOON, WEEK], counts: {}, ...extra } : { notifications: [], unread: 0 };
     return { ok: true, status: 200, json: async () => body };
   };
   const host = () => document.createElement('div');
@@ -50,5 +50,18 @@ test('noteTicket() upserts by id; forgetTicket() removes one', async () => {
     assert.deepEqual(view.tickets().map((t) => t.id), ['t_soon', 't_new']);
     view.forgetTicket('nope');
     assert.equal(view.tickets().length, 2, 'an unknown id is a no-op');
+  } finally { view.destroy(); }
+});
+
+test('chains() is empty without a server list, and reflects the loaded chains otherwise', async () => {
+  const bare = await mount();
+  try {
+    assert.deepEqual(bare.chains(), []);
+  } finally { bare.destroy(); }
+  const chains = [{ id: 'c_1', tickets: ['t_soon', 't_week'] }];
+  const view = await mount({ chains });
+  try {
+    assert.deepEqual(view.chains(), chains);
+    assert.equal(view.chains(), view.chains(), 'the same array until the next load()');
   } finally { view.destroy(); }
 });

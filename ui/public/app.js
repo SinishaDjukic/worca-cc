@@ -82,6 +82,8 @@ import { createLogDrawer } from './log-drawer.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
+import { runProgress, chainProgress, progressWidth } from '../../src/shared/run-progress.mjs';
+import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS } from './runs-list.mjs';
@@ -1353,7 +1355,7 @@ function handleServerMessage(msg) {
     refreshAllCounts();
     activityMenu?.schedulesChanged();   // an open Activity refetches its Scheduled tab; a closed one forgets it
     // Chat P4: a paused run in the panel offers "Resume at" off the same tickets.
-    if (currentView() === 'schedules' || inRunsView() || crpShowsRun()) void schedulesView.load().then(() => { if (inRunsView()) paintRunsList(); repaintLimitNotices(); });
+    if (currentView() === 'schedules' || inRunsView() || crpShowsRun()) void schedulesView.load().then(() => { if (inRunsView()) { paintRunsList(); rdRepaintOpenGlance(); } repaintLimitNotices(); });
     return;
   }
   if (msg.type === 'extension-pair-request') { void promptExtensionPair(msg.request); return; }
@@ -2360,7 +2362,7 @@ function onState(r, msg) {
   // omits the field (older runs / partial snapshots) leaves the delta-built array.
   r.subAgents = msg.subAgents || r.subAgents;
   // v2 run-level outcome fields (ignored by v1 runs, which never send them).
-  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate']) {
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts']) {
     if (msg[k] !== undefined) r[k] = msg[k];
   }
   // Skills registry §6 board 9: the run's set skills (run-harness state.skillMount) for its Overview.
@@ -21579,6 +21581,17 @@ function rdRepaintOpenGlance(pipelineId = null) {
   paintRdGlance(runDetailState.screen, r);
 }
 
+/** The open chain `r` belongs to, as a runsChainItem; null for a single run (P8: no overall bar). */
+function chainItemFor(r) {
+  if (!r || !(r.pipelineId || r.runId)) return null;
+  if (!schedulesView.isLoaded()) {
+    if (!chainsAsked) { chainsAsked = true; void withWorkspaces().then(() => schedulesView.load()).then(() => rdRepaintOpenGlance()).catch(() => {}); }
+    return null;
+  }
+  const c = schedulesView.chains().find((x) => x.members.some((m) => (r.pipelineId && m.pipelineId === r.pipelineId) || m.ticketId === r.runId));
+  return c ? runsChainItem(c, false) : null;
+}
+
 /** Some PR host is reachable (gh, or an Azure DevOps token); the Ship-it modal and the server name the
  *  missing one for the chosen remote (D8). */
 function prHostAvailable() { return !!(state.ghAvailable || state.adoAvailable); }
@@ -27699,8 +27712,10 @@ function graphModelLabel(id) { return id ? (modelById(id)?.label || id) : null; 
 function runDecorFor(r, mode = 'monitor') {
   const seq = r._decorSeq || 0;
   if (!r._decorCache || r._decorCache.seq !== seq) {
-    r._decorCache = { seq, views: new Map(),
-      decor: decorFromState(r, { live: isLive(r), now: Date.now(), subsOf: (id) => subAgentsForNode(r, id), lastLines: liveLinesOf(r), modelLabel: graphModelLabel }) };
+    const decor = decorFromState(r, { live: isLive(r), now: Date.now(), subsOf: (id) => subAgentsForNode(r, id), lastLines: liveLinesOf(r), modelLabel: graphModelLabel });
+    // Run progress (P3): the memo lives on the RUN, not the per-generation bag, so the fill never drops.
+    r._progressMemo ||= { fraction: 0, stage: 0 };
+    r._decorCache = { seq, views: new Map(), decor: { ...decor, stageProgress: runProgress(r, r._progressMemo) } };
   }
   const cache = r._decorCache;
   let bag = cache.views.get(mode);
@@ -27725,11 +27740,10 @@ function paintQuiescenceBanner(host, decor) {
   el.hidden = !show;
 }
 
-/** `3/6 done` — D15 forbids a bar, not a number. '' on a v1 run. */
+/** The P5 line ("Build · task 2 of 4"); supersedes the D15 "3/6 done" counter (spec 2026-10-14 P12). '' on a v1 run. */
 function progressText(r) {
   if (!isGraphRun(r)) return '';
-  const { done, total } = runDecorFor(r).progress;
-  return `${done}/${total} done`;
+  return runDecorFor(r).stageProgress.text;
 }
 
 // ---- Ask Worca run store (spec seam 2): the chat's progress cards read the SAME run models the Running list
@@ -27750,6 +27764,7 @@ function askRunSnapshot(r) {
     costUsd: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,   // null: cost unknown (Cursor), never $0.00
     // Chat P3 (U10): activeNodes' model + effort, named through the catalog, plus the execution's cycle.
     progress: decor ? decor.progress : null, active: graph ? activeAgents(decor, r.stepper, { modelLabel: graphModelLabel }) : [],
+    stageProgress: decor ? decor.stageProgress : null,
     stepper: graph ? r.stepper : null, decor,
     // Chat P3 (CONTRACT §5): the chat run card's extra facts. A live run model holds no results.json numbers,
     // artifact rows or PR — the card reads those over REST once the run is over (GET /api/ask/runs/:id `extras`).
@@ -29232,7 +29247,7 @@ function buildHdArtifacts(sec, record, data) {
 
 
 // Frontier step for the compact card row (design §4.3): DONE agent nodes over
-// agent nodes (D15: a number, never a bar), the active-node copy, and the active
+// agent nodes (a count, not the bar; the run progress bar is src/shared/run-progress.mjs, spec 2026-10-14 P12 supersedes D15), the active-node copy, and the active
 // node's `model · effort` caption. Every run is a graph run now.
 function runStepLabel(r) {
   const d = runDecorFor(r);
@@ -29362,7 +29377,7 @@ function loadRunsGroupBy() {
   try { const v = localStorage.getItem(RUNS_GROUP_BY_KEY); return RUNS_GROUPINGS.includes(v) ? v : 'project'; }
   catch { return 'project'; }
 }
-const runsUi = { query: '', filter: loadRunsFilter(), groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false };
+const runsUi = { query: '', filter: loadRunsFilter(), groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false, chainsOpen: new Set() };
 
 function histGroupName(p) {
   return (p.target === 'workspace' && p.workspaceName) || p.projectName || p.projectKey || '(unknown project)';
@@ -29406,18 +29421,38 @@ function runsLiveItem(r) {
   const terminal = RD_TERMINAL.includes(r.status);
   const rec = terminal && r.pipelineId ? rdHistoryRecord(r) : null;
   const failed = r.status === 'error' ? ledgerRows(r).filter((x) => x.status === 'error').pop() : null;
+  const prog = isGraphRun(r) ? runDecorFor(r).stageProgress : null;
   return {
     runId: r.runId, pipelineId: r.pipelineId || '', title: r.title, status: r.status,
     // nodeLabel(null, id) returns the raw node id ("n3 review"): name the step only with a manifest.
     ask: pq != null ? { kind: pq.kind || '', step: pq.nodeId && r.stepper ? nodeLabel(r.stepper, pq.nodeId) : '' } : null,
     pauseReason: r.pauseReason || '', limitEngine: r.limitEngine || null, limitNote: limitRowNote(r), unread: isLingering(r),
-    step: r.status === 'running' && pq == null ? runsStepWord(r) : '',
+    step: r.status === 'running' && pq == null ? (prog && prog.text ? prog.text : runsStepWord(r)) : '',
+    progress: prog && !RD_TERMINAL.includes(r.status) ? { fraction: prog.fraction, tone: prog.tone } : null,
     failedStep: failed && failed.nodeId ? nodeLabel(r.stepper, failed.nodeId) : '',
     startedAt: r.startedAt, groupKey: g.key, groupName: g.name, by: runsPersonKey(r.startedBy),
     pr: terminal ? glancePrInput(rec) : null,
     checks: rec && typeof rec.checks === 'number' ? rec.checks : null,
     files: rec && typeof rec.files === 'number' ? rec.files : null,
   };
+}
+/** P8: a server chain (schedulesView.chains()) as the list's chain item, members overlaid with this tab's live runs. */
+function runsChainItem(c, open) {
+  const members = c.members.map((m) => {
+    const r = (m.pipelineId ? latestPipelineRun(m.pipelineId) : null) || (m.ticketId ? runs.get(m.ticketId) || null : null);
+    const state = r ? (r.status === 'done' ? 'done' : RD_TERMINAL.includes(r.status) ? 'failed' : 'current') : m.state;
+    const progress = r && state === 'current' && isGraphRun(r) ? runDecorFor(r).stageProgress : null;
+    const href = r ? `#running/${r.runId}`
+      : m.pipelineId && m.historyKey ? `#history/${m.historyKey}/${m.pipelineId}`
+      : m.ticketId ? '#schedules/once' : '#runs';
+    // The row glyph follows runStatusMeta's order: parked first, then a question.
+    const icon = !r || state !== 'current' ? '' : ['paused', 'pausing', 'interrupted'].includes(r.status) ? 'paused'
+      : r.pendingQuestion != null ? 'ask' : 'run';
+    return { ...m, pipelineId: m.pipelineId || (r && r.pipelineId) || null, state, progress, href, icon, runId: r ? r.runId : '' };
+  });
+  const first = c.members[0] || {};
+  const g = runsGroupFor({ pipelineId: first.pipelineId || '', projectDir: first.projectDir || '', workspaceId: first.workspaceId || '', projectKey: first.projectKey || '' });
+  return { id: c.id, title: c.title, members, open, groupKey: g.key, groupName: g.name, ...chainProgress(members) };
 }
 function runsHistItem(p) {
   return {
@@ -29440,13 +29475,16 @@ function runsSchedItem(t) {
 
 // pipelineId: a live row painted before its id arrived must repaint once it does (selection
 // and the focus fallbacks below match on it).
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base];
+// `r.progress ? 1 : 0`: the line's presence is structural; its fraction/tone are patched in place (paintRunsProgress).
+const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base,
+  r.progress ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.href])] : 0];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over (same slot first), then the
 // selected row stands in; a focused group head is found by its group.
-function runsFocusTarget(host, { key, slot, pid, group }) {
+function runsFocusTarget(host, { key, slot, pid, group, chain }) {
   const q = (sel) => host.querySelector(sel);
+  if (chain) return q(`.runs-chain-toggle[data-chain-key="${cssEscape(chain)}"]`);
   if (group) return q(`.runs-group-head[data-group-key="${cssEscape(group)}"]`);
   if (!key) return null;
   const k = cssEscape(key);
@@ -29466,6 +29504,7 @@ function paintRunsList() {
     live: overviewRuns().map(runsLiveItem),
     history: histSource.filter(Boolean).map(runsHistItem),
     scheduled: schedulesView.upcoming(SCHEDULED_GROUP_WINDOW_MS).map(runsSchedItem),
+    chains: schedulesView.chains().map((c) => runsChainItem(c, runsUi.chainsOpen.has(`chain:${c.id}`))),
     person: viewer.shared ? state.historyPerson : '',
     query: runsUi.query, filter: runsUi.filter, groupBy: runsUi.groupBy, collapsed: runsUi.collapsed, now: Date.now(),
   });
@@ -29486,10 +29525,19 @@ function paintRunsList() {
     const a = document.activeElement;
     if (a && host.contains(a)) {
       refocus = { key: a.dataset.rowKey || '', slot: a.dataset.slot || 'group',
-        pid: a.dataset.pipelineId || '', group: a.dataset.rowKey ? '' : (a.dataset.groupKey || '') };
+        pid: a.dataset.pipelineId || '', group: a.dataset.rowKey ? '' : (a.dataset.groupKey || ''),
+        chain: a.classList.contains('runs-chain-toggle') ? (a.dataset.chainKey || '') : '' };
     }
-    host.replaceChildren(...renderRunsList(document, model, { emptyText: 'No runs yet. Start one from New run.', note }));
+    // P2: each live line's current width, by row key, so its rebuilt twin starts where this one is.
+    const lineFrom = new Map();
+    for (const i of host.querySelectorAll('.runs-row-prog > i')) {
+      const k = i.closest('.runs-row')?.dataset.rowKey;
+      if (k && !lineFrom.has(k) && i.style.width) lineFrom.set(k, i.style.width);
+    }
+    host.replaceChildren(...renderRunsList(document, model, { emptyText: 'No runs yet. Start one from New run.', note, lineFrom }));
+    if (lineFrom.size) void host.offsetWidth;   // commit the start widths, so the patch below transitions
   }
+  paintRunsProgress(host, model);   // P2/P7: fraction + tone, in place
   paintRunsSelection();   // before the focus restore: its last fallback is the selected row
   if (refocus) {
     const back = runsFocusTarget(host, refocus);
@@ -29501,6 +29549,17 @@ function paintRunsList() {
     const g = host.querySelector(`.runs-group[data-group-key="${cssEscape(runsUi.reveal)}"]`);
     runsUi.reveal = '';
     if (g && typeof g.scrollIntoView === 'function') g.scrollIntoView({ block: 'start' });
+  }
+}
+/** P2/P7: move every thin line to its fraction/tone IN PLACE — a rebuild would restart the glide. */
+function paintRunsProgress(host, model) {
+  const rows = [...model.needs, ...model.groups.flatMap((g) => (g.collapsed ? [] : g.rows))];
+  for (const r of rows) {
+    if (!r.progress) continue;
+    for (const line of host.querySelectorAll(`.runs-row[data-row-key="${cssEscape(r.key)}"] .runs-row-prog`)) {
+      line.dataset.tone = r.progress.tone || 'blue';
+      line.firstElementChild.style.width = progressWidth(r.progress.fraction);
+    }
   }
 }
 // Frames arrive in bursts (one message fans out to several repaint hooks): paint once.
@@ -29524,7 +29583,8 @@ function paintRunsSelection() {
   if (!host) return;
   const sel = runsSelection();
   for (const a of host.querySelectorAll('.runs-row')) {
-    const row = { kind: a.dataset.kind, runId: a.dataset.runId || '', pipelineId: a.dataset.pipelineId || '', projectKey: a.dataset.projectKey || '' };
+    const row = { kind: a.dataset.kind, runId: a.dataset.runId || '', pipelineId: a.dataset.pipelineId || '', projectKey: a.dataset.projectKey || '',
+      memberKeys: new Set((a.dataset.memberKeys || '').split(' ').filter(Boolean)) };
     const on = isRowSelected(row, sel);
     a.classList.toggle('selected', on);
     if (on) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current');
@@ -29534,6 +29594,14 @@ function paintRunsSelection() {
 // Rows are links (#running/<id>, #history/<key>/<id>, #schedules) so a modifier click can
 // open a tab; a plain click routes in place. Group heads fold (D10).
 el.runsList?.addEventListener('click', (e) => {
+  const tog = e.target.closest && e.target.closest('.runs-chain-toggle');
+  if (tog) {
+    e.preventDefault();
+    const k = tog.dataset.chainKey;
+    if (runsUi.chainsOpen.has(k)) runsUi.chainsOpen.delete(k); else runsUi.chainsOpen.add(k);
+    paintRunsList();   // the refocus path above puts focus back on the rebuilt toggle
+    return;
+  }
   const head = e.target.closest && e.target.closest('.runs-group-head');
   if (head) { toggleRunsGroup(head.dataset.groupKey || ''); return; }
   const a = e.target.closest && e.target.closest('a.runs-row');
@@ -30999,13 +31067,18 @@ function paintRdGlance(screen, r) {
   }
   const live = r;
   r = terminal ? rdGlanceRun(r) : r;
+  const prog = isGraphRun(live) ? runDecorFor(live).stageProgress : null;
   const copy = glanceCopy(r, {
     pill: statusPill(live), checks: rdChecksCount(live), lastLine: rdLastLine(live), limitNote: limitRowNote(live),
     pr: terminal ? glancePrInput(rdHistoryRecord(live)) : null, files: terminal ? rdFilesChanged(live) : null,
+    progress: prog,
   });
   screen.dataset.glance = copy.state;
 
   paintGlanceStatus(screen.querySelector('.rd-glance'), copy);
+  // Run progress (P2/P4): stopped and error keep today's red glance with no bar.
+  paintProgressBar(screen.querySelector('.rd-glance .rd-prog'), prog && prog.tone !== 'red' ? prog : null);
+  paintChainBar(screen.querySelector('.rd-glance .rd-prog-chain'), chainItemFor(live));
   // Only while a question waits is the status header a control (see openRunDetail).
   const statusTop = screen.querySelector('.rd-now-top');
   const asking = copy.state === 'ask';
@@ -32115,8 +32188,9 @@ function paintRdHeader(screen, r) {
   // Guard on `name`, not on `n`: runStepLabel always returns n >= 1, so `step.n`
   // can never be falsy and an unresolvable node would render `step 1/7 · ` with a
   // dangling separator.
+  const prog = isGraphRun(r) ? runDecorFor(r).stageProgress : null;
   const stepText = isGraphRun(r) && step
-    ? (RD_TERMINAL.includes(r.status) || isPaused(r) ? '' : (nowRows(r).map((x) => x.label).join(' · ') || (preflightOpen(r) ? 'Preflight' : '') || step.name || ''))   // names what runs, never a count (graphs loop and branch)
+    ? (RD_TERMINAL.includes(r.status) || isPaused(r) ? '' : (prog && prog.text ? prog.text : (nowRows(r).map((x) => x.label).join(' · ') || (preflightOpen(r) ? 'Preflight' : '') || step.name || '')))   // the P5 line; names what runs, never a count (graphs loop and branch)
     : (step && step.name ? `step ${step.n}/${step.m} · ${step.name}` : '');
   const segs = [
     ['rd-project', projectName(r.projectDir), false],
@@ -34428,6 +34502,8 @@ pinpoint.addSurface(askPanel.root, {
 // render already has it (the section is still hidden here: the visit starts when the route shows it).
 mountChatHome();
 askRunStore.subscribe((runId, type) => { if (type !== 'log') chatHome?.update(); });   // a log line changes no tile
+
+let chainsAsked = false;   // module-level, ABOVE the boot showView (TDZ: app-js-boot-route-before-async)
 
 // Boot: parse view + optional param so a reload on a deep link (#running/<id>)
 // restores the Running view instead of silently resetting to Chat (worca Chat U5: the app's home).

@@ -12,6 +12,7 @@ import { mountRunGraph } from '../graph/run-hosts.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askRendererFor, askKindOf } from '../ask/registry.mjs';
 import { shapeFirstOn } from './shape-gate.mjs';
+import { paintProgressBar } from '../run-progress-bar.mjs';
 
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
@@ -177,6 +178,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const timeEl = stat('Elapsed', 'ask-rc-time mono');
   const costEl = stat('Cost', 'ask-rc-cost mono');
   const progEl = stat('Progress', 'ask-rc-prog mono');
+  const progBar = h('div', 'run-prog is-compact chat-rc-prog');   // P9: the bar, compact (no marks)
+  progBar.hidden = true;
   const agentsBox = h('div', 'ask-rc-active');
   agentsBox.hidden = true;
   agentsBox.setAttribute('role', 'group');
@@ -227,7 +230,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   footErr.hidden = true;
   footErr.setAttribute('role', 'status');
   foot.append(pauseBtn, stopBtn, footErr);
-  el.append(head, title, sub, shapedEl, stats, agentsBox, well, qSec, resultSec, reason, foot);
+  el.append(head, title, sub, shapedEl, stats, progBar, agentsBox, well, qSec, resultSec, reason, foot);
 
   let last = null, graph = null, agentsSig = null, resultSig = '', painted = null, sent = null, inFlight = false, dead = false, pauseAsked = '';
   let shownFor = null;   // the question whose receipt shows the "Answered" fallback (its answer may still be in flight)
@@ -565,7 +568,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     timeEl.textContent = fmtDur(s ? s.elapsedMs : 0);
     costEl.textContent = s && s.costUsd == null ? 'cost unknown' : fmtUsd(s ? s.costUsd : 0);
     const prog = s && s.progress;
-    progEl.textContent = prog && prog.total ? `${prog.done}/${prog.total} agents` : '—';
+    const sp = s && s.stageProgress;
+    // P9: the same bar and text, compact. The Progress tile carries the P5 text (no new tile; P12 retires "n/m agents").
+    progEl.textContent = sp && sp.text ? sp.text : (prog && prog.total ? `${prog.done}/${prog.total} agents` : '—');
+    paintProgressBar(progBar, sp && sp.tone !== 'red' ? sp : null);
     open.setAttribute('href', progressRoute(id, s));
     const sh = s && s.shaping;
     if (sh && sh.approved && shapeFirstOn()) {

@@ -13,6 +13,11 @@ import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { effectiveAllowedTools } from '../src/core/phases.mjs';
 import { toolsForMeta } from '../src/core/graph/executor.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { GRAPH_DEFAULT_WORKFLOW, GRAPH_PR_FIX_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_WORKSPACE_SCAN_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
+import { GRAPH_ARCHITECTURE_WORKFLOW } from '../src/core/graph/architecture-workflow.mjs';
+import { GRAPH_PRESENTATION_WORKFLOW } from '../src/core/graph/presentation-workflow.mjs';
+import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
+import { RECIPE_SHAPES } from '../src/core/auto/recipes.mjs';
 
 const AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
 const RUNNER_TYPES = new Set(['producer', 'verifier', 'clarifier']);
@@ -72,6 +77,47 @@ test('every shipped sidecar: required fields, runnable runnerType, v2 typed port
         assert.ok(RUNNER_TYPES.has(meta.runnerType), `${file}: runnerType "${meta.runnerType}" must be producer|verifier|clarifier`);
         assert.equal(meta.metaVersion, 2, `${file}: must be a meta v2 sidecar`);
         assert.equal(typeof meta.order, 'number', `${file}: order must be a number`);
+      }
+    } },
+    { name: 'shipped sidecars have progressStage exactly as specified', run: async () => {
+      const expect = {
+        clarify: 'plan', planner: 'plan', refiner: 'plan', planReviewer: 'plan',
+        architect: 'plan', architectSetup: 'plan',
+        decomposer: 'build', implementer: 'build',
+        reviewer: 'review', workspaceReviewer: 'review',
+        manualTestsChecklist: 'review', manualWebUiTesting: 'review',
+      };
+      const { metas } = await listAgents();
+      for (const file of metas) {
+        const meta = JSON.parse(await readFile(join(AGENTS_DIR, file), 'utf8'));
+        if (expect[meta.key]) assert.equal(meta.progressStage, expect[meta.key], `${meta.key} has progressStage=${expect[meta.key]}`);
+        else assert.equal('progressStage' in meta, false, `${meta.key} has no progressStage`);
+      }
+    } },
+    { name: 'every agent of the staged workflows, seed templates and Auto recipes resolves to a staged sidecar', run: async () => {
+      const stageOf = {};
+      for (const f of (await listAgents()).metas) {
+        const m = JSON.parse(await readFile(join(AGENTS_DIR, f), 'utf8'));
+        stageOf[m.key] = m.progressStage;
+      }
+      const keysOf = (wf) => wf.nodes.filter((n) => n.kind === 'agent').map((n) => n.key);
+      const recipeKeys = RECIPE_SHAPES.flatMap((r) => r.shape.stages.flatMap((st) => (st.parallel || [st]).map((x) => x.agent)));
+      const sets = [['wf_default', keysOf(GRAPH_DEFAULT_WORKFLOW)], ['wf_pr_fix', keysOf(GRAPH_PR_FIX_WORKFLOW)],
+        ['wf_architecture_c4', keysOf(GRAPH_ARCHITECTURE_WORKFLOW)], ['recipes', recipeKeys],
+        ...SEED_TEMPLATES.map((t) => [t.id, keysOf(t)])];
+      for (const [name, keys] of sets) {
+        assert.ok(keys.length, `${name} has agents`);
+        for (const k of keys) assert.ok(['plan', 'build', 'review'].includes(stageOf[k]), `${name}: ${k} has a progressStage`);
+      }
+    } },
+    { name: 'memory defrag, workspace scan and presentation workflows have no staged agent', run: async () => {
+      const stageOf = {};
+      for (const f of (await listAgents()).metas) {
+        const m = JSON.parse(await readFile(join(AGENTS_DIR, f), 'utf8'));
+        stageOf[m.key] = m.progressStage;
+      }
+      for (const wf of [GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_WORKSPACE_SCAN_WORKFLOW, GRAPH_PRESENTATION_WORKFLOW]) {
+        for (const n of wf.nodes.filter((x) => x.kind === 'agent')) assert.equal(stageOf[n.key], undefined, `${wf.id}: ${n.key} is unstaged`);
       }
     } },
     { name: 'every sidecar declares its typed ports, and NO v1 wiring field', run: async () => {
