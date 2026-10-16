@@ -75,7 +75,7 @@ test('POST /api/run: overlay.nodes is checked against the workflow and the catal
     [{ nodes: { n_plan: { model: 'gone-model' } } }, /node "n_plan": unknown model "gone-model"/],
     [{ nodes: { n_plan: { model: 'claude-haiku-4-5', effort: 'max' } } }, /node "n_plan": model claude-haiku-4-5 has no effort "max"/],
     [{ nodes: { n_plan: { effort: 'high' } } }, /node "n_plan": an effort needs a model/],
-    [{ nodes: { n_plan: { model: 'gpt-5.5' } } }, /node "n_plan": gpt-5\.5 runs on Codex, not on Claude/],
+    [{ nodes: { n_plan: { model: 'gpt-5.5' } } }, /node "n_plan": gpt-5\.5 runs on OpenAI Codex, not on Claude Code/],
     [{ nodes: { n_plan: { model: 'claude-opus-5-5', reason: 'x' } } }, /overlay\.nodes\.n_plan: unknown key "reason"/],
     [{ nodes: { n_plan: { fanOut: 'yes' } } }, /node "n_plan": fanOut must be true or false/],
   ]) {

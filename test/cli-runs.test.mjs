@@ -203,7 +203,7 @@ test('a paused run: the detail says how to resume; after a usage limit its engin
   const r = await run(['runs', 'ddd40001']);
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, /Resume with: worca resume ddd40001\n/);
-  assert.match(r.stdout, /Or continue now on Claude: worca resume ddd40001 --engine claude/);
+  assert.match(r.stdout, /Or continue now on Claude Code: worca resume ddd40001 --engine claude/);
   assert.match(r.stdout, /Or continue now on Cursor: worca resume ddd40001 --engine cursor/);
   const d = JSON.parse((await run(['runs', 'ddd40001', '--json'])).stdout);
   assert.deepEqual([d.engine, d.limitEngine], ['codex', 'codex']);

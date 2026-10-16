@@ -230,6 +230,7 @@ import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisibl
 import { applyFlags, decorateFlagChips } from './flags.mjs';
 import { createFlagsView } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
+import { renderReadinessChip, readinessAddedToast, readinessMenuModel, renderLevelLabel, LEVEL_WORDS } from './readiness-chip.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
 import { pageTitle } from './topnav.mjs';
@@ -1485,6 +1486,22 @@ function handleServerMessage(msg) {
     if (hdCommentState && hdCommentState.key === msg.storeKey && hdCommentState.id === msg.pipelineId) {
       pokeOpenDiffTab();
     }
+    return;
+  }
+
+  // The server's frame names the project in `action` (emitChanged(type, action)); a null one has nothing to refetch.
+  if (msg.type === 'readiness-changed') {
+    // Repaint whatever shows this project's readiness: the Projects list (chip, open popover) or a settings card.
+    const key = msg.action;
+    const shown = key && (currentView() === 'projects'
+      || [...document.querySelectorAll('.readiness-settings-card')].some((c) => c.dataset.key === key));
+    if (shown) void refreshReadiness(key);
+    return;
+  }
+  // A project just added evaluated not-ready: one nudge per project, opening its breakdown.
+  if (msg.type === 'readiness-added') {
+    const toast = readinessAddedToast(msg, { run: () => openReadinessBreakdown(msg.projectKey) });
+    if (toast) notify(toast);
     return;
   }
 
@@ -11093,7 +11110,14 @@ function buildProjectRow(p) {
   path.className = 'proj-path';
   appendBreakable(path, p.path);   // a narrow column breaks it after a /, not mid-name
   path.title = p.path;
-  main.append(name, path);
+  // The title line: the name, then the readiness chip (paintReadinessChips fills the slot). A long name pushes
+  // the chip onto the next line instead of cutting the name.
+  const title = document.createElement('div');
+  title.className = 'pl-title';
+  const rdSlot = document.createElement('span');
+  rdSlot.className = 'pl-rd-slot';
+  title.append(name, rdSlot);
+  main.append(title, path);
   row.appendChild(main);
   // #527 / design 2026-10-01: the sync bar's own column (branch | origin status | action). A keyed
   // row's bar is always there; paintSyncChips fills it, and hides it only for a project the
@@ -11554,6 +11578,465 @@ if (el.projectsSyncAll) {
   });
 }
 
+// ---- Agent readiness: a chip per project row, its popover, the ignore list and the per-tool setting ----------
+// The row chip paints from the cache-only `readiness` summary on GET /api/projects. A project with no
+// summary yet is evaluated once per page load (warmReadiness) and the summaries are re-read after.
+// The popover shows the final report (GET /api/projects/:key/readiness): only the tools the project uses are
+// judged. `readiness-changed` frames refetch it. Every string in a report is server data: textContent only.
+const readinessReports = {};        // projectKey → last full report
+const readinessChips = new Map();   // projectKey → { chip, menu, fly }: one popover per project, reused across repaints
+const readinessHeadChips = new Map();   // projectKey → the same record for the project page header's chip
+/** Every chip record of one project (the list row's and the project page header's), or of all projects. */
+const readinessRecs = (key) => [readinessChips, readinessHeadChips].flatMap((m) => (key ? [m.get(key)] : [...m.values()])).filter(Boolean);
+const readinessTried = new Set();   // keys the cold-start warm-up already asked for
+let readinessOff = false;           // GET answered {disabled: true}: no chips, no more asking
+
+async function fetchReadinessReport(key, { refresh = false } = {}) {
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(key)}/readiness${refresh ? '?refresh=1' : ''}`);
+    const data = await safeJson(res);
+    if (data && data.disabled) { readinessOff = true; return null; }
+    const report = res.ok && data && data.readiness ? data.readiness : null;
+    if (report) readinessReports[key] = report;
+    return report;
+  } catch {
+    return null;
+  }
+}
+
+// The row summary of a fresh report (the server's summaryOf, report.mjs).
+const summaryOfClient = (r) => ({ level: r.level, failingCount: r.counts.mustFix + r.counts.shouldFix, ...r.counts });
+function applyReadinessReport(key, report) {
+  const p = projectByKey(key);
+  if (!p || !report || !report.counts) return;
+  p.readiness = summaryOfClient(report);
+}
+
+async function syncReadinessSummaries() {
+  try {
+    const data = await safeJson(await fetch('/api/projects'));
+    for (const q of (data && Array.isArray(data.projects)) ? data.projects : []) {
+      const p = q && projectByKey(q.key);
+      if (p) p.readiness = q.readiness || null;
+    }
+  } catch { /* keep the summaries we have */ }
+}
+
+async function warmReadiness() {
+  if (readinessOff) return;
+  const cold = state.projects.filter((p) => p && p.key && p.exists && !p.readiness && !readinessTried.has(p.key));
+  if (!cold.length) return;
+  for (const p of cold) readinessTried.add(p.key);
+  for (const p of cold) {
+    if (readinessOff) break;
+    await fetchReadinessReport(p.key);
+  }
+  if (!readinessOff) await syncReadinessSummaries();
+  if (currentShownView === 'projects') paintReadinessChips();
+}
+
+// Re-read one project's report (`refresh` re-evaluates past the server cache) and repaint what shows it:
+// the row chip, the open flyout and the project settings cards (`cards: false` for the card that asked).
+async function refreshReadiness(key, { refresh = false, cards = true } = {}) {
+  const report = await fetchReadinessReport(key, { refresh });
+  if (!report) return;
+  applyReadinessReport(key, report);
+  if (currentShownView === 'projects') paintReadinessChips();
+  if (projDetail && projDetail.key === key) paintReadinessHeadChip(projDetail.screen, key);
+  for (const rec of readinessRecs(key)) if (rec.fly.isOpen()) { paintReadinessMenu(key, rec); rec.fly.reposition(); }
+  if (cards) for (const card of document.querySelectorAll('.readiness-settings-card')) if (card.dataset.key === key) void fillReadinessCard(card, key);
+}
+
+// Show the Projects page with one project's breakdown open (the add-project toast's action).
+let readinessOpenOnPaint = null;
+function openReadinessBreakdown(key) {
+  readinessOpenOnPaint = key;
+  if (currentShownView === 'projects') paintReadinessChips();
+  else location.hash = 'projects';
+}
+
+function paintReadinessChips() {
+  for (const item of document.querySelectorAll('#projects-list .pl-item[data-key]')) {
+    const key = item.dataset.key;
+    const p = projectByKey(key);
+    const slot = item.querySelector('.pl-rd-slot');
+    const fresh = readinessOff || !slot ? null : renderReadinessChip(p && p.readiness, { doc: document });
+    let rec = readinessChips.get(key);
+    if (!fresh) { if (rec) rec.chip.remove(); continue; }
+    if (rec) {
+      rec.chip.className = fresh.className;
+      rec.chip.title = fresh.title;
+      rec.chip.replaceChildren(...fresh.childNodes);
+    } else {
+      rec = newReadinessChip(key, fresh);
+      readinessChips.set(key, rec);
+    }
+    slot.appendChild(rec.chip);
+    if (readinessOpenOnPaint === key) { readinessOpenOnPaint = null; rec.chip.click(); }
+  }
+}
+
+// The chip is the flyout's trigger (createFlyout toggles it on click); the menu lives on <body> and is
+// filled when it opens. One per project for the page's life — createFlyout's document listeners are never removed.
+function newReadinessChip(key, chip, { closeOn = document.querySelector('.main') } = {}) {
+  chip.setAttribute('role', 'button');
+  chip.tabIndex = 0;
+  chip.setAttribute('aria-haspopup', 'dialog');
+  const menu = document.createElement('div');
+  menu.className = 'activity-pop readiness-pop';
+  menu.setAttribute('role', 'dialog');
+  menu.setAttribute('aria-label', 'Agent readiness');
+  menu.hidden = true;
+  document.body.appendChild(menu);
+  const rec = { chip, menu, fly: null };
+  // 'below': under the chip, left-aligned, height limited to the room below; only .rp-body scrolls.
+  rec.fly = createFlyout({ doc: document, win: window, trigger: chip, menu, mode: 'below', closeOn, onOpen: () => void openReadinessMenu(key, rec) });
+  chip.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    e.preventDefault();
+    e.stopPropagation();
+    chip.click();   // detail 0: createFlyout reads it as a keyboard open
+  });
+  return rec;
+}
+
+// The project page header's chip, beside the name: the list row's chip and popover, kept in its own record. A page
+// opened straight from a link has no summary yet: read the report once, then paint.
+function paintReadinessHeadChip(screen, key) {
+  const slot = screen && screen.querySelector('.pd-rd-slot');
+  if (!slot || !key) return;
+  const p = projectByKey(key);
+  if (p && !p.readiness && !readinessOff && p.exists && !readinessTried.has(key)) {
+    readinessTried.add(key);
+    void refreshReadiness(key, { cards: false });
+  }
+  const fresh = readinessOff ? null : renderReadinessChip(p && p.readiness, { doc: document });
+  let rec = readinessHeadChips.get(key);
+  if (!fresh) { slot.replaceChildren(); return; }
+  if (rec) {
+    rec.chip.className = fresh.className;
+    rec.chip.title = fresh.title;
+    rec.chip.setAttribute('aria-label', fresh.getAttribute('aria-label'));
+    rec.chip.replaceChildren(...fresh.childNodes);
+  } else {
+    rec = newReadinessChip(key, fresh, { closeOn: screen });
+    readinessHeadChips.set(key, rec);
+  }
+  if (rec.chip.parentNode !== slot) slot.replaceChildren(rec.chip);
+}
+
+// The Settings card's "View report": the header chip's popover, opened once this click is over (the flyout closes on
+// a click outside it) and after the header is scrolled into view (it closes on a scroll of the page).
+function openReadinessFromCard(key) {
+  const rec = readinessHeadChips.get(key);
+  if (!rec || !rec.chip.isConnected) return;
+  (rec.chip.closest('.pd-header') || rec.chip).scrollIntoView({ block: 'start' });
+  requestAnimationFrame(() => requestAnimationFrame(() => { if (rec.chip.isConnected) rec.fly.open({ focus: true }); }));
+}
+
+async function openReadinessMenu(key, rec) {
+  if (!readinessReports[key]) {
+    rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'rp-head', textContent: 'Checking...' }));
+    rec.fly.reposition();
+    await fetchReadinessReport(key);
+  }
+  if (rec.fly.isOpen()) { paintReadinessMenu(key, rec); rec.fly.reposition(); }
+}
+
+function paintReadinessMenu(key, rec) {
+  const report = readinessReports[key];
+  if (!report) {
+    rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'rp-head', textContent: 'Readiness could not be read.' }));
+    return;
+  }
+  // Keep the reader's place across a repaint (spec 5): which boxes are open and where the body is scrolled.
+  const open = [...rec.menu.querySelectorAll('.rp-more')].map((d) => d.open);
+  const body = rec.menu.querySelector('.rp-body');
+  const top = body ? body.scrollTop : 0;
+  rec.menu.replaceChildren(buildReadinessMenu(key, report));
+  rec.menu.querySelectorAll('.rp-more').forEach((d, i) => { if (open[i]) d.open = true; });
+  const next = rec.menu.querySelector('.rp-body');
+  if (next) next.scrollTop = top;
+}
+
+// The popover (spec 5): head with the level and "N of M checks pass"; the tools this project uses; one line naming
+// the tools that are not judged; failing repository checks; the passed and ignored boxes; a fixed foot.
+// Every string from the report is server data: textContent only.
+function buildReadinessMenu(key, report) {
+  const m = readinessMenuModel(report, { engineLabel });
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
+  const frag = document.createDocumentFragment();
+
+  const head = el('div', 'rp-head');
+  const title = el('div', 'rp-title', 'Agent readiness');
+  const p = projectByKey(key);
+  title.append(el('span', 'rp-sub', p ? p.name : key));
+  const count = el('button', 'rp-count', m.countLine);
+  count.type = 'button';
+  title.append(count);
+  head.append(title);
+  const end = el('div', 'rp-head-end');
+  if (LEVEL_WORDS[m.level]) end.append(renderLevelLabel(m.level, { doc: document }));
+  // Closes this popover like Escape: a pointer click lets go of focus, a key press hands it back to the chip.
+  const close = el('button', 'rp-close', '×');
+  close.type = 'button';
+  close.title = 'Close';
+  close.setAttribute('aria-label', 'Close');
+  close.addEventListener('click', (e) => {
+    const rec = readinessRecs().find((r) => r.menu.contains(close));
+    if (rec) rec.fly.close(e.detail === 0 ? { refocus: true } : { blur: true });
+  });
+  end.append(close);
+  head.append(end);
+  frag.append(head);
+
+  const body = el('div', 'rp-body');
+  const sec = (h, note) => { const s = el('div', 'rp-sec'); s.append(el('h3', '', h)); if (note) s.append(el('span', '', note)); return s; };
+
+  body.append(sec('Tools this project uses'));
+  for (const t of m.tools) {
+    const row = el('div', 'rp-tool');
+    const name = el('span', 'rp-tool-n', t.label);
+    if (t.reason) name.append(' ', el('small', '', `(${t.reason})`));
+    row.append(name);
+    if (LEVEL_WORDS[t.level]) row.append(renderLevelLabel(t.level, { doc: document }));
+    if (t.detail) row.append(el('span', 'rp-tool-d', t.detail));
+    if (t.fix) row.append(el('span', 'rp-tool-f', t.fix));
+    if (t.runs) {
+      row.append(el('span', 'rp-hint', 'Runs use this tool. To stop judging it, change the engine in Settings.'));
+    } else {
+      const btn = el('button', 'rp-act', 'Not used here');
+      btn.type = 'button';
+      btn.setAttribute('role', 'menuitem');
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const prev = await setReadinessTool(key, t.name, 'unused');
+        if (prev === null) { btn.disabled = false; notify({ tone: 'err', title: `Could not save. ${t.label} is still judged.` }); return; }
+        await refreshReadiness(key);
+        notify({ tone: 'info', title: `${t.label} marked as not used`, key: `readiness-unused-${key}-${t.name}`,
+          action: { label: 'Undo', run: async () => { if ((await setReadinessTool(key, t.name, prev)) !== null) await refreshReadiness(key); } } });
+      });
+      row.append(btn);
+    }
+    body.append(row);
+  }
+  if (m.notJudged.length) {
+    const line = el('div', 'rp-notjudged', `Not judged: ${m.notJudged.join(', ')}. `);
+    const link = el('a', '', 'Change in Settings');
+    link.href = `#projects/${key}/settings`;
+    link.addEventListener('click', (e) => { e.preventDefault(); openReadinessSettings(key); });
+    line.append(link);
+    body.append(line);
+  }
+
+  body.append(sec('Repository', 'Applies to every tool'));
+  const GROUP = { blocker: 'Must fix', warn: 'Should fix', info: 'Advice' };
+  for (const sev of ['blocker', 'warn', 'info']) {
+    for (const c of m.failing[sev]) {
+      const row = el('div', 'rp-chk');
+      const dot = el('span', `rp-sev ${sev}`);
+      dot.setAttribute('aria-label', GROUP[sev]);
+      const ign = el('button', 'rp-ign', 'Ignore');
+      ign.type = 'button';
+      ign.addEventListener('click', async () => { if (await setReadinessIgnore(key, c.id, true)) await refreshReadiness(key, { refresh: true }); });
+      row.append(dot, el('span', 'rp-chk-t', c.title), ign);
+      if (c.detail) row.append(el('span', 'rp-chk-d', c.detail));
+      row.append(el('span', 'rp-chk-f', c.fix));
+      body.append(row);
+    }
+  }
+
+  const box = (lead, text) => {
+    const d = el('details', 'rp-more');
+    const s = el('summary');
+    s.append(el('span', lead), el('span', '', text), el('span', 'rp-chev'));
+    d.append(s);
+    return d;
+  };
+  const passedBox = box('rp-tick', `${m.passed.length} checks pass`);
+  const list = el('ul');
+  for (const it of m.passed) { const li = el('li'); li.append(el('b', '', it.title), el('span', '', it.detail)); list.append(li); }
+  passedBox.append(list);
+  body.append(passedBox);
+  count.addEventListener('click', () => { passedBox.open = true; passedBox.scrollIntoView({ block: 'nearest' }); passedBox.querySelector('summary').focus(); });
+
+  if (m.ignored.length) {
+    const ignBox = box('rp-gdot', `${m.ignored.length} ignored for this project`);
+    const ul = el('ul');
+    for (const it of m.ignored) {
+      const li = el('li');
+      const back = el('button', 'rp-ign', 'Stop ignoring');
+      back.type = 'button';
+      back.addEventListener('click', async () => { if (await setReadinessIgnore(key, it.id, false)) await refreshReadiness(key, { refresh: true }); });
+      li.append(el('b', '', it.title), back);
+      ul.append(li);
+    }
+    ignBox.append(ul);
+    body.append(ignBox);
+  }
+  frag.append(body);
+
+  const foot = el('div', 'rp-foot');
+  const when = el('span', '', report.checkedAt ? `Checked ${ago(report.checkedAt)}` : '');
+  const settings = el('a', '', 'Settings');
+  settings.href = `#projects/${key}/settings`;
+  settings.addEventListener('click', (e) => { e.preventDefault(); openReadinessSettings(key); });
+  const recheck = el('button', 'btn btn-ghost btn-mini', 'Recheck');
+  recheck.type = 'button';
+  recheck.addEventListener('click', async () => { recheck.disabled = true; await refreshReadiness(key, { refresh: true }); recheck.disabled = false; });
+  foot.append(when, el('span', 'rp-sp'), settings, recheck);
+  frag.append(foot);
+  return frag;
+}
+
+// Add (`ignored`) or drop one check id on the project's own `readiness.ignore` list. Resolves true once
+// the PATCH landed; the other ids on the list, known or not, are kept.
+async function setReadinessIgnore(key, checkId, ignored) {
+  const url = `/api/projects/${encodeURIComponent(key)}/settings`;
+  try {
+    const data = await safeJson(await fetch(url));
+    const own = data && data.own && data.own['readiness.ignore'];
+    const cur = Array.isArray(own) ? own : [];
+    const next = ignored ? [...new Set([...cur, checkId])] : cur.filter((id) => id !== checkId);
+    const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ 'readiness.ignore': next.length ? next : null }) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Set one tool's readiness choice ('used' | 'unused' | 'detect') on the project's own readiness.tools map.
+// Resolves to the previous choice (for Undo), or null when the PATCH failed.
+async function setReadinessTool(key, engine, value) {
+  const url = `/api/projects/${encodeURIComponent(key)}/settings`;
+  try {
+    const data = await safeJson(await fetch(url));
+    const own = data && data.own && data.own['readiness.tools'];
+    const cur = own && typeof own === 'object' && !Array.isArray(own) ? { ...own } : {};
+    const prev = cur[engine] || 'detect';
+    if (value === 'detect') delete cur[engine]; else cur[engine] = value;
+    const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 'readiness.tools': Object.keys(cur).length ? cur : null }) });
+    if (!res.ok) return null;
+    return prev;
+  } catch {
+    return null;
+  }
+}
+
+// The popovers live on <body>, outside every view: any hash navigation (Back, a link) closes them.
+function closeReadinessPopovers() {
+  for (const rec of readinessRecs()) if (rec.fly.isOpen()) rec.fly.close();
+}
+window.addEventListener('hashchange', closeReadinessPopovers);
+
+// The project's Settings tab, scrolled to the Agent readiness card once that card has filled (fillReadinessCard).
+let readinessScrollTo = null;
+function openReadinessSettings(key) {
+  closeReadinessPopovers();
+  const hash = `projects/${key}/settings`;
+  // Already on that tab (the header chip's popover): no hashchange will refill the card, so go to it now.
+  const card = location.hash === `#${hash}` && [...document.querySelectorAll('.readiness-settings-card')].find((c) => c.dataset.key === key);
+  if (card) { card.scrollIntoView({ block: 'start' }); card.focus({ preventScroll: true }); return; }
+  readinessScrollTo = key;
+  location.hash = hash;
+}
+
+// The project page's Settings tab: a Detect / Used / Not used control per tool, then one switch per check
+// (on = skipped for this project).
+function buildReadinessSettingsCard(key) {
+  const card = document.createElement('section');
+  card.className = 'card readiness-settings-card';
+  card.dataset.key = key;
+  card.tabIndex = -1;   // openReadinessSettings focuses it
+  void fillReadinessCard(card, key);
+  return card;
+}
+
+async function fillReadinessCard(card, key) {
+  const mine = (card.rdSeq = (card.rdSeq || 0) + 1);
+  const head = document.createElement('div');
+  head.className = 'rs-head';
+  const view = Object.assign(document.createElement('button'), { type: 'button', className: 'rs-view', textContent: 'View report' });
+  view.addEventListener('click', () => openReadinessFromCard(key));
+  head.append(Object.assign(document.createElement('h3'), { textContent: 'Agent readiness' }), view);
+  const hint = Object.assign(document.createElement('small'), { className: 'hint', textContent: 'Which tools this project uses. Detect lets Worca decide from runs and files.' });
+  const msg = Object.assign(document.createElement('small'), { className: 'hint' });
+  card.replaceChildren(head, hint);
+  const [settings, report] = await Promise.all([
+    fetch(`/api/projects/${encodeURIComponent(key)}/settings`).then(safeJson, () => ({})),
+    readinessReports[key] ? Promise.resolve(readinessReports[key]) : fetchReadinessReport(key),
+  ]);
+  if (mine !== card.rdSeq) return;
+  const CHOICES = [['detect', 'Detect'], ['used', 'Used'], ['unused', 'Not used']];
+  for (const [name, e] of Object.entries((report && report.engines) || {})) {
+    if (e.level === 'locked') continue;
+    const runs = (e.reasons || []).some((r) => r.kind === 'run-engine');
+    const row = document.createElement('div');
+    row.className = 'rs-row';
+    row.append(Object.assign(document.createElement('span'), { className: 'rs-name', textContent: engineLabel(name) }));
+    const seg = document.createElement('div');
+    seg.className = 'seg seg-sm';
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', engineLabel(name));
+    for (const [v, label] of CHOICES) {
+      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: label });
+      b.setAttribute('aria-pressed', String(e.setting === v));
+      b.classList.toggle('on', e.setting === v);
+      if (runs && v === 'unused') { b.disabled = true; b.title = 'Runs use this tool'; }
+      b.addEventListener('click', async () => {
+        if (b.disabled || e.setting === v) return;
+        msg.textContent = '';
+        for (const x of seg.children) x.disabled = true;
+        const prev = await setReadinessTool(key, name, v);
+        if (prev === null) msg.textContent = 'Could not save.';
+        void refreshReadiness(key, { cards: true });
+      });
+      seg.append(b);
+    }
+    row.append(seg);
+    const finds = e.detectedReason ? `Detect finds: ${e.detectedReason}` : 'Detect finds nothing';
+    const judged = e.used ? `Judged: ${LEVEL_WORDS[e.level] || e.level}.` : 'Not judged.';
+    row.append(Object.assign(document.createElement('span'), { className: 'rs-find', textContent: `${finds}. ${judged}` }));
+    if (runs) row.append(Object.assign(document.createElement('span'), { className: 'rs-note', textContent: 'Runs use this tool, so it is always judged. To stop, change the Run engine setting.' }));
+    card.append(row);
+  }
+  if (readinessScrollTo === key && card.isConnected) {
+    readinessScrollTo = null;
+    requestAnimationFrame(() => { card.scrollIntoView({ block: 'start' }); card.focus({ preventScroll: true }); });
+  }
+  const own = settings && settings.own && settings.own['readiness.ignore'];
+  const ignored = new Set(Array.isArray(own) ? own : []);
+  const seen = new Set();
+  const checks = ((report && report.checks) || []).filter((c) => !seen.has(c.id) && seen.add(c.id));
+  if (!checks.length) hint.textContent = readinessOff ? 'Agent readiness is switched off.' : 'No readiness report yet.';
+  else card.append(Object.assign(document.createElement('small'), { className: 'hint rs-skip', textContent: 'Switch a check on to skip it for this project.' }));
+  for (const check of checks) {
+    const label = document.createElement('label');
+    label.className = 'qtune-sw';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'sw-input';
+    input.checked = ignored.has(check.id);
+    input.setAttribute('aria-label', `Skip ${check.title}`);
+    input.addEventListener('change', async () => {
+      msg.textContent = '';
+      const want = input.checked;
+      if (await setReadinessIgnore(key, check.id, want)) {
+        void refreshReadiness(key, { refresh: true, cards: false });
+      } else {
+        input.checked = !want;
+        msg.textContent = 'Could not save.';
+      }
+    });
+    const knob = Object.assign(document.createElement('span'), { className: 'switch switch-sm' });
+    const text = Object.assign(document.createElement('span'), { className: 'qtune-sw-t', textContent: check.title });
+    label.append(input, knob, text);
+    card.appendChild(label);
+  }
+  card.appendChild(msg);
+}
+
 function renderProjectsList() {
   const host = el.projectsList;
   if (!host) return;
@@ -11608,6 +12091,8 @@ function renderProjectsList() {
   paintProjectPolicyCells();
   paintSyncChips();
   void refreshSyncChips();
+  paintReadinessChips();
+  void warmReadiness();
 }
 
 // Fills the .pl-tm chips left by buildProjectRow, and the open project page's team-metrics
@@ -11757,6 +12242,7 @@ function paintProjHeader(screen, p) {
       copy._t = setTimeout(() => { copy.classList.remove('copied'); copy.setAttribute('aria-label', 'Copy path'); }, 1200);
     });
   }
+  paintReadinessHeadChip(screen, p.key);
   const fresh = screen.querySelector('.pd-new');
   fresh.disabled = !p.exists;
   fresh.title = p.exists ? 'Start a pipeline in this project' : 'The folder is missing on disk';
@@ -12099,6 +12585,7 @@ function buildPdSettings(sec, key) {
   const host = document.createElement('div'); host.className = 'pd-settings'; sec.appendChild(host);
   mountProjectSettings(host, { projectKey: p.key, projectDir: p.path, onTest: testModelRow });
   sec.appendChild(buildPdNightCard(p));
+  sec.appendChild(buildReadinessSettingsCard(p.key));
 }
 
 // The project's Away mode layer (project_config.extra.nightMode): fields set here beat the
@@ -12760,6 +13247,7 @@ if (el.projectsList) {
     location.hash = `projects/${item.dataset.key}`;
   };
   el.projectsList.addEventListener('click', (e) => {
+    if (e.target.closest && e.target.closest('.pl-rd')) return;   // the readiness chip opens its own flyout, not the page
     const row = e.target.closest && e.target.closest('.pl-row[role="button"]');
     if (row) openRow(row);                              // a chevron click bubbles here too — one open
   });

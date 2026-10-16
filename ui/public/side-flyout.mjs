@@ -40,12 +40,17 @@ function stackOf(doc) {
   return st;
 }
 
+/** Room (px) under the trigger below which mode 'below' opens upward instead, when there is more room above. */
+const BELOW_MIN = 260;
+
 /** Position a fixed popup next to its trigger, clamped to the viewport (margin px from every edge).
  *  mode 'side'  : left = right edge of the closest `.sidebar` (or the trigger) + gap; top = trigger.top - 30
  *  mode 'up'    : left = trigger.left; top = trigger.top - menu height - gap (opens upward)
  *  mode 'beside': left = parent.right + 4, or parent.left - width - 4 when there is no room; top = trigger.top - 5
  *  mode 'down'  : left = trigger.right - menu width (right edges aligned); top = trigger.bottom + gap (opens downward)
- *  Writes menu.style.left/top in px; un-hides the menu first so it can be measured. */
+ *  mode 'below' : left = trigger.left; top = trigger.bottom + gap; height limited to the room below (never covers the trigger);
+ *                 with less than BELOW_MIN px below and more room above, it opens upward the same way
+ *  Writes menu.style.left/top in px ('below' may write bottom and maxHeight instead); un-hides the menu first so it can be measured. */
 export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win = globalThis.window, gap = 6, margin = 8 } = {}) {
   menu.hidden = false;
   const w = menu.offsetWidth;
@@ -53,6 +58,23 @@ export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win =
   const vw = win.innerWidth;
   const vh = win.innerHeight;
   const t = trigger.getBoundingClientRect();
+  if (mode === 'below') {
+    const top = t.bottom + gap;
+    const below = vh - top - margin;
+    const above = t.top - gap - margin;
+    menu.style.left = `${Math.max(margin, Math.min(t.left, vw - w - margin))}px`;
+    if (below < Math.min(h, BELOW_MIN) && above > below) {
+      // Too little room under a low trigger: open upward, anchored by its bottom edge so it still never covers the trigger.
+      menu.style.top = '';
+      menu.style.bottom = `${vh - t.top + gap}px`;
+      menu.style.maxHeight = `${above}px`;
+    } else {
+      menu.style.bottom = '';
+      menu.style.top = `${top}px`;
+      menu.style.maxHeight = `${Math.max(0, below)}px`;
+    }
+    return;
+  }
   let left;
   let top;
   if (mode === 'up') {

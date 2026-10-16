@@ -2643,6 +2643,18 @@ export function runEngineOfRow(row) {
   return typeof rp?.claude?.engine === 'string' && rp.claude.engine ? rp.claude.engine : 'claude';
 }
 
+/** How many runs of `projectKey` started on or after `sinceIso` ran on each engine (NULL engine = 'claude').
+ *  Indexed by idx_pipelines_project_started. Never throws: a DB problem answers {}. */
+export function runEngineCounts(projectKey, sinceIso) {
+  try {
+    const rows = getDb().prepare(`SELECT COALESCE(${RUN_ENGINE_SQL}, 'claude') AS engine, COUNT(*) AS n
+      FROM pipelines WHERE project_key = ? AND started_at >= ? GROUP BY 1`).all(projectKey, sinceIso);
+    return Object.fromEntries(rows.map((r) => [r.engine, Number(r.n)]));
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Find a pipelines row by store key + (short id OR run-dir basename). Maps a store
  * key back to the WHERE column: "workspaces/<wk>" -> workspace_key=<wk>; otherwise

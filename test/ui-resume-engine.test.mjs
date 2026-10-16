@@ -16,7 +16,7 @@ const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.ur
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj-resume-engine';
 const KEY = 'proj-resume-engine-abcd1234';
-const NOTE = "Starts the paused step fresh; a model Claude cannot run falls back to its default.";
+const NOTE = "Starts the paused step fresh; a model Claude Code cannot run falls back to its default.";
 
 const live = [];
 afterEach(() => { while (live.length) { try { live.pop().close(); } catch {} } });
@@ -95,9 +95,9 @@ test('run page: the Resume menu names both engines; the other one says what swit
   await ctx.settle();
   const saved = page.querySelector('.rd-resume-menu .resume-on-saved');
   const other = page.querySelector('.rd-resume-menu .resume-on-other');
-  assert.equal(saved.querySelector('b').textContent, 'Resume on Codex');
+  assert.equal(saved.querySelector('b').textContent, 'Resume on OpenAI Codex');
   assert.equal(other.hidden, false);
-  assert.equal(other.querySelector('b').textContent, 'Resume on Claude');
+  assert.equal(other.querySelector('b').textContent, 'Resume on Claude Code');
   assert.equal(other.querySelector('small').textContent, NOTE);
   assert.equal(ctx.doc.activeElement, saved, 'the menu opens on its first item');
 });
@@ -114,7 +114,7 @@ test('run page: a pause that is not a usage limit the engine hit lists no other 
   }
 });
 
-test('run page: "Resume on Codex" is today\'s resume — no question, no engine sent', async () => {
+test('run page: "Resume on OpenAI Codex" is today\'s resume — no question, no engine sent', async () => {
   const ctx = await boot();
   const page = await pausedRun(ctx);
   page.querySelector('.rd-resume-more').click();
@@ -126,7 +126,7 @@ test('run page: "Resume on Codex" is today\'s resume — no question, no engine 
   assert.equal('engine' in ctx.resumes[0], false);
 });
 
-test('run page: "Resume on Claude" confirms with the note, then sends engine claude', async () => {
+test('run page: "Resume on Claude Code" confirms with the note, then sends engine claude', async () => {
   const ctx = await boot();
   const page = await pausedRun(ctx, { done: limitOf('codex') });
   page.querySelector('.rd-resume-more').click();
@@ -135,9 +135,9 @@ test('run page: "Resume on Claude" confirms with the note, then sends engine cla
   await ctx.settle();
   const m = modal(ctx.doc);
   assert.equal(m.open, true);
-  assert.equal(m.title, 'Resume on Claude?');
+  assert.equal(m.title, 'Resume on Claude Code?');
   assert.equal(m.message, NOTE);
-  assert.equal(m.okLabel, 'Resume on Claude');
+  assert.equal(m.okLabel, 'Resume on Claude Code');
   assert.equal(ctx.resumes.length, 0, 'nothing is sent before the confirmation');
   ctx.doc.getElementById('confirm-ok').click();
   await ctx.settle(8);
@@ -154,11 +154,11 @@ test('a 409 engine-refused shows the reason and New pipeline\'s consent; ticking
   await ctx.settle();
   page.querySelector('.resume-on-other').click();
   await ctx.settle();
-  ctx.doc.getElementById('confirm-ok').click();          // "Resume on Codex?"
+  ctx.doc.getElementById('confirm-ok').click();          // "Resume on OpenAI Codex?"
   await ctx.settle(8);
   const m = modal(ctx.doc);
   assert.equal(m.open, true, 'the refusal is shown');
-  assert.equal(m.title, 'Not resumed on Codex');
+  assert.equal(m.title, 'Not resumed on OpenAI Codex');
   assert.match(m.message, /guardrail set "normal" has permission rules/);
   assert.equal(m.checkbox, true);
   const newPipelineLabel = ctx.doc.getElementById('engineAllowRow').textContent.replace(/\s+/g, ' ').trim();
@@ -197,7 +197,7 @@ test('a team-cap question on the way keeps the engine on the re-send', async () 
   await ctx.settle();
   page.querySelector('.resume-on-other').click();
   await ctx.settle();
-  ctx.doc.getElementById('confirm-ok').click();          // "Resume on Claude?"
+  ctx.doc.getElementById('confirm-ok').click();          // "Resume on Claude Code?"
   await ctx.settle(8);
   assert.equal(modal(ctx.doc).title, 'Continue past the team cap?');
   ctx.doc.getElementById('confirm-ok').click();
@@ -211,7 +211,7 @@ test('run page banner: a usage limit an engine hit offers "Resume on <other>", a
   const page = await pausedRun(ctx, { done: { reason: 'usage_limit', detail: "You've hit your usage limit · try again at 3:47 PM", limitEngine: 'codex' } });
   const btn = page.querySelector('.rd-ov-state .rd-ov-switch');
   assert.ok(btn, 'the banner carries the button');
-  assert.equal(btn.textContent, 'Resume on Claude');
+  assert.equal(btn.textContent, 'Resume on Claude Code');
   assert.match(page.querySelector('.rd-ov-copy').textContent, /Resume after the reset\./);
   btn.click();
   await ctx.settle();
@@ -256,14 +256,14 @@ test('History detail: the saved run\'s engine names the menu; the other one conf
   ctx.go(`history/${KEY}/fcec04e8`);
   await ctx.settle(8);
   const menu = ctx.doc.querySelector('.hd-resume-menu');
-  assert.equal(menu.querySelector('.resume-on-saved b').textContent, 'Resume on Codex');
-  assert.equal(menu.querySelector('.resume-on-other b').textContent, 'Resume on Claude');
+  assert.equal(menu.querySelector('.resume-on-saved b').textContent, 'Resume on OpenAI Codex');
+  assert.equal(menu.querySelector('.resume-on-other b').textContent, 'Resume on Claude Code');
   assert.equal(menu.querySelector('.resume-on-other small').textContent, NOTE);
   ctx.doc.querySelector('.hd-resume-more').click();
   await ctx.settle();
   menu.querySelector('.resume-on-other').click();
   await ctx.settle();
-  assert.equal(modal(ctx.doc).title, 'Resume on Claude?');
+  assert.equal(modal(ctx.doc).title, 'Resume on Claude Code?');
   ctx.doc.getElementById('confirm-ok').click();
   await ctx.settle(8);
   assert.equal(ctx.resumes.length, 1);
@@ -279,7 +279,7 @@ test('History detail: a refused switch offers the consent and re-sends with it',
   await ctx.settle();
   ctx.doc.querySelector('.hd-resume-menu .resume-on-other').click();
   await ctx.settle();
-  ctx.doc.getElementById('confirm-ok').click();          // "Resume on Codex?"
+  ctx.doc.getElementById('confirm-ok').click();          // "Resume on OpenAI Codex?"
   await ctx.settle(8);
   assert.equal(modal(ctx.doc).checkbox, true);
   ctx.doc.getElementById('confirm-checkbox').checked = true;
@@ -302,10 +302,10 @@ test('History detail at simple level: a usage limit the engine hit shows the Res
   more.click();
   await ctx.settle();
   const item = [...ctx.doc.querySelectorAll('.hd-resume-menu .resume-on-other')].find((i) => !i.hidden && i.dataset.engine === 'claude');
-  assert.equal(item.querySelector('b').textContent, 'Resume on Claude');
+  assert.equal(item.querySelector('b').textContent, 'Resume on Claude Code');
   item.click();
   await ctx.settle();
-  assert.equal(modal(ctx.doc).title, 'Resume on Claude?');
+  assert.equal(modal(ctx.doc).title, 'Resume on Claude Code?');
   ctx.doc.getElementById('confirm-ok').click();
   await ctx.settle(8);
   assert.equal(ctx.resumes.length, 1);
@@ -336,7 +336,7 @@ test('run page: a paused Codex run lists every other engine; the second clone re
   page.querySelector('.rd-resume-more').click();
   await ctx.settle();
   const items = [...page.querySelectorAll('.rd-resume-menu .resume-on-other')].filter((i) => !i.hidden);
-  assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent]), [['claude', 'Resume on Claude'], ['cursor', 'Resume on Cursor']]);
+  assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent]), [['claude', 'Resume on Claude Code'], ['cursor', 'Resume on Cursor']]);
   items[1].querySelector('b').click();
   await ctx.settle();
   assert.equal(modal(ctx.doc).title, 'Resume on Cursor?');
@@ -360,7 +360,7 @@ const countingEngines = (ready, inner = null) => {
 const LIMIT = { reason: 'usage_limit', detail: "You've hit your usage limit · try again at 3:47 PM", limitEngine: 'claude' };
 
 test('run page banner: only the ready engines are offered after a usage limit', async () => {
-  for (const [ready, want] of [[['claude', 'codex'], ['Resume on Codex']], [['claude', 'codex', 'cursor'], ['Resume on Codex', 'Resume on Cursor']]]) {
+  for (const [ready, want] of [[['claude', 'codex'], ['Resume on OpenAI Codex']], [['claude', 'codex', 'cursor'], ['Resume on OpenAI Codex', 'Resume on Cursor']]]) {
     const { handler } = countingEngines(ready);
     const ctx = await boot({ fetchHandler: handler });
     const page = await pausedRun(ctx, { engine: 'claude', done: LIMIT });
@@ -386,7 +386,7 @@ test('History detail menu: one item per other engine, ready or not; the second o
   await ctx.settle(8);
   const items = [...ctx.doc.querySelectorAll('.hd-resume-menu .resume-on-other')].filter((i) => !i.hidden);
   assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent, i.querySelector('small').textContent]),
-    [['claude', 'Resume on Claude', NOTE], ['cursor', 'Resume on Cursor', "Starts the paused step fresh; a model Cursor cannot run falls back to its default."]]);
+    [['claude', 'Resume on Claude Code', NOTE], ['cursor', 'Resume on Cursor', "Starts the paused step fresh; a model Cursor cannot run falls back to its default."]]);
   ctx.doc.querySelector('.hd-resume-more').click();
   await ctx.settle();
   items[1].click();
@@ -421,7 +421,7 @@ test('run page: a second frame of the same paused run leaves the open menu\'s it
 });
 
 test('History detail Overview names the run\'s engine under the title', async () => {
-  for (const [engine, label] of [['codex', 'Codex'], ['claude', 'Claude']]) {
+  for (const [engine, label] of [['codex', 'OpenAI Codex'], ['claude', 'Claude Code']]) {
     const ctx = await boot({ fetchHandler: histFetch(engine, { pauseReason: 'error', limitEngine: null }) });
     ctx.go(`history/${KEY}/fcec04e8`);
     await ctx.settle(8);

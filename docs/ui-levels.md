@@ -258,6 +258,8 @@ inside the view.
 | Element | Level |
 |---|---|
 | Projects list, add, project page Overview, remove | S |
+| Agent readiness chip (Projects row, project page header) and its report, incl. Not used here / Undo and Recheck | S — status of the project a run starts in; its Settings links open the project Settings tab by deep link |
+| Project Settings tab: Agent readiness card (Detect / Used / Not used per tool, skipped checks) | A — the tab's level |
 | Project Memory tab (view and edit files) | A |
 | Project page Actions tab | A |
 | Workspaces list, create wizard, workspace page Overview (projects, description, re-scan, delete) | A |

@@ -548,7 +548,7 @@ test('/resume [*ref] [engine]: an engine continues the run on it; the refusal sa
   const { send } = fixture({ resume: async (pipelineId, by, opts) => { got.push([pipelineId, opts]); return answer; } });
   assert.match(text(await send('/resume *3333 claude')), /Resuming `\*3333` on Claude/);
   assert.deepEqual(got.at(-1), ['pipe-cccc3333', { engine: 'claude' }]);
-  assert.match(text(await send('/resume Codex')), /Resuming `\*3333` on Codex/, 'bare, with the engine first');
+  assert.match(text(await send('/resume Codex')), /Resuming `\*3333` on OpenAI Codex/, 'bare, with the engine first');
   assert.deepEqual(got.at(-1), ['pipe-cccc3333', { engine: 'codex' }]);
   await send('/resume *3333');
   assert.deepEqual(got.at(-1), ['pipe-cccc3333', undefined], 'no engine named: the saved one');
@@ -558,7 +558,7 @@ test('/resume [*ref] [engine]: an engine continues the run on it; the refusal sa
 
   answer = { ok: false, code: 'engine-refused', overridable: true, error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them' };
   const refused = text(await send('/resume *3333 codex'));
-  assert.match(refused, /Could not resume `\*3333` on Codex: engine codex: guardrail set "normal"/);
+  assert.match(refused, /Could not resume `\*3333` on OpenAI Codex: engine codex: guardrail set "normal"/);
   assert.match(refused, /or resume it in the Worca UI with Allow unguarded to run it without them/, 'the consent is the UI\'s, never a chat word');
   assert.doesNotMatch(refused, /--allow-unguarded-engine/, 'no CLI flag in chat');
 });

@@ -76,6 +76,7 @@ import {
   isValidSourceRef, snapshotWorktreePatch, listLocalBranches, worktreeHead, deleteBranchIfAt,
   reusedBranchBase, isAncestor,
 } from './worktree.mjs';
+import { writeReadinessSnapshot } from './repo-readiness/snapshot.mjs';
 import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS } from './git-sync.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
@@ -2533,6 +2534,13 @@ export class RunHarness extends EventEmitter {
         projectDir: resolve(m.projectDir),               // the REAL repo — what `git worktree remove` needs
         worktreeDir: this.workDirs.get(m.projectKey),
       })),
+    });
+    // Agent-readiness snapshot of the primary project's REAL dir, for the run's own engine.
+    // Merged right after the Phase-1 write so every later updateRunManifest keeps the key.
+    // Best-effort and cache-free: a failure records nothing, and the Projects chip is untouched.
+    if (detached) await writeReadinessSnapshot({
+      runRoot: this.runRoot, projectDir: primary.projectDir,
+      projectKey: primary.projectKey, engine: this.claude.engine,
     });
     await this._persist();
     this._emit('state', this.getState());

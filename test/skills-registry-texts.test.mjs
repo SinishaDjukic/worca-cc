@@ -33,7 +33,7 @@ test('skip lines name the skill (name, else the id\'s name, else the id) and the
 test('layer reasons: the words after "skills from sets not loaded: " (each surface writes that prefix once)', () => {
   assert.equal(skillLayerText('cli-no-plugin-dir'), 'this Claude Code has no --plugin-dir option');
   assert.match(skillLayerText('sideload-disabled'), /^this machine's managed Claude Code settings .*disableSideloadFlags/);
-  assert.equal(skillLayerText('engine-no-skill-mount', 'codex'), "Codex reads skills from the run's .agents/skills mount, and this run has none");
+  assert.equal(skillLayerText('engine-no-skill-mount', 'codex'), "OpenAI Codex reads skills from the run's .agents/skills mount, and this run has none");
   assert.doesNotMatch(skillLayerText('engine-no-skill-mount', 'cursor'), /this machine|Claude Code/, 'another engine\'s reason names neither');
   assert.equal(skillLayerText('engine-no-skill-mount'), "this engine reads skills from the run's .agents/skills mount, and this run has none");
   assert.equal(skillLayerText('other'), 'other');
@@ -41,6 +41,6 @@ test('layer reasons: the words after "skills from sets not loaded: " (each surfa
 });
 
 test('hooks on another engine: one line naming the mounted skills and the engine', () => {
-  assert.equal(skillHooksIgnoredText('codex', ['deploy']), 'set skill deploy declares hooks, which Codex does not run — the skill loads without them');
+  assert.equal(skillHooksIgnoredText('codex', ['deploy']), 'set skill deploy declares hooks, which OpenAI Codex does not run — the skill loads without them');
   assert.equal(skillHooksIgnoredText('cursor', ['a', 'billing-b']), 'set skills a, billing-b declare hooks, which Cursor does not run — the skills load without them');
 });

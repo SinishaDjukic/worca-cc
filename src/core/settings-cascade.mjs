@@ -63,6 +63,14 @@ const SCALARS = [
   scalar({ id: 'memory.defrag.files', path: ['memory', 'defrag', 'files'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_DEFRAG_FILES }),
   scalar({ id: 'memory.defrag.bytesPct', path: ['memory', 'defrag', 'bytesPct'], check: SETTING_CHECKS.pct, def: DEFAULT_MEMORY_DEFRAG_BYTES_PCT }),
   scalar({ id: 'memory.defrag.alwaysOnBytes', path: ['memory', 'defrag', 'alwaysOnBytes'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES }),
+  // Project-only (not scalar()): scalar() defaults readUser to the user layer, which would inherit.
+  { id: 'readiness.ignore', path: ['readiness', 'ignore'], store: 'settings', default: [],
+    readUser: () => undefined, readProject: (ctx) => dig(ctx.projectSettings(), ['readiness', 'ignore']), team: null,
+    validate: (value) => SETTING_CHECKS.stringArray(value), hint: 'must be an array of check-id strings' },
+  // Project layer now; the team layer is a follow-up (policy FIELDS + Team policy page).
+  { id: 'readiness.tools', path: ['readiness', 'tools'], store: 'settings', default: {},
+    readUser: () => undefined, readProject: (ctx) => dig(ctx.projectSettings(), ['readiness', 'tools']), team: null,
+    validate: (value) => SETTING_CHECKS.toolMap(value), hint: 'must map engine names to "used" or "unused"' },
 ];
 const NIGHT = NIGHT_FIELDS.map((field) => ({
   id: `nightMode.${field}`, path: [field], store: 'nightMode', default: NIGHT_DEFAULTS[field], hint: 'is not a valid Away mode value',

@@ -56,12 +56,12 @@ test('a usage limit offers the ready others; any other pause offers none', () =>
 });
 
 test('labels, lists and cost reporting follow the registry', () => {
-  assert.equal(engineLabel('codex'), 'Codex');
-  assert.equal(engineLabel(undefined), 'Claude');
+  assert.equal(engineLabel('codex'), 'OpenAI Codex');
+  assert.equal(engineLabel(undefined), 'Claude Code');
   assert.equal(engineLabel('cursor'), 'Cursor');
-  assert.equal(engineList(['codex', 'cursor']), 'Codex or Cursor');
+  assert.equal(engineList(['codex', 'cursor']), 'OpenAI Codex or Cursor');
   assert.equal(engineList(['claude', 'codex', 'cursor'], (e) => e), 'claude, codex or cursor');
-  assert.equal(engineSwitchNote('claude'), "Starts the paused step fresh; a model Claude cannot run falls back to its default.");
+  assert.equal(engineSwitchNote('claude'), "Starts the paused step fresh; a model Claude Code cannot run falls back to its default.");
   assert.match(engineSwitchNote('cursor'), /a model Cursor cannot run falls back to its default/);
   for (const e of listEngines().filter((x) => x.name !== 'mock')) assert.equal(engineReportsCost(e.name), e.capabilities.cost !== false, e.name);
 });
@@ -109,7 +109,7 @@ test('a usage limit an agent hit records its engine on every copy of the pause',
   assert.equal(row.limitEngine, 'claude', 'the history list row too');
   assert.equal(row.limitResetAt, res.limitResetAt, 'the history list row carries the reset time');
   const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(orch.state.id).map((e) => e.text).join('\n');
-  assert.match(audit, /Resume after the reset, or continue now on Codex or Cursor, or resume with another model\./);
+  assert.match(audit, /Resume after the reset, or continue now on OpenAI Codex or Cursor, or resume with another model\./);
 
   // A resume clears it, like the reason.
   const orch2 = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true }, runners: { producer: async () => ({ status: 'ok', summary: 'done' }), verifier: okVerifier }, resume: saved });

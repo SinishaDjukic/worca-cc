@@ -102,9 +102,6 @@ export function effortsOn(m, engine) {
   return list.filter((e) => mapped.has(e));
 }
 
-/** The harnesses by their product names, where a sentence names the CLI (the engine labels stay short: Claude). */
-export const HARNESS_NAMES = Object.freeze({ claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', copilot: 'Copilot' });
-
 /** A free catalog id for a model `upstreamId` reached through `provider` ('openai', 'copilot', 'anthropic', or 'gw' for a
  *  routing-env endpoint): the id is worca's handle, the upstream id is what the endpoint is sent. */
 export function suggestModelHandle(upstreamId, provider = 'gw') {
@@ -115,7 +112,7 @@ export function suggestModelHandle(upstreamId, provider = 'gw') {
 /** "Runs on Claude Code and Codex — …" for the model editor: what a connection reaches, in words. */
 export function runsOnText(connection) {
   const hs = harnessesOf({ connection });
-  if (connection.kind === 'signin') return `Runs on ${HARNESS_NAMES[connection.engine] || engineLabel(connection.engine)} only — a subscription works in its own harness.`;
+  if (connection.kind === 'signin') return `Runs on ${engineLabel(connection.engine)} only — a subscription works in its own harness.`;
   if (connection.kind === 'env') return 'Runs on Claude Code only — the routing env is Claude Code\'s.';
   return hs.includes('codex')
     ? 'Runs on Claude Code (through worca\'s bridge) and Codex (directly).'

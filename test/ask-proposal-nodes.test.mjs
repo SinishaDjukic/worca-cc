@@ -77,7 +77,7 @@ test('errors: not an agent node, unknown model, an effort the model lacks, an ef
     'node "n_plan": unknown model "gone"', 'node "n_impl": model claude-haiku-4-5 has no effort "max"']);
   assert.deepEqual(errs(await validateProposal({ ...base, nodes: { n_plan: { effort: 'high' } } })), ['node "n_plan": an effort needs a model']);
   assert.deepEqual(errs(await validateProposal({ ...base, nodes: { n_plan: { reason: 'x' } } })), [PROPOSAL_ERRORS.nodeNoModel('n_plan')]);
-  assert.deepEqual(errs(await validateProposal({ ...base, nodes: { n_plan: { model: 'gpt-5.5' } } })), ['node "n_plan": gpt-5.5 runs on Codex, not on Claude — pick a model this run\'s engine runs']);
+  assert.deepEqual(errs(await validateProposal({ ...base, nodes: { n_plan: { model: 'gpt-5.5' } } })), ['node "n_plan": gpt-5.5 runs on OpenAI Codex, not on Claude Code — pick a model this run\'s engine runs']);
   assert.deepEqual(errs(await validateProposal({ ...base, nodes: { n_plan: { model: 'claude-opus-5-5', fanOut: true } } })), ['nodes.n_plan: unknown key "fanOut"']);
   assert.deepEqual(errs(await validateProposal({ ...base, nodes: ['n_plan'] })), ['nodes must be an object keyed by node id']);
   assert.deepEqual(errs(await validateProposal({ ...base, nodes: { n_plan: { model: 'claude-opus-5-5', subagentModel: 'gpt' } } })), ['node "n_plan": unknown sub-agent model "gpt"']);
@@ -88,7 +88,7 @@ test('the engine: a named engine decides; without one the run\'s default engine 
   ok(await a.validateProposal({ ...base, engine: 'codex', nodes: { n_plan: { model: 'gpt-5.5', effort: 'low' } } }));
   assert.equal(a.calls.auth, 0);
   const b = validator({ resolveEngine: () => 'codex' });
-  assert.deepEqual(errs(await b.validateProposal({ ...base, nodes: { n_plan: { model: 'claude-opus-5-5' } } })), ['node "n_plan": claude-opus-5-5 runs on Claude, not on Codex — pick a model this run\'s engine runs']);
+  assert.deepEqual(errs(await b.validateProposal({ ...base, nodes: { n_plan: { model: 'claude-opus-5-5' } } })), ['node "n_plan": claude-opus-5-5 runs on Claude Code, not on OpenAI Codex — pick a model this run\'s engine runs']);
 });
 
 test('nodes are refused with Auto (it picks at start) and the Memory defragment workflow (Settings › Memory owns its model)', async () => {
@@ -232,7 +232,7 @@ test('signed out (the answer the turn handed down): a plain Claude proposal is t
 test('signed out: another engine\'s model gets its engine error only (it never "needs the Claude Code sign-in"); a plain defragment proposal gets no note (nodes are refused there)', async () => {
   const { validateProposal } = validator({ claudeAuth: async () => 'signed-out' });
   const e = errs(await validateProposal({ ...base, nodes: { n_plan: { model: 'gpt-5.5' }, n_impl: { model: 'gw-coder' } } }));
-  assert.deepEqual(e, ['node "n_plan": gpt-5.5 runs on Codex, not on Claude — pick a model this run\'s engine runs']);
+  assert.deepEqual(e, ['node "n_plan": gpt-5.5 runs on OpenAI Codex, not on Claude Code — pick a model this run\'s engine runs']);
   const defrag = await validateProposal({ ...base, workflowId: 'wf_memory_defrag', memoryScope: 'project' }, { claudeAuth: 'signed-out' });
   assert.equal(defrag.ok, true, JSON.stringify(defrag));
   assert.equal('notes' in defrag, false, 'the note asks for nodes, which the defragment workflow refuses');
@@ -247,10 +247,10 @@ test('an engine that runs no catalog model (Copilot): ONE "omit nodes" error, ne
   for (const [over, named] of [[{}, { engine: 'copilot' }], [{ resolveEngine: () => 'copilot' }, {}]]) {
     const { validateProposal, calls } = validator(over);
     assert.deepEqual(errs(await validateProposal({ ...base, ...named, nodes: { n_plan: { model: 'claude-opus-5-5' }, n_impl: { model: 'claude-haiku-4-5', effort: 'high' } } })),
-      ['nodes: the Copilot engine runs its own models — omit nodes for a run on it']);
+      ['nodes: the GitHub Copilot engine runs its own models — omit nodes for a run on it']);
     assert.deepEqual([calls.auth, calls.models.length], [0, 0], 'nothing is read for it');
   }
   // Codex runs catalog models: a Claude pick keeps its own per-node error there.
   const { validateProposal } = validator();
-  assert.match(errs(await validateProposal({ ...base, engine: 'codex', nodes: { n_plan: { model: 'claude-opus-5-5' } } })).join('\n'), /claude-opus-5-5 runs on Claude, not on Codex/);
+  assert.match(errs(await validateProposal({ ...base, engine: 'codex', nodes: { n_plan: { model: 'claude-opus-5-5' } } })).join('\n'), /claude-opus-5-5 runs on Claude Code, not on OpenAI Codex/);
 });
