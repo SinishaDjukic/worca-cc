@@ -306,9 +306,10 @@ test('transformSend runs only for a send that goes ahead: never while a reply st
   input.value = 'fix the flaky upload test';
   ctx.doc.querySelector('.ask-send').click();
   await ctx.tick(); await ctx.tick();
-  assert.equal(n, 0, 'refused under a streaming reply: nothing reworded');
+  assert.equal(n, 0, 'queued under a streaming reply: nothing reworded yet (the reword runs when the queue sends it)');
   assert.ok(!(rec.calls || []).some((x) => x.endsWith('/messages')), 'and nothing sent');
-  assert.equal(input.value, 'fix the flaky upload test', 'the draft stays');
+  assert.equal(input.value, '', 'the draft moved into the queue');
+  assert.deepEqual([...ctx.doc.querySelectorAll('[data-ask-queue-item] .ask-queue-text')].map((b) => b.textContent), ['fix the flaky upload test']);
 });
 
 test('New chat hands the add-ons the empty chat at once (update(null)), before any render', async () => {

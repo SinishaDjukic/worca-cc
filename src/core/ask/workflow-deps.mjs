@@ -152,7 +152,8 @@ export async function revalidateWorkflowProposal({ shape, projectKey = null, wor
  *  `[/worca context]` tag typed into a name is neutralised (prompt.mjs:47-49 does that only for header lines). */
 const eventName = (name) => flat(name, 60).replace(/"/g, "'").replace(/\[(\/?)worca context\]/gi, '($1worca context)');
 export function workflowEventPrompt({ cardId, state, workflowId = null, name = '', thenRun = false, projectKey = '', workspaceId = '' }) {
-  const tgt = workspaceId ? `workspace=${flat(workspaceId, 120)}` : `project=${flat(projectKey, 120)}`;   // a workspace wins; never both
+  // A workspace wins; never both. Ask's graph card proposed with nothing pinned names neither (rule 12: "no target").
+  const tgt = workspaceId ? `workspace=${flat(workspaceId, 120)}` : projectKey ? `project=${flat(projectKey, 120)}` : 'no target';
   if (state === 'declined') return `[worca event] workflow card ${cardId} declined; ${tgt}`;
   return `[worca event] workflow card ${cardId} saved as ${flat(workflowId, 120)} "${eventName(name)}"; thenRun=${thenRun ? 'true' : 'false'}; ${tgt}`;
 }

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle } from '../ui/public/chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle } from '../ui/public/chat-settings-view.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -69,6 +69,19 @@ test('chat settings render and round-trip, including the Ask Worca script toggle
       off.querySelector('input#askScriptTools').checked = true;
       assert.deepEqual(collectScriptToolsToggle(off), { scriptTools: true });
       assert.deepEqual(collectScriptToolsToggle(doc.createElement('div')), { scriptTools: true }, 'a host with no control means ON');
+    } },
+    { name: 'the Ask Worca suggestions toggle: default on, explicit off honored, round-trips', run: () => {
+      const on = renderSuggestionsToggle({ prefs: {} }, { doc });
+      assert.equal(on.querySelector('input#askSuggestions').checked, true, 'an absent pref is ON');
+      assert.equal(on.textContent.trim(), 'Suggest a next prompt after each reply');
+      assert.equal(on.getAttribute('for'), 'askSuggestions');
+      assert.deepEqual(collectSuggestionsToggle(on), { suggestions: true });
+      const off = renderSuggestionsToggle({ prefs: { suggestions: false } }, { doc });
+      assert.equal(off.querySelector('input#askSuggestions').checked, false);
+      assert.deepEqual(collectSuggestionsToggle(off), { suggestions: false });
+      off.querySelector('input#askSuggestions').checked = true;
+      assert.deepEqual(collectSuggestionsToggle(off), { suggestions: true });
+      assert.deepEqual(collectSuggestionsToggle(doc.createElement('div')), { suggestions: true }, 'a host with no control means ON');
     } },
   ]);
 });

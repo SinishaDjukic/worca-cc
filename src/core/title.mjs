@@ -19,7 +19,7 @@ const CLI_DEFAULT_LABEL = 'the CLI default model';
 // Whether a catalog id can be spawned right now — the Models list's ready/needs-sign-in
 // state (config.mjs composeCatalog): a bridged entry needs its provider signed in, an
 // unbridged one (the unshadowed built-in) is always ready. Never throws.
-function modelReady(id) {
+export function modelReady(id) {
   try {
     const bridged = findBridgedEntry(id);
     return !bridged || providerReadiness(bridged.upstream).ok;
@@ -170,20 +170,22 @@ export async function generateTitle(prompt, opts = {}, deps) {
 }
 
 /**
- * One title spawn on `model` (undefined → no --model flag). Resolves `{title}`
- * on a usable title, `{aborted:true}` on a stop, `{error}` on an empty reply or
- * a refusal, and `{error, thrown:true}` when the call itself failed. Never
- * throws; every priced result is booked through opts.onCost as `model`. `engine`: null for Claude.
+ * One tool-less helper text call (a run/chat title, an Ask next-prompt suggestion) on `model`
+ * (undefined → no --model flag). Resolves the model's raw text. Throws when the call itself fails
+ * (an AbortError on a stop). Every priced result — a 429 retry spawns again — is booked through
+ * opts.onCost; a bridged call cut before its `result` books its upstream's figure before rethrowing.
+ * `engine`: null for Claude.
+ * @returns {Promise<string>}
  */
-async function titleAttempt(text, model, opts, engine = null) {
+export async function auxTextCall({ systemPrompt, prompt, model, engine = null }, opts = {}) {
   try {
     // A provider 429 (a shared free pool) is retried with the recovery backoff;
     // nothing else is — a title is cosmetic, and an unspawnable CLI (stamped
     // network) would only make the run wait for it.
-    const { text: out } = await withRecoveryRetry(() => (opts.run || runClaude)({
+    const { text } = await withRecoveryRetry(() => (opts.run || runClaude)({
       cwd: opts.cwd || process.cwd(),
-      systemPrompt: SYSTEM,
-      prompt: `Write the title for this task:\n\n${text.slice(0, 4000)}`,
+      systemPrompt,
+      prompt,
       model,
       // Aux calls keep their model choice but still route through the catalog's
       // env (design §4.8) — a global entry matching this id carries its routing
@@ -224,21 +226,40 @@ async function titleAttempt(text, model, opts, engine = null) {
         const up = opts.bridgeTag ? bridgeCostFor(opts.bridgeTag) : null;   // a bridged model: the upstream's own figure wins
         if (up) forgetBridgeTag(opts.bridgeTag);
         const c = up ? up.costUsd : resolveModelCost(model, Number(e.costUsd), usage);
-        try { opts.onCost({ costUsd: Number.isFinite(c) ? c : Number(e.costUsd), usage, model: model || null }); } catch { /* a sink never fails the title */ }
+        try { opts.onCost({ costUsd: Number.isFinite(c) ? c : Number(e.costUsd), usage, model: model || null }); } catch { /* a sink never fails the call */ }
       }),
     }), { classes: ['rate_limit'], signal: opts.signal });
+    return typeof text === 'string' ? text : '';
+  } catch (err) {
+    // A bridged call cut before its `result` (a stop) was still billed by its upstream: book that figure.
+    const up = opts.bridgeTag ? bridgeCostFor(opts.bridgeTag) : null;
+    if (up && typeof opts.onCost === 'function') {
+      forgetBridgeTag(opts.bridgeTag);
+      try { opts.onCost({ costUsd: up.costUsd, usage: null, model: model || null }); } catch { /* a sink never fails the call */ }
+    }
+    throw err;
+  }
+}
+
+/**
+ * One title spawn on `model` (undefined → no --model flag). Resolves `{title}`
+ * on a usable title, `{aborted:true}` on a stop, `{error}` on an empty reply or
+ * a refusal, and `{error, thrown:true}` when the call itself failed. Never
+ * throws; every priced result is booked through opts.onCost as `model`. `engine`: null for Claude.
+ */
+async function titleAttempt(text, model, opts, engine = null) {
+  try {
+    const out = await auxTextCall({
+      systemPrompt: SYSTEM,
+      prompt: `Write the title for this task:\n\n${text.slice(0, 4000)}`,
+      model, engine,
+    }, opts);
     const title = sanitizeTitle(out);
     // An empty reply or a refusal is the model answering, not the model missing: not `thrown`, never retried.
     if (!title) return { error: new Error('the model returned an empty reply') };
     if (isRefusalTitle(title)) return { error: new Error(`the model did not write a title: ${title.slice(0, 120)}`) };
     return { title };
   } catch (err) {
-    // A bridged title call cut before its `result` (a stop) was still billed by its upstream: book that figure.
-    const up = opts.bridgeTag ? bridgeCostFor(opts.bridgeTag) : null;
-    if (up && typeof opts.onCost === 'function') {
-      forgetBridgeTag(opts.bridgeTag);
-      try { opts.onCost({ costUsd: up.costUsd, usage: null, model: model || null }); } catch { /* a sink never fails the title */ }
-    }
     if (err && err.name === 'AbortError') return { aborted: true }; // run was stopped — caller keeps provisional
     return { error: err instanceof Error ? err : new Error(String(err)), thrown: true };
   }
