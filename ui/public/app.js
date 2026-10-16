@@ -230,7 +230,7 @@ import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisibl
 import { applyFlags, decorateFlagChips, flagOn } from './flags.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor } from './tag-input.mjs';
 import { normaliseTags, formatTag } from '../../src/shared/run-tags.mjs';
-import { missingRequired, splitByDimensions, tagGroupOptions, dimensionLabel, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
+import { splitByDimensions, tagGroupOptions, dimensionLabel, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
@@ -4284,12 +4284,7 @@ function paintRunTagDimsWarn(reason = null) {
   if (state.tagDims.enforce || reason) {
     warn.hidden = !gate; warn.textContent = gate || ''; warn.classList.toggle('err', !!gate);
   } else {
-    const missing = flagOn('runTags') ? missingRequired(state.tagDims.dims, [...runTagInput.get(), ...runTagDims.get()]) : [];
-    warn.hidden = !missing.length;
-    warn.textContent = missing.length
-      ? `${missing.map((d) => d.label).join(', ')} ${missing.length > 1 ? 'are' : 'is'} required${state.tagDims.source === 'policy' ? ' by team policy' : ''}. You can still start the run; it will be recorded.`
-      : '';
-    warn.classList.remove('err');
+    warn.hidden = true; warn.textContent = ''; warn.classList.remove('err');   // policy off: tags are optional
   }
   applyBudgetToNewView();                 // Start follows the gate
 }
@@ -4304,9 +4299,10 @@ function paintRunTagDims(info, tags) {
   runTagDims = next;
   const host = document.getElementById('runTagDimsField');
   if (host) host.hidden = !dims.length;
-  // "(optional)" is true only while no configured tag is mandatory (enforced or not, a mandatory tag is asked for).
+  // The policy (Settings › Tags "Require mandatory tags", or team policy) decides: on with a tag ticked Mandatory, the
+  // field says so and Start waits for it; off, tags are optional.
   const opt = document.querySelector('.run-tags-field .opt');
-  if (opt) opt.hidden = dims.some((d) => d.required);
+  if (opt) opt.textContent = state.tagDims.enforce && dims.some((d) => d.required) ? '· mandatory tags required' : '(optional)';
   paintRunTagDimsWarn();
 }
 runTagInput.onChange(() => paintRunTagDimsWarn());
@@ -13391,9 +13387,6 @@ el.form.addEventListener('submit', async (e) => {
     return { ok: false };
   };
   const submittedTask = snapshotTask();   // #687: cleared once the server accepts it
-  // Tag dimensions: unenforced, a required key left empty still starts the run; the toast says it is recorded.
-  const missingTagDims = flagOn('runTags') && !state.tagDims.enforce ? missingRequired(state.tagDims.dims, body.tags || []) : [];
-  const missingTagText = missingTagDims.length ? `Missing required tag: ${missingTagDims.map((d) => d.label).join(', ')} (recorded on the run).` : '';
 
   await withButton(el.startBtn, async () => {
     // Guard the whole in-flight window: applyBudgetToNewView also drives
@@ -13474,7 +13467,7 @@ el.form.addEventListener('submit', async (e) => {
         clearTask(submittedTask);
         // Keep the warn tone when the server attached a budget warning. showView('schedules')
         // already shows the ticket, so the toast needs no Open action.
-        notify({ tone: data.budgetWarning || missingTagText ? 'warn' : 'ok', title: 'Scheduled', detail: [data.budgetWarning, missingTagText].filter(Boolean).join(' ') || title || '' });
+        notify({ tone: data.budgetWarning ? 'warn' : 'ok', title: 'Scheduled', detail: data.budgetWarning || title || '' });
         showView('schedules');
         return { ok: true };
       }
@@ -13489,7 +13482,7 @@ el.form.addEventListener('submit', async (e) => {
       showEngineRefusal(null);
       clearTask(submittedTask);
       // D6: the user is on the run's page now, so the result is a toast, not a #form-msg line.
-      notify({ tone: missingTagText ? 'warn' : 'ok', title: 'Run started', detail: missingTagText || title || '', key: `run-${data.runId}`,
+      notify({ tone: 'ok', title: 'Run started', detail: title || '', key: `run-${data.runId}`,
         action: { label: 'Open run', run: () => { location.hash = rdHash(data.runId); } } });
       if (extras.length) {
         appendLog({

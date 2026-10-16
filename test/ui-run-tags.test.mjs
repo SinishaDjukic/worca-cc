@@ -190,29 +190,32 @@ test('No dimensions configured: no slot UI beyond the free-form field', async ()
   assert.doesNotMatch(ctx.doc.querySelector('#run-form').textContent, /Cost centre/);
 });
 
-test('the Tags label says "(optional)" only while no configured tag is mandatory', async () => {
-  const opt = (ctx) => ctx.doc.querySelector('.run-tags-field .opt');
+test('the Tags label follows the policy: "(optional)" while it is off, "mandatory tags required" while it is on', async () => {
+  const opt = (ctx) => ctx.doc.querySelector('.run-tags-field .opt').textContent;
+  const cc = [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }];
   const none = await bootForm({ dims: () => ({ source: null, home: null, dims: [] }) });
   flagsOn(none.window);
-  assert.equal(opt(none).hidden, false, 'no dimensions: tags are optional');
-  const optionalDim = await bootForm({ dims: () => ({ source: 'settings', home: null, dims: [{ key: 'team', label: 'Team', values: [], required: false }] }) });
-  flagsOn(optionalDim.window);
-  assert.equal(opt(optionalDim).hidden, false, 'only optional dimensions: still optional');
-  const mandatory = await bootForm({ dims: () => ({ source: 'settings', home: null, dims: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }] }) });
-  flagsOn(mandatory.window);
-  assert.equal(opt(mandatory).hidden, true, 'a mandatory tag: the field is not optional');
+  assert.equal(opt(none), '(optional)', 'no dimensions: optional');
+  const off = await bootForm({ dims: () => ({ source: 'settings', home: null, enforce: false, dims: cc }) });
+  flagsOn(off.window);
+  assert.equal(opt(off), '(optional)', 'policy off: optional, even with a tag ticked Mandatory');
+  const on = await bootForm({ dims: () => ({ source: 'settings', home: null, enforce: true, dims: cc }) });
+  flagsOn(on.window);
+  assert.equal(opt(on), '· mandatory tags required', 'policy on: the field says so');
+  const onNoneTicked = await bootForm({ dims: () => ({ source: 'settings', home: null, enforce: true, dims: [{ ...cc[0], required: false }] }) });
+  flagsOn(onNoneTicked.window);
+  assert.equal(opt(onNoneTicked), '(optional)', 'policy on but no tag ticked Mandatory: still optional');
 });
 
-test('enforcement off: start without a mandatory tag succeeds and warns (today)', async () => {
-  const ctx = await bootForm({ dims: () => ({ source: 'policy', home: 'acme/web', dims: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }] }) });
+test('policy off: a run without a tag ticked Mandatory starts quietly — no warning, nothing blocked', async () => {
+  const ctx = await bootForm({ dims: () => ({ source: 'policy', home: 'acme/web', enforce: false, dims: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }] }) });
   flagsOn(ctx.window);
-  const slots = [...ctx.doc.querySelectorAll('#runTagDimsField .tag-dim-slot')];
-  assert.deepEqual(slots.map((s) => s.querySelector('.tag-dim-label').textContent), ['Cost centre']);
+  assert.equal(ctx.doc.getElementById('runTagDimsWarn').hidden, true, 'no "is required" warning under the field');
   const body = await submit(ctx);
-  assert.equal(body.tags, undefined, 'the run is posted with no tags — never blocked');
+  assert.equal(body.tags, undefined, 'the run is posted with no tags');
   const toast = [...ctx.doc.querySelectorAll('.toast')].at(-1);
-  assert.match(toast.textContent, /Missing required tag: Cost centre/);
-  assert.match(toast.className, /warn/);
+  assert.doesNotMatch(toast.textContent, /Missing required tag/);
+  assert.doesNotMatch(toast.className, /warn/);
 });
 
 test('enforced: a pre-filled mandatory tag shows as a chosen value; Start is enabled and posts it', async () => {
