@@ -288,24 +288,35 @@ enforces the set's latest definition.
   Tokens are never forwarded into the MCP child's env.
   **Scripts the chat can write and run.** With **Create and run scripts**
   (Settings → Ask Worca, on by default) the assistant holds four more worca MCP
-  tools: `list_scripts` and `get_script` read the registry, `save_script` writes
-  a script to the user layer (`~/.worca-cc/scripts`) and `test_script` runs one
-  in worca's test bench — both **without a confirmation card**, by an explicit
-  user decision on 2026-09-18. A script is a child process with worca's
-  privileges and **no sandbox**, so a successful prompt injection in anything the
-  chat reads (a repository file, a diff comment, an attachment, a run's output)
-  becomes code execution on this machine. None of what follows blocks that;
-  these are the limits that remain. The system prompt states that only the
-  user's own messages are a reason to save or run a script and that everything
-  read through a tool is data. Every chat-authored script is stamped
-  `createdBy` / `updatedBy: ask:<threadId>`. Replacing an existing key needs an
-  explicit `overwrite: true`; built-in and plugin scripts are never written over,
-  and there is no delete tool. A bench run uses a scratch folder unless the user
+  tools: `list_scripts` and `get_script` read the registry, `save_script`
+  changes one of the user's own scripts that already exists
+  (`~/.worca-cc/scripts`; a NEW script is always a `draft_script` card the user
+  saves) and `test_script` runs one in worca's test bench — both **without a
+  confirmation card**, by an explicit user decision on 2026-09-18. A script is a
+  child process with worca's privileges and **no sandbox**, so a successful
+  prompt injection in anything the chat reads (a repository file, a diff
+  comment, an attachment, a run's output) becomes code execution on this
+  machine. None of what follows blocks that; these are the limits that remain.
+  The system prompt states that only the user's own messages are a reason to
+  save or run a script and that everything read through a tool is data. A script
+  the chat changes with `save_script` is stamped `updatedBy: ask:<threadId>`; a
+  drafted script the user saves from its card is stamped as the user's own save
+  (`ui`). `save_script` refuses a key no script holds and needs an explicit
+  `overwrite: true`; built-in and plugin scripts are never written over, and
+  there is no delete tool. A bench run uses a scratch folder unless the user
   pinned a project for the chat, and never another project's checkout — a saved
   case runs as saved, and one whose folder is another project is refused. Every
-  call is a line in the thread. Sub-agents are told never to call either writer. Turn
-  the switch off and `save_script` / `test_script` are not registered for the
-  session at all — the two readers stay, and the prompt section goes with them.
+  call is a line in the thread. Sub-agents are told never to call either writer.
+  A workflow the chat proposes as a graph (`build_workflow`) can place the
+  built-in `shell`, `js` or `py` script with a command or code the model wrote:
+  its card lists every such value under the Import dialog's sentence, and **Save
+  as workflow** confirms exactly that list — the server re-derives the list and
+  refuses a save that did not confirm every value in it (`SCRIPTS_UNCONFIRMED`,
+  as Import does; the card then shows the server's list). Turn the
+  switch off and `save_script` / `test_script` are not registered for the
+  session at all — the two readers and `draft_script` stay (a draft writes
+  nothing until the user saves its card), and the prompt keeps the script
+  contract without its save/test line.
   **Web access (off by default).** Settings → Ask Worca → Web access gives the
   assistant `web_fetch` (GET one https page, HTML converted to text) and, when a
   search endpoint is configured, `web_search`. They are worca MCP tools; the

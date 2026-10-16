@@ -72,6 +72,16 @@ look checks out up to 8 members detached under a throwaway dir (`auto-look-*` in
 `<worcaHome>/tmp/ask`), and a boot sweep removes looks a crashed chat child left behind
 after one hour.
 
+**Agents, scripts and graphs from Ask Worca.** Ask has the Workflows chat's composer tools minus the canvas:
+`draft_agent` and `draft_script` put a draft card in the chat (nothing is written until the user presses Save, or saves
+it from the wizard Edit… opens), and `build_workflow` proposes a whole graph — scripts, gates, drafted keys, explicit
+wires — validated and laid out by `src/core/ask/composer-deps.mjs` on a working copy that starts from the empty
+template and the thread's own still-proposed draft cards. Its card (`ui/public/ask-composer-cards.mjs`, DOM shared with
+the Workflows chat through `ui/public/workflows/card-views.mjs`) saves the drafts it uses first, then the graph through
+the composer's Save path (`saveGraphWorkflow`, origin `auto`), and starts the same workflow-card event turn as
+`propose_workflow`'s card; **Open in Workflows** opens it on the canvas as a new unsaved workflow. Draft Save/Decline
+start no turn: the context header's `cards:` line reports their state.
+
 Deep dives: [Guardrails](guardrails.md) · [Storage](storage.md) · [Scheduled runs](scheduled-runs.md)
 
 <!--

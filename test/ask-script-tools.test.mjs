@@ -139,3 +139,15 @@ test('test_script: cwd "project" is the PINNED project or a refusal; scratch is 
   assert.deepEqual(await refused.tools.call('test_script', { key: 'ghost' }),
     { ok: false, errors: ['script not found: ghost'] }, 'the bench\'s own sentence reaches the model unchanged');
 });
+
+test('save_script only changes a script that exists: a new key is refused before the store (a new script is a draft_script card)', async () => {
+  const { tools, saves } = fakeTools();
+  const out = await tools.call('save_script', { key: 'brandNew', meta: { displayName: 'x' }, source: 'x', overwrite: true });
+  assert.deepEqual(out, { ok: false, errors: ['no script "brandNew" — save_script only changes one of your existing scripts; a new script is a draft_script card the user saves'] });
+  assert.equal(saves.length, 0, 'nothing reached the store');
+  const ok = await tools.call('save_script', { key: 'runTests', meta: { displayName: 'Run tests' }, source: 'npm test\n', overwrite: true });
+  assert.equal(ok.ok, true, 'an existing key still saves');
+  const defs = Object.fromEntries(tools.list().map((d) => [d.name, d]));
+  assert.match(defs.save_script.description, /A key no script holds is refused: a NEW script is always a draft_script card the user saves/);
+  assert.doesNotMatch(defs.test_script.inputSchema.properties.draft.description, /composer chats/);
+});

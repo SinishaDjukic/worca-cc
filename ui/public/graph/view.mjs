@@ -1130,6 +1130,17 @@ export function createGraphView(host, {
       }
       if (current) render(source || current, {});
     },
+    /** Swap the registry for a repaint of the label rows and description footers ONLY (a chat well's descriptions
+     *  land after the first paint). Footer heights are fixed (DESC_H / CAP_H), so no card moves and no wire
+     *  re-routes — unlike setAgents, which re-renders and rewrites every wire's class. */
+    repaintMeta(next) {
+      agents = next || {};
+      if (!ctx) return;
+      for (const [id, el] of nodeEls) {
+        const node = ctx.byId.get(id);
+        if (node) { paintLabel(el, node); paintFoot(el, node); }
+      }
+    },
     destroy() {
       for (const n of navs.splice(0)) n.destroy();
       if (movingTimer) { win.clearTimeout(movingTimer); movingTimer = null; }

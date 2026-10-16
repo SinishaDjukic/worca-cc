@@ -1987,3 +1987,21 @@ test('R-G: one Claude sign-in answer per turn — handed to the MCP child and to
   assert.equal(asked2, 0, 'the Workflows chat proposes no runs');
   assert.equal('WORCA_ASK_CLAUDE_AUTH' in cfg2.mcpServers.worca.env, false);
 });
+
+test('Ask: a build_workflow RESULT becomes a proposed workflow-build card stamped with the pinned target (no composer session)', async () => {
+  const s = seed();
+  const { turn } = makeTurn(s, { pinnedScope: { projectKey: 'demo-00000001' } }, {
+    runClaudeImpl: async (opts) => {
+      push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id: 'toolu_bw', name: 'mcp__worca__build_workflow', input: { name: 'G' } }] } });
+      wfResult(opts.onEvent, 'toolu_bw', JSON.stringify({ ok: true, name: 'G', workflow: { nodes: [], wires: [] }, counts: {}, thenRun: true,
+        manifest: { version: 2, graph: { nodes: [], wires: [] } } }));
+      await drain();
+      push(opts.onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  const cards = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
+  assert.equal(cards.length, 1);
+  assert.deepEqual([cards[0].card.type, cards[0].card.sessionId, cards[0].card.projectKey, cards[0].card.thenRun], ['workflow-build', null, 'demo-00000001', true]);
+});

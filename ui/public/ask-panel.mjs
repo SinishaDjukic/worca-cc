@@ -32,6 +32,7 @@ import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64,
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
+import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
   fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
@@ -180,7 +181,7 @@ const HISTORY_GROUPS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['earlie
 /** The column's search waits this long after the last keystroke before it asks the server. */
 const HISTORY_SEARCH_MS = 200;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -1586,6 +1587,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       setUnread(false);
       st.pinned = true;
       ensureFirstOpen({ restore: !routed });
+      composerCards().stale();   // the chat was hidden: a wizard may have saved a draft meanwhile
       scheduleFlush();
       repaintProgressCards({ hydrate: true });
       scheduleMcpRefresh();                          // the page may have changed while Chat was hidden
@@ -3692,6 +3694,40 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return el;
   }
 
+  /** A proposed Auto card as a NEW unsaved workflow: the graph the card shows (its well's template — the positions the
+   *  card drew), every agent's template config (it carries the proposal's model and effort) with only the chips' edits
+   *  applied, as Save stores them (diffNodes, then src/core/ask/workflow-deps.mjs applyTunables: '' clears a key).
+   *  card.nodes is a display row whose fanOut/askQuestions are resolved defaults: never baked in. Assemble's domain is
+   *  'coding'. */
+  function wfDraft(card, wf, name, tpl) {
+    const nodes = (tpl.nodes || []).map((n) => {
+      if (!n || n.kind !== 'agent') return n;
+      const sel = wf.nodes[n.id] || {};
+      const config = { ...(n.config || {}) };
+      for (const k of TUNABLE_KEYS) {
+        if (sel[k] === undefined) continue;
+        if (sel[k] === '') delete config[k]; else config[k] = sel[k];
+      }
+      return { ...n, config };
+    });
+    return { name: String(name || card.name || ''), domain: card.domain || 'coding', nodes, wires: tpl.wires || [] };
+  }
+  /** The workflow card's way into the Workflows composer (its graph well's Expand, "Open full screen in Workflows"): a
+   *  saved card opens its row; a proposed one matching a saved workflow opens that row (a new copy would invite a
+   *  duplicate); a NEW proposal opens as a new unsaved workflow through the build card's path (app.js
+   *  askComposerActions().openBuild). null = no way in: the well shows no Expand. */
+  function wfOpenAction(block, card, wf, handleOf) {
+    const rowId = block.state === 'saved' ? (block.workflowId || null) : (card.match && card.match.id) || null;
+    if (block.state !== 'proposed' || rowId) return typeof openComposer === 'function' && rowId ? () => openComposer(rowId) : null;
+    const openBuild = composerActions && typeof composerActions.openBuild === 'function' ? composerActions.openBuild : null;
+    if (!openBuild) return null;
+    return () => {
+      const handle = handleOf();
+      const tpl = handle && handle.well ? handle.well.template() : null;
+      return tpl ? openBuild(wfDraft(card, wf, handle.getName(), tpl)) : undefined;
+    };
+  }
+
   function buildWorkflowCard(block, prev) {
     const card = block.card || {};
     const name = card.name || '';
@@ -3724,9 +3760,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const matched = !!(card.match && card.match.id);
     const editable = proposed && !matched;                       // PD4: only a NEW row takes a name and chip edits
     const wf = { nodes: {}, name };
+    // The Workflows canvas rendering in a pannable well (graph/proposal-host.mjs). Its Expand opens the workflow in the
+    // composer (wfOpenAction) — the only Open a proposed card has; footers read Ask's library (composerCards describe).
     const handle = renderAutoProposal({ ...card, reasoning: card.reasoning || card.note || '' }, {
       doc, order: proposed ? AUTO_PROPOSAL_ORDER_CARD : ['name', 'graph', 'loops'],
       editableName: editable, pick: editable, onName: (v) => { wf.name = v; },
+      canvas: true, descriptionOf: composerCards().describe, onExpand: wfOpenAction(block, card, wf, () => handle),
     });
     if (!proposed) {
       const saved = make('div', 'ask-wfcard-saved');
@@ -5170,6 +5209,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     appendToComposer: (text) => appendToComposer(text),
     announce: (text) => announce(text),
   };
+  /** Ask Worca's drafted agent / script cards and its graph card (ask-composer-cards.mjs): the Workflows chat's cards
+   *  without a canvas, their actions app.js's (composerActions). Made on first use (never during construction). */
+  function composerCards() {
+    if (!st.composerCards) {
+      st.composerCards = createAskComposerCards({
+        doc, fetch, now,
+        blocks: () => {
+          const out = [];
+          if (st.model) for (const row of st.model.messages()) for (const b of row.blocks || []) if (b && b.kind === 'card') out.push(b);
+          return out;
+        },
+        postCard: (block, body) => postCardJson(block, body),
+        actions: composerActions || {},
+        openComposer,
+        onChange: () => scheduleFlush(),
+      });
+    }
+    return st.composerCards;
+  }
   /** The registered builder a block renders with, or null. The key (lead ruling, P3): every block the built-in
    *  progress card would take — a track_run card AND a typeless run proposal that started (or failed with a runId) —
    *  looks up `progress`; anything else its own type. A registered type is never a progress block (below). */
@@ -5187,6 +5245,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const card = block.card || {};
     if (card.type === PROGRESS_CARD_TYPE) return true;
     if (card.type && chatCardBuilder(card.type)) return false;      // an extension type is never a run card, whatever its state
+    if (ASK_COMPOSER_CARD_TYPES.includes(card.type)) return false;   // Ask's draft / graph cards are never run cards
     if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
@@ -5228,8 +5287,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isActions = !!(block.card && block.card.type === 'actions');
     const isAway = !!(block.card && block.card.type === 'away');
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
+    const isComposer = !!(block.card && ASK_COMPOSER_CARD_TYPES.includes(block.card.type));
     const isProgress = isProgressBlock(block);
-    if (cached && cached.state === block.state && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isWeb || isWorkspace || isActions || isAway || isCommand || isProgress || block.state === 'proposed')) return cached.el;
+    // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
+    // what they show changes, not only their state.
+    const view = isComposer ? composerCards().view(block) : '';
+    if (cached && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isWeb || isWorkspace || isActions || isAway || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -5241,10 +5304,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isActions ? buildActionsCard(block)
       : isAway ? buildAwayCard(block)
       : isCommand ? buildCommandCard(block)
+      : isComposer ? composerCards().render(block)
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
-    st.cardEls.set(block.id, { el: built.el, state: block.state, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });
+    st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });
     return built.el;
   }
   function disposeCardEntry(c) {
@@ -5262,7 +5326,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   /** After a flush: measure the attached graph hosts once per width (jsdom: 0 ⇒ the 702 default) and start a pending build animation.
    *  A width change DURING a build lands it first (v5): view.relayout re-creates the wire paths, which would drop their `is-hid`
-   *  mid-choreography (measured) — so cancel() (which lands everything) runs before the relayout. */
+   *  mid-choreography (measured) — so cancel() (which lands everything) runs before the relayout. A canvas well
+   *  (`handle.well`) never moves a node or rewrites a wire on relayout: its build keeps running. */
   function relayoutCards() {
     if (!st.cardEls) return;
     for (const c of st.cardEls.values()) {
@@ -5270,12 +5335,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // A built-in handle measures its graph host; an extension card's handle (CONTRACT §2) has no `parts` — its element then.
       const w = (c.handle.parts ? (c.handle.parts.graph && c.handle.parts.graph.clientWidth) : c.el.clientWidth) || 0;
       if (w !== c.lastW) {
-        if (c.cancelAnim) { try { c.cancelAnim(); } catch { /* ignore */ } c.cancelAnim = null; }
+        if (c.cancelAnim && !c.handle.well) { try { c.cancelAnim(); } catch { /* ignore */ } c.cancelAnim = null; }
         c.lastW = w;
         if (typeof c.handle.relayout === 'function') c.handle.relayout(w);
       }
+      // A canvas well's description footers fill in once the library behind them loads (ask-composer-cards describe):
+      // text only — the footer heights are fixed, so no card moves and a running build keeps its hidden wires.
+      if (st.composerCards && typeof c.handle.setDescriptions === 'function' && c.descAt !== st.composerCards.describedAt()) {
+        c.descAt = st.composerCards.describedAt();
+        c.handle.setDescriptions(st.composerCards.describe);
+      }
       if (c.animate) { c.animate = false; c.cancelAnim = playAssembly(c.handle, { win, onDone: () => { c.cancelAnim = null; } }); }
     }
+  }
+
+  /** True while a card whose graph well shows description footers is in the column (relayoutCards fills them in). */
+  function describedGraphShowing() {
+    if (!st.cardEls) return false;
+    for (const c of st.cardEls.values()) if (c.handle && typeof c.handle.setDescriptions === 'function' && c.el.isConnected) return true;
+    return false;
   }
 
   // ---- command cards (ui/public/ask-command-card.mjs; Ask agent mode, #574) ------------------------------------------
@@ -6218,6 +6296,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     flushExtra();
     if (st.runPoked) repaintProgressCards();
     relayoutCards();
+    if (st.open) void composerCards().sweep();   // a draft saved through its wizard is recorded saved
+    if (st.open && describedGraphShowing()) void composerCards().describeGraphs();   // the graph wells' description footers
     applyPin();
     updateAddons();                                  // CONTRACT §2: every render hands the add-ons the open chat
     // A row counts as SHOWN once a flush ends with it in the column. Marking it

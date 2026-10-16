@@ -721,7 +721,8 @@ class AskTurn extends EventEmitter {
     if (isError) return;
     let out = null;
     try { out = JSON.parse(text); } catch { out = null; }
-    const card = composerCardFrom(name, out, this.composer);
+    // An Ask chat (no composer session) stamps its pinned scope on a graph card: its Save event names that target.
+    const card = composerCardFrom(name, out, this.composer, this.composer ? {} : { target: this.pinnedScope });
     if (!card) return;
     if (!this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'proposed', card })) return;   // finished reducer
     this._persistBlocks();

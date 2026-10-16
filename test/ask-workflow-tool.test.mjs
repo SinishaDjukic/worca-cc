@@ -64,3 +64,8 @@ test('propose_workflow: deps failures surface as AskToolError text the model can
   const t = createAskTools({ buildCatalog: async () => ({}), validateProposal: async () => ({}), pinnedScope: () => ({ projectKey: 'p' }), redact: redactAskText, limits: ASK_LIMITS });
   await assert.rejects(() => t.call('propose_workflow', { task: 't' }), { message: 'propose_workflow: unavailable' }, 'no workflow deps ⇒ a clean tool error');
 });
+
+test('propose_workflow names build_workflow for what a ladder cannot say', () => {
+  const d = fakeTools().tools.list().find((x) => x.name === 'propose_workflow');
+  assert.match(d.description, /a script, a gate or a new agent needs build_workflow/);
+});
