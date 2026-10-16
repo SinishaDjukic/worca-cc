@@ -369,6 +369,10 @@ async function paintShapeFeature(host) {
   // Bumped on every path, the gate-off one too, so a fetch in flight never lands after the host was cleared.
   const seq = (host.__shapeSeq = (host.__shapeSeq || 0) + 1);       // the last paint wins (act + WS frames race)
   if (!shapeFirstOn()) { host.replaceChildren(); host.dataset.painted = ''; host.__shapeWant = null; return; }
+  // The page's first paint of this feature: say so while it loads, not a blank page (a busy server takes seconds).
+  if (host.__shapeMode === 'page' && host.dataset.painted !== id) {
+    host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-loading', textContent: 'Loading feature…' }));
+  }
   const r = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
   const f = r && r.ok ? await r.json().catch(() => null) : null;
   if (seq !== host.__shapeSeq || SHAPE_FEATURE_HOSTS.get(host) !== id) return;
@@ -378,6 +382,8 @@ async function paintShapeFeature(host) {
       host.replaceChildren(...(host.__shapeMode === 'page'
         ? [Object.assign(document.createElement('p'), { className: 'feature-page-gone', textContent: 'This feature no longer exists.' })] : []));
       host.dataset.painted = ''; host.__shapeShown = null; host.__shapeShownView = null;
+    } else if (host.querySelector('.feature-page-loading')) {
+      host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-gone', textContent: 'Could not load this feature. Reload to try again.' }));
     }
     return;
   }
@@ -29533,7 +29539,8 @@ function runsLiveItem(r) {
   return {
     runId: r.runId, pipelineId: r.pipelineId || '', title: r.title, status: r.status,
     // nodeLabel(null, id) returns the raw node id ("n3 review"): name the step only with a manifest.
-    ask: pq != null ? { kind: pq.kind || '', step: pq.nodeId && r.stepper ? nodeLabel(r.stepper, pq.nodeId) : '' } : null,
+    ask: pq != null ? { kind: pq.kind || '', step: pq.nodeId && r.stepper ? nodeLabel(r.stepper, pq.nodeId) : '',
+      outline: !!(pq.plan && (pq.plan.outline || pq.plan.port === 'outline')) } : null,
     pauseReason: r.pauseReason || '', limitEngine: r.limitEngine || null, limitNote: limitRowNote(r), unread: isLingering(r),
     step: r.status === 'running' && pq == null ? (prog && prog.text ? prog.text : runsStepWord(r)) : '',
     progress: prog && !RD_TERMINAL.includes(r.status) ? { fraction: prog.fraction, tone: prog.tone } : null,

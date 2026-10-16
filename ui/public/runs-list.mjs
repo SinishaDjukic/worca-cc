@@ -86,6 +86,7 @@ function askWord(ask) {
     return kind === 'gate' ? 'Approval needed' : 'Workflow review';
   }
   if (kind === 'recovery') return step ? `${step} failed` : 'Step failed';
+  if (kind === 'plan') return ask.outline ? 'Approve the slices' : 'Approve the plan';   // Shaper's plan ask (D33)
   if (kind === 'form') return step ? `${step} question` : 'Input needed';
   return step ? `${step} question` : 'Question';
 }

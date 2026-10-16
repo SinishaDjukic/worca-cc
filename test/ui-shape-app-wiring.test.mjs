@@ -307,6 +307,26 @@ test('#feature/feat_1 fetches the feature and renders the page view', async () =
   assert.equal(page.querySelectorAll('.shape-feature-seg').length, 3);
 });
 
+test('#feature says it is loading until the feature arrives (no blank page on a slow server)', async () => {
+  const server = featureServer();
+  let release = null;
+  server.getHandler = () => new Promise((r) => { release = r; });
+  const { page } = await openFeaturePage({ server });
+  assert.equal(page.querySelector('.feature-page-loading').textContent, 'Loading feature…');
+  release(res(200, PAGE_FEATURE()));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(page.querySelector('.feature-page-loading'), null, 'the page replaces the loading line');
+  assert.ok(page.querySelector('.shape-feature.is-page'));
+});
+
+test('#feature whose first load fails says so instead of loading forever', async () => {
+  const server = featureServer();
+  server.getHandler = () => res(500, { error: 'boom' });
+  const { page } = await openFeaturePage({ server });
+  assert.equal(page.querySelector('.feature-page-loading'), null);
+  assert.equal(page.querySelector('.feature-page-gone').textContent, 'Could not load this feature. Reload to try again.');
+});
+
 test('#feature for an unknown id says the feature no longer exists', async () => {
   const { page } = await openFeaturePage();
   assert.equal(page.querySelector('.feature-page-gone').textContent, 'This feature no longer exists.');
