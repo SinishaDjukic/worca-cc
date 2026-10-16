@@ -34,7 +34,7 @@ import {
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   resolveIndexedArtifactFileForRow, readPromptFile, runDirForRow, recordArtifact, appendAudit,
-  persistMemberPrState, readMemberPrStates,
+  persistMemberPrState, readMemberPrStates, readPipelineExtras,
   checkoutRecordsFor, retainedWorkFor, runEngineOfRow,
 } from '../src/core/artifacts.mjs';
 import { mimeForPath, viewerKindFor } from '../src/shared/artifact-kinds.mjs';
@@ -139,7 +139,7 @@ import { validateMcpOff, resolveAskMcp, askMcpPromptInput, askMcpPreview, askMcp
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
-import { getStats, budgetWindowSavings } from '../src/core/stats.mjs';
+import { getStats, budgetWindowSavings, shapingGroups } from '../src/core/stats.mjs';
 import {
   enableTeamMetrics, setRecordMyRuns, flushSlug, flushAll, flushProject, scheduleFlush, discoverProject,
   discoverAll, scanMembers, routeWorkspaceMembers, projectMetricsStatus, startTeamMetricsBackground,
@@ -293,7 +293,9 @@ import {
 import {
   fetchRemote, remoteInfo, syncStatus, fastForward, resolveSourceRef, commitsBetween, isSafeBranchName, isSafeRemoteName, scrubGitText,
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, checkBaseMerge, mergeBaseInto, startConflictMerge, branchCheckouts,
+  commitFileOnBranch,
 } from '../src/core/git-sync.mjs';
+import { shipFeature, SHIP_MODES } from '../src/core/shape/ship.mjs';
 import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
@@ -301,7 +303,7 @@ import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
-  uncommittedPatch } from '../src/core/git-info.mjs';
+  markPrReady, closePr, uncommittedPatch } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
@@ -316,7 +318,14 @@ import {
   addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash,
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
+import { shapeFirstEnabled, requireShapeFirst } from '../src/core/shape/gate.mjs';
+import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
+import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
+import { savePlanToCheckout } from '../src/core/shape/save.mjs';
+import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
+  rechainWaiting, replanRest, setApproveEach, stackedPrBase, recordShapePlan, listShapePlans, chainFeature,
+  sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput } from '../src/core/shape/features.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
 import { editRunTags, readRunTags, tagVocabulary } from '../src/core/run-tags-store.mjs';
@@ -383,7 +392,7 @@ import {
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
   resolveAfterRef, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
-  chainBaseBranchesOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation,
+  chainBaseBranchesOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
 } from '../src/core/scheduler.mjs';
 import {
   onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
@@ -1086,6 +1095,7 @@ function summarizeRuns() {
     // Who last stopped / paused / resumed it ({ kind, by, at }), or null.
     lastAction: r.lastAction || r.orch?.state?.lastAction || null,
     pendingQuestion: r.pendingQuestion || null,
+    ...(r.orch?.state?.shaping ? { shaping: r.orch.state.shaping } : {}),
     // Night mode switches + counters ({optIn, override, decisions, flagged}), so a reconnect paints the run-view switch.
     night: r.orch?.state?.night || null,
     // kind discriminator so the client routes runs vs agent generations vs
@@ -1272,12 +1282,24 @@ function wireRun(entry) {
         entry.title = payload.title;
       }
 
+      // F49: the feature card shows each slice's live state (liveSliceOf). Reaching or answering a plan ask, or
+      // Clarify's questions, changes no status, so key on everything the view reads. Gated and caught (F42).
+      if (orch.runShape?.slice && (name === 'question' || name === 'state' || name === 'exec' || name === 'done')) {
+        const pq = entry.pendingQuestion;
+        const key = `${entry.status}|${pq ? pq.kind : ''}|${orch.state?.shaping?.approved ? 1 : 0}`;
+        if (key !== entry._featureKey) {
+          entry._featureKey = key;
+          broadcastFeaturesOf(() => [featureOfPipeline(entry.pipelineId)?.featureId].filter(Boolean));
+        }
+      }
+
       record(event);
       // Only the events that can change status or pendingQuestion; log/token frames are far too
       // frequent for a flag check (it reads settings.json synchronously).
       if (KEEP_AWAKE_EVENTS.has(name)) syncKeepAwake();
     });
   }
+  subscribe(orch, 'shape-feature', (p) => broadcastFeature(p && p.id));
   syncKeepAwake();
 }
 
@@ -2236,8 +2258,11 @@ const startRunHandler = async (req, res) => {
     // orchestrator resolves topology + per-project run-config into an executable
     // plan at run start; here we only normalize + reject an unknown id up front
     // so the client gets a clean 400 instead of a mid-run error event.
-    const workflowId =
-      typeof body.workflowId === 'string' && body.workflowId.trim() ? body.workflowId.trim() : 'wf_default';
+    // Shape it first (spec D9/D12): `shape` and the shape workflows only while the gate is on.
+    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { enabled: shapeFirstEnabled(), internal: !!internal });
+    if (!shapeReq.ok) return badRequest(res, shapeReq.error);
+    const { shape } = shapeReq;
+    const workflowId = shapeReq.workflowId || 'wf_default';
     // ONE gate for every run entry point, ONE status: unknown (today's text) and
     // archived (the upgrade explanation the UI shows verbatim) answer 400 through
     // badRequest. A graph row runs on the graph engine — createOrchestratorFor
@@ -2510,6 +2535,7 @@ const startRunHandler = async (req, res) => {
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
         tags,
+        ...(shape ? { shape } : {}),
       });
 
       entry = {
@@ -2650,6 +2676,7 @@ const startRunHandler = async (req, res) => {
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
         tags,
+        ...(shape ? { shape } : {}),
       });
 
       entry = {
@@ -2699,6 +2726,7 @@ const startRunHandler = async (req, res) => {
       try {
         askLinkRun(askLink.threadId, { runId, cardId: askLink.cardId, status: entry.status });
         flipCard(askLink.threadId, askLink.cardId, { state: 'started', runId });
+        if (shape) { try { recordShapePlan({ threadId: askLink.threadId, cardId: askLink.cardId, title }); } catch (err) { console.error(`[worca-ui] shape plan record failed: ${err?.message || err}`); } }
         // The card's pending comment ids move onto the link row, keyed by the minted
         // UUID exactly as pipeline_id is before it exists. Consumed one-shot: a card
         // launches at most once. Own try/catch — comment bookkeeping must never
@@ -3266,16 +3294,32 @@ function liveProbe({ id, pipelineId }) {
   return !!e && !SETTLED_RUN.has(String(e.status || ''));
 }
 
+/** D17: a chain whose first run is a slice carries its feature (gated; a lookup error keeps the plain chain). */
+function withChainFeatures(chains) {
+  if (!shapeFirstEnabled()) return chains;
+  return chains.map((c) => {
+    try { const feature = chainFeature(c.members); return feature ? { ...c, feature } : c; } catch { return c; }
+  });
+}
+
 // Run on the source branch: the merge back happens in teardown, AFTER `done` — the history row a client
 // fetched on `done` predates it, and a chained run waits on it (pipelineGate answers `waiting` until then).
 // orch.run()/orch.resume() settle only after teardown, so refresh both then. Best effort: never the run's outcome.
 const ranMergeBack = (st) => !!st && [st.branch, ...Object.values(st.branches || {})].some((b) => b && b.mergeBack);
+// D24: a slice that settled done opens its draft PR here, after teardown committed the run's work (`done` fires
+// before teardown). First, so it runs whether or not the run merged back. Returns the draft promise (the test awaits it).
 function afterRunSettled(orch) {
+  let draft;
   try {
-    if (!ranMergeBack(orch.getState())) return;
+    const st = orch.getState?.();
+    if (orch.runShape?.slice && st?.status === 'done' && st.id) {
+      draft = openSliceDraft(st.id).catch((err) => console.error(`[worca-ui] slice draft PR failed: ${err?.message || err}`));
+    }
+    if (!ranMergeBack(st)) return draft;
     emitChanged('pipelines-changed', 'updated');
     setTimeout(() => { void schedulerTick(); }, 0);
   } catch { /* a refresh hint only */ }
+  return draft;
 }
 
 let _schedulerBusy = false;
@@ -3296,6 +3340,7 @@ export async function schedulerTick({ now = Date.now() } = {}) {
       staggerMs: SCHEDULER_STAGGER_MS,
     });
     for (const id of [...out.failed, ...out.missed, ...out.skipped]) releaseAskCard(getTicket(id));
+    broadcastFeaturesOf(() => featuresOfTickets([...out.fired, ...out.missed, ...out.failed, ...out.skipped]));
     if (out.fired.length || out.missed.length || out.skipped.length || out.failed.length || out.retried.length) {
       emitChanged('schedules-changed', 'tick');
     }
@@ -3387,6 +3432,8 @@ app.get('/api/schedules', (req, res) => {
     res.json({
       schedules: listSchedules({ projectDir, workspaceId }),
       tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter),
+      // Run progress (P8): every open "Run after" chain, unscoped (a chain may cross projects).
+      chains: withChainFeatures(runChains({ isLive: liveProbe })),
       counts: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },
       defaults: scheduleDefaults(),
     });
@@ -4128,6 +4175,293 @@ app.post('/api/answer', (req, res) => {
     if (err && err.code === 'INVALID_ANSWER') {
       return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
     }
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// POST /api/runs/:id/answer  -> answer the run's plan approval stop (shape-it-first D2/D10)
+// body: { id, decision: 'approve'|'revise'|'stop', feedback?, source? }. 404 while the shapeFirst gate is off — a run
+// already held then is still answered through POST /api/answer (never stranded, D12).
+app.post('/api/runs/:id/answer', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  const runId = req.params.id;
+  const entry = runs.get(runId);
+  if (!entry) return res.status(404).json({ error: 'unknown run' });
+  const { id, decision, feedback, perspectives, edits, approveEach, source } = req.body || {};
+  const pq = entry.pendingQuestion;
+  if (!pq || pq.kind !== PLAN_ASK_KIND || !id || pq.id !== id) {
+    return res.status(409).json({ error: 'no plan approval with that id is waiting on this run' });
+  }
+  try {
+    answerRun(runId, id, { decision, ...(feedback !== undefined ? { feedback } : {}),
+      ...(perspectives !== undefined ? { perspectives } : {}),
+      ...(edits !== undefined ? { edits } : {}),
+      ...(approveEach !== undefined ? { approveEach } : {}),
+      ...(source !== undefined ? { source } : {}) }, actorOf(req));
+    res.json({ ok: true });
+  } catch (err) {
+    if (err && err.code === 'INVALID_ANSWER') {
+      return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
+    }
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+/** The live overlay featureView needs (L8): the entry driving this pipeline or run (liveRunEntry takes either, F26).
+ *  A settled entry other than `paused` is ignored, so the pipelines row decides done / stopped / error. */
+function liveSliceOf(id) {
+  const e = id ? liveRunEntry(id) : null;
+  if (!e || !e.orch) return null;
+  const status = String(e.status || '');
+  if (SETTLED_RUN.has(status) && status !== 'paused') return null;
+  const pq = e.pendingQuestion;
+  return { runId: e.id, status, waiting: !!(pq && pq.kind === PLAN_ASK_KIND), asking: !!(pq && pq.kind !== PLAN_ASK_KIND),
+    approved: !!e.orch.state?.shaping?.approved };
+}
+function broadcastFeature(id) { if (id && shapeFirstEnabled()) broadcast({ type: 'shape-feature', id }); }
+/** F42: the run-event and tick hooks. Gate first (no query while it is off), and never let a throw escape: in wireRun
+ *  it would drop the run's own done/state frame (record() comes after the hook), in schedulerTick the rest of the tick. */
+function broadcastFeaturesOf(lookup) {
+  if (!shapeFirstEnabled()) return;
+  try { for (const id of lookup()) broadcastFeature(id); }
+  catch (err) { console.error(`[worca-ui] shape-feature broadcast failed: ${err?.message || err}`); }
+}
+/** F29: an async handler never lets a throw escape (Express 4, no unhandledRejection handler). /api/resume's mapping. */
+function shapeRouteError(res, err) {
+  if (res.headersSent) return;
+  if (err instanceof ResumeError) {
+    return res.status(err.status).json(err.body.code === 'engine-refused' ? { ...err.body, error: engineRefusalFor(err.body.error, 'ui') } : err.body);
+  }
+  res.status(500).json({ error: err && err.message ? err.message : String(err) });
+}
+/** featureView/actions' answer: null → 404, {status, error} → that refusal. Returns true when it answered. */
+function shapeRefused(res, out) {
+  if (!out) { res.status(404).json({ error: 'unknown feature' }); return true; }
+  if (out.error) { res.status(out.status || 409).json({ error: out.error }); return true; }
+  return false;
+}
+
+app.get('/api/shape/features/:id', async (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    // F47: a re-planned feature answers with the feature that carries on; `replanOf` names the one asked for.
+    const cur = currentFeatureId(req.params.id);
+    const view = featureView(cur, { live: liveSliceOf });
+    if (!view) return res.status(404).json({ error: 'unknown feature' });
+    // P17: the Ship as default, once every slice is done (async: it reads each slice's results.json).
+    if (view.ship && view.ship.ready) Object.assign(view.ship, await featureShipSuggestion(view));
+    res.json({ ...view, replanOf: cur !== req.params.id ? req.params.id : null });
+  } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
+});
+
+// D16, D22: where a run sits in its feature, for the run page line, the Chat home card and Ship it (P11).
+app.get('/api/shape/pipelines/:pid/slice', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const out = sliceOfPipeline(req.params.pid, { live: liveSliceOf });
+    if (!out) return res.status(404).json({ error: 'not a slice' });
+    res.json(out);
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+app.post('/api/shape/features/:id/cancel', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const out = cancelRest(req.params.id, { by: actorOf(req) });
+    if (shapeRefused(res, out)) return;
+    emitChanged('schedules-changed', 'canceled');
+    broadcastFeature(req.params.id);
+    res.json({ ok: true, ...out, feature: featureView(req.params.id, { live: liveSliceOf }) });
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+app.post('/api/shape/features/:id/resume', async (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const by = actorOf(req);
+    const out = resumeFeature(req.params.id, { live: liveSliceOf, by });
+    if (shapeRefused(res, out)) return;
+    if (out.action === 'none') return res.status(409).json({ error: 'no slice is stopped' });
+    let runId = null;
+    if (out.action === 'resume') {
+      const r = await resumeRun(out.pipelineId, { by, mock: out.mock === true });
+      runId = r && r.runId ? r.runId : null;
+      rechainWaiting(req.params.id, out.index, { by });     // F30: an interrupted slice already missed its successor
+      emitChanged('schedules-changed', 'updated');
+    } else {
+      emitChanged('schedules-changed', 'created');
+      await schedulerTick();                                  // best effort: null while a tick is busy
+    }
+    broadcastFeature(req.params.id);
+    res.json({ ok: true, ...out, ...(runId ? { runId } : {}) });
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+app.post('/api/shape/features/:id/replan', async (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const out = replanRest(req.params.id, { live: liveSliceOf, by: actorOf(req) });
+    if (shapeRefused(res, out)) return;
+    emitChanged('schedules-changed', 'created');
+    await schedulerTick();
+    broadcastFeature(req.params.id);
+    // A ticket's id is the run id it fires as. It may not be live yet: the client never navigates to it, the
+    // feature view shows "Re-planned" and the Running list picks the run up when it starts.
+    res.json({ ok: true, runId: out.ticketId });
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+app.post('/api/shape/features/:id/approve-each', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const on = req.body && req.body.on;
+    if (typeof on !== 'boolean') return badRequest(res, 'on must be true or false');
+    if (!setApproveEach(req.params.id, on)) return res.status(404).json({ error: 'unknown feature' });
+    broadcastFeature(req.params.id);
+    res.json({ ok: true, approveEach: on });
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+// ── D24, D25: Ship as ─────────────────────────────────────────────────────────────────────────────────────────
+/** The last slice's run, its PR target and the feature's base (the chain root), or { error }. */
+function shipCtxOf(view) {
+  const last = view.slices[view.slices.length - 1];
+  const state = last && last.pipelineId ? readPipelineStateById(last.pipelineId) : null;
+  if (!state) return { error: 'the last slice has no run' };
+  const target = prTargetFor(state);
+  if (target.error) return { error: target.error };
+  if (!target.repoDir || !target.feature) return { error: 'the last slice has no branch to ship' };
+  const base = chainBaseBranchesOf(last.pipelineId)[0] || null;
+  if (!base) return { error: 'the feature has no base branch' };
+  return { state, target, base };
+}
+/** Stacked: a gh slice PR's "Part of …" preamble gets the other slices' current PR links (best effort; Azure keeps its
+ *  body). Any other body is left alone. */
+async function refreshSliceBody(prUrl, pid, repoDir) {
+  if (forgeOfPrUrl(prUrl) === 'azure') return null;
+  const cur = await readPrBody({ projectDir: repoDir, prUrl });
+  if (!cur.ok || !cur.body.startsWith('Part of ')) return null;
+  // The preamble: the "Part of" line, a blank line, the "- Slice" list; it ends at the first blank line after the list.
+  const lines = cur.body.split('\n');
+  let end = 1;
+  while (end < lines.length && lines[end] === '') end += 1;
+  while (end < lines.length && lines[end].startsWith('- Slice ')) end += 1;
+  const fresh = slicePrPreamble(pid);
+  if (!fresh) return null;
+  return editPrBody({ projectDir: repoDir, prUrl, body: [fresh, ...lines.slice(end)].join('\n') });
+}
+const SHIPPING = new Set();     // feature ids with a Ship as in flight (ship_mode is written only at the end)
+app.post('/api/shape/features/:id/ship', async (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  const id = String(req.params.id);
+  try {
+    const mode = req.body && req.body.mode;
+    if (!SHIP_MODES.includes(mode)) return res.status(400).json({ error: 'mode must be stacked or one' });
+    if (SHIPPING.has(id)) return res.status(409).json({ error: 'this feature is already shipping' });
+    const view = featureView(id, { live: liveSliceOf });
+    if (!view) return res.status(404).json({ error: 'unknown feature' });
+    if (view.ship.mode) return res.status(409).json({ error: `this feature was already shipped as ${view.ship.mode === 'one' ? 'one PR' : 'stacked PRs'}` });
+    if (!view.ship.ready) return res.status(409).json({ error: 'every slice must be done before the feature ships' });
+    SHIPPING.add(id);
+    const actor = actorOf(req);
+    try {
+      // A slice whose draft never opened (a CLI-started run, or the auto draft failed at the time) gets its PR now,
+      // the same way; a failure stays visible as shipFeature's "slice K has no pull request yet".
+      let shown = view;
+      if (shown.slices.some((s) => s.pipelineId && !s.pr)) {
+        for (const s of shown.slices) if (s.pipelineId && !s.pr) await openSliceDraft(s.pipelineId);
+        shown = featureView(id, { live: liveSliceOf }) || view;
+      }
+      const input = await featureShipInput(shown);
+      const ctx = shipCtxOf(shown);
+      if (ctx.error) return res.status(409).json({ error: ctx.error });
+      const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000 }, {
+        commitChangelog: (pid, update) => commitFileOnBranch(ctx.target.repoDir, {
+          branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }),
+        push: async () => {
+          const picked = await pickPrRemotes({}, ctx.target.repoDir);
+          if (picked.error) return { ok: false, error: picked.error };
+          const p = await pushBranch(ctx.target.repoDir, ctx.target.feature, picked.pushRemote);
+          return p.ok ? { ok: true } : { ok: false, error: p.stderr };
+        },
+        openOnePr: async ({ pipelineId, title, body }) => {
+          const r = await createRunPr({ id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
+            description: body, title, actor, preamble: false });
+          return r.ok ? { ok: true, url: r.pr.url, existed: !!r.pr.existed } : { ok: false, error: r.error };
+        },
+        adoptOnePr: async ({ url, body }) => {
+          const r = await markPrReady({ prUrl: url });
+          if (!r.ok) return r;
+          if (forgeOfPrUrl(url) !== 'azure') await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
+          return { ok: true };
+        },
+        markReady: (prUrl) => markPrReady({ prUrl }),
+        close: async (prUrl, comment, pid) => {
+          const r = await closePr({ prUrl, comment });
+          if (r.ok) { const pr = readPrState(pid); if (pr && pr.url === prUrl) persistPrState(pid, { ...pr, state: 'CLOSED' }); }
+          return r;
+        },
+        refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
+      });
+      if (!out.ok) return res.status(out.status).json({ error: out.error });
+      recordShip(id, { mode: out.mode, prUrl: out.prUrl });
+      appendAuditById(ctx.state.id, `Feature shipped as ${out.mode === 'one' ? 'one PR' : 'stacked PRs'}${byActor(actor)}${out.prUrl ? `: ${out.prUrl}` : ''}`, { actor });
+      broadcastFeature(id);
+      res.json({ ok: true, mode: out.mode, prUrl: out.prUrl, warnings: out.warnings });
+    } finally { SHIPPING.delete(id); }
+  } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
+});
+
+/** A plan row's state when its run is not live: the pipelines row first, then the link row (follow.mjs). */
+const PLAN_STATE = { done: 'done', stopped: 'stopped', error: 'stopped', interrupted: 'stopped', paused: 'paused', starting: 'running', running: 'running' };
+
+app.get('/api/shape/plans', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const rows = listShapePlans({ limit: 30 }).map((p) => {
+      // Before the run's first `state` event the link has no pipeline id yet: fall back to its run id.
+      const live = liveSliceOf(p.pipelineId) || liveSliceOf(p.runId);
+      // liveSliceOf keeps a `paused` entry (F26): show it as paused, not as shaping.
+      const state = live ? (live.status === 'paused' ? 'paused' : live.waiting ? 'waiting' : live.approved ? 'running' : 'shaping')
+        : PLAN_STATE[p.pipelineStatus || p.linkStatus] || 'shaping';
+      return { ...p, state, feature: p.featureId ? featureView(currentFeatureId(p.featureId), { live: liveSliceOf }) : null };
+    });
+    res.json({ plans: rows });
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+const PLAN_TEXT_MAX = 512 * 1024;   // characters (UTF-16 units), not bytes
+
+// The plan card's text (S4/S6): the open plan ask's file, the approved one, or ?round=N's. The path is the server's own.
+app.get('/api/runs/:id/plan', async (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  const entry = runs.get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'unknown run' });
+  const file = planFileOf({ pendingQuestion: entry.pendingQuestion, shaping: entry.orch?.state?.shaping }, req.query.round);
+  if (!file) return res.status(404).json({ error: 'no plan on this run' });
+  try {
+    const text = await fsp.readFile(file, 'utf8');
+    const truncated = text.length > PLAN_TEXT_MAX;
+    res.json({ file, name: path.basename(file), text: truncated ? text.slice(0, PLAN_TEXT_MAX) : text, truncated });
+  } catch {
+    res.status(404).json({ error: 'plan file not found' });
+  }
+});
+
+// Save to plans/ (D10, S7): into the registered checkout, never over a file without {overwrite:true}, never a commit.
+app.post('/api/runs/:id/plan/save', async (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  const entry = runs.get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'unknown run' });
+  if (entry.workspaceId || !entry.projectDir) return res.status(409).json({ error: 'Save to plans/ needs a single-project run' });
+  const file = planFileOf({ pendingQuestion: entry.pendingQuestion, shaping: entry.orch?.state?.shaping });
+  if (!file) return res.status(404).json({ error: 'no plan on this run' });
+  try {
+    const r = await savePlanToCheckout({ file, projectDir: entry.projectDir, title: entry.title, overwrite: req.body?.overwrite === true });
+    if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.path ? { path: r.path } : {}) });
+    entry.orch?.recordPlanSaved?.(r.path);
+    res.json({ ok: true, path: r.path });
+  } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -5126,6 +5460,8 @@ app.get('/api/stats', async (req, res) => {
   // Credential broker: model spend per person in the same window, as the broker metered it
   // (the authoritative figure: it saw every request). Absent with the broker off.
   if (brokerEnabled() && !stats.filtered) stats.byPerson = await statsByPerson(stats.windowStartMs, stats.windowEndMs);
+  // Shaper (D28): shaped vs unshaped runs of the same size. Absent with the flag off.
+  if (shapeFirstEnabled()) stats.shaping = shapingGroups(stats.range === 'all' ? 0 : stats.windowStartMs, stats.windowEndMs);
   res.json(stats);
 });
 
@@ -7298,9 +7634,13 @@ app.get('/api/pr/remotes', async (req, res) => {
   // chainBaseBranchesOf answers [] for a workspace row, so a member's chain is its own source.
   const walked = chainBaseBranchesOf(resolved.state.id || resolved.id);
   const chain = (walked.length ? walked : (source ? [source] : [])).filter((b) => b !== feature);
-  const defaultBase = chain[0] || null;
-  const rl = await listRemotes(repoDir);
   const pipelineId = resolved.state.id || resolved.id;
+  // L10: a slice's PR stacks on the previous slice's branch until that slice's PR merges. The route is async with
+  // no try/catch (F29): a failed feature lookup keeps the chain-root default instead of rejecting.
+  let stacked = null;
+  try { stacked = stackedPrBase(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
+  const defaultBase = stacked || chain[0] || null;
+  const rl = await listRemotes(repoDir);
   if (!rl.ok) {
     const issue = runSourceIssue(pipelineId, { memberKey: target.memberKey });
     return res.status(500).json({ error: `git remote failed: ${rl.error}`, chain, defaultBase, issue });
@@ -7335,6 +7675,123 @@ app.get('/api/pr/remotes', async (req, res) => {
   res.json({ ok: true, remotes, defaults, remembered,
     chain, defaultBase, branches, baseStatus, issue });
 });
+
+/** D24: a finished slice opens a draft PR for early review (best effort: a failure is an audit line). */
+async function openSliceDraft(pipelineId) {
+  if (!shapeFirstEnabled() || !pipelineId || readPrState(pipelineId)) return null;
+  if (!(await anyPrHost())) return null;
+  const state = readPipelineStateById(pipelineId);
+  if (!state || !state.projectDir) return null;
+  const target = prTargetFor(state);
+  if (target.error || !target.repoDir) return null;
+  // The PR dialog's default base (GET /api/pr/remotes): the chain without the feature branch itself, stacked on the
+  // previous slice's branch until that slice's PR merges.
+  const walked = chainBaseBranchesOf(pipelineId);
+  const chain = (walked.length ? walked : (target.source ? [target.source] : [])).filter((b) => b !== target.feature);
+  let base = null;
+  try { base = stackedPrBase(pipelineId, chain) || chain[0] || null; } catch { base = chain[0] || null; }
+  if (!base) return null;
+  let out = await createRunPr({ id: pipelineId, state, target, base, draft: true });
+  // A forge that refuses drafts (GitHub's free plan for private repositories): open it ready instead.
+  if (!out.ok && /draft/i.test(out.error || '')) out = await createRunPr({ id: pipelineId, state, target, base, draft: false });
+  if (!out.ok) { appendAuditById(pipelineId, `Could not open the slice's pull request: ${out.error}`); return out; }
+  if (out.newDraft) { try { recordSliceDraft(pipelineId, out.pr.url); } catch { /* the "draft" label only */ } }
+  broadcastFeaturesOf(() => { const at = featureOfPipeline(pipelineId); return at ? [at.featureId] : []; });
+  return out;
+}
+
+/**
+ * The pull request part of Ship it, shared by POST /api/pr and the slice paths (D24): branch info, remotes, forge,
+ * push, body, createPr, persist, audit. Never writes a response; the caller does its own checks (the Chat card rule)
+ * first. `remotes` is the dialog's choice ({pushRemote, baseRemote}); `{}` falls back to the saved prefs
+ * (pickPrRemotes). `preamble: false` skips the D22 slice preamble (the combined one-PR body has its own sections).
+ * @returns {Promise<{ok:false, status:number, error:string, kind?:string, forge?:string}
+ *   |{ok:true, pr, newDraft:boolean, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr}>}
+ */
+async function createRunPr({ id, state, target, base, memberKey = null, remotes: chosen = {}, description = '',
+  draft = false, actor = null, title = null, preamble = true }) {
+  const { repoDir, feature, source } = target;
+  if (!repoDir || !feature || !source) return { ok: false, status: 400, error: 'pipeline has no branch info to open a PR' };
+  const picked = await pickPrRemotes(chosen, repoDir);
+  if (picked.error) return { ok: false, status: picked.status, error: picked.error };
+  const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
+  // Always target the chosen base repo explicitly (gh's default-repo guess prefers
+  // a remote named upstream over origin); use the owner:branch head only when the
+  // branch lives in a different repository than the PR (gh matches by head label).
+  const repo = baseR?.slug || null;
+  const crossRepo = !!(pushR?.slug && baseR?.slug && !sameRepo(pushR, baseR));
+  const headOwner = crossRepo ? pushR.owner : null;
+
+  // The base remote's forge opens the PR (no base remote: GitHub's gh, as before). Its own
+  // reason when it cannot; an Azure fork is refused BEFORE anything is pushed.
+  const provider = prProviderFor(baseR);
+  const avail = await provider.available();
+  if (!avail.ok) return { ok: false, status: 409, error: avail.reason, forge: provider.forge };
+  const refusal = azureForkRefusal(pushR, baseR);
+  if (refusal) return { ok: false, status: 422, error: refusal, kind: 'unsupported' };
+  // A base the base remote does not have (a run started from a branch that was never pushed) would
+  // push the head, then fail on GitHub's "Base sha can't be blank". Refuse first, naming the fix.
+  // Judged on a fresh fetch only: when the fetch fails, the forge's own answer stands as before.
+  if (baseR && isSafeRemoteName(baseR.name)) {
+    const f = await fetchRemote(repoDir, { remote: baseR.name, maxAgeMs: 0 });
+    const rb = f.ok ? await listRemoteBranches(repoDir, [baseR.name]) : null;
+    if (rb?.ok && !rb.byRemote[baseR.name].includes(base)) {
+      return { ok: false, status: 409, error: `the base branch ${base} is not on ${baseR.name}: push it there first, or pick a base branch that is` };
+    }
+  }
+
+  // Push (idempotent) -> create PR. All args are passed as an argv array (no shell), so
+  // branch/remote/source names cannot inject.
+  const pushed = await pushBranch(repoDir, feature, pushRemote);
+  if (!pushed.ok) return { ok: false, status: 500, error: `git push failed: ${pushed.stderr}` };
+
+  // A PR opened by a shared bot still names the person behind it (identity.mjs); none for 'local'.
+  const footer = prAttributionFooter(state.startedBy);
+  const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
+  // A run from the Azure Boards source links its work item to the PR.
+  const workItemId = provider.forge === 'azure'
+    ? workItemIdFromSourceRef(findPipelineRowById(pipelineIdForPr)?.source_ref ?? null, baseR) : null;
+  // The run's GitHub issue, closed on merge: after the description, before the footer.
+  const closing = runSourceIssue(pipelineIdForPr, { baseRemote: baseR, memberKey })
+    ? issueClosingLine({ sourceUrl: runSourceUrl(pipelineIdForPr), baseRepo: repo, body: description }) : '';
+  // Spec D7: a shaped run's PR ends with its checklist (the latest review cycle that has one), before the
+  // attribution footer; skipped when the description already carries it. Guarded like runSourceUrl: the branch is
+  // already pushed, so a DB error must not become a failed PR.
+  let cl = null;
+  if (shapeFirstEnabled() && !description.includes(CHECKLIST_PR_MARKER)) {
+    try { cl = latestChecklist(readPipelineExtras(pipelineIdForPr).reviews); } catch { cl = null; }
+  }
+  const checklistMd = cl ? checklistMarkdown(cl.checklist).trimEnd() : '';
+  // D22: a slice's PR starts with its place in the feature and links the other slices' PRs.
+  let lead0 = '';
+  if (preamble && shapeFirstEnabled() && !memberKey) { try { lead0 = slicePrPreamble(pipelineIdForPr); } catch { lead0 = ''; } }
+  const lead = description || state.title || feature;
+  const prBody = lead0 || description || closing || checklistMd || footer
+    ? `${lead0 ? `${lead0}\n\n` : ''}${lead}${closing ? `\n\n${closing}` : ''}${checklistMd ? `\n\n${checklistMd}` : ''}${footer}` : '';
+  const pr = await createPr({
+    projectDir: repoDir, base, head: feature, title: title || state.title || feature, repo, headOwner,
+    baseRemote: baseR, pushRemote: pushR, workItemId, draft,
+    ...(prBody ? { body: prBody } : {}),
+  });
+  if (!pr.ok) {
+    return { ok: false, status: pr.kind === 'unsupported' ? 422 : 500,
+      error: `${provider.label} pull request failed: ${pr.error}`, ...(pr.kind ? { kind: pr.kind } : {}) };
+  }
+  // D6: draft only describes a PR this call created; an existing one is linked as-is.
+  const newDraft = draft && !pr.existed;
+
+  // Persist the PR facts we just learned, so History/stats survive a gh outage. A draft is 'OPEN' too (P18).
+  if (pipelineIdForPr) {
+    const facts = { url: pr.url, number: pr.number ?? prNumberFromUrl(pr.url), state: 'OPEN' };
+    // A workspace member's PR is recorded per member; the row keeps the rollup (stats count the run once).
+    if (memberKey) persistMemberPrState(pipelineIdForPr, memberKey, facts);
+    else persistPrState(pipelineIdForPr, facts);
+    // Who shipped it (the footer names who STARTED the run). No actor: worca opened it (a slice's draft).
+    const where = memberKey ? ` in \`${target.memberName}\`` : '';
+    appendAuditById(pipelineIdForPr, `Pull request ${pr.existed ? 'linked' : (newDraft ? 'opened (draft)' : 'opened')}${where}${byActor(actor)}: ${pr.url}`, { actor });
+  }
+  return { ok: true, pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr };
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/pr  -> push the pipeline's feature branch (if needed) and open a PR
@@ -7421,73 +7878,12 @@ app.post('/api/pr', async (req, res) => {
     base = b;
   }
 
-  const picked = await pickPrRemotes(body, repoDir);
-  if (picked.error) return res.status(picked.status).json({ error: picked.error });
-  const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
-  // Always target the chosen base repo explicitly (gh's default-repo guess prefers
-  // a remote named upstream over origin); use the owner:branch head only when the
-  // branch lives in a different repository than the PR (gh matches by head label).
-  const repo = baseR?.slug || null;
-  const crossRepo = !!(pushR?.slug && baseR?.slug && !sameRepo(pushR, baseR));
-  const headOwner = crossRepo ? pushR.owner : null;
-
-  // The base remote's forge opens the PR (no base remote: GitHub's gh, as before). Its own
-  // reason when it cannot; an Azure fork is refused BEFORE anything is pushed.
-  const provider = prProviderFor(baseR);
-  const avail = await provider.available();
-  if (!avail.ok) return res.status(409).json({ error: avail.reason, forge: provider.forge });
-  const refusal = azureForkRefusal(pushR, baseR);
-  if (refusal) return res.status(422).json({ error: refusal, kind: 'unsupported' });
-  // A base the base remote does not have (a run started from a branch that was never pushed) would
-  // push the head, then fail on GitHub's "Base sha can't be blank". Refuse first, naming the fix.
-  // Judged on a fresh fetch only: when the fetch fails, the forge's own answer stands as before.
-  if (baseR && isSafeRemoteName(baseR.name)) {
-    const f = await fetchRemote(repoDir, { remote: baseR.name, maxAgeMs: 0 });
-    const rb = f.ok ? await listRemoteBranches(repoDir, [baseR.name]) : null;
-    if (rb?.ok && !rb.byRemote[baseR.name].includes(base)) {
-      return res.status(409).json({ error: `the base branch ${base} is not on ${baseR.name}: push it there first, or pick a base branch that is` });
-    }
+  const out = await createRunPr({ id, state, target, base, memberKey,
+    remotes: { pushRemote: body.pushRemote, baseRemote: body.baseRemote }, description, draft, actor: actorOf(req) });
+  if (!out.ok) {
+    return res.status(out.status).json({ error: out.error, ...(out.kind ? { kind: out.kind } : {}), ...(out.forge ? { forge: out.forge } : {}) });
   }
-
-  // Push (idempotent) -> create PR -> read mergeability. All args are passed as
-  // an argv array (no shell), so branch/remote/source names cannot inject.
-  const pushed = await pushBranch(repoDir, feature, pushRemote);
-  if (!pushed.ok) return res.status(500).json({ error: `git push failed: ${pushed.stderr}` });
-
-  // A PR opened by a shared bot still names the person behind it (identity.mjs); none for 'local'.
-  const footer = prAttributionFooter(state.startedBy);
-  const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
-  // A run from the Azure Boards source links its work item to the PR.
-  const workItemId = provider.forge === 'azure'
-    ? workItemIdFromSourceRef(findPipelineRowById(pipelineIdForPr)?.source_ref ?? null, baseR) : null;
-  // The run's GitHub issue, closed on merge: after the description, before the footer.
-  const closing = runSourceIssue(pipelineIdForPr, { baseRemote: baseR, memberKey })
-    ? issueClosingLine({ sourceUrl: runSourceUrl(pipelineIdForPr), baseRepo: repo, body: description }) : '';
-  const lead = description || state.title || feature;
-  const prBody = description || closing || footer ? `${lead}${closing ? `\n\n${closing}` : ''}${footer}` : '';
-  const pr = await createPr({
-    projectDir: repoDir, base, head: feature, title: state.title || feature, repo, headOwner,
-    baseRemote: baseR, pushRemote: pushR, workItemId, draft,
-    ...(prBody ? { body: prBody } : {}),
-  });
-  if (!pr.ok) {
-    return res.status(pr.kind === 'unsupported' ? 422 : 500)
-      .json({ error: `${provider.label} pull request failed: ${pr.error}`, ...(pr.kind ? { kind: pr.kind } : {}) });
-  }
-  // D6: draft only describes a PR this call created; an existing one is linked as-is.
-  const newDraft = draft && !pr.existed;
-
-  // Persist the PR facts we just learned, so History/stats survive a gh outage.
-  if (pipelineIdForPr) {
-    const facts = { url: pr.url, number: pr.number ?? prNumberFromUrl(pr.url), state: 'OPEN' };
-    // A workspace member's PR is recorded per member; the row keeps the rollup (stats count the run once).
-    if (memberKey) persistMemberPrState(pipelineIdForPr, memberKey, facts);
-    else persistPrState(pipelineIdForPr, facts);
-    // Who clicked Create PR (the footer names who STARTED the run; this names who shipped it).
-    const prBy = actorOf(req);
-    const where = memberKey ? ` in \`${target.memberName}\`` : '';
-    appendAuditById(pipelineIdForPr, `Pull request ${pr.existed ? 'linked' : (newDraft ? 'opened (draft)' : 'opened')}${where}${byActor(prBy)}: ${pr.url}`, { actor: prBy });
-  }
+  const { pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr } = out;
   // Remember the choice for this project (only once a PR was actually created).
   if (remotes.length) {
     try { await setPrRemotePrefs(repoDir, { pushRemote, baseRemote }); } catch { /* best-effort */ }
@@ -10505,9 +10901,11 @@ app.get('/api/workflows', async (req, res) => {
       const all = await listWorkflows({ includeArchived: true });
       return res.json({ workflows: all.filter((w) => w.archivedAt) });
     }
-    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, ...listWorkflows() ]. The
-    // built-ins are never persisted rows (listWorkflows filters their ids), so none appears twice.
-    res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(await listWorkflows())] });
+    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, then the Shape it first built-in while
+    // the shapeFirst gate is on, then the saved rows ]. The built-ins are never persisted rows (listWorkflows
+    // filters their ids), so none appears twice.
+    res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW,
+      ...(shapeFirstEnabled() ? [GRAPH_SHAPE_WORKFLOW] : []), ...(await listWorkflows())] });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -10637,6 +11035,7 @@ app.delete('/api/workflows/:id', async (req, res) => {
   if (id === 'wf_default') return badRequest(res, 'the default workflow cannot be deleted');
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return badRequest(res, 'the Memory defragment workflow cannot be deleted');
   if (id === PR_FIX_WORKFLOW_ID) return badRequest(res, 'the PR fix workflow cannot be deleted');
+  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return badRequest(res, 'the Shaper workflow cannot be deleted');
   try {
     const removed = await deleteWorkflow(id); // CONV-1: await
     if (!removed) return res.status(404).json({ error: 'workflow not found' });
@@ -11119,6 +11518,14 @@ app.get('/api/ask/runs/:id', async (req, res) => {
     const entry = liveRunEntry(id);
     const state = readPipelineStateById(entry && entry.pipelineId ? entry.pipelineId : id);
     if (!state) return res.status(404).json({ error: 'run not found' });
+    // Shape it first, plan in slices: state.shaping is in memory only (F46), so a finished or unloaded slice 1 would
+    // lose its feature strip. The feature row is durable. Best effort, and only while the gate is on.
+    if (!state.shaping && shapeFirstEnabled()) {
+      try {
+        const at = featureOfPipeline(state.id);
+        if (at && at.idx === 1) state.shaping = { feature: { id: at.featureId, index: 1 } };
+      } catch { /* the feature tables are best-effort here */ }
+    }
     const extras = await askRunCardExtras(findPipelineRowById(state.id));
     res.json({ state, live: entry ? { runId: entry.id, status: entry.status } : null, extras });
   } catch (err) {
@@ -11391,7 +11798,8 @@ function askWebAccessFor(threadId, ctx) {
  *  askMcpPromptInput()). Memory is mounted, not rendered. */
 async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
-  return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, ...(engine === 'codex' ? { engine } : {}) });
+  return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands,
+    ...(engine === 'codex' ? { engine } : {}), ...(shapeFirstEnabled() ? { shape: true } : {}) });
 }
 
 /** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */
@@ -15237,5 +15645,6 @@ export const _testing = {
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
+  openSliceDraft, afterRunSettled,
   setAutoRescan(on) { autoRescanOn = on !== false; },
 };

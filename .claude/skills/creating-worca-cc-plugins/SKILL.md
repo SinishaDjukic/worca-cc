@@ -164,6 +164,7 @@ An agent sidecar is meta v2: typed PORTS replace the v1 channel vocabulary.
 - `humanEffort` (optional): `{ "factor": <number ≥ 0> }` scales the human-hours estimate of this
   agent's executions, `{ "hours": <number ≥ 0> }` fixes it per execution; `{ "factor": 0 }` opts out.
   Absent → the heuristic (code delta, md/json outputs, verifier reads). Invalid → ignored with a warning.
+- `progressStage` (optional): the stage of the run progress bar this agent advances; one of `plan`, `build`, or `review`. Omit for agents that don't fit the bar.
 - `placeable: false` keeps an agent off the composer canvas (off-pipeline scanners).
 - `agentFile`: optional; the prompt file for this agent. It is a **plain basename inside
   `agents/`** — no `/`, no `..`, never absolute. Defaults to nothing (the scaffold writes

@@ -680,6 +680,43 @@ export function renderGroupsCard(groups, rangeLabel, { doc = globalThis.document
   return card;
 }
 
+const SIZE_LABELS = { small: 'Small', medium: 'Medium', large: 'Large' };
+
+/** Shaper (D28): finished runs of the same size, planned with the person vs not. */
+export function renderShapingCard(shaping, rangeLabel, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
+  const card = chartCard(doc, 'Shaper', rangeLabel);
+  card.classList.add('shaping-card');
+  const groups = shaping?.groups || [];
+  if (!groups.length) {
+    card.appendChild(h(doc, 'p', 'chart-empty hint', 'No finished runs with a recorded size in this period.'));
+    return card;
+  }
+  const table = h(doc, 'table', 'people-table');
+  const head = h(doc, 'tr', null);
+  for (const t of ['Size', 'Planned', 'Runs', 'Average cost', 'Average active time', 'Average review cycles']) head.appendChild(h(doc, 'th', null, t));
+  const thead = h(doc, 'thead', null); thead.appendChild(head); table.appendChild(thead);
+  const tbody = h(doc, 'tbody', null);
+  const dash = (v, f) => (v == null ? '–' : f(v));
+  for (const g of groups) {
+    for (const [i, [label, c]] of [['With Shaper', g.shaped], ['Without', g.unshaped]].entries()) {
+      const tr = h(doc, 'tr', null);
+      if (i === 0) { const size = h(doc, 'td', 'people-name', SIZE_LABELS[g.size] || g.size); size.rowSpan = 2; tr.appendChild(size); }
+      tr.appendChild(h(doc, 'td', null, label));
+      tr.appendChild(h(doc, 'td', 'num', String(c.runs)));
+      tr.appendChild(h(doc, 'td', 'num', dash(c.avgCostUsd, fmt.usd)));
+      tr.appendChild(h(doc, 'td', 'num', dash(c.avgActiveMs, fmt.duration)));
+      tr.appendChild(h(doc, 'td', 'num', dash(c.avgReviewCycles, String)));
+      tbody.appendChild(tr);
+    }
+  }
+  table.appendChild(tbody);
+  const scroll = h(doc, 'div', 'people-scroll');
+  scroll.appendChild(table);
+  card.appendChild(scroll);
+  card.appendChild(h(doc, 'small', 'hint', 'Finished runs started in this period. Size comes from the lines and files each run changed: small is up to 150 lines and 5 files, medium up to 800 lines and 20 files.'));
+  return card;
+}
+
 export function renderStatsBody(model, opts = {}) {
   const { doc = globalThis.document } = opts;
   const wrap = h(doc, 'div', null);
@@ -717,6 +754,12 @@ export function renderStatsBody(model, opts = {}) {
     const people = h(doc, 'div', 'charts-grid people-grid');
     people.appendChild(renderPeopleCard(model.byPerson, rangeLabel, opts));
     wrap.appendChild(people);
+  }
+  if (model.shaping) {
+    const shapingGrid = h(doc, 'div', 'charts-grid people-grid');
+    // the server counts all time for `all` (Decision 14); rangeLabel says "last 12 months" there, which is the charts' span
+    shapingGrid.appendChild(renderShapingCard(model.shaping, model.range === 'all' ? 'all time' : rangeLabel, opts));
+    wrap.appendChild(shapingGrid);
   }
   return wrap;
 }

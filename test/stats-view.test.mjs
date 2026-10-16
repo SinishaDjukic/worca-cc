@@ -185,3 +185,24 @@ test('renderKpiRow: a filtered model drops the budget meter and says Filtered', 
   assert.equal(el.querySelector('.stat-meter'), null);
   assert.match(el.querySelector('.stat-tile .stat-sub').textContent, /Filtered/);
 });
+
+test('renderStatsBody: the Shaper card only when the model carries shaping', () => {
+  const model = { ...MODEL, bucket: 'day', windowStartMs: 1, windowEndMs: 5,
+    series: RUNS.series.map((r, i) => ({ ...r, spentUsd: SPEND.series[i].spentUsd })) };
+  assert.equal(renderStatsBody(model, { doc }).querySelector('.shaping-card'), null);
+  const shaping = { groups: [{ size: 'small',
+    shaped: { runs: 2, avgCostUsd: 12.5, avgActiveMs: 600000, avgReviewCycles: 1 },
+    unshaped: { runs: 0, avgCostUsd: null, avgActiveMs: null, avgReviewCycles: null } }] };
+  const card = renderStatsBody({ ...model, shaping }, { doc }).querySelector('.shaping-card');
+  assert.equal(card.querySelector('h2').textContent, 'Shaper');
+  const rows = [...card.querySelectorAll('tbody tr')].map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent));
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0][0], 'Small');
+  assert.equal(rows[0][1], 'With Shaper');
+  assert.equal(rows[1][0], 'Without');
+  assert.equal(rows[1][rows[1].length - 1], '–');
+  const empty = renderStatsBody({ ...model, shaping: { groups: [] } }, { doc }).querySelector('.shaping-card');
+  assert.ok(empty.querySelector('.chart-empty'));
+  const all = renderStatsBody({ ...model, range: 'all', shaping }, { doc }).querySelector('.shaping-card');
+  assert.equal(all.querySelector('.card-head small.hint').textContent, 'all time');
+});

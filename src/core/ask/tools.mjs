@@ -406,6 +406,27 @@ export function createAskTools(deps) {
     return deps.composer;
   };
 
+  // No dep means no shape fields. Both deps or neither: an empty enum would accept no perspective at all.
+  const shapeOn = typeof deps.shapeFirstOn === 'function' && deps.shapeFirstOn() === true
+    && Array.isArray(deps.perspectiveKeys) && deps.perspectiveKeys.length > 0;
+  const PERSPECTIVE_LIST = { type: 'array', items: { type: 'string', enum: [...(deps.perspectiveKeys || [])] } };
+  const SHAPE_PROPS = shapeOn ? {
+    shape: { type: 'object', additionalProperties: false,
+      description: 'Shaper: the run asks at most 3 questions, writes the plan for these perspectives and waits for the user to approve it before anything is built. The workflow is picked for you: leave workflowId out. Never with when, every or after.',
+      properties: {
+        perspectives: { ...PERSPECTIVE_LIST, description: 'product is always on; add the 2–4 that fit the task' },
+        slices: { type: 'string', enum: ['auto', 'off'], description: 'plan in slices: "auto" (the default) lets the run cut a large task into 2–5 sequential slices, each its own run and pull request; "off" plans it as one' },
+      } },
+    assess: { type: 'object', additionalProperties: false, required: ['size', 'openDecisions'],
+      description: 'your judgement of the task, on every coding run; on a shaped run only `size` is read: the card offers Shaper when it is large or leaves 2+ decisions open',
+      properties: {
+        size: { type: 'string', enum: ['small', 'medium', 'large'] },
+        openDecisions: { type: 'array', items: { type: 'string' }, maxItems: 6,
+          description: 'decisions the brief leaves open that change what gets built and the repo cannot answer; [] when none' },
+        perspectives: { ...PERSPECTIVE_LIST, description: 'the perspectives you would pick if it were shaped' },
+      } },
+  } : {};
+
   const defs = [
     { name: 'list_projects',
       description: 'List the registered projects (key, name, path) and workspaces (id, name, member project keys). Use the key / id in the other tools. Each project with a remote carries sync: {base, ahead, behind, dirty, fetchedAt} from the last fetch (no network).',
@@ -470,6 +491,7 @@ export function createAskTools(deps) {
         sourceBranchByKey: { type: 'object', description: 'workspace only: per-member source branch overrides keyed by project key', additionalProperties: { type: 'string' } },
         commentIds: { type: 'array', items: { type: 'string' },
           description: 'diff comment ids (dc_…) this run is meant to address. They are stamped with the run id once the user confirms the card AND the run actually starts; nothing is resolved.' },
+        ...SHAPE_PROPS,
         ...SCHEDULE_FIELDS }, ['brief']) },
     { name: 'propose_workflow',
       description: 'Propose a NEW workflow for the user to save — it never writes anything; the user sees a card and decides. Exactly one of task / shape: task = the full task text (worca\'s Auto classifier picks the agents, loops and models exactly as an Auto run would — use this when the user says "auto" or simply gives a task); shape = a hand-authored ladder of catalog agents (see "Workflows you can create" in your instructions — only when the user describes the steps; a script, a gate or a new agent needs build_workflow). Target: projectKey OR workspaceId (not both); with neither, the scope pinned for this chat is used, whichever kind it is. A workspace proposal runs its plan, refine and implement stages across every member. thenRun = the user also asked to run it. Returns {ok:true, name, match, warnings, summary, shape}: match names the saved workflow with the same shape (Save reuses it), summary lists the stages and loops. Returns {ok:false, error} when worca\'s classifier failed (timeout, unusable replies): tell the user, retry at most once. Do not search list_workflows for a match yourself — the tool does.',

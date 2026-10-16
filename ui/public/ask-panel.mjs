@@ -34,6 +34,10 @@ import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 import { flagOn } from './flags.mjs';
 import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
+import { shapeFirstOn } from './chat/shape-gate.mjs';
+import { INTENTS, splitIntentLead } from './chat/intent.mjs';
+import { homeIcon } from './chat/home-icons.mjs';
+import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
@@ -3440,6 +3444,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       reset.hidden = true;
       laneSec.appendChild(make('div', 'ask-rp-lane-msg', loadingText || 'Could not load agent settings.'));
       lc.summary.textContent = '';
+      if (lc.onPaint) lc.onPaint(null);
       return;
     }
     // "changed" = rows the user moved off the proposal (Ask Worca's picks are the baseline, not the user's edits).
@@ -3593,6 +3598,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     box.appendChild(foot);
     laneSec.appendChild(box);
     lc.summary.textContent = laneSummary(lane);
+    if (lc.onPaint) lc.onPaint(lane);
   }
 
   /** The stub states. A `started` run — and a `failed` one that HAS a runId — renders the live progress
@@ -4500,6 +4506,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       head.appendChild(tagRow);
     }
     if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
+    // A shaped card follows card.shape: the server puts it there only while the gate is on, and a card built before the
+    // first hello (a boot on Chat) must still start its shaped run. The nudge is advisory and needs the client gate.
+    const shapeUi = card.shape ? shapeCardExtras(doc, card)
+      : card.nudge && shapeFirstOn() ? shapeCardExtras(doc, card) : null;
+    local.shapeUi = shapeUi;
     rootEl.appendChild(head);
 
     // #397 guardrail: the model proposed a different target than the chat's pin.
@@ -4566,6 +4577,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
     wfRow.append(wfField, engineField, guardField);
     targetSec.appendChild(wfRow);
+    if (shapeUi) rootEl.appendChild(shapeUi.el);
     rootEl.appendChild(targetSec);
     engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
     workflowSel.addEventListener('change', () => {
@@ -4747,8 +4759,75 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (picked) startCard(block, rootEl, local, picked);
       });
     }
-    foot.append(openNp, summary, dismissBtn, laterBtn, startBtn);
+    // Shape it first: Start holds an icon and a text node, so only the text node is relabelled.
+    let shapeBtn = null;
+    if (shapeUi) {
+      const setLabel = (b, t) => { const n = [...b.childNodes].find((x) => x.nodeType === 3); if (n) n.textContent = t; else b.append(t); };
+      if (card.shape) {
+        setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
+      } else {
+        shapeBtn = make('button', 'ask-card-start ask-card-shape', 'Shaper');
+        shapeBtn.type = 'button';
+        shapeBtn.dataset.askCardShape = '';
+        shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));
+        setLabel(startBtn, 'Run as is');                 // D32: the choice card's own words, never "anyway"
+      }
+    }
+    foot.append(openNp, summary, dismissBtn, laterBtn, ...(shapeBtn ? [shapeBtn] : []), startBtn);
     rootEl.appendChild(foot);
+
+    // Shaper (D20, mock board 13): a shaped card shows the title, the brief clamped, Project, Base branch,
+    // Perspectives and what happens; every other field MOVES, unchanged, into a collapsed Advanced. Moves only: each
+    // control keeps its class, so collectCardBody / startCard read the same values and the request is unchanged.
+    let paintAdvanced = () => {};
+    if (card.shape && shapeUi) {
+      const kicker = eyebrow.querySelector('.ask-rp-kicker');
+      kicker.textContent = 'Shaper';
+      kicker.classList.add('ask-rp-kicker-shape');
+      const main = make('div', 'ask-rp-sec ask-rp-shape-main');
+      const preview = make('div', 'ask-rp-brief-preview',
+        card.source ? (card.source.title || card.source.taskId || '') : brief.value);
+      const more = make('button', 'link-btn ask-rp-brief-more', 'Show the full brief');
+      more.type = 'button';
+      more.setAttribute('data-ask-card-brief-more', '');
+      briefSec.hidden = true;
+      more.addEventListener('click', () => { preview.hidden = true; more.hidden = true; briefSec.hidden = false; grow(); });
+      const what = make('div', 'ask-rp-shape-what');
+      what.append(make('span', 'ask-rp-label', 'What happens'), make('span', null, shapeWhatHappens(card.shape)));
+      main.append(preview, more, briefSec, targetHost, rpField('Perspectives', shapeUi.el), what);
+      const adv = doc.createElement('details');
+      adv.className = 'ask-rp-adv disclosure';
+      adv.setAttribute('data-ask-card-advanced', '');
+      const advSum = make('summary', 'ask-rp-adv-sum', 'Advanced');
+      adv.appendChild(advSum);
+      const why = head.querySelector('.ask-rp-why');
+      if (why) adv.appendChild(why);
+      // renderTarget fills this with Feature branch + Run on the source branch on a project target (it rebuilds on every call).
+      local.shapeBranchHost = make('div', 'ask-rp-grid two ask-rp-adv-branch');
+      targetSec.insertBefore(local.shapeBranchHost, wfRow);
+      const sched = make('div', 'ask-rp-adv-sched');
+      sched.appendChild(laterBtn);
+      adv.append(targetSec, laneSec, sched);
+      rootEl.insertBefore(main, err);
+      rootEl.insertBefore(adv, err);
+      openNp.classList.add('link-btn');
+      delete openNp.dataset.minLevel;                       // one of the small card's own controls (D20)
+      foot.replaceChildren(openNp, dismissBtn, startBtn);   // the Advanced summary stands in for the lane summary
+      let advLane = null;
+      paintAdvanced = (lane = advLane) => {
+        advLane = lane;
+        const g = guardSel.selectedOptions[0];
+        advSum.textContent = shapeAdvancedSummary({
+          engine: engineLabel(engineSel.value || (lane && lane.defaultEngine) || ''),
+          guardrails: g ? g.textContent : '',
+          agents: lane ? lane.rows.length : 0,
+          overrides: lane ? laneOverrideCount(lane) : 0,
+        });
+      };
+      guardSel.addEventListener('change', () => paintAdvanced());
+      engineSel.addEventListener('change', () => paintAdvanced());   // the lane reload repaints again once loaded
+      paintAdvanced(null);
+    }
 
     local.projectDir = () => (local.target === 'project' ? ((rootEl.querySelector('.ask-card-project-select') || {}).value || '') : '');
     local.workflowId = () => workflowSel.value || card.workflowId || 'wf_default';
@@ -4792,13 +4871,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           if (srcHint && srcSel.value !== card.sourceBranch) srcHint.textContent = '';
           updateTargetSub();
         });
-        grid.append(rpField('Project', projSel), lvTag(srcField, 'advanced', !!card.sourceBranch),
-          lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch),
-          lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource));
+        const featureField = lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch);
+        const sameField = lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource);
+        if (local.shapeBranchHost) {
+          // Shaper (D20): Project and Base branch on the small card, at every level; the rest in Advanced.
+          srcField.querySelector('.ask-rp-label').firstChild.textContent = 'Base branch';
+          grid.classList.add('two');
+          grid.append(rpField('Project', projSel), srcField);
+          local.shapeBranchHost.replaceChildren(featureField, sameField);
+        } else {
+          grid.append(rpField('Project', projSel), lvTag(srcField, 'advanced', !!card.sourceBranch), featureField, sameField);
+        }
         targetHost.appendChild(grid);
         updateTargetSub();
         return;
       }
+      if (local.shapeBranchHost) local.shapeBranchHost.replaceChildren();
       const wsSel = rpSelect('ask-card-workspace-select', 'Workspace');
       const members = make('div', 'ask-card-members');
       const srcInput = doc.createElement('input');
@@ -4850,7 +4938,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // `edits` are per workflow-and-project and are DISCARDED, silently.
     // `saveDefaults`: the card's "Save as project defaults" switch (off by default), kept across lane reloads.
     const laneCtx = { summary, workflowId: () => local.workflowId(), projectDir: () => local.projectDir(),
-      saveDefaults: () => !!local.saveDefaults, setSaveDefaults: (v) => { local.saveDefaults = !!v; } };
+      saveDefaults: () => !!local.saveDefaults, setSaveDefaults: (v) => { local.saveDefaults = !!v; },
+      onPaint: (lane) => paintAdvanced(lane) };
     let laneSeq = 0;
     function reloadLane() {
       const seq = ++laneSeq;
@@ -4914,10 +5003,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     loadCardOptions({ fresh: true }).then((opts) => {
       if (st.destroyed) return;
       local.options = opts;
-      // Auto is not a saved workflow: listed only when Ask Worca proposed it (a plain card keeps its list).
-      const autoOpt = card.workflowId === 'wf_auto' ? [{ value: 'wf_auto', label: 'Auto — picks the workflow when the run starts' }] : [];
-      fillSelect(workflowSel, [...autoOpt, ...opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id }))], card.workflowId || 'wf_default');
-      if (card.workflowId && workflowSel.value !== card.workflowId) markWorkflowUnavailable();
+      if (card.shape && local.shapeUi) {
+        // Shape it first (D9): the workflow is fixed; the server re-derives wf_shape / wf_shape_ux from the chips at start.
+        fillSelect(workflowSel, [{ value: card.workflowId, label: card.workflowName || 'Shaper' }], card.workflowId);
+        workflowSel.disabled = true;
+      } else {
+        // Auto is not a saved workflow: listed only when Ask Worca proposed it (a plain card keeps its list).
+        const autoOpt = card.workflowId === 'wf_auto' ? [{ value: 'wf_auto', label: 'Auto — picks the workflow when the run starts' }] : [];
+        fillSelect(workflowSel, [...autoOpt, ...opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id }))], card.workflowId || 'wf_default');
+        if (card.workflowId && workflowSel.value !== card.workflowId) markWorkflowUnavailable();
+      }
       fillSelect(guardSel, opts.guardrails.map((g) => ({ value: g.id, label: g.id === 'permissive' ? 'Permissive' : (g.name || g.id) })), card.guardrailsId || 'normal');
       renderTarget();
       reloadLane();
@@ -5006,11 +5101,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
   }
 
-  async function startCard(block, rootEl, local, schedule = null) {
+  async function startCard(block, rootEl, local, schedule = null, { shaped = false } = {}) {
     const err = rootEl.querySelector('.ask-card-err');
     const startBtn = rootEl.querySelector('[data-ask-card-start]');
     err.textContent = '';
     startBtn.disabled = true;
+    const shapeBtn = rootEl.querySelector('[data-ask-card-shape]');
+    if (shapeBtn) shapeBtn.disabled = true;               // a double click must not post /api/run twice
     freezeTargetInputs(rootEl, true);
     try {
       // D3: read-only, so it runs BEFORE saveLaneEdits — a refusal here must not leave the config already written.
@@ -5036,6 +5133,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (Object.keys(ov.nodes).length) overlay = { nodes: ov.nodes };
       }
       const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
+      if (local.shapeUi && (shaped || (block.card || {}).shape)) Object.assign(body, local.shapeUi.body());
       if (overlay) body.overlay = overlay;
       // Run chains: "the branch of the run before it" is a flag, and the wire refuses it next to a branch name.
       // Keyed off the schedule being POSTED — a Start now on an after-proposal carries none and keeps the picked branch.
@@ -5068,8 +5166,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // the flip frame renders the terminal state. The browser never navigates
       // (beginRun is NEVER called — spec §10.5).
     } finally {
-      startBtn.disabled = !!rootEl.__rp?.tagRules?.blocked();   // an enforced tag still missing keeps Start off
+      const tagBlocked = !!rootEl.__rp?.tagRules?.blocked();   // an enforced tag still missing keeps Start off
+      startBtn.disabled = tagBlocked;
+      if (shapeBtn) shapeBtn.disabled = tagBlocked;            // Shaper starts a run too: the same tag rule
       freezeTargetInputs(rootEl, false);
+      // freezeTargetInputs re-enabled the select; a shaped card's workflow is fixed.
+      if ((block.card || {}).shape && local.shapeUi) rootEl.querySelector('.ask-card-workflow').disabled = true;
     }
   }
 
@@ -5243,6 +5345,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     confirm,
     runStore,
     openRunPanel: (ref, opts) => chatDep('openRunPanel', ref, opts),
+    mountFeature: (host, id) => chatDep('mountFeature', host, id),
     openArtifact: (ref, artifact) => chatDep('openArtifact', ref, artifact),
     openShipIt: (ref, link) => chatDep('openShipIt', ref, link),
     runLinkFor: (ref) => runLinkFor(ref || {}),
@@ -5312,7 +5415,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       try { made = custom(block, cardCtx); } catch (err) { console.warn('[worca] a chat card builder failed', err); }
       if (made && made.el) {
         if (cached) disposeCardEntry(cached);
-        st.cardEls.set(block.id, { el: made.el, state: block.state, rev, custom, handle: made.handle || null, dispose: made.dispose || null, animate: !!made.animate, cancelAnim: null, lastW: -1 });
+        st.cardEls.set(block.id, { el: made.el, state: block.state, rev, custom, handle: made.handle || null, dispose: made.dispose || null, animate: !!made.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn() });
         return made.el;
       }
     }
@@ -5329,10 +5432,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
     const isComposer = !!(block.card && ASK_COMPOSER_CARD_TYPES.includes(block.card.type));
     const isProgress = isProgressBlock(block);
+    // Proposed cards only: `card.nudge` stays on the block after it flips to 'started', and a live run card must never
+    // be disposed and remounted because the gate changed.
+    const nudgeStale = block.state === 'proposed' && !!(block.card && block.card.nudge) && cached && cached.shapeOn !== shapeFirstOn();
     // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
     // what they show changes, not only their state.
     const view = isComposer ? composerCards().view(block) : '';
-    if (cached && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isWeb || isWorkspace || isActions || isAway || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && !nudgeStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isWeb || isWorkspace || isActions || isAway || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -5348,7 +5454,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
-    st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });
+    st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn() });
     return built.el;
   }
   function disposeCardEntry(c) {
@@ -5873,14 +5979,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (synthetic.length) {
         for (const b of synthetic) wrap.appendChild(buildNotice(b));
       } else {
+        // Shaper (D21): the lead went to the model; the bubble shows the intent chip and the person's own text.
+        const own = splitIntentLead(row.text || '');
+        if (own.intent) {
+          const chip = make('div', 'ask-user-intent');
+          chip.append(homeIcon(doc, INTENTS[own.intent].icon, 14), make('span', null, INTENTS[own.intent].label));
+          wrap.appendChild(chip);
+        }
         // Pinpoint (#669): a message that opens with a blockquote shows it as a quote card above the bubble.
-        const { quote, rest } = parseQuotedMessage(row.text || '');
+        const { quote, rest } = parseQuotedMessage(own.text);
         if (quote) {
           const card = make('div', 'ask-user-quote');
           card.append(make('div', 'ask-user-quote-h', quote.src ? `From ${quote.src}` : 'Quoted'), make('div', 'ask-user-quote-t', quote.text));
           wrap.appendChild(card);
         }
-        if (!quote || rest) wrap.appendChild(make('div', 'ask-user-bubble', quote ? rest : (row.text || '')));
+        const bubbleText = quote ? rest : own.text;
+        if (bubbleText || (!quote && !own.intent)) wrap.appendChild(make('div', 'ask-user-bubble', bubbleText));
         const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
         if (atts.length) {
           const pills = make('div', 'extras-pills ask-user-pills');

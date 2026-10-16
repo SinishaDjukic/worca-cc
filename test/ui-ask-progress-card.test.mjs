@@ -221,7 +221,7 @@ test('ui-ask-progress-card: a started card goes live from the run store, repaint
   await settle(ctx.window);
   assert.equal(el.querySelector('.ask-rc-pill').textContent, 'Planner', 'the newest active agent, Running-list parity');
   assert.equal(el.querySelector('.ask-rc-pill').className, 'ask-rc-pill st-violet');
-  assert.equal(el.querySelector('.ask-rc-prog').textContent, '0/2 agents');
+  assert.equal(el.querySelector('.ask-rc-prog').textContent, 'Planner', 'the P5 text replaces "n/m agents" for a graph run');
   assert.equal(el.querySelector('.ask-rc-sub').textContent, 'proj · #abcd1234');
   const stage = el.querySelector('.chat-rc-graph .gv-stage');   // Chat P3: the registered chat run card (Workflows well)
   assert.ok(stage, 'the workflow graph is mounted from the live stepper');
@@ -253,7 +253,7 @@ test('ui-ask-progress-card: byPipeline prefers the live lineage when a supersede
   ctx.recv(STATE({ runId: 'run-new' }));
   await settle(ctx.window);
   assert.equal(store.byPipeline('abcd1234').runId, 'run-new', 'the live lineage wins over the superseded paused one that Map order lists first');
-  assert.equal(store.get('run-old').status, 'paused', 'the old entry is still there (only the acting tab deletes it)');
+  assert.equal(store.get('run-old'), null, 'the superseded paused entry is dropped in every tab, not only the acting one');
   ctx.recv({ runId: 'run-new', type: 'done', status: 'done' });
   await settle(ctx.window);
   assert.equal(store.byPipeline('abcd1234').runId, 'run-new', 'both settled: the newest lineage wins');

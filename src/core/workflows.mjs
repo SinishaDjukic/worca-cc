@@ -33,8 +33,9 @@ import {
   GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB,
   GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_NAME, isReservedWorkflowId,
   GRAPH_WORKSPACE_SCAN_WORKFLOW, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_PR_FIX_WORKFLOW, PR_FIX_WORKFLOW_ID,
+  SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_NAME, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW,
 } from './graph/builtin-workflows.mjs';
-export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, isReservedWorkflowId };
+export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, isReservedWorkflowId };
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 
@@ -316,7 +317,10 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   // refused by DELETE — the user's pipeline would vanish behind a 201. Refuse
   // the WRITE instead; only the name is wrong, so the caller can rename.
   if (reserved(id)) {
-    const which = id === AUTO_WORKFLOW_ID ? AUTO_WORKFLOW_NAME : id === MEMORY_DEFRAG_WORKFLOW_ID ? MEMORY_DEFRAG_WORKFLOW_NAME : GRAPH_DEFAULT_WORKFLOW.name;
+    const which = id === AUTO_WORKFLOW_ID ? AUTO_WORKFLOW_NAME
+      : id === MEMORY_DEFRAG_WORKFLOW_ID ? MEMORY_DEFRAG_WORKFLOW_NAME
+      : id === SHAPE_WORKFLOW_ID ? SHAPE_WORKFLOW_NAME
+      : GRAPH_DEFAULT_WORKFLOW.name;
     throw Object.assign(
       new Error(`the name "${which}" is reserved — choose another name`),
       { code: 'RESERVED_NAME' });
@@ -374,6 +378,9 @@ export async function readWorkflow(id, opts = {}) {
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return GRAPH_MEMORY_DEFRAG_WORKFLOW;
   if (id === WORKSPACE_SCAN_WORKFLOW_ID) return GRAPH_WORKSPACE_SCAN_WORKFLOW;
   if (id === PR_FIX_WORKFLOW_ID) return GRAPH_PR_FIX_WORKFLOW;
+  // No gate check: resuming a held shaped run must never be stranded.
+  if (id === SHAPE_WORKFLOW_ID) return GRAPH_SHAPE_WORKFLOW;
+  if (id === SHAPE_UX_WORKFLOW_ID) return GRAPH_SHAPE_UX_WORKFLOW;
   return readRaw(id, opts);
 }
 
@@ -539,6 +546,7 @@ export async function deleteWorkflow(id) {
   if (id === AUTO_WORKFLOW_ID) return false;    // never a row
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return false; // a constant, never a row
   if (id === PR_FIX_WORKFLOW_ID) return false;  // a constant, never a row
+  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return false; // constants, never rows
   if (!isSafeWorkflowId(id)) return false;      // SECURITY: reject unsafe ids
   getDb();
   let changed = 0;

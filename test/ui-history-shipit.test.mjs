@@ -1394,3 +1394,77 @@ test('Overview: pr-watch-changed rereads only the exact PR', async () => {
   await settle(ctx.window);
   assert.equal(checksGets(ctx).length, before + 1);
 });
+
+// ---------------------------------------------------------------------------
+// D16/D22: a slice's place in its feature (the History glance line and the Ship it note)
+// ---------------------------------------------------------------------------
+
+const SLICE_URL = `/api/shape/pipelines/${ROW.id}/slice`;
+const SLICE_INFO = { featureId: 'feat_1', title: 'Charts', index: 1, total: 3, sliceTitle: 'Store tags', state: 'done',
+  next: { index: 2, title: 'Slice 2', state: 'planned' } };
+const gateOn = (ctx) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', flags: { shapeFirst: true }, runs: [] }) });
+/** A slice endpoint stub; `hold` keeps the answer until `release()`. */
+function sliceArm({ info = SLICE_INFO, hold = false } = {}) {
+  const a = { calls: 0, release: null };
+  a.arm = (url) => {
+    if (!url.endsWith(SLICE_URL)) return null;
+    a.calls += 1;
+    const answer = () => (info ? ok(info) : fail(404, { error: 'not a slice' }));
+    return hold ? new Promise((r) => { a.release = () => r(answer()); }) : answer();
+  };
+  return a;
+}
+
+test('a done slice\'s History page names its place and the next slice, with Open feature; a repaint keeps one line', async () => {
+  const s = sliceArm();
+  const ctx = await bootShip({ arms: s.arm });
+  gateOn(ctx);
+  await openDetail(ctx);
+  await settle(ctx.window, 4);
+  const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-slice-line');
+  assert.equal(line.hidden, false);
+  assert.equal(line.querySelector('.rd-slice-link').textContent, 'Slice 1 of 3 · next: Slice 2 (planned)');
+  assert.equal(line.querySelector('.rd-slice-link').getAttribute('href'), '#feature/feat_1');
+  assert.equal(line.querySelector('.rd-slice-open').textContent, 'Open feature');
+  assert.equal(s.calls, 1);
+  await openDetail(ctx);                                 // the same detail again: painted in place
+  assert.equal(ctx.window.document.querySelectorAll('#hist-detail .rd-slice-link').length, 1);
+});
+
+test('a plain run (the slice endpoint answers 404) shows no slice line', async () => {
+  const s = sliceArm({ info: null });
+  const ctx = await bootShip({ arms: s.arm });
+  gateOn(ctx);
+  await openDetail(ctx);
+  await settle(ctx.window, 4);
+  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-slice-line').hidden, true);
+});
+
+test('Ship it for a slice with a next slice says to merge this PR first, on the first open; a plain run has no note', async () => {
+  const s = sliceArm({ hold: true });
+  const ctx = await bootShip({ arms: (url, opts) => s.arm(url, opts) });
+  gateOn(ctx);
+  const modal = await openModal(ctx);
+  const note = modal.querySelector('.shipit-slice-note');
+  s.release?.();
+  await settle(ctx.window, 4);
+  assert.equal(note.hidden, false);
+  assert.equal(note.textContent, 'Slice 2 builds on this branch: merge this PR first.');
+
+  const plain = await bootShip({ arms: sliceArm({ info: null }).arm });
+  gateOn(plain);
+  const m2 = await openModal(plain);
+  await settle(plain.window, 4);
+  assert.equal(m2.querySelector('.shipit-slice-note').hidden, true);
+});
+
+test('the Ship it note waits for its own run: an answer that lands after the dialog moved on paints nothing', async () => {
+  const s = sliceArm({ hold: true });
+  const ctx = await bootShip({ arms: (url, opts) => s.arm(url, opts) });
+  gateOn(ctx);
+  const modal = await openModal(ctx);
+  modal.dataset.pipelineId = 'someone-else';            // what another run's open sets
+  s.release?.();
+  await settle(ctx.window, 4);
+  assert.equal(modal.querySelector('.shipit-slice-note').hidden, true);
+});
