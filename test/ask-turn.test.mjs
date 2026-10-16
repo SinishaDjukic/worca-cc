@@ -1880,6 +1880,85 @@ test('composer: Ask\'s run, workflow, track and away hooks stand down — a hall
   assert.deepEqual(calls, { validate: 0, track: 0, away: 0 });
 });
 
+test('suggestion: a finished user turn writes one ask-suggestion out of turn; stopped, error, off, budget, mock and event turns never do', async () => {
+  const sugDeps = (calls, over = {}) => ({
+    generateSuggestion: async (input, opts) => { calls.push({ input, opts }); opts.onCost?.({ costUsd: 0.0004, usage: { input_tokens: 30, output_tokens: 4 }, model: opts.model }); return 'Open a PR'; },
+    suggestionModel: () => 'claude-haiku-4-5',
+    suggestionsEnabled: () => true,
+    budgetStatus: () => ({ blocked: false }),
+    ...over,
+  });
+  const ok = (opts) => { say(opts.onEvent, 'msg_1', 'The diff adds X.'); push(opts.onEvent, RESULT()); return { text: 'x', exitCode: 0 }; };
+  await checkRows([
+    { name: 'done turn → ask-suggestion tagged with the reply id; hardened options; cost booked on the reply', run: async () => {
+      const s = seed();
+      const calls = []; const ledger = [];
+      const { turn, outOfTurn } = makeTurn(s, { suggest: true, firstText: 'summarize the diff' }, {
+        ...sugDeps(calls), recordAskCost: (r) => ledger.push(r), runClaudeImpl: async (opts) => ok(opts),
+      });
+      await turn.run();
+      await turn.suggestionPromise;
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].input.userText, 'summarize the diff');
+      assert.equal(calls[0].input.replyText, 'The diff adds X.');
+      const o = calls[0].opts;
+      assert.equal(o.model, 'claude-haiku-4-5');
+      assert.deepEqual(o.tools, []);
+      assert.equal(o.permissionMode, 'dontAsk');
+      assert.equal(o.strictMcpConfig, true);
+      assert.equal(o.envScrub, true);
+      assert.ok(o.signal instanceof AbortSignal);
+      assert.deepEqual(outOfTurn.filter((f) => f.type === 'ask-suggestion'), [{ type: 'ask-suggestion', messageId: s.asst.id, text: 'Open a PR' }]);
+      const row = ledger.find((r) => r.model === 'claude-haiku-4-5');
+      assert.equal(row.amountUsd, 0.0004);
+      assert.equal(row.messageId, s.asst.id);
+      assert.equal(row.tokens, 34);
+    } },
+    { name: 'stopped / error turns, off switch, blocked budget, no model, mock, composer, suggest:false → no call', run: async () => {
+      const cases = [
+        [{ suggest: true }, { runClaudeImpl: async (opts) => { await waitAbort(opts.signal); const e = new Error('aborted'); e.name = 'AbortError'; throw e; } }, (t) => t.stop()],
+        [{ suggest: true }, { runClaudeImpl: async () => { throw new Error('boom'); } }],
+        [{ suggest: true }, { suggestionsEnabled: () => false, runClaudeImpl: async (opts) => ok(opts) }],
+        [{ suggest: true }, { budgetStatus: () => ({ blocked: true }), runClaudeImpl: async (opts) => ok(opts) }],
+        [{ suggest: true }, { suggestionModel: () => null, runClaudeImpl: async (opts) => ok(opts) }],
+        [{ suggest: true, mock: { card: null } }, { runClaudeImpl: async (opts) => ok(opts) }],
+        [{ suggest: true, composer: { sessionId: 's', docToken: 'd' } }, { runClaudeImpl: async (opts) => ok(opts) }],
+        [{ suggest: false }, { runClaudeImpl: async (opts) => ok(opts) }],
+      ];
+      for (const [over, deps, act] of cases) {
+        const s = seed();
+        const calls = [];
+        const { turn, outOfTurn } = makeTurn(s, over, { ...sugDeps(calls), ...deps });
+        const p = turn.run();
+        if (act) act(turn);
+        await p;
+        await turn.suggestionPromise;
+        assert.equal(calls.length, 0, JSON.stringify(over));
+        assert.equal(outOfTurn.filter((f) => f.type === 'ask-suggestion').length, 0);
+      }
+    } },
+    { name: 'a new turn on the thread cancels the suggestion being written: no stale frame', run: async () => {
+      const s = seed();
+      let release;
+      const gate = new Promise((r) => { release = r; });
+      const cancelled = [];
+      const { turn, outOfTurn } = makeTurn(s, { suggest: true }, {
+        ...sugDeps([], { generateSuggestion: async (_i, opts) => { await gate; return opts.signal.aborted ? '' : 'Late'; } }),
+        runClaudeImpl: async (opts) => ok(opts),
+      });
+      await turn.run();
+      // The next message's turn starts: its run() cancels the thread's pending suggestion (real claim/cancel registry).
+      const s2 = { thread: s.thread, user: appendMessage(s.thread.id, { role: 'user', text: 'next' }), asst: appendMessage(s.thread.id, { role: 'assistant', text: '', status: 'streaming' }) };
+      const { turn: t2 } = makeTurn(s2, {}, { runClaudeImpl: async (opts) => ok(opts), cancelSuggestion: (id) => { cancelled.push(id); turn.deps.cancelSuggestion(id); } });
+      await t2.run();
+      release();
+      await turn.suggestionPromise;
+      assert.deepEqual(cancelled, [s.thread.id]);
+      assert.equal(outOfTurn.filter((f) => f.type === 'ask-suggestion').length, 0);
+    } },
+  ]);
+});
+
 test('R-G: one Claude sign-in answer per turn — handed to the MCP child and to the turn\'s own re-validation; the Workflows chat never asks', async () => {
   const s = seed();
   let cfg = null;

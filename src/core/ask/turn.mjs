@@ -44,7 +44,7 @@ import { createWebValidator } from './web-proposal.mjs';
 import { validateScheduleChange } from './schedule-deps.mjs';
 import { lookupTask } from './source-deps.mjs';
 import { effectiveTimeZone } from './schedule-spec.mjs';
-import { scheduleDefaults } from '../settings.mjs';
+import { scheduleDefaults, chatPrefs } from '../settings.mjs';
 import { ASK_ENGINES } from '../model-env.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
@@ -58,7 +58,8 @@ import { mentionedRefs } from './contexts.mjs';
 import {
   newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, ASK_ID_RE,
 } from './store.mjs';
-import { recordAskCostDelta } from '../cost-budget.mjs';
+import { budgetStatus, recordAskCostDelta } from '../cost-budget.mjs';
+import { generateSuggestion, suggestionModel, claimSuggestion, releaseSuggestion, cancelSuggestion, SUGGESTION_TIMEOUT_MS } from './suggest.mjs';
 import { setPendingCardComments } from '../diff-comments.mjs';
 
 export function createAskTurn(opts) { return new AskTurn(opts); }
@@ -129,6 +130,7 @@ class AskTurn extends EventEmitter {
     skills = null,
     agentMode = true,
     composer = null,
+    suggest = false,
     deps = {},
   } = {}) {
     super();
@@ -167,6 +169,11 @@ class AskTurn extends EventEmitter {
     this.agentMode = agentMode !== false;
     // Workflows chat (D13): the page session + open document its composer cards are stamped with; null on an Ask chat.
     this.composer = composer && typeof composer === 'object' ? { sessionId: composer.sessionId || null, docToken: composer.docToken || null } : null;
+    // Next-prompt suggestion (ask-suggestion): the server sets it for a user's message (never an event turn). Off by
+    // default, so a turn built without it — every test fixture — never spawns the suggestion call.
+    this.suggest = suggest === true;
+    this.suggestionPromise = Promise.resolve();   // stored for test determinism, never awaited by run()
+    this._replyText = '';                         // the finished reply's text (set in _complete), the suggestion's input
     this.commands = null;
     this.assistantMessageId = assistantMessageId;
     this.userMessageId = userMessageId;
@@ -233,6 +240,14 @@ class AskTurn extends EventEmitter {
       // Conversation chips: (refs) → resolved chip entries (ui/server.mjs resolveAskMentions). null = none.
       resolveMentions: deps.resolveMentions ?? null,
       generateTitle: deps.generateTitle ?? generateTitle,
+      generateSuggestion: deps.generateSuggestion ?? generateSuggestion,
+      suggestionModel: deps.suggestionModel ?? suggestionModel,
+      // Read per kickoff: a Settings save reaches the very next suggestion.
+      suggestionsEnabled: deps.suggestionsEnabled ?? (() => chatPrefs().suggestions !== false),
+      budgetStatus: deps.budgetStatus ?? budgetStatus,
+      claimSuggestion: deps.claimSuggestion ?? claimSuggestion,
+      releaseSuggestion: deps.releaseSuggestion ?? releaseSuggestion,
+      cancelSuggestion: deps.cancelSuggestion ?? cancelSuggestion,
       askLimits: deps.askLimits ?? askLimits,
       limits: deps.limits ?? ASK_LIMITS,
       resolveModelEnv: deps.resolveModelEnv ?? resolveModelEnv,
@@ -968,6 +983,7 @@ class AskTurn extends EventEmitter {
       });
     }
     const summary = this.reducer.finish();
+    this._replyText = typeof summary.text === 'string' ? summary.text : '';
     const finalStatus = kind === 'error' ? 'error' : status;
     // Already AUTHORITATIVE: the reducer applied this turn's per-model cost
     // override (the `resolveCost` hook in _makeReducer), so this one value is
@@ -1141,6 +1157,8 @@ class AskTurn extends EventEmitter {
     if (this.status !== 'created') return { status: this.status };
     this.status = 'running';
     const d = this.deps;
+    // A new turn on this thread makes the previous reply's suggestion stale (it may still be writing).
+    try { d.cancelSuggestion(this.threadId); } catch { /* best effort */ }
     this._makeReducer();
     // §4.6: a Codex chat names the registry servers it does not get, once per chat (the server decides "once").
     if (this.mcpCodexNote) this.reducer.addBlock({ kind: 'notice', text: CODEX_MCP_NOTE, mcpCodex: true });
@@ -1227,6 +1245,7 @@ class AskTurn extends EventEmitter {
       if (this.commands) { try { this.commands.dispose(); } catch { /* already gone */ } this.commands = null; }
     }
     this._kickoffTitle();
+    this._kickoffSuggestion();
     return out;
   }
 
@@ -1408,5 +1427,49 @@ class AskTurn extends EventEmitter {
         }
       })
       .catch(() => { /* generateTitle already swallows; final backstop */ });
+  }
+
+  /** The next-prompt suggestion (ask-suggestion): one cheap, tool-less, out-of-turn call after a turn that finished
+   *  cleanly. Fire-and-forget like the title; holds no turn slot (settleJob already released it). Cancellable: a new
+   *  turn on the thread aborts it (run() → cancelSuggestion), and so does its own 30 s timeout. The frame is live-only
+   *  and tagged with this reply's id, so the panel drops it once anything newer happened. Its cost is Ask spend. */
+  _kickoffSuggestion() {
+    if (!this.suggest || this.status !== 'done' || this.mock || this.composer) return;
+    const d = this.deps;
+    let model = null;
+    try {
+      if (!d.suggestionsEnabled() || d.budgetStatus().blocked) return;
+      model = d.suggestionModel(this.engine);
+    } catch { return; }
+    if (!model) return;
+    const ctl = d.claimSuggestion(this.threadId);
+    const signal = AbortSignal.any([ctl.signal, AbortSignal.timeout(SUGGESTION_TIMEOUT_MS)]);
+    this.suggestionPromise = Promise.resolve()
+      .then(() => d.generateSuggestion({ userText: this.firstText, replyText: this._replyText }, {
+        cwd: this.scratchDir || join(d.worcaHome(), 'tmp', 'ask'),
+        model,
+        ...(this.engine === 'codex' ? { engine: 'codex' } : {}),
+        tools: [], strictMcpConfig: true, settingSources: ['project'],
+        disableSlashCommands: true, envScrub: true, envAllowlist: [],
+        permissionMode: 'dontAsk',
+        signal,
+        onCost: ({ costUsd, usage, model: m }) => {
+          try {
+            d.recordAskCost({
+              threadId: this.threadId, messageId: this.assistantMessageId, amountUsd: costUsd,
+              tokens: ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens']
+                .reduce((a, k) => a + (Number(usage?.[k]) || 0), 0),
+              model: m || model, tsMs: d.now(),
+            });
+          } catch { /* ledger append is best-effort */ }
+        },
+        onError: (err) => console.warn(`[worca-ask] thread ${this.threadId}: suggestion failed (model ${model}): ${err?.message || err} — the default placeholder stays`),
+      }))
+      .then((text) => {
+        if (!text || ctl.signal.aborted) return;
+        try { d.onOutOfTurn({ type: 'ask-suggestion', messageId: this.assistantMessageId, text }); } catch { /* sink */ }
+      })
+      .catch(() => { /* generateSuggestion never throws; final backstop */ })
+      .finally(() => { try { d.releaseSuggestion(this.threadId, ctl); } catch { /* best effort */ } });
   }
 }

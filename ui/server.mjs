@@ -133,6 +133,7 @@ import {
   sweepAskWorktrees,
 } from '../src/core/ask/worktrees.mjs';
 import { createAskTurn } from '../src/core/ask/turn.mjs';
+import { cancelSuggestion } from '../src/core/ask/suggest.mjs';
 import { validateMcpOff, resolveAskMcp, askMcpPromptInput, askMcpPreview, askMcpJoinNotice, resolveAskSkills } from '../src/core/ask/mcp.mjs';
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
@@ -11011,6 +11012,7 @@ async function deleteAskThreadFully(id) {
     // that was already mid-start is stopped here rather than left running.
     const job = stopJob();
     const deleted = askDeleteThread(id);
+    cancelSuggestion(id);                                     // no next-prompt call outlives a deleted chat
     if (job) {
       if (job.graceTimer) clearTimeout(job.graceTimer);
       askJobs.delete(id);
@@ -11594,6 +11596,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       skills: skills.result,
       agentMode: agentOn,
       composer: composerMode ? ((askGetThread(id) || {}).composer || null) : null,
+      suggest: !synthetic,                          // ask-suggestion: a user's message only — an event turn suggests nothing
       ...(engine === 'codex' ? {
         engine,
         mcpCodexNote,

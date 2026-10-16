@@ -93,10 +93,11 @@ function ledgerSpend(fromMs, toMs) {
  *  DISTINCT sessions, turns. A thread is a session in every window it has a
  *  costed turn in. */
 function askTotals(fromMs, toMs) {
+  // A reply's next-prompt suggestion books its own row on the reply's message id: one turn, two costs.
   const row = prepare(`
-    SELECT COALESCE(SUM(amount_usd), 0) AS s,
-           COUNT(DISTINCT thread_id)    AS sessions,
-           COUNT(*)                     AS turns
+    SELECT COALESCE(SUM(amount_usd), 0)                        AS s,
+           COUNT(DISTINCT thread_id)                           AS sessions,
+           COUNT(DISTINCT COALESCE(message_id, 'row:' || id))  AS turns
     FROM ask_cost_ledger WHERE ts >= ? AND ts < ?`).get(fromMs, toMs);
   return { spendUsd: roundUsd(row?.s || 0), sessions: row?.sessions || 0, turns: row?.turns || 0 };
 }
