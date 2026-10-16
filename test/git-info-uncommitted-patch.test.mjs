@@ -96,7 +96,7 @@ test('a moved submodule is a Subproject commit hunk git apply can use, whatever 
   assert.equal(git(dir, ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'sm']).status, 0);
   git(dir, ['-c', 'commit.gpgsign=false', 'commit', '-qm', 'add sm']);
   await writeFile(join(dir, 'sm', 's.txt'), 's2\n');
-  git(join(dir, 'sm'), ['-c', 'commit.gpgsign=false', 'commit', '-qam', 'moved']);
+  git(join(dir, 'sm'), ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', 'commit', '-qam', 'moved']);   // the submodule clone has no identity of its own (CI has no global one)
   git(dir, ['config', 'diff.submodule', 'log']);
   const r = await uncommittedPatch(dir, { base: 'HEAD', outFile: join(await outDir(), 'u.patch') });
   assert.equal(r.ok, true, JSON.stringify(r));
