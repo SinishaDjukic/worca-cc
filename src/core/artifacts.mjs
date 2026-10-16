@@ -1993,6 +1993,19 @@ export function mergeBackFor(row) {
   return members.length ? { merged: members.every((m) => m.merged === true), members } : null;
 }
 
+/** A recorded "not merged back" goes stale once the work lands by hand (or the source catches up): the hidden branch
+ *  is then gone or no longer ahead of its source, and the card's "the work is on <branch>" is false. Read live, like
+ *  retainedWorkFor's self-clearing; the stored record is left as it was. Single-project rows only (`repoDir`). */
+async function settleLandedMergeBack(mb, repoDir, feature, source) {
+  if (!mb || mb.merged || !repoDir || !feature || !source) return mb;
+  const members = await Promise.all(mb.members.map(async (m) => {
+    if (m.merged !== false || m.branch !== feature) return m;
+    const landed = !(await branchExists(repoDir, feature)) || (await commitsAhead(repoDir, source, feature)) === 0;
+    return landed ? { ...m, merged: true, kind: null, reason: null, landed: true } : m;
+  }));
+  return { merged: members.every((m) => m.merged === true), members };
+}
+
 /**
  * Return the still-live worktrees retained after a teardown commit failure.
  * The DB stores single-project metadata in `branch` and workspace metadata in
@@ -2207,7 +2220,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     }
   }
   const { cost, active } = totalsFor(row);
-  const mergeBack = mergeBackFor(row);
+  const mergeBack = await settleLandedMergeBack(mergeBackFor(row), repoDir, feature, source);
   const entry = {
     id: row.id,
     dir: row.dir,
