@@ -2042,7 +2042,23 @@ function upsertRun(partial) {
     }
     r.staleBoot = false;   // every caller relays the current server: it knows this runId
   }
+  dropSupersededPaused(r);
   return r;
+}
+
+// A resume runs under a NEW runId. resumeRunFromCard drops the old paused copy when THIS tab resumed it; a resume
+// from elsewhere (the usage-limit auto-resume, another tab, the feature page) only shows up as the new run going
+// live, so drop the older paused/interrupted copies of its pipeline here — the server evicts the same lineage
+// (ui/server.mjs, /api/resume). Without this the copy lingers as a phantom "Paused" row under Needs you.
+function dropSupersededPaused(r) {
+  if (!r || !r.pipelineId || (r.status !== 'starting' && r.status !== 'running')) return;
+  for (const [id, e] of runs) {
+    if (id === r.runId || e.pipelineId !== r.pipelineId || (e.status !== 'paused' && e.status !== 'interrupted')) continue;
+    if ((e.orderKey || 0) > (r.orderKey || 0)) continue;   // a resurrected stale frame never evicts a newer copy
+    alerts.onResolved(alertRun(e));
+    runs.delete(id);
+    if (state.selectedRunId === id) state.selectedRunId = '';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2483,6 +2499,7 @@ function onState(r, msg) {
   // hello snapshot, i.e. after a page reload — and /api/resume keys on it.
   // Guard: id-less pre-createPipeline snapshots must not clobber a captured id.
   if (typeof msg.id === 'string' && msg.id) r.pipelineId = msg.id;
+  dropSupersededPaused(r);
   if (msg && msg.branch && typeof msg.branch === 'object') {
     // Keep the WHOLE branch record, not just .feature: the detail header's
     // `base →` row needs .source, and the retained-work banner needs

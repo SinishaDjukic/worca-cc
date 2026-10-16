@@ -118,5 +118,37 @@ test('a trailing frame for a superseded run does not outrank the resumed run', a
   assert.deepEqual(cardOrder(window), ['r-new', 'r1'], 'resumed run stays above the resurrected stale run');
 });
 
+// Resumed ELSEWHERE (the usage-limit auto-resume, another tab, the feature page): this tab never called
+// resumeRunFromCard, so the new runId's state frame is what tells it. The old paused copy must go, or it
+// lingers as a phantom "Paused" row under Needs you (and a feature's slice reads paused) until a reload.
+test('a run resumed elsewhere drops the superseded paused copy of the same pipeline', async () => {
+  const { window, np, recv, selectProject, tick } = await boot();
+  selectProject();
+  window.location.hash = 'runs';
+  window.dispatchEvent(new window.Event('hashchange'));
+  recv({ type: 'phase', runId: 'r1', phase: 'plan', cycle: 0 });
+  await tick();
+  const r1 = np.getRun('r1');
+  np.onState(r1, { status: 'running', id: 'p1' });
+  np.onState(r1, { status: 'paused' });
+  recv({ type: 'phase', runId: 'r2', phase: 'plan', cycle: 0 });
+  await tick();
+  np.onState(np.getRun('r2'), { status: 'running', id: 'p1' });
+  await tick();
+  assert.equal(np.getRun('r1'), undefined, 'the paused copy is superseded by the live run of the same pipeline');
+  assert.ok(np.getRun('r2'), 'the resumed run stays');
+});
+
+test('a paused run of another pipeline, or a newer paused copy, is kept', async () => {
+  const { np, recv, tick } = await boot();
+  recv({ type: 'phase', runId: 'a1', phase: 'plan', cycle: 0 });
+  recv({ type: 'phase', runId: 'b1', phase: 'plan', cycle: 0 });
+  await tick();
+  np.onState(np.getRun('a1'), { status: 'running', id: 'pa' });
+  np.onState(np.getRun('a1'), { status: 'paused' });
+  np.onState(np.getRun('b1'), { status: 'running', id: 'pb' });
+  assert.ok(np.getRun('a1'), 'another pipeline\'s paused run stays');
+});
+
 // Sidebar rows: a log frame changes nothing → the rebuild must be skipped
 // entirely (same DOM nodes), so sidebar scroll/DOM stop churning per log.
