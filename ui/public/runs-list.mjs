@@ -5,12 +5,15 @@
 //
 // Item shapes (the adapters live in app.js: runsLiveItem / runsHistItem / runsSchedItem):
 //   live:  { runId, pipelineId, title, status, ask: {kind, step}|null, pauseReason, unread,
-//            step, failedStep, startedAt, groupKey, groupName, by, pr, checks, files, tags }
+//            step, failedStep, startedAt, groupKey, groupName, by, pr, checks, files, tags,
+//            progress: {fraction, tone}|null }
 //   hist:  { id, projectKey, title, status, pauseReason, startedAt, mtime, groupName, by,
 //            pr (a glance input: glancePrInput's output), checks, files,
 //            archived, archivedAt (archived-feed rows only), tags }
 //   sched: { id, scheduleId, title (may be null), status, after, queued, retryAt, runAt, groupKey, groupName, by }
+//   chain: { id, title, members[], total, index, fraction, tone, text, groupKey, groupName, open }
 import { glanceCopy } from './run-glance.mjs';
+import { renderRowLine } from './run-progress-bar.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { hasTag } from '../../src/shared/run-tags.mjs';
 import { tagChip } from './tag-input.mjs';
@@ -85,6 +88,7 @@ function askWord(ask) {
     return kind === 'gate' ? 'Approval needed' : 'Workflow review';
   }
   if (kind === 'recovery') return step ? `${step} failed` : 'Step failed';
+  if (kind === 'plan') return ask.outline ? 'Approve the slices' : 'Approve the plan';   // Shaper's plan ask (D33)
   if (kind === 'form') return step ? `${step} question` : 'Input needed';
   return step ? `${step} question` : 'Question';
 }
@@ -177,8 +181,40 @@ export function liveRow(it, now = Date.now()) {
     groupKey: String(it.groupKey || ''), groupName: String(it.groupName || ''), by: String(it.by || ''),
     tags: Array.isArray(it.tags) ? it.tags.map(String) : [],
     unread: !!it.unread, needs: needsYou({ kind: 'live', status, ask: !!it.ask, unread: !!it.unread }),
+    progress: it.progress || null,
   }, { at: it.startedAt }, now);
 }
+
+/** P8: a "Run after" chain as ONE row: the first run's title, "Run 2 of 3 · Build", one overall line. */
+export function chainRow(c, now = Date.now()) {
+  const members = Array.isArray(c.members) ? c.members : [];
+  const cur = members.find((m) => m.state === 'current') || members.find((m) => m.state === 'waiting') || members[0] || null;
+  // The current member's glyph (runsChainItem sets it from the live run: ask | paused | run); a chain
+  // that only waits shows the scheduled clock. Every value is a GLYPHS key in this file.
+  const icon = cur && cur.state === 'current' ? (cur.icon || 'run') : cur && cur.state === 'waiting' ? 'scheduled' : 'run';
+  // D17: a chain that is a feature opens the feature page.
+  const feature = c.feature && c.feature.id ? { id: String(c.feature.id) } : null;
+  return {
+    kind: 'chain', key: `chain:${c.id}`,
+    href: feature ? String(c.href || `#feature/${encodeURIComponent(feature.id)}`) : (cur && cur.href) || '#runs',
+    runId: (cur && cur.runId) || '', pipelineId: (cur && cur.pipelineId) || '', projectKey: '',
+    title: String(c.title || '(untitled)'), status: 'running', icon, word: String(c.text || ''), detail: '',
+    groupKey: String(c.groupKey || ''), groupName: String(c.groupName || ''), by: '',
+    unread: false, needs: false, time: '', sortMs: now, open: !!c.open,
+    progress: { fraction: c.fraction || 0, tone: c.tone || 'blue' },
+    feature,
+    members,
+    memberKeys: new Set(members.flatMap((m) => [m.pipelineId && `p:${m.pipelineId}`, m.ticketId && `t:${m.ticketId}`, m.runId && `r:${m.runId}`]).filter(Boolean)),
+  };
+}
+
+// A row's identities a chain can claim. A firing ticket's live row has runId === the ticket id.
+const rowChainKeys = (r) => [
+  r.pipelineId && `p:${r.pipelineId}`,
+  r.kind === 'sched' && `t:${r.key.slice('sched:'.length)}`,
+  r.kind === 'live' && r.runId && `r:${r.runId}`,
+  r.kind === 'live' && r.runId && `t:${r.runId}`,
+].filter(Boolean);
 
 export function histRow(p, now = Date.now()) {
   const st = histRowState(p);
@@ -260,7 +296,7 @@ export const DATE_BUCKETS = Object.freeze([
 ]);
 export function dateBucket(row, now = Date.now()) {
   if (row.kind === 'sched') return 'upcoming';
-  const t = row.kind === 'live' ? now : row.activityMs;
+  const t = row.kind === 'live' || row.kind === 'chain' ? now : row.activityMs;
   if (!Number.isFinite(t)) return 'older';
   const day = new Date(now);
   day.setHours(0, 0, 0, 0);
@@ -270,12 +306,12 @@ export function dateBucket(row, now = Date.now()) {
   day.setDate(day.getDate() - 6);
   return t >= day.getTime() ? 'week' : 'older';
 }
-const KIND_RANK = Object.freeze({ live: 0, sched: 1, hist: 2 });
+const KIND_RANK = Object.freeze({ live: 0, chain: 0, sched: 1, hist: 2 });
 const cmpDateRows = (a, b) => ((KIND_RANK[a.kind] ?? 3) - (KIND_RANK[b.kind] ?? 3))
   || (a.kind === 'hist' ? (b.activityMs || 0) - (a.activityMs || 0) : 0);
 
 const NEEDS_RANK = Object.freeze({ ask: 0, paused: 1, fail: 2 });
-export const cmpNeeds = (a, b) => ((NEEDS_RANK[a.icon] ?? 3) - (NEEDS_RANK[b.icon] ?? 3)) || ((b.sortMs || 0) - (a.sortMs || 0));
+export const cmpNeeds = (a, b) => ((NEEDS_RANK[a.needsIcon || a.icon] ?? 3) - (NEEDS_RANK[b.needsIcon || b.icon] ?? 3)) || ((b.sortMs || 0) - (a.sortMs || 0));
 
 /**
  * The list model: { needs: Row[], groups: [{key, name, count, collapsed, rows}], total, searching, filter }.
@@ -295,7 +331,7 @@ export function tagFilterOptions(rows) {
 }
 
 export function buildRunsModel({
-  live = [], history = [], scheduled = [], person = '', tag = '', query = '', filter = 'all', groupBy = 'project', collapsed = new Set(), now = Date.now(),
+  live = [], history = [], scheduled = [], chains = [], person = '', tag = '', query = '', filter = 'all', groupBy = 'project', collapsed = new Set(), now = Date.now(),
 } = {}) {
   const shown = RUNS_FILTERS.includes(filter) ? filter : 'all';
   const byDate = groupBy === 'date';
@@ -306,39 +342,64 @@ export function buildRunsModel({
   const schedRows = scheduled.filter((t) => t && !liveIds.has(String(t.id))).map((t) => schedRow(t, now));
   const all = [...liveRows, ...schedRows, ...histRows]
     .filter((r) => (!person || r.by === person) && rowHasTag(r, tag) && rowMatches(r, query) && rowInFilter(r, shown));
-  const needs = all.filter((r) => r.needs).sort(cmpNeeds);
+  const chainRows = chains.map((c) => chainRow(c, now));
+  // D17: a feature row needs you exactly when a row it claims does (the same needsYou() rule as the member rows), so
+  // nothing is dropped or invented. `needsIcon` (the needy member's icon) lets cmpNeeds order it like that row; the
+  // row's own `icon` stays the current member's.
+  const featureOf = (r) => chainRows.find((c) => c.feature && rowChainKeys(r).some((k) => c.memberKeys.has(k))) || null;
+  for (const r of all) {
+    const c = r.needs ? featureOf(r) : null;
+    if (c && (!c.needs || (NEEDS_RANK[r.icon] ?? 3) < (NEEDS_RANK[c.needsIcon] ?? 3))) { c.needs = true; c.needsIcon = r.icon; }
+  }
+  const placed = new Set();
+  const placedRows = [];
+  for (const r of all) {
+    const c = chainRows.find((x) => rowChainKeys(r).some((k) => x.memberKeys.has(k)));
+    if (!c) { placedRows.push(r); continue; }
+    if (placed.has(c.key)) continue;
+    placed.add(c.key);
+    // The chain sits where its first listed member sat (that row passed the person/search/filter checks).
+    placedRows.push({ ...c, groupKey: c.groupKey || r.groupKey, groupName: c.groupName || r.groupName, sortMs: r.sortMs });
+  }
+  // Needs you lists the member rows, not the chain row that folds them (a question never hides behind an expander),
+  // except a feature's: its member rows are left out and the placed feature row stands for them.
+  const needs = [
+    ...all.filter((r) => r.needs && !featureOf(r)),
+    ...placedRows.filter((r) => r.kind === 'chain' && r.feature && r.needs),
+  ].sort(cmpNeeds);
   const groups = new Map();
-  for (const r of shown === 'needs' ? [] : all) {
+  for (const r of shown === 'needs' ? [] : placedRows) {
     let g = groups.get(r.groupKey);
     if (!g) {
       g = { key: r.groupKey, name: r.groupName || '(unknown project)', rows: [], live: false, latest: -Infinity };
       groups.set(r.groupKey, g);
     }
     g.rows.push(r);
-    if (r.kind === 'live') g.live = true;
+    if (r.kind === 'live' || r.kind === 'chain') g.live = true;
     const t = Math.min(Number.isFinite(r.sortMs) ? r.sortMs : -Infinity, now);   // a future runAt counts as now
     if (t > g.latest) g.latest = t;
   }
   const searching = !!String(query || '').trim();
   if (byDate) {
     const buckets = new Map(DATE_BUCKETS.map(([id]) => [id, []]));
-    for (const r of shown === 'needs' ? [] : all) buckets.get(dateBucket(r, now)).push(r);
+    for (const r of shown === 'needs' ? [] : placedRows) buckets.get(dateBucket(r, now)).push(r);
     const list = DATE_BUCKETS.filter(([id]) => buckets.get(id).length).map(([id, name]) => {
       const rows = buckets.get(id).sort(cmpDateRows).map((r) => ({ ...r, nowMs: now }));
       const key = `date:${id}`;
       return { key, name, bucket: id, count: rows.length, collapsed: !searching && collapsed.has(key), rows };
     });
-    return { needs, groups: list, total: all.length, searching, filter: shown, groupBy: 'date' };
+    return { needs, groups: list, total: placedRows.length, searching, filter: shown, groupBy: 'date' };
   }
   const list = [...groups.values()]
     .sort((a, b) => (Number(b.live) - Number(a.live)) || (b.latest - a.latest) || a.name.localeCompare(b.name))
     .map((g) => ({ key: g.key, name: g.name, count: g.rows.length, collapsed: !searching && collapsed.has(g.key), rows: g.rows }));
-  return { needs, groups: list, total: all.length, searching, filter: shown, groupBy: 'project' };
+  return { needs, groups: list, total: placedRows.length, searching, filter: shown, groupBy: 'project' };
 }
 
 /** Is `row` the run the pane shows? `sel` = { runId, pipelineId, histKey: "<projectKey>/<id>" }. */
 export function isRowSelected(row, sel) {
   if (!sel || row.kind === 'sched') return false;
+  if (row.kind === 'chain') return !!((sel.pipelineId && row.memberKeys.has(`p:${sel.pipelineId}`)) || (sel.runId && row.memberKeys.has(`r:${sel.runId}`)));
   if (sel.runId && row.runId === sel.runId) return true;
   if (sel.histKey && row.kind === 'hist' && `${row.projectKey}/${row.pipelineId}` === sel.histKey) return true;
   return !!sel.pipelineId && row.pipelineId === sel.pipelineId;
@@ -379,7 +440,7 @@ function textEl(doc, tag, cls, text) {
   return n;
 }
 
-function renderRow(doc, r, { inNeeds = false, bucket = '' } = {}) {
+function renderRow(doc, r, { inNeeds = false, bucket = '', lineFrom = null } = {}) {
   const a = doc.createElement('a');
   a.className = `runs-row runs-row-${r.kind}`;
   a.setAttribute('href', r.href);
@@ -390,6 +451,7 @@ function renderRow(doc, r, { inNeeds = false, bucket = '' } = {}) {
   if (r.runId) a.dataset.runId = r.runId;
   if (r.pipelineId) a.dataset.pipelineId = r.pipelineId;
   if (r.projectKey) a.dataset.projectKey = r.projectKey;
+  if (r.memberKeys) a.dataset.memberKeys = [...r.memberKeys].join(' ');   // a chain row: paintRunsSelection rebuilds the set from it
   const ic = doc.createElement('span');
   ic.className = `runs-ic runs-ic-${r.icon}`;
   ic.setAttribute('aria-hidden', 'true');
@@ -404,8 +466,72 @@ function renderRow(doc, r, { inNeeds = false, bucket = '' } = {}) {
     if (r.tags.length > 3) box.append(tagChip(doc, `+${r.tags.length - 3}`));
     body.append(box);
   }
+  // P7: the thin line, only while the run is live (an ended live row and every History row have none).
+  // `lineFrom` (paintRunsList): the width this row's line had before the rebuild, so it glides on.
+  if (r.progress && (r.kind === 'live' || r.kind === 'chain') && !ENDED_ICONS.has(r.icon)) {
+    body.appendChild(renderRowLine(doc, r.progress, (lineFrom && lineFrom.get(r.key)) || ''));
+  }
   a.append(ic, body);
   return a;
+}
+
+const MEMBER_GLYPH = Object.freeze({ done: '✓', current: '●', waiting: '○', failed: '✕' });
+function renderChainRow(doc, r, opts) {
+  const wrap = doc.createElement('div');
+  wrap.className = 'runs-chain';
+  wrap.dataset.chainKey = r.key;
+  const toggle = doc.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'runs-chain-toggle';
+  toggle.dataset.chainKey = r.key;
+  toggle.setAttribute('aria-expanded', r.open ? 'true' : 'false');
+  if (r.feature) toggle.dataset.feature = '1';
+  toggle.setAttribute('aria-label', `${r.open ? 'Hide' : 'Show'} the ${r.members.length} ${r.feature ? 'slices in this feature' : 'runs in this chain'}`);
+  toggle.appendChild(chevron(doc));
+  const list = doc.createElement('ol');
+  list.className = 'runs-chain-members';
+  list.hidden = !r.open;
+  if (r.open) {
+    // The row itself toggles the group (a plain click), so the feature page is the first item inside.
+    if (r.feature) {
+      const li = doc.createElement('li');
+      li.className = 'runs-chain-member runs-chain-open-feature';
+      const link = doc.createElement('a');
+      link.className = 'runs-chain-link';
+      link.setAttribute('href', r.href);
+      link.textContent = 'Open feature →';
+      li.appendChild(link);
+      list.appendChild(li);
+    }
+    for (const m of r.members) {
+      const li = doc.createElement('li');
+      // D33: the current slice's dot: amber while it needs the person (a question waits, paused or not), blue and
+      // pulsing while it works, grey while it is paused with nothing to answer.
+      const dot = m.state !== 'current' ? ''
+        : m.icon === 'ask' || (m.icon === 'paused' && m.asks) ? ' is-needs'
+        : m.icon === 'paused' ? ' is-paused'
+        : m.icon === 'run' ? ' is-live' : '';
+      li.className = `runs-chain-member is-${m.state}${dot}`;
+      li.append(textEl(doc, 'span', 'runs-chain-glyph', MEMBER_GLYPH[m.state] || '○'));
+      const link = doc.createElement('a');
+      link.className = 'runs-chain-link';
+      link.setAttribute('href', m.href || '#runs');
+      link.textContent = m.title || '(untitled)';
+      li.appendChild(link);
+      if (m.state === 'done' && m.prUrl) {
+        const pr = doc.createElement('a');
+        pr.className = 'runs-chain-pr';
+        pr.setAttribute('href', m.prUrl);           // https-only, enforced server-side (runChains)
+        pr.target = '_blank';
+        pr.rel = 'noopener noreferrer';
+        pr.textContent = 'PR';
+        li.appendChild(pr);
+      }
+      list.appendChild(li);
+    }
+  }
+  wrap.append(renderRow(doc, r, opts), toggle, list);
+  return wrap;
 }
 
 function chevron(doc) {
@@ -416,7 +542,7 @@ function chevron(doc) {
 }
 
 /** The list's children: Needs you, then one section per group, then a note when empty. */
-export function renderRunsList(doc, model, { emptyText = 'No runs yet.', note = '' } = {}) {
+export function renderRunsList(doc, model, { emptyText = 'No runs yet.', note = '', lineFrom = null } = {}) {
   const out = [];
   if (model.needs.length) {
     const sec = doc.createElement('section');
@@ -426,7 +552,7 @@ export function renderRunsList(doc, model, { emptyText = 'No runs yet.', note = 
     head.className = 'runs-needs-head';
     head.append(textEl(doc, 'span', 'runs-needs-title', 'Needs you'), textEl(doc, 'span', 'runs-count', String(model.needs.length)));
     sec.appendChild(head);
-    for (const r of model.needs) sec.appendChild(renderRow(doc, r, { inNeeds: true }));
+    for (const r of model.needs) sec.appendChild(renderRow(doc, r, { inNeeds: true, lineFrom }));
     out.push(sec);
   }
   for (const g of model.groups) {
@@ -443,7 +569,7 @@ export function renderRunsList(doc, model, { emptyText = 'No runs yet.', note = 
     const rows = doc.createElement('div');
     rows.className = 'runs-group-rows';
     rows.hidden = g.collapsed;
-    if (!g.collapsed) for (const r of g.rows) rows.appendChild(renderRow(doc, r, { bucket: g.bucket || '' }));
+    if (!g.collapsed) for (const r of g.rows) rows.appendChild(r.kind === 'chain' ? renderChainRow(doc, r, { bucket: g.bucket || '', lineFrom }) : renderRow(doc, r, { bucket: g.bucket || '', lineFrom }));
     sec.append(head, rows);
     out.push(sec);
   }

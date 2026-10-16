@@ -1062,6 +1062,29 @@ export function prWatchReply(opts = {}) {
 export function prWatchComment(opts = {}) {
   return azureWatch(opts.prUrl) ? azurePr.prComment(opts) : ghPrComment(opts);
 }
+async function ghMarkPrReady({ projectDir = null, prUrl } = {}) {
+  const cred = await githubEnv('write', { repo: ownerRepoOfPrUrl(prUrl) });
+  if (cred.error) return { ok: false, error: cred.error };
+  const r = await _run('gh', ['pr', 'ready', prUrl], { cwd: projectDir || undefined, env: cred.env });
+  // An already-ready PR is a success for "mark ready".
+  return r.ok || /not a draft|already/i.test(r.stderr || '') ? { ok: true } : { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+}
+async function ghClosePr({ projectDir = null, prUrl, comment = '' } = {}) {
+  const cred = await githubEnv('write', { repo: ownerRepoOfPrUrl(prUrl) });
+  if (cred.error) return { ok: false, error: cred.error };
+  const r = await _run('gh', ['pr', 'close', prUrl, ...(comment ? ['--comment', String(comment)] : [])], { cwd: projectDir || undefined, env: cred.env });
+  return r.ok ? { ok: true } : { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+}
+/** D24: mark a draft PR ready for review, by the URL's forge. */
+export function markPrReady(opts = {}) {
+  if (!opts.prUrl) return Promise.resolve({ ok: false, error: 'prUrl is required' });
+  return azureWatch(opts.prUrl) ? azurePr.markReady(opts) : ghMarkPrReady(opts);
+}
+/** D24: close a PR with a comment, by the URL's forge (Azure: abandoned). */
+export function closePr(opts = {}) {
+  if (!opts.prUrl) return Promise.resolve({ ok: false, error: 'prUrl is required' });
+  return azureWatch(opts.prUrl) ? azurePr.closePr(opts) : ghClosePr(opts);
+}
 /** The PR card's checks rollup, mergeability and merge verdict, by forge (see ghPrChecks). null on any failure. */
 export async function prChecks({ projectDir, prUrl } = {}) {
   if (!azureWatch(prUrl)) return ghPrChecks({ projectDir, prUrl });

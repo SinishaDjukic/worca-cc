@@ -1,7 +1,7 @@
 // test/results-assemble.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bucketFiles, selectKeyChecks, splitNitpicks, linkIssues, assembleResults }
+import { bucketFiles, selectKeyChecks, splitNitpicks, linkIssues, assembleResults, sizeOfChange }
   from '../src/core/results.mjs';
 
 test('bucketFiles splits new vs changed and sums lines', () => {
@@ -74,4 +74,29 @@ test('assembleResults is deterministic (byte-identical)', () => {
   assert.equal(r.summary.blockingIssues, 1);
   assert.equal(r.summary.filesNew, 1);
   assert.equal(r.keyThingsToCheck[0].file, 'b.ts'); // linked
+});
+
+test('assembleResults adds the latest checklist tally only when a review carries one (spec D7)', () => {
+  const base = { nameStatus: [], numstat: new Map() };
+  const plain = assembleResults({ ...base, reviews: [{ kind: 'impl', cycle: 1, issues: [], summary: '' }] });
+  assert.deepEqual(Object.keys(plain), ['summary', 'newFiles', 'changedFiles', 'keyThingsToCheck', 'nitpicks']);
+  const cl1 = [{ id: 'R-qa-1', status: 'unmet' }];
+  const cl2 = [{ id: 'R-qa-1', status: 'met' }, { id: 'R-ux-1', status: 'na' }];
+  const out = assembleResults({ ...base, reviews: [
+    { kind: 'impl', cycle: 1, issues: [], summary: '', checklist: cl1 },
+    { kind: 'impl', cycle: 2, issues: [], summary: '', checklist: cl2 }] });
+  assert.deepEqual(out.checklist, { met: 1, unmet: 0, na: 1, missing: 0, total: 2, cycle: 2 });
+});
+
+test('sizeOfChange: small/medium/large from lines and files; null without counts or with no change', () => {
+  const sz = (a, r, f) => sizeOfChange({ linesAdded: a, linesRemoved: r, filesNew: 0, filesChanged: f, filesDeleted: 0 });
+  assert.equal(sz(100, 50, 5), 'small');
+  assert.equal(sz(100, 51, 5), 'medium');
+  assert.equal(sz(10, 0, 6), 'medium');
+  assert.equal(sz(800, 0, 20), 'medium');
+  assert.equal(sz(801, 0, 1), 'large');
+  assert.equal(sz(10, 0, 21), 'large');
+  assert.equal(sz(0, 0, 0), null);
+  assert.equal(sizeOfChange(null), null);
+  assert.equal(sizeOfChange({ filesChanged: 2 }), null);
 });

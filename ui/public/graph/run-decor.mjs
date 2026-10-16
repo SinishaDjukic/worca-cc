@@ -192,7 +192,7 @@ export function decorFromState(st, { live = true, now = Date.now(), subsOf = nul
     colors[node.id] = node.color || '';
   }
 
-  // Progress = done KEYED nodes / keyed nodes (D15: a number, never a bar). A script is a keyed card.
+  // Progress = done KEYED nodes / keyed nodes: a count, not the bar; the run progress bar is src/shared/run-progress.mjs (spec 2026-10-14 P12 supersedes D15). A script is a keyed card.
   const keyed = nodes.filter((n) => KEYED_KINDS.includes(n.kind));
   const progress = { done: keyed.filter((n) => status[n.id] === 'done').length, total: keyed.length };
 

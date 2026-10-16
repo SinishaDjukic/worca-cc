@@ -1,8 +1,8 @@
-// ui/public/chat/home-actions.mjs — the Chat home's quick actions (worca Chat P6): seven intent tiles and More, in the
+// ui/public/chat/home-actions.mjs — the Chat home's quick actions (worca Chat P6): eight intent tiles and More, in the
 // mockup's order. A tile only ARMS the composer (deps.setIntent: the intent chip and its placeholder); nothing is sent
 // until the user sends. Track a run / Explain a diff also open a run picker (Live / Finished) whose pick prefills a
 // mention of that run. Every action is a real Ask Worca capability (src/core/ask/tools.mjs):
-//   run propose_run · workflow propose_workflow · schedule preview_schedule + propose_run · track list_runs + track_run
+//   run propose_run · shape propose_run (Shaper) · workflow propose_workflow · schedule preview_schedule + propose_run · track list_runs + track_run
 //   diff get_run + get_run_diff · script draft_script (+ save_script / test_script) · clone propose_clone_project · away set_away_now
 //   metrics get_team_metrics · model list_models + propose_model_change · workspace propose_workspace_change
 //   remember remember · tasks list_task_sources + find_tasks
@@ -11,18 +11,19 @@ import { levelShows } from '../ui-level.mjs';
 import { INTENTS } from './intent.mjs';
 import { homeIcon } from './home-icons.mjs';
 
-export const TILE_INTENTS = Object.freeze(['run', 'workflow', 'schedule', 'track', 'diff', 'script', 'clone']);
+export const TILE_INTENTS = Object.freeze(['run', 'shape', 'workflow', 'schedule', 'track', 'diff', 'script', 'clone']);
 export const MORE_INTENTS = Object.freeze(['away', 'metrics', 'model', 'workspace', 'remember', 'tasks']);
 /** The interface mode each action belongs to: the level of the page or surface that owns the feature
  *  (app.js VIEW_MIN_LEVEL / SETTINGS_TAB_MIN_LEVEL, docs/ui-levels.md). */
 export const ACTION_LEVEL = Object.freeze({
-  run: 'simple', workflow: 'simple', schedule: 'advanced', track: 'simple', diff: 'advanced', script: 'simple', clone: 'simple',
+  run: 'simple', shape: 'simple', workflow: 'simple', schedule: 'advanced', track: 'simple', diff: 'advanced', script: 'simple', clone: 'simple',
   away: 'simple', metrics: 'expert', model: 'expert', workspace: 'advanced', remember: 'advanced', tasks: 'advanced', more: 'simple',
 });
 /** Actions a server-side switch can take away: action → key of the flags the home loads (deps.flags). */
-export const ACTION_FLAG = Object.freeze({ script: 'scripts', tasks: 'tasks' });
-/** Before the flags load: script tools on (the setting's default), task sources unknown = none. */
-export const DEFAULT_FLAGS = Object.freeze({ scripts: true, tasks: false });
+export const ACTION_FLAG = Object.freeze({ script: 'scripts', tasks: 'tasks', shape: 'shapeFirst' });
+/** Before the flags load: script tools on (the setting's default), task sources unknown = none, Shape it first off
+ *  until a hello turns it on. */
+export const DEFAULT_FLAGS = Object.freeze({ scripts: true, tasks: false, shapeFirst: false });
 export const PICKER_MAX = 8;
 const PICKERS = Object.freeze({
   track: Object.freeze({ header: 'Live', empty: 'Nothing running', list: 'live' }),
@@ -53,7 +54,7 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
   let flags = { ...DEFAULT_FLAGS };
   let menu = null;
 
-  function tile(id, label, icon) {
+  function tile(id, label, icon, badge) {
     const b = doc.createElement('button');
     b.type = 'button';
     b.className = 'chat-home-act';
@@ -63,6 +64,7 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
     l.className = 'chat-home-act-l';
     l.textContent = label;
     b.appendChild(l);
+    if (badge) { const s = doc.createElement('span'); s.className = 'chat-home-act-badge'; s.textContent = badge; b.appendChild(s); }
     return b;
   }
   /** Arm intent `id`; an intent that cannot go out empty (Step away) also leaves its text in the composer. */
@@ -81,7 +83,7 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
   }
 
   for (const id of TILE_INTENTS) {
-    const b = tile(id, INTENTS[id].label, INTENTS[id].icon);
+    const b = tile(id, INTENTS[id].label, INTENTS[id].icon, INTENTS[id].badge);
     b.dataset.intent = id;
     if (PICKERS[id]) {
       b.setAttribute('aria-haspopup', 'menu');
