@@ -61,7 +61,7 @@ test('estimateGraph: no number without enough history', () => {
   assert.equal(estimateGraph(GRAPH_DEFAULT_WORKFLOW, null), null, 'no history at all');
 });
 
-test('estimateChoices: Plan it with me includes its planning, the same agents give the same honest figure', () => {
+test('estimateChoices: Shaper includes its planning, the same agents give the same honest figure', () => {
   const history = fakeHistory(DEFAULT_AGENTS);
   const got = estimateChoices({ asIs: GRAPH_DEFAULT_WORKFLOW, shaped: GRAPH_SHAPE_WORKFLOW }, { history });
   assert.equal('same' in got, false);

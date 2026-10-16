@@ -159,7 +159,7 @@ export function rollupSummary(perProject) {
   return s;
 }
 
-/** A finished run's size from its results summary (Plan it with me D28): null without line counts or with no change. */
+/** A finished run's size from its results summary (Shaper D28): null without line counts or with no change. */
 export function sizeOfChange(summary) {
   const s = summary && typeof summary === 'object' ? summary : null;
   if (!s || !Number.isFinite(s.linesAdded) || !Number.isFinite(s.linesRemoved)) return null;

@@ -27,7 +27,7 @@ test('a nudge lists the open decisions and shows both estimates', () => {
   const ests = texts(ui.el, '.shape-choice .shape-est');
   assert.deepEqual(ests, ['Planning ≈ $0.50 + build ≈ $1.00 · ~12 min', `Planning ≈ $1.25 + build ≈ $1.00 · ~9 min · ${SHAPE_ATTENTION}`]);
   assert.equal(ui.el.querySelector('.shape-est-shared'), null);
-  assert.equal(ui.el.querySelector('.shape-choice.primary b').textContent, 'Plan it with me');
+  assert.equal(ui.el.querySelector('.shape-choice.primary b').textContent, 'Shaper');
   assert.equal(ui.el.querySelector('.shape-choice.primary span').textContent,
     'Up to 3 questions now, then a plan you approve before anything is built.');
   assert.ok(ui.el.querySelector('.shape-chips'));

@@ -18,11 +18,11 @@ export const EXAMPLE_MS = 3500;
 
 /** Each intent: chip label + icon, the placeholder while it is set, the sentence the sent text starts with, and —
  *  where the composer could not be sent empty otherwise — the text a quick action leaves in it (`prefill`). A tile's
- *  `badge` shows under its label on the home. Plan it with me (`shape`) is Shape it first's, gated.
+ *  `badge` shows under its label on the home. Shaper (`shape`) is Shape it first's, gated.
  *  Every one is a real Ask Worca capability (src/core/ask/tools.mjs — the map is in home-actions.mjs). */
 export const INTENTS = Object.freeze({
   run: Object.freeze({ label: 'New run', icon: 'run', placeholder: 'Describe the task…', lead: 'Propose a pipeline run for this task.' }),
-  shape: Object.freeze({ label: 'Plan it with me', icon: 'shape', placeholder: 'Describe the problem…',
+  shape: Object.freeze({ label: 'Shaper', icon: 'shape', placeholder: 'Describe the problem…',
     lead: 'Shape this task first: propose a run with `shape`.', badge: 'Experimental' }),
   workflow: Object.freeze({ label: 'Build workflow', icon: 'workflow', placeholder: 'Describe the workflow…', lead: 'Build a workflow from this description.' }),
   schedule: Object.freeze({ label: 'Schedule a run', icon: 'schedule', placeholder: 'What should run, and when?', lead: 'Propose a scheduled run for this.' }),
@@ -58,7 +58,7 @@ export function intentText(id, text) {
   return body ? `${lead}\n\n${body}` : lead;
 }
 
-/** The person's sent text split for their bubble (D21): the Plan it with me lead is for the model only, so a message
+/** The person's sent text split for their bubble (D21): the Shaper lead is for the model only, so a message
  *  that opens with it — alone, or then a blank line — shows the intent chip and the rest. Exact match, ungated: only a
  *  send made with the gate on can carry it, and a reload renders before the flags arrive. */
 export function splitIntentLead(text) {

@@ -36,7 +36,7 @@ test('nine tiles in the mockup order — eight intents and More — each naming 
   const s = setup();
   const tiles = [...s.doc.querySelectorAll('.chat-home-act')];
   assert.deepEqual(tiles.map((b) => b.textContent), ['New run',
-    'Plan it with meExperimental', 'Build workflow', 'Schedule a run', 'Track a run',
+    'ShaperExperimental', 'Build workflow', 'Schedule a run', 'Track a run',
     'Explain a diff', 'Write a script', 'Clone a repo', 'More']);
   assert.deepEqual(tiles.map((b) => b.dataset.minLevel), ['simple', 'simple', 'simple', 'advanced', 'simple', 'advanced', 'simple', 'simple', 'simple']);
   assert.ok(tiles.every((b) => b.type === 'button' && b.querySelector('.chat-ic svg')));
@@ -130,12 +130,12 @@ test('switches: script tools off hides Write a script; Clone has no off switch; 
   assert.equal(actionAvailable('script', {}), true);
 });
 
-test('Plan it with me: hidden until the Shape it first flag is on, with its Experimental badge and no help line; re-pushed flags keep the others', () => {
+test('Shaper: hidden until the Shape it first flag is on, with its Experimental badge and no help line; re-pushed flags keep the others', () => {
   const s = setup();
   const t = s.tile('shape');
   assert.equal(t.hidden, true, 'DEFAULT_FLAGS: the gate is off until the hello says otherwise');
   assert.equal(t.dataset.minLevel, 'simple');
-  assert.equal(t.querySelector('.chat-home-act-l').textContent, 'Plan it with me');
+  assert.equal(t.querySelector('.chat-home-act-l').textContent, 'Shaper');
   assert.equal(t.querySelector('.chat-home-act-help'), null);
   assert.equal(t.querySelector('.chat-home-act-badge').textContent, 'Experimental');
   assert.equal(s.tile('run').querySelector('.chat-home-act-badge'), null);

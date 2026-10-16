@@ -30,8 +30,8 @@ test('wf_shape: Default\'s graph with the Clarify cap and the plan approval hold
   const wf = GRAPH_SHAPE_WORKFLOW;
   assert.equal(SHAPE_WORKFLOW_ID, 'wf_shape');
   assert.equal(SHAPE_UX_WORKFLOW_ID, 'wf_shape_ux');
-  assert.equal(SHAPE_WORKFLOW_NAME, 'Plan it with me');
-  assert.equal(wf.id, 'wf_shape'); assert.equal(wf.name, 'Plan it with me'); assert.equal(wf.version, 2);
+  assert.equal(SHAPE_WORKFLOW_NAME, 'Shaper');
+  assert.equal(wf.id, 'wf_shape'); assert.equal(wf.name, 'Shaper'); assert.equal(wf.version, 2);
   assert.deepEqual(wf.nodes.find((n) => n.id === 'n_clarify').config, { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS });
   assert.deepEqual(wf.nodes.find((n) => n.id === 'n_refine').config.approve, { kind: 'plan', port: 'plan' });
   assert.deepEqual(wf.nodes.map((n) => [n.id, n.kind, n.key ?? null]),
@@ -42,7 +42,7 @@ test('wf_shape: Default\'s graph with the Clarify cap and the plan approval hold
 
 test('wf_shape_ux: the same head plus the manual-test tail, with no review.pass → end wire', () => {
   const wf = GRAPH_SHAPE_UX_WORKFLOW;
-  assert.equal(wf.id, 'wf_shape_ux'); assert.equal(wf.name, 'Plan it with me'); assert.equal(wf.version, 2);
+  assert.equal(wf.id, 'wf_shape_ux'); assert.equal(wf.name, 'Shaper'); assert.equal(wf.version, 2);
   assert.deepEqual(wf.nodes.find((n) => n.id === 'n_clarify').config, { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS });
   assert.deepEqual(wf.nodes.find((n) => n.id === 'n_refine').config.approve, { kind: 'plan', port: 'plan' });
   assert.ok(wf.nodes.some((n) => n.id === 'n_check' && n.key === 'manualTestsChecklist'));
@@ -90,7 +90,7 @@ test('a save cannot claim either id, a delete is refused, and the name "Shape" i
     assert.equal(await deleteWorkflow(id), false);
   }
   await assert.rejects(() => writeGraphWorkflow({ name: 'Shape', nodes: [], wires: [] }),
-    (e) => e.code === 'RESERVED_NAME' && /Plan it with me/.test(e.message));
+    (e) => e.code === 'RESERVED_NAME' && /Shaper/.test(e.message));
 });
 
 test('resolveShapeRequest: no shape and no shape workflow leaves the request alone', () => {

@@ -199,7 +199,7 @@ export const GRAPH_PR_FIX_WORKFLOW = deepFreeze({
  *  ids have an underscore, so only the name "Shape" can slug onto wf_shape and nothing onto wf_shape_ux. */
 export const SHAPE_WORKFLOW_ID = 'wf_shape';
 export const SHAPE_UX_WORKFLOW_ID = 'wf_shape_ux';
-export const SHAPE_WORKFLOW_NAME = 'Plan it with me';
+export const SHAPE_WORKFLOW_NAME = 'Shaper';
 export const SHAPE_CLARIFY_HINTS = 'Shaping: ask at most 3 questions — only decisions that change what gets built '
   + 'and that the repo can\'t answer. Give each question a recommended option.';
 const SHAPE_CLARIFY_CONFIG = { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS };
