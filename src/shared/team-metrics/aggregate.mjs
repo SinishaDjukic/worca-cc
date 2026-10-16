@@ -2,6 +2,7 @@
 // Team metrics aggregation (team-metrics-design.md §4.9). PURE: no I/O, no node: imports —
 // shared by the server (read.mjs) and the browser (the page re-aggregates per range/group/filter).
 import { canonicalMetricsSlug } from './slug.mjs';
+import { csvCell } from '../csv.mjs';
 
 export const SUPPORTED_RECORD_VERSION = 1;
 export const RANGES = Object.freeze(['this-month', 'last-month', 'quarter', 'year', 'all', 'custom']);
@@ -370,13 +371,6 @@ export function aggregate(records, { range = 'this-month', from = null, to = nul
 }
 
 export const CSV_COLUMNS = Object.freeze(['startedAt', 'title', 'workflow', 'result', 'costUsd', 'humanHours', 'savedUsd', 'wallMs', 'activeMs', 'pausedMs', 'reviewCycles', 'prNumber', 'prUrl', 'actor', 'source', 'projects', 'id']);
-
-function csvCell(v) {
-  if (v == null) return '';
-  let s = String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;            // spreadsheet formula injection guard
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 /** CSV of aggregate().runs rows (the filtered run table). */
 export function toCsv(runRows) {

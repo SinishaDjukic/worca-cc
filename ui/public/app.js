@@ -158,7 +158,7 @@ import {
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
-import { renderStatsBody, renderBudgetReadout, renderCostPauseBanner } from './stats-view.mjs';
+import { renderStatsBody, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv } from './stats-view.mjs';
 import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
 import { createComposer, isReservedWorkflowId } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
@@ -17617,7 +17617,38 @@ if (el.modelShareBtn) {
 // ---------------------------------------------------------------------------
 // Statistics view
 // ---------------------------------------------------------------------------
-const statsState = { range: null };
+const statsState = { range: null, from: '', to: '', tags: [], person: '', groupBy: '', last: null };
+const statsTagInput = createTagInput(document, { suggest: fetchTagVocabulary, placeholder: 'Filter: client:acme…' });
+document.getElementById('stats-tags')?.appendChild(statsTagInput.el);
+statsTagInput.onChange((tags) => { statsState.tags = tags; loadStatsView(); });
+
+// document.createElement, not `new Option`: the jsdom test harness exposes only `document`.
+const statsOption = (text, value) => Object.assign(document.createElement('option'), { textContent: text, value });
+
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+async function paintStatsGroupOptions() {
+  const sel = document.getElementById('stats-group');
+  // /api/tags → { keys: [{ key, count, plain, valued }], values } (run-tags-store.mjs tagVocabulary)
+  const keys = flagOn('runTags') ? ((await fetchTagVocabulary())?.keys || []).map((k) => k.key) : [];
+  const sig = keys.join('\u0000');
+  if (sel.dataset.sig === sig) return;
+  sel.dataset.sig = sig;
+  sel.replaceChildren(statsOption('No grouping', ''), statsOption('Group by person', 'person'),
+    ...keys.map((k) => statsOption(`Group by tag: ${k}`, `tag:${k}`)));
+  sel.value = statsState.groupBy;
+  if (sel.value !== statsState.groupBy) statsState.groupBy = '';   // a key that vanished
+}
+
+function paintStatsPeople(people) {
+  const sel = document.getElementById('stats-person');
+  const sig = (people || []).join('\u0000');
+  if (sel.dataset.sig !== sig) {
+    sel.dataset.sig = sig;
+    sel.replaceChildren(statsOption('Everyone', ''), ...(people || []).map((p) => statsOption(p, p)));
+  }
+  sel.value = statsState.person;
+}
 
 function defaultStatsRange() {
   const period = budgetState.budget?.resetPeriod;
@@ -17630,13 +17661,25 @@ async function loadStatsView() {
   for (const b of el.statsRange.querySelectorAll('button')) {
     b.classList.toggle('on', b.dataset.range === statsState.range);
   }
+  // Custom: show the dates; an inverted pair is refused here, so no request is sent for it.
+  const custom = statsState.range === 'custom';
+  document.getElementById('stats-custom').hidden = !custom;
+  const inverted = custom && statsState.from && statsState.to && statsState.to < statsState.from;
+  for (const id of ['stats-from', 'stats-to']) {
+    if (inverted) document.getElementById(id).setAttribute('aria-invalid', 'true');
+    else document.getElementById(id).removeAttribute('aria-invalid');
+  }
+  document.getElementById('stats-custom-err').hidden = !inverted;
+  if (inverted) return;
   const body = el.statsBody;
-  if (body.childElementCount) body.classList.add('is-loading');
+  if (body.childElementCount) body.classList.add('is-loading');   // before any await: painted synchronously
+  await paintStatsGroupOptions().catch(() => {});      // a vanished tag key resets groupBy before the query
   // A network-level rejection is not an !res.ok — without this catch it escapes
   // as an unhandled rejection and leaves the body stuck in .is-loading.
   let res, data;
   try {
-    res = await fetch(`/api/stats?range=${encodeURIComponent(statsState.range)}`);
+    // Flag off: the tag field is hidden, so its chips must not narrow the numbers either.
+    res = await fetch(`/api/stats?${statsQuery({ ...statsState, tags: flagOn('runTags') ? statsState.tags : [] })}`);
     data = await safeJson(res);
   } catch (err) {
     body.classList.remove('is-loading');
@@ -17650,6 +17693,9 @@ async function loadStatsView() {
       { className: 'hint err', textContent: data.error || `HTTP ${res.status}` }));
     return;
   }
+  statsState.last = data;                               // the export reads the rows on screen
+  paintStatsPeople(data.people);
+  document.getElementById('stats-filter-note').hidden = !data.filtered;
   body.replaceChildren(renderStatsBody(data, {
     fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));
   loadTmScopes().then((d) => { const a = document.getElementById('stats-tm-hint'); if (a) a.hidden = !d.anyEnabled; });
@@ -18201,7 +18247,31 @@ el.statsRange.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-range]');
   if (!btn) return;
   statsState.range = btn.dataset.range;
+  if (statsState.range === 'custom' && !statsState.from) {
+    const now = new Date();
+    statsState.from = ymd(new Date(now.getFullYear(), now.getMonth(), 1));
+    statsState.to = ymd(now);
+    document.getElementById('stats-from').value = statsState.from;
+    document.getElementById('stats-to').value = statsState.to;
+  }
   loadStatsView();
+});
+for (const id of ['stats-from', 'stats-to']) {
+  document.getElementById(id)?.addEventListener('change', () => {
+    statsState.from = document.getElementById('stats-from').value;
+    statsState.to = document.getElementById('stats-to').value;
+    if (statsState.from && statsState.to) loadStatsView();
+  });
+}
+document.getElementById('stats-person')?.addEventListener('change', (e) => { statsState.person = e.target.value; loadStatsView(); });
+document.getElementById('stats-group')?.addEventListener('change', (e) => { statsState.groupBy = e.target.value; loadStatsView(); });
+el.statsBody.addEventListener('click', (e) => {
+  if (!e.target.closest('.stats-export') || !statsState.last?.groups) return;
+  const csv = groupsToCsv(statsState.last.groups);
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: `statistics-${statsState.range}-${statsState.groupBy.replace(':', '-')}.csv` });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
 const statsSection = document.querySelector('section[data-view="stats"]');

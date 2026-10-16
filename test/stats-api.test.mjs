@@ -183,6 +183,22 @@ test('GET /api/stats serves the shape; defaults to month; 400 on bad range', asy
   assert.ok((await res.json()).error);
 });
 
+test('GET /api/stats passes filter, groupBy, custom range; malformed input → 400', async () => {
+  let res = await fetch(`${base}/api/stats?range=custom&from=2026-08-01&to=2026-08-31&groupBy=person&tag=client:acme&tag=spike`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.range, 'custom');
+  assert.deepEqual(body.filter.tags, ['client:acme', 'spike']);
+  assert.equal(body.groupBy, 'person');
+  assert.ok(Array.isArray(body.groups.rows));
+  for (const q of ['groupBy=tag:', 'tag=client:', 'range=custom&from=2026-08-09', 'range=custom&from=2026-08-09&to=2026-08-01', 'range=lastYear']) {
+    res = await fetch(`${base}/api/stats?${q}`);
+    assert.equal(res.status, 400, q);
+  }
+  res = await fetch(`${base}/api/stats?range=lastMonth`);
+  assert.equal(res.status, 200);
+});
+
 test('totals carry humanHours and savedUsd = hours × rate − spent; prev too; rate is reported', () => {
   const s = getStats({ range: 'month', now: NOW });
   assert.equal(s.humanRateUsd, 35);

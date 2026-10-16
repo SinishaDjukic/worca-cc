@@ -1108,8 +1108,22 @@
               <button type="button" data-range="today">Today</button>
               <button type="button" data-range="week">This week</button>
               <button type="button" data-range="month">This month</button>
+              <button type="button" data-range="lastMonth">Last month</button>
               <button type="button" data-range="all">All time</button>
+              <button type="button" data-range="custom">Custom</button>
             </div>
+            <span class="stats-custom" id="stats-custom" hidden>
+              <input type="date" class="input" id="stats-from" aria-label="From">
+              <span aria-hidden="true">–</span>
+              <input type="date" class="input" id="stats-to" aria-label="To">
+              <small class="hint err" id="stats-custom-err" hidden>The end date is before the start date.</small>
+            </span>
+          </div>
+          <div class="stats-filter stats-scope">
+            <span class="stats-tags" id="stats-tags" data-flag="runTags"></span>
+            <div class="select-wrap"><select id="stats-person" class="select" aria-label="Filter by person"><option value="">Everyone</option></select></div>
+            <div class="select-wrap"><select id="stats-group" class="select" aria-label="Group by"><option value="">No grouping</option><option value="person">Group by person</option></select></div>
+            <small class="hint" id="stats-filter-note" hidden>Filtered: Ask Worca chat spend is not included.</small>
           </div>
           <div id="stats-body"><small class="hint">Loading…</small></div>
           <div id="stats-tip" class="chart-tip" hidden></div>
