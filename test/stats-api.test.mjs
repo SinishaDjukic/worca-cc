@@ -226,6 +226,19 @@ test('a reply\'s next-prompt suggestion books its own ledger row on the reply id
   assert.equal(now.spendUsd, Math.round((before.spendUsd + 0.03) * 1e6) / 1e6);
 });
 
+test('GET /api/stats byTag: tagGroups with the configured keys first; a bad tagKey → 400; no byTag → null', async () => {
+  let res = await fetch(`${base}/api/stats?range=month&byTag=1&tagKey=cc`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.tagGroups[0].key, 'cc');
+  res = await fetch(`${base}/api/stats?range=month`);
+  assert.equal((await res.json()).tagGroups, null);
+  for (const q of ['byTag=1&tagKey=', 'byTag=1&tagKey=Bad%20key']) {
+    res = await fetch(`${base}/api/stats?range=month&${q}`);
+    assert.equal(res.status, 400, q);
+  }
+});
+
 // Shaper (D28): appended last (the tests above count this DB's rows); seeded in February 2026, a month no
 // other test uses.
 const setShape = (id, size, stats) => getDb().prepare('UPDATE pipelines SET run_size = ?, shape_stats = ? WHERE id = ?')

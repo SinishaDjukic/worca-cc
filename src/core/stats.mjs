@@ -267,6 +267,36 @@ function groupedRows(g, { win, fromMs, toMs, filter, allTime, ask, totalUsd }) {
   return kept;
 }
 
+// The configured keys are the instance's merged dimensions (every project's plus the local ones, mergeDimensions
+// does not cap them), so the per-run MAX_TAGS (20) is the wrong bound here. This one only stops a runaway query string.
+const MAX_TAG_KEYS = 50;
+
+/** By tag (#718 slice 4): configured keys → validated, de-duplicated; null = no By tag tables. @throws {RangeError} */
+function normaliseTagKeys(tagKeys) {
+  if (tagKeys == null) return null;
+  const out = [];
+  for (const raw of [].concat(tagKeys)) {
+    const k = String(raw);
+    if (!TAG_KEY_RE.test(k)) throw new RangeError(`bad tagKey "${k}"`);
+    if (!out.includes(k)) out.push(k);
+  }
+  if (out.length > MAX_TAG_KEYS) throw new RangeError(`at most ${MAX_TAG_KEYS} tag keys`);
+  return out;
+}
+
+/** One groupedRows table per key: configured keys first (always), then every other key a run in the
+ *  range carries (it has a value row), by value spend. Same money rule as the Group by table. */
+function tagGroupsFor(configured, ctx) {
+  const table = (key, isConfigured) => ({ key, configured: isConfigured, rows: groupedRows({ kind: 'tag', key }, ctx) });
+  const valueUsd = (t) => t.rows.reduce((a, r) => a + (r.kind === 'value' ? r.spentUsd : 0), 0);
+  const others = prepare('SELECT DISTINCT key FROM run_tags ORDER BY key').all().map((r) => r.key)
+    .filter((k) => !configured.includes(k))
+    .map((k) => table(k, false))
+    .filter((t) => t.rows.some((r) => r.kind === 'value'))
+    .sort((a, b) => valueUsd(b) - valueUsd(a) || (a.key < b.key ? -1 : 1));
+  return configured.map((k) => table(k, true)).concat(others);
+}
+
 /** Ask Worca window aggregate (ask-cost-statistics-design.md D5/D6): spend,
  *  DISTINCT sessions, turns. A thread is a session in every window it has a
  *  costed turn in. */
@@ -324,11 +354,12 @@ function buildBuckets(windowStart, now, bucket) {
 }
 
 /** GET /api/stats backing (spec §6.9). @throws {RangeError} on unknown range. */
-export function getStats({ range = 'month', now = new Date(), from = null, to = null, filter: rawFilter = null, groupBy = null } = {}) {
+export function getStats({ range = 'month', now = new Date(), from = null, to = null, filter: rawFilter = null, groupBy = null, tagKeys = null } = {}) {
   if (!RANGES.includes(range)) throw new RangeError(`unknown stats range: ${range}`);
   const filter = normaliseStatsFilter(rawFilter || {});
   const filtered = isFiltered(filter);
   const group = parseGroupBy(groupBy);
+  const tagKeyList = normaliseTagKeys(tagKeys);
   const budget = budgetStatus(now);
   const rate = effectiveHumanRateUsd();
 
@@ -419,21 +450,23 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
     };
   });
 
+  const groupCtx = {
+    win: range === 'all' ? WINDOWS.cohort(0, windowEnd.getTime())
+      : (range === 'today' ? WINDOWS.active : WINDOWS.cohort)(windowStart.getTime(), windowEnd.getTime()),
+    fromMs: windowStart.getTime(), toMs: windowEnd.getTime(), filter,
+    allTime: range === 'all', ask: filtered ? null : totals.ask, totalUsd: totals.spentUsd,
+  };
   const groups = group ? {
     by: groupBy,
     label: group.kind === 'person' ? 'person' : group.key,
-    rows: groupedRows(group, {
-      win: range === 'all' ? WINDOWS.cohort(0, windowEnd.getTime())
-        : (range === 'today' ? WINDOWS.active : WINDOWS.cohort)(windowStart.getTime(), windowEnd.getTime()),
-      fromMs: windowStart.getTime(), toMs: windowEnd.getTime(), filter,
-      allTime: range === 'all', ask: filtered ? null : totals.ask, totalUsd: totals.spentUsd,
-    }),
+    rows: groupedRows(group, groupCtx),
   } : null;
+  const tagGroups = tagKeyList ? tagGroupsFor(tagKeyList, groupCtx) : null;
 
   return {
     range, bucket,
     windowStartMs: windowStart.getTime(), windowEndMs: windowEnd.getTime(),
     totals, prev, budget, series, humanRateUsd: rate,
-    filter, filtered, groupBy: group ? groupBy : null, groups, people: peopleInUse(),
+    filter, filtered, groupBy: group ? groupBy : null, groups, tagGroups, people: peopleInUse(),
   };
 }

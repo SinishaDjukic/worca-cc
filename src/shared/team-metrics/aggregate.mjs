@@ -3,7 +3,7 @@
 // shared by the server (read.mjs) and the browser (the page re-aggregates per range/group/filter).
 import { canonicalMetricsSlug } from './slug.mjs';
 import { csvCell } from '../csv.mjs';
-import { hasTag, parseTag, parseTagGroupBy, MAX_TAGS } from '../run-tags.mjs';
+import { hasTag, parseTag, parseTagGroupBy, MAX_TAGS, TAG_KEY_RE } from '../run-tags.mjs';
 
 export const SUPPORTED_RECORD_VERSION = 1;
 export const RANGES = Object.freeze(['this-month', 'last-month', 'quarter', 'year', 'all', 'custom']);
@@ -366,17 +366,37 @@ function toRunRow(r, humanRateUsd = 0) {
   };
 }
 
+/** The records a view counts: parseable start, the filter applied, started inside the range window. */
+function scopedRecords(records, { range, from, to, filter, now }) {
+  const win = resolveRange(range, { now, from, to });
+  const usable = (records || []).filter((r) => r && Number.isFinite(startOf(r)));
+  const filtered = applyFilter(usable, filter);
+  const inWin = (s, e) => (r) => (s == null || startOf(r) >= s) && (e == null || startOf(r) < e);
+  return { win, usable, filtered, inWin, inRange: filtered.filter(inWin(win.startMs, win.endMs)) };
+}
+
+/**
+ * By tag (#718 slice 4): one breakdown per key. Every key in `keys` (configured dimensions, in order) comes
+ * first, then every other key a record in range carries, by value spend. Same window and filter as aggregate().
+ */
+export function tagBreakdowns(records, { range = 'this-month', from = null, to = null, filter = {}, now = Date.now(), keys = [] } = {}) {
+  const { inRange } = scopedRecords(records, { range, from, to, filter, now });
+  const configured = [...new Set((keys || []).filter((k) => typeof k === 'string' && TAG_KEY_RE.test(k)))];
+  const carried = [...new Set(inRange.flatMap((r) => recordTags(r).map((t) => parseTag(t).tag.key)))]
+    .filter((k) => !configured.includes(k));
+  const valueUsd = (rows) => rows.reduce((a, r) => a + (r.isNone ? 0 : r.usd), 0);
+  const table = (key) => ({ key, rows: breakdown(inRange, `tag:${key}`) });
+  return configured.map(table).concat(carried.map(table)
+    .sort((a, b) => valueUsd(b.rows) - valueUsd(a.rows) || (a.key < b.key ? -1 : 1)));
+}
+
 /**
  * @param {object[]} records  v1 records (already parsed; unknown v / malformed already dropped)
  * @param {{range?:string, from?:string|null, to?:string|null, groupBy?:string, filter?:object, now?:number}} [opts]
  */
 export function aggregate(records, { range = 'this-month', from = null, to = null, groupBy = 'workflow', filter = {}, now = Date.now(), humanRateUsd = 0 } = {}) {
   if (!isGroupBy(groupBy)) throw new RangeError(`unknown groupBy "${groupBy}" (expected ${GROUP_BYS.join(' | ')} | tag:KEY)`);
-  const win = resolveRange(range, { now, from, to });
-  const usable = (records || []).filter((r) => r && Number.isFinite(startOf(r)));
-  const filtered = applyFilter(usable, filter);
-  const inWin = (s, e) => (r) => (s == null || startOf(r) >= s) && (e == null || startOf(r) < e);
-  const inRange = filtered.filter(inWin(win.startMs, win.endMs));
+  const { win, usable, filtered, inWin, inRange } = scopedRecords(records, { range, from, to, filter, now });
   const kpis = computeKpis(inRange, now, humanRateUsd);
   const prevKpis = win.prevStartMs == null ? null : computeKpis(filtered.filter(inWin(win.prevStartMs, win.prevEndMs)), now, humanRateUsd);
   const hasActor = inRange.some((r) => r.actor);

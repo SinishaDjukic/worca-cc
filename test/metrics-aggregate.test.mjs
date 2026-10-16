@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 // Pure module directly — read.mjs would pull in sync/DB/projects for no reason.
-import { aggregate, resolveRange, weekStartMs, parseRecordLine, toCsv, safeHttpUrl, DIMENSIONS, isGroupBy, CSV_COLUMNS } from '../src/shared/team-metrics/aggregate.mjs';
+import { aggregate, tagBreakdowns, resolveRange, weekStartMs, parseRecordLine, toCsv, safeHttpUrl, DIMENSIONS, isGroupBy, CSV_COLUMNS } from '../src/shared/team-metrics/aggregate.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 
 const NOW = Date.parse('2026-09-16T12:00:00Z');
@@ -265,4 +265,18 @@ test('toCsv: trailing tags column, space-joined', () => {
   const csv = toCsv(aggregate(tagged, { range: 'this-month', groupBy: 'tag:client', now: NOW }).runs);
   assert.match(csv, /,t1,client:acme spike\r\n/);
   assert.match(csv, /,t4,\r\n/);
+});
+
+test('tagBreakdowns: configured keys first, then carried keys by value spend; rows equal the tag group-by', () => {
+  const t = tagBreakdowns(tagged, { range: 'this-month', now: NOW, keys: ['cc'] });
+  assert.deepEqual(t.map((x) => x.key), ['cc', 'client', 'spike']);
+  assert.deepEqual(t[0].rows.map((r) => [r.label, r.usd, r.runs, r.isNone]), [['(no cc)', 11.5, 5, true]]);
+  assert.deepEqual(t[1].rows, aggregate(tagged, { range: 'this-month', groupBy: 'tag:client', now: NOW }).breakdowns.tag);
+});
+
+test('tagBreakdowns: the same filter and window as aggregate(); no records in range → configured keys only', () => {
+  const f = tagBreakdowns(tagged, { range: 'this-month', now: NOW, filter: { tags: ['client:acme'] } });
+  assert.deepEqual(f.map((x) => x.key), ['client', 'spike']);
+  assert.equal(f[0].rows.reduce((a, r) => a + r.usd, 0), 4.5);
+  assert.deepEqual(tagBreakdowns(tagged, { range: 'last-month', now: NOW, keys: ['cc'] }).map((x) => [x.key, x.rows.length]), [['cc', 0]]);
 });

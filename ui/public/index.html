@@ -1137,7 +1137,12 @@
           <div class="stats-filter stats-scope">
             <span class="stats-tags" id="stats-tags" data-flag="runTags"></span>
             <div class="select-wrap"><select id="stats-person" class="select" aria-label="Filter by person"><option value="">Everyone</option></select></div>
-            <div class="select-wrap"><select id="stats-group" class="select" aria-label="Group by"><option value="">No grouping</option><option value="person">Group by person</option></select></div>
+            <div class="seg seg-sm" id="stats-view" role="group" aria-label="View" data-flag="runTags">
+              <button type="button" data-stats-view="overview" class="on" aria-pressed="true">Overview</button>
+              <button type="button" data-stats-view="person" aria-pressed="false">By person</button>
+              <button type="button" data-stats-view="tag" aria-pressed="false" hidden>By tag</button>
+            </div>
+            <div class="select-wrap" id="stats-group-wrap"><select id="stats-group" class="select" aria-label="Group by"><option value="">No grouping</option><option value="person">Group by person</option></select></div>
             <small class="hint" id="stats-filter-note" hidden>Filtered: Ask Worca chat spend is not included.</small>
           </div>
           <div id="stats-body"><small class="hint">Loading…</small></div>

@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import {
   BUDGET_WARN_AT, renderKpiRow,
   renderCostPauseBanner, renderStatsBody,
-  renderGroupsCard, groupsToCsv, statsQuery,
+  renderGroupsCard, groupsToCsv, statsQuery, renderStatsView,
 } from '../ui/public/stats-view.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -184,6 +184,31 @@ test('renderKpiRow: a filtered model drops the budget meter and says Filtered', 
   const el = renderKpiRow({ ...MODEL, budget: { ...BUDGET }, filtered: true }, { doc });
   assert.equal(el.querySelector('.stat-meter'), null);
   assert.match(el.querySelector('.stat-tile .stat-sub').textContent, /Filtered/);
+});
+
+const VIEW_MODEL = {
+  range: 'month', bucket: 'day', windowStartMs: Date.UTC(2026, 7, 1), windowEndMs: Date.UTC(2026, 8, 1),
+  totals: { spentUsd: 4.25, runs: 3 }, series: [], filtered: false,
+  groups: { label: 'person', rows: [{ kind: 'value', key: 'ana', label: 'ana', spentUsd: 4.25, runs: 3, finished: 3, stopped: 0, failed: 0, running: 0, paused: 0, prsOpened: 0, prsMerged: 0 }] },
+  tagGroups: [
+    { key: 'cc', configured: true, rows: [{ kind: 'none', key: null, label: '(no cc)', spentUsd: 3.5, runs: 3 }, { kind: 'ask', key: null, label: 'Ask Worca', spentUsd: 0.75, runs: 0 }] },
+    { key: 'client', configured: false, rows: [{ kind: 'value', key: 'acme', label: 'acme', spentUsd: 3.5, runs: 3 }, { kind: 'ask', key: null, label: 'Ask Worca', spentUsd: 0.75, runs: 0 }] },
+  ],
+};
+
+test('statsQuery: byTag adds byTag=1 and one tagKey per configured key', () => {
+  assert.equal(statsQuery({ range: 'month', byTag: true, tagKeys: ['cc', 'team'] }), 'range=month&byTag=1&tagKey=cc&tagKey=team');
+  assert.equal(statsQuery({ range: 'month', byTag: false, tagKeys: ['cc'] }), 'range=month');
+});
+
+test('renderStatsView: By tag = one table per key labelled by dimension; By person = the person table alone', () => {
+  const tag = renderStatsView(VIEW_MODEL, 'tag', { doc, dims: [{ key: 'cc', label: 'Cost centre' }] });
+  assert.deepEqual([...tag.querySelectorAll('.alloc-card h2')].map((n) => n.textContent), ['Cost centre', 'client']);
+  assert.equal(tag.querySelector('.stat-row'), null);
+  const person = renderStatsView(VIEW_MODEL, 'person', { doc });
+  assert.equal(person.querySelector('.groups-card h2').textContent, 'By person');
+  assert.equal(person.querySelectorAll('.groups-card').length, 1);
+  assert.equal(person.querySelector('.alloc-card'), null);
 });
 
 test('renderStatsBody: the Shaper card only when the model carries shaping', () => {
