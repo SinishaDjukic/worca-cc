@@ -1,4 +1,4 @@
-// src/core/shape/stats.mjs — Plan it with me D28: what a shaped run records about its shaping. Pure, no imports.
+// src/core/shape/stats.mjs — Shaper D28: what a shaped run records about its shaping. Pure, no imports.
 
 /** The nodes that run before the approval stop; every other step row is building. */
 export const SHAPING_NODES = Object.freeze(['n_clarify', 'n_plan', 'n_refine']);

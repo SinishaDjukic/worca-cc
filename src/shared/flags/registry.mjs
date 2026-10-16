@@ -41,7 +41,7 @@ export const FLAGS = Object.freeze([
   }),
   entry({
     key: 'shapeFirst',
-    title: 'Plan it with me',
+    title: 'Shaper',
     description: 'Shape a task in Chat before it runs: a few questions, a plan you approve, and large tasks cut into slices.',
     stage: 'experimental',
     default: false,

@@ -1921,7 +1921,7 @@ function toPipelineRow(o) {
     source_ref: s(o.sourceMeta),
     guardrails_id: o.guardrailsId ?? null,
     started_by: o.startedBy ?? null,
-    // Plan it with me D28: a writer without them (an unshaped run, a pre-results persist) keeps the column (COALESCE)
+    // Shaper D28: a writer without them (an unshaped run, a pre-results persist) keeps the column (COALESCE)
     shape_stats: o.shapeStats ? s(o.shapeStats) : null,
     run_size: o.runSize ?? null,
     // §5.9 outcome: the derived run-level v2 facts, so a rehydrated state matches
@@ -2575,7 +2575,7 @@ function rowToState(row) {
   state.limitEngine = typeof rp?.limitEngine === 'string' ? rp.limitEngine : null;
   state.limitResetAt = typeof rp?.limitResetAt === 'string' ? rp.limitResetAt : null;
   state.runEngine = runEngineOfRow(row);
-  // Plan it with me D28: only a shaped run carries shapeStats (run_size is write-only: Statistics reads the column)
+  // Shaper D28: only a shaped run carries shapeStats (run_size is write-only: Statistics reads the column)
   if (row.shape_stats) state.shapeStats = j(row.shape_stats, null);
   const outcome = j(row.outcome, null);
   if (outcome) {

@@ -5081,7 +5081,7 @@ app.get('/api/stats', async (req, res) => {
   // Credential broker: model spend per person in the same window, as the broker metered it
   // (the authoritative figure: it saw every request). Absent with the broker off.
   if (brokerEnabled()) stats.byPerson = await statsByPerson(stats.windowStartMs, stats.windowEndMs);
-  // Plan it with me (D28): shaped vs unshaped runs of the same size. Absent with the flag off.
+  // Shaper (D28): shaped vs unshaped runs of the same size. Absent with the flag off.
   if (shapeFirstEnabled()) stats.shaping = shapingGroups(stats.range === 'all' ? 0 : stats.windowStartMs, stats.windowEndMs);
   res.json(stats);
 });

@@ -134,7 +134,7 @@ test('renderStatsBody: KPI row + two chart cards; empty range -> chart-empty not
   assert.equal(empty.querySelector('svg.chart-svg'), null);
 });
 
-test('renderStatsBody: the Plan it with me card only when the model carries shaping', () => {
+test('renderStatsBody: the Shaper card only when the model carries shaping', () => {
   const model = { ...MODEL, bucket: 'day', windowStartMs: 1, windowEndMs: 5,
     series: RUNS.series.map((r, i) => ({ ...r, spentUsd: SPEND.series[i].spentUsd })) };
   assert.equal(renderStatsBody(model, { doc }).querySelector('.shaping-card'), null);
@@ -142,11 +142,11 @@ test('renderStatsBody: the Plan it with me card only when the model carries shap
     shaped: { runs: 2, avgCostUsd: 12.5, avgActiveMs: 600000, avgReviewCycles: 1 },
     unshaped: { runs: 0, avgCostUsd: null, avgActiveMs: null, avgReviewCycles: null } }] };
   const card = renderStatsBody({ ...model, shaping }, { doc }).querySelector('.shaping-card');
-  assert.equal(card.querySelector('h2').textContent, 'Plan it with me');
+  assert.equal(card.querySelector('h2').textContent, 'Shaper');
   const rows = [...card.querySelectorAll('tbody tr')].map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent));
   assert.equal(rows.length, 2);
   assert.equal(rows[0][0], 'Small');
-  assert.equal(rows[0][1], 'With Plan it with me');
+  assert.equal(rows[0][1], 'With Shaper');
   assert.equal(rows[1][0], 'Without');
   assert.equal(rows[1][rows[1].length - 1], '–');
   const empty = renderStatsBody({ ...model, shaping: { groups: [] } }, { doc }).querySelector('.shaping-card');

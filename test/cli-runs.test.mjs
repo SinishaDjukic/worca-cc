@@ -213,7 +213,7 @@ test('a paused run: the detail says how to resume; after a usage limit its engin
   assert.doesNotMatch((await run(['runs', 'aaa10001'])).stdout, /Resume with/, 'a finished run has nothing to resume');
 });
 
-test('--json carries shapeStats for a shaped run (Plan it with me D28) and no shapeStats key otherwise', async () => {
+test('--json carries shapeStats for a shaped run (Shaper D28) and no shapeStats key otherwise', async () => {
   const STATS = { questions: { asked: 2, skipped: 1 }, revises: [{ round: 1, by: 'person' }], shapeScore: 0.875,
     reviewCycles: 2, checklist: null, cost: { shaping: 12.5, building: 30 } };
   insertPipeline({ id: 'eee50001', projectKey: 'proj-e', title: 'shaped run', status: 'done', minutesAgo: 1 });
