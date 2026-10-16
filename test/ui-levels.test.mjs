@@ -209,7 +209,7 @@ test('levelCardsHtml escapes and marks exactly one card checked', () => {
 
 test('blocking prompts are never under a gated ancestor in the shell', () => {
   const doc = shell();
-  for (const sel of ['#run-detail-tpl']) {
+  for (const sel of ['#run-detail-tpl', '#hist-detail-tpl']) {
     const tpl = doc.querySelector(sel).content;
     for (const q of tpl.querySelectorAll('.qpanel, .cost-banner, .retained-banner, .rd-questions')) {
       assert.equal(minLevelFor(q), 'simple', `${sel} ${q.className} must show at every level`);

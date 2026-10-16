@@ -120,7 +120,7 @@ import {
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
-import { askScriptPromptInput } from '../src/core/ask/script-deps.mjs';
+import { askScriptPromptInput, scriptToolsEnabled } from '../src/core/ask/script-deps.mjs';
 import { validateComposerPayload, isComposerCard, composerCardPatch, composerHeaderCard } from '../src/core/ask/composer-payload.mjs';
 import { composerPromptBlock } from '../src/core/ask/composer-deps.mjs';
 import {
@@ -133,6 +133,7 @@ import {
   sweepAskWorktrees,
 } from '../src/core/ask/worktrees.mjs';
 import { createAskTurn } from '../src/core/ask/turn.mjs';
+import { cancelSuggestion } from '../src/core/ask/suggest.mjs';
 import { validateMcpOff, resolveAskMcp, askMcpPromptInput, askMcpPreview, askMcpJoinNotice, resolveAskSkills } from '../src/core/ask/mcp.mjs';
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
@@ -298,13 +299,14 @@ import {
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
-  prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
+  prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
+  uncommittedPatch } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
-import { archivePipeline, restorePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
+import { archivePipeline, restorePipeline, discardRetainedWorktrees, applyRetainedWork } from '../src/core/pipeline-delete.mjs';
 import {
   listWorkspaces, readWorkspace, checkNewWorkspace, scanMemberProblems,
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
@@ -6044,7 +6046,42 @@ app.post('/api/runs/:id/discard-worktree', async (req, res) => {
   if (liveActive) return res.status(409).json({ error: 'cannot discard a running pipeline worktree' });
 
   try {
-    const report = await discardRetainedWorktrees({
+    // The run lock (checkout.mjs) serialises this with Apply to branch, Check out and Discard of the same run.
+    const report = await withRunLock(id, () => discardRetainedWorktrees({
+      workspaceKey: scope.workspaceId || null,
+      key: scope.workspaceId ? null : (scope.projectKey || null),
+      projectDir: (scope.workspaceId || scope.projectKey) ? null : scope.projectDir,
+      id,
+      by: actorOf(req),
+    }));
+    if (!report) return res.status(404).json({ error: 'pipeline not found' });
+    emitChanged('pipelines-changed', 'updated');
+    res.json({ ok: true, ...report });
+  } catch (e) {
+    if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'SNAPSHOT_FAILED') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
+    res.status(500).json({ error: e && e.message ? e.message : String(e) });
+  }
+});
+
+// Apply to branch (the summary card's worktree notice): commit the work a failed end-of-run commit left in
+// the retained worktree(s), then finish what teardown does after a good commit: merge back, release the
+// worktree, base check (pipeline-delete.mjs applyRetainedWork). 200 { ok, applied, failed, remaining, … }
+// when anything applied or nothing was left; 409 { code: 'COMMIT_FAILED', error: git's message, …report }
+// when every commit failed again (the retained state stays).
+app.post('/api/runs/:id/apply-retained', async (req, res) => {
+  const id = req.params.id;
+  const scope = resolveRunScope(req, res);
+  if (!scope) return;
+  const liveActive = [...runs.values()].some((r) =>
+    (r.pipelineId === id || r.id === id) &&
+    ['running', 'starting', 'created', 'pausing'].includes(String(r.status || '').toLowerCase()));
+  if (liveActive || isFinishingRun(id)) {
+    return res.status(409).json({ error: 'cannot apply the work of a running pipeline', code: 'RUNNING' });
+  }
+  try {
+    const report = await applyRetainedWork({
       workspaceKey: scope.workspaceId || null,
       key: scope.workspaceId ? null : (scope.projectKey || null),
       projectDir: (scope.workspaceId || scope.projectKey) ? null : scope.projectDir,
@@ -6052,11 +6089,13 @@ app.post('/api/runs/:id/discard-worktree', async (req, res) => {
       by: actorOf(req),
     });
     if (!report) return res.status(404).json({ error: 'pipeline not found' });
-    emitChanged('pipelines-changed', 'updated');
-    res.json({ ok: true, ...report });
+    if (report.applied.length || report.failed.length) emitChanged('pipelines-changed', 'updated');
+    if (report.failed.length && !report.applied.length) {
+      return res.status(409).json({ ...report, ok: false, code: 'COMMIT_FAILED', error: report.failed.map((f) => f.message).join('\n') });
+    }
+    res.json(report);
   } catch (e) {
-    if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
-    if (e && e.code === 'SNAPSHOT_FAILED') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message, code: 'RUNNING' });
     if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
@@ -6686,6 +6725,37 @@ app.delete('/api/runs/:id/checkout', async (req, res) => {
   } catch (e) { sendCheckoutError(res, e); }
 });
 
+// Get the diff (the summary card's worktree notice): a patch of a checkout's uncommitted changes against the
+// folder's own HEAD, built in a TEMPORARY index (git-info uncommittedPatch). The folder's own index is never
+// touched, so it is offered for a linked folder (the person's own clone) and a checkout left mid-merge
+// alike. ?member=<projectKey> picks a workspace member. 200 text/x-diff attachment | 204 nothing
+// uncommitted | 409 NOT_CHECKED_OUT.
+app.get('/api/runs/:id/checkout/diff', async (req, res) => {
+  const row = runRowForScope(req, res); if (!row) return;
+  const recs = checkoutRecordsFor(row)?.members || [];
+  const member = typeof req.query.member === 'string' ? req.query.member.trim() : '';
+  if (!member && recs.length > 1) return badRequest(res, 'member is required for a workspace run');
+  const rec = member ? recs.find((m) => m.projectKey === member) : recs[0];
+  if (!rec) return res.status(409).json({ error: 'This run is not checked out.', code: 'NOT_CHECKED_OUT' });
+  let tmp = null;
+  try {
+    tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'worca-checkout-diff-'));
+    // Against the folder's own HEAD: the run's branch while the folder is on it. A linked folder can be switched
+    // to another branch and stay linked; a branch base would then hand back the run's commits reversed.
+    const out = await uncommittedPatch(rec.worktreeDir, { base: 'HEAD', outFile: path.join(tmp, 'uncommitted.patch') });
+    if (!out.ok) return res.status(500).json({ error: `git ${out.step} failed: ${out.message}`, code: 'DIFF_FAILED' });
+    if (!out.file) return res.status(204).end();
+    const name = `uncommitted-${String(rec.branch || row.id).replace(/[^a-zA-Z0-9._-]+/g, '-')}.patch`;
+    res.setHeader('Content-Disposition', attachmentDisposition(name));
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('text/x-diff').send(await fsp.readFile(out.file));
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ error: e?.message || String(e) });
+  } finally {
+    if (tmp) await fsp.rm(tmp, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
 app.post('/api/runs/:id/setup', async (req, res) => {
   if (!requireActions(req, res) || !noRawCommand(req, res)) return;
   const row = runRowForScope(req, res); if (!row) return;
@@ -7221,7 +7291,7 @@ app.get('/api/pr/remotes', async (req, res) => {
 // to ship; its PR is recorded per member and the response echoes memberKey) —
 // remote names are validated against the repo's real remote list (never trusted
 // from the body); baseBranch must be a well-formed ref other than the feature
-// branch (whether the base repo has it is gh's call, its error surfaces as usual).
+// branch; a base the base remote does not have is refused (409) before anything is pushed.
 // `body` is the "Ship it?" modal's PR description (a string of at most PR_BODY_MAX
 // characters): it becomes the PR body, the attribution footer after it. Absent,
 // null or blank keeps the title-only body exactly as before. `draft` (boolean) opens a
@@ -7312,6 +7382,16 @@ app.post('/api/pr', async (req, res) => {
   if (!avail.ok) return res.status(409).json({ error: avail.reason, forge: provider.forge });
   const refusal = azureForkRefusal(pushR, baseR);
   if (refusal) return res.status(422).json({ error: refusal, kind: 'unsupported' });
+  // A base the base remote does not have (a run started from a branch that was never pushed) would
+  // push the head, then fail on GitHub's "Base sha can't be blank". Refuse first, naming the fix.
+  // Judged on a fresh fetch only: when the fetch fails, the forge's own answer stands as before.
+  if (baseR && isSafeRemoteName(baseR.name)) {
+    const f = await fetchRemote(repoDir, { remote: baseR.name, maxAgeMs: 0 });
+    const rb = f.ok ? await listRemoteBranches(repoDir, [baseR.name]) : null;
+    if (rb?.ok && !rb.byRemote[baseR.name].includes(base)) {
+      return res.status(409).json({ error: `the base branch ${base} is not on ${baseR.name}: push it there first, or pick a base branch that is` });
+    }
+  }
 
   // Push (idempotent) -> create PR -> read mergeability. All args are passed as
   // an argv array (no shell), so branch/remote/source names cannot inject.
@@ -11076,6 +11156,7 @@ async function deleteAskThreadFully(id) {
     // that was already mid-start is stopped here rather than left running.
     const job = stopJob();
     const deleted = askDeleteThread(id);
+    cancelSuggestion(id);                                     // no next-prompt call outlives a deleted chat
     if (job) {
       if (job.graceTimer) clearTimeout(job.graceTimer);
       askJobs.delete(id);
@@ -11237,13 +11318,14 @@ function askWebAccessFor(threadId, ctx) {
   }
 }
 
-/** The system prompt of ONE Ask turn: the rules, the catalog, and — only when the chat's
- *  "Create and run scripts" pref is on (W20) — the scripts section with the runtimes this host
- *  actually has (the python probe, cached 60 s); plus the web section when `web` (askWebAccess()
- *  for this turn) is on, and the MCP servers section when the turn has registry copies (`mcp`,
+/** The system prompt of ONE Ask turn: the rules, the catalog, the scripts section — always: draft_script is an Ask tool
+ *  whatever the "Create and run scripts" pref (W20) says, and that pref only adds the save_script / test_script line
+ *  (`edits`) — with the runtimes this host actually has (the python probe, cached 60 s); plus the web section when `web`
+ *  (askWebAccess() for this turn) is on, and the MCP servers section when the turn has registry copies (`mcp`,
  *  askMcpPromptInput()). Memory is mounted, not rendered. */
 async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
-  return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput(), deployment: DEPLOYMENT, web, mcp, commands,
+  const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
+  return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands,
     ...(engine === 'codex' ? { engine } : {}), ...(shapeFirstEnabled() ? { shape: true } : {}) });
 }
 
@@ -11660,6 +11742,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       skills: skills.result,
       agentMode: agentOn,
       composer: composerMode ? ((askGetThread(id) || {}).composer || null) : null,
+      suggest: !synthetic,                          // ask-suggestion: a user's message only — an event turn suggests nothing
       ...(engine === 'codex' ? {
         engine,
         mcpCodexNote,
@@ -12213,6 +12296,38 @@ async function saveWorkflowCard(threadId, block, body = {}) {
   return { block: flipped, workflowId, name, matched };
 }
 
+/** Save an Ask graph card (workflow-build on an Ask chat): its own laid-out graph through the composer's Save path
+ *  (saveGraphWorkflow: the catalog check and the shared validator over the REAL registry — a draft the card did not save
+ *  first is an unknown key there) under a fresh wf_<slug>[-N] id, tagged origin 'auto' like every workflow Ask saves.
+ *  A command / code value a script node runs needs `acceptScripts`: the list the card showed, holding exactly the values
+ *  the save re-derives over the real registry (D10 — a yes/no flag, or a list cut short or changed since, is a 409).
+ *  @returns {Promise<{ok:true, block:object|null, workflowId:string} | {ok:false, status:number, error:string, code?:string, errors?:Array, scriptNodes?:Array}>} */
+async function saveBuildCard(threadId, block, { acceptScripts = null } = {}) {
+  const card = block.card || {};
+  const wf = card.workflow && typeof card.workflow === 'object' ? card.workflow : {};
+  const name = typeof card.name === 'string' && card.name.trim() ? card.name.trim() : 'Workflow';
+  let workflowId;
+  try {
+    workflowId = await mintAutoWorkflowId(name, async (wid) => !!(await readWorkflow(wid, { includeArchived: true })));
+    await saveGraphWorkflow({ version: 2, id: workflowId, name, domain: typeof card.domain === 'string' && card.domain ? card.domain : 'general',
+      nodes: Array.isArray(wf.nodes) ? wf.nodes : [], wires: Array.isArray(wf.wires) ? wf.wires : [] },
+    { agentsDir: AGENTS_DIR, origin: 'auto', confirmScripts: true, acceptScripts: Array.isArray(acceptScripts) ? acceptScripts : null });
+  } catch (err) {
+    const code = err && err.code;
+    const message = err && err.message ? err.message : String(err);
+    if (code === 'INVALID_GRAPH') {
+      const issues = (err.errors || []).slice(0, 3).map((e) => e && e.message).filter(Boolean).join('; ');
+      return { ok: false, status: 422, error: `the workflow is not valid any more — ${issues || message}`, errors: err.errors || [] };
+    }
+    if (code === 'SCRIPTS_UNCONFIRMED') return { ok: false, status: 409, error: message, code, scriptNodes: err.scriptNodes || [] };
+    if (code === 'BAD_REQUEST') return { ok: false, status: 400, error: message };
+    if (code === 'RESERVED_NAME') return { ok: false, status: 422, error: message };
+    if (code === 'ID_TAKEN') return { ok: false, status: 409, error: message };
+    throw err;
+  }
+  return { ok: true, block: flipCard(threadId, block.id, { state: 'saved', workflowId }), workflowId };
+}
+
 /**
  * The IMMEDIATE twin of drainAskDeferred's failure arm (PD29). The route answers the
  * flip and `turn:{error,status}` in one 200, but by then the flip frame has already
@@ -12337,13 +12452,41 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
   const cardId = askIdParam(res, req.params.cardId, 'card');
   if (!cardId) return;
   try {
-    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    const thread = askGetThread(id);
+    if (!thread) return res.status(404).json({ error: 'thread not found' });
     const body = req.body || {};
     const found = askFindCard(id, cardId);
     if (!found) return res.status(404).json({ error: 'card not found' });
+    // Ask Worca's graph card (a workflow-build card on an ASK chat, which has no canvas): Save writes the workflow, and
+    // Save and Decline start the workflow-card event turn (rule 12) — a paid turn, as the Auto workflow card's. The
+    // Workflows chat's build cards keep the composer branch below (Apply / Undo in the browser, no event turn).
+    if (found.block.card && found.block.card.type === 'workflow-build' && thread.mode !== 'composer') {
+      if (body.state !== 'saved' && body.state !== 'declined') return badRequest(res, 'state must be "saved" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being saved' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startWorkflowEventTurn(id, block, { declined: true });
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let saved;
+      try { saved = await saveBuildCard(id, found.block, { acceptScripts: Array.isArray(body.acceptScripts) ? body.acceptScripts : null }); }
+      finally { askCardBusy.delete(cardId); }
+      if (!saved.ok) {
+        return res.status(saved.status).json({ error: saved.error, ...(saved.code ? { code: saved.code } : {}),
+          ...(saved.errors ? { errors: saved.errors } : {}), ...(saved.scriptNodes ? { scriptNodes: saved.scriptNodes } : {}) });
+      }
+      if (!saved.block) return res.status(409).json({ error: 'card vanished' });
+      const turn = await startWorkflowEventTurn(id, saved.block, { thenRun: found.block.card.thenRun === true });
+      return res.json({ block: saved.block, turn });
+    }
     if (found.block.card && isComposerCard(found.block.card)) {
       // Workflows chat cards (D13): the dock applies/undoes/saves in the browser and records it here. No event
       // turn — the next message carries the canvas, so the model sees the result anyway.
+      // An Ask chat has no canvas: its draft cards are only saved or declined ("added" / "failed" are the dock's).
+      if (thread.mode !== 'composer' && body.state !== 'saved' && body.state !== 'declined') return badRequest(res, 'state must be "saved" or "declined"');
       const next = composerCardPatch(found.block.card, found.block.state, body);
       if (!next.ok) return res.status(next.status).json({ error: next.error });
       const block = flipCard(id, cardId, next.patch);
