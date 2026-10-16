@@ -63,6 +63,18 @@ export function marketplaceExportBody({ marketplaceId, pluginName, draft }) {
   return { destination: 'marketplace', marketplaceId, ...(pluginName ? { pluginName } : {}), ...(draft ? { draft: true } : {}) };
 }
 
+/** Staleness guard for an answer (a Preview) that lands after the dialog may have moved on. `requestTicket(seq, body)`
+ *  right before the request; `ticketIsCurrent(ticket, seq, body)` when the answer lands, with the dialog's CURRENT
+ *  invalidation count and the body it would send now. The answer is shown only when nothing invalidated the plan
+ *  meanwhile (every input change, a close and a reopen bump `seq`) AND the inputs still build the body that was sent —
+ *  a typed name, another marketplace, a ticked draft or a switched destination all make the answer somebody else's. */
+export function requestTicket(seq, body) {
+  return { seq, body: JSON.stringify(body) };
+}
+export function ticketIsCurrent(ticket, seq, body) {
+  return ticket.seq === seq && ticket.body === JSON.stringify(body);
+}
+
 /** Why the plugin name cannot be exported, '' when it can. `{raw, name}` is app.js's exportPluginName(): a name that
  *  normalises to nothing must stop the export — sending no name would publish under the pipeline's name instead.
  *  The server's name pattern also starts with a letter, so "2fa" is refused here rather than as a 400 after the click. */

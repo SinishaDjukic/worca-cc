@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { fillMarketplaceSelect, marketplaceExportBody, marketplaceNameProblem, marketplacePlanExtras, marketplaceDoneView,
-  renderMarketplaceSkipped, marketplaceLoadError, syncMarketplaceButtons } from '../ui/public/export-marketplace.mjs';
+  renderMarketplaceSkipped, marketplaceLoadError, syncMarketplaceButtons, requestTicket, ticketIsCurrent } from '../ui/public/export-marketplace.mjs';
 
 const doc = () => new JSDOM('<!doctype html><body><select id="s"></select></body>').window.document;
 const RES = {
@@ -68,6 +68,21 @@ test('syncMarketplaceButtons: both off while a request is in flight, and still o
   assert.deepEqual(state(), [true, true]);
   syncMarketplaceButtons({ plan, apply }, {});                               // defaults: not busy, no targets
   assert.deepEqual(state(), [true, true]);
+});
+
+test('requestTicket / ticketIsCurrent: a Preview answer is current only for the inputs it was asked for, and not after the plan was invalidated', () => {
+  const body = (over = {}) => marketplaceExportBody({ marketplaceId: 'acme', pluginName: 'default', draft: false, ...over });
+  const ticket = requestTicket(3, body());
+  assert.equal(ticketIsCurrent(ticket, 3, body()), true);                                  // nothing moved: show it
+  assert.equal(ticketIsCurrent(ticket, 3, body({ pluginName: 'renamed' })), false);        // the name was typed meanwhile
+  assert.equal(ticketIsCurrent(ticket, 3, body({ marketplaceId: 'beta' })), false);        // another marketplace was picked
+  assert.equal(ticketIsCurrent(ticket, 3, body({ draft: true })), false);                  // draft was ticked
+  assert.equal(ticketIsCurrent(ticket, 3, { destination: 'plugin', pluginDir: '/x', keepVersion: false, pluginName: 'default' }), false);  // switched to Local folder
+  assert.equal(ticketIsCurrent(ticket, 4, body()), false);                                 // invalidated (an input change, a close, a reopen) even with the same body
+  // the ticket is a snapshot: mutating the body object afterwards does not make a changed dialog look current
+  const b = body(); const t = requestTicket(0, b); b.pluginName = 'renamed';
+  assert.equal(ticketIsCurrent(t, 0, b), false);
+  assert.equal(ticketIsCurrent(t, 0, body()), true);
 });
 
 test('marketplaceExportBody: draft only when ticked', () => {
