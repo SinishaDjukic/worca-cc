@@ -3515,22 +3515,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         renderLane(laneSec, lane, lc);
       });
       l1.appendChild(sel);
-      // effort pills
-      const eff = make('div', `ask-rp-eff${c.model ? '' : ' unset'}`);
-      eff.setAttribute('role', 'radiogroup');
-      eff.setAttribute('aria-label', `Effort for ${row.label}`);
-      const offered = (lane.models.find((m) => m.id === c.model) || {}).efforts || [];
-      for (const e of lane.efforts) {
-        const b = make('button', `ask-rp-effbtn${e === c.effort ? ' on' : ''}`, e);
-        b.type = 'button';
-        b.setAttribute('role', 'radio');
-        b.setAttribute('aria-checked', String(e === c.effort));
-        b.disabled = !lane.editable || !!row.pinned || !offered.includes(e);
-        if (!offered.includes(e) && c.model) b.title = `Not offered by ${modelLabel(lane, c.model)}`;
-        b.addEventListener('click', () => { laneSet(lane, row, { effort: e }); renderLane(laneSec, lane, lc); });
-        eff.appendChild(b);
+      // effort pills — none for an engine without effort levels (Copilot, Cursor…): an empty group would leave only
+      // its "inherits workflow" label, overflowing the tile.
+      if (lane.efforts.length) {
+        const eff = make('div', `ask-rp-eff${c.model ? '' : ' unset'}`);
+        eff.setAttribute('role', 'radiogroup');
+        eff.setAttribute('aria-label', `Effort for ${row.label}`);
+        const offered = (lane.models.find((m) => m.id === c.model) || {}).efforts || [];
+        for (const e of lane.efforts) {
+          const b = make('button', `ask-rp-effbtn${e === c.effort ? ' on' : ''}`, e);
+          b.type = 'button';
+          b.setAttribute('role', 'radio');
+          b.setAttribute('aria-checked', String(e === c.effort));
+          b.disabled = !lane.editable || !!row.pinned || !offered.includes(e);
+          if (!offered.includes(e) && c.model) b.title = `Not offered by ${modelLabel(lane, c.model)}`;
+          b.addEventListener('click', () => { laneSet(lane, row, { effort: e }); renderLane(laneSec, lane, lc); });
+          eff.appendChild(b);
+        }
+        l1.appendChild(eff);
       }
-      l1.appendChild(eff);
       tile.appendChild(l1);
       // line 2
       const l2 = make('div', 'ask-rp-tile-l2');

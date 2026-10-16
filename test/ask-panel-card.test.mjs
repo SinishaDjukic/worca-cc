@@ -496,6 +496,12 @@ test('ask-panel-card v2: the lane follows the run engine — Codex models only o
       assert.equal(lane.querySelector('.ask-rp-subagent'), null);
       assert.deepEqual([...lane.querySelectorAll('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-effbtn')].map((b) => b.textContent), ['minimal', 'low', 'medium', 'high']);
     } },
+    { name: 'on an engine without effort levels (Cursor) the rows show no effort group', run: async () => {
+      const ctx = await openWithCard(PROJECT_CARD, { runEngine: 'cursor' });
+      const lane = await laneOf(ctx);
+      assert.ok(lane.querySelector('.ask-rp-tile'));
+      assert.equal(lane.querySelector('.ask-rp-eff'), null, 'an empty group would leave its "inherits workflow" label overflowing the tile');
+    } },
     { name: 'on a Claude run a Codex model is not offered', run: async () => {
       const ctx = await openWithCard(PROJECT_CARD, { extraModels: [GPT] });
       const lane = await laneOf(ctx);
