@@ -3,6 +3,7 @@
 // the DOM the list is built from.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import {
   rowTime, liveRowState, histRowState, schedRowState, countNeedsYou,
@@ -445,6 +446,29 @@ test('only a current member that is working pulses (is-live): not one that asks 
   assert.deepEqual(liveOf('run'), [false, true]);
   assert.deepEqual(liveOf('ask'), [false, false]);
   assert.deepEqual(liveOf('paused'), [false, false]);
+});
+
+test('a member that needs the person is amber, a working one pulses blue, a paused one is grey (D33)', () => {
+  const doc = new JSDOM('<body></body>').window.document;
+  const classesOf = (icon, asks = false) => {
+    const chain = chainIt({ open: true, members: [
+      { state: 'done', pipelineId: 'p0', title: 'Zero', href: '#history/k/p0' },
+      { state: 'current', pipelineId: 'p1', runId: 'r1', title: 'A', href: '#running/r1', icon, asks }] });
+    const host = doc.createElement('div');
+    host.append(...renderRunsList(doc, buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1' })], chains: [chain], now: NOW }), {}));
+    const li = host.querySelectorAll('.runs-chain-member')[1];
+    return ['is-live', 'is-needs', 'is-paused'].filter((c) => li.classList.contains(c));
+  };
+  assert.deepEqual(classesOf('run'), ['is-live']);
+  assert.deepEqual(classesOf('ask', true), ['is-needs']);
+  assert.deepEqual(classesOf('paused', true), ['is-needs'], 'paused with a question waiting: it needs the person');
+  assert.deepEqual(classesOf('paused'), ['is-paused']);
+});
+
+test('the member dot colours: amber for needs, grey for paused (style.css)', async () => {
+  const css = await readFile(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.runs-chain-member\.is-needs \.runs-chain-glyph\{color:var\(--amber-ink\);\}/);
+  assert.match(css, /\.runs-chain-member\.is-paused \.runs-chain-glyph\{color:var\(--ink-3\);\}/);
 });
 
 test('the chain row glyph follows the current member: ask, paused, else scheduled while it only waits', () => {

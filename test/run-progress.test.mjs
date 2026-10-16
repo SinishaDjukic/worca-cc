@@ -326,6 +326,15 @@ test('tone and text while waiting, parked or ended', async () => {
       assert.equal(runProgress(S({ ...planning, pendingQuestion: { questions: [{}] } })).text, 'Plan · needs you: answer 1 question');
       assert.equal(runProgress(S({ ...planning, pendingQuestion: {} })).text, 'Plan · needs you: answer a question');
     } },
+    { name: 'a plan approval, a slice outline and Clarify name the wait (D33)', run: () => {
+      const text = (pq) => runProgress(S({ ...planning, pendingQuestion: pq })).text;
+      assert.equal(text({ kind: 'plan', plan: { round: 1, nodeId: 'n_plan' } }), 'Plan · needs you: approve the plan');
+      assert.equal(text({ kind: 'plan', plan: { port: 'outline', outline: { why: 'w', slices: [{}, {}] } } }), 'Plan · needs you: approve the slices');
+      assert.equal(text({ kind: 'clarify', questions: [{}, {}] }), 'Plan · needs you: answer 2 questions');
+      assert.notEqual(text({ kind: 'plan', plan: {} }), 'Plan · needs you: answer a question');
+      const p6 = { stepper: manifest([agent('n_a', 'deckA'), end()]) };
+      assert.equal(runProgress(S({ ...p6, pendingQuestion: { kind: 'plan', plan: {} } })).text, 'Needs you: approve the plan');
+    } },
     { name: 'paused / pausing / interrupted → amber', run: () => {
       assert.equal(runProgress(S({ ...planning, status: 'paused' })).tone, 'amber');
       assert.equal(runProgress(S({ ...planning, status: 'paused' })).text, 'Plan · paused');
@@ -375,6 +384,11 @@ test('small helpers: ordinal, progressWidth, progressTone, askWhat, constants', 
     { name: 'askWhat', run: () => {
       assert.equal(askWhat(null), '');
       assert.equal(askWhat({ kind: 'workflow' }), 'review the workflow');
+      assert.equal(askWhat({ kind: 'plan', plan: { round: 2 } }), 'approve the plan');
+      assert.equal(askWhat({ kind: 'plan', plan: { outline: { slices: [] } } }), 'approve the slices');
+      assert.equal(askWhat({ kind: 'plan', plan: { port: 'outline' } }), 'approve the slices');
+      assert.equal(askWhat({ kind: 'plan' }), 'approve the plan');
+      assert.equal(askWhat({ kind: 'clarify', questions: [{}] }), 'answer 1 question');
     } },
     { name: 'constants', run: () => {
       assert.deepEqual([...PROGRESS_STAGES], ['plan', 'build', 'review']);

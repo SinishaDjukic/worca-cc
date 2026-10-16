@@ -49,13 +49,19 @@ export function progressTone(st) {
   return 'blue';
 }
 
-/** What a waiting question asks for: the tail of "needs you: …" (P5). */
+/** What a waiting question asks for: the tail of "needs you: …" (P5, D33). */
 export function askWhat(pq) {
   if (!pq) return '';
   if (pq.kind === 'workflow') return 'review the workflow';
   if (pq.kind === 'gate') return 'a decision';
   if (pq.kind === 'form') return 'input needed';
   if (pq.kind === 'recovery') return 'a step failed';
+  // Shaper's plan ask (PLAN_ASK_KIND, src/core/shape/run.mjs — shared/ cannot import core). The slice outline is the
+  // same kind with `plan.outline` set (orchestrator's outline ask; app.js askHeading tells them apart the same way).
+  if (pq.kind === 'plan') {
+    const p = pq.plan || {};
+    return p.outline || p.port === 'outline' ? 'approve the slices' : 'approve the plan';
+  }
   const n = Array.isArray(pq.questions) ? pq.questions.length : 0;
   return n ? `answer ${plural(n, 'question')}` : 'answer a question';
 }

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // tools/verify-feature-page-cdp.mjs — headless-Chrome proof of Shaper's feature views (D16, D17): a 3-slice
 // feature is ONE open row in the Runs list (members "1 · …", no row of its own for slice 2's run, the row links to
-// #feature/ID), and #feature/ID renders the full-width page (segmented bar, "merge first", the actions, Approve each
-// unchecked). NOT part of `npm test`: it needs Chrome. Screenshots of both land in a temp dir; their paths are printed.
+// #feature/ID), and #feature/ID renders the full-width page (one segmented bar and no stage bar, "merge first", the rare
+// actions in ⋯ with Approve each unchecked, the halted line in amber). NOT part of `npm test`: it needs Chrome. Screenshots of both land in a temp dir; their paths are printed.
 // Run: node tools/verify-feature-page-cdp.mjs   (or: npm run verify:feature-page)
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -135,7 +135,7 @@ const runs = await ev(`(() => {
     title: row.querySelector('.runs-row').textContent,
     href: row.querySelector('.runs-row').getAttribute('href'),
     open: !row.querySelector('.runs-chain-members').hidden,
-    members: [...row.querySelectorAll('.runs-chain-link')].map((a) => a.textContent),
+    members: [...row.querySelectorAll('.runs-chain-member:not(.runs-chain-open-feature) .runs-chain-link')].map((a) => a.textContent),
     ownRow: [...host.querySelectorAll('.runs-row')].filter((r) => !r.closest('.runs-chain') && /2\\/3/.test(r.textContent)).length,
   };
 })()`);
@@ -156,17 +156,28 @@ const page = await ev(`(() => {
   return {
     segs: el.querySelectorAll('.shape-feature-seg').length,
     merge: el.querySelector('.shape-feature-slice.is-done .shape-feature-merge')?.textContent || '',
-    replan: !!el.querySelector('.shape-feature-replan'), cancel: !!el.querySelector('.shape-feature-cancel'),
-    each: el.querySelector('[data-act="shape-feature-approve-each"]')?.checked,
+    bars: el.querySelectorAll('.shape-feature-segs').length, stageBars: el.querySelectorAll('.run-prog').length,
+    replanButton: !!el.querySelector('.shape-feature-replan'), more: !!el.querySelector('.shape-feature-more'),
+    headColor: getComputedStyle(el.querySelector('.shape-feature-head')).color,
+    amber: (() => { const p = document.createElement('span'); p.style.color = 'var(--amber-ink)'; el.appendChild(p);
+      const c = getComputedStyle(p).color; p.remove(); return c; })(),
+    menu: (() => { el.querySelector('.shape-feature-more')?.click();
+      const items = [...document.querySelectorAll('.wfv-menu .wfv-menu-item')];
+      return { labels: items.map((b) => b.textContent), each: items.find((b) => /Approve each/.test(b.textContent))?.getAttribute('aria-checked') }; })(),
     width: el.getBoundingClientRect().width, mainWidth: main.getBoundingClientRect().width,
   };
 })()`);
 check(page.segs === 3, 'three bar parts');
 check(page.merge === 'merge first', 'slice 1 reads "merge first"');
-check(page.replan && page.cancel, 'Re-plan the rest and Cancel the rest');
-check(page.each === false, 'Approve each slice\'s plan is unchecked');
+check(page.bars === 1 && page.stageBars === 0, 'one segmented bar, no stage bar');
+check(!page.replanButton && page.more, 'Re-plan the rest moved into ⋯');
+check(['Re-plan the rest', 'Cancel the rest'].every((l) => page.menu.labels.includes(l)), `⋯ holds ${JSON.stringify(page.menu.labels)}`);
+check(page.menu.each === 'false', 'Approve each slice\'s plan is unchecked');
+check(page.headColor === page.amber, `the halted line is amber (${page.headColor} vs ${page.amber})`);
 check(page.width > 0.8 * page.mainWidth, `full width (${Math.round(page.width)} of ${Math.round(page.mainWidth)})`);
 const pageShot = await shot('page');
+// A second ⋯ click closes the menu (toggleMenu); a document-level Escape would not reach the menu's own keydown.
+await ev("document.querySelector('[data-view=\"feature\"] .shape-feature-more').click(), !document.querySelector('.wfv-menu')");
 check(errors.length === 0, `no page errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
 console.log(`screenshots:\n  ${runsShot}\n  ${pageShot}`);
 console.log(failed ? `${failed} check(s) FAILED` : 'all checks passed');

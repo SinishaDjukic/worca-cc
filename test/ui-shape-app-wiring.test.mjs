@@ -324,7 +324,7 @@ test('#feature with the gate off falls back to Chat', async () => {
   assert.ok(ctx.window.document.querySelector('[data-view="feature"]').classList.contains('hidden'));
 });
 
-test('the page\'s ask host survives a repaint; a state frame moves the bar without a fetch', async () => {
+test('the page\'s ask host survives a repaint; a state frame repaints the line without a fetch', async () => {
   const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
   const { ctx, page } = await openFeaturePage({ server, runs: [{ runId: 'r2', pipelineId: 'p2', title: 'Run tags', projectDir: '/tmp/p',
     status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z', shaping: { perspectives: [], rounds: [], approved: null, savedTo: null }, pendingQuestion: PLAN_Q }] });
@@ -335,8 +335,12 @@ test('the page\'s ask host survives a repaint; a state frame moves the bar witho
   await ctx.settle(6);
   assert.equal(server.gets.length, 2);
   assert.equal(page.querySelector('.shape-feature-current .shape-feature-ask .qpanel'), qp, 'the same panel: a typed answer survives');
+  const head = page.querySelector('.shape-feature-head');
+  head.textContent = 'stale';
   ctx.dispatch({ type: 'state', runId: 'r2', status: 'running' });
   await ctx.settle(4);
+  assert.equal(page.querySelector('.shape-feature-head').textContent, 'Slice 2 of 3 › Plan › your approval',
+    'the state frame rewrote the line (paintFeaturePageProgress)');
   assert.equal(server.gets.length, 2, 'a state frame does not refetch the feature');
 });
 
