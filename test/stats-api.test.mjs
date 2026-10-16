@@ -183,6 +183,22 @@ test('GET /api/stats serves the shape; defaults to month; 400 on bad range', asy
   assert.ok((await res.json()).error);
 });
 
+test('GET /api/stats passes filter, groupBy, custom range; malformed input → 400', async () => {
+  let res = await fetch(`${base}/api/stats?range=custom&from=2026-08-01&to=2026-08-31&groupBy=person&tag=client:acme&tag=spike`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.range, 'custom');
+  assert.deepEqual(body.filter.tags, ['client:acme', 'spike']);
+  assert.equal(body.groupBy, 'person');
+  assert.ok(Array.isArray(body.groups.rows));
+  for (const q of ['groupBy=tag:', 'tag=client:', 'range=custom&from=2026-08-09', 'range=custom&from=2026-08-09&to=2026-08-01', 'range=lastYear']) {
+    res = await fetch(`${base}/api/stats?${q}`);
+    assert.equal(res.status, 400, q);
+  }
+  res = await fetch(`${base}/api/stats?range=lastMonth`);
+  assert.equal(res.status, 200);
+});
+
 test('totals carry humanHours and savedUsd = hours × rate − spent; prev too; rate is reported', () => {
   const s = getStats({ range: 'month', now: NOW });
   assert.equal(s.humanRateUsd, 35);
@@ -208,6 +224,19 @@ test('a reply\'s next-prompt suggestion books its own ledger row on the reply id
   assert.equal(now.turns, before.turns + 1, 'the suggestion row is the same turn');
   assert.equal(now.sessions, before.sessions);
   assert.equal(now.spendUsd, Math.round((before.spendUsd + 0.03) * 1e6) / 1e6);
+});
+
+test('GET /api/stats byTag: tagGroups with the configured keys first; a bad tagKey → 400; no byTag → null', async () => {
+  let res = await fetch(`${base}/api/stats?range=month&byTag=1&tagKey=cc`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.tagGroups[0].key, 'cc');
+  res = await fetch(`${base}/api/stats?range=month`);
+  assert.equal((await res.json()).tagGroups, null);
+  for (const q of ['byTag=1&tagKey=', 'byTag=1&tagKey=Bad%20key']) {
+    res = await fetch(`${base}/api/stats?range=month&${q}`);
+    assert.equal(res.status, 400, q);
+  }
 });
 
 // Shaper (D28): appended last (the tests above count this DB's rows); seeded in February 2026, a month no

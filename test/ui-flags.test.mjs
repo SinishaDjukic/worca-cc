@@ -199,3 +199,15 @@ test('app: the Experimental tab shows at every level; a flags frame flips the pa
     } },
   ]);
 });
+
+// A repaint queued before a test's DOM was released still asks flagOn (#718's tag chips do on every Runs
+// list and header paint): releaseDom (test/helpers/jsdom-release.mjs) detaches <html> itself, so every
+// flag reads off instead of throwing into the next test.
+test('flagOn on a document without <html> reads off, never throws', () => {
+  const { window } = new JSDOM('<!doctype html><html data-flags="runTags"><body></body></html>');
+  const doc = window.document;
+  assert.equal(flagOn('runTags', doc), true);
+  doc.documentElement.remove();
+  assert.equal(doc.documentElement, null);
+  assert.equal(flagOn('runTags', doc), false);
+});

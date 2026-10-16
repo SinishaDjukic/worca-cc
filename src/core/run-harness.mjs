@@ -106,7 +106,9 @@ import { fieldsForRun, effectiveCap, deviationsFor, mcpDeviations } from './poli
 import { overlayStepModels } from './run-overlay.mjs';
 import { writePolicyState, hasPipelineOverride, readTotalAck } from './policy/state.mjs';
 import { installedPluginsMap, WORCA_VERSION as POLICY_WORCA_VERSION } from './policy/local.mjs';
-import { readSettings as readRawSettings } from './settings.mjs';
+import { readSettings as readRawSettings, userTagDimensions } from './settings.mjs';
+import { readRunTags } from './run-tags-store.mjs';
+import { missingRequired } from '../shared/tag-dimensions.mjs';
 import { byActor } from './identity.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { agentIdentity } from './agent-user.mjs';
@@ -1376,6 +1378,7 @@ export class RunHarness extends EventEmitter {
       await this._brokerPreflight(topology.manifest, stepModels);
       await this._resolveGuardrails();
       await this._resolvePolicy();
+      this._noteLocalTagDimensions();
       // The engine's own run-start check (binary, sign-in) and the project deny rules
       // it could not enforce, then the gate's refusals and audit lines.
       this._engineProjectRules = await this._engineChecks((m) => this.guardrailHonorByKey?.get(m.projectKey) !== false);
@@ -1415,6 +1418,7 @@ export class RunHarness extends EventEmitter {
         guardrailsId: this.guardrailsId,
         startedBy: this.opts.startedBy || null,
         prWatchRunId: this.opts.prWatchRunId || null,
+        tags: this.opts.tags || [],
         ...(this.isWorkspace ? {
           workspaceKey: this.workspaceKey,
           workspaceId: this.workspace.id,
@@ -1837,6 +1841,7 @@ export class RunHarness extends EventEmitter {
       this.mcpOptOut = Array.isArray(rp.mcpOptOut) ? rp.mcpOptOut : [];
       await this._resolveGuardrails();
       await this._resolvePolicy();
+      this._noteLocalTagDimensions();
       for (const line of this._engineGate(engineGateNodes)) await appendAudit(this.pipeline.dir, line);
       // Restore the EFFECTIVE instruction from the resume point — by dispatch time
       // run() has replaced the detect-time tools.instruction with the in-worktree
@@ -2605,6 +2610,7 @@ export class RunHarness extends EventEmitter {
     const deviations = deviationsFor(fields, {
       guardrailsId: this.guardrailsId, guardrailSet: this.guardrails ? { settings: this.guardrails } : null,
       stepModels, installed, worcaVersion: POLICY_WORCA_VERSION, metricsRecord,
+      tags: this._policyTags(),
     });
     this.policyRun = { home: r.home, homeDir: r.homeDir, sha: r.sha, fields, deviations: deviations.map((d) => d.code), unattended: !!this.auto };
     for (const w of r.warnings || []) this._log('policy', 'warn', `team policy ${r.home}: ${w}`);
@@ -2627,6 +2633,22 @@ export class RunHarness extends EventEmitter {
           if (mc && mc.value < cap.value) this._log('policy', 'info', `member ${mr.from} carries a tighter pipeline cap ($${Number(mc.value).toFixed(2)}, ${mr.home}); the workspace policy applies to this run`);
         } catch { /* informational only */ }
       }
+    }
+  }
+
+  /** The tags policy checks read (D5): a resumed harness gets no opts.tags, so read the stored ones. */
+  _policyTags() {
+    if (this.resumeOpts && this.pipeline?.id) { try { return readRunTags(this.pipeline.id); } catch { return []; } }
+    return Array.isArray(this.opts.tags) ? this.opts.tags : [];
+  }
+
+  /** Settings tag dimensions (D8): the policy sets none for this run, so a missing required key is a run-log warning only. */
+  _noteLocalTagDimensions() {
+    if (this.policyRun?.fields?.['runs.tagDimensions']) return;          // deviationsFor recorded it
+    let dims = [];
+    try { dims = userTagDimensions(); } catch { return; }
+    for (const d of missingRequired(dims, this._policyTags())) {
+      this._log('policy', 'warn', `${d.label} (${d.key}) is a required tag in your Settings and was not set. The run proceeds.`);
     }
   }
 

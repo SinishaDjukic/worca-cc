@@ -5,16 +5,18 @@
 //
 // Item shapes (the adapters live in app.js: runsLiveItem / runsHistItem / runsSchedItem):
 //   live:  { runId, pipelineId, title, status, ask: {kind, step}|null, pauseReason, unread,
-//            step, failedStep, startedAt, groupKey, groupName, by, pr, checks, files,
+//            step, failedStep, startedAt, groupKey, groupName, by, pr, checks, files, tags,
 //            progress: {fraction, tone}|null }
 //   hist:  { id, projectKey, title, status, pauseReason, startedAt, mtime, groupName, by,
 //            pr (a glance input: glancePrInput's output), checks, files,
-//            archived, archivedAt (archived-feed rows only) }
+//            archived, archivedAt (archived-feed rows only), tags }
 //   sched: { id, scheduleId, title (may be null), status, after, queued, retryAt, runAt, groupKey, groupName, by }
 //   chain: { id, title, members[], total, index, fraction, tone, text, groupKey, groupName, open }
 import { glanceCopy } from './run-glance.mjs';
 import { renderRowLine } from './run-progress-bar.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
+import { hasTag } from '../../src/shared/run-tags.mjs';
+import { tagChip } from './tag-input.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -177,6 +179,7 @@ export function liveRow(it, now = Date.now()) {
     runId: String(it.runId), pipelineId: String(it.pipelineId || ''), projectKey: '',
     title: String(it.title || '(untitled)'), status,
     groupKey: String(it.groupKey || ''), groupName: String(it.groupName || ''), by: String(it.by || ''),
+    tags: Array.isArray(it.tags) ? it.tags.map(String) : [],
     unread: !!it.unread, needs: needsYou({ kind: 'live', status, ask: !!it.ask, unread: !!it.unread }),
     progress: it.progress || null,
   }, { at: it.startedAt }, now);
@@ -222,6 +225,7 @@ export function histRow(p, now = Date.now()) {
     runId: '', pipelineId: String(p.id), projectKey: key,
     title: String(p.title || p.id || '(untitled)'), status,
     groupKey: key, groupName: String(p.groupName || key || '(unknown project)'), by: String(p.by || ''),
+    tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
     archived: !!(p && p.archived),
     base: String(p.base || ''),                      // #620: "conflicts with dev" / "dev moved", else ''
     unread: false, needs: needsYou({ kind: 'hist', status }),
@@ -245,7 +249,7 @@ export function schedRow(t, now = Date.now()) {
 export function rowMatches(row, query) {
   const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return true;
-  const hay = [row.title, row.groupName, row.word, row.detail, row.base || '', STATE_TERMS[row.icon] || '', row.needs ? 'needs you' : '']
+  const hay = [row.title, row.groupName, row.word, row.detail, row.base || '', (row.tags || []).join(' '), STATE_TERMS[row.icon] || '', row.needs ? 'needs you' : '']
     .join(' ').toLowerCase();
   return words.every((w) => hay.includes(w));
 }
@@ -318,8 +322,25 @@ export const cmpNeeds = (a, b) => ((NEEDS_RANK[a.needsIcon || a.icon] ?? 3) - (N
  * A History row whose run is listed live is dropped (the live row stands for it), and so is a
  * schedule ticket whose run is (a firing ticket's id IS its runId).
  */
+/** The Runs list tag filter (#718): '' = every row. */
+export function rowHasTag(row, tag) { return !tag || hasTag(row.tags, tag); }
+
+/** Distinct tags on the given rows, sorted — the #runs-tag options. */
+export function tagFilterOptions(rows) {
+  return [...new Set(rows.flatMap((r) => r.tags || []))].sort();
+}
+
+/** The #runs-tag options with configured dimensions: an optgroup per dimension ('any' = the bare key), then the rest. */
+export function tagFilterGroups(rows, dims) {
+  const all = tagFilterOptions(rows);
+  const keyOf = (t) => t.split(':')[0];
+  const groups = (dims || []).map((d) => ({ label: d.label, any: d.key, tags: all.filter((t) => t !== d.key && keyOf(t) === d.key) }));
+  const known = new Set((dims || []).map((d) => d.key));
+  return { groups, rest: all.filter((t) => !known.has(keyOf(t))) };
+}
+
 export function buildRunsModel({
-  live = [], history = [], scheduled = [], chains = [], person = '', query = '', filter = 'all', groupBy = 'project', collapsed = new Set(), now = Date.now(),
+  live = [], history = [], scheduled = [], chains = [], person = '', tag = '', query = '', filter = 'all', groupBy = 'project', collapsed = new Set(), now = Date.now(),
 } = {}) {
   const shown = RUNS_FILTERS.includes(filter) ? filter : 'all';
   const byDate = groupBy === 'date';
@@ -329,7 +350,7 @@ export function buildRunsModel({
   const histRows = history.filter((p) => p && p.id && !listed.has(String(p.id))).map((p) => histRow(p, now));
   const schedRows = scheduled.filter((t) => t && !liveIds.has(String(t.id))).map((t) => schedRow(t, now));
   const all = [...liveRows, ...schedRows, ...histRows]
-    .filter((r) => (!person || r.by === person) && rowMatches(r, query) && rowInFilter(r, shown));
+    .filter((r) => (!person || r.by === person) && rowHasTag(r, tag) && rowMatches(r, query) && rowInFilter(r, shown));
   const chainRows = chains.map((c) => chainRow(c, now));
   // D17: a feature row needs you exactly when a row it claims does (the same needsYou() rule as the member rows), so
   // nothing is dropped or invented. `needsIcon` (the needy member's icon) lets cmpNeeds order it like that row; the
@@ -447,6 +468,13 @@ function renderRow(doc, r, { inNeeds = false, bucket = '', lineFrom = null } = {
   const body = doc.createElement('span');
   body.className = 'runs-row-body';
   body.append(textEl(doc, 'span', 'runs-row-title', r.title), textEl(doc, 'span', 'runs-row-sub', rowSub(r, { inNeeds, bucket })));
+  if (r.tags && r.tags.length) {
+    const box = doc.createElement('span');
+    box.className = 'runs-row-tags';
+    box.append(...r.tags.slice(0, 3).map((t) => tagChip(doc, t)));
+    if (r.tags.length > 3) box.append(tagChip(doc, `+${r.tags.length - 3}`));
+    body.append(box);
+  }
   // P7: the thin line, only while the run is live (an ended live row and every History row have none).
   // `lineFrom` (paintRunsList): the width this row's line had before the rebuild, so it glides on.
   if (r.progress && (r.kind === 'live' || r.kind === 'chain') && !ENDED_ICONS.has(r.icon)) {

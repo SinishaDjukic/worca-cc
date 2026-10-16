@@ -139,6 +139,14 @@ test('[hidden] beats the author display rule on every element app.js hides by at
   ]);
 });
 
+// The tag field sits on the grey field ground, where the house placeholder grey (ink-3) is 2.58:1 in light — under 4.5:1
+// (CI theme proof). Like the search fields, its "Tags" placeholder uses ink-2.
+test('the tag input placeholder is readable on the grey field (ink-2)', () => {
+  const r = flat.find((x) => sels(x).includes('.tag-input-text::placeholder'));
+  assert.ok(r, 'a .tag-input-text::placeholder rule exists');
+  assert.equal(r.style.getPropertyValue('color').replace(/\s+/g, ''), 'var(--ink-2)');
+});
+
 // The run header is a 2-column grid (title | Live view). The slice line ("Part of <feature> · slice 1 of 2 →", D22)
 // must take its own full row like the progress bar: while the run waits on the person the Live view switch is hidden,
 // and an auto-placed slice line took the title's row and squeezed "Waiting for you" into a narrow column.

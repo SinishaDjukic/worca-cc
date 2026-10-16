@@ -189,6 +189,7 @@ test('one fix run batches failures, review threads and change requests, then pub
   // Unattended Implement ⇄ Review on the origin's engine and mock flag; per-node models stay project defaults.
   assert.deepEqual([body.humanInLoop, body.engine, body.mock], [false, 'codex', true]);
   assert.equal(Object.hasOwn(body, 'model'), false);
+  assert.equal(Object.hasOwn(body, 'tags'), false, 'an untagged origin starts an untagged fix run');
   assert.deepEqual(opts, { startedBy: 'pr-watch', runId: opts.prWatchRunId, prWatchRunId: opts.prWatchRunId });
   let w = getWatch(URL);
   assert.equal(w.status, 'fixing'); assert.equal(w.fixRuns, 1);
@@ -537,6 +538,17 @@ test('a workspace-member origin starts the same single-project Implement ⇄ Rev
   assert.equal(body.workflowId, FIX_WORKFLOW_ID);
   assert.equal(Object.hasOwn(opts, 'frozenStepper'), false);
   assert.equal(getWatch(URL).status, 'fixing');
+});
+
+test('a fix run carries the origin run\'s tags (#718)', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const h = harness({ pr: openPr({ threads: [thread('T1', 1)] }) });
+  const base = h.deps.originOf;
+  h.deps.originOf = (w) => ({ ...base(w), tags: ['client:acme'] });
+  await createPrWatcher(h.deps).tick();
+  assert.equal(h.io.calls.start.length, 1);
+  assert.deepEqual(h.io.calls.start[0].body.tags, ['client:acme']);
 });
 
 test('a missing origin needs a person once', async () => {

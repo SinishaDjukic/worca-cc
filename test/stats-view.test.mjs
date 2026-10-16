@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import {
   BUDGET_WARN_AT, renderKpiRow,
   renderCostPauseBanner, renderStatsBody,
+  renderGroupsCard, groupsToCsv, statsQuery, renderStatsView,
 } from '../ui/public/stats-view.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -132,6 +133,82 @@ test('renderStatsBody: KPI row + two chart cards; empty range -> chart-empty not
     series: [] }, { doc });
   assert.equal(empty.querySelectorAll('.chart-empty').length, 2);
   assert.equal(empty.querySelector('svg.chart-svg'), null);
+});
+
+const GROUPS = { by: 'tag:client', label: 'client', rows: [
+  { kind: 'value', key: 'Müller & Söhne, GmbH', label: 'Müller & Söhne, GmbH', spentUsd: 3, runs: 2, finished: 2, stopped: 0, failed: 0, paused: 0, running: 0, prsOpened: 1, prsMerged: 1 },
+  { kind: 'none', key: null, label: '(no client)', spentUsd: 0.5, runs: 1, finished: 0, stopped: 1, failed: 0, paused: 0, running: 0, prsOpened: 0, prsMerged: 0 },
+  { kind: 'ask', key: null, label: 'Ask Worca', spentUsd: 0.75, sessions: 1, runs: 0, finished: 0, stopped: 0, failed: 0, paused: 0, running: 0, prsOpened: 0, prsMerged: 0 },
+] };
+
+test('renderGroupsCard: one row per group, muted none/ask rows, a total, export enabled', () => {
+  const card = renderGroupsCard(GROUPS, 'Aug 1 – Aug 31', { doc, totalUsd: 4.25, totalRuns: 3 });
+  assert.equal(card.querySelector('.card-head h2').textContent, 'By client');
+  const rows = card.querySelectorAll('tbody tr');
+  assert.equal(rows.length, 3);
+  assert.ok(rows[1].classList.contains('groups-row-none'));
+  assert.ok(rows[2].classList.contains('groups-row-ask'));
+  // cells: 0 label · 1 spend · 2 share · 3 runs · 4 finished · 5 stopped · 6 failed · 7 PRs merged
+  assert.equal(rows[2].cells[2].textContent, '18%');      // 0.75 / 4.25
+  assert.equal(rows[2].cells[3].textContent, '—');
+  assert.equal(rows[0].cells[3].textContent, '2');
+  const foot = card.querySelector('tfoot tr');
+  assert.equal(foot.cells.length, 8);
+  assert.match(foot.textContent, /\$4\.25/);
+  assert.equal(card.querySelector('button.stats-export').disabled, false);
+});
+
+test('renderGroupsCard: no rows → empty hint and a disabled export', () => {
+  const card = renderGroupsCard({ ...GROUPS, rows: [] }, 'x', { doc, totalUsd: 0, totalRuns: 0 });
+  assert.match(card.textContent, /Nothing spent and no runs in this period/);
+  assert.equal(card.querySelector('button.stats-export').disabled, true);
+});
+
+test('groupsToCsv: BOM, header from the group label, the label cell round-trips', () => {
+  const csv = groupsToCsv(GROUPS);
+  assert.deepEqual([...Buffer.from(csv, 'utf8').subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+  const lines = csv.slice(1).split('\r\n');
+  assert.equal(lines[0], 'client,spendUsd,runs,finished,stopped,failed,running,paused,prsOpened,prsMerged');
+  assert.equal(lines[1], '"Müller & Söhne, GmbH",3,2,2,0,0,0,0,1,1');
+  assert.equal(lines[3].startsWith('Ask Worca,0.75,'), true);
+});
+
+test('statsQuery: repeated tag params, custom dates only for custom', () => {
+  assert.equal(statsQuery({ range: 'month' }), 'range=month');
+  assert.equal(statsQuery({ range: 'custom', from: '2026-08-01', to: '2026-08-31', tags: ['client:acme', 'spike'], person: 'bob', groupBy: 'tag:client' }),
+    'range=custom&from=2026-08-01&to=2026-08-31&tag=client%3Aacme&tag=spike&person=bob&groupBy=tag%3Aclient');
+});
+
+test('renderKpiRow: a filtered model drops the budget meter and says Filtered', () => {
+  assert.ok(renderKpiRow({ ...MODEL, budget: { ...BUDGET } }, { doc }).querySelector('.stat-meter'), 'control: unfiltered week draws the meter');
+  const el = renderKpiRow({ ...MODEL, budget: { ...BUDGET }, filtered: true }, { doc });
+  assert.equal(el.querySelector('.stat-meter'), null);
+  assert.match(el.querySelector('.stat-tile .stat-sub').textContent, /Filtered/);
+});
+
+const VIEW_MODEL = {
+  range: 'month', bucket: 'day', windowStartMs: Date.UTC(2026, 7, 1), windowEndMs: Date.UTC(2026, 8, 1),
+  totals: { spentUsd: 4.25, runs: 3 }, series: [], filtered: false,
+  groups: { label: 'person', rows: [{ kind: 'value', key: 'ana', label: 'ana', spentUsd: 4.25, runs: 3, finished: 3, stopped: 0, failed: 0, running: 0, paused: 0, prsOpened: 0, prsMerged: 0 }] },
+  tagGroups: [
+    { key: 'cc', configured: true, rows: [{ kind: 'none', key: null, label: '(no cc)', spentUsd: 3.5, runs: 3 }, { kind: 'ask', key: null, label: 'Ask Worca', spentUsd: 0.75, runs: 0 }] },
+    { key: 'client', configured: false, rows: [{ kind: 'value', key: 'acme', label: 'acme', spentUsd: 3.5, runs: 3 }, { kind: 'ask', key: null, label: 'Ask Worca', spentUsd: 0.75, runs: 0 }] },
+  ],
+};
+
+test('statsQuery: byTag adds byTag=1 and one tagKey per configured key', () => {
+  assert.equal(statsQuery({ range: 'month', byTag: true, tagKeys: ['cc', 'team'] }), 'range=month&byTag=1&tagKey=cc&tagKey=team');
+  assert.equal(statsQuery({ range: 'month', byTag: false, tagKeys: ['cc'] }), 'range=month');
+});
+
+test('renderStatsView: By tag = one table per key labelled by dimension; By person = the person table alone', () => {
+  const tag = renderStatsView(VIEW_MODEL, 'tag', { doc, dims: [{ key: 'cc', label: 'Cost centre' }] });
+  assert.deepEqual([...tag.querySelectorAll('.alloc-card h2')].map((n) => n.textContent), ['Cost centre', 'client']);
+  assert.equal(tag.querySelector('.stat-row'), null);
+  const person = renderStatsView(VIEW_MODEL, 'person', { doc });
+  assert.equal(person.querySelector('.groups-card h2').textContent, 'By person');
+  assert.equal(person.querySelectorAll('.groups-card').length, 1);
+  assert.equal(person.querySelector('.alloc-card'), null);
 });
 
 test('renderStatsBody: the Shaper card only when the model carries shaping', () => {

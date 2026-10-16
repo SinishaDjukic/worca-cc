@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
 import { setShapeFirst } from './helpers/shape-gate.mjs';
 
 const TID = 'ask_00000001';
@@ -95,6 +96,13 @@ function apiHandler(recorder = {}) {
       recorder.runBodies = [...(recorder.runBodies || []), JSON.parse(opts.body)];
       if (recorder.runResponse) return recorder.runResponse;
       return { ok: true, status: 200, json: async () => ({ runId: 'run-uuid-1' }) };
+    }
+    if (path === '/api/tag-dimensions') {
+      const q = url.split('?')[1] || '';
+      recorder.tagRuleQueries = [...(recorder.tagRuleQueries || []), q];
+      const body = recorder.tagRules === undefined ? {}
+        : typeof recorder.tagRules === 'function' ? recorder.tagRules(new URLSearchParams(q)) : recorder.tagRules;
+      return { ok: true, status: 200, json: async () => body };
     }
     if (url === `/api/ask/threads/${TID}/cards/${CARD_ID}` && method === 'POST') {
       recorder.dismissBodies = [...(recorder.dismissBodies || []), JSON.parse(opts.body)];
@@ -1714,6 +1722,43 @@ test('ask-panel-card: Open in New run asks before leaving picks behind that are 
   ]);
 });
 
+// ── Run tags (#718): the card's tag field, behind the experimental `runTags` flag ──
+test('ask-panel-card: run tags show as chips and ride Start and Open in New run while the flag is on; none while it is off', async () => {
+  await checkRows([
+    { name: 'flag on: 1 chip, Start posts tags, New run gets them', run: async () => {
+      const rec = {};
+      const handed = [];
+      const ctx = makePanel({ fetchHandler: apiHandler(rec), openNewPipeline: (p) => handed.push(p) });
+      applyFlags({ runTags: true }, ctx.doc);
+      ctx.storage.setItem('worca-cc.ask.thread', TID);
+      ctx.panel.open();
+      await ctx.tick(); await ctx.tick(); await ctx.tick();
+      for (const f of stampFrames([
+        { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
+        { type: 'ask-card', block: { kind: 'card', id: CARD_ID, state: 'proposed', card: { ...PROJECT_CARD, tags: ['client:acme'] } } },
+      ], { threadId: TID, messageId: MID })) ctx.panel.pushServerFrame(f);
+      ctx.flush(); await ctx.tick(); await ctx.tick(); ctx.flush();
+      const card = ctx.doc.querySelector('.ask-card');
+      assert.deepEqual([...card.querySelectorAll('.tag-chip')].map((c) => c.firstChild.textContent), ['client:acme']);
+      card.querySelector('[data-ask-card-open-np]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.deepEqual(handed[0].tags, ['client:acme']);
+      card.querySelector('[data-ask-card-start]').click();
+      await ctx.tick(); await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].tags, ['client:acme']);
+    } },
+    { name: 'flag off: no tag field, no tags in the body', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, tags: ['client:acme'] }, rec);
+      const card = ctx.doc.querySelector('.ask-card');
+      assert.equal(card.querySelectorAll('.tag-chip').length, 0);
+      card.querySelector('[data-ask-card-start]').click();
+      await ctx.tick(); await ctx.tick();
+      assert.equal(Object.hasOwn(rec.runBodies[0], 'tags'), false);
+    } },
+  ]);
+});
+
 // ── Ask Worca's composer cards: drafted agents / scripts and the graph card (ask-composer-cards.mjs) ──
 import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
 
@@ -2158,4 +2203,81 @@ test('Ask draft card: a Save whose record failed shows the card unsaved (Save re
   clock.t += 16_000;
   ctx.flush(); await ticks(ctx); ctx.flush(); await ticks(ctx);
   assert.deepEqual(r.cardPosts.map((p) => p[0]), ['card_0000c041', 'card_0000c041'], 'the sweep records it once the TTL passed');
+});
+
+// ── Enforced run tags (slice 4A): the card fetches its target's tag rules, pre-fills, and gates Start ──
+async function openFlagged(card, rec) {
+  const ctx = makePanel({ fetchHandler: apiHandler(rec) });
+  applyFlags({ runTags: true }, ctx.doc);
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  for (const f of stampFrames([
+    { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
+    { type: 'ask-card', block: { kind: 'card', id: CARD_ID, state: 'proposed', card } },
+  ], { threadId: TID, messageId: MID })) ctx.panel.pushServerFrame(f);
+  ctx.flush(); await ctx.tick(); await ctx.tick(); ctx.flush();
+  return { ctx, card: ctx.doc.querySelector('.ask-card') };
+}
+const rpChips = (card) => [...card.querySelectorAll('.ask-rp-tags .tag-chip')].map((c) => c.firstChild.textContent);
+const CC_DIM = { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true };
+
+test('run card, enforced: pre-filled chips on one line; a missing mandatory tag shows its picker inline and gates Start', async () => {
+  const rec = { runBodies: [], tagRuleQueries: [], tagRules: { source: 'settings', home: null, enforce: true, prefill: ['client:acme'],
+    dims: [{ key: 'client', label: 'Client', values: [], required: false, default: 'acme' }, CC_DIM] } };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD, tags: ['spike'] }, rec);
+  await ctx.tick();
+  assert.deepEqual(rec.tagRuleQueries, [`projectDir=${encodeURIComponent('/repos/proj')}`]);
+  assert.deepEqual(rpChips(card), ['client:acme', 'spike']);
+  const start = card.querySelector('[data-ask-card-start]');
+  assert.equal(start.disabled, true);
+  assert.equal(start.title, 'Add Cost centre to start');
+  const pick = card.querySelector('.ask-rp-tags .tag-rule-pickers select');
+  pick.value = '4420'; pick.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  assert.equal(card.querySelector('.tag-rule-pickers').childElementCount, 0);
+  assert.equal(start.disabled, false);
+  assert.equal(start.title, '');
+  start.click(); await ctx.tick(); await ctx.tick();
+  assert.deepEqual(rec.runBodies[0].tags, ['cc:4420', 'client:acme', 'spike']);
+});
+
+test('run card, enforced: a refused start keeps Start disabled after the request ends (startCard finally)', async () => {
+  const reason = 'Add Cost centre to start';
+  const rec = { runBodies: [], tagRules: { source: 'settings', home: null, enforce: false, prefill: [], dims: [CC_DIM] },
+    runResponse: { ok: false, status: 422, json: async () => ({ error: reason, fields: { tags: reason } }) } };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD }, rec);
+  await ctx.tick();
+  const start = card.querySelector('[data-ask-card-start]');
+  assert.equal(start.disabled, false);
+  start.click();
+  // The rules turn enforced while the request is out (a stale rule set the server then refuses).
+  card.__rp.tagRules.update({ dims: [CC_DIM], enforce: true, prefill: [] });
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal(rec.runBodies.length, 1);
+  assert.equal(card.querySelector('.ask-card-err').textContent, reason);
+  assert.equal(start.disabled, true, 'still blocked: the tag is missing');
+});
+
+test('run card: changing the project re-fetches the rules and swaps the pre-fill chips it added', async () => {
+  const rec = { runBodies: [], tagRuleQueries: [], tagRules: (sp) => ({ source: 'settings', home: null, enforce: false, dims: [CC_DIM],
+    prefill: sp.get('projectDir') === '/repos/proj' ? ['cc:4410'] : ['cc:4420'] }) };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD, tags: ['spike'] }, rec);
+  await ctx.tick();
+  assert.deepEqual(rpChips(card), ['cc:4410', 'spike']);
+  const n = rec.tagRuleQueries.length;
+  const sel = card.querySelector('.ask-card-project-select');
+  sel.value = '/repos/other'; sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  assert.equal(rec.tagRuleQueries.length, n + 1);
+  assert.equal(rec.tagRuleQueries.at(-1), `projectDir=${encodeURIComponent('/repos/other')}`);
+  assert.deepEqual(rpChips(card), ['cc:4420', 'spike'], 'the typed chip stays; the pre-fill chip is swapped');
+});
+
+test('run card, enforcement off: no pickers, Start enabled, chips pre-filled', async () => {
+  const rec = { runBodies: [], tagRules: { source: 'settings', home: null, enforce: false, prefill: ['cc:4410'], dims: [CC_DIM] } };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD }, rec);
+  await ctx.tick();
+  assert.deepEqual(rpChips(card), ['cc:4410']);
+  assert.equal(card.querySelector('.tag-rule-pickers').childElementCount, 0);
+  assert.equal(card.querySelector('[data-ask-card-start]').disabled, false);
 });

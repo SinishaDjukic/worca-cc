@@ -19,7 +19,8 @@ const listeners = new Map();   // key -> Set<(on:boolean)=>void>
 
 /** { key: bool } for every registry flag, read from <html data-flags>. */
 export function currentFlags(doc) {
-  const on = new Set(String(docOf(doc).documentElement.dataset.flags || '').split(/\s+/).filter(Boolean));
+  // A closed window's document has no <html>: every flag reads off.
+  const on = new Set(String(docOf(doc).documentElement?.dataset.flags || '').split(/\s+/).filter(Boolean));
   return Object.fromEntries(FLAGS.map((f) => [f.key, on.has(f.key)]));
 }
 

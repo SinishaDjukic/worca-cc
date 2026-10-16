@@ -19,6 +19,7 @@ import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
 import { EFFORTS, CODEX_EFFORTS, ALL_EFFORTS, MODEL_ENGINES, prepareModelEnv, withTierModelEnv, withProviderModesOff, PROVIDER_MODE_ENV_KEYS, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
+import { normaliseTags } from '../shared/run-tags.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
 import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel } from './settings.mjs';
@@ -1555,6 +1556,33 @@ export function writeSyncPrefs(key, patch) {
     `).run(key, JSON.stringify(extra));
   });
   return next;
+}
+
+// ── Run tags (#718): per-project default tags ────────────────────────────────
+export const RUN_TAGS_KEY = 'runTags';
+
+/** The project's default run tags (#718): a New run form prefill — applied by the server only as an enforced-tags pre-fill source. */
+export function readProjectDefaultTags(key) {
+  assertProjectKey(key);
+  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+  const list = (row ? parseJson(row.extra, {}) : {})[RUN_TAGS_KEY]?.defaults;
+  return Array.isArray(list) ? normaliseTags(list).tags : [];
+}
+
+/** Replace the defaults with an already-normalised list; [] removes the key. */
+export function writeProjectDefaultTags(key, tags) {
+  assertProjectKey(key);
+  tx(() => {
+    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+    const extra = row ? parseJson(row.extra, {}) : {};
+    if (tags.length) extra[RUN_TAGS_KEY] = { defaults: tags }; else delete extra[RUN_TAGS_KEY];
+    prepare(`
+      INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+      VALUES (?, '{}', '[]', NULL, ?)
+      ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
+    `).run(key, JSON.stringify(extra));
+  });
+  return tags;
 }
 
 /**

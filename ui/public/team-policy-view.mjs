@@ -7,6 +7,7 @@
 // purely local (a show-all toggle, chip add/remove inside the editor).
 
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
+import { normaliseDimension } from '../../src/shared/tag-dimensions.mjs';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const POLICY_PAUSE_REASONS = Object.freeze(['cost_pipeline_policy', 'cost_total_policy']);
 export const PROTECT_HINT = 'Protect worca-policy on your git host so only maintainers can push. Worca reads it for everyone and writes it only from the Team policy page.';
@@ -784,6 +785,19 @@ function valueControl(doc, meta, entry, row) {
       add.append(inp, b); wrap.append(add, err);
       break;
     }
+    case 'tagDimensions': {
+      writeItems(row, Array.isArray(v) ? v : []);
+      wrap.append(h(doc, 'div', 'tp-list'));
+      const add = h(doc, 'div', 'path-row tp-add-row');
+      const key = h(doc, 'input', 'input tp-add tp-dim-key'); key.type = 'text'; key.placeholder = 'key (cc)'; key.setAttribute('aria-label', 'Key');
+      const label = h(doc, 'input', 'input tp-dim-label'); label.type = 'text'; label.placeholder = 'label (Cost centre)'; label.setAttribute('aria-label', 'Label');
+      const values = h(doc, 'input', 'input tp-dim-values'); values.type = 'text'; values.placeholder = 'allowed values, comma-separated (optional)'; values.setAttribute('aria-label', 'Allowed values');
+      const def = h(doc, 'input', 'input tp-dim-default'); def.type = 'text'; def.placeholder = 'default (optional)'; def.setAttribute('aria-label', 'Default');
+      const req = h(doc, 'label', 'check-row'); const cb = h(doc, 'input', 'tp-dim-required'); cb.type = 'checkbox'; req.append(cb, ' Required');
+      const b = h(doc, 'button', 'btn btn-ghost btn-mini tp-add-btn', '+ add'); b.type = 'button';
+      add.append(key, label, values, def, req, b); wrap.append(add);
+      break;
+    }
     default: wrap.append(h(doc, 'span', 'muted', '—'));
   }
   return wrap;
@@ -795,8 +809,9 @@ const mcpChip = (e) => (e.plugin ? `${e.server} · ${e.plugin}`
   : clipTo(`${e.name} · inline ${e.type} · ${e.type === 'stdio' ? [e.command, ...(Array.isArray(e.args) ? e.args : []).filter((a) => typeof a === 'string')].join(' ') : typeof e.url === 'string' ? e.url : 'url with fields'}`, 60));
 const chipLabel = (meta) => (it) => (meta.type === 'plugins' ? `${it.name}${it.minVersion ? ` ≥ ${it.minVersion}` : ''}${it.marketplace ? ` (${it.marketplace})` : ''}`
   : meta.type === 'steps' ? `${it.role} ${it.model || '·'}${it.effort ? ` / ${it.effort}` : ''}` : meta.type === 'mcpServers' ? mcpChip(it)
-  : meta.type === 'skills' ? `${it.skill} · ${it.plugin}` : String(it));
-const LIST_TYPES = ['string[]', 'plugins', 'steps', 'mcpServers', 'skills'];
+  : meta.type === 'skills' ? `${it.skill} · ${it.plugin}`
+  : meta.type === 'tagDimensions' ? `${it.label} (${it.key})${it.values?.length ? ` · ${it.values.join(', ')}` : ''}${it.default ? ` · default ${it.default}` : ''}${it.required ? ' · required' : ''}` : String(it));
+const LIST_TYPES = ['string[]', 'plugins', 'steps', 'mcpServers', 'skills', 'tagDimensions'];
 /** "acme/deploy-checklist" → { plugin, skill }: the plugin manifest's name rule and the Agent Skills name rule, each
  *  ≤ 64 (checked where it is read). Publish runs the full rules again (plugins.required, one name per Team set). */
 const SKILL_REF_RE = /^([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)$/;
@@ -965,6 +980,17 @@ function wireEditor(doc, root, registry) {
         const it = { role, model: row.querySelector('.tp-step-model').value.trim(), effort: row.querySelector('.tp-step-effort').value };
         const i = items.findIndex((x) => x.role === role); if (i >= 0) items[i] = it; else items.push(it);
         row.querySelector('.tp-step-role').value = ''; row.querySelector('.tp-step-model').value = ''; row.querySelector('.tp-step-effort').value = '';
+      } else if (meta.type === 'tagDimensions') {
+        const { dim } = normaliseDimension({
+          key: row.querySelector('.tp-dim-key').value, label: row.querySelector('.tp-dim-label').value,
+          values: row.querySelector('.tp-dim-values').value.split(',').map((s) => s.trim()).filter(Boolean),
+          required: row.querySelector('.tp-dim-required').checked,
+          default: row.querySelector('.tp-dim-default').value,
+        });
+        if (!dim) return;
+        const i = items.findIndex((x) => x.key === dim.key); if (i >= 0) items[i] = dim; else items.push(dim);
+        for (const s of ['.tp-dim-key', '.tp-dim-label', '.tp-dim-values', '.tp-dim-default']) row.querySelector(s).value = '';
+        row.querySelector('.tp-dim-required').checked = false;
       } else {
         const val = row.querySelector('.tp-add').value.trim();
         if (!val || items.includes(val)) return;
@@ -1167,7 +1193,7 @@ function rowValue(row, meta) {
     case 'enum': return row.querySelector('.tp-val').value;
     case 'string': case 'semver': { const s = row.querySelector('.tp-val').value.trim(); return s === '' ? undefined : s; }
     case 'string[]': return readItems(row);
-    case 'plugins': case 'mcpServers': case 'skills': return readItems(row);
+    case 'plugins': case 'mcpServers': case 'skills': case 'tagDimensions': return readItems(row);
     case 'steps': { const out = {}; for (const it of readItems(row)) { const s = {}; if (it.model) s.model = it.model; if (it.effort) s.effort = it.effort; out[it.role] = s; } return out; }
     case 'criteria': { const out = {}; for (const i of row.querySelectorAll('.tp-crit-val')) { const t = i.value.trim(); const n = Number(t); if (t !== '' && Number.isFinite(n)) out[i.dataset.crit] = n; } return Object.keys(out).length ? out : undefined; }
     default: return undefined;
@@ -1185,7 +1211,7 @@ export function docFromEditor(root, { registry = [] } = {}) {
     const meta = metaOf(row.dataset.key);
     const value = rowValue(row, meta);
     if (value === undefined) continue;
-    if ((meta.type === 'string[]' || meta.type === 'plugins' || meta.type === 'mcpServers' || meta.type === 'skills') && !value.length) continue;
+    if ((meta.type === 'string[]' || meta.type === 'plugins' || meta.type === 'mcpServers' || meta.type === 'skills' || meta.type === 'tagDimensions') && !value.length) continue;
     if (meta.type === 'steps' && !Object.keys(value).length) continue;
     const entry = { kind, value };
     // An attribute at its default is written only when the document already carried it: a fresh

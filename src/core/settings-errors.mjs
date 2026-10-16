@@ -38,6 +38,8 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   'workspaceScan.agentModel': 'Project agents',
   'workspaceScan.agentEffort': 'Effort',
   schedule: 'Scheduled runs',
+  tagDimensions: 'Tag dimensions',
+  enforceTags: 'Require mandatory tags',
   'schedule.graceMin': 'At most this late',
   'schedule.ifMissed': 'If Worca is not running at that time',
   'schedule.maxFailures': 'Pause a repeating schedule after failures in a row',

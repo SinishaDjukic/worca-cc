@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { aggregate } from '../src/shared/team-metrics/aggregate.mjs';
 import {
-  renderSyncChip, renderTmKpiRow, renderTeamMetricsBody, renderRunsTable } from '../ui/public/team-metrics-view.mjs';
+  renderSyncChip, renderTmKpiRow, renderTeamMetricsBody, renderRunsTable, renderTmViewChips } from '../ui/public/team-metrics-view.mjs';
+import { allocationModel } from '../ui/public/tag-allocation.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -90,6 +91,12 @@ test('Group by lives in the Spend per week card head, reflects agg.groupBy, and 
   const ws = renderGroupBySelect('actor', 'workspace', { doc });
   assert.deepEqual([...ws.querySelector('select').options].map((o) => o.value), ['workflow', 'result', 'actor'], 'a workspace scope offers the same three: a run\'s cost is one number, never split by project touched');
   assert.equal(ws.querySelector('select').value, 'actor');
+  // Run tags: one option per tag key in the loaded records, labelled by its dimension when configured.
+  const tagged = renderGroupBySelect('workflow', 'project', { doc, tagKeys: ['client'], dims: [{ key: 'client', label: 'Client' }] }).querySelector('select');
+  assert.deepEqual([...tagged.options].map((o) => o.value), ['workflow', 'result', 'actor', 'tag:client']);
+  assert.equal(tagged.options[3].textContent, 'Client');
+  const tagBody = renderTeamMetricsBody(aggregate(recs, { range: 'this-month', now: NOW }), { doc, now: NOW, tagKeys: ['client'], tagDims: [{ key: 'client', label: 'Client' }] });
+  assert.ok([...tagBody.querySelectorAll('#tm-group option')].some((o) => o.value === 'tag:client' && o.textContent === 'Client'));
   const wsBody = renderTeamMetricsBody(aggregate([makeRecord({ id: 'g2', startedAt: '2026-09-05T10:00:00Z', usd: 2, kind: 'workspace', touched: ['acme/gateway', 'acme/console'] })], { range: 'this-month', now: NOW }), { doc, now: NOW, scopeKind: 'workspace' });
   assert.ok(!wsBody.textContent.includes('split evenly'), 'no "split evenly" hint anywhere');
   const projTbl = wsBody.querySelector('.tm-breakdown table[data-dim="project"]');
@@ -129,4 +136,22 @@ test('KPI row: Saved tile appears only with human hours, prices them at the rate
       assert.equal(tile.parentElement.querySelectorAll('.stat-mult').length, 1, 'only the Saved tile carries the pill');
     } },
   ]);
+});
+
+const VIEW_RECS = [
+  { ...makeRecord({ id: 'v1', startedAt: '2026-09-08T10:00:00Z', usd: 3, actor: 'Ana' }), tags: ['client:acme'] },
+  makeRecord({ id: 'v2', startedAt: '2026-09-09T10:00:00Z', usd: 1 }),
+];
+
+test('renderTeamMetricsBody: no view (flag off) = no chips; By person = the By actor table alone; By tag = the tables', () => {
+  const agg = aggregate(VIEW_RECS, { range: 'this-month', now: NOW });
+  assert.equal(renderTeamMetricsBody(agg, { doc }).querySelector('#tm-view'), null);
+  const person = renderTeamMetricsBody(agg, { doc, view: 'person', tagChip: true });
+  assert.deepEqual([...person.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'By tag']);
+  assert.deepEqual([...person.querySelectorAll('.tm-tbl')].map((t) => t.dataset.dim), ['actor']);
+  const tables = [allocationModel({ key: 'client', label: 'client', rows: [{ kind: 'value', label: 'acme', usd: 3, runs: 1 }, { kind: 'none', label: '(no client)', usd: 1, runs: 1 }] })];
+  const tag = renderTeamMetricsBody(agg, { doc, view: 'tag', tagChip: true, tagTables: tables });
+  assert.equal(tag.querySelectorAll('.alloc-card').length, 1);
+  assert.equal(tag.querySelector('.tm-tbl'), null);
+  assert.equal(renderTmViewChips('overview', { doc, tagChip: false }).querySelectorAll('button').length, 2);
 });

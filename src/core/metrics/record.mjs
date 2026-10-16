@@ -15,6 +15,8 @@ import {
 } from './sync.mjs';
 import { writeRunLedger } from './ledger.mjs';
 import { readPolicyState } from '../policy/state.mjs';
+import { readRunTags } from '../run-tags-store.mjs';
+import { normaliseTags, parseTag } from '../../shared/run-tags.mjs';
 
 export const RECORD_VERSION = 1;
 export const TEXT_MAX = 200;
@@ -28,8 +30,9 @@ export const RECORD_FIELDS = Object.freeze([
   'workflow', 'target', 'title', 'source',
   'cost', 'agents', 'steps', 'cycles', 'interventions',
   'pr', 'git', 'actor',
-  // `policy` (team-policy design §10) is an OPTIONAL trailing key: present only on runs that
-  // saw a policy, so policy-less records keep exactly this key list. Readers ignore it.
+  // `tags` (run tags) and `policy` (team-policy design §10) are OPTIONAL trailing keys: `tags` only
+  // on runs with tags, `policy` only on runs that saw a policy, so other records keep exactly this
+  // key list. Readers ignore them.
 ]);
 
 const RESULT_OF = Object.freeze({ done: 'done', error: 'failed', stopped: 'stopped' });
@@ -237,10 +240,19 @@ export function buildRunRecord(snap, { attribution = 'git-user', now = new Date(
     // Additive: a stable, host-neutral key for the person (personKey of the git email), so the
     // Timeline can match a run's actor to the author of a pull request made outside Worca.
     ...(attribution !== 'none' && PERSON_KEY_RE.test(String(snap.actorKey || '')) ? { actorKey: snap.actorKey } : {}),
+    // Present ONLY on runs with tags: tag-less records stay byte-identical to v1. Not gated on
+    // attribution — tags describe the work, not the person (clarify: always include).
+    ...((t) => (t ? { tags: t } : {}))(buildTags(snap.tags)),
     // Present ONLY on runs that saw a policy: records of policy-less runs stay byte-identical to v1.
     ...((p) => (p ? { policy: p } : {}))(buildPolicy(snap.policy, attribution)),
     ...((h) => (h ? { human: h } : {}))(buildHuman(agentSteps, snap.humanHours)),
   };
+}
+
+/** `tags` (run tags, additive): the run's normalised tags at its terminal hook; null when none. */
+function buildTags(list) {
+  const tags = normaliseTags(Array.isArray(list) ? list.filter((t) => typeof t === 'string' && !parseTag(t).error) : []).tags;
+  return tags.length ? tags : null;
 }
 
 const TERMINAL = new Set(['done', 'error', 'stopped']);
@@ -360,6 +372,7 @@ export async function snapshotFromHarness(harness, { status, error = null } = {}
     target,
     title: await settledTitle(harness),
     source: readSource(runId),
+    tags: (() => { try { return readRunTags(runId); } catch { return []; } })(),
     pr: (() => { try { return readPrState(runId); } catch { return null; } })(),
     prBase: branch?.source ?? null,
     git: {

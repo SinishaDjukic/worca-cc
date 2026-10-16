@@ -74,6 +74,7 @@ import {
   memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
   workspaceScanModels, setWorkspaceScanModels, assertWorkspaceScanInput,
   scheduleDefaults, setScheduleDefaults,
+  userTagDimensions, setUserTagDimensions, userEnforceTags, setUserEnforceTags,
   nightModeSettings, setNightMode, nightModeToggle, nightModeHereSince, setNightModeToggle, assertNightModeToggleInput,
   awayPerPerson, nightModeToggleFor, nightModeHereSinceFor, setPersonNightModeToggle,
   actionsSettings, setActionsSettings, assertActionsInput,
@@ -144,7 +145,7 @@ import {
   discoverAll, scanMembers, routeWorkspaceMembers, projectMetricsStatus, startTeamMetricsBackground,
   metricsEvents, slugDirName,
 } from '../src/core/metrics/sync.mjs';
-import { readScope, scopeSources, listScopes, parseScopeParam, aggregate, resolveRange, GROUP_BYS, PROJECT_KEY_RE as TM_PROJECT_KEY_RE } from '../src/core/metrics/read.mjs';
+import { readScope, scopeSources, listScopes, parseScopeParam, aggregate, resolveRange, isGroupBy, PROJECT_KEY_RE as TM_PROJECT_KEY_RE } from '../src/core/metrics/read.mjs';
 import { resolveRunPrs, listPrEvents, MAX_LOOKUPS as TM_MAX_PR_LOOKUPS } from '../src/core/metrics/prs.mjs';
 // Team policy (team-policy design §9, §11): the worca-policy branch, its gates and its pages.
 import {
@@ -220,7 +221,7 @@ import {
   readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, setHumanInLoop, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
   readPrRemotePrefs, setPrRemotePrefs, modelHasBaseUrlRouting, writeSyncPrefs, readSyncPrefs,
-  readNightModePrefs, writeNightModePrefs,
+  readNightModePrefs, writeNightModePrefs, readProjectDefaultTags, writeProjectDefaultTags,
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
@@ -327,6 +328,10 @@ import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, ca
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput } from '../src/core/shape/features.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
+import { editRunTags, readRunTags, tagVocabulary } from '../src/core/run-tags-store.mjs';
+import { normaliseTags, describeTagChange, parseTag } from '../src/shared/run-tags.mjs';
+import { normaliseDimensions, prefillTags } from '../src/shared/tag-dimensions.mjs';
+import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, prefillSources } from '../src/core/tag-dimensions.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
@@ -387,7 +392,7 @@ import {
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
   resolveAfterRef, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
-  chainBaseBranchesOf, resumeTicketsFor, cancelResumeTicketsFor, runChains,
+  chainBaseBranchesOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
 } from '../src/core/scheduler.mjs';
 import {
   onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
@@ -1100,6 +1105,7 @@ function summarizeRuns() {
     genId: r.genId || null,
     workspaceId: r.workspaceId || null,
     projectNames: r.projectNames || null,
+    tags: r.tags || [],
   }));
 }
 
@@ -1121,6 +1127,7 @@ function announceRun(entry) {
     startedAt: entry.startedAt,
     startedBy: entry.startedBy || null,
     lastAction: entry.lastAction || null,
+    tags: entry.tags || [],
   });
 }
 
@@ -2108,6 +2115,21 @@ function askTrackRun(threadId, input, pin) {
 // body (workspace):      { workspaceId, prompt?, ... } — mutually exclusive with
 //                        projectDir (§2.6). Single-project behavior is byte-identical.
 // ---------------------------------------------------------------------------
+/**
+ * Enforced run tags (D9, D9a, D10, D13): pre-fill, then refuse a missing mandatory tag or an off-list value
+ * with 422 { error, fields: { tags } }. Returns true when it answered. On pass, body.tags holds the filled
+ * list (so a schedule stores it) — except a Run after that names no tags, which keeps inheriting.
+ */
+async function tagGate(res, body, { projectDir = null, workspaceId = null, startedBy = null, after = null, exempt = false }) {
+  if (exempt) return false;
+  const inherits = !!after && body.tags === undefined;
+  const base = inherits ? inheritedTagsAtCreation(after) : (Array.isArray(body.tags) ? body.tags : []);
+  const g = await applyTagRules({ projectDir, workspaceId, tags: base, person: startedBy });
+  if (g.error) { res.status(422).json({ error: g.error, fields: { tags: g.error } }); return true; }
+  if (g.enforced && !inherits) body.tags = g.tags;
+  return false;
+}
+
 const startRunHandler = async (req, res) => {
   // B2: a draining server starts nothing new (the scan arm and the scheduler come through here too).
   if (DRAIN.on) return res.status(503).json(DRAIN_REFUSAL);
@@ -2289,6 +2311,19 @@ const startRunHandler = async (req, res) => {
     // body, so the flag survives the wait.
     if (body.nightMode !== undefined && typeof body.nightMode !== 'boolean') return badRequest(res, 'nightMode must be true or false');
     const nightMode = body.nightMode === true;
+    // Run tags (#718): normalised once, written back so a stored schedule keeps the clean list and
+    // its firing re-validates it. Absent = no tags (legacy bodies unchanged). An explicit [] stays []:
+    // "no tags", which also opts an `after` run out of inheriting its predecessor's tags.
+    let tags = [];
+    if (body.tags !== undefined) {
+      const t = normaliseTags(body.tags);
+      if (t.errors.length) return badRequest(res, `tags: ${t.errors[0]}`);
+      tags = t.tags;
+      body.tags = tags;
+    }
+    // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
+    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
+      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
@@ -2443,6 +2478,8 @@ const startRunHandler = async (req, res) => {
         if (!r.ok) return badRequest(res, r.error);
         sched.afterRef = r.after;
       }
+      if (await tagGate(res, body, { workspaceId: ws.id, startedBy, after: sched?.afterRef || null, exempt: tagExempt })) return;
+      if (Array.isArray(body.tags)) tags = body.tags;
       if (sched) {
         // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
         if (runEngine.engine) {
@@ -2497,6 +2534,7 @@ const startRunHandler = async (req, res) => {
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
+        tags,
         ...(shape ? { shape } : {}),
       });
 
@@ -2511,6 +2549,7 @@ const startRunHandler = async (req, res) => {
         status: 'starting',
         startedAt: new Date().toISOString(),
         startedBy,
+        tags,
         events: [],
         pendingQuestion: null,
       };
@@ -2576,6 +2615,9 @@ const startRunHandler = async (req, res) => {
         if (!r.ok) return badRequest(res, r.error);
         sched.afterRef = r.after;
       }
+      // Enforced tags (D9): before pairBody / storedBody copy body, so a schedule stores the pre-filled list.
+      if (await tagGate(res, body, { projectDir, startedBy, after: sched?.afterRef || null, exempt: tagExempt })) return;
+      if (Array.isArray(body.tags)) tags = body.tags;
       // A schedule stores the pair as checked (the catalog's casing, trimmed): its ticket takes it verbatim.
       const pairBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
       // …and the overlay as checked (the catalog's casing, each model with its effort): the ticket fires it verbatim.
@@ -2633,6 +2675,7 @@ const startRunHandler = async (req, res) => {
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
+        tags,
         ...(shape ? { shape } : {}),
       });
 
@@ -2645,6 +2688,7 @@ const startRunHandler = async (req, res) => {
         status: 'starting',
         startedAt: new Date().toISOString(),
         startedBy,
+        tags,
         events: [],
         pendingQuestion: null,
       };
@@ -3186,6 +3230,12 @@ async function fireTicket(ticket) {
   if (ticket.after) {
     const p = predecessorState(ticket.after, { policy: ticket.after.policy, isLive: liveProbe });
     if (p.state === 'waiting' && !ticket.forced) return { ok: false, error: 'the run before it is still going', transient: true };
+    // #718: a chained run that names no tags of its own takes the previous run's tags, read at fire
+    // time so a retag of the parent before the chain fires is honoured. An explicit [] opts out.
+    if (body.tags === undefined && p.pipelineId) {
+      const inherited = readRunTags(p.pipelineId);
+      if (inherited.length) body.tags = inherited;
+    }
     if (ticket.sourceFromPrevious) {
       const prev = p.pipelineId ? previousBranchesOf(p.pipelineId) : null;
       // Backstop only: the gate already waits for a merge back (pipelineGate). A FORCED ticket skips the gate.
@@ -3219,6 +3269,17 @@ async function fireTicket(ticket) {
   // A "Run now" click names its clicker for this one firing (scheduleVerb records it).
   const runNowBy = RUN_NOW_BY.get(ticket.id) || null;
   RUN_NOW_BY.delete(ticket.id);
+  // Enforced tags (D11): saved at creation; a firing fills only what became mandatory since (after #718
+  // inheritance above), then re-checks. A start it would refuse is SKIPPED with the reason — never started
+  // untagged, and never a failure (the handler gate exempts fired tickets, D10).
+  const tagCheck = await applyTagRules({
+    projectDir: ticket.workspaceId ? null : (body.projectDir || ticket.projectDir || null),
+    workspaceId: ticket.workspaceId || null,
+    tags: Array.isArray(body.tags) ? body.tags : [],
+    person: runNowBy || (body.internal && body.internal.startedBy) || null,
+  });
+  if (tagCheck.error) return { ok: false, skip: true, error: tagCheck.error };
+  if (tagCheck.enforced) body.tags = tagCheck.tags;
   const out = await invokeStartRun(body, { ticket, ...(runNowBy ? { runNowBy } : {}) });
   if (out.status === 200 && out.body && out.body.runId) return { ok: true };
   const error = (out.body && out.body.error) || `the run could not be started (HTTP ${out.status})`;
@@ -3278,8 +3339,8 @@ export async function schedulerTick({ now = Date.now() } = {}) {
       isLive: liveProbe,
       staggerMs: SCHEDULER_STAGGER_MS,
     });
-    for (const id of [...out.failed, ...out.missed]) releaseAskCard(getTicket(id));
-    broadcastFeaturesOf(() => featuresOfTickets([...out.fired, ...out.missed, ...out.failed]));
+    for (const id of [...out.failed, ...out.missed, ...out.skipped]) releaseAskCard(getTicket(id));
+    broadcastFeaturesOf(() => featuresOfTickets([...out.fired, ...out.missed, ...out.failed, ...out.skipped]));
     if (out.fired.length || out.missed.length || out.skipped.length || out.failed.length || out.retried.length) {
       emitChanged('schedules-changed', 'tick');
     }
@@ -4484,8 +4545,13 @@ app.get('/api/run-defaults', (req, res) => {
   if (raw && !projectDir) return badRequest(res, 'invalid projectDir');
   try {
     const result = resolveSetting('run.engine', projectDir ? { projectDir } : null);
+    // Run tags (#718): the project's default tags (a New run prefill) and its store key, which the
+    // form needs to save new defaults.
+    const key = projectDir ? projectKey(projectDir) : null;
     res.json({ engine: { value: result.value, source: result.source },
-      steps: Object.fromEntries(MODEL_ENGINES.map((e) => [e, stepSlotDefaults(e, { projectDir })])) });
+      steps: Object.fromEntries(MODEL_ENGINES.map((e) => [e, stepSlotDefaults(e, { projectDir })])),
+      projectKey: key,
+      tags: key ? readProjectDefaultTags(key) : [] });
   } catch (error) { res.status(500).json({ error: error?.message || String(error) }); }
 });
 
@@ -4784,6 +4850,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     projectDir,
     // The run keeps its starter across a resume; the resume itself is the last action.
     startedBy: saved.row.started_by || null,
+    tags: readRunTags(saved.row.id),
     lastAction: { kind: 'resume', by: by || 'local', at: new Date().toISOString() },
     ...(workspace
       ? {
@@ -5371,21 +5438,29 @@ app.get('/api/counts', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/stats?range=today|week|month|all  -> the Statistics view payload (§6.9).
-// Pure DB reads; an unknown range is the caller's fault, so getStats' RangeError
-// maps to 400 while anything else keeps bubbling to the error handler.
+// GET /api/stats?range=today|week|month|lastMonth|custom|all[&from&to][&tag…][&person][&groupBy][&byTag=1[&tagKey…]]
+//   -> the Statistics view payload (§6.9). A bad range/filter/groupBy is the caller's fault: getStats'
+//   RangeError maps to 400. The broker's per-person card is skipped while a filter is active (it
+//   cannot be narrowed by tag).
 app.get('/api/stats', async (req, res) => {
+  const str = (v) => (typeof v === 'string' && v ? v : null);
   let stats;
   try {
-    const range = typeof req.query.range === 'string' && req.query.range ? req.query.range : 'month';
-    stats = getStats({ range });
+    const q = req.query;
+    stats = getStats({
+      range: str(q.range) || 'month',
+      from: str(q.from), to: str(q.to),
+      filter: { tags: q.tag == null ? [] : [].concat(q.tag), person: str(q.person) },
+      groupBy: str(q.groupBy),
+      tagKeys: q.byTag === '1' ? (q.tagKey == null ? [] : [].concat(q.tagKey)) : null,
+    });
   } catch (err) {
     if (err instanceof RangeError) return badRequest(res, err.message);
-    throw err;
+    return res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
   // Credential broker: model spend per person in the same window, as the broker metered it
   // (the authoritative figure: it saw every request). Absent with the broker off.
-  if (brokerEnabled()) stats.byPerson = await statsByPerson(stats.windowStartMs, stats.windowEndMs);
+  if (brokerEnabled() && !stats.filtered) stats.byPerson = await statsByPerson(stats.windowStartMs, stats.windowEndMs);
   // Shaper (D28): shaped vs unshaped runs of the same size. Absent with the flag off.
   if (shapeFirstEnabled()) stats.shaping = shapingGroups(stats.range === 'all' ? 0 : stats.windowStartMs, stats.windowEndMs);
   res.json(stats);
@@ -5442,9 +5517,11 @@ app.get('/api/team-metrics', async (req, res) => {
   const groupBy = typeof req.query.groupBy === 'string' && req.query.groupBy ? req.query.groupBy : 'workflow';
   const from = typeof req.query.from === 'string' ? req.query.from : null;
   const to = typeof req.query.to === 'string' ? req.query.to : null;
+  const tagFilter = req.query.tag == null ? [] : [].concat(req.query.tag).map(String);
   try {
     resolveRange(range, { from, to });                       // 400 before touching git
-    if (!GROUP_BYS.includes(groupBy)) throw new RangeError(`unknown groupBy "${groupBy}"`);
+    if (!isGroupBy(groupBy)) throw new RangeError(`unknown groupBy "${groupBy}"`);
+    for (const t of tagFilter) { const r = parseTag(t); if (r.error) throw new RangeError(`bad tag filter: ${r.error}`); }
   } catch (err) { return badRequest(res, err.message); }
   try {
     // defer=1 (the page): serve the worktree now and run a due fetch afterwards; the fetch's
@@ -5462,7 +5539,7 @@ app.get('/api/team-metrics', async (req, res) => {
       // The page re-aggregates client-side (§4.9 "one fetch serves the session") and asks with
       // aggregate=0: at 12k records the unused aggregate added ~3.9 MB to a ~9.9 MB response.
       // Other clients (and the API tests) still get it by default.
-      aggregate: req.query.aggregate === '0' ? null : aggregate(read.records, { range, from, to, groupBy, humanRateUsd }),
+      aggregate: req.query.aggregate === '0' ? null : aggregate(read.records, { range, from, to, groupBy, filter: tagFilter.length ? { tags: tagFilter } : {}, humanRateUsd }),
       stats: read.stats,
       sync: read.sync,
       refresh: read.refresh,
@@ -5786,6 +5863,58 @@ app.get('/api/projects/:key/sync/settings', syncRoute(async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;
   res.json(syncPrefsView(p.key));
 }));
+
+// Run tags (#718): the project's default tags, a New run form prefill (the server applies them only as an enforced-tags pre-fill source).
+app.get('/api/projects/:key/tags/defaults', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  res.json({ tags: readProjectDefaultTags(p.key) });
+});
+app.put('/api/projects/:key/tags/defaults', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  const t = normaliseTags(req.body?.tags);
+  if (!Array.isArray(req.body?.tags) || t.errors.length) return badRequest(res, t.errors[0] || 'tags must be a list of strings');
+  res.json({ tags: writeProjectDefaultTags(p.key, t.tags) });
+});
+
+// Run tags (#718): replace a run's tags (any status; the UI offers it on finished runs), logging who
+// changed what in run_tag_events and on the run's timeline. By pipeline id alone, archived runs included.
+app.put('/api/runs/:id/tags', (req, res) => {
+  const row = findPipelineRowById(req.params.id);
+  if (!row) return res.status(404).json({ error: 'pipeline not found' });
+  if (!Array.isArray(req.body?.tags)) return badRequest(res, 'tags must be a list of strings');
+  const actor = actorOf(req);
+  let out;
+  try { out = editRunTags(row.id, req.body.tags, { actor }); }
+  catch (e) { if (e?.code === 'BAD_TAGS') return badRequest(res, e.message); throw e; }
+  if (out.changed) {
+    appendAuditById(row.id, `Tags changed${byActor(actor)}: ${describeTagChange(out.before, out.tags)}.`, { actor });
+    for (const r of runs.values()) if (r.pipelineId === row.id) r.tags = out.tags;
+    emitChanged('pipelines-changed', 'tags');
+  }
+  res.json({ tags: out.tags, changed: out.changed });
+});
+
+// Autocomplete vocabulary for tag fields: keys, then values already in use, most used first.
+app.get('/api/tags', (req, res) => res.json(tagVocabulary()));
+// Tag dimensions (D9): one run target's list, or the machine-wide union for Statistics, the Runs list and Team metrics.
+app.get('/api/tag-dimensions', async (req, res) => {
+  const rawDir = typeof req.query.projectDir === 'string' && req.query.projectDir ? req.query.projectDir : null;
+  const workspaceId = typeof req.query.workspaceId === 'string' && req.query.workspaceId ? req.query.workspaceId : null;
+  // resolveProjectDir (normalizeProjectPath) never returns null for a non-blank string, so refuse a NUL byte here.
+  if (rawDir && rawDir.includes('\0')) return badRequest(res, 'invalid projectDir');
+  const projectDir = rawDir ? resolveProjectDir(rawDir) : null;
+  if (rawDir && !projectDir) return badRequest(res, 'invalid projectDir');
+  try {
+    if (projectDir || workspaceId) {
+      const info = await dimensionsForTarget({ projectDir, workspaceId });
+      // D4: the form's pre-fill, dimension keys only (the form keeps project defaults for other keys itself).
+      // D19: enforce is flag-aware here, so the client gate needs no flag check of its own.
+      const prefill = prefillTags(info.dims, [], prefillSources({ projectDir, person: startedByOf(req) }));
+      return res.json({ ...info, enforce: flagEnabled('runTags') && info.enforce === true, prefill });
+    }
+    res.json({ ...(await allTagDimensions()), team: await teamTagPolicy() });
+  } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
 function syncPrefsView(key) {
   return { own: readSyncPrefs(key) || {}, defaults: syncDefaults(), settings: effectiveSyncSettings(key) };
 }
@@ -6543,7 +6672,7 @@ function prWatchOrigin(w) {
   return { pipelineId: row.id, projectKey: m.projectKey, projectDir: m.projectDir, branch: m.br.feature,
     sourceBranch: m.br.source || null, baseRemote: effectiveSyncSettings(m.projectKey).remote || null,
     guardrailsId: row.guardrails_id || null, engine: runEngineOfRow(row),
-    mock: rp?.mock === true };
+    mock: rp?.mock === true, tags: readRunTags(row.id) };
 }
 /** The pr-watch-changed frame: the run's STORE key (a workspace run's is `workspaces/<wk>`, the key its
  *  History detail carries), its id and the member, so only the matching open detail / member row refreshes. */
@@ -8102,6 +8231,7 @@ app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
       return res.status(409).json({ error: `\`${m.br.feature}\` is checked out${holders?.[0] ? ` in ${holders[0]}` : ''}. Discard that checkout first: the new run needs its own worktree.`,
         code: 'BRANCH_CHECKED_OUT', ...(holders?.[0] ? { holder: holders[0] } : {}) });
     }
+    const parentTags = readRunTags(row.id);
     const body = {
       projectDir: m.projectDir,
       title: `Resolve conflicts with ${c.base}: ${row.title || m.br.feature}`.slice(0, 200),
@@ -8117,6 +8247,7 @@ app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
       // #617: a mock run is resolved by a mock run. Best effort: the resume point records `mock: true` while it
       // exists; when it was cleared, the server's own mock mode decides (startRunHandler's `serverMockMode()`).
       ...(mockOfRow(row) ? { mock: true } : {}),
+      ...(parentTags.length ? { tags: parentTags } : {}),   // #718: the resolve run is the parent's work
     };
     // Mark BEFORE the start: the run's own post-run step settles this mark, so it must exist before the run can end.
     const mark = resolveMark('pipeline', rec, { by });
@@ -9352,6 +9483,8 @@ const settingsState = () => ({
   hideBuiltinModels: hideBuiltinModels(),
   theme: storedTheme(),                                   // system | light | dark (dark-mode design §6)
   schedule: scheduleDefaults(),                           // defaults a NEW schedule inherits
+  tagDimensions: userTagDimensions(),                     // Settings › Tags › Tag dimensions (local; a team policy's list wins)
+  enforceTags: userEnforceTags(),                         // Settings › Tags (local; a team policy's runs.enforceTags wins)
   sync: syncDefaults(),                                   // sync before run (#527): instance defaults
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
   flags: allFlags(),                                      // { key: bool } resolved (docs/feature-flags.md)
@@ -9950,6 +10083,13 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasActionsKey) asSettingsField('actions', () => assertActionsInput(body.actions));
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
     if (hasFlagsKey) asSettingsField('flags', () => checkFlags(body.flags));   // validate + cascade dry run, before anything is written
+    if (has('tagDimensions')) asSettingsField('tagDimensions', () => {
+      const { errors } = normaliseDimensions(body.tagDimensions ?? []);
+      if (errors.length) throw Object.assign(new Error(errors[0]), { code: 'BAD_TAG_DIMENSIONS' });
+    });
+    if (has('enforceTags')) asSettingsField('enforceTags', () => {
+      if (typeof body.enforceTags !== 'boolean') throw Object.assign(new Error('enforceTags must be true or false'), { code: 'BAD_ENFORCE_TAGS' });
+    });
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -9989,13 +10129,15 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('nightMode')) await setNightMode(body.nightMode);
     if (has('nightModeToggle') && !(await setPersonNightModeToggle(person, body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
     if (has('sync')) await setSyncDefaults(body.sync);
+    if (has('tagDimensions')) await asSettingsField('tagDimensions', () => setUserTagDimensions(body.tagDimensions));
+    if (has('enforceTags')) await asSettingsField('enforceTags', () => setUserEnforceTags(body.enforceTags));
     // Live runs re-evaluate their open question against the new night settings.
     if (hasNightKey) for (const e of runs.values()) e.orch?.nightConfigChanged?.();
     if (hasActionsKey) { await setActionsSettings(body.actions); builtinsDetected = null; }   // re-detect the built-ins lazily
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;

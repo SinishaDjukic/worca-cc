@@ -332,3 +332,29 @@ test('Catalog tab and editor show a Codex model\'s engine', () => {
   const plain = renderPolicyCatalogPanel(PAYLOAD, { doc });
   assert.equal(plain.querySelector('.tp-catalog-models .tp-engine'), null);
 });
+
+test('editor: runs.tagDimensions chips, add row adds a dimension, docFromEditor reads them back', () => {
+  const registry = [...REGISTRY, { key: 'runs.tagDimensions', group: 'runs', type: 'tagDimensions', kinds: ['soft'], label: 'Tag dimensions' },
+    { key: 'runs.enforceTags', group: 'runs', type: 'bool', kinds: ['soft'], label: 'Require mandatory tags' }];
+  const policy = { schema: 1, fields: { 'runs.tagDimensions': { kind: 'soft', value: [{ key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true }] } }, workspaceRuns: {}, catalogs: { guardrailSets: [], models: [] } };
+  const root = renderPolicyEditor(policy, { registry, doc });
+  doc.body.append(root);
+  const row = root.querySelector('.tp-edit-row[data-key="runs.tagDimensions"][data-scope="fields"]');
+  assert.deepEqual([...row.querySelectorAll('.tp-chip')].map((c) => c.firstChild.textContent), ['Cost centre (cc) · 4410, 4420 · required']);
+  row.querySelector('.tp-dim-key').value = 'client';
+  row.querySelector('.tp-dim-label').value = 'Client';
+  row.querySelector('.tp-dim-default').value = 'Acme';
+  row.querySelector('.tp-add-btn').dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  assert.equal(row.querySelectorAll('.tp-chip').length, 2);
+  assert.equal(row.querySelector('.tp-dim-key').value, '');
+  assert.equal(row.querySelector('.tp-dim-default').value, '');
+  assert.equal(row.querySelectorAll('.tp-chip')[1].firstChild.textContent, 'Client (client) · default acme');
+  assert.deepEqual(docFromEditor(root, { registry }).fields['runs.tagDimensions'].value, [
+    { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true },
+    { key: 'client', label: 'Client', values: [], required: false, default: 'acme' },
+  ]);
+  const enforceRow = root.querySelector('.tp-edit-row[data-key="runs.enforceTags"][data-scope="fields"]');
+  assert.ok(enforceRow, 'runs.enforceTags renders through the generic bool control');
+  assert.equal(enforceRow.closest('[data-group]')?.dataset.group, 'runs');
+  root.remove();
+});

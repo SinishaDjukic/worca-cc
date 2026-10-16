@@ -62,7 +62,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 59;
+export const SCHEMA_VERSION = 60;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1042,6 +1042,30 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
 );
 `;
 
+// v59 (#718; 57-58 are Shaper's): run tags. One row per (run, key); the plain tag `spike` is value ''. Written at run
+// creation and by the tag-edit route only — writeState never touches them. pipelines rows are never
+// DELETEd (pipeline-delete.mjs), so the CASCADE is convention, and tags survive archive/restore.
+const RUN_TAGS_DDL = `
+CREATE TABLE IF NOT EXISTS run_tags (
+  pipeline_id TEXT NOT NULL,
+  key         TEXT NOT NULL,
+  value       TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (pipeline_id, key),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_run_tags_key_value ON run_tags (key, value);
+CREATE TABLE IF NOT EXISTS run_tag_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  pipeline_id TEXT NOT NULL,
+  ts          TEXT NOT NULL,
+  actor       TEXT,
+  before_tags TEXT NOT NULL,   -- JSON string[] (normalised)
+  after_tags  TEXT NOT NULL,   -- JSON string[] (normalised)
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_run_tag_events_pipeline ON run_tag_events (pipeline_id, id);
+`;
+
 const SHAPE_SLICES_DDL = `
 CREATE TABLE IF NOT EXISTS shape_features (
   id TEXT PRIMARY KEY,
@@ -1113,6 +1137,8 @@ const INCREMENTAL_TABLES = {
   shape_features: SHAPE_SLICES_DDL,
   shape_feature_slices: SHAPE_SLICES_DDL,
   shape_plans: SHAPE_SLICES_DDL,
+  run_tags:       RUN_TAGS_DDL,
+  run_tag_events: RUN_TAGS_DDL,
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -1580,8 +1606,8 @@ function applySchemaV55(db) {
   seedShippedWorkflow(db, GRAPH_ARCHITECTURE_WORKFLOW);
 }
 
-/** v59: seed the shipped Diagram → Plan workflow (V41's shape for a third shipped graph). */
-function applySchemaV59(db) {
+/** v60: seed the shipped Diagram → Plan workflow (V41's shape for a third shipped graph). */
+function applySchemaV60(db) {
   seedShippedWorkflow(db, GRAPH_DIAGRAM_WORKFLOW);
 }
 
@@ -2206,9 +2232,10 @@ export function migrate(db) {
     if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
     if (current < 57) db.exec(SHAPE_SLICES_DDL);     // Shape it first: sliced features + Plans
     // v58 (D24): shape_features ship columns, shape_feature_slices.draft_pr_url — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 59) db.exec(RUN_TAGS_DDL);         // run tags + tag-edit audit (#718); 57-58 are Shaper's (#708, #730)
     // The shipped Diagram → Plan workflow: one-shot seed at its own rung, refresh on every bump
     // (the Presentation seed's two halves).
-    if (current < 59) applySchemaV59(db);
+    if (current < 60) applySchemaV60(db);
     if (current < SCHEMA_VERSION) refreshDiagramSeed(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
