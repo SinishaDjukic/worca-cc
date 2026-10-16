@@ -181,6 +181,25 @@ test('the chat title runs on Codex with the Ask slot model, read-only', async ()
   assert.equal(titles[0].model, 'gpt-5.6-luna');
 });
 
+test('a finished Codex reply writes its next-prompt suggestion on Codex, with the small Codex model', async () => {
+  const s = seed();
+  const sugs = [];
+  const engines = [];
+  const { turn } = makeTurn(s, { suggest: true }, {
+    generateSuggestion: async (_i, o) => { sugs.push(o); return 'Open a PR'; },
+    suggestionModel: (e) => { engines.push(e); return e === 'codex' ? 'gpt-5.6-luna' : null; },
+    suggestionsEnabled: () => true,
+    budgetStatus: () => ({ blocked: false }),
+    runClaudeImpl: async (o) => reply(o),
+  });
+  await turn.run();
+  await turn.suggestionPromise;
+  assert.deepEqual(engines, ['codex']);
+  assert.equal(sugs.length, 1);
+  assert.equal(sugs[0].engine, 'codex');
+  assert.equal(sugs[0].model, 'gpt-5.6-luna');
+});
+
 test('a refused first Codex turn starts no codex for its title: the prompt words become the title', async () => {
   const s = seed();
   const titles = [];

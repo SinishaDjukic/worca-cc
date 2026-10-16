@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 
-import { makePanel } from './helpers/ask-panel-harness.mjs';
+import { makePanel, key } from './helpers/ask-panel-harness.mjs';
 import { replayFixture, stampFrames } from './helpers/ask-frames.mjs';
 
 const TID = 'ask_00000001';
@@ -499,4 +499,65 @@ test('ask-panel-stream: an adopted turn (no ask-start) gets the orb row and Stop
       assert.equal(ctx.doc.querySelector('.ask-stop').hidden, false, 'still streaming');
     } },
   ]);
+});
+
+// ---- the next-prompt suggestion (ask-suggestion, live-only ghost text) ---------------------------------------------
+const suggest = (ctx, text = 'Open a PR', messageId = MID) => {
+  ctx.panel.pushServerFrame({ type: 'ask-suggestion', threadId: TID, messageId, text });
+  ctx.flush();
+};
+async function finishedTurn() {
+  const ctx = await openWith({ body: snapBody() });
+  for (const f of stampFrames([
+    { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
+    { type: 'ask-done', text: 'Here is the diff summary.', blocks: [], usage: null, costUsd: 0, durationMs: 1, model: 'm', status: 'done' },
+  ], { threadId: TID, messageId: MID })) ctx.panel.pushServerFrame(f);
+  ctx.flush();
+  return ctx;
+}
+
+test('ask-panel-stream: a suggestion replaces the default placeholder; Tab accepts it; Enter on empty never sends it; screen readers get it', async () => {
+  const ctx = await finishedTurn();
+  const input = ctx.doc.querySelector('textarea.ask-input');
+  suggest(ctx);
+  assert.equal(input.placeholder, 'Open a PR');
+  assert.ok(input.classList.contains('is-suggesting'));
+  const hintId = input.getAttribute('aria-describedby');
+  assert.match(ctx.doc.getElementById(hintId).textContent, /Open a PR.*Tab/);
+  const before = ctx.fetchCalls.filter((c) => /\/messages$/.test(c.url)).length;
+  const enter = key(ctx.window, input, 'Enter');
+  await ctx.tick(); await ctx.tick();
+  assert.equal(ctx.fetchCalls.filter((c) => /\/messages$/.test(c.url)).length, before, 'Enter on an empty input sends nothing');
+  assert.equal(enter.defaultPrevented, true);
+  const tab = key(ctx.window, input, 'Tab');
+  assert.equal(tab.defaultPrevented, true);
+  assert.equal(input.value, 'Open a PR');
+  assert.equal(input.selectionStart, 'Open a PR'.length, 'caret at the end');
+  assert.equal(input.placeholder, 'Ask about any run, agent, or project…');
+  assert.equal(input.hasAttribute('aria-describedby'), false);
+});
+
+test('ask-panel-stream: typing hides the suggestion for good; Tab without one keeps focus behaviour', async () => {
+  const ctx = await finishedTurn();
+  const input = ctx.doc.querySelector('textarea.ask-input');
+  suggest(ctx);
+  input.value = 'x';
+  input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  input.value = '';
+  input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  assert.equal(input.placeholder, 'Ask about any run, agent, or project…', 'a typed-over suggestion does not come back');
+  assert.equal(key(ctx.window, input, 'Tab').defaultPrevented, false);
+});
+
+test('ask-panel-stream: a stale suggestion is dropped — typed before it landed, an older reply, another thread, or a turn running', async () => {
+  const ctx = await finishedTurn();
+  const input = ctx.doc.querySelector('textarea.ask-input');
+  input.value = 'typing'; input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  input.value = ''; input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  suggest(ctx);
+  assert.equal(input.placeholder, 'Ask about any run, agent, or project…', 'typed after the reply: dropped');
+  suggest(ctx, 'Old', 'askm_older');
+  ctx.panel.pushServerFrame({ type: 'ask-suggestion', threadId: 'ask_ffffffff', messageId: MID, text: 'Other' });
+  ctx.flush();
+  assert.equal(input.placeholder, 'Ask about any run, agent, or project…');
 });

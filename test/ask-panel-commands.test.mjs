@@ -174,3 +174,20 @@ test('a command card\'s output: folded by default, the toggle shows it, and the 
   assert.equal(out().hidden, true, 'folded again after the next rebuild');
   ctx.panel.destroy();
 });
+
+test('command cards sit in the answer where they ran (textAt), not all below it; an older block without textAt stays below', async () => {
+  const text = 'First I run the tests.\n\nThen the linter.\n\nAll green.';
+  const CMD2 = { ...CMD, id: 'card_00000002', textAt: text.indexOf('\n\nAll'), card: { ...CMD.card, blockId: 't-0000000001:2', seq: 2, command: 'npm run lint' } };
+  const LEGACY = { ...CMD, id: 'card_00000003', card: { ...CMD.card, blockId: 't-0000000001:3', seq: 3, command: 'git status' } };
+  const blocks = [{ ...CMD, textAt: text.indexOf('\n\nThen') }, CMD2, LEGACY];
+  const { ctx } = setup({ blocks });
+  ctx.panel.open();
+  await settle(ctx);
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: { id: MID, threadId: TID, seq: 2, role: 'assistant', text, status: 'done', createdAt: 't', blocks } });
+  ctx.flush();
+  const msg = ctx.doc.querySelector('.ask-msg-assistant');
+  const order = [...msg.children].filter((c) => !c.hidden && (c.classList.contains('ask-answer') || c.classList.contains('ask-cmd')))
+    .map((c) => (c.classList.contains('ask-cmd') ? `card:${c.textContent.match(/npm test|npm run lint|git status/)[0]}` : c.textContent.trim()));
+  assert.deepEqual(order, ['First I run the tests.', 'card:npm test', 'Then the linter.', 'card:npm run lint', 'All green.', 'card:git status']);
+  ctx.panel.destroy();
+});

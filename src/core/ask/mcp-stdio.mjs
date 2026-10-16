@@ -94,7 +94,8 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultFileDeps({ threadId, env, signal }),
       // Agent mode (#574): present only when this turn's env names the command bridge (command-deps.mjs).
       ...defaultCommandDeps({ env }),
-      // Composer chats (Workflows view, D10): present only on a composer thread (composer-deps.mjs).
+      // The composer family (composer-deps.mjs): all of it on a composer thread (Workflows view, D10); an Ask thread gets
+      // the drafts and build_workflow without the canvas.
       ...defaultComposerDeps({ threadId }),
       // worca Chat P2: settings and run controls — validate here, applied by the parent (chat-action-deps.mjs).
       ...defaultChatActionDeps(),
