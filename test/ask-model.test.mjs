@@ -504,6 +504,30 @@ test('ask-model: ask-suggestion is kept only for the newest finished reply; ask-
       assert.equal(m.suggestion(), null);
       assert.deepEqual(m.apply({ type: 'ask-suggestion', threadId: TID, messageId: MID, text: 'x' }), { dropped: 'stale' }, 'never while a turn runs');
     } },
+    { name: 'a thread row after the reply (Run started) clears it and drops a late one', run: async () => {
+      const notice = { id: 'askm_sys1', threadId: TID, seq: 3, role: 'system', text: 'Run started — "x"', blocks: [{ kind: 'notice', text: 'Run started — "x"' }], status: null };
+      const m = createThreadModel({ threadId: TID });
+      m.load(snapshot({ messages: [doneRow(MID, 2, 'b')] }));
+      m.apply({ type: 'ask-suggestion', threadId: TID, messageId: MID, text: 'Start the run' });
+      m.takeDirty();
+      m.apply({ type: 'ask-message', threadId: TID, message: notice });
+      assert.equal(m.suggestion(), null);
+      assert.equal(m.takeDirty().suggestion, true);
+      assert.deepEqual(m.apply({ type: 'ask-suggestion', threadId: TID, messageId: MID, text: 'Start the run' }), { dropped: 'stale' });
+      m.load(snapshot({ messages: [doneRow(MID, 2, 'b'), notice] }));
+      assert.deepEqual(m.apply({ type: 'ask-suggestion', threadId: TID, messageId: MID, text: 'Start the run' }), { dropped: 'stale' },
+        'a reload whose snapshot already holds the later row');
+    } },
+    { name: 'a change to the reply itself (its card acted on) clears it and drops a late one; an older row does not', run: async () => {
+      const m = createThreadModel({ threadId: TID });
+      m.load(snapshot({ messages: [doneRow('askm_old', 1, 'a'), doneRow(MID, 3, 'b')] }));
+      m.apply({ type: 'ask-message', threadId: TID, message: { ...doneRow('askm_old', 1, 'a'), blocks: [{ kind: 'card', id: 'c0', state: 'scheduled' }] } });
+      assert.deepEqual(m.apply({ type: 'ask-suggestion', threadId: TID, messageId: MID, text: 'Open a PR' }), { ok: true });
+      m.apply({ type: 'ask-message', threadId: TID, message: { ...doneRow(MID, 3, 'b'), blocks: [{ kind: 'card', id: 'c1', state: 'started' }] } });
+      assert.equal(m.suggestion(), null);
+      assert.deepEqual(m.apply({ type: 'ask-suggestion', threadId: TID, messageId: MID, text: 'Open a PR' }), { dropped: 'stale' },
+        'the card was approved while the suggestion was still being written');
+    } },
     { name: 'load clears it', run: async () => {
       const m = createThreadModel({ threadId: TID });
       m.load(snapshot({ messages: [doneRow(MID, 2, 'b')] }));

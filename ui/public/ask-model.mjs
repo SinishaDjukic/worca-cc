@@ -22,6 +22,7 @@ export function createThreadModel({ threadId }) {
   let dirty = newDirty();
   let worktrees = [];   // P4 §10: the chat's open worktrees (snapshot + ask-worktrees frames); the panel mirrors it
   let suggestion = null;   // {messageId, text}: the newest finished reply's next-prompt (live-only ask-suggestion)
+  let staleReply = null;   // the reply something happened after (a row, its card acted on): its suggestion is spent
 
   function newDirty() {
     // runLinks dirt: the panel's progress cards re-resolve their run identity on it (ask-panel.mjs flushExtra).
@@ -228,6 +229,13 @@ export function createThreadModel({ threadId }) {
       case 'ask-message': {
         const m = frame.message;
         if (!m || typeof m.id !== 'string') return { dropped: 'no-live' };
+        // A new row after the reply (Run started, a direction, another tab's message) or a change to the reply
+        // itself (its card approved, declined, scheduled) spends its suggestion — also one still being written.
+        const reply = newestAssistant();
+        if (reply && (m.id === reply.id || !rowById(m.id))) {
+          staleReply = reply.id;
+          clearSuggestion();
+        }
         upsertRow(m);
         noteAttachmentBlocks(m.blocks);
         dirty.messages.add(m.id);
@@ -251,10 +259,12 @@ export function createThreadModel({ threadId }) {
         dirty.worktrees = true;
         return { ok: true };
       case 'ask-suggestion': {
-        // Live-only and stale-safe: only the newest reply, finished cleanly, with no turn running.
+        // Live-only and stale-safe: only a reply that finished cleanly, is still the thread's last row and has had
+        // nothing happen to it since, with no turn running.
         const text = typeof frame.text === 'string' ? frame.text.trim() : '';
-        const last = newestAssistant();
-        if (!text || live || inFlight || !last || last.id !== frame.messageId || last.status !== 'done') return { dropped: 'stale' };
+        const last = rows[rows.length - 1];
+        if (!text || live || inFlight || !last || last.id !== frame.messageId || last.role !== 'assistant'
+          || last.status !== 'done' || staleReply === frame.messageId) return { dropped: 'stale' };
         suggestion = { messageId: frame.messageId, text };
         dirty.suggestion = true;
         return { ok: true };
@@ -278,6 +288,7 @@ export function createThreadModel({ threadId }) {
       live = null;
       inFlight = snapshot.inFlight ?? null;
       suggestion = null;
+      staleReply = null;
       dirty = newDirty();
       dirty.structure = true;
       dirty.title = true;
