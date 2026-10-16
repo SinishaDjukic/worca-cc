@@ -1875,6 +1875,16 @@ function onHello(msg) {
     }
     // Terminal runs (done|error|stopped) are simply excluded from liveRuns().
   }
+  // A restarted server never re-listed these: a run the old process was running died with it. Without this it reads
+  // as running (spinner, live cost) until a page reload; History (reloaded below) has its real state. A paused run
+  // keeps its pause: the new server can resume it.
+  if (rebooted) {
+    for (const r of runs.values()) {
+      if (!r.staleBoot || !['starting', 'running', 'pausing'].includes(r.status)) continue;
+      r.status = 'interrupted';
+      r.pendingQuestion = null;
+    }
+  }
 
   pokeAskRuns(null, 'hello');
   askPanel?.onHello(msg.ask);

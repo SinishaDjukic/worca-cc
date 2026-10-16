@@ -152,3 +152,19 @@ test('a paused run of another pipeline, or a newer paused copy, is kept', async 
 
 // Sidebar rows: a log frame changes nothing → the rebuild must be skipped
 // entirely (same DOM nodes), so sidebar scroll/DOM stop churning per log.
+
+// A restarted server (new bootId) lists only the runs IT knows. A run the old process was running and the new one
+// does not list died with it: it must stop reading as running (no endless spinner until a page reload). A paused
+// run keeps its pause: the new server can still resume it.
+test('after a server restart, a running run the new server does not list stops reading as running', async () => {
+  const { np, recv, tick } = await boot();
+  recv({ type: 'hello', bootId: 'b1', runs: [
+    { runId: 'r1', title: 'A', status: 'running', pipelineId: 'p1', kind: 'run' },
+    { runId: 'r2', title: 'B', status: 'paused', pipelineId: 'p2', kind: 'run' }] });
+  await tick();
+  assert.equal(np.getRun('r1').status, 'running');
+  recv({ type: 'hello', bootId: 'b2', runs: [] });
+  await tick();
+  assert.equal(np.getRun('r1').status, 'interrupted', 'the old process\'s running run is over');
+  assert.equal(np.getRun('r2').status, 'paused', 'a paused run stays resumable');
+});
