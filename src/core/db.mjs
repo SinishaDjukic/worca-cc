@@ -62,7 +62,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 57;
+export const SCHEMA_VERSION = 59;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -869,6 +869,10 @@ const INCREMENTAL_COLUMNS = {
                             engine: 'TEXT',          // v53 (#635): the engine the chat is locked to; NULL = before v53 (read from its model)
                             mode: 'TEXT',            // v54 (Workflows view): 'composer' for the editor's chat; NULL = an Ask Worca chat
                             composer: 'TEXT' },      // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
+  shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
+                            ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
+                            shipped_at: 'TEXT' },     // v58: when Ship as ran
+  shape_feature_slices:   { draft_pr_url: 'TEXT' },   // v58 (D24): the PR openSliceDraft opened as a draft
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
   workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
                             policy_project: 'TEXT',     // v32: team-policy home (member absolute path); NULL = no home
@@ -1038,6 +1042,51 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
 );
 `;
 
+const SHAPE_SLICES_DDL = `
+CREATE TABLE IF NOT EXISTS shape_features (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  project_dir TEXT NOT NULL,
+  origin_pipeline_id TEXT NOT NULL,
+  source_branch TEXT,
+  outline TEXT NOT NULL,
+  request_base TEXT NOT NULL DEFAULT '{}',
+  perspectives TEXT NOT NULL DEFAULT '[]',
+  workflow_id TEXT NOT NULL,
+  approve_each INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'active',
+  proposed INTEGER,
+  merges INTEGER NOT NULL DEFAULT 0,
+  removals INTEGER NOT NULL DEFAULT 0,
+  replaces TEXT,
+  replaced_by TEXT,
+  replan_ticket_id TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS shape_feature_slices (
+  feature_id TEXT NOT NULL,
+  idx INTEGER NOT NULL,
+  slice_id TEXT,
+  title TEXT NOT NULL,
+  ticket_id TEXT,
+  pipeline_id TEXT,
+  PRIMARY KEY (feature_id, idx),
+  FOREIGN KEY (feature_id) REFERENCES shape_features (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_shape_features_origin ON shape_features (origin_pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_shape_feature_slices_pipeline ON shape_feature_slices (pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_shape_feature_slices_ticket ON shape_feature_slices (ticket_id);
+CREATE TABLE IF NOT EXISTS shape_plans (
+  thread_id TEXT NOT NULL,
+  card_id TEXT NOT NULL,
+  title TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (thread_id, card_id)
+);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1061,6 +1110,9 @@ const INCREMENTAL_TABLES = {
   pipeline_member_prs: PIPELINE_MEMBER_PRS_DDL,
   pr_watches: PR_WATCH_DDL,
   pr_watch_runs: PR_WATCH_DDL,
+  shape_features: SHAPE_SLICES_DDL,
+  shape_feature_slices: SHAPE_SLICES_DDL,
+  shape_plans: SHAPE_SLICES_DDL,
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -1528,8 +1580,8 @@ function applySchemaV55(db) {
   seedShippedWorkflow(db, GRAPH_ARCHITECTURE_WORKFLOW);
 }
 
-/** v57: seed the shipped Diagram → Plan workflow (V41's shape for a third shipped graph). */
-function applySchemaV57(db) {
+/** v59: seed the shipped Diagram → Plan workflow (V41's shape for a third shipped graph). */
+function applySchemaV59(db) {
   seedShippedWorkflow(db, GRAPH_DIAGRAM_WORKFLOW);
 }
 
@@ -2152,9 +2204,11 @@ export function migrate(db) {
     if (current < 55) applySchemaV55(db);
     if (current < SCHEMA_VERSION) refreshArchitectureSeed(db);
     if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
+    if (current < 57) db.exec(SHAPE_SLICES_DDL);     // Shape it first: sliced features + Plans
+    // v58 (D24): shape_features ship columns, shape_feature_slices.draft_pr_url — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     // The shipped Diagram → Plan workflow: one-shot seed at its own rung, refresh on every bump
-    // (the Presentation seed's two halves). If dev claims 57 first, move both to the next free rung.
-    if (current < 57) applySchemaV57(db);
+    // (the Presentation seed's two halves).
+    if (current < 59) applySchemaV59(db);
     if (current < SCHEMA_VERSION) refreshDiagramSeed(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');

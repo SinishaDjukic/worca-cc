@@ -131,7 +131,7 @@ import { redactSecrets } from '../shared/workspace-map/redact.mjs';
 import { effectiveNightConfig } from './night/effective.mjs';
 import { nightState, decideDelayMs, nightAnchorMs, runAllowed } from './night/activation.mjs';
 import { decideAsk } from './night/decider.mjs';
-import { PLAN_ASK_KIND } from './shape/run.mjs';
+import { PLAN_ASK_KIND, initialShaping } from './shape/run.mjs';
 import { runNightAnalysis, readMemoryText } from './night/analysis.mjs';
 import { resolveDeciderPair } from './night/decider-model.mjs';
 import { writeNightDecision, countNightDecisions, nightCounts, nightGateCycles, nightSpendSinceUsd } from './night/store.mjs';
@@ -1013,6 +1013,7 @@ export class RunHarness extends EventEmitter {
       pauseDetail: null,   // mirrors this.pauseDetail
       limitEngine: null,   // mirrors this.limitEngine: the engine whose usage limit paused the run
       limitResetAt: null,  // mirrors this.limitResetAt: when that usage limit resets (ISO)
+      ...(this.runShape ? { shaping: initialShaping(this.runShape, this.resumeOpts?.resumePoint?.shaping) } : {}),
       // Sub-agent lifecycle records (rides the existing `state` snapshot; mirrored to
       // the sub_agents table). Each: { id, label, nodeId, stepIndex, cycle, stepKey,
       // status, startedAt, finishedAt, durationMs?, tokens?, costUsd? };
@@ -1045,6 +1046,14 @@ export class RunHarness extends EventEmitter {
   /** @returns {object} a deep-ish snapshot of current state. */
   getState() {
     return JSON.parse(JSON.stringify(this.state));
+  }
+
+  /** Save to plans/ (server): the saved checkout path rides state.shaping so the run card can show it. */
+  recordPlanSaved(rel) {
+    if (!this.state.shaping || typeof rel !== 'string') return false;
+    this.state.shaping.savedTo = rel;
+    this._emit('state', this.getState());
+    return true;
   }
 
   /**
@@ -1191,6 +1200,7 @@ export class RunHarness extends EventEmitter {
     if (pq.kind === 'workflow') line = `Workflow proposal **${d === 'decline' ? 'declined' : d || 'answered'}**`;
     else if (pq.kind === 'gate') line = `Gate **${d || 'answered'}**`;
     else if (pq.kind === 'recovery') line = `Recovery decision **${d || 'answered'}**`;
+    else if (pq.kind === PLAN_ASK_KIND && pq.plan?.outline) line = `Slice outline **${d || 'answered'}** (round ${pq.plan.round || 1})`;
     else if (pq.kind === PLAN_ASK_KIND) line = `Plan approval **${d || 'answered'}**`;
     if (!line) return;
     appendAudit(this.pipeline.dir, `${line}${byActor(by)}.`, { actor: by }).catch(() => {});
@@ -5220,7 +5230,9 @@ export class RunHarness extends EventEmitter {
         return { decision: 'continue' };
       }
       return await new Promise((resolveP, rejectP) => {
-        this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null };
+        // An outline ask keeps its marker and round, so _auditDecision can word its answer (F38).
+        this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null,
+          ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } } : {}) };
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
         const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, form, version, answerSchema, autoValues, nodeId, agent, origin };
@@ -7261,6 +7273,12 @@ export class RunHarness extends EventEmitter {
   _kickoffTitleGeneration() {
     const prompt = this.pipeline?.promptText || this.opts.prompt || '';
     const id = this.pipeline?.id;
+    // D18: a slice started from its ticket keeps the title the ticket set (sliceTitle); the UI shows the slice's own
+    // name under its feature. Slice 1's own shaping run gets runShape.slice only at outline approval: it titles as usual.
+    const sl = this.runShape?.slice;
+    if (sl && (sl.index > 1 || this.opts.shape?.slice)) {
+      this.state.titleProvisional = false; this._titlePromise = Promise.resolve(); return;
+    }
     if (!prompt || !id) { this._titlePromise = Promise.resolve(); return; }
     this._titlePromise = Promise.resolve()
       .then(() => generateTitle(prompt, this._titleGenOpts()))

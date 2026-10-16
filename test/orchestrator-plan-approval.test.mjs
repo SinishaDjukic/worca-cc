@@ -3,6 +3,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -10,7 +11,8 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { GRAPH_SHAPE_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
-import { readPipelineForResume } from '../src/core/artifacts.mjs';
+import { readPipelineForResume, readPipelineExtras } from '../src/core/artifacts.mjs';
+import { hasBlocking } from '../src/shared/graph/verdict.mjs';
 import { getDb } from '../src/core/db.mjs';
 
 useTempHome(after);
@@ -150,6 +152,97 @@ test('pause while the plan is held, then resume: the same question comes back an
   assert.deepEqual(readPipelineForResume(h2.orch.getState().id).state.shapeStats.questions, questions);
 });
 
+/** Revise round 1 and pause in the same tick (F19), then wait for the feedback file. */
+async function pauseDuringRevise(dir) {
+  const h = start({ projectDir: dir }, (q, orch) => {
+    orch.answer(q.id, { decision: 'revise', feedback: 'Cover the empty state.' });
+    orch.pause();
+  });
+  assert.equal((await h.done).status, 'paused');
+  const path = join(h.orch.pipeline.dir, 'plan-feedback-1.md');
+  await waitFor(() => existsSync(path));
+  return { h, path, saved: readPipelineForResume(h.orch.getState().id) };
+}
+
+test('pause in the same tick as a revise: the resume replays the feedback, round 1 is not asked again (F19)', async () => {
+  const dir = gitDir('plan-revise-pause');
+  const { path, saved } = await pauseDuringRevise(dir);
+  assert.deepEqual(saved.resumePoint.planRevise, { id: 'plan-n_refine-1', path });
+
+  const h2 = start({ projectDir: dir, resume: saved, shape: undefined }, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
+  const res = await h2.done;
+  assert.equal(res.status, 'done', res.error);
+  assert.deepEqual(h2.plans.map((q) => q.id), ['plan-n_refine-2'], 'round 1 is never re-asked');
+  const rerun = h2.orch._graphSnapshot.execs.find((e) => e.nodeId === 'n_plan' && e.ordinal === 2);
+  assert.ok(rerun, 'the planner ran again');
+  assert.ok(rerun.bindings.revise.path.endsWith('plan-feedback-1.md'), 'with the feedback bound');
+});
+
+test('a replayed revise whose feedback file is gone asks round 1 again', async () => {
+  const dir = gitDir('plan-revise-missing');
+  const { path, saved } = await pauseDuringRevise(dir);
+  await rm(path, { force: true });
+
+  const h2 = start({ projectDir: dir, resume: saved, shape: undefined }, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
+  const res = await h2.done;
+  assert.equal(res.status, 'done', res.error);
+  assert.equal(h2.plans[0].id, 'plan-n_refine-1');
+});
+
+test('a normal revise leaves no stash behind for the next round', async () => {
+  let seen = null;
+  const h = start({}, (q, orch) => {
+    if (q.id === 'plan-n_refine-1') return orch.answer(q.id, { decision: 'revise', feedback: 'More tests.' });
+    seen = { stash: orch._planRevise, rp: orch.state.resumePoint?.planRevise };
+    orch.answer(q.id, { decision: 'approve' });
+  });
+  assert.equal((await h.done).status, 'done');
+  assert.deepEqual(seen, { stash: null, rp: undefined });
+});
+
+test('a revise may change perspectives: the next ask, the state and the resume point carry the new list', async () => {
+  const next = ['product', 'architect', 'security'];
+  let rp = null;
+  let shaping = null;
+  const h = start({}, (q, orch) => {
+    if (q.id === 'plan-n_refine-1') return orch.answer(q.id, { decision: 'revise', feedback: 'Threats.', perspectives: next });
+    rp = orch.state.resumePoint?.shape?.perspectives;
+    shaping = orch.state.shaping.perspectives;
+    orch.answer(q.id, { decision: 'approve' });
+  });
+  assert.equal((await h.done).status, 'done');
+  assert.deepEqual(h.plans[0].plan.perspectives, SHAPE.perspectives);
+  assert.deepEqual(h.plans[1].plan.perspectives, next);
+  assert.deepEqual(rp, next);
+  assert.deepEqual(shaping, next);
+});
+
+test('state.shaping: rounds with the check, approved on approve, savedTo from recordPlanSaved', async () => {
+  let atAsk = null;
+  const h = start({}, (q, orch) => { atAsk = orch.getState().shaping; orch.answer(q.id, { decision: 'approve' }); });
+  assert.equal((await h.done).status, 'done');
+  const q = h.plans[0];
+  assert.deepEqual(atAsk.perspectives, SHAPE.perspectives);
+  assert.deepEqual(atAsk.rounds, [{ round: 1, file: q.plan.file, passed: q.plan.check.passed, total: 8, decision: null }]);
+  assert.equal(atAsk.approved, null);
+  const s = h.orch.getState().shaping;
+  assert.equal(s.rounds[0].decision, 'approve');
+  assert.deepEqual(s.approved, { round: 1, file: q.plan.file });
+  assert.equal(s.savedTo, null);
+  assert.equal(h.orch.recordPlanSaved('plans/demo.md'), true);
+  assert.equal(h.orch.getState().shaping.savedTo, 'plans/demo.md');
+});
+
+test('a re-raised round replaces its row and drops a stale approved', () => {
+  const orch = createOrchestrator({ projectDir: gitDir('plan-reraise'), workflowId: 'wf_shape', prompt: 'demo', claude: { mock: true }, shape: SHAPE });
+  const q = { plan: { round: 1, file: '/p/plan.md' } };
+  orch._shapingRound(q, { passed: 3, total: 8 });
+  orch.state.shaping.approved = { round: 1, file: '/p/plan.md' };
+  orch._shapingRound(q, { passed: 4, total: 8 });
+  assert.equal(orch.state.shaping.approved, null);
+  assert.deepEqual(orch.state.shaping.rounds, [{ round: 1, file: '/p/plan.md', passed: 4, total: 8, decision: null }]);
+});
+
 test('an unshaped run of a copy of wf_shape never holds (D12)', async () => {
   const wf = await writeGraphWorkflow({ id: 'wf_shape_copy', name: 'Shape copy', nodes: GRAPH_SHAPE_WORKFLOW.nodes, wires: GRAPH_SHAPE_WORKFLOW.wires });
   const h = start({ workflowId: wf.id || 'wf_shape_copy', shape: undefined });
@@ -157,6 +250,7 @@ test('an unshaped run of a copy of wf_shape never holds (D12)', async () => {
   assert.equal(res.status, 'done', res.error);
   assert.equal(h.plans.length, 0);
   assert.ok(ran(h.execs, 'n_impl').length > 0);
+  assert.equal('shaping' in h.orch.getState(), false, 'a non-shaped run has no shaping state');
   assert.equal(readPipelineForResume(h.orch.getState().id).state.shapeStats, undefined);
 });
 
@@ -188,4 +282,33 @@ test('D28: a person revise and a check revise are recorded by round', async () =
   assert.equal(res.status, 'done', res.error);
   const { state } = readPipelineForResume(h.orch.getState().id);
   assert.deepEqual(state.shapeStats.revises, [{ round: 1, by: 'person' }, { round: 2, by: 'check' }]);
+});
+
+test('a shaped run with checklists: the reviewer reports the plan items, the rows keep them, results.json tallies the last (spec D7)', async () => {
+  const h = start({}, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const id = h.orch.getState().id;
+  const impl = readPipelineExtras(id).reviews.filter((r) => r.kind === 'impl');
+  assert.deepEqual(impl.map((r) => r.cycle), [1, 2], 'the checklist adds no cycle (C10)');
+  const [c1, c2] = impl;
+  assert.deepEqual(c1.checklist.map((c) => [c.id, c.status]), [['R-arch-1', 'unmet'], ['R-qa-1', 'met']]);
+  for (const c of c1.checklist) assert.ok(c.perspective && c.text, 'the merged row keeps perspective and text');
+  assert.ok(c1.issues.some((i) => i.severity === 'major' && i.title.startsWith('R-arch-1 not met')));
+  assert.deepEqual(c2.checklist.map((c) => [c.id, c.status]), [['R-arch-1', 'met'], ['R-qa-1', 'na']]);
+  assert.equal(hasBlocking(c2), false);
+  const results = JSON.parse(await readFile(join(h.orch.pipeline.dir, 'results.json'), 'utf8'));
+  assert.deepEqual(results.checklist, { met: 1, unmet: 0, na: 1, missing: 0, total: 2, cycle: 2 });
+});
+
+test('the unshaped copy of wf_shape stores no checklist and results.json has none (spec D7)', async () => {
+  const wf = await writeGraphWorkflow({ id: 'wf_shape_copy_cl', name: 'Shape copy', nodes: GRAPH_SHAPE_WORKFLOW.nodes, wires: GRAPH_SHAPE_WORKFLOW.wires });
+  const h = start({ workflowId: wf.id || 'wf_shape_copy_cl', shape: undefined });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const rows = readPipelineExtras(h.orch.getState().id).reviews.filter((r) => r.kind === 'impl');
+  assert.ok(rows.length > 0);
+  for (const r of rows) assert.equal(Object.hasOwn(r, 'checklist'), false);
+  const results = JSON.parse(await readFile(join(h.orch.pipeline.dir, 'results.json'), 'utf8'));
+  assert.equal(Object.hasOwn(results, 'checklist'), false);
 });

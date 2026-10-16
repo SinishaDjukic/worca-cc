@@ -49,7 +49,7 @@ export const FLAGS = Object.freeze([
     since: '1.11.0',
     added: '2026-10-15',
     reviewBy: '2027-01-13',
-    docs: 'docs/feature-flags.md',
+    docs: 'docs/shape-it-first.md',
   }),
 ]);
 

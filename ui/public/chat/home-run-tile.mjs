@@ -108,7 +108,8 @@ export function createRunTile({ doc, snap, onOpen = null, onAnswer = null }) {
     el.dataset.tileKey = String(s.key || '');
     const p = runPill(s);
     el.classList.toggle('is-need', needsWash(s));
-    const title = String(s.title || 'Run');
+    // D16: a slice under its feature: "Slice 2 of 3 · Run tags".
+    const title = s.slice ? `Slice ${s.slice.index} of ${s.slice.total} · ${s.slice.title}` : String(s.title || 'Run');
     put(open, title);
     open.title = title;
     put(sub, tileSub(s));

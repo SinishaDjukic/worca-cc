@@ -595,7 +595,7 @@ export function readReviewRow(pipelineId, kind, cycle) {
  * (readStepQuestions, chronological insert order). Always returns arrays (never
  * null) so callers render unconditionally.
  * @param {string} pipelineId
- * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
+ * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string,checklist?:Array}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
  */
 export function readPipelineExtras(pipelineId) {
   const c = getDb().prepare('SELECT questions, answers FROM clarify WHERE pipeline_id = ?').get(pipelineId);
@@ -617,6 +617,7 @@ export function readPipelineExtras(pipelineId) {
       cycle: r.cycle,
       issues: Array.isArray(v.issues) ? v.issues : [],
       summary: typeof v.summary === 'string' ? v.summary : '',
+      ...(Array.isArray(v.checklist) ? { checklist: v.checklist } : {}),
     };
   });
   return { clarify, reviews, stepQuestions: readStepQuestions(pipelineId) };
@@ -2093,6 +2094,13 @@ async function readResultsJson(dir) {
   } catch {
     return null;
   }
+}
+
+/** A finished run's results.json by pipeline id (null when the row, its dir or the file is missing). */
+export async function readRunResultsById(pipelineId) {
+  const row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(String(pipelineId));
+  if (!row) return null;
+  try { return await readResultsJson(await runDirForRow(row)); } catch { return null; }
 }
 
 /**

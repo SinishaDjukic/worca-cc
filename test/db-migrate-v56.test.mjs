@@ -6,6 +6,7 @@ import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 test('fresh DB has PR watch ownership tables', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
+  assert.ok(SCHEMA_VERSION >= 56);
   assert.deepEqual(db.prepare('PRAGMA table_info(pr_watches)').all().map((c) => c.name), [
     'pr_url', 'pipeline_id', 'member_key', 'push_remote', 'enabled', 'status', 'reason',
     'fix_runs', 'active_run_id', 'active_pipeline_id', 'handled', 'pending', 'retry_state',

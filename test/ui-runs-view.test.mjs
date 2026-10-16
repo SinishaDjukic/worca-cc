@@ -469,6 +469,53 @@ test('a "Run after" chain is one row with a thin line; its toggle opens the memb
   assert.equal(doc.activeElement, tog(), 'focus returns to the rebuilt toggle');
 });
 
+test('D17: a feature chain is one open row titled by the feature, members "1 · Store tags", the row and a waiting slice open the feature page', async () => {
+  const chains = [{ id: 'p:pslice01', title: 'Tags · 1/3: Store tags', members: [
+    { pipelineId: 'pslice01', ticketId: null, state: 'current', title: 'Tags · 1/3: Store tags', projectDir: PROJECT },
+    { pipelineId: null, ticketId: 'tslice02', state: 'waiting', title: 'Tags · 2/3: Run tags', projectDir: PROJECT },
+    { pipelineId: null, ticketId: 'tslice03', state: 'waiting', title: 'Tags · 3/3: Cost report', projectDir: PROJECT },
+  ], feature: { id: 'feat_1', title: 'Tags', slices: [
+    { index: 1, title: 'Store tags', ticketId: null, pipelineId: 'pslice01' },
+    { index: 2, title: 'Run tags', ticketId: 'tslice02', pipelineId: null },
+    { index: 3, title: 'Cost report', ticketId: 'tslice03', pipelineId: null } ] } }];
+  const { window, doc, recv } = await boot({ chains, history: [] });
+  recv({ type: 'hello', flags: { shapeFirst: true }, runs: [live('r1', { pipelineId: 'pslice01' })] });
+  go(window, 'runs'); await settle(window);
+  const host = doc.getElementById('runs-list');
+  assert.equal(host.querySelectorAll('.runs-chain').length, 1);
+  assert.equal(host.querySelector('.runs-chain .runs-row').getAttribute('href'), '#feature/feat_1');
+  assert.match(host.querySelector('.runs-chain .runs-row-sub').textContent, /^Slice 1 of 3/);
+  const tog = () => host.querySelector('.runs-chain-toggle');
+  assert.equal(tog().getAttribute('aria-expanded'), 'true', 'open by default');
+  const links = [...host.querySelectorAll('.runs-chain-link')];
+  assert.deepEqual(links.map((a) => a.textContent), ['Open feature →', '1 · Store tags', '2 · Run tags', '3 · Cost report']);
+  assert.deepEqual(links.map((a) => a.getAttribute('href')), ['#feature/feat_1', '#running/r1', '#feature/feat_1', '#feature/feat_1']);
+  // A plain click on the row itself opens and closes the group (no chevron to find) and stays on the page.
+  const hashBefore = window.location.hash;
+  click(window, host.querySelector('.runs-chain .runs-row-title'));
+  await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'false', 'a row click closes it');
+  assert.equal(window.location.hash, hashBefore, 'a row click does not navigate');
+  click(window, host.querySelector('.runs-chain .runs-row-title'));
+  await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'true', 'and opens it again');
+  click(window, tog());
+  await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'false', 'a person\'s toggle wins');
+  recv({ type: 'state', runId: 'r1', status: 'running' });
+  await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'false', 'and holds across repaints');
+  // A slice waiting for a person: amber "Needs you" on the feature row.
+  recv({ type: 'question', runId: 'r1', question: { id: 'q1', kind: 'clarify', questions: [] } });
+  await settle(window);
+  assert.match(host.querySelector('.runs-chain .runs-row-sub').textContent, /^Slice 1 of 3 · Needs you/);
+  click(window, tog());
+  await settle(window);
+  const member1 = host.querySelectorAll('.runs-chain-member:not(.runs-chain-open-feature)')[0];
+  assert.ok(member1.classList.contains('is-needs'), 'the asking slice is amber');
+  assert.ok(!member1.classList.contains('is-live'), 'and does not pulse');
+});
+
 test('a state frame and a schedules-changed frame keep the chain toggle focused, and a repaint without a text change keeps the thin line element', async () => {
   const chains = [{ id: 'p:pchain01', title: 'Chain root', members: [
     { pipelineId: 'pchain01', ticketId: null, state: 'current', title: 'Chain root', projectDir: PROJECT },

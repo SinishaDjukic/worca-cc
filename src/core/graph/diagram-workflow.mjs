@@ -1,6 +1,6 @@
 // src/core/graph/diagram-workflow.mjs
 // The shipped Diagram → Plan workflow: wf_default with the Planner swapped for the diagram
-// interpreter. Seeded by schema V57 as a v2 row (INSERT OR IGNORE), so a user who edits or
+// interpreter. Seeded by schema V59 as a v2 row (INSERT OR IGNORE), so a user who edits or
 // deletes it keeps their choice; refreshed on later bumps only while the stored shape is one
 // worca shipped (DIAGRAM_SHIPPED_FINGERPRINTS), exactly like the Presentation and C4 seeds.
 //

@@ -57,7 +57,7 @@ test('isRefusalTitle: refusals flagged, real titles (incl. What/Which/Unable/Ple
       assert.equal(isRefusalTitle('Improve History Diff Viewer'), false);
       assert.equal(isRefusalTitle('I/O Error Handling Cleanup'), false);   // "I/" is not first-person "I "
       assert.equal(isRefusalTitle('I18n Support For Settings Page'), false);
-      assert.equal(isRefusalTitle('[mock] role unknown complete'), false); // mock-mode title must survive
+      assert.equal(isRefusalTitle('[mock] role unknown complete'), false); // not a refusal; titleAttempt refuses mock markers separately
       assert.equal(isRefusalTitle(''), false);
     } },
     { name: 'isRefusalTitle: legitimate titles starting with What/Which/Unable/Please are NOT refusals; real refusals still are', run: () => {
@@ -124,21 +124,30 @@ test('generateTitle forwards envScrub/envAllowlist to the spawn (no leak during 
   }
 });
 
-test('generateTitle honors opts.mock without WORCA_MOCK — no spawn even with a bogus bin', async () => {
+test('generateTitle honors opts.mock without WORCA_MOCK, and a mock marker is never a title (D35)', async () => {
   const prevMock = process.env.WORCA_MOCK;
   delete process.env.WORCA_MOCK;
   try {
+    const errors = [];
     const t = await generateTitle('Add a settings page with dark mode', {
-      cwd: process.cwd(),
-      mock: true,
-      bin: '/nonexistent/claude-must-not-spawn',
+      cwd: process.cwd(), mock: true, bin: '/nonexistent/claude-must-not-spawn',
+      onError: (e) => errors.push(String(e.error && e.error.message)),
     });
-    // runMock's unknown-role body. Without the passthrough the bogus bin is
-    // spawned, ENOENTs, and generateTitle swallows that into ''.
-    assert.equal(t, '[mock] role unknown complete');
+    // runMock answered (no spawn: a spawn would ENOENT with a different error); its marker is refused.
+    assert.equal(t, '');
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /mock marker/);
   } finally {
     if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
   }
+});
+
+test('a "[mock] …" reply from the engine is refused; a real title passes', async () => {
+  const run = (text) => async () => ({ text });
+  const offline = { bin: '/nonexistent/claude-must-not-spawn', mock: false };
+  assert.equal(await generateTitle('plan this in slices', { ...offline, run: run('[mock] planner-plan: no MOCK_OUT given') }), '');
+  assert.equal(await generateTitle('plan this in slices', { ...offline, run: run('[MOCK] role unknown complete') }), '');
+  assert.equal(await generateTitle('plan this in slices', { ...offline, run: run('Slice the billing feature') }), 'Slice the billing feature');
 });
 
 test('generateTitle on codex: one codex spawn, read-only, codex\'s default model and no Claude title model', POSIX_SHIM, async () => {

@@ -49,3 +49,21 @@ test('protocol.readReview still normalizes severities through the moved helper',
   assert.equal(protocol.hasBlocking(r), true);
   await rm(dir, { recursive: true, force: true });
 });
+
+test('normalizeReview keeps a reviewer checklist as a conditional key (spec D7)', async () => {
+  assert.deepEqual(Object.keys(protocol.normalizeReview({ issues: [], summary: 's' })), ['issues', 'summary']);
+  const withList = protocol.normalizeReview({ issues: [], summary: 's', checklist: [{ id: 'R-qa-1', status: 'met', evidence: 'x' }] });
+  assert.deepEqual(withList.checklist, [{ id: 'R-qa-1', status: 'met', evidence: 'x' }]);
+  assert.equal(Object.hasOwn(protocol.normalizeReview({ issues: [], summary: 's', checklist: 'nope' }), 'checklist'), false);
+});
+
+test('readVerdict returns a checklist the file carries (spec D7)', async () => {
+  const { readVerdict } = await import('../src/core/graph/exec-io.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-verdict-cl-'));
+  try {
+    const file = join(dir, 'v.json');
+    await writeFile(file, JSON.stringify({ issues: [], summary: 's', checklist: [{ id: 'R-qa-1', status: 'na', evidence: 'r' }] }), 'utf8');
+    const v = await readVerdict(file);
+    assert.deepEqual(v.checklist, [{ id: 'R-qa-1', status: 'na', evidence: 'r' }]);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

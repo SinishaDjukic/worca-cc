@@ -258,6 +258,8 @@ async function titleAttempt(text, model, opts, engine = null) {
     // An empty reply or a refusal is the model answering, not the model missing: not `thrown`, never retried.
     if (!title) return { error: new Error('the model returned an empty reply') };
     if (isRefusalTitle(title)) return { error: new Error(`the model did not write a title: ${title.slice(0, 120)}`) };
+    // D35: a mock engine's marker ("[mock] planner-plan: no MOCK_OUT given") is never a title; '' keeps the one the run has.
+    if (/^\[mock\]/i.test(title)) return { error: new Error(`the engine returned a mock marker, not a title: ${title.slice(0, 120)}`) };
     return { title };
   } catch (err) {
     if (err && err.name === 'AbortError') return { aborted: true }; // run was stopped — caller keeps provisional

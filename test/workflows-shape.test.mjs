@@ -13,6 +13,7 @@ import {
 } from '../src/core/graph/builtin-workflows.mjs';
 import {
   resolveShapeRequest, validatePlanAnswer, renderPlanFeedback, isShapeWorkflowId, PLAN_ASK_KIND, PLAN_FEEDBACK_MAX,
+  initialShaping, planFileOf,
 } from '../src/core/shape/run.mjs';
 import { DEFAULT_PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
@@ -29,8 +30,8 @@ test('wf_shape: Default\'s graph with the Clarify cap and the plan approval hold
   const wf = GRAPH_SHAPE_WORKFLOW;
   assert.equal(SHAPE_WORKFLOW_ID, 'wf_shape');
   assert.equal(SHAPE_UX_WORKFLOW_ID, 'wf_shape_ux');
-  assert.equal(SHAPE_WORKFLOW_NAME, 'Shape it first');
-  assert.equal(wf.id, 'wf_shape'); assert.equal(wf.name, 'Shape it first'); assert.equal(wf.version, 2);
+  assert.equal(SHAPE_WORKFLOW_NAME, 'Shaper');
+  assert.equal(wf.id, 'wf_shape'); assert.equal(wf.name, 'Shaper'); assert.equal(wf.version, 2);
   assert.deepEqual(wf.nodes.find((n) => n.id === 'n_clarify').config, { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS });
   assert.deepEqual(wf.nodes.find((n) => n.id === 'n_refine').config.approve, { kind: 'plan', port: 'plan' });
   assert.deepEqual(wf.nodes.map((n) => [n.id, n.kind, n.key ?? null]),
@@ -41,7 +42,7 @@ test('wf_shape: Default\'s graph with the Clarify cap and the plan approval hold
 
 test('wf_shape_ux: the same head plus the manual-test tail, with no review.pass → end wire', () => {
   const wf = GRAPH_SHAPE_UX_WORKFLOW;
-  assert.equal(wf.id, 'wf_shape_ux'); assert.equal(wf.name, 'Shape it first'); assert.equal(wf.version, 2);
+  assert.equal(wf.id, 'wf_shape_ux'); assert.equal(wf.name, 'Shaper'); assert.equal(wf.version, 2);
   assert.deepEqual(wf.nodes.find((n) => n.id === 'n_clarify').config, { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS });
   assert.deepEqual(wf.nodes.find((n) => n.id === 'n_refine').config.approve, { kind: 'plan', port: 'plan' });
   assert.ok(wf.nodes.some((n) => n.id === 'n_check' && n.key === 'manualTestsChecklist'));
@@ -89,7 +90,7 @@ test('a save cannot claim either id, a delete is refused, and the name "Shape" i
     assert.equal(await deleteWorkflow(id), false);
   }
   await assert.rejects(() => writeGraphWorkflow({ name: 'Shape', nodes: [], wires: [] }),
-    (e) => e.code === 'RESERVED_NAME' && /Shape it first/.test(e.message));
+    (e) => e.code === 'RESERVED_NAME' && /Shaper/.test(e.message));
 });
 
 test('resolveShapeRequest: no shape and no shape workflow leaves the request alone', () => {
@@ -155,6 +156,49 @@ test('validatePlanAnswer: junk is rejected', () => {
     assert.equal(r.ok, false, JSON.stringify(raw));
     assert.equal(r.errors[0].path, 'decision');
   }
+});
+
+test('validatePlanAnswer: a revise may change perspectives, never UX', () => {
+  const ok = validatePlanAnswer({ decision: 'revise', feedback: 'x', perspectives: ['security', 'architect'] },
+    { revisable: true, perspectives: ['product', 'architect', 'qa'] });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.payload.perspectives.slice().sort(), ['architect', 'product', 'security']);
+  const unknown = validatePlanAnswer({ decision: 'revise', feedback: 'x', perspectives: ['nope'] }, { revisable: true });
+  assert.equal(unknown.ok, false); assert.equal(unknown.errors[0].path, 'perspectives');
+  const addUx = validatePlanAnswer({ decision: 'revise', feedback: 'x', perspectives: ['product', 'ux'] },
+    { revisable: true, perspectives: ['product', 'qa'] });
+  assert.equal(addUx.ok, false); assert.equal(addUx.errors[0].path, 'perspectives'); assert.match(addUx.errors[0].message, /UX/);
+  const dropUx = validatePlanAnswer({ decision: 'revise', feedback: 'x', perspectives: ['product'] },
+    { revisable: true, perspectives: ['product', 'ux'] });
+  assert.equal(dropUx.ok, false); assert.equal(dropUx.errors[0].path, 'perspectives');
+  assert.deepEqual(validatePlanAnswer({ decision: 'revise', feedback: 'x' }, { revisable: true, perspectives: ['product'] }),
+    { ok: true, payload: { decision: 'revise', feedback: 'x' } }, 'no perspectives, payload unchanged');
+});
+
+test('initialShaping: defaults, and a resume keeps its versions', () => {
+  assert.deepEqual(initialShaping(null), { perspectives: [...DEFAULT_PERSPECTIVES], rounds: [], approved: null, savedTo: null });
+  const shape = { perspectives: ['product', 'qa'] };
+  const s = initialShaping(shape, { rounds: [{ round: 1, file: '/p/a.md' }, { round: 'x' }, null], approved: { round: 1, file: '/p/a.md' }, savedTo: 'plans/a.md', perspectives: ['ignored'] });
+  assert.deepEqual(s, { perspectives: ['product', 'qa'], rounds: [{ round: 1, file: '/p/a.md' }], approved: { round: 1, file: '/p/a.md' }, savedTo: 'plans/a.md' });
+  assert.notEqual(s.perspectives, shape.perspectives, 'a copy');
+  assert.deepEqual(initialShaping(shape, []).rounds, [], 'a non-object saved is ignored');
+});
+
+test('planFileOf: a round, else the open plan ask, else the approved plan; never a bad path', () => {
+  const shaping = { rounds: [{ round: 1, file: '/p/plan-v1.md' }, { round: 2, file: 'rel/plan.md' }, { round: 3, file: '/p/plan.txt' }], approved: { round: 1, file: '/p/plan-v1.md' } };
+  const pendingQuestion = { kind: PLAN_ASK_KIND, plan: { file: '/p/plan-v4.md' } };
+  assert.equal(planFileOf({ shaping }, 1), '/p/plan-v1.md');
+  assert.equal(planFileOf({ shaping }, '1'), '/p/plan-v1.md');
+  assert.equal(planFileOf({ shaping }, 2), null, 'not absolute');
+  assert.equal(planFileOf({ shaping }, 3), null, 'not .md');
+  assert.equal(planFileOf({ shaping }, 9), null, 'no such round');
+  assert.equal(planFileOf({ shaping }, '1.5'), null, 'not an integer');
+  assert.equal(planFileOf({ shaping }, 'x'), null);
+  assert.equal(planFileOf({ pendingQuestion, shaping }), '/p/plan-v4.md');
+  assert.equal(planFileOf({ pendingQuestion: { kind: 'clarify', plan: { file: '/p/x.md' } }, shaping }), '/p/plan-v1.md');
+  assert.equal(planFileOf({ pendingQuestion: { kind: PLAN_ASK_KIND, plan: { file: 'x.md' } }, shaping }), '/p/plan-v1.md');
+  assert.equal(planFileOf({ shaping: { rounds: [], approved: null } }), null);
+  assert.equal(planFileOf(), null);
 });
 
 test('renderPlanFeedback carries the feedback and the plan file', () => {
