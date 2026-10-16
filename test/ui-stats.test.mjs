@@ -12,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -213,4 +214,39 @@ test('narrow widths: the range control wraps and a grouped table scrolls inside 
   // A grid item keeps min-width:auto, so the 1fr track grows to the table's
   // min-content width and .people-scroll never scrolls; min-width:0 caps it.
   assert.match(css, /\.people-grid>\*\{min-width:0;\}/);
+});
+
+// Tag dimensions (slice 3): configured dimensions lead the Group by, by label; none configured = slice 2's list.
+const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
+function tagHandler(dims, groups = null) {
+  return (u) => {
+    if (u.includes('/api/tag-dimensions')) return json({ dims });
+    if (u.includes('/api/tags')) return json({ keys: [{ key: 'client', count: 2, plain: false, valued: true }, { key: 'spike', count: 1, plain: true, valued: false }], values: {} });
+    if (groups && u.includes('/api/stats') && u.includes('groupBy=tag')) return json({ ...STATS_FIXTURE, groups });
+    return null;
+  };
+}
+const groupTexts = (doc) => [...doc.querySelectorAll('#stats-group option')].map((o) => o.textContent);
+
+test('Group by: no dimensions → exactly the slice 2 options; a configured dimension leads by label and names the groups card', async () => {
+  await checkRows([
+    { name: 'none configured', run: async () => {
+      const ctx = await boot({ fetchHandler: tagHandler([]) });
+      applyFlags({ runTags: true }, ctx.window.document);
+      await ctx.showStats(); await ctx.tick(); await ctx.tick();
+      assert.deepEqual(groupTexts(ctx.window.document), ['No grouping', 'Group by person', 'Group by tag: client', 'Group by tag: spike']);
+      assert.ok(!groupTexts(ctx.window.document).some((t) => t.includes('Cost centre')));
+    } },
+    { name: 'Cost centre configured', run: async () => {
+      const groups = { label: 'cc', rows: [{ key: '4410', label: '4410', spentUsd: 3.5, runs: 3, finished: 2, stopped: 1, failed: 0, running: 0, paused: 0, prsOpened: 1, prsMerged: 1 }] };
+      const ctx = await boot({ fetchHandler: tagHandler([{ key: 'cc', label: 'Cost centre', values: [], required: true }], groups) });
+      applyFlags({ runTags: true }, ctx.window.document);
+      await ctx.showStats(); await ctx.tick(); await ctx.tick();
+      const doc = ctx.window.document;
+      assert.deepEqual(groupTexts(doc), ['No grouping', 'Group by person', 'Group by Cost centre', 'Group by tag: client', 'Group by tag: spike']);
+      const sel = doc.getElementById('stats-group');
+      sel.value = 'tag:cc'; sel.dispatchEvent(new ctx.window.Event('change')); await ctx.tick(); await ctx.tick(); await ctx.tick();
+      assert.equal(doc.querySelector('#stats-body .groups-card h2').textContent, 'By Cost centre');
+    } },
+  ]);
 });

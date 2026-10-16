@@ -349,6 +349,8 @@
                 <!-- Run tags (#718): who the work is for, so its cost can be allocated. Chips from tag-input.mjs. -->
                 <div class="field field-compact run-tags-field" data-flag="runTags" data-flag-chip>
                   <label>Tags <span class="opt">(optional)</span></label>
+                  <div id="runTagDimsField" hidden></div>
+                  <small class="hint tag-dims-warn" id="runTagDimsWarn" aria-live="polite" hidden></small>
                   <div id="runTagsField"></div>
                   <small class="hint">Used to allocate cost. <button type="button" class="link-btn" id="runTagsSaveDefault">Save as project default</button></small>
                 </div>
@@ -1169,6 +1171,7 @@
             <span class="tm-custom" id="tm-custom" hidden>
               <input type="date" id="tm-from" class="input" aria-label="From" /> – <input type="date" id="tm-to" class="input" aria-label="To" />
             </span>
+            <select id="tm-tag" class="select select-sm" aria-label="Filter by tag" hidden></select>
           </div>
           <div class="tm-active-filters" id="tm-filters" hidden></div>
           <div id="tm-body"><small class="hint">Loading…</small></div>
@@ -1982,6 +1985,21 @@
               <div class="add-project-actions" style="margin-top:14px">
                 <button type="button" id="schedDefaultsReset" class="btn btn-ghost btn-mini">Use defaults</button>
                 <button type="button" id="schedDefaultsSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+            </section>
+
+            <!-- Tag dimensions (run tags, slice 3): local keys the New run form asks for when the run
+                 target's team policy sets none. Empty = a hint and the Add button, no rows. -->
+            <section class="card settings-card" id="tag-dims-settings-card" data-min-level="advanced" data-flag="runTags">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Tag dimensions</h2>
+                </div>
+              </div>
+              <p class="hint">Runs take free-form tags. Add a dimension to suggest a key (like a cost centre) on every New run. Projects whose team policy sets tag dimensions use the team's list instead.</p>
+              <div id="tagDimsEditor" data-setting="tagDimensions"></div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" class="btn btn-primary btn-mini" id="tagDimsSave">Save</button>
               </div>
             </section>
 

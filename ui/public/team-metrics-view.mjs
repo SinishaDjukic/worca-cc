@@ -3,7 +3,8 @@
 // every function takes an aggregate() result (src/shared/team-metrics/aggregate.mjs) and
 // returns detached elements. app.js owns fetch, mounting and delegated events.
 import { niceScale, roundedTopBar, savedMultChip } from './stats-view.mjs';
-import { safeHttpUrl } from '../../src/shared/team-metrics/aggregate.mjs';
+import { safeHttpUrl, recordTags } from '../../src/shared/team-metrics/aggregate.mjs';
+import { dimensionLabel } from '../../src/shared/tag-dimensions.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -492,7 +493,7 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
  * it is not. `project` is offered for workspace scopes only — on a single project it is
  * always one bar.
  */
-export function renderGroupBySelect(groupBy, scopeKind, { doc = globalThis.document } = {}) {
+export function renderGroupBySelect(groupBy, scopeKind, { doc = globalThis.document, tagKeys = [], dims = [] } = {}) {
   const label = h(doc, 'label', 'tm-group');
   label.append('Group by ');
   const wrap = h(doc, 'span', 'select-wrap');
@@ -500,14 +501,25 @@ export function renderGroupBySelect(groupBy, scopeKind, { doc = globalThis.docum
   sel.id = 'tm-group';
   sel.setAttribute('aria-label', 'Stack Spend per week by');
   // The same three for both scope kinds: spend is never split across the projects a run touched.
-  const opts = ['workflow', 'result', 'actor'];
-  for (const v of opts) { const o = h(doc, 'option', null, v); o.value = v; o.selected = v === groupBy; sel.append(o); }
+  // Tag keys stack too: a run carries one value per key.
+  const opts = ['workflow', 'result', 'actor'].map((v) => [v, v])
+    .concat(tagKeys.map((k) => [`tag:${k}`, dimensionLabel(dims, k) || `tag: ${k}`]));
+  for (const [v, text] of opts) { const o = h(doc, 'option', null, text); o.value = v; o.selected = v === groupBy; sel.append(o); }
   wrap.append(sel);
   label.append(wrap);
   return label;
 }
 
-export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Date.now(), scopeKind = 'project', sort = {}, filter = {}, homeHint = null, runLimit = 50 } = {}) {
+/** The #tm-tag filter: every distinct tag on the loaded records; hidden when none carries tags. */
+export function renderTagFilterSelect(records, current, { doc = globalThis.document } = {}) {
+  const tags = [...new Set(records.flatMap(recordTags))].sort();
+  const sel = h(doc, 'select', 'select select-sm');
+  sel.id = 'tm-tag'; sel.setAttribute('aria-label', 'Filter by tag'); sel.hidden = !tags.length;
+  for (const [v, text] of [['', 'All tags'], ...tags.map((t) => [t, t])]) { const o = h(doc, 'option', null, text); o.value = v; o.selected = v === current; sel.append(o); }
+  return sel;
+}
+
+export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Date.now(), scopeKind = 'project', sort = {}, filter = {}, homeHint = null, runLimit = 50, tagKeys = [], tagDims = [] } = {}) {
   const wrap = h(doc, 'div', 'tm-body');
   if (homeHint) wrap.append(homeHint);
   wrap.append(renderTmKpiRow(agg, { doc, now, scopeKind }));
@@ -516,7 +528,7 @@ export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Da
   charts.append(renderStackedWeekChart({
     title: 'Spend per week', weeks: agg.series.spend, stacks, valueOf: (pt, key) => pt.stacks[key],
     yFmt: (v) => (v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${Math.round(v)}`), tipFmt: TM_FMT.usd, legendValue: (st) => TM_FMT.usd(st.totalUsd),
-    headExtra: renderGroupBySelect(agg.groupBy, scopeKind, { doc }),
+    headExtra: renderGroupBySelect(agg.groupBy, scopeKind, { doc, tagKeys, dims: tagDims }),
   }, { doc }));
   const runTotals = Object.fromEntries(RESULT_STACKS.map((r) => [r.key, agg.series.runs.reduce((a, p) => a + (p[r.key] || 0), 0)]));
   charts.append(renderStackedWeekChart({

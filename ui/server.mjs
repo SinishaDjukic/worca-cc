@@ -74,6 +74,7 @@ import {
   memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
   workspaceScanModels, setWorkspaceScanModels, assertWorkspaceScanInput,
   scheduleDefaults, setScheduleDefaults,
+  userTagDimensions, setUserTagDimensions,
   nightModeSettings, setNightMode, nightModeToggle, nightModeHereSince, setNightModeToggle, assertNightModeToggleInput,
   awayPerPerson, nightModeToggleFor, nightModeHereSinceFor, setPersonNightModeToggle,
   actionsSettings, setActionsSettings, assertActionsInput,
@@ -144,7 +145,7 @@ import {
   discoverAll, scanMembers, routeWorkspaceMembers, projectMetricsStatus, startTeamMetricsBackground,
   metricsEvents, slugDirName,
 } from '../src/core/metrics/sync.mjs';
-import { readScope, scopeSources, listScopes, parseScopeParam, aggregate, resolveRange, GROUP_BYS, PROJECT_KEY_RE as TM_PROJECT_KEY_RE } from '../src/core/metrics/read.mjs';
+import { readScope, scopeSources, listScopes, parseScopeParam, aggregate, resolveRange, isGroupBy, PROJECT_KEY_RE as TM_PROJECT_KEY_RE } from '../src/core/metrics/read.mjs';
 import { resolveRunPrs, listPrEvents, MAX_LOOKUPS as TM_MAX_PR_LOOKUPS } from '../src/core/metrics/prs.mjs';
 // Team policy (team-policy design §9, §11): the worca-policy branch, its gates and its pages.
 import {
@@ -328,7 +329,9 @@ import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, ca
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
 import { editRunTags, readRunTags, tagVocabulary } from '../src/core/run-tags-store.mjs';
-import { normaliseTags, describeTagChange } from '../src/shared/run-tags.mjs';
+import { normaliseTags, describeTagChange, parseTag } from '../src/shared/run-tags.mjs';
+import { normaliseDimensions } from '../src/shared/tag-dimensions.mjs';
+import { dimensionsForTarget, allTagDimensions } from '../src/core/tag-dimensions.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
@@ -5479,9 +5482,11 @@ app.get('/api/team-metrics', async (req, res) => {
   const groupBy = typeof req.query.groupBy === 'string' && req.query.groupBy ? req.query.groupBy : 'workflow';
   const from = typeof req.query.from === 'string' ? req.query.from : null;
   const to = typeof req.query.to === 'string' ? req.query.to : null;
+  const tagFilter = req.query.tag == null ? [] : [].concat(req.query.tag).map(String);
   try {
     resolveRange(range, { from, to });                       // 400 before touching git
-    if (!GROUP_BYS.includes(groupBy)) throw new RangeError(`unknown groupBy "${groupBy}"`);
+    if (!isGroupBy(groupBy)) throw new RangeError(`unknown groupBy "${groupBy}"`);
+    for (const t of tagFilter) { const r = parseTag(t); if (r.error) throw new RangeError(`bad tag filter: ${r.error}`); }
   } catch (err) { return badRequest(res, err.message); }
   try {
     // defer=1 (the page): serve the worktree now and run a due fetch afterwards; the fetch's
@@ -5499,7 +5504,7 @@ app.get('/api/team-metrics', async (req, res) => {
       // The page re-aggregates client-side (§4.9 "one fetch serves the session") and asks with
       // aggregate=0: at 12k records the unused aggregate added ~3.9 MB to a ~9.9 MB response.
       // Other clients (and the API tests) still get it by default.
-      aggregate: req.query.aggregate === '0' ? null : aggregate(read.records, { range, from, to, groupBy, humanRateUsd }),
+      aggregate: req.query.aggregate === '0' ? null : aggregate(read.records, { range, from, to, groupBy, filter: tagFilter.length ? { tags: tagFilter } : {}, humanRateUsd }),
       stats: read.stats,
       sync: read.sync,
       refresh: read.refresh,
@@ -5856,6 +5861,18 @@ app.put('/api/runs/:id/tags', (req, res) => {
 
 // Autocomplete vocabulary for tag fields: keys, then values already in use, most used first.
 app.get('/api/tags', (req, res) => res.json(tagVocabulary()));
+// Tag dimensions (D9): one run target's list, or the machine-wide union for Statistics, the Runs list and Team metrics.
+app.get('/api/tag-dimensions', async (req, res) => {
+  const rawDir = typeof req.query.projectDir === 'string' && req.query.projectDir ? req.query.projectDir : null;
+  const workspaceId = typeof req.query.workspaceId === 'string' && req.query.workspaceId ? req.query.workspaceId : null;
+  // resolveProjectDir (normalizeProjectPath) never returns null for a non-blank string, so refuse a NUL byte here.
+  if (rawDir && rawDir.includes('\0')) return badRequest(res, 'invalid projectDir');
+  const projectDir = rawDir ? resolveProjectDir(rawDir) : null;
+  if (rawDir && !projectDir) return badRequest(res, 'invalid projectDir');
+  try {
+    res.json(projectDir || workspaceId ? await dimensionsForTarget({ projectDir, workspaceId }) : await allTagDimensions());
+  } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
 function syncPrefsView(key) {
   return { own: readSyncPrefs(key) || {}, defaults: syncDefaults(), settings: effectiveSyncSettings(key) };
 }
@@ -9424,6 +9441,7 @@ const settingsState = () => ({
   hideBuiltinModels: hideBuiltinModels(),
   theme: storedTheme(),                                   // system | light | dark (dark-mode design §6)
   schedule: scheduleDefaults(),                           // defaults a NEW schedule inherits
+  tagDimensions: userTagDimensions(),                     // Settings › Runs › Tag dimensions (local; a team policy's list wins)
   sync: syncDefaults(),                                   // sync before run (#527): instance defaults
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
   flags: allFlags(),                                      // { key: bool } resolved (docs/feature-flags.md)
@@ -10022,6 +10040,10 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasActionsKey) asSettingsField('actions', () => assertActionsInput(body.actions));
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
     if (hasFlagsKey) asSettingsField('flags', () => checkFlags(body.flags));   // validate + cascade dry run, before anything is written
+    if (has('tagDimensions')) asSettingsField('tagDimensions', () => {
+      const { errors } = normaliseDimensions(body.tagDimensions ?? []);
+      if (errors.length) throw Object.assign(new Error(errors[0]), { code: 'BAD_TAG_DIMENSIONS' });
+    });
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -10061,13 +10083,14 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('nightMode')) await setNightMode(body.nightMode);
     if (has('nightModeToggle') && !(await setPersonNightModeToggle(person, body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
     if (has('sync')) await setSyncDefaults(body.sync);
+    if (has('tagDimensions')) await asSettingsField('tagDimensions', () => setUserTagDimensions(body.tagDimensions));
     // Live runs re-evaluate their open question against the new night settings.
     if (hasNightKey) for (const e of runs.values()) e.orch?.nightConfigChanged?.();
     if (hasActionsKey) { await setActionsSettings(body.actions); builtinsDetected = null; }   // re-detect the built-ins lazily
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;

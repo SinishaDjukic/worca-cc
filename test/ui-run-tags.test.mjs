@@ -21,7 +21,7 @@ const ok = (body, status = 200) => ({ ok: status < 400, status, json: async () =
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const flagsOn = (window) => applyFlags({ runTags: true }, window.document);
 
-async function bootForm({ tagsFor = () => [] } = {}) {
+async function bootForm({ tagsFor = () => [], dims = null } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -32,14 +32,17 @@ async function bootForm({ tagsFor = () => [] } = {}) {
     addEventListener(t, fn) { (this._l[t] ||= []).push(fn); }
   };
   const posted = [];
+  const puts = [];
   window.fetch = (url, opts = {}) => {
     const u = String(url);
     const method = opts.method || 'GET';
+    if (u.includes('/tags/defaults') && method === 'PUT') { puts.push(JSON.parse(opts.body)); return Promise.resolve(ok(JSON.parse(opts.body))); }
     if (u.includes('/api/run-defaults')) {
       const dir = new URL(u, 'http://x').searchParams.get('projectDir') || '';
       return Promise.resolve(ok({ engine: { value: 'claude', source: 'default' }, steps: { claude: {}, codex: {} },
         projectKey: dir ? `${dir.split('/').pop()}-00000001` : null, tags: tagsFor(dir) }));
     }
+    if (dims && u.includes('/api/tag-dimensions')) return Promise.resolve(ok(dims(new URL(u, 'http://x').searchParams)));
     if (u.includes('/api/tags')) return Promise.resolve(ok({ keys: [], values: {} }));
     if (u.includes('/api/projects')) return Promise.resolve(ok({ projects: PROJECTS }));
     if (u.includes('/api/workspaces')) return Promise.resolve(ok({ workspaces: [] }));
@@ -58,7 +61,7 @@ async function bootForm({ tagsFor = () => [] } = {}) {
   await tick();
   lastWs._l.open?.forEach((fn) => fn());
   for (let i = 0; i < 8; i++) await tick();
-  return { window, doc: window.document, posted };
+  return { window, doc: window.document, posted, puts };
 }
 const formChips = (doc) => [...doc.querySelectorAll('#runTagsField .tag-chip')].map((c) => c.firstChild.textContent);
 async function submit(ctx) {
@@ -173,4 +176,56 @@ test('finished run page: "Add tags" when the run has none; no tag UI with the fl
     assert.equal(doc.querySelector(`#hist-detail ${host} .hd-tags-edit`).textContent, 'Add tags', host);
     assert.equal(doc.querySelectorAll(`#hist-detail ${host} .tag-chip`).length, 0, host);
   }
+});
+
+test('No dimensions configured: no slot UI beyond the free-form field', async () => {
+  const ctx = await bootForm({ dims: () => ({ source: null, home: null, dims: [] }) });
+  flagsOn(ctx.window);
+  assert.equal(ctx.doc.getElementById('runTagDimsField').hidden, true);
+  assert.equal(ctx.doc.querySelectorAll('.tag-dim-slot').length, 0);
+  assert.doesNotMatch(ctx.doc.querySelector('#run-form').textContent, /Cost centre/);
+});
+
+test('Policy Cost centre (required): one slot; start without it succeeds and warns', async () => {
+  const ctx = await bootForm({ dims: () => ({ source: 'policy', home: 'acme/web', dims: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }] }) });
+  flagsOn(ctx.window);
+  const slots = [...ctx.doc.querySelectorAll('#runTagDimsField .tag-dim-slot')];
+  assert.deepEqual(slots.map((s) => s.querySelector('.tag-dim-label').textContent), ['Cost centre']);
+  const body = await submit(ctx);
+  assert.equal(body.tags, undefined, 'the run is posted with no tags — never blocked');
+  const toast = [...ctx.doc.querySelectorAll('.toast')].at(-1);
+  assert.match(toast.textContent, /Missing required tag: Cost centre/);
+  assert.match(toast.className, /warn/);
+});
+
+test('A filled slot rides the body with the free-form tags; a default cc:4410 lands in the slot', async () => {
+  const ctx = await bootForm({ tagsFor: (dir) => (dir === '/a/web' ? ['cc:4410', 'client:acme'] : []), dims: () => ({ source: 'settings', home: null, dims: [{ key: 'cc', label: 'Cost centre', values: [], required: true }] }) });
+  flagsOn(ctx.window);
+  const input = ctx.doc.querySelector('#runTagDimsField .tag-dim-input');
+  assert.equal(input.value, '4410', 'the project default lands in its slot');
+  assert.deepEqual(formChips(ctx.doc), ['client:acme'], 'not in the free-form field too');
+  input.value = '4420'; input.dispatchEvent(new ctx.window.Event('input'));
+  assert.deepEqual((await submit(ctx)).tags, ['cc:4420', 'client:acme']);
+});
+
+test('Save as project default keeps the value typed in a dimension slot', async () => {
+  const ctx = await bootForm({ tagsFor: (dir) => (dir === '/a/web' ? ['client:acme'] : []), dims: () => ({ source: 'settings', home: null, dims: [{ key: 'cc', label: 'Cost centre', values: [], required: true }] }) });
+  flagsOn(ctx.window);
+  const input = ctx.doc.querySelector('#runTagDimsField .tag-dim-input');
+  input.value = '4420'; input.dispatchEvent(new ctx.window.Event('input'));
+  ctx.doc.getElementById('runTagsSaveDefault').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(ctx.puts.at(-1)?.tags?.slice().sort(), ['cc:4420', 'client:acme']);
+  await submit(ctx);
+  assert.equal(ctx.doc.querySelector('#runTagDimsField .tag-dim-input').value, '4420', 'the saved default comes back in its slot');
+  assert.deepEqual(formChips(ctx.doc), ['client:acme']);
+});
+
+test('A workspace run with no workspace picked shows no slots, even when a project configures dimensions', async () => {
+  const ctx = await bootForm({ dims: (q) => (q.get('projectDir') ? { source: 'policy', home: 'acme/web', dims: [{ key: 'cc', label: 'Cost centre', values: [], required: true }] } : { dims: [{ key: 'cc', label: 'Cost centre', values: [], required: true }] }) });
+  flagsOn(ctx.window);
+  assert.equal(ctx.doc.querySelectorAll('.tag-dim-slot').length, 1, 'the project target has its slot');
+  ctx.doc.querySelector('#target-seg button[data-target="workspace"]').click();
+  for (let i = 0; i < 8; i++) await tick();
+  assert.equal(ctx.doc.querySelectorAll('.tag-dim-slot').length, 0);
 });

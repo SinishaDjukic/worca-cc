@@ -10,6 +10,7 @@ import { WORKSPACE_KEY_RE } from '../workspaces.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 import { RECIPE_GUIDE, WORKSPACE_GUIDE } from '../auto/recipes.mjs';
 import { MODEL_PICK_POLICY, compareFacts, factsLine } from '../model-tiers.mjs';   // prompt DATA: names stages, never agent keys
+import { isGroupBy } from '../../shared/team-metrics/aggregate.mjs';
 import { isValidTimeZone, formatInstant } from '../../shared/schedule/recurrence.mjs';   // prompt DATA (D23 — recipes.mjs is the ONE Auto module naming agents; it has zero imports)
 
 export const ASK_SYSTEM_RULES = [
@@ -443,7 +444,6 @@ const RUN_PAGE_LABEL = {
 };
 const TM_SCOPE_RE = /^(?:project:[a-z0-9][a-z0-9-]*-[0-9a-f]{8}|workspace:wks-[a-z0-9-]+-[0-9a-f]{8})$/;
 const TM_RANGES = ['this-month', 'last-month', 'quarter', 'year', 'all', 'custom'];
-const TM_GROUP_BYS = ['workflow', 'result', 'actor'];
 const TM_FILTER_MAX = 200;
 // `dim=key;dim=key` — keys come from record fields (workflow ids, actor names, slugs), so any
 // printable run of characters is allowed but no line breaks or block tags (flattened at render).
@@ -472,7 +472,7 @@ const CONTEXT_KEYS = {
   // trusted block, so nothing here is free text.
   tmScope: (v) => typeof v === 'string' && TM_SCOPE_RE.test(v),
   tmRange: (v) => typeof v === 'string' && TM_RANGES.includes(v),
-  tmGroupBy: (v) => typeof v === 'string' && TM_GROUP_BYS.includes(v),
+  tmGroupBy: (v) => typeof v === 'string' && isGroupBy(v),
   tmFilter: (v) => typeof v === 'string' && v.length > 0 && v.length <= TM_FILTER_MAX && TM_FILTER_RE.test(v),
   // The Team policy page's scope select (same slug shape as the metrics scope), so "raise this cap"
   // refers to the policy on screen.

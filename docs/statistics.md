@@ -31,7 +31,9 @@ the whole account, not the filtered slice).
 ## Group by
 
 **Group by person** or **Group by tag: client** (one option per tag key in use, while `runTags` is
-on) adds a table under the charts:
+on) adds a table under the charts. Configured tag dimensions (team policy `runs.tagDimensions` or
+Settings › Runs › Tag dimensions) come first and read by label: **Group by Cost centre**, with the
+table, its header and the CSV's first column named "Cost centre":
 
 - one row per value (`acme`, `globex`, or a person's name);
 - a `(no client)` row for runs without that tag, or `(unknown person)` for runs with no named

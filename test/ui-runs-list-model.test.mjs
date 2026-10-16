@@ -8,6 +8,7 @@ import { JSDOM } from 'jsdom';
 import {
   rowTime, liveRowState, histRowState, schedRowState, countNeedsYou,
   buildRunsModel, rowSub, rowMatches, isRowSelected, renderRunsList, rowInFilter, dateBucket, RUNS_FILTERS, DATE_BUCKETS, chainRow,
+  tagFilterGroups,
 } from '../ui/public/runs-list.mjs';
 
 const NOW = new Date(2026, 8, 30, 15, 0).getTime();           // Wed Sep 30 2026, 15:00 local
@@ -562,4 +563,13 @@ test('run tags: search, the tag filter, chips with overflow, and the filter opti
   assert.deepEqual(chips, ['a:1', 'b:2', 'c:3', '+2']);
   assert.equal(host.querySelector('.runs-row[data-pipeline-id="h2"] .runs-row-tags'), null, 'an untagged row has no empty container');
   assert.deepEqual(tagFilterOptions([{ tags: ['team:web', 'client:acme'] }, { tags: ['client:acme'] }, {}]), ['client:acme', 'team:web']);
+});
+
+test('tagFilterGroups: one group per configured dimension, then the rest; none configured = flat list', () => {
+  const rows = [{ tags: ['cc:4410', 'client:acme'] }, { tags: ['cc:4420', 'spike', 'cc'] }];
+  assert.deepEqual(tagFilterGroups(rows, []), { groups: [], rest: ['cc', 'cc:4410', 'cc:4420', 'client:acme', 'spike'] });
+  assert.deepEqual(tagFilterGroups(rows, [{ key: 'cc', label: 'Cost centre', values: [], required: false }]), {
+    groups: [{ label: 'Cost centre', any: 'cc', tags: ['cc:4410', 'cc:4420'] }],
+    rest: ['client:acme', 'spike'],
+  });
 });

@@ -54,9 +54,9 @@ export const FLAGS = Object.freeze([
   entry({
     key: 'runTags',
     title: 'Run tags',
-    description: 'Tag runs (client:acme, team:web) on the New run form, run pages and Runs list, so their cost can be allocated.',
-    stage: 'experimental',
-    default: false,
+    description: 'Tag runs (client:acme, team:web) on the New run form, run pages, Runs list, Statistics and Team metrics, with optional tag dimensions from team policy or Settings.',
+    stage: 'beta',
+    default: true,
     owner: 'e-angelov',
     since: '1.11.0',
     added: '2026-10-15',

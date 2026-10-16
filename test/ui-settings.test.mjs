@@ -76,3 +76,38 @@ test('Settings sits in the account menu (not the page list), loads root, and sav
   await new Promise((r) => setTimeout(r, 0));
   assert.ok(posted && posted.root === '', 'Reset POSTs an empty root');
 });
+
+test('Settings › Runs › Tag dimensions: no rows when empty; Add, fill and Save POSTs the list', async () => {
+  const posts = [];
+  const ctx = await boot({
+    fetchHandler: (url, opts) => {
+      if (url.includes('/api/settings')) {
+        if ((opts.method || 'GET').toUpperCase() === 'POST') {
+          const body = JSON.parse(opts.body); posts.push(body);
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ root: '', default: '/home/me', tagDimensions: body.tagDimensions || [] }) });
+        }
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ root: '', default: '/home/me', tagDimensions: [] }) });
+      }
+      return null;
+    },
+  });
+  const { window } = ctx;
+  const doc = window.document;
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  window.location.hash = 'settings';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await tick(); await tick();
+  const card = doc.getElementById('tag-dims-settings-card');
+  assert.equal(card.querySelectorAll('.tag-dim-row').length, 0);
+  assert.equal(card.querySelector('.tag-dim-add').textContent, 'Add a tag dimension');
+  assert.doesNotMatch(card.textContent, /Cost centre/);
+  card.querySelector('.tag-dim-add').click();
+  const row = card.querySelector('.tag-dim-row');
+  for (const [sel, v] of [['.tag-dim-key', 'cc'], ['.tag-dim-label-input', 'Cost centre']]) {
+    const i = row.querySelector(sel); i.value = v; i.dispatchEvent(new window.Event('input', { bubbles: true }));
+  }
+  await tick();
+  doc.getElementById('tagDimsSave').click();
+  for (let i = 0; i < 6 && !posts.length; i++) await tick();
+  assert.deepEqual(posts.at(-1), { tagDimensions: [{ key: 'cc', label: 'Cost centre', values: [], required: false }] });
+});

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
-import { createTagInput, suggestionsFor, tagChip } from '../ui/public/tag-input.mjs';
+import { createTagInput, suggestionsFor, tagChip, createDimensionSlots, createDimensionEditor } from '../ui/public/tag-input.mjs';
 
 const VOCAB = {
   keys: [{ key: 'client', count: 3, plain: false, valued: true }, { key: 'spike', count: 1, plain: true, valued: false }],
@@ -105,4 +105,58 @@ test('focus loads the vocabulary once and fills the datalist; tagChip is a plain
   const c = tagChip(f.doc, 'spike');
   assert.equal(c.className, 'tag-chip');
   assert.equal(c.textContent, 'spike');
+});
+
+const DIMS = [{ key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true }, { key: 'client', label: 'Client', values: [], required: false }];
+function slots(dims, opts) {
+  const { window } = new JSDOM('<!doctype html><div id="h"></div>');
+  const s = createDimensionSlots(window.document, dims, opts);
+  window.document.getElementById('h').appendChild(s.el);
+  return { s, window, doc: window.document };
+}
+
+test('dimension slots: one per dimension, datalist of allowed values, get/set/missing', () => {
+  const { s, window, doc } = slots(DIMS);
+  const els = [...doc.querySelectorAll('.tag-dim-slot')];
+  assert.deepEqual(els.map((e) => e.querySelector('.tag-dim-label').textContent), ['Cost centre', 'Client']);
+  assert.equal(els[0].querySelector('.tag-dim-req').textContent, 'required');
+  const input = els[0].querySelector('.tag-dim-input');
+  assert.equal(input.getAttribute('aria-label'), 'Cost centre');
+  assert.deepEqual([...doc.getElementById(input.getAttribute('list')).querySelectorAll('option')].map((o) => o.value), ['4410', '4420']);
+  assert.deepEqual(s.missing().map((d) => d.key), ['cc']);
+  assert.equal(s.dirty(), false);
+  input.value = '4410'; input.dispatchEvent(new window.Event('input'));
+  assert.deepEqual(s.get(), ['cc:4410']);
+  assert.deepEqual(s.missing(), []);
+  assert.equal(s.dirty(), true);
+  s.set(['client:acme', 'spike']);
+  assert.deepEqual(s.get(), ['client:acme']);
+  assert.equal(s.dirty(), false);
+});
+
+test('dimension slots: an invalid value is flagged and not returned', () => {
+  const { s, window, doc } = slots(DIMS);
+  const input = doc.querySelector('.tag-dim-input');
+  input.value = 'x'.repeat(65); input.dispatchEvent(new window.Event('input'));
+  assert.equal(input.getAttribute('aria-invalid'), 'true');
+  assert.deepEqual(s.get(), []);
+});
+
+test('no dimensions → an empty, hidden slot row', () => {
+  const { s, doc } = slots([]);
+  assert.equal(s.el.hidden, true);
+  assert.equal(doc.querySelectorAll('.tag-dim-slot').length, 0);
+});
+
+test('dimension editor: empty state has no rows; add/remove/get', () => {
+  const { window } = new JSDOM('<!doctype html><div id="h"></div>');
+  const ed = createDimensionEditor(window.document, { value: [] });
+  assert.equal(ed.el.querySelectorAll('.tag-dim-row').length, 0);
+  ed.el.querySelector('.tag-dim-add').click();
+  const row = ed.el.querySelector('.tag-dim-row');
+  row.querySelector('.tag-dim-key').value = 'cc'; row.querySelector('.tag-dim-label-input').value = 'Cost centre';
+  row.querySelector('.tag-dim-values').value = '4410, 4420'; row.querySelector('.tag-dim-required').checked = true;
+  assert.deepEqual(ed.get(), [{ key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true }]);
+  row.querySelector('.tag-dim-remove').click();
+  assert.deepEqual(ed.get(), []);
 });
