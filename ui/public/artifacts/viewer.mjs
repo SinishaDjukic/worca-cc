@@ -488,7 +488,15 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
   closeBtn.addEventListener('click', () => close());
   wrap.addEventListener('focus', () => { (stops()[0] || card).focus(); });
   // The backdrop: the overlay itself, never the card; the second press of a double click (the first opened us) is not a dismissal.
-  root.addEventListener('click', (e) => { if (e.target === root && !(e.detail > 1)) close(); });
+  // The press must land on the overlay too (modal-guard.mjs's rule): a text selection dragged out of the preview ends
+  // with a click on the overlay, and that is not one.
+  let pressedRoot = false;
+  root.addEventListener('mousedown', (e) => { pressedRoot = e.target === root; });
+  root.addEventListener('click', (e) => {
+    const pressed = pressedRoot;
+    pressedRoot = false;
+    if (e.target === root && pressed && !(e.detail > 1)) close();
+  });
   win.addEventListener('keydown', onKey, true);
   win.addEventListener('hashchange', onHash);
   doc.addEventListener('fullscreenchange', onFs);

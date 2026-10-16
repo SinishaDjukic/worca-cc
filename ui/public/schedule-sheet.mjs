@@ -16,6 +16,7 @@ import {
   WEEKDAYS, normalizeRule, previewOccurrences, describeRule, formatInstant, formatCountdown,
   zonedToUtc, zonedParts, localDate, isValidTimeZone,
 } from '../../src/shared/schedule/recurrence.mjs';
+import { guardModal } from './modal-guard.mjs';
 
 const DAY_LABEL = { mo: 'Mo', tu: 'Tu', we: 'We', th: 'Th', fr: 'Fr', sa: 'Sa', su: 'Su' };
 const DAY_NAME = { mo: 'Monday', tu: 'Tuesday', we: 'Wednesday', th: 'Thursday', fr: 'Friday', sa: 'Saturday', su: 'Sunday' };
@@ -431,17 +432,11 @@ export function openScheduleSheet({
       const chosen = result ? syncResult() : undefined;
       if (chosen) result = { ...result, sync: chosen };
       if (result && engineSel && engineSel.firstChild.value !== engine.choices[0][0]) result = { ...result, engine: engineSel.firstChild.value };
-      document.removeEventListener('keydown', onKey, true);
       modal.remove();
       openSheet = null;
       if (prevFocus && typeof prevFocus.focus === 'function') { try { prevFocus.focus(); } catch { /* gone */ } }
       resolve(result);
     }
-    function onKey(e) {
-      if (e.key === 'Escape') { e.stopPropagation(); finish(null); }
-    }
-    document.addEventListener('keydown', onKey, true);
-    modal.addEventListener('click', (e) => { if (e.target === modal) finish(null); });
     cancelBtn.addEventListener('click', () => finish(null));
     closeBtn.addEventListener('click', () => finish(null));
     okBtn.addEventListener('click', () => {
@@ -464,6 +459,9 @@ export function openScheduleSheet({
     openSheet = finish;
     document.body.append(modal);
     paint();
+    // A form: a backdrop click never closes it; Escape closes it untouched and asks once a time, a preset
+    // or a policy changed (the run list it loads later is not a change). Cancel and Close discard at once.
+    guardModal(modal, { kind: 'form', close: () => finish(null) }).opened();
     (showKind ? kindSeg.querySelector('button.on') : showPresets ? seg.querySelector('button.on') : dateIn)?.focus();
   });
 }

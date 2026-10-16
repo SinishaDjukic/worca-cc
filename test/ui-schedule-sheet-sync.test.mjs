@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick, pressEscape, discardPrompt, keepEditing } from './helpers/popups.mjs';
 
 const sheetPath = fileURLToPath(new URL('../ui/public/schedule-sheet.mjs', import.meta.url));
 const tick = (n = 1) => new Promise((r) => setTimeout(r, n));
@@ -124,4 +125,30 @@ test('a recurring result carries sync too', async () => {
   const out = await done;
   assert.ok(out.repeat);
   assert.deepEqual(out.sync, { beforeRun: false });
+});
+
+test('the schedule sheet: never on a backdrop click; Escape closes it untouched and asks once a preset changed; Cancel closes at once', async () => {
+  await checkRows([
+    { name: 'untouched: Escape resolves null at once', run: async () => {
+      const { doc, window, done } = await open({ mode: 'create' });
+      pressEscape(window);
+      assert.equal(discardPrompt(doc), null);
+      assert.equal(await done, null);
+    } },
+    { name: 'a picked preset is a change: no backdrop close, Escape asks, Cancel closes at once', run: async () => {
+      const { doc, window, done } = await open({ mode: 'create' });
+      const modal = doc.getElementById('schedule-modal');
+      backdropClick(window, modal);
+      assert.ok(modal.isConnected, 'never on a backdrop click');
+      modal.querySelector('button[data-preset="daily"]').click();   // the repeat presets (aria-pressed flips in paint)
+      pressEscape(window);
+      assert.ok(discardPrompt(doc), 'a changed schedule asks');
+      keepEditing(doc);
+      await new Promise((r) => setTimeout(r, 0));
+      assert.ok(modal.isConnected);
+      modal.querySelector('.sched-cancel').click();
+      assert.equal(await done, null, 'Cancel resolves null at once');
+      assert.equal(doc.getElementById('schedule-modal'), null);
+    } },
+  ]);
 });

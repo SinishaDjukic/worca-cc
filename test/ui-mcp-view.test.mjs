@@ -186,6 +186,22 @@ test('Team sets are read-only (no rename/delete/add/remove, disabled never-conse
   ]);
 });
 
+test('New set: dismissing the shell itself (header Close, Escape) settles the name prompt — nothing is created, nothing waits forever', async () => {
+  const { host, ctl, modal, writes } = mount();
+  let dismiss = null;
+  modal.onClose = (fn) => { dismiss = fn; return () => { dismiss = null; }; };
+  await ctl.show('');
+  click(host.querySelector('[data-act="new-set"]'));
+  await settle();
+  assert.equal(modal.opened.title, 'New set');
+  assert.equal(typeof dismiss, 'function', 'the prompt registered a dismiss hook');
+  dismiss();
+  await settle();
+  assert.equal(modal.opened, null, 'closed');
+  assert.equal(dismiss, null, 'the hook is released');
+  assert.deepEqual(writes(), [], 'nothing created');
+});
+
 test('Delete: the confirm lists the projects using the set and flags those left with no sets (a Team set counts)', async () => {
   const assignments = { 'billing-1a2b3c4d': { sets: [{ id: 'billing', name: 'Billing' }], includeGeneral: false, team: null },
     'mobile-3c4d5e6f': { sets: [{ id: 'billing', name: 'Billing' }], includeGeneral: false, team: { home: 'acme/platform' } } };

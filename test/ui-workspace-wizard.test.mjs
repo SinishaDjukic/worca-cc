@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { pressEscape } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -408,6 +409,48 @@ test('size limits: no note up to 10, warnings above 10 and 20, Scan blocked abov
       assert.equal(posts.length, 0, 'startWizardScan refuses 41+ on its own');
       tickFirst(window, 40);
       assert.equal(doc.querySelector('#wiz-start-scan').disabled, false, 'back in range');
+    } },
+  ]);
+});
+
+// The wizard's Escape arm runs in the capture phase and stands down while a pop-up is up
+// (modal-guard dialogOpen), so that pop-up alone takes the Escape.
+test('Escape over a pop-up on the wizard closes only that pop-up and the wizard stays; with nothing on top, Escape leaves it', async () => {
+  await checkRows([
+    { name: 'the folder browser', run: async () => {
+      const { window } = await boot({ fetchHandler: (u) => (u.includes('/api/fs/dirs')
+        ? Promise.resolve({ ok: true, status: 200, json: async () => ({ path: '/home/me', parent: '/home', home: '/home/me', dirs: [] }) }) : null) });
+      goCreate(window);
+      await tick();
+      const doc = window.document;
+      void window.__projects.openFolderBrowser('', () => {});
+      await tick(); await tick();
+      const browser = doc.getElementById('folder-browser');
+      assert.equal(browser.classList.contains('hidden'), false);
+      pressEscape(window);
+      assert.equal(browser.classList.contains('hidden'), true, 'the pop-up on top took the Escape');
+      assert.equal(window.location.hash, '#workspace-create', 'the wizard stays');
+      pressEscape(window);
+      assert.equal(window.location.hash, '#new', 'nothing on top: Escape leaves the wizard');
+    } },
+    { name: 'Connect Claude Code, opened by "Sign in…" after a signed-out refusal', run: async () => {
+      const { window } = await boot({
+        fetchHandler: (u, opts) => (u.endsWith('/api/workspaces/scan') && opts.method === 'POST'
+          ? Promise.resolve({ ok: false, status: 409, json: async () => ({ code: 'claude-signed-out', error: 'signed out' }) }) : null),
+      });
+      goCreate(window);
+      await tick();
+      const doc = window.document;
+      doc.querySelector('#wiz-name').value = 'A';
+      pick(window, ['/a/svc-iam', '/a/svc-ui']);
+      click(window, doc.querySelector('#wiz-start-scan'));
+      await tick(); await tick();
+      click(window, doc.querySelector('#wiz-step1-hint a'));
+      const setup = doc.getElementById('claude-setup-modal');
+      assert.equal(setup.classList.contains('hidden'), false, 'Sign in… opens it');
+      pressEscape(window);
+      assert.equal(setup.classList.contains('hidden'), true, 'the pop-up took the Escape');
+      assert.equal(window.location.hash, '#workspace-create', 'the wizard stays');
     } },
   ]);
 });

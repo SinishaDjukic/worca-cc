@@ -1626,6 +1626,13 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    z-index the export modal would paint over it, hiding the Browse… picker.
    Elevate it above every other modal so it is always usable when open. */
 #folder-browser.viewer-modal{z-index:70;}
+/* "Discard changes?" (modal-guard.mjs askDiscard): a native <dialog> opened with showModal(), so it
+   paints in the top layer above every .viewer-modal, the folder browser and the composer's own
+   <dialog>. These rules undo the UA dialog box so the .viewer-modal scrim and centred .card apply. */
+dialog.discard-modal{max-width:none;max-height:none;width:auto;height:auto;margin:0;border:0;color:inherit;}
+dialog.discard-modal:not([open]){display:none;}
+dialog.discard-modal::backdrop{background:transparent;}
+.discard-modal .discard-go{background:var(--red-ink);border-color:var(--red-ink);color:var(--on-status);}
 .viewer-modal .card{width:min(860px,100%);max-height:86vh;overflow:auto;}
 /* The artifact viewer's header actions (Full screen · Close) share one row and one height. */
 #viewer-card .viewer-actions{display:inline-flex;align-items:center;gap:8px;}
