@@ -4304,6 +4304,9 @@ function paintRunTagDims(info, tags) {
   runTagDims = next;
   const host = document.getElementById('runTagDimsField');
   if (host) host.hidden = !dims.length;
+  // "(optional)" is true only while no configured tag is mandatory (enforced or not, a mandatory tag is asked for).
+  const opt = document.querySelector('.run-tags-field .opt');
+  if (opt) opt.hidden = dims.some((d) => d.required);
   paintRunTagDimsWarn();
 }
 runTagInput.onChange(() => paintRunTagDimsWarn());

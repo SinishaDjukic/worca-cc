@@ -190,6 +190,19 @@ test('No dimensions configured: no slot UI beyond the free-form field', async ()
   assert.doesNotMatch(ctx.doc.querySelector('#run-form').textContent, /Cost centre/);
 });
 
+test('the Tags label says "(optional)" only while no configured tag is mandatory', async () => {
+  const opt = (ctx) => ctx.doc.querySelector('.run-tags-field .opt');
+  const none = await bootForm({ dims: () => ({ source: null, home: null, dims: [] }) });
+  flagsOn(none.window);
+  assert.equal(opt(none).hidden, false, 'no dimensions: tags are optional');
+  const optionalDim = await bootForm({ dims: () => ({ source: 'settings', home: null, dims: [{ key: 'team', label: 'Team', values: [], required: false }] }) });
+  flagsOn(optionalDim.window);
+  assert.equal(opt(optionalDim).hidden, false, 'only optional dimensions: still optional');
+  const mandatory = await bootForm({ dims: () => ({ source: 'settings', home: null, dims: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }] }) });
+  flagsOn(mandatory.window);
+  assert.equal(opt(mandatory).hidden, true, 'a mandatory tag: the field is not optional');
+});
+
 test('enforcement off: start without a mandatory tag succeeds and warns (today)', async () => {
   const ctx = await bootForm({ dims: () => ({ source: 'policy', home: 'acme/web', dims: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }] }) });
   flagsOn(ctx.window);
