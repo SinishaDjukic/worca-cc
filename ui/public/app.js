@@ -247,7 +247,7 @@ import { registerDirectionAddon } from './chat/direction.mjs';
 import { shapeFirstOn, onShapeFirstChange } from './chat/shape-gate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
-import { renderFeature, renderFeatureSummary } from './shape/feature-view.mjs';
+import { renderFeature, renderFeatureSummary, featureWhere } from './shape/feature-view.mjs';
 import { sliceLineCopy } from './shape/slice-line.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun } from './shape/plan-text.mjs';
@@ -427,14 +427,13 @@ function refreshShapeFeatures(id = null) {
     if (!id || fid === id || host.__shapeShown === id) paintShapeFeature(host);
   }
 }
-/** D16: the page's extras: the live slice's stage bar, and its ask in a persistent host (P12). */
+/** D16: the page's extras: the live slice's progress (for the "you are here" line), and its ask in a persistent host (P12). */
 const featureLiveRun = (s) => (s.runId ? runs.get(s.runId) : null) || (s.pipelineId ? latestPipelineRun(s.pipelineId) : null);
 function featureProgress(s) { const r = featureLiveRun(s); return r && isGraphRun(r) ? runDecorFor(r).stageProgress : null; }
 function featurePageDeps(host) {
   return {
     page: true,
     progressOf: featureProgress,
-    paintProgress: (bar, prog) => paintProgressBar(bar, prog),
     mountAsk: (slot, s) => {
       // One ask element per page host, moved into each rebuild's slot. chatPaintQuestion rebuilds only when the
       // question changes and registers the panel in CHAT_QPANELS (postAnswer's busy sweep, 422 marks, clearQpanel).
@@ -448,19 +447,16 @@ function featurePageDeps(host) {
     },
   };
 }
-/** D16: move the feature page's current stage bar on a run frame, without a fetch. */
+/** D33: move the feature page's "you are here" line on a run frame, without a fetch. */
 function paintFeaturePageProgress(r) {
   if (currentShownView !== 'feature' || !r || !r.pipelineId) return;
   const page = document.querySelector('[data-view="feature"] .feature-page');
   const box = page && page.querySelector('.shape-feature-current');
+  const head = page && page.querySelector('.shape-feature.is-page .shape-feature-head');
   const f = page && page.__shapeShownView;                 // the last view JSON paintShapeFeature drew in page mode
   const cur = f && box ? f.slices.find((s) => String(s.index) === box.dataset.slice) : null;
-  if (!cur || (cur.pipelineId !== r.pipelineId && cur.runId !== r.runId)) return;
-  const prog = featureProgress(cur);
-  const bar = box.querySelector('.shape-feature-current-bar');
-  const text = box.querySelector('.shape-feature-current-text');
-  bar.hidden = !prog; text.hidden = !prog;
-  if (prog) { paintProgressBar(bar, prog); text.textContent = prog.text; }
+  if (!cur || !head || (cur.pipelineId !== r.pipelineId && cur.runId !== r.runId)) return;
+  head.textContent = featureWhere(f, featureProgress(cur));
 }
 chatDeps.mountFeature = (host, id) => mountShapeFeature(host, id, { mode: 'summary' });   // P13: the Chat run card (F33)
 if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, mountCard: (h, id) => chatDeps.mountFeature(h, id), refresh: refreshShapeFeatures };   // test seam
@@ -29548,8 +29544,10 @@ function runsChainItem(c, open) {
     // The amber "Needs you" text only; the Needs-you list membership comes from the model. Same cases as needsYou():
     // an open question or a pause (`interrupted` is not one).
     const needs = !!r && state === 'current' && (r.pendingQuestion != null || r.status === 'paused');
+    // D33: an open question, whether or not the run is also paused: the member's dot turns amber.
+    const asks = !!r && state === 'current' && r.pendingQuestion != null;
     const slice = feat ? (feat.slices.find((s) => (m.ticketId && s.ticketId === m.ticketId) || (m.pipelineId && s.pipelineId === m.pipelineId)) || feat.slices[i]) : null;
-    return { ...m, pipelineId: m.pipelineId || (r && r.pipelineId) || null, state, progress, icon, needs, runId: r ? r.runId : '',
+    return { ...m, pipelineId: m.pipelineId || (r && r.pipelineId) || null, state, progress, icon, needs, asks, runId: r ? r.runId : '',
       title: slice ? `${slice.index} · ${slice.title}` : m.title,
       // D17: a slice that has not started opens the feature page; a started one opens its run.
       href: feat && !r && !m.pipelineId ? featHref : href };
@@ -29588,8 +29586,10 @@ function runsSchedItem(t) {
 // pipelineId: a live row painted before its id arrived must repaint once it does (selection
 // and the focus fallbacks below match on it).
 // `r.progress ? 1 : 0`: the line's presence is structural; its fraction/tone are patched in place (paintRunsProgress).
+// A member's icon and asks: the fields its dot reads, so a paused member that gains a question (icon stays 'paused')
+// repaints amber.
 const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base,
-  r.progress ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.href])] : 0];
+  r.progress ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.href, m.icon, !!m.asks])] : 0];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over (same slot first), then the

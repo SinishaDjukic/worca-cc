@@ -1,5 +1,9 @@
 // ui/public/shape/feature-view.mjs — the feature card (spec §3.8, screen 9): progress, each slice's state and PR, and
-// Review plan / Resume / Re-plan the rest / Cancel the rest. One view for slice 1's Chat run card and the Plans tab (L11).
+// Review plan / Resume / Re-plan the rest / Cancel the rest, and on the feature page a ⋯ menu
+// (Open slice run / Re-plan the rest / Cancel the rest / Approve each). One view for slice 1's Chat run card and the
+// Plans tab (L11).
+import { toggleMenu } from '../workflows/menu.mjs';
+
 export const SLICE_STATE_LABELS = Object.freeze({
   planned: 'Planned', starting: 'Starting', shaping: 'Planning', questions: 'Waiting for your answers', approval: 'Waiting for your plan approval',
   running: 'Building', paused: 'Paused', done: 'Done', stopped: 'Stopped', error: 'Stopped with an error',
@@ -23,6 +27,21 @@ export function featureHeadline(f) {
 const NEEDS = new Set(['approval', 'questions']);
 // The slice in flight on the feature page: sliceState's live states.
 const CURRENT = new Set(['approval', 'questions', 'running', 'shaping', 'starting', 'paused']);
+// D33: the wait in words on the feature page's line, and the stage a slice state implies when no live run is known.
+const WAIT_WORDS = Object.freeze({ approval: 'your approval', questions: 'your answers', paused: 'paused', starting: 'starting' });
+const STATE_STAGE = Object.freeze({ shaping: 'Plan', questions: 'Plan', approval: 'Plan', running: 'Build' });
+
+/** D33: the feature page's one "you are here" line, "Slice 1 of 2 › Plan › your approval". `prog` is the live slice's
+ *  runProgress() or null. A feature with no slice in flight, or one that halted, reads its headline. */
+export function featureWhere(f, prog) {
+  const cur = f.status === 'active' && !f.halted ? f.slices.find((s) => CURRENT.has(s.state)) : null;
+  if (!cur) return featureHeadline(f);
+  const label = (prog && prog.label) || '';
+  const text = String((prog && prog.text) || '');
+  const tail = label && text.startsWith(`${label} · `) ? text.slice(label.length + 3) : '';
+  return [`Slice ${cur.index} of ${f.total}`, label || STATE_STAGE[cur.state] || '', WAIT_WORDS[cur.state] || tail]
+    .filter(Boolean).join(' › ');
+}
 
 /** The Chat card's one line (board 9). */
 export function featureSummaryLine(f) {
@@ -59,7 +78,7 @@ function mergeTags(slices) {
 }
 
 /** deps: { act(action, body, {focus}) → Promise<{ok, error?}>, openSlice(slice), openRun(ref), confirm, error?: string }
- *  The feature page (D16) adds { page: true, progressOf(slice), paintProgress(bar, prog), mountAsk(slot, slice) }. */
+ *  The feature page (D16) adds { page: true, progressOf(slice), mountAsk(slot, slice) }. */
 export function renderFeature(doc, f, deps) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   // data-act names each control, so the host can give the focus back after a repaint (a rebuild drops it). Per-slice
@@ -70,7 +89,12 @@ export function renderFeature(doc, f, deps) {
   el.appendChild(h('div', 'shape-feature-title', f.title));
   // F47: the host asked for an earlier feature; this is the one its Re-plan the rest started.
   if (f.replanOf) el.appendChild(h('div', 'shape-feature-replanned', 'Re-planned: the slices below replace the earlier outline'));
-  el.appendChild(h('div', 'shape-feature-head', featureHeadline(f)));
+  // D33: on the page, ONE line says where the feature stands and what it waits for; the segmented bar is the only bar.
+  const cur = deps.page ? f.slices.find((s) => CURRENT.has(s.state)) || null : null;
+  const inlineAsk = !!(cur && NEEDS.has(cur.state) && deps.mountAsk);
+  const head = h('div', 'shape-feature-head', deps.page ? featureWhere(f, cur && deps.progressOf ? deps.progressOf(cur) : null) : featureHeadline(f));
+  if (inlineAsk && f.status === 'active' && !f.halted) head.classList.add('is-needs');
+  el.appendChild(head);
   if (deps.page) el.appendChild(segBar(h, f));
   else {
     const bar = h('div', 'shape-feature-bar');
@@ -79,15 +103,31 @@ export function renderFeature(doc, f, deps) {
     bar.appendChild(h('span', 'shape-feature-fill')).style.width = `${f.total ? Math.round((f.done / f.total) * 100) : 0}%`;
     el.appendChild(bar);
   }
+  // D30: the slice in flight, and its ask, come first.
+  if (cur) {
+    const box = h('div', 'shape-feature-current');
+    box.dataset.slice = String(cur.index);
+    box.appendChild(h('div', 'shape-feature-current-title', `Slice ${cur.index} · ${cur.title}`));
+    el.appendChild(box);
+    if (inlineAsk) {
+      // A slot only: the host swaps in its persistent ask element (P12), so a repaint never wipes a typed answer.
+      const slot = h('div', 'shape-feature-ask');
+      box.appendChild(slot);
+      deps.mountAsk(slot, cur);
+    }
+  }
   const tags = deps.page ? mergeTags(f.slices) : null;
   const ol = h('ol', 'shape-feature-slices');
   for (const s of f.slices) {
     const li = h('li', `shape-feature-slice is-${s.state}`);
     li.append(h('span', 'shape-feature-slice-title', `${s.index} · ${s.title}`), h('span', 'shape-feature-slice-state', SLICE_STATE_LABELS[s.state] || s.state));
     if (s.state === 'approval' || s.state === 'questions') {
-      const rv = btn('shape-feature-review', s.state === 'approval' ? 'Review plan' : 'Answer', `shape-feature-review-${s.index}`);
-      rv.addEventListener('click', () => deps.openSlice(s));
-      li.appendChild(rv);
+      // D31: no Review plan / Answer pointing at the ask that is already inline above.
+      if (!(inlineAsk && s === cur)) {
+        const rv = btn('shape-feature-review', s.state === 'approval' ? 'Review plan' : 'Answer', `shape-feature-review-${s.index}`);
+        rv.addEventListener('click', () => deps.openSlice(s));
+        li.appendChild(rv);
+      }
     } else if (s.pipelineId || s.runId) {
       const open = btn('shape-feature-open', 'Open', `shape-feature-open-${s.index}`);
       open.addEventListener('click', () => deps.openSlice(s));
@@ -124,25 +164,6 @@ export function renderFeature(doc, f, deps) {
     if (b.isConnected) b.disabled = false;
   };
   if (deps.page) {
-    const cur = f.slices.find((s) => CURRENT.has(s.state));
-    if (cur) {
-      const box = h('div', 'shape-feature-current');
-      box.dataset.slice = String(cur.index);
-      box.appendChild(h('div', 'shape-feature-current-title', `Slice ${cur.index} · ${cur.title}`));
-      const prog = deps.progressOf ? deps.progressOf(cur) : null;
-      const bar = h('div', 'run-prog shape-feature-current-bar');
-      const text = h('div', 'shape-feature-current-text', prog ? prog.text : '');
-      bar.hidden = !prog; text.hidden = !prog;
-      if (prog && deps.paintProgress) deps.paintProgress(bar, prog);
-      box.append(bar, text);
-      el.appendChild(box);
-      if (NEEDS.has(cur.state) && deps.mountAsk) {
-        // A slot only: the host swaps in its persistent ask element (P12), so a repaint never wipes a typed answer.
-        const slot = h('div', 'shape-feature-ask');
-        box.appendChild(slot);
-        deps.mountAsk(slot, cur);
-      }
-    }
     if (f.slices.length > 1) el.appendChild(h('div', 'shape-feature-order', 'Merge in order: each slice\'s branch starts from the one before.'));
     if (f.ship && f.ship.mode) {
       const done = h('div', 'shape-feature-shipped', f.ship.mode === 'one' ? 'Shipped as one PR' : 'Shipped as stacked PRs');
@@ -166,6 +187,12 @@ export function renderFeature(doc, f, deps) {
     }
     if (f.status !== 'active') el.appendChild(err);
   }
+  const replan = async (b) => {
+    if (await deps.confirm({ title: 'Re-plan the rest', message: 'The waiting slices are canceled and Worca plans what is left from the last finished slice.', confirmLabel: 'Re-plan' })) run('replan', null, b);
+  };
+  const cancel = async (b) => {
+    if (await deps.confirm({ title: 'Cancel the rest', message: 'The slices that have not started are canceled. A running slice keeps running.', confirmLabel: 'Cancel the rest', danger: true })) run('cancel', null, b);
+  };
   if (f.status === 'active') {
     const foot = h('div', 'shape-feature-actions');
     if (f.halted) {
@@ -173,22 +200,35 @@ export function renderFeature(doc, f, deps) {
       res.addEventListener('click', () => run('resume', null, res));
       foot.appendChild(res);
     }
-    if (f.open || f.halted) {
-      const rp = btn('shape-feature-replan', 'Re-plan the rest');
-      rp.addEventListener('click', async () => {
-        if (await deps.confirm({ title: 'Re-plan the rest', message: 'The waiting slices are canceled and Worca plans what is left from the last finished slice.', confirmLabel: 'Re-plan' })) run('replan', null, rp);
+    if (deps.page) {
+      // D31: the page's rare actions sit in ⋯; the inline card carries the decision.
+      const more = btn('shape-feature-more', '⋯');
+      more.title = 'More actions';
+      more.setAttribute('aria-label', 'More actions');
+      more.setAttribute('aria-haspopup', 'menu');
+      more.setAttribute('aria-expanded', 'false');
+      more.addEventListener('click', () => {
+        const items = [];
+        if (cur && (cur.runId || cur.pipelineId)) items.push({ label: 'Open slice run', onSelect: () => deps.openSlice(cur) });
+        if (f.open || f.halted) items.push({ label: 'Re-plan the rest', onSelect: () => replan(more) }, { label: 'Cancel the rest', onSelect: () => cancel(more) });
+        items.push({ label: 'Approve each slice\'s plan', checked: !!f.approveEach, onSelect: () => run('approve-each', { on: !f.approveEach }, more) });
+        toggleMenu({ doc, anchor: more, items, align: 'end', label: 'More actions' });
       });
-      const cx = btn('shape-feature-cancel', 'Cancel the rest');
-      cx.addEventListener('click', async () => {
-        if (await deps.confirm({ title: 'Cancel the rest', message: 'The slices that have not started are canceled. A running slice keeps running.', confirmLabel: 'Cancel the rest', danger: true })) run('cancel', null, cx);
-      });
-      foot.append(rp, cx);
+      foot.appendChild(more);
+    } else {
+      if (f.open || f.halted) {
+        const rp = btn('shape-feature-replan', 'Re-plan the rest');
+        rp.addEventListener('click', () => replan(rp));
+        const cx = btn('shape-feature-cancel', 'Cancel the rest');
+        cx.addEventListener('click', () => cancel(cx));
+        foot.append(rp, cx);
+      }
+      const lab = h('label', 'shape-feature-approve-each');
+      const box = h('input'); box.type = 'checkbox'; box.checked = f.approveEach; box.dataset.act = 'shape-feature-approve-each';
+      box.addEventListener('change', () => run('approve-each', { on: box.checked }, box));
+      lab.append(box, doc.createTextNode(' Approve each slice\'s plan'));
+      foot.appendChild(lab);
     }
-    const lab = h('label', 'shape-feature-approve-each');
-    const box = h('input'); box.type = 'checkbox'; box.checked = f.approveEach; box.dataset.act = 'shape-feature-approve-each';
-    box.addEventListener('change', () => run('approve-each', { on: box.checked }, box));
-    lab.append(box, doc.createTextNode(' Approve each slice\'s plan'));
-    foot.appendChild(lab);
     el.append(foot, err);
   }
   return el;

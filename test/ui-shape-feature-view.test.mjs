@@ -2,8 +2,10 @@
 // Review plan / Answer / Open, and the active feature's Resume / Re-plan the rest / Cancel the rest / approve-each.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
-import { SLICE_STATE_LABELS, featureHeadline, renderFeature, renderFeatureSummary, featureSummaryLine } from '../ui/public/shape/feature-view.mjs';
+import { SLICE_STATE_LABELS, featureHeadline, featureWhere, renderFeature, renderFeatureSummary, featureSummaryLine } from '../ui/public/shape/feature-view.mjs';
+import { closeMenus } from '../ui/public/workflows/menu.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -272,25 +274,121 @@ const PAGE = () => ({ ...feature(), status: 'active', total: 3, done: 1, approve
     { index: 2, title: 'Run tags', state: 'approval', pipelineId: 'p2', runId: 'r2', pr: null },
     { index: 3, title: 'Cost report', state: 'planned', pipelineId: null, pr: null } ] });
 
+// D30/D31/D33
+const WAIT = () => ({ ...feature(), title: 'Charts', total: 2, done: 0, approveEach: false, open: true, halted: null,
+  slices: [
+    { index: 1, title: 'Store chart definitions', state: 'approval', pipelineId: 'p1', runId: 'r1', pr: null },
+    { index: 2, title: 'Chart export', state: 'planned', pipelineId: null, pr: null } ] });
+const PLAN_PROG = { mode: 'stages', label: 'Plan', text: 'Plan · needs you: approve the plan', tone: 'amber', fraction: 0.1 };
+// The inline plan card stands in for the -2-chat card: Approve plan / Ask for changes / Full plan / ⋯.
+const cardAsk = (slot) => {
+  for (const t of ['Approve plan', 'Ask for changes', 'Full plan', '⋯']) {
+    const b = doc.createElement('button'); b.type = 'button'; b.textContent = t; slot.appendChild(b);
+  }
+};
+const pageDeps = (o = {}) => deps({ page: true, progressOf: () => PLAN_PROG, mountAsk: cardAsk, ...o });
+const menuLabels = () => [...doc.querySelectorAll('.wfv-menu .wfv-menu-item')].map((b) => b.textContent);
+const pick = (label) => [...doc.querySelectorAll('.wfv-menu .wfv-menu-item')].find((b) => b.textContent === label).click();
+
+test('featureWhere: the stage and the wait in words; the headline when nothing is in flight or it halted', () => {
+  assert.equal(featureWhere(WAIT(), PLAN_PROG), 'Slice 1 of 2 › Plan › your approval');
+  assert.equal(featureWhere(WAIT(), null), 'Slice 1 of 2 › Plan › your approval', 'no live run: the stage from the slice state');
+  const q = { ...WAIT(), slices: [{ ...WAIT().slices[0], state: 'questions' }, WAIT().slices[1]] };
+  assert.equal(featureWhere(q, null), 'Slice 1 of 2 › Plan › your answers');
+  const building = { ...PAGE(), slices: PAGE().slices.map((s) => (s.index === 2 ? { ...s, state: 'running' } : s)) };
+  assert.equal(featureWhere(building, { label: 'Build', text: 'Build · task 2 of 5' }), 'Slice 2 of 3 › Build › task 2 of 5');
+  assert.equal(featureWhere(building, null), 'Slice 2 of 3 › Build');
+  assert.equal(featureWhere(halted('paused', 2, [3]), null), 'Slice 2 paused · slice 3 waiting');
+  assert.equal(featureWhere(feature({ status: 'done', done: 3 }), null), 'All 3 slices done');
+});
+
+test('page waiting state: one line, one bar, the ask first, no Review plan, at most 5 controls', () => {
+  const { el } = mount(WAIT(), pageDeps());
+  assert.equal(q(el, '.shape-feature-head').textContent, 'Slice 1 of 2 › Plan › your approval');
+  assert.ok(q(el, '.shape-feature-head').classList.contains('is-needs'));
+  assert.equal(el.querySelectorAll('.shape-feature-segs').length, 1);
+  assert.equal(q(el, '.run-prog'), null, 'no stage bar');
+  assert.equal(q(el, '.shape-feature-current-bar'), null);
+  assert.equal(q(el, '.shape-feature-current-text'), null);
+  assert.equal(q(el, '.shape-feature-review'), null, 'no Review plan: the plan is right below');
+  const order = [...el.children].map((c) => c.className.split(' ')[0]);
+  assert.ok(order.indexOf('shape-feature-current') < order.indexOf('shape-feature-slices'), 'the ask comes before the list');
+  const controls = el.querySelectorAll('button, a[href], input, select, textarea');
+  // Exactly 5 today (4 stand-in card buttons + ⋯): the D31 limit, with no slack.
+  assert.ok(controls.length <= 5, `${controls.length} controls`);
+  assert.equal(q(el, '.shape-feature-replan'), null);
+  assert.equal(q(el, '.shape-feature-cancel'), null);
+  assert.equal(q(el, '.shape-feature-approve-each'), null);
+});
+
+test('page questions state: no Answer button beside the inline ask', () => {
+  const f = { ...WAIT(), slices: [{ ...WAIT().slices[0], state: 'questions' }, WAIT().slices[1]] };
+  const { el } = mount(f, pageDeps());
+  assert.equal(q(el, '.shape-feature-review'), null);
+  assert.equal(q(el, '.shape-feature-head').textContent, 'Slice 1 of 2 › Plan › your answers');
+});
+
+test('⋯ holds Open slice run, Re-plan the rest, Cancel the rest and Approve each', async () => {
+  const d = pageDeps();
+  const { el } = mount(WAIT(), d);
+  const more = q(el, '.shape-feature-more');
+  assert.equal(more.getAttribute('aria-haspopup'), 'menu');
+  assert.equal(more.getAttribute('aria-label'), 'More actions');
+  more.click();
+  assert.equal(more.getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(menuLabels(), ['Open slice run', 'Re-plan the rest', 'Cancel the rest', 'Approve each slice\'s plan']);
+  pick('Open slice run');
+  assert.deepEqual(d.opened.map((s) => s.index), [1]);
+  more.click(); pick('Re-plan the rest'); await flush();
+  assert.deepEqual(d.acts.map((a) => a.action), ['replan']);
+  assert.deepEqual(d.acts[0].opts, { focus: 'shape-feature-more' });
+  more.click(); pick('Cancel the rest'); await flush();
+  assert.deepEqual(d.acts.map((a) => a.action), ['replan', 'cancel']);
+  more.click();
+  const each = [...doc.querySelectorAll('.wfv-menu .wfv-menu-item')].find((b) => b.textContent === 'Approve each slice\'s plan');
+  assert.equal(each.getAttribute('aria-checked'), 'false');
+  each.click(); await flush();
+  assert.deepEqual(d.acts.at(-1), { action: 'approve-each', body: { on: true }, opts: { focus: 'shape-feature-more' } });
+  closeMenus();
+});
+
+test('⋯: a refused confirm posts nothing; nothing open drops Re-plan/Cancel; no run drops Open slice run', async () => {
+  const d = pageDeps({ confirm: async () => false });
+  const { el } = mount(WAIT(), d);
+  q(el, '.shape-feature-more').click(); pick('Cancel the rest'); await flush();
+  assert.equal(d.acts.length, 0);
+  const idle = { ...WAIT(), open: false, slices: [{ ...WAIT().slices[0], runId: null, pipelineId: null, state: 'shaping' }, WAIT().slices[1]] };
+  const { el: el2 } = mount(idle, pageDeps());
+  q(el2, '.shape-feature-more').click();
+  assert.deepEqual(menuLabels(), ['Approve each slice\'s plan']);
+  closeMenus();
+});
+
+test('the page line keeps the halted amber (style.css)', async () => {
+  const css = await readFile(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.shape-feature\.is-page:not\(\.is-halted\) \.shape-feature-head\{color:var\(--ink\);\}/);
+  assert.match(css, /\.shape-feature\.is-halted \.shape-feature-head\{[^}]*color:var\(--amber-ink\)/);
+});
+
 test('page mode: segmented bar, merge first, current slice block, ask host, actions', () => {
   const asked = [];
-  const painted = [];
-  const { el } = mount(PAGE(), deps({ page: true, progressOf: () => ({ fraction: 0.4, tone: 'amber', text: 'Plan · needs you: a plan approval', label: 'Plan' }),
-    paintProgress: (bar, prog) => painted.push([bar.className, prog.tone]),
+  const { el } = mount(PAGE(), deps({ page: true, progressOf: () => PLAN_PROG,
     mountAsk: (host, s) => asked.push([host.className, s.index]) }));
   assert.ok(el.classList.contains('is-page'));
+  assert.equal(el.querySelector('.shape-feature-head').textContent, 'Slice 2 of 3 › Plan › your approval');
   assert.equal(el.querySelector('.shape-feature-bar'), null, 'the segmented bar replaces the single bar');
   assert.equal(el.querySelectorAll('.shape-feature-seg').length, 3);
   assert.deepEqual([...el.querySelectorAll('.shape-feature-seg')].map((x) => x.dataset.state), ['done', 'approval', 'planned']);
   assert.equal(el.querySelector('.shape-feature-slice.is-done .shape-feature-merge').textContent, 'merge first');
   assert.equal(el.querySelector('.shape-feature-slice.is-done .shape-feature-pr').textContent, 'PR #1 · draft');
   assert.match(el.querySelector('.shape-feature-current').textContent, /Slice 2 · Run tags/);
-  assert.match(el.querySelector('.shape-feature-current').textContent, /Plan · needs you/);
-  assert.deepEqual(painted, [['run-prog shape-feature-current-bar', 'amber']]);
+  assert.equal(el.querySelector('.shape-feature-current-bar'), null);
   assert.deepEqual(asked, [['shape-feature-ask', 2]]);
   assert.match(el.querySelector('.shape-feature-order').textContent, /Merge in order/);
-  assert.ok(el.querySelector('.shape-feature-replan') && el.querySelector('.shape-feature-cancel'));
-  assert.equal(el.querySelector('[data-act="shape-feature-approve-each"]').checked, false);
+  assert.ok(el.querySelector('.shape-feature-more'));
+  assert.equal(el.querySelector('.shape-feature-replan'), null);
+  assert.equal(el.querySelector('.shape-feature-cancel'), null);
+  assert.equal(el.querySelector('[data-act="shape-feature-approve-each"]'), null);
   assert.equal(el.querySelector('.shape-feature-ship'), null, 'no Ship as before every slice is done');
 });
 

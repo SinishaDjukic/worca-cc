@@ -4609,6 +4609,9 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-chain-member{display:flex;gap:6px;align-items:baseline;padding:2px 0;color:var(--ink-2);}
 .runs-chain-member.is-done .runs-chain-glyph{color:var(--green-ink);}
 .runs-chain-member.is-current .runs-chain-glyph{color:var(--blue-ink);}
+/* D34: amber means "needs you" and nothing else; a paused slice with nothing to answer is grey. */
+.runs-chain-member.is-needs .runs-chain-glyph{color:var(--amber-ink);}
+.runs-chain-member.is-paused .runs-chain-glyph{color:var(--ink-3);}
 /* The slice that is working pulses (blue, as the running pills and the progress line; green is "done"). */
 .runs-chain-member.is-live .runs-chain-glyph{display:inline-block;animation:wr-pulse 1.6s ease-in-out infinite;}
 @media (prefers-reduced-motion: reduce){.runs-chain-member.is-live .runs-chain-glyph{animation:none;}}
@@ -9397,6 +9400,13 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .shape-feature-title{font-weight:600;overflow-wrap:anywhere;}
 .shape-feature-head{color:var(--ink-2);}
 .shape-feature.is-halted .shape-feature-head{color:var(--amber-ink);}
+/* D33: the page's "you are here" line. :not(.is-halted) leaves a halted page to the existing amber rule above,
+   which this more specific rule would otherwise beat. .is-needs below has the same specificity as the ink rule
+   and comes later, so amber wins there. */
+.shape-feature.is-page:not(.is-halted) .shape-feature-head{color:var(--ink);}
+.shape-feature.is-page .shape-feature-head{font-weight:600;}
+.shape-feature.is-page .shape-feature-head.is-needs{color:var(--amber-ink);}
+.shape-feature-more{margin-left:auto;min-width:32px;}
 .shape-feature-replanned{color:var(--ink-3);font-size:12px;}
 .shape-feature-bar{height:6px;border-radius:999px;background:var(--line);overflow:hidden;}
 .shape-feature-fill{display:block;height:100%;background:var(--amber);}
@@ -9427,8 +9437,6 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .shape-feature-merge{padding:1px 8px;border-radius:999px;background:var(--blue-bg);color:var(--blue-ink);font-size:10.5px;font-weight:600;}
 .shape-feature-current{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-ctrl);}
 .shape-feature-current-title{font-weight:600;}
-.shape-feature-current-text{color:var(--ink-2);font-size:12px;}
-.shape-feature-current-text[hidden],.shape-feature-current-bar[hidden]{display:none;}
 .shape-feature-order{color:var(--ink-3);font-size:12px;}
 .shape-feature-ship{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
 .shape-feature-ship-head{font-weight:600;flex-basis:100%;}

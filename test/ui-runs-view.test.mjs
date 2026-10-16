@@ -509,6 +509,11 @@ test('D17: a feature chain is one open row titled by the feature, members "1 · 
   recv({ type: 'question', runId: 'r1', question: { id: 'q1', kind: 'clarify', questions: [] } });
   await settle(window);
   assert.match(host.querySelector('.runs-chain .runs-row-sub').textContent, /^Slice 1 of 3 · Needs you/);
+  click(window, tog());
+  await settle(window);
+  const member1 = host.querySelectorAll('.runs-chain-member:not(.runs-chain-open-feature)')[0];
+  assert.ok(member1.classList.contains('is-needs'), 'the asking slice is amber');
+  assert.ok(!member1.classList.contains('is-live'), 'and does not pulse');
 });
 
 test('a state frame and a schedules-changed frame keep the chain toggle focused, and a repaint without a text change keeps the thin line element', async () => {

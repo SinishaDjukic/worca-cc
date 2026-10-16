@@ -485,8 +485,13 @@ function renderChainRow(doc, r, opts) {
     }
     for (const m of r.members) {
       const li = doc.createElement('li');
-      // Pulses only while the slice works: a current one that asks or is paused (icon ask | paused) stays still.
-      li.className = `runs-chain-member is-${m.state}${m.state === 'current' && m.icon === 'run' ? ' is-live' : ''}`;
+      // D33: the current slice's dot: amber while it needs the person (a question waits, paused or not), blue and
+      // pulsing while it works, grey while it is paused with nothing to answer.
+      const dot = m.state !== 'current' ? ''
+        : m.icon === 'ask' || (m.icon === 'paused' && m.asks) ? ' is-needs'
+        : m.icon === 'paused' ? ' is-paused'
+        : m.icon === 'run' ? ' is-live' : '';
+      li.className = `runs-chain-member is-${m.state}${dot}`;
       li.append(textEl(doc, 'span', 'runs-chain-glyph', MEMBER_GLYPH[m.state] || '○'));
       const link = doc.createElement('a');
       link.className = 'runs-chain-link';
