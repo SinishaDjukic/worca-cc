@@ -4,7 +4,7 @@ Date: 2026-10-14. Base branch: `dev` (761452f9, 1.11.0). Branches: `feat/shape-i
 Mock (approved): the "Specs in Chat" design canvas, https://claude.ai/artifact/MJk8bfs2cK4YsKTBta5Z2q
 (screens 1–7).
 **Revised 2026-10-15** after the first real sliced feature (#718, run tags): §11 records what it showed and the
-decisions D16–D29, which take precedence over §2–§3 where they differ. Replaces Spec Builder (#678, closed as not planned; PR #679 closed). Some
+decisions D16–D35, which take precedence over §2–§3 where they differ. Replaces Spec Builder (#678, closed as not planned; PR #679 closed). Some
 Spec Builder code on `feat/spec-builder-v2` is reused (§4.6).
 
 ## 1. Goal
@@ -365,6 +365,12 @@ The engine worked. The way it is shown and started did not.
 | D27 | **Mechanical shape-check failures fix themselves.** A failing check that needs no judgement (`grounded`: a path missing its `(new)` mark; `noPlaceholders` on an empty heading) is fixed deterministically on the plan file before the approval stop, and the card says what was fixed. Only checks that need judgement (`testable`, `decisions`) offer **Fix**, which still re-runs the Planner. On #718 the mechanical case cost one extra Plan and Refine (about $30). |
 | D28 | **Measure it from day one (§7).** Each shaped run records, on the run: questions asked and skipped, revise count and why (person or check), shape score at approval, review cycles, checklist met/unmet/n.a., shaping cost vs building cost, and for a feature the slices proposed, merged and removed. `GET /api/runs/:id` returns it as `shapeStats`; Statistics gets a "Shaper" row group comparing shaped runs with unshaped runs of the same size. The nudge's estimate includes the shaping cost (Plan and Refine dominate: $62 of $87 on #718), calibrated from these records once 5 shaped runs exist. |
 | D29 | **Shaper.** The flow is called "Shaper" (2026-10-16): the flag title, the Chat tile and intent chip, the start button, the workflow display name, the proposal kicker, the feature-page line, the Statistics card and the docs. Shorter than "Plan it with me", and it matches the code (`shape`, `wf_shape`, shaped runs). The New run link reads "Not sure what to build yet? Try Shaper in Chat →". Internal ids stay; the vocabulary scan refuses both old names. |
+| D30 | **One decision card, at the top** (second review, 2026-10-16). When a shaped run or a feature waits on the person, the first thing under the header is one card: "Slice 1 of 2 · Store chart definitions · **Your turn: approve the plan**", a 2–3 line summary, one check line ("Shape 5/8 · 3 to fix ›", expands to the rows), and the buttons **Approve plan** (primary), **Ask for changes** (opens its text box on click), **Full plan** and **⋯** (Save to plans/, Open in New run). On the run page, Results and How it ran fold into one "Run details ›" while it waits; they open again when it works. |
+| D31 | **Fewer buttons.** One primary per screen; one Stop (the top bar's; the card has none); rare actions in ⋯; inputs closed until used. The perspective chips show as a text line "Product · Architect · QA · UX — edit" and open on edit; the per-row Fix buttons become one "Fix all" when D27 leaves any; Pause hides while the run waits on the person. For a shaped run the top bar keeps Pause and Stop and moves the answer mode, Run after and the terminal into ⋯. Target: ≤ 6 controls in the run page's waiting state, ≤ 5 on the feature page (today 43 and 23). |
+| D32 | **A failed check informs, it does not alarm.** The primary stays the approval: "Approve plan", or "Approve anyway" with one line saying what is unmet. No wall of red rows: rows are neutral with a small ✓ / ✕ mark, folded behind the check line. |
+| D33 | **Where am I.** The feature page shows one line "Slice 1 of 2 › Plan › your approval" and one segmented bar (not a feature bar plus a stage bar). Status words name the wait: "approve the plan", "approve the slices", "answer 2 questions" — never "answer a question" for a plan approval. In the Runs list, a slice that needs the person has an amber dot; a working one pulses blue; a paused one is grey. |
+| D34 | **Dark-mode colour.** Amber means "needs you" and nothing else; check rows neutral; selected chips filled, unselected outlined; a disabled button looks disabled. |
+| D35 | **Mock runs keep their title.** Title generation never replaces a run's title with a mock engine marker ("[mock] … no MOCK_OUT given"); a mock run keeps the title it was started with. |
 
 ### 11.3 Code changes
 
@@ -404,9 +410,9 @@ The fixes go onto the open branches, so each PR carries its own fix. `feat/run-p
 | Branch (PR) | Decisions |
 |---|---|
 | `feat/shape-it-first-1-engine` (#708) | D27, D28 (recording, `shapeStats` and the Statistics group), D29 |
-| `feat/shape-it-first-2-chat` (#728) | D20, D21, D26, the nudge estimate (D28), D29 |
+| `feat/shape-it-first-2-chat` (#728) | D20, D21, D26, the nudge estimate (D28), D29, D30–D32 and D34 (the plan card and the run page) |
 | `feat/shape-it-first-3-checklists` (#729) | D23, D29 |
-| `feat/shape-it-first-4-slices` (#730) | D16, D17, D18, D19, D22, D24, D25, D29 |
+| `feat/shape-it-first-4-slices` (#730) | D16, D17, D18, D19, D22, D24, D25, D29, D30–D31 (the feature page), D33, D35 |
 
 Each lower branch is merged forward after its fix (1 → 2 → 3 → 4), and the test bundle
 `test/shape-it-first-and-run-progress` is rebuilt from slice 4 when all four are green.
