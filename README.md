@@ -350,9 +350,10 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 ### Workspaces
 
 - **Multi-project workspaces** — group 2–40 related repos under **Workspaces** (Advanced
-  level): **Create workspace**, pick the projects, **Scan interconnections**; the workspace
-  is saved when that scan ends. **Add projects** / **Remove** on its Overview tab re-scan
-  the new set.
+  level): **Create workspace**, pick the projects — or bring repos straight in with **Add…** or a
+  pasted list (a repo, a folder of repos, a VS Code `.code-workspace` file; a ticked repo that is
+  not a project yet becomes one) — **Scan interconnections**; the workspace is saved when that scan ends.
+  **Add projects** / **Remove** on its Overview tab re-scan the new set.
 - **A map built from code, with evidence** — the scan is itself a pipeline run that never
   changes a member. Code detectors find REST, gRPC and GraphQL APIs, message queues, build
   dependencies, shared databases and service calls and do the matching; agents fill what

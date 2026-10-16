@@ -127,6 +127,38 @@ The same actions over HTTP:
 | `DELETE /api/workspaces/:id/map/edges/:edgeId` | — manual edges (`m_…`) only |
 | `POST /api/workspaces/:id/map/render` | — Regenerate description |
 
+## Creating a workspace
+
+**Workspaces › Create workspace** opens the wizard: a name, the member projects (2–40) and the
+scan's models. The project list shows every registered project. Repositories that are not projects
+yet come in through **Add…** or the box under it — paste paths, one per line, then press
+**Add paths** (or Ctrl/Cmd+Enter). Worca works out what each path is:
+
+| You give it | It adds |
+|---|---|
+| a repository folder | that repository. A folder inside a repository (a monorepo package) adds the repository's top folder instead: a scan takes whole repositories. A folder inside a repository that holds repositories of its own counts as a folder of repositories. |
+| a folder of repositories | every git repository directly inside it (hidden folders and `node_modules` skipped). Tick **Look two levels deep** to search one level further down, for layouts such as `org/repo`. |
+| a VS Code `.code-workspace` file | every folder it lists (`path` relative to the file or absolute; comments and trailing commas are fine). Its file name becomes the workspace name while the name is still empty. |
+
+- **Add…** opens the system dialog. On macOS it takes folders and `.code-workspace` files in one go;
+  on Windows and Linux it takes folders — paste a `.code-workspace` file's path into the box. Where
+  no system dialog can open (remote access), Worca's own folder browser opens instead.
+- In the box, a path starting with `~/` is in your home folder. Quotes, `file://` and the
+  backslash escapes Terminal adds when you drag a folder in are undone, and blank lines and lines
+  starting with `#` are skipped. Use full paths.
+- What it finds lands in a review list: **new** (registered as a project when you scan),
+  **already a project** (that project is used), or why it cannot join — it does not exist, is not
+  in a git repository, has no commit yet, or is a git submodule (not supported yet). New and
+  existing rows start ticked, up to the 40-project limit; untick what you do not want.
+- **Scan interconnections** registers the ticked new rows as projects first — named after the
+  `.code-workspace` entry or the folder; a name already taken gets its parent folder's name in
+  front — then starts the scan.
+- Importing only reads: it lists folders, reads the `.code-workspace` file and runs
+  `git rev-parse`. It never writes into a repository. The projects Scan registers are ordinary
+  projects from then on, with the same background fetches as a project added under **Projects**.
+  The wizard calls `POST /api/workspaces/import-candidates` with
+  `{ "paths": [...], "text": "...", "depth": 1 | 2 }`.
+
 ## Changing members
 
 A workspace's members can change after it is created: **Add projects** and **Remove** on the

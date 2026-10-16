@@ -216,6 +216,7 @@ import { syncPluginSlots } from '../src/core/plugin-broker-slots.mjs';
 import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import { realRoots, checkInside, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
+import { importCandidates, parsePathList, IMPORT_MAX_INPUTS } from '../src/core/workspace-import.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, foreignRunModel, assertSlotModels, stepSlotDefaults,
@@ -9353,6 +9354,32 @@ async function scanRequest(req, res, { id, name, projectPaths, rescan, models })
     pendingScans.delete(hash);
   }
 }
+
+// POST /api/workspaces/import-candidates {paths?: string[], text?: string, depth?: 1|2}
+//   -> 200 {candidates, workspaceName, truncated}
+// The creation wizard's Add… and paste box: what each path is (a repository, a folder of
+// repositories, a VS Code .code-workspace file) as review rows — registered (the existing project),
+// new (the wizard registers it through POST /api/projects/bulk before it scans) or problem (with
+// the reason). Reads folders and runs `git rev-parse` only: it never writes (src/core/workspace-
+// import.mjs). Localhost-only like every route here (global isLocalRequest middleware).
+app.post('/api/workspaces/import-candidates', async (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  if (body.paths !== undefined && !Array.isArray(body.paths)) return badRequest(res, 'paths must be an array of paths');
+  if (body.text !== undefined && typeof body.text !== 'string') return badRequest(res, 'text must be a string');
+  try {
+    // Picked and pasted paths, duplicates removed BEFORE the count: the same 60 paths picked and
+    // pasted are 60 inputs. parsePathList stops just past the limit, so a huge paste stays cheap.
+    const inputs = [...new Set([
+      ...(body.paths || []).filter((p) => typeof p === 'string' && p.trim()).map((p) => p.trim()),
+      ...parsePathList(body.text || '', IMPORT_MAX_INPUTS),
+    ])];
+    if (!inputs.length) return badRequest(res, 'give at least one path (paths or text)');
+    if (inputs.length > IMPORT_MAX_INPUTS) return badRequest(res, `at most ${IMPORT_MAX_INPUTS} paths per import`);
+    res.json(await importCandidates(inputs, { depth: body.depth === 2 ? 2 : 1, projects: await listProjects() }));
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
 
 // POST /api/workspaces/scan (first scan): validated exactly as the save will be (D4).
 app.post('/api/workspaces/scan', async (req, res) => {
