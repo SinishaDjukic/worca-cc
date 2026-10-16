@@ -70,6 +70,20 @@ async function openAdd(window, doc) {
   await tick(); await tick();
 }
 
+test('Add project Folder field: the path input has its own line, the two buttons sit below it', () => {
+  const doc = new JSDOM(readFileSync(htmlPath, 'utf8')).window.document;
+  const row = $(doc, '#proj-add-path').parentElement;
+  assert.ok(row.classList.contains('path-row-stacked'));
+  const actions = $(doc, '#proj-add-browse').parentElement;
+  assert.notEqual(actions, row);
+  assert.ok(actions.classList.contains('path-row-actions'));
+  assert.equal(actions.parentElement, row);
+  assert.equal($(doc, '#proj-add-browse-many').parentElement, actions);
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  assert.match(css, /\.path-row\.path-row-stacked\{[^}]*flex-direction:column/);
+  assert.match(css, /\.path-row\{display:flex;gap:9px;align-items:center;\}/);
+});
+
 test('Add project opens on Clone without a folder picker, on Folder with a picked path, and the tabs switch panes', async () => {
   await checkRows([
     { name: 'no folder picker (container/hosted): Add project opens on Clone from URL', run: async () => {
