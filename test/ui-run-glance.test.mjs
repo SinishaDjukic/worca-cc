@@ -179,3 +179,29 @@ test('DOM: trail stacks and the orb carries its state class', () => {
   assert.ok(orb.querySelector('path.rg-orb-mark') && orb.querySelector('circle.rg-orb-dot'), 'a drawn hook and dot, not a font glyph');
   assert.equal(orb.querySelector('text'), null);
 });
+
+test('glanceCopy: the progress option replaces the step line while running or waiting (P5)', () => {
+  const progress = { text: 'Build · task 2 of 4' };
+  const run = glanceCopy(loopedBranched, { progress });
+  assert.deepEqual([run.title, run.sub], ['Running', 'Build · task 2 of 4'], 'the P5 line beats "Steps: …"');
+  const ask = glanceCopy({ status: 'running', stepper, steps: [], pendingQuestion: { kind: 'questions', nodeId: 'n_clarify' } }, { progress });
+  assert.deepEqual([ask.state, ask.title, ask.sub], ['ask', 'Waiting for you', 'Build · task 2 of 4']);
+  const wf = glanceCopy({ status: 'running', stepper, steps: [], pendingQuestion: { kind: 'workflow' } }, { progress });
+  assert.equal(wf.sub, 'Build · task 2 of 4');
+  // Nothing runs and the preflight is open: setting up outranks the progress line.
+  const pre = glanceCopy({ status: 'running', stepper, steps: [{ executionId: 'x:preflight:1', status: 'start' }], setupStage: 'worktree' }, { progress });
+  assert.equal(pre.sub, 'Preflight · worktree');
+  // No text, no change; terminal states are untouched.
+  assert.equal(glanceCopy(loopedBranched, { progress: { text: '' } }).sub, 'Steps: Implement and Docs');
+  assert.equal(glanceCopy({ status: 'error', stepper, steps: [] }, { progress }).title, 'Failed');
+  assert.equal(glanceCopy({ status: 'paused' }, { progress, pill: { text: 'Paused' } }).sub, 'Resume to continue where it left off');
+});
+
+test('glanceCopy: a stopped or done run ignores the progress option (P5)', () => {
+  const progress = { text: 'Build · task 2 of 4' };
+  for (const status of ['stopped', 'done']) {
+    const without = glanceCopy({ status, stepper, steps: [] });
+    const withProg = glanceCopy({ status, stepper, steps: [] }, { progress });
+    assert.deepEqual([withProg.state, withProg.title, withProg.sub], [without.state, without.title, without.sub], status);
+  }
+});

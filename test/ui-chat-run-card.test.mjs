@@ -75,7 +75,7 @@ test('chat run card: head, sub-line, stats, agent chips with model + cycle, Auto
       assert.equal($('.ask-rc-sub').textContent, 'proj · #abcd1234');
       assert.equal($('.ask-rc-time').textContent, '1m 5s');
       assert.equal($('.ask-rc-cost').textContent, '$0.42');
-      assert.equal($('.ask-rc-prog').textContent, '1/2 agents');
+      assert.equal($('.ask-rc-prog').textContent, 'Implementer', 'the P5 text replaces "n/m agents" for a graph run');
       assert.equal($('.chat-rc-agent .chat-rc-agent-name').textContent, 'Implementer');
       const well = $('.chat-rc-well');
       assert.equal(well.hidden, false);
@@ -953,4 +953,38 @@ test('chat run card: an answer whose 200 lands before the question goes away kee
   card.update(live({ status: 'pausing', pendingQuestion: null }));
   assert.equal($('.chat-rc-receipt').hidden, false, 'the card names what it sent');
   assert.equal($('.chat-rc-receipt summary').textContent, 'Answer sent · Implementer');
+});
+
+test('chat run card progress bar (P9): compact bar + P5 text for a live graph snapshot; v1, stopped and red snapshots hide the bar', async () => {
+  await checkRows([
+    { name: 'live snapshot with stageProgress shows the bar and the P5 text in the Progress tile', run: () => {
+      const { card, $ } = mk();
+      const snap = live({ progress: { done: 1, total: 2 }, stageProgress: { mode: 'stages', text: 'Build · task 2 of 4', tone: 'blue', fraction: 0.4, stages: [], passes: 0 } });
+      card.update(snap);
+      assert.equal($('.chat-rc-prog').hidden, false);
+      assert.ok($('.chat-rc-prog').classList.contains('run-prog') && $('.chat-rc-prog').classList.contains('is-compact'));
+      assert.equal($('.ask-rc-prog').textContent, 'Build · task 2 of 4');
+      assert.equal($('.chat-rc-prog').dataset.tone, 'blue', 'the compact bar wears the snapshot tone');
+    } },
+    { name: 'a v1 snapshot without stageProgress hides the bar and keeps "n/m agents"', run: () => {
+      const { card, $ } = mk();
+      card.update(live({ progress: { done: 2, total: 5 }, stageProgress: null }));
+      assert.equal($('.chat-rc-prog').hidden, true);
+      assert.equal($('.ask-rc-prog').textContent, '2/5 agents');
+    } },
+    { name: 'a stopped (red) snapshot hides the bar', run: () => {
+      const { card, $ } = mk();
+      card.update(live({ status: 'stopped', progress: null, stageProgress: { mode: 'stages', text: 'Stopped', tone: 'red', fraction: 0.3, stages: [], passes: 0 } }));
+      assert.equal($('.chat-rc-prog').hidden, true);
+    } },
+    { name: 'a frozen done state that reached the end gives stageProgress.fraction 1, green, Finished', run: () => {
+      const snap = snapshotFromState(STATE({ status: 'done', endReached: true, active: [], steps: [step({ executionId: 'x:n_plan:1', nodeId: 'n_plan', ordinal: 1 }), step({ executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1 })] }), { now: 0 });
+      assert.equal(snap.stageProgress.fraction, 1);
+      assert.equal(snap.stageProgress.tone, 'green');
+      assert.equal(snap.stageProgress.text, 'Finished');
+    } },
+    { name: 'a v1 frozen state carries no stageProgress', run: () => {
+      assert.equal(snapshotFromState(STATE({ stepper: null }), { now: 0 }).stageProgress, null);
+    } },
+  ]);
 });

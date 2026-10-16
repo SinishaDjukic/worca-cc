@@ -1,6 +1,7 @@
 {
   "key": "implementer",
   "metaVersion": 2,
+  "progressStage": "build",
   "mockRole": "implementer",
   "sideEffect": "code",
   "workspaceFanOut": true,
