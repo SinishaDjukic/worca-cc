@@ -661,6 +661,100 @@ test('workflow card: openComposer receives the workflowId; dropping the card (ne
   assert.ok(graphObservers[0].disconnected, 'newThread pruned the card and destroyed the mount');
 });
 
+/** Open the panel on one Auto (propose_workflow) card block. */
+async function openWorkflowCard(blocks, { fetchHandler = apiHandler({}), deps = {} } = {}) {
+  const ctx = makePanel({ fetchHandler, resizeObserver: true, deps });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  for (const f of stampFrames([
+    { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
+    ...blocks.map((block) => ({ type: 'ask-card', block })),
+  ], { threadId: TID, messageId: MID })) ctx.panel.pushServerFrame(f);
+  ctx.flush(); await ctx.tick(); ctx.flush();
+  return ctx;
+}
+
+test('workflow card: the Workflows rendering in a pannable well; Expand opens a NEW proposal as an unsaved workflow (the positions the card drew, its tunables and chip edits baked in), a matched or saved one opens its row', async () => {
+  const { proposalFor } = await import('./helpers/auto-proposal-fixture.mjs');
+  const builds = []; const opened = [];
+  const card = { type: 'workflow', mode: 'task', projectKey: 'p', projectName: 'p', note: '', thenRun: false, shape: {}, summary: '', adopted: false, ...proposalFor() };
+  const ctx = await openWorkflowCard([
+    { kind: 'card', id: 'card_0000ab03', state: 'proposed', card },
+    { kind: 'card', id: 'card_0000ab04', state: 'proposed', card: { ...card, match: { id: 'wf_same', name: 'Same' } } },
+  ], { deps: { openComposer: (id) => opened.push(id), composerActions: { openBuild: async (b) => { builds.push(b); } } } });
+  const els = [...ctx.doc.querySelectorAll('[data-ask-wfcard="proposed"]')];
+  const el = els[0];
+  const { handle, wf } = el.__wf;
+  assert.ok(el.querySelector('.ask-wfcard-graph.gv-well .gv-stage.gv-monitor') && !el.querySelector('.gv-flow'), 'the canvas rendering, not the flow rows');
+  assert.equal(el.querySelector('.ask-wfcard-graph .bchip.model').tagName, 'BUTTON', 'the editable chips stay');
+  assert.equal(el.querySelector('[data-ask-wf-open]'), null, 'no new text button on a proposed card: Expand is its way in');
+  const agentId = card.order[1];
+  wf.nodes[agentId] = { model: 'claude-opus-5-5', effort: 'max' };     // what a chip pick records (openChipPicker's set)
+  handle.setName('My flow');
+  el.querySelector('.ask-wfcard-graph > .gv-nav [data-nav="expand"]').click();
+  await ctx.tick();
+  assert.equal(builds.length, 1, 'a NEW proposal opens through openBuild');
+  const b = builds[0];
+  assert.equal(b.name, 'My flow');
+  assert.equal(b.domain, 'coding');
+  assert.deepEqual(b.nodes.map((n) => [n.id, n.x, n.y]), handle.well.template().nodes.map((n) => [n.id, n.x, n.y]), 'the positions the card drew');
+  assert.deepEqual(b.wires, handle.well.template().wires);
+  for (const n of b.nodes.filter((x) => x.kind === 'agent')) {
+    const sel = { ...card.nodes[n.id], ...(wf.nodes[n.id] || {}) };
+    for (const k of ['model', 'effort']) if (sel[k]) assert.equal(n.config[k], sel[k], `${n.id}.${k}: the tunable the card holds`);
+  }
+  assert.equal(b.nodes.find((n) => n.id === agentId).config.model, 'claude-opus-5-5', 'the chip edit wins');
+  const untouched = b.nodes.filter((n) => n.kind === 'agent' && n.id !== agentId);
+  assert.ok(untouched.length > 0);
+  for (const n of untouched) {
+    assert.deepEqual(n.config, handle.well.template().nodes.find((x) => x.id === n.id).config,
+      `${n.id}: no chip edit keeps its template config verbatim (Save stores only the chip edits, never the card's resolved defaults)`);
+  }
+  els[1].querySelector('.gv-nav [data-nav="expand"]').click();
+  assert.deepEqual(opened, ['wf_same'], 'a proposal matching a saved workflow opens that row');
+  for (const f of stampFrames([{ type: 'ask-card', block: { kind: 'card', id: 'card_0000ab03', state: 'saved', workflowId: 'wf_new', card } }],
+    { threadId: TID, messageId: MID, seqStart: 4 })) ctx.panel.pushServerFrame(f);
+  ctx.flush(); await ctx.tick(); ctx.flush();
+  ctx.doc.querySelector('[data-ask-wfcard="saved"] .gv-nav [data-nav="expand"]').click();
+  assert.deepEqual(opened, ['wf_same', 'wf_new'], 'a saved card opens its row');
+  assert.ok(ctx.doc.querySelector('[data-ask-wfcard="saved"] [data-ask-wf-open]'), 'the saved card keeps its Open in Workflows text button');
+});
+
+test('workflow card: no way into the composer means no Expand; the description footers fill in once the library loads, and no card moves', async () => {
+  const { proposalFor } = await import('./helpers/auto-proposal-fixture.mjs');
+  const p = proposalFor();
+  const keys = [...new Set(p.manifest.graph.nodes.filter((n) => n.kind === 'agent').map((n) => n.key))];
+  const r = { agents: keys.map((key) => ({ key, displayName: key, description: `About ${key}`, metaVersion: 2, inputs: [], outputs: [] })) };
+  const card = { type: 'workflow', mode: 'task', projectKey: 'p', projectName: 'p', note: '', thenRun: false, shape: {}, summary: '', adopted: false, ...p };
+  const ctx = await openWorkflowCard([{ kind: 'card', id: 'card_0000ab05', state: 'proposed', card }], { fetchHandler: composerApi(r) });
+  const el = ctx.doc.querySelector('[data-ask-wfcard="proposed"]');
+  assert.deepEqual([...el.querySelectorAll('.gv-nav .gv-nav-btn')].map((x) => x.dataset.nav), ['in', 'out', 'center'], 'no composerActions.openBuild: no Expand');
+  const cards = () => [...el.querySelectorAll('.ask-wfcard-graph .node')].map((n) => n.style.transform);
+  const before = cards();
+  for (let i = 0; i < 4; i += 1) { ctx.flush(); await ticks(ctx, 2); }
+  const n0 = p.manifest.graph.nodes.find((n) => n.kind === 'agent');
+  assert.equal(el.querySelector(`[data-node-id="${n0.id}"] .ncap.desc`).textContent, `About ${n0.key}`);
+  assert.deepEqual(cards(), before, 'text only: no card moved');
+});
+
+test('workflow card: a width change during the build animation lands nothing early — a canvas well moves no card on relayout', async () => {
+  const { proposalFor } = await import('./helpers/auto-proposal-fixture.mjs');
+  const card = { type: 'workflow', mode: 'task', projectKey: 'p', projectName: 'p', note: '', thenRun: false, shape: {}, summary: '', adopted: false, ...proposalFor() };
+  const ctx = await openWorkflowCard([{ kind: 'card', id: 'card_0000ab06', state: 'building', card }]);
+  for (const f of stampFrames([{ type: 'ask-card', block: { kind: 'card', id: 'card_0000ab06', state: 'proposed', card } }],
+    { threadId: TID, messageId: MID, seqStart: 3 })) ctx.panel.pushServerFrame(f);
+  ctx.flush();
+  const el = ctx.doc.querySelector('[data-ask-wfcard="proposed"]');
+  const g = el.__wf.handle.parts.graph;
+  const hidden = () => g.querySelectorAll('.node.is-hid, path.wire.is-hid').length;
+  const before = hidden();
+  assert.ok(before > 0, 'the build animation runs');
+  Object.defineProperty(g, 'clientWidth', { value: 640, configurable: true });   // a scrollbar appears mid-build
+  ctx.flush();
+  assert.equal(hidden(), before, 'the build keeps its hidden cards and wires');
+});
+
 // ---- Scheduled runs (docs/scheduled-runs.md "Ask Worca") ----
 const ONCE = { kind: 'once', runAt: '2026-09-19T00:00:00.000Z', when: 'Sat Sep 19, 02:00', timeZone: 'Europe/Berlin' };
 const REPEAT = {
@@ -1464,9 +1558,8 @@ test('Ask graph card: the graph from its manifest with read-only model chips; Sa
   ], r, { saveAgentDraft: async (d) => { saved.push(d.key); return { ok: true, key: d.key }; } });
   const el = ctx.doc.querySelector('.ask-ccard [aria-label="Proposed workflow"]');
   assert.equal(el.querySelectorAll('.ask-wfcard-graph .node').length, WF_DEFAULT_TPL.nodes.length, 'the manifest graph is mounted');
-  const chip = el.querySelector('.ask-wfcard-graph .bchip.model');
-  assert.ok(chip, 'the model the node carries is shown');
-  assert.notEqual(chip.tagName, 'BUTTON', 'models are changed on the canvas, not on the card');
+  assert.equal(el.querySelector('.ask-wfcard-graph .nband'), null, 'the canvas card: no chip band — models are changed on the canvas, not on the card');
+  assert.ok(el.querySelector('.ask-wfcard-graph.gv-well .gv-stage.gv-monitor'), 'the Workflows rendering in a pannable well');
   assert.deepEqual([...el.querySelectorAll('.wfc-actions button')].map((b) => b.textContent), ['Decline', 'Open in Workflows', 'Save as workflow']);
   clickText(el, 'Save as workflow');
   await ticks(ctx, 6);
@@ -1590,6 +1683,45 @@ test('Ask graph card: Open in Workflows saves its drafts first; a failed or miss
   await ticks(ctx, 6);
   assert.equal(errOf('card_0000c019').hidden, false);
   assert.equal(errOf('card_0000c019').textContent, 'Not saved — down');
+});
+
+test('Ask graph card: the Workflows rendering — build_workflow\'s x/y verbatim, description footers once the library loads, and its Expand is Open in Workflows (a saved card opens its row)', async () => {
+  const built = [];
+  const r = { agents: AGENTS.map((a) => ({ ...a, description: `About ${a.key}` })) };
+  const ctx = await openComposerCards([{ kind: 'card', id: 'card_0000c030', state: 'proposed', card: BUILD }], r, { openBuild: async (b) => { built.push(b); } });
+  for (let i = 0; i < 4; i += 1) { ctx.flush(); await ticks(ctx, 2); }
+  const sel = '.ask-ccard[data-card-id="card_0000c030"]';
+  const g = ctx.doc.querySelector(`${sel} .ask-wfcard-graph.gv-well`);
+  assert.ok(g && g.querySelector('.gv-stage.gv-monitor') && !g.querySelector('.gv-flow'), 'the canvas rendering in a pannable well');
+  for (const n of BUILD.manifest.graph.nodes) {
+    assert.equal(g.querySelector(`[data-node-id="${n.id}"]`).style.transform, `translate(${n.x}px, ${n.y}px)`, `${n.id}: the positions the composer opens`);
+  }
+  const agent = BUILD.manifest.graph.nodes.find((n) => n.kind === 'agent');
+  assert.equal(g.querySelector(`[data-node-id="${agent.id}"] .ncap.desc`).textContent, `About ${agent.key}`, 'the library\'s description, as the canvas shows it');
+  g.querySelector(':scope > .gv-nav [data-nav="expand"]').click();
+  await ticks(ctx, 4);
+  assert.deepEqual(built, [{ name: 'Fix and review', domain: 'coding', nodes: WF_DEFAULT_TPL.nodes, wires: WF_DEFAULT_TPL.wires }], 'Expand runs the card\'s Open in Workflows (openBuild)');
+  for (const f of stampFrames([{ type: 'ask-card', block: { kind: 'card', id: 'card_0000c030', state: 'saved', workflowId: 'wf_fix-and-review', card: BUILD } }],
+    { threadId: TID, messageId: MID, seqStart: 3 })) ctx.panel.pushServerFrame(f);
+  ctx.flush(); await ticks(ctx, 2);
+  ctx.doc.querySelector(`${sel} .gv-nav [data-nav="expand"]`).click();
+  await ticks(ctx, 2);
+  assert.deepEqual(r.opened, ['wf_fix-and-review'], 'a saved card\'s Expand opens its row');
+});
+
+test('Ask graph card: the well\'s Expand on an unsaved build card saves its drafts first, as Open in Workflows does', async () => {
+  const saved = [];
+  const opened = [];
+  const r = {};
+  const ctx = await openComposerCards([
+    { kind: 'card', id: 'card_0000c031', state: 'proposed', card: AGENT_DRAFT },
+    { kind: 'card', id: 'card_0000c032', state: 'proposed', card: { ...BUILD, drafts: ['releaseNotes'] } },
+  ], r, { saveAgentDraft: async (d) => { saved.push(d.key); return { ok: true, key: d.key }; },
+    openBuild: (b) => { opened.push([b.name, saved.length, (r.cardPosts || []).length]); } });
+  ctx.doc.querySelector('.ask-ccard[data-card-id="card_0000c032"] .ask-wfcard-graph > .gv-nav [data-nav="expand"]').click();
+  await ticks(ctx, 6);
+  assert.deepEqual(opened, [['Fix and review', 1, 1]], 'opened after its draft was saved and recorded');
+  assert.deepEqual(r.cardPosts, [['card_0000c031', { state: 'saved', card: { savedKey: 'releaseNotes' } }]], 'Expand records the draft, never the graph card');
 });
 
 test('Ask graph card: a state change rebuilds it once and destroys the old graph; a later render keeps the saved card', async () => {

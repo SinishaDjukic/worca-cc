@@ -3218,6 +3218,40 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return el;
   }
 
+  /** A proposed Auto card as a NEW unsaved workflow: the graph the card shows (its well's template — the positions the
+   *  card drew), every agent's template config (it carries the proposal's model and effort) with only the chips' edits
+   *  applied, as Save stores them (diffNodes, then src/core/ask/workflow-deps.mjs applyTunables: '' clears a key).
+   *  card.nodes is a display row whose fanOut/askQuestions are resolved defaults: never baked in. Assemble's domain is
+   *  'coding'. */
+  function wfDraft(card, wf, name, tpl) {
+    const nodes = (tpl.nodes || []).map((n) => {
+      if (!n || n.kind !== 'agent') return n;
+      const sel = wf.nodes[n.id] || {};
+      const config = { ...(n.config || {}) };
+      for (const k of TUNABLE_KEYS) {
+        if (sel[k] === undefined) continue;
+        if (sel[k] === '') delete config[k]; else config[k] = sel[k];
+      }
+      return { ...n, config };
+    });
+    return { name: String(name || card.name || ''), domain: card.domain || 'coding', nodes, wires: tpl.wires || [] };
+  }
+  /** The workflow card's way into the Workflows composer (its graph well's Expand, "Open full screen in Workflows"): a
+   *  saved card opens its row; a proposed one matching a saved workflow opens that row (a new copy would invite a
+   *  duplicate); a NEW proposal opens as a new unsaved workflow through the build card's path (app.js
+   *  askComposerActions().openBuild). null = no way in: the well shows no Expand. */
+  function wfOpenAction(block, card, wf, handleOf) {
+    const rowId = block.state === 'saved' ? (block.workflowId || null) : (card.match && card.match.id) || null;
+    if (block.state !== 'proposed' || rowId) return typeof openComposer === 'function' && rowId ? () => openComposer(rowId) : null;
+    const openBuild = composerActions && typeof composerActions.openBuild === 'function' ? composerActions.openBuild : null;
+    if (!openBuild) return null;
+    return () => {
+      const handle = handleOf();
+      const tpl = handle && handle.well ? handle.well.template() : null;
+      return tpl ? openBuild(wfDraft(card, wf, handle.getName(), tpl)) : undefined;
+    };
+  }
+
   function buildWorkflowCard(block, prev) {
     const card = block.card || {};
     const name = card.name || '';
@@ -3250,9 +3284,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const matched = !!(card.match && card.match.id);
     const editable = proposed && !matched;                       // PD4: only a NEW row takes a name and chip edits
     const wf = { nodes: {}, name };
+    // The Workflows canvas rendering in a pannable well (graph/proposal-host.mjs). Its Expand opens the workflow in the
+    // composer (wfOpenAction) — the only Open a proposed card has; footers read Ask's library (composerCards describe).
     const handle = renderAutoProposal({ ...card, reasoning: card.reasoning || card.note || '' }, {
       doc, order: proposed ? AUTO_PROPOSAL_ORDER_CARD : ['name', 'graph', 'loops'],
       editableName: editable, pick: editable, onName: (v) => { wf.name = v; },
+      canvas: true, descriptionOf: composerCards().describe, onExpand: wfOpenAction(block, card, wf, () => handle),
     });
     if (!proposed) {
       const saved = make('div', 'ask-wfcard-saved');
@@ -4813,7 +4850,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   /** After a flush: measure the attached graph hosts once per width (jsdom: 0 ⇒ the 702 default) and start a pending build animation.
    *  A width change DURING a build lands it first (v5): view.relayout re-creates the wire paths, which would drop their `is-hid`
-   *  mid-choreography (measured) — so cancel() (which lands everything) runs before the relayout. */
+   *  mid-choreography (measured) — so cancel() (which lands everything) runs before the relayout. A canvas well
+   *  (`handle.well`) never moves a node or rewrites a wire on relayout: its build keeps running. */
   function relayoutCards() {
     if (!st.cardEls) return;
     for (const c of st.cardEls.values()) {
@@ -4821,12 +4859,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // A built-in handle measures its graph host; an extension card's handle (CONTRACT §2) has no `parts` — its element then.
       const w = (c.handle.parts ? (c.handle.parts.graph && c.handle.parts.graph.clientWidth) : c.el.clientWidth) || 0;
       if (w !== c.lastW) {
-        if (c.cancelAnim) { try { c.cancelAnim(); } catch { /* ignore */ } c.cancelAnim = null; }
+        if (c.cancelAnim && !c.handle.well) { try { c.cancelAnim(); } catch { /* ignore */ } c.cancelAnim = null; }
         c.lastW = w;
         if (typeof c.handle.relayout === 'function') c.handle.relayout(w);
       }
+      // A canvas well's description footers fill in once the library behind them loads (ask-composer-cards describe):
+      // text only — the footer heights are fixed, so no card moves and a running build keeps its hidden wires.
+      if (st.composerCards && typeof c.handle.setDescriptions === 'function' && c.descAt !== st.composerCards.describedAt()) {
+        c.descAt = st.composerCards.describedAt();
+        c.handle.setDescriptions(st.composerCards.describe);
+      }
       if (c.animate) { c.animate = false; c.cancelAnim = playAssembly(c.handle, { win, onDone: () => { c.cancelAnim = null; } }); }
     }
+  }
+
+  /** True while a card whose graph well shows description footers is in the column (relayoutCards fills them in). */
+  function describedGraphShowing() {
+    if (!st.cardEls) return false;
+    for (const c of st.cardEls.values()) if (c.handle && typeof c.handle.setDescriptions === 'function' && c.el.isConnected) return true;
+    return false;
   }
 
   // ---- command cards (ui/public/ask-command-card.mjs; Ask agent mode, #574) ------------------------------------------
@@ -5699,6 +5750,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.runPoked) repaintProgressCards();
     relayoutCards();
     if (st.open) void composerCards().sweep();   // a draft saved through its wizard is recorded saved
+    if (st.open && describedGraphShowing()) void composerCards().describeGraphs();   // the graph wells' description footers
     applyPin();
     updateAddons();                                  // CONTRACT §2: every render hands the add-ons the open chat
     // A row counts as SHOWN once a flush ends with it in the column. Marking it

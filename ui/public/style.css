@@ -5880,6 +5880,15 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-wfcard-warn{font-size:13px;line-height:1.5;color:var(--amber-ink);background:var(--amber-wash);border:1px solid var(--amber-line);border-radius:10px;padding:8px 12px;}
 .ask-wfcard-meta{margin-top:8px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;}
 @media (prefers-reduced-motion: reduce){.ask-wfcard-graph{transition:none;}}
+/* ---------- the canvas well (ui/public/graph/proposal-host.mjs): a chat card's graph as the Workflows canvas draws it ---------- */
+/* The nav never prevents pointerdown (a press must still click a chip), so a drag-pan would select card text: like .gv-canvas. */
+.gv-well{user-select:none;-webkit-user-select:none;}
+.gv-well .gv-stage,.gv-well .gv-world .node{cursor:grab;}
+.gv-well .gv-stage.panning,.gv-well .gv-stage.panning *{cursor:grabbing !important;}
+.gv-well > .gv-nav{right:12px;bottom:12px;}
+/* Only the well outgrows a build card's 760px text column (.ask-ccard): up to the chat card width, centred on the column.
+   An Auto card (.ask-card) is that wide already (.chat-convo .ask-msg > .ask-card). */
+.chat-convo .ask-ccard .ask-wfcard-graph.gv-well{width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
 
 /* ---------- workflow card build (ui/public/auto-build.mjs; mockup §B/§F motion) ---------- */
 .ask-wfcard-graph .gv-world .node{transition:opacity .28s cubic-bezier(.2,.7,.3,1),translate .28s cubic-bezier(.2,.7,.3,1);}

@@ -24,7 +24,8 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
   const { h, button } = cardKit(doc, { onChange });
   const act = (name, ...a) => (actions && typeof actions[name] === 'function' ? actions[name](...a) : undefined);
   // The library's keys, read here: app.js's own registry stays empty until the Workflows view mounted once.
-  const lib = { agents: new Set(), scripts: new Set(), at: -Infinity, tried: -Infinity, loading: null };
+  // descs: key → the description the composer's card footer shows (Ask's graph cards draw the same footer).
+  const lib = { agents: new Set(), scripts: new Set(), descs: new Map(), at: -Infinity, tried: -Infinity, loading: null };
   const flipped = new Set();            // draft cards this page recorded saved (once each)
   const savedFrom = new Map();          // draft key → the card whose program this page saved under it (its Save, or its wizard)
   const recordFailed = new Map();       // draft card id → when the sweep's record failed (retried at the TTL; its Save records it)
@@ -41,6 +42,8 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
         const [ad, sd] = await Promise.all([a.json(), s.json()]);
         lib.agents = new Set(rowsOf(ad, 'agents').map((x) => x && x.key).filter(Boolean));
         lib.scripts = new Set(rowsOf(sd, 'scripts').map((x) => x && x.key).filter(Boolean));
+        lib.descs = new Map([...rowsOf(sd, 'scripts'), ...rowsOf(ad, 'agents')]
+          .filter((x) => x && typeof x.key === 'string').map((x) => [x.key, String(x.description || '')]));
         lib.at = now();
         return true;
       } catch { return false; } finally { lib.loading = null; }
@@ -143,14 +146,23 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
     if (!f.ok) fail(b, `Not declined — ${f.error}`);
   }
 
-  /** The graph from the manifest build_workflow made (composer-deps.mjs), with read-only model chips. */
-  function graphOf(c) {
+  /** The footer text a graph card shows for `key` (the composer's description): the newest live draft of it in this
+   *  chat, else the library row. '' until the library loads — the footer is full height either way. */
+  function describeKey(key) {
+    const d = findDraft(key);
+    const own = d && d.state !== 'declined' && d.state !== 'failed' && d.card.draft.meta && d.card.draft.meta.description;
+    return own ? String(own) : (lib.descs.get(key) || '');
+  }
+  /** The graph from the manifest build_workflow made (composer-deps.mjs), drawn as the Workflows canvas draws it — the
+   *  same x/y (build_workflow laid it out with the description footer billed), scale 1, lanes, no chip band (the model
+   *  shows in the label row) — in a pannable well whose Expand is this card's Open in Workflows. */
+  function graphOf(b) {
+    const c = b.card;
     const m = c.manifest;
     if (!m || !m.graph || !Array.isArray(m.graph.nodes) || !m.graph.nodes.length) return null;
-    const nodes = {};
-    for (const n of m.graph.nodes) if (n && n.kind === 'agent') nodes[n.id] = { model: n.model || '', effort: n.effort || '', askQuestions: n.askQuestions === true };
-    return renderAutoProposal({ name: c.name || '', manifest: { version: 2, graph: m.graph }, nodes, order: null },
-      { doc, order: ['graph'], editableName: false, pick: false });
+    return renderAutoProposal({ name: c.name || '', manifest: { version: 2, graph: m.graph }, nodes: {}, order: null },
+      { doc, order: ['graph'], editableName: false, pick: false, canvas: true, chips: false,
+        descriptionOf: describeKey, onExpand: () => openBuild(b) });
   }
   /** D10: every command / code a script step runs, shown as the Import dialog shows them (app.js gvConfirmScriptImport:
    *  workflow-share.mjs's SCRIPT_IMPORT_NOTICE sentence and the same classes), above the buttons. */
@@ -168,7 +180,7 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
   }
   function renderBuild(b) {
     const c = b.card;
-    const handle = b.state === 'declined' || b.state === 'failed' ? null : graphOf(c);
+    const handle = b.state === 'declined' || b.state === 'failed' ? null : graphOf(b);
     const el = buildCardView(b, { h, graph: handle ? handle.el : null, title: b.state === 'saved' ? 'Saved workflow' : 'Proposed workflow', actions: (row) => {
       if (b.state === 'proposed') {
         row.append(button('Decline', 'wfv-btn', () => decline(b)), h('span', 'wfc-spacer'),
@@ -234,5 +246,17 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
     },
     /** The chat was hidden (a wizard, another view): the next sweep re-reads the library. */
     stale() { lib.at = -Infinity; lib.tried = -Infinity; },
+    /** A graph card's description footer for `key` (describeKey). */
+    describe: describeKey,
+    /** When the library behind `describe` last loaded: ask-panel repaints the footers once it moves. */
+    describedAt: () => lib.at,
+    /** While a graph card shows (the Chat page open): load the library once per page open for the footers — sharing the
+     *  sweep's load and its failure back-off (lib.tried, the TTL), never a load per render; onChange once it landed. */
+    async describeGraphs() {
+      const at = lib.at;
+      if (lib.loading) await lib.loading;
+      else if (lib.at === -Infinity && now() - lib.tried > LIBRARY_TTL_MS) await loadLibrary();
+      if (lib.at !== at) onChange();
+    },
   };
 }
