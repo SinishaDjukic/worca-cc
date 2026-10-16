@@ -1235,3 +1235,10 @@ test('propose_run: shape and assess exist only while the injected gate is on wit
     } },
   ]);
 });
+
+test('an Ask chat with a composer bundle lists the drafts and the graph proposal right after its other tools — never the canvas tools', () => {
+  const names = createAskTools({ ...fake, composer: {} }).list().map((d) => d.name);
+  assert.deepEqual(names.slice(names.indexOf('get_task') + 1), ['build_workflow', 'draft_agent', 'draft_script', 'get_agent', 'get_workflow']);
+  for (const n of ['get_canvas', 'edit_canvas']) assert.equal(names.includes(n), false, n);
+  assert.ok(names.includes('propose_run') && names.includes('propose_workflow'), 'Ask keeps its own proposals');
+});

@@ -18,6 +18,7 @@ test('the Codex rules name worca file tools, no Read/Grep/Glob tools, no sub-age
   assert.doesNotMatch(r, /your Read, Grep and Glob tools/);
   assert.doesNotMatch(r, /pass that path to your Read tool/);
   assert.doesNotMatch(r, /never from a sub-agent/);
+  assert.doesNotMatch(r, /sub-agent/, 'a Codex chat has no sub-agents: no rule mentions one');
   assert.match(r, /this chat runs on the Codex CLI/);
   assert.match(r, /NOT loaded into this session/);
 });

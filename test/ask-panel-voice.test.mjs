@@ -164,6 +164,7 @@ test('barge-in stops the live turn; the transcript is sent once the turn ends', 
   f.hooks.onTranscript('new question', { autoSend: true });
   await ctx.tick();
   assert.equal(posts(ctx, /\/messages$/).length, 0, 'nothing is sent while the stopped turn is still live');
+  assert.equal(ctx.doc.querySelectorAll('[data-ask-queue-item]').length, 1, 'the utterance waits in the queue');
   ctx.panel.pushServerFrame(done);
   await ctx.tick(); await ctx.tick();
   const sent = posts(ctx, /\/messages$/);

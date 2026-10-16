@@ -354,7 +354,7 @@ test('a successful discard clears the Running banner for good and re-arms the bu
 
   assert.equal(window.document.querySelector('#run-detail .retained-banner').hidden, true,
     'the banner goes away on this screen, not just on History');
-  assert.equal(window.document.querySelector('#run-detail .hist-discard').hidden, true,
+  assert.equal(window.document.querySelector('#run-detail .hist-discard'), null,
     'and so does the action');
   assert.equal(btn.disabled, false, 'the control is not left permanently disabled');
   assert.equal(btn.textContent, before, 'nor stuck reading "Saving patch…"');
@@ -1550,4 +1550,59 @@ test('a failing /api/schedules is not refetched by repaints; the chain bar stays
   }
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/api/schedules')).length, asked, 'repaints do not refetch a failing lookup');
   assert.equal(screen.querySelector('.rd-glance .rd-prog-chain').hidden, true);
+});
+
+test('run page: Apply to branch clears the notice, and a later state frame does not bring it back', async () => {
+  const ctx = await openDetail({
+    bootOpts: {
+      fetchHandler: (u) => (u.includes('/apply-retained')
+        ? Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, applied: [{ projectKey: null, branch: 'worca-cc/auth', sha: 'abcdef0123456789', committed: true }], failed: [], remaining: 0 }) })
+        : null),
+    },
+  });
+  const { window, recv } = ctx;
+  window.__np.getRun(ID).pipelineId = 'p1';
+  const RETAINED = {
+    type: 'state', runId: ID, status: 'running', steps: [],
+    branch: { source: 'main', feature: 'worca-cc/auth', worktreeDir: '/tmp/wt',
+              commitFailed: { code: 'commit_failed', step: 'commit', message: 'hook failed' } },
+  };
+  recv(RETAINED);
+  await settle(window);
+  const notice = window.document.querySelector('#run-detail .retained-banner');
+  assert.equal(notice.hidden, false);
+  window.document.querySelector('#run-detail .wt-apply').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await confirmDialog(window);
+  await settle(window, 6);
+  assert.equal(notice.hidden, true, 'applied: the notice goes on this screen too');
+  recv(RETAINED);
+  await settle(window);
+  assert.equal(notice.hidden, true, 'the finished orchestrator\'s stale commitFailed stamp does not resurrect it');
+});
+
+test('run page: a checkout on History\'s row shows the notice, and a row without it clears it', async () => {
+  const CO = { members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: 'worca-cc/dark-p1', at: '2026-10-14T09:00:00Z', policy: 'on-demand' }] };
+  const box = { rows: [{ ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main', pr: null, checkout: CO }] };
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.endsWith('/api/history/pr')) return ok({ ok: true });
+      if (url.endsWith('/api/history')) return ok({ pipelines: box.rows, ghAvailable: true });
+      if (url.endsWith('/api/budget')) return ok(okBudget());
+      if (url.includes('/api/runs/p1?projectDir=')) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
+      return null;
+    },
+  });
+  frame(ctx, { type: 'hello', runs: [] });
+  await settle(ctx.window, 6);
+  await openGlance(ctx);
+  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  await settle(ctx.window, 10);
+  const n = ctx.window.document.querySelector('#run-detail .retained-banner');
+  assert.equal(n.hidden, false);
+  assert.equal(n.dataset.kind, 'checkout');
+  assert.deepEqual([...n.querySelectorAll('button')].map((b) => b.textContent), ['Discard', 'Get the diff', 'Actions tab ›']);
+  box.rows = [{ ...box.rows[0], checkout: null }];
+  frame(ctx, { type: 'pipelines-changed' });
+  await settle(ctx.window, 12);
+  assert.equal(n.hidden, true, 'a checkout discarded elsewhere clears the notice here (rdRepaintOpenGlance repaints the banners)');
 });

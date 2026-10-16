@@ -601,7 +601,8 @@ test('discard confirms honestly, POSTs the keyed route and shows/links the saved
       const link = ctx.window.document.querySelector('#hist-detail .retained-patch-link a');
       assert.ok(link, 'the alternate-recovery link renders for a retained-work-patch artifact');
       assert.equal(link.download, `retained-work-${ROW.id}.patch`, 'download name matches what the route prefers');
-      assert.match(link.textContent, /recovery patch \(snapshot taken when the work was retained\)/);
+      assert.equal(link.textContent, 'Download the recovery patch');
+      assert.equal(link.title, 'The snapshot taken when the work was retained');
     } },
   ]);
 });

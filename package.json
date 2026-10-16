@@ -114,7 +114,7 @@
     "@playwright/test": "1.56.0",
     "esbuild": "^0.25.0",
     "jsdom": "^29.1.1",
-    "web-ext": "^8.9.0"
+    "web-ext": "^10.8.0"
   },
   "overrides": {
     "addons-scanner-utils": {

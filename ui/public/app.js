@@ -84,6 +84,7 @@ import { mountRunGraph } from './graph/run-hosts.mjs';
 import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
 import { runProgress, chainProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
+import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS } from './runs-list.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
@@ -97,7 +98,7 @@ import {
   renderMemoryHistory, MEMORY_NAME_HELP,
 } from './memory-view.mjs';
 import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
-import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningActionRows, historyActionBadges, createActionsController } from './actions-view.mjs';
+import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout } from './actions-view.mjs';
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
@@ -132,7 +133,7 @@ import {
   renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
   renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList,
 } from './plugins-view.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
@@ -2033,8 +2034,8 @@ function makeRun({
     autoscroll: true,   // Auto-scroll toggle state (source of truth; template default is ON)
     subAgents: [],     // Array<record> — sub-agent lifecycle for this run (see onSubagent/onState)
     artifacts: [],     // Array<{kind, path}> — what the run has written so far.
-                       // The detail's retained-work banner needs it to offer the
-                       // recovery-patch link (addRecoveryPatchLink).
+                       // The detail's worktree notice needs it to offer the
+                       // recovery-patch link (paintWorktreeNotice).
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
     stepGraphify: {}, // {`${nodeId}|${cycle}`: number} — MAIN-agent graphify-use count per group
     // v2 (graph-engine) run-level outcome fields; a v1 run never sends them.
@@ -2797,7 +2798,7 @@ let wfvSheet = '';          // '' | 'agent' | 'agent-new' | 'script'
 let wfvRuntimes = null;     // the script runtime probe (GET /api/scripts/runtimes), read once: the Library's "python not found" chip
 let wfvChat = null;         // the composer chat dock (workflows/chat-dock.mjs), mounted with the view
 const WFV_SESSION = mintId('cs_');   // this page load's composer session: the chat applies only cards stamped with it
-const wfvPendingDraft = { agent: null, script: null };   // a chat draft's Edit…, handed to the route it opens
+const wfvPendingDraft = { agent: null, script: null, build: null };   // a chat draft's Edit… (and Ask's graph card's Open in Workflows), handed to the route it opens
 const gvNewIds = new Set(); // workflows imported this page session (a NEW pill until reload)
 // A saved workflow id, by the server's own rule (workflows.mjs isSafeWorkflowId): a minted `wf_<slug>` (no
 // length cap), a plugin's `wfp_<plugin>_<slug>`, or any safe id a POST /api/workflows body kept (`myflow`).
@@ -3088,6 +3089,28 @@ function wfvChatActions() {
   };
 }
 
+/** Ask Worca's draft and graph cards (ask-composer-cards.mjs): the Workflows chat's save and editor actions, plus Open
+ *  in Workflows for a graph nobody saved yet. Ask reads the library itself (libraryHas here is empty off the view). */
+function askComposerActions() {
+  const a = wfvChatActions();
+  return {
+    notify: a.notify,
+    saveAgentDraft: a.saveAgentDraft,
+    saveScriptDraft: a.saveScriptDraft,
+    openAgentDraft: a.openAgentDraft,
+    openScriptDraft: a.openScriptDraft,
+    openBuild: (build) => openBuildFromAsk(build),
+  };
+}
+
+/** Ask's graph card → the canvas as a NEW unsaved workflow (the composer's Apply: loadDraft after the discard prompt),
+ *  handed to routeWorkflows through wfvPendingDraft.build, like a draft's Edit…. */
+async function openBuildFromAsk(build) {
+  wfvPendingDraft.build = build;
+  if (location.hash.slice(1) === 'workflows' && gvComposer) await routeWorkflows('');
+  else location.hash = 'workflows';
+}
+
 /** Route the view's param (D6). In-view hops (sheet ↔ canvas, tab ↔ tab) only route. */
 async function routeWorkflows(param = '') {
   const [head, ...rest] = String(param || '').split('/');
@@ -3113,6 +3136,14 @@ async function routeWorkflows(param = '') {
     return;
   }
   wfvCloseSheet();
+  // Ask's graph card (Open in Workflows): a NEW unsaved workflow, after the discard prompt — the composer's Apply.
+  if (!head && wfvPendingDraft.build) {
+    const build = wfvPendingDraft.build;
+    wfvPendingDraft.build = null;
+    await gvLoadAgents();                          // drafts the card saved from the chat are placeable now
+    if (await gvComposer.guardDiscard()) { gvComposer.loadDraft(build); gvComposer.fit(); }
+    return;
+  }
   if (!head) return;
   // Any other head names a saved workflow (Ask's "Open in Workflows", the top-bar search, a bookmark): open it
   // and normalise the hash, or say why not — never nothing.
@@ -3267,7 +3298,7 @@ function wfvGoCanvas() {
 // The headless-Chrome probe seam (tools/verify-composer-cdp.mjs): the live engine and its view.
 if (typeof window !== 'undefined') window.__gv = () => (gvComposer ? { c: gvComposer, v: gvComposer.view } : null);
 if (typeof window !== 'undefined') window.__gvImport = (obj) => gvImportWorkflowObject(obj);   // test seam for the Import dialog
-if (typeof window !== 'undefined') window.__wfv = { routeWorkflows, wfvOpenSheet, wfvCloseSheet, openAgentDraft, openScriptDraft, sheet: () => wfvSheet, library: () => wfvLibrary, chat: () => wfvChat, session: WFV_SESSION };
+if (typeof window !== 'undefined') window.__wfv = { routeWorkflows, wfvOpenSheet, wfvCloseSheet, openAgentDraft, openScriptDraft, openBuildFromAsk, sheet: () => wfvSheet, library: () => wfvLibrary, chat: () => wfvChat, session: WFV_SESSION };
 
 // Leave-guard: the engine stays MOUNTED (DOM + undo ring), its document listeners go, the sheet closes.
 function workflowsExit() {
@@ -14749,6 +14780,8 @@ function paintAskSettings(data) {
   // the GET and from every save response without a second fetch.
   const scriptHost = document.getElementById('ask-script-tools-host');
   if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
+  const suggestHost = document.getElementById('ask-suggestions-host');
+  if (suggestHost) suggestHost.replaceChildren(renderSuggestionsToggle({ prefs: data.chat || {} }, { doc: document }));
   // Web access: repainted from every GET and save response, which also resets its dirty flag.
   const webHost = document.getElementById('ask-web-host');
   if (webHost) webHost.replaceChildren(renderAskWebFields({ askWeb: data.askWeb }, { doc: document }));
@@ -14798,8 +14831,13 @@ function saveAskLimits(e) {
   const scriptHost = document.getElementById('ask-script-tools-host');
   const webHost = document.getElementById('ask-web-host');
   const askWebBody = webHost ? collectAskWebFields(webHost) : null;   // null = the web fields were not touched
+  const suggestHost = document.getElementById('ask-suggestions-host');
+  const chat = {
+    ...(scriptHost ? collectScriptToolsToggle(scriptHost) : {}),
+    ...(suggestHost ? collectSuggestionsToggle(suggestHost) : {}),
+  };
   postAskLimits({ askMaxTurns, askMaxBudgetUsd,
-    ...(scriptHost ? { chat: collectScriptToolsToggle(scriptHost) } : {}),
+    ...(Object.keys(chat).length ? { chat } : {}),
     ...(askWebBody ? { askWeb: askWebBody } : {}) }, { button: e?.currentTarget || null });
 }
 document.getElementById('askLimitsSave')?.addEventListener('click', saveAskLimits);
@@ -20259,142 +20297,234 @@ function mergeBackRecipe(m, p) {
   }
 }
 
-// Paint both the collapsed warning badge and the expanded manual-recovery
-// instructions. Every value is assigned through textContent: git stderr and
-// repository paths are data, never markup.
-function renderRetainedWork(node, p) {
-  const retained = p && p.retainedWork;
-  const members = Array.isArray(retained?.members) ? retained.members : [];
-  const badge = node.querySelector('.hist-retained-badge');
-  if (badge) badge.hidden = !members.length;
-  const banner = node.querySelector('.retained-banner');
-  if (!banner || !members.length) {
-    if (banner) banner.hidden = true;
+// The summary card's worktree notice (worktree-notice.mjs) in its host, `.retained-banner` inside
+// `.rd-banners` / `.hd-banners`, so the Chat run panel carries it too. It shows at every level. It is
+// rebuilt ONLY when what it shows changes: the run page repaints on every frame of any run, and in Chrome
+// a button replaced between press and release loses its click. The handlers therefore read the run or
+// the record at click time.
+function paintWorktreeNotice(screen, model, { sig = '', recovery = null, handlers = {} } = {}) {
+  const badge = screen.querySelector('.hist-retained-badge');
+  if (badge) badge.hidden = !(model && model.kind === 'retained');
+  const host = screen.querySelector('.retained-banner');
+  if (!host) return;
+  if (!model) {
+    host.hidden = true;
+    if (host.dataset.key) { host.replaceChildren(); delete host.dataset.key; delete host.dataset.kind; }
     return;
   }
-  banner.hidden = false;
-  banner.innerHTML = '';
-  const title = document.createElement('h4');
-  title.textContent = 'Commit failed — uncommitted work retained';
-  const intro = document.createElement('p');
-  intro.textContent = 'The pipeline result is unchanged, but this work is not safely stored on the branch yet. Commit it manually, or save a recovery patch and discard the worktree below.';
-  const list = document.createElement('ul');
-  for (const member of members) {
-    const li = document.createElement('li');
-    const label = document.createElement('strong');
-    label.textContent = member.projectKey || member.branch || 'Project';
-    li.appendChild(label);
-    const detail = document.createElement('span');
-    detail.textContent = ` — git ${member.step || 'commit'}: ${member.message || 'failed'}`;
-    li.appendChild(detail);
-    const path = document.createElement('div');
-    path.textContent = `Worktree: ${member.worktreeDir || '(unknown)'}`;
-    li.appendChild(path);
-    if (member.branch) {
-      const branch = document.createElement('div');
-      branch.textContent = `Branch: ${member.branch} (the uncommitted work is not on it yet)`;
-      li.appendChild(branch);
+  host.hidden = false;
+  host.dataset.kind = model.kind;
+  host.setAttribute('role', model.kind === 'retained' ? 'alert' : 'status');
+  const key = JSON.stringify([sig, model, recovery]);
+  if (host.dataset.key === key) return;
+  host.dataset.key = key;
+  host.replaceChildren(renderWorktreeNotice(model, { doc: document, handlers, recovery, when: fmtDate }));
+}
+
+/** Workspace member names from History's row (`members[].memberKey/name`), for the notice's member lines. */
+function memberNamesOf(rec) {
+  const members = rec && Array.isArray(rec.members) ? rec.members : [];
+  return Object.fromEntries(members.filter((m) => m && m.memberKey && m.name).map((m) => [m.memberKey, m.name]));
+}
+
+/** The run's live checkout from History's row (checkoutRecordsFor, existsSync-gated on the server), or null.
+ *  writeHistoryCache keeps `checkout`, so a cache-warm row can show a checkout discarded since. The fresh
+ *  row corrects it one fetch later, and the routes answer a gone checkout harmlessly. */
+function hdCheckoutFor(record) {
+  const c = record && record.checkout;
+  return c && Array.isArray(c.members) && c.members.length ? c : null;
+}
+
+/** The notice's recovery-patch link: the retained-work snapshot, else the run's diff (GET …/recovery-patch). */
+function recoveryLinkOf(projectDir, p, model) {
+  if (!model || model.kind !== 'retained' || !model.recoveryPatch || !p || !p.id) return null;
+  const retained = model.recoveryPatch === 'retained';
+  return { kind: model.recoveryPatch,
+    href: `/api/runs/${encodeURIComponent(p.id)}/recovery-patch?${runActionQuery(projectDir, p)}`,
+    download: retained ? `retained-work-${p.id}.patch` : `diff-patch-${p.id}.patch` };
+}
+
+/** After a successful Apply / Discard worktree: mark the open History detail's state branch released. A
+ *  cache-warm repaint (rows stripped of retainedWork) would otherwise rebuild a PROVISIONAL retention from its
+ *  stale commitFailed stamp; hdRetainedFor skips a branch whose worktreeRemoved is true. */
+function hdForgetRetained(p) {
+  const ds = histDetailState && p && histDetailState.id === p.id && histDetailState.data && histDetailState.data.state;
+  if (!ds || !ds.branch || typeof ds.branch !== 'object') return;
+  // Copy, never mutate: the loaded detail object can be shared (a test fixture served by reference).
+  histDetailState.data = { ...histDetailState.data, state: { ...ds, branch: { ...ds.branch, worktreeRemoved: true } } };
+}
+
+// Discard worktree (retained work): POST discard-worktree after the confirm, a recovery patch saved first.
+// `onDiscarded` runs after a FULLY successful discard (remaining === 0). The run page needs it: it derives
+// retention from the live run model, which the server-side clear writes only to the DB.
+async function discardRetainedWorktree(btn, projectDir, p, onDiscarded) {
+  // The title carries the question and the OK button carries the verb, so the
+  // body no longer repeats either (it used to open "Discard the retained
+  // worktree?" and end "Continue?" because an OS alert has neither).
+  const msg = 'Any work NOT yet committed exists only in the retained worktree; a recovery patch of uncommitted changes will be saved in the pipeline directory before anything is removed.\n\nIf you already committed the work manually, discarding just removes the now-redundant checkout and clears the warning. The pipeline history and feature branch are kept.';
+  const ok = await confirmModal({
+    title: 'Discard the retained worktree?', danger: true, confirmLabel: 'Discard',
+    message: msg,
+  });
+  if (!ok) return;
+  btn.disabled = true;
+  const previous = btn.textContent;
+  btn.textContent = 'Saving patch…';
+  try {
+    const qs = runActionQuery(projectDir, p);
+    const res = await fetch(`/api/runs/${encodeURIComponent(p.id)}/discard-worktree?${qs}`, { method: 'POST' });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    if (data.remaining > 0) {
+      // Partial failure: the checkout is still on disk, so the retained state
+      // is still true — repaint nothing away, tell the user what happened.
+      btn.disabled = false;
+      btn.textContent = previous;
+      const text = 'The retained worktree could not be fully removed:\n\n' +
+        `${Array.isArray(data.warnings) && data.warnings.length ? data.warnings.join('\n') : 'unknown error'}\n\n` +
+        'The retained-work warning stays until the checkout is gone.';
+      notify({ tone: 'warn', title: 'Discard incomplete', detail: 'The retained checkout is still on disk.', key: 'discard-wt',
+        action: { label: 'Details', run: () => showViewer('Discard incomplete', text) } });
+      return;
     }
-    const command = document.createElement('code');
-    command.textContent = `git -C ${shellSingleQuote(member.worktreeDir)} status\ngit -C ${shellSingleQuote(member.worktreeDir)} add -A\ngit -C ${shellSingleQuote(member.worktreeDir)} commit`;
-    li.appendChild(command);
-    list.appendChild(li);
+    p.retainedWork = null;
+    hdForgetRetained(p);
+    writeHistoryCache(state.historyAll, state.ghAvailable, state.adoAvailable);
+    paintHistory();
+    // The Actions model offered the retained worktree as "Use that folder" (it held the branch): refetch it.
+    void refreshActionsModel(p.id, qs.toString());
+    // Restore the control unconditionally: the repaint may drop the notice (and this node) or keep it.
+    btn.disabled = false;
+    btn.textContent = previous;
+    if (typeof onDiscarded === 'function') onDiscarded(data);
+    const paths = Array.isArray(data.patches) ? data.patches : [];
+    const text = paths.length
+      ? `Recovery patch${paths.length === 1 ? '' : 'es'} saved before removal:\n\n${paths.join('\n')}`
+      : 'No recovery patch was needed (nothing uncommitted remained to save); the retained checkout is gone.';
+    notify({ tone: 'ok', title: 'Retained worktree discarded',
+      detail: paths.length ? `${paths.length} recovery patch${paths.length === 1 ? '' : 'es'} saved.` : 'Nothing uncommitted needed saving.',
+      key: 'discard-wt', action: paths.length ? { label: 'Details', run: () => showViewer('Retained worktree discarded', text) } : null });
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = previous;
+    btn.title = `Could not discard retained worktree: ${err.message}`;
+    notify({ tone: 'err', title: 'Could not discard the retained worktree', detail: err.message, key: 'discard-wt',
+      action: { label: 'Retry', run: () => btn.isConnected && btn.click() } });
   }
-  const archiveNote = document.createElement('p');
-  archiveNote.textContent = 'Archive is disabled until the retained worktree has been recovered or discarded.';
-  const clearNote = document.createElement('p');
-  clearNote.textContent = 'After committing manually, use "Discard worktree" to remove the now-redundant checkout and clear this warning (a patch of anything still uncommitted is saved first). Your changes are already staged in that checkout, so git status will list them under "Changes to be committed".';
-  banner.append(title, intro, list, archiveNote, clearNote);
 }
 
-function addRecoveryPatchLink(node, projectDir, p, artifacts) {
-  const banner = node.querySelector('.retained-banner');
-  if (!banner || banner.hidden || !Array.isArray(artifacts)) return;
-  const retained = artifacts.some((a) => a && a.kind === 'retained-work-patch');
-  const diff = artifacts.some((a) => a && a.kind === 'diff-patch');
-  if (!retained && !diff) return;
-  if (banner.querySelector('.retained-patch-link')) return;
-  const line = document.createElement('p');
-  line.className = 'retained-patch-link';
-  line.appendChild(document.createTextNode('Alternate recovery: '));
-  const link = document.createElement('a');
-  link.href = `/api/runs/${encodeURIComponent(p.id)}/recovery-patch?${runActionQuery(projectDir, p)}`;
-  link.download = retained ? `retained-work-${p.id}.patch` : `diff-patch-${p.id}.patch`;
-  link.textContent = retained
-    ? 'download the recovery patch (snapshot taken when the work was retained)'
-    : 'download the pipeline diff patch';
-  link.addEventListener('click', (e) => e.stopPropagation());
-  line.appendChild(link);
-  banner.appendChild(line);
-}
-
-// `onDiscarded` runs after a FULLY successful discard (remaining === 0), for a
-// caller whose screen the History repaint below does not reach. The Running
-// detail needs it: it derives retention from the live run model, which the
-// server-side clear only writes to the DB.
-function setupDiscardWorktreeButton(node, projectDir, p, onDiscarded) {
-  const btn = node.querySelector('.hist-discard');
-  if (!btn) return;
-  const retained = p && p.retainedWork;
-  const members = Array.isArray(retained?.members) ? retained.members : [];
-  btn.hidden = !members.length;
-  if (!members.length) return;
-  btn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    // The title carries the question and the OK button carries the verb, so the
-    // body no longer repeats either (it used to open "Discard the retained
-    // worktree?" and end "Continue?" because an OS alert has neither).
-    const msg = 'Any work NOT yet committed exists only in the retained worktree; a recovery patch of uncommitted changes will be saved in the pipeline directory before anything is removed.\n\nIf you already committed the work manually, discarding just removes the now-redundant checkout and clears the warning. The pipeline history and feature branch are kept.';
-    const ok = await confirmModal({
-      title: 'Discard the retained worktree?', danger: true, confirmLabel: 'Discard',
-      message: msg,
-    });
-    if (!ok) return;
-    btn.disabled = true;
-    const previous = btn.textContent;
-    btn.textContent = 'Saving patch…';
-    try {
-      const qs = runActionQuery(projectDir, p);
-      const res = await fetch(`/api/runs/${encodeURIComponent(p.id)}/discard-worktree?${qs}`, { method: 'POST' });
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
-      if (data.remaining > 0) {
-        // Partial failure: the checkout is still on disk, so the retained state
-        // is still true — repaint nothing away, tell the user what happened.
-        btn.disabled = false;
-        btn.textContent = previous;
-        const text = 'The retained worktree could not be fully removed:\n\n' +
-          `${Array.isArray(data.warnings) && data.warnings.length ? data.warnings.join('\n') : 'unknown error'}\n\n` +
-          'The retained-work warning stays until the checkout is gone.';
-        notify({ tone: 'warn', title: 'Discard incomplete', detail: 'The retained checkout is still on disk.', key: 'discard-wt',
-          action: { label: 'Details', run: () => showViewer('Discard incomplete', text) } });
-        return;
-      }
-      p.retainedWork = null;
-      writeHistoryCache(state.historyAll, state.ghAvailable, state.adoAvailable);
-      paintHistory();
-      // Restore the control unconditionally. History never noticed it was missing
-      // — paintHistory() rebuilds the node — but the Running detail reuses this
-      // same button and repaints from its own painter, so leaving it here would
-      // strand a dead control reading "Saving patch…".
-      btn.disabled = false;
-      btn.textContent = previous;
-      if (typeof onDiscarded === 'function') onDiscarded(data);
-      const paths = Array.isArray(data.patches) ? data.patches : [];
-      const text = paths.length
-        ? `Recovery patch${paths.length === 1 ? '' : 'es'} saved before removal:\n\n${paths.join('\n')}`
-        : 'No recovery patch was needed (nothing uncommitted remained to save); the retained checkout is gone.';
-      notify({ tone: 'ok', title: 'Retained worktree discarded',
-        detail: paths.length ? `${paths.length} recovery patch${paths.length === 1 ? '' : 'es'} saved.` : 'Nothing uncommitted needed saving.',
-        key: 'discard-wt', action: paths.length ? { label: 'Details', run: () => showViewer('Retained worktree discarded', text) } : null });
-    } catch (err) {
-      btn.disabled = false;
-      btn.textContent = previous;
-      btn.title = `Could not discard retained worktree: ${err.message}`;
-      notify({ tone: 'err', title: 'Could not discard the retained worktree', detail: err.message, key: 'discard-wt',
+// Apply to branch (retained work): POST apply-retained after the confirm. On success (every member applied,
+// or nothing was left), `p.retainedWork = null` is History's authoritative clear, and `onApplied` runs. The
+// run page passes `onApplied` to set `r._retainedApplied`, because later state frames still carry the old
+// commitFailed stamp. A commit that fails again leaves everything as it was and shows git's message.
+async function applyRetainedFlow(btn, p, model, onApplied = null) {
+  const ok = await confirmModal({ title: 'Apply the work to the branch?', confirmLabel: 'Apply', message: applyConfirmMessage(model) });
+  if (!ok) return;
+  const previous = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Applying…';
+  let res = null;
+  let data = null;
+  try {
+    res = await fetch(`/api/runs/${encodeURIComponent(p.id)}/apply-retained?${runActionQuery(p.projectDir || null, p)}`, { method: 'POST' });
+    data = await safeJson(res);
+  } catch (e) {
+    data = { error: e.message };
+  }
+  btn.disabled = false;
+  btn.textContent = previous;
+  const failed = Array.isArray(data && data.failed) ? data.failed : [];
+  if (!res || !res.ok) {
+    const error = (data && data.error) || `HTTP ${res ? res.status : 0}`;
+    btn.title = `Could not apply the work: ${error}`;
+    if (failed.length) {
+      const text = failed.map((f) => `${f.projectKey ? `${f.projectKey}\n` : ''}git ${f.step} failed:\n${f.message}`).join('\n\n');
+      notify({ tone: 'err', title: 'The commit failed again', detail: String(failed[0].message || '').split('\n')[0], key: 'wt-apply',
+        action: { label: 'Details', run: () => showViewer('The commit failed again', text) } });
+    } else {
+      notify({ tone: 'err', title: 'Could not apply the work', detail: error, key: 'wt-apply',
         action: { label: 'Retry', run: () => btn.isConnected && btn.click() } });
     }
-  });
+    return;
+  }
+  btn.title = '';
+  if (!failed.length) {
+    p.retainedWork = null;
+    hdForgetRetained(p);
+    writeHistoryCache(state.historyAll, state.ghAvailable, state.adoAvailable);
+    if (typeof onApplied === 'function') onApplied(data);
+  }
+  paintHistory();
+  rdRepaintOpenGlance(p.id);
+  // A released worktree no longer holds the branch: refetch the Actions model so Check out is offered again.
+  if (Array.isArray(data && data.applied) && data.applied.length) void refreshActionsModel(p.id, runActionQuery(p.projectDir || null, p).toString());
+  notify({ ...applyOutcome(data), key: 'wt-apply' });
+}
+
+/** Drop released members from a History row's checkout (null once none is left). */
+function dropCheckoutMembers(p, keys) {
+  const left = (p.checkout && Array.isArray(p.checkout.members) ? p.checkout.members : []).filter((x) => !keys.includes(x.projectKey));
+  p.checkout = left.length ? { members: left } : null;
+}
+
+// Discard / Unlink from the notice: the Actions tab's flow and copy (actions-view.mjs releaseCheckout).
+// Check out / Discard emit only `pipelines-changed`, never `actions-changed`, so the strips' model cache
+// is refetched here.
+async function releaseCheckoutFlow(btn, p, m) {
+  const scope = runActionQuery(p.projectDir || null, p).toString();
+  btn.disabled = true;
+  let r;
+  try {
+    r = await releaseCheckout({ api: actionsCall, url: actionsRunUrl(p.id, '/checkout', scope), members: [m.projectKey],
+      external: !!m.external, dir: m.dir, confirm: confirmModal });
+  } finally {
+    if (btn.isConnected) btn.disabled = false;
+  }
+  if (!r) return;
+  if (!r.ok) {
+    notify({ tone: 'err', title: m.external ? 'Could not unlink the folder' : 'Could not discard the checkout',
+      detail: (r.data && r.data.error) || `HTTP ${r.status}`, key: 'wt-release' });
+    return;
+  }
+  dropCheckoutMembers(p, [m.projectKey]);
+  writeHistoryCache(state.historyAll, state.ghAvailable, state.adoAvailable);
+  paintHistory();
+  rdRepaintOpenGlance(p.id);
+  void refreshActionsModel(p.id, scope);
+  const patches = Array.isArray(r.data && r.data.patches) ? r.data.patches : [];
+  notify({ tone: 'ok', title: m.external ? 'Folder unlinked' : 'Checkout discarded', key: 'wt-release',
+    detail: m.external ? 'The folder stays as it was.'
+      : (patches.length ? 'Uncommitted changes were saved as a patch in the run\'s files.' : 'Nothing uncommitted needed saving.') });
+}
+
+// Get the diff: a read-only patch of the checkout's uncommitted changes against its own HEAD
+// (GET …/checkout/diff, built in a temporary git index), downloaded as a file. 204 = nothing uncommitted.
+async function downloadCheckoutDiff(btn, p, m) {
+  const qs = runActionQuery(p.projectDir || null, p);
+  if (m.projectKey) qs.set('member', m.projectKey);
+  btn.disabled = true;
+  let res = null;
+  let blob = null;
+  let error = '';
+  try {
+    res = await fetch(`/api/runs/${encodeURIComponent(p.id)}/checkout/diff?${qs}`);
+    if (res.ok && res.status !== 204) blob = await res.blob();
+    else if (!res.ok) { const data = await safeJson(res); error = (data && data.error) || `HTTP ${res.status}`; }
+  } catch (e) {
+    error = e.message;
+  } finally {
+    if (btn.isConnected) btn.disabled = false;
+  }
+  if (error) { notify({ tone: 'err', title: 'Could not get the diff', detail: error, key: 'wt-diff' }); return; }
+  if (!blob) { notify({ tone: 'info', title: 'Nothing uncommitted', detail: 'The folder has no uncommitted changes.', key: 'wt-diff' }); return; }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = uncommittedPatchName(m.branch || p.id);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);   // not 0: Firefox can cancel a download whose URL is revoked at once
 }
 
 // Resume a paused pipeline from its history card. POST /api/resume returns the
@@ -21321,6 +21451,13 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
     const bs = data.baseStatus && typeof data.baseStatus === 'object' ? data.baseStatus : null;
     const paintBaseWarn = () => {
       if (!baseWarn) return;
+      // A base the base remote does not have (a run started from a local-only branch) cannot take a PR.
+      const pick = shipItChosenBase(modal, record);
+      if (!box.hidden && pick && Array.isArray(byRemote[baseSel.value]) && !byRemote[baseSel.value].includes(pick)) {
+        baseWarn.hidden = false;
+        baseWarn.textContent = `${pick} is not on ${baseSel.value}. Push it there first, or pick a base branch that is.`;
+        return;
+      }
       const n = bs && Number(bs.movedSinceRun);
       // Measured on bs.remote: a PR into another remote's copy of the same branch name says nothing.
       const sameRemote = box.hidden || !baseSel.value || baseSel.value === (bs && bs.remote ? bs.remote : 'origin');
@@ -21655,6 +21792,7 @@ function rdRepaintOpenGlance(pipelineId = null) {
   const r = typeof rdOpenRun === 'function' ? rdOpenRun() : null;
   if (!r || !runDetailState || !runDetailState.screen) return;
   if (pipelineId && r.pipelineId !== pipelineId) return;
+  paintRdBanners(runDetailState.screen, r);   // the worktree notice reads these rows too (checkout, retained work)
   paintRdGlance(runDetailState.screen, r);
 }
 
@@ -23005,10 +23143,6 @@ async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspac
   }
 }
 
-// { screen, record } the Discard-worktree listener is currently bound to, so
-// paintHdBanners can re-bind when either changes (see the comment inside it).
-let hdDiscardBound = null;
-
 // Retained work is a LIST-row field (and the server gates it on existsSync of the
 // worktree). A deep-linked or cache-warm detail has no authoritative value, so
 // derive a PROVISIONAL one from the state.branch.commitFailed stamp and let the
@@ -23023,8 +23157,8 @@ let hdDiscardBound = null;
 // lives in state.historyAll, so materializing a derived retention would grow a
 // "Work retained" badge on the LIST card, computed from a commitFailed stamp the
 // server would have suppressed via its existsSync gate. Instead a provisional
-// retention paints the banner from a throwaway carrier and binds NO Discard — the
-// button appears one fetch later, when the authoritative row arrives.
+// retention paints the worktree notice with the facts but offers no action — Apply
+// and Discard appear one fetch later, when the authoritative row arrives.
 //
 // LIMIT: the provisional derivation is single-project only. A workspace run's
 // retention comes from workspace_meta.branches, and the detail payload carries no
@@ -23131,47 +23265,31 @@ function paintHdBanners(screen, record, data) {
     banners.prepend(banner);
   }
 
-  // Retained work. renderRetainedWork rebuilds the banner from scratch each call
-  // (and tolerates a missing node), so it is safe to re-run;
-  // `setupDiscardWorktreeButton` is NOT idempotent (it adds a listener on every
-  // call), so it must be bound at most once PER RECORD OBJECT.
-  //
-  // "Per record object", not "per screen". The bound handler closes over the
-  // record it was handed and mutates THAT object on success
-  // (`p.retainedWork = null`) before calling paintHistory(). On the deep-link path
-  // refreshHdFromRow REPLACES histDetailState.record with the real list row, so a
-  // bind-once-per-screen guard would leave the handler mutating the orphaned
-  // minimal record: the POST succeeds and the worktree really is discarded, but
-  // the repaint reads the still-retained ROW — the banner stays and Archive stays
-  // disabled until a full reload. Re-bind whenever the record identity changes,
-  // dropping the stale listener by replacing the button node first
-  // (addEventListener leaves no removal handle).
+  // The worktree notice: retained work (the end-of-run commit failed), else a live checkout. A PROVISIONAL
+  // retention (deep link, cache-warm row) shows the facts but offers no action: Apply and Discard must act
+  // on the authoritative row, which arrives one fetch later and re-runs this painter. Handlers read the
+  // record at click time (hdCurrentRecord): refreshHdFromRow REPLACES histDetailState.record.
   const { retained, provisional } = hdRetainedFor(record, st);
-  // renderRetainedWork only READS `p.retainedWork`, so a provisional paint may use
-  // a throwaway carrier; every MUTATING helper below is handed `record` itself.
-  renderRetainedWork(screen, provisional ? { ...record, retainedWork: retained } : record);
+  const checkout = hdCheckoutFor(record);
   renderMergeBack(screen, record);
-  let dbtn = screen.querySelector('.hist-discard');
-  if (retained && !provisional) {
-    // Keyed on BOTH screen and record: a new visit builds a fresh screen from the
-    // template (unbound button) while `record` may be the very same list-row
-    // object, so a record-only key would skip the bind on the new screen.
-    if (!hdDiscardBound || hdDiscardBound.screen !== screen || hdDiscardBound.record !== record) {
-      if (dbtn) { const fresh = dbtn.cloneNode(true); dbtn.replaceWith(fresh); dbtn = fresh; }
-      hdDiscardBound = { screen, record };
-      setupDiscardWorktreeButton(screen, record.projectDir || null, record);
-    }
-  } else {
-    // Provisional retention shows the banner but NOT the action: discarding must
-    // act on the authoritative row (which arrives one fetch later and re-runs this
-    // painter), never on a stub or a cache-warm row whose retention we inferred.
-    hdDiscardBound = null;
-    if (dbtn) dbtn.hidden = true;   // renderRetainedWork does not touch this button
-  }
-  // Must run AFTER renderRetainedWork unhides the banner: addRecoveryPatchLink
-  // bails on a hidden banner and self-guards against duplicates.
-  addRecoveryPatchLink(screen, record.projectDir || null, record, data.artifacts);
-  return retained;
+  const model = worktreeNoticeModel({
+    retained, checkout, provisional,
+    workspace: record.target === 'workspace', names: memberNamesOf(record),
+    recoveryPatch: recoveryPatchKind(data.artifacts),
+  });
+  const cur = () => hdCurrentRecord(record);
+  paintWorktreeNotice(screen, model, {
+    sig: `hd|${record.id}`,
+    recovery: recoveryLinkOf(record.projectDir || null, record, model),
+    handlers: {
+      onApply: (btn) => applyRetainedFlow(btn, cur(), model),
+      onDiscardRetained: (btn) => discardRetainedWorktree(btn, cur().projectDir || null, cur()),
+      onReleaseCheckout: (m, btn) => releaseCheckoutFlow(btn, cur(), m),
+      onDiff: (m, btn) => downloadCheckoutDiff(btn, cur(), m),
+      onOpenActions: () => hdGoDetails('actions'),
+    },
+  });
+  return { retained, checkout };
 }
 
 // THE record accessor for detail-screen click handlers. `setupHdActions` binds
@@ -23189,7 +23307,7 @@ function hdCurrentRecord(fallback) {
   return (histDetailState && histDetailState.record) || fallback;
 }
 
-function hdSetArchiveGate(btn, retained) {
+function hdSetArchiveGate(btn, retained, checkout = null) {
   if (!btn) return;
   // An IN-FLIGHT archive owns its button outright — the mirror of
   // refreshHistResumeGating's `resumeState === 'busy'` guard. The DELETE removes a
@@ -23199,8 +23317,9 @@ function hdSetArchiveGate(btn, retained) {
   // "Archiving…" (second click = second DELETE, whose 404 stamps an error for an
   // archive that in fact succeeded).
   if (btn.dataset.archiveState === 'busy') return;
-  btn.disabled = !!retained;
-  btn.title = retained ? 'Recover or discard the retained uncommitted work before archiving.' : '';
+  btn.disabled = !!(retained || checkout);
+  btn.title = retained ? 'Recover or discard the retained uncommitted work before archiving.'
+    : checkout ? 'Discard the checkout (or unlink your folder) before archiving.' : '';
 }
 
 // Base conflicts (#620): one line per branch from the loaded detail (data.state), Re-check / Update branch /
@@ -23362,7 +23481,7 @@ async function hdBaseAction(screen, record, data, m, action, button) {
 
 function setupHdActions(screen, record, data) {
   const st = data.state;
-  const retained = paintHdBanners(screen, record, data);
+  const held = paintHdBanners(screen, record, data);
 
   // The bar's run controls. Bound unconditionally, once: their visibility follows the
   // pipeline's live run (paintHdLive, every frame), so a pipeline that pauses after the
@@ -23469,7 +23588,7 @@ function setupHdActions(screen, record, data) {
   const archived = !!st.archivedAt;
   if (!archived && isDeletableEntry({ ...record, status: st.status })) {
     archiveBtn.hidden = false;
-    hdSetArchiveGate(archiveBtn, retained);
+    hdSetArchiveGate(archiveBtn, held.retained, held.checkout);
     archiveBtn.addEventListener('click', async () => {
       if (archiveBtn.disabled) return;
       const r = hdCurrentRecord(record);              // never the load-time object
@@ -23621,7 +23740,7 @@ function setupHdActions(screen, record, data) {
 // There is deliberately NO `row === histDetailState.record` early-out. The row and
 // the detail's record are usually the SAME object (histRecordFor returns it), and
 // the flows that matter mutate it in place before calling paintHistory():
-// setupDiscardWorktreeButton sets `p.retainedWork = null`, and the ship-it path
+// discardRetainedWorktree sets `p.retainedWork = null`, and the ship-it path
 // sets `record.pr`. An identity guard would skip exactly those repaints and strand
 // a cleared worktree behind a live banner + a disabled Archive. The painters are
 // cheap and idempotent, and paintHistory() is not a hot path.
@@ -23811,8 +23930,8 @@ function refreshHdFromRow() {
   histDetailState.record = row;
   const { screen, data } = histDetailState;
   paintHdHeaderMeta(screen, row, data);
-  const retained = paintHdBanners(screen, row, data);   // corrects in BOTH directions
-  hdSetArchiveGate(screen.querySelector('.hd-archive'), retained);
+  const held = paintHdBanners(screen, row, data);       // corrects in BOTH directions
+  hdSetArchiveGate(screen.querySelector('.hd-archive'), held.retained, held.checkout);
   refreshHistResumeGating();
   paintHdPr(screen, row, data);                         // idempotent; re-binds btn.onclick
   paintHdAfter(screen, row, data);
@@ -32054,12 +32173,6 @@ function paintRdQuestions(screen, r) {
   }
 }
 
-// { screen, runId } the detail's Discard-worktree listener is currently bound to.
-// setupDiscardWorktreeButton adds a listener on EVERY call and hands back no
-// removal handle, so paintRdBanners re-binds only when either identity changes —
-// the same guard paintHdBanners keeps for the History screen.
-let rdDiscardBound = null;
-
 // Live twin of hdRetainedFor. A run model has no authoritative `retainedWork`
 // field — that one is minted by /api/history from an existsSync gate — so derive
 // it from the state snapshot's branch.commitFailed stamp, which is exactly the
@@ -32070,7 +32183,7 @@ function rdRetainedFor(r) {
   // `state` frame from an orchestrator that still carries the stamp — so the
   // clear has to live on the run, outside `branch`, or the banner comes back
   // claiming work is retained for a worktree that is gone.
-  if (r._retainedDiscarded) return null;
+  if (r._retainedDiscarded || r._retainedApplied) return null;   // cleared here: Discard worktree / Apply to branch
   const br = r.branch && typeof r.branch === 'object' ? r.branch : {};
   if (!br.commitFailed || !br.worktreeDir || br.worktreeRemoved === true) return null;
   return {
@@ -32134,39 +32247,49 @@ function paintRdBanners(screen, r) {
     banners.prepend(errBanner);
   }
 
-  // ---- retained work (D11) ----
-  // renderRetainedWork only READS `p.retainedWork`, so a derived carrier is fine
-  // for the paint; every MUTATING helper below gets the same carrier so the
-  // discard handler's `p.retainedWork = null` lands somewhere harmless.
-  const retained = rdRetainedFor(r);
-  const carrier = { id: r.pipelineId || '', projectDir: r.projectDir || '', retainedWork: retained };
-  renderRetainedWork(screen, carrier);
-  let dbtn = screen.querySelector('.hist-discard');
-  if (retained && r.pipelineId) {
-    if (!rdDiscardBound || rdDiscardBound.screen !== screen || rdDiscardBound.runId !== r.runId) {
-      // addEventListener leaves no removal handle — drop any stale listener by
-      // replacing the node first.
-      if (dbtn) { const swap = dbtn.cloneNode(true); dbtn.replaceWith(swap); dbtn = swap; }
-      rdDiscardBound = { screen, runId: r.runId };
-      // `carrier.retainedWork = null` lands on a throwaway, so the run itself
-      // carries the clear; repaint from here because the success path's own
-      // repaint (writeHistoryCache + paintHistory) is History-only. Safe to
-      // re-enter: rdRetainedFor now returns null, so this takes the else branch,
-      // hides the button and rebinds nothing.
-      setupDiscardWorktreeButton(screen, r.projectDir || null, carrier, () => {
-        r._retainedDiscarded = true;
-        const open = runDetailState.screen;
-        if (open && runDetailState.runId === r.runId) paintRdBanners(open, r);
-      });
-    }
-  } else {
-    rdDiscardBound = null;
-    if (dbtn) dbtn.hidden = true;   // renderRetainedWork does not touch this button
-  }
-  // Must run AFTER renderRetainedWork unhides the banner: addRecoveryPatchLink
-  // bails on a hidden banner and self-guards against duplicates. It needs a
-  // pipeline id for the URL, so skip it until one is known.
-  if (r.pipelineId) addRecoveryPatchLink(screen, r.projectDir || null, carrier, r.artifacts || []);
+  // ---- the worktree notice: retained work, else a live checkout ----
+  paintRdWorktreeNotice(screen, r);
+}
+
+/** The scope the notice's routes need (runActionQuery): History's row once it has one, else from the run. */
+function rdNoticeCarrier(r) {
+  const rec = rdHistoryRecord(r);
+  if (rec) return rec;
+  const ws = r.workspaceId ? String(r.workspaceId).replace(/^workspaces\//, '') : '';
+  return { id: r.pipelineId || '', projectDir: r.projectDir || '', projectKey: ws ? `workspaces/${ws}` : (r.projectKey || null),
+    ...(ws ? { target: 'workspace' } : {}), retainedWork: rdRetainedFor(r) };
+}
+
+// The run page's worktree notice. Retained work comes from History's row when it lists some (every member,
+// existsSync-gated), else from the live run's branch.commitFailed (a run whose row has not landed yet). A
+// checkout comes from History's row only: a Check out is a DB write the run's own frames never carry, and
+// `pipelines-changed` reloads the rows on this view (rdRepaintOpenGlance then repaints here). The clears
+// live on the run, outside `branch`, because every later `state` frame replaces `r.branch` wholesale.
+function paintRdWorktreeNotice(screen, r) {
+  const rec = r.pipelineId ? rdHistoryRecord(r) : null;
+  const cleared = r._retainedDiscarded || r._retainedApplied;
+  const retained = cleared ? null : ((rec && rec.retainedWork) || rdRetainedFor(r));
+  const checkout = RD_TERMINAL.includes(r.status) ? hdCheckoutFor(rec) : null;
+  const model = worktreeNoticeModel({
+    retained, checkout, provisional: !r.pipelineId,
+    workspace: !!(r.workspaceId || (rec && rec.target === 'workspace')), names: memberNamesOf(rec),
+    recoveryPatch: recoveryPatchKind(r.artifacts),
+  });
+  const repaint = () => {
+    const open = runDetailState.screen;
+    if (open && runDetailState.runId === r.runId) paintRdBanners(open, r);
+  };
+  paintWorktreeNotice(screen, model, {
+    sig: `rd|${r.runId}|${r.pipelineId || ''}`,
+    recovery: r.pipelineId ? recoveryLinkOf(r.projectDir || null, rdNoticeCarrier(r), model) : null,
+    handlers: {
+      onApply: (btn) => applyRetainedFlow(btn, rdNoticeCarrier(r), model, () => { r._retainedApplied = true; repaint(); }),
+      onDiscardRetained: (btn) => discardRetainedWorktree(btn, r.projectDir || null, rdNoticeCarrier(r), () => { r._retainedDiscarded = true; repaint(); }),
+      onReleaseCheckout: (m, btn) => releaseCheckoutFlow(btn, rdNoticeCarrier(r), m),
+      onDiff: (m, btn) => downloadCheckoutDiff(btn, rdNoticeCarrier(r), m),
+      onOpenActions: () => rdGoDetails('actions'),
+    },
+  });
 }
 
 // Delegated controls on the rebuilt parts of the detail screen. #run-detail is a
@@ -34638,6 +34761,7 @@ askPanel = createAskPanel({
   getPageContext,
   openNewPipeline,
   openComposer: (id) => { openWorkflowFromAsk(id); },
+  composerActions: askComposerActions(),        // Ask's draft and graph cards: the Workflows chat's actions (ask-composer-cards.mjs)
   openClaudeSetup: () => { openClaudeSetup(); },
   loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,
