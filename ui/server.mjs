@@ -118,7 +118,7 @@ import {
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
-import { askScriptPromptInput } from '../src/core/ask/script-deps.mjs';
+import { askScriptPromptInput, scriptToolsEnabled } from '../src/core/ask/script-deps.mjs';
 import { validateComposerPayload, isComposerCard, composerCardPatch, composerHeaderCard } from '../src/core/ask/composer-payload.mjs';
 import { composerPromptBlock } from '../src/core/ask/composer-deps.mjs';
 import {
@@ -11180,13 +11180,14 @@ function askWebAccessFor(threadId, ctx) {
   }
 }
 
-/** The system prompt of ONE Ask turn: the rules, the catalog, and — only when the chat's
- *  "Create and run scripts" pref is on (W20) — the scripts section with the runtimes this host
- *  actually has (the python probe, cached 60 s); plus the web section when `web` (askWebAccess()
- *  for this turn) is on, and the MCP servers section when the turn has registry copies (`mcp`,
+/** The system prompt of ONE Ask turn: the rules, the catalog, the scripts section — always: draft_script is an Ask tool
+ *  whatever the "Create and run scripts" pref (W20) says, and that pref only adds the save_script / test_script line
+ *  (`edits`) — with the runtimes this host actually has (the python probe, cached 60 s); plus the web section when `web`
+ *  (askWebAccess() for this turn) is on, and the MCP servers section when the turn has registry copies (`mcp`,
  *  askMcpPromptInput()). Memory is mounted, not rendered. */
 async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
-  return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput(), deployment: DEPLOYMENT, web, mcp, commands, ...(engine === 'codex' ? { engine } : {}) });
+  const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
+  return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, ...(engine === 'codex' ? { engine } : {}) });
 }
 
 /** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */
@@ -12155,6 +12156,38 @@ async function saveWorkflowCard(threadId, block, body = {}) {
   return { block: flipped, workflowId, name, matched };
 }
 
+/** Save an Ask graph card (workflow-build on an Ask chat): its own laid-out graph through the composer's Save path
+ *  (saveGraphWorkflow: the catalog check and the shared validator over the REAL registry — a draft the card did not save
+ *  first is an unknown key there) under a fresh wf_<slug>[-N] id, tagged origin 'auto' like every workflow Ask saves.
+ *  A command / code value a script node runs needs `acceptScripts`: the list the card showed, holding exactly the values
+ *  the save re-derives over the real registry (D10 — a yes/no flag, or a list cut short or changed since, is a 409).
+ *  @returns {Promise<{ok:true, block:object|null, workflowId:string} | {ok:false, status:number, error:string, code?:string, errors?:Array, scriptNodes?:Array}>} */
+async function saveBuildCard(threadId, block, { acceptScripts = null } = {}) {
+  const card = block.card || {};
+  const wf = card.workflow && typeof card.workflow === 'object' ? card.workflow : {};
+  const name = typeof card.name === 'string' && card.name.trim() ? card.name.trim() : 'Workflow';
+  let workflowId;
+  try {
+    workflowId = await mintAutoWorkflowId(name, async (wid) => !!(await readWorkflow(wid, { includeArchived: true })));
+    await saveGraphWorkflow({ version: 2, id: workflowId, name, domain: typeof card.domain === 'string' && card.domain ? card.domain : 'general',
+      nodes: Array.isArray(wf.nodes) ? wf.nodes : [], wires: Array.isArray(wf.wires) ? wf.wires : [] },
+    { agentsDir: AGENTS_DIR, origin: 'auto', confirmScripts: true, acceptScripts: Array.isArray(acceptScripts) ? acceptScripts : null });
+  } catch (err) {
+    const code = err && err.code;
+    const message = err && err.message ? err.message : String(err);
+    if (code === 'INVALID_GRAPH') {
+      const issues = (err.errors || []).slice(0, 3).map((e) => e && e.message).filter(Boolean).join('; ');
+      return { ok: false, status: 422, error: `the workflow is not valid any more — ${issues || message}`, errors: err.errors || [] };
+    }
+    if (code === 'SCRIPTS_UNCONFIRMED') return { ok: false, status: 409, error: message, code, scriptNodes: err.scriptNodes || [] };
+    if (code === 'BAD_REQUEST') return { ok: false, status: 400, error: message };
+    if (code === 'RESERVED_NAME') return { ok: false, status: 422, error: message };
+    if (code === 'ID_TAKEN') return { ok: false, status: 409, error: message };
+    throw err;
+  }
+  return { ok: true, block: flipCard(threadId, block.id, { state: 'saved', workflowId }), workflowId };
+}
+
 /**
  * The IMMEDIATE twin of drainAskDeferred's failure arm (PD29). The route answers the
  * flip and `turn:{error,status}` in one 200, but by then the flip frame has already
@@ -12279,13 +12312,41 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
   const cardId = askIdParam(res, req.params.cardId, 'card');
   if (!cardId) return;
   try {
-    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    const thread = askGetThread(id);
+    if (!thread) return res.status(404).json({ error: 'thread not found' });
     const body = req.body || {};
     const found = askFindCard(id, cardId);
     if (!found) return res.status(404).json({ error: 'card not found' });
+    // Ask Worca's graph card (a workflow-build card on an ASK chat, which has no canvas): Save writes the workflow, and
+    // Save and Decline start the workflow-card event turn (rule 12) — a paid turn, as the Auto workflow card's. The
+    // Workflows chat's build cards keep the composer branch below (Apply / Undo in the browser, no event turn).
+    if (found.block.card && found.block.card.type === 'workflow-build' && thread.mode !== 'composer') {
+      if (body.state !== 'saved' && body.state !== 'declined') return badRequest(res, 'state must be "saved" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being saved' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startWorkflowEventTurn(id, block, { declined: true });
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let saved;
+      try { saved = await saveBuildCard(id, found.block, { acceptScripts: Array.isArray(body.acceptScripts) ? body.acceptScripts : null }); }
+      finally { askCardBusy.delete(cardId); }
+      if (!saved.ok) {
+        return res.status(saved.status).json({ error: saved.error, ...(saved.code ? { code: saved.code } : {}),
+          ...(saved.errors ? { errors: saved.errors } : {}), ...(saved.scriptNodes ? { scriptNodes: saved.scriptNodes } : {}) });
+      }
+      if (!saved.block) return res.status(409).json({ error: 'card vanished' });
+      const turn = await startWorkflowEventTurn(id, saved.block, { thenRun: found.block.card.thenRun === true });
+      return res.json({ block: saved.block, turn });
+    }
     if (found.block.card && isComposerCard(found.block.card)) {
       // Workflows chat cards (D13): the dock applies/undoes/saves in the browser and records it here. No event
       // turn — the next message carries the canvas, so the model sees the result anyway.
+      // An Ask chat has no canvas: its draft cards are only saved or declined ("added" / "failed" are the dock's).
+      if (thread.mode !== 'composer' && body.state !== 'saved' && body.state !== 'declined') return badRequest(res, 'state must be "saved" or "declined"');
       const next = composerCardPatch(found.block.card, found.block.state, body);
       if (!next.ok) return res.status(next.status).json({ error: next.error });
       const block = flipCard(id, cardId, next.patch);

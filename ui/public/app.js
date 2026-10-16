@@ -2565,7 +2565,7 @@ let wfvSheet = '';          // '' | 'agent' | 'agent-new' | 'script'
 let wfvRuntimes = null;     // the script runtime probe (GET /api/scripts/runtimes), read once: the Library's "python not found" chip
 let wfvChat = null;         // the composer chat dock (workflows/chat-dock.mjs), mounted with the view
 const WFV_SESSION = mintId('cs_');   // this page load's composer session: the chat applies only cards stamped with it
-const wfvPendingDraft = { agent: null, script: null };   // a chat draft's Edit…, handed to the route it opens
+const wfvPendingDraft = { agent: null, script: null, build: null };   // a chat draft's Edit… (and Ask's graph card's Open in Workflows), handed to the route it opens
 const gvNewIds = new Set(); // workflows imported this page session (a NEW pill until reload)
 // A saved workflow id, by the server's own rule (workflows.mjs isSafeWorkflowId): a minted `wf_<slug>` (no
 // length cap), a plugin's `wfp_<plugin>_<slug>`, or any safe id a POST /api/workflows body kept (`myflow`).
@@ -2856,6 +2856,28 @@ function wfvChatActions() {
   };
 }
 
+/** Ask Worca's draft and graph cards (ask-composer-cards.mjs): the Workflows chat's save and editor actions, plus Open
+ *  in Workflows for a graph nobody saved yet. Ask reads the library itself (libraryHas here is empty off the view). */
+function askComposerActions() {
+  const a = wfvChatActions();
+  return {
+    notify: a.notify,
+    saveAgentDraft: a.saveAgentDraft,
+    saveScriptDraft: a.saveScriptDraft,
+    openAgentDraft: a.openAgentDraft,
+    openScriptDraft: a.openScriptDraft,
+    openBuild: (build) => openBuildFromAsk(build),
+  };
+}
+
+/** Ask's graph card → the canvas as a NEW unsaved workflow (the composer's Apply: loadDraft after the discard prompt),
+ *  handed to routeWorkflows through wfvPendingDraft.build, like a draft's Edit…. */
+async function openBuildFromAsk(build) {
+  wfvPendingDraft.build = build;
+  if (location.hash.slice(1) === 'workflows' && gvComposer) await routeWorkflows('');
+  else location.hash = 'workflows';
+}
+
 /** Route the view's param (D6). In-view hops (sheet ↔ canvas, tab ↔ tab) only route. */
 async function routeWorkflows(param = '') {
   const [head, ...rest] = String(param || '').split('/');
@@ -2881,6 +2903,14 @@ async function routeWorkflows(param = '') {
     return;
   }
   wfvCloseSheet();
+  // Ask's graph card (Open in Workflows): a NEW unsaved workflow, after the discard prompt — the composer's Apply.
+  if (!head && wfvPendingDraft.build) {
+    const build = wfvPendingDraft.build;
+    wfvPendingDraft.build = null;
+    await gvLoadAgents();                          // drafts the card saved from the chat are placeable now
+    if (await gvComposer.guardDiscard()) { gvComposer.loadDraft(build); gvComposer.fit(); }
+    return;
+  }
   if (!head) return;
   // Any other head names a saved workflow (Ask's "Open in Workflows", the top-bar search, a bookmark): open it
   // and normalise the hash, or say why not — never nothing.
@@ -3035,7 +3065,7 @@ function wfvGoCanvas() {
 // The headless-Chrome probe seam (tools/verify-composer-cdp.mjs): the live engine and its view.
 if (typeof window !== 'undefined') window.__gv = () => (gvComposer ? { c: gvComposer, v: gvComposer.view } : null);
 if (typeof window !== 'undefined') window.__gvImport = (obj) => gvImportWorkflowObject(obj);   // test seam for the Import dialog
-if (typeof window !== 'undefined') window.__wfv = { routeWorkflows, wfvOpenSheet, wfvCloseSheet, openAgentDraft, openScriptDraft, sheet: () => wfvSheet, library: () => wfvLibrary, chat: () => wfvChat, session: WFV_SESSION };
+if (typeof window !== 'undefined') window.__wfv = { routeWorkflows, wfvOpenSheet, wfvCloseSheet, openAgentDraft, openScriptDraft, openBuildFromAsk, sheet: () => wfvSheet, library: () => wfvLibrary, chat: () => wfvChat, session: WFV_SESSION };
 
 // Leave-guard: the engine stays MOUNTED (DOM + undo ring), its document listeners go, the sheet closes.
 function workflowsExit() {
@@ -34148,6 +34178,7 @@ askPanel = createAskPanel({
   getPageContext,
   openNewPipeline,
   openComposer: (id) => { openWorkflowFromAsk(id); },
+  composerActions: askComposerActions(),        // Ask's draft and graph cards: the Workflows chat's actions (ask-composer-cards.mjs)
   openClaudeSetup: () => { openClaudeSetup(); },
   loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,

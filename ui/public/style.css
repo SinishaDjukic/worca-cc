@@ -8364,6 +8364,9 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfc-actions .wfv-btn{height:26px;padding:0 10px;border:1px solid var(--line-2);font-size:11.5px;}
 .wfc-actions .wfv-btn-primary{border-color:var(--ink);}
 .wfc :is(.wfv-btn,.wfc-link)[aria-disabled="true"]{opacity:.55;cursor:default;}
+.ask-ccard :is(.wfv-btn,.wfc-link)[aria-disabled="true"]{opacity:.55;cursor:default;}
+.ask-ccard{margin:6px 0;max-width:760px;font-size:12.5px;line-height:1.5;}
+.ask-ccard .ask-wfcard-body{margin:4px 0;}
 .wfc-suggest{display:flex;flex-wrap:wrap;gap:6px;}
 .wfc-chip-btn{height:26px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink);font:500 11.5px/24px var(--sans);cursor:pointer;}
 :is(.wfc-ibtn,.wfc-scope,.wfc-sel,.wfc-link,.wfc-chip-btn):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
