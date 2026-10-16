@@ -5,13 +5,14 @@
 
 const VERB = { opened: 'opened', updated: 'updated' };
 
-/** Fill the marketplace <select>; keeps `keep` selected when still offered. → number of targets. */
-export function fillMarketplaceSelect(select, targets, { doc = document, keep = '' } = {}) {
+/** Fill the marketplace <select>; keeps `keep` selected when still offered. → number of targets.
+ *  `emptyText` replaces the "add one" option when the list is empty for another reason (it could not be loaded). */
+export function fillMarketplaceSelect(select, targets, { doc = document, keep = '', emptyText = '' } = {}) {
   select.replaceChildren();
   if (!targets.length) {
     const o = doc.createElement('option');
     o.value = ''; o.disabled = true; o.selected = true;
-    o.textContent = 'No GitHub or Azure DevOps marketplace — add one on the Marketplace page';
+    o.textContent = emptyText || 'No GitHub or Azure DevOps marketplace — add one on the Marketplace page';
     select.appendChild(o);
     return 0;
   }
@@ -23,6 +24,38 @@ export function fillMarketplaceSelect(select, targets, { doc = document, keep = 
   }
   select.value = targets.some((t) => t.id === keep) ? keep : targets[0].id;
   return targets.length;
+}
+
+/** The hint under the select when no marketplace can take a pull request: each registered one the server left out
+ *  (GET /api/marketplaces/publish-targets `skipped`: {id, name, reason} — a local folder, a GitHub Enterprise host,
+ *  outside WORCA_CLONE_ALLOW), with why. "Add one" alone would send the user to re-add a marketplace that is already
+ *  there. Hidden when there is nothing to explain. → number of rows. */
+export function renderMarketplaceSkipped(el, skipped, { doc = document } = {}) {
+  el.replaceChildren();
+  el.classList.toggle('hidden', !skipped.length);
+  if (!skipped.length) return 0;
+  el.appendChild(doc.createTextNode('Registered but cannot take a pull request: '));
+  skipped.forEach((s, i) => {
+    if (i) el.appendChild(doc.createTextNode('; '));
+    const b = doc.createElement('b');
+    b.textContent = s.name || s.id;
+    el.append(b, ` — ${s.reason}`);
+  });
+  return skipped.length;
+}
+
+/** The dialog's error line when the marketplace list could not be read — never "add a marketplace". */
+export function marketplaceLoadError(detail) {
+  return `Could not load marketplaces${detail ? `: ${detail}` : ''}`;
+}
+
+/** Preview and Open pull request: both off while a marketplace request is in flight (a publish takes about a minute;
+ *  a second click would start a second export that ends in a lease refusal overwriting the first one's message), and
+ *  afterwards back to the dialog's rule — both stay off when there is no marketplace to send to. */
+export function syncMarketplaceButtons({ plan, apply }, { busy = false, targets = 0 } = {}) {
+  const off = busy || targets === 0;
+  plan.disabled = off;
+  apply.disabled = off;
 }
 
 /** The POST /api/workflows/:id/export body. Draft only when ticked (the server's default is not a draft). */
@@ -38,9 +71,13 @@ export function marketplaceNameProblem({ raw, name }) {
   return name && !/^[a-z]/.test(name) ? 'Plugin name must start with a letter.' : '';
 }
 
+/** The pull request URL as the done view shows it. It comes from gh / Azure output, so only an http(s) URL becomes a
+ *  link (a `javascript:` or `data:` URL would run in the dialog); anything else is plain text, still readable. */
 function link(doc, url) {
+  const text = url == null ? '' : String(url);
+  if (!/^https?:\/\//i.test(text)) return text;
   const a = doc.createElement('a');
-  a.href = url; a.textContent = url; a.target = '_blank'; a.rel = 'noopener';
+  a.href = text; a.textContent = text; a.target = '_blank'; a.rel = 'noopener';
   return a;
 }
 

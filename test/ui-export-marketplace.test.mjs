@@ -4,7 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { fillMarketplaceSelect, marketplaceExportBody, marketplaceNameProblem, marketplacePlanExtras, marketplaceDoneView } from '../ui/public/export-marketplace.mjs';
+import { fillMarketplaceSelect, marketplaceExportBody, marketplaceNameProblem, marketplacePlanExtras, marketplaceDoneView,
+  renderMarketplaceSkipped, marketplaceLoadError, syncMarketplaceButtons } from '../ui/public/export-marketplace.mjs';
 
 const doc = () => new JSDOM('<!doctype html><body><select id="s"></select></body>').window.document;
 const RES = {
@@ -25,6 +26,48 @@ test('fillMarketplaceSelect: options, kept selection, empty state', () => {
   assert.equal(s.options.length, 1);
   assert.equal(s.options[0].disabled, true);
   assert.match(s.options[0].textContent, /add one on the Marketplace page/);
+  // a failed load is not "no marketplaces": the one disabled option says the list could not be read
+  assert.equal(fillMarketplaceSelect(s, [], { doc: d, emptyText: 'Marketplaces could not be loaded' }), 0);
+  assert.deepEqual([s.options.length, s.options[0].disabled, s.options[0].textContent], [1, true, 'Marketplaces could not be loaded']);
+});
+
+test('renderMarketplaceSkipped: each registered marketplace left out, with why; hidden when there is nothing to explain', () => {
+  const d = doc(); const el = d.createElement('span'); el.className = 'hint';
+  const skipped = [{ id: 'loc', name: 'Local plugins', reason: 'not a GitHub or Azure DevOps repository' },
+    { id: 'ent', name: 'Enterprise', reason: 'ghe.acme.dev/acme/market is not in WORCA_CLONE_ALLOW' }];
+  assert.equal(renderMarketplaceSkipped(el, skipped, { doc: d }), 2);
+  assert.equal(el.classList.contains('hidden'), false);
+  assert.deepEqual([...el.querySelectorAll('b')].map((b) => b.textContent), ['Local plugins', 'Enterprise']);
+  assert.match(el.textContent, /Local plugins — not a GitHub or Azure DevOps repository/);
+  assert.match(el.textContent, /Enterprise — ghe\.acme\.dev\/acme\/market is not in WORCA_CLONE_ALLOW/);
+  assert.equal(renderMarketplaceSkipped(el, [{ id: 'x', reason: 'r' }], { doc: d }), 1);  // no name: the id stands in
+  assert.match(el.textContent, /x — r/);
+  assert.equal(renderMarketplaceSkipped(el, [], { doc: d }), 0);
+  assert.equal(el.textContent, '');
+  assert.equal(el.classList.contains('hidden'), true);
+});
+
+test('marketplaceLoadError: "Could not load marketplaces" plus the server\'s message when there is one', () => {
+  assert.equal(marketplaceLoadError('store is locked'), 'Could not load marketplaces: store is locked');
+  assert.equal(marketplaceLoadError(''), 'Could not load marketplaces');
+  assert.equal(marketplaceLoadError(undefined), 'Could not load marketplaces');
+});
+
+test('syncMarketplaceButtons: both off while a request is in flight, and still off afterwards when there is no marketplace', () => {
+  const d = doc(); const plan = d.createElement('button'); const apply = d.createElement('button');
+  const state = () => [plan.disabled, apply.disabled];
+  syncMarketplaceButtons({ plan, apply }, { busy: false, targets: 2 });
+  assert.deepEqual(state(), [false, false]);
+  syncMarketplaceButtons({ plan, apply }, { busy: true, targets: 2 });
+  assert.deepEqual(state(), [true, true]);
+  syncMarketplaceButtons({ plan, apply }, { busy: false, targets: 2 });     // the request finished: back on
+  assert.deepEqual(state(), [false, false]);
+  syncMarketplaceButtons({ plan, apply }, { busy: true, targets: 0 });
+  assert.deepEqual(state(), [true, true]);
+  syncMarketplaceButtons({ plan, apply }, { busy: false, targets: 0 });     // finished, but nothing to send to: stay off
+  assert.deepEqual(state(), [true, true]);
+  syncMarketplaceButtons({ plan, apply }, {});                               // defaults: not busy, no targets
+  assert.deepEqual(state(), [true, true]);
 });
 
 test('marketplaceExportBody: draft only when ticked', () => {
@@ -67,6 +110,27 @@ test('marketplaceDoneView: PR link, version, fork; "No changes" without a PR', (
   assert.equal(unv.title, 'Pull request opened for plugin "shared-flow"');
   assert.deepEqual(unv.lines.find(([k]) => k === 'Version'), ['Version', 'unversioned (unchanged)']);
   assert.doesNotMatch(JSON.stringify(unv.lines.filter(([, v]) => typeof v === 'string')), /null/);
+});
+
+test('marketplaceDoneView: only an http(s) PR URL becomes a link; anything else is shown as plain text', () => {
+  const d = doc();
+  // exportShowDone's rendering: a string goes in as text, a Node is appended
+  const render = (v) => { const dd = d.createElement('dd'); if (typeof v === 'string') dd.textContent = v; else dd.appendChild(v); return dd; };
+  const pr = (prUrl) => marketplaceDoneView({ ...RES, status: 'opened', prUrl }, { doc: d }).lines.find(([k]) => k === 'Pull request')[1];
+  for (const bad of ['javascript:alert(1)', 'data:text/html,hi', 'ftp://x/y', '//evil.example/pull/1', ' https://padded.example/1']) {
+    const dd = render(pr(bad));
+    assert.equal(dd.querySelector('a'), null, `${bad} must not be an anchor`);
+    assert.equal(dd.textContent, bad, `${bad} is still shown as text`);
+  }
+  for (const good of ['https://github.com/acme/market/pull/9', 'http://dev.azure.com/acme/p/_git/m/pullrequest/4', 'HTTPS://GitHub.com/acme/market/pull/9']) {
+    const a = render(pr(good)).querySelector('a');
+    assert.ok(a, `${good} is a link`);
+    assert.deepEqual([a.getAttribute('href'), a.textContent, a.getAttribute('target'), a.getAttribute('rel')], [good, good, '_blank', 'noopener']);
+  }
+  // up-to-date reuses the same line
+  const same = marketplaceDoneView({ ...RES, status: 'up-to-date', prUrl: 'javascript:alert(1)' }, { doc: d }).lines.find(([k]) => k === 'Pull request')[1];
+  assert.equal(render(same).querySelector('a'), null);
+  assert.equal(render(same).textContent, 'javascript:alert(1)');
 });
 
 test('marketplaceDoneView: the server\'s warnings reach the done screen (a user who skips Preview must still see them)', () => {

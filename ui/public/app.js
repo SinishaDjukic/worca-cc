@@ -121,7 +121,8 @@ import {
 import { groupCommentThreads, commentWhen } from './comment-thread.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
 import { exportSlugPreview } from './export-slug.mjs';
-import { fillMarketplaceSelect, marketplaceExportBody, marketplaceNameProblem, marketplacePlanExtras, marketplaceDoneView } from './export-marketplace.mjs';
+import { fillMarketplaceSelect, marketplaceExportBody, marketplaceNameProblem, marketplacePlanExtras, marketplaceDoneView,
+  renderMarketplaceSkipped, marketplaceLoadError, syncMarketplaceButtons } from './export-marketplace.mjs';
 import { createCodeEditor } from './code-editor.mjs';
 import { previewAskFromDef, previewFileUrl } from './ask/form-preview.mjs';
 import { projectForm } from '../../src/shared/forms/project.mjs';
@@ -34221,7 +34222,10 @@ async function exportApply(id, opts) { return exportCall(id, opts); }
 // first — one Export… per row instead of one button per format.
 // `planned`: a Preview (dry run) for the CURRENT inputs is on screen. Export runs
 // its own dry run when there is none, so the primary button is never dead.
-const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, conflicts: [], planned: false };
+// `targets`: the PR-capable marketplaces (null until read; a failed read leaves it null so the next
+// open retries), `skipped`: the registered ones the server left out, with why. `targetsLoad`: the
+// read in flight, shared by every caller while it runs. `busy`: a marketplace request is in flight.
+const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, skipped: [], targetsLoad: null, busy: false, conflicts: [], planned: false };
 
 function openExportModal(item) {
   const modal = document.getElementById('export-modal');
@@ -34231,6 +34235,7 @@ function openExportModal(item) {
   exportModalState.destination = 'global';
   exportModalState.pluginDest = 'folder';
   exportModalState.targets = null;                       // re-read: a marketplace may have been added since
+  exportModalState.skipped = [];
   exportModalState.conflicts = [];
   exportModalState.planned = false;
   document.getElementById('export-draft').checked = false;   // draft is opt-in per export, never remembered
@@ -34341,24 +34346,57 @@ function exportSyncFormat() {
   if (market) void exportLoadTargets();
 }
 const exportIsMarketplace = () => exportModalState.format === 'plugin' && exportModalState.pluginDest === 'marketplace';
-/** Fetch the PR-capable marketplaces once per open, fill the select, and disable Preview/Export when there are none. */
+/** Fetch the PR-capable marketplaces once per open, fill the select, and disable Preview/Open pull request when
+ *  there are none. A failed read is not "no marketplaces": it is said as an error, both buttons stay disabled, and
+ *  nothing is cached, so the next open (or the next switch to Marketplace) retries. When the list is empty but the
+ *  server skipped registered marketplaces, the hint under the select says why. */
 async function exportLoadTargets() {
-  if (exportModalState.targets === null) {
-    exportModalState.targets = [];
-    try {
-      const r = await fetch('/api/marketplaces/publish-targets');
-      const j = await safeJson(r);
-      if (r.ok) exportModalState.targets = j.targets || [];
-    } catch { /* stays empty: the select says how to add one */ }
-  }
   const select = document.getElementById('export-marketplace');
+  const skippedEl = document.getElementById('export-marketplace-skipped');
+  if (exportModalState.targets === null) {
+    exportSyncMarketplaceButtons(0);                       // nothing to send to until the list is in
+    if (!exportModalState.targetsLoad) exportModalState.targetsLoad = exportFetchTargets();
+    const loaded = await exportModalState.targetsLoad;
+    exportModalState.targetsLoad = null;
+    if (!exportIsMarketplace()) return;                    // switched away while reading: nothing to show
+    if (loaded.error !== undefined) {
+      fillMarketplaceSelect(select, [], { doc: document, emptyText: 'Marketplaces could not be loaded' });
+      renderMarketplaceSkipped(skippedEl, [], { doc: document });
+      exportSyncMarketplaceButtons(0);
+      exportSay(marketplaceLoadError(loaded.error), true);
+      return;
+    }
+    exportModalState.targets = loaded.targets;
+    exportModalState.skipped = loaded.skipped;
+  }
   const n = fillMarketplaceSelect(select, exportModalState.targets, { doc: document, keep: select.value });
+  renderMarketplaceSkipped(skippedEl, n === 0 ? exportModalState.skipped : [], { doc: document });
   exportSyncMarketplaceButtons(n);
+}
+/** GET /api/marketplaces/publish-targets → {targets, skipped} | {error} (the server's message, else the status or the network error). */
+async function exportFetchTargets() {
+  try {
+    const r = await fetch('/api/marketplaces/publish-targets');
+    const j = await safeJson(r);
+    if (!r.ok) return { error: j.error || `HTTP ${r.status}` };
+    return { targets: j.targets || [], skipped: j.skipped || [] };
+  } catch (err) { return { error: err && err.message ? err.message : String(err) }; }
 }
 function exportSyncMarketplaceButtons(n = (exportModalState.targets || []).length) {
   if (!exportIsMarketplace()) return;
-  document.getElementById('export-apply-btn').disabled = n === 0;
-  document.getElementById('export-plan-btn').disabled = n === 0;
+  syncMarketplaceButtons({ plan: document.getElementById('export-plan-btn'), apply: document.getElementById('export-apply-btn') },
+    { busy: exportModalState.busy, targets: n });
+}
+/** A marketplace request starts (`busy`) or ends: both buttons off while it runs, then back by the dialog's rule
+ *  (a no-op when the user switched destination meanwhile — that destination's own sync already set them). */
+function exportSetBusy(busy) {
+  exportModalState.busy = busy;
+  if (busy) {
+    document.getElementById('export-plan-btn').disabled = true;
+    document.getElementById('export-apply-btn').disabled = true;
+    return;
+  }
+  exportSyncMarketplaceButtons();
 }
 /** Plugin names are kebab-case (worca-cc-plugin.json `name`). Derive one from
  *  what the user typed, else from the folder's basename, and say so under the
@@ -34525,13 +34563,19 @@ function bindExportModal() {
   document.getElementById('export-cancel').addEventListener('click', closeExportModal);
   document.getElementById('export-done-close').addEventListener('click', closeExportModal);
   // Preview: the optional dry run — shows what Export would write, writes nothing.
+  // The destination is read ONCE, before the request: a marketplace plan has no `created` list, so
+  // handing it to exportRenderPlan after a switch to Local folder would throw. A result for a
+  // destination the dialog no longer shows is dropped.
   document.getElementById('export-plan-btn').addEventListener('click', async () => {
-    const nameProblem = exportIsMarketplace() ? marketplaceNameProblem(exportPluginName()) : '';
+    const market = exportIsMarketplace();
+    const nameProblem = market ? marketplaceNameProblem(exportPluginName()) : '';
     if (nameProblem) { exportSay(nameProblem, true); return; }
     exportSay('Previewing…');
+    if (market) exportSetBusy(true);
     try {
       const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
-      if (exportIsMarketplace()) {
+      if (exportIsMarketplace() !== market) return;
+      if (market) {
         exportRenderPlan({ ...plan.files, warnings: plan.warnings, conflicts: [] });
         document.getElementById('export-plan').appendChild(marketplacePlanExtras(plan, { doc: document }));
         exportSay(plan.status === 'unchanged' ? 'No changes — the marketplace already has this export.'
@@ -34540,7 +34584,11 @@ function bindExportModal() {
       }
       exportRenderPlan(plan);
       exportSay(plan.conflicts.length ? 'Resolve each conflict below, then Export.' : 'Preview only — nothing is written until you click Export.');
-    } catch (err) { exportSay(`Preview failed: ${err.message}`, true); }
+    } catch (err) {
+      if (exportIsMarketplace() === market) exportSay(`Preview failed: ${err.message}`, true);
+    } finally {
+      if (market) exportSetBusy(false);
+    }
   });
   // Export: writes. Without a preview for the current inputs it runs the dry run
   // itself first; a conflict (only the skill format can raise one) stops it and is
@@ -34565,6 +34613,7 @@ function bindExportModal() {
       const nameProblem = marketplaceNameProblem(exportPluginName());
       if (nameProblem) { exportSay(nameProblem, true); return; }
       exportSay('Building the plugin in a copy of the marketplace, validating, then opening the pull request…');
+      exportSetBusy(true);                                 // about a minute: a second click must not start a second export
       try {
         const r = await exportApply(exportModalState.item.id, exportBuildOpts());
         appendLog({ source: 'ui', level: 'info', text: `exported ${exportModalState.item.name} to marketplace ${r.marketplace.name}: ${r.status}${r.prUrl ? ` ${r.prUrl}` : ''}` });
@@ -34572,6 +34621,8 @@ function bindExportModal() {
       } catch (err) {
         exportInvalidatePlan();
         exportSay(`Export failed: ${err.message}`, true);
+      } finally {
+        exportSetBusy(false);
       }
       return;
     }

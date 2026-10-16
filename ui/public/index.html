@@ -2464,6 +2464,8 @@
           <label class="export-label" for="export-marketplace">Marketplace</label>
           <span class="select-wrap"><select id="export-marketplace" class="select" aria-label="Marketplace"></select></span>
           <span class="hint">The pull request targets the branch the marketplace tracks, else its default branch. Without push access it comes from your fork.</span>
+          <!-- Only when no marketplace can take a pull request: the registered ones that were left out, with why. -->
+          <span id="export-marketplace-skipped" class="hint hidden"></span>
           <!-- Draft is opt-in per export (unchecked on every open), like Ship it? (#597). -->
           <label class="confirm-checkbox" for="export-draft"><input id="export-draft" type="checkbox" /> Open as draft</label>
         </div>
