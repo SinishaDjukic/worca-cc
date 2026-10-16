@@ -4825,6 +4825,7 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:23px;margin-left:16px;}   /* the state word's line box (18px × 1.3) */
 /* The progress bars take the card's full width, under the status line (a flex row squeezed them to ~128px). */
 .rd-sheet-head > .run-prog{grid-column:1 / -1;}
+.rd-sheet-head > .rd-slice-line{grid-column:1 / -1;}   /* own row: never the Live view column (D22) */
 /* The status line: what is happening now. A state word, then what it concerns. */
 .rd-now-top{display:flex;align-items:center;gap:12px;min-width:0;}
 .rd-orb{flex:none;display:flex;}
