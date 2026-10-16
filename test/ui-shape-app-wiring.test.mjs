@@ -47,7 +47,7 @@ test('a pending outline ask renders the outline body, with the outline heading',
   assert.ok(panel.querySelector('.outline-body'), 'the outline body is drawn');
   assert.equal(panel.querySelector('.plan-approve'), null, 'not the plan body');
   assert.equal(ctx.window.document.querySelector('#run-detail .rd-ask-head').textContent,
-    'Slices ready for your approval · v1 · Outline 5/5');
+    'Your turn: approve the slices', 'D30: the heading names the decision');
 });
 
 test('gate on: Plan slice 1 posts the gated answer route', async () => {
