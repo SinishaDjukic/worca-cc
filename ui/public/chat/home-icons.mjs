@@ -5,6 +5,7 @@ const open = (size) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24
 
 export const HOME_ICONS = Object.freeze({
   run: '<path d="M8 5.5v13l10.5-6.5z"></path>',
+  shape: '<rect x="5" y="4.5" width="14" height="16" rx="2.2"></rect><path d="M9.5 3h5v3h-5zM8.5 11l1.3 1.3 2.4-2.4M8.5 16l1.3 1.3 2.4-2.4M14 11.5h2M14 16.5h2"></path>',
   workflow: '<rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path>',
   schedule: '<rect x="3.5" y="5" width="17" height="15.5" rx="3"></rect><path d="M3.5 10h17M8 3v4M16 3v4"></path><path d="M12 13.2v2.6l1.8 1.1"></path>',
   track: '<path d="M3 12h4l2.5-6 4 12 2.5-6H21"></path>',

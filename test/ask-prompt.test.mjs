@@ -855,6 +855,26 @@ test('the composer prompt names every placeable agent (all domains, no cap); Ask
   assert.doesNotMatch(buildSystemPrompt(cat, {}), /\n- deckBuilder "/, 'Ask\'s propose_workflow list stays the coding vocabulary');
 });
 
+// ── Shape it first (spec D9) ─────────────────────────────────────────────────
+
+test('shape section: after mcp and before commands, only with shape; the default prompt is unchanged', async () => {
+  const { renderShapeSection } = await import('../src/core/ask/prompt.mjs');
+  const cat = { projects: [], workspaces: [], workflows: [] };
+  const plain = buildSystemPrompt(cat);
+  assert.equal(buildSystemPrompt(cat, { shape: false }), plain);
+  assert.equal(buildSystemPrompt(cat, { shape: true }), `${plain}\n\n${renderShapeSection()}`);
+  assert.equal(buildSystemPrompt(cat, { shape: true, commands: true }), `${plain}\n\n${renderShapeSection()}\n\n${renderCommandsSection()}`, 'commands stay last');
+  const s = renderShapeSection();
+  assert.match(s, /^## Shaper\n/);
+  for (const phrase of ['shape: { perspectives }', 'at most 3 questions', 'Shape this task first', 'assess: { size, openDecisions, perspectives }',
+    'Never give workflowId, when, every or after with shape']) assert.ok(s.includes(phrase), `states: ${phrase}`);
+  for (const phrase of ['planned in slices', "`slices: 'auto'`", "`slices: 'off'`", 'On every propose_run for a coding task, shaped or not',
+    'on a shaped run only its size is read']) assert.ok(s.includes(phrase), `states: ${phrase}`);
+  assert.ok(!s.includes('On every other propose_run'), 'the old contradicting opening is gone');
+  assert.ok(!/^\s*\d+\. /m.test(s), 'not a numbered rule');
+  for (const key of ['implementer', 'planner', 'refiner', 'reviewer', 'clarify', 'decomposer']) assert.ok(!s.includes(key), `no agent key (${key})`);
+});
+
 test('Ask proposes graphs and drafts like the composer: rule 11 teaches build_workflow / draft_*, the catalog carries the graph rules, the scripts section drafts and saves only with W20 on', () => {
   const rule11 = ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('11. '));
   for (const t of ['propose_workflow', 'build_workflow', 'draft_agent', 'draft_script', 'get_agent']) assert.ok(rule11.includes(t), t);

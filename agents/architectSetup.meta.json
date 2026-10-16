@@ -1,6 +1,7 @@
 {
   "key": "architectSetup",
   "metaVersion": 2,
+  "progressStage": "plan",
   "mockRole": "clarify",
   "humanEffort": {
     "hours": 0.25

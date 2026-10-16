@@ -445,6 +445,15 @@ test('readPipelineExtras returns clarify + ordered reviews, and empty arrays for
       assert.equal(ex.reviews[0].issues[0].severity, 'major');
       assert.equal(ex.reviews[1].issues.length, 0);
     } },
+    { name: 'readPipelineExtras carries a stored checklist and only then (spec D7)', run: async () => {
+      seedPipelineRow({ id: 'ex000003', projectKey: 'proj-00000001', status: 'done' });
+      const cl = [{ id: 'R-qa-1', perspective: 'qa', text: 't', status: 'met', evidence: 'e' }];
+      await writeReview('ex000003', 'impl', 1, { issues: [], summary: '', checklist: cl });
+      await writeReview('ex000003', 'impl', 2, { issues: [], summary: '' });
+      const ex = readPipelineExtras('ex000003');
+      assert.deepEqual(ex.reviews[0].checklist, cl);
+      assert.deepEqual(Object.keys(ex.reviews[1]), ['kind', 'cycle', 'issues', 'summary']);
+    } },
     { name: 'readPipelineExtras on a bare pipeline returns empty arrays (never null)', run: async () => {
       seedPipelineRow({ id: 'ex000002', projectKey: 'proj-00000001', status: 'done' });
       const ex = readPipelineExtras('ex000002');

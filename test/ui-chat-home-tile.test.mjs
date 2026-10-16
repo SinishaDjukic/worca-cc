@@ -172,3 +172,10 @@ test('a decided Auto run draws its graph; a pausing run is "paused before decidi
   tile.setBusy(true);
   assert.equal(tile.el.querySelector('.chat-run-tile-open').getAttribute('aria-disabled'), 'true');
 });
+
+test('D16: a slice snapshot titles the tile "Slice 2 of 3 · Run tags"; without `slice` the title is unchanged', () => {
+  const { tile } = mount(snap({ slice: { index: 2, total: 3, title: 'Run tags' } }));
+  assert.equal(tile.el.querySelector('button.chat-run-tile-open').textContent, 'Slice 2 of 3 · Run tags');
+  tile.update(snap());
+  assert.equal(tile.el.querySelector('button.chat-run-tile-open').textContent, 'Fix the upload test');
+});

@@ -1033,6 +1033,25 @@ test('detached: same-branch + stopped → never merged back, hidden branch kept 
   });
 });
 
+test('detached: same-branch + stopped before any commit → nothing to merge: no warning, empty hidden branch deleted', async () => {
+  const repo = await freshRepo();
+  const mainBefore = git(repo, 'rev-parse', 'main');
+  await withMode('detached', async () => {
+    // No agent output: stopped as soon as the worktree exists, so the hidden branch is the source's own tip.
+    const orch = createOrchestrator({ projectDir: repo, prompt: 'Add login flow', auto: true, claude: { mock: true },
+      branch: { source: 'main', sameAsSource: true } });
+    let asked = false;
+    orch.on('state', (s) => { if (!asked && s.branch?.feature) { asked = true; orch.stop(); } });
+    const res = await orch.run();
+    assert.equal(res.status, 'stopped', JSON.stringify(res));
+    const b = orch.getState().branch;
+    assert.equal(b.mergeBack.merged, true, `nothing was left behind, so no "not merged back": ${JSON.stringify(b.mergeBack)}`);
+    assert.equal(b.mergeBack.commits, 0);
+    assert.equal(git(repo, 'rev-parse', 'main'), mainBefore, 'the source is untouched');
+    assert.ok(!branchList(repo).includes(b.feature), 'the empty hidden branch is deleted');
+  });
+});
+
 test('detached workspace: same-branch → every member fast-forwards ITS OWN source; no suffixed branch remains', async () => {
   const a = await freshRepo('worca-cc-rrt-wsa-');
   const b = await freshRepo('worca-cc-rrt-wsb-');

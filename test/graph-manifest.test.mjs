@@ -33,6 +33,13 @@ const TPL = { id: 'wf_t', name: 'T', version: 2, domain: 'coding',
     { id: 'w7', from: { node: 'n_rev', port: 'pass' }, to: { node: 'n_end', port: 'result' } }] };
 const build = (over) => buildGraphManifest(TPL, AGENTS, over);
 
+test('agent progressStage stamps onto the manifest cell; other cells never carry it', () => {
+  const m = buildGraphManifest(TPL, { ...AGENTS, planner: { ...AGENTS.planner, progressStage: 'plan' } });
+  assert.equal(m.graph.nodes.find((n) => n.id === 'n_plan').progressStage, 'plan');
+  assert.equal('progressStage' in m.graph.nodes.find((n) => n.id === 'n_rev'), false, 'an agent without it stays bare');
+  assert.equal('progressStage' in m.graph.nodes.find((n) => n.id === 'n_task'), false);
+});
+
 test('manifest head and node cells', () => {
   const m = build();
   assert.equal(m.version, 2);

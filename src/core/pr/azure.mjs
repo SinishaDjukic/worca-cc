@@ -445,3 +445,20 @@ export async function prComment({ prUrl, body, env = process.env } = {}) {
     return { ok: true };
   } catch (e) { return watchFailure(e); }
 }
+
+/** D24: mark a draft PR ready for review. */
+export async function markReady({ prUrl, env = process.env } = {}) {
+  const p = parseAzurePrUrl(prUrl);
+  if (!p) return { ok: false, error: 'invalid Azure DevOps pull request URL' };
+  try { await adoFetch('write', prApi(p), { method: 'PATCH', body: { isDraft: false }, env }); return { ok: true }; }
+  catch (e) { return watchFailure(e); }
+}
+
+/** D24: close a PR (abandoned), after a PR-level comment saying why. */
+export async function closePr({ prUrl, comment = '', env = process.env } = {}) {
+  const p = parseAzurePrUrl(prUrl);
+  if (!p) return { ok: false, error: 'invalid Azure DevOps pull request URL' };
+  if (comment) { const c = await prComment({ prUrl, body: comment, env }); if (!c.ok) return c; }
+  try { await adoFetch('write', prApi(p), { method: 'PATCH', body: { status: 'abandoned' }, env }); return { ok: true }; }
+  catch (e) { return watchFailure(e); }
+}

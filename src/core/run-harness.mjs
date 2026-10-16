@@ -34,7 +34,7 @@ import { clearStaleIndexLock, staleIndexLockNote } from './git-lock.mjs';
 import { claimPipelineCommand, discardPendingPipelineCommands, controlCheckIntervalMs } from './pipeline-commands.mjs';
 import {
   assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
-  retainedWorkPatchName,
+  retainedWorkPatchName, sizeOfChange,
 } from './results.mjs';
 import { resolveTaskInput, retryWriteback } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
@@ -131,6 +131,7 @@ import { redactSecrets } from '../shared/workspace-map/redact.mjs';
 import { effectiveNightConfig } from './night/effective.mjs';
 import { nightState, decideDelayMs, nightAnchorMs, runAllowed } from './night/activation.mjs';
 import { decideAsk } from './night/decider.mjs';
+import { PLAN_ASK_KIND, initialShaping } from './shape/run.mjs';
 import { runNightAnalysis, readMemoryText } from './night/analysis.mjs';
 import { resolveDeciderPair } from './night/decider-model.mjs';
 import { writeNightDecision, countNightDecisions, nightCounts, nightGateCycles, nightSpendSinceUsd } from './night/store.mjs';
@@ -140,6 +141,7 @@ import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../shared/mcp-tool
 import { usageLimitSwitches, engineList, engineLabel } from '../shared/engine-switch.mjs';
 import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
+import { shapeRecordFrom, buildShapeStats } from './shape/stats.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -927,6 +929,12 @@ export class RunHarness extends EventEmitter {
     // it back from its resume point — the resume sites pass no run options (B10). The API and the
     // CLI validated already; this throw is the programming-error backstop (never a 400).
     this.memoryScope = this.opts.memoryScope || this.resumeOpts?.resumePoint?.memoryScope || null;
+    // Shape it first (spec D5): { perspectives } for a shaped run, null otherwise. NOT `this.shape` — the
+    // orchestrator's Auto path already uses "shape" for the classifier's shape.
+    this.runShape = this.opts.shape || this.resumeOpts?.resumePoint?.shape || null;
+    // Shaper D28: the recorded half of shapeStats (questions, revises, score); null on an unshaped run.
+    // A resumed run reads it back from its row (shape_stats).
+    this._shapeRec = this.runShape ? shapeRecordFrom(safeParse(this.resumeOpts?.row?.shape_stats)) : null;
     {
       const wf = this.resumeOpts?.resumePoint?.workflowId || this.workflowId;
       const reason = validateMemoryScope({ workflowId: wf, memoryScope: this.memoryScope, isWorkspace: this.isWorkspace });
@@ -1005,6 +1013,7 @@ export class RunHarness extends EventEmitter {
       pauseDetail: null,   // mirrors this.pauseDetail
       limitEngine: null,   // mirrors this.limitEngine: the engine whose usage limit paused the run
       limitResetAt: null,  // mirrors this.limitResetAt: when that usage limit resets (ISO)
+      ...(this.runShape ? { shaping: initialShaping(this.runShape, this.resumeOpts?.resumePoint?.shaping) } : {}),
       // Sub-agent lifecycle records (rides the existing `state` snapshot; mirrored to
       // the sub_agents table). Each: { id, label, nodeId, stepIndex, cycle, stepKey,
       // status, startedAt, finishedAt, durationMs?, tokens?, costUsd? };
@@ -1037,6 +1046,14 @@ export class RunHarness extends EventEmitter {
   /** @returns {object} a deep-ish snapshot of current state. */
   getState() {
     return JSON.parse(JSON.stringify(this.state));
+  }
+
+  /** Save to plans/ (server): the saved checkout path rides state.shaping so the run card can show it. */
+  recordPlanSaved(rel) {
+    if (!this.state.shaping || typeof rel !== 'string') return false;
+    this.state.shaping.savedTo = rel;
+    this._emit('state', this.getState());
+    return true;
   }
 
   /**
@@ -1183,6 +1200,8 @@ export class RunHarness extends EventEmitter {
     if (pq.kind === 'workflow') line = `Workflow proposal **${d === 'decline' ? 'declined' : d || 'answered'}**`;
     else if (pq.kind === 'gate') line = `Gate **${d || 'answered'}**`;
     else if (pq.kind === 'recovery') line = `Recovery decision **${d || 'answered'}**`;
+    else if (pq.kind === PLAN_ASK_KIND && pq.plan?.outline) line = `Slice outline **${d || 'answered'}** (round ${pq.plan.round || 1})`;
+    else if (pq.kind === PLAN_ASK_KIND) line = `Plan approval **${d || 'answered'}**`;
     if (!line) return;
     appendAudit(this.pipeline.dir, `${line}${byActor(by)}.`, { actor: by }).catch(() => {});
   }
@@ -4297,12 +4316,25 @@ export class RunHarness extends EventEmitter {
     };
     try {
       if (retained) return await notMerged('commit-failed', 'the run\'s last changes could not be committed');
-      if (this.state.status !== 'done') return await notMerged('not-done', `the run ended ${this.state.status || 'early'}`);
       // The PROJECT dir (the user's checkout), never the run worktree: syncStatus's "checked out here"
       // is that dir's own HEAD.
       const dir = resolve(this.memberByKey.get(key)?.projectDir || this.projectDir);
       const tip = await this._git(['rev-parse', '--verify', '--quiet', `refs/heads/${info.branch}^{commit}`], { cwd: dir, ignoreAbort: true });
       const to = tip.ok ? tip.stdout.trim() : '';
+      if (this.state.status !== 'done') {
+        // A run that ended before committing anything left nothing behind: the source already holds all of it
+        // (merged, 0 commits), so no "not merged back" warning and the caller drops the empty hidden branch.
+        const ahead = to ? await this._git(['rev-list', '--count', `refs/heads/${source}..${to}`], { cwd: dir, ignoreAbort: true }) : null;
+        if (ahead && ahead.ok && ahead.stdout.trim() === '0') {
+          branchRecord.mergeBack = { merged: true, sha: to, commits: 0, at };
+          this._log('worktree', 'info', `${key}: nothing to merge back into ${source} (the run ended ${this.state.status || 'early'} with no commits)`);
+          if (this.pipeline) {
+            await appendAudit(this.pipeline.dir, `Nothing to merge back into \`${source}\` (\`${key}\`): the run made no commits.`).catch(() => {});
+          }
+          return true;
+        }
+        return await notMerged('not-done', `the run ended ${this.state.status || 'early'}`);
+      }
       if (!to) return await notMerged('failed', `could not read ${info.branch}`);
       const r = await fastForwardTo(dir, { base: source, to, message: `worca: fast-forward ${source} to run ${this.pipeline?.id || ''}` });
       if (!r.ok) return await notMerged(r.kind, r.error, r.paths);
@@ -5122,7 +5154,7 @@ export class RunHarness extends EventEmitter {
    * Freezes the active-time clock while blocked on the user (active-time-only).
    * @returns {Promise<any>} the answer payload
    */
-  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow,
+  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow, plan,
     askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
@@ -5155,6 +5187,7 @@ export class RunHarness extends EventEmitter {
       ...(deliveryNo != null ? { deliveryNo } : {}),
       ...(holdNo != null ? { holdNo } : {}),
       ...(workflow !== undefined ? { workflow } : {}),
+      ...(plan !== undefined ? { plan } : {}),
       // The ask-form envelope (spec §4, ruling X1) rides the EXISTING 'question'
       // frame — no new transport, no new slot. `id` (already emitted above) is the
       // ANSWER token; `askId` is the route-safe file token and they are never
@@ -5170,7 +5203,8 @@ export class RunHarness extends EventEmitter {
     try {
       // A night-eligible --yes run hands the ask to night mode: it is answered through the
       // same pendingQuestion + answer() path below (delay 0), so it is attributed and audited.
-      if (this.auto && !this._nightOwnsAuto({ kind, origin })) {
+      // A plan approval needs a person (spec D2): --yes never answers it and Away mode never decides it.
+      if (this.auto && kind !== PLAN_ASK_KIND && !this._nightOwnsAuto({ kind, origin })) {
         if (kind === 'recovery') {
           // Auto mode handles recovery in _recover before ever calling _ask;
           // this is a defensive fallback so an auto run can never hang. Giving up
@@ -5197,13 +5231,15 @@ export class RunHarness extends EventEmitter {
         return { decision: 'continue' };
       }
       return await new Promise((resolveP, rejectP) => {
-        this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null };
+        // An outline ask keeps its marker and round, so _auditDecision can word its answer (F38).
+        this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null,
+          ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } } : {}) };
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
-        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, form, version, answerSchema, autoValues, nodeId, agent, origin };
-        try {
-          this._nightArm(nq);
-        } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
+        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, form, version, answerSchema, autoValues, nodeId, agent, origin };
+        if (kind !== PLAN_ASK_KIND) {
+          try { this._nightArm(nq); } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
+        }
       });
     } finally {
       this._nightDisarm();
@@ -5917,16 +5953,22 @@ export class RunHarness extends EventEmitter {
       // diff-patch.patch is still never written on any path.
       if (noPatch && stage && !listed) return;
       const memory = this.memorySummary();
+      let summary;
       if (members.length === 1 && !this.isWorkspace) {
         if (memory) members[0].results.memory = memory;
         await persistResults(this.pipeline.dir, members[0].results);
         if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches[0].patch);
+        summary = members[0].results.summary;
       } else {
         const perProject = buildPerProject(members);
         const results = { summary: rollupSummary(perProject), perProject, ...(memory ? { memory } : {}) };
         await persistResults(this.pipeline.dir, results);
         if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches.map((p) => `# ${p.key}\n${p.patch}`).join('\n\n'));
+        summary = results.summary;
       }
+      // D28: the run's size for Statistics; _buildResults runs after the terminal persist, so write it again
+      this.state.runSize = sizeOfChange(summary);
+      await this._persist();
     } catch (err) {
       this._log('results', 'warn', `results build failed: ${err.message}`);
     }
@@ -7232,6 +7274,12 @@ export class RunHarness extends EventEmitter {
   _kickoffTitleGeneration() {
     const prompt = this.pipeline?.promptText || this.opts.prompt || '';
     const id = this.pipeline?.id;
+    // D18: a slice started from its ticket keeps the title the ticket set (sliceTitle); the UI shows the slice's own
+    // name under its feature. Slice 1's own shaping run gets runShape.slice only at outline approval: it titles as usual.
+    const sl = this.runShape?.slice;
+    if (sl && (sl.index > 1 || this.opts.shape?.slice)) {
+      this.state.titleProvisional = false; this._titlePromise = Promise.resolve(); return;
+    }
     if (!prompt || !id) { this._titlePromise = Promise.resolve(); return; }
     this._titlePromise = Promise.resolve()
       .then(() => generateTitle(prompt, this._titleGenOpts()))
@@ -7254,6 +7302,7 @@ export class RunHarness extends EventEmitter {
     if (rpNow && typeof rpNow === 'object' && this._metricsIv) rpNow.interventions = { ...this._metricsIv };
     if (!this.pipeline) return false;
     if (this._rowHandedOff()) return false;
+    if (this._shapeRec) this.state.shapeStats = buildShapeStats(this._shapeRec, this.state.steps);
     try {
       // A paused harness names itself in the saved point (`pausedBy`, written here only, never kept
       // in state): _rowHandedOff reads it back. A resumed run's new harness never writes this token.

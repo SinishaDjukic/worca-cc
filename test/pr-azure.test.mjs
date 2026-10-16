@@ -180,3 +180,16 @@ test('Azure PR provider', async () => {
     } },
   ]);
 });
+
+// No AZ_PR_URL_7 exists in test/: the URL form test/pr-watch-azure.test.mjs uses.
+const AZ_PR_URL_7 = 'https://dev.azure.com/org/proj/_git/repo/pullrequest/7';
+test('markReady and closePr: PATCH isDraft false; comment then PATCH abandoned', async () => {
+  const f = fakeFetch([{ match: /pullRequests\/7\/threads/, method: 'POST', reply: res(200, {}) },
+    { match: /pullRequests\/7/, method: 'PATCH', reply: res(200, { pullRequestId: 7 }) }]);
+  az._testing.setFetch(f);
+  assert.deepEqual(await az.markReady({ prUrl: AZ_PR_URL_7, env: ENV }), { ok: true });
+  assert.deepEqual(await az.closePr({ prUrl: AZ_PR_URL_7, comment: 'see #9', env: ENV }), { ok: true });
+  assert.deepEqual(f.calls.map((c) => [c.method, c.body]), [['PATCH', { isDraft: false }], ['POST', f.calls[1].body], ['PATCH', { status: 'abandoned' }]]);
+  assert.equal(f.calls[1].body.comments[0].content, 'see #9');
+  assert.equal((await az.markReady({ prUrl: 'https://github.com/o/r/pull/1', env: ENV })).ok, false);
+});
