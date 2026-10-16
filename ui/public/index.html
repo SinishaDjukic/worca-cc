@@ -812,8 +812,8 @@
                     </div>
                   </div>
                   <div class="rd-banners">
+                    <!-- The worktree notice (worktree-notice.mjs): retained work, or a live checkout. -->
                     <div class="retained-banner" role="alert" hidden></div>
-                    <button type="button" class="hist-discard btn-ghost" hidden>Discard worktree</button>
                   </div>
                   <!-- Time · Cost · Changes, in every state (the time ticks while live). -->
                   <div class="rd-facts"></div>
@@ -964,7 +964,6 @@
                     <span class="badge hist-retained-badge" hidden>Work retained</span>
                     <div class="retained-banner" role="alert" hidden></div>
                     <div class="merge-back-banner" role="status" hidden></div>
-                    <button type="button" class="hist-discard btn-ghost" hidden>Discard worktree</button>
                   </div>
                   <div class="rd-facts"></div>
                   <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
@@ -2154,6 +2153,9 @@
               <!-- Scripts workbench W20: the chat's save_script / test_script switch. Body
                    rendered by chat-settings-view.mjs; saved with this card's Save button. -->
               <div class="field" id="ask-script-tools-host"></div>
+              <!-- Ask next-prompt suggestions (ghost text after each reply): rendered by chat-settings-view.mjs; saved with
+                   this card's Save button. -->
+              <div class="field" id="ask-suggestions-host"></div>
               <!-- Ask web access (off by default): rendered by chat-settings-view.mjs; saved with this
                    card's Save button, and only when one of its fields was touched. -->
               <div class="field" id="ask-web-host"></div>

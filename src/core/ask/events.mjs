@@ -852,6 +852,10 @@ export function createTurnReducer({
       upsertBlock(block);
       return block;
     },
+    /** The answer's length so far: a card added now sits at this offset in it (textAt). */
+    textLength() {
+      return mainText().length;
+    },
     updateBlock(id, patch) {
       if (summary) { reducerErrors += 1; return null; }
       const b = byId.get(id);

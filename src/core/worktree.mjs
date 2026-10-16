@@ -482,6 +482,75 @@ export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_
 }
 
 /**
+ * Commit a retained worktree's work onto its checked-out branch: the end-of-run commit that failed
+ * (run-harness `_commitWork`), asked for again by Apply to branch. Same staging — each `exclude` path is
+ * dropped from the index first (`git add -A` with an exclude never unstages) and excluded from `add -A`
+ * while it still exists on disk — and the same attempts: the repo's identity, then a local fallback
+ * identity, then, only when `bypassHooks` (a detached run, exactly as at teardown), once more with hooks
+ * off. Never overrides signing. A stale index.lock is cleared once. Never throws. With `branch`, it refuses
+ * (step 'branch') unless HEAD is that branch: a person may have detached or switched the retained worktree
+ * while recovering by hand, and Apply deletes the worktree after a good commit. For the same reason it refuses
+ * (step 'add') a worktree with unresolved conflicts, which `add -A` would mark resolved.
+ * @returns {Promise<{ok:true, committed:boolean, sha:string|null, hooksBypassed:boolean}
+ *                  |{ok:false, step:'status'|'branch'|'add'|'commit', message:string}>}
+ */
+export async function commitStagedWork(worktreeDir, { message, exclude = [], bypassHooks = false, branch = null } = {}) {
+  const run = (args) => git(worktreeDir, args, { timeout: SLOW_GIT_TIMEOUT_MS });
+  const msgOf = (r) => r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`;
+  const indexWrite = async (args) => {
+    let r = await run(args);
+    if (!r.ok && await clearStaleIndexLock(worktreeDir)) r = await run(args);
+    return r;
+  };
+  const status = await run(['status', '--porcelain']);
+  if (!status.ok) return { ok: false, step: 'status', message: msgOf(status) };
+  if (branch) {
+    // Committing on whatever HEAD is would put the work on another branch, or on none (a detached HEAD),
+    // and the release after a good commit then deletes the only worktree that knows it.
+    const sym = await run(['symbolic-ref', '-q', 'HEAD']);
+    const on = sym.ok ? sym.stdout.trim().replace(/^refs\/heads\//, '') : '';
+    if (on !== branch) {
+      return { ok: false, step: 'branch', message: `the worktree is on ${on || 'a detached HEAD'}, not ${branch}: switch it back to ${branch}, then apply again` };
+    }
+  }
+  // `add -A` would mark unresolved conflicts resolved, and the release after a good commit deletes the
+  // worktree: a merge or cherry-pick the person left half-done by hand would land with its conflict markers.
+  const unmerged = await run(['-c', 'core.quotePath=false', 'ls-files', '-u']);
+  if (unmerged.ok && unmerged.stdout.trim()) {
+    const files = [...new Set(unmerged.stdout.trim().split('\n').map((l) => l.slice(l.indexOf('\t') + 1)))];
+    return { ok: false, step: 'add', message: `the worktree has unresolved conflicts (${files.slice(0, 5).join(', ')}${files.length > 5 ? ', and more' : ''}): resolve them or abort the merge, then apply again` };
+  }
+  for (const p of exclude) await indexWrite(['rm', '-r', '--cached', '-q', '--ignore-unmatch', '--', p]);
+  const present = exclude.filter((p) => existsSync(join(worktreeDir, p)));
+  const add = await indexWrite(['add', '-A', '--', '.', ...present.map((p) => `:(exclude)${p}`)]);
+  if (!add.ok) return { ok: false, step: 'add', message: msgOf(add) };
+  const staged = await run(['diff', '--cached', '--quiet']);
+  if (staged.ok) return { ok: true, committed: false, sha: null, hooksBypassed: false };   // exit 0 = nothing staged
+  const local = ['-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator'];
+  let commit = await indexWrite(['commit', '-m', message]);
+  if (!commit.ok) commit = await run([...local, 'commit', '-m', message]);
+  let hooksBypassed = false;
+  if (!commit.ok && bypassHooks) {
+    commit = await run(['-c', 'core.hooksPath=', ...local, 'commit', '-m', message]);
+    hooksBypassed = commit.ok;
+  }
+  if (!commit.ok) return { ok: false, step: 'commit', message: msgOf(commit) };
+  const head = await run(['rev-parse', 'HEAD']);
+  return { ok: true, committed: true, sha: head.ok ? head.stdout.trim() : null, hooksBypassed };
+}
+
+/**
+ * Whether the checkout's index tracks anything under `rel`, in any letter case: the memory mount guard's own
+ * test (run-harness `_mountMemoryUnguarded`, which refuses the mount on such a checkout). `null` when git
+ * cannot tell.
+ * @returns {Promise<boolean|null>}
+ */
+export async function indexTracks(dir, rel) {
+  const r = await git(dir, ['ls-files', '--', `:(icase)${rel}`]);
+  return r.ok ? !!r.stdout.trim() : null;
+}
+
+/**
  * Stage every remaining change and render a binary-capable patch against HEAD
  * DIRECTLY INTO outFile (no in-memory patch string — agent-created artifacts can
  * be huge). Staging is intentional: it makes untracked files part of the patch.

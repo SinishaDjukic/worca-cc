@@ -60,7 +60,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 57;
+export const SCHEMA_VERSION = 59;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1033,7 +1033,7 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
 );
 `;
 
-// v57 (#718): run tags. One row per (run, key); the plain tag `spike` is value ''. Written at run
+// v59 (#718; 57-58 are Shaper's): run tags. One row per (run, key); the plain tag `spike` is value ''. Written at run
 // creation and by the tag-edit route only — writeState never touches them. pipelines rows are never
 // DELETEd (pipeline-delete.mjs), so the CASCADE is convention, and tags survive archive/restore.
 const RUN_TAGS_DDL = `
@@ -2163,7 +2163,7 @@ export function migrate(db) {
     if (current < 55) applySchemaV55(db);
     if (current < SCHEMA_VERSION) refreshArchitectureSeed(db);
     if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
-    if (current < 57) db.exec(RUN_TAGS_DDL);         // run tags + tag-edit audit (#718)
+    if (current < 59) db.exec(RUN_TAGS_DDL);         // run tags + tag-edit audit (#718); 57-58 are Shaper's (#708, #730)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
