@@ -79,6 +79,7 @@ import {
   awayPerPerson, nightModeToggleFor, nightModeHereSinceFor, setPersonNightModeToggle,
   actionsSettings, setActionsSettings, assertActionsInput,
   syncDefaults, setSyncDefaults, assertSyncSettingsInput, DEFAULT_SYNC_SETTINGS,
+  networkWaitSettings, assertNetworkWaitInput, setNetworkWait, effectiveNetworkWait,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
@@ -327,7 +328,9 @@ import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, ca
   rechainWaiting, replanRest, setApproveEach, stackedPrBase, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput } from '../src/core/shape/features.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
-import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
+import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById, listNetworkWaitRuns } from '../src/core/artifacts.mjs';
+import { createNetworkWatch, NETWORK_ACTOR } from '../src/core/network-wait.mjs';
+import { probeReachable, hostOf } from '../src/core/upstream-probe.mjs';
 import { editRunTags, readRunTags, tagVocabulary } from '../src/core/run-tags-store.mjs';
 import { normaliseTags, describeTagChange, parseTag } from '../src/shared/run-tags.mjs';
 import { normaliseDimensions, prefillTags } from '../src/shared/tag-dimensions.mjs';
@@ -642,7 +645,7 @@ function liveRunIds() {
 // engine AND for the v2 shim until the graph cut-over retires it.
 // `artifact-gone` is this branch's: an indexed artifact whose file the run later
 // removed, so the client can drop the row instead of leaving one that 404s.
-const EVENT_NAMES = ['exec', 'token', 'log', 'question', 'artifact', 'artifact-gone', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title', 'night-decision'];
+const EVENT_NAMES = ['exec', 'token', 'log', 'question', 'artifact', 'artifact-gone', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title', 'night-decision', 'recovery-auto'];
 // The agentgen-* WS family (Agent Platform, Phase 2): a NEW family in the SAME
 // runs Map. createAgentGen emits many agentgen-progress then exactly one terminal
 // agentgen-done OR agentgen-error. (The scan-* family is gone: dev made a
@@ -1098,6 +1101,7 @@ function summarizeRuns() {
     ...(r.orch?.state?.shaping ? { shaping: r.orch.state.shaping } : {}),
     // Night mode switches + counters ({optIn, override, decisions, flagged}), so a reconnect paints the run-view switch.
     night: r.orch?.state?.night || null,
+    networkWait: r.orch?.state?.networkWait || null,
     // kind discriminator so the client routes runs vs agent generations vs
     // workspace runs without guessing; genId/workspaceId are the matching
     // attribution fields.
@@ -1180,6 +1184,10 @@ function wireRun(entry) {
         // card can go. A guardrail row answered nothing: its pause's `done` frame clears the
         // card, and a refused pause leaves the question open for the user.
         if (!payload.record?.guardrail) resolvePending(entry, { id: payload.id, reason: 'night-mode' });
+      }
+      if (name === 'recovery-auto') {
+        // The harness answered its own recovery prompt (the network came back): clear the card in every tab.
+        resolvePending(entry, { id: payload.id, reason: 'network-back' });
       }
       if (name === 'done') {
         entry.status = (payload && payload.status) || 'done';
@@ -3408,6 +3416,38 @@ function startAwayHoursWatch() {
   _awayWatchTimer.unref();
 }
 
+// Wait for the network (network-wait.mjs): a run that paused as recoverable/network while its
+// endpoint was unreachable, or that died while it waited (a restart), is resumed here — in this
+// process, keeping --yes — once that endpoint answers again, inside the max-wait window.
+const NETWORK_WATCH_TICK_MS = 60_000;
+let _networkProbe = (origin) => probeReachable(origin);
+let _networkWatch = null;
+function networkWatch() {
+  return (_networkWatch ||= createNetworkWatch({
+    settings: () => effectiveNetworkWait(),
+    listRuns: () => listNetworkWaitRuns(),
+    hasResumeTicket: (id) => resumeTicketsFor(id).length > 0,
+    probe: (origin) => _networkProbe(origin),
+    resume: async (r) => {
+      const out = await resumeRun(r.id, {
+        by: NETWORK_ACTOR, auto: r.resumePoint.runAuto === true, resumeCause: 'network',
+        mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK),
+      });
+      const since = new Date(r.resumePoint.network.since);
+      appendAuditById(r.id, `Network back: ${hostOf(r.resumePoint.network.origin)} answers again — run resumed${byActor(NETWORK_ACTOR)} (waiting since ${since.toISOString().slice(11, 16)} UTC).`, { actor: NETWORK_ACTOR });
+      return out;
+    },
+    log: (m) => console.warn(`[worca-ui] network watch: ${m}`),
+  }));
+}
+let _networkWatchTimer = null;
+function startNetworkWatch() {
+  if (_networkWatchTimer) return;
+  networkWatch().tick().catch(() => {});           // the boot sweep
+  _networkWatchTimer = setInterval(() => { networkWatch().tick().catch(() => {}); }, NETWORK_WATCH_TICK_MS);
+  _networkWatchTimer.unref();
+}
+
 /** A schedule item (ticket or series) by id, for the unified /api/schedules routes. */
 function findScheduleItem(id) {
   if (typeof id !== 'string' || !id) return null;
@@ -4699,7 +4739,7 @@ async function resumeTargetDirs(saved) {
   return { projectDir, workspace: undefined };
 }
 
-async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false } = {}) {
+async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false, auto = false, resumeCause = null } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
@@ -4823,6 +4863,9 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     claude: { permissionMode: 'acceptEdits', mock: effMock, ...engineOpts, ...modelOpts },
     resume: saved,
     resumedBy: by || 'local',
+    // The network watch keeps a --yes run --yes across its resume (a manual resume does not).
+    ...(auto === true ? { auto: true } : {}),
+    ...(resumeCause ? { resumeCause } : {}),
     ...(autoLimitResume ? { autoLimitResume: true } : {}),
   });
   // The engine gate's refusals answer here, before the resume is committed, like POST
@@ -9486,6 +9529,7 @@ const settingsState = () => ({
   tagDimensions: userTagDimensions(),                     // Settings › Tags › Tag dimensions (local; a team policy's list wins)
   enforceTags: userEnforceTags(),                         // Settings › Tags (local; a team policy's runs.enforceTags wins)
   sync: syncDefaults(),                                   // sync before run (#527): instance defaults
+  networkWait: networkWaitSettings(),                     // Settings › Runs › Wait for the network
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
   flags: allFlags(),                                      // { key: bool } resolved (docs/feature-flags.md)
   memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
@@ -9997,6 +10041,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasAskEngineKey = has('askEngine');
   const hasAskModelsKey = has('askModels');
   const hasActionsKey = has('actions');
+  const hasNetworkWaitKey = has('networkWait');
   const wsScanModels = hasWorkspaceScanKey ? (autoModels || defragModels || await listModels('')) : null;
   // #422: the title model is a SELECT over the catalog, so an id that is not a
   // catalog member is a client bug (or a stale option) — refuse it here rather
@@ -10082,6 +10127,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('nightModeToggle')) asSettingsField('nightModeToggle', () => assertNightModeToggleInput(body.nightModeToggle));
     if (hasActionsKey) asSettingsField('actions', () => assertActionsInput(body.actions));
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
+    if (hasNetworkWaitKey) asSettingsField('networkWait', () => assertNetworkWaitInput(body.networkWait));
     if (hasFlagsKey) asSettingsField('flags', () => checkFlags(body.flags));   // validate + cascade dry run, before anything is written
     if (has('tagDimensions')) asSettingsField('tagDimensions', () => {
       const { errors } = normaliseDimensions(body.tagDimensions ?? []);
@@ -10129,6 +10175,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('nightMode')) await setNightMode(body.nightMode);
     if (has('nightModeToggle') && !(await setPersonNightModeToggle(person, body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
     if (has('sync')) await setSyncDefaults(body.sync);
+    if (hasNetworkWaitKey) await setNetworkWait(body.networkWait);
     if (has('tagDimensions')) await asSettingsField('tagDimensions', () => setUserTagDimensions(body.tagDimensions));
     if (has('enforceTags')) await asSettingsField('enforceTags', () => setUserEnforceTags(body.enforceTags));
     // Live runs re-evaluate their open question against the new night settings.
@@ -10137,7 +10184,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -15622,6 +15669,7 @@ if (isMain) {
       console.log('[worca-ui] heartbeat: reporting to WORCA_HEARTBEAT_URL every 60 s');
     }
     startAwayHoursWatch();
+    try { startNetworkWatch(); } catch (err) { console.warn(`[worca-ui] network watch: ${err?.message || err}`); }
     // Keep policy until-pr (D11): release kept checkouts whose PR merged or closed, hourly.
     const keptTimer = setInterval(() => {
       releaseKeptCheckouts({ busy: busyActionRunIds(), stopServices: stopCheckoutServices })
@@ -15647,5 +15695,7 @@ export const _testing = {
   askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
   openSliceDraft, afterRunSettled,
+  networkWatchTick: () => networkWatch().tick(),
+  setNetworkProbe(fn) { _networkProbe = fn; },
   setAutoRescan(on) { autoRescanOn = on !== false; },
 };

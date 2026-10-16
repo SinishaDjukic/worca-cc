@@ -424,6 +424,35 @@ test('the gate and recovery bodies render on the detail page too (D6)', async ()
   assert.equal(rpanel.querySelector('.recovery-abort'), null, 'no Abort control remains');
 });
 
+test('waiting for the network: a hello paints the banner naming the host; a state frame with networkWait null removes it', async () => {
+  const until = new Date(Date.now() + 3_600_000).toISOString();
+  const nw = { node: 'implementer', host: 'api.anthropic.com', since: new Date().toISOString(), until };
+  const { window, recv } = await openDetail({ run: { networkWait: nw } });
+  const banner = window.document.querySelector('#run-detail .rd-banners .net-wait-banner');
+  assert.ok(banner, 'the banner renders from the first hello (makeRun keeps networkWait)');
+  assert.match(banner.textContent, /Waiting for network… api\.anthropic\.com is unreachable/);
+  recv({ type: 'state', runId: ID, status: 'running', steps: [], networkWait: null });
+  await settle(window);
+  assert.equal(window.document.querySelector('#run-detail .rd-banners .net-wait-banner'), null, 'the network is back: no banner');
+});
+
+test('the recovery body carries the network note only when the prompt waits for the network', async () => {
+  const until = new Date(Date.now() + 3_600_000).toISOString();
+  const net = await openDetail();
+  net.recv({ type: 'question', runId: ID, id: 'n1', kind: 'recovery',
+             recovery: { cls: 'network', message: 'ECONNRESET', network: { host: 'api.anthropic.com', since: new Date().toISOString(), until } } });
+  await settle(net.window);
+  const npanel = net.window.document.querySelector('#run-detail .rd-questions .qpanel');
+  assert.match(npanel.querySelector('.recovery-network').textContent, /api\.anthropic\.com is unreachable/);
+  assert.ok(npanel.querySelector('.recovery-retry'), 'Retry is still offered');
+  assert.ok(npanel.querySelector('.recovery-pause'), 'Pause is still offered');
+
+  const plain = await openDetail();
+  plain.recv({ type: 'question', runId: ID, id: 'n2', kind: 'recovery', recovery: { cls: 'network', message: 'HTTP 500' } });
+  await settle(plain.window);
+  assert.equal(plain.window.document.querySelector('#run-detail .rd-questions .qpanel .recovery-network'), null);
+});
+
 // THE repaint-storm regression. paintRunDetail runs on EVERY ws frame — including
 // log lines belonging to a DIFFERENT run — and renderQpanel is destructive. An
 // unconditional rebuild silently discards a half-finished answer.

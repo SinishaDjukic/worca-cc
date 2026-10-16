@@ -161,6 +161,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       schedule: {},
       nightMode: {}, nightModeToggle: 'auto',
       sync: null,
+      networkWait: null,
       actions: {},
       runEngine: null, stepModels: {}, utilityModels: {},   // cascading settings (Plan 2a): null / {} change nothing
       askEngine: null, askModels: {},                        // Ask Worca's engine (Plan 2b, D17): null / {} change nothing
