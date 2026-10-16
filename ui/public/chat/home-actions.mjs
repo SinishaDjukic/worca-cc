@@ -2,8 +2,8 @@
 // mockup's order. A tile only ARMS the composer (deps.setIntent: the intent chip and its placeholder); nothing is sent
 // until the user sends. Track a run / Explain a diff also open a run picker (Live / Finished) whose pick prefills a
 // mention of that run. Every action is a real Ask Worca capability (src/core/ask/tools.mjs):
-//   run propose_run · shape propose_run (Shape it first) · workflow propose_workflow · schedule preview_schedule + propose_run · track list_runs + track_run
-//   diff get_run + get_run_diff · script save_script + test_script · clone propose_clone_project · away set_away_now
+//   run propose_run · shape propose_run (Shaper) · workflow propose_workflow · schedule preview_schedule + propose_run · track list_runs + track_run
+//   diff get_run + get_run_diff · script draft_script (+ save_script / test_script) · clone propose_clone_project · away set_away_now
 //   metrics get_team_metrics · model list_models + propose_model_change · workspace propose_workspace_change
 //   remember remember · tasks list_task_sources + find_tasks
 import { toggleMenu } from '../workflows/menu.mjs';

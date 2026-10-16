@@ -7,9 +7,10 @@
 //
 // Public surface:
 //   exportGraphJson(id)                -> { version:2, name, domain, nodes, wires, canvas? }
-//   saveGraphWorkflow(body)            -> composer semantics: keeps a legal `id`, 409 on a minted collision
+//   saveGraphWorkflow(body, opts)      -> composer semantics: keeps a legal `id`, 409 on a minted collision (opts.origin; opts.confirmScripts = Ask's graph card, D18's rule over the list it showed)
 //   importGraphWorkflow(body, opts)    -> import semantics: id/origin ignored, name suffixed on collision
 //   listScriptNodes(graph, scripts)    -> the command/code values an import must show first (D18)
+//   scriptNodesConfirmed(shown, list)  -> the shown list holds exactly those values (Ask's graph card, D10)
 //   formatScriptNodes(list)            -> SCRIPT_IMPORT_NOTICE + those values, for the CLI
 //   nodeDefaultsError(raw, models, at) -> '' | reason  (per-node tunables vs the project-less catalog)
 //
@@ -50,6 +51,25 @@ export function listScriptNodes(graph, scripts) {
     if (Object.keys(params).length) out.push({ nodeId: n.id, key: n.key, displayName: meta.displayName || n.key, runtime: meta.runtime, params });
   }
   return out;
+}
+
+/** One (node, param, value) row per confirmed value, sorted: the identity of a script-node list. A row whose node id
+ *  or value is no string (an untrusted body) keeps a null there, so it never equals a derived row. */
+function scriptValueRows(list) {
+  const rows = [];
+  for (const n of Array.isArray(list) ? list : []) {
+    const params = n && typeof n === 'object' && n.params && typeof n.params === 'object' && !Array.isArray(n.params) ? n.params : {};
+    for (const [id, value] of Object.entries(params)) {
+      rows.push(JSON.stringify([typeof n.nodeId === 'string' ? n.nodeId : null, id, typeof value === 'string' ? value : null]));
+    }
+  }
+  return rows.sort().join('\n');
+}
+
+/** Ask's graph card (D10): `shown` — the list the card showed and its Save posts — holds exactly the values `derived`
+ *  (listScriptNodes over the real registry) holds, in any order. Display fields (key, name, runtime) do not count. */
+export function scriptNodesConfirmed(shown, derived) {
+  return Array.isArray(shown) && scriptValueRows(shown) === scriptValueRows(derived);
 }
 
 /** The CLI block: the notice, then one indented value per command/code param. */
@@ -185,13 +205,28 @@ async function validateForSave(graph, { registry, scripts, agentsDir }) {
 /**
  * The composer's Save. A legal `id` in the body is a re-save of that row; a
  * body without one mints wf_<slug(name)> and REFUSES to land on a live row
- * (ID_TAKEN carries the id so the dialog can offer rename/overwrite).
+ * (ID_TAKEN carries the id so the dialog can offer rename/overwrite). `origin`
+ * is the caller's, never the body's: the API route passes none (a re-save keeps
+ * the row's own), Ask's graph card passes 'auto'. `confirmScripts` (Ask's graph
+ * card) applies the import's D18/P10 rule, bound to what the card showed: a graph
+ * carrying a command/code value is refused (SCRIPTS_UNCONFIRMED + .scriptNodes)
+ * unless `acceptScripts` is the list the card showed, holding exactly the values
+ * re-derived here (scriptNodesConfirmed) — a yes/no flag confirms nothing. The
+ * composer's Save passes neither: its canvas shows them.
  * @returns {Promise<{workflow: object, warnings: Array}>}
+ * @throws code 'SCRIPTS_UNCONFIRMED' (`.scriptNodes`) — nothing was written
  */
-export async function saveGraphWorkflow(body, { registry, agentsDir } = {}) {
+export async function saveGraphWorkflow(body, { registry, agentsDir, origin = null, confirmScripts = false, acceptScripts = null } = {}) {
   const graph = prepareGraph(body || {}, { keepId: true });
-  const { warnings } = await validateForSave(graph, { registry, agentsDir });
-  const workflow = await writeGraphWorkflow(graph, { rejectCollision: true });
+  const { warnings, scripts } = await validateForSave(graph, { registry, agentsDir });
+  if (confirmScripts === true) {
+    const scriptNodes = listScriptNodes(graph, scripts);
+    if (scriptNodes.length && !scriptNodesConfirmed(acceptScripts, scriptNodes)) {
+      throw err(`this workflow runs commands on this machine (${scriptNodes.map((n) => `${n.displayName} · ${n.nodeId}`).join(', ')}) — review them on the card, then save again`,
+        'SCRIPTS_UNCONFIRMED', { scriptNodes });
+    }
+  }
+  const workflow = await writeGraphWorkflow(typeof origin === 'string' && origin ? { ...graph, origin } : graph, { rejectCollision: true });
   return { workflow, warnings };
 }
 
