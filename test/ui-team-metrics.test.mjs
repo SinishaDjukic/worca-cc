@@ -35,7 +35,7 @@ const STATS_FIXTURE = {
   series: [{ bucketStartMs: Date.now() - 2 * 86400000, spentUsd: 3.5, finished: 2, stopped: 1, failed: 0 }],
 };
 
-async function boot({ fetchHandler, url = 'http://localhost:4317/' } = {}) {
+async function boot({ fetchHandler, url = 'http://localhost:4317/', storage = {} } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -66,6 +66,7 @@ async function boot({ fetchHandler, url = 'http://localhost:4317/' } = {}) {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
   }
   globalThis.window = window; globalThis.document = window.document;
+  for (const [k, v] of Object.entries(storage)) window.localStorage.setItem(k, v);
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -292,4 +293,63 @@ test('run tags: tag-less records hide #tm-tag and leave the group-by options unc
   await tick(); await tick(); await tick();
   assert.equal(doc.getElementById('tm-tag').hidden, true);
   assert.deepEqual([...doc.querySelectorAll('#tm-group option')].map((o) => o.value), ['workflow', 'result', 'actor']);
+});
+
+const TAGGED = () => {
+  const nowIso = new Date().toISOString();
+  return { ...TM_DATA, records: [{ ...makeRecord({ id: 'r1', startedAt: nowIso, usd: 3 }), tags: ['client:acme'] }, makeRecord({ id: 'r2', startedAt: nowIso, usd: 1 })] };
+};
+async function openTm(opts) {
+  const ctx = await boot(opts);
+  applyFlags({ runTags: true }, ctx.window.document);
+  ctx.window.location.hash = 'team-metrics'; ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  return ctx;
+}
+
+test('Team metrics chips: By tag tables over the loaded records with Untagged and a total; remembered', async () => {
+  const ctx = await openTm({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TAGGED() }) });
+  const doc = ctx.window.document;
+  assert.deepEqual([...doc.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'By tag']);
+  doc.querySelector('#tm-view [data-tm-view="tag"]').click(); await ctx.tick();
+  const card = doc.querySelector('#tm-body .alloc-card');
+  assert.equal(card.querySelector('h2').textContent, 'client');
+  assert.deepEqual([...card.querySelectorAll('tbody tr')].map((r) => [r.cells[0].textContent, r.cells[2].textContent]), [['acme', '75%'], ['Untagged', '25%']]);
+  assert.equal(card.querySelector('tfoot tr').cells[1].textContent, '$4.00');
+  assert.equal(doc.querySelector('#tm-body .tm-run-tbl'), null);
+  assert.equal(ctx.window.localStorage.getItem('worca.teamMetrics.view'), 'tag');
+});
+
+test('Team metrics chips: By person = the By actor table alone; By tag hidden without tags; flag off = no chips', async () => {
+  const plain = await openTm({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TM_DATA }), storage: { 'worca.teamMetrics.view': 'tag' } });
+  const doc = plain.window.document;
+  assert.deepEqual([...doc.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person']);
+  assert.ok(doc.querySelector('#tm-body .tm-run-tbl'), 'a stored "tag" without tags renders Overview');
+  doc.querySelector('#tm-view [data-tm-view="person"]').click(); await plain.tick();
+  assert.equal(doc.querySelector('#tm-body .tm-run-tbl'), null);
+  assert.deepEqual([...doc.querySelectorAll('#tm-body .tm-tbl')].map((t) => t.dataset.dim), ['actor']);
+
+  const off = await boot({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TAGGED() }), storage: { 'worca.teamMetrics.view': 'tag' } });
+  off.window.location.hash = 'team-metrics'; off.window.dispatchEvent(new off.window.Event('hashchange'));
+  await off.tick(); await off.tick(); await off.tick();
+  assert.equal(off.window.document.getElementById('tm-view'), null);
+  assert.ok(off.window.document.querySelector('#tm-body .tm-run-tbl'));
+});
+
+test('Team metrics By tag: the CSV link downloads that key', async () => {
+  const ctx = await openTm({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TAGGED() }), storage: { 'worca.teamMetrics.view': 'tag' } });
+  // Node's URL, not ctx.window.URL: app.js's bare URL/Blob are Node globals here (see the Step 5 CSV test).
+  const blobs = []; const names = [];
+  const orig = [URL.createObjectURL, URL.revokeObjectURL];
+  URL.createObjectURL = (b) => { blobs.push(b); return 'blob:x'; };
+  URL.revokeObjectURL = () => {};
+  ctx.window.HTMLAnchorElement.prototype.click = function () { names.push(this.download); };
+  try {
+    ctx.window.document.querySelector('#tm-body .alloc-csv[data-key="client"]').click();
+    assert.deepEqual(names, ['team-metrics-project-billing-api-0123abcd-this-month-tag-client.csv']);
+    // Blob.text() strips a leading BOM, so decode the bytes with ignoreBOM to see it.
+    assert.match(new TextDecoder('utf-8', { ignoreBOM: true }).decode(await blobs[0].arrayBuffer()), /^\uFEFFclient,spendUsd,sharePct,runs\r\nacme,3,75,1\r\n/);
+  } finally {
+    [URL.createObjectURL, URL.revokeObjectURL] = orig;
+  }
 });

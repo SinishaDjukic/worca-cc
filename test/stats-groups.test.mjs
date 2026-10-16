@@ -162,3 +162,26 @@ test('malformed groupBy throws RangeError', () => {
     assert.throws(() => getStats({ range: 'month', now: NOW, groupBy: g }), RangeError);
   }
 });
+
+test('tagKeys: configured keys first (even untagged), then keys carried in range by value spend; rows match groupBy', () => {
+  const s = getStats({ range: 'lastMonth', now: NOW, tagKeys: ['cc'] });
+  assert.equal(s.tagGroups[0].key, 'cc');
+  assert.equal(s.tagGroups[0].configured, true);
+  assert.ok(!s.tagGroups[0].rows.some((r) => r.kind === 'value'), 'no run carries cc');
+  assert.equal(sum(s.tagGroups[0].rows), s.totals.spentUsd);
+  const others = s.tagGroups.slice(1);
+  assert.deepEqual(new Set(others.map((t) => t.key)), new Set(['client', 'spike']));
+  const valueUsd = (t) => t.rows.filter((r) => r.kind === 'value').reduce((a, r) => a + r.spentUsd, 0);
+  assert.ok(valueUsd(others[0]) >= valueUsd(others[1]), 'other keys by value spend');
+  for (const t of others) {
+    assert.equal(t.configured, false);
+    assert.deepEqual(t.rows, getStats({ range: 'lastMonth', now: NOW, groupBy: `tag:${t.key}` }).groups.rows);
+  }
+});
+
+test('tagKeys: null = no tables; a bad or duplicate key', () => {
+  assert.equal(getStats({ range: 'lastMonth', now: NOW }).tagGroups, null);
+  assert.throws(() => getStats({ range: 'lastMonth', now: NOW, tagKeys: ['Bad key'] }), RangeError);
+  assert.deepEqual(getStats({ range: 'lastMonth', now: NOW, tagKeys: ['cc', 'cc'] }).tagGroups.filter((t) => t.key === 'cc').length, 1);
+  assert.throws(() => getStats({ range: 'lastMonth', now: NOW, tagKeys: Array.from({ length: 51 }, (_, i) => `k${i}`) }), RangeError);
+});

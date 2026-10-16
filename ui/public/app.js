@@ -158,7 +158,7 @@ import {
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
-import { renderStatsBody, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv } from './stats-view.mjs';
+import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv } from './stats-view.mjs';
 import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
 import { createComposer, isReservedWorkflowId } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
@@ -205,7 +205,8 @@ import {
   renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel, renderMcpStrip, renderMcpConsent, handleTeamSkillClick,
 } from './team-policy-view.mjs';
 import { mcpRunsLabel, renderMcpRunsPop, renderRunSkills } from './mcp-run-picker.mjs';
-import { aggregate, toCsv, recordTags } from '../../src/shared/team-metrics/aggregate.mjs';
+import { aggregate, toCsv, recordTags, tagBreakdowns } from '../../src/shared/team-metrics/aggregate.mjs';
+import { allocationModel, fromBreakdownRows, allocationCsv } from './tag-allocation.mjs';
 import { buildWorkItems, prLookupFor } from '../../src/shared/team-metrics/timeline.mjs';
 import { renderTimeline, renderTimelinePopover, timelineWindow, shiftAnchor, TL_MODES, TL_ZOOMS } from './team-metrics-timeline.mjs';
 import {
@@ -17714,7 +17715,18 @@ if (el.modelShareBtn) {
 // ---------------------------------------------------------------------------
 // Statistics view
 // ---------------------------------------------------------------------------
-const statsState = { range: null, from: '', to: '', tags: [], person: '', groupBy: '', last: null };
+// A remembered view chip (#718 slice 4), per browser. A missing or throwing localStorage, or a stale value,
+// falls back, so module evaluation never breaks on it.
+const VIEW_CHIPS = ['overview', 'person', 'tag'];
+const STATS_VIEW_KEY = 'worca-cc.stats.view';
+function storedChoice(key, allowed, fallback) {
+  try { const v = localStorage.getItem(key); return allowed.includes(v) ? v : fallback; } catch { return fallback; }
+}
+function storeChoice(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* private mode */ }
+}
+
+const statsState = { range: null, from: '', to: '', tags: [], person: '', groupBy: '', view: storedChoice(STATS_VIEW_KEY, VIEW_CHIPS, 'overview'), last: null };
 const statsTagInput = createTagInput(document, { suggest: fetchTagVocabulary, placeholder: 'Filter: client:acme…' });
 document.getElementById('stats-tags')?.appendChild(statsTagInput.el);
 statsTagInput.onChange((tags) => { statsState.tags = tags; loadStatsView(); });
@@ -17737,6 +17749,23 @@ async function paintStatsGroupOptions() {
     ...tagGroupOptions(dims, keys).map((o) => statsOption(o.text, o.value)));
   sel.value = statsState.groupBy;
   if (sel.value !== statsState.groupBy) statsState.groupBy = '';   // a key that vanished
+}
+
+/** Flag on: paint #stats-view (By tag only while a tag exists or a dimension is configured) → the view to show
+ *  and the dims it was decided with. A stored `tag` while By tag is unavailable shows Overview but stays stored. */
+async function paintStatsViewChips() {
+  const keys = (await fetchTagVocabulary())?.keys || [];
+  const dims = await loadAllTagDims();
+  const tagOk = keys.length > 0 || dims.length > 0;
+  const seg = document.getElementById('stats-view');
+  seg.querySelector('[data-stats-view="tag"]').hidden = !tagOk;
+  const view = statsState.view === 'tag' && !tagOk ? 'overview' : statsState.view;
+  for (const b of seg.querySelectorAll('button[data-stats-view]')) {
+    const on = b.dataset.statsView === view;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  }
+  return { view, dims };
 }
 
 function paintStatsPeople(people) {
@@ -17772,13 +17801,22 @@ async function loadStatsView() {
   if (inverted) return;
   const body = el.statsBody;
   if (body.childElementCount) body.classList.add('is-loading');   // before any await: painted synchronously
-  await paintStatsGroupOptions().catch(() => {});      // a vanished tag key resets groupBy before the query
+  const chips = flagOn('runTags');
+  document.getElementById('stats-group-wrap').hidden = chips;
+  const { view, dims } = chips
+    ? await paintStatsViewChips().catch(() => ({ view: 'overview', dims: [] }))
+    : { view: null, dims: [] };
+  if (!chips) await paintStatsGroupOptions().catch(() => {});      // a vanished tag key resets groupBy before the query
   // A network-level rejection is not an !res.ok — without this catch it escapes
   // as an unhandled rejection and leaves the body stuck in .is-loading.
   let res, data;
   try {
-    // Flag off: the tag field is hidden, so its chips must not narrow the numbers either.
-    res = await fetch(`/api/stats?${statsQuery({ ...statsState, tags: flagOn('runTags') ? statsState.tags : [] })}`);
+    // Flag on: the chip decides groupBy and byTag. Flag off: the tag field is hidden, so its chips must not
+    // narrow the numbers either.
+    const query = chips
+      ? { ...statsState, groupBy: view === 'person' ? 'person' : '', byTag: view === 'tag', tagKeys: dims.map((d) => d.key) }
+      : { ...statsState, tags: [] };
+    res = await fetch(`/api/stats?${statsQuery(query)}`);
     data = await safeJson(res);
   } catch (err) {
     body.classList.remove('is-loading');
@@ -17792,17 +17830,13 @@ async function loadStatsView() {
       { className: 'hint err', textContent: data.error || `HTTP ${res.status}` }));
     return;
   }
-  // A configured dimension's label names the groups card, its table header and the CSV's first column
-  // ("Cost centre", not "cc"), with no change to stats-view.mjs.
-  if (data.groups && statsState.groupBy?.startsWith('tag:')) {
-    const label = dimensionLabel(allTagDimsCache?.dims || [], statsState.groupBy.slice(4));
-    if (label) data.groups = { ...data.groups, label };
-  }
   statsState.last = data;                               // the export reads the rows on screen
   paintStatsPeople(data.people);
   document.getElementById('stats-filter-note').hidden = !data.filtered;
-  body.replaceChildren(renderStatsBody(data, {
-    fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));
+  const fmt = { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle };
+  body.replaceChildren(view && view !== 'overview'
+    ? renderStatsView(data, view, { fmt, dims })
+    : renderStatsBody(data, { fmt }));
   loadTmScopes().then((d) => { const a = document.getElementById('stats-tm-hint'); if (a) a.hidden = !d.anyEnabled; });
 }
 
@@ -18370,13 +18404,31 @@ for (const id of ['stats-from', 'stats-to']) {
 }
 document.getElementById('stats-person')?.addEventListener('change', (e) => { statsState.person = e.target.value; loadStatsView(); });
 document.getElementById('stats-group')?.addEventListener('change', (e) => { statsState.groupBy = e.target.value; loadStatsView(); });
-el.statsBody.addEventListener('click', (e) => {
-  if (!e.target.closest('.stats-export') || !statsState.last?.groups) return;
-  const csv = groupsToCsv(statsState.last.groups);
+document.getElementById('stats-view')?.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-stats-view]');
+  if (!b || b.hidden) return;
+  statsState.view = b.dataset.statsView;
+  storeChoice(STATS_VIEW_KEY, statsState.view);
+  loadStatsView();
+});
+function downloadStatsCsv(csv, name) {
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  const a = Object.assign(document.createElement('a'), { href: url, download: `statistics-${statsState.range}-${statsState.groupBy.replace(':', '-')}.csv` });
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+el.statsBody.addEventListener('click', (e) => {
+  const csv = e.target.closest('.alloc-csv');
+  if (csv) {
+    const t = statsState.last?.tagGroups?.find((g) => g.key === csv.dataset.key);
+    if (!t) return;
+    const label = dimensionLabel(allTagDimsCache?.dims || [], t.key) || t.key;
+    downloadStatsCsv(groupsToCsv({ label, rows: t.rows }), `statistics-${statsState.range}-tag-${t.key}.csv`);
+    return;
+  }
+  if (!e.target.closest('.stats-export') || !statsState.last?.groups) return;
+  downloadStatsCsv(groupsToCsv(statsState.last.groups),
+    `statistics-${statsState.range}-${(statsState.last.groupBy || '').replace(':', '-')}.csv`);
 });
 
 const statsSection = document.querySelector('section[data-view="stats"]');
@@ -19365,6 +19417,7 @@ async function paintPooledBudgetTile(scopeId, records) {
 /** First paint caps the run table for layout; "Show all" lifts it (§4.9). Declared BEFORE
  *  tmState: tmState's initialiser reads it, and a const read above its declaration throws. */
 const TM_RUN_PAGE = 50;
+const TM_VIEW_KEY = 'worca.teamMetrics.view';
 const tmState = {
   scopeId: localStorage.getItem('worca.teamMetrics.scope') || '',
   range: 'this-month', from: '', to: '', groupBy: 'workflow',
@@ -19373,6 +19426,8 @@ const tmState = {
   runLimit: TM_RUN_PAGE,            // raised by "Show all N runs" (§4.9 "every record in range")
   cache: new Map(),                 // scopeId → last payload this session: switching back paints at once
   tab: 'overview',                  // 'overview' | 'timeline' — the hash param (#team-metrics/timeline)
+  view: storedChoice(TM_VIEW_KEY, VIEW_CHIPS, 'overview'),   // the Overview tab's chip (#718 slice 4)
+  lastTagTables: [],                // the By tag allocationModels last painted (the per-table CSV reads them)
   // Timeline: calendar position, grouping (kept per viewer) and the tile filter.
   tl: {
     zoom: 'month', anchor: Date.now(), filter: null,
@@ -19675,9 +19730,10 @@ function renderTeamMetrics() {
   const tagKeys = [...new Set(loadedTags.map((t) => t.split(':')[0]))].sort();
   if (tmState.groupBy.startsWith('tag:') && !tagKeys.includes(tmState.groupBy.slice(4))) tmState.groupBy = 'workflow';
   if (tmState.tag && !loadedTags.includes(tmState.tag)) tmState.tag = '';
+  const aggFilter = { ...tmState.filter, ...(tmState.tag ? { tags: [tmState.tag] } : {}) };
   let agg;
   try {
-    agg = aggregate(data.records, { range: tmState.range, from: tmState.from || null, to: tmState.to || null, groupBy: tmState.groupBy, filter: { ...tmState.filter, ...(tmState.tag ? { tags: [tmState.tag] } : {}) }, now: Date.now(), humanRateUsd: data.humanRateUsd ?? 0 });
+    agg = aggregate(data.records, { range: tmState.range, from: tmState.from || null, to: tmState.to || null, groupBy: tmState.groupBy, filter: aggFilter, now: Date.now(), humanRateUsd: data.humanRateUsd ?? 0 });
   } catch (err) {
     body.classList.remove('is-loading');
     body.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint err', textContent: err.message }));
@@ -19691,8 +19747,16 @@ function renderTeamMetrics() {
     homeHint.append('Metrics home ', Object.assign(document.createElement('code'), { className: 'mono', textContent: data.scope.home || '—' }),
       ` · records from ${(data.scope.sources || []).length} member repositor${(data.scope.sources || []).length === 1 ? 'y' : 'ies'}, grouped by workspace name`);
   }
+  // View chips (flag on only): By tag while a dimension is configured or a loaded record carries a tag.
+  const tagChip = tagsOn && (tmState.dims.length > 0 || loadedTags.length > 0);
+  const view = !tagsOn ? null : (tmState.view === 'tag' && !tagChip ? 'overview' : tmState.view);
+  const tagTables = view !== 'tag' ? [] : tagBreakdowns(data.records, {
+    range: tmState.range, from: tmState.from || null, to: tmState.to || null, filter: aggFilter, now: Date.now(),
+    keys: tmState.dims.map((d) => d.key),
+  }).map((t) => allocationModel({ key: t.key, label: dimensionLabel(tmState.dims, t.key) || t.key, rows: fromBreakdownRows(t.rows) }));
+  tmState.lastTagTables = tagTables;
   body.classList.remove('is-loading');
-  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims }));
+  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, tagChip, tagTables }));
   tmState.lastAgg = agg;
   // The #tm-tag select, beside the range controls (replaced on every render; hidden with the flag off).
   const tagSel = renderTagFilterSelect(tagsOn ? data.records || [] : [], tmState.tag, { doc: document });
@@ -19751,6 +19815,23 @@ if (tmSection) {
     if (tabBtn) {
       closeTlPopover();
       location.hash = tabBtn.dataset.tmTab === 'timeline' ? 'team-metrics/timeline' : 'team-metrics';
+      return;
+    }
+    const viewBtn = e.target.closest('[data-tm-view]');
+    if (viewBtn) {
+      tmState.view = viewBtn.dataset.tmView;
+      storeChoice(TM_VIEW_KEY, tmState.view);
+      renderTeamMetrics();
+      return;
+    }
+    const allocCsv = e.target.closest('.alloc-csv');
+    if (allocCsv) {
+      const m = (tmState.lastTagTables || []).find((t) => t.key === allocCsv.dataset.key);
+      if (!m) return;
+      const url = URL.createObjectURL(new Blob([allocationCsv(m)], { type: 'text/csv;charset=utf-8' }));
+      const a = Object.assign(document.createElement('a'), { href: url, download: `team-metrics-${tmState.scopeId.replace(/[^a-z0-9-]+/gi, '-')}-${tmState.range}-tag-${m.key}.csv` });
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
       return;
     }
     if (e.target.closest('#tm-timeline')) { onTimelineClick(e); return; }

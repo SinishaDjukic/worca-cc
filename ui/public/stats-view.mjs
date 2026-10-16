@@ -11,6 +11,8 @@
 
 import { renderTeamCapPauseBanner, POLICY_PAUSE_REASONS } from './team-policy-view.mjs';
 import { rowsToCsv } from '../../src/shared/csv.mjs';
+import { allocationModel, fromStatsRows, renderAllocationTables } from './tag-allocation.mjs';
+import { dimensionLabel } from '../../src/shared/tag-dimensions.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -607,12 +609,13 @@ export function renderPeopleCard(byPerson, rangeLabel, { doc = globalThis.docume
 }
 
 /** The /api/stats query string for the page's state. */
-export function statsQuery({ range, from = '', to = '', tags = [], person = '', groupBy = '' }) {
+export function statsQuery({ range, from = '', to = '', tags = [], person = '', groupBy = '', byTag = false, tagKeys = [] }) {
   const q = new URLSearchParams({ range });
   if (range === 'custom') { q.set('from', from); q.set('to', to); }
   for (const t of tags) q.append('tag', t);
   if (person) q.set('person', person);
   if (groupBy) q.set('groupBy', groupBy);
+  if (byTag) { q.set('byTag', '1'); for (const k of tagKeys) q.append('tagKey', k); }
   return q.toString();
 }
 
@@ -680,16 +683,37 @@ export function renderGroupsCard(groups, rangeLabel, { doc = globalThis.document
   return card;
 }
 
+/** The card hint for a stats model's window: "Aug 1 – Aug 31", one day for today, "last 12 months" for all. */
+export function statsRangeLabel(model) {
+  return model.range === 'all'
+    ? 'last 12 months'
+    : model.range === 'today'
+      ? tipDate(model.windowStartMs, 'day')
+      : `${tipDate(model.windowStartMs, 'day')} – ${tipDate(model.windowEndMs - 1, 'day')}`;
+}
+
+/** The By person / By tag chips (#718 slice 4): that table alone, without the KPI row and charts. */
+export function renderStatsView(model, view, opts = {}) {
+  const { doc = globalThis.document, fmt = DEFAULT_FMT, dims = [] } = opts;
+  const rangeLabel = statsRangeLabel(model);
+  if (view === 'tag') {
+    const tables = (model.tagGroups || []).map((t) => allocationModel({
+      key: t.key, label: dimensionLabel(dims, t.key) || t.key, rows: fromStatsRows(t.rows),
+    }));
+    return renderAllocationTables(tables, { doc, fmt, rangeLabel, empty: 'No tagged runs in this period.' });
+  }
+  const g = h(doc, 'div', 'charts-grid people-grid');
+  g.appendChild(renderGroupsCard(model.groups || { label: 'person', rows: [] }, rangeLabel,
+    { ...opts, totalUsd: model.totals.spentUsd, totalRuns: model.totals.runs }));
+  return g;
+}
+
 export function renderStatsBody(model, opts = {}) {
   const { doc = globalThis.document } = opts;
   const wrap = h(doc, 'div', null);
   wrap.appendChild(renderKpiRow(model, opts));
   const grid = h(doc, 'div', 'charts-grid');
-  const rangeLabel = model.range === 'all'
-    ? 'last 12 months'
-    : model.range === 'today'
-      ? tipDate(model.windowStartMs, 'day')
-      : `${tipDate(model.windowStartMs, 'day')} – ${tipDate(model.windowEndMs - 1, 'day')}`;
+  const rangeLabel = statsRangeLabel(model);
   const currentBucketStartMs = model.series.length
     ? model.series[model.series.length - 1].bucketStartMs : 0;
   if (!model.totals.runs && !model.series.some((p) => p.spentUsd > 0)) {

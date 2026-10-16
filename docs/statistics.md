@@ -28,21 +28,24 @@ Every tile, chart and grouped row follows the filters. Ask Worca chat spend is n
 so any active filter leaves it out, and the Spent tile drops its budget meter (the limit covers
 the whole account, not the filtered slice).
 
-## Group by
+## View
 
-**Group by person** or **Group by tag: client** (one option per tag key in use, while `runTags` is
-on) adds a table under the charts. Configured tag dimensions (team policy `runs.tagDimensions` or
-Settings › Runs › Tag dimensions) come first and read by label: **Group by Cost centre**, with the
-table, its header and the CSV's first column named "Cost centre":
+While the `runTags` feature flag is on, three chips replace the Group by select:
 
-- one row per value (`acme`, `globex`, or a person's name);
-- a `(no client)` row for runs without that tag, or `(unknown person)` for runs with no named
-  starter;
-- an `Ask Worca` row for chat spend (absent while a filter is active);
-- a `Total` footer equal to the Spent tile.
+- **Overview** (default): the tiles and charts.
+- **By person**: the person table on its own (one row per starter, `(unknown person)` for runs with
+  no named starter, an `Ask Worca` row, a `Total` footer equal to the Spent tile), with Export CSV.
+- **By tag**: one table per tag key. Configured tag dimensions (team policy `runs.tagDimensions` or
+  Settings › Runs › Tag dimensions) come first, read by label ("Cost centre"), even when no run in
+  the range carries them. Every other key follows when a run in the range carries it, by spend.
+  Each table lists the values by spend, then **Untagged**, then **Ask Worca** (absent while a
+  filter is active), and a **Total** footer equal to the Spent tile. Share is an integer percent;
+  the column always adds up to 100% (— at $0). More than 8 values show the top 7 and an
+  **Other (n)** row that expands in place. A plain tag such as `spike` reads `spike` and Untagged.
+  By tag appears only when a tag is in use or a dimension is configured.
 
-A plain tag such as `spike` groups into `spike` and `(no spike)`. Rows with no spend and no runs
-are left out.
+The chosen chip is remembered in this browser. With `runTags` off, the **Group by** select stays:
+**Group by person** adds the person table under the charts.
 
 **How the numbers reconcile.** Spend is counted when it happened (each cost ledger entry by its
 time), so a run that started on 31 August and kept spending on 1 September splits across the two
@@ -54,7 +57,8 @@ Retagging a finished run moves its spend to the new row the next time the page l
 
 ## CSV export
 
-**Export CSV** on the grouped table downloads the rows on screen. The file is UTF-8 with a byte
+**Export CSV** on the person table, and each By tag table's **CSV** link (named
+`statistics-<range>-tag-<key>.csv`, the none row reading `(no client)`), download the rows on screen. The file is UTF-8 with a byte
 order mark (so Excel reads accents correctly), uses CRLF line ends and RFC 4180 quoting. Columns:
 the group (for example `client` or `person`), `spendUsd`, `runs`, `finished`, `stopped`,
 `failed`, `running`, `paused`, `prsOpened`, `prsMerged`.
@@ -70,6 +74,10 @@ the group (for example `client` or `person`), `spendUsd`, `runs`, `finished`, `s
 | `tag` | repeatable; up to 20 |
 | `person` | a starter's name |
 | `groupBy` | `person` or `tag:` followed by a tag key |
+| `byTag` | `1` adds `tagGroups` |
+| `tagKey` | repeatable, with `byTag=1`; the configured keys, which always get a table (up to 50) |
 
 A malformed range, date, tag or group answers 400. The response adds `filter`, `filtered`,
-`groupBy`, `groups` (`{ by, label, rows }`) and `people` (the names for the person picker).
+`groupBy`, `groups` (`{ by, label, rows }`), `tagGroups` (`null` without `byTag=1`, otherwise
+`[{ key, configured, rows }]` with the same rows as `groupBy=tag:` for that key) and `people` (the
+names for the person picker).

@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { aggregate } from '../src/shared/team-metrics/aggregate.mjs';
 import {
-  renderSyncChip, renderTmKpiRow, renderTeamMetricsBody, renderRunsTable } from '../ui/public/team-metrics-view.mjs';
+  renderSyncChip, renderTmKpiRow, renderTeamMetricsBody, renderRunsTable, renderTmViewChips } from '../ui/public/team-metrics-view.mjs';
+import { allocationModel } from '../ui/public/tag-allocation.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -135,4 +136,22 @@ test('KPI row: Saved tile appears only with human hours, prices them at the rate
       assert.equal(tile.parentElement.querySelectorAll('.stat-mult').length, 1, 'only the Saved tile carries the pill');
     } },
   ]);
+});
+
+const VIEW_RECS = [
+  { ...makeRecord({ id: 'v1', startedAt: '2026-09-08T10:00:00Z', usd: 3, actor: 'Ana' }), tags: ['client:acme'] },
+  makeRecord({ id: 'v2', startedAt: '2026-09-09T10:00:00Z', usd: 1 }),
+];
+
+test('renderTeamMetricsBody: no view (flag off) = no chips; By person = the By actor table alone; By tag = the tables', () => {
+  const agg = aggregate(VIEW_RECS, { range: 'this-month', now: NOW });
+  assert.equal(renderTeamMetricsBody(agg, { doc }).querySelector('#tm-view'), null);
+  const person = renderTeamMetricsBody(agg, { doc, view: 'person', tagChip: true });
+  assert.deepEqual([...person.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'By tag']);
+  assert.deepEqual([...person.querySelectorAll('.tm-tbl')].map((t) => t.dataset.dim), ['actor']);
+  const tables = [allocationModel({ key: 'client', label: 'client', rows: [{ kind: 'value', label: 'acme', usd: 3, runs: 1 }, { kind: 'none', label: '(no client)', usd: 1, runs: 1 }] })];
+  const tag = renderTeamMetricsBody(agg, { doc, view: 'tag', tagChip: true, tagTables: tables });
+  assert.equal(tag.querySelectorAll('.alloc-card').length, 1);
+  assert.equal(tag.querySelector('.tm-tbl'), null);
+  assert.equal(renderTmViewChips('overview', { doc, tagChip: false }).querySelectorAll('button').length, 2);
 });

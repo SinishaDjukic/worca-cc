@@ -213,3 +213,16 @@ test('totals carry humanHours and savedUsd = hours × rate − spent; prev too; 
   assert.equal(all.totals.humanHours, 16.5);
   assert.equal(all.totals.savedUsd, Math.round((16.5 * 35 - all.totals.spentUsd) * 100) / 100);
 });
+
+test('GET /api/stats byTag: tagGroups with the configured keys first; a bad tagKey → 400; no byTag → null', async () => {
+  let res = await fetch(`${base}/api/stats?range=month&byTag=1&tagKey=cc`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.tagGroups[0].key, 'cc');
+  res = await fetch(`${base}/api/stats?range=month`);
+  assert.equal((await res.json()).tagGroups, null);
+  for (const q of ['byTag=1&tagKey=', 'byTag=1&tagKey=Bad%20key']) {
+    res = await fetch(`${base}/api/stats?range=month&${q}`);
+    assert.equal(res.status, 400, q);
+  }
+});

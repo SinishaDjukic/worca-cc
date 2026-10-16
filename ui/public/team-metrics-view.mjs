@@ -5,6 +5,7 @@
 import { niceScale, roundedTopBar, savedMultChip } from './stats-view.mjs';
 import { safeHttpUrl, recordTags } from '../../src/shared/team-metrics/aggregate.mjs';
 import { dimensionLabel } from '../../src/shared/tag-dimensions.mjs';
+import { renderAllocationTables } from './tag-allocation.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -519,9 +520,44 @@ export function renderTagFilterSelect(records, current, { doc = globalThis.docum
   return sel;
 }
 
-export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Date.now(), scopeKind = 'project', sort = {}, filter = {}, homeHint = null, runLimit = 50, tagKeys = [], tagDims = [] } = {}) {
+/** #tm-view (#718 slice 4): Overview · By person · By tag, inside the Overview tab; By tag only when tagChip. */
+export function renderTmViewChips(view, { doc = globalThis.document, tagChip = false } = {}) {
+  const seg = h(doc, 'div', 'seg seg-sm tm-view');
+  seg.id = 'tm-view';
+  seg.setAttribute('role', 'group');
+  seg.setAttribute('aria-label', 'View');
+  for (const [v, text] of [['overview', 'Overview'], ['person', 'By person'], ['tag', 'By tag']]) {
+    if (v === 'tag' && !tagChip) continue;
+    const b = h(doc, 'button', v === view ? 'on' : null, text);
+    b.type = 'button';
+    b.dataset.tmView = v;
+    b.setAttribute('aria-pressed', String(v === view));
+    seg.appendChild(b);
+  }
+  return seg;
+}
+
+export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Date.now(), scopeKind = 'project', sort = {}, filter = {}, homeHint = null, runLimit = 50, tagKeys = [], tagDims = [], view = null, tagChip = false, tagTables = [] } = {}) {
   const wrap = h(doc, 'div', 'tm-body');
   if (homeHint) wrap.append(homeHint);
+  if (view) wrap.append(renderTmViewChips(view, { doc, tagChip }));
+  if (view === 'person') {
+    const g = h(doc, 'div', 'charts-grid people-grid tm-breakdowns');
+    if (agg.breakdowns.actor) {
+      g.append(renderBreakdownTable('actor', agg.breakdowns.actor, { doc, sort: sort.actor || null, activeKey: filter.actor ?? null, homeSlug: agg.homeSlug ?? null }));
+    } else {
+      const card = h(doc, 'section', 'card chart-card tm-breakdown');
+      const head = h(doc, 'div', 'card-head'); head.append(h(doc, 'h2', null, 'By actor'));
+      card.append(head, h(doc, 'p', 'chart-empty hint', 'No runs with a named person in this range.'));
+      g.append(card);
+    }
+    wrap.append(g);
+    return wrap;
+  }
+  if (view === 'tag') {
+    wrap.append(renderAllocationTables(tagTables, { doc, fmt: TM_FMT, empty: 'No tagged runs in this range.' }));
+    return wrap;
+  }
   wrap.append(renderTmKpiRow(agg, { doc, now, scopeKind }));
   const charts = h(doc, 'div', 'charts-grid');
   const stacks = agg.series.stackKeys.map((st, i) => ({ ...st, color: SERIES_COLORS[Math.min(i, SERIES_COLORS.length - 1)] }));
