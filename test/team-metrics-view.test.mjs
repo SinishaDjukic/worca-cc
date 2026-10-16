@@ -90,6 +90,12 @@ test('Group by lives in the Spend per week card head, reflects agg.groupBy, and 
   const ws = renderGroupBySelect('actor', 'workspace', { doc });
   assert.deepEqual([...ws.querySelector('select').options].map((o) => o.value), ['workflow', 'result', 'actor'], 'a workspace scope offers the same three: a run\'s cost is one number, never split by project touched');
   assert.equal(ws.querySelector('select').value, 'actor');
+  // Run tags: one option per tag key in the loaded records, labelled by its dimension when configured.
+  const tagged = renderGroupBySelect('workflow', 'project', { doc, tagKeys: ['client'], dims: [{ key: 'client', label: 'Client' }] }).querySelector('select');
+  assert.deepEqual([...tagged.options].map((o) => o.value), ['workflow', 'result', 'actor', 'tag:client']);
+  assert.equal(tagged.options[3].textContent, 'Client');
+  const tagBody = renderTeamMetricsBody(aggregate(recs, { range: 'this-month', now: NOW }), { doc, now: NOW, tagKeys: ['client'], tagDims: [{ key: 'client', label: 'Client' }] });
+  assert.ok([...tagBody.querySelectorAll('#tm-group option')].some((o) => o.value === 'tag:client' && o.textContent === 'Client'));
   const wsBody = renderTeamMetricsBody(aggregate([makeRecord({ id: 'g2', startedAt: '2026-09-05T10:00:00Z', usd: 2, kind: 'workspace', touched: ['acme/gateway', 'acme/console'] })], { range: 'this-month', now: NOW }), { doc, now: NOW, scopeKind: 'workspace' });
   assert.ok(!wsBody.textContent.includes('split evenly'), 'no "split evenly" hint anywhere');
   const projTbl = wsBody.querySelector('.tm-breakdown table[data-dim="project"]');

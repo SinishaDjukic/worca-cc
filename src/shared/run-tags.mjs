@@ -64,3 +64,9 @@ export function describeTagChange(before, after) {
     .concat([...b].filter((t) => !a.has(t)).map((t) => `−${t}`));
   return parts.join(' ') || 'no change';
 }
+
+/** 'tag:client' → 'client'; anything else (incl. 'tag:' and a bad key) → null. */
+export function parseTagGroupBy(groupBy) {
+  const m = typeof groupBy === 'string' ? /^tag:(.+)$/.exec(groupBy) : null;
+  return m && TAG_KEY_RE.test(m[1]) ? m[1] : null;
+}

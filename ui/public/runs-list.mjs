@@ -294,6 +294,15 @@ export function tagFilterOptions(rows) {
   return [...new Set(rows.flatMap((r) => r.tags || []))].sort();
 }
 
+/** The #runs-tag options with configured dimensions: an optgroup per dimension ('any' = the bare key), then the rest. */
+export function tagFilterGroups(rows, dims) {
+  const all = tagFilterOptions(rows);
+  const keyOf = (t) => t.split(':')[0];
+  const groups = (dims || []).map((d) => ({ label: d.label, any: d.key, tags: all.filter((t) => t !== d.key && keyOf(t) === d.key) }));
+  const known = new Set((dims || []).map((d) => d.key));
+  return { groups, rest: all.filter((t) => !known.has(keyOf(t))) };
+}
+
 export function buildRunsModel({
   live = [], history = [], scheduled = [], person = '', tag = '', query = '', filter = 'all', groupBy = 'project', collapsed = new Set(), now = Date.now(),
 } = {}) {

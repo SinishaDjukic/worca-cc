@@ -323,7 +323,7 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     // release-tag URL — read from package.json). GET-only: POST still echoes settingsState() + chat.
     assert.deepEqual(Object.keys(j).sort(), ['actions', 'actionsDetected', 'actionsGate', 'app', 'askEngine', 'askMaxBudgetUsd', 'askMaxTurns', 'askModels', 'askWeb', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'costLimitResetPeriod',
       'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'flags', 'hideBuiltinModels', 'humanRateUsdPerHour', 'memoryDefrag', 'memoryDefragDefault', 'nightMode', 'nightModeEffective', 'nightModeToggle', 'pipelineCostLimitUsd', 'prDescriptionModel', 'prDescriptionModelEffective', 'projectsRoot', 'projectsRootDefault', 'resumeAfterUsageLimit', 'root', 'runEngine',
-      'schedule', 'stepModels', 'sync', 'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd', 'uiLevel', 'utilityModels', 'workspaceScan', 'workspaceScanDefault']);
+      'schedule', 'stepModels', 'sync', 'tagDimensions', 'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd', 'uiLevel', 'utilityModels', 'workspaceScan', 'workspaceScanDefault']);
     assert.deepEqual(Object.keys(j.actionsDetected).sort(), ['editor', 'terminal'], 'what blank Editor / Terminal fall back to');
     assert.equal(j.autoWorkflowModel, '', 'no classifier model stored -> the catalog default applies');
     assert.equal(j.titleModel, null, 'no title model stored -> the run\'s model');

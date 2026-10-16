@@ -162,6 +162,8 @@ test('validateClientContext: enum/slug keys (projectSource, pinned, tmScope/tmRa
       assert.deepEqual(ok, { ok: true, context: { tmScope: 'workspace:wks-team-0000abcd', tmRange: 'last-month', tmGroupBy: 'actor', tmFilter: 'actor=Ana Ban;workflow=wf_auto' } });
       assert.equal(validateClientContext({ tmScope: 'workspace:wks-team-0000abcd', tmGroupBy: 'project' }).ok, false, 'project is a breakdown and a filter, not a group-by');
       assert.equal(validateClientContext({ tmScope: 'project:worca-cc-551183d0' }).ok, true);
+      assert.equal(validateClientContext({ tmGroupBy: 'tag:client' }).ok, true, 'a run-tag key stacks too');
+      assert.equal(validateClientContext({ tmGroupBy: 'tag:' }).ok, false, 'tag: needs a key');
       for (const bad of [{ tmScope: 'project:nope' }, { tmScope: 'team:x' }, { tmRange: 'week' }, { tmGroupBy: 'model' }, { tmFilter: '' }, { tmFilter: 'a\nb' }, { tmFilter: 'x'.repeat(201) }]) {
         assert.equal(validateClientContext(bad).ok, false, JSON.stringify(bad));
       }

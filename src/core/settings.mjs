@@ -66,6 +66,7 @@ import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
+import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -1140,6 +1141,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
   'askEngine', 'askModels',                  // Ask Worca's engine for new chats and its model per engine (user-only, D17)
+  'tagDimensions',                           // Settings › Runs › Tag dimensions [{ key, label, values, required }]
 ]);
 
 let projectLayerReader = null;
@@ -2331,6 +2333,22 @@ export async function setScheduleDefaults(patch = {}) {
   if (has('maxFailures')) put('scheduleMaxFailures', patch.maxFailures);
   await persistSettings(settings);
   return scheduleDefaults();
+}
+
+/** Local tag dimensions (Settings › Runs): used when the run target's team policy sets none. Never throws. */
+export function userTagDimensions() {
+  if (homeGuarded()) return [];
+  return normaliseDimensions(readSettings().tagDimensions).dims;
+}
+
+/** Replace the local list; [] or null clears it. Throws { code: 'BAD_TAG_DIMENSIONS' } before any write. */
+export async function setUserTagDimensions(list) {
+  const { dims, errors } = normaliseDimensions(list ?? []);
+  if (errors.length) throw Object.assign(new Error(errors[0]), { code: 'BAD_TAG_DIMENSIONS' });
+  const settings = readSettings();
+  if (dims.length) settings.tagDimensions = dims; else delete settings.tagDimensions;
+  await persistSettings(settings);
+  return userTagDimensions();
 }
 
 // ── Sync before run (#527) ─────────────────────────────────────────────────

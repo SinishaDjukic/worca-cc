@@ -13,6 +13,7 @@ import { JSDOM } from 'jsdom';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -257,4 +258,38 @@ test('switching back to a scope paints its cached payload at once, dimmed, while
   release();
   await until(() => !body.hasAttribute('aria-busy'), 'the project read to land');
   assert.equal(body.classList.contains('is-loading'), false); assert.equal(body.getAttribute('aria-busy'), null);
+});
+
+test('run tags: #tm-tag lists the records\' tags, narrows the page with a removable chip; hidden without tags and on the Timeline tab', async () => {
+  const tagged = { ...TM_DATA, records: [{ ...makeRecord({ id: 'r1', startedAt: nowIso, usd: 3 }), tags: ['client:acme'] }, makeRecord({ id: 'r2', startedAt: nowIso, usd: 1 })] };
+  const { window, tick } = await boot({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: tagged }) });
+  applyFlags({ runTags: true }, window.document);
+  const doc = window.document;
+  window.location.hash = 'team-metrics'; window.dispatchEvent(new window.Event('hashchange'));
+  await tick(); await tick(); await tick();
+  const sel = doc.getElementById('tm-tag');
+  assert.ok(sel, '#tm-tag is mounted');
+  assert.equal(sel.hidden, false);
+  assert.deepEqual([...sel.options].map((o) => o.value), ['', 'client:acme']);
+  assert.ok([...doc.querySelectorAll('#tm-group option')].some((o) => o.value === 'tag:client'), 'a tag key in the records stacks too');
+  sel.value = 'client:acme'; sel.dispatchEvent(new window.Event('change', { bubbles: true })); await tick();
+  assert.equal(doc.querySelectorAll('#tm-body .tm-run-tbl tbody tr').length, 1);
+  const chip = doc.querySelector('#tm-filters .tm-filter-chip[data-dim="tag"]');
+  assert.match(chip.textContent, /tag: client:acme/);
+  assert.equal(doc.getElementById('tm-filters').hidden, false);
+  chip.click(); await tick();
+  assert.equal(doc.querySelectorAll('#tm-body .tm-run-tbl tbody tr').length, 2);
+  assert.equal(doc.getElementById('tm-tag').value, '');
+  window.location.hash = 'team-metrics/timeline'; window.dispatchEvent(new window.Event('hashchange')); await tick(); await tick();
+  assert.equal(doc.getElementById('tm-tag').hidden, true, 'hidden on the Timeline tab with #tm-filters');
+});
+
+test('run tags: tag-less records hide #tm-tag and leave the group-by options unchanged', async () => {
+  const { window, tick } = await boot({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TM_DATA }) });
+  applyFlags({ runTags: true }, window.document);
+  const doc = window.document;
+  window.location.hash = 'team-metrics'; window.dispatchEvent(new window.Event('hashchange'));
+  await tick(); await tick(); await tick();
+  assert.equal(doc.getElementById('tm-tag').hidden, true);
+  assert.deepEqual([...doc.querySelectorAll('#tm-group option')].map((o) => o.value), ['workflow', 'result', 'actor']);
 });

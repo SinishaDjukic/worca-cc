@@ -16,7 +16,7 @@ import { parseRecordLine } from '../../shared/team-metrics/aggregate.mjs';
 import { matchesWorkspace } from '../../shared/team-metrics/workspace-match.mjs';
 
 export {
-  aggregate, resolveRange, weekStartMs, parseRecordLine, toCsv, safeHttpUrl, RANGES, GROUP_BYS, CSV_COLUMNS,
+  aggregate, resolveRange, weekStartMs, parseRecordLine, toCsv, safeHttpUrl, RANGES, GROUP_BYS, CSV_COLUMNS, isGroupBy,
 } from '../../shared/team-metrics/aggregate.mjs';
 
 export const FETCH_TTL_MS = 60_000;

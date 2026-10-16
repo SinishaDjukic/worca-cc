@@ -7858,6 +7858,19 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .tag-input-hint{flex-basis:100%;margin-top:0;}
 .tag-input-hint:empty{display:none;}
 .tag-input-hint:not(:empty){color:var(--red-ink);}
+/* Tag dimensions (run tags, slice 3): the New run slots and the Settings editor rows, spaced like .tag-input. */
+.tag-dims{display:flex;flex-wrap:wrap;gap:6px 12px;margin-bottom:6px;}
+.tag-dims[hidden]{display:none;}
+.tag-dim-slot{display:flex;flex-wrap:wrap;align-items:center;gap:6px;flex:1 1 220px;}
+.tag-dim-label{font-size:12px;color:var(--ink-2);}
+.tag-dim-req{font-size:11px;padding:0 6px;border-radius:999px;border:1px solid var(--line);color:var(--ink-3);}
+.tag-dim-input{flex:1 1 140px;min-width:120px;}
+.tag-dim-input[aria-invalid="true"]{border-color:var(--red-ink);}
+.tag-dim-hint{flex-basis:100%;margin-top:0;color:var(--red-ink);}
+.tag-dim-hint:empty{display:none;}
+.tag-dim-rows{display:flex;flex-direction:column;gap:6px;margin-bottom:6px;}
+.tag-dim-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.tag-dim-row .input{flex:1 1 140px;min-width:100px;}
 .hd-tags{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;}
 .hd-tags-editor{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;}
 .hd-tags .tag-input{flex:1 1 280px;}

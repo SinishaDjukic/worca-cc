@@ -318,6 +318,8 @@ const SCHEDULE_WHEN = SCHEMA.s('run ONCE at: "02:00" (its next occurrence), "tod
 const SCHEDULE_EVERY = SCHEMA.s('REPEAT: "day 03:30", "3 days 02:00", "weekdays 02:00", "weekends 09:00", "mon,wed,fri 02:00", "2 weeks mon 02:00", "month 1 02:00", "month last 02:00"');
 const SCHEDULE_UNTIL = SCHEMA.s('every only: last date, YYYY-MM-DD');
 const SCHEDULE_COUNT = SCHEMA.i('every only: stop after this many runs', 1, 1000);
+// The team-metrics tools' tag filter: one shared property in both tools' own filter schemas.
+const TM_TAGS_FILTER = { type: 'array', items: { type: 'string' }, description: 'keep runs carrying every listed tag, e.g. ["client:acme"]; a bare key ("client") matches any value' };
 const SCHEDULE_OVERLAP = SCHEMA.s('every only, when the previous run is still going: skip (default) | queue | start');
 const SCHEDULE_MAX_FAILURES = SCHEMA.i('every only: pause after this many failures in a row (0 = never; default from Settings, usually 3)', 0, 100);
 const SCHEDULE_AFTER = SCHEMA.s('run ONCE when another run ends: a run id (list_runs) or a one-off scheduled run id (list_schedules). Instead of when / every');
@@ -512,17 +514,17 @@ export function createAskTools(deps) {
       inputSchema: SCHEMA.obj({ runId: SCHEMA.s('run id') }, ['runId']) },
     // ---- team metrics (docs/team-metrics.md "Ask Worca"): domain-level tools — scopes, ranges, homes, routing — never git-level.
     { name: 'get_team_metrics',
-      description: 'Team-wide run metrics for one scope (a project or a workspace: exactly one of projectKey / workspaceId; omitting both uses the scope pinned for this chat), read from the team\'s shared worca-metrics branch: KPIs (spend, runs, success rate, cost per run, duration, autonomy, review cycles), the previous period and deltas, breakdowns by workflow / source / actor / project (workspace scopes: the runs that touched each project — a run\'s cost is never split across projects) / models, spend and runs per week, the team-policy counts (offPolicyRuns, capOverrides, deviations, policyRuns — runs recorded under a team policy; breakdown rows carry overrides and offPolicy), and the sync state (pending pushes, fetch errors). These are TEAM numbers over the given range — every teammate\'s runs, asynchronous (pushed after each run, fetched at most once a minute) — and they differ from get_run / list_runs, which see this machine only. range: this-month (default), last-month, quarter, year, all, or custom with from/to (YYYY-MM-DD). groupBy (the weekly stacks): workflow (default), result, actor. filter narrows to one key per dimension, taken from a breakdown row\'s key. actor breakdowns are null when attribution is off. Read-only.',
+      description: 'Team-wide run metrics for one scope (a project or a workspace: exactly one of projectKey / workspaceId; omitting both uses the scope pinned for this chat), read from the team\'s shared worca-metrics branch: KPIs (spend, runs, success rate, cost per run, duration, autonomy, review cycles), the previous period and deltas, breakdowns by workflow / source / actor / project (workspace scopes: the runs that touched each project — a run\'s cost is never split across projects) / models, spend and runs per week, the team-policy counts (offPolicyRuns, capOverrides, deviations, policyRuns — runs recorded under a team policy; breakdown rows carry overrides and offPolicy), and the sync state (pending pushes, fetch errors). These are TEAM numbers over the given range — every teammate\'s runs, asynchronous (pushed after each run, fetched at most once a minute) — and they differ from get_run / list_runs, which see this machine only. range: this-month (default), last-month, quarter, year, all, or custom with from/to (YYYY-MM-DD). groupBy (the weekly stacks): workflow (default), result, actor, or tag:client (one stack per value of that run-tag key plus "(no client)"; breakdowns.tag then has the same rows). filter narrows to one key per dimension, taken from a breakdown row\'s key, and filter.tags keeps runs carrying every listed tag. actor breakdowns are null when attribution is off. Read-only.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'), workspaceId: SCHEMA.s('workspace id from list_projects'),
         range: SCHEMA.s('this-month | last-month | quarter | year | all | custom'), from: SCHEMA.s('custom range start, YYYY-MM-DD'), to: SCHEMA.s('custom range end, YYYY-MM-DD (exclusive)'),
-        groupBy: SCHEMA.s('workflow | result | actor'),
-        filter: { type: 'object', description: 'one key per dimension: {workflow|source|actor|project|models|result: <breakdown row key>}', additionalProperties: { type: 'string' } },
+        groupBy: SCHEMA.s('workflow | result | actor | tag:KEY (e.g. tag:client: one stack per tag value plus "(no client)")'),
+        filter: { type: 'object', description: 'one key per dimension: {workflow|source|actor|project|models|result: <breakdown row key>}, plus tags', properties: { tags: TM_TAGS_FILTER }, additionalProperties: { type: 'string' } },
         refresh: SCHEMA.b('fetch the branch again first (at most once a minute)') }) },
     { name: 'list_team_metrics_runs',
       description: 'The runs behind get_team_metrics for one scope and range (same scope / range / filter inputs), newest first, paged by offset: id, title, startedAt, workflow, result, cost, duration, review cycles, PR, actor, source, projects touched, and `policy` on a run recorded under a team policy (home, overrides / exceeded: the team caps it continued past or ran over, deviations: off-policy picks, unattended, the override reason). `local` is true when the run is on this machine, so get_run / get_run_diff / list_run_artifacts can open it; a teammate\'s run is a row only. Read-only.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key'), workspaceId: SCHEMA.s('workspace id'),
         range: SCHEMA.s('this-month | last-month | quarter | year | all | custom'), from: SCHEMA.s('custom range start, YYYY-MM-DD'), to: SCHEMA.s('custom range end, YYYY-MM-DD (exclusive)'),
-        filter: { type: 'object', description: 'one key per dimension, as in get_team_metrics', additionalProperties: { type: 'string' } },
+        filter: { type: 'object', description: 'one key per dimension, as in get_team_metrics', properties: { tags: TM_TAGS_FILTER }, additionalProperties: { type: 'string' } },
         limit: SCHEMA.i('rows per page (default 20, max 100)', 1, L.metricsRunsMaxLimit), offset: SCHEMA.i('row offset to start at', 0, Number.MAX_SAFE_INTEGER) }) },
     { name: 'push_team_metrics',
       description: 'Push this machine\'s pending team-metrics records for a scope (projectKey or workspaceId; omitting both uses the pinned scope) or, with all:true, every pending record on this machine — the same action as the page\'s "Push now". Pushes are otherwise automatic after each run; use this when get_team_metrics reports pending records, or a push error the user has since fixed (e.g. branch protection). Returns one result per branch pushed.',
@@ -1650,7 +1652,7 @@ export function createAskTools(deps) {
         scope: tmScope(read), range: tmRange(agg), groupBy: agg.groupBy, filter: agg.filter,
         totalRecords: agg.totalRecords, runsInRange: agg.kpis.runs,
         kpis: agg.kpis, previous: agg.prev, deltas: agg.deltas,
-        breakdowns: { workflow: rows(agg.breakdowns.workflow), source: rows(agg.breakdowns.source), actor: rows(agg.breakdowns.actor), project: rows(agg.breakdowns.project), models: rows(agg.breakdowns.models) },
+        breakdowns: { workflow: rows(agg.breakdowns.workflow), source: rows(agg.breakdowns.source), actor: rows(agg.breakdowns.actor), project: rows(agg.breakdowns.project), models: rows(agg.breakdowns.models), tag: rows(agg.breakdowns.tag) },
         spendByWeek: agg.series.spend.map((w) => ({ weekStart: iso(w.weekStartMs), totalUsd: w.totalUsd, stacks: w.stacks })),
         runsByWeek: agg.series.runs.map((w) => ({ weekStart: iso(w.weekStartMs), done: w.done, failed: w.failed, stopped: w.stopped })),
         stackKeys: agg.series.stackKeys.slice(0, L.metricsBreakdownMaxRows).map((k) => ({ key: k.key, label: R(String(k.label ?? '')), totalUsd: k.totalUsd })),
@@ -1672,6 +1674,8 @@ export function createAskTools(deps) {
           id: r.id, title: R(String(r.title ?? '')), startedAt: r.startedAt, workflow: r.workflow, result: r.result,
           usd: r.usd, wallMs: r.wallMs, activeMs: r.activeMs, reviewCycles: r.reviewCycles, pr: r.pr,
           actor: r.actor, source: r.source ? R(String(r.source)) : null, projects: r.projects,
+          // Run tags: redacted like title and source (records come from a branch anyone with push access writes).
+          tags: (r.tags || []).map((t) => R(String(t))),
           local: typeof m.isLocalRun === 'function' ? m.isLocalRun(r.id) === true : false,
           ...(r.policy ? { policy: { ...r.policy, reason: r.policy.reason ? R(String(r.policy.reason)) : null } } : {}),
         })),

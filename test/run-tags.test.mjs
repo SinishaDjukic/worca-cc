@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
-import { parseTag, normaliseTags, hasTag, describeTagChange, MAX_TAGS } from '../src/shared/run-tags.mjs';
+import { parseTag, normaliseTags, hasTag, describeTagChange, parseTagGroupBy, MAX_TAGS } from '../src/shared/run-tags.mjs';
 
 test('normaliseTags trims, lower-cases, sorts and keeps one value per key', () => checkRows([
   { name: 'trim + lower + sort', run: () => assert.deepEqual(normaliseTags(['Client: Acme ', 'spike']), { tags: ['client:acme', 'spike'], errors: [] }) },
@@ -39,4 +39,9 @@ test('hasTag matches a key alone or an exact key:value', () => checkRows([
 test('describeTagChange lists additions then removals', () => {
   assert.equal(describeTagChange(['client:acme'], ['client:globex']), '+client:globex −client:acme');
   assert.equal(describeTagChange(['a'], ['a']), 'no change');
+});
+
+test('parseTagGroupBy: a key after tag:, else null', () => {
+  assert.equal(parseTagGroupBy('tag:client'), 'client');
+  for (const bad of ['tag:', 'tag:Bad Key', 'tag', 'workflow', '', null, undefined, 42]) assert.equal(parseTagGroupBy(bad), null);
 });

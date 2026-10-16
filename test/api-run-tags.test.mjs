@@ -10,7 +10,7 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { graphResumePoint } from './helpers/graph-templates.mjs';
 
-let homeDir, prevHome, srv, base, runs, schedulerTick, _testing, repo;
+let homeDir, prevHome, prevEnv, srv, base, runs, schedulerTick, _testing, repo;
 let getDb, projectKey, readRunTags, readTagEvents, insertRunTags;
 const JSONH = { 'Content-Type': 'application/json' };
 const call = (method, p, b) => fetch(`${base}${p}`, { method, headers: JSONH, ...(b === undefined ? {} : { body: JSON.stringify(b) }) });
@@ -43,6 +43,9 @@ before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'worca-cc-run-tags-'));
   prevHome = process.env.WORCA_HOME;
   process.env.WORCA_HOME = homeDir;
+  // Settings (tag dimensions) live under HOME, not WORCA_HOME: sandbox it so no POST reaches the real ~/.worca-cc.
+  prevEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, WORCA_TEST_ALLOW_HOME_FALLBACK: process.env.WORCA_TEST_ALLOW_HOME_FALLBACK };
+  process.env.HOME = homeDir; process.env.USERPROFILE = homeDir; process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   process.env.WORCA_MOCK = '1';
   const mod = await import('../ui/server.mjs');   // imported ⇒ no port bind, no scheduler timer
   ({ runs, schedulerTick, _testing } = mod);
@@ -60,6 +63,7 @@ after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   delete process.env.WORCA_MOCK;
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
+  for (const [k, v] of Object.entries(prevEnv || {})) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }).catch(() => {});
 });
 
@@ -174,4 +178,14 @@ test('a resumed run\'s live entry carries the run\'s tags', async () => {
   assert.deepEqual(readRunTags(id), ['client:acme']);
   const live = runs.get(runId);
   if (live && !settled.has(String(live.status || ''))) await post('/api/stop', { runId });
+});
+
+test('GET /api/tag-dimensions: none by default, the Settings list after a POST, 400 on a NUL projectDir', async () => {
+  assert.deepEqual(await get('/api/tag-dimensions'), { dims: [] });
+  const saved = await post('/api/settings', { tagDimensions: [{ key: 'cc', label: 'Cost centre' }] });
+  assert.equal(saved.status, 200);
+  try {
+    assert.deepEqual((await get('/api/tag-dimensions')).dims, [{ key: 'cc', label: 'Cost centre', values: [], required: false }]);
+    assert.equal((await fetch(`${base}/api/tag-dimensions?projectDir=%00`)).status, 400);
+  } finally { await post('/api/settings', { tagDimensions: [] }); }
 });

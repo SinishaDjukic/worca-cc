@@ -17,6 +17,7 @@
 
 import { domainError } from '../web-allowlist.mjs';
 import { FIELD_LABELS } from '../../shared/away-mode/labels.mjs';
+import { normaliseDimension, MAX_DIMENSIONS } from '../../shared/tag-dimensions.mjs';
 
 export const POLICY_SCHEMA = 1;
 export const KINDS = Object.freeze(['default', 'soft', 'hard']);
@@ -65,6 +66,7 @@ export const FIELDS = Object.freeze([
   { key: 'run.humanInLoop', group: 'runs', label: 'Human in the loop', help: 'Applies until the project sets its own switch.', type: 'bool', kinds: ['default'] },
   { key: 'metrics.record', group: 'runs', label: 'Record runs to team metrics', help: 'Expected on: the Projects cell hints when "Include my runs" is off.', type: 'bool', kinds: ['soft'] },
   { key: 'worca.minVersion', group: 'runs', label: 'Minimum Worca version', help: 'An older client shows a banner and logs a note.', type: 'semver', kinds: ['soft'] },
+  { key: 'runs.tagDimensions', group: 'runs', label: 'Tag dimensions', help: 'Keys every run is asked for (like a cost centre), with allowed values. Required only warns and is recorded; a run is never blocked.', type: 'tagDimensions', kinds: ['soft'] },
   // Away mode (src/core/night/*): `night: true` makes validateValue run the night leaf's own
   // field rules after the base-type check, so the rules live in one place. Labels: src/shared/away-mode/labels.mjs.
   { key: 'night.enabled', group: 'night', label: FIELD_LABELS.enabled.label, help: FIELD_LABELS.enabled.hint || 'On: All runs. Off: Only runs I marked.', type: 'bool', kinds: ['default'], night: true },
@@ -211,6 +213,19 @@ export function normalizeSkillsRequired(list) {
   });
   return { value, dropped };
 }
+/** Keep the valid `runs.tagDimensions` entries; one "KEY: why" per dropped entry (a bad entry never drops the field). */
+export function normalizeTagDimensions(list) {
+  const value = []; const dropped = [];
+  list.forEach((e, i) => {
+    const { dim, error } = normaliseDimension(e);
+    const why = error
+      || (value.some((x) => x.key === dim.key) ? 'listed twice' : null)
+      || (value.length >= MAX_DIMENSIONS ? `at most ${MAX_DIMENSIONS} tag dimensions` : null);
+    if (why) { dropped.push(`${dim?.key || `entry ${i + 1}`}: ${why}`); return; }
+    value.push(dim);
+  });
+  return { value, dropped };
+}
 /** Did this build read every `skills.required` entry of a doc (the mcpListComplete rule)? An entry it dropped is still
  *  listed by the team: its Team state stays. */
 export function skillsListComplete(warnings = []) {
@@ -282,6 +297,9 @@ function baseError(meta, value) {
     case 'skills':
       if (!Array.isArray(value)) return 'must be a list of { plugin, skill } entries';
       return normalizeSkillsRequired(value).dropped[0] ?? null;
+    case 'tagDimensions':
+      if (!Array.isArray(value)) return 'must be a list of { key, label, values?, required? }';
+      return normalizeTagDimensions(value).dropped[0] ?? null;
     default: return 'unknown field type';
   }
 }
@@ -304,8 +322,9 @@ export function normalizeEntry(key, raw) {
     else if (kind === 'hard' && meta.kinds.includes('default')) { warning = `${key}: hard constraints are not enforced by this version — treated as default`; }
     else return { entry: null, warning: `${key}: kind "${kind}" is not allowed (accepts ${meta.kinds.join(' | ')})` };
   }
-  // mcpServers, skills: a per-entry normalizer — bad entries are dropped one warning each, the rest stays.
-  const perEntry = meta.type === 'mcpServers' ? normalizeMcpRequired : meta.type === 'skills' ? normalizeSkillsRequired : null;
+  // mcpServers, skills, tagDimensions: a per-entry normalizer — bad entries are dropped one warning each, the rest stays.
+  const perEntry = meta.type === 'mcpServers' ? normalizeMcpRequired : meta.type === 'skills' ? normalizeSkillsRequired
+    : meta.type === 'tagDimensions' ? normalizeTagDimensions : null;
   const mcp = perEntry && Array.isArray(raw.value) ? perEntry(raw.value) : null;
   const err = mcp ? null : validateValue(meta, raw.value);
   if (err) return { entry: null, warning: `${key}: ${err}` };

@@ -83,7 +83,7 @@ import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS, tagFilterOptions } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS, tagFilterGroups } from './runs-list.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
 // History list card. They stay EXPORTED
@@ -195,7 +195,7 @@ import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNo
 import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
-import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton, renderPooledBudgetTile } from './team-metrics-view.mjs';
+import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton, renderPooledBudgetTile, renderTagFilterSelect } from './team-metrics-view.mjs';
 // Team policy (team-policy design §11): the Projects cell, the enable dialog, the page (read +
 // edit), the workspace line, the Settings readout, the New pipeline notes, the Plugins strip.
 import {
@@ -205,7 +205,7 @@ import {
   renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel, renderMcpStrip, renderMcpConsent, handleTeamSkillClick,
 } from './team-policy-view.mjs';
 import { mcpRunsLabel, renderMcpRunsPop, renderRunSkills } from './mcp-run-picker.mjs';
-import { aggregate, toCsv } from '../../src/shared/team-metrics/aggregate.mjs';
+import { aggregate, toCsv, recordTags } from '../../src/shared/team-metrics/aggregate.mjs';
 import { buildWorkItems, prLookupFor } from '../../src/shared/team-metrics/timeline.mjs';
 import { renderTimeline, renderTimelinePopover, timelineWindow, shiftAnchor, TL_MODES, TL_ZOOMS } from './team-metrics-timeline.mjs';
 import {
@@ -228,7 +228,9 @@ import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/a
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, decorateFlagChips, flagOn } from './flags.mjs';
-import { createTagInput, tagChip, fetchTagVocabulary } from './tag-input.mjs';
+import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor } from './tag-input.mjs';
+import { normaliseTags, formatTag } from '../../src/shared/run-tags.mjs';
+import { missingRequired, splitByDimensions, tagGroupOptions, dimensionLabel } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
@@ -254,6 +256,25 @@ const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader()
 function testHookInt(name, fallback) {
   const v = window.__worcaTestHooks?.[name];
   return Number.isInteger(v) && v > 0 ? v : fallback;
+}
+
+// Machine-wide tag dimensions (GET /api/tag-dimensions with no target): one cached loader (15 s with an
+// in-flight dedupe, like loadTpScopes), shared by Statistics, the Runs list and Team metrics. Declared
+// up here, above any paint that can run during module evaluation.
+let allTagDimsCache = null;
+let allTagDimsInflight = null;
+function loadAllTagDims() {
+  if (allTagDimsCache && Date.now() - allTagDimsCache.at < 15_000) return Promise.resolve(allTagDimsCache.dims);
+  if (allTagDimsInflight) return allTagDimsInflight;
+  allTagDimsInflight = (async () => {
+    let dims = [];
+    try { const r = await fetch('/api/tag-dimensions'); dims = r.ok ? ((await safeJson(r))?.dims || []) : []; } catch {}
+    if (!Array.isArray(dims)) dims = [];
+    allTagDimsCache = { at: Date.now(), dims };
+    allTagDimsInflight = null;
+    return dims;
+  })();
+  return allTagDimsInflight;
 }
 
 // One markdown pipeline for the whole page — Ask answers AND diff-comment bodies
@@ -4243,18 +4264,65 @@ function paintEngineHints() {
 // project's default tags; once the person edits it, later project changes leave it alone.
 const runTagInput = createTagInput(document, { suggest: fetchTagVocabulary });
 document.getElementById('runTagsField')?.appendChild(runTagInput.el);
+// Tag dimensions (slice 3): one slot per configured key above the free-form field. The slots own the
+// dimension keys; the free-form field keeps every other key. Required only warns, never blocks.
+let runTagDims = createDimensionSlots(document, []);
+document.getElementById('runTagDimsField')?.appendChild(runTagDims.el);
+state.tagDims = { source: null, home: null, dims: [] };
+
+function paintRunTagDimsWarn() {
+  const warn = document.getElementById('runTagDimsWarn');
+  if (!warn) return;
+  const missing = flagOn('runTags') ? missingRequired(state.tagDims.dims, [...runTagInput.get(), ...runTagDims.get()]) : [];
+  warn.hidden = !missing.length;
+  warn.textContent = missing.length
+    ? `${missing.map((d) => d.label).join(', ')} ${missing.length > 1 ? 'are' : 'is'} required${state.tagDims.source === 'policy' ? ' by team policy' : ''}. You can still start the run; it will be recorded.`
+    : '';
+}
+/** Rebuild the slots for a new target. Painted whatever the flag: the .run-tags-field CSS gate hides it when runTags is off. */
+function paintRunTagDims(info, tags) {
+  state.tagDims = info && Array.isArray(info.dims) ? info : { source: null, home: null, dims: [] };
+  const dims = state.tagDims.dims;
+  const typed = runTagDims.dirty() ? runTagDims.get() : [];          // keep what the user typed into a slot
+  const next = createDimensionSlots(document, dims, { value: [...tags, ...typed] });
+  next.onChange(paintRunTagDimsWarn);
+  runTagDims.el.replaceWith(next.el);
+  runTagDims = next;
+  const host = document.getElementById('runTagDimsField');
+  if (host) host.hidden = !dims.length;
+  paintRunTagDimsWarn();
+}
+runTagInput.onChange(paintRunTagDimsWarn);
+
+// Fetch the current target's dimensions and repaint. Its own generation counter, so a workspace
+// switch does not have to re-run loadRunDefaults (and its engine defaults).
+let runTagDimsGen = 0;
+async function refreshRunTagDims() {
+  const gen = ++runTagDimsGen;
+  // No target yet → no slots. Never fall back to the bare GET: that is the machine-wide union (D9).
+  const q = state.runTarget === 'workspace'
+    ? (state.selectedWorkspaceId ? `?workspaceId=${encodeURIComponent(state.selectedWorkspaceId)}` : null)
+    : (state.projectDir ? `?projectDir=${encodeURIComponent(state.projectDir)}` : null);
+  let info = null;
+  if (q) { try { const r = await fetch(`/api/tag-dimensions${q}`); info = r.ok ? await safeJson(r) : null; } catch {} }
+  if (gen !== runTagDimsGen) return;
+  const { slots, rest } = splitByDimensions(state.runTagDefaults || [], info?.dims || []);
+  if (!runTagInput.dirty()) runTagInput.set(rest);
+  paintRunTagDims(info, Object.entries(slots).map(([key, value]) => formatTag({ key, value })));
+}
 document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (e) => {
   const btn = e.currentTarget;
   const key = state.runTagsProjectKey;
   if (!key) return;
   const label = 'Save as project default';
   let msg = 'Saved';
+  const tags = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;   // the dimension slots too
   try {
     const res = await fetch(`/api/projects/${encodeURIComponent(key)}/tags/defaults`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tags: runTagInput.get() }),
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tags }),
     });
     const data = await safeJson(res);
-    if (res.ok) state.runTagDefaults = (data && data.tags) || runTagInput.get();
+    if (res.ok) state.runTagDefaults = (data && data.tags) || tags;
     else msg = (data && data.error) || `Could not save (HTTP ${res.status})`;
   } catch (err) { msg = err && err.message ? err.message : 'Could not save'; }
   btn.textContent = msg;
@@ -4279,6 +4347,7 @@ async function loadRunDefaults(projectDir) {
   // The rows show the slot defaults: repaint them only when those changed (setRunEngine repaints
   // on an engine change itself). An idle repaint re-arms the policy/MCP preview debounce.
   if (JSON.stringify(state.runDefaults?.steps ?? null) !== prevSteps) void renderWorkflowConfig(state.workflowId);
+  await refreshRunTagDims();
 }
 
 /** The gate's 409 under the form, with the consent when it lifts the refusal; null clears
@@ -6661,7 +6730,12 @@ function clearTask(submitted) {
   if (!sameTask(snapshotTask(), submitted)) return;
   lastTask = submitted;
   setTask({ title: '', prompt: '', markdown: '', mdFileName: '', extras: [] });
-  runTagInput.set(state.runTagDefaults || [], { clearText: true });   // #718: the next run starts from the project's defaults again
+  { // #718: the next run starts from the project's defaults again, the dimension keys in their slots
+    const { slots, rest } = splitByDimensions(state.runTagDefaults || [], state.tagDims.dims);
+    runTagInput.set(rest, { clearText: true });
+    runTagDims.set(Object.entries(slots).map(([key, value]) => formatTag({ key, value })));
+    paintRunTagDimsWarn();
+  }
   el.reuseTask.hidden = false;
 }
 el.reuseTaskBtn.addEventListener('click', () => {
@@ -8245,6 +8319,8 @@ async function ensureWorkspaceOptions({ keepMembers = false } = {}) {
     state.selectedWorkspaceId = '';
     placeholder.selected = true;
   }
+  // The select is filled without a change event: the tag-dimension slots follow the restored workspace.
+  if (state.runTarget === 'workspace') void refreshRunTagDims();
   // A background list refresh (keepMembers) leaves a still-selected workspace's member rows and
   // branch picks alone; only a changed selection repaints them.
   if (keepMembers && state.selectedWorkspaceId && state.selectedWorkspaceId === shown) return;
@@ -8268,6 +8344,7 @@ if (el.workspaceSelect) {
     renderWorkspaceMembers();
     renderWorkspaceSourceBranches();
     schedulePolicyLine();                   // team policy notes for the new target (design board 8)
+    if (state.runTarget === 'workspace') void refreshRunTagDims();
     // Same as onProjectChanged: a workspace has its own binding (or inherits
     // one from its members), so the resolved profile can differ.
     if (state.activePluginSource && state.activePluginSource.multiProfile) {
@@ -13210,8 +13287,12 @@ el.form.addEventListener('submit', async (e) => {
     // to be Claude (a failed or stale defaults read must not let the server pick a Codex default).
     engine: state.engine !== 'claude' ? state.engine : (state.runDefaults?.engine?.value === 'claude' ? undefined : 'claude'),
     allowUnguardedEngine: state.engine !== 'claude' && el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
-    // Run tags (#718): omitted when empty, so a legacy body stays byte-identical.
-    tags: flagOn('runTags') && runTagInput.get().length ? runTagInput.get() : undefined,
+    // Run tags (#718): omitted when empty, so a legacy body stays byte-identical. A slot wins its key.
+    tags: (() => {
+      if (!flagOn('runTags')) return undefined;
+      const all = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
+      return all.length ? all : undefined;
+    })(),
   };
   // Run on the source branch: a flag on the wire, never a feature name (the run auto-names its hidden branch).
   if (el.sameAsSource && el.sameAsSource.checked) { body.sameAsSource = true; delete body.featureBranch; }
@@ -13291,6 +13372,9 @@ el.form.addEventListener('submit', async (e) => {
     return { ok: false };
   };
   const submittedTask = snapshotTask();   // #687: cleared once the server accepts it
+  // Tag dimensions: a required key left empty still starts the run; the toast says it is recorded.
+  const missingTagDims = flagOn('runTags') ? missingRequired(state.tagDims.dims, body.tags || []) : [];
+  const missingTagText = missingTagDims.length ? `Missing required tag: ${missingTagDims.map((d) => d.label).join(', ')} (recorded on the run).` : '';
 
   await withButton(el.startBtn, async () => {
     // Guard the whole in-flight window: applyBudgetToNewView also drives
@@ -13365,7 +13449,7 @@ el.form.addEventListener('submit', async (e) => {
         clearTask(submittedTask);
         // Keep the warn tone when the server attached a budget warning. showView('schedules')
         // already shows the ticket, so the toast needs no Open action.
-        notify({ tone: data.budgetWarning ? 'warn' : 'ok', title: 'Scheduled', detail: data.budgetWarning || title || '' });
+        notify({ tone: data.budgetWarning || missingTagText ? 'warn' : 'ok', title: 'Scheduled', detail: [data.budgetWarning, missingTagText].filter(Boolean).join(' ') || title || '' });
         showView('schedules');
         return { ok: true };
       }
@@ -13380,7 +13464,7 @@ el.form.addEventListener('submit', async (e) => {
       showEngineRefusal(null);
       clearTask(submittedTask);
       // D6: the user is on the run's page now, so the result is a toast, not a #form-msg line.
-      notify({ tone: 'ok', title: 'Run started', detail: title || '', key: `run-${data.runId}`,
+      notify({ tone: missingTagText ? 'warn' : 'ok', title: 'Run started', detail: missingTagText || title || '', key: `run-${data.runId}`,
         action: { label: 'Open run', run: () => { location.hash = rdHash(data.runId); } } });
       if (extras.length) {
         appendLog({
@@ -13718,6 +13802,7 @@ async function loadSettings() {
     paintBudgetSettings(data);
     paintAskSettings(data);
     paintScheduleSettings(data);
+    paintTagDimsSettings(data);
     paintNightSettings(data);
     paintSyncSettings(data);
     paintActionsSettings(data);
@@ -14450,6 +14535,18 @@ document.getElementById('schedIfMissed')?.addEventListener('change', (e) => {
   const grace = document.getElementById('schedGraceMin');
   if (grace) grace.disabled = e.target.value !== 'run';
 });
+
+// Settings › Runs › Tag dimensions: the local list (a run target's team policy list wins over it).
+const tagDimsEditor = createDimensionEditor(document, { value: [] });
+document.getElementById('tagDimsEditor')?.appendChild(tagDimsEditor.el);
+function paintTagDimsSettings(data) {
+  tagDimsEditor.set(Array.isArray(data?.tagDimensions) ? data.tagDimensions : []);
+  settingsCardPainted('tagDimsSave');
+}
+const tagDimsCard = () => document.getElementById('tag-dims-settings-card');
+document.getElementById('tagDimsSave')?.addEventListener('click', (e) => postSettingsCard({ tagDimensions: tagDimsEditor.get() },
+  { card: tagDimsCard(), button: e.currentTarget, paint: (d) => { paintTagDimsSettings(d); allTagDimsCache = null; }, dirty: settingsCardDirty('tagDimsSave') }));
+settingsCardDirty('tagDimsSave');
 
 // Settings › Runs › Sync before run (#527): the instance defaults every project inherits.
 function paintSyncSettings(data) {
@@ -17631,11 +17728,13 @@ async function paintStatsGroupOptions() {
   const sel = document.getElementById('stats-group');
   // /api/tags → { keys: [{ key, count, plain, valued }], values } (run-tags-store.mjs tagVocabulary)
   const keys = flagOn('runTags') ? ((await fetchTagVocabulary())?.keys || []).map((k) => k.key) : [];
-  const sig = keys.join('\u0000');
+  // Configured tag dimensions come first, by label ("Group by Cost centre"); none configured = slice 2's list.
+  const dims = flagOn('runTags') ? await loadAllTagDims() : [];
+  const sig = JSON.stringify([keys, dims.map((d) => [d.key, d.label])]);
   if (sel.dataset.sig === sig) return;
   sel.dataset.sig = sig;
   sel.replaceChildren(statsOption('No grouping', ''), statsOption('Group by person', 'person'),
-    ...keys.map((k) => statsOption(`Group by tag: ${k}`, `tag:${k}`)));
+    ...tagGroupOptions(dims, keys).map((o) => statsOption(o.text, o.value)));
   sel.value = statsState.groupBy;
   if (sel.value !== statsState.groupBy) statsState.groupBy = '';   // a key that vanished
 }
@@ -17692,6 +17791,12 @@ async function loadStatsView() {
     body.replaceChildren(Object.assign(document.createElement('small'),
       { className: 'hint err', textContent: data.error || `HTTP ${res.status}` }));
     return;
+  }
+  // A configured dimension's label names the groups card, its table header and the CSV's first column
+  // ("Cost centre", not "cc"), with no change to stats-view.mjs.
+  if (data.groups && statsState.groupBy?.startsWith('tag:')) {
+    const label = dimensionLabel(allTagDimsCache?.dims || [], statsState.groupBy.slice(4));
+    if (label) data.groups = { ...data.groups, label };
   }
   statsState.last = data;                               // the export reads the rows on screen
   paintStatsPeople(data.people);
@@ -19264,6 +19369,7 @@ const tmState = {
   scopeId: localStorage.getItem('worca.teamMetrics.scope') || '',
   range: 'this-month', from: '', to: '', groupBy: 'workflow',
   filter: {}, sort: {}, data: null, loading: false, loadSeq: 0,
+  tag: '', dims: [],                // run tags: the #tm-tag filter, and the configured dimensions (labels)
   runLimit: TM_RUN_PAGE,            // raised by "Show all N runs" (§4.9 "every record in range")
   cache: new Map(),                 // scopeId → last payload this session: switching back paints at once
   tab: 'overview',                  // 'overview' | 'timeline' — the hash param (#team-metrics/timeline)
@@ -19308,6 +19414,8 @@ async function loadTeamMetricsView({ refresh = false } = {}) {
   // of index.html) must not throw out of the loader the way an unguarded chip.hidden would.
   if (!body || !chip || !scopeSel) return;
   const seq = ++tmState.loadSeq;
+  // Dimension labels for the tag group-by: repaint as soon as the list arrives, not only on the next render.
+  if (flagOn('runTags')) loadAllTagDims().then((d) => { tmState.dims = d; if (tmState.data && tmState.tab === 'overview') renderTeamMetrics(); });
   body.classList.add('is-loading');
   body.setAttribute('aria-busy', 'true');
   setTmChipBusy(true);
@@ -19418,6 +19526,8 @@ function applyTmTab() {
   if (custom) custom.hidden = tl || tmState.range !== 'custom';
   const chips = document.getElementById('tm-filters');
   if (chips && tl) chips.hidden = true;
+  const tagSel = document.getElementById('tm-tag');
+  if (tagSel && tl) tagSel.hidden = true;
   // No data yet (skeleton, empty state, an error): #tm-body says so on either tab.
   const showTl = tl && !!tmState.data;
   const body = document.getElementById('tm-body');
@@ -19559,9 +19669,15 @@ function renderTeamMetrics() {
   const body = document.getElementById('tm-body');
   const data = tmState.data;
   if (!body || !data) return;
+  // Run tags: the keys and tags on the loaded records; a group-by or tag filter they no longer carry falls back.
+  const tagsOn = flagOn('runTags');
+  const loadedTags = tagsOn ? [...new Set((data.records || []).flatMap(recordTags))] : [];
+  const tagKeys = [...new Set(loadedTags.map((t) => t.split(':')[0]))].sort();
+  if (tmState.groupBy.startsWith('tag:') && !tagKeys.includes(tmState.groupBy.slice(4))) tmState.groupBy = 'workflow';
+  if (tmState.tag && !loadedTags.includes(tmState.tag)) tmState.tag = '';
   let agg;
   try {
-    agg = aggregate(data.records, { range: tmState.range, from: tmState.from || null, to: tmState.to || null, groupBy: tmState.groupBy, filter: tmState.filter, now: Date.now(), humanRateUsd: data.humanRateUsd ?? 0 });
+    agg = aggregate(data.records, { range: tmState.range, from: tmState.from || null, to: tmState.to || null, groupBy: tmState.groupBy, filter: { ...tmState.filter, ...(tmState.tag ? { tags: [tmState.tag] } : {}) }, now: Date.now(), humanRateUsd: data.humanRateUsd ?? 0 });
   } catch (err) {
     body.classList.remove('is-loading');
     body.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint err', textContent: err.message }));
@@ -19576,12 +19692,17 @@ function renderTeamMetrics() {
       ` · records from ${(data.scope.sources || []).length} member repositor${(data.scope.sources || []).length === 1 ? 'y' : 'ies'}, grouped by workspace name`);
   }
   body.classList.remove('is-loading');
-  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit }));
+  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims }));
   tmState.lastAgg = agg;
+  // The #tm-tag select, beside the range controls (replaced on every render; hidden with the flag off).
+  const tagSel = renderTagFilterSelect(tagsOn ? data.records || [] : [], tmState.tag, { doc: document });
+  if (tmState.tab === 'timeline') tagSel.hidden = true;
+  const oldTag = document.getElementById('tm-tag');
+  oldTag?.replaceWith(tagSel);
   void paintPooledBudgetTile(tmState.scopeId, data.records || []);   // team policy (design board 10): advisory tile, when the scope's policy sets one
   const chips = document.getElementById('tm-filters');
   const active = Object.entries(tmState.filter).filter(([, v]) => v != null);
-  chips.hidden = !active.length;
+  chips.hidden = !(active.length || tmState.tag);
   chips.replaceChildren(...active.map(([dim, key]) => {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'chip tm-filter-chip'; b.dataset.dim = dim;
@@ -19590,6 +19711,12 @@ function renderTeamMetrics() {
     b.textContent = `${dim}: ${row ? row.label : key === '__none__' ? 'none' : key} ×`;
     return b;
   }));
+  if (tmState.tag) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip tm-filter-chip'; b.dataset.dim = 'tag';
+    b.textContent = `tag: ${tmState.tag} ×`;
+    chips.append(b);
+  }
 }
 
 // Delegated events on the view section.
@@ -19607,6 +19734,7 @@ if (tmSection) {
     if (e.target.id === 'tm-scope') {
       tmState.scopeId = e.target.value;
       tmState.filter = {};
+      tmState.tag = '';
       tmState.sort = {};                                  // column sorts belong to the old scope's rows
       tmState.runLimit = TM_RUN_PAGE;                     // a new scope starts capped again
       tmState.data = null; tmState.lastAgg = null;        // never render the old scope under the new name
@@ -19615,6 +19743,7 @@ if (tmSection) {
       loadTeamMetricsView();
     }
     else if (e.target.id === 'tm-group') { tmState.groupBy = e.target.value; renderTeamMetrics(); }
+    else if (e.target.id === 'tm-tag') { tmState.tag = e.target.value; renderTeamMetrics(); }
     else if (e.target.id === 'tm-from' || e.target.id === 'tm-to') { tmState[e.target.id === 'tm-from' ? 'from' : 'to'] = e.target.value; if (tmState.from && tmState.to) renderTeamMetrics(); }
   });
   tmSection.addEventListener('click', async (e) => {
@@ -19649,7 +19778,11 @@ if (tmSection) {
     }
     if (e.target.closest('.tm-show-all')) { tmState.runLimit = Infinity; return renderTeamMetrics(); }
     const chipBtn = e.target.closest('.tm-filter-chip');
-    if (chipBtn) { tmState.filter = { ...tmState.filter, [chipBtn.dataset.dim]: null }; return renderTeamMetrics(); }
+    if (chipBtn) {
+      if (chipBtn.dataset.dim === 'tag') tmState.tag = '';
+      else tmState.filter = { ...tmState.filter, [chipBtn.dataset.dim]: null };
+      return renderTeamMetrics();
+    }
     if (e.target.closest('.tm-export')) {
       const csv = toCsv(tmState.lastAgg ? tmState.lastAgg.runs : []);
       const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
@@ -29482,17 +29615,24 @@ function paintRunsList() {
     if (g && typeof g.scrollIntoView === 'function') g.scrollIntoView({ block: 'start' });
   }
 }
-// The Runs list tag filter (#718): every distinct tag on the loaded rows. A chosen tag that is no
-// longer listed falls back to "All tags".
+// The Runs list tag filter (#718): every distinct tag on the loaded rows, a configured dimension's
+// tags in an optgroup of their own. A chosen tag that is no longer listed falls back to "All tags".
+// Synchronous: it reads the dimension cache and refreshes it when stale.
 function paintRunsTagFilter(items) {
   const sel = document.getElementById('runs-tag');
   if (!sel) return;
-  const opts = tagFilterOptions(items);
+  const dims = flagOn('runTags') ? (allTagDimsCache?.dims || []) : [];
+  if (flagOn('runTags') && (!allTagDimsCache || Date.now() - allTagDimsCache.at >= 15_000) && !allTagDimsInflight) {
+    loadAllTagDims().then(() => paintRunsList()).catch(() => {});
+  }
+  const { groups, rest } = tagFilterGroups(items, dims);
+  const opts = [...groups.flatMap((g) => [g.any, ...g.tags]), ...rest];
   if (runsUi.tag && !opts.includes(runsUi.tag)) runsUi.tag = '';
-  const sig = JSON.stringify(opts);
+  const sig = JSON.stringify([groups, rest]);
   if (sel.dataset.sig !== sig) {
     sel.dataset.sig = sig;
-    sel.replaceChildren(option('', 'All tags'), ...opts.map((t) => option(t, t)));
+    const group = (g) => { const og = document.createElement('optgroup'); og.label = g.label; og.append(option(g.any, `${g.label}: any`), ...g.tags.map((t) => option(t, t))); return og; };
+    sel.replaceChildren(option('', 'All tags'), ...groups.map(group), ...rest.map((t) => option(t, t)));
   }
   sel.value = runsUi.tag;
 }

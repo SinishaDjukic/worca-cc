@@ -42,6 +42,7 @@ No run is ever blocked by a policy. The two Ask Worca web fields are the excepti
 | Required skills (`skills.required`) | plugin skills each developer turns on with consent; they join the **Team** set ([below](#skills-required-plugin-skills)); never in `workspaceRuns` | soft |
 | Default workflow, human in the loop | when the project has no active workflow / switch of its own | default |
 | Record runs to team metrics, minimum Worca version | a hint when "Include my runs" is off; a banner on an older client | soft |
+| Tag dimensions (`runs.tagDimensions`) | up to 10 `{ key, label, values?, required? }` run-tag keys: one New run slot each, with the allowed values as suggestions; a required key the run does not carry records a `tag-missing:cc` finding (a warning, never a block). Without it, the developer's Settings › Runs › Tag dimensions apply | soft |
 | Catalogs: guardrail sets, models | distributed as read-only rows with a **policy** badge; model env may use `${VAR}` indirection only — secrets never go on the branch | — |
 
 A document may also carry a **`workspaceRuns`** block: the same fields, applied instead of the
