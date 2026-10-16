@@ -142,6 +142,9 @@ test('checkLine and unmetLine name the count and the short check names', () => {
   assert.equal(checkLine({ passed: 8, total: 8, items: [] }), 'Shape 8/8');
   assert.equal(unmetLine({ items: [{ id: 'paths', pass: false }] }), '1 check unmet: paths');
   assert.equal(unmetLine({ items: [] }), '');
+  assert.equal(checkLine({ passed: 4, total: 5, items: [{ pass: false }] }, 'Outline'), 'Outline 4/5 · 1 to fix');
+  assert.equal(checkLine({ passed: 5, total: 5, items: [] }, 'Outline'), 'Outline 5/5');
+  assert.equal(checkLine(null, 'Outline'), 'Outline check');
 });
 
 test('fixAllFeedback: one failure equals fixFeedback; several are listed', () => {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX, OUTLINE_EDITS_MAX, SLICE_IDS, SLICE_LABELS, FLAT_NOTE,
   normalizeOutline, checkSlices, normalizeEdits, applyOutlineEdits,
-  outlineMarkdown, slicingBlock, outlineFixFeedback, outlineFeedbackBlock, sliceScopeBlock, sliceBrief, replanBrief, changelogWithFeature,
+  outlineMarkdown, slicingBlock, outlineFixFeedback, outlineFixAllFeedback, outlineFeedbackBlock, sliceScopeBlock, sliceBrief, replanBrief, changelogWithFeature,
 } from '../src/shared/shape/slices.mjs';
 import { checkShape, isTestable } from '../src/shared/shape/shape.mjs';
 import { wellShapedPlan } from './helpers/shape-plan.mjs';
@@ -287,4 +287,17 @@ test('changelogWithFeature (D25): one entry per feature at the top of ## Unrelea
   assert.equal(changelogWithFeature('# Changelog', T), '# Changelog\n\n## Unreleased\n\n### T\n\n- A: x.\n', 'one heading, not two');
   assert.equal(changelogWithFeature('', { title: 'T', slices: [{ title: 'A', summary: '' }, { title: 'B' }] }),
     '# Changelog\n\n## Unreleased\n\n### T\n\n- A\n- B\n');
+});
+
+test('outlineFixAllFeedback: one failure reads as outlineFixFeedback; several are listed, naming the outline', () => {
+  const a = { label: SLICE_LABELS.order, detail: 's1 depends on s2', pass: false };
+  const b = { label: SLICE_LABELS.notTiny, detail: '', pass: false };
+  const ok = { label: SLICE_LABELS.count, pass: true };
+  assert.equal(outlineFixAllFeedback([ok, a]), outlineFixFeedback(a));
+  const t = outlineFixAllFeedback([a, ok, b]);
+  assert.match(t, /^The outline check fails 2 checks:\n/);
+  assert.ok(t.includes(`- "${SLICE_LABELS.order}": s1 depends on s2\n`));
+  assert.ok(t.includes(`- "${SLICE_LABELS.notTiny}"\n`));
+  assert.match(t, /Rewrite the outline so these checks pass\.$/);
+  assert.doesNotMatch(t, /Fix the plan/);
 });

@@ -192,6 +192,14 @@ export function outlineFixFeedback(item) {
   return `The outline check fails "${item.label}"${item.detail ? `: ${item.detail}` : ''}. Rewrite the outline so this check passes.`;
 }
 
+/** The outline card's one Fix all (D32); a single failure reads as outlineFixFeedback, so it posts what Fix posted. */
+export function outlineFixAllFeedback(items) {
+  const bad = (Array.isArray(items) ? items : []).filter((it) => it && !it.pass);
+  if (bad.length === 1) return outlineFixFeedback(bad[0]);
+  return `The outline check fails ${bad.length} checks:\n${bad.map((it) => `- "${it.label}"${it.detail ? `: ${it.detail}` : ''}`).join('\n')}\n`
+    + 'Rewrite the outline so these checks pass.';
+}
+
 export function outlineFeedbackBlock(feedback) {
   return '## Changes asked for the outline\n\n'
     + 'The person reviewing your outline asked for these changes. Rewrite the outline file and STOP again; do not '

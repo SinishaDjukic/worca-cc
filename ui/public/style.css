@@ -9377,6 +9377,20 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 /* D30: while a shaped run waits on the person, Results / How it ran and the graph fold under "Run details ›" */
 .rd-wait-more{align-self:flex-start;padding:4px 10px;font-size:12.5px;color:var(--ink-2);}
 .rd-glance[data-shaper-wait]:not([data-wait-open]) :is(.rd-result,.rd-live,.rd-live-row){display:none;}
+/* D30, D33: while a shaped run waits on the person, the card says what is needed; the status panel is one line —
+   the stage words and "Run details ›" — with no "Waiting for you" of its own. Run details › (data-wait-open) and
+   the run working again bring today's panel back. */
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 16px;padding:10px 16px;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > :is(.rd-facts,.rd-nowlist,.rd-pr-box){display:none;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > :is(.rd-banners,.rd-away-note){flex-basis:100%;margin:0;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-sheet-head{display:flex;flex:1 1 auto;min-width:0;flex-wrap:wrap;align-items:center;gap:6px 16px;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-sheet-head > :is(.rd-now-top,.rd-prog-chain){display:none;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-sheet-head > .rd-slice-line{flex-basis:100%;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-prog{margin-top:0;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-prog[data-mode="stages"] > .run-prog-track{display:none;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-prog:focus-visible{outline:2px solid var(--blue-line);outline-offset:2px;border-radius:4px;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-prog .run-prog-marks{display:flex;gap:12px;margin-top:0;font-size:12px;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > .rd-wait-more{align-self:center;}
 .chat-rc-shaped{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:8px;font-size:12px;color:var(--ink-2);}
 .chat-rc-shaped:empty{display:none;}
 .chat-rc-shaped-stages{color:var(--green-ink);font-weight:500;}
@@ -9422,6 +9436,13 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .outline-approve-each{display:flex;align-items:center;gap:6px;color:var(--ink-2);cursor:pointer;}
 .outline-undo{align-self:flex-start;}
 .outline-undo[hidden]{display:none;}
+/* D30–D32: the slice outline as a decision card (outline-body.mjs renderCard); plan-card classes do the rest. */
+.plan-card .outline-slices{gap:4px;}
+.plan-card .outline-slice{gap:2px;padding:6px 10px;}
+.plan-card .outline-goal{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.outline-under{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;font-size:12px;}
+.outline-under .outline-approve-each{font-size:12px;}
+.outline-under .outline-edit{font-size:12px;}
 .chat-rc-feature{margin:8px 0;}
 .chat-rc-feature[hidden]{display:none;}
 .shape-feature{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;}
