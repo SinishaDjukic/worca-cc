@@ -184,7 +184,7 @@ jobs:
 
   cdp:
     # Three runners, ~1/3 of the proofs each. Each script mints its own WORCA_HOME, its own
-    # git project, an ephemeral server port and a distinct CDP port (9333-9342), so the
+    # git project, an ephemeral server port and a distinct CDP port (9333-9343), so the
     # groups share nothing even if two ever ran on one machine.
     name: headless-Chrome UI proofs (${{ matrix.group }})
     runs-on: ubuntu-latest
@@ -197,8 +197,8 @@ jobs:
             proofs: "verify:composer verify:run-monitor"
           - group: theme + memory + scripts
             proofs: "verify:theme verify:memory verify:scripts"
-          - group: ask-forms + workspace-map
-            proofs: "verify:ask-forms verify:workspace-map"
+          - group: ask-forms + workspace-map + flags
+            proofs: "verify:ask-forms verify:workspace-map verify:flags"
     steps:
       - uses: actions/checkout@v6
 

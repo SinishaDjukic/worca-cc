@@ -29,7 +29,7 @@ after(async () => {
 });
 const post = (path, body) => fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const stored = async () => { try { return JSON.parse(await readFile(settingsFile(), 'utf8')).uiLevel; } catch { return undefined; } };
-const shellLevel = async () => ((await (await fetch(`${base}/`)).text()).match(/<html lang="en" data-theme="\w+" data-level="(\w+)">/) || [])[1];
+const shellLevel = async () => ((await (await fetch(`${base}/`)).text()).match(/<html lang="en" data-theme="\w+" data-level="(\w+)"/) || [])[1];
 
 test('fresh install: shell + GET /api/settings say simple with nothing stored; adding the first project pins simple', async () => {
   await checkRows([

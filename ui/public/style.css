@@ -642,6 +642,25 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .switch.disabled{opacity:.5;cursor:not-allowed;}
 .switch-row .txt{font-weight:500;}
 
+/* Feature flags (docs/feature-flags.md): the Experimental / Beta chip a flagged element wears (D9),
+   and the Settings › Experimental rows (D8). The gates themselves live in <style id="flag-gates">. */
+.flag-chip{display:inline-flex;align-items:center;margin-left:6px;padding:2px 8px;border-radius:999px;
+  font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;text-decoration:none;
+  background:var(--violet-bg);color:var(--violet-ink);vertical-align:middle;}
+.flag-chip-beta{background:var(--blue-bg);color:var(--blue-ink-strong);}   /* --blue-ink is 3.6:1 on --blue-bg at this size (:1016) */
+.flag-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.flags-warn{margin:0 0 12px;padding:10px 12px;border-radius:10px;background:var(--amber-bg);color:var(--amber-ink);font-weight:500;}
+.flags-host{display:flex;flex-direction:column;}
+.flag-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:14px 0;border-top:1px solid var(--line);}
+.flag-row:first-child{border-top:0;}
+.flag-row-target{background:var(--field);border-radius:10px;padding-left:10px;padding-right:10px;}
+.flag-row-title{font-weight:600;display:flex;align-items:center;gap:8px;}
+.flag-row-desc{margin:4px 0 0;color:var(--ink-2);}
+.flag-row-lock{margin:4px 0 0;color:var(--ink-3);font-size:12px;}
+.flag-row-docs{display:inline-block;margin-top:4px;font-size:12px;}
+.flag-stage-experimental{background:var(--violet-bg);color:var(--violet-ink);}
+.flag-stage-beta{background:var(--blue-bg);color:var(--blue-ink-strong);}
+
 /* ---------- buttons ---------- */
 .actions{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:22px;}
 .btn-ghost{background:var(--surface);border:1.5px solid var(--line-2);color:var(--ink);font-family:inherit;
