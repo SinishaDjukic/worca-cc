@@ -42,7 +42,7 @@ needed (§3.8).
 | D5 | **The planner writes for the perspectives.** The run request carries `shape: { perspectives: [...] }`. The planner's prompt (`buildAgentPrompt`, `src/core/graph/executor.mjs:482`) gains a **Perspectives** block: the sections each picked perspective owns, and "end each section that makes claims with a `### Checklist` of 1–8 `- [ ] R-<p>-<n>` items, one verifiable statement each". Refine checks them too. Runs without `shape` are unchanged. |
 | D6 | **Shape check and grounding marks, deterministic.** Ported from Spec Builder (`shape.mjs`, `grounding.mjs`): sections present, testable criteria, decisions decided, repo paths found or marked `(new)`, tests named, no placeholders, checklists present, grounded (at least 3 found paths for a medium or large task). It runs on the plan before the approval stop and its result rides on the `plan` ask. The plan card shows it (screen 4). **Fix** is a `revise` answer naming the failing checks. A failing check doesn't block **Run this plan**; the button reads **Run anyway**. |
 | D7 | **Checklists travel into review.** Spec Builder's V14–V16, unchanged in substance: the reviewer's task header lists every `R-…` item. The reviewer's JSON gains `checklist: [{ id, status: met \| unmet \| na, evidence }]`. An `unmet` item, or a `met` one without evidence, becomes a **major** issue through the existing `hasBlocking` path. A review that omits `checklist` when the plan had items counts as one major issue. The run page shows a **Perspective checklists** group per review cycle. The PR description Worca writes ends with the ticked list and its evidence. |
-| D8 | **When Chat offers it.** Three ways in, one flow: <ul><li>**The intent chip "Plan it with me"** in the Chat composer (screen 1), next to New run;</li><li>**the nudge on a run proposal** (screen 2): when `propose_run` would start a task that is thin (the Auto classifier's `taskKind` is `prompt` and it finds open decisions) or large (`size: large`), the card shows **Shape it first** next to **Run as is**, with each one's estimate from the existing estimator;</li><li>**New run** (screen 6): one link under the Markdown source, "Not sure what to build yet? Plan it with me in Chat →". New run gets no new task source.</li></ul>A small, clear task gets the normal run card with no nudge. |
+| D8 | **When Chat offers it.** Three ways in, one flow: <ul><li>**The intent chip "Shaper"** in the Chat composer (screen 1), next to New run;</li><li>**the nudge on a run proposal** (screen 2): when `propose_run` would start a task that is thin (the Auto classifier's `taskKind` is `prompt` and it finds open decisions) or large (`size: large`), the card shows **Shape it first** next to **Run as is**, with each one's estimate from the existing estimator;</li><li>**New run** (screen 6): one link under the Markdown source, "Not sure what to build yet? Shaper in Chat →". New run gets no new task source.</li></ul>A small, clear task gets the normal run card with no nudge. |
 | D9 | **`propose_run` gains `shape`.** `shape: { perspectives?: string[], slices?: 'auto' \| 'off' }`. When present, the card proposes `wf_shape` (the workflow choice is fixed). `validateProposal` checks the perspective keys. Without `shape`, `propose_run` is unchanged. |
 | D10 | **The plan card's actions** (screen 4): <ul><li>**Run this plan**: `approve`;</li><li>**Update plan** (after a perspective change), **Fix**, or a typed message: `revise`;</li><li>**Save to plans/**: writes the approved Markdown to `plans/<slug>-design.md` in the project's checkout. It never overwrites without asking and never commits;</li><li>**Open in New run**: prefills New run's Markdown source with the plan, Workflow Auto. A complete plan then skips Clarify, Plan and Refine through the existing `plan-complete-*` recipes;</li><li>**Stop**: stops the run.</li></ul>Each revise posts a new version of the card (v1, v2, …); older versions collapse. |
 | D11 | **Run this plan continues the same run** (screen 5). The run card shows Clarify, Plan and Refine as done ("while shaping") and continues into Implement ⇄ Review. The plan file is the run's plan of record. There is no second run and no re-planning. |
@@ -55,7 +55,7 @@ needed (§3.8).
 
 ### 3.1 Chat home (screen 1)
 
-The composer gets the **Plan it with me** intent (`ui/public/chat/intent.mjs`), with the help
+The composer gets the **Shaper** intent (`ui/public/chat/intent.mjs`), with the help
 line "Agree on what gets built before anything runs · ~3 min" and the **New** badge while the
 flag is in beta. Its lead tells the model: "Shape this task first: propose a run with `shape`".
 The home's tabs gain **Plans**: the Chat threads with a plan card, newest first, each with its
@@ -198,7 +198,7 @@ waiting for approval, running, done, PR) and its link.
   estimates) from the classifier.
 
 ### 4.4 Chat UI (`ui/public/chat`)
-- `intent.mjs`: the **Plan it with me** intent.
+- `intent.mjs`: the **Shaper** intent.
 - New cards via `registerChatCard`: `run-questions` (§3.3), `plan` (§3.4), `slices` and `feature`
   (§3.8).
 - `ask-panel.mjs` run card: the nudge (§3.2) and the `shape` field in `collectCardBody`.

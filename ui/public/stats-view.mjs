@@ -607,9 +607,9 @@ export function renderPeopleCard(byPerson, rangeLabel, { doc = globalThis.docume
 
 const SIZE_LABELS = { small: 'Small', medium: 'Medium', large: 'Large' };
 
-/** Plan it with me (D28): finished runs of the same size, planned with the person vs not. */
+/** Shaper (D28): finished runs of the same size, planned with the person vs not. */
 export function renderShapingCard(shaping, rangeLabel, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
-  const card = chartCard(doc, 'Plan it with me', rangeLabel);
+  const card = chartCard(doc, 'Shaper', rangeLabel);
   card.classList.add('shaping-card');
   const groups = shaping?.groups || [];
   if (!groups.length) {
@@ -623,7 +623,7 @@ export function renderShapingCard(shaping, rangeLabel, { doc = globalThis.docume
   const tbody = h(doc, 'tbody', null);
   const dash = (v, f) => (v == null ? '–' : f(v));
   for (const g of groups) {
-    for (const [i, [label, c]] of [['With Plan it with me', g.shaped], ['Without', g.unshaped]].entries()) {
+    for (const [i, [label, c]] of [['With Shaper', g.shaped], ['Without', g.unshaped]].entries()) {
       const tr = h(doc, 'tr', null);
       if (i === 0) { const size = h(doc, 'td', 'people-name', SIZE_LABELS[g.size] || g.size); size.rowSpan = 2; tr.appendChild(size); }
       tr.appendChild(h(doc, 'td', null, label));

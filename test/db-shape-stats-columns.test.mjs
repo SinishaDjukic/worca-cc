@@ -1,4 +1,4 @@
-// test/db-shape-stats-columns.test.mjs — Plan it with me D28: pipelines.shape_stats + run_size are INCREMENTAL_COLUMNS,
+// test/db-shape-stats-columns.test.mjs — Shaper D28: pipelines.shape_stats + run_size are INCREMENTAL_COLUMNS,
 // healed on every open (no SCHEMA_VERSION of their own).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
