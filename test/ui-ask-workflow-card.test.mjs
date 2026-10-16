@@ -7,7 +7,6 @@ import { JSDOM } from 'jsdom';
 import { proposalFor } from './helpers/auto-proposal-fixture.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { flowPerRow } from '../src/shared/graph/flow-layout.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -165,7 +164,8 @@ test('building → proposed: the trace renders first; the flip mounts the REAL g
   assert.ok(el);
   const p = proposalFor();
   assert.equal(el.querySelectorAll('.ask-wfcard-graph .node').length, p.manifest.graph.nodes.length, 'the real manifest is mounted');
-  assert.equal(el.__wf.handle.graph.flowLayout().perRow, flowPerRow(702), '702 default width in jsdom (clientWidth 0)');
+  assert.ok(el.querySelector('.ask-wfcard-graph.gv-well .gv-stage.gv-monitor') && !el.querySelector('.ask-wfcard-graph .gv-flow'), 'the Workflows rendering in a pannable well (template x/y, lanes), not the flow rows');
+  assert.equal(el.querySelector('.ask-wfcard-graph > .gv-nav [data-nav="expand"]').getAttribute('aria-label'), 'Open full screen in Workflows', 'app.js hands the chat its openBuild: a NEW proposal has a way in');
   assert.equal(el.querySelector('.ask-wfcard-graph .bchip.model').tagName, 'BUTTON', 'chips are pickable on a NEW-row card');
   assert.equal(el.querySelector('[data-ask-wf-save]').textContent.trim(), 'Save & propose run');
   assert.ok(el.querySelector('[data-ask-wf-decline]'));

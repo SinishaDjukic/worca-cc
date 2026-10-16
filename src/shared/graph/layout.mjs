@@ -58,8 +58,9 @@ export function rankNodes(tpl, loops) {
   return rank;
 }
 
-/** @returns {{[nodeId:string]: {x:number, y:number}}} — the caller applies them. */
-export function autoLayout(tpl, portsFn, { x0 = RANK_X0, dx = RANK_DX, y0 = RANK_Y0, gap = ROW_GAP, describe = false } = {}) {
+/** @returns {{[nodeId:string]: {x:number, y:number}}} — the caller applies them. `describe` bills the description
+ *  footer (edit hosts, the chat's proposal well); `band` the chip band under agent heads (the chat's Auto cards). */
+export function autoLayout(tpl, portsFn, { x0 = RANK_X0, dx = RANK_DX, y0 = RANK_Y0, gap = ROW_GAP, describe = false, band = false } = {}) {
   const nodes = (Array.isArray(tpl?.nodes) ? tpl.nodes : []).filter(isNode);
   const loops = classifyLoops(tpl, portsFn);
   const rank = rankNodes(tpl, loops);
@@ -109,7 +110,7 @@ export function autoLayout(tpl, portsFn, { x0 = RANK_X0, dx = RANK_DX, y0 = RANK
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const heightOf = (node) => {
     const ports = (typeof portsFn === 'function' ? portsFn(node) : null) || { inputs: [], outputs: [] };
-    return nodeSize(node, ports, { describe }).h;   // edit hosts bill the description footer
+    return nodeSize(node, ports, { describe, band }).h;   // edit hosts bill the description footer; a chip band its row
   };
   const positions = {};
   for (const r of ranksAscending) {

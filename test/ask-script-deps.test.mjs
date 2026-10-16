@@ -113,10 +113,10 @@ test('save: an existing user key needs overwrite: true; built-in and plugin keys
 
   const builtin = fakeIo({ readScript: async () => ({ meta: { key: 'shell', origin: 'builtin' }, cases: [], userCases: [] }) });
   assert.deepEqual(await builtin.s.save({ key: 'shell', meta: META({ key: 'shell' }), source: 'x', overwrite: true }),
-    { ok: false, errors: ['script "shell" is a built-in — save your version under a new key instead'] });
+    { ok: false, errors: ['script "shell" is a built-in — draft your own version under a new key with draft_script instead'] });
   const plugin = fakeIo({ readScript: async () => ({ meta: { key: 'lint', origin: 'plugin:acme-tools' }, cases: [], userCases: [] }) });
   assert.deepEqual(await plugin.s.save({ key: 'lint', meta: META({ key: 'lint' }), source: 'x', overwrite: true }),
-    { ok: false, errors: ['script "lint" is shipped by plugin "acme-tools" — save your version under a new key instead'] });
+    { ok: false, errors: ['script "lint" is shipped by plugin "acme-tools" — draft your own version under a new key with draft_script instead'] });
   assert.equal(builtin.calls.concat(plugin.calls).some((c) => c[0] === 'createScript' || c[0] === 'updateScript'), false);
 });
 

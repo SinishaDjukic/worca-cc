@@ -5,13 +5,13 @@ import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 
 const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
 
-test('v57 adds run_tags and run_tag_events to a v56 DB', () => {
+test('v59 adds run_tags and run_tag_events to a v56 DB (57-58 belong to Shaper)', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
   db.exec('DROP TABLE run_tag_events; DROP TABLE run_tags; PRAGMA user_version = 56');
   migrate(db);
-  assert.equal(SCHEMA_VERSION, 57);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 57);
+  assert.equal(SCHEMA_VERSION, 59);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 59);
   assert.deepEqual(cols(db, 'run_tags'), ['pipeline_id', 'key', 'value']);
   assert.deepEqual(cols(db, 'run_tag_events'), ['id', 'pipeline_id', 'ts', 'actor', 'before_tags', 'after_tags']);
 });
