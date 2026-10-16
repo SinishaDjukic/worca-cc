@@ -250,8 +250,9 @@ import { renderOutlineBody } from './shape/outline-body.mjs';
 import { renderFeature, renderFeatureSummary, featureWhere } from './shape/feature-view.mjs';
 import { sliceLineCopy } from './shape/slice-line.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
-import { isShapingRun } from './shape/plan-text.mjs';
+import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
+import { toggleMenu } from './workflows/menu.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
 import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
@@ -30362,6 +30363,38 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
     if (r && r.pipelineId) location.hash = `#new/after/${r.pipelineId}`;
   });
 
+  // D30: "Run details ›" opens Results, How it ran and the graph while a shaped run waits on the person.
+  screen.querySelector('.rd-wait-more').addEventListener('click', (e) => {
+    const glance = screen.querySelector('.rd-glance');
+    const open = !glance.hasAttribute('data-wait-open');
+    glance.toggleAttribute('data-wait-open', open);
+    e.currentTarget.setAttribute('aria-expanded', String(open));
+  });
+
+  // D31: a shaped run's ⋯ drives the bar controls CSS hides — the same select, button and pane.
+  screen.querySelector('.rd-bar-more').addEventListener('click', (e) => {
+    const anchor = e.currentTarget;
+    const ns = screen.querySelector('.rd-night');
+    const after = screen.querySelector('.rd-after');
+    const items = [];
+    if (ns && !ns.closest('.rd-night-wrap').hidden) {
+      const pill = screen.querySelector('.rd-night-pill');
+      items.push({ header: 'Away mode on this run' });
+      for (const o of RUN_SWITCH_OPTIONS) {
+        const on = ns.value === o.value;
+        items.push({ label: o.label, title: o.tip, checked: on, hint: on && pill ? pill.textContent : '',
+          onSelect: () => { if (on) return; ns.value = o.value; ns.dispatchEvent(new Event('change')); } });
+      }
+      items.push({ sep: true });
+    }
+    if (after && !after.hidden && levelAtLeast('advanced')) {
+      items.push({ label: after.querySelector('.rd-btn-label').textContent, title: after.title, onSelect: () => after.click() });
+    }
+    // The Chat panel hides the terminal opener on purpose (.crp .term-opener): no Terminal item there either.
+    if (screen.dataset.presentation !== 'panel') items.push({ label: 'Terminal', onSelect: () => terminalPane?.toggle() });
+    toggleMenu({ doc: document, anchor, items, align: 'end', label: 'More for this run' });
+  });
+
   const r = runs.get(runId);
   if (r) repaintRunDetail(r);
   else {                                                         // deep link before hello
@@ -30440,6 +30473,7 @@ function paintRunDetail(r) {
   if (isGraphRun(r)) paintQuiescenceBanner(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
   paintRdGraph(screen, r);
   paintRdQuestions(screen, r);
+  paintShaperWait(screen, r);
   paintRdGlance(screen, r);
   paintNightDecisions(screen, r);
 }
@@ -31906,8 +31940,9 @@ function askHeading(r, pq) {
   const who = pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '';
   const n = Array.isArray(pq.questions) ? pq.questions.length : (Array.isArray(pq.issues) ? pq.issues.length : 1);
   switch (pq.kind) {
-    case 'plan': {                                 // spec §3.4 header: version and shape score
+    case 'plan': {                                 // spec §3.4; D30: the gate on says whose turn it is
       const p = pq.plan || {};
+      if (shapeFirstOn()) return p.outline ? 'Your turn: approve the slices' : 'Your turn: approve the plan';
       const c = p.check;
       if (p.outline) return `Slices ready for your approval · v${p.round || 1}${c && Number.isFinite(c.total) ? ` · Outline ${c.passed}/${c.total}` : ''}`;
       const score = c && Number.isFinite(c.total) ? ` · Shape ${c.passed}/${c.total}` : '';
@@ -31921,6 +31956,27 @@ function askHeading(r, pq) {
       if (!who) return n > 1 ? `${n} questions` : 'A question';
       return n > 1 ? `${n} questions from ${who}` : `A question from ${who}`;
   }
+}
+
+/** D30: a shaped run waiting on Shaper's own step puts its card first and folds Results / How it ran. */
+function paintShaperWait(screen, r) {
+  const glance = screen.querySelector('.rd-glance');
+  const host = screen.querySelector('.rd-questions');
+  if (!glance || !host) return;
+  const wait = shaperWait(r, shapeFirstOn());
+  if (wait) glance.dataset.shaperWait = wait;
+  else { delete glance.dataset.shaperWait; glance.removeAttribute('data-wait-open'); }
+  const more = screen.querySelector('.rd-wait-more');
+  if (more) {
+    more.hidden = !wait;
+    more.setAttribute('aria-expanded', String(!!wait && glance.hasAttribute('data-wait-open')));
+  }
+  // The Chat panel moved .rd-questions into its own head (presentRunScreenInPanel): leave it there.
+  if (host.parentElement !== glance) return;
+  const now = glance.querySelector(':scope > .rd-now');
+  const night = glance.querySelector(':scope > .rd-night-sec');
+  if (wait && now && host.previousElementSibling !== now) now.after(host);
+  else if (!wait && night && host.nextElementSibling !== night) night.before(host);
 }
 
 function paintRdQuestions(screen, r) {
@@ -32345,9 +32401,15 @@ function paintRdHeader(screen, r) {
   const stopBtn = screen.querySelector('.rd-stop');
   // Hidden iff the run is OVER. A paused/pausing run keeps both controls: it is parked,
   // not finished. An interrupted one keeps no Stop: it is only ever resumed.
-  pauseBtn.hidden = terminal;
+  // D30: Pause goes while a shaped run waits on the person (a paused run keeps it: it is Resume there).
+  pauseBtn.hidden = terminal || (!!shaperWait(r, shapeFirstOn()) && !paused);
   // An interrupted run is never stopped — it stays resumable (stop-paused.mjs refuses it).
   stopBtn.hidden = terminal || r.status === 'interrupted';
+  // D31: a shaped run's bar folds Away mode, Run after and the terminal into one ⋯ (CSS hides the three).
+  const shapedBar = shapeFirstOn() && isShapingRun(r);
+  screen.querySelector('.rd-bar')?.toggleAttribute('data-shaped', shapedBar);
+  const barMore = screen.querySelector('.rd-bar-more');
+  if (barMore) barMore.hidden = !shapedBar;
   // Run after this one (the list card's old schedule-after button): a pipeline run with a pipeline
   // id, in every state. A finished run is followed up, as on the saved run's bar (paintHdAfter).
   const afterBtn = screen.querySelector('.rd-after');
@@ -32435,7 +32497,8 @@ function paintRdHeader(screen, r) {
       }
       ns.closest('.rd-night-wrap').title = RUN_SWITCH_TIP;
     }
-    if (document.activeElement !== ns) ns.value = (r.night && r.night.override) || 'auto';
+    // A ⋯ menu pick leaves focus on ⋯: the change handler disables the select for its whole POST (D31).
+    if (document.activeElement !== ns && !ns.disabled) ns.value = (r.night && r.night.override) || 'auto';
     paintRdAwayPill(screen, r);
   }
 }

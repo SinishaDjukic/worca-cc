@@ -5160,6 +5160,10 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
   .rd-glance[data-live="on"] > .rd-now{grid-column:1;grid-row:1;}
   .rd-glance[data-live="on"] > .rd-sheet{grid-column:1;grid-row:2;}
   .rd-glance[data-live="on"] > .rd-questions{grid-column:1 / -1;}
+  /* D30: a shaped run waiting on the person — the card in row 2, right under the title; folded, one column */
+  .rd-glance[data-live="on"][data-shaper-wait] > .rd-questions{grid-row:2;}
+  .rd-glance[data-live="on"][data-shaper-wait] > :is(.rd-sheet,.rd-live){grid-row:3;}
+  .rd-glance[data-live="on"][data-shaper-wait]:not([data-wait-open]):not([hidden]){display:flex;max-width:608px;}
   /* Away mode's answers stay under the run card, never beside the title in the graph's column. */
   .rd-glance[data-live="on"] > .rd-night-sec{grid-column:1;}
   /* Wide: as tall as the card (320px at least), its top level with the card's; it slides
@@ -9319,7 +9323,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .plan-md.collapsed{max-height:40vh;overflow:hidden;}
 .plan-md.collapsed::after{content:'';position:absolute;inset:auto 0 0;height:48px;background:linear-gradient(transparent,var(--panel));pointer-events:none;}
 .plan-md pre{white-space:pre-wrap;margin:0;}
-.plan-tag{margin-left:8px;padding:2px 8px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink);font-size:10.5px;font-weight:600;vertical-align:middle;}
+.plan-tag{margin-left:8px;padding:2px 8px;border-radius:999px;background:var(--hover);color:var(--ink-2);font-size:10.5px;font-weight:600;vertical-align:middle;}
 .plan-ground{margin-left:6px;font-size:10.5px;font-weight:600;}
 .plan-ground.found{color:var(--green-ink);}
 .plan-ground.new{color:var(--ink-3);}
@@ -9336,8 +9340,8 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .plan-actions .plan-stop{margin-left:auto;}
 .shape-chips{display:flex;flex-wrap:wrap;gap:6px;}
 .shape-chip{padding:4px 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink-2);font:500 11.5px/1.2 var(--sans);cursor:pointer;}
-.shape-chip.on{border-color:var(--amber);background:var(--amber-bg);color:var(--amber-ink);}
-.shape-chip:disabled{cursor:default;opacity:.8;}
+.shape-chip.on{border-color:var(--ink);background:var(--ink);color:var(--on-ink);}
+.shape-chip:disabled{cursor:not-allowed;opacity:.5;}
 .shape-chip-more{padding:4px 8px;border:0;background:none;color:var(--ink-2);font:500 11.5px/1.2 var(--sans);cursor:pointer;}
 .shape-card,.ask-card-shape{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--amber-line);border-radius:var(--r-ctrl);background:var(--amber-wash);}
 .shape-nudge-head{font-weight:600;color:var(--amber-ink);}
@@ -9349,6 +9353,29 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .clarify-defaults{margin-right:8px;}
 .clarify-defaults-err{margin-top:8px;color:var(--red-ink);font-size:12px;}
 .clarify-defaults-err[hidden]{display:none;}
+/* D30–D34: the decision card. Amber stays on the heading's disc only; rows and chips are neutral. */
+.plan-sub{color:var(--ink-2);font-size:12px;}
+.plan-summary{margin:0;color:var(--ink);font-size:13px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+.plan-fold{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;padding:2px 0;border:0;background:none;color:var(--ink-2);font:500 12px/1.4 var(--sans);cursor:pointer;}
+.plan-chev{display:inline-block;transition:transform .15s;}
+.plan-fold[aria-expanded="true"] .plan-chev{transform:rotate(90deg);}
+.plan-checks{display:flex;flex-direction:column;gap:2px;padding-left:4px;}
+.plan-check-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;padding:3px 0;color:var(--ink);}
+.plan-check-mark{flex:none;width:1em;font-weight:700;color:var(--ink-3);}
+.plan-check-row:not(.ok) .plan-check-mark{color:var(--ink);}
+.plan-fix-all{align-self:flex-start;margin-top:4px;}
+.plan-persp-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;color:var(--ink-2);font-size:12px;}
+.plan-persp-edit{padding:0;border:0;background:none;color:var(--ink);font:inherit;text-decoration:underline;cursor:pointer;}
+.plan-full-view{display:flex;flex-direction:column;gap:8px;}
+.plan-actions .plan-more{margin-left:auto;}
+.plan-unmet{color:var(--ink-2);font-size:12px;}
+/* D31: a shaped run's bar — the three controls live in the ⋯ menu */
+.rd-bar[data-shaped] .rd-bar-end > :is(.rd-night-wrap,.rd-after,.term-opener){display:none;}
+/* .btn-ghost alone is a 13px×20px-padded pill: size ⋯ like the terminal opener next to it (style.css:5451) */
+.rd-bar-more{display:inline-flex;align-items:center;justify-content:center;flex:none;width:36px;height:36px;padding:0;box-sizing:border-box;color:var(--ink-2);}
+/* D30: while a shaped run waits on the person, Results / How it ran and the graph fold under "Run details ›" */
+.rd-wait-more{align-self:flex-start;padding:4px 10px;font-size:12.5px;color:var(--ink-2);}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) :is(.rd-result,.rd-live,.rd-live-row){display:none;}
 .chat-rc-shaped{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:8px;font-size:12px;color:var(--ink-2);}
 .chat-rc-shaped:empty{display:none;}
 .chat-rc-shaped-stages{color:var(--green-ink);font-weight:500;}
