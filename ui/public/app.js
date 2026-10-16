@@ -34224,7 +34224,8 @@ async function exportApply(id, opts) { return exportCall(id, opts); }
 // its own dry run when there is none, so the primary button is never dead.
 // `targets`: the PR-capable marketplaces (null until read; a failed read leaves it null so the next
 // open retries), `skipped`: the registered ones the server left out, with why. `targetsLoad`: the
-// read in flight, shared by every caller while it runs. `busy`: a marketplace request is in flight.
+// read in flight, shared by every caller while it runs and reset per open (a reopen reads afresh;
+// the older read's late answer is dropped). `busy`: a marketplace request is in flight.
 const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, skipped: [], targetsLoad: null, busy: false, conflicts: [], planned: false };
 
 function openExportModal(item) {
@@ -34235,6 +34236,7 @@ function openExportModal(item) {
   exportModalState.destination = 'global';
   exportModalState.pluginDest = 'folder';
   exportModalState.targets = null;                       // re-read: a marketplace may have been added since
+  exportModalState.targetsLoad = null;                   // a read still in flight belongs to the previous open: its answer is dropped
   exportModalState.skipped = [];
   exportModalState.conflicts = [];
   exportModalState.planned = false;
@@ -34356,7 +34358,9 @@ async function exportLoadTargets() {
   if (exportModalState.targets === null) {
     exportSyncMarketplaceButtons(0);                       // nothing to send to until the list is in
     if (!exportModalState.targetsLoad) exportModalState.targetsLoad = exportFetchTargets();
-    const loaded = await exportModalState.targetsLoad;
+    const load = exportModalState.targetsLoad;
+    const loaded = await load;
+    if (exportModalState.targetsLoad !== load) return;     // the dialog was reopened meanwhile: this answer is stale, the new open reads again
     exportModalState.targetsLoad = null;
     if (!exportIsMarketplace()) return;                    // switched away while reading: nothing to show
     if (loaded.error !== undefined) {

@@ -7,7 +7,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import {
   publishTargetOf, publishRefusal, listPublishTargets, derivePluginName, pluginBranchName, pluginSubdir,
-  placePlugin, parseLsTree, assertNoSymlinkOnPath, addToIndex, buildPrTitle, buildPrBody, describeVersion, findCredentialLeaks,
+  placePlugin, placementSubdir, parseLsTree, assertNoSymlinkOnPath, addToIndex, buildPrTitle, buildPrBody, describeVersion, findCredentialLeaks,
 } from '../src/core/marketplace-publish.mjs';
 
 useTempHome(after);
@@ -93,11 +93,23 @@ test('placePlugin: new, update, and every conflict', async () => {
       assert.deepEqual(placePlugin({ name: 'x', subdir: 'plugins/x', paths: ['plugins/x/worca-cc-plugin.json'], index: idx,
         discovered: [{ name: 'x', subdir: 'plugins/x' }], folderManifestName: 'x' }), { subdir: 'plugins/x', update: true });
     } },
-    { name: 'same name elsewhere → CONFLICT', run: () => {
-      assert.throws(() => placePlugin({ name: 'x', subdir: 'plugins/x', paths: [], index: idx, discovered: [{ name: 'x', subdir: 'extras/x' }], folderManifestName: null }),
-        (e) => e.code === 'CONFLICT' && /already lives at extras\/x/.test(e.message));
+    { name: 'same name in another folder → that folder, update in place', run: () => {
+      assert.equal(placementSubdir({ name: 'x', subdir: 'plugins/x', discovered: [{ name: 'x', subdir: 'extras/x' }] }), 'extras/x');
+      assert.equal(placementSubdir({ name: 'x', subdir: 'plugins/x', discovered: [{ name: 'y', subdir: 'extras/y' }] }), 'plugins/x');
+      assert.deepEqual(placePlugin({ name: 'x', subdir: 'plugins/x', paths: ['extras/x/worca-cc-plugin.json'], index: idx,
+        discovered: [{ name: 'x', subdir: 'extras/x' }], folderManifestName: 'x' }), { subdir: 'extras/x', update: true });
+      // idempotent: the caller resolves the folder first, then re-reads the placement against it
+      assert.deepEqual(placePlugin({ name: 'x', subdir: 'extras/x', paths: ['extras/x/worca-cc-plugin.json'], index: idx,
+        discovered: [{ name: 'x', subdir: 'extras/x' }], folderManifestName: 'x' }), { subdir: 'extras/x', update: true });
+    } },
+    { name: 'same name in another folder whose manifest reads another name, or none → CONFLICT (never a write there)', run: () => {
+      assert.throws(() => placePlugin({ name: 'x', subdir: 'plugins/x', paths: ['extras/x/worca-cc-plugin.json'], index: idx, discovered: [{ name: 'x', subdir: 'extras/x' }], folderManifestName: 'other' }),
+        (e) => e.code === 'CONFLICT' && /extras\/x\/ holds plugin "other"/.test(e.message));
+      assert.throws(() => placePlugin({ name: 'x', subdir: 'plugins/x', paths: ['extras/x/worca-cc-plugin.json'], index: idx, discovered: [{ name: 'x', subdir: 'extras/x' }], folderManifestName: null }),
+        (e) => e.code === 'CONFLICT' && /extras\/x\/ holds plugin "\(unreadable manifest\)"/.test(e.message));
     } },
     { name: 'same name at the root → CONFLICT', run: () => {
+      assert.throws(() => placementSubdir({ name: 'x', subdir: 'x', discovered: [{ name: 'x', subdir: '' }] }), (e) => e.code === 'CONFLICT' && /repository root/.test(e.message));
       assert.throws(() => placePlugin({ name: 'x', subdir: 'x', paths: ['worca-cc-plugin.json'], index: { present: false, ok: true }, discovered: [{ name: 'x', subdir: '' }], folderManifestName: null }),
         (e) => e.code === 'CONFLICT' && /repository root/.test(e.message));
     } },

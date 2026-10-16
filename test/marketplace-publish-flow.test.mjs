@@ -215,9 +215,31 @@ test('no index → placed at <name>/ in the root, no index file created', async 
   assert.equal(JSON.parse(await showAt(bare, BRANCH, 'shared-flow/worca-cc-plugin.json')).name, 'shared-flow');
 });
 
+test('a plugin the marketplace lists in another folder is updated there in place: the index is untouched and the PR is an update', async () => {
+  const { bare, fork } = await makeMarket({ files: { __plugins: ['tools/shared-flow'], 'tools/shared-flow/worca-cc-plugin.json': '{"name":"shared-flow","version":"1.0.0"}\n' } });
+  const calls = stub({ bare, fork });
+  const r = await exportWorkflowToMarketplace({ workflowId, marketplaceId: 'acme' });
+  assert.equal(r.status, 'opened');
+  assert.deepEqual([r.subdir, r.update, r.oldVersion, r.newVersion], ['tools/shared-flow', true, '1.0.0', '1.0.1']);
+  assert.deepEqual(r.index, { present: true, added: false }, 'the existing index entry is kept, never duplicated');
+  assert.deepEqual(JSON.parse(await showAt(bare, BRANCH, 'worca-cc-marketplace.json')).plugins, ['tools/shared-flow']);
+  assert.equal(JSON.parse(await showAt(bare, BRANCH, 'tools/shared-flow/worca-cc-plugin.json')).version, '1.0.1');
+  assert.match(await showAt(bare, BRANCH, 'tools/shared-flow/agents/sharedAgent.md'), /Shared Agent/);
+  await assert.rejects(showAt(bare, BRANCH, 'plugins/shared-flow/worca-cc-plugin.json'), 'nothing lands at the default folder');
+  const changed = (await git(bare, 'diff', '--name-only', `main..${BRANCH}`)).split('\n').filter(Boolean);
+  assert.ok(changed.length > 0 && changed.every((p) => p.startsWith('tools/shared-flow/')), changed.join(', '));
+  assert.equal(r.validation.discovery, 'finds shared-flow v1.0.1 at tools/shared-flow/');
+  const pr = calls.createPr[0];
+  assert.equal(pr.title, 'Update plugin shared-flow 1.0.0 → 1.0.1');
+  assert.match(pr.body, /\*\*Folder:\*\* `tools\/shared-flow\/`/);
+  assert.match(pr.body, /1\.0\.0 → 1\.0\.1/);
+  assert.doesNotMatch(pr.body, /## Marketplace index/);
+});
+
 test('name clash / failed validation / discovery missing / ignored files → nothing is pushed, the error says why', async () => {
   const cases = [
-    { name: 'same name in another folder', files: { __plugins: ['extras/shared-flow'], 'extras/shared-flow/worca-cc-plugin.json': '{"name":"shared-flow","version":"1.0.0"}\n' }, code: 'CONFLICT', re: /already lives at extras\/shared-flow\// },
+    // a marketplace that IS one plugin (no index, the manifest at its root): exporting into the root would rewrite the repository
+    { name: 'same name at the repository root', index: false, files: { 'worca-cc-plugin.json': '{"name":"shared-flow","version":"1.0.0"}\n' }, code: 'CONFLICT', re: /already lives at the repository root/ },
     { name: 'folder holds another plugin', files: { __plugins: [], 'plugins/shared-flow/worca-cc-plugin.json': '{"name":"other","version":"1.0.0"}\n' }, code: 'CONFLICT', re: /holds plugin "other"/ },
     { name: 'shipped script case fails', files: {}, over: { runCases: async () => ({ scripts: [{ key: 's', cases: [{ caseId: 'c1', name: 'c1', pass: false, diffs: ['exit 1 ≠ 0'] }] }], passed: 0, failed: 1, unchecked: 0, stopped: false, problems: [] }) }, code: 'VALIDATION_FAILED', re: /script cases failed/ },
     { name: 'existing plugin manifest does not validate', files: { __plugins: ['plugins/shared-flow'], 'plugins/shared-flow/worca-cc-plugin.json': '{"name":"shared-flow","version":"1.0.0","taskSources":"nope"}\n' }, code: 'VALIDATION_FAILED', re: /does not validate/ },
@@ -226,7 +248,7 @@ test('name clash / failed validation / discovery missing / ignored files → not
     { name: 'discovery does not find it', files: {}, over: { discover: (() => { let n = 0; return async () => (++n === 1 ? { sha: 'x', discovered: [], warnings: [], marketplace: { name: 'Acme', description: '' } } : { sha: 'y', discovered: [], warnings: ['plugins/shared-flow/worca-cc-plugin.json: engines mismatch'], marketplace: null }); })() }, code: 'DISCOVERY_FAILED', re: /discovery does not find plugin "shared-flow".*engines mismatch/ },
   ];
   for (const c of cases) {
-    const { bare, fork } = await makeMarket({ files: c.files });
+    const { bare, fork } = await makeMarket({ files: c.files, index: c.index !== false });
     const calls = stub({ bare, fork, over: c.over || {} });
     await assert.rejects(exportWorkflowToMarketplace({ workflowId, marketplaceId: 'acme' }), (e) => e.code === c.code && c.re.test(e.message), c.name);
     assert.equal(await remoteTip(bare), '', `${c.name}: nothing pushed`);

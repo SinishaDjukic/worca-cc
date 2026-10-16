@@ -95,27 +95,43 @@ export function listPublishTargets(entries = listMarketplaces(), { env = process
 }
 
 /**
- * Where plugin `name` goes and whether that is an update (#717 §3-4). Same name in another folder
- * (discovery's view), a folder holding another plugin, or a folder (or file) that is not a plugin
- * → CONFLICT; an index the marketplace's own discovery would ignore → MARKETPLACE_INVALID. Pure.
+ * The folder plugin `name` goes to: `subdir` (pluginSubdir's default), unless the marketplace's own
+ * discovery lists the same name in another folder — then THAT folder, so a plugin kept at e.g.
+ * `tools/<name>` is updated in place (renaming it would fork the plugin's identity). The same name at
+ * the repository root (a marketplace that IS one plugin, no index) → CONFLICT: exporting into the
+ * root would rewrite the repository itself. Pure; the caller runs this BEFORE the symlink guard and
+ * every read, so the guard covers the folder the export really writes into.
+ */
+export function placementSubdir({ name, subdir, discovered }) {
+  const elsewhere = discovered.find((d) => d.name === name && d.subdir !== subdir);
+  if (!elsewhere) return subdir;
+  if (elsewhere.subdir === '') {
+    throw err(`plugin "${name}" already lives at the repository root of this marketplace — Worca does not export into a repository root; pick another plugin name`, 'CONFLICT');
+  }
+  return elsewhere.subdir;
+}
+
+/**
+ * Where plugin `name` goes and whether that is an update (#717 §3-4): `{ subdir, update }` with
+ * `subdir` resolved by placementSubdir (the default folder, or the one discovery already lists the
+ * name at — an update in place; the root → CONFLICT). `folderManifestName` is the manifest read from
+ * THAT folder: a folder holding another plugin (or an unreadable manifest), or a folder (or file)
+ * that is not a plugin → CONFLICT; an index the marketplace's own discovery would ignore →
+ * MARKETPLACE_INVALID. Idempotent over its own result. Pure.
  */
 export function placePlugin({ name, subdir, paths, index, discovered, folderManifestName }) {
   if (index.present && !index.ok) {
     throw err(`${INDEX_FILE} in this marketplace is invalid (${(index.errors || []).join('; ')}) — fix it there first`, 'MARKETPLACE_INVALID');
   }
-  const elsewhere = discovered.find((d) => d.name === name && d.subdir !== subdir);
-  if (elsewhere) {
-    throw err(`plugin "${name}" already lives at ${elsewhere.subdir ? `${elsewhere.subdir}/` : 'the repository root'} in this marketplace — `
-      + 'pick another plugin name', 'CONFLICT');
-  }
-  const hasManifest = paths.includes(`${subdir}/worca-cc-plugin.json`);
+  const target = placementSubdir({ name, subdir, discovered });
+  const hasManifest = paths.includes(`${target}/worca-cc-plugin.json`);
   if (hasManifest && folderManifestName !== name) {
-    throw err(`${subdir}/ holds plugin "${folderManifestName ?? '(unreadable manifest)'}" — pick another plugin name`, 'CONFLICT');
+    throw err(`${target}/ holds plugin "${folderManifestName ?? '(unreadable manifest)'}" — pick another plugin name`, 'CONFLICT');
   }
-  if (!hasManifest && (paths.includes(subdir) || paths.some((p) => p.startsWith(`${subdir}/`)))) {
-    throw err(`${subdir} already exists and is not a Worca plugin — pick another plugin name`, 'CONFLICT');
+  if (!hasManifest && (paths.includes(target) || paths.some((p) => p.startsWith(`${target}/`)))) {
+    throw err(`${target} already exists and is not a Worca plugin — pick another plugin name`, 'CONFLICT');
   }
-  return { subdir, update: hasManifest };
+  return { subdir: target, update: hasManifest };
 }
 
 /**
@@ -451,16 +467,18 @@ export async function exportWorkflowToMarketplace({ workflowId, marketplaceId, p
     const baseSha = await mustGit(d, repo, ['rev-parse', 'HEAD'], scrub);
     const gitDirAbs = await mustGit(d, repo, ['rev-parse', '--absolute-git-dir'], scrub);
 
-    // 2. Placement, by the marketplace's own discovery at the base.
+    // 2. Placement, by the marketplace's own discovery at the base. discoverAtCommit reads the commit
+    //    through git (ls-tree, show), never the checkout, so it runs before the symlink guard; the
+    //    guard then covers the RESOLVED folder — the default one, or the one the plugin already lives in.
     const lsTree = await d.git(repo, ['ls-tree', '-r', '-z', 'HEAD']);
     if (!lsTree.ok) throw err(`git ls-tree failed: ${scrub(lsTree.stderr)}`, 'GIT_FAILED');
     const { paths, symlinks } = parseLsTree(lsTree.stdout);
-    const subdir = pluginSubdir(name, paths.includes(INDEX_FILE));
+    const atBase = await scrubbed(scrub, () => d.discover(gitDirAbs, baseSha));
+    const subdir = placementSubdir({ name, subdir: pluginSubdir(name, paths.includes(INDEX_FILE)), discovered: atBase.discovered });
     assertNoSymlinkOnPath(symlinks, subdir);                // before ANY read of, or write into, the checkout
     const index = await readIndex(repo, paths);
     const pluginDir = join(repo, ...subdir.split('/'));
     const folderManifest = await readJsonOrNull(join(pluginDir, 'worca-cc-plugin.json'));
-    const atBase = await scrubbed(scrub, () => d.discover(gitDirAbs, baseSha));
     const { update } = placePlugin({ name, subdir, paths, index, discovered: atBase.discovered,
       folderManifestName: folderManifest && typeof folderManifest.name === 'string' ? folderManifest.name : null });
     const oldVersion = update && typeof folderManifest.version === 'string' ? folderManifest.version : null;
