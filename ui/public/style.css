@@ -7846,6 +7846,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .tag-input{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
 .tag-input-chips{display:contents;}
 .tag-input-text{flex:1 1 160px;min-width:120px;}
+.tag-input-text::placeholder{color:var(--ink-2);}   /* ink-3 misses 4.5:1 on the grey field (theme proof) */
 .tag-input-text[aria-invalid="true"]{border-color:var(--red-ink);}
 .tag-input-hint{flex-basis:100%;margin-top:0;}
 .tag-input-hint:empty{display:none;}
