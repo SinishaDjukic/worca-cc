@@ -220,7 +220,7 @@ import {
   readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, setHumanInLoop, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
   readPrRemotePrefs, setPrRemotePrefs, modelHasBaseUrlRouting, writeSyncPrefs, readSyncPrefs,
-  readNightModePrefs, writeNightModePrefs,
+  readNightModePrefs, writeNightModePrefs, readProjectDefaultTags, writeProjectDefaultTags,
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
@@ -327,6 +327,8 @@ import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, ca
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput } from '../src/core/shape/features.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
+import { editRunTags, readRunTags, tagVocabulary } from '../src/core/run-tags-store.mjs';
+import { normaliseTags, describeTagChange } from '../src/shared/run-tags.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
@@ -1100,6 +1102,7 @@ function summarizeRuns() {
     genId: r.genId || null,
     workspaceId: r.workspaceId || null,
     projectNames: r.projectNames || null,
+    tags: r.tags || [],
   }));
 }
 
@@ -1121,6 +1124,7 @@ function announceRun(entry) {
     startedAt: entry.startedAt,
     startedBy: entry.startedBy || null,
     lastAction: entry.lastAction || null,
+    tags: entry.tags || [],
   });
 }
 
@@ -2289,6 +2293,16 @@ const startRunHandler = async (req, res) => {
     // body, so the flag survives the wait.
     if (body.nightMode !== undefined && typeof body.nightMode !== 'boolean') return badRequest(res, 'nightMode must be true or false');
     const nightMode = body.nightMode === true;
+    // Run tags (#718): normalised once, written back so a stored schedule keeps the clean list and
+    // its firing re-validates it. Absent = no tags (legacy bodies unchanged). An explicit [] stays []:
+    // "no tags", which also opts an `after` run out of inheriting its predecessor's tags.
+    let tags = [];
+    if (body.tags !== undefined) {
+      const t = normaliseTags(body.tags);
+      if (t.errors.length) return badRequest(res, `tags: ${t.errors[0]}`);
+      tags = t.tags;
+      body.tags = tags;
+    }
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
@@ -2497,6 +2511,7 @@ const startRunHandler = async (req, res) => {
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
+        tags,
         ...(shape ? { shape } : {}),
       });
 
@@ -2511,6 +2526,7 @@ const startRunHandler = async (req, res) => {
         status: 'starting',
         startedAt: new Date().toISOString(),
         startedBy,
+        tags,
         events: [],
         pendingQuestion: null,
       };
@@ -2633,6 +2649,7 @@ const startRunHandler = async (req, res) => {
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
+        tags,
         ...(shape ? { shape } : {}),
       });
 
@@ -2645,6 +2662,7 @@ const startRunHandler = async (req, res) => {
         status: 'starting',
         startedAt: new Date().toISOString(),
         startedBy,
+        tags,
         events: [],
         pendingQuestion: null,
       };
@@ -3186,6 +3204,12 @@ async function fireTicket(ticket) {
   if (ticket.after) {
     const p = predecessorState(ticket.after, { policy: ticket.after.policy, isLive: liveProbe });
     if (p.state === 'waiting' && !ticket.forced) return { ok: false, error: 'the run before it is still going', transient: true };
+    // #718: a chained run that names no tags of its own takes the previous run's tags, read at fire
+    // time so a retag of the parent before the chain fires is honoured. An explicit [] opts out.
+    if (body.tags === undefined && p.pipelineId) {
+      const inherited = readRunTags(p.pipelineId);
+      if (inherited.length) body.tags = inherited;
+    }
     if (ticket.sourceFromPrevious) {
       const prev = p.pipelineId ? previousBranchesOf(p.pipelineId) : null;
       // Backstop only: the gate already waits for a merge back (pipelineGate). A FORCED ticket skips the gate.
@@ -4484,8 +4508,13 @@ app.get('/api/run-defaults', (req, res) => {
   if (raw && !projectDir) return badRequest(res, 'invalid projectDir');
   try {
     const result = resolveSetting('run.engine', projectDir ? { projectDir } : null);
+    // Run tags (#718): the project's default tags (a New run prefill) and its store key, which the
+    // form needs to save new defaults.
+    const key = projectDir ? projectKey(projectDir) : null;
     res.json({ engine: { value: result.value, source: result.source },
-      steps: Object.fromEntries(MODEL_ENGINES.map((e) => [e, stepSlotDefaults(e, { projectDir })])) });
+      steps: Object.fromEntries(MODEL_ENGINES.map((e) => [e, stepSlotDefaults(e, { projectDir })])),
+      projectKey: key,
+      tags: key ? readProjectDefaultTags(key) : [] });
   } catch (error) { res.status(500).json({ error: error?.message || String(error) }); }
 });
 
@@ -4784,6 +4813,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     projectDir,
     // The run keeps its starter across a resume; the resume itself is the last action.
     startedBy: saved.row.started_by || null,
+    tags: readRunTags(saved.row.id),
     lastAction: { kind: 'resume', by: by || 'local', at: new Date().toISOString() },
     ...(workspace
       ? {
@@ -5786,6 +5816,39 @@ app.get('/api/projects/:key/sync/settings', syncRoute(async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;
   res.json(syncPrefsView(p.key));
 }));
+
+// Run tags (#718): the project's default tags, a New run form prefill only (never applied by the server).
+app.get('/api/projects/:key/tags/defaults', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  res.json({ tags: readProjectDefaultTags(p.key) });
+});
+app.put('/api/projects/:key/tags/defaults', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  const t = normaliseTags(req.body?.tags);
+  if (!Array.isArray(req.body?.tags) || t.errors.length) return badRequest(res, t.errors[0] || 'tags must be a list of strings');
+  res.json({ tags: writeProjectDefaultTags(p.key, t.tags) });
+});
+
+// Run tags (#718): replace a run's tags (any status; the UI offers it on finished runs), logging who
+// changed what in run_tag_events and on the run's timeline. By pipeline id alone, archived runs included.
+app.put('/api/runs/:id/tags', (req, res) => {
+  const row = findPipelineRowById(req.params.id);
+  if (!row) return res.status(404).json({ error: 'pipeline not found' });
+  if (!Array.isArray(req.body?.tags)) return badRequest(res, 'tags must be a list of strings');
+  const actor = actorOf(req);
+  let out;
+  try { out = editRunTags(row.id, req.body.tags, { actor }); }
+  catch (e) { if (e?.code === 'BAD_TAGS') return badRequest(res, e.message); throw e; }
+  if (out.changed) {
+    appendAuditById(row.id, `Tags changed${byActor(actor)}: ${describeTagChange(out.before, out.tags)}.`, { actor });
+    for (const r of runs.values()) if (r.pipelineId === row.id) r.tags = out.tags;
+    emitChanged('pipelines-changed', 'tags');
+  }
+  res.json({ tags: out.tags, changed: out.changed });
+});
+
+// Autocomplete vocabulary for tag fields: keys, then values already in use, most used first.
+app.get('/api/tags', (req, res) => res.json(tagVocabulary()));
 function syncPrefsView(key) {
   return { own: readSyncPrefs(key) || {}, defaults: syncDefaults(), settings: effectiveSyncSettings(key) };
 }
@@ -6543,7 +6606,7 @@ function prWatchOrigin(w) {
   return { pipelineId: row.id, projectKey: m.projectKey, projectDir: m.projectDir, branch: m.br.feature,
     sourceBranch: m.br.source || null, baseRemote: effectiveSyncSettings(m.projectKey).remote || null,
     guardrailsId: row.guardrails_id || null, engine: runEngineOfRow(row),
-    mock: rp?.mock === true };
+    mock: rp?.mock === true, tags: readRunTags(row.id) };
 }
 /** The pr-watch-changed frame: the run's STORE key (a workspace run's is `workspaces/<wk>`, the key its
  *  History detail carries), its id and the member, so only the matching open detail / member row refreshes. */
@@ -8102,6 +8165,7 @@ app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
       return res.status(409).json({ error: `\`${m.br.feature}\` is checked out${holders?.[0] ? ` in ${holders[0]}` : ''}. Discard that checkout first: the new run needs its own worktree.`,
         code: 'BRANCH_CHECKED_OUT', ...(holders?.[0] ? { holder: holders[0] } : {}) });
     }
+    const parentTags = readRunTags(row.id);
     const body = {
       projectDir: m.projectDir,
       title: `Resolve conflicts with ${c.base}: ${row.title || m.br.feature}`.slice(0, 200),
@@ -8117,6 +8181,7 @@ app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
       // #617: a mock run is resolved by a mock run. Best effort: the resume point records `mock: true` while it
       // exists; when it was cleared, the server's own mock mode decides (startRunHandler's `serverMockMode()`).
       ...(mockOfRow(row) ? { mock: true } : {}),
+      ...(parentTags.length ? { tags: parentTags } : {}),   // #718: the resolve run is the parent's work
     };
     // Mark BEFORE the start: the run's own post-run step settles this mark, so it must exist before the run can end.
     const mark = resolveMark('pipeline', rec, { by });

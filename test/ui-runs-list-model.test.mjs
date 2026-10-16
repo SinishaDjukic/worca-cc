@@ -540,3 +540,26 @@ test('#620: a history row carries its base-check note in the subline, and search
   assert.equal(rowMatches(h1, 'conflicts'), true);
   assert.equal(rowMatches(h2, 'conflicts'), false);
 });
+
+// Run tags (#718): rows carry tags, search matches their text, the tag filter keeps matching rows,
+// and a row shows at most 3 chips plus a +N overflow chip.
+test('run tags: search, the tag filter, chips with overflow, and the filter options', async () => {
+  const { tagFilterOptions, rowHasTag } = await import('../ui/public/runs-list.mjs');
+  const tagged = histIt('h1', { tags: ['client:acme'] });
+  const plain = histIt('h2');
+  assert.deepEqual(keysOf(buildRunsModel({ history: [tagged, plain], query: 'acme', now: NOW })), ['hist:worca-00000002/h1']);
+  assert.deepEqual(keysOf(buildRunsModel({ history: [tagged, plain], tag: 'client:acme', now: NOW })), ['hist:worca-00000002/h1']);
+  assert.deepEqual(keysOf(buildRunsModel({ history: [tagged, plain], tag: 'client', now: NOW })), ['hist:worca-00000002/h1']);
+  assert.equal(keysOf(buildRunsModel({ history: [tagged, plain], now: NOW })).length, 2);
+  assert.deepEqual(keysOf(buildRunsModel({ live: [liveIt('l1', { tags: ['team:web'] }), liveIt('l2')], tag: 'team:web', now: NOW })), ['live:l1']);
+  assert.equal(rowHasTag({ tags: [] }, ''), true);
+  const { window } = new JSDOM('<!doctype html><div id="h"></div>');
+  const doc = window.document;
+  const host = doc.getElementById('h');
+  const five = histIt('h3', { tags: ['a:1', 'b:2', 'c:3', 'd:4', 'e:5'] });
+  host.append(...renderRunsList(doc, buildRunsModel({ history: [five, plain], now: NOW })));
+  const chips = [...host.querySelectorAll('.runs-row[data-pipeline-id="h3"] .runs-row-tags .tag-chip')].map((c) => c.textContent);
+  assert.deepEqual(chips, ['a:1', 'b:2', 'c:3', '+2']);
+  assert.equal(host.querySelector('.runs-row[data-pipeline-id="h2"] .runs-row-tags'), null, 'an untagged row has no empty container');
+  assert.deepEqual(tagFilterOptions([{ tags: ['team:web', 'client:acme'] }, { tags: ['client:acme'] }, {}]), ['client:acme', 'team:web']);
+});

@@ -469,6 +469,8 @@ export function createAskTools(deps) {
           properties: { plugin: SCHEMA.s('plugin name'), sourceId: SCHEMA.s('task source id'), taskId: SCHEMA.s('the task id as find_tasks / get_task return it'),
             profile: SCHEMA.s('multi-profile sources only; default: the profile this project is bound to'),
             inputs: { type: 'object', description: 'the source\'s run inputs (list_task_sources), e.g. whether to write the result back', additionalProperties: true } } }, title: SCHEMA.s('short run title'), guardrailsId: SCHEMA.s('guardrail set id (default normal)'),
+        tags: { type: 'array', items: { type: 'string' },
+          description: 'run tags for cost allocation, "key:value" or a plain name (client:acme, team:web, spike). Only when the user names them.' },
         memoryScope: SCHEMA.s('Memory defragment workflow only: "global" | "project"'),
         engine: SCHEMA.s('claude | codex | copilot | cursor — only when the user asked for that engine; omit for the default. codex, copilot and cursor are beta: never pick one on your own'),
         sourceBranch: SCHEMA.s('branch to start from (default: current)'), featureBranch: SCHEMA.s('feature branch name'),

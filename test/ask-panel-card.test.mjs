@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
 import { setShapeFirst } from './helpers/shape-gate.mjs';
 
 const TID = 'ask_00000001';
@@ -1710,6 +1711,43 @@ test('ask-panel-card: Open in New run asks before leaving picks behind that are 
       ctx.doc.querySelector('[data-ask-card-open-np]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(asked.length, 1);
+    } },
+  ]);
+});
+
+// ── Run tags (#718): the card's tag field, behind the experimental `runTags` flag ──
+test('ask-panel-card: run tags show as chips and ride Start and Open in New run while the flag is on; none while it is off', async () => {
+  await checkRows([
+    { name: 'flag on: 1 chip, Start posts tags, New run gets them', run: async () => {
+      const rec = {};
+      const handed = [];
+      const ctx = makePanel({ fetchHandler: apiHandler(rec), openNewPipeline: (p) => handed.push(p) });
+      applyFlags({ runTags: true }, ctx.doc);
+      ctx.storage.setItem('worca-cc.ask.thread', TID);
+      ctx.panel.open();
+      await ctx.tick(); await ctx.tick(); await ctx.tick();
+      for (const f of stampFrames([
+        { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
+        { type: 'ask-card', block: { kind: 'card', id: CARD_ID, state: 'proposed', card: { ...PROJECT_CARD, tags: ['client:acme'] } } },
+      ], { threadId: TID, messageId: MID })) ctx.panel.pushServerFrame(f);
+      ctx.flush(); await ctx.tick(); await ctx.tick(); ctx.flush();
+      const card = ctx.doc.querySelector('.ask-card');
+      assert.deepEqual([...card.querySelectorAll('.tag-chip')].map((c) => c.firstChild.textContent), ['client:acme']);
+      card.querySelector('[data-ask-card-open-np]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.deepEqual(handed[0].tags, ['client:acme']);
+      card.querySelector('[data-ask-card-start]').click();
+      await ctx.tick(); await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].tags, ['client:acme']);
+    } },
+    { name: 'flag off: no tag field, no tags in the body', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, tags: ['client:acme'] }, rec);
+      const card = ctx.doc.querySelector('.ask-card');
+      assert.equal(card.querySelectorAll('.tag-chip').length, 0);
+      card.querySelector('[data-ask-card-start]').click();
+      await ctx.tick(); await ctx.tick();
+      assert.equal(Object.hasOwn(rec.runBodies[0], 'tags'), false);
     } },
   ]);
 });

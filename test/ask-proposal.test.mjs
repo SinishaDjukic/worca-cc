@@ -125,6 +125,14 @@ test('workflow, guardrails, brief, branches: errors accumulate in order', async 
   assert.equal(ok(await validateProposal({ workspaceId: 'wks-team-0000abcd', brief: 'x', sourceBranchByKey: 'junk' })).sourceBranchByKey, null, 'non-object ignored like the route');
 });
 
+test('tags (#718): normalised onto the card when given, no key when absent, refused when invalid', async () => {
+  assert.deepEqual(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: ['Client: Acme'] })).tags, ['client:acme']);
+  assert.equal(Object.hasOwn(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x' })), 'tags'), false);
+  assert.equal(Object.hasOwn(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: [] })), 'tags'), false);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: ['client:'] })), ['tags: "client:" needs a value after the colon']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: 'client:acme' })), ['tags: tags must be a list of strings']);
+});
+
 test('isSyntacticRef: git ref-format rules, no shell-outs', () => {
   for (const good of ['main', 'feature/x-1', 'release-2.0', 'v1.2.3', 'user/sub/branch', 'a'.repeat(255)]) assert.ok(isSyntacticRef(good), good);
   for (const bad of ['', '-x', 'a b', 'a..b', 'a/', '/a', 'a//b', '.hidden', 'a/.b', 'x.lock', 'a~1', 'a^', 'a:b', 'a?', 'a*', 'a[b', 'a\\b', 'a@{1}', 'a.', 'a'.repeat(256), 42, null]) {
