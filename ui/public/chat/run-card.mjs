@@ -173,6 +173,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   // ---- Shape it first: the approved plan this run was shaped into (snapshot.shaping)
   const shapedEl = h('div', 'chat-rc-shaped');
   shapedEl.hidden = true;
+  const featureEl = h('div', 'chat-rc-feature');
+  featureEl.hidden = true;
   // ---- stats
   const stats = h('div', 'ask-rc-stats');
   const stat = (label, cls) => { const box = h('div', 'ask-rc-stat'); const v = h('span', `ask-rc-stat-v ${cls}`); box.append(h('span', 'ask-rc-stat-k', label), v); stats.appendChild(box); return v; };
@@ -231,7 +233,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   footErr.hidden = true;
   footErr.setAttribute('role', 'status');
   foot.append(pauseBtn, stopBtn, footErr);
-  el.append(head, title, sub, shapedEl, stats, progBar, agentsBox, well, qSec, resultSec, reason, foot);
+  el.append(head, title, sub, shapedEl, stats, featureEl, progBar, agentsBox, well, qSec, resultSec, reason, foot);
 
   let last = null, graph = null, agentsSig = null, resultSig = '', painted = null, sent = null, inFlight = false, dead = false, pauseAsked = '';
   let shownFor = null;   // the question whose receipt shows the "Answered" fallback (its answer may still be in flight)
@@ -593,6 +595,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       }
       shapedEl.hidden = false;
     } else shapedEl.hidden = true;
+    const fid = sh && sh.feature && sh.feature.id;
+    if (fid && shapeFirstOn() && typeof ctx.mountFeature === 'function') { featureEl.hidden = false; ctx.mountFeature(featureEl, fid); }
+    else featureEl.hidden = true;
     paintAgents(s);
     paintGraph(s, chip);
     paintQuestion(s);

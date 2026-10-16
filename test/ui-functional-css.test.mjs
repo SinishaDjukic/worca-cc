@@ -138,3 +138,12 @@ test('[hidden] beats the author display rule on every element app.js hides by at
     } },
   ]);
 });
+
+// The run header is a 2-column grid (title | Live view). The slice line ("Part of <feature> · slice 1 of 2 →", D22)
+// must take its own full row like the progress bar: while the run waits on the person the Live view switch is hidden,
+// and an auto-placed slice line took the title's row and squeezed "Waiting for you" into a narrow column.
+test('the slice line spans the run header grid on its own row', () => {
+  const r = flat.find((x) => sels(x).includes('.rd-sheet-head > .rd-slice-line'));
+  assert.ok(r, 'a .rd-sheet-head > .rd-slice-line rule exists');
+  assert.equal(r.style.getPropertyValue('grid-column').replace(/\s+/g, ''), '1/-1');
+});

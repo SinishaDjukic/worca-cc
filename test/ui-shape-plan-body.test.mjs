@@ -98,6 +98,14 @@ test('the card: summary, footer of four, no Stop, no Run anyway', async () => {
   assert.doesNotMatch($('.plan-body').textContent, /Run anyway/);
 });
 
+test('D19: plan.outlineChange shows the planner\'s note as text; without it there is no note', () => {
+  const withNote = setup({ pq: ask({ outlineChange: 'Slice 1 did not add the <b>tags</b> table.' }) });
+  assert.equal(withNote.$('.shape-plan-outline-change-head').textContent, 'The planner says this slice can\'t be built as outlined:');
+  assert.equal(withNote.$('.shape-plan-outline-change-text').textContent, 'Slice 1 did not add the <b>tags</b> table.');
+  assert.equal(withNote.$('.shape-plan-outline-change-text b'), null, 'text, never markup');
+  assert.equal(setup().$('.shape-plan-outline-change'), null);
+});
+
 test('the meta line shows the file and Shape p/t, then sections and words once the text loads', async () => {
   const { $ } = setup({ fetchPlan: async () => new Promise(() => {}) });
   assert.equal($('.plan-meta').textContent, 'feature-v2.md · Shape 2/3');

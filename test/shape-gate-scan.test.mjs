@@ -51,6 +51,23 @@ test('outside import/export lines GRAPH_SHAPE_WORKFLOW is read only beside a gat
   }
 });
 
-test('resolveShapeRequest( is called in ui/server.mjs with enabled: shapeFirstEnabled()', () => {
-  assert.match(read('ui/server.mjs'), /resolveShapeRequest\([^)]*\{\s*enabled:\s*shapeFirstEnabled\(\)\s*\}\)/);
+test('resolveShapeRequest( is called in ui/server.mjs with enabled: shapeFirstEnabled() and internal', () => {
+  assert.match(read('ui/server.mjs'), /resolveShapeRequest\([^)]*\{\s*enabled:\s*shapeFirstEnabled\(\),\s*internal:/);
+});
+
+test('every /api/shape/ handler, async or not, starts with requireShapeFirst', () => {
+  const re = /app\.(get|post)\('\/api\/shape\/[^']*',\s*(async\s+)?\(req, res\)\s*=>\s*\{\s*\n\s*([^\n]*)/g;
+  const found = [...read('ui/server.mjs').matchAll(re)];
+  assert.ok(found.length >= 6, `found ${found.length} handlers`);
+  for (const m of found) assert.equal(m[3].trim(), 'if (!requireShapeFirst(req, res)) return;', m[0]);
+});
+
+test('liveSliceOf and broadcastFeature never read the flag themselves (only through the gate)', () => {
+  const text = read('ui/server.mjs');
+  for (const name of ['function liveSliceOf', 'function broadcastFeature(']) {
+    const at = text.indexOf(name);
+    assert.ok(at >= 0, name);
+    const end = text.indexOf('\n}\n', at);
+    assert.ok(!/flagEnabled\(/.test(text.slice(at, end)), name);
+  }
 });

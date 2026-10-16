@@ -1,18 +1,19 @@
 // ui/public/chat/home.mjs — the Chat home (worca Chat P6; CONTRACT §8): what the Chat page shows while the open chat
 // has no messages. The hero ("What should worca do?" on the flat page) wraps P1's hero slot — the composer lives
 // there and P1 re-parents it; this module only animates the move (home-flip.mjs) — followed by the quick actions
-// (home-actions.mjs), the tabs Needs you · Running · Recent chats · Workflows (home-lists.mjs; run tiles
+// (home-actions.mjs), the tabs Needs you · Running · Recent chats · Plans (gated) · Workflows (home-lists.mjs; run tiles
 // home-run-tile.mjs) and the "More you can do" promos. It works only while it is on screen: a VISIT starts when the
 // Chat section shows with chat-page[data-view="home"] and ends when either changes; leaving destroys every tile and
 // its graph mount. Data comes from deps (app.js); findFollowingThread is the one fetch of its own.
 import { createQuickActions } from './home-actions.mjs';
 import {
-  createHomeTabs, buildChatsList, buildWorkflowsGrid, defaultTab, emptyState, runWorkflowText,
+  createHomeTabs, buildChatsList, buildPlansList, buildWorkflowsGrid, defaultTab, emptyState, runWorkflowText,
   HOME_TABS, HOME_TAB_EMPTY, HOME_TAB_KEY, RECENT_CHATS_MAX, WORKFLOWS_MAX,
 } from './home-lists.mjs';
 import { createRunTile } from './home-run-tile.mjs';
 import { createHeroFlip } from './home-flip.mjs';
 import { INTENTS } from './intent.mjs';
+import { featureHeadline } from '../shape/feature-view.mjs';
 
 export const RUNS_TICK_MS = 1000;        // elapsed time and states move between frames: re-read once a second
 export const RUNS_COALESCE_MS = 250;     // update() after a run frame: one re-read per burst
@@ -98,7 +99,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   const section = host.closest('section[data-view="chat"]');
   const h = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const st = {
-    visiting: false, visit: 0, tab: null, chosen: false, runs: EMPTY_RUNS, threads: null, workflows: null, portsFn: null,
+    visiting: false, visit: 0, tab: null, chosen: false, runs: EMPTY_RUNS, threads: null, workflows: null, portsFn: null, plans: null, plansOn: false, plansOpen: new Set(),
     tiles: new Map(), tilesTab: null, panelSig: '', tick: null, pending: null, routing: false, runsWait: null, runsWaited: false,
   };
 
@@ -169,7 +170,12 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   }
 
   // ---- session pick ------------------------------------------------------------------------------------------
-  function readTab() { try { const v = win.sessionStorage.getItem(HOME_TAB_KEY); return HOME_TABS.includes(v) ? v : null; } catch { return null; } }
+  function readTab() {
+    try {
+      const v = win.sessionStorage.getItem(HOME_TAB_KEY);
+      return HOME_TABS.includes(v) && (v !== 'plans' || st.plansOn) ? v : null;
+    } catch { return null; }
+  }
   function writeTab(t) { try { win.sessionStorage.setItem(HOME_TAB_KEY, t); } catch { /* storage off: the pick lasts this visit */ } }
 
   // ---- the panel -----------------------------------------------------------------------------------------------
@@ -198,6 +204,18 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
       tabs.panel.replaceChildren(st.threads.length
         ? buildChatsList(doc, st.threads, { onOpen: (id) => deps.openThread(id) })
         : emptyState(doc, HOME_TAB_EMPTY.chats));
+      return;
+    }
+    if (t === 'plans') {
+      if (st.plans == null) { busy(); return; }
+      // The feature part is its headline, so a halt (status and done unchanged) still changes the signature.
+      const sig = `plans|${st.plans.map((p) => [p.threadId, p.cardId, p.state, p.title, p.feature ? `${p.feature.id}:${featureHeadline(p.feature)}` : ''].join(':')).join(',')}`;
+      if (sig === st.panelSig) return;
+      st.panelSig = sig;
+      tabs.panel.removeAttribute('aria-busy');
+      tabs.panel.replaceChildren(st.plans.length
+        ? buildPlansList(doc, st.plans, { onOpen: (id) => deps.openThread(id), mountFeature: deps.mountFeature, open: st.plansOpen })
+        : emptyState(doc, HOME_TAB_EMPTY.plans));
       return;
     }
     if (st.workflows == null) { busy(); return; }
@@ -345,11 +363,33 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     st.portsFn = got && typeof got.portsFn === 'function' ? got.portsFn : null;
     if (st.tab === 'workflows') renderPanel();
   }
+  async function loadPlans(token) {
+    let list = [];
+    try { list = typeof deps.plans === 'function' ? await deps.plans() : []; } catch { list = []; }
+    if (token !== st.visit) return;
+    st.plans = Array.isArray(list) ? list.slice(0, 30) : [];
+    if (st.tab === 'plans') renderPanel();
+  }
+  /** The switches, and the Plans tab while the Shape it first gate is on. */
+  function applyFlags(flags) {
+    actions.setFlags(flags);
+    const on = flags['shapeFirst'] === true;          // the key form: the gate scan bans the dotted read outside shape-gate.mjs
+    if (on === st.plansOn) return;
+    st.plansOn = on;
+    tabs.setVisible('plans', on);
+    if (on && st.visiting && st.plans == null) void loadPlans(st.visit);
+    if (!on && st.tab === 'plans') {
+      st.chosen = false; st.tab = null; st.panelSig = null;
+      maybeChoose();
+      // maybeChoose may not be able to choose yet (runs not known): never leave the hidden tab selected or its list up.
+      if (st.chosen) renderPanel(); else { tabs.select(null); busy(); }
+    }
+  }
   async function loadFlags(token) {
     let got = null;
     try { got = typeof deps.flags === 'function' ? await deps.flags() : null; } catch { got = null; }
     if (token !== st.visit || !got) return;
-    actions.setFlags(got);
+    applyFlags(got);
   }
 
   // ---- visits ----------------------------------------------------------------------------------------------------
@@ -363,6 +403,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     const token = ++st.visit;
     st.threads = null;
     st.workflows = null;
+    st.plans = null;
     st.panelSig = '';
     const stored = readTab();
     st.chosen = !!stored;
@@ -380,6 +421,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     void loadThreads(token);
     void loadWorkflows(token);
     void loadFlags(token);
+    if (st.plansOn) void loadPlans(token);
     st.tick = clock.setInterval(() => { if (!visible()) { leave(); return; } pullRuns(); }, RUNS_TICK_MS);
   }
   function leave() {
@@ -406,7 +448,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   /** update(): something about the runs changed (a run frame) — re-read them, coalesced. update(data): apply now. */
   function update(data) {
     if (data && typeof data === 'object') {
-      if (data.flags) actions.setFlags(data.flags);
+      if (data.flags) applyFlags(data.flags);
       if (!st.visiting) return;                 // a hidden home mounts nothing; the next visit re-reads everything
       if (Array.isArray(data.threads)) st.threads = validThreads(data.threads).slice(0, RECENT_CHATS_MAX);
       if (data.workflows && Array.isArray(data.workflows.list)) {
@@ -423,6 +465,8 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
 
   return {
     update,
+    /** A shape-feature / schedules-changed frame: re-read the Plans tab's rows. */
+    refreshPlans() { if (st.visiting && st.plansOn) void loadPlans(st.visit); },
     /** The intent add-on's transformSend (every Ask send): a send from the home arms the hero → dock glide. */
     armFlip() { return !!page && page.dataset.view === 'home' && flip.arm(); },
     destroy() {

@@ -27,6 +27,12 @@ const NEW_RE = /\(new\)/i;
 const ITEM_LINE_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(.*)$/;
 const VAGUE_RE = /\b(?:works|is fast|is good|should handle|properly|as expected)\b/i;
 const MEASURABLE_RE = /\d|`[^`]+`|"[^"]+"|\b(?:returns?|shows?|rejects?|lists?|names?|within|under|at (?:most|least)|equals?|contains?|exits?)\b/i;
+/** The shape check's `testable` rule on one line (V8): vague only when it uses a vague phrase AND nothing
+ *  measurable is left once that phrase is removed. Shared with checkSlices' `acceptance`. */
+export function isTestable(text) {
+  const t = String(text || '');
+  return !(VAGUE_RE.test(t) && !MEASURABLE_RE.test(t.replace(VAGUE_RE, '')));
+}
 const UNDECIDED_RE = /^(?:tbd|maybe|consider)\b/i;
 // `<…>` placeholders, but not Markdown autolinks (`<https://…>`, `<mailto:…>`)
 const PLACEHOLDER_RES = [/\bTODO\b/, /\bTBD\b/, /\blorem\b/i, /\[(?:…|\.\.\.)\]/, /<(?:…|\.\.\.|(?!https?:|mailto:)[A-Za-z][^<>\n]*)>/];
@@ -88,7 +94,7 @@ export function checkShape(markdown, opts = {}) {
 
   // testable: success criteria (Problem and goal) and QA checks (Testing)
   const vague = ['problem', 'testing'].flatMap((key) => listItems(sec(key)?.text || '').map((t) => ({ t, key })))
-    .find(({ t }) => VAGUE_RE.test(t) && !MEASURABLE_RE.test(t.replace(VAGUE_RE, '')));
+    .find(({ t }) => !isTestable(t));
   add('testable', !vague, vague ? `"${vague.t}" has no measurable condition` : '', vague?.key);
 
   // decisions + grounded share the Decisions table (only when a perspective owns it). A Why or Notes column is allowed (R25):

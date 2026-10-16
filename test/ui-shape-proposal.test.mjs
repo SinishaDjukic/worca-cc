@@ -82,9 +82,14 @@ test('a shaped card has chips but no choices; body() reflects a chip toggle', ()
   assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'ux'] } });
 });
 
-test('a nudged card body() carries the nudge perspectives', () => {
+test('a nudged card body() carries the nudge perspectives and size', () => {
   const ui = shapeCardExtras(doc(), { nudge: nudge() });
-  assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'architect'] } });
+  assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'architect'], size: 'large' } });
+});
+
+test('a shaped card body() sends the slices and size of card.shape', () => {
+  const ui = shapeCardExtras(doc(), { shape: { perspectives: ['product', 'qa'], slices: 'off', size: 'medium' } });
+  assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'qa'], slices: 'off', size: 'medium' } });
 });
 
 test('shapeWhatHappens: the questions and the approval; slices only when suggested', () => {

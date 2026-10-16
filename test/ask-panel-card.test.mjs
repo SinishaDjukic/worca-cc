@@ -1274,7 +1274,7 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       shapeBtn.click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
-      assert.deepEqual(rec.runBodies[0].shape, { perspectives: ['product', 'architect'] });
+      assert.deepEqual(rec.runBodies[0].shape, { perspectives: ['product', 'architect'], size: 'large' });
       startBtn.click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(rec.runBodies[1].workflowId, 'wf_default');

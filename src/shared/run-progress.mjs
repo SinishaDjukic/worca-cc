@@ -49,13 +49,19 @@ export function progressTone(st) {
   return 'blue';
 }
 
-/** What a waiting question asks for: the tail of "needs you: …" (P5). */
+/** What a waiting question asks for: the tail of "needs you: …" (P5, D33). */
 export function askWhat(pq) {
   if (!pq) return '';
   if (pq.kind === 'workflow') return 'review the workflow';
   if (pq.kind === 'gate') return 'a decision';
   if (pq.kind === 'form') return 'input needed';
   if (pq.kind === 'recovery') return 'a step failed';
+  // Shaper's plan ask (PLAN_ASK_KIND, src/core/shape/run.mjs — shared/ cannot import core). The slice outline is the
+  // same kind with `plan.outline` set (orchestrator's outline ask; app.js askHeading tells them apart the same way).
+  if (pq.kind === 'plan') {
+    const p = pq.plan || {};
+    return p.outline || p.port === 'outline' ? 'approve the slices' : 'approve the plan';
+  }
   const n = Array.isArray(pq.questions) ? pq.questions.length : 0;
   return n ? `answer ${plural(n, 'question')}` : 'answer a question';
 }
@@ -292,7 +298,7 @@ export function runProgress(st, memo = null) {
  * Returns `{ total, index (1-based: the current run, else the next waiting one), fraction,
  * tone, text: "Run 2 of 3 · Build", parts: [{state, fraction, tone}] }`.
  */
-export function chainProgress(members) {
+export function chainProgress(members, { noun = 'Run' } = {}) {
   const list = Array.isArray(members) ? members.filter(Boolean) : [];
   const total = list.length;
   const at = list.findIndex((m) => m.state === 'current');
@@ -305,8 +311,10 @@ export function chainProgress(members) {
   const fraction = total ? parts.reduce((a, p) => a + (p.state === 'failed' ? 0 : p.fraction), 0) / total : 0;
   const cur = at >= 0 ? list[at] : null;
   const index = next >= 0 ? next + 1 : total;
-  const stageWord = cur && cur.progress && cur.progress.label ? ` · ${cur.progress.label}` : '';
+  // D17: a current member that waits for a person turns the text and tone amber.
+  const needs = !!(cur && cur.needs);
+  const stageWord = needs ? ' · Needs you' : cur && cur.progress && cur.progress.label ? ` · ${cur.progress.label}` : '';
   return { total, index, fraction, parts,
-    tone: cur && cur.progress ? cur.progress.tone : 'blue',
-    text: total ? `Run ${index} of ${total}${stageWord}` : '' };
+    tone: needs ? 'amber' : cur && cur.progress ? cur.progress.tone : 'blue',
+    text: total ? `${noun} ${index} of ${total}${stageWord}` : '' };
 }

@@ -3,6 +3,7 @@
 // the DOM the list is built from.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import {
   rowTime, liveRowState, histRowState, schedRowState, countNeedsYou,
@@ -41,6 +42,9 @@ test('live row states: questions name their step, pause reasons, a named failure
   assert.equal(liveRowState({ status: 'running', ask: { kind: 'gate', step: '' } }).word, 'Approval needed');
   assert.equal(liveRowState({ status: 'running', ask: { kind: 'questions', step: 'Plan' } }).word, 'Plan question');
   assert.equal(liveRowState({ status: 'running', ask: { kind: '', step: '' } }).word, 'Question');
+  // D33: Shaper's plan ask names the decision, not "Plan question".
+  assert.equal(liveRowState({ status: 'running', ask: { kind: 'plan', step: 'Plan' } }).word, 'Approve the plan');
+  assert.equal(liveRowState({ status: 'running', ask: { kind: 'plan', step: 'Plan', outline: true } }).word, 'Approve the slices');
   assert.equal(liveRowState({ status: 'paused', pauseReason: 'cost_pipeline' }).word, 'Cost limit');
   assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'codex' }).word, 'Codex usage limit', 'a usage limit names its engine');
   assert.equal(histRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude' }).word, 'Claude usage limit');
@@ -322,6 +326,71 @@ const chainIt = (extra = {}) => ({
   ], ...extra,
 });
 
+// D17: a chain that is a feature (runsChainItem adds `feature` and `href`).
+const featureChainIt = (extra = {}) => chainIt({
+  id: 'c7', title: 'Run tags and cost allocation', open: true, feature: { id: 'feat_1' }, href: '#feature/feat_1',
+  total: 3, index: 2, text: 'Slice 2 of 3 · Build',
+  members: [
+    { state: 'done', pipelineId: 'p1', ticketId: null, runId: 'r1', title: '1 · Store tags', href: '#running/r1', prUrl: 'https://github.com/o/r/pull/1' },
+    { state: 'current', pipelineId: 'p2', ticketId: 't2', runId: 'r2', title: '2 · Run tags', href: '#running/r2', icon: 'run' },
+    { state: 'waiting', pipelineId: null, ticketId: 't3', title: '3 · Cost report', href: '#feature/feat_1' },
+  ], ...extra });
+
+test('a 3-slice feature is one row, open, short member names, the feature title once', () => {
+  const m = buildRunsModel({
+    live: [liveIt('r1', { pipelineId: 'p1', status: 'done' }), liveIt('r2', { pipelineId: 'p2' })],
+    scheduled: [{ id: 't3', title: 'Run tags and cost allocation · 3/3: Cost report', status: 'scheduled', after: 't2', groupKey: 'emp-00000001', groupName: 'Employee project' }],
+    chains: [featureChainIt()], now: NOW,
+  });
+  const rows = m.groups.flatMap((g) => g.rows);
+  assert.deepEqual(rows.map((r) => r.key), ['chain:c7']);
+  assert.equal(rows[0].href, '#feature/feat_1');
+  assert.equal(rows[0].open, true);
+  assert.deepEqual(rows[0].feature, { id: 'feat_1' });
+  const doc = new JSDOM('<body></body>').window.document;
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m, {}));
+  assert.equal(host.textContent.split('Run tags and cost allocation').length - 1, 1, 'the feature title once');
+  assert.deepEqual([...host.querySelectorAll('.runs-chain-link')].map((a) => a.textContent), ['Open feature →', '1 · Store tags', '2 · Run tags', '3 · Cost report']);
+  assert.equal(host.querySelector('.runs-chain-open-feature a').getAttribute('href'), '#feature/feat_1', 'the feature page is the first item');
+  const toggle = host.querySelector('.runs-chain-toggle');
+  assert.equal(toggle.dataset.feature, '1');
+  assert.equal(toggle.getAttribute('aria-label'), 'Hide the 3 slices in this feature');
+});
+
+test('a started slice waiting on a question is not its own row nor under Needs you: the feature row is', () => {
+  const ask = { kind: 'clarify', step: 'Clarify' };
+  const m = buildRunsModel({
+    live: [liveIt('r2', { pipelineId: 'p2', ask })],
+    chains: [featureChainIt({ text: 'Slice 2 of 3 · Needs you', tone: 'amber',
+      members: featureChainIt().members.map((x) => (x.runId === 'r2' ? { ...x, needs: true, icon: 'ask' } : x)) })],
+    now: NOW,
+  });
+  assert.deepEqual(m.needs.map((r) => r.key), ['chain:c7']);
+  assert.deepEqual(m.groups.flatMap((g) => g.rows).map((r) => r.key), ['chain:c7']);
+  const only = buildRunsModel({ live: [liveIt('r2', { pipelineId: 'p2', ask })], chains: [featureChainIt()], filter: 'needs', now: NOW });
+  assert.deepEqual(only.needs.map((r) => r.key), ['chain:c7'], 'the Needs-you filter too');
+});
+
+test('the feature row needs you exactly when a member row does (one rule): a paused History member counts', () => {
+  const m = buildRunsModel({ history: [histIt('p1', { status: 'paused' })], chains: [featureChainIt()], now: NOW });
+  assert.deepEqual(m.needs.map((r) => r.key), ['chain:c7']);
+  const quiet = buildRunsModel({ live: [liveIt('r2', { pipelineId: 'p2' })], chains: [featureChainIt()], now: NOW });
+  assert.deepEqual(quiet.needs, [], 'nobody needed: the feature row is not added');
+});
+
+test('a non-feature chain is unchanged: its member stays under Needs you; its toggle names runs', () => {
+  const m = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', ask: { kind: 'workflow', step: 'Plan' } })], chains: [chainIt()], now: NOW });
+  assert.deepEqual(m.needs.map((r) => r.key), ['live:r1']);
+  const doc = new JSDOM('<body></body>').window.document;
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m, {}));
+  const toggle = host.querySelector('.runs-chain-toggle');
+  assert.equal(toggle.dataset.feature, undefined);
+  assert.equal(toggle.getAttribute('aria-label'), 'Show the 2 runs in this chain');
+  assert.equal(chainRow(chainIt(), NOW).href, '#running/r1', 'a plain chain links its current member');
+});
+
 test('live row carries its progress; a chain item replaces its member rows with ONE chain row', async () => {
   const m = buildRunsModel({
     live: [liveIt('r1', { pipelineId: 'p1', progress: { fraction: 0.4, tone: 'blue' } }), liveIt('r9')],
@@ -365,6 +434,44 @@ test('a chain of three is ONE row (Run 2 of 3) that expands to ✓ ● ○ membe
   assert.deepEqual([...host.querySelectorAll('.runs-chain-glyph')].map((g) => g.textContent), ['✓', '●', '○']);
   assert.deepEqual(host.querySelector('.runs-row-chain').dataset.memberKeys.split(' ').sort(), ['p:p0', 'p:p1', 'r:r1', 't:t2'],
     'the row carries its member keys so the selection repaint can rebuild them from the DOM');
+});
+
+test('only a current member that is working pulses (is-live): not one that asks or is paused', () => {
+  const doc = new JSDOM('<body></body>').window.document;
+  const liveOf = (icon) => {
+    const chain = chainIt({ open: true, members: [
+      { state: 'done', pipelineId: 'p0', title: 'Zero', href: '#history/k/p0' },
+      { state: 'current', pipelineId: 'p1', runId: 'r1', title: 'A', href: '#running/r1', icon }] });
+    const host = doc.createElement('div');
+    host.append(...renderRunsList(doc, buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1' })], chains: [chain], now: NOW }), {}));
+    return [...host.querySelectorAll('.runs-chain-member')].map((li) => li.classList.contains('is-live'));
+  };
+  assert.deepEqual(liveOf('run'), [false, true]);
+  assert.deepEqual(liveOf('ask'), [false, false]);
+  assert.deepEqual(liveOf('paused'), [false, false]);
+});
+
+test('a member that needs the person is amber, a working one pulses blue, a paused one is grey (D33)', () => {
+  const doc = new JSDOM('<body></body>').window.document;
+  const classesOf = (icon, asks = false) => {
+    const chain = chainIt({ open: true, members: [
+      { state: 'done', pipelineId: 'p0', title: 'Zero', href: '#history/k/p0' },
+      { state: 'current', pipelineId: 'p1', runId: 'r1', title: 'A', href: '#running/r1', icon, asks }] });
+    const host = doc.createElement('div');
+    host.append(...renderRunsList(doc, buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1' })], chains: [chain], now: NOW }), {}));
+    const li = host.querySelectorAll('.runs-chain-member')[1];
+    return ['is-live', 'is-needs', 'is-paused'].filter((c) => li.classList.contains(c));
+  };
+  assert.deepEqual(classesOf('run'), ['is-live']);
+  assert.deepEqual(classesOf('ask', true), ['is-needs']);
+  assert.deepEqual(classesOf('paused', true), ['is-needs'], 'paused with a question waiting: it needs the person');
+  assert.deepEqual(classesOf('paused'), ['is-paused']);
+});
+
+test('the member dot colours: amber for needs, grey for paused (style.css)', async () => {
+  const css = await readFile(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.runs-chain-member\.is-needs \.runs-chain-glyph\{color:var\(--amber-ink\);\}/);
+  assert.match(css, /\.runs-chain-member\.is-paused \.runs-chain-glyph\{color:var\(--ink-3\);\}/);
 });
 
 test('the chain row glyph follows the current member: ask, paused, else scheduled while it only waits', () => {

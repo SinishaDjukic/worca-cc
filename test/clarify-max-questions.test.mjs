@@ -101,3 +101,32 @@ test('placement: the cap sits after the form downgrade and before `let answers =
   const answers = fn.indexOf('let answers = [];');
   assert.ok(downgrade > 0 && cap > downgrade && answers > cap, `${downgrade} < ${cap} < ${answers}`);
 });
+
+// D19: a later slice publishes the feature's Clarify answers (slice 1's) without spawning or asking.
+test('carriedClarify: no spawn, no ask; the port file, the result and the clarify row carry the answers', async () => {
+  const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
+  const { readClarifyRow } = await import('../src/core/artifacts.mjs');
+  const rows = [
+    { name: 'questions', carried: {
+      questions: { questions: [{ id: 'q1', question: 'Where?', options: ['A', 'B'] }] },
+      answers: { answers: [{ id: 'q1', question: 'Where?', choice: 'B' }], answeredBy: 'local' } },
+    file: (c) => ({ questions: c.questions.questions, answers: c.answers.answers }) },
+    { name: 'form', carried: { questions: { form: 'f1' }, answers: { kind: 'form', form: 'f1', version: 2, values: { a: 1 } } },
+      file: () => ({ form: 'f1', version: 2, values: { a: 1 } }) },
+  ];
+  for (const row of rows) {
+    const seen = [];
+    const ctx = await ctxFor({ seen });
+    ctx.pipelineId = `p-carry-${row.name}-${Date.now()}`;
+    seedPipelineRow({ id: ctx.pipelineId });
+    ctx.ask = async () => { throw new Error('a carried Clarify must not ask'); };
+    ctx.claudeOpts = { mock: false, bin: '/nonexistent/claude-must-not-spawn' };
+    ctx.carriedClarify = row.carried;
+    const out = await runClarifierExecution(ctx);
+    const written = JSON.parse(await readFile(ctx.outputs.answers.path, 'utf8'));
+    assert.deepEqual(written, row.file(row.carried), row.name);
+    assert.deepEqual(out.answers, row.name === 'form' ? [] : row.carried.answers.answers, row.name);
+    assert.equal(out.sessionId, null);
+    assert.deepEqual(readClarifyRow(ctx.pipelineId), row.carried, row.name);
+  }
+});

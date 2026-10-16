@@ -253,7 +253,7 @@ test('ui-ask-progress-card: byPipeline prefers the live lineage when a supersede
   ctx.recv(STATE({ runId: 'run-new' }));
   await settle(ctx.window);
   assert.equal(store.byPipeline('abcd1234').runId, 'run-new', 'the live lineage wins over the superseded paused one that Map order lists first');
-  assert.equal(store.get('run-old').status, 'paused', 'the old entry is still there (only the acting tab deletes it)');
+  assert.equal(store.get('run-old'), null, 'the superseded paused entry is dropped in every tab, not only the acting one');
   ctx.recv({ runId: 'run-new', type: 'done', status: 'done' });
   await settle(ctx.window);
   assert.equal(store.byPipeline('abcd1234').runId, 'run-new', 'both settled: the newest lineage wins');

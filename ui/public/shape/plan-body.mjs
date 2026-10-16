@@ -106,6 +106,14 @@ export function renderPlanBody(panel, pq, deps) {
     summary = h('p', 'plan-summary'); summary.hidden = true;
     body.appendChild(summary);
 
+    // D19: a later slice's planner said the slice can't be built as outlined: that is why this plan stopped
+    if (plan.outlineChange) {
+      const note = h('div', 'shape-plan-outline-change');
+      note.append(h('div', 'shape-plan-outline-change-head', 'The planner says this slice can\'t be built as outlined:'),
+        h('p', 'shape-plan-outline-change-text', String(plan.outlineChange)));
+      body.appendChild(note);
+    }
+
     // one check line, folded; neutral rows with ✓ / ✕; one Fix all (D32)
     if (items.length) {
       const rows = h('div', 'plan-checks'); rows.hidden = true;

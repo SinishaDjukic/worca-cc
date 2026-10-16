@@ -859,10 +859,28 @@ export function mockChecklistPrefixes(prompt) {
   return out;
 }
 
+export const MOCK_OUTLINE = Object.freeze({
+  why: 'Two user-facing steps; the second needs the first one\'s storage.',
+  slices: [
+    { id: 's1', title: 'Store chart definitions', goal: 'Charts are saved and listed.', inScope: ['the chart store'], outOfScope: ['Chat'],
+      acceptance: ['GET /api/charts returns the saved chart'], dependsOn: [], estimate: 'medium' },
+    { id: 's2', title: 'Ask for a chart in Chat', goal: 'Chat proposes a chart and saves it.', inScope: ['the Chat tool'], outOfScope: [],
+      acceptance: ['Chat shows the chart card after "chart my runs"'], dependsOn: ['s1'], estimate: 'medium' },
+  ],
+});
+
 async function mockPlannerPlan(m, onEvent, prompt = '') {
   const out = m.MOCK_OUT;
   const base = m.MOCK_BASE || 'feature';
   await emitLog(onEvent, '[mock] planner writing initial plan with code snippet');
+  // §3.8: a slicing prompt whose task says "plan this in slices" gets a two-slice outline and no plan (the real
+  // Planner STOPs after the outline). The resumed spawn carries no MOCK_SLICES, so it writes the plan below.
+  if (m.MOCK_SLICES && /\bplan this in slices\b/i.test(prompt)) {
+    await ensureDir(m.MOCK_SLICES);
+    await writeFile(m.MOCK_SLICES, JSON.stringify(MOCK_OUTLINE, null, 2) + '\n', 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_SLICES}`, raw: { mock: true, file: m.MOCK_SLICES } });
+    return `[mock] planner-plan: outline at ${m.MOCK_SLICES}`;
+  }
   if (!out) return '[mock] planner-plan: no MOCK_OUT given';
   const md = mockPlanMarkdown(base, 1, mockChecklistPrefixes(prompt));
   await ensureDir(out);

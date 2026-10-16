@@ -137,6 +137,8 @@ async function bootRunning({ budget = okBudget(), rows = [HISTORY_ROW] } = {}) {
       if (url.endsWith('/api/history/pr')) return ok({ ok: true });
       if (url.endsWith('/api/history')) return ok({ pipelines: box.rows, ghAvailable: false });
       if (url.endsWith('/api/budget')) return ok(box.budget);
+      // D16: the slice endpoint, only when a test sets box.slice (else the boot's benign default: not a slice).
+      if (box.slice && /\/api\/shape\/pipelines\/[^/]+\/slice$/.test(url)) return ok(box.slice);
       return null;
     },
   });
@@ -1497,6 +1499,33 @@ test('a run in a chain of three paints the overall bar: 3 parts, the first green
   assert.equal(parts[0].firstElementChild.style.width, '100%');
   assert.equal(parts[1].dataset.state, 'current');
   assert.equal(parts[2].dataset.state, 'waiting');
+});
+
+test('D16: a live slice shows "Part of FEATURE · slice 2 of 3 →" linking to the feature page, and no chain bar', async () => {
+  const ctx = await bootRunning();
+  frame(ctx, { type: 'hello', flags: { shapeFirst: true }, runs: [] });
+  ctx.box.chains = CHAIN_OF_THREE();
+  ctx.box.slice = { featureId: 'feat_1', title: 'Charts', index: 2, total: 3, sliceTitle: 'Slice 2', state: 'running',
+    next: { index: 3, title: 'Slice 3', state: 'planned' } };
+  const screen = await openChainRun(ctx);
+  const line = screen.querySelector('.rd-glance .rd-slice-line');
+  assert.equal(line.hidden, false);
+  assert.equal(line.querySelector('.rd-slice-link').textContent, 'Part of Charts · slice 2 of 3 →');
+  assert.equal(line.querySelector('.rd-slice-link').getAttribute('href'), '#feature/feat_1');
+  assert.equal(line.querySelector('.rd-slice-open'), null, 'Open feature only once the slice is done');
+  assert.equal(screen.querySelector('.rd-glance .rd-prog-chain').hidden, true, 'the slice line replaces the chain bar');
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: STAGED_V2(), steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 2 });
+  await settle(ctx.window, 4);
+  assert.equal(screen.querySelectorAll('.rd-slice-link').length, 1, 'painting twice leaves one line');
+});
+
+test('D16: a plain run in a chain keeps the chain bar and has no slice line (gate on)', async () => {
+  const ctx = await bootRunning();
+  frame(ctx, { type: 'hello', flags: { shapeFirst: true }, runs: [] });
+  ctx.box.chains = CHAIN_OF_THREE();
+  const screen = await openChainRun(ctx);
+  assert.equal(screen.querySelector('.rd-glance .rd-slice-line').hidden, true);
+  assert.equal(screen.querySelector('.rd-glance .rd-prog-chain').hidden, false);
 });
 
 test('chain freshness: no chain at first, a schedules-changed frame then shows the bar', async () => {

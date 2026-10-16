@@ -4618,6 +4618,12 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-chain-member{display:flex;gap:6px;align-items:baseline;padding:2px 0;color:var(--ink-2);}
 .runs-chain-member.is-done .runs-chain-glyph{color:var(--green-ink);}
 .runs-chain-member.is-current .runs-chain-glyph{color:var(--blue-ink);}
+/* D34: amber means "needs you" and nothing else; a paused slice with nothing to answer is grey. */
+.runs-chain-member.is-needs .runs-chain-glyph{color:var(--amber-ink);}
+.runs-chain-member.is-paused .runs-chain-glyph{color:var(--ink-3);}
+/* The slice that is working pulses (blue, as the running pills and the progress line; green is "done"). */
+.runs-chain-member.is-live .runs-chain-glyph{display:inline-block;animation:wr-pulse 1.6s ease-in-out infinite;}
+@media (prefers-reduced-motion: reduce){.runs-chain-member.is-live .runs-chain-glyph{animation:none;}}
 .runs-chain-member.is-failed .runs-chain-glyph{color:var(--red-ink);}
 .runs-chain-pr{margin-left:auto;color:var(--blue-ink);}
 .runs-note{margin:0;padding:18px 12px;color:var(--ink-2);font-size:13px;text-align:center;}
@@ -4828,6 +4834,7 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:23px;margin-left:16px;}   /* the state word's line box (18px × 1.3) */
 /* The progress bars take the card's full width, under the status line (a flex row squeezed them to ~128px). */
 .rd-sheet-head > .run-prog{grid-column:1 / -1;}
+.rd-sheet-head > .rd-slice-line{grid-column:1 / -1;}   /* own row: never the Live view column (D22) */
 /* The status line: what is happening now. A state word, then what it concerns. */
 .rd-now-top{display:flex;align-items:center;gap:12px;min-width:0;}
 .rd-orb{flex:none;display:flex;}
@@ -9424,6 +9431,20 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 /* D30: while a shaped run waits on the person, Results / How it ran and the graph fold under "Run details ›" */
 .rd-wait-more{align-self:flex-start;padding:4px 10px;font-size:12.5px;color:var(--ink-2);}
 .rd-glance[data-shaper-wait]:not([data-wait-open]) :is(.rd-result,.rd-live,.rd-live-row){display:none;}
+/* D30, D33: while a shaped run waits on the person, the card says what is needed; the status panel is one line —
+   the stage words and "Run details ›" — with no "Waiting for you" of its own. Run details › (data-wait-open) and
+   the run working again bring today's panel back. */
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 16px;padding:10px 16px;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > :is(.rd-facts,.rd-nowlist,.rd-pr-box){display:none;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > :is(.rd-banners,.rd-away-note){flex-basis:100%;margin:0;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-sheet-head{display:flex;flex:1 1 auto;min-width:0;flex-wrap:wrap;align-items:center;gap:6px 16px;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-sheet-head > :is(.rd-now-top,.rd-prog-chain){display:none;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-sheet-head > .rd-slice-line{flex-basis:100%;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-prog{margin-top:0;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-prog[data-mode="stages"] > .run-prog-track{display:none;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-prog:focus-visible{outline:2px solid var(--blue-line);outline-offset:2px;border-radius:4px;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-prog .run-prog-marks{display:flex;gap:12px;margin-top:0;font-size:12px;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > .rd-wait-more{align-self:center;}
 .chat-rc-shaped{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:8px;font-size:12px;color:var(--ink-2);}
 .chat-rc-shaped:empty{display:none;}
 .chat-rc-shaped-stages{color:var(--green-ink);font-weight:500;}
@@ -9455,3 +9476,99 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 @media (prefers-reduced-motion:reduce){.shape-cl-toggle .chev{transition:none;}}
 .chat-rc-checklist{font-size:12px;color:var(--green-ink);margin:4px 0;}
 .chat-rc-checklist.is-open{color:var(--red-ink);}
+.outline-why{margin:0;color:var(--ink-2);}
+.outline-why[hidden]{display:none;}
+.outline-slices{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none;counter-reset:outline;}
+.outline-slice{counter-increment:outline;display:flex;flex-direction:column;gap:4px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);}
+.outline-slice-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
+.outline-slice-title::before{content:counter(outline) '. ';color:var(--ink-3);font-weight:500;}
+.outline-est{padding:1px 8px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink);font-size:10.5px;font-weight:600;}
+.outline-est.small{background:var(--green-bg);color:var(--green-ink);}
+.outline-goal{color:var(--ink-2);overflow-wrap:anywhere;}
+.outline-acceptance{margin:0;padding-left:18px;color:var(--ink-2);font-size:12px;overflow-wrap:anywhere;}
+.outline-slice-tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;}
+.outline-approve-each{display:flex;align-items:center;gap:6px;color:var(--ink-2);cursor:pointer;}
+.outline-undo{align-self:flex-start;}
+.outline-undo[hidden]{display:none;}
+/* D30–D32: the slice outline as a decision card (outline-body.mjs renderCard); plan-card classes do the rest. */
+.plan-card .outline-slices{gap:4px;}
+.plan-card .outline-slice{gap:2px;padding:6px 10px;}
+.plan-card .outline-goal{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.outline-under{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;font-size:12px;}
+.outline-under .outline-approve-each{font-size:12px;}
+.outline-under .outline-edit{font-size:12px;}
+.chat-rc-feature{margin:8px 0;}
+.chat-rc-feature[hidden]{display:none;}
+.shape-feature{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;}
+.shape-feature-title{font-weight:600;overflow-wrap:anywhere;}
+.shape-feature-head{color:var(--ink-2);}
+.shape-feature.is-halted .shape-feature-head{color:var(--amber-ink);}
+/* D33: the page's "you are here" line. :not(.is-halted) leaves a halted page to the existing amber rule above,
+   which this more specific rule would otherwise beat. .is-needs below has the same specificity as the ink rule
+   and comes later, so amber wins there. */
+.shape-feature.is-page:not(.is-halted) .shape-feature-head{color:var(--ink);}
+.shape-feature.is-page .shape-feature-head{font-weight:600;}
+.shape-feature.is-page .shape-feature-head.is-needs{color:var(--amber-ink);}
+.shape-feature-more{margin-left:auto;min-width:32px;}
+.shape-feature-replanned{color:var(--ink-3);font-size:12px;}
+.shape-feature-bar{height:6px;border-radius:999px;background:var(--line);overflow:hidden;}
+.shape-feature-fill{display:block;height:100%;background:var(--amber);}
+.shape-feature-slices{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;}
+.shape-feature-slice{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:6px 8px;border:1px solid var(--line);border-radius:var(--r-ctrl);}
+.shape-feature-slice-title{flex:1 1 140px;min-width:0;overflow-wrap:anywhere;}
+.shape-feature-slice-state{padding:1px 8px;border-radius:999px;background:var(--line);color:var(--ink-3);font-size:10.5px;font-weight:600;}
+.shape-feature-slice.is-done .shape-feature-slice-state{background:var(--green-bg);color:var(--green-ink);}
+.shape-feature-slice.is-stopped .shape-feature-slice-state,.shape-feature-slice.is-error .shape-feature-slice-state,.shape-feature-slice.is-failed .shape-feature-slice-state{background:var(--red-bg);color:var(--red-ink);}
+.shape-feature-slice.is-approval .shape-feature-slice-state,.shape-feature-slice.is-questions .shape-feature-slice-state,.shape-feature-slice.is-paused .shape-feature-slice-state{background:var(--amber-bg);color:var(--amber-ink);}
+.shape-feature-slice.is-missed .shape-feature-slice-state,.shape-feature-slice.is-canceled .shape-feature-slice-state{color:var(--ink-3);}
+.shape-feature-slice.is-missed .shape-feature-slice-title,.shape-feature-slice.is-canceled .shape-feature-slice-title{color:var(--ink-3);}
+.shape-feature-pr{color:var(--ink-2);font-size:12px;}
+.shape-feature-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
+.shape-feature-approve-each{display:flex;align-items:center;gap:6px;color:var(--ink-2);cursor:pointer;}
+.shape-feature-err{padding:6px 8px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);overflow-wrap:anywhere;}
+.shape-feature-err[hidden]{display:none;}
+/* D16: the feature page (#feature/ID), full width; one bar part per slice, tinted by its state. */
+.feature-page{padding:16px 20px;}
+.feature-page-gone,.feature-page-loading{color:var(--ink-3);}
+.shape-feature.is-page{width:100%;box-sizing:border-box;font-size:14px;}
+.shape-feature-segs{display:flex;gap:3px;height:8px;}
+.shape-feature-seg{flex:1 1 0;border-radius:999px;background:var(--line);}
+.shape-feature-seg[data-state="done"]{background:var(--green);}
+.shape-feature-seg[data-state="running"],.shape-feature-seg[data-state="shaping"],.shape-feature-seg[data-state="starting"]{background:var(--blue);}
+.shape-feature-seg[data-state="approval"],.shape-feature-seg[data-state="questions"],.shape-feature-seg[data-state="paused"]{background:var(--amber);}
+.shape-feature-seg[data-state="stopped"],.shape-feature-seg[data-state="error"],.shape-feature-seg[data-state="failed"]{background:var(--red);}
+.shape-feature-merge{padding:1px 8px;border-radius:999px;background:var(--blue-bg);color:var(--blue-ink);font-size:10.5px;font-weight:600;}
+.shape-feature-current{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-ctrl);}
+.shape-feature-current-title{font-weight:600;}
+.shape-feature-order{color:var(--ink-3);font-size:12px;}
+.shape-feature-ship{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
+.shape-feature-ship-head{font-weight:600;flex-basis:100%;}
+.shape-feature-ship-why{flex-basis:100%;color:var(--ink-2);font-size:12px;}
+.shape-feature-shipped{color:var(--green-ink);}
+/* P13: the Chat run card's summary of the feature. */
+.shape-feature-sum{display:flex;flex-direction:column;gap:6px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;}
+.shape-feature-sum.is-needs .shape-feature-sum-line,.shape-feature-sum.is-halted .shape-feature-sum-line{color:var(--amber-ink);}
+.shape-feature-sum-open{align-self:flex-start;}
+/* D19: why a later slice's plan stopped. */
+.shape-plan-outline-change{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--amber-wash);border:1px solid var(--amber-line);}
+.shape-plan-outline-change-head{font-weight:600;color:var(--amber-ink);}
+.shape-plan-outline-change-text{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;}
+/* D16, D22: a slice's place in its feature, on its run page. */
+.rd-slice-line{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;}
+.rd-slice-line[hidden]{display:none;}
+.rd-slice-link{color:var(--blue-ink-strong);}
+.shipit-slice-note[hidden]{display:none;}
+.chat-home-plans{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;}
+.chat-home-plan{display:flex;flex-direction:column;gap:4px;}
+.chat-home-plan-open{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:10px;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.chat-home-plan-open:hover{background:var(--hover);}
+.chat-home-plan-col{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0;}
+.chat-home-plan-t{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-home-plan-m{color:var(--ink-2);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-home-plan-state{flex:none;padding:1px 8px;border-radius:999px;background:var(--line);color:var(--ink-3);font-size:10.5px;font-weight:600;}
+.chat-home-plan-state.is-done{background:var(--green-bg);color:var(--green-ink);}
+.chat-home-plan-state.is-stopped{background:var(--red-bg);color:var(--red-ink);}
+.chat-home-plan-state.is-waiting,.chat-home-plan-state.is-paused{background:var(--amber-bg);color:var(--amber-ink);}
+.chat-home-plan-feature{margin:0 10px 4px;color:var(--ink-2);font-size:12px;}
+.chat-home-plan-feature>summary{cursor:pointer;}
+.chat-home-plan-feature-body{margin-top:6px;}
