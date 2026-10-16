@@ -1,4 +1,5 @@
 // src/core/shape/run.mjs — shaped-run helpers: the POST /api/run `shape` field and the plan answer (spec D2, D9).
+import { isAbsolute } from 'node:path';
 import { SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { normalizePerspectives, DEFAULT_PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
 
@@ -25,7 +26,7 @@ export function resolveShapeRequest({ shape, workflowId }, { enabled }) {
   const extra = Object.keys(shape || {}).filter((k) => !SHAPE_FIELDS.has(k));
   if (extra.length) return { ok: false, error: `shape has unknown field(s): ${extra.join(', ')}` };
   if (named && !isShapeWorkflowId(named)) {
-    return { ok: false, error: `a shaped run uses the Shape it first workflow (${SHAPE_WORKFLOW_ID}), not "${named}"` };
+    return { ok: false, error: `a shaped run uses the Shaper workflow (${SHAPE_WORKFLOW_ID}), not "${named}"` };
   }
   const p = normalizePerspectives(shape?.perspectives ?? [...DEFAULT_PERSPECTIVES]);
   if (!p.ok) return { ok: false, error: p.error };
@@ -37,7 +38,7 @@ export function resolveShapeRequest({ shape, workflowId }, { enabled }) {
 }
 
 /** The `plan` ask's validator (RunHarness.answer → 422 on {ok:false}). */
-export function validatePlanAnswer(raw, { revisable = false } = {}) {
+export function validatePlanAnswer(raw, { revisable = false, perspectives = null } = {}) {
   const bad = (message) => ({ ok: false, errors: [{ path: 'decision', code: 'invalid', message }] });
   const d = raw && typeof raw === 'object' ? raw.decision : undefined;
   if (d === 'approve' || d === 'stop') return { ok: true, payload: { decision: d } };
@@ -52,8 +53,47 @@ export function validatePlanAnswer(raw, { revisable = false } = {}) {
   if (source !== 'person' && source !== 'check') {
     return { ok: false, errors: [{ path: 'source', code: 'invalid', message: 'source must be person or check' }] };
   }
-  return { ok: true, payload: { decision: 'revise', feedback, ...(source === 'check' ? { source } : {}) } };
+  const payload = { decision: 'revise', feedback, ...(source === 'check' ? { source } : {}) };
+  if (raw.perspectives !== undefined) {
+    const p = normalizePerspectives(raw.perspectives);
+    if (!p.ok) return { ok: false, errors: [{ path: 'perspectives', code: 'invalid', message: p.error }] };
+    const had = Array.isArray(perspectives) ? perspectives : DEFAULT_PERSPECTIVES;
+    if (had.includes('ux') !== p.perspectives.includes('ux')) {
+      return { ok: false, errors: [{ path: 'perspectives', code: 'invalid',
+        message: 'UX adds or drops the manual-test stages: start a new shaped run to change it' }] };
+    }
+    payload.perspectives = p.perspectives;
+  }
+  return { ok: true, payload };
 }
+
+/** state.shaping of a shaped run; `saved` is the resume point's copy (a resumed run keeps its versions). */
+export function initialShaping(shape, saved = null) {
+  const s = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  return {
+    perspectives: Array.isArray(shape?.perspectives) ? [...shape.perspectives] : [...DEFAULT_PERSPECTIVES],
+    rounds: Array.isArray(s.rounds) ? s.rounds.filter((r) => r && Number.isInteger(r.round)).map((r) => ({ ...r })) : [],
+    approved: s.approved && typeof s.approved === 'object' ? { ...s.approved } : null,
+    savedTo: typeof s.savedTo === 'string' ? s.savedTo : null,
+  };
+}
+
+const isPlanPath = (f) => typeof f === 'string' && isAbsolute(f) && /\.md$/i.test(f);
+
+/** The plan file a request means: round N's (versions), else the open plan ask's, else the approved one. Never a
+ *  client path. */
+export function planFileOf({ pendingQuestion = null, shaping = null } = {}, round = undefined) {
+  if (round !== undefined && round !== null && round !== '') {
+    const n = Number(round);
+    if (!Number.isInteger(n)) return null;
+    const row = Array.isArray(shaping?.rounds) ? shaping.rounds.find((r) => r.round === n) : null;
+    return isPlanPath(row?.file) ? row.file : null;
+  }
+  if (pendingQuestion?.kind === PLAN_ASK_KIND && isPlanPath(pendingQuestion.plan?.file)) return pendingQuestion.plan.file;
+  return isPlanPath(shaping?.approved?.file) ? shaping.approved.file : null;
+}
+
+export const SHAPING_FEEDBACK_PREVIEW = 300;
 
 /** The file a `revise` hands the Planner on its `revise` loop port. */
 export function renderPlanFeedback(feedback, planFile) {

@@ -32,7 +32,7 @@ import { mockEnabled } from './claude-runner.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { checkPlan } from './shape/check.mjs';
 import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
-import { PLAN_ASK_KIND, validatePlanAnswer, renderPlanFeedback } from './shape/run.mjs';
+import { PLAN_ASK_KIND, validatePlanAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
 import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
@@ -101,6 +101,7 @@ export class GraphOrchestrator extends RunHarness {
     this._resumeSessions = null; // Map executionId -> sessionId (one-shot)
     this._graphError = null;     // first genuine execution error (identity preserved)
     this._planVersion = 0;       // {vsuffix} ticks, carried across a resume
+    this._planRevise = null;     // {id, path}: a revise answered just before a pause (F19), carried across a resume
     this._secretEnv = {};        // typed `secret` form fields, MEMORY ONLY: never persisted, so a resume after a restart falls back to the environment
     this._humanCursor = null;          // cumulative worktree numstat at the last agent/script terminal (money-saved §3.1)
     this._humanCursorReady = false;    // baseline measured at the first agent/script start, or restored from the resume point
@@ -956,6 +957,7 @@ export class GraphOrchestrator extends RunHarness {
         completed: s.status === 'done',
       })),
       planVersion: this._planVersion,
+      ...(this._planRevise ? { planRevise: { ...this._planRevise } } : {}),
       // money-saved §3.1: the cursor at the last completed terminal (paused executions never
       // advance it), so a resume credits the paused execution's pre-pause work at its terminal.
       humanCursor: this._humanCursorReady ? (this._humanCursor ?? { files: 0, insertions: 0, deletions: 0 }) : null,
@@ -985,6 +987,7 @@ export class GraphOrchestrator extends RunHarness {
       ...(this.mcpOptOut?.length ? { mcpOptOut: [...this.mcpOptOut] } : {}),   // MCP registry §6.2: resume re-resolves minus it
       memoryScope: this.memoryScope || null,   // agent memory §7.3: a paused defrag resumes with ONE scope (B10)
       ...(this.runShape ? { shape: this.runShape } : {}),
+      ...(this.state.shaping ? { shaping: jsonClone(this.state.shaping) } : {}),
       checkpointRef: this.checkpointRef || null,
       checkpointRefs: { ...this.checkpointRefs },
       workspace: this.isWorkspace ? { projects: this._workspaceProjects() } : null,
@@ -1130,17 +1133,36 @@ export class GraphOrchestrator extends RunHarness {
   }
 
   _planAsk(q) {
+    // A revise answered just before a pause (F19): its snapshot was frozen out, so the resume re-raises the same ask.
+    // Replay the saved answer before any shape check or ask. Any other id means the stash is stale.
+    if (this._planRevise && this._planRevise.id === q.id) {
+      const { path } = this._planRevise;
+      this._planRevise = null;
+      // The point can be persisted before the feedback write lands (a parallel sibling lets run() finish 'paused'
+      // first, F19). If that write then failed, the file is missing: ask again instead of binding a dead path.
+      return access(path).then(
+        () => {
+          this._log('orchestrator', 'info', `plan approval ${q.id}: revise replayed after a pause (${path})`);
+          return { decision: 'revise', path };
+        },
+        () => this._planAsk(q),
+      );
+    }
+    this._planRevise = null;
     let check = null;
     const asked = (async () => {
       check = await this._planCheck(q.plan?.file);
+      this._shapingRound(q, check);
+      const perspectives = this._shapePerspectives();
       return this._enqueueAsk(() => this._ask({
         id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId,
-        plan: { ...q.plan, nodeId: q.nodeId, check },
-        validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true }),
+        plan: { ...q.plan, nodeId: q.nodeId, check, perspectives },
+        validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives }),
       }));
     })();
     return asked.then(
       async (payload) => {
+        this._shapingDecision(q, payload);
         if (payload?.decision === 'stop') {
           this._log('orchestrator', 'info', `plan approval ${q.id}: stop`);
           this.stop(this.answeredBy(q.id));
@@ -1148,10 +1170,14 @@ export class GraphOrchestrator extends RunHarness {
           return new Promise(() => {});
         }
         if (payload?.decision === 'revise') {
+          if (Array.isArray(payload.perspectives)) this._setShapePerspectives(payload.perspectives);
           const path = join(this.pipeline.dir, `plan-feedback-${q.plan.round}.md`);
+          // Stash BEFORE the write (F19): a pause-time resume point built while the write is pending must carry it.
+          // Persisted with the resume point; replayed only if a pause re-raises this same ask.
+          this._planRevise = { id: q.id, path };
           // Keep the real cause: the run rethrows _graphError, else a generic 'a graph execution failed'.
           try { await writeFile(path, renderPlanFeedback(payload.feedback, q.plan.file), 'utf8'); }
-          catch (err) { this._graphError ||= err; throw err; }
+          catch (err) { this._planRevise = null; this._graphError ||= err; throw err; }
           this._shapeRec?.revises.push({ round: q.plan.round, by: payload.source === 'check' ? 'check' : 'person' });
           this._log('orchestrator', 'info', `plan approval ${q.id}: revise (${path})`);
           return { decision: 'revise', path };
@@ -1166,6 +1192,44 @@ export class GraphOrchestrator extends RunHarness {
         return new Promise(() => {});
       },
     );
+  }
+
+  _shapePerspectives() {
+    return Array.isArray(this.runShape?.perspectives) ? [...this.runShape.perspectives] : [...DEFAULT_PERSPECTIVES];
+  }
+
+  /** Update plan (S5): the next Planner/Refine prompt and shape check use the new list; the resume point keeps it. */
+  _setShapePerspectives(perspectives) {
+    this.runShape = { ...(this.runShape || {}), perspectives: [...perspectives] };
+    if (this.state.shaping) this.state.shaping.perspectives = [...perspectives];
+  }
+
+  /** One version row per plan ask; a resume re-raises the same round, which replaces its row. */
+  _shapingRound(q, check) {
+    const s = this.state.shaping;
+    if (!s) return;
+    const row = { round: q.plan?.round ?? 0, file: q.plan?.file ?? null,
+      passed: Number.isFinite(check?.passed) ? check.passed : null, total: Number.isFinite(check?.total) ? check.total : null,
+      decision: null };
+    const i = s.rounds.findIndex((r) => r.round === row.round);
+    if (i >= 0) s.rounds[i] = row; else s.rounds.push(row);
+    // An approve answered just before a pause is not replayed: the resume re-asks the same round. Drop the stale
+    // `approved`, or the run card would show "while shaping" over an open plan ask.
+    if (s.approved && s.approved.round === row.round) s.approved = null;
+    this._emit('state', this.getState());
+  }
+
+  _shapingDecision(q, payload) {
+    const s = this.state.shaping;
+    const d = payload?.decision;
+    if (!s || (d !== 'approve' && d !== 'revise' && d !== 'stop')) return;   // 'withdrawn' (End) records nothing
+    const row = s.rounds.find((r) => r.round === q.plan?.round);
+    if (row) {
+      row.decision = d;
+      if (d === 'revise') row.feedback = String(payload.feedback || '').slice(0, SHAPING_FEEDBACK_PREVIEW);
+    }
+    if (d === 'approve') s.approved = { round: q.plan?.round ?? null, file: q.plan?.file ?? null };
+    this._emit('state', this.getState());
   }
 
   /** checkPlan for this run: grounded in the run's checkout; a workspace run skips grounding (paths are per member). */
@@ -2329,6 +2393,8 @@ export class GraphOrchestrator extends RunHarness {
     this._resumeSnapshot = rp.snapshot || null;
     this._graphSnapshot = rp.snapshot || null;
     this._planVersion = Number.isFinite(rp.planVersion) ? rp.planVersion : 0;
+    const pr = rp.planRevise;
+    this._planRevise = pr && typeof pr.id === 'string' && typeof pr.path === 'string' ? { id: pr.id, path: pr.path } : null;
     if (rp.humanCursor && typeof rp.humanCursor === 'object') { this._humanCursor = rp.humanCursor; this._humanCursorReady = true; }
     this._clearPauseReason();
     const manifest = rp.manifest || this.state.stepper;

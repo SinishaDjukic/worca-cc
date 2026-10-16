@@ -5162,6 +5162,10 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
   .rd-glance[data-live="on"] > .rd-now{grid-column:1;grid-row:1;}
   .rd-glance[data-live="on"] > .rd-sheet{grid-column:1;grid-row:2;}
   .rd-glance[data-live="on"] > .rd-questions{grid-column:1 / -1;}
+  /* D30: a shaped run waiting on the person — the card in row 2, right under the title; folded, one column */
+  .rd-glance[data-live="on"][data-shaper-wait] > .rd-questions{grid-row:2;}
+  .rd-glance[data-live="on"][data-shaper-wait] > :is(.rd-sheet,.rd-live){grid-row:3;}
+  .rd-glance[data-live="on"][data-shaper-wait]:not([data-wait-open]):not([hidden]){display:flex;max-width:608px;}
   /* Away mode's answers stay under the run card, never beside the title in the graph's column. */
   .rd-glance[data-live="on"] > .rd-night-sec{grid-column:1;}
   /* Wide: as tall as the card (320px at least), its top level with the card's; it slides
@@ -5581,6 +5585,8 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-msg[data-ask-enter]{animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
 .ask-user-bubble{align-self:flex-end;max-width:78%;padding:10px 14px;border-radius:var(--r-card) var(--r-card) 4px var(--r-card);
   background:var(--field);color:var(--ink);font-size:13.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
+/* Shaper (D21): the intent chip above the person's bubble — the lead itself went to the model only. */
+.ask-user-intent{align-self:flex-end;display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink);font:500 11.5px/1 var(--sans);}
 .ask-user-pills{justify-content:flex-end;margin-top:0;}
 .ask-attachment-pill{padding-right:12px;}
 .ask-attachment-thumb-link{display:inline-block;line-height:0;}
@@ -5810,6 +5816,22 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rp-foot .ask-card-not-now{height:34px;padding:0 14px;font-size:12.5px;}
 .ask-rp-foot .ask-card-start{height:36px;padding:0 18px 0 15px;font-size:12.5px;color:var(--on-ink);box-shadow:var(--shadow-pop);}
 .ask-rp-foot .ask-card-start svg{width:11px;height:11px;}
+/* Shaper (D20): the small proposal card — clamped brief, the main fields, a collapsed Advanced. */
+.ask-rp-kicker.ask-rp-kicker-shape{color:var(--violet-ink);}
+.ask-rp-shape-main{display:flex;flex-direction:column;gap:10px;}
+.ask-rp-shape-main > .ask-rp-sec{padding:0;border:0;}
+/* On the small card the chips sit in a plain Perspectives field, not in the nudge's amber box (.shape-card). */
+.ask-rp-shape-main .shape-card{padding:0;border:0;background:none;}
+.ask-rp-brief-preview{display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink-2);line-height:1.5;}
+.ask-rp-brief-preview[hidden],.ask-rp-brief-more[hidden],.ask-rp-brief-host[hidden]{display:none;}
+.ask-rp-brief-more{align-self:flex-start;font-size:12px;}
+.ask-rp-shape-what{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;font-size:12.5px;color:var(--ink-2);}
+.ask-rp-adv{border-bottom:1px solid var(--line);}
+.ask-rp-adv > summary{padding:10px 18px;font-size:12px;color:var(--ink-3);overflow-wrap:anywhere;}
+.ask-rp-adv > .ask-rp-why,.ask-rp-adv > .ask-rp-adv-sched{padding:0 18px 12px;}
+.ask-rp-adv > .ask-rp-sec:last-of-type{border-bottom:0;}
+/* With the lane summary gone from the shaped footer, the link keeps Not now and Start planning on the right. */
+.ask-rp-foot .ask-card-open-np.link-btn{margin-right:auto;}
 .ask-rp .ask-card-err{padding:0 18px 10px;}
 .ask-rp .ask-card-scope-warn{margin:12px 18px 0;}
 .ask-pop-at{width:288px;padding:6px;border-radius:var(--r-card);max-height:min(320px,60%);overflow-y:auto;}
@@ -9333,3 +9355,82 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .branches-new > label.same-src-row{display:flex;margin:8px 0 0;}
 #sameAsSourceHint[hidden]{display:none;}   /* .hint{display:block} beats the UA [hidden] rule */
 #featureBranch:disabled{opacity:.65;cursor:not-allowed;}   /* no global .input:disabled rule exists */
+
+/* ---------- Shape it first (spec §3.3–§3.5): the plan ask, the shaping Clarify, the Chat proposal/tile/run card ---------- */
+.plan-body{display:flex;flex-direction:column;gap:10px;padding-top:10px;font-size:12.5px;}
+.plan-meta{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);}
+.plan-perspectives{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.plan-perspectives-ro{font-size:12px;color:var(--ink-2);}
+.plan-check{display:flex;flex-wrap:wrap;gap:6px;}
+.plan-check-ok{padding:3px 9px;border-radius:999px;background:var(--green-bg);color:var(--green-ink);font-size:11.5px;font-weight:500;}
+/* Wraps on a narrow card: the detail's basis sends it to its own line rather than shrinking it to nothing under Fix. */
+.plan-check-bad{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;width:100%;padding:6px 10px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);}
+.plan-check-label{font-weight:600;}
+.plan-check-detail{flex:1 1 12em;min-width:0;color:var(--ink-2);}
+.plan-md{position:relative;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);overflow-wrap:anywhere;}
+.plan-md.collapsed{max-height:40vh;overflow:hidden;}
+.plan-md.collapsed::after{content:'';position:absolute;inset:auto 0 0;height:48px;background:linear-gradient(transparent,var(--panel));pointer-events:none;}
+.plan-md pre{white-space:pre-wrap;margin:0;}
+.plan-tag{margin-left:8px;padding:2px 8px;border-radius:999px;background:var(--hover);color:var(--ink-2);font-size:10.5px;font-weight:600;vertical-align:middle;}
+.plan-ground{margin-left:6px;font-size:10.5px;font-weight:600;}
+.plan-ground.found{color:var(--green-ink);}
+.plan-ground.new{color:var(--ink-3);}
+.plan-ground.missing{color:var(--red-ink);}
+.plan-versions{display:flex;flex-direction:column;gap:6px;}
+.plan-version summary{cursor:pointer;color:var(--ink-2);font-size:12px;}
+.plan-version .plan-md{margin-top:6px;}
+.plan-err{color:var(--red-ink);font-size:12px;}
+.plan-err.ok{color:var(--green-ink);}
+.plan-err[hidden]{display:none;}
+.plan-typed{display:flex;align-items:flex-end;gap:8px;}
+.plan-typed textarea{flex:1;min-width:0;resize:vertical;}
+.plan-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.plan-actions .plan-stop{margin-left:auto;}
+.shape-chips{display:flex;flex-wrap:wrap;gap:6px;}
+.shape-chip{padding:4px 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink-2);font:500 11.5px/1.2 var(--sans);cursor:pointer;}
+.shape-chip.on{border-color:var(--ink);background:var(--ink);color:var(--on-ink);}
+.shape-chip:disabled{cursor:not-allowed;opacity:.5;}
+.shape-chip-more{padding:4px 8px;border:0;background:none;color:var(--ink-2);font:500 11.5px/1.2 var(--sans);cursor:pointer;}
+.shape-card,.ask-card-shape{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--amber-line);border-radius:var(--r-ctrl);background:var(--amber-wash);}
+.shape-nudge-head{font-weight:600;color:var(--amber-ink);}
+.shape-nudge-list{margin:0;padding-left:18px;color:var(--ink-2);font-size:12px;}
+.shape-choices{display:flex;flex-wrap:wrap;gap:8px;}
+.shape-choice{display:flex;flex-direction:column;align-items:flex-start;gap:2px;}
+.shape-choice.primary{border-color:var(--amber);}
+.shape-est{font-size:11px;color:var(--ink-3);font-weight:400;}
+.clarify-defaults{margin-right:8px;}
+.clarify-defaults-err{margin-top:8px;color:var(--red-ink);font-size:12px;}
+.clarify-defaults-err[hidden]{display:none;}
+/* D30–D34: the decision card. Amber stays on the heading's disc only; rows and chips are neutral. */
+.plan-sub{color:var(--ink-2);font-size:12px;}
+.plan-summary{margin:0;color:var(--ink);font-size:13px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+.plan-fold{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;padding:2px 0;border:0;background:none;color:var(--ink-2);font:500 12px/1.4 var(--sans);cursor:pointer;}
+.plan-chev{display:inline-block;transition:transform .15s;}
+.plan-fold[aria-expanded="true"] .plan-chev{transform:rotate(90deg);}
+.plan-checks{display:flex;flex-direction:column;gap:2px;padding-left:4px;}
+.plan-check-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;padding:3px 0;color:var(--ink);}
+.plan-check-mark{flex:none;width:1em;font-weight:700;color:var(--ink-3);}
+.plan-check-row:not(.ok) .plan-check-mark{color:var(--ink);}
+.plan-fix-all{align-self:flex-start;margin-top:4px;}
+.plan-persp-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;color:var(--ink-2);font-size:12px;}
+.plan-persp-edit{padding:0;border:0;background:none;color:var(--ink);font:inherit;text-decoration:underline;cursor:pointer;}
+.plan-full-view{display:flex;flex-direction:column;gap:8px;}
+.plan-actions .plan-more{margin-left:auto;}
+.plan-unmet{color:var(--ink-2);font-size:12px;}
+/* D31: a shaped run's bar — the three controls live in the ⋯ menu */
+.rd-bar[data-shaped] .rd-bar-end > :is(.rd-night-wrap,.rd-after,.term-opener){display:none;}
+/* .btn-ghost alone is a 13px×20px-padded pill: size ⋯ like the terminal opener next to it (style.css:5451) */
+.rd-bar-more{display:inline-flex;align-items:center;justify-content:center;flex:none;width:36px;height:36px;padding:0;box-sizing:border-box;color:var(--ink-2);}
+/* D30: while a shaped run waits on the person, Results / How it ran and the graph fold under "Run details ›" */
+.rd-wait-more{align-self:flex-start;padding:4px 10px;font-size:12.5px;color:var(--ink-2);}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) :is(.rd-result,.rd-live,.rd-live-row){display:none;}
+.chat-rc-shaped{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:8px;font-size:12px;color:var(--ink-2);}
+.chat-rc-shaped:empty{display:none;}
+.chat-rc-shaped-stages{color:var(--green-ink);font-weight:500;}
+.chat-rc-shaped-plan,.chat-rc-shaped-saved{font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere;}
+/* Same word as Settings › Experimental; never wraps (the ellipsis is a safety net only). */
+.chat-home-act-badge{max-width:100%;box-sizing:border-box;padding:1px 7px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* Poppins SemiBold "Experimental" is ~81px at 10px: below a 960px home the 4- and 9-column tiles are 64–93px, so only
+   the tile that carries a badge (the gated shape tile) drops its inline padding and the badge goes compact (~61px).
+   After the base rule on purpose: same specificity, so source order makes it win. */
+@container chat-home (max-width:960px){.chat-home-act:has(> .chat-home-act-badge){padding-inline:0;}.chat-home-act-badge{font-size:8.5px;padding:1px 3px;letter-spacing:-.02em;}}

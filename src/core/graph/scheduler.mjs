@@ -169,10 +169,14 @@ export function createScheduler(opts) {
   let abortRequested = false;
   let settled = false;
 
-  for (const id of loopWireIds) {
+  function initialAllowance(id) {
     const raw = Number(wireById.get(id)?.config?.maxCycles ?? DEFAULT_MAX_CYCLES);
     const maxCycles = Number.isFinite(raw) && raw >= 1 ? raw : DEFAULT_MAX_CYCLES;
-    wireState.set(id, { deliveries: 0, allowance: maxCycles - 1 });     // A1: allowance = maxCycles − 1
+    return maxCycles - 1;                                              // A1: allowance = maxCycles − 1
+  }
+
+  for (const id of loopWireIds) {
+    wireState.set(id, { deliveries: 0, allowance: initialAllowance(id) });
   }
 
   // --- wake plumbing -------------------------------------------------------
@@ -920,9 +924,15 @@ export function createScheduler(opts) {
     } else if (decision === 'revise' && entry.reviseTo && typeof answer.path === 'string') {
       // Drop this node's latched loop-input tokens (Refine's own round-1 `revise` rewrite) so the re-run does not
       // see a stale rewrite beside the Planner's new plan (R16). Latched tokens stay bound on every later execution.
+      // The person's revise starts a new shaping round: each loop into this node gets its full budget back. `holds`
+      // stays, so later gate ask ids remain unique.
       const node = nodeById.get(nodeId);
       for (const inp of (node && portsOfNode(node).inputs) || []) {
-        if (isLoopPort(nodeId, inp)) tokens.delete(`${nodeId}.${inp.id}`);
+        if (!isLoopPort(nodeId, inp)) continue;
+        tokens.delete(`${nodeId}.${inp.id}`);
+        const wireId = wiredIn.get(nodeId)?.get(inp.id);
+        const st = wireId ? wireState.get(wireId) : null;
+        if (st) { st.deliveries = 0; st.allowance = initialAllowance(wireId); }
       }
       // Re-queue the producer with the feedback on its loop input; it re-fires (any-fresh), its new plan re-fires
       // this node via the non-loop wire and the stop is raised again as round N+1.
