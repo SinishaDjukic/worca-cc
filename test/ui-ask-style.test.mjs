@@ -16,7 +16,8 @@ function ruleBody(selector) {
 
 test('ui-ask-style: hidden twins exist for the hideable ask elements', () => {
   for (const sel of ['.ask-jump[hidden]', '.ask-composer-msg[hidden]', '.ask-chips[hidden]',
-    '.ask-mcp-btn[hidden]']) {   // shares display:inline-flex from .ask-scope-btn, so without the twin it never hides (jsdom cannot catch it)
+    '.ask-mcp-btn[hidden]',      // shares display:inline-flex from .ask-scope-btn, so without the twin it never hides (jsdom cannot catch it)
+    '.ask-queue[hidden]', '.ask-queue-resume[hidden]']) {
     const body = ruleBody(sel);
     assert.ok(body, `${sel} twin exists`);
     assert.match(body, /display:none/);

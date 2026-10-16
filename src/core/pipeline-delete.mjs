@@ -20,15 +20,18 @@ import { join, isAbsolute } from 'node:path';
 import { projectKey, projectStorePath } from './store.mjs';
 import {
   listArtifacts, readPipelineByKey, persistPrState, retainedWorkFor, checkoutRecordsFor, branchRecordsOf,
-  recordArtifact, appendAudit, findRunDir, readMemberPrStates, persistMemberPrState,
+  recordArtifact, appendAudit, appendAuditById, findRunDir, readMemberPrStates, persistMemberPrState,
 } from './artifacts.mjs';
 import { workspaceMembers } from './workspace-prs.mjs';
 import { worcaHome } from './projects.mjs';
 import { getDb, tx } from './db.mjs';
-import { removeWorktree, snapshotWorktreePatch } from './worktree.mjs';
+import { removeWorktree, snapshotWorktreePatch, commitStagedWork, commitOf, indexTracks } from './worktree.mjs';
+import { fastForwardTo } from './git-sync.mjs';
+import { updateBranchRecords, withRunLock } from './checkout.mjs';
+import { MEMORY_RULES_REL } from './memory-sync.mjs';
 import { staleIndexLockNote } from './git-lock.mjs';
 import {
-  rmGuarded, readRunManifest, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo, RETAIN_REASONS,
+  rmGuarded, readRunManifest, updateRunManifest, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo, RETAIN_REASONS,
 } from './run-manifest.mjs';
 import { branchExists, anyPrHost, findPrForBranch } from './git-info.mjs';
 import { retainedWorkPatchName } from './results.mjs';
@@ -358,6 +361,110 @@ export async function restorePipeline({ projectDir = null, key = null, workspace
   return { ok: true, id: row.id, restored: true, ...(wasPaused ? { wasPaused: true } : {}), warnings: [] };
 }
 
+/** The retained members, each with its repository: a workspace member's from state.projects, else the run's. */
+function retainedTargets(state, retained, projectDir = null) {
+  const projects = Array.isArray(state.projects) ? state.projects : [];
+  const dirByKey = new Map(projects.map((p) => [p.projectKey, p.projectDir]));
+  return retained.members.map((member) => ({
+    ...member,
+    projectDir: state.target === 'workspace'
+      ? (dirByKey.get(member.projectKey) || null)
+      : (state.projectDir || projectDir || null),
+  }));
+}
+
+/**
+ * The release half shared by Discard worktree and Apply to branch. It does four things in order:
+ *   - rescues edited mounts and stray files out of the run root and copies its run.json (while it exists);
+ *   - removes each target's worktree, plus `target.dropBranch`: the hidden branch of a run merged back into its source;
+ *   - stamps each removed member's record through `stamp(br, projectKey)` in ONE targeted UPDATE;
+ *   - removes the run root once nothing is retained (`report.remaining === 0`).
+ * It fills `report.worktrees`, `report.remaining`, `report.warnings` and `report.runRoot` in place.
+ */
+async function releaseRetainedTargets({ row, state, targets, runDir, report, stamp }) {
+  const runRoot = join(worcaHome(), 'runs', row.id);
+  if (existsSync(runRoot) && runDir) {
+    const manifest = await readRunManifest(runRoot);
+    for (const [scope, entries] of Object.entries(manifest?.injectedPaths || {})) {
+      const baseDir = scope === 'runRoot'
+        ? runRoot
+        : targets.find((t) => t.projectKey === scope)?.worktreeDir || join(runRoot, 'repos', scope);
+      const warnings = await rescueModifiedMounts({
+        baseDir, entries, pipelineDir: runDir, scope, pipelineId: row.id,
+      });
+      report.warnings.push(...warnings);
+    }
+    report.warnings.push(...await scanStrayEntries({ runRoot, pipelineDir: runDir }));
+    await copyRunManifestTo(runRoot, runDir);
+  }
+
+  const clearedKeys = [];
+  for (const target of targets) {
+    const result = await removeWorktree({
+      projectDir: target.projectDir, worktreeDir: target.worktreeDir, branch: target.dropBranch || null, force: true,
+    });
+    for (const step of result.steps.filter((s) => !s.ok)) {
+      report.warnings.push(`${target.projectKey || 'project'}: ${step.step}: ${step.stderr || 'failed'}`);
+    }
+    if (!existsSync(target.worktreeDir)) {
+      report.worktrees.push(target.worktreeDir);
+      clearedKeys.push(target.projectKey ?? null);
+    } else {
+      report.remaining += 1;
+      report.warnings.push(`${target.projectKey || 'project'}: worktree still exists at ${target.worktreeDir}`);
+    }
+  }
+
+  // Targeted update: stamp ONLY the released members. A full writeState would
+  // restamp updated_at (the stats terminal-write proxy), NULL resume_point, and
+  // rewrite pipeline_steps — none of which a checkout reclaim may touch.
+  if (clearedKeys.length) {
+    const parse = (t) => { try { return JSON.parse(t); } catch { return undefined; } };
+    tx(() => {
+      const fresh = getDb().prepare('SELECT branch, workspace_meta FROM pipelines WHERE id = ?').get(row.id);
+      if (state.target === 'workspace') {
+        const wm = typeof fresh?.workspace_meta === 'string' ? parse(fresh.workspace_meta) : fresh?.workspace_meta;
+        // NEVER write a rebuilt {} here: workspace_meta carries the whole §5.2
+        // superset (projects/projectKeys/checkpointRefs/runRootMode). Unreadable
+        // or branch-less meta is reported, not overwritten.
+        if (!wm || typeof wm !== 'object' || !wm.branches || typeof wm.branches !== 'object') {
+          // A NULL column is the manifest-only case (Task 11) — nothing to clear,
+          // nothing to warn about. Warn only when a non-null column is corrupt.
+          if (fresh?.workspace_meta != null) {
+            report.warnings.push('retention stamp not cleared: workspace metadata is unreadable');
+          }
+          return;
+        }
+        let touched = false;
+        for (const k of clearedKeys) { const br = wm.branches[k]; if (br) { stamp(br, k); touched = true; } }
+        if (touched) {
+          getDb().prepare('UPDATE pipelines SET workspace_meta = ? WHERE id = ?')
+            .run(JSON.stringify(wm), row.id);
+        }
+      } else {
+        const br = typeof fresh?.branch === 'string' ? parse(fresh.branch) : fresh?.branch;
+        if (!br || typeof br !== 'object') {
+          if (fresh?.branch != null) { // NULL column = manifest-only discard: silent skip
+            report.warnings.push('retention stamp not cleared: branch metadata is unreadable');
+          }
+          return;
+        }
+        stamp(br, clearedKeys[0]);
+        getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify(br), row.id);
+      }
+    });
+  }
+  // The run root goes only once nothing is retained AND the rescue above ran. Discard refuses a missing
+  // pipeline directory before getting here; Apply tolerates one, so it keeps the run root and says why.
+  if (existsSync(runRoot) && report.remaining === 0 && runDir) {
+    const removal = await rmGuarded(runRoot, { worcaHome: worcaHome(), pipelineId: row.id });
+    if (removal.removed) report.runRoot = runRoot;
+    else report.warnings.push(`run-root: ${removal.reason || 'removal refused'}`);
+  } else if (existsSync(runRoot) && report.remaining === 0) {
+    report.warnings.push('run-root kept: the pipeline directory to rescue it into is missing');
+  }
+}
+
 /**
  * Explicitly reclaim worktrees retained after a teardown commit failure while
  * preserving the pipeline row and artifact directory. Every live checkout is
@@ -400,14 +507,7 @@ export async function discardRetainedWorktrees({ projectDir = null, key = null, 
     throw err('cannot discard retained work: the pipeline directory needed for the recovery patch is missing', 'SNAPSHOT_FAILED');
   }
 
-  const projects = Array.isArray(state.projects) ? state.projects : [];
-  const dirByKey = new Map(projects.map((p) => [p.projectKey, p.projectDir]));
-  const targets = retained.members.map((member) => ({
-    ...member,
-    projectDir: state.target === 'workspace'
-      ? (dirByKey.get(member.projectKey) || null)
-      : (state.projectDir || projectDir || null),
-  }));
+  const targets = retainedTargets(state, retained, projectDir);
   if (targets.some((t) => !t.projectDir)) {
     throw err('cannot discard retained work: a member repository could not be resolved', 'SNAPSHOT_FAILED');
   }
@@ -438,87 +538,153 @@ export async function discardRetainedWorktrees({ projectDir = null, key = null, 
     ok: true, id: row.id, discarded: false, remaining: 0, worktrees: [], patches,
     runRoot: null, warnings: lockNotes,
   };
-  if (existsSync(runRoot)) {
-    const manifest = await readRunManifest(runRoot);
-    for (const [scope, entries] of Object.entries(manifest?.injectedPaths || {})) {
-      const baseDir = scope === 'runRoot'
-        ? runRoot
-        : targets.find((t) => t.projectKey === scope)?.worktreeDir || join(runRoot, 'repos', scope);
-      const warnings = await rescueModifiedMounts({
-        baseDir, entries, pipelineDir: runDir, scope, pipelineId: row.id,
-      });
-      report.warnings.push(...warnings);
-    }
-    report.warnings.push(...await scanStrayEntries({ runRoot, pipelineDir: runDir }));
-    await copyRunManifestTo(runRoot, runDir);
-  }
-
-  const clearedKeys = [];
-  for (const target of targets) {
-    const result = await removeWorktree({
-      projectDir: target.projectDir, worktreeDir: target.worktreeDir, branch: null, force: true,
-    });
-    for (const step of result.steps.filter((s) => !s.ok)) {
-      report.warnings.push(`${target.projectKey || 'project'}: ${step.step}: ${step.stderr || 'failed'}`);
-    }
-    if (!existsSync(target.worktreeDir)) {
-      report.worktrees.push(target.worktreeDir);
-      clearedKeys.push(target.projectKey ?? null);
-    } else {
-      report.remaining += 1;
-      report.warnings.push(`${target.projectKey || 'project'}: worktree still exists at ${target.worktreeDir}`);
-    }
-  }
+  await releaseRetainedTargets({ row, state, targets, runDir, report,
+    stamp: (br) => { delete br.commitFailed; br.worktreeRemoved = true; br.branchKept = true; } });
   report.discarded = report.remaining === 0;
-
-  // Targeted update: clear ONLY the retention stamps. A full writeState would
-  // restamp updated_at (the stats terminal-write proxy), NULL resume_point, and
-  // rewrite pipeline_steps — none of which a checkout reclaim may touch.
-  if (clearedKeys.length) {
-    const parse = (t) => { try { return JSON.parse(t); } catch { return undefined; } };
-    const clear = (br) => { delete br.commitFailed; br.worktreeRemoved = true; br.branchKept = true; };
-    tx(() => {
-      const fresh = getDb().prepare('SELECT branch, workspace_meta FROM pipelines WHERE id = ?').get(row.id);
-      if (state.target === 'workspace') {
-        const wm = typeof fresh?.workspace_meta === 'string' ? parse(fresh.workspace_meta) : fresh?.workspace_meta;
-        // NEVER write a rebuilt {} here: workspace_meta carries the whole §5.2
-        // superset (projects/projectKeys/checkpointRefs/runRootMode). Unreadable
-        // or branch-less meta is reported, not overwritten.
-        if (!wm || typeof wm !== 'object' || !wm.branches || typeof wm.branches !== 'object') {
-          // A NULL column is the manifest-only case (Task 11) — nothing to clear,
-          // nothing to warn about. Warn only when a non-null column is corrupt.
-          if (fresh?.workspace_meta != null) {
-            report.warnings.push('retention stamp not cleared: workspace metadata is unreadable');
-          }
-          return;
-        }
-        let touched = false;
-        for (const k of clearedKeys) { const br = wm.branches[k]; if (br) { clear(br); touched = true; } }
-        if (touched) {
-          getDb().prepare('UPDATE pipelines SET workspace_meta = ? WHERE id = ?')
-            .run(JSON.stringify(wm), row.id);
-        }
-      } else {
-        const br = typeof fresh?.branch === 'string' ? parse(fresh.branch) : fresh?.branch;
-        if (!br || typeof br !== 'object') {
-          if (fresh?.branch != null) { // NULL column = manifest-only discard: silent skip
-            report.warnings.push('retention stamp not cleared: branch metadata is unreadable');
-          }
-          return;
-        }
-        clear(br);
-        getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify(br), row.id);
-      }
-    });
-  }
-  if (existsSync(runRoot) && report.remaining === 0) {
-    const removal = await rmGuarded(runRoot, { worcaHome: worcaHome(), pipelineId: row.id });
-    if (removal.removed) report.runRoot = runRoot;
-    else report.warnings.push(`run-root: ${removal.reason || 'removal refused'}`);
-  }
   await appendAudit(runDir,
     `Discarded ${report.worktrees.length} retained worktree(s)${byActor(by)} after saving recovery patch(es): ` +
     patches.map((p) => `\`${p}\``).join(', '), { actor: by }).catch(() => {});
+  return report;
+}
+
+/** JSON column or already-parsed value → object, else null. */
+const parseJson = (t) => {
+  if (t && typeof t === 'object') return t;
+  try { return JSON.parse(t); } catch { return null; }
+};
+
+/**
+ * The merge back teardown would have done (run-harness `_mergeBack`) for a run on its source branch whose
+ * retained work was just committed: fast-forward the source to the hidden branch, only for a run that
+ * ended `done`. Returns the record to store on `branch.mergeBack`. Never throws.
+ */
+async function finishMergeBack({ row, projectDir, br, branch }) {
+  const at = new Date().toISOString();
+  const notMerged = (kind, reason, paths = null) => ({ merged: false, kind, reason, at,
+    ...(Array.isArray(paths) && paths.length ? { paths } : {}) });
+  if (row.status !== 'done') return notMerged('not-done', `the run ended ${row.status || 'early'}`);
+  try {
+    const to = await commitOf(projectDir, `refs/heads/${branch}`);
+    if (!to) return notMerged('failed', `could not read ${branch}`);
+    const r = await fastForwardTo(projectDir, { base: br.source, to, message: `worca: fast-forward ${br.source} to run ${row.id}` });
+    if (!r.ok) return notMerged(r.kind, r.error, r.paths);
+    return { merged: true, sha: r.to, commits: r.commits, at };
+  } catch (e) {
+    return notMerged('failed', e?.message || String(e));
+  }
+}
+
+/**
+ * Apply to branch (the summary card's worktree notice). It retries the end-of-run commit that failed in each
+ * retained worktree (worktree.mjs commitStagedWork: the teardown commit, its hook bypass for detached runs
+ * only). Then it does what teardown does after a good commit:
+ *   - records the commit;
+ *   - finishes the merge back of a run on its source branch;
+ *   - releases the worktree, and the run root once nothing is retained, through Discard's own tail.
+ * A member whose commit fails again keeps its worktree and its stamp, refreshed with git's new message.
+ * results.json is not touched: its counts were frozen before teardown and already include this work.
+ * The work runs under the run lock (checkout.mjs), so it never races a Check out, a Discard of the checkout,
+ * an Update branch or a Discard worktree (its route takes the same lock, Task 4). The post-run base check
+ * runs after the lock is released.
+ * @returns {Promise<null | { ok, id, applied:[{projectKey, branch, sha, committed, hooksBypassed, mergeBack?}],
+ *   failed:[{projectKey, branch, step, message}], remaining, worktrees, runRoot, warnings }>}
+ *   null => no pipeline with that id (404). Throws err(code: 'BAD_REQUEST'|'RUNNING').
+ */
+export async function applyRetainedWork({ projectDir = null, key = null, workspaceKey = null, id, by = null } = {}) {
+  if (!id || typeof id !== 'string') throw err('id is required', 'BAD_REQUEST');
+  const storeKey = workspaceKey
+    ? `workspaces/${workspaceKey}`
+    : (key || (projectDir ? projectKey(projectDir) : null));
+  if (!storeKey) throw err('projectKey, projectDir or workspaceKey is required', 'BAD_REQUEST');
+  const found = lookupRow(storeKey, id);
+  if (!found) return null;
+  const report = await withRunLock(found.id, () => applyRetainedUnderLock({ storeKey, id: found.id, projectDir, by }));
+  if (report && report.applied.length) {
+    // Teardown's post-run base check (D9) on the branch's new tip, outside the lock (it may fetch). Lazy import, as the harness does.
+    const { afterRunBaseCheck } = await import('./base-conflicts.mjs');
+    await afterRunBaseCheck(report.id).catch(() => {});
+  }
+  return report;
+}
+
+async function applyRetainedUnderLock({ storeKey, id, projectDir, by }) {
+  const row = lookupRow(storeKey, id);          // re-read under the lock: a Discard may have won the race
+  if (!row) return null;
+  if (ACTIVE.has(String(row.status || '').toLowerCase())) {
+    throw err('cannot apply the work of a running pipeline', 'RUNNING');
+  }
+  const report = { ok: true, id: row.id, applied: [], failed: [], remaining: 0, worktrees: [], runRoot: null, warnings: [] };
+  const retained = retainedWorkFor(row);
+  if (!retained) return report;                 // nothing (left) to apply: idempotent
+  const { state } = (await readPipelineByKey(storeKey, row.id)) || { state: null };
+  if (!state) throw err('pipeline state is unavailable', 'BAD_REQUEST');
+  const runDir = await findRunDir(join(projectStorePath(storeKey), 'pipelines'), row.id);
+  const targets = retainedTargets(state, retained, projectDir);
+  if (targets.some((t) => !t.projectDir)) {
+    throw err('cannot apply retained work: a member repository could not be resolved', 'BAD_REQUEST');
+  }
+  const records = new Map(branchRecordsOf(row));
+  const modeOf = (br) => br?.runRootMode || parseJson(row.workspace_meta)?.runRootMode || 'legacy';
+  const message = `worca: ${row.title || row.base_name || 'changes'}\n\nPipeline ${row.id}`;   // teardown: title || baseName || 'changes'
+  const at = new Date().toISOString();
+  const outcome = new Map();                     // projectKey -> { sha, hooksBypassed, mergeBack }
+  const released = [];
+  for (const t of targets) {
+    const br = records.get(t.projectKey) || {};
+    // Teardown excludes the memory mount only when the run mounted it, and the mount is refused on a checkout
+    // that tracks the path: there, `rm --cached` of the exclude would commit the deletion of the project's own files.
+    const exclude = (await indexTracks(t.worktreeDir, MEMORY_RULES_REL)) === false ? [MEMORY_RULES_REL] : [];
+    const c = await commitStagedWork(t.worktreeDir, { message, exclude, bypassHooks: modeOf(br) === 'detached', branch: t.branch });
+    if (!c.ok) {
+      report.failed.push({ projectKey: t.projectKey, branch: t.branch, step: c.step, message: c.message });
+      continue;
+    }
+    const mergeBack = br.sameAsSource === true ? await finishMergeBack({ row, projectDir: t.projectDir, br, branch: t.branch }) : null;
+    outcome.set(t.projectKey, { sha: c.sha, hooksBypassed: c.hooksBypassed, mergeBack });
+    report.applied.push({ projectKey: t.projectKey, branch: t.branch, sha: c.sha, committed: c.committed,
+      hooksBypassed: c.hooksBypassed, ...(mergeBack ? { mergeBack: { ...mergeBack, source: br.source || null } } : {}) });
+    released.push({ ...t, dropBranch: mergeBack?.merged === true ? t.branch : null });
+  }
+  // What teardown records after a good commit. This happens even when the worktree removal below fails:
+  // the work is safely on the branch now. A member that failed again gets git's newest message.
+  updateBranchRecords(row.id, [...outcome.keys()], (br, k) => {
+    const o = outcome.get(k);
+    delete br.commitFailed;
+    if (o.sha) br.commit = o.sha;
+    if (o.mergeBack) br.mergeBack = o.mergeBack;
+    br.retainedApplied = { at, ...(o.sha ? { sha: o.sha } : {}), ...(o.hooksBypassed ? { hooksBypassed: true } : {}) };
+  });
+  updateBranchRecords(row.id, report.failed.map((f) => f.projectKey), (br, k) => {
+    const f = report.failed.find((x) => x.projectKey === k) || report.failed[0];
+    br.commitFailed = { ...(br.commitFailed || {}), code: br.commitFailed?.code || RETAIN_REASONS.COMMIT_FAILED,
+      step: f.step, message: f.message, at };
+  });
+  report.remaining = report.failed.length;      // a member that failed again keeps the run root alive
+  if (released.length) {
+    await releaseRetainedTargets({ row, state, targets: released, runDir, report,
+      stamp: (br, k) => { br.worktreeRemoved = true; br.branchKept = outcome.get(k)?.mergeBack?.merged !== true; } });
+  }
+  // The run.json retain ledger must forget the applied members too: Archive's guard and the boot sweep trust
+  // it as much as the DB stamp. Their work is on the branch now, even when a worktree removal failed and kept
+  // the folder (and with it the run root). A member that failed again stays listed. `retain: null` is what
+  // teardown writes when nothing is retained.
+  const runRoot = join(worcaHome(), 'runs', row.id);
+  if (released.length && existsSync(runRoot)) {
+    const cur = await readRunManifest(runRoot);
+    if (Array.isArray(cur?.retain?.members)) {
+      const appliedDirs = new Set(released.map((t) => t.worktreeDir));
+      const left = cur.retain.members.filter((m) => !appliedDirs.has(m?.worktreeDir));
+      await updateRunManifest(runRoot, { retain: left.length ? { ...cur.retain, members: left } : null });
+    }
+  }
+  for (const a of report.applied) {
+    appendAuditById(row.id, `Applied the retained work${byActor(by)}: ${a.committed && a.sha ? `committed \`${a.sha.slice(0, 10)}\` on` : 'nothing new to commit on'} \`${a.branch}\``
+      + `${a.hooksBypassed ? ' (commit hooks bypassed, as at the end of a detached run)' : ''}`
+      + `${a.mergeBack ? (a.mergeBack.merged ? `; merged back into \`${a.mergeBack.source}\`` : `; not merged back into \`${a.mergeBack.source}\`: ${a.mergeBack.reason}`) : ''}.`, { actor: by });
+  }
+  for (const f of report.failed) {
+    appendAuditById(row.id, `Apply to branch failed for \`${f.branch}\`${byActor(by)} at git ${f.step}: ${f.message}. The worktree stays.`, { actor: by });
+  }
   return report;
 }
 

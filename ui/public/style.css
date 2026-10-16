@@ -1542,6 +1542,15 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
   background:var(--panel-wash);color:var(--ink);font-family:var(--mono);font-size:11.5px;
   white-space:pre-wrap;word-break:break-all;}
 .retained-banner a,.merge-back-banner a{color:var(--amber-ink);font-weight:700;}
+/* The worktree notice (worktree-notice.mjs) is this banner: amber for retained work, neutral for a live checkout. */
+.retained-banner[data-kind="checkout"]{border-color:var(--line);background:var(--panel-wash);color:var(--ink);}
+.retained-banner[data-kind="checkout"] h4{color:var(--ink);}
+.retained-banner .wt-actions,.retained-banner .wt-member-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.retained-banner .wt-actions{margin-top:10px;}
+.retained-banner .wt-member-actions{margin-top:6px;}
+.retained-banner .wt-since{font-size:11.5px;}
+.retained-banner .wt-manual{margin-top:10px;}
+.retained-banner .wt-manual summary{cursor:pointer;font-weight:600;}
 .hist-empty{color:var(--ink-3);font-size:13px;padding:22px 4px;text-align:center;}
 
 /* ---------- Started-by filter pills (the Runs list's .runs-people row) ---------- */
@@ -3798,23 +3807,23 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-archive:hover:not([disabled]),.pd-remove:hover:not([disabled]){border-color:var(--red);}
 .hd-archive[disabled],.pd-remove[disabled]{opacity:.55;cursor:not-allowed;}
 /* align-items:flex-start, NOT the default stretch: `.badge.hist-retained-badge`
-   (696) and `.hist-discard` (856) are inline-flex with no width, so a stretching
-   column blows both up to the full body width. Only the two BANNERS want the full
-   row — an unstretched `.cost-banner` renders ~738px inside a 1068px column and
-   its own `.cb-actions{justify-content:flex-end}` then right-aligns short of the
-   edge. */
+   (696) is inline-flex with no width, so a stretching column blows it up to the
+   full body width. Only the BANNERS want the full row (the Discard worktree button
+   lives inside the worktree notice now) — an unstretched `.cost-banner` renders
+   ~738px inside a 1068px column and its own `.cb-actions{justify-content:flex-end}`
+   then right-aligns short of the edge. */
 .hd-banners{display:flex;flex-direction:column;align-items:flex-start;gap:12px;}
 /* Both reused banners carry legacy margins from their old hosts —
    `.retained-banner{margin:0 0 18px}` (714) and `.cost-banner{margin-top:12px}`
    (1505) — which double up with this column's own `gap:12px`. Zero them here
    rather than editing the shared rules. */
 .hd-banners .retained-banner,.hd-banners .cost-banner,.hd-banners .merge-back-banner{align-self:stretch;margin:0;}
-/* NOT `.hd-banners:empty` — the container always holds three template children
-   (badge, banner, discard button), just hidden, so :empty never matches and the
-   top margin would always apply. Key the margin off "has a visible child". */
+/* NOT `.hd-banners:empty` — the container always holds its template children
+   (badge, worktree notice, merge-back banner), just hidden, so :empty never matches
+   and the top margin would always apply. Key the margin off "has a visible child". */
 .hd-banners:has(> :not([hidden])){margin-top:18px;}
-/* .hist-discard's existing rules (856-860) are card-scoped only by position; keep
-   them and let the detail banner button ride them unchanged. */
+/* .hist-discard's existing rules (1661-1665) still style the worktree notice's own
+   Discard worktree button, which lives inside the notice. */
 
 /* Destructive confirm (spec §5.2). The id keeps it out of .btn-primary's way with
    no !important. confirmModal removes the class on close, so it never leaks. */
@@ -4987,17 +4996,16 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-graph .run-flow-wrap{margin:0;}
 
 /* ---------- Running detail: banners ---------- */
-/* align-items:flex-start, NOT the default stretch: `.hist-discard` is an
-   inline-flex button with no width and a stretching column would blow it up to
-   the full body width. Only the two BANNERS want the full row. Same shape as
-   .hd-banners. */
+/* align-items:flex-start, NOT the default stretch, as .hd-banners: only the
+   BANNERS want the full row. The container holds the worktree notice only; its
+   Discard worktree button (`.hist-discard`) lives inside the notice. */
 .rd-banners{display:flex;flex-direction:column;align-items:flex-start;gap:12px;}
 /* Both reused banners carry legacy margins from their old hosts —
    `.retained-banner{margin:0 0 18px}` and `.cost-banner{margin-top:12px}` —
    which double up with this column's own gap. */
 .rd-banners .retained-banner,.rd-banners .cost-banner{align-self:stretch;margin:0;}
-/* NOT `:empty` — the container always holds its two template children, just
-   hidden. Key the margin off "has a visible child", as .hd-banners does. */
+/* NOT `:empty` — the container always holds its template child (the worktree
+   notice), just hidden. Key the margin off "has a visible child", as .hd-banners does. */
 .rd-banners:has(> :not([hidden])){margin-top:18px;}
 
 /* ---------- Running detail: question panel ---------- */
@@ -5891,6 +5899,15 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-wfcard-warn{font-size:13px;line-height:1.5;color:var(--amber-ink);background:var(--amber-wash);border:1px solid var(--amber-line);border-radius:10px;padding:8px 12px;}
 .ask-wfcard-meta{margin-top:8px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;}
 @media (prefers-reduced-motion: reduce){.ask-wfcard-graph{transition:none;}}
+/* ---------- the canvas well (ui/public/graph/proposal-host.mjs): a chat card's graph as the Workflows canvas draws it ---------- */
+/* The nav never prevents pointerdown (a press must still click a chip), so a drag-pan would select card text: like .gv-canvas. */
+.gv-well{user-select:none;-webkit-user-select:none;}
+.gv-well .gv-stage,.gv-well .gv-world .node{cursor:grab;}
+.gv-well .gv-stage.panning,.gv-well .gv-stage.panning *{cursor:grabbing !important;}
+.gv-well > .gv-nav{right:12px;bottom:12px;}
+/* Only the well outgrows a build card's 760px text column (.ask-ccard): up to the chat card width, centred on the column.
+   An Auto card (.ask-card) is that wide already (.chat-convo .ask-msg > .ask-card). */
+.chat-convo .ask-ccard .ask-wfcard-graph.gv-well{width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
 
 /* ---------- workflow card build (ui/public/auto-build.mjs; mockup §B/§F motion) ---------- */
 .ask-wfcard-graph .gv-world .node{transition:opacity .28s cubic-bezier(.2,.7,.3,1),translate .28s cubic-bezier(.2,.7,.3,1);}
@@ -5960,6 +5977,40 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-composer-msg{font-size:11.5px;color:var(--red-ink);padding:0 6px;}
 .ask-composer-msg[hidden]{display:none;}
 .ask-composer-row{display:flex;align-items:center;gap:8px;position:relative;}
+/* The queue: messages sent while a reply runs, stacked above the box, oldest card nearest the input. */
+.ask-queue{width:100%;max-width:var(--ask-col-max);margin:0 auto 6px;display:flex;flex-direction:column;gap:4px;}
+.ask-queue[hidden]{display:none;}
+.ask-queue-bar{display:flex;align-items:center;gap:8px;padding:0 6px;font-size:11.5px;color:var(--ink-3);}
+.ask-queue-resume{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink);font:inherit;font-size:11.5px;padding:2px 10px;cursor:pointer;transition:.15s;}
+.ask-queue-resume:hover{border-color:var(--hover-outline);}
+.ask-queue-resume[hidden]{display:none;}
+.ask-queue-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;}
+.ask-queue-item{display:flex;align-items:center;gap:6px;padding:4px 4px 4px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink-2);font-size:12.5px;transition:transform .2s cubic-bezier(.65,.02,.28,1),opacity .15s;}
+.ask-queue-item.is-entering{animation:ask-queue-in .16s ease-out backwards;}
+.ask-queue-item.is-sending{opacity:.55;}
+.ask-queue-text{flex:1 1 auto;min-width:0;padding:2px 0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+.ask-queue-text:disabled{cursor:default;}
+.ask-queue-meta{flex:none;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.ask-queue-x{flex:none;width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--ink-3);cursor:pointer;transition:.15s;}
+.ask-queue-x:hover{color:var(--ink);background:var(--hover);}
+.ask-queue-x:disabled{visibility:hidden;}
+.ask-queue-pen{flex:none;display:grid;place-items:center;width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--ink-3);cursor:pointer;transition:.15s;}
+.ask-queue-pen:hover{color:var(--ink);background:var(--hover);}
+.ask-queue-pen:disabled{visibility:hidden;}
+.ask-queue-item.is-editing{border-color:var(--hover-outline);color:var(--ink);}
+.ask-queue-item.is-editing .ask-queue-text{display:none;}
+.ask-queue-item.is-editing .ask-queue-pen{color:var(--ink);}
+.ask-queue-item textarea.ask-queue-edit{flex:1 1 auto;width:auto;min-width:0;min-height:0;height:auto;max-height:120px;margin:0;padding:2px 0;
+  border:0;border-radius:0;outline:0;resize:none;background:transparent;color:inherit;font:inherit;line-height:1.4;overflow-y:auto;}
+/* The card's is-editing border is the focus cue; the field itself stays flat. */
+.ask-queue-item textarea.ask-queue-edit:focus{background:transparent;border-color:transparent;}
+.ask-queue-item textarea.ask-queue-edit:focus-visible{outline:none;}
+.ask-queue-ghost{position:absolute;margin:0;pointer-events:none;animation:ask-queue-out .2s cubic-bezier(.65,.02,.28,1) both;}
+.ask-composer :is(.ask-queue-text,.ask-queue-pen,.ask-queue-x,.ask-queue-resume):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-send:disabled,.ask-send:disabled:hover{opacity:.4;cursor:default;box-shadow:none;}
+@keyframes ask-queue-in{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+@keyframes ask-queue-out{from{opacity:1;transform:none;}to{opacity:0;transform:translateY(-18px);}}
+@media (prefers-reduced-motion: reduce){.ask-queue-item,.ask-queue-item.is-entering,.ask-queue-ghost{animation:none;transition:none;}}
 .ask-meter{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10.5px;
   color:var(--ink-3);white-space:nowrap;}
 .ask-meter-cost{color:var(--ink-2);}
@@ -8375,6 +8426,9 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfc-actions .wfv-btn{height:26px;padding:0 10px;border:1px solid var(--line-2);font-size:11.5px;}
 .wfc-actions .wfv-btn-primary{border-color:var(--ink);}
 .wfc :is(.wfv-btn,.wfc-link)[aria-disabled="true"]{opacity:.55;cursor:default;}
+.ask-ccard :is(.wfv-btn,.wfc-link)[aria-disabled="true"]{opacity:.55;cursor:default;}
+.ask-ccard{margin:6px 0;max-width:760px;font-size:12.5px;line-height:1.5;}
+.ask-ccard .ask-wfcard-body{margin:4px 0;}
 .wfc-suggest{display:flex;flex-wrap:wrap;gap:6px;}
 .wfc-chip-btn{height:26px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink);font:500 11.5px/24px var(--sans);cursor:pointer;}
 :is(.wfc-ibtn,.wfc-scope,.wfc-sel,.wfc-link,.wfc-chip-btn):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
@@ -8430,7 +8484,7 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-page[data-view="home"] .chat-head [data-ask-new-btn]{visibility:hidden;}
 /* New chat (ask-panel.mjs newChatButton): the ghost .ask-icon-btn widened for its plus glyph and label. */
 .ask-icon-btn.chat-new-btn{width:auto;gap:6px;padding:0 10px 0 8px;font:500 12.5px/1 var(--sans);white-space:nowrap;}
-.chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(32px,16vh,160px) 16px 32px;}
+.chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(24px,8vh,80px) 16px 32px;}
 .chat-hero-slot{width:100%;max-width:var(--chat-text-max);}
 .chat-hero-slot .ask-composer{padding:0;--ask-col-inset:0px;}
 .chat-page[data-view="thread"] .chat-home{display:none;}
@@ -8458,10 +8512,10 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-page .ask-composer-box:has(.guide-target){-webkit-backdrop-filter:none;backdrop-filter:none;}
 .chat-convo .ask-msg > :is(.ask-card,.ask-card-stub){width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
 /* The composer's popovers ride the composer (ask-panel.mjs openPopover): above the box in the dock, under it on
-   home, and never sized against the composer's own height. */
+   home, and never sized against the composer's own height. On home the cap is 100vh less .chat-home's 8vh top padding. */
 .chat-page .ask-composer{--ask-box-top:calc(100% - 10px);}
 .chat-page .ask-composer > .ask-pop{max-height:min(420px,calc(100vh - 240px));}
-.chat-page[data-view="home"] .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(84vh - 230px));}
+.chat-page[data-view="home"] .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(92vh - 230px));}
 .chat-panel{flex:none;min-width:0;min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--panel);}
 .chat-panel[hidden]{display:none;}
 /* The Chat row's unread dot (a .nav-count, so the rail parks it in the square's corner) and the logo links. */

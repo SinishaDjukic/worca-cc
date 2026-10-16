@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { memberViewState, renderActionsCard, renderOverviewStrip, renderRunPill,
-  renderRunningActionRows, historyActionBadges, formatUptime, isSafeHref, createActionsController } from '../ui/public/actions-view.mjs';
+  renderRunningActionRows, historyActionBadges, formatUptime, isSafeHref, createActionsController, releaseCheckout } from '../ui/public/actions-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const member = (over = {}) => ({ projectKey: 'app-0cea65fb', projectName: 'app', branch: 'worca-cc/x', worktreeDir: '/h/runs/ab/repos/app-0cea65fb',
@@ -412,4 +412,35 @@ test('Run setup shows only when setup was skipped AND the project has a setup co
     'no setup command: nothing to run, no button');
   assert.ok(!labelsOf(renderActionsCard(model(member({ checkout: { setup: { status: 'ok' } } })), { doc, handlers: {} })).includes('Run setup'),
     'setup already ran: no button');
+});
+
+test('releaseCheckout: the Actions tab\'s Discard / Unlink copy and DELETE, shared with the worktree notice', async () => {
+  const asked = [];
+  const calls = [];
+  const api = async (method, url, body) => {
+    calls.push([method, url, body]);
+    return calls.length === 1 && !body.force && url.includes('snap') ? { ok: false, status: 409, data: { code: 'SNAPSHOT_FAILED' } } : { ok: true, status: 200, data: {} };
+  };
+  const yes = async (o) => { asked.push(o); return true; };
+  // Discard: danger confirm, then DELETE with the members.
+  await releaseCheckout({ api, url: '/api/runs/ab/checkout?projectKey=app', members: ['app-0cea65fb'], confirm: yes });
+  assert.equal(asked[0].title, 'Discard the checkout?');
+  assert.equal(asked[0].message, 'Running services stop first. Uncommitted changes are saved as a patch in the run\'s files.');
+  assert.equal(asked[0].danger, true);
+  assert.deepEqual(calls[0], ['DELETE', '/api/runs/ab/checkout?projectKey=app', { members: ['app-0cea65fb'] }]);
+  // Unlink: names the folder, never danger.
+  asked.length = 0; calls.length = 0;
+  await releaseCheckout({ api, url: '/u', members: ['app-0cea65fb'], external: true, dir: '/Users/ada/app', confirm: yes });
+  assert.equal(asked[0].title, 'Stop using this folder?');
+  assert.deepEqual(asked[0].message, ['Running services stop first. ', { strong: '/Users/ada/app' }, ' stays exactly as it is.']);
+  assert.ok(!asked[0].danger);
+  // SNAPSHOT_FAILED asks again, then forces.
+  asked.length = 0; calls.length = 0;
+  await releaseCheckout({ api, url: '/snap', members: ['m'], confirm: yes });
+  assert.deepEqual(asked.map((o) => o.title), ['Discard the checkout?', 'Saving the uncommitted changes failed']);
+  assert.deepEqual(calls.map((c) => c[2]), [{ members: ['m'] }, { members: ['m'], force: true }]);
+  // A declined confirm sends nothing and resolves null.
+  calls.length = 0;
+  assert.equal(await releaseCheckout({ api, url: '/x', members: ['m'], confirm: async () => false }), null);
+  assert.equal(calls.length, 0);
 });
