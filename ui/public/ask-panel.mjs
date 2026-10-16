@@ -33,7 +33,7 @@ import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 import { flagOn } from './flags.mjs';
-import { createTagInput, fetchTagVocabulary } from './tag-input.mjs';
+import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
 import { shapeFirstOn } from './chat/shape-gate.mjs';
 import { INTENTS, splitIntentLead } from './chat/intent.mjs';
 import { homeIcon } from './chat/home-icons.mjs';
@@ -4500,8 +4500,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(titleRow);
     // Run tags (#718), behind the experimental flag: prefilled from the proposal, sent on Start.
     const tagInput = flagOn('runTags', doc) ? createTagInput(doc, { value: card.tags || [], suggest: fetchTagVocabulary }) : null;
+    const tagRow = tagInput ? make('div', 'ask-rp-tags') : null;
     if (tagInput) {
-      const tagRow = make('div', 'ask-rp-tags');
       tagRow.appendChild(tagInput.el);
       head.appendChild(tagRow);
     }
@@ -4845,6 +4845,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const n = row && Array.isArray(row.projectKeys) ? row.projectKeys.length : (Array.isArray(card.members) ? card.members.length : 0);
         targetSub.textContent = `${(row && row.name) || card.workspaceName || 'workspace'} · ${n} member${n === 1 ? '' : 's'} · feature ${featureWord()}`;
       }
+      // Every target change lands here (renderTarget rebuilds the selects, so outside listeners are lost).
+      rootEl.__rp?.refreshTagRules?.();
     }
     feature.addEventListener('input', updateTargetSub);
 
@@ -5016,6 +5018,31 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       reloadLane();
     });
     rootEl.__rp = { local, wfDesc, summary, laneSec, briefSec, brief, titleInput, tagInput, lane: () => local.lane };   // consumed by later tasks + tests
+    // Enforced run tags (slice 4A): the target's rules pre-fill the chips and, when enforced, gate Start
+    // with an inline picker per missing mandatory tag. The server gate still answers a stale rule set (422).
+    if (tagInput) {
+      const line = createTagRulesLine(doc, tagInput);
+      tagRow.appendChild(line.el);
+      rootEl.__rp.tagRules = line;
+      const sync = () => { const why = line.blocked(); startBtn.disabled = !!why; startBtn.title = why || ''; };
+      line.onChange(sync);
+      let gen = 0;
+      let lastQ = null;
+      const refreshTagRules = () => {
+        const wsId = local.target === 'workspace' ? ((rootEl.querySelector('.ask-card-workspace-select') || {}).value || card.workspaceId || '') : '';
+        const dir = wsId ? '' : local.projectDir();
+        const q = wsId ? `workspaceId=${encodeURIComponent(wsId)}` : dir ? `projectDir=${encodeURIComponent(dir)}` : '';
+        if (q === lastQ) return;            // updateTargetSub also runs on branch/feature edits: same target, no fetch
+        lastQ = q;
+        const mine = ++gen;
+        if (!q) { line.update(null); return; }
+        fetch(`/api/tag-dimensions?${q}`).then((r) => (r.ok ? r.json() : null))
+          .then((info) => { if (mine === gen && !st.destroyed) line.update(info && Array.isArray(info.dims) ? info : null); })
+          .catch(() => {});
+      };
+      rootEl.__rp.refreshTagRules = refreshTagRules;
+      refreshTagRules();
+    }
     return rootEl;
   }
 
@@ -5139,8 +5166,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // the flip frame renders the terminal state. The browser never navigates
       // (beginRun is NEVER called — spec §10.5).
     } finally {
-      startBtn.disabled = false;
-      if (shapeBtn) shapeBtn.disabled = false;
+      const tagBlocked = !!rootEl.__rp?.tagRules?.blocked();   // an enforced tag still missing keeps Start off
+      startBtn.disabled = tagBlocked;
+      if (shapeBtn) shapeBtn.disabled = tagBlocked;            // Shaper starts a run too: the same tag rule
       freezeTargetInputs(rootEl, false);
       // freezeTargetInputs re-enabled the select; a shaped card's workflow is fixed.
       if ((block.card || {}).shape && local.shapeUi) rootEl.querySelector('.ask-card-workflow').disabled = true;

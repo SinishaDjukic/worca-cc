@@ -218,3 +218,19 @@ test('runs.tagDimensions: an 11th dimension is dropped with a warning', () => {
   assert.equal(doc.fields['runs.tagDimensions'].value.length, 10);
   assert.ok(warnings.some((w) => /k10: at most 10 tag dimensions/.test(w)));
 });
+
+test('runs.enforceTags: a soft bool in the runs group; a non-boolean is dropped with a warning', () => {
+  const meta = fieldMeta('runs.enforceTags');
+  assert.deepEqual({ type: meta.type, kinds: meta.kinds, group: meta.group }, { type: 'bool', kinds: ['soft'], group: 'runs' });
+  assert.equal(normalizePolicyDoc({ schema: 1, fields: { 'runs.enforceTags': { kind: 'soft', value: true } } }).doc.fields['runs.enforceTags'].value, true);
+  const { doc, warnings } = normalizePolicyDoc({ schema: 1, fields: { 'runs.enforceTags': { kind: 'soft', value: 'yes' } } });
+  assert.equal('runs.enforceTags' in doc.fields, false);
+  assert.ok(warnings.some((w) => /^runs\.enforceTags: /.test(w)), warnings.join('\n'));
+});
+
+test('runs.tagDimensions: an entry with a default keeps it', () => {
+  const { doc } = normalizePolicyDoc({ schema: 1, fields: { 'runs.tagDimensions': { kind: 'soft', value: [
+    { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true, default: '4420' },
+  ] } } });
+  assert.deepEqual(doc.fields['runs.tagDimensions'].value, [{ key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true, default: '4420' }]);
+});

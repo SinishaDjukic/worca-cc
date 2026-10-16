@@ -1561,7 +1561,7 @@ export function writeSyncPrefs(key, patch) {
 // ── Run tags (#718): per-project default tags ────────────────────────────────
 export const RUN_TAGS_KEY = 'runTags';
 
-/** The project's default run tags (#718): a New run form prefill only — never applied by the server. */
+/** The project's default run tags (#718): a New run form prefill — applied by the server only as an enforced-tags pre-fill source. */
 export function readProjectDefaultTags(key) {
   assertProjectKey(key);
   const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);

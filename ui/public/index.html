@@ -1581,6 +1581,7 @@
             <!-- Ordered by mode (Simple, Advanced, Expert) so each mode sees a gap-free prefix of the
                  strip. Plugins, Sets, Models and Providers left for the Add-ons pages. -->
             <button type="button" class="on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
+            <button type="button" data-tab="tags" data-min-level="simple" data-flag="runTags" aria-pressed="false">Tags</button>
             <button type="button" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
             <!-- Experimental (docs/feature-flags.md) shows at every level: flags are not levels. -->
             <button type="button" data-tab="experimental" data-min-level="simple" aria-pressed="false">Experimental</button>
@@ -1793,6 +1794,22 @@
           </section>
           <!-- /pane general -->
 
+          <!-- ===== TAB: TAGS — run tag rules (Settings › Tags): tag rows and "Require mandatory tags".
+               Every level while runTags is on. The pane has no data-flag (a deep link would show a blank
+               page); the chip and the card carry it, and parseSettingsParam sends #settings/tags to General. ===== -->
+          <section class="settings-pane hidden" data-tab="tags">
+            <section class="card settings-card" id="tag-dims-settings-card" data-min-level="simple" data-flag="runTags">
+              <div class="card-head"><div class="label-row"><h2>Tags</h2></div></div>
+              <p class="hint" id="tagsTeamNote" hidden></p>
+              <label class="check-row"><input type="checkbox" id="tagsEnforce" data-setting="enforceTags"> Require mandatory tags to start a run</label>
+              <p class="hint">On: a run cannot start without its mandatory tags (pre-filled where they can be). Off: tags are optional. A tag with values accepts only those values.</p>
+              <div id="tagDimsEditor" data-setting="tagDimensions"></div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" class="btn btn-primary btn-mini" id="tagDimsSave">Save</button>
+              </div>
+            </section>
+          </section><!-- /pane tags -->
+
           <!-- ===== TAB: RUNS — how pipeline runs are capped, scheduled and reported.
                Simple, for Budget; the two Advanced cards keep their own level. ===== -->
           <section class="settings-pane hidden" data-tab="runs">
@@ -1985,21 +2002,6 @@
               <div class="add-project-actions" style="margin-top:14px">
                 <button type="button" id="schedDefaultsReset" class="btn btn-ghost btn-mini">Use defaults</button>
                 <button type="button" id="schedDefaultsSave" class="btn btn-primary btn-mini">Save</button>
-              </div>
-            </section>
-
-            <!-- Tag dimensions (run tags, slice 3): local keys the New run form asks for when the run
-                 target's team policy sets none. Empty = a hint and the Add button, no rows. -->
-            <section class="card settings-card" id="tag-dims-settings-card" data-min-level="advanced" data-flag="runTags">
-              <div class="card-head">
-                <div class="label-row">
-                  <h2>Tag dimensions</h2>
-                </div>
-              </div>
-              <p class="hint">Runs take free-form tags. Add a dimension to suggest a key (like a cost centre) on every New run. Projects whose team policy sets tag dimensions use the team's list instead.</p>
-              <div id="tagDimsEditor" data-setting="tagDimensions"></div>
-              <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" class="btn btn-primary btn-mini" id="tagDimsSave">Save</button>
               </div>
             </section>
 
