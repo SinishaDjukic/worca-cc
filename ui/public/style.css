@@ -538,6 +538,8 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
 /* Settings tab strip. .seg gives the pill chrome; this only spaces it from the
    first pane's .topbar, which brings its own 22px bottom margin. */
 .settings-tabs{margin-bottom:18px;}
+/* After .seg button, same (0,1,1), so it wins by order: the Settings tabs share the run tabs' --tab-h. */
+.settings-tabs > button{height:var(--tab-h);padding:0 20px;}
 /* A pane is a plain block — it is deliberately NOT .view (see index.html). */
 .settings-pane{display:block;}
 
@@ -663,45 +665,38 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 
 /* ---------- buttons ---------- */
 .actions{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:22px;}
-.btn-ghost{background:var(--surface);border:1.5px solid var(--line-2);color:var(--ink);font-family:inherit;
-  font-weight:600;font-size:13.5px;padding:13px 20px;border-radius:999px;cursor:pointer;transition:border-color .15s,background .15s;}
-.btn-ghost:hover:not(:disabled){border-color:var(--hover-outline);}
-.btn-ghost:disabled{opacity:.45;cursor:not-allowed;}   /* a waiting step must not look clickable */
-.btn-go{display:inline-flex;align-items:center;gap:9px;background:var(--ink);color:var(--on-ink);border:none;
-  font-family:inherit;font-weight:600;font-size:14px;padding:14px 28px;border-radius:999px;cursor:pointer;
-  transition:transform .15s,box-shadow .15s;}
-.btn-go:hover{transform:translateY(-1px);box-shadow:inset 0 0 0 999px var(--solid-hover);}
-.btn-go:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
 /* One button scale: sm 28 / md 34 (default) / lg 42, one 8px radius, a 1px line border, a tint on hover and no lift.
+   .btn-ghost, .btn-go and .rd-cta are aliases (slice 3): .btn-ghost is the default outline, .btn-go the primary, .rd-cta
+   the lg primary. Each base selector is :is() of single classes, specificity (0,1,0), so context rules still win by order.
    The tint mixes 7% --ink into the button's background: --hover would be invisible on --surface in dark.
    Height is a min-height, so a wrapping label grows the button. Hover rules sit in :where() (specificity 0,1,0): a later
    context rule that restyles a .btn as a link (.plan-fold, .plan-persp-edit) still wins by order. */
-/* Legacy pill padding for the ~41 btn-ghost btn-mini elements that carry no .btn (mcp-view, team views, index.html):
-   without .btn they get no min-height, so they keep this padding. On a .btn, the scoped rule below overrides it. */
+/* Legacy pill padding for a .btn-mini that carries no scale class; on a scale class the scoped sm rule below overrides it. */
 .btn-mini{padding:8px 14px;font-size:12.5px;}
-:root{--btn-h-sm:28px;--btn-h-md:34px;--btn-h-lg:42px;--btn-r:8px;--btn-ic:14px;}
+:root{--btn-h-sm:28px;--btn-h-md:34px;--btn-h-lg:42px;--btn-r:8px;--btn-ic:14px;--tab-h:32px;}
 @media (pointer:coarse){:root{--btn-h-sm:40px;--btn-h-md:40px;}}
-.btn{--btn-h:var(--btn-h-md);display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:var(--btn-h);
+:is(.btn,.btn-ghost,.btn-go,.rd-cta){--btn-h:var(--btn-h-md);display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:var(--btn-h);
   padding:4px 14px;background:var(--surface);border:1px solid var(--line-2);border-radius:var(--btn-r);color:var(--ink);
   font-family:inherit;font-weight:500;font-size:13px;line-height:1.25;text-decoration:none;cursor:pointer;
   transition:background .15s,border-color .15s,box-shadow .15s,color .15s;}
-.btn:where(:hover:not(:disabled)){background:color-mix(in srgb,var(--ink) 7%,var(--surface));}
-.btn:hover{transform:none;}
-.btn:disabled{opacity:.45;cursor:not-allowed;}
-.btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.btn svg{width:var(--btn-ic);height:var(--btn-ic);flex:none;}
-.btn-primary{background:var(--ink);border-color:var(--ink);color:var(--on-ink);font-weight:600;}
-.btn-primary:where(:hover:not(:disabled)){background:var(--ink);box-shadow:inset 0 0 0 999px var(--solid-hover);}
-.btn-danger{background:var(--red-bg);border-color:transparent;color:var(--red-ink);}
+:is(.btn,.btn-ghost,.btn-go,.rd-cta):where(:hover:not(:disabled)){background:color-mix(in srgb,var(--ink) 7%,var(--surface));}
+:is(.btn,.btn-ghost,.btn-go,.rd-cta):hover{transform:none;}
+:is(.btn,.btn-ghost,.btn-go,.rd-cta):disabled{opacity:.45;cursor:not-allowed;}
+:is(.btn,.btn-ghost,.btn-go,.rd-cta):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+:is(.btn,.btn-ghost,.btn-go,.rd-cta) svg{width:var(--btn-ic);height:var(--btn-ic);flex:none;}
+:is(.btn-primary,.btn-go,.rd-cta){background:var(--ink);border-color:var(--ink);color:var(--on-ink);font-weight:600;}
+:is(.btn-primary,.btn-go,.rd-cta):where(:hover:not(:disabled)){background:var(--ink);box-shadow:inset 0 0 0 999px var(--solid-hover);}
+/* --red-ink-strong: 4.70:1 on --red-bg in light (--red-ink is 3.94:1); the same #F08C7E in dark (D18). */
+.btn-danger{background:var(--red-bg);border-color:transparent;color:var(--red-ink-strong);}
 .btn-danger:where(:hover:not(:disabled)){background:var(--red-bg);border-color:var(--red);}
 .btn-quiet{background:transparent;border-color:transparent;color:var(--ink-2);}
 .btn-quiet:where(:hover:not(:disabled)){background:color-mix(in srgb,var(--ink) 7%,transparent);color:var(--ink);}
-.btn:where(.btn-sm,.btn-mini){--btn-h:var(--btn-h-sm);padding:2px 10px;font-size:12.5px;}
-.btn-lg{--btn-h:var(--btn-h-lg);padding:6px 18px;font-size:14px;}
+:is(.btn,.btn-ghost,.btn-go):where(.btn-sm,.btn-mini){--btn-h:var(--btn-h-sm);padding:2px 10px;font-size:12.5px;}
+:is(.btn-lg,.rd-cta){--btn-h:var(--btn-h-lg);padding:6px 18px;font-size:14px;}
 .btn-icon{width:var(--btn-h);padding:0;}
 .btn-block{width:100%;}
-a.btn,a.btn:is(:hover,:focus,:focus-visible,:active,:visited){text-decoration:none;}
+a:is(.btn,.btn-ghost,.btn-go,.rd-cta),a:is(.btn,.btn-ghost,.btn-go,.rd-cta):is(:hover,:focus,:focus-visible,:active,:visited){text-decoration:none;}
 
 /* form message */
 .form-msg{margin:12px 0 0;font-size:12.5px;min-height:16px;}
@@ -2538,7 +2533,6 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 .proj-fdot.green{background:var(--green);} .proj-fdot.grey{background:var(--ink-3);}
 #projects-list .proj-head-tools{margin-left:auto;display:flex;align-items:center;gap:10px;}
 #projects-list .proj-head-tools .sync-checked{margin-left:0;}
-#projects-sync-all{height:32px;padding:0 15px;font-size:13px;}
 #projects-list .proj-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2.7fr) var(--pl-team-col) 30px;column-gap:24px;align-items:center;
   padding:10px 20px;border-bottom:1px solid var(--line);background:var(--field);
   font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);}
@@ -2590,7 +2584,7 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 @keyframes ps-pop{0%{transform:scale(.92);}60%{transform:scale(1.04);}100%{transform:scale(1);}}
 .ps-hint{margin-top:5px;font-size:12px;line-height:1.4;color:var(--ink-2);}
 .ps-act{display:flex;justify-content:flex-end;}
-.proj-sync .ps-btn{height:32px;padding:0 15px;gap:7px;font-size:13px;white-space:nowrap;background:var(--panel);border:1px solid var(--ps-act-line);color:var(--ps-act);}
+.proj-sync .ps-btn{white-space:nowrap;background:var(--panel);border:1px solid var(--ps-act-line);color:var(--ps-act);}
 .proj-sync .ps-btn:hover:not(:disabled){border-color:currentColor;}
 .proj-sync .ps-btn.busy:disabled{opacity:.7;cursor:default;}
 .proj-sync .ps-btn.busy svg{animation:ws-spin .9s linear infinite;}
@@ -2837,7 +2831,6 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .grv-name-input{flex:1 1 auto;min-width:0;}
 .grv-summary{display:block;margin:6px 0 0;}
 .grv-actions{display:flex;gap:8px;margin-top:4px;}
-.grv-actions .btn-ghost{padding:7px 12px;font-size:12px;}
 /* Details button on the card's right edge — opens the read-only view (built-ins) or the editor (user sets). */
 .grv-details{flex:0 0 auto;}
 .grv-editor{padding:18px 22px;}
@@ -3473,7 +3466,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .mv-name{font-size:14.5px;}
 .mv-summary{display:block;margin:6px 0 0;word-break:break-all;}
-.mv-card .btn-ghost{flex:0 0 auto;padding:7px 12px;font-size:12px;}
+.mv-card .btn-ghost{flex:0 0 auto;}
 .mv-builtin{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;border:1px solid var(--line-2);border-radius:10px;}
 .mv-builtin .mv-summary{margin:0;flex:1 1 auto;text-align:right;}
 .mv-editor{padding:18px 22px;}
@@ -3489,12 +3482,11 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-env-row{display:flex;gap:8px;align-items:center;}
 .mv-env-row .mv-env-key{flex:0 0 34%;font-family:var(--mono);font-size:12.5px;}
 .mv-env-row .mv-env-val{flex:1 1 auto;font-family:var(--mono);font-size:12.5px;}
-.mv-env-row .mv-env-rm{flex:0 0 auto;padding:6px 10px;}
-.mv-env-add{justify-self:start;padding:7px 12px;font-size:12px;}
+.mv-env-row .mv-env-rm{flex:0 0 auto;}
+.mv-env-add{justify-self:start;}
 .mv-editor-btns{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;}
-.mv-env-row .mv-env-copy{flex:0 0 auto;padding:6px 10px;}
+.mv-env-row .mv-env-copy{flex:0 0 auto;}
 .mv-env-btns{display:flex;gap:10px;justify-content:flex-start;}
-.mv-env-btns .btn-ghost{padding:7px 12px;font-size:12px;}
 /* Pricing: the opt-in per-model cost override. Modes read like the effort row;
    the rate grid is hidden outside per-Mtok mode (explicit — a reset elsewhere
    must not be able to un-hide it). */
@@ -3601,17 +3593,14 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-section.is-folded .mv-sec-body,.mv-section.is-folded .mv-sec-hint{display:none;}
 .mv-no-hits{margin-top:6px;}
 @media (prefers-reduced-motion: reduce){.mv-sec-caret,.advanced .adv-chev{transition:none;}}
-.mv-pv-btns .btn-ghost,.mv-pv-btns .btn-go{padding:7px 12px;font-size:12px;}
 .mv-pv-row .input,.mv-pv-row .select{font-family:var(--mono);font-size:12.5px;padding:9px 12px;}
 .mv-pv-row .mv-pv-conc{max-width:120px;}
 .mv-cp-signin-box{display:grid;gap:8px;padding:12px 14px;border:1px solid var(--line-2);border-radius:10px;background:var(--field);}
 .mv-cp-code-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
 .mv-cp-code{font-family:var(--mono);font-size:26px;font-weight:700;letter-spacing:.12em;padding:4px 10px;border-radius:8px;background:var(--panel);border:1px solid var(--line);}
-.mv-cp-code-row .btn-ghost{padding:7px 12px;font-size:12px;text-decoration:none;}
 .mv-cp-status.err{color:var(--red);}
-.mv-cp-signin-box .mv-cp-cancel{justify-self:start;padding:7px 12px;font-size:12px;}
+.mv-cp-signin-box .mv-cp-cancel{justify-self:start;}
 .mv-needs-signin{display:inline-flex;align-items:center;gap:6px;}
-.mv-needs-signin .mv-signin{padding:4px 10px;font-size:11.5px;}
 .mv-degradation{display:block;margin:4px 0 0;}
 .mv-conn{display:grid;gap:12px;}
 .mv-conn-modes{display:grid;gap:8px;}
@@ -3756,7 +3745,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    .hd-report has no icon, but it stands in the SAME row as .hd-archive and needs the
    same padding for the same reason: on .btn-ghost's own 13px it measured 48px beside
    a 38px Archive (headless Chrome, both themes). */
-.hd-back,.hd-report,.pd-back,.pd-new,.pd-history,.ws-rescan{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;}   /* one height for every header action */
+.hd-back,.hd-report,.pd-back,.pd-new,.pd-history,.ws-rescan{display:inline-flex;align-items:center;gap:8px;}   /* one height for every header action */
 /* Same trap as the fallback issue link in the report modal: the author `display`
    above beats the UA's `[hidden]{display:none}`, and this button ships hidden. */
 .hd-report[hidden]{display:none;}
@@ -3861,7 +3850,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 /* ---------- History detail: section tabs ---------- */
 .hd-tabs,.pd-tabs{position:sticky;top:0;z-index:5;display:flex;align-items:center;flex-wrap:wrap;gap:8px;
   padding:18px 0 14px;background:var(--bg);}
-.hd-tab,.pd-tab{display:flex;align-items:center;gap:9px;padding:10px 17px;border:1.5px solid var(--line);
+.hd-tab,.pd-tab{display:flex;align-items:center;gap:9px;height:var(--tab-h);padding:0 17px;border:1.5px solid var(--line);
   border-radius:999px;background:var(--panel);font:600 13.5px var(--sans);color:var(--ink-2);cursor:pointer;}
 .hd-tab:hover,.pd-tab:hover{border-color:var(--ink-3);color:var(--ink);}
 .hd-tab.active,.pd-tab.active{background:var(--ink);color:var(--on-ink);border-color:var(--ink);}
@@ -4323,7 +4312,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 /* Watch PR (#619): a member row's failed toggle alert takes its own line under the row. */
 .hd-pr-repo{flex-wrap:wrap;}
 .hd-pr-repo>.card-alert{flex-basis:100%;}
-.hd-after{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;flex:0 0 auto;}
+.hd-after{flex:0 0 auto;}
 .hd-after[hidden]{display:none;}
 
 /* WIDTH GOES ON `#shipit-modal .card`, NOT `.shipit-card`. The markup is
@@ -4398,8 +4387,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 
 /* Publish branch (#618): the header's outline pill + "Published to …" note, and its dialog
    (one row per repo: tick for a workspace member, name, branch, push remote, status). */
-.hd-publish{padding:8px 16px;border:1.5px solid var(--ink);border-radius:999px;
-  font:600 12.5px var(--sans);cursor:pointer;flex:0 0 auto;}
+.hd-publish{flex:0 0 auto;}
 .hd-publish[hidden],.hd-published[hidden]{display:none;}
 .hd-published{margin:8px 0 0;font-size:12px;color:var(--ink-3);overflow-wrap:anywhere;}
 #publish-modal .card{width:min(520px,100%);padding:24px;}
@@ -4688,12 +4676,9 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
    one shell shows, and a z-index there would trap the tour's .guide-lift (z 45) under its scrim. */
 .runs-shell[data-layout="slide"] .runs-pane > :is(.run-shell,.hist-shell).detail-open{z-index:1;}
 .runs-shell.no-anim > *{transition:none !important;}
-/* Run after this one (the list card's old schedule-after button): a quiet pill beside Pause/Stop,
+/* Run after this one (the list card's old schedule-after button): a default .btn beside Pause/Stop,
    on the run page's bar and the saved run's (.hd-after). */
-.hd-after,.rd-after{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--line);
-  border-radius:999px;background:var(--panel);font:600 12.5px var(--sans);color:var(--ink-2);cursor:pointer;}
 .hd-after[hidden],.rd-after[hidden]{display:none;}
-.hd-after:hover,.rd-after:hover{border-color:var(--ink-2);color:var(--ink);}
 .hd-after:focus-visible,.rd-after:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* "Resume on <other engine>" after a usage limit (.hd-resume-switch): the same quiet pill. */
 .hd-resume-switch{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--line);
@@ -4743,24 +4728,17 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .rd-copied{display:none;font:500 11.5px var(--sans);color:var(--green-ink);}
 .rd-branch-copy.copied + .rd-copied{display:inline;}
 .rd-spacer{flex:1 1 24px;}
-/* Pause/Resume and Stop. The saved run's bar (.hd-resume, .hd-pause, .hd-stop) wears the same
-   rules: its Resume and Pause are two buttons where this page toggles one. */
-.hd-resume,.hd-pause,.rd-pause{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--amber-bg);
-  border-radius:999px;background:var(--panel);font:600 12.5px var(--sans);color:var(--amber-ink);cursor:pointer;}
+/* Pause/Resume and Stop are .btn / .btn .btn-danger (markup). The saved run's bar (.hd-resume, .hd-pause, .hd-stop)
+   has the same: its Resume and Pause are two buttons where this page toggles one. */
 .hd-resume[hidden],.hd-pause[hidden],.rd-pause[hidden]{display:none;}
-.hd-resume:hover:not([disabled]),.hd-pause:hover:not([disabled]),.rd-pause:hover:not([disabled]){border-color:var(--amber);}
-.hd-resume[disabled],.hd-pause[disabled],.rd-pause[disabled]{opacity:.55;cursor:not-allowed;}
 /* Only one of the two glyphs shows; data-action decides which. */
 .rd-pause[data-action="pause"] .ico-play,.rd-pause[data-action="resume"] .ico-pause{display:none;}
-.hd-stop,.rd-stop{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--red-bg);
-  border-radius:999px;background:var(--panel);font:600 12.5px var(--sans);color:var(--red-ink);cursor:pointer;}
 .hd-stop[hidden],.rd-stop[hidden]{display:none;}
-.hd-stop:hover:not([disabled]),.rd-stop:hover:not([disabled]){border-color:var(--red);}
 .rd-error{margin-top:24px;color:var(--red-ink);font-size:12.5px;}
 .rd-error[hidden]{display:none;}
 /* .btn-ghost declares no focus ring and .rd-back is focused programmatically by
    openRunDetail — same reasoning as the .hd-back arm. */
-.rd-back{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;}
+.rd-back{display:inline-flex;align-items:center;gap:8px;}
 .rd-back:focus-visible,.rd-pause:focus-visible,.rd-stop:focus-visible,.hd-pause:focus-visible,.hd-stop:focus-visible,
 .rd-branch-copy:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
@@ -4794,9 +4772,6 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 /* Every control in the bar keeps its words on one line: a squeezed bar wraps whole controls
    onto a second row, never the text inside one ("Run after" over two lines). */
 .rd-bar-end > *{flex:none;white-space:nowrap;}
-.rd-bar .rd-back,.rd-bar .rd-to-run,.hd-bar .hd-back,.hd-bar .hd-to-run,.rd-bar .rd-pause,.rd-bar .rd-stop,
-.hd-bar .hd-resume,.hd-bar .hd-pause,.hd-bar .hd-stop{height:36px;box-sizing:border-box;}
-.rd-to-run,.hd-to-run{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;}
 .rd-to-run.ask{background:var(--panel);border-color:var(--amber);color:var(--amber-ink);}   /* a question waits on the glance */
 .rd-back[hidden],.hd-bar .hd-back[hidden],.hd-to-run[hidden],.rd-to-run[hidden]{display:none;}
 .rd-to-run:focus-visible,.hd-to-run:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
@@ -4956,16 +4931,13 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-stats .hd-diff-counts .diff-add{color:var(--hd-count-add);}
 .rd-stats .hd-diff-counts .diff-del{color:var(--hd-count-del);}
 .rd-stats > div > span{font-size:11.5px;color:var(--ink-2);}
-.rd-cta{display:flex;align-items:center;justify-content:center;gap:9px;box-sizing:border-box;width:100%;text-align:center;font:600 15px var(--sans);border:0;border-radius:var(--r-ctrl);
-  padding:13px;cursor:pointer;background:var(--ink);color:var(--on-ink);text-decoration:none;
-  transition:filter .15s,transform .15s,box-shadow .15s;}
-.rd-cta:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);transform:translateY(-1px);}
+/* The run page's main CTA: an lg primary (the alias at the button scale) sized to its label; full width on a phone only. */
+.rd-cta{box-sizing:border-box;}
 /* The pull request by state: solid ink to create one, then the PR orbs' tints — blue while it
    is open, violet once merged. Their hover is an inset ring, no lift (they have no border to recolour). */
-.rd-cta.pr-view{background:var(--blue-bg);color:var(--blue-ink-strong);}
-.rd-cta.pr-merged{background:var(--violet-bg);color:var(--violet-ink);}
-.rd-cta:is(.pr-view,.pr-merged):hover{box-shadow:inset 0 0 0 1.5px currentColor;transform:none;}
-.rd-cta:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.rd-cta.pr-view{background:var(--blue-bg);border-color:transparent;color:var(--blue-ink-strong);}
+.rd-cta.pr-merged{background:var(--violet-bg);border-color:transparent;color:var(--violet-ink);}
+.rd-cta:is(.pr-view,.pr-merged):hover{box-shadow:inset 0 0 0 1.5px currentColor;}
 .rd-cta-ico{flex:0 0 auto;}
 /* The pull request button's slot (app.js paintPrCta): one node for the screen's life, so the
    lookup's placeholder can become the button. Pending: a white button with a hairline and a
@@ -4975,13 +4947,13 @@ button.rd-srow:hover{background:var(--hover-on-field);}
    and label come in. Compositor-only: transform and opacity, will-change only on the nodes
    that animate; the slot's height never changes during the morph. With no button after all,
    the placeholder fades out and the slot then folds away (the one height change, at the end). */
-.rd-pr-slot{position:relative;border-radius:var(--r-ctrl);}
+.rd-pr-slot{position:relative;width:fit-content;max-width:100%;border-radius:var(--btn-r);}
 .rd-pr-slot[hidden]{display:none;}
 .rd-pr-status[hidden]{display:none;}
-/* An open PR with a status: the button and its footer are one card. */
+/* An open PR with a status: the button sits inside the card, the status row under it. */
 .rd-pr-box:has(> .rd-pr-status:not([hidden])){border-radius:var(--r-ctrl);overflow:hidden;background:var(--blue-wash);
   box-shadow:inset 0 0 0 1px var(--blue-line);}
-.rd-pr-box:has(> .rd-pr-status:not([hidden])) .rd-cta{border-radius:var(--r-ctrl) var(--r-ctrl) 0 0;}
+.rd-pr-box:has(> .rd-pr-status:not([hidden])) > .rd-pr-slot{margin:12px 16px;}
 .rd-pr-status{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;
   border-top:1px solid var(--blue-line);font-size:13px;color:var(--ink-2);}
 .rd-prs-sum{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0;}
@@ -5011,8 +4983,8 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-prs-watch .switch.on::after{left:14px;}
 .rd-pr-slot:is(.is-pending,.is-morph,.is-out){overflow:hidden;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);}
 .rd-pr-slot > .rd-cta{position:relative;}   /* above the colour layer */
-.rd-pr-wait{display:flex;align-items:center;justify-content:center;gap:9px;box-sizing:border-box;width:100%;padding:13px;
-  font:600 15px var(--sans);color:var(--ink-2);cursor:default;}
+.rd-pr-wait{display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;width:100%;
+  min-height:var(--btn-h-lg);padding:0 18px;font:600 14px var(--sans);color:var(--ink-2);cursor:default;}
 .rd-pr-wait > *{opacity:0;}
 .rd-pr-spin{position:absolute;left:50%;top:50%;width:20px;height:20px;margin:-10px 0 0 -10px;box-sizing:border-box;
   border-radius:50%;border:2px solid var(--line-2);border-top-color:var(--ink);animation:ws-spin .9s linear infinite;}
@@ -5020,9 +4992,9 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
   border-radius:50%;background:var(--ink);will-change:transform;animation:rd-pr-grow .32s cubic-bezier(.2,.8,.2,1) both;}
 .rd-pr-fill.pr-view{background:var(--blue-bg);}
 .rd-pr-fill.pr-merged{background:var(--violet-bg);}
-/* While it morphs the button lends its colour to the layer and sits out its hover (no lift, no
-   ring): only its icon and label move. */
-.rd-pr-slot.is-morph > .rd-cta{background:transparent;box-shadow:none;transform:none;transition:none;}
+/* While it morphs the button lends its colour to the layer and sits out its hover (no ring) and its
+   ink border: only its icon and label move. */
+.rd-pr-slot.is-morph > .rd-cta{background:transparent;border-color:transparent;box-shadow:none;transform:none;transition:none;}
 .rd-pr-slot.is-morph > .rd-cta > *{will-change:transform,opacity;animation:rd-pr-in .18s ease-out .22s both;}
 .rd-pr-slot.is-morph > .rd-pr-spin{animation:ws-spin .9s linear infinite,rd-pr-fade .15s ease-out both;}
 .rd-pr-slot.is-out{will-change:opacity;animation:rd-pr-fade .18s ease-out both,rd-pr-fold .2s ease-in-out .18s both;}
@@ -5036,6 +5008,10 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 @media (prefers-reduced-motion: reduce){
   .rd-pr-fill{animation-name:rd-pr-show;}
   .rd-pr-slot.is-morph > .rd-cta > *{animation-name:rd-pr-show;}
+}
+@media (max-width:640px){
+  .rd-pr-slot{width:auto;}
+  .rd-pr-slot > .rd-cta{width:100%;}
 }
 /* Details: the header card and the tabs. The shared bar above carries the status and the way back. */
 .rd-details{display:flex;flex-direction:column;min-height:100%;}
@@ -5062,7 +5038,6 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
   .rd-bar,.hd-bar{padding:10px 16px;flex-wrap:wrap;gap:8px;}
   .rd-bar-end{margin-left:auto;gap:6px;}
   .rd-bar-end:empty{display:none;}
-  .rd-bar .rd-pause,.rd-bar .rd-stop,.hd-bar .hd-resume,.hd-bar .hd-pause,.hd-bar .hd-stop{padding:0 11px;}
   .rd-glance{padding:20px 16px var(--ask-dock-clearance);}
   .rd-page-title{font-size:24px;}
   .rd-details .rd-header{margin:16px 16px 0;}
@@ -5101,7 +5076,7 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 /* Night mode (Step 14): the run-view switch and the decisions list; flagged rows need review. */
 .rd-night-wrap{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2)}
 .rd-night-wrap[hidden]{display:none}
-.rd-bar .rd-night{width:auto;height:36px;box-sizing:border-box;padding:0 14px;font-size:12px;}   /* the bar's control size, not a form field's */
+.rd-bar .rd-night{width:auto;height:var(--btn-h-md);box-sizing:border-box;padding:0 14px;font-size:12px;}   /* the bar's md button height, not a form field's */
 .rd-night-pill{font-size:11.5px;padding:1px 8px;border-radius:999px;border:1px solid var(--line);color:var(--ink-2);white-space:nowrap}
 .rd-night-pill:empty{display:none}
 .rd-night-pill[data-state="now"]{border-color:var(--amber);background:var(--amber-wash)}
@@ -5239,7 +5214,7 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
    behind it. */
 .rd-tabs{position:sticky;top:0;z-index:5;display:flex;align-items:center;flex-wrap:wrap;gap:8px;
   padding:18px 0 14px;background:var(--bg);}
-.rd-tab{display:flex;align-items:center;gap:9px;padding:10px 17px;border:1.5px solid var(--line);
+.rd-tab{display:flex;align-items:center;gap:9px;height:var(--tab-h);padding:0 17px;border:1.5px solid var(--line);
   border-radius:999px;background:var(--panel);font:600 13.5px var(--sans);color:var(--ink-2);cursor:pointer;}
 .rd-tab:hover{border-color:var(--ink-3);color:var(--ink);}
 .rd-tab.active{background:var(--ink);color:var(--on-ink);border-color:var(--ink);}
@@ -5372,17 +5347,7 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
    leave a blank mono line in the block */
 .stop-ident-branch[hidden]{display:none;}
 .stop-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:22px;}
-.stop-cancel{padding:11px 20px;border:1.5px solid var(--line-2);border-radius:999px;
-  background:var(--panel);font:600 13.5px var(--sans);color:var(--ink);cursor:pointer;}
-.stop-cancel:hover{background:var(--hover);}
-.stop-confirm{padding:11px 20px;border:1.5px solid transparent;border-radius:999px;
-  background:var(--red-bg);font:600 13.5px var(--sans);color:var(--red-ink);cursor:pointer;}
-/* The mockup's hover is #F7D2CD — a shade §9 does not name and no token carries.
-   brightness() keeps the darker-on-hover intent inside the existing palette (and
-   out of Task 12's "one occurrence per new literal" assertion). */
-.stop-confirm:hover{border-color:var(--red);}
-.stop-confirm:disabled{opacity:.6;cursor:default;}
-.stop-cancel:focus-visible,.stop-confirm:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* Keep running and Stop pipeline are .btn / .btn .btn-danger (markup). */
 
 /* ---------- Collapsible sidebar: the 60px icon rail ---------- */
 /* No rule here restyles anything the expanded 254px column already had: the rail
@@ -5545,11 +5510,11 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 body.term-open .app{margin-right:var(--term-w,460px);}
 body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 /* The opener: an icon button in the run bar and the project page's title row, at their controls' height. */
-.term-opener{display:inline-flex;align-items:center;justify-content:center;flex:none;width:36px;height:36px;padding:0;box-sizing:border-box;color:var(--ink-2);}
+.term-opener{display:inline-flex;align-items:center;justify-content:center;flex:none;color:var(--ink-2);}   /* .btn-icon sizes it */
 .term-opener:hover{color:var(--ink);}
 .term-opener[aria-expanded="true"]{color:var(--ink);background:var(--hover);}
 .term-opener:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.pd-row1 .term-opener{margin-left:auto;width:39px;height:39px;}   /* Back and Remove are 39px here */
+.pd-row1 .term-opener{margin-left:auto;}
 .term-resize{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;}
 .term-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);}
 .term-title{font:600 13px/1 var(--sans);color:var(--ink);margin-right:auto;}
@@ -6760,12 +6725,12 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .rc-status-word.st-grey{color:var(--ink-2);}
 .badge.blue{background:var(--blue-bg);color:var(--blue-ink);}
 
-/* split Start button: the primary action keeps its pill; the caret is its right half */
+/* split Start button: the primary action on the scale radius; the caret is its right half */
 .btn-split{display:inline-flex;align-items:stretch;position:relative;}
-.btn-split > .btn-go:first-child{border-radius:999px 0 0 999px;padding-right:22px;}
+.btn-split > .btn-go:first-child{border-radius:var(--btn-r) 0 0 var(--btn-r);padding-right:14px;}
 .btn-split > .btn-split-more{display:inline-flex;align-items:center;justify-content:center;background:var(--ink);color:var(--on-ink);
-  border:none;border-left:1px solid var(--on-ink-wash-2);border-radius:0 999px 999px 0;padding:0 16px 0 13px;cursor:pointer;
-  transition:transform .15s,box-shadow .15s;}
+  border:none;border-left:1px solid var(--on-ink-wash-2);border-radius:0 var(--btn-r) var(--btn-r) 0;padding:0 16px 0 13px;cursor:pointer;
+  transition:box-shadow .15s;}
 .btn-split > .btn-split-more:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
 .btn-split > .btn-split-more:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .btn-split > .btn-go:disabled,.btn-split > .btn-split-more:disabled{opacity:.45;cursor:not-allowed;transform:none;filter:none;}
@@ -6782,7 +6747,7 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .btn-split.mini > .btn-split-more{padding:0 12px 0 9px;}
 .btn-split.mini .btn-split-menu{bottom:auto;top:calc(100% + 8px);}
 /* Simple mode hides the caret (Schedule… is Advanced): the Start pill closes up again. */
-:root[data-level="simple"] .btn-split > .btn-go:first-child:not(:has(~ [data-level-keep])){border-radius:999px;padding-right:28px;}
+:root[data-level="simple"] .btn-split > .btn-go:first-child:not(:has(~ [data-level-keep])){border-radius:var(--btn-r);padding-right:18px;}
 :root[data-level="simple"] .btn-split.mini > .btn-go:first-child:not(:has(~ [data-level-keep])){padding-right:14px;}
 /* Resume split (run card, run page, History detail): ONE control like #start-split —
    the location's own Resume is the left half, the caret the right half, a hairline
@@ -6804,18 +6769,17 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 /* The run page's split and the saved run's (.hd-resume-split, whose Resume is its own button and
    whose caret is never `hidden`: the wrapper is) share one look. */
 .rd-resume-split:has(> .rd-pause[hidden]){display:none;}
-.hd-resume-split > .hd-resume,.rd-resume-split > .rd-pause:has(~ .rd-resume-more:not([hidden])){border-radius:999px 0 0 999px;border-right:none;padding-right:12px;}
+.hd-resume-split > .hd-resume,.rd-resume-split > .rd-pause:has(~ .rd-resume-more:not([hidden])){border-radius:var(--btn-r) 0 0 var(--btn-r);border-right:none;}
 .btn-split.hd-resume-split > .hd-resume-more,.btn-split.rd-resume-split > .rd-resume-more{
-  display:inline-flex;align-items:center;justify-content:center;
-  height:36px;padding:0 13px 0 10px;box-sizing:border-box;
-  background:var(--panel);color:var(--amber-ink);
-  border:1.5px solid var(--amber-bg);border-radius:0 999px 999px 0;
-  font-family:inherit;cursor:pointer;transition:border-color .15s;}
-.btn-split.hd-resume-split > .hd-resume-more:hover,.btn-split.rd-resume-split > .rd-resume-more:hover{border-color:var(--amber);}
+  display:inline-flex;align-items:center;justify-content:center;padding:0 10px;box-sizing:border-box;
+  background:var(--surface);color:var(--ink-2);border:1px solid var(--line-2);border-radius:0 var(--btn-r) var(--btn-r) 0;
+  font-family:inherit;cursor:pointer;transition:background .15s;}
+/* The carets also carry .btn-split-more, whose hover paints the ink split's --solid-hover inset: clear it here. */
+.btn-split.hd-resume-split > .hd-resume-more:hover,.btn-split.rd-resume-split > .rd-resume-more:hover{background:color-mix(in srgb,var(--ink) 7%,var(--surface));box-shadow:none;}
 .btn-split.hd-resume-split > .hd-resume-more:focus-visible,.btn-split.rd-resume-split > .rd-resume-more:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .btn-split.rd-resume-split > .rd-resume-more[hidden]{display:none;}
 .hd-resume-split[hidden],.hd-resume-split > .hd-resume-more[hidden]{display:none;}
-:root[data-level="simple"] .hd-resume-split > .hd-resume,:root[data-level="simple"] .rd-resume-split > .rd-pause{border-radius:999px;border-right:1.5px solid var(--amber-bg);padding-right:15px;}
+:root[data-level="simple"] .hd-resume-split > .hd-resume,:root[data-level="simple"] .rd-resume-split > .rd-pause{border-radius:var(--btn-r);border-right:1px solid var(--line-2);}
 
 /* Disabled "Resume at…" menu item: greyed, and its hover must not light it up. */
 .btn-split-menu button:disabled{opacity:.45;cursor:not-allowed;}
@@ -8862,19 +8826,10 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-rc-res-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px;}
 .chat-rc-res-err{margin-right:auto;font-size:12px;color:color-mix(in srgb, var(--red-ink) 85%, var(--ink));}
 .chat-rc-res-err[hidden]{display:none;}
-.chat-rc-create-pr,.chat-rc-view-pr{display:inline-flex;align-items:center;height:30px;padding:0 14px;border:0;border-radius:999px;background:var(--ink);color:var(--panel);font:inherit;font-weight:600;font-size:12px;text-decoration:none;white-space:nowrap;cursor:pointer;}
-.chat-rc-create-pr:hover,.chat-rc-view-pr:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
-.chat-rc-create-pr:disabled{opacity:.5;cursor:default;}
-.chat-rc-create-pr:focus-visible,.chat-rc-view-pr:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* Pause, Stop and the PR buttons are sm scale buttons (markup): .btn btn-sm, Stop .btn-danger, the PR buttons .btn-primary. */
+.chat-rc-create-pr,.chat-rc-view-pr,.chat-rc-btn{white-space:nowrap;}
 .chat-rc-foot{display:flex;align-items:center;gap:8px;margin-top:14px;}
 .chat-rc-foot[hidden]{display:none;}
-.chat-rc-btn{height:30px;padding:0 14px;border:1.5px solid var(--line-2);border-radius:999px;background:var(--panel);color:var(--ink);font:inherit;font-weight:600;font-size:12px;cursor:pointer;}
-.chat-rc-btn:hover{background:var(--hover);}
-.chat-rc-btn:disabled{opacity:.5;cursor:default;}
-.chat-rc-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.chat-rc-stop{border-color:color-mix(in srgb, var(--red) 55%, var(--line-2));color:var(--red-ink);}
-/* A hovered Stop keeps the panel under its red ink (4.81:1; on --hover it is 4.03:1) — the run page's red .rd-stop:hover border. */
-.chat-rc-stop:hover{background:var(--panel);border-color:var(--red);}
 .chat-rc-stop[hidden]{display:none;}
 .chat-rc-err{font-size:12px;color:var(--red-ink);}
 .chat-rc-err[hidden]{display:none;}
@@ -8942,7 +8897,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .crp :is(.rd-title,.hd-title){flex:1 1 100%;font-size:18px;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;}
 .crp :is(.rd-body,.hd-body){padding:0 16px 24px;}
 .crp :is(.rd-tabs,.hd-tabs){top:0;gap:6px;padding:12px 0 10px;}
-.crp :is(.rd-tab,.hd-tab){gap:7px;padding:7px 12px;font-size:12.5px;}
+.crp :is(.rd-tab,.hd-tab){gap:7px;padding:0 12px;font-size:12.5px;}
 .crp .crp-head{display:flex;flex-direction:column;gap:12px;margin:12px 16px 0;}
 .crp .crp-head > :is(.rd-banners,.hd-banners){margin-top:0;}
 .crp .crp-head > :is(.rd-banners,.hd-banners):not(:has(> :not([hidden]))){display:none;}
@@ -8984,7 +8939,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
   .crp :is(.rd-tab,.hd-tab) > svg{display:none;}
 }
 @container crp (max-width:520px){
-  .crp :is(.rd-tab,.hd-tab){padding:6px 10px;}
+  .crp :is(.rd-tab,.hd-tab){padding:0 10px;}
 }
 @container crp (max-width:420px){
   .crp :is(.rd-tab-badge,.hd-tab-badge){display:none;}
@@ -9496,7 +9451,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 /* D31: a shaped run's bar — the three controls live in the ⋯ menu */
 .rd-bar[data-shaped] .rd-bar-end > :is(.rd-night-wrap,.rd-after,.term-opener){display:none;}
 /* .btn-ghost alone is a 13px×20px-padded pill: size ⋯ like the terminal opener next to it (style.css:5451) */
-.rd-bar-more{display:inline-flex;align-items:center;justify-content:center;flex:none;width:36px;height:36px;padding:0;box-sizing:border-box;color:var(--ink-2);}
+.rd-bar-more{flex:none;color:var(--ink-2);}
 /* D30: while a shaped run waits on the person, Results / How it ran and the graph fold under "Run details ›" */
 .rd-wait-more{align-self:flex-start;padding:4px 10px;font-size:12.5px;color:var(--ink-2);}
 .rd-glance[data-shaper-wait]:not([data-wait-open]) :is(.rd-result,.rd-live,.rd-live-row){display:none;}

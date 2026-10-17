@@ -239,19 +239,19 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
     if (deg) body.appendChild(h(doc, 'small', 'mv-degradation hint', deg));
     body.appendChild(h(doc, 'small', 'mv-test-result hint')); // app.js paints the Test outcome here
     card.appendChild(body);
-    const del = h(doc, 'button', 'btn-ghost mv-delete', 'Delete');
+    const del = h(doc, 'button', 'btn-ghost btn-sm mv-delete', 'Delete');
     del.type = 'button'; del.dataset.id = m.id;
     card.appendChild(del);
-    const edit = h(doc, 'button', 'btn-ghost mv-edit', 'Edit');
+    const edit = h(doc, 'button', 'btn-ghost btn-sm mv-edit', 'Edit');
     edit.type = 'button'; edit.dataset.id = m.id;
     card.appendChild(edit);
     // Duplicate opens a CREATE editor seeded from this entry (app.js fetches the
     // raw env values first — the card only ever holds masked ones). The point is
     // deriving a sibling: same routing, one parameter changed.
-    const dup = h(doc, 'button', 'btn-ghost mv-duplicate', 'Duplicate');
+    const dup = h(doc, 'button', 'btn-ghost btn-sm mv-duplicate', 'Duplicate');
     dup.type = 'button'; dup.dataset.id = m.id;
     card.appendChild(dup);
-    const tst = h(doc, 'button', 'btn-ghost mv-test', 'Test');
+    const tst = h(doc, 'button', 'btn-ghost btn-sm mv-test', 'Test');
     tst.type = 'button'; tst.dataset.id = m.id;
     card.appendChild(tst);
     yours.appendChild(card);
@@ -275,7 +275,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
       body.appendChild(head);
       body.appendChild(h(doc, 'small', 'mv-summary hint', m.id));
       card.appendChild(body);
-      const promote = h(doc, 'button', 'btn-ghost mv-promote', 'Promote to global');
+      const promote = h(doc, 'button', 'btn-ghost btn-sm mv-promote', 'Promote to global');
       promote.type = 'button'; promote.dataset.id = m.id;
       card.appendChild(promote);
       leg.appendChild(card);
@@ -320,10 +320,10 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
       }
       body.appendChild(h(doc, 'small', 'mv-test-result hint')); // app.js paints the Test outcome here
       card.appendChild(body);
-      const copy = h(doc, 'button', 'btn-ghost mv-copy', 'Edit a copy');
+      const copy = h(doc, 'button', 'btn-ghost btn-sm mv-copy', 'Edit a copy');
       copy.type = 'button'; copy.dataset.id = m.id; copy.dataset.plugin = m.plugin;
       card.appendChild(copy);
-      const tst = h(doc, 'button', 'btn-ghost mv-test', 'Test');
+      const tst = h(doc, 'button', 'btn-ghost btn-sm mv-test', 'Test');
       tst.type = 'button'; tst.dataset.id = m.id; tst.dataset.plugin = m.plugin;
       if ((m.secrets || []).some((s) => !s.set)) {
         // A test would only prove what the NOT SET line already says.
@@ -359,7 +359,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
       body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join(' — ')));
       body.appendChild(h(doc, 'small', 'mv-test-result hint'));
       card.appendChild(body);
-      const tst = h(doc, 'button', 'btn-ghost mv-test', 'Test');
+      const tst = h(doc, 'button', 'btn-ghost btn-sm mv-test', 'Test');
       tst.type = 'button'; tst.dataset.id = m.id;
       card.appendChild(tst);
       pol.appendChild(card);
@@ -434,12 +434,12 @@ function envRow(doc, key = '', value = '') {
     // The STORED key, frozen at render time — the copy must reveal what is on
     // disk even after the user edits the key input.
     row.dataset.key = key;
-    const cp = h(doc, 'button', 'btn-ghost mv-env-copy', '⧉');
+    const cp = h(doc, 'button', 'btn-ghost btn-sm mv-env-copy', '⧉');
     cp.type = 'button';
     cp.title = 'Copy the real (unmasked) value';
     row.appendChild(cp);
   }
-  const rm = h(doc, 'button', 'btn-ghost mv-env-rm', '✕');
+  const rm = h(doc, 'button', 'btn-ghost btn-sm mv-env-rm', '✕');
   rm.type = 'button';
   row.appendChild(rm);
   return row;
@@ -522,7 +522,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
   const envWrap = h(doc, 'div', 'mv-env');
   const rows = editing && model.env ? Object.entries(model.env) : [];
   for (const [k, v] of rows) envWrap.appendChild(envRow(doc, k, v));
-  const add = h(doc, 'button', 'btn-ghost mv-env-add', '+ env var');
+  const add = h(doc, 'button', 'btn-ghost btn-sm mv-env-add', '+ env var');
   add.type = 'button';
   grid.appendChild(field('Routing env (merged into the claude spawn for this model)', envWrap,
     'e.g. ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN. ANTHROPIC_MODEL sets the wire id sent to --model (the id above stays worca’s handle). Stored values show masked; leave masked to keep. WORCA_* and process keys are reserved. Through a provider, the bridge owns ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY / ANTHROPIC_MODEL — setting them here is refused.'));
@@ -531,7 +531,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
   if (rows.length) {
     // Reveal toggle: swaps the masked inputs to the REAL stored values (the
     // user owns them on disk in ~/.worca-cc/settings.json). app.js wires it.
-    const reveal = h(doc, 'button', 'btn-ghost mv-env-reveal', 'Show values');
+    const reveal = h(doc, 'button', 'btn-ghost btn-sm mv-env-reveal', 'Show values');
     reveal.type = 'button';
     reveal.title = 'Reveal the real stored values';
     envBtns.appendChild(reveal);

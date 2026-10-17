@@ -149,6 +149,8 @@ test('chat run card controls: Pause / Resume / Stop through `controls`, disabled
       assert.equal($('.chat-rc-pause').textContent, 'Pause');
       assert.equal($('.chat-rc-pause').disabled, false);
       assert.equal($('.chat-rc-stop').hidden, false);
+      assert.ok(['btn', 'btn-sm'].every((c) => $('.chat-rc-pause').classList.contains(c)));
+      assert.ok(['btn', 'btn-sm', 'btn-danger'].every((c) => $('.chat-rc-stop').classList.contains(c)));
       $('.chat-rc-pause').click();
       await settle();
       assert.deepEqual(seen, [['run-uuid-1', $('.chat-rc-pause')]]);
@@ -356,6 +358,7 @@ test('chat run card result region: words, churn, top files → Diff, artifact ch
       card.update(done({ ...EXTRAS, pr: { url: 'https://github.com/o/r/pull/7', number: 7, state: 'OPEN' } }));
       assert.equal($('.chat-rc-res-title').textContent, 'In review');
       const a = $('a.chat-rc-view-pr');
+      assert.ok(['btn', 'btn-sm', 'btn-primary'].every((c) => a.classList.contains(c)), a.className);
       assert.equal(a.getAttribute('href'), 'https://github.com/o/r/pull/7');
       assert.equal(a.target, '_blank');
       assert.equal(a.rel, 'noopener');
@@ -493,6 +496,7 @@ test('chat run card result words follow the run page: Ready to review when the r
   assert.equal($('.chat-rc-res-title').textContent, 'Ready to review');
   assert.equal($('.chat-rc-res-sub').textContent, '2 things to check');
   assert.ok($('.chat-rc-create-pr'), 'a flagged run can still open its pull request');
+  assert.ok(['btn', 'btn-sm', 'btn-primary'].every((c) => $('.chat-rc-create-pr').classList.contains(c)));
   assert.equal($('.chat-rc-file-path').textContent, 'api-00000001/srv.mjs', 'the Overview\'s workspace rule');
   card.update(done({ ...facts(), pr: { url: 'https://github.com/o/r/pull/9', number: 9, state: 'CLOSED' } }));
   assert.equal($('.chat-rc-res-title').textContent, 'PR closed');
@@ -853,17 +857,18 @@ test('chat run card CSS: the result counts and error, a hovered file row or Stop
     return 0.2126 * r + 0.7152 * g + 0.0722 * b;
   };
   const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
-  // Chrome, light theme, as plain status inks: −d on --field 4.45, on a hovered row 4.03; +a on a hovered row 4.44; a
-  // hovered Stop (--red-ink on --hover) 4.03. The "K of N answered" lead is the Runs page's --ink on the white pill footer.
+  // Chrome, light theme, as plain status inks: −d on --field 4.45, on a hovered row 4.03; +a on a hovered row 4.44.
+  // The "K of N answered" lead is the Runs page's --ink on the white pill footer.
   const mixed = (tok) => `color-mix(in srgb, var(${tok}) 85%, var(--ink))`;
   for (const rule of [
     `.chat-rc-add{color:${mixed('--green-ink')};}`,
     `.chat-rc-del{color:${mixed('--red-ink')};}`,
     `.chat-rc-res-err{margin-right:auto;font-size:12px;color:${mixed('--red-ink')};}`,
-    '.chat-rc-stop:hover{background:var(--panel);border-color:var(--red);}',
     '.chat-rc-agent-model{min-width:0;flex:0 100000 auto;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);font-family:var(--mono);font-size:10.5px;font-weight:500;}',
     '.chat-rc-deciding{padding:28px 16px;text-align:center;color:var(--ink-2);font-size:12.5px;}',
   ]) assert.ok(p3.includes(rule), rule);
+  // Stop is a .btn-danger: --red-ink-strong on --red-bg (4.70:1), proven in the browser by npm run verify:theme.
+  assert.match(readFileSync(new URL('../ui/public/chat/run-card.mjs', import.meta.url), 'utf8'), /button\('btn btn-sm btn-danger chat-rc-btn chat-rc-stop'/);
   assert.ok(css.includes(':is(.rd-questions,.chat-rc-q) .qanswered{font:600 14px var(--sans);color:var(--ink);}'));
   const ink = pair('--ink');
   for (const [fg, mix, bgs] of [['--green-ink', true, ['--field', '--hover']], ['--red-ink', true, ['--field', '--hover']],

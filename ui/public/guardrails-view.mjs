@@ -51,7 +51,7 @@ export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
     body.appendChild(h(doc, 'small', 'grv-summary hint', guardrailSummary(s.settings)));
     card.appendChild(body);
     if (!isReadOnlyGuardrailSet(s)) {
-      const del = h(doc, 'button', 'btn-ghost grv-delete', 'Delete');
+      const del = h(doc, 'button', 'btn-ghost btn-sm grv-delete', 'Delete');
       del.dataset.minLevel = 'expert';                    // authoring sets is expert (docs/ui-levels.md)
       del.type = 'button';
       del.dataset.id = s.id;
@@ -61,7 +61,7 @@ export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
     // .grv-edit routing class so app.js's one delegated listener still opens
     // the editor. Built-ins open a read-only view; user sets open for editing
     // (the title reflects that; the visible label is the accessible name).
-    const open = h(doc, 'button', 'btn-ghost grv-edit grv-details', 'Details');
+    const open = h(doc, 'button', 'btn-ghost btn-sm grv-edit grv-details', 'Details');
     open.type = 'button';
     open.dataset.id = s.id;
     open.title = isReadOnlyGuardrailSet(s) ? 'View' : 'Edit';
