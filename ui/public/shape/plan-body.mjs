@@ -125,7 +125,7 @@ export function renderPlanBody(panel, pq, deps) {
         rows.appendChild(row);
       }
       if (plan.revisable && items.some((it) => !it.pass)) {
-        const fixAll = btn('plan-fix-all', 'Fix all');
+        const fixAll = btn('btn-sm plan-fix-all', 'Fix all');
         fixAll.addEventListener('click', () => send({ decision: 'revise', feedback: fixAllFeedback(items) }));
         rows.appendChild(fixAll);
       }
@@ -191,7 +191,7 @@ export function renderPlanBody(panel, pq, deps) {
     full.addEventListener('click', () => { full.textContent = fullView.hidden ? 'Full plan' : 'Hide plan'; });
     foot.appendChild(full);
     if (!(deps.run && deps.run.workspaceId)) {
-      const more = btn('btn-ghost plan-more', '⋯');
+      const more = btn('btn-quiet btn-icon plan-more', '⋯');
       more.setAttribute('aria-label', 'More for this plan');
       more.setAttribute('aria-haspopup', 'menu');
       more.addEventListener('click', () => toggleMenu({ doc, anchor: more, align: 'end', label: 'More for this plan', items: [

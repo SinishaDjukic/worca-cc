@@ -46,7 +46,7 @@ async function openFeaturePage({ runs, before = null }) {
   return { ctx, ask, posts, gets };
 }
 
-test('Feature page: Don\'t approve another cycle posts decision continue for the slice\'s run', async () => {
+test('Feature page: Continue with what you have posts decision continue for the slice\'s run', async () => {
   const { ctx, ask, posts } = await openFeaturePage({ runs: [run('r2', 'p2', GATE_Q)] });
   click(ctx, ask.querySelector('.gate-continue'));
   await ctx.settle();
@@ -56,7 +56,7 @@ test('Feature page: Don\'t approve another cycle posts decision continue for the
   assert.equal(ctx.window.location.hash, '#feature/feat_1', 'the page stays put');
 });
 
-test('Feature page: I approve another cycle posts decision another for the slice\'s run', async () => {
+test('Feature page: Approve another cycle posts decision another for the slice\'s run', async () => {
   const { ctx, ask, posts } = await openFeaturePage({ runs: [run('r2', 'p2', GATE_Q)] });
   click(ctx, ask.querySelector('.gate-another'));
   await ctx.settle();
@@ -155,4 +155,20 @@ test('run page: the shared router still answers runDetailState\'s run', async ()
   click(ctx, runPanel(ctx).querySelector('.gate-continue'));
   await ctx.settle();
   assert.deepEqual(posts.map((p) => [p.runId, p.id, p.payload.decision]), [['r9', 'gate-other-1', 'continue']]);
+});
+
+test('the gate reads Continue with what you have, then Approve another cycle (primary, last), on the Feature page and the run page', async () => {
+  const { ctx, ask, posts } = await openFeaturePage({ runs: [run('r2', 'p2', GATE_Q), run('r9', 'p9', { ...GATE_Q, id: 'gate-other-1' })] });
+  const row = (root) => [...root.querySelectorAll('.gate-actions > button')]
+    .map((b) => [b.textContent, b.classList.contains('btn'), b.classList.contains('btn-primary')]);
+  const want = [['Continue with what you have', true, false], ['Approve another cycle', true, true]];
+  assert.deepEqual(row(ask), want, 'Feature page');
+  click(ctx, ask.querySelector('.gate-actions > button:first-child'));
+  await ctx.settle();
+  ctx.go('running/r9');
+  await ctx.settle();
+  assert.deepEqual(row(runPanel(ctx)), want, 'run page');
+  click(ctx, runPanel(ctx).querySelector('.gate-actions > button:last-child'));
+  await ctx.settle();
+  assert.deepEqual(posts.map((p) => [p.runId, p.payload.decision]), [['r2', 'continue'], ['r9', 'another']]);
 });

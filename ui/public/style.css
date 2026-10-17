@@ -673,20 +673,35 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .btn-go:hover{transform:translateY(-1px);box-shadow:inset 0 0 0 999px var(--solid-hover);}
 .btn-go:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
-/* generic .btn / .btn-primary (question + gate JS, old markup) restyled to pills */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;
-  background:var(--surface);border:1.5px solid var(--line-2);color:var(--ink);font-family:inherit;
-  font-weight:600;font-size:13.5px;padding:13px 20px;border-radius:999px;cursor:pointer;
-  transition:background .15s,box-shadow .15s,transform .15s,border-color .15s;}
-.btn:hover:not(:disabled){border-color:var(--hover-outline);}
+/* One button scale: sm 28 / md 34 (default) / lg 42, one 8px radius, a 1px line border, a tint on hover and no lift.
+   The tint mixes 7% --ink into the button's background: --hover would be invisible on --surface in dark.
+   Height is a min-height, so a wrapping label grows the button. Hover rules sit in :where() (specificity 0,1,0): a later
+   context rule that restyles a .btn as a link (.plan-fold, .plan-persp-edit) still wins by order. */
+/* Legacy pill padding for the ~41 btn-ghost btn-mini elements that carry no .btn (mcp-view, team views, index.html):
+   without .btn they get no min-height, so they keep this padding. On a .btn, the scoped rule below overrides it. */
+.btn-mini{padding:8px 14px;font-size:12.5px;}
+:root{--btn-h-sm:28px;--btn-h-md:34px;--btn-h-lg:42px;--btn-r:8px;--btn-ic:14px;}
+@media (pointer:coarse){:root{--btn-h-sm:40px;--btn-h-md:40px;}}
+.btn{--btn-h:var(--btn-h-md);display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:var(--btn-h);
+  padding:4px 14px;background:var(--surface);border:1px solid var(--line-2);border-radius:var(--btn-r);color:var(--ink);
+  font-family:inherit;font-weight:500;font-size:13px;line-height:1.25;text-decoration:none;cursor:pointer;
+  transition:background .15s,border-color .15s,box-shadow .15s,color .15s;}
+.btn:where(:hover:not(:disabled)){background:color-mix(in srgb,var(--ink) 7%,var(--surface));}
+.btn:hover{transform:none;}
 .btn:disabled{opacity:.45;cursor:not-allowed;}
 .btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.btn-primary{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
-.btn-primary:hover:not(:disabled){background:var(--ink);transform:translateY(-1px);box-shadow:inset 0 0 0 999px var(--solid-hover);}
+.btn svg{width:var(--btn-ic);height:var(--btn-ic);flex:none;}
+.btn-primary{background:var(--ink);border-color:var(--ink);color:var(--on-ink);font-weight:600;}
+.btn-primary:where(:hover:not(:disabled)){background:var(--ink);box-shadow:inset 0 0 0 999px var(--solid-hover);}
 .btn-danger{background:var(--red-bg);border-color:transparent;color:var(--red-ink);}
-.btn-danger:hover:not(:disabled){border-color:var(--red);}
-.btn-mini{padding:8px 14px;font-size:12.5px;}
+.btn-danger:where(:hover:not(:disabled)){background:var(--red-bg);border-color:var(--red);}
+.btn-quiet{background:transparent;border-color:transparent;color:var(--ink-2);}
+.btn-quiet:where(:hover:not(:disabled)){background:color-mix(in srgb,var(--ink) 7%,transparent);color:var(--ink);}
+.btn:where(.btn-sm,.btn-mini){--btn-h:var(--btn-h-sm);padding:2px 10px;font-size:12.5px;}
+.btn-lg{--btn-h:var(--btn-h-lg);padding:6px 18px;font-size:14px;}
+.btn-icon{width:var(--btn-h);padding:0;}
 .btn-block{width:100%;}
+a.btn,a.btn:is(:hover,:focus,:focus-visible,:active,:visited){text-decoration:none;}
 
 /* form message */
 .form-msg{margin:12px 0 0;font-size:12.5px;min-height:16px;}
@@ -1054,7 +1069,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .qfree.has{background:var(--panel);border-color:var(--ink);}
 .qblock > .qfree{margin-left:28px;width:calc(100% - 28px);}
 .qpanel-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:14px;}
-.qpanel-foot .btn-go{padding:9px 18px;font-size:12px;gap:8px;}
 /* secondary "Open run" — card only (§4.3) */
 .qopen{padding:9px 16px;border:1.5px solid var(--line-2);border-radius:999px;background:var(--panel);
   font-family:inherit;font-weight:600;font-size:12px;color:var(--ink);cursor:pointer;transition:.14s;}
@@ -1137,7 +1151,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   box-shadow:0 0 0 3px var(--line);}
 /* one card (gate, recovery, workflow): the actions sit across its foot, under a rule */
 :is(.rd-questions,.chat-rc-q) .qpanel-foot{margin-top:24px;padding-top:20px;border-top:1px solid var(--line);}
-:is(.rd-questions,.chat-rc-q) .qpanel-foot .btn-go{padding:14px 26px;font-size:14px;gap:9px;}
 /* a stack of cards (clarify, form): the footer is a pill bar of its own beneath them */
 :is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="clarify"],[data-kind="form"]) .qpanel-foot{margin-top:0;padding:10px 10px 10px 26px;
   background:var(--panel);border:1px solid var(--line);border-radius:999px;box-shadow:var(--shadow);}
@@ -1464,8 +1477,13 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .issue-title{font-weight:600;font-size:13px;}
 .issue-detail{font-size:12.5px;color:var(--ink-2);margin:2px 0 0;}
 .issue-loc{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:4px;}
-.gate-actions{display:flex;gap:10px;flex-wrap:wrap;}
-.gate-actions .btn{flex:1 1 auto;}
+.gate-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;}
+/* phone width stacks the gate / recovery / plan / outline rows, primary last (DOM order); a ⋯ icon stays square */
+@media (max-width:640px){
+  .qpanel-foot:is(.gate-actions,.plan-actions){flex-direction:column;align-items:stretch;}
+  .qpanel-foot:is(.gate-actions,.plan-actions) > .btn{width:100%;margin-left:0;}
+  .qpanel-foot:is(.gate-actions,.plan-actions) > .btn-icon{align-self:flex-end;width:var(--btn-h);}
+}
 
 /* ---- the run page: gate and recovery as one ask card ---- */
 /* The decision on the left, its evidence (the open issues, the model's own message) on
@@ -1481,7 +1499,6 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 :is(.rd-questions,.chat-rc-q) .qpanel[data-kind="recovery"] > .gate-intro::before{content:'What to do';}
 :is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > :is(.issues,.issue-detail){grid-column:2;}
 :is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > .qpanel-foot{grid-column:1 / -1;}
-:is(.rd-questions,.chat-rc-q) .gate-actions .btn{flex:0 0 auto;padding:14px 24px;font-size:14px;}
 :is(.rd-questions,.chat-rc-q) .issues{margin:0;gap:8px;}
 :is(.rd-questions,.chat-rc-q) .qpanel[data-kind="gate"] > .issues::before{content:'What the reviewer still sees';
   font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);}
@@ -6980,8 +6997,8 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
   font-size:12.5px;line-height:1.5;color:var(--ink-2);}
 .level-hidden-note[hidden]{display:none;}
 .level-hidden-note b{color:var(--ink);font-weight:600;}
-.link-btn{background:none;border:0;padding:0;font:inherit;font-weight:600;color:var(--blue-ink-strong);cursor:pointer;text-decoration:underline;text-underline-offset:2px;}
-.link-btn:hover{color:var(--ink);}
+.link-btn{background:none;border:0;padding:0;font:inherit;font-weight:600;color:var(--blue-ink-strong);cursor:pointer;text-decoration:none;text-underline-offset:2px;}
+.link-btn:hover{color:var(--ink);text-decoration:underline;}
 .link-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px;}
 
 /* Settings › General › Interface mode. */
@@ -9463,7 +9480,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 /* D30–D34: the decision card. Amber stays on the heading's disc only; rows and chips are neutral. */
 .plan-sub{color:var(--ink-2);font-size:12px;}
 .plan-summary{margin:0;color:var(--ink);font-size:13px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
-.plan-fold{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;padding:2px 0;border:0;background:none;color:var(--ink-2);font:500 12px/1.4 var(--sans);cursor:pointer;}
+.plan-fold{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;padding:2px 0;border:0;background:none;color:var(--ink-2);font:500 12px/1.4 var(--sans);cursor:pointer;min-height:0;}
 .plan-chev{display:inline-block;transition:transform .15s;}
 .plan-fold[aria-expanded="true"] .plan-chev{transform:rotate(90deg);}
 .plan-checks{display:flex;flex-direction:column;gap:2px;padding-left:4px;}
@@ -9472,7 +9489,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .plan-check-row:not(.ok) .plan-check-mark{color:var(--ink);}
 .plan-fix-all{align-self:flex-start;margin-top:4px;}
 .plan-persp-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;color:var(--ink-2);font-size:12px;}
-.plan-persp-edit{padding:0;border:0;background:none;color:var(--ink);font:inherit;text-decoration:underline;cursor:pointer;}
+.plan-persp-edit{padding:0;border:0;background:none;color:var(--ink);font:inherit;text-decoration:underline;cursor:pointer;min-height:0;}
 .plan-full-view{display:flex;flex-direction:column;gap:8px;}
 .plan-actions .plan-more{margin-left:auto;}
 .plan-unmet{color:var(--ink-2);font-size:12px;}
@@ -9561,7 +9578,9 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .shape-feature.is-page:not(.is-halted) .shape-feature-head{color:var(--ink);}
 .shape-feature.is-page .shape-feature-head{font-weight:600;}
 .shape-feature.is-page .shape-feature-head.is-needs{color:var(--amber-ink);}
-.shape-feature-more{margin-left:auto;min-width:32px;}
+.shape-feature-top{display:flex;align-items:center;gap:8px;}
+.shape-feature-top > .shape-feature-title{flex:1 1 auto;min-width:0;}
+.shape-feature-more{flex:none;}
 .shape-feature-replanned{color:var(--ink-3);font-size:12px;}
 .shape-feature-bar{height:6px;border-radius:999px;background:var(--line);overflow:hidden;}
 .shape-feature-fill{display:block;height:100%;background:var(--amber);}
@@ -9574,7 +9593,8 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .shape-feature-slice.is-approval .shape-feature-slice-state,.shape-feature-slice.is-questions .shape-feature-slice-state,.shape-feature-slice.is-paused .shape-feature-slice-state{background:var(--amber-bg);color:var(--amber-ink);}
 .shape-feature-slice.is-missed .shape-feature-slice-state,.shape-feature-slice.is-canceled .shape-feature-slice-state{color:var(--ink-3);}
 .shape-feature-slice.is-missed .shape-feature-slice-title,.shape-feature-slice.is-canceled .shape-feature-slice-title{color:var(--ink-3);}
-.shape-feature-pr{color:var(--ink-2);font-size:12px;}
+.shape-feature-pr{color:var(--ink-2);font-size:12px;text-decoration:none;text-underline-offset:2px;}
+.shape-feature-pr:hover{text-decoration:underline;}
 .shape-feature-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
 .shape-feature-approve-each{display:flex;align-items:center;gap:6px;color:var(--ink-2);cursor:pointer;}
 .shape-feature-err{padding:6px 8px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);overflow-wrap:anywhere;}
@@ -9608,7 +9628,8 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 /* D16, D22: a slice's place in its feature, on its run page. */
 .rd-slice-line{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;}
 .rd-slice-line[hidden]{display:none;}
-.rd-slice-link{color:var(--blue-ink-strong);}
+.rd-slice-link{color:var(--blue-ink-strong);text-decoration:none;text-underline-offset:2px;}
+.rd-slice-link:hover{text-decoration:underline;}
 .shipit-slice-note[hidden]{display:none;}
 .chat-home-plans{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;}
 .chat-home-plan{display:flex;flex-direction:column;gap:4px;}

@@ -18,7 +18,7 @@ const PQ = { id: 'q1', kind: 'questions', questions: [
 function clarifyPanel() {
   const panel = doc.createElement('div');
   panel.className = 'qpanel';
-  panel.innerHTML = '<div class="qpanel-body"></div><div class="qpanel-foot"><button class="btn btn-go" type="button"><span class="icon"></span>Submit</button></div>';
+  panel.innerHTML = '<div class="qpanel-body"></div><div class="qpanel-foot"><button class="btn btn-primary btn-go" type="button"><span class="icon"></span>Submit</button></div>';
   return panel;
 }
 
@@ -80,4 +80,11 @@ test('no foot or no submit: nothing changes and nothing throws', () => {
   noGo.innerHTML = '<div class="qpanel-foot"><button class="btn">Cancel</button></div>';
   assert.doesNotThrow(() => decorateShapingQuestions(noGo, PQ, { doc, submit: async () => true }));
   assert.equal(noGo.querySelector('.clarify-defaults'), null);
+});
+
+test('button scale: Skip is a default .btn, the submit stays the one primary .btn', () => {
+  const { $ } = decorate(async () => true);
+  assert.ok($('.clarify-defaults').classList.contains('btn'));
+  assert.ok(!$('.clarify-defaults').classList.contains('btn-primary'));
+  assert.ok($('.btn-go').classList.contains('btn') && $('.btn-go').classList.contains('btn-primary'));
 });

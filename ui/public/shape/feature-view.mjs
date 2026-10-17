@@ -86,7 +86,10 @@ export function renderFeature(doc, f, deps) {
   const btn = (cls, text, act = cls.split(' ').pop()) => { const b = h('button', `btn ${cls}`, text); b.type = 'button'; b.dataset.act = act; return b; };
   const el = h('section', `shape-feature${f.halted ? ' is-halted' : ''}${deps.page ? ' is-page' : ''}`);
   el.dataset.feature = f.id;
-  el.appendChild(h('div', 'shape-feature-title', f.title));
+  const title = h('div', 'shape-feature-title', f.title);
+  // The page's header row: the title, then (while active) the ⋯ at its end. Off the page the title stands alone.
+  const top = deps.page ? h('div', 'shape-feature-top') : null;
+  if (top) { top.appendChild(title); el.appendChild(top); } else el.appendChild(title);
   // F47: the host asked for an earlier feature; this is the one its Re-plan the rest started.
   if (f.replanOf) el.appendChild(h('div', 'shape-feature-replanned', 'Re-planned: the slices below replace the earlier outline'));
   // D33: on the page, ONE line says where the feature stands and what it waits for; the segmented bar is the only bar.
@@ -124,12 +127,12 @@ export function renderFeature(doc, f, deps) {
     if (s.state === 'approval' || s.state === 'questions') {
       // D31: no Review plan / Answer pointing at the ask that is already inline above.
       if (!(inlineAsk && s === cur)) {
-        const rv = btn('shape-feature-review', s.state === 'approval' ? 'Review plan' : 'Answer', `shape-feature-review-${s.index}`);
+        const rv = btn('btn-sm shape-feature-review', s.state === 'approval' ? 'Review plan' : 'Answer', `shape-feature-review-${s.index}`);
         rv.addEventListener('click', () => deps.openSlice(s));
         li.appendChild(rv);
       }
     } else if (s.pipelineId || s.runId) {
-      const open = btn('shape-feature-open', 'Open', `shape-feature-open-${s.index}`);
+      const open = btn('btn-sm shape-feature-open', 'Open', `shape-feature-open-${s.index}`);
       open.addEventListener('click', () => deps.openSlice(s));
       li.appendChild(open);
     }
@@ -201,8 +204,8 @@ export function renderFeature(doc, f, deps) {
       foot.appendChild(res);
     }
     if (deps.page) {
-      // D31: the page's rare actions sit in ⋯; the inline card carries the decision.
-      const more = btn('shape-feature-more', '⋯');
+      // D31: the page's rare actions sit in ⋯, at the end of the header row; the inline card carries the decision.
+      const more = btn('btn-quiet btn-sm btn-icon shape-feature-more', '⋯');
       more.title = 'More actions';
       more.setAttribute('aria-label', 'More actions');
       more.setAttribute('aria-haspopup', 'menu');
@@ -214,7 +217,7 @@ export function renderFeature(doc, f, deps) {
         items.push({ label: 'Approve each slice\'s plan', checked: !!f.approveEach, onSelect: () => run('approve-each', { on: !f.approveEach }, more) });
         toggleMenu({ doc, anchor: more, items, align: 'end', label: 'More actions' });
       });
-      foot.appendChild(more);
+      top.appendChild(more);
     } else {
       if (f.open || f.halted) {
         const rp = btn('shape-feature-replan', 'Re-plan the rest');
@@ -229,7 +232,8 @@ export function renderFeature(doc, f, deps) {
       lab.append(box, doc.createTextNode(' Approve each slice\'s plan'));
       foot.appendChild(lab);
     }
-    el.append(foot, err);
+    if (foot.childElementCount) el.appendChild(foot);
+    el.appendChild(err);
   }
   return el;
 }

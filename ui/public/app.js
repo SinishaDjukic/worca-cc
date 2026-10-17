@@ -377,7 +377,7 @@ function paintSliceLine(host, line) {
   const a = document.createElement('a'); a.className = 'rd-slice-link'; a.href = line.href; a.textContent = line.text;
   host.appendChild(a);
   if (line.openFeature) {
-    const b = document.createElement('a'); b.className = 'btn rd-slice-open'; b.href = line.href; b.textContent = 'Open feature';
+    const b = document.createElement('a'); b.className = 'btn btn-sm rd-slice-open'; b.href = line.href; b.textContent = 'Open feature';
     host.appendChild(b);
   }
 }
@@ -5839,7 +5839,7 @@ function renderClarifyBody(r, panel, pq) {
   recount();
   const submit = document.createElement('button');
   submit.type = 'button';
-  submit.className = 'btn-go';
+  submit.className = 'btn btn-primary btn-go';
   submit.appendChild(playIcon());
   submit.appendChild(document.createTextNode('Submit'));
   foot.appendChild(submit);
@@ -5904,11 +5904,11 @@ function renderGateBody(r, panel, pq) {
   const cont = document.createElement('button');
   cont.type = 'button';
   cont.className = 'btn gate-continue';
-  cont.textContent = "Don't approve another cycle and continue";
+  cont.textContent = 'Continue with what you have';
   const another = document.createElement('button');
   another.type = 'button';
   another.className = 'btn btn-primary gate-another';
-  another.textContent = 'I approve another cycle';
+  another.textContent = 'Approve another cycle';
   foot.append(cont, another);
   panel.appendChild(foot);
 }
@@ -6023,7 +6023,7 @@ function renderWorkflowBody(r, panel, pq) {
   const cancel = mk('qcancel wf-cancel', 'Cancel run');
   const revise = tagLevel(mk('qopen wf-revise', 'Revise'), 'advanced');
   const send = mk('qopen wf-send', 'Send'); send.hidden = true;
-  const accept = mk('btn-go wf-accept', 'Accept & run');
+  const accept = mk('btn btn-primary btn-go wf-accept', 'Accept & run');
   accept.dataset.busyLabel = 'Starting…';                 // A31: setPanelBusy's primary swap reads it
   accept.prepend(playIcon());
   const stop = (fn) => (e) => { e.stopPropagation(); fn(); };   // the #run-detail delegates sit above this node
@@ -6238,7 +6238,7 @@ function askFormHost(r, panel, ask) {
   foot.appendChild(answered);
   const submit = document.createElement('button');
   submit.type = 'button';
-  submit.className = 'btn-go';
+  submit.className = 'btn btn-primary btn-go';
   submit.appendChild(playIcon());
   submit.appendChild(document.createTextNode('Submit'));
   foot.appendChild(submit);

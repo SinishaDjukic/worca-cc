@@ -59,6 +59,8 @@ test('a shaping run\'s Clarify shows Answer and draft, Skip, draft with defaults
   const skip = panel.querySelector('.qpanel-foot .clarify-defaults');
   assert.ok(skip, 'Skip, draft with defaults is offered');
   assert.equal(skip.textContent, 'Skip, draft with defaults');
+  assert.ok(panel.querySelector('.qpanel-foot .btn-go').classList.contains('btn-primary'));
+  assert.ok(skip.classList.contains('btn'));
   assert.equal(head.textContent, 'A few questions before the plan');
 });
 

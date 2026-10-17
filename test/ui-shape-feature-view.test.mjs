@@ -454,3 +454,23 @@ test('summary card: one line, segmented bar, Open feature; needs-you and stopped
   assert.equal(featureSummaryLine({ ...PAGE(), slices: PAGE().slices.map((s) => ({ ...s, state: s.index === 1 ? 'done' : 'planned' })) }),
     'Shaper · 1 of 3 slices done');
 });
+
+test('button scale: page ⋯ ends the header row as a 28px quiet icon .btn; Open / Review are sm .btn; Resume is a primary .btn', () => {
+  const { el } = mount(PAGE(), pageDeps());
+  const top = q(el, '.shape-feature-top');
+  assert.ok(top, 'the page has a header row');
+  assert.equal(top.firstElementChild, q(el, '.shape-feature-title'));
+  assert.equal(top.lastElementChild, q(el, '.shape-feature-more'), '⋯ is the last item of the header row');
+  assert.deepEqual(['btn', 'btn-quiet', 'btn-sm', 'btn-icon'].map((c) => q(el, '.shape-feature-more').classList.contains(c)), [true, true, true, true]);
+  assert.equal(q(el, '.shape-feature-actions'), null, 'no footer row when only ⋯ would be in it');
+  assert.ok(q(el, '.shape-feature-open'), 'slice 1 (done, p1) draws Open');
+  for (const b of el.querySelectorAll('.shape-feature-open, .shape-feature-review')) {
+    assert.ok(b.classList.contains('btn') && b.classList.contains('btn-sm'), b.className);
+  }
+  const { el: h } = mount(halted('paused', 2, [3]), pageDeps());
+  const res = q(h, '.shape-feature-resume');
+  assert.ok(res.classList.contains('btn') && res.classList.contains('btn-primary'));
+  assert.equal(q(h, '.shape-feature-actions').firstElementChild, res);
+  const { el: card } = mount(PAGE(), deps());
+  assert.equal(q(card, '.shape-feature-top'), null, 'the Chat card keeps the plain title');
+});

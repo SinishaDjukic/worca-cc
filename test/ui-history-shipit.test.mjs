@@ -1426,6 +1426,7 @@ test('a done slice\'s History page names its place and the next slice, with Open
   assert.equal(line.querySelector('.rd-slice-link').textContent, 'Slice 1 of 3 · next: Slice 2 (planned)');
   assert.equal(line.querySelector('.rd-slice-link').getAttribute('href'), '#feature/feat_1');
   assert.equal(line.querySelector('.rd-slice-open').textContent, 'Open feature');
+  assert.ok(line.querySelector('.rd-slice-open').classList.contains('btn') && line.querySelector('.rd-slice-open').classList.contains('btn-sm'));
   assert.equal(s.calls, 1);
   await openDetail(ctx);                                 // the same detail again: painted in place
   assert.equal(ctx.window.document.querySelectorAll('#hist-detail .rd-slice-link').length, 1);
