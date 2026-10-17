@@ -86,7 +86,8 @@ import { runProgress, chainProgress, progressWidth } from '../../src/shared/run-
 import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, needsYou, normalizeRunsFilter, renderRunsList, RUNS_GROUPINGS } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, DEFAULT_RUNS_VIEW, isRowSelected, needsYou, normalizeRunsView, renderRunsList, viewChip } from './runs-list.mjs';
+import { mountRunsViewMenu } from './runs-view-menu.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
 // History list card. They stay EXPORTED
@@ -618,12 +619,11 @@ const el = {
   runsPane: $('#runs-pane'),
   runsEmpty: $('#runs-empty'),
   runsSearch: $('#runs-search'),
-  runsSearchBtn: $('#runs-search-btn'),
-  runsSearchRow: $('#runs-search-row'),
-  runsFilter: $('#runs-filter'),
-  runsGroupBtn: $('#runs-group-btn'),
-  runsArchivedBtn: $('#runs-archived-btn'),
-  runsGroupMenu: $('#runs-group-menu'),
+  runsViewBtn: $('#runs-view-btn'),
+  runsViewMenu: $('#runs-view-menu'),
+  runsViewChipRow: $('#runs-view-chip-row'),
+  runsViewChipLabel: $('#runs-view-chip-label'),
+  runsViewChipX: $('#runs-view-chip-x'),
 
   // Target selector (New Pipeline)
   targetSeg: $('#target-seg'),
@@ -27867,8 +27867,8 @@ document.addEventListener('keydown', (e) => {
   if (document.querySelector('.viewer-modal.sync-modal')) return;
   if (currentView() !== 'history') return;
   if (!el.histShell || !el.histShell.classList.contains('detail-open')) return;
-  // The search box owns its Escape (clears and closes the search).
-  if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search-row')) return;
+  // The Runs header's search field (clears) and open View menu (closes) own their Escape.
+  if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search, #runs-view-menu')) return;
   if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
   if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
@@ -27907,8 +27907,8 @@ document.addEventListener('keydown', (e) => {
   if (document.querySelector('.viewer-modal.sync-modal')) return;
   if (currentView() !== 'running') return;
   if (!el.runShell || !el.runShell.classList.contains('detail-open')) return;
-  // The search box owns its Escape (clears and closes the search).
-  if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search-row')) return;
+  // The Runs header's search field (clears) and open View menu (closes) own their Escape.
+  if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search, #runs-view-menu')) return;
   if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
   if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
@@ -30077,17 +30077,15 @@ function withWorkspaces() {
 const RUNS_COLLAPSED_KEY = 'worca-cc.runs.collapsed';   // group keys the user folded (D10)
 // reveal: a group to scroll to once the list is on screen ("Show in Runs").
 // skipRestore: bare #runs shows the list, not the remembered run, until another route (goRunsList).
-const RUNS_FILTER_KEY = 'worca-cc.runs.filter';         // the chip this browser last picked
-function loadRunsFilter() {
-  try { return normalizeRunsFilter(localStorage.getItem(RUNS_FILTER_KEY)); }   // #724: 'all' / 'live' / 'needs' read as Active
-  catch { return 'active'; }                 // private mode / storage disabled
+const RUNS_FILTER_KEY = 'worca-cc.runs.filter';         // View › Show this browser last picked
+const RUNS_GROUP_BY_KEY = 'worca-cc.runs.groupBy';     // View › Group by: 'project' (default) or 'date'
+function loadRunsView() {
+  // #724/#740: a legacy 'all' / 'live' / 'needs' reads as Active; an unknown grouping as Project.
+  try { return normalizeRunsView({ show: localStorage.getItem(RUNS_FILTER_KEY), groupBy: localStorage.getItem(RUNS_GROUP_BY_KEY) }); }
+  catch { return normalizeRunsView(); }                 // private mode / storage disabled
 }
-const RUNS_GROUP_BY_KEY = 'worca-cc.runs.groupBy';     // 'project' (default) or 'date'
-function loadRunsGroupBy() {
-  try { const v = localStorage.getItem(RUNS_GROUP_BY_KEY); return RUNS_GROUPINGS.includes(v) ? v : 'project'; }
-  catch { return 'project'; }
-}
-const runsUi = { query: '', filter: loadRunsFilter(), beforeArchived: 'active', groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false, chainsOpen: new Set(), chainsToggled: new Map() };
+const runsView0 = loadRunsView();
+const runsUi = { query: '', filter: runsView0.show, groupBy: runsView0.groupBy, collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false, chainsOpen: new Set(), chainsToggled: new Map() };
 
 function histGroupName(p) {
   return (p.target === 'workspace' && p.workspaceName) || p.projectName || p.projectKey || '(unknown project)';
@@ -30372,53 +30370,37 @@ function toggleRunsGroup(key) {
   persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed);
   paintRunsList();
 }
-function setRunsSearchOpen(open) {
-  if (!el.runsSearchRow || !el.runsSearch || !el.runsSearchBtn) return;
-  el.runsSearchRow.hidden = !open;
-  el.runsSearchBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-  el.runsSearchBtn.classList.toggle('on', open);
-  if (open) { el.runsSearch.focus({ preventScroll: true }); return; }
-  const had = !!runsUi.query;
-  el.runsSearch.value = '';
-  runsUi.query = '';
-  if (had) paintRunsList();
-  el.runsSearchBtn.focus({ preventScroll: true });
+// View menu (#740, runs-view-menu.mjs): Show and Group by; a non-default view shows one chip.
+const runsViewMenu = el.runsViewBtn && el.runsViewMenu
+  ? mountRunsViewMenu({ button: el.runsViewBtn, menu: el.runsViewMenu, onPick: (pick) => setRunsView(pick) })
+  : null;
+function paintRunsView() {
+  const view = { show: runsUi.filter, groupBy: runsUi.groupBy };
+  runsViewMenu?.paint(view);
+  // docs/ui-levels.md rule 2: Show › Archived stays on screen below Advanced while it is the pick.
+  keepVisible(el.runsViewMenu?.querySelector('[data-show="archived"]'), runsUi.filter === 'archived');
+  const chip = viewChip(view);
+  if (el.runsViewChipRow) el.runsViewChipRow.hidden = !chip;
+  if (el.runsViewChipLabel) el.runsViewChipLabel.textContent = chip || '';
 }
-el.runsSearchBtn?.addEventListener('click', () => setRunsSearchOpen(el.runsSearchRow.hidden));
-function paintRunsFilter() {
-  for (const b of el.runsFilter ? el.runsFilter.querySelectorAll('button[data-filter]') : []) {
-    const on = b.dataset.filter === runsUi.filter;
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  }
-  // The header's Archived toggle: no chip is pressed while it is on (it swaps the list's
-  // source). docs/ui-levels.md rule 2: the Advanced toggle stays on screen below Advanced
-  // while it is the stored pick — otherwise the list shows only archived runs with no way out.
-  const arch = el.runsArchivedBtn;
-  if (arch) {
-    const on = runsUi.filter === 'archived';
-    arch.classList.toggle('on', on);
-    arch.setAttribute('aria-pressed', on ? 'true' : 'false');
-    keepVisible(arch, on);
-  }
-}
-function setRunsFilter(f) {
-  if (f === runsUi.filter) return;
-  if (f === 'archived') runsUi.beforeArchived = runsUi.filter;   // the Archived toggle turns back off to it
-  runsUi.filter = f;
-  try { localStorage.setItem(RUNS_FILTER_KEY, runsUi.filter); } catch { /* private mode */ }
+function setRunsView({ show = runsUi.filter, groupBy = runsUi.groupBy } = {}) {
+  if (show === runsUi.filter && groupBy === runsUi.groupBy) return;
+  const showChanged = show !== runsUi.filter;
+  runsUi.filter = show;
+  runsUi.groupBy = groupBy;
+  try { localStorage.setItem(RUNS_FILTER_KEY, show); localStorage.setItem(RUNS_GROUP_BY_KEY, groupBy); } catch { /* private mode */ }
   // Each Archived activation refetches its feed; a never-loaded one is fetched by the
   // paint below (state.historyArchived === null), so it is not asked for twice.
-  if (runsUi.filter === 'archived' && state.historyArchived !== null) void loadHistoryArchived();
-  paintRunsFilter();
+  if (showChanged && show === 'archived' && state.historyArchived !== null) void loadHistoryArchived();
+  paintRunsView();
   paintRunsList();
 }
-el.runsFilter?.addEventListener('click', (e) => {
-  const b = e.target.closest && e.target.closest('button[data-filter]');
-  if (b) setRunsFilter(b.dataset.filter);
+function setRunsFilter(f) { setRunsView({ show: f }); }   // "Show older" opens Finished
+el.runsViewChipX?.addEventListener('click', () => {
+  setRunsView({ ...DEFAULT_RUNS_VIEW });
+  el.runsViewBtn?.focus({ preventScroll: true });          // the chip it sat on is gone
 });
-el.runsArchivedBtn?.addEventListener('click', () => setRunsFilter(runsUi.filter === 'archived' ? runsUi.beforeArchived : 'archived'));
-paintRunsFilter();
+paintRunsView();
 
 // The Archived toggle's feed (issue #575): fetched lazily on activation, and again on
 // every pipelines-changed once loaded (an archive or restore here, in another tab or from
@@ -30451,49 +30433,13 @@ async function loadHistoryArchived() {
   refreshHdFromRow();
 }
 
-// "Group by" menu: opens under its header button; a pick, Escape or a click elsewhere closes it.
-function paintRunsGroupBy() {
-  for (const b of el.runsGroupMenu ? el.runsGroupMenu.querySelectorAll('[data-group-by]') : []) {
-    b.setAttribute('aria-checked', b.dataset.groupBy === runsUi.groupBy ? 'true' : 'false');
-  }
-  el.runsGroupBtn?.classList.toggle('on', runsUi.groupBy !== 'project');
-}
-function setRunsGroupMenuOpen(open, { focusBtn = false } = {}) {
-  if (!el.runsGroupMenu || !el.runsGroupBtn) return;
-  el.runsGroupMenu.hidden = !open;
-  el.runsGroupBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-  if (open) el.runsGroupMenu.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
-  else if (focusBtn) el.runsGroupBtn.focus({ preventScroll: true });
-}
-el.runsGroupBtn?.addEventListener('click', () => setRunsGroupMenuOpen(el.runsGroupMenu.hidden));
-el.runsGroupMenu?.addEventListener('click', (e) => {
-  const b = e.target.closest && e.target.closest('[data-group-by]');
-  if (!b) return;
-  setRunsGroupMenuOpen(false, { focusBtn: true });
-  if (b.dataset.groupBy === runsUi.groupBy) return;
-  runsUi.groupBy = b.dataset.groupBy;
-  try { localStorage.setItem(RUNS_GROUP_BY_KEY, runsUi.groupBy); } catch { /* private mode */ }
-  paintRunsGroupBy();
-  paintRunsList();
-});
-el.runsGroupMenu?.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { e.preventDefault(); setRunsGroupMenuOpen(false, { focusBtn: true }); return; }
-  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-  e.preventDefault();
-  const items = [...el.runsGroupMenu.querySelectorAll('[data-group-by]')];
-  const i = items.indexOf(document.activeElement);
-  items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus();
-});
-document.addEventListener('click', (e) => {
-  if (!el.runsGroupMenu || el.runsGroupMenu.hidden) return;
-  if (!e.target.closest || !e.target.closest('.runs-group-wrap')) setRunsGroupMenuOpen(false);
-});
-paintRunsGroupBy();
 el.runsSearch?.addEventListener('input', () => { runsUi.query = el.runsSearch.value; paintRunsList(); });
 el.runsSearch?.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
+  if (e.key !== 'Escape' || !el.runsSearch.value) return;
   e.preventDefault();
-  setRunsSearchOpen(false);
+  el.runsSearch.value = '';
+  runsUi.query = '';
+  paintRunsList();
 });
 // Projects page: "Show in Runs" unfolds the project's group and scrolls to it (D17). #724 D21: Active scopes
 // fold keys by section, so the project is unfolded under each key it can have.

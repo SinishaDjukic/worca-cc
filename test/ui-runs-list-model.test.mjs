@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 import {
   rowTime, liveRowState, histRowState, schedRowState, countNeedsYou,
   buildRunsModel, rowSub, rowMatches, isRowSelected, renderRunsList, rowInFilter, dateBucket, RUNS_FILTERS, DATE_BUCKETS, chainRow,
-  liveRow, histRow, normalizeRunsFilter, rowDot,
+  liveRow, histRow, normalizeRunsFilter, rowDot, viewChip, normalizeRunsView,
 } from '../ui/public/runs-list.mjs';
 
 const NOW = new Date(2026, 8, 30, 15, 0).getTime();           // Wed Sep 30 2026, 15:00 local
@@ -675,4 +675,22 @@ test('#724 row words: paused by you, resumes at, answer N questions, waiting aft
   // D18: the archived override clears the hint.
   assert.deepEqual(histRowState({ status: 'paused', pauseReason: 'cost_pipeline', archived: true }),
     { icon: 'paused', word: 'Archived', detail: '', hint: '' });
+});
+
+test('#740 viewChip: no chip for Active · Project, one label for every other view', () => {
+  assert.equal(viewChip({ show: 'active', groupBy: 'project' }), null);
+  assert.equal(viewChip({ show: 'finished', groupBy: 'date' }), 'Finished · by date');
+  assert.equal(viewChip({ show: 'finished', groupBy: 'project' }), 'Finished · by project');
+  assert.equal(viewChip({ show: 'active', groupBy: 'date' }), 'Active · by date');
+  assert.equal(viewChip({ show: 'archived', groupBy: 'project' }), 'Archived · by project');
+  assert.equal(viewChip({ show: 'needs', groupBy: 'bogus' }), null, 'legacy and unknown values are the default view');
+  assert.equal(viewChip(), null);
+});
+
+test('#740 normalizeRunsView: a stored legacy filter of needs, live or all reads back as Active', () => {
+  for (const show of ['needs', 'live', 'all']) {
+    assert.deepEqual(normalizeRunsView({ show, groupBy: 'date' }), { show: 'active', groupBy: 'date' }, show);
+  }
+  assert.deepEqual(normalizeRunsView({ show: null, groupBy: null }), { show: 'active', groupBy: 'project' }, 'nothing stored');
+  assert.deepEqual(normalizeRunsView({ show: 'archived', groupBy: 'project' }), { show: 'archived', groupBy: 'project' });
 });

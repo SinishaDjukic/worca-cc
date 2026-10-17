@@ -332,6 +332,19 @@ const isDim = (r) => { const d = rowDot(r); return d === 'paused' || d === 'wait
 
 /** "Group by" for the list: per project/workspace (the default), or by when the run last moved. */
 export const RUNS_GROUPINGS = Object.freeze(['project', 'date']);
+/** The View menu's two choices (#740): Show (RUNS_FILTERS) and Group by (RUNS_GROUPINGS). */
+export const DEFAULT_RUNS_VIEW = Object.freeze({ show: 'active', groupBy: 'project' });
+const SHOW_LABELS = Object.freeze({ active: 'Active', finished: 'Finished', archived: 'Archived' });
+/** A stored or passed view as known values; a legacy filter ('all' / 'live' / 'needs') reads as Active. */
+export function normalizeRunsView({ show, groupBy } = {}) {
+  return { show: normalizeRunsFilter(show), groupBy: RUNS_GROUPINGS.includes(groupBy) ? groupBy : DEFAULT_RUNS_VIEW.groupBy };
+}
+/** The chip under the header: null for the default view, else "Finished · by date". */
+export function viewChip(view) {
+  const { show, groupBy } = normalizeRunsView(view);
+  if (show === DEFAULT_RUNS_VIEW.show && groupBy === DEFAULT_RUNS_VIEW.groupBy) return null;
+  return `${SHOW_LABELS[show]} · by ${groupBy}`;
+}
 /** Date sections, top to bottom. Live rows are happening now (Today); a scheduled run is
  *  Upcoming; a History row files under its last activity (finish time, else start). The
  *  boundaries are local midnights, stepped with setDate so a DST day is still one day. */
