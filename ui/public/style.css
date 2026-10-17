@@ -174,14 +174,21 @@ body{
   transition:flex-basis .2s cubic-bezier(.65,.02,.28,1),
              width .2s cubic-bezier(.65,.02,.28,1);
 }
-/* The fixed top band: the wordmark and the mock pill (the collapse toggle is in the top bar). Its border is
-   transparent at rest and turns --line while the pages scroll under it (.under-top). It is 48px tall, border
-   included, like .topnav, so the two hairlines meet on one row in the column and on the rail alike. */
+/* The fixed top band: the wordmark, the mock pill and the collapse toggle (« at the right; on the rail » under
+   the mark). Its border is transparent at rest and turns --line while the pages scroll under it (.under-top). It
+   is 48px tall, border included, like .topnav, so the two hairlines meet on one row in the column and on the
+   tablet rail; the desktop rail's band grows to stack the toggle (.sidebar.collapsed .brand). */
 .brand{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;height:48px;padding:0 10px 0 20px;
   border-bottom:1px solid transparent;transition:border-color .15s;}
 .sidebar.under-top .brand{border-bottom-color:var(--line);}
 .brand .logo{display:block;height:32px;aspect-ratio:512/190;background:var(--ink);
   -webkit-mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;}
+.side-toggle{display:flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;padding:0;border:0;
+  border-radius:50%;background:transparent;color:var(--ink-2);cursor:pointer;transition:background .15s,color .15s;}
+.side-toggle svg{width:16px;height:16px;flex:none;}
+.side-toggle[aria-expanded="false"] svg{transform:scaleX(-1);}
+.side-toggle:hover{background:var(--field);color:var(--ink);}
+.side-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* The scrolling band. A column flex box so .nav can grow to the band's full height. */
 .side-scroll{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
   overflow-y:auto;overflow-x:hidden;padding:11px 10px 10px;scrollbar-width:thin;}
@@ -291,7 +298,7 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
    the one scroll container (flex:1;min-height:0 above), so the run pages' sticky
    .rd-bar/.hd-bar still pin to its top. The bar is a three-slot grid: the page name on the
    left, search in the centre (240-440px), the actions on the right. The side tracks keep a floor:
-   the right one its content (Activity + New run), the left one the 32px collapse toggle. With 0
+   the right one its content (Activity + New run), the left one 32px for the page name. With 0
    floors the centre grew to 440px first and both sides spilled under the search pill, which then
    took their presses; now the centre and the page name give way. Every tier keeps it 48px tall.
    HOUSE RULE: no comment inside a rule body and no closing brace in a comment. */
@@ -303,13 +310,6 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
 .topnav-r{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;}
 .topnav-title{min-width:0;margin:0;font-size:14px;font-weight:600;line-height:20px;letter-spacing:-.005em;color:var(--ink);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.side-toggle{display:flex;align-items:center;justify-content:center;flex:none;width:32px;height:32px;padding:0;border:0;
-  border-radius:8px;background:transparent;color:var(--ink-2);cursor:pointer;transition:background .15s,color .15s;}
-.side-toggle svg{width:20px;height:20px;flex:none;}
-.side-toggle .side-toggle-fill,.side-toggle[aria-expanded="false"] .side-toggle-line{display:none;}
-.side-toggle[aria-expanded="false"] .side-toggle-fill{display:inline;}
-.side-toggle:hover{background:var(--field);color:var(--ink);}
-.side-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .topnav-new{display:inline-flex;align-items:center;gap:7px;flex:none;height:32px;padding:0 14px 0 12px;border:0;
   border-radius:999px;background:var(--ink);color:var(--on-ink);font:500 13px/1 var(--sans);white-space:nowrap;
   cursor:pointer;transition:box-shadow .15s;}
@@ -5388,12 +5388,16 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .sidebar.collapsed{width:60px;flex:0 0 60px;}
 .sidebar.collapsed .side-scroll{scrollbar-width:none;}
 .sidebar.collapsed .side-scroll::-webkit-scrollbar{width:0;height:0;}
-/* The logo row stacks: the round mark on top, the mock pill under it, both inside the band's 48px
-   (26 + 3 + a 15px pill), so the rail's hairline stays level with the top bar's. */
-.sidebar.collapsed .brand{flex-direction:column;justify-content:center;gap:3px;padding:0;}
+/* The logo row stacks: the round mark on top, the collapse toggle (») under it, the mock pill last (order:1). On the
+   tablet rail the toggle is hidden and mark + pill (26 + 3 + a 15px pill) stay inside 48px, so the hairline stays
+   level with the top bar's; on the desktop rail the band grows to 71px to hold the toggle. */
+.sidebar.collapsed .brand{flex-direction:column;justify-content:center;gap:3px;height:auto;min-height:48px;padding:0;}
 .sidebar.collapsed .logo{display:none;}
 .sidebar.collapsed .logo-mark{display:block;}
-.sidebar.collapsed .brand .side-mock-pill{margin-right:0;padding:2px 4px;font-size:9px;line-height:11px;letter-spacing:.02em;}
+.sidebar.collapsed .brand .side-mock-pill{order:1;margin-right:0;padding:2px 4px;font-size:9px;line-height:11px;letter-spacing:.02em;}
+@media (min-width:1081px){
+  .sidebar.collapsed .brand{padding:8px 0;gap:4px;}
+}
 
 /* The rail's rows: 40x34 squares, 3px apart, centred in the 39px content box; hover and
    the open page keep the column's greys. Child combinators only (`.nav > button`, and
@@ -5447,7 +5451,7 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 /* Three tiers, one sidebar. Above 1080px nothing here applies. 761-1080px
    (tablets) app.js#railCollapsed forces the 60px rail above, so the only rule
    left is hiding the toggle that could not change anything. At 760px and below
-   the top bar's hamburger (#mbar-menu) takes the toggle's place, New run keeps
+   the top bar's hamburger (#mbar-menu) opens the sidebar, New run keeps
    only its icon, and the aside turns into an off-canvas drawer:
    fixed, translated out, visibility:hidden so nothing in it is focusable until
    body.nav-open slides it in. visibility waits for the slide out (0s delay .22s)
@@ -8604,7 +8608,7 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-head .ask-title{font-size:13.5px;}
 .chat-head-spacer{flex:1 1 auto;}
 .chat-head-btn{flex:none;}
-/* History: the menu toggle's 32px square (.side-toggle) with a page-of-text glyph; the open column keeps the wash. */
+/* History: a 32px square with a page-of-text glyph; the open column keeps the wash. */
 .chat-head-btn.chat-history-toggle{width:32px;height:32px;border-radius:8px;}
 .chat-history-toggle > svg{width:20px;height:20px;flex:none;}
 .chat-history-toggle:hover,.chat-history-toggle[aria-pressed="true"]{background:var(--field);color:var(--ink);}

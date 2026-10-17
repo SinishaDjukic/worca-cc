@@ -989,7 +989,7 @@ function applySidebarCollapsed() {
   const btn = $('#side-toggle');
   if (btn) {
     btn.setAttribute('aria-expanded', String(!collapsed));
-    const label = collapsed ? 'Expand menu' : 'Collapse menu';
+    const label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
     btn.title = label;
     btn.setAttribute('aria-label', label);
   }

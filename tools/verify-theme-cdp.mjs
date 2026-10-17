@@ -338,7 +338,7 @@ const WALKER = (rootSel, withStyles = false) => `(() => {
 // so a future element is sampled. `.topnav-new` is New run in the top bar (an ink pill: its hover is a wash).
 const HOVER_SELECTORS = ['.icon-btn', '.ask-icon-btn', '.btn', '.btn-ghost', '.btn-primary', '.runs-row', '.runs-group-head', '.wiz-proj', '.sp-row', '.grv-source-row',
   '.gr-rm', '.field-clear', '.agent-row-head', '.topnav-new', '.nav button', '.acct', '.mi', '.hd-tree-file', '.ap',
-  '.act-srow', '.act-stop'];
+  '.act-srow', '.act-stop', '.side-toggle'];
 async function hoverSamples() {
   // CDP node ids die on every Page.reload (every go()): fetch the document per call, and let a
   // querySelector error THROW — a swallowed "Could not find node" would silently drop hover coverage.

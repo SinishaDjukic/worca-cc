@@ -33,17 +33,17 @@ const budgetFixture = () => ({
 async function boot({ seed = null, breakStorage = false,
                       poisonToggle = false, noBudget = false,
                       budgetOver = null, resizeObserver = null } = {}) {
-  // index.html SHIPS aria-expanded="true" / title="Collapse menu" /
-  // aria-label="Collapse menu" on #side-toggle, so asserting those after an
+  // index.html SHIPS aria-expanded="true" / title="Collapse sidebar" /
+  // aria-label="Collapse sidebar" on #side-toggle, so asserting those after an
   // EXPANDED boot passes even when applySidebarCollapsed() never ran — proven by
   // deleting its whole `if (btn)` branch and watching the suite stay green.
   // poisonToggle strips them, so only a real write can satisfy the assertion.
-  // Verified safe: index.html's only other two aria-expanded are ="false"
-  // (:700, :812), and neither menu label occurs anywhere in ui/, test/ or src/.
+  // Verified safe: every other aria-expanded in index.html is ="false", and
+  // neither sidebar label occurs anywhere else in ui/, test/ or src/.
   let markup = html;
   if (poisonToggle) {
     markup = markup.replace(
-      / aria-expanded="true"| title="Collapse menu"| aria-label="Collapse menu"/g, '');
+      / aria-expanded="true"| title="Collapse sidebar"| aria-label="Collapse sidebar"/g, '');
   }
   const dom = trackDom(new JSDOM(markup, { url: 'http://localhost:4317/' }));
   const { window } = dom;
@@ -137,8 +137,8 @@ test('the rail toggle: boots expanded with nothing stored, collapses/expands wit
       assert.equal(window.document.querySelector('.sidebar').classList.contains('collapsed'), false);
       const btn = window.document.querySelector('#side-toggle');
       assert.equal(btn.getAttribute('aria-expanded'), 'true');
-      assert.equal(btn.getAttribute('aria-label'), 'Collapse menu');
-      assert.equal(btn.title, 'Collapse menu');
+      assert.equal(btn.getAttribute('aria-label'), 'Collapse sidebar');
+      assert.equal(btn.title, 'Collapse sidebar');
     } },
     { name: 'clicking the toggle collapses, relabels and persists', run: async () => {
       const { window, click } = await boot();
@@ -146,8 +146,8 @@ test('the rail toggle: boots expanded with nothing stored, collapses/expands wit
       const btn = window.document.querySelector('#side-toggle');
       assert.equal(window.document.querySelector('.sidebar').classList.contains('collapsed'), true);
       assert.equal(btn.getAttribute('aria-expanded'), 'false');
-      assert.equal(btn.getAttribute('aria-label'), 'Expand menu');
-      assert.equal(btn.title, 'Expand menu');
+      assert.equal(btn.getAttribute('aria-label'), 'Expand sidebar');
+      assert.equal(btn.title, 'Expand sidebar');
       assert.equal(window.localStorage.getItem(KEY), '1');
     } },
     { name: 'clicking again expands and persists the expanded state', run: async () => {

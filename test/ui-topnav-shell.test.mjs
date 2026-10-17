@@ -138,10 +138,9 @@ test('the top bar box: a 48px white grid with a hairline; .main-col is a flex co
   }
   // The side slots keep a floor: with 0 minimums the 440px search grew first and Activity + New run spilled left under
   // the search pill (Chrome hit-tested the search at 820 rail, 1100, 1280 + terminal), and with the right floor alone the
-  // left track fell to 0 and the search covered the collapse toggle (1280 + terminal).
+  // left track fell to 0 and the search covered the page name (1280 + terminal).
   assert.match(bar, /grid-template-columns:[^;]* minmax\(max-content,1fr\);/, 'the right track never goes below its content');
-  assert.match(bar, /grid-template-columns:minmax\(32px,1fr\) /, 'the left track keeps the 32px collapse toggle');
-  assert.match(ruleBody('.side-toggle'), /flex:none;width:32px;/, 'the floor is the toggle\'s width');
+  assert.match(bar, /grid-template-columns:minmax\(32px,1fr\) /, 'the left track keeps a 32px floor for the page name');
   const all = [...css.matchAll(/(?:^|[\s,}])\.topnav\s*\{([^}]*)\}/g)].map((m) => m[1]);
   assert.ok(all.length >= 1);
   for (const body of all.slice(1)) assert.doesNotMatch(body, /height/, 'no tier changes the bar\'s height');
@@ -155,23 +154,38 @@ test('the top bar box: a 48px white grid with a hairline; .main-col is a flex co
 
 // ---- the collapse toggle ----
 
-test('the collapse toggle sits in the bar\'s left slot, before the page name: a static panel icon (line while open, filled block on the rail), no chevron, no mark', () => {
+test('no sidebar toggle in the top bar: its left slot is the phone hamburger and the page name, nothing else', () => {
   const doc = new JSDOM(html).window.document;
-  const btn = doc.getElementById('side-toggle');
-  assert.equal(btn.parentElement.className, 'topnav-l');
-  assert.equal(btn.nextElementSibling.id, 'topnav-title');
-  assert.equal(doc.querySelector('.brand #side-toggle, .sidebar #side-toggle'), null, 'it left the logo row');
+  assert.equal(doc.querySelector('.topnav #side-toggle, .topnav .side-toggle'), null, 'the toggle left every page header');
+  assert.deepEqual([...doc.querySelector('.topnav-l').children].map((el) => el.id), ['mbar-menu', 'topnav-title'],
+    'past the phone-only hamburger, the row starts with the page title');
+});
+
+test('the collapse toggle sits once in the sidebar\'s logo row, after the MOCK pill: a small round double chevron, mirrored on the rail', () => {
+  const doc = new JSDOM(html).window.document;
+  const btns = doc.querySelectorAll('.side-toggle');
+  assert.equal(btns.length, 1, 'one toggle');
+  const btn = btns[0];
+  assert.equal(btn.id, 'side-toggle');
+  assert.equal(btn.parentElement.className, 'brand');
+  assert.equal(btn.previousElementSibling.id, 'side-mock-pill');
+  assert.equal(btn.nextElementSibling.id, 'side-close');
   assert.equal(btn.getAttribute('aria-controls'), 'side-rail');
-  assert.equal(btn.querySelector('svg').innerHTML, '<rect x="2.5" y="4.5" width="19" height="15" rx="4.5"></rect><path class="side-toggle-line" d="M7.25 9v6"></path><rect class="side-toggle-fill" x="6" y="8.25" width="4" height="7.5" rx="1.5" fill="currentColor" stroke="none"></rect>');
-  assert.equal(btn.querySelector('svg').getAttribute('stroke-width'), '1.5');
-  assert.equal(doc.querySelector('.side-toggle-mark, #side-toggle .chev'), null);
-  assert.match(ruleBody('.side-toggle svg'), /width:20px;height:20px;/);
-  // The state lives in CSS off aria-expanded, so the markup never changes.
-  assert.equal(ruleBody('.side-toggle .side-toggle-fill,.side-toggle[aria-expanded="false"] .side-toggle-line'), 'display:none;');
-  assert.equal(ruleBody('.side-toggle[aria-expanded="false"] .side-toggle-fill'), 'display:inline;');
-  for (const sel of ['.sidebar .side-toggle', '.sidebar.collapsed .side-toggle', '.brand .side-toggle-mark']) {
-    assert.equal(ruleBody(sel), null, `${sel} is gone`);
+  assert.deepEqual([btn.getAttribute('aria-expanded'), btn.getAttribute('aria-label'), btn.title], ['true', 'Collapse sidebar', 'Collapse sidebar']);
+  assert.equal(btn.querySelector('svg').innerHTML, '<path d="M11 17l-5-5 5-5"></path><path d="M18 17l-5-5 5-5"></path>');
+  assert.equal(btn.querySelector('svg').getAttribute('aria-hidden'), 'true');
+  const base = ruleBody('.side-toggle');
+  for (const d of ['width:24px;', 'height:24px;', 'border-radius:50%;', 'background:transparent;', 'color:var(--ink-2);']) {
+    assert.ok(base.includes(d), `.side-toggle has ${d}`);
   }
+  assert.match(ruleBody('.side-toggle svg'), /width:16px;height:16px;/);
+  // The state lives in CSS off aria-expanded, so the markup never changes.
+  assert.equal(ruleBody('.side-toggle[aria-expanded="false"] svg'), 'transform:scaleX(-1);');
+  assert.match(ruleBody('.side-toggle:focus-visible'), /outline:2px solid var\(--ink\)/);
+  assert.equal(doc.querySelector('.side-toggle-line, .side-toggle-fill'), null, 'the old panel icon is gone');
+  assert.doesNotMatch(css, /\.side-toggle-(line|fill)/, 'and so are its rules');
+  // The base rule sits with the sidebar's, ahead of the top bar section.
+  assert.ok(css.indexOf('.side-toggle{') < css.indexOf('.main-col{'));
 });
 
 test('the toggle is desktop only: hidden from 1080px down (the tablet rail is forced, phones use the hamburger)', () => {
@@ -179,18 +193,18 @@ test('the toggle is desktop only: hidden from 1080px down (the tablet rail is fo
   assert.ok(tiers.some((b) => /^\s*\.side-toggle\{display:none;\}$/m.test(b)), 'a 1080px tier rule hides .side-toggle');
 });
 
-test('clicking the toggle in the bar collapses and expands the sidebar: aria, label, title and the stored key; the icon never changes', async () => {
+test('clicking the toggle in the sidebar collapses and expands the sidebar: aria, label, title and the stored key; the icon never changes', async () => {
   const { window, $, click } = await boot();
   const btn = $('#side-toggle');
   const icon = btn.innerHTML;
   click(btn);
   assert.ok($('.sidebar').classList.contains('collapsed'));
-  assert.deepEqual([btn.getAttribute('aria-expanded'), btn.getAttribute('aria-label'), btn.title], ['false', 'Expand menu', 'Expand menu']);
+  assert.deepEqual([btn.getAttribute('aria-expanded'), btn.getAttribute('aria-label'), btn.title], ['false', 'Expand sidebar', 'Expand sidebar']);
   assert.equal(window.localStorage.getItem('worca-cc.sidebar.collapsed'), '1');
   assert.equal(btn.innerHTML, icon, 'no chevron rewrite');
   click(btn);
   assert.equal($('.sidebar').classList.contains('collapsed'), false);
-  assert.deepEqual([btn.getAttribute('aria-expanded'), btn.getAttribute('aria-label'), btn.title], ['true', 'Collapse menu', 'Collapse menu']);
+  assert.deepEqual([btn.getAttribute('aria-expanded'), btn.getAttribute('aria-label'), btn.title], ['true', 'Collapse sidebar', 'Collapse sidebar']);
   assert.equal(window.localStorage.getItem('worca-cc.sidebar.collapsed'), '0');
   assert.equal(btn.innerHTML, icon);
 });
@@ -200,8 +214,8 @@ test('resizing across 1080px and 760px: the tiers never touch the stored prefere
   assert.ok(tiers.every((b) => !/\.mbar-menu/.test(b)), 'the rail tier never shows the hamburger (only the 760px block does)');
   const KEY = 'worca-cc.sidebar.collapsed';
   await checkRows([
-    { name: 'collapsed', seed: '1', desktop: ['false', 'Expand menu', 'Expand menu'], railOnDesktop: true },
-    { name: 'expanded', seed: '0', desktop: ['true', 'Collapse menu', 'Collapse menu'], railOnDesktop: false },
+    { name: 'collapsed', seed: '1', desktop: ['false', 'Expand sidebar', 'Expand sidebar'], railOnDesktop: true },
+    { name: 'expanded', seed: '0', desktop: ['true', 'Collapse sidebar', 'Collapse sidebar'], railOnDesktop: false },
   ].map((row) => ({ name: `the sidebar ${row.name}`, run: async () => {
     const { window, $, click, resize } = await boot({ width: 1280, seed: { [KEY]: row.seed } });
     const btn = $('#side-toggle');
@@ -209,7 +223,7 @@ test('resizing across 1080px and 760px: the tiers never touch the stored prefere
     assert.deepEqual(aria(), row.desktop, 'desktop: the stored preference');
     resize(900);
     assert.ok($('.sidebar').classList.contains('collapsed'), 'the rail tier forces the rail');
-    assert.deepEqual(aria(), ['false', 'Expand menu', 'Expand menu'], 'hidden there, and still true to what is on screen');
+    assert.deepEqual(aria(), ['false', 'Expand sidebar', 'Expand sidebar'], 'hidden there, and still true to what is on screen');
     resize(390);
     assert.equal($('.sidebar').classList.contains('collapsed'), false, 'the phone drawer is the full column');
     resize(1080);
