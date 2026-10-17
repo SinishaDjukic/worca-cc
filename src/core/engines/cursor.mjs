@@ -30,10 +30,9 @@
 // - assumed absent (capability false): a system-prompt flag, an effort flag, a per-spawn tool allowlist, sub-agents,
 //   hooks, a skills folder, a turn or spend cap, and any switch that turns the shell or file tools off — so an Ask
 //   chat (CURSOR_ASK_LOCKDOWN) and a read-only spawn refuse.
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, renameSync, rmSync, appendFileSync, chmodSync, existsSync, readdirSync, statSync, lstatSync } from 'node:fs';
-import { execFile, execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { join, dirname, isAbsolute, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { join } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
@@ -41,6 +40,8 @@ import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
+import { ENGINE_PROJECT_FILES, projectFileOwned, writeProjectFiles } from './project-files.mjs';
+export { excludeLine } from './project-files.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const cursorDefaultBin = () => process.env.WORCA_CURSOR_BIN || 'cursor-agent';
@@ -66,7 +67,7 @@ export const CURSOR_RULE_TERMS = Object.freeze({
 });
 
 /** The project files Cursor reads from its cwd, relative to it. */
-export const CURSOR_PROJECT_FILES = Object.freeze(['.cursor/cli.json', '.cursor/mcp.json']);
+export const CURSOR_PROJECT_FILES = ENGINE_PROJECT_FILES.cursor;
 
 // ── permission rules ─────────────────────────────────────────────────────────
 
@@ -125,119 +126,12 @@ export function cursorMcpDocument(servers) {
   return { mcpServers };
 }
 
-// ── the run checkout's .cursor files ─────────────────────────────────────────
-
-const git = (cwd, args) => { try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } };
-const EXCLUDE_NOTE = '# worca: Cursor engine config written into run checkouts (engines/cursor.mjs)';
-/** Whether `dir` or a parent holds a `.git` (so a failed `git rev-parse` is a git failure, not "no repository"). */
-const gitAbove = (dir) => { for (let d = resolve(dir); ; d = dirname(d)) { if (existsSync(join(d, '.git'))) return true; if (dirname(d) === d) return false; } };
-/** The info/exclude line for `rel` under the cwd's work-tree prefix: anchored, with gitignore glob characters escaped. */
-export const excludeLine = (prefix, rel) => `/${`${prefix}${rel}`.replace(/[\\[\]*?!#]/g, '\\$&')}`;
-
-// ── ownership: worca touches only a .cursor file it wrote ───────────────────
-// "Untracked" is not "worca's": outside git it is every file (the model test's cwd may be $HOME, holding the user's
-// ~/.cursor/mcp.json), and an agent may write .cursor/*.json as the task's deliverable. The ledger maps a file's
-// absolute path to the sha256 of what worca last wrote there. Paths are compared as `resolve()`d strings: the adapter
-// and the harness both join the same run cwd string.
-const sha = (t) => createHash('sha256').update(t).digest('hex');
-const ownedDir = () => join(worcaHome(), 'engines', 'cursor', 'owned');
-const ownedEntry = (abs) => join(ownedDir(), `${sha(resolve(abs)).slice(0, 32)}.json`);
-const LEDGER_PRUNE_AGE_MS = 3_600_000;
+// ── the run checkout's .cursor files (engines/project-files.mjs) ─────────────
 
 /** True when `abs` is absent (nothing to protect) or holds exactly what worca last wrote there. */
-export function cursorOwns(abs) {
-  let text;
-  try { text = readFileSync(abs, 'utf8'); } catch (err) { return err?.code === 'ENOENT'; }
-  try { return JSON.parse(readFileSync(ownedEntry(abs), 'utf8')).sha256 === sha(text); } catch { return false; }
-}
-/** Record `text` as worca's content of `abs` (BEFORE the file is written: a crash in between leaves an absent file,
- *  which is writable, never an unowned one). Entries over an hour old whose file is gone are dropped. */
-function recordOwned(abs, text) {
-  const dir = ownedDir();
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const now = Date.now();
-  for (const f of readdirSync(dir)) {
-    const p = join(dir, f);
-    try { if (now - statSync(p).mtimeMs > LEDGER_PRUNE_AGE_MS && !existsSync(JSON.parse(readFileSync(p, 'utf8')).path)) rmSync(p, { force: true }); }
-    catch { /* a half-written or vanished entry: leave it to the next prune */ }
-  }
-  writeFileSync(ownedEntry(abs), JSON.stringify({ path: resolve(abs), sha256: sha(text) }), { mode: 0o600 });
-}
-const forgetOwned = (abs) => rmSync(ownedEntry(abs), { force: true });
-
-/**
- * Make `cwd`'s Cursor project files (CURSOR_PROJECT_FILES) match `files` ({'.cursor/cli.json': text, …}).
- * - Each file given is written. A path the checkout TRACKS is never written (throws: the file would change in the
- *   deliverable). A path holding a file worca did not write (cursorOwns false) is never overwritten (throws).
- * - Each file not given is removed when worca wrote it (an earlier spawn's rules or servers must not reach a later
- *   node). A file worca did not write is left alone.
- * - Inside a git work tree each written path gets an info/exclude line, so neither an agent's own `git add -A` nor
- *   worca's commit and diffs stage it (run-harness.mjs _engineConfigState also unstages it). The harness's §8.8 entry
- *   (_registerEngineConfig, filtered by cursorOwns in _injectedFor) removes it at teardown.
- * - Mode 0644 (and 0755 for a `.cursor` dir worca creates): the files hold only `${env:…}` refs, never a secret
- *   value, and an agent-user spawn (asAgent) runs under another uid that must read them.
- * - A `.cursor` that is a symlink is never written or removed through: the link may point anywhere, the user's
- *   ~/.cursor included, and every check above would pass on the far side of it (throws when files are given).
- * - Atomic per file, idempotent. A failed write leaves the ledger on the file's previous content and no temp file.
- * The exclude line is `/<cwd's prefix in the work tree><rel>`, from `git rev-parse --show-prefix`: never computed from
- * absolute paths, which differ by realpath on macOS (/var → /private/var).
- */
-export function writeCursorProjectFiles(cwd, files) {
-  const entries = Object.entries(files);
-  let linked = false;
-  try { linked = lstatSync(join(cwd, '.cursor')).isSymbolicLink(); } catch { /* absent */ }
-  const stale = linked ? [] : CURSOR_PROJECT_FILES.filter((rel) => !(rel in files) && existsSync(join(cwd, rel)));
-  for (const rel of stale) {
-    const abs = join(cwd, rel);
-    if (cursorOwns(abs)) { rmSync(abs, { force: true }); forgetOwned(abs); }
-  }
-  if (!entries.length) return;
-  if (linked) throw new Error(`${join(cwd, '.cursor')} is a symlink — worca will not write Cursor's config through it (it may point outside the checkout)`);
-  const inside = git(cwd, ['rev-parse', '--is-inside-work-tree']);
-  if (inside === null && gitAbove(cwd)) throw new Error(`git cannot read the repository around ${cwd} — worca will not write Cursor's config blind`);
-  const inTree = inside === 'true';
-  if (inTree) {
-    const tracked = git(cwd, ['ls-files', '--', ...entries.map(([rel]) => `:(icase)${rel}`)]);
-    if (tracked === null) throw new Error(`cannot tell whether the checkout tracks ${entries.map(([rel]) => rel).join(' or ')} — worca will not write Cursor's config blind`);
-    if (tracked) throw new Error(`the checkout tracks ${tracked.split('\n')[0]} — worca cannot add its Cursor config without changing your file`);
-  }
-  const foreign = entries.map(([rel]) => rel).filter((rel) => !cursorOwns(join(cwd, rel)));
-  if (foreign.length) throw new Error(`${foreign.join(' and ')} already exists in ${cwd} and worca did not write it — worca will not overwrite it (move it away to run this on Cursor)`);
-  if (inTree) {
-    const prefix = git(cwd, ['rev-parse', '--show-prefix']) ?? '';
-    const exclude = git(cwd, ['rev-parse', '--git-path', 'info/exclude']);
-    // The exclude line is what keeps these files out of every `git add -A` (the harness's commit included: it uses no
-    // exclude pathspec for them, because git refuses one that names an ignored path). No line, no write.
-    if (!exclude) throw new Error(`cannot find the repository's info/exclude around ${cwd} — worca will not write Cursor's config where git would stage it`);
-    const path = isAbsolute(exclude) ? exclude : join(cwd, exclude);
-    let cur = '';
-    try { cur = readFileSync(path, 'utf8'); } catch { /* none yet */ }
-    const have = new Set(cur.split('\n'));
-    const want = entries.map(([rel]) => excludeLine(prefix, rel)).filter((l) => !have.has(l));
-    if (want.length) {
-      mkdirSync(dirname(path), { recursive: true });
-      appendFileSync(path, `${cur && !cur.endsWith('\n') ? '\n' : ''}${have.has(EXCLUDE_NOTE) ? '' : `${EXCLUDE_NOTE}\n`}${want.join('\n')}\n`);
-    }
-  }
-  for (const [rel, text] of entries) {
-    const file = join(cwd, rel);
-    let cur = null;
-    try { cur = readFileSync(file, 'utf8'); } catch { /* new */ }
-    if (cur === text) continue;                // owned and unchanged (cursorOwns passed above)
-    if (mkdirSync(dirname(file), { recursive: true })) chmodSync(dirname(file), 0o755);   // only a dir worca created
-    recordOwned(file, text);
-    const tmp = `${file}.worca-${process.pid}-${Date.now().toString(36)}`;
-    try {
-      writeFileSync(tmp, text, { mode: 0o644 });
-      chmodSync(tmp, 0o644);                   // the umask may have narrowed it
-      renameSync(tmp, file);
-    } catch (err) {
-      rmSync(tmp, { force: true });
-      if (cur === null) forgetOwned(file); else recordOwned(file, cur);   // the file still holds worca's old content
-      throw err;
-    }
-  }
-}
+export const cursorOwns = (abs) => projectFileOwned('cursor', abs);
+/** Make `cwd`'s Cursor project files match `files` (engines/project-files.mjs writeProjectFiles). */
+export const writeCursorProjectFiles = (cwd, files) => writeProjectFiles('cursor', cwd, files);
 
 // ── argv ─────────────────────────────────────────────────────────────────────
 

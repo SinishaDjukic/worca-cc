@@ -336,7 +336,7 @@ test('run page: a paused Codex run lists every other engine; the second clone re
   page.querySelector('.rd-resume-more').click();
   await ctx.settle();
   const items = [...page.querySelectorAll('.rd-resume-menu .resume-on-other')].filter((i) => !i.hidden);
-  assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent]), [['claude', 'Resume on Claude'], ['cursor', 'Resume on Cursor']]);
+  assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent]), [['claude', 'Resume on Claude'], ['cursor', 'Resume on Cursor'], ['gemini', 'Resume on Gemini CLI'], ['qwen', 'Resume on Qwen Code']]);
   items[1].querySelector('b').click();
   await ctx.settle();
   assert.equal(modal(ctx.doc).title, 'Resume on Cursor?');
@@ -386,7 +386,9 @@ test('History detail menu: one item per other engine, ready or not; the second o
   await ctx.settle(8);
   const items = [...ctx.doc.querySelectorAll('.hd-resume-menu .resume-on-other')].filter((i) => !i.hidden);
   assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent, i.querySelector('small').textContent]),
-    [['claude', 'Resume on Claude', NOTE], ['cursor', 'Resume on Cursor', "Starts the paused step fresh; a model Cursor cannot run falls back to its default."]]);
+    [['claude', 'Resume on Claude', NOTE], ['cursor', 'Resume on Cursor', "Starts the paused step fresh; a model Cursor cannot run falls back to its default."],
+     ['gemini', 'Resume on Gemini CLI', 'Starts the paused step fresh; a model Gemini CLI cannot run falls back to its default.'],
+     ['qwen', 'Resume on Qwen Code', 'Starts the paused step fresh; a model Qwen Code cannot run falls back to its default.']]);
   ctx.doc.querySelector('.hd-resume-more').click();
   await ctx.settle();
   items[1].click();

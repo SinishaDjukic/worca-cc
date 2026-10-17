@@ -1202,8 +1202,8 @@ test('ask-panel-card: the Engine field — Default sends none, a proposed engine
       const sel = ctx.doc.querySelector('.ask-card-engine');
       assert.equal(sel.value, '');
       assert.equal(sel.options[0].textContent, 'Codex (default)');
-      assert.deepEqual([...sel.options].slice(1).map((o) => o.textContent), ['Claude', 'Codex (Beta)', 'Copilot (Beta)', 'Cursor (Beta)']);
-      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'claude', 'copilot', 'cursor'], 'Codex is listed once, as the default');
+      assert.deepEqual([...sel.options].slice(1).map((o) => o.textContent), ['Claude', 'Codex (Beta)', 'Copilot (Beta)', 'Cursor (Beta)', 'Gemini CLI (Beta)', 'Qwen Code (Beta)']);
+      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'claude', 'copilot', 'cursor', 'gemini', 'qwen'], 'Codex is listed once, as the default');
       ctx.doc.querySelector('[data-ask-card-start]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(rec.runBodies.length, 1);

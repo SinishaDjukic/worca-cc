@@ -127,7 +127,7 @@ test('POST /api/mcp/preview on another engine: each set skill shows the name .ag
     assert.deepEqual(codex.skills.layer, { blocked: null, text: null });
     const claude = await (await post('/api/mcp/preview', { target: { projectKey: key }, engine: 'claude' })).json();
     assert.ok(claude.skills.mounted.every((m) => !('agentName' in m)), 'Claude agents call <plugin>:<skill>');
-    const bad = await post('/api/mcp/preview', { target: { projectKey: key }, engine: 'gemini' });
+    const bad = await post('/api/mcp/preview', { target: { projectKey: key }, engine: 'gpt' });
     assert.equal(bad.status, 400);
   } finally {
     await rm(join(dir, '.claude'), { recursive: true, force: true });

@@ -12,7 +12,7 @@
 // import contract; that is why the constant does NOT live next to
 // SPAWN_ENV_BASE in claude-runner.mjs.
 
-import { ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../shared/engine-switch.mjs';
+import { ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES } from '../shared/engine-switch.mjs';
 
 /** Reasoning-effort vocabulary. Canonical home is HERE (not config.mjs, which
  *  re-exports it) so settings.mjs can validate a catalog entry's `efforts`
@@ -22,19 +22,24 @@ export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 /** Cursor has no effort flag (engines/cursor.mjs capability `effort: false`). */
 export const CURSOR_EFFORTS = [];
 export const MODEL_ENGINES = [...MODEL_ENGINE_NAMES];
+/** The engines whose models connect through their CLI's own sign-in (Cursor, Gemini CLI, Qwen Code): a model of
+ *  theirs takes no routing env, no upstream and no effort (no effort flag), and worca ships none of theirs. */
+export const SIGN_IN_ENGINES = [...SIGN_IN_ENGINE_NAMES];
+/** The CLI each SIGN_IN_ENGINES engine signs in with (what a model-entry error names). */
+export const SIGN_IN_CLI = Object.freeze({ cursor: 'cursor-agent', gemini: 'gemini', qwen: 'qwen' });
 /** The engines a run's agent nodes can run on (engines/index.mjs). Copilot runs pipelines but owns no catalog
  *  model, so it is not a MODEL_ENGINES member (no step or helper slots, no Ask chats). */
 export const RUN_ENGINES = [...ENGINE_NAMES];
 /** Engines with helper-model slots of their own (title, overview, PR description, Auto classifier, night decider). */
 export const HELPER_ENGINES = ['claude', 'codex'];
-/** The engine a run's helper jobs run on. A Cursor run hands them to Claude: they read untrusted text, and Cursor's
- *  shell cannot be switched off. Copilot runs its own on its default model (no helper slots). The memory defrag and
+/** The engine a run's helper jobs run on. A Cursor, Gemini CLI or Qwen Code run (SIGN_IN_ENGINES) hands them to Claude:
+ *  they read untrusted text, and worca does not switch those engines' shell off. Copilot runs its own on its default model (no helper slots). The memory defrag and
  *  the workspace scan are agent nodes of the run, not helper jobs. */
 export function helperEngineFor(engine) { return RUN_ENGINES.includes(engine) && ENGINES[engine].helpers ? engine : 'claude'; }
 /** Engines an Ask Worca chat may run on: those whose shell and disk tools can be switched off (Codex: CODEX_ASK_LOCKDOWN,
  *  and a codex that has every flag in it, ask/turn.mjs). Cursor: no such switch is known (CURSOR_ASK_LOCKDOWN = null). */
 export const ASK_ENGINES = ['claude', 'codex'];
-export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : engine === 'cursor' ? CURSOR_EFFORTS : EFFORTS; }
+export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : SIGN_IN_ENGINES.includes(engine) ? CURSOR_EFFORTS : EFFORTS; }
 export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS])];
 
 // The effort worca's own auxiliary calls run at (title generation, the Models

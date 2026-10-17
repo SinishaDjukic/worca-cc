@@ -824,8 +824,14 @@ test('models: a Codex model names its engine, takes Codex efforts and refuses ro
   assert.equal(up.manifest.models[0].upstream.model, 'qwen', 'a Codex model may ship an OpenAI-compatible Responses endpoint');
   const chat = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'codex', upstream: { provider: 'openai', api: 'openai-chat', model: 'qwen' } }] });
   assert.ok(chat.errors.some((e) => /"cx".*Responses API only/.test(e)), JSON.stringify(chat.errors));
-  const bad = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'gemini' }] });
-  assert.ok(bad.errors.some((e) => /"engine" must be "claude", "codex" or "cursor"/.test(e)), JSON.stringify(bad.errors));
+  const bad = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'gpt' }] });
+  assert.ok(bad.errors.some((e) => /"engine" must be "claude", "codex", "cursor", "gemini" or "qwen"/.test(e)), JSON.stringify(bad.errors));
+  for (const engine of ['gemini', 'qwen']) {
+    const ok = normalizeManifest({ name: 'p', models: [{ id: 'g', engine }] });
+    assert.deepEqual(ok.manifest.models[0], { id: 'g', label: 'g', engine, efforts: [] });
+    const withEnv = normalizeManifest({ name: 'p', models: [{ id: 'g', engine, env: { X: '1' } }] });
+    assert.ok(withEnv.errors.some((e) => new RegExp(`"g".*a ${engine} model takes no env`).test(e)), JSON.stringify(withEnv.errors));
+  }
   const cursor = normalizeManifest({ name: 'p', models: [{ id: 'cu', engine: 'cursor' }] });
   assert.equal(cursor.ok, true, JSON.stringify(cursor.errors));
   assert.deepEqual(cursor.manifest.models[0], { id: 'cu', label: 'cu', engine: 'cursor', efforts: [] });

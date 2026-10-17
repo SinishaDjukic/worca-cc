@@ -70,8 +70,8 @@ const NIGHT = NIGHT_FIELDS.map((field) => ({
   readUser: () => nightModeSettings()[field], readProject: (ctx) => ctx.nightProject()?.[field], team: (ctx) => ctx.teamValue(`night.${field}`),
 }));
 const STATIC = new Map([...SCALARS, ...NIGHT].map((entry) => [entry.id, entry]));
-const STEP_RE = /^models\.(claude|codex|cursor)\.steps\.([A-Za-z0-9_-]{1,64})$/;
-// UTIL_RE and ASK_MODEL_RE stay (claude|codex): Cursor has no helper or Ask slots.
+const STEP_RE = new RegExp(`^models\\.(${MODEL_ENGINES.join('|')})\\.steps\\.([A-Za-z0-9_-]{1,64})$`);
+// UTIL_RE and ASK_MODEL_RE stay (claude|codex): the sign-in engines (Cursor, Gemini CLI, Qwen Code) have no helper or Ask slots.
 const UTIL_RE = /^models\.(claude|codex)\.(?:utility\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$/;
 const RUN_JOBS = new Set(['title', 'classifier', 'overview', 'prDescription']);
 const utilityId = (engine, job) => (RUN_JOBS.has(job) ? `models.${engine}.utility.${job}` : `models.${engine}.${job}`);
@@ -90,7 +90,7 @@ const CLAUDE_USER = {
   memoryDefrag: () => { const pair = memoryDefragModel(); return pair.model ? { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) } : undefined; },
 };
 function utilEntry(engine, job) {
-  if (!HELPER_ENGINES.includes(engine)) return null;          // Cursor: no utility ids (helper jobs run on Claude)
+  if (!HELPER_ENGINES.includes(engine)) return null;          // Cursor, Gemini CLI, Qwen Code: no utility ids (helper jobs run on Claude)
   if (engine === 'claude' && job === 'workspaceScan') return null;
   return { id: utilityId(engine, job), family: 'utility', engine, job, path: ['utilityModels', engine, job], store: 'settings',
     default: undefined, userOnly: job === 'workspaceScan', validate: pairCheck(engine),

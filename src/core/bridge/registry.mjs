@@ -8,7 +8,7 @@
 import { listGlobalModels, providerConfig, providerSecretSet, resolveProviderSecret, copilotTermsAcknowledged } from '../settings.mjs';
 import { listPluginModels } from '../plugin-models.mjs';
 import { policyCatalogModels } from '../policy/cache.mjs';
-import { isLocalBaseUrl } from '../model-env.mjs';
+import { isLocalBaseUrl, SIGN_IN_ENGINES } from '../model-env.mjs';
 import { brokerEnabled } from '../broker-client.mjs';
 import { routeBridgedUpstream } from '../broker-routing.mjs';
 
@@ -20,7 +20,7 @@ export function keyOptional(provider, baseUrl) {
 /** Every entry with an upstream is bridged when Claude Code runs it (src/shared/connections.mjs: Claude Code
  *  reaches every provider through the bridge). Codex connects to an OpenAI Responses endpoint itself
  *  (engines/codex-endpoint.mjs), so the same entry is bridged on a Claude run and direct on a Codex run. */
-const bridgedUpstream = (m) => (m.upstream && (m.engine || 'claude') !== 'cursor' ? m.upstream : null);
+const bridgedUpstream = (m) => (m.upstream && !SIGN_IN_ENGINES.includes(m.engine || 'claude') ? m.upstream : null);
 
 /**
  * The bridged catalog entry for `id` (user global → plugin → team policy), or

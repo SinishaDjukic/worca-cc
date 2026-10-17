@@ -14,7 +14,9 @@ const CATALOG = [
 ];
 
 test('every engine but Claude is in beta', () => {
-  assert.deepEqual(BETA_ENGINES, ['codex', 'copilot', 'cursor']);
+  assert.deepEqual(BETA_ENGINES, ['codex', 'copilot', 'cursor', 'gemini', 'qwen']);
+  assert.equal(engineChoiceLabel('gemini'), 'Gemini CLI (beta)');
+  assert.equal(engineChoiceLabel('qwen'), 'Qwen Code (beta)');
   for (const e of BETA_ENGINES) assert.ok(ENGINE_NAMES.includes(e), `${e} is a known engine`);
   assert.equal(engineChoiceLabel('cursor'), 'Cursor (beta)');
   assert.equal(isBetaEngine('codex'), true);

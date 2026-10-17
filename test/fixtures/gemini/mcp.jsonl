@@ -1,0 +1,7 @@
+{"type":"init","timestamp":"2026-10-08T20:27:30.233Z","session_id":"fc4c73af-7822-4746-ad1b-db326fb52e76","model":"auto"}
+{"type":"message","timestamp":"2026-10-08T20:27:30.234Z","role":"user","content":"Call the echo tool from the \"spike\" MCP server with text \"ping\" and print its output."}
+{"type":"tool_use","timestamp":"2026-10-08T20:27:37.422Z","tool_name":"mcp_spike_echo","tool_id":"mcp_spike_echo__call_966031","parameters":{"text":"ping"}}
+{"type":"tool_result","timestamp":"2026-10-08T20:27:37.444Z","tool_id":"mcp_spike_echo__call_966031","status":"success","output":"PING (token=s3cr3t)"}
+{"type":"message","timestamp":"2026-10-08T20:27:39.444Z","role":"assistant","content":"`PING (token=s3","delta":true}
+{"type":"message","timestamp":"2026-10-08T20:27:39.474Z","role":"assistant","content":"cr3t)`","delta":true}
+{"type":"result","timestamp":"2026-10-08T20:27:39.494Z","status":"success","stats":{"total_tokens":21219,"input_tokens":20417,"output_tokens":56,"cached":0,"input":20417,"duration_ms":9261,"tool_calls":1,"models":{"gemini-3.5-flash-lite":{"total_tokens":1527,"input_tokens":1039,"output_tokens":26,"cached":0,"input":1039},"gemini-3.8-flash":{"total_tokens":19692,"input_tokens":19378,"output_tokens":30,"cached":0,"input":19378}}}}

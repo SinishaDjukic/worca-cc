@@ -17,7 +17,7 @@
 // executions render nothing; `token` events are never rendered.
 import { BOOKEND_EXECUTION_IDS, KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { awayAnswersSummary } from '../shared/away-mode/labels.mjs';
-import { usageLimitSwitches, engineLabel, runCostLabel } from '../shared/engine-switch.mjs';
+import { usageLimitSwitches, engineLabel, runCostLabel, engineReportsCost } from '../shared/engine-switch.mjs';
 import { readyEnginesCached } from '../core/engines/ready-cache.mjs';
 import { shortHelp } from '../shared/forms/project.mjs';
 
@@ -60,7 +60,7 @@ function flowMarker(node, m, color) {
 }
 
 /** ONE `exec` event -> ONE terminal line ('' when the event renders nothing). */
-export function formatExecLine(ev, manifest, { color = (n, s) => s } = {}) {
+export function formatExecLine(ev, manifest, { color = (n, s) => s, engine = null } = {}) {
   if (!ev || !ev.nodeId) return '';
   if (BOOKEND_EXECUTION_IDS.includes(ev.executionId)) return '';   // P8's preflight/done rows render nothing
   const m = manifest || {};
@@ -92,7 +92,9 @@ export function formatExecLine(ev, manifest, { color = (n, s) => s } = {}) {
   if (ev.status !== 'done') return '';   // `skipped` (and anything unknown) renders nothing
   const cost = node && node.kind === 'script'
     ? (ev.exitCode != null ? ` · exit ${ev.exitCode}` : '')
-    : (ev.costUsd != null ? ` · ${usd(ev.costUsd)}` : '');
+    // An engine that reports no cost shows none rather than $0.00 (engine-switch.mjs runCostLabel); a cost worca
+    // knows anyway (a priced model) still shows.
+    : (ev.costUsd != null && (engineReportsCost(engine) || ev.costUsd > 0) ? ` · ${usd(ev.costUsd)}` : '');
   const verdict = ev.verdict ? (ev.verdict.missing ? ' — no verdict written (treated as clean)' : ev.verdict.hasBlocking ? ' — blocking' : ' — clean') : '';
   return `${color('green', '✓')} ${label}${ord}${dur}${cost}${verdict}`;
 }
