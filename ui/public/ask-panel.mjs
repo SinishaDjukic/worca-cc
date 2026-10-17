@@ -6003,8 +6003,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         }
       }
     } else if (row.role === 'system') {
-      const notices = (row.blocks || []).filter((b) => b && b.kind === 'notice');
-      if (notices.length) for (const b of notices) wrap.appendChild(buildNotice(b));
+      // Notices — and a card worca posted out of turn (a PR fix run's progress card, ui/server.mjs askPrFixRun).
+      const shown = (row.blocks || []).filter((b) => b && (b.kind === 'notice' || b.kind === 'card'));
+      if (shown.length) for (const b of shown) wrap.appendChild(b.kind === 'card' ? buildCard(b) : buildNotice(b));
       else wrap.appendChild(buildNotice({ text: row.text }));
     } else {
       const activity = buildActivity(row);
@@ -6154,6 +6155,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (switched) stopVoice();
     if (switched) st.seenRows = new Set();
     st.threadId = id;
+    if (st.open && st.unread && st.unreadThread === id) setUnread(false);   // the dot's chat is on screen now
     st.model = createThreadModel({ threadId: id });
     st.model.load(snap);
     if (switched) { st.hist = { idx: -1, draft: '' }; st.suggestDismissed = null; }
@@ -6333,6 +6335,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return;
     }
     if (THREADS_REFRESH_FRAMES.has(frame.type)) scheduleThreadsRefresh();
+    // A PR fix run's card landed, or its outcome did (ui/server.mjs askPrFixRun marks the frame unread), in a chat that
+    // is not on screen: the Chat row's dot, as a finished reply lights it. Any chat of this person — worca posted it.
+    if (frame.type === 'ask-message' && frame.unread === true && typeof frame.threadId === 'string'
+      && (!st.open || frame.threadId !== st.threadId)) setUnread(true, frame.threadId);
     // The Chat row's dot (worca Chat): a reply in ANOTHER chat this tab asked in (the user switched chats before it
     // landed) ended while Chat was hidden. The open chat's own reply is afterFrame's.
     if ((frame.type === 'ask-done' || frame.type === 'ask-error') && !st.open && typeof frame.threadId === 'string'
