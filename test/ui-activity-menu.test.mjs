@@ -18,8 +18,8 @@ const liveIt = (runId, extra = {}) => ({
 const ask1 = liveIt('ask1', { ask: { kind: 'gate', step: 'Review' } });
 const RUNNING = [liveIt('run1'), liveIt('run2'), liveIt('start1', { status: 'starting' })];
 const RUNS = {
-  live: [ask1, liveIt('paused1', { status: 'paused' }), liveIt('fail1', { status: 'error', unread: true }), ...RUNNING],
-  history: [{ id: 'p9', projectKey: 'worca-2', title: 'p9', status: 'paused', startedAt: utc(7, 8, 0), groupName: 'worca-cc' }],
+  live: [ask1, liveIt('paused1', { status: 'paused', pauseReason: 'error' }), liveIt('fail1', { status: 'error', unread: true }), ...RUNNING],
+  history: [{ id: 'p9', projectKey: 'worca-2', title: 'p9', status: 'paused', pauseReason: 'error', startedAt: utc(7, 8, 0), groupName: 'worca-cc' }],
   active: [ask1, ...RUNNING],
 };
 const ONLY_RUNNING = { live: RUNNING, history: [], active: RUNNING };

@@ -128,15 +128,17 @@ const row = (over) => ({ projectKey: KEY, projectName: 'Proj', projectDir: '/x/p
 // ---------------------------------------------------------------------------
 
 const histRows = (doc) => doc.querySelectorAll('#runs-list .runs-row[data-kind="hist"]');
+// Hours ago, as ISO: Active's Recent lists only runs finished in the last 7 days (#724).
+const hoursAgo = (h) => new Date(Date.now() - h * 3600000).toISOString();
 const word = (r) => r.querySelector('.runs-row-sub').textContent.split(' · ')[0];
 
-test('Runs list rows: status icon + word + title per finished run; interrupted is amber \'Interrupted\' and not Needs you', async () => {
+test('Runs list rows: status icon + word + title per finished run; interrupted is amber \'Interrupted\' and Needs you', async () => {
   await checkRows([
     { name: 'the Runs list renders one row per finished run (no <li>): status icon + word + title', run: async () => {
       const ctx = await boot({
         fetchHandler: armsFor([
-          row({ id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }),
-          row({ id: 'p-stop', title: 'Stopped run', status: 'stopped', startedAt: '2026-01-02T00:00:00Z' }),
+          row({ id: 'p-done', title: 'Done run', status: 'done', startedAt: hoursAgo(1) }),
+          row({ id: 'p-stop', title: 'Stopped run', status: 'stopped', startedAt: hoursAgo(2) }),
         ]),
       });
       ctx.showRuns();
@@ -154,10 +156,8 @@ test('Runs list rows: status icon + word + title per finished run; interrupted i
       assert.equal(word(rows[0]), 'Finished');
       assert.ok(rows[1].querySelector('.runs-ic').classList.contains('runs-ic-stop'), 'stopped -> red square family');
       assert.equal(word(rows[1]), 'Stopped');
-      // Exactly one glyph per row, the family's own.
-      const glyphs = [...rows[0].querySelectorAll('.runs-ic svg')];
-      assert.equal(glyphs.length, 1);
-      assert.ok(glyphs[0].classList.contains('runs-glyph-done'));
+      // #724: a status dot, the family's own.
+      assert.equal(rows[0].querySelector('.runs-ic').dataset.dot, 'done');
 
       // Titles surface in .runs-row-title.
       assert.equal(rows[0].querySelector('.runs-row-title').textContent, 'Done run');
@@ -170,14 +170,14 @@ test('Runs list rows: status icon + word + title per finished run; interrupted i
       ctx.showRuns();
       await new Promise((r) => setTimeout(r, 0));
       const doc = ctx.window.document;
-      const r = doc.querySelector('#runs-list .runs-row[data-kind="hist"]');
+      const r = doc.querySelector('#runs-list .runs-needs .runs-row[data-kind="hist"]');
       // The icon column answers "can this be resumed?", so interrupted is amber, not red.
       assert.ok(r.querySelector('.runs-ic').classList.contains('runs-ic-paused'));
       assert.equal(word(r), 'Interrupted');
       // The glyph is decorative: the word is in the row link's own text, which names it.
       assert.equal(r.querySelector('.runs-ic').getAttribute('aria-hidden'), 'true');
       assert.match(r.textContent, /Interrupted/);
-      assert.equal(doc.querySelector('#runs-list .runs-needs'), null, 'an interrupted run is not Needs you (D5)');
+      assert.ok(r, 'an interrupted run is Needs you (#724: only a person can resume it)');
     } },
   ]);
 });
@@ -194,7 +194,7 @@ test('clicking the title opens the run page like the rest of the row (no viewer 
       if (url.endsWith(`/api/history/${KEY}/p-done`)) {
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: { phase: 'done', status: 'done' }, auditMarkdown: '# saved audit' }) });
       }
-      if (url.endsWith('/api/history')) return runsList([row({ id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' })]);
+      if (url.endsWith('/api/history')) return runsList([row({ id: 'p-done', title: 'Done run', status: 'done', startedAt: hoursAgo(1) })]);
       return null;
     },
   });

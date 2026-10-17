@@ -35,7 +35,7 @@ test('every query word must match: across title, project and state word for runs
 
 test('rank: title prefix > a title word starts with the first query word > a match elsewhere — before the tie order', () => {
   const sources = {
-    live: [live('a', { title: 'Catalog sync', status: 'paused' })],     // needs you, but only a substring
+    live: [live('a', { title: 'Catalog sync', status: 'paused', pauseReason: 'error' })],     // needs you, but only a substring
     history: [hist('b', { title: 'Fix login page' }), hist('c', { title: 'Login page polish', mtime: at(1, 9) })],
     projects: [{ key: 'k1', name: 'blog' }, { key: 'k2', name: 'logbook' }, { key: 'k3', name: 'web-login' }],
   };
@@ -50,7 +50,7 @@ test('ties: runs needs you → live → newest; the rest project → workspace �
     live: [live('run-old', { title: 'deploy run old', startedAt: at(9, 8) }), live('run-new', { title: 'deploy run new', startedAt: at(9, 14) }),
       live('ask', { title: 'deploy ask', ask: { kind: 'questions', step: '' }, startedAt: at(9, 1) })],
     history: [hist('h-new', { title: 'deploy finished new', mtime: at(9, 13) }), hist('h-old', { title: 'deploy finished old', mtime: at(2, 9) }),
-      hist('h-paused', { title: 'deploy paused', status: 'paused', mtime: at(1, 9) })],
+      hist('h-paused', { title: 'deploy paused', status: 'paused', pauseReason: 'error', mtime: at(1, 9) })],
     projects: [{ key: 'pz', name: 'deploy zeta' }, { key: 'pa', name: 'deploy alpha' }],
     workspaces: [{ id: 'w1', name: 'deploy ws', projectCount: 2 }],
     workflows: [{ id: 'wf_1', name: 'deploy flow', builtin: false }],
@@ -79,7 +79,7 @@ test('the empty query lists runs only: needs you, then running, then the newest 
   const sources = {
     live: [live('running', { startedAt: at(9, 9) }), live('asking', { ask: { kind: 'gate', step: '' }, startedAt: at(9, 2) })],
     history: [hist('older', { mtime: at(3, 9) }), hist('newest', { mtime: at(9, 14) }), hist('mid', { mtime: at(7, 9) }),
-      hist('parked', { status: 'paused', mtime: at(1, 9) })],
+      hist('parked', { status: 'paused', pauseReason: 'error', mtime: at(1, 9) })],
     projects: [{ key: 'k', name: 'proj' }],
   };
   const out = run(sources, '   ');

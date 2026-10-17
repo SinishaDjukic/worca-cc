@@ -142,7 +142,8 @@ test('a run ending live shows its icon: failed shows fail; paused shows paused a
     } },
     { name: 'a run failing live shows the failed icon', run: async () => {
       await showRuns(window);
-      assert.equal(groupRow(window.document, 'seo-pSEO').dataset.icon, 'fail');
+      // An unread live failure needs you (#724): it is listed once, under Needs you.
+      assert.equal(window.document.querySelector('#runs-list .runs-needs .runs-row[data-run-id="seo-pSEO"]').dataset.icon, 'fail');
     } },
   ]);
 });
@@ -224,7 +225,7 @@ test('Runs badges: the live count is a grey number hidden at zero and behind the
   const zero = snap();
   recv({ type: 'hello', runs: [live('auth-fix'), live('seo-pSEO')] });
   const both = snap();
-  recv({ type: 'done', runId: 'auth-fix', status: 'paused' });
+  recv({ type: 'done', runId: 'auth-fix', status: 'paused', reason: 'cost_pipeline' });   // a manual pause needs nobody (#724)
   const paused = snap();
   recv({ type: 'done', runId: 'seo-pSEO', status: 'done' });       // the last running run finishes
   const finished = snap();
@@ -259,6 +260,7 @@ test('run-created broadcast lists the run under its project without a reload', a
   await showRuns(window);
   const row = groupRow(window.document, 'fresh');
   assert.ok(row, 'row present without a reload');
-  assert.equal(row.closest('.runs-group').querySelector('.runs-group-name').textContent, 'proj');
+  // One project: no project header (#724), so its name ends the row's subline.
+  assert.match(row.querySelector('.runs-row-sub').textContent, / · proj$/);
   assert.equal(window.document.querySelector('#nav-running-count').textContent, '1');
 });

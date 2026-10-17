@@ -17,12 +17,19 @@ const htmlPath = join(__dir, '..', 'ui', 'public', 'index.html');
 const appPath = join(__dir, '..', 'ui', 'public', 'app.js');
 const PROJECT = '/tmp/proj';
 const KEY = 'proj-0000abcd';
+// A second project: with rows from one project the list has no project headers (#724).
+const OTHER_DIR = '/tmp/other';
+const OTHER_KEY = 'other-0000ef01';
+// Finished minutes ago: Active's Recent lists only runs finished in the last 7 days (#724).
+const RECENT = Date.now();
 const HIST = [
   { id: 'aaaa0001', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Merged thing', status: 'done',
-    startedAt: '2026-09-29T09:18:00Z', mtime: 3, pr: { number: 7, state: 'MERGED', url: 'https://example.test/7' } },
+    startedAt: '2026-09-29T09:18:00Z', mtime: RECENT - 60_000, pr: { number: 7, state: 'MERGED', url: 'https://example.test/7' } },
   { id: 'aaaa0002', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Stopped thing', status: 'stopped',
-    startedAt: '2026-09-29T08:00:00Z', mtime: 2 },
+    startedAt: '2026-09-29T08:00:00Z', mtime: RECENT - 120_000 },
 ];
+const OTHER_HIST = { id: 'bbbb0001', projectKey: OTHER_KEY, projectName: 'other', projectDir: OTHER_DIR, title: 'Other thing',
+  status: 'done', startedAt: '2026-09-29T07:00:00Z', mtime: RECENT - 180_000 };
 const windows = [];
 afterEach(() => { while (windows.length) windows.pop().close(); });
 
@@ -105,11 +112,13 @@ test('one Runs nav item; a bare #running or #history lands on #runs with the emp
 
 test('a live run groups with its registered project even before History loads', async () => {
   const { window, doc, recv } = await boot({
-    projects: [{ name: 'proj', path: PROJECT, exists: true, key: KEY }], history: [],
+    projects: [{ name: 'proj', path: PROJECT, exists: true, key: KEY }, { name: 'other', path: OTHER_DIR, exists: true, key: OTHER_KEY }], history: [],
   });
-  recv({ type: 'hello', runs: [live('r1')] });
+  recv({ type: 'hello', runs: [live('r1'), live('r2', { projectDir: OTHER_DIR })] });
   go(window, 'runs'); await settle(window);
-  assert.equal(doc.querySelector('#runs-list .runs-row[data-run-id="r1"]').closest('.runs-group').dataset.groupKey, KEY);
+  const group = doc.querySelector('#runs-list .runs-row[data-run-id="r1"]').closest('.runs-group');
+  assert.equal(group.dataset.projectKey, KEY);
+  assert.equal(group.dataset.groupKey, `running/${KEY}`, 'Active scopes the fold key to its section');
 });
 
 test('a finished run opens its saved page in the same pane and closes the live one', async () => {
@@ -226,38 +235,54 @@ test('list preferences — a folded group, the filter chip, the Group by choice 
   // Each row boots its own page.
   await checkRows([
     { name: 'a folded project group stays folded across reloads', run: async () => {
-      const first = await boot();
+      const two = { projects: [{ name: 'proj', path: PROJECT, exists: true }, { name: 'other', path: OTHER_DIR, exists: true }], history: [...HIST, OTHER_HIST] };
+      const first = await boot(two);
       go(first.window, 'runs'); await settle(first.window);
-      const head = first.doc.querySelector(`#runs-list .runs-group-head[data-group-key="${KEY}"]`);
+      const head = first.doc.querySelector(`#runs-list .runs-group-head[data-group-key="recent/${KEY}"]`);
       click(first.window, head); await settle(first.window);
       const saved = first.window.localStorage.getItem('worca-cc.runs.collapsed');
-      assert.deepEqual(JSON.parse(saved), [KEY]);
-      const second = await boot({ storage: { 'worca-cc.runs.collapsed': saved } });
+      assert.deepEqual(JSON.parse(saved), [`recent/${KEY}`]);
+      const second = await boot({ ...two, storage: { 'worca-cc.runs.collapsed': saved } });
       go(second.window, 'runs'); await settle(second.window);
-      const head2 = second.doc.querySelector(`#runs-list .runs-group-head[data-group-key="${KEY}"]`);
+      const head2 = second.doc.querySelector(`#runs-list .runs-group-head[data-group-key="recent/${KEY}"]`);
       assert.equal(head2.getAttribute('aria-expanded'), 'false');
-      assert.equal(second.doc.querySelector(`#runs-list .runs-group[data-group-key="${KEY}"] .runs-row`), null);
+      assert.equal(second.doc.querySelector(`#runs-list .runs-group[data-group-key="recent/${KEY}"] .runs-row`), null);
     } },
     { name: 'the filter chips narrow the list and are remembered across reloads', run: async () => {
       const first = await boot();
       go(first.window, 'runs'); await settle(first.window);
       first.recv({ type: 'hello', runs: [live('r-live')] });
       await settle(first.window);
-      const titles = (doc) => [...doc.querySelectorAll('#runs-list .runs-group .runs-row-title')].map((n) => n.textContent);
+      const titles = (doc) => [...doc.querySelectorAll('#runs-list .runs-row-title')].map((n) => n.textContent);
       const chip = (doc, f) => doc.querySelector(`#runs-filter [data-filter="${f}"]`);
-      assert.equal(chip(first.doc, 'all').getAttribute('aria-pressed'), 'true');
+      assert.deepEqual([...first.doc.querySelectorAll('#runs-filter [data-filter]')].map((b) => b.dataset.filter), ['active', 'finished'], '#724: two chips');
+      assert.equal(chip(first.doc, 'active').getAttribute('aria-pressed'), 'true');
       click(first.window, chip(first.doc, 'finished')); await settle(first.window);
       assert.deepEqual(titles(first.doc), ['Merged thing', 'Stopped thing']);
       assert.equal(chip(first.doc, 'finished').getAttribute('aria-pressed'), 'true');
-      assert.equal(chip(first.doc, 'all').getAttribute('aria-pressed'), 'false');
-      click(first.window, chip(first.doc, 'live')); await settle(first.window);
-      assert.deepEqual(titles(first.doc), ['r-live']);
+      assert.equal(chip(first.doc, 'active').getAttribute('aria-pressed'), 'false');
       const saved = first.window.localStorage.getItem('worca-cc.runs.filter');
-      assert.equal(saved, 'live');
+      assert.equal(saved, 'finished');
+      click(first.window, chip(first.doc, 'active')); await settle(first.window);
+      assert.deepEqual(titles(first.doc), ['r-live', 'Merged thing', 'Stopped thing'], 'Running, then Recent');
       const second = await boot({ storage: { 'worca-cc.runs.filter': saved } });
       go(second.window, 'runs'); await settle(second.window);
-      assert.equal(chip(second.doc, 'live').classList.contains('on'), true, 'the chip comes back');
-      assert.deepEqual(titles(second.doc), [], 'and still filters (no live run after this boot)');
+      assert.equal(chip(second.doc, 'finished').classList.contains('on'), true, 'the chip comes back');
+      assert.deepEqual(titles(second.doc), ['Merged thing', 'Stopped thing'], 'and still filters');
+      const legacy = await boot({ storage: { 'worca-cc.runs.filter': 'needs' } });
+      go(legacy.window, 'runs'); await settle(legacy.window);
+      assert.equal(chip(legacy.doc, 'active').classList.contains('on'), true, 'a stored Needs you chip boots on Active');
+    } },
+    { name: 'Show older opens Finished, and Finished is remembered', run: async () => {
+      const old = { ...HIST[1], id: 'aaaa0003', title: 'Old thing', mtime: RECENT - 30 * 86400000 };
+      const { window, doc } = await boot({ history: [HIST[0], old] });
+      go(window, 'runs'); await settle(window);
+      const titles = () => [...doc.querySelectorAll('#runs-list .runs-row-title')].map((n) => n.textContent);
+      assert.deepEqual(titles(), ['Merged thing'], 'Active keeps the old run behind Show older');
+      click(window, doc.querySelector('#runs-list .runs-show-older')); await settle(window);
+      assert.equal(doc.querySelector('#runs-filter [data-filter="finished"]').getAttribute('aria-pressed'), 'true');
+      assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), 'finished');
+      assert.ok(titles().includes('Old thing'), 'Finished lists the older run');
     } },
     { name: 'the Group by menu switches to date sections, closes on a pick or a click outside, and is remembered', run: async () => {
       const first = await boot();
@@ -279,13 +304,13 @@ test('list preferences — a folded group, the filter chip, the Group by choice 
       assert.equal(menu.hidden, true, 'a pick closes it');
       assert.equal(menu.querySelector('[data-group-by="date"]').getAttribute('aria-checked'), 'true');
       const heads = () => [...doc.querySelectorAll('#runs-list .runs-group-name')].map((n) => n.textContent);
-      assert.equal(heads()[0], 'Today', 'the live run is happening today');
+      assert.equal(heads()[0], 'Today', 'Recent buckets by date; the live run sits flat in Running');
       assert.ok(heads().every((h) => ['Upcoming', 'Today', 'Yesterday', 'Previous 7 days', 'Older'].includes(h)));
       assert.equal(window.localStorage.getItem('worca-cc.runs.groupBy'), 'date');
       const second = await boot({ storage: { 'worca-cc.runs.groupBy': 'date' } });
       go(second.window, 'runs'); await settle(second.window);
       assert.equal(second.doc.getElementById('runs-group-btn').classList.contains('on'), true);
-      assert.ok(second.doc.querySelector('#runs-list .runs-group[data-group-key^="date:"]'), 'date sections after a reload');
+      assert.ok(second.doc.querySelector('#runs-list .runs-group[data-group-key^="recent/date:"]'), 'date buckets after a reload');
     } },
   ]);
 });
@@ -315,20 +340,25 @@ test('the Archived toggle fetches the archived feed only when picked (and on the
       assert.equal(archBtn.getAttribute('aria-pressed'), 'true');
       assert.ok([...doc.querySelectorAll('#runs-filter button')].every((b) => b.getAttribute('aria-pressed') === 'false'),
         'no chip is pressed while the archived list shows');
-      const titles = () => [...doc.querySelectorAll('#runs-list .runs-group .runs-row-title')].map((n) => n.textContent);
+      const titles = () => [...doc.querySelectorAll('#runs-list .runs-row-title')].map((n) => n.textContent);
       assert.deepEqual(titles(), ['Archived thing']);
       const row = doc.querySelector('#runs-list .runs-row[data-pipeline-id="cccc0009"]');
-      assert.equal(row.querySelector('.runs-row-sub').textContent, 'Archived · Sep 1', 'the word says where the run lives');
+      assert.equal(row.querySelector('.runs-row-sub').textContent, 'Archived · Sep 1 · proj', 'the word says where the run lives; one project: its name ends the line');
       assert.equal(row.dataset.icon, 'done', 'the terminal icon stays');
       assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), 'archived');
-      click(window, chip('all')); await settle(window);
+      click(window, chip('active')); await settle(window);
       assert.deepEqual(titles().sort(), ['Merged thing', 'Stopped thing'],
-        'All shows the active history only (the archived feed is a separate array)');
+        'Active shows the active history only (the archived feed is a separate array)');
       assert.equal(archivedFetches, 1, 'switching back does not re-fetch');
       click(window, archBtn); await settle(window);
       assert.equal(archivedFetches, 2, 'each activation re-fetches (cheap, stays fresh)');
       click(window, archBtn); await settle(window);
-      assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), 'all', 'the toggle turns back off to All');
+      assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), 'active', 'the toggle turns back off to Active');
+      click(window, chip('finished')); await settle(window);
+      click(window, archBtn); await settle(window);
+      click(window, archBtn); await settle(window);
+      assert.equal(chip('finished').getAttribute('aria-pressed'), 'true', 'the toggle turns back off to the filter picked before it');
+      assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), 'finished');
     } },
     { name: 'a remembered Archived filter fetches its feed on the first paint, chip hidden or not', run: async () => {
       const { window, doc } = await boot({ storage: { 'worca-cc.runs.filter': 'archived' } });
@@ -342,7 +372,7 @@ test('the Archived toggle fetches the archived feed only when picked (and on the
       go(window, 'runs'); await settle(window);
       assert.ok(archivedFetches >= 1, 'the feed loads without a chip click');
       assert.equal(doc.getElementById('runs-archived-btn').classList.contains('on'), true);
-      const titles = () => [...doc.querySelectorAll('#runs-list .runs-group .runs-row-title')].map((n) => n.textContent);
+      const titles = () => [...doc.querySelectorAll('#runs-list .runs-row-title')].map((n) => n.textContent);
       assert.deepEqual(titles(), ['Archived thing']);
     } },
   ]);
@@ -383,7 +413,7 @@ test('docs/ui-levels.md rule 2: the Archived toggle stays on screen below Advanc
   assert.equal(archBtn.dataset.minLevel, 'advanced');
   assert.equal(archBtn.dataset.levelKeep, '1',
     'kept visible: otherwise a Simple list shows only archived runs with no way out');
-  click(window, doc.querySelector('#runs-filter [data-filter="all"]')); await settle(window);
+  click(window, doc.querySelector('#runs-filter [data-filter="active"]')); await settle(window);
   assert.equal(archBtn.dataset.levelKeep, undefined, 'once left, the toggle is Advanced-only again');
 });
 

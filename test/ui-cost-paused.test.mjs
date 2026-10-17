@@ -89,8 +89,8 @@ async function boot({ budget = okBudget(), fetchHandler } = {}) {
 const historyList = (pipelines) =>
   Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live: [], ghAvailable: false }) });
 
-// A run's row in its project group, and its copy in Needs you (null when it is not there).
-const groupRow = (ctx, sel) => ctx.window.document.querySelector(`#runs-list .runs-row[data-slot="group"]${sel}`);
+// A run's row (listed once, #724), and the same row when it sits in Needs you (null when it is not there).
+const groupRow = (ctx, sel) => ctx.window.document.querySelector(`#runs-list .runs-row${sel}`);
 const needsRow = (ctx, sel) => ctx.window.document.querySelector(`#runs-list .runs-needs .runs-row${sel}`);
 // The row's word: the subline's head, before " · <time or project>".
 const rowWord = (row) => row.querySelector('.runs-row-sub').textContent.split(' · ')[0];
@@ -129,6 +129,7 @@ test('cost_pipeline pause: the row reads "Cost limit" in Needs you, the run page
   assert.equal(rowWord(card), 'Cost limit');
   const needs = needsRow(ctx, '[data-run-id="r1"]');
   assert.ok(needs, 'the pause puts the run in Needs you, which points at the run page');
+  assert.equal(card, needs, 'each run is listed once (#724): its row is the Needs-you row');
   assert.equal(rowWord(needs), 'Cost limit');
   assert.equal(needs.dataset.icon, 'paused', 'a pause is not a question');
   const page = await openRunPage(ctx);
@@ -207,24 +208,24 @@ test('budget-changed unblocking re-enables Resume on the run page', async () => 
   assert.match(resume().title, /^Resume/, 'the ordinary Resume tooltip comes back');
 });
 
-test('non-cost pauses (manual, error) read \'Paused\' in Needs you, show no cost banner (error banner for an error pause) and keep Resume enabled', async () => {
+test('non-cost pauses: a manual pause reads \'Paused by you\' outside Needs you, an error pause \'Error\' in Needs you; no cost banner (error banner for an error pause), Resume enabled', async () => {
   await checkRows([
-    { name: 'a non-cost pause reads a plain "Paused" and shows no banner', run: async () => {
+    { name: 'a manual pause reads "Paused by you" and shows no banner', run: async () => {
       const ctx = await boot();
       const card = await pausedRun(ctx, undefined);   // manual pause carries no reason
-      assert.equal(rowWord(card), 'Paused');
-      assert.equal(rowWord(needsRow(ctx, '[data-run-id="r1"]')), 'Paused', 'every pause needs you (D5)');
+      assert.equal(rowWord(card), 'Paused by you');
+      assert.equal(needsRow(ctx, '[data-run-id="r1"]'), null, 'a manual pause does not need you (#724)');
       const page = await openRunPage(ctx);
       assert.equal(page.querySelector('.rd-banners .cost-banner'), null, 'no cost banner on the run page');
       assert.equal(page.querySelector('.rd-banners .pause-error-banner'), null, 'no error banner either');
       assert.equal(resumeOf(page).disabled, false);
     } },
-    { name: 'an error pause: the row reads "Paused" in Needs you, error banner (no cost banner) on the run page, Resume enabled', run: async () => {
+    { name: 'an error pause: the row reads "Error" in Needs you, error banner (no cost banner) on the run page, Resume enabled', run: async () => {
       const ctx = await boot();
       const card = await pausedRun(ctx, 'error', 'claude exited with code 1: disk full');
-      assert.equal(rowWord(card), 'Paused');
+      assert.equal(rowWord(card), 'Error');
       assert.equal(card.querySelector('.cost-banner'), null);
-      assert.equal(rowWord(needsRow(ctx, '[data-run-id="r1"]')), 'Paused');
+      assert.equal(rowWord(needsRow(ctx, '[data-run-id="r1"]')), 'Error');
       const page = await openRunPage(ctx);
       assert.equal(page.querySelector('.rd-banners .cost-banner'), null, 'no cost banner for an error pause');
       assert.match(page.querySelector('.rd-banners .pause-error-banner').textContent, /disk full/);
@@ -255,7 +256,7 @@ test('history: the row names the pause; the detail screen shows the banner and g
   const ctx = await boot({ budget: blockedBudget(), fetchHandler: pausedArms });
   ctx.showHistory();
   await ctx.settle();
-  const cards = ctx.window.document.querySelectorAll('#runs-list .runs-row[data-slot="group"][data-kind="hist"]');
+  const cards = ctx.window.document.querySelectorAll('#runs-list .runs-row[data-kind="hist"]');
   assert.equal(cards.length, 2);
 
   assert.equal(rowWord(groupRow(ctx, '[data-pipeline-id="h1"]')), 'Cost limit');
@@ -357,15 +358,15 @@ const errorArms = (url) => {
   return null;
 };
 
-test('history error pause: row reads Paused, detail shows the error banner + enabled Resume, also from a deep link with no list row', async () => {
+test('history error pause: row reads Error, detail shows the error banner + enabled Resume, also from a deep link with no list row', async () => {
   await checkRows([
-    { name: 'history: an error pause reads "Paused" on its row; the detail screen shows the error banner and an enabled Resume', run: async () => {
+    { name: 'history: an error pause reads "Error" on its row; the detail screen shows the error banner and an enabled Resume', run: async () => {
       const ctx = await boot({ fetchHandler: errorArms });
       ctx.showHistory();
       await ctx.settle();
       const card = groupRow(ctx, '[data-pipeline-id="h3"]');
       assert.ok(card, 'the paused saved run is listed');
-      assert.equal(rowWord(card), 'Paused');
+      assert.equal(rowWord(card), 'Error');
 
       ctx.showDetail('k1', 'h3');
       await ctx.settle();

@@ -130,7 +130,7 @@ test('a run frame repaints the home within the coalesce window: a live v2 run is
 test('a paused History row with no live run stands in as a Needs-you tile; a click opens that saved run', async () => {
   const ctx = await bootChat({ history: [
     HROW({ id: 'dddd0004', status: 'paused', pauseReason: 'cost_pipeline', title: 'Paused proj' }),
-    HROW({ id: 'eeee0005', status: 'paused', title: 'Paused ws', projectKey: 'workspaces/ws1', projectName: 'WS One', workspaceName: 'WS One', target: 'workspace', runEngine: 'cursor', totalCostUsd: 0 }),
+    HROW({ id: 'eeee0005', status: 'paused', pauseReason: 'error', title: 'Paused ws', projectKey: 'workspaces/ws1', projectName: 'WS One', workspaceName: 'WS One', target: 'workspace', runEngine: 'cursor', totalCostUsd: 0 }),
   ] });
   helloRun(ctx, { runId: 'zz', pipelineId: 'ffff0000', title: 'Old', status: 'done' });
   await revisit(ctx);

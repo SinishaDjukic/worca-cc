@@ -270,7 +270,7 @@ test('Show in Runs unfolds the project group; New pipeline selects the project, 
   // happens, and the rows read the records.
   const cfgDirs = [];
   const { window } = await boot({
-    storage: { 'worca-cc.runs.collapsed': JSON.stringify(['alpha-00000001']) },
+    storage: { 'worca-cc.runs.collapsed': JSON.stringify(['alpha-00000001', 'running/alpha-00000001', 'recent/alpha-00000001']) },
     fetchHandler: (u) => { if (u.startsWith('/api/config')) cfgDirs.push(decodeURIComponent(u.split('projectDir=')[1] || '')); return null; },
   });
   await goHash(window, 'projects/alpha-00000001');

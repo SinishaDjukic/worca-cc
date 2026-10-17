@@ -281,14 +281,14 @@ test('menu item: clicking it posts the same ticket as the button', async () => {
   assert.equal(ctx.server.posts[0].scheduledFor, iso(reset + 5 * MIN));
 });
 
-/** A usage-limit-paused run is open in the Chat run panel. Chat is the boot view: no Runs view loaded the schedules. */
+/** A usage-limit-paused run is open in the Chat run panel. Chat is the boot view: no Runs view loaded the schedules
+ *  (the Needs-you badges may have: #724 D17 loads the resume tickets once a usage-limit pause is listed). */
 async function pausedPanel(ctx, { limitResetAt }) {
   const { doc, recv, settle, go } = ctx;
   recv({ type: 'hello', runs: [{ runId: 'r1', title: 'Feat', projectDir: PROJECT, status: 'running', startedAt: '00:00:00', pipelineId: 'pl_1' }] });
   await settle();
   recv({ type: 'done', runId: 'r1', status: 'paused', reason: 'usage_limit', detail: DETAIL_TEXT, limitEngine: 'claude', limitResetAt });
   await settle(8);
-  assert.equal(ctx.fetchCalls.some((c) => c.url.split('?')[0].endsWith('/api/schedules')), false, 'nothing loaded the schedules yet');
   go('chat/new/run/r1');
   await settle(10);
   const screen = doc.querySelector('[data-chat-panel] .crp-host > .rd');
@@ -352,19 +352,24 @@ test('countdown: one 60s interval while B is painted, cleared once the run resum
   }
 });
 
-test('run rows: the group row reads "resets HH:MM", and "resumes HH:MM" once a ticket exists', async () => {
+test('run rows: the row reads "resets HH:MM" in Needs you, and "Resumes at HH:MM" in Running once a ticket exists', async () => {
   const ctx = await boot({ level: 'simple' });
   const reset = Date.now() + 2 * 60 * MIN;
   await pausedCard(ctx, { limitResetAt: iso(reset) });
   ctx.go('runs');
   await ctx.settle(8);
-  const sub = () => ctx.doc.querySelector('[data-slot="group"] .runs-row-sub')?.textContent || '';
-  assert.match(sub(), new RegExp(`· resets ${hhmm(reset)}$`));
+  const row = () => ctx.doc.querySelector('#runs-list .runs-row[data-run-id="r1"]');
+  const sub = () => row()?.querySelector('.runs-row-sub')?.textContent || '';
+  assert.ok(row()?.closest('.runs-needs'), 'a usage limit with no resume booked needs you');
+  assert.match(sub(), new RegExp(`· resets ${hhmm(reset)} · proj-limit-reset$`));
   const at = reset + 5 * MIN;
   ctx.server.tickets = [ticket({ runAt: iso(at) })];
   ctx.recv({ type: 'schedules-changed' });
   await ctx.settle(10);
-  assert.match(sub(), new RegExp(`· resumes ${hhmm(at)}$`));
+  assert.ok(row()?.closest('[data-section="running"]'), 'a booked resume moves the run to Running');
+  const clock = (ms) => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  // The ticket has no project of its own, so it forms a second group and the row may lose its project suffix.
+  assert.match(sub(), new RegExp(`^Resumes at ${clock(at)} · Claude usage limit(?: · proj-limit-reset)?$`));
 });
 
 test('settings: #budgetLimitResume paints from GET, Save posts resumeAfterUsageLimit, visible at simple', async () => {

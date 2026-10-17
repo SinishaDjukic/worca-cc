@@ -86,7 +86,7 @@ import { runProgress, chainProgress, progressWidth } from '../../src/shared/run-
 import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS, tagFilterGroups } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, needsYou, normalizeRunsFilter, renderRunsList, RUNS_GROUPINGS } from './runs-list.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
 // History list card. They stay EXPORTED
@@ -491,6 +491,7 @@ function paintFeaturePageProgress(r) {
 }
 chatDeps.mountFeature = (host, id) => mountShapeFeature(host, id, { mode: 'summary' });   // P13: the Chat run card (F33)
 if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, mountCard: (h, id) => chatDeps.mountFeature(h, id), refresh: refreshShapeFeatures };   // test seam
+let resumeTicketsAsked = false;   // #724 D17: ensureResumeTickets tried once since the last schedules-changed
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -1532,10 +1533,12 @@ function handleServerMessage(msg) {
   // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
   // CLI, or because the scheduler tick started/missed/skipped something).
   if (msg.type === 'schedules-changed') {
+    resumeTicketsAsked = false;
     refreshAllCounts();
     activityMenu?.schedulesChanged();   // an open Activity refetches its Scheduled tab; a closed one forgets it
     // Chat P4: a paused run in the panel offers "Resume at" off the same tickets.
-    if (currentView() === 'schedules' || inRunsView() || crpShowsRun()) void schedulesView.load().then(() => { if (inRunsView()) { paintRunsList(); rdRepaintOpenGlance(); } repaintLimitNotices(); });
+    // #724 D17: also reload when the badges loaded the tickets, then recount, so a booked or cancelled resume moves them.
+    if (currentView() === 'schedules' || inRunsView() || crpShowsRun() || schedulesView.isLoaded()) void schedulesView.load().then(() => { updateNavCounts(); if (inRunsView()) { paintRunsList(); rdRepaintOpenGlance(); } repaintLimitNotices(); });
     // Last, so even a throw could not cost the Schedules page its refresh. chatHome is null until mountChatHome (F40).
     SLICE_INFO.clear();
     refreshShapeFeatures();
@@ -27105,6 +27108,28 @@ function limitModelOf(p) {
     limitResetAt: p.limitResetAt, ticket });
 }
 
+/** #724: when this pipeline's pause will lift by itself — an open resume ticket that is scheduled or
+ *  firing (a missed one will not) — as epoch ms, else null. Read by needsYou() through the items. */
+function autoResumeAt(pipelineId) {
+  if (!pipelineId || !schedulesView.isLoaded()) return null;
+  const t = resumeTicketOf(schedulesView.tickets(), pipelineId);
+  if (!t || t.status === 'missed') return null;
+  const at = Date.parse(t.runAt);
+  return Number.isFinite(at) ? at : null;
+}
+
+// #724 D17: the badges tell an auto-resuming usage-limit pause from one that waits for a person only with the resume
+// tickets in hand. schedulesView loads on Runs / Schedules / the run panel only, so load it once from here as soon
+// as such a pause is listed, and recount when it arrives. One try per schedules-changed: a failed load never loops.
+function ensureResumeTickets(src) {
+  if (resumeTicketsAsked || schedulesView.isLoaded()) return;
+  const limited = (x) => x && x.status === 'paused' && x.pauseReason === 'usage_limit';
+  if (!src.live.some(limited) && !src.history.some(limited)) return;
+  resumeTicketsAsked = true;
+  // withWorkspaces first, like every other load (app.js:31436): load() also paints the Schedules cards' target names.
+  void withWorkspaces().then(() => schedulesView.load()).then(() => { updateNavCounts(); if (inRunsView()) paintRunsList(); });
+}
+
 /** The Runs-list / glance note on a usage-limit pause: "resets 18:00" (B), "resumes 18:05" (C), else ''. */
 function limitRowNote(x) {
   if (x.pauseReason !== 'usage_limit') return '';
@@ -30054,15 +30079,15 @@ const RUNS_COLLAPSED_KEY = 'worca-cc.runs.collapsed';   // group keys the user f
 // skipRestore: bare #runs shows the list, not the remembered run, until another route (goRunsList).
 const RUNS_FILTER_KEY = 'worca-cc.runs.filter';         // the chip this browser last picked
 function loadRunsFilter() {
-  try { const v = localStorage.getItem(RUNS_FILTER_KEY); return RUNS_FILTERS.includes(v) ? v : 'all'; }
-  catch { return 'all'; }                    // private mode / storage disabled
+  try { return normalizeRunsFilter(localStorage.getItem(RUNS_FILTER_KEY)); }   // #724: 'all' / 'live' / 'needs' read as Active
+  catch { return 'active'; }                 // private mode / storage disabled
 }
 const RUNS_GROUP_BY_KEY = 'worca-cc.runs.groupBy';     // 'project' (default) or 'date'
 function loadRunsGroupBy() {
   try { const v = localStorage.getItem(RUNS_GROUP_BY_KEY); return RUNS_GROUPINGS.includes(v) ? v : 'project'; }
   catch { return 'project'; }
 }
-const runsUi = { query: '', tag: '', filter: loadRunsFilter(), groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false, chainsOpen: new Set(), chainsToggled: new Map() };
+const runsUi = { query: '', filter: loadRunsFilter(), beforeArchived: 'active', groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false, chainsOpen: new Set(), chainsToggled: new Map() };
 
 function histGroupName(p) {
   return (p.target === 'workspace' && p.workspaceName) || p.projectName || p.projectKey || '(unknown project)';
@@ -30111,8 +30136,8 @@ function runsLiveItem(r) {
     runId: r.runId, pipelineId: r.pipelineId || '', title: r.title, status: r.status,
     // nodeLabel(null, id) returns the raw node id ("n3 review"): name the step only with a manifest.
     ask: pq != null ? { kind: pq.kind || '', step: pq.nodeId && r.stepper ? nodeLabel(r.stepper, pq.nodeId) : '',
-      outline: !!(pq.plan && (pq.plan.outline || pq.plan.port === 'outline')) } : null,
-    pauseReason: r.pauseReason || '', limitEngine: r.limitEngine || null, limitNote: limitRowNote(r), unread: isLingering(r),
+      outline: !!(pq.plan && (pq.plan.outline || pq.plan.port === 'outline')), count: pq.kind === 'plan' ? 0 : questionCount(pq) } : null,
+    pauseReason: r.pauseReason || '', resumeAt: r.status === 'paused' ? autoResumeAt(r.pipelineId) : null, limitEngine: r.limitEngine || null, limitNote: limitRowNote(r), unread: isLingering(r),
     step: r.status === 'running' && pq == null ? (prog && prog.text ? prog.text : runsStepWord(r)) : '',
     progress: prog && !RD_TERMINAL.includes(r.status) ? { fraction: prog.fraction, tone: prog.tone } : null,
     failedStep: failed && failed.nodeId ? nodeLabel(r.stepper, failed.nodeId) : '',
@@ -30138,9 +30163,9 @@ function runsChainItem(c, open) {
     // The row glyph follows runStatusMeta's order: parked first, then a question.
     const icon = !r || state !== 'current' ? '' : ['paused', 'pausing', 'interrupted'].includes(r.status) ? 'paused'
       : r.pendingQuestion != null ? 'ask' : 'run';
-    // The amber "Needs you" text only; the Needs-you list membership comes from the model. Same cases as needsYou():
-    // an open question or a pause (`interrupted` is not one).
-    const needs = !!r && state === 'current' && (r.pendingQuestion != null || r.status === 'paused');
+    // The amber "Needs you" text only; the Needs-you list membership comes from the model. The one rule (#724).
+    const needs = !!r && state === 'current' && needsYou({ kind: 'live', status: r.status, ask: r.pendingQuestion != null,
+      pauseReason: r.pauseReason || '', resumeAt: r.status === 'paused' ? autoResumeAt(r.pipelineId) : null });
     // D33: an open question, whether or not the run is also paused: the member's dot turns amber.
     const asks = !!r && state === 'current' && r.pendingQuestion != null;
     const slice = feat ? (feat.slices.find((s) => (m.ticketId && s.ticketId === m.ticketId) || (m.pipelineId && s.pipelineId === m.pipelineId)) || feat.slices[i]) : null;
@@ -30165,6 +30190,7 @@ function runsHistItem(p) {
   return {
     id: p.id, projectKey: p.projectKey, title: p.title, status: p.status, pauseReason: p.pauseReason,
     limitEngine: p.limitEngine || null, limitNote: limitRowNote(p),
+    resumeAt: p.status === 'paused' ? autoResumeAt(p.id) : null,
     startedAt: p.startedAt, mtime: p.mtime, groupName: histGroupName(p), by: runsPersonKey(p.startedBy),
     pr: glancePrInput(p),
     archived: !!p.archived,
@@ -30176,7 +30202,7 @@ function runsHistItem(p) {
 }
 function runsSchedItem(t) {
   const g = runsGroupFor({ projectDir: t.projectDir || '', workspaceId: t.workspaceId || '', projectKey: t.projectKey || '' });
-  return { id: t.id, scheduleId: t.scheduleId || '', title: t.title, status: t.status, after: t.after || null,
+  return { id: t.id, scheduleId: t.scheduleId || '', resumePipelineId: t.resumePipelineId || '', title: t.title, status: t.status, after: t.after || null,
     queued: !!t.queued, retryAt: t.retryAt || null, runAt: t.runAt,
     groupKey: g.key, groupName: g.name, by: runsPersonKey(t.createdBy) };
 }
@@ -30186,8 +30212,8 @@ function runsSchedItem(t) {
 // `r.progress ? 1 : 0`: the line's presence is structural; its fraction/tone are patched in place (paintRunsProgress).
 // A member's icon and asks: the fields its dot reads, so a paused member that gains a question (icon stays 'paused')
 // repaints amber.
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base, (r.tags || []).join(','),
-  r.progress ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.href, m.icon, !!m.asks])] : 0];
+const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base,
+  r.needs ? 1 : 0, r.hint, r.resumes ? 1 : 0, r.progress ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.href, m.icon, !!m.asks])] : 0];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over (same slot first), then the
@@ -30212,14 +30238,12 @@ function paintRunsList() {
   const histSource = archivedView ? (state.historyArchived || []) : (state.historyAll || []);
   const liveItems = overviewRuns().map(runsLiveItem);
   const histItems = histSource.filter(Boolean).map(runsHistItem);
-  paintRunsTagFilter([...liveItems, ...histItems]);
   const model = buildRunsModel({
     live: liveItems,
     history: histItems,
     scheduled: schedulesView.upcoming(SCHEDULED_GROUP_WINDOW_MS).map(runsSchedItem),
     chains: schedulesView.chains().map((c) => runsChainItem(c, chainOpen(c))),
     person: viewer.shared ? state.historyPerson : '',
-    tag: flagOn('runTags') ? runsUi.tag : '',
     query: runsUi.query, filter: runsUi.filter, groupBy: runsUi.groupBy, collapsed: runsUi.collapsed, now: Date.now(),
   });
   const note = archivedView
@@ -30229,8 +30253,7 @@ function paintRunsList() {
   // feed without a click.
   if (archivedView && state.historyArchived === null) loadHistoryArchived();
   const sig = JSON.stringify([
-    model.needs.map(runsRowSig),
-    model.groups.map((g) => [g.key, g.name, g.count, g.collapsed, g.collapsed ? [] : g.rows.map(runsRowSig)]),
+    model.sections.map((s) => [s.key, s.count, s.older, s.groups.map((g) => [g.key, g.name, g.count, g.head, g.collapsed, g.collapsed ? [] : g.rows.map(runsRowSig)])]),
     model.total, model.searching, model.filter, model.groupBy, note,
   ]);
   let refocus = null;
@@ -30260,36 +30283,14 @@ function paintRunsList() {
   // Only once the section is actually shown: `inRunsView()` reads the hash, which already says
   // #runs before its hashchange routes, and a WS frame painting in that gap must not use it up.
   if (runsUi.reveal && RUNS_VIEWS.has(currentShownView)) {
-    const g = host.querySelector(`.runs-group[data-group-key="${cssEscape(runsUi.reveal)}"]`);
+    const g = host.querySelector(`.runs-group[data-project-key="${cssEscape(runsUi.reveal)}"]`);
     runsUi.reveal = '';
     if (g && typeof g.scrollIntoView === 'function') g.scrollIntoView({ block: 'start' });
   }
 }
-// The Runs list tag filter (#718): every distinct tag on the loaded rows, a configured dimension's
-// tags in an optgroup of their own. A chosen tag that is no longer listed falls back to "All tags".
-// Synchronous: it reads the dimension cache and refreshes it when stale.
-function paintRunsTagFilter(items) {
-  const sel = document.getElementById('runs-tag');
-  if (!sel) return;
-  const dims = flagOn('runTags') ? (allTagDimsCache?.dims || []) : [];
-  if (flagOn('runTags') && (!allTagDimsCache || Date.now() - allTagDimsCache.at >= 15_000) && !allTagDimsInflight) {
-    loadAllTagDims().then(() => paintRunsList()).catch(() => {});
-  }
-  const { groups, rest } = tagFilterGroups(items, dims);
-  const opts = [...groups.flatMap((g) => [g.any, ...g.tags]), ...rest];
-  if (runsUi.tag && !opts.includes(runsUi.tag)) runsUi.tag = '';
-  const sig = JSON.stringify([groups, rest]);
-  if (sel.dataset.sig !== sig) {
-    sel.dataset.sig = sig;
-    const group = (g) => { const og = document.createElement('optgroup'); og.label = g.label; og.append(option(g.any, `${g.label}: any`), ...g.tags.map((t) => option(t, t))); return og; };
-    sel.replaceChildren(option('', 'All tags'), ...groups.map(group), ...rest.map((t) => option(t, t)));
-  }
-  sel.value = runsUi.tag;
-}
-document.getElementById('runs-tag')?.addEventListener('change', (e) => { runsUi.tag = e.target.value; paintRunsList(); });
 /** P2/P7: move every thin line to its fraction/tone IN PLACE — a rebuild would restart the glide. */
 function paintRunsProgress(host, model) {
-  const rows = [...model.needs, ...model.groups.flatMap((g) => (g.collapsed ? [] : g.rows))];
+  const rows = model.groups.flatMap((g) => (g.collapsed ? [] : g.rows));
   for (const r of rows) {
     if (!r.progress) continue;
     for (const line of host.querySelectorAll(`.runs-row[data-row-key="${cssEscape(r.key)}"] .runs-row-prog`)) {
@@ -30345,6 +30346,7 @@ el.runsList?.addEventListener('click', (e) => {
     paintRunsList();   // the refocus path above puts focus back on the rebuilt toggle
     return;
   }
+  if (e.target.closest && e.target.closest('.runs-show-older')) { setRunsFilter('finished'); return; }
   const head = e.target.closest && e.target.closest('.runs-group-head');
   if (head) { toggleRunsGroup(head.dataset.groupKey || ''); return; }
   const a = e.target.closest && e.target.closest('a.runs-row');
@@ -30402,6 +30404,7 @@ function paintRunsFilter() {
 }
 function setRunsFilter(f) {
   if (f === runsUi.filter) return;
+  if (f === 'archived') runsUi.beforeArchived = runsUi.filter;   // the Archived toggle turns back off to it
   runsUi.filter = f;
   try { localStorage.setItem(RUNS_FILTER_KEY, runsUi.filter); } catch { /* private mode */ }
   // Each Archived activation refetches its feed; a never-loaded one is fetched by the
@@ -30414,7 +30417,7 @@ el.runsFilter?.addEventListener('click', (e) => {
   const b = e.target.closest && e.target.closest('button[data-filter]');
   if (b) setRunsFilter(b.dataset.filter);
 });
-el.runsArchivedBtn?.addEventListener('click', () => setRunsFilter(runsUi.filter === 'archived' ? 'all' : 'archived'));
+el.runsArchivedBtn?.addEventListener('click', () => setRunsFilter(runsUi.filter === 'archived' ? runsUi.beforeArchived : 'archived'));
 paintRunsFilter();
 
 // The Archived toggle's feed (issue #575): fetched lazily on activation, and again on
@@ -30492,9 +30495,12 @@ el.runsSearch?.addEventListener('keydown', (e) => {
   e.preventDefault();
   setRunsSearchOpen(false);
 });
-// Projects page: "Show in Runs" unfolds the project's group and scrolls to it (D17).
+// Projects page: "Show in Runs" unfolds the project's group and scrolls to it (D17). #724 D21: Active scopes
+// fold keys by section, so the project is unfolded under each key it can have.
 function openRunsForProject(key) {
-  if (runsUi.collapsed.delete(key)) persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed);
+  let changed = false;
+  for (const k of [key, `needs/${key}`, `running/${key}`, `recent/${key}`]) changed = runsUi.collapsed.delete(k) || changed;
+  if (changed) persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed);
   runsUi.reveal = key;
   goRunsList();          // the list itself: no D6 restore over the group it reveals
 }
@@ -32316,7 +32322,7 @@ async function loadRdPrStatus(host, scope) {
 }
 const PR_STATUS_ICONS = {
   'is-ok': '<circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16 10"/>',
-  'is-run': '<path d="M12 3a9 9 0 1 0 9 9"/>',
+  'is-run': '<circle cx="12" cy="12" r="4.5" fill="currentColor" stroke="none"/>',
   'is-bad': '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>',
   'is-wait': '<circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/>',
   none: '<circle cx="12" cy="12" r="9"/>',
@@ -33130,21 +33136,23 @@ function renderPipelineTabs() {
 // bar's Activity badge reads the SAME items (activity-model.mjs activityCounts), so its amber
 // number is this one; `active` is every live run: the grey Runs number, Activity's running count.
 function runsNeedsInput() {
+  const resumeOf = (pid, status) => (status === 'paused' ? autoResumeAt(pid) : null);
   return {
-    live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r) })),
-    history: Array.isArray(state.historyAll) ? state.historyAll : [],
+    live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null,
+      unread: isLingering(r), pauseReason: r.pauseReason || '', resumeAt: resumeOf(r.pipelineId, r.status) })),
+    history: (Array.isArray(state.historyAll) ? state.historyAll : [])
+      .map((p) => (p && p.status === 'paused' ? { ...p, resumeAt: resumeOf(p.id, p.status) } : p)),
     active: liveRuns().map((r) => ({ runId: r.runId })),
   };
-}
-function runsNeedsCount() {
-  return countNeedsYou(runsNeedsInput());
 }
 function updateNavCounts() {
   const live = liveRuns().length;
   let waiting = 0;
   for (const r of runs.values()) if (r.pendingQuestion != null || pausedOnYou(r)) waiting += 1;
   alerts.updateBadge({ waitingRuns: waiting });
-  const needs = runsNeedsCount();
+  const src = runsNeedsInput();
+  ensureResumeTickets(src);
+  const needs = countNeedsYou(src);
   // One badge on Runs (D11): the amber Needs-you pill while anything needs you, else the live
   // count as a plain grey number. A zero is hidden; each element keeps its number.
   const nc = $('#nav-needs-count');

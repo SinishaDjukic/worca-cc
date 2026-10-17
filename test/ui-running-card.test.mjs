@@ -108,9 +108,9 @@ function helloRunning(ctx, extra = {}, more = []) {
   });
 }
 
-// The run's row in its project group (a Needs-you run is repeated above it: rule 6).
+// The run's row: each run is listed once, under Needs you or in its section (#724).
 const rowOf = (ctx, runId = RUN_ID) =>
-  ctx.window.document.querySelector(`#runs-list .runs-row[data-slot="group"][data-run-id="${runId}"]`);
+  ctx.window.document.querySelector(`#runs-list .runs-row[data-run-id="${runId}"]`);
 const subOf = (row) => row.querySelector('.runs-row-sub').textContent;
 const wordOf = (row) => subOf(row).split(' · ')[0];
 
@@ -139,8 +139,8 @@ test('status icon + word per run state', async () => {
   const cases = [
     [RUN_ID,          'run',    'Running'],
     ['s-starting',    'start',  'Starting'],
-    ['s-ask',         'ask',    'Question'],
-    ['s-paused',      'paused', 'Paused'],
+    ['s-ask',         'ask',    'Answer 1 question'],
+    ['s-paused',      'paused', 'Paused by you'],
     ['s-pausing',     'paused', 'Pausing'],
     ['s-interrupted', 'paused', 'Interrupted'],
     ['s-done',        'done',   'Finished'],
@@ -156,9 +156,9 @@ test('status icon + word per run state', async () => {
     assert.equal(row.dataset.icon, icon);
     assert.equal(wordOf(row), word, `${id}: word`);
   }
-  // Needs you (D5): the question, the pause and the unread failure; not pausing/interrupted.
+  // Needs you (#724): the question, the interrupted run and the unread failure; not a manual pause, not pausing.
   const needs = [...ctx.window.document.querySelectorAll('#runs-list .runs-needs .runs-row')].map((a) => a.dataset.runId);
-  assert.deepEqual(needs, ['s-ask', 's-paused', 's-error']);
+  assert.deepEqual(needs, ['s-ask', 's-interrupted', 's-error']);
 });
 
 test('clicking a row opens #running/<runId> in the pane beside the list', async () => {

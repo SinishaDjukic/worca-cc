@@ -689,14 +689,11 @@
                 <input type="search" id="runs-search" class="runs-search" placeholder="Status, project or name"
                        aria-label="Search runs by status, project or name" autocomplete="off" spellcheck="false">
               </div>
-              <!-- Which runs the list shows (runs-list.mjs RUNS_FILTERS); app.js keeps aria-pressed. -->
+              <!-- Which runs the list shows (runs-list.mjs RUNS_FILTERS, #724): Active is Needs you · Running · Recent. -->
               <div class="seg runs-filter" id="runs-filter" role="group" aria-label="Show runs">
-                <button type="button" data-filter="all" aria-pressed="true" class="on">All</button>
-                <button type="button" data-filter="live" aria-pressed="false">Live</button>
+                <button type="button" data-filter="active" aria-pressed="true" class="on">Active</button>
                 <button type="button" data-filter="finished" aria-pressed="false">Finished</button>
-                <button type="button" data-filter="needs" aria-pressed="false">Needs you</button>
               </div>
-              <div class="select-wrap runs-tag-wrap" data-flag="runTags"><select id="runs-tag" class="select runs-tag" aria-label="Filter by tag"><option value="">All tags</option></select></div>
               <!-- "Started by" pills, shared deployments only: one scrolling row. Built by renderRunsPeople(). -->
               <div class="hist-filter runs-people" id="historyFilter" role="group" aria-label="Filter runs by who started them" hidden></div>
               <div class="runs-list" id="runs-list" aria-label="Runs"></div>

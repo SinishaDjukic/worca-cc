@@ -107,7 +107,7 @@ export const ROW = {
   title: 'Implement Log-UX Review Fixes', status: 'done',
   startedAt: '2026-08-17T20:54:42Z', branch: 'worca-cc/log-ux-fcec04e8',
   sourceBranch: 'feat/log-ux', survived: true, added: 12, removed: 3,
-  totalCostUsd: 153.21, totalActiveMs: 6000000, mtime: 1,
+  totalCostUsd: 153.21, totalActiveMs: 6000000, mtime: Date.now(),   // finished just now: Active's Recent keeps 7 days (#724)
   pauseReason: null, retainedWork: null,
 };
 export const DETAIL = {

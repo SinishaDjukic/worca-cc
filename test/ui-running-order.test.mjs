@@ -57,7 +57,7 @@ async function boot() {
 }
 
 const liveRows = (window) =>
-  [...window.document.querySelectorAll('#runs-list .runs-group .runs-row[data-slot="group"][data-kind="live"]')];
+  [...window.document.querySelectorAll('#runs-list .runs-row[data-kind="live"]')];
 const cardOrder = (window) => liveRows(window).map((c) => c.dataset.runId);
 
 // One boot: baseline, a log frame, then a question frame.
