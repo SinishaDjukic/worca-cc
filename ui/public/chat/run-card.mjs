@@ -226,8 +226,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   // ---- run controls (live, parked or resumable runs)
   const foot = h('div', 'chat-rc-foot');
   foot.hidden = true;
-  const pauseBtn = button('chat-rc-btn chat-rc-pause', 'Pause');
-  const stopBtn = button('chat-rc-btn chat-rc-stop', 'Stop');
+  const pauseBtn = button('btn btn-sm chat-rc-btn chat-rc-pause', 'Pause');
+  const stopBtn = button('btn btn-sm btn-danger chat-rc-btn chat-rc-stop', 'Stop');
   stopBtn.title = 'Stop this pipeline';
   const footErr = h('span', 'chat-rc-err');
   footErr.hidden = true;
@@ -509,13 +509,13 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       const rfoot = h('div', 'chat-rc-res-foot');
       rfoot.dataset.minLevel = 'advanced';              // Create PR / View PR: the run page's level (docs/ui-levels.md)
       if (prUrl) {
-        const a = h('a', 'chat-rc-view-pr', 'View pull request');
+        const a = h('a', 'btn btn-sm btn-primary chat-rc-view-pr', 'View pull request');
         a.setAttribute('href', prUrl);
         a.target = '_blank';
         a.rel = 'noopener';
         rfoot.appendChild(a);
       } else {
-        const b = button('chat-rc-create-pr', 'Create pull request');
+        const b = button('btn btn-sm btn-primary chat-rc-create-pr', 'Create pull request');
         const why = h('span', 'chat-rc-res-err');
         why.hidden = true;
         why.setAttribute('role', 'status');

@@ -77,7 +77,7 @@ export function renderOutlineBody(panel, pq, deps) {
   const approve = btn('btn-primary outline-approve', 'Plan slice 1');
   approve.addEventListener('click', () => send({ decision: 'approve', ...(edits.length ? { edits } : {}), ...(approveEach ? { approveEach: approveEach.checked } : {}) }));
   // Undo edits: shown only while there are edits (and, on the card, while editing). It posts nothing.
-  const undo = btn('outline-undo', 'Undo edits');
+  const undo = btn('btn-sm outline-undo', 'Undo edits');
   undo.addEventListener('click', () => { edits = []; paint(); });
 
   // per-mode parts paint() fills
@@ -136,7 +136,7 @@ export function renderOutlineBody(panel, pq, deps) {
     const foot = h('div', 'qpanel-foot plan-actions');
     foot.appendChild(approve);
     if (typed) foot.appendChild(fold(btn('plan-ask-changes', 'Ask for changes'), typed.row, () => typed.typed.focus()));
-    const more = btn('btn-ghost plan-more', '⋯');
+    const more = btn('btn-quiet btn-icon plan-more', '⋯');
     more.setAttribute('aria-label', 'More for these slices');
     more.setAttribute('aria-haspopup', 'menu');
     more.addEventListener('click', () => toggleMenu({ doc, anchor: more, align: 'end', label: 'More for these slices', items: [
@@ -185,7 +185,7 @@ export function renderOutlineBody(panel, pq, deps) {
       return row;
     });
     if (plan.revisable && check.items.some((it) => !it.pass)) {
-      const fixAll = btn('plan-fix-all', 'Fix all');
+      const fixAll = btn('btn-sm plan-fix-all', 'Fix all');
       fixAll.addEventListener('click', () => send({ decision: 'revise', feedback: outlineFixAllFeedback(check.items) }));
       rows.push(fixAll);
     }
@@ -208,12 +208,12 @@ export function renderOutlineBody(panel, pq, deps) {
     if (card && editing) {
       const tools = h('div', 'outline-slice-tools');
       if (i + 1 < n) {
-        const m = btn('outline-merge', 'Merge with next');
+        const m = btn('btn-sm outline-merge', 'Merge with next');
         m.addEventListener('click', () => { edits = [...edits, { op: 'merge', id: s.id }]; paint(); });
         tools.appendChild(m);
       }
       if (n > 1) {
-        const rm = btn('outline-remove', 'Remove');
+        const rm = btn('btn-sm outline-remove', 'Remove');
         rm.addEventListener('click', () => { edits = [...edits, { op: 'remove', id: s.id }]; paint(); });
         tools.appendChild(rm);
       }

@@ -339,3 +339,10 @@ test('a plan with no outline renders an empty list without throwing', () => {
   assert.equal($$('.outline-slice').length, 0);
   assert.ok($('.outline-approve'));
 });
+
+test('button scale: outline-approve is a primary .btn, ⋯ a quiet icon .btn, every footer control a .btn', () => {
+  const { $, $$ } = setup();
+  for (const b of $$('.plan-actions > button')) assert.ok(b.classList.contains('btn'), b.className);
+  assert.ok($('.outline-approve').classList.contains('btn-primary'));
+  assert.ok($('.plan-more').classList.contains('btn-quiet') && $('.plan-more').classList.contains('btn-icon'));
+});

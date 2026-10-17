@@ -40,6 +40,7 @@ test('each failing check gets a Fix button that calls onFix with its item', () =
   assert.equal(fixes[0].textContent, 'Fix');
   assert.equal(fixes[0].type, 'button');
   assert.ok(fixes[0].classList.contains('btn'));
+  assert.ok(fixes[0].classList.contains('btn-sm'));
   fixes[1].click();
   fixes[0].click();
   assert.deepEqual(got, ['misc', 'paths']);

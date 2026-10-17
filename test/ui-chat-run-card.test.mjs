@@ -149,6 +149,8 @@ test('chat run card controls: Pause / Resume / Stop through `controls`, disabled
       assert.equal($('.chat-rc-pause').textContent, 'Pause');
       assert.equal($('.chat-rc-pause').disabled, false);
       assert.equal($('.chat-rc-stop').hidden, false);
+      assert.ok(['btn', 'btn-sm'].every((c) => $('.chat-rc-pause').classList.contains(c)));
+      assert.ok(['btn', 'btn-sm', 'btn-danger'].every((c) => $('.chat-rc-stop').classList.contains(c)));
       $('.chat-rc-pause').click();
       await settle();
       assert.deepEqual(seen, [['run-uuid-1', $('.chat-rc-pause')]]);
@@ -356,6 +358,7 @@ test('chat run card result region: words, churn, top files → Diff, artifact ch
       card.update(done({ ...EXTRAS, pr: { url: 'https://github.com/o/r/pull/7', number: 7, state: 'OPEN' } }));
       assert.equal($('.chat-rc-res-title').textContent, 'In review');
       const a = $('a.chat-rc-view-pr');
+      assert.ok(['btn', 'btn-sm', 'btn-primary'].every((c) => a.classList.contains(c)), a.className);
       assert.equal(a.getAttribute('href'), 'https://github.com/o/r/pull/7');
       assert.equal(a.target, '_blank');
       assert.equal(a.rel, 'noopener');
@@ -493,6 +496,7 @@ test('chat run card result words follow the run page: Ready to review when the r
   assert.equal($('.chat-rc-res-title').textContent, 'Ready to review');
   assert.equal($('.chat-rc-res-sub').textContent, '2 things to check');
   assert.ok($('.chat-rc-create-pr'), 'a flagged run can still open its pull request');
+  assert.ok(['btn', 'btn-sm', 'btn-primary'].every((c) => $('.chat-rc-create-pr').classList.contains(c)));
   assert.equal($('.chat-rc-file-path').textContent, 'api-00000001/srv.mjs', 'the Overview\'s workspace rule');
   card.update(done({ ...facts(), pr: { url: 'https://github.com/o/r/pull/9', number: 9, state: 'CLOSED' } }));
   assert.equal($('.chat-rc-res-title').textContent, 'PR closed');
@@ -570,7 +574,7 @@ test('chat run card CSS: the Runs page ask card in one column (the run side pane
   assert.deepEqual(chatRules.filter((m) => /--amber-line/.test(m[2])).map((m) => m[2].trim()), ['border-color:var(--amber-line);']);
   assert.deepEqual(chatRules.filter((m) => /--amber-wash/.test(m[2])).map((m) => m[1].trim()), [], 'no amber wash in the chat question');
   // P2's ask-card field metrics stand down inside the question, so its fields keep the Runs page's own.
-  assert.ok(css.includes('.ask-card :is(select,input[type="text"],textarea):where(:not(.chat-rc-q *)){font-size:12.5px;padding:8px 11px;border-radius:10px;}'));
+  assert.ok(css.includes('.ask-card :is(select,input[type="text"],textarea):where(:not(.chat-rc-q *)){font-size:12.5px;padding:8px 11px;border-radius:var(--r-sm);}'));
 });
 
 // ---- The question's styles, replayed over style.css. jsdom computes no cascade, so (as test/ui-functional-css.test.mjs
@@ -634,7 +638,7 @@ function cascaded(el, props, pseudo = '') {
 const ASK_HTML = {
   clarify: '<div class="qpanel-head"><b>Questions</b></div><div class="qblock"><div class="qtext"><span class="qn">1</span>Which port?</div><div class="qopts"><button type="button" class="qopt" data-key="A"><span class="qopt-txt">8080</span></button></div><input class="qfree" type="text"></div><div class="qpanel-foot"><span class="qanswered">0 of 1 answered</span><button type="button" class="btn-go">Submit</button></div>',
   form: '<div class="qpanel-head"><b>A form</b></div><div class="qbody"><div class="af-form"><div class="af-grp"><h3 class="af-grp-title">Scope</h3><div class="af-fld"><label class="af-label">Name</label><input type="text" class="af-inp"></div></div></div><div class="qpanel-foot"><span class="qanswered">0 of 1 answered</span><button type="button" class="btn-go">Submit</button></div></div>',
-  gate: '<div class="qpanel-head"><b>Cycle gate</b></div><div class="gate-intro">This cycle reached its limit.</div><ul class="issues"><li class="issue sev-major"><div class="issue-head"><span class="issue-sev">major</span><span class="issue-title">Login leaks</span></div><div class="issue-loc">srv.mjs:12</div></li></ul><div class="qpanel-foot gate-actions"><button type="button" class="btn gate-continue">Don\'t approve another cycle and continue</button><button type="button" class="btn btn-primary gate-another">I approve another cycle</button></div>',
+  gate: '<div class="qpanel-head"><b>Cycle gate</b></div><div class="gate-intro">This cycle reached its limit.</div><ul class="issues"><li class="issue sev-major"><div class="issue-head"><span class="issue-sev">major</span><span class="issue-title">Login leaks</span></div><div class="issue-loc">srv.mjs:12</div></li></ul><div class="qpanel-foot gate-actions"><button type="button" class="btn gate-continue">Continue with what you have</button><button type="button" class="btn btn-primary gate-another">Approve another cycle</button></div>',
   recovery: '<div class="qpanel-head"><b>Step failed</b></div><div class="gate-intro">This step could not reach the model.</div><div class="issue-detail">429 rate limited</div><div class="qpanel-foot gate-actions"><button type="button" class="btn recovery-pause">Pause run</button><button type="button" class="btn btn-primary recovery-retry">Retry</button></div>',
   workflow: '<div class="qpanel-head"><b>Workflow</b></div><div class="qbody"><div class="ask-wfcard-body"><div class="qnote"><b>Round 1 revised: </b>“skip the docs step”</div><div class="ask-wfcard-warnings"><div class="ask-wfcard-warn">This project\'s saved settings for that workflow are not applied to Auto runs.</div></div></div></div><textarea class="qfree qfree-area" hidden></textarea><div class="qpanel-foot"><button type="button" class="qcancel wf-cancel">Cancel run</button><button type="button" class="btn-go wf-accept">Accept &amp; run</button></div>',
 };
@@ -725,7 +729,7 @@ test('chat run card CSS: the question heading is the Runs page heading (amber di
       assert.equal(cols(gr.querySelector('.issue')), '92px minmax(0,1fr)');
       assert.equal(cascaded(g.querySelector('.issue-title'), ['grid-column']), '1');
       for (const btn of g.querySelectorAll('.gate-actions .btn')) assert.equal(cascaded(btn, ['flex']), '0 1 auto', btn.className);
-      assert.equal(cascaded(gr.querySelector('.gate-actions .btn'), ['flex']), '0 0 auto');
+      assert.equal(cascaded(gr.querySelector('.gate-actions .btn'), ['flex']), null, 'the Runs page gate button sizes to its label');
       // The model's own words are mono and pre-wrap: a long JSON or URL token breaks inside the card, never past its edge.
       const { chat: rc, runs: rr } = askMounts('recovery');
       assert.equal(cascaded(rc.querySelector('.qpanel > .issue-detail'), ['overflow-wrap']), 'anywhere');
@@ -853,17 +857,18 @@ test('chat run card CSS: the result counts and error, a hovered file row or Stop
     return 0.2126 * r + 0.7152 * g + 0.0722 * b;
   };
   const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
-  // Chrome, light theme, as plain status inks: −d on --field 4.45, on a hovered row 4.03; +a on a hovered row 4.44; a
-  // hovered Stop (--red-ink on --hover) 4.03. The "K of N answered" lead is the Runs page's --ink on the white pill footer.
+  // Chrome, light theme, as plain status inks: −d on --field 4.45, on a hovered row 4.03; +a on a hovered row 4.44.
+  // The "K of N answered" lead is the Runs page's --ink on the white pill footer.
   const mixed = (tok) => `color-mix(in srgb, var(${tok}) 85%, var(--ink))`;
   for (const rule of [
     `.chat-rc-add{color:${mixed('--green-ink')};}`,
     `.chat-rc-del{color:${mixed('--red-ink')};}`,
     `.chat-rc-res-err{margin-right:auto;font-size:12px;color:${mixed('--red-ink')};}`,
-    '.chat-rc-stop:hover{background:var(--panel);border-color:var(--red);}',
     '.chat-rc-agent-model{min-width:0;flex:0 100000 auto;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);font-family:var(--mono);font-size:10.5px;font-weight:500;}',
     '.chat-rc-deciding{padding:28px 16px;text-align:center;color:var(--ink-2);font-size:12.5px;}',
   ]) assert.ok(p3.includes(rule), rule);
+  // Stop is a .btn-danger: --red-ink-strong on --red-bg (4.70:1), proven in the browser by npm run verify:theme.
+  assert.match(readFileSync(new URL('../ui/public/chat/run-card.mjs', import.meta.url), 'utf8'), /button\('btn btn-sm btn-danger chat-rc-btn chat-rc-stop'/);
   assert.ok(css.includes(':is(.rd-questions,.chat-rc-q) .qanswered{font:600 14px var(--sans);color:var(--ink);}'));
   const ink = pair('--ink');
   for (const [fg, mix, bgs] of [['--green-ink', true, ['--field', '--hover']], ['--red-ink', true, ['--field', '--hover']],

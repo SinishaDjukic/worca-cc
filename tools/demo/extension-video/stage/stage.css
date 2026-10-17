@@ -6,7 +6,7 @@
    of the post-production zoom at its own size; --cap-x is in output pixels. */
 .hud { position: absolute; left: 0; top: 0; width: 100vw; height: 100vh; transform-origin: 0 0; }
 .cap { position: absolute; bottom: 40px; left: var(--cap-x, 50vw); transform: translate(-50%, 14px); opacity: 0;
-  display: grid; gap: 4px; min-width: 520px; max-width: 760px; padding: 18px 26px 20px; border-radius: var(--r-card);
+  display: grid; gap: 4px; min-width: 520px; max-width: 760px; padding: 18px 26px 20px; border-radius: var(--r-md);
   background: color-mix(in srgb, var(--panel) 94%, transparent); box-shadow: var(--shadow-glass, var(--shadow-pop)); border: 1px solid var(--line);
   backdrop-filter: blur(14px) saturate(1.2); transition: opacity .5s ease, transform .5s cubic-bezier(.2,.8,.2,1); }
 .cap.in { opacity: 1; transform: translate(-50%, 0); }
@@ -29,7 +29,7 @@ kbd { font: 600 18px var(--mono); padding: 10px 14px; border-radius: 10px; backg
   transform: translate(var(--cx, -40px), var(--cy, -40px)) scale(var(--cam-s, 1)); }
 .cursor path { fill: var(--ink); stroke: var(--panel); stroke-width: 1.5; }
 .cursor.down path { fill: var(--ink-2); }
-.spot { position: absolute; border-radius: var(--r-card); box-shadow: 0 0 0 3px var(--peach), 0 0 0 9999px color-mix(in srgb, var(--ink) 14%, transparent);
+.spot { position: absolute; border-radius: var(--r-md); box-shadow: 0 0 0 3px var(--peach), 0 0 0 9999px color-mix(in srgb, var(--ink) 14%, transparent);
   opacity: 0; transition: all .5s ease; }
 .spot.in { opacity: 1; }
 .card.in ~ .cursor { visibility: hidden; }

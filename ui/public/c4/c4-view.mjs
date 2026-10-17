@@ -611,7 +611,7 @@ function renderSVG(view, lay, m, pal, opts = {}) {
   const text = (x, y, s, size, fill, extra = '') => `<text x="${x}" y="${y}" font-family="${FONT}" font-size="${size}" fill="${fill}" ${extra}>${esc(s)}</text>`;
   const tones = (tone) => (tone === 'amber' ? [pal.peachBg, pal.peachInk] : tone === 'green' ? [pal.greenBg, pal.greenInk] : tone === 'grey' ? [pal.field, pal.ink3] : [pal.indigoBg, pal.indigoInk]);
   const badgeW = (label) => label.length * 6.6 + 14;
-  const badgeAt = (x, y, label, tone) => { const w = badgeW(label); const t = tones(tone); return `<rect x="${x}" y="${y}" width="${w}" height="16" rx="5" fill="${t[0]}"/>${text(x + w / 2, y + 11.5, label.toUpperCase(), 9.5, t[1], 'text-anchor="middle" font-weight="700" letter-spacing=".06em"')}`; };
+  const badgeAt = (x, y, label, tone) => { const w = badgeW(label); const t = tones(tone); return `<rect x="${x}" y="${y}" width="${w}" height="16" rx="3" fill="${t[0]}"/>${text(x + w / 2, y + 11.5, label.toUpperCase(), 9.5, t[1], 'text-anchor="middle" font-weight="700" letter-spacing=".06em"')}`; };
   const badgeRow = (cx, y, labels, tone) => { const total = labels.reduce((s, l) => s + badgeW(l), 0) + (labels.length - 1) * 5; let x = cx - total / 2; return labels.map((l) => { const svg = badgeAt(x, y, l, /^default$/i.test(l) ? 'grey' : tone); x += badgeW(l) + 5; return svg; }).join(''); };
 
   if (lay.kind === 'sheet') {
@@ -619,12 +619,12 @@ function renderSVG(view, lay, m, pal, opts = {}) {
     for (const b of lay.bands) if (!b.boundary) { parts.push(text(0, b.y + 12, b.node.title.toUpperCase(), 11, pal.ink3, 'font-weight="700" letter-spacing=".18em"')); const lw = b.node.title.length * 8.2 + 14; parts.push(`<line x1="${lw}" y1="${b.y + 8}" x2="${lay.w}" y2="${b.y + 8}" stroke="${pal.line2}"/>`); }
     for (const f of lay.frames) {
       if (f.boundary) {
-        parts.push(`<rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" rx="18" fill="${pal.field}" stroke="${pal.seq}" stroke-width="2" stroke-dasharray="6 5"/>`);
+        parts.push(`<rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" rx="8" fill="${pal.field}" stroke="${pal.seq}" stroke-width="2" stroke-dasharray="6 5"/>`);
         let x = f.x + 22; const tw = f.node.title.length * 7.4 + 30;
-        parts.push(`<rect x="${x}" y="${f.y - 14}" width="${tw}" height="26" rx="13" fill="${pal.ink}"/>${text(x + tw / 2, f.y + 3.5, f.node.title.toUpperCase(), 11, pal.onInk, 'text-anchor="middle" font-weight="700" letter-spacing=".12em"')}`); x += tw + 8;
-        for (const b of badgesOf(f.node, m)) { const w = b.length * 7.2 + 30; parts.push(`<rect x="${x}" y="${f.y - 14}" width="${w}" height="26" rx="13" fill="${pal.peachBg}" stroke="${pal.peachLine}"/>${text(x + w / 2, f.y + 3.5, b.toUpperCase(), 11, pal.peachInk, 'text-anchor="middle" font-weight="700" letter-spacing=".08em"')}`); x += w + 8; }
+        parts.push(`<rect x="${x}" y="${f.y - 14}" width="${tw}" height="26" rx="3" fill="${pal.ink}"/>${text(x + tw / 2, f.y + 3.5, f.node.title.toUpperCase(), 11, pal.onInk, 'text-anchor="middle" font-weight="700" letter-spacing=".12em"')}`); x += tw + 8;
+        for (const b of badgesOf(f.node, m)) { const w = b.length * 7.2 + 30; parts.push(`<rect x="${x}" y="${f.y - 14}" width="${w}" height="26" rx="3" fill="${pal.peachBg}" stroke="${pal.peachLine}"/>${text(x + w / 2, f.y + 3.5, b.toUpperCase(), 11, pal.peachInk, 'text-anchor="middle" font-weight="700" letter-spacing=".08em"')}`); x += w + 8; }
       } else {
-        parts.push(`<g opacity="${dim(f.node.id)}"><rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" rx="12" fill="${pal.panel}" stroke="${pal.line2}"/>${text(f.x + f.w / 2, f.y + 23, f.node.title, 15, pal.ink, 'text-anchor="middle" font-weight="700"')}${badgeRow(f.x + f.w / 2, f.y + 31, badgesOf(f.node, m), 'blue')}</g>`);
+        parts.push(`<g opacity="${dim(f.node.id)}"><rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" rx="6" fill="${pal.panel}" stroke="${pal.line2}"/>${text(f.x + f.w / 2, f.y + 23, f.node.title, 15, pal.ink, 'text-anchor="middle" font-weight="700"')}${badgeRow(f.x + f.w / 2, f.y + 31, badgesOf(f.node, m), 'blue')}</g>`);
       }
     }
     // edges under tiles
@@ -635,7 +635,7 @@ function renderSVG(view, lay, m, pal, opts = {}) {
       const n = t.node; const fam = famOf(n); const card = t.depth === 1 && !lay.frames.some((f) => f.node.id === n.parent && !f.boundary);
       const gate = (n.tags || []).includes('gate'); const o = dim(n.id); const isSel = n.id === sel;
       const fill = card || t.depth === 1 ? pal.panel : (gate ? pal.amberWash : pal.field); const stroke = isSel ? pal.ink : gate ? pal.amberLine : pal.line2;
-      parts.push(`<g class="c4-node" data-id="${esc(n.id)}" opacity="${o}" style="cursor:pointer"><rect x="${t.x}" y="${t.y}" width="${t.w}" height="${t.h}" rx="${card ? 12 : 9}" fill="${fill}" stroke="${stroke}" stroke-width="${isSel ? 2 : 1}"/>`);
+      parts.push(`<g class="c4-node" data-id="${esc(n.id)}" opacity="${o}" style="cursor:pointer"><rect x="${t.x}" y="${t.y}" width="${t.w}" height="${t.h}" rx="6" fill="${fill}" stroke="${stroke}" stroke-width="${isSel ? 2 : 1}"/>`);
       if (card || t.h >= SHEET.CARD_H) {
         const bl = badgesOf(n, m); const lines = wrap(n.title, 14.5, t.w - 20, 2);
         const block = lines.length * 17 + (bl.length ? 22 : 0); let ty = t.y + (t.h - block) / 2 + 13;
@@ -654,11 +654,11 @@ function renderSVG(view, lay, m, pal, opts = {}) {
     }
   } else {
     parts.push(`<rect x="-40" y="-30" width="${lay.w + 80}" height="${lay.h + 60}" fill="${pal.canvas}"/>`);
-    for (const f of lay.frames) parts.push(`<g opacity="${dim(f.node.id)}"><rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" rx="14" fill="${pal.panel}" fill-opacity=".55" stroke="${pal.line2}" stroke-dasharray="5 4"/>${text(f.x + 14, f.y + 19, f.node.title, 11, pal.ink3, 'font-family="' + MONO + '" font-weight="500" letter-spacing=".02em"')}</g>`);
-    parts.push(`<g fill="none" stroke-linecap="round">${lay.edges.map((e) => { const on = sel && (e.source === sel || e.target === sel); const out = sel && e.source === sel; const loop = e.kinds.includes('loop') || (m.spec.relationships[e.kinds[0]] && m.spec.relationships[e.kinds[0]].style.color === 'amber'); const col = loop ? pal.amber : !sel ? pal.seq : on ? (out ? pal.indigoInk : pal.amber) : pal.seq; const op = !sel ? 1 : on ? 1 : 0.15; const dash = loop ? ' stroke-dasharray="6 5"' : (m.spec.relationships[e.kinds[0]] && m.spec.relationships[e.kinds[0]].style.line === 'dotted') ? ' stroke-dasharray="2 4"' : ''; const label = e.step ? `${e.step}. ${e.labels[0] || ''}` : (e.labels[0] || ''); return `<path d="${e.d}" stroke="${col}" stroke-width="${on ? 2.4 : 1.8}" opacity="${op}"${dash} marker-end="url(#${loop ? 'c4-am' : out ? 'c4-ao' : on ? 'c4-ai' : 'c4-ag'})"><title>${esc(e.labels.join('; '))}</title></path>${label && e.lx != null ? `<g opacity="${op}"><rect x="${e.lx - Math.min(160, label.length * 6.2) / 2 - 5}" y="${e.ly - 9}" width="${Math.min(160, label.length * 6.2) + 10}" height="17" rx="4" fill="${pal.panel}" stroke="${pal.line}"/>${text(e.lx, e.ly + 3.5, ell(label, 10.5, 160), 10.5, pal.ink2, 'text-anchor="middle" font-family="' + MONO + '"')}</g>` : ''}`; }).join('')}</g>`);
+    for (const f of lay.frames) parts.push(`<g opacity="${dim(f.node.id)}"><rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" rx="8" fill="${pal.panel}" fill-opacity=".55" stroke="${pal.line2}" stroke-dasharray="5 4"/>${text(f.x + 14, f.y + 19, f.node.title, 11, pal.ink3, 'font-family="' + MONO + '" font-weight="500" letter-spacing=".02em"')}</g>`);
+    parts.push(`<g fill="none" stroke-linecap="round">${lay.edges.map((e) => { const on = sel && (e.source === sel || e.target === sel); const out = sel && e.source === sel; const loop = e.kinds.includes('loop') || (m.spec.relationships[e.kinds[0]] && m.spec.relationships[e.kinds[0]].style.color === 'amber'); const col = loop ? pal.amber : !sel ? pal.seq : on ? (out ? pal.indigoInk : pal.amber) : pal.seq; const op = !sel ? 1 : on ? 1 : 0.15; const dash = loop ? ' stroke-dasharray="6 5"' : (m.spec.relationships[e.kinds[0]] && m.spec.relationships[e.kinds[0]].style.line === 'dotted') ? ' stroke-dasharray="2 4"' : ''; const label = e.step ? `${e.step}. ${e.labels[0] || ''}` : (e.labels[0] || ''); return `<path d="${e.d}" stroke="${col}" stroke-width="${on ? 2.4 : 1.8}" opacity="${op}"${dash} marker-end="url(#${loop ? 'c4-am' : out ? 'c4-ao' : on ? 'c4-ai' : 'c4-ag'})"><title>${esc(e.labels.join('; '))}</title></path>${label && e.lx != null ? `<g opacity="${op}"><rect x="${e.lx - Math.min(160, label.length * 6.2) / 2 - 5}" y="${e.ly - 9}" width="${Math.min(160, label.length * 6.2) + 10}" height="17" rx="3" fill="${pal.panel}" stroke="${pal.line}"/>${text(e.lx, e.ly + 3.5, ell(label, 10.5, 160), 10.5, pal.ink2, 'text-anchor="middle" font-family="' + MONO + '"')}</g>` : ''}`; }).join('')}</g>`);
     for (const t of lay.tiles) {
       const n = t.node; const fam = famOf(n); const isSel = n.id === sel; const o = dim(n.id);
-      parts.push(`<g class="c4-node" data-id="${esc(n.id)}" opacity="${o}" style="cursor:pointer"><rect x="${t.x}" y="${t.y}" width="${t.w}" height="${t.h}" rx="12" fill="${pal.panel}" stroke="${isSel ? pal.ink : pal.line2}" stroke-width="${isSel ? 2 : 1.5}"/>`);
+      parts.push(`<g class="c4-node" data-id="${esc(n.id)}" opacity="${o}" style="cursor:pointer"><rect x="${t.x}" y="${t.y}" width="${t.w}" height="${t.h}" rx="6" fill="${pal.panel}" stroke="${isSel ? pal.ink : pal.line2}" stroke-width="${isSel ? 2 : 1.5}"/>`);
       parts.push(`<path d="M${t.x + 1} ${t.y + 12} q0 -11 11 -11 h${t.w - 24} q11 0 11 11 v22 h-${t.w - 2} z" fill="${fam.bg}"/>`);
       parts.push(text(t.x + 12, t.y + 22, ell(n.title, 13, t.w - 24), 13, fam.ink, 'font-weight="600"'));
       let y = t.y + 34 + 14;
@@ -682,16 +682,16 @@ const CSS = `
 :host([hidden]){display:none}
 :host(:fullscreen){background:var(--bg,#F1F1EF)}
 :host(:fullscreen) .wrap{border-radius:0;border:0}
-.wrap{position:absolute;inset:0;display:flex;overflow:hidden;border:1px solid var(--c4-line);border-radius:var(--c4-radius,12px);background:var(--canvas-2,#FBFBF9)}
+.wrap{position:absolute;inset:0;display:flex;overflow:hidden;border:1px solid var(--c4-line);border-radius:var(--r-md,8px);background:var(--canvas-2,#FBFBF9)}
 .stage{position:relative;flex:1 1 auto;min-width:0;overflow:hidden;touch-action:none;cursor:grab;outline:none;background:var(--canvas-2,#FBFBF9) radial-gradient(circle,var(--line-2,#E3E3E0) 1.1px,transparent 1.1px);background-size:22px 22px}
 .stage.panning{cursor:grabbing}
 svg.sheet{position:absolute;left:0;top:0;transform-origin:0 0;overflow:visible}
 .nav{position:absolute;right:12px;bottom:12px;display:flex;flex-direction:column;gap:6px;z-index:3}
-.nav button,.bar button{width:30px;height:30px;padding:0;display:grid;place-items:center;border:1px solid var(--c4-line);border-radius:9px;background:var(--c4-panel);color:var(--ink-2,#5C5C63);box-shadow:0 2px 12px rgba(25,25,27,.04);cursor:pointer;font-family:inherit}
+.nav button,.bar button{width:30px;height:30px;padding:0;display:grid;place-items:center;border:1px solid var(--c4-line);border-radius:var(--r-sm,6px);background:var(--c4-panel);color:var(--ink-2,#5C5C63);box-shadow:0 2px 12px rgba(25,25,27,.04);cursor:pointer;font-family:inherit}
 .nav button:hover,.bar button:hover{background:var(--hover,#EBEBE8);color:var(--ink,#19191B)}
 .nav svg,.bar svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
 .bar{position:absolute;left:12px;top:12px;display:flex;gap:6px;z-index:3;align-items:center}
-.bar select{height:30px;border:1px solid var(--c4-line);border-radius:9px;background:var(--c4-panel);color:var(--ink,#19191B);font:500 12.5px ${FONT};padding:0 28px 0 10px;appearance:none;background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);background-position:calc(100% - 15px) 12px,calc(100% - 10px) 12px;background-size:5px 5px;background-repeat:no-repeat;max-width:260px}
+.bar select{height:30px;border:1px solid var(--c4-line);border-radius:var(--r-sm,6px);background:var(--c4-panel);color:var(--ink,#19191B);font:500 12.5px ${FONT};padding:0 28px 0 10px;appearance:none;background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);background-position:calc(100% - 15px) 12px,calc(100% - 10px) 12px;background-size:5px 5px;background-repeat:no-repeat;max-width:260px}
 .bar .cnt{font:11px ${MONO};color:var(--ink-3,#9A9AA1);white-space:nowrap}
 .rail{flex:0 0 300px;border-left:1px solid var(--c4-line);background:var(--c4-panel);overflow:auto;padding:13px 15px 20px;display:none}
 :host([info]) .rail{display:block}
@@ -701,12 +701,12 @@ svg.sheet{position:absolute;left:0;top:0;transform-origin:0 0;overflow:visible}
 .rail .head{padding-bottom:11px;margin-bottom:13px;border-bottom:1px solid var(--line,#ECECEA)}
 .rail p{margin:0 0 12px;font-size:12px;line-height:1.55;color:var(--ink-2,#5C5C63)}
 .rail .z{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3,#9A9AA1);margin:12px 0 7px}
-.rail .it{display:flex;align-items:flex-start;gap:8px;padding:6px 9px;border-radius:9px;background:var(--c4-field);margin-bottom:4px;font-size:12px}
+.rail .it{display:flex;align-items:flex-start;gap:8px;padding:6px 9px;border-radius:var(--r-sm,6px);background:var(--c4-field);margin-bottom:4px;font-size:12px}
 .rail .it i{flex:none;width:9px;height:9px;border-radius:50%;background:var(--ink,#19191B);margin-top:4px}
 .rail .it .n{flex:1 1 auto;min-width:0;color:var(--ink,#19191B);font-weight:500}
 .rail .it .t{flex:0 0 auto;max-width:45%;text-align:right;font:10px/1.4 ${MONO};color:var(--ink-3,#9A9AA1)}
-.rail .crit{font-size:12px;line-height:1.5;color:var(--ink-2,#5C5C63);background:var(--amber-wash,#FEF7EC);border:1px solid var(--amber-line,#F5D9A8);border-radius:9px;padding:8px 10px;white-space:pre-wrap}
-.rail code{font:11px ${MONO};color:var(--ink-2,#5C5C63);background:var(--c4-field);border-radius:6px;padding:1px 5px}
+.rail .crit{font-size:12px;line-height:1.5;color:var(--ink-2,#5C5C63);background:var(--amber-wash,#FEF7EC);border:1px solid var(--amber-line,#F5D9A8);border-radius:var(--r-md,8px);padding:8px 10px;white-space:pre-wrap}
+.rail code{font:11px ${MONO};color:var(--ink-2,#5C5C63);background:var(--c4-field);border-radius:var(--r-xs,3px);padding:1px 5px}
 .msg{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;color:var(--ink-2,#5C5C63);font-size:13px}
 .msg.err{color:var(--red-ink,#C5483A)}
 `;

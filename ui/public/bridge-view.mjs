@@ -106,7 +106,7 @@ export function needsSignInPill(m, { doc = globalThis.document } = {}) {
   const b = h(doc, 'span', 'badge red mv-needs-signin-badge', m.signInReason === 'terms' ? 'needs acknowledgement' : m.signInReason === 'no_key' ? 'needs API key' : 'needs sign-in');
   b.title = m.signInMessage || 'The provider behind this model is not usable yet.';
   wrap.appendChild(b);
-  const btn = h(doc, 'button', 'btn-ghost mv-signin', m.signInReason === 'no_key' ? 'Set key' : 'Sign in');
+  const btn = h(doc, 'button', 'btn-ghost btn-sm mv-signin', m.signInReason === 'no_key' ? 'Set key' : 'Sign in');
   btn.type = 'button';
   btn.dataset.provider = m.bridged || '';
   wrap.appendChild(btn);

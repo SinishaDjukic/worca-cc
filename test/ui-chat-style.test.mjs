@@ -96,16 +96,16 @@ test('the composer buttons keep their size, the run panel slot hides, cards meas
 });
 
 test('the mockup look (2026-10-10): the composer is frosted glass the transcript scrolls under, the run card a white card with a soft shadow, History toggles like the menu', () => {
-  assert.equal(ruleBody('.chat-page .ask-composer-box'), 'border-color:var(--glass-line);border-radius:22px;background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);box-shadow:var(--shadow-glass);');
-  assert.equal(ruleBody('.chat-hero-slot .ask-composer-box'), 'border-radius:24px;');
+  assert.equal(ruleBody('.chat-page .ask-composer-box'), 'border-color:var(--glass-line);border-radius:var(--r-md);background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);box-shadow:var(--shadow-glass);');
+  assert.equal(ruleBody('.chat-hero-slot .ask-composer-box'), 'border-radius:var(--r-md);');
   assert.equal(ruleBody('.chat-page .ask-composer-box:has(.guide-target)'), '-webkit-backdrop-filter:none;backdrop-filter:none;', 'a Getting started ring escapes the blur\'s stacking context');
   assert.equal(ruleBody('.chat-dock > .ask-composer'), 'pointer-events:none;');
   assert.equal(ruleBody('.chat-dock > .ask-jump,.chat-dock > .ask-composer > *'), 'pointer-events:auto;', 'only the composer\'s own parts take the pointer');
   assert.match(ruleBody('.chat-dock::before'), /^content:"";position:absolute;left:0;right:0;bottom:0;height:56px;/);
-  assert.equal(ruleBody('.ask-card.chat-rc'), 'gap:0;border-radius:16px;box-shadow:var(--shadow-card);');
+  assert.equal(ruleBody('.ask-card.chat-rc'), 'gap:0;border-radius:var(--r-md);');
   assert.match(ruleBody(':root'), /--shadow-card:0 1px 2px light-dark\(/);
   assert.match(ruleBody(':root'), /--shadow-glass:0 2px 6px light-dark\(/);
-  assert.equal(ruleBody('.chat-head-btn.chat-history-toggle'), 'width:32px;height:32px;border-radius:8px;', 'a 32px square');
+  assert.equal(ruleBody('.chat-head-btn.chat-history-toggle'), 'width:32px;height:32px;border-radius:var(--r-sm);', 'a 32px square');
   assert.equal(ruleBody('.chat-history-toggle:hover,.chat-history-toggle[aria-pressed="true"]'), 'background:var(--field);color:var(--ink);', 'open: the wash marks the state');
   assert.doesNotMatch(bare, /chat-history-toggle-(line|fill)/, 'the panel glyph\'s open/closed parts are gone');
 });
@@ -122,7 +122,7 @@ test('History: a 264px push column that turns into an overlay with a scrim below
 
 test('New chat is a labelled ghost button (.ask-icon-btn widened): in the head, and leading the History column at the rows\' inset and radius', () => {
   assert.equal(ruleBody('.ask-icon-btn.chat-new-btn'), 'width:auto;gap:6px;padding:0 10px 0 8px;font:500 12.5px/1 var(--sans);white-space:nowrap;');
-  assert.equal(ruleBody('.chat-history-new.chat-new-btn'), 'flex:none;justify-content:flex-start;height:34px;margin:6px 6px 0;padding:0 10px;border-radius:10px;');
+  assert.equal(ruleBody('.chat-history-new.chat-new-btn'), 'flex:none;justify-content:flex-start;height:34px;margin:6px 6px 0;padding:0 10px;border-radius:var(--r-sm);');
   assert.ok(css.indexOf('\n.chat-history-new.chat-new-btn{') > css.indexOf('\n.ask-icon-btn.chat-new-btn{'), 'the column\'s padding wins: same weight, later');
 });
 

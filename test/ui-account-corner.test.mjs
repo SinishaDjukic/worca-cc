@@ -339,9 +339,9 @@ test('stylesheet: the account menu is the mockup\'s padded sheet: inset hairline
   assert.doesNotMatch(css, /\.acct-menu > :not\(\[hidden\]\) ~ :not\(\[hidden\]\)\{[^}]*border-top/, 'no full-width border between sections');
   assert.match(rule('.acct-menu > :not([hidden]) ~ :not([hidden])') || '', /margin-top:9px;/, '4px, the 1px hairline, 4px');
   assert.match(rule('.acct-menu > :not([hidden]) ~ :not([hidden])::before') || '', /top:-5px;left:6px;right:6px;height:1px;background:var\(--line\);/, 'the hairline stops short of the edges');
-  assert.match(rule('.mcard') || '', /border-radius:10px;background:var\(--field\);/, 'the cards are inset grey panels');
+  assert.match(rule('.mcard') || '', /border-radius:var\(--r-md\);background:var\(--field\);/, 'the cards are inset grey panels');
   assert.match(rule('.mc-title') || '', /font:600 /, 'a semibold title');
-  assert.match(rule('.mc-btn') || '', /border-radius:999px;/, 'Details is a pill');
+  assert.match(rule('.mc-btn') || '', /border-radius:var\(--r-sm\);/, 'Details is a 6px button');
   assert.match(rule('.mc-rows dd') || '', /font:600 [^;]*var\(--sans\);/, 'semibold sans figures');
   assert.doesNotMatch(rule('.mc-rows dd') || '', /--mono/);
   assert.equal(rule('.mc-rows dd.pos'), null, 'Saved is ink, as the mockup shows');

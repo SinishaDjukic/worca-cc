@@ -370,3 +370,15 @@ test('no button in the body uses .btn-go', () => {
   const { $$ } = setup();
   assert.equal($$('.btn-go').length, 0);
 });
+
+test('button scale: every footer control is a .btn; Approve is the one primary; ⋯ is a quiet icon button; Fix all is sm', () => {
+  const { $, $$ } = setup();
+  for (const b of $$('.plan-actions > button')) assert.ok(b.classList.contains('btn'), b.className);
+  assert.ok($('.plan-approve').classList.contains('btn-primary'));
+  const more = $('.plan-more');
+  assert.deepEqual(['btn', 'btn-quiet', 'btn-icon'].map((c) => more.classList.contains(c)), [true, true, true]);
+  assert.ok(!more.classList.contains('btn-ghost'));
+  assert.ok($('.plan-fix-all').classList.contains('btn-sm'));
+  const held = setup({ extras: false });
+  for (const b of held.$$('.plan-actions > button')) assert.ok(b.classList.contains('btn'), b.className);
+});

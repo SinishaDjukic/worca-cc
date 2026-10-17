@@ -8,7 +8,7 @@ export function buildCheckRow(doc, check, { onFix = null } = {}) {
     const bad = h('div', 'plan-check-bad');
     bad.append(h('span', 'plan-check-label', it.label), h('span', 'plan-check-detail', it.detail || ''));
     if (onFix) {
-      const fix = h('button', 'btn plan-fix', 'Fix'); fix.type = 'button';
+      const fix = h('button', 'btn btn-sm plan-fix', 'Fix'); fix.type = 'button';
       fix.addEventListener('click', () => onFix(it));
       bad.appendChild(fix);
     }
