@@ -4643,6 +4643,14 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-chain{position:relative;}
 .runs-chain-toggle{position:absolute;top:8px;right:6px;border:0;background:none;color:var(--ink-3);padding:4px;cursor:pointer;}
 .runs-chain-toggle[aria-expanded="true"] .runs-chev{transform:rotate(180deg);}
+/* #770: a finished feature row's ⋯ sits left of the chevron; while selecting its checkbox leads the row */
+.runs-chain.has-more > .runs-row{padding-right:62px;}
+.runs-chain > .runs-row-more{right:30px;}
+.runs-chain:hover > .runs-row-more,.runs-chain:focus-within > .runs-row-more{opacity:1;}
+.runs-chain.is-selecting > .runs-row-check{position:absolute;top:0;left:0;z-index:1;}
+.runs-chain.is-selecting > .runs-row{padding-left:32px;}
+.runs-chain-sep{padding:6px 0 2px;color:var(--ink-3);font-size:11.5px;list-style:none;}
+.runs-chain-note{color:var(--ink-3);}
 /* #739: a row with a ⋯ menu, or any row while selecting */
 .runs-item{position:relative;}
 .runs-item:not(.is-selecting) > .runs-row{padding-right:34px;}

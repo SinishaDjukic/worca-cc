@@ -65,3 +65,11 @@ test('chains() is empty without a server list, and reflects the loaded chains ot
     assert.equal(view.chains(), view.chains(), 'the same array until the next load()');
   } finally { view.destroy(); }
 });
+
+test('features() is empty without a server list, and reflects the loaded feature groups otherwise (#770)', async () => {
+  const bare = await mount();
+  try { assert.deepEqual(bare.features(), []); } finally { bare.destroy(); }
+  const features = [{ id: 'feat_1', members: [], pipelineIds: ['p1'], ticketIds: [], featureIds: ['feat_1'] }];
+  const view = await mount({ features });
+  try { assert.deepEqual(view.features(), features); } finally { view.destroy(); }
+});

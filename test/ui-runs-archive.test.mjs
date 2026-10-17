@@ -2,7 +2,7 @@
 // (ui/public/runs-archive.mjs, #739). Rows are built with the real runs-list.mjs row builders.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { histRow, liveRow, schedRow } from '../ui/public/runs-list.mjs';
+import { histRow, liveRow, schedRow, buildRunsModel } from '../ui/public/runs-list.mjs';
 import { archiveBlock, canArchive, archivePlan, archiveConfirm, missedLine, olderThan, archiveEach, archiveReport, rowMenuItems, nothingToArchive } from '../ui/public/runs-archive.mjs';
 
 const NOW = Date.parse('2026-10-17T12:00:00Z');
@@ -102,4 +102,52 @@ test('row menu items: finished 3, archived 2, live/paused/scheduled none; a reta
   const kept = rowMenuItems(hist('K', { retained: true }))[0];
   assert.equal(kept.disabled, true);
   assert.equal(kept.why, 'Recover or discard the retained work first');
+});
+
+// #770: a feature is archived as one
+const feat = (members, extra = {}) => ({ id: 'f:feat_9', title: 'Run presets', feature: { id: 'feat_9' }, href: '#feature/feat_9',
+  groupKey: 'proj-0000abcd', groupName: 'proj', hasActive: true, extraKeys: [], members: members.map((m) => ({ era: 'slice', ...m })), ...extra });
+const featureRowOf = (history, item) => buildRunsModel({ history, chains: [item], now: NOW }).groups.flatMap((g) => g.rows)[0];
+const doneSlices = [{ state: 'done', pipelineId: 'a', title: '1 · Store' }, { state: 'done', pipelineId: 'b', title: '2 · Save' }];
+const runsOf = (extra = {}) => [
+  { id: 'a', projectKey: 'proj-0000abcd', title: 'Run presets', status: 'done', startedAt: NOW - DAY, mtime: NOW - DAY, ...extra.a },
+  { id: 'b', projectKey: 'proj-0000abcd', title: 'Run presets · 2/2: Save', status: 'done', startedAt: NOW - DAY, mtime: NOW - DAY, ...extra.b },
+];
+
+test('#770: a finished feature row archives all its runs; the confirm names the feature and lists them', () => {
+  const row = featureRowOf(runsOf(), feat(doneSlices));
+  assert.equal(archiveBlock(row), '');
+  assert.deepEqual(rowMenuItems(row).map((i) => i.id), ['archive']);
+  const plan = archivePlan([row, hist('Lone')]);
+  assert.deepEqual(plan.eligible.map((r) => r.pipelineId), ['a', 'b', 'Lone']);
+  assert.deepEqual(plan.features.map((f) => [f.row.title, f.rows.length]), [['Run presets', 2]]);
+  const copy = archiveConfirm(plan);
+  assert.equal(copy.title, 'Archive 3 runs?');
+  assert.match(copy.message, /^Run presets, all 2 runs:\n· Run presets\n· Run presets · 2\/2: Save\n/);
+});
+
+test('#770: a feature with a live, paused or retained run is not archivable; a live one has no menu; an archived one restores', () => {
+  const going = featureRowOf(runsOf({ b: { status: 'running' } }), feat([doneSlices[0], { ...doneSlices[1], state: 'current' }]));
+  assert.equal(archiveBlock(going), 'live');
+  assert.deepEqual(rowMenuItems(going), []);
+  const kept = featureRowOf(runsOf({ b: { retained: true } }), feat(doneSlices));
+  assert.equal(archiveBlock(kept), 'retained');
+  assert.equal(rowMenuItems(kept)[0].disabled, true);
+  const arch = buildRunsModel({ history: runsOf({ a: { archived: true }, b: { archived: true } }), chains: [feat(doneSlices, { hasActive: false })],
+    filter: 'archived', now: NOW }).groups.flatMap((g) => g.rows)[0];
+  assert.deepEqual(rowMenuItems(arch).map((i) => i.id), ['restore']);
+  assert.equal(archiveBlock(arch), 'archived');
+});
+
+test('#770: the age rule takes a feature whole: all its runs old, or none of them', () => {
+  const rows = [hist('f1', { mtime: NOW - 40 * DAY }), hist('f2', { mtime: NOW - 5 * DAY }), hist('g1', { mtime: NOW - 40 * DAY }),
+    hist('g2', { mtime: NOW - 45 * DAY }), hist('h1', { mtime: NOW - 40 * DAY }), hist('solo', { mtime: NOW - 40 * DAY })];
+  const together = [{ ids: ['f1', 'f2'], open: false }, { ids: ['g1', 'g2'], open: false }, { ids: ['h1'], open: true }];
+  assert.deepEqual(olderThan(rows, 30, NOW, { together }).eligible.map((r) => r.title), ['g1', 'g2', 'solo']);
+  assert.deepEqual(olderThan(rows, 30, NOW).eligible.map((r) => r.title), ['f1', 'g1', 'g2', 'h1', 'solo'], 'without groups: unchanged');
+});
+
+test('#770: a live feature that is paused or asks keeps that reason (not "still running")', () => {
+  const parked = featureRowOf(runsOf({ b: { status: 'paused' } }), feat([doneSlices[0], { ...doneSlices[1], state: 'current', icon: 'paused' }]));
+  assert.equal(archiveBlock(parked), 'paused');
 });

@@ -1180,6 +1180,11 @@ export function recoverScheduler({ now = Date.now(), host = hostname(), pidAlive
 /** Drop ended tickets and ended schedules past the retention window. */
 export function purgeScheduler({ days = TICKET_RETENTION_DAYS, now = Date.now() } = {}) {
   const cutoff = iso(now - days * 86400000);
+  // #770: slices 2..N reach their run through their ticket (shape/features.mjs sliceRows): keep that link on the
+  // slice row before the ticket is deleted, so the feature page and the Runs list still find the run.
+  getDb().prepare(`UPDATE shape_feature_slices SET pipeline_id = (SELECT t.pipeline_id FROM scheduled_runs t WHERE t.id = shape_feature_slices.ticket_id)
+    WHERE pipeline_id IS NULL AND ticket_id IN (SELECT id FROM scheduled_runs
+      WHERE status IN ('fired', 'canceled', 'skipped', 'failed') AND updated_at < ? AND pipeline_id IS NOT NULL)`).run(cutoff);
   const old = getDb().prepare("SELECT id, schedule_id FROM scheduled_runs WHERE status IN ('fired', 'canceled', 'skipped', 'failed') AND updated_at < ?").all(cutoff);
   for (const r of old) { if (!r.schedule_id) removeStage(r.id); }
   const tickets = getDb().prepare("DELETE FROM scheduled_runs WHERE status IN ('fired', 'canceled', 'skipped', 'failed') AND updated_at < ?").run(cutoff).changes;

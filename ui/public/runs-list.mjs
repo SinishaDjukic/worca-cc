@@ -11,7 +11,10 @@
 //            pr (a glance input: glancePrInput's output), checks, files,
 //            archived, archivedAt (archived-feed rows only), tags, retained }
 //   sched: { id, scheduleId, title (may be null), status, after, queued, retryAt, runAt, groupKey, groupName, by }
-//   chain: { id, title, members[], total, index, fraction, tone, text, groupKey, groupName, open }
+//   chain: { id, title, members[], total, index, fraction, tone, text, groupKey, groupName, open (boolean, or undefined: no
+//            toggle yet), feature?, href?, extraKeys? (more 'p:'/'t:' keys it claims), hasActive? (a run still in Active) }
+//            member: { state, era? ('earlier' | 'slice' | 'replan'), pipelineId, ticketId, runId, title, href, prUrl?,
+//            prNumber?, prState?, archived?, icon?, asks? }
 import { glanceCopy } from './run-glance.mjs';
 import { renderRowLine } from './run-progress-bar.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
@@ -215,6 +218,29 @@ export function liveRow(it, now = Date.now()) {
   }, { at: it.startedAt }, now);
 }
 
+/** #770: a feature row with nothing running or waiting: "3 of 3 slices · in review". Merged once every done slice's PR
+ *  is merged, in review while one is open, stopped when a slice did not finish, else done. */
+export function featureSummary(slices) {
+  const list = Array.isArray(slices) ? slices.filter(Boolean) : [];
+  const done = list.filter((m) => m.state === 'done');
+  const all = list.length > 0 && done.length === list.length;
+  const prs = done.map((m) => String(m.prState || '').toUpperCase()).filter(Boolean);
+  const tail = !all ? 'stopped' : prs.length && prs.every((s) => s === 'MERGED') ? 'merged' : prs.includes('OPEN') ? 'in review' : 'done';
+  const count = `${done.length} of ${list.length} slice${list.length === 1 ? '' : 's'}`;
+  return { icon: all ? 'done' : 'stop', status: all ? 'done' : 'stopped', word: `${count} · ${tail}`, count };
+}
+/** #770: a run status (live or History) as a chain member state, with the list's own status sets: done, failed (an
+ *  error or a stop), else current (running, starting, parked, asking). */
+export function memberState(status) {
+  const s = String(status || '');
+  return DONE.has(s) ? 'done' : FAILED.has(s) || STOPPED.has(s) ? 'failed' : 'current';
+}
+/** A member's PR link text: "#759" (its number, or the one in a /pull/N URL), else "PR". */
+export function prLabel(m) {
+  const n = Number(m && m.prNumber) || Number((/\/pull(?:requests)?\/(\d+)/.exec(String((m && m.prUrl) || '')) || [])[1]);
+  return n ? `#${n}` : 'PR';
+}
+
 /** P8: a "Run after" chain as ONE row: the first run's title, "Run 2 of 3 · Build", one overall line. */
 export function chainRow(c, now = Date.now()) {
   const members = Array.isArray(c.members) ? c.members : [];
@@ -224,17 +250,27 @@ export function chainRow(c, now = Date.now()) {
   const icon = cur && cur.state === 'current' ? (cur.icon || 'run') : cur && cur.state === 'waiting' ? 'scheduled' : 'run';
   // D17: a chain that is a feature opens the feature page.
   const feature = c.feature && c.feature.id ? { id: String(c.feature.id) } : null;
+  // #770: a feature with nothing running or waiting is a finished row: its summary, no line, filed by its last activity.
+  const ended = !!feature && !members.some((m) => m.state === 'current' || m.state === 'waiting');
+  const sum = ended ? featureSummary(members.filter((m) => !m.era || m.era === 'slice')) : null;
   return {
     kind: 'chain', key: `chain:${c.id}`,
     href: feature ? String(c.href || `#feature/${encodeURIComponent(feature.id)}`) : (cur && cur.href) || '#runs',
     runId: (cur && cur.runId) || '', pipelineId: (cur && cur.pipelineId) || '', projectKey: '',
-    title: String(c.title || '(untitled)'), status: 'running', icon, word: String(c.text || ''), detail: '',
+    title: String(c.title || '(untitled)'), status: sum ? sum.status : 'running', icon: sum ? sum.icon : icon,
+    word: sum ? sum.word : String(c.text || ''), detail: '', count: sum ? sum.count : '',
     groupKey: String(c.groupKey || ''), groupName: String(c.groupName || ''), by: '',
-    unread: false, needs: false, time: '', sortMs: now, open: !!c.open,
-    progress: { fraction: c.fraction || 0, tone: c.tone || 'blue' },
+    unread: false, needs: false, time: '', sortMs: now, ended,
+    // null: nobody toggled it yet; buildRunsModel opens a live or needy feature (#770 clarify 2).
+    open: typeof c.open === 'boolean' ? c.open : null,
+    hasActive: !!c.hasActive,
+    progress: sum ? null : { fraction: c.fraction || 0, tone: c.tone || 'blue' },
     feature,
     members,
-    memberKeys: new Set(members.flatMap((m) => [m.pipelineId && `p:${m.pipelineId}`, m.ticketId && `t:${m.ticketId}`, m.runId && `r:${m.runId}`]).filter(Boolean)),
+    memberKeys: new Set([
+      ...members.flatMap((m) => [m.pipelineId && `p:${m.pipelineId}`, m.ticketId && `t:${m.ticketId}`, m.runId && `r:${m.runId}`]),
+      ...(Array.isArray(c.extraKeys) ? c.extraKeys : []),
+    ].filter(Boolean)),
   };
 }
 
@@ -311,7 +347,8 @@ export function normalizeRunsFilter(f) { return RUNS_FILTERS.includes(f) ? f : '
 export const RECENT_DAYS = 7;
 const SECTION_NAMES = Object.freeze({ needs: 'Needs you', running: 'Running', recent: 'Recent' });
 // A run ended: its icon says so. A History row that is paused, interrupted or still running has not.
-const isFinishedRow = (r) => (r.kind === 'hist' || r.kind === 'live') && ENDED_ICONS.has(r.icon);
+// #770: an ended feature row is finished too.
+const isFinishedRow = (r) => (r.kind === 'hist' || r.kind === 'live' || (r.kind === 'chain' && r.ended)) && ENDED_ICONS.has(r.icon);
 export function rowInFilter(row, filter) {
   if (filter === 'archived') return !!row.archived;
   if (filter === 'finished') return isFinishedRow(row);
@@ -356,7 +393,7 @@ export const DATE_BUCKETS = Object.freeze([
 ]);
 export function dateBucket(row, now = Date.now()) {
   if (row.kind === 'sched') return 'upcoming';
-  const t = row.kind === 'live' || row.kind === 'chain' ? now : row.activityMs;
+  const t = row.kind === 'live' || (row.kind === 'chain' && !row.ended) ? now : row.activityMs;
   if (!Number.isFinite(t)) return 'older';
   const day = new Date(now);
   day.setHours(0, 0, 0, 0);
@@ -367,8 +404,10 @@ export function dateBucket(row, now = Date.now()) {
   return t >= day.getTime() ? 'week' : 'older';
 }
 const KIND_RANK = Object.freeze({ live: 0, chain: 0, sched: 1, hist: 2 });
-const cmpDateRows = (a, b) => ((KIND_RANK[a.kind] ?? 3) - (KIND_RANK[b.kind] ?? 3))
-  || (a.kind === 'hist' ? (b.activityMs || 0) - (a.activityMs || 0) : 0);
+// #770: a finished feature row files with the History rows, by its last activity.
+const dateRank = (r) => (r.kind === 'chain' && r.ended ? KIND_RANK.hist : KIND_RANK[r.kind] ?? 3);
+const cmpDateRows = (a, b) => (dateRank(a) - dateRank(b))
+  || (dateRank(a) === KIND_RANK.hist ? (b.activityMs || 0) - (a.activityMs || 0) : 0);
 
 const NEEDS_RANK = Object.freeze({ ask: 0, paused: 1, fail: 2 });
 export const cmpNeeds = (a, b) => ((NEEDS_RANK[a.needsIcon || a.icon] ?? 3) - (NEEDS_RANK[b.needsIcon || b.icon] ?? 3)) || ((b.sortMs || 0) - (a.sortMs || 0));
@@ -392,7 +431,7 @@ function groupRows(rows, { mode, prefix, collapsed, searching, now }) {
     let g = groups.get(r.groupKey);
     if (!g) { g = { projectKey: r.groupKey, name: r.groupName || '(unknown project)', rows: [], live: false, latest: -Infinity }; groups.set(r.groupKey, g); }
     g.rows.push(r);
-    if (r.kind === 'live' || r.kind === 'chain') g.live = true;
+    if (r.kind === 'live' || (r.kind === 'chain' && !r.ended)) g.live = true;
     const t = Math.min(Number.isFinite(r.sortMs) ? r.sortMs : -Infinity, now);   // a future runAt counts as now
     if (t > g.latest) g.latest = t;
   }
@@ -425,28 +464,56 @@ export function buildRunsModel({
   const schedRows = scheduled
     .filter((t) => t && !liveIds.has(String(t.id)) && !(!t.scheduleId && t.resumePipelineId && runIds.has(String(t.resumePipelineId))))
     .map((t) => schedRow(t, now));
-  const all = [...liveRows, ...schedRows, ...histRows]
-    .filter((r) => (!person || r.by === person) && rowMatches(r, query) && rowInFilter(r, shown));
+  // Rows that pass the person and Show checks; the search narrows them below. Chains claim from this list (#770), so a
+  // feature's needs, its last activity and what Archive takes never depend on the query.
+  const visible = [...liveRows, ...schedRows, ...histRows]
+    .filter((r) => (!person || r.by === person) && rowInFilter(r, shown));
+  const all = visible.filter((r) => rowMatches(r, query));
+  const searching = !!String(query || '').trim();
   const chainRows = chains.map((c) => chainRow(c, now));
+  // The first chain that claims a row. app.js lists the feature rows first, so a feature wins over a plain chain.
+  const chainOf = (r) => chainRows.find((x) => rowChainKeys(r).some((k) => x.memberKeys.has(k))) || null;
+  const featureOf = (r) => { const c = chainOf(r); return c && c.feature ? c : null; };
+  const claims = new Map();
+  for (const r of visible) {
+    const c = chainOf(r);
+    if (!c) continue;
+    if (!claims.has(c.key)) claims.set(c.key, []);
+    claims.get(c.key).push(r);
+  }
   // D17: a feature row needs you exactly when a row it claims does (the same needsYou() rule as the member rows), so
   // nothing is dropped or invented. `needsIcon` (the needy member's icon) lets cmpNeeds order it like that row; the
   // row's own `icon` stays the current member's.
-  const featureOf = (r) => chainRows.find((c) => c.feature && rowChainKeys(r).some((k) => c.memberKeys.has(k))) || null;
-  for (const r of all) {
+  for (const r of visible) {
     const c = r.needs ? featureOf(r) : null;
     if (c && (!c.needs || (NEEDS_RANK[r.icon] ?? 3) < (NEEDS_RANK[c.needsIcon] ?? 3))) { c.needs = true; c.needsIcon = r.icon; }
   }
+  // A chain is listed when a row it claims matches, or its own title or a member's does (#770: a slice's title finds it).
+  const matches = (c) => !searching || (claims.get(c.key) || []).some((r) => rowMatches(r, query))
+    || rowMatches(c, query) || c.members.some((m) => rowMatches({ title: m.title }, query));
+  const at = (r) => (Number.isFinite(r.activityMs) ? r.activityMs : r.kind === 'live' ? now : -Infinity);
+  const shownRows = new Set(all);
   const placed = new Set();
   const placedRows = [];
-  for (const r of all) {
-    const c = chainRows.find((x) => rowChainKeys(r).some((k) => x.memberKeys.has(k)));
-    if (!c) { placedRows.push(r); continue; }
+  for (const r of visible) {
+    const c = chainOf(r);
+    if (!c) { if (shownRows.has(r)) placedRows.push(r); continue; }
     if (placed.has(c.key)) continue;
     placed.add(c.key);
-    // The chain sits where its first listed member sat (that row passed the person/search/filter checks).
-    placedRows.push({ ...c, groupKey: c.groupKey || r.groupKey, groupName: c.groupName || r.groupName, sortMs: r.sortMs });
+    // #770 clarify 3: a feature with a run still active stays in Active; Archived lists it once every run in it is.
+    if (shown === 'archived' && c.feature && c.hasActive) continue;
+    if (!matches(c)) continue;
+    const mine = claims.get(c.key);
+    const last = Math.max(...mine.map(at));
+    const activityMs = Number.isFinite(last) ? last : now;
+    // Clarify 2: a live or needy feature opens; a person's toggle wins, except that a search opens a matching feature.
+    const open = c.feature && searching ? true : c.open ?? (!!c.feature && (!c.ended || c.needs));
+    // The chain sits where its first claimed row sat (that row passed the person and Show checks).
+    placedRows.push({ ...c, groupKey: c.groupKey || r.groupKey, groupName: c.groupName || r.groupName,
+      sortMs: c.ended ? activityMs : r.sortMs, open, memberRows: mine,
+      ...(c.ended ? { activityMs, time: rowTime(activityMs, now) } : {}),
+      ...(shown === 'archived' && c.feature ? { archived: true, word: `Archived · ${c.count || featureSummary([]).count}` } : {}) });
   }
-  const searching = !!String(query || '').trim();
   const base = { searching, filter: shown, groupBy: byDate ? 'date' : 'project' };
   const multi = new Set(placedRows.map((r) => r.groupKey)).size > 1;
   const opts = (prefix) => ({ prefix, collapsed, searching, now });
@@ -536,25 +603,19 @@ function renderRow(doc, r, { inNeeds = false, bucket = '', project = '', lineFro
 
 /** A row with a ⋯ menu, or any row while selecting (#739): a wrapper holding the row's <a> and either
  *  the ⋯ button (a sibling, never inside the link) or a leading checkbox. Otherwise the bare row. */
-function renderItem(doc, r, opts, selecting) {
-  const a = renderRow(doc, r, opts);
-  if (!selecting && !rowMenuItems(r).length) return a;
-  const wrap = doc.createElement('div');
-  wrap.className = selecting ? 'runs-item is-selecting' : 'runs-item';
-  wrap.dataset.rowKey = r.key;
-  if (selecting) {
-    const why = archiveBlock(r);
-    const box = doc.createElement('input');
-    box.type = 'checkbox';
-    box.className = 'runs-row-check';
-    box.dataset.rowKey = r.key;
-    box.checked = selecting.has(r.key);
-    box.disabled = !!why;
-    box.setAttribute('aria-label', why ? `${r.title}: can't archive, ${SKIP_WORDS[why]}` : `Select ${r.title}`);
-    if (why) box.title = `Can't archive: ${SKIP_WORDS[why]}`;
-    wrap.append(box, a);
-    return wrap;
-  }
+function rowCheck(doc, r, selecting) {
+  const why = archiveBlock(r);
+  const box = doc.createElement('input');
+  box.type = 'checkbox';
+  box.className = 'runs-row-check';
+  box.dataset.rowKey = r.key;
+  box.checked = selecting.has(r.key);
+  box.disabled = !!why;
+  box.setAttribute('aria-label', why ? `${r.title}: can't archive, ${SKIP_WORDS[why]}` : `Select ${r.title}`);
+  if (why) box.title = `Can't archive: ${SKIP_WORDS[why]}`;
+  return box;
+}
+function rowMore(doc, r) {
   const more = doc.createElement('button');
   more.type = 'button';
   more.className = 'runs-row-more';
@@ -564,22 +625,38 @@ function renderItem(doc, r, opts, selecting) {
   more.setAttribute('aria-controls', 'runs-row-menu');
   more.setAttribute('aria-label', `More actions for ${r.title}`);
   more.textContent = '⋯';
-  wrap.append(a, more);
+  return more;
+}
+function renderItem(doc, r, opts, selecting) {
+  const a = renderRow(doc, r, opts);
+  if (!selecting && !rowMenuItems(r).length) return a;
+  const wrap = doc.createElement('div');
+  wrap.className = selecting ? 'runs-item is-selecting' : 'runs-item';
+  wrap.dataset.rowKey = r.key;
+  if (selecting) wrap.append(rowCheck(doc, r, selecting), a);
+  else wrap.append(a, rowMore(doc, r));
   return wrap;
 }
 
 const MEMBER_GLYPH = Object.freeze({ done: '✓', current: '●', waiting: '○', failed: '✕' });
-function renderChainRow(doc, r, opts) {
+function renderChainRow(doc, r, opts, selecting = null) {
   const wrap = doc.createElement('div');
   wrap.className = 'runs-chain';
   wrap.dataset.chainKey = r.key;
+  // #770: a feature row is archived (and restored) as one: a checkbox while selecting, else its ⋯ menu when it has one.
+  const check = selecting && r.feature ? rowCheck(doc, r, selecting) : null;
+  const more = !selecting && rowMenuItems(r).length ? rowMore(doc, r) : null;
+  if (check) wrap.classList.add('is-selecting');
+  if (more) wrap.classList.add('has-more');
   const toggle = doc.createElement('button');
   toggle.type = 'button';
   toggle.className = 'runs-chain-toggle';
   toggle.dataset.chainKey = r.key;
   toggle.setAttribute('aria-expanded', r.open ? 'true' : 'false');
   if (r.feature) toggle.dataset.feature = '1';
-  toggle.setAttribute('aria-label', `${r.open ? 'Hide' : 'Show'} the ${r.members.length} ${r.feature ? 'slices in this feature' : 'runs in this chain'}`);
+  // #770: a feature counts this plan's slices, not an earlier plan's.
+  const count = r.feature ? r.members.filter((m) => !m.era || m.era === 'slice').length : r.members.length;
+  toggle.setAttribute('aria-label', `${r.open ? 'Hide' : 'Show'} the ${count} ${r.feature ? 'slices in this feature' : 'runs in this chain'}`);
   toggle.appendChild(chevron(doc));
   const list = doc.createElement('ol');
   list.className = 'runs-chain-members';
@@ -596,7 +673,13 @@ function renderChainRow(doc, r, opts) {
       li.appendChild(link);
       list.appendChild(li);
     }
+    const replanned = r.members.some((m) => m.era === 'earlier');
+    let sep = false;
     for (const m of r.members) {
+      if (replanned && !sep && m.era === 'slice') {
+        sep = true;
+        list.appendChild(textEl(doc, 'li', 'runs-chain-sep', 'After the re-plan'));
+      }
       const li = doc.createElement('li');
       // D33: the current slice's dot: amber while it needs the person (a question waits, paused or not), blue and
       // pulsing while it works, grey while it is paused with nothing to answer.
@@ -614,16 +697,17 @@ function renderChainRow(doc, r, opts) {
       if (m.state === 'done' && m.prUrl) {
         const pr = doc.createElement('a');
         pr.className = 'runs-chain-pr';
-        pr.setAttribute('href', m.prUrl);           // https-only, enforced server-side (runChains)
+        pr.setAttribute('href', m.prUrl);           // https-only, enforced server-side (runChains) and in runsFeatureItem
         pr.target = '_blank';
         pr.rel = 'noopener noreferrer';
-        pr.textContent = 'PR';
+        pr.textContent = prLabel(m);
         li.appendChild(pr);
       }
+      if (m.archived) li.appendChild(textEl(doc, 'span', 'runs-chain-note', 'Archived'));
       list.appendChild(li);
     }
   }
-  wrap.append(renderRow(doc, r, opts), toggle, list);
+  wrap.append(...(check ? [check] : []), renderRow(doc, r, opts), toggle, ...(more ? [more] : []), list);
   return wrap;
 }
 
@@ -638,7 +722,7 @@ function renderGroup(doc, g, { searching, inNeeds, lineFrom, selecting }) {
   // No project header above the row: the project joins its subline (#724 D9).
   const rowEl = (r) => {
     const opts = { inNeeds, bucket: g.bucket || '', project: g.head && !g.bucket ? '' : r.groupName, lineFrom };
-    return r.kind === 'chain' ? renderChainRow(doc, r, opts) : renderItem(doc, r, opts, selecting);
+    return r.kind === 'chain' ? renderChainRow(doc, r, opts, selecting) : renderItem(doc, r, opts, selecting);
   };
   if (!g.head) return g.rows.map(rowEl);
   const sec = doc.createElement('section');

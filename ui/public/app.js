@@ -86,7 +86,7 @@ import { runProgress, chainProgress, progressWidth } from '../../src/shared/run-
 import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, DEFAULT_RUNS_VIEW, histRow, isRowSelected, needsYou, normalizeRunsView, renderRunsList, viewChip } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, DEFAULT_RUNS_VIEW, histRow, isRowSelected, memberState, needsYou, normalizeRunsView, renderRunsList, viewChip } from './runs-list.mjs';
 import { mountRunsViewMenu } from './runs-view-menu.mjs';
 import { archiveConfirm, archiveEach, archivePlan, archiveReport, nothingToArchive, olderThan, rowMenuItems } from './runs-archive.mjs';
 import { mountRunsRowMenu } from './runs-row-menu.mjs';
@@ -1561,6 +1561,7 @@ function handleServerMessage(msg) {
     SLICE_INFO.clear();
     refreshShapeFeatures(msg.id);
     chatHome?.refreshPlans();
+    if (inRunsView() && schedulesView.isLoaded()) queueRunsFeatureReload();   // #770: a slice's state or PR moved
     return;
   }
   if (msg.type === 'extension-pair-request') { void promptExtensionPair(msg.request); return; }
@@ -30160,6 +30161,19 @@ function runsLiveItem(r) {
     retained: !!(rec && (rec.retainedWork || hdCheckoutFor(rec))),
   };
 }
+/** A chain member's bits from this tab's run `r` (null when it has none): its line, glyph, Needs-you text and asks. */
+function chainMemberBits(r, state) {
+  const progress = r && state === 'current' && isGraphRun(r) ? runDecorFor(r).stageProgress : null;
+  // The row glyph follows runStatusMeta's order: parked first, then a question.
+  const icon = !r || state !== 'current' ? '' : ['paused', 'pausing', 'interrupted'].includes(r.status) ? 'paused'
+    : r.pendingQuestion != null ? 'ask' : 'run';
+  // The amber "Needs you" text only; the Needs-you list membership comes from the model. The one rule (#724).
+  const needs = !!r && state === 'current' && needsYou({ kind: 'live', status: r.status, ask: r.pendingQuestion != null,
+    pauseReason: r.pauseReason || '', resumeAt: r.status === 'paused' ? autoResumeAt(r.pipelineId) : null });
+  // D33: an open question, whether or not the run is also paused: the member's dot turns amber.
+  const asks = !!r && state === 'current' && r.pendingQuestion != null;
+  return { progress, icon, needs, asks };
+}
 /** P8: a server chain (schedulesView.chains()) as the list's chain item, members overlaid with this tab's live runs. */
 function runsChainItem(c, open) {
   // D17: a chain that is a feature shows the feature title and its slices ("1 · Run tags"), and opens the feature page.
@@ -30168,18 +30182,10 @@ function runsChainItem(c, open) {
   const members = c.members.map((m, i) => {
     const r = (m.pipelineId ? latestPipelineRun(m.pipelineId) : null) || (m.ticketId ? runs.get(m.ticketId) || null : null);
     const state = r ? (r.status === 'done' ? 'done' : RD_TERMINAL.includes(r.status) ? 'failed' : 'current') : m.state;
-    const progress = r && state === 'current' && isGraphRun(r) ? runDecorFor(r).stageProgress : null;
     const href = r ? `#running/${r.runId}`
       : m.pipelineId && m.historyKey ? `#history/${m.historyKey}/${m.pipelineId}`
       : m.ticketId ? '#schedules/once' : '#runs';
-    // The row glyph follows runStatusMeta's order: parked first, then a question.
-    const icon = !r || state !== 'current' ? '' : ['paused', 'pausing', 'interrupted'].includes(r.status) ? 'paused'
-      : r.pendingQuestion != null ? 'ask' : 'run';
-    // The amber "Needs you" text only; the Needs-you list membership comes from the model. The one rule (#724).
-    const needs = !!r && state === 'current' && needsYou({ kind: 'live', status: r.status, ask: r.pendingQuestion != null,
-      pauseReason: r.pauseReason || '', resumeAt: r.status === 'paused' ? autoResumeAt(r.pipelineId) : null });
-    // D33: an open question, whether or not the run is also paused: the member's dot turns amber.
-    const asks = !!r && state === 'current' && r.pendingQuestion != null;
+    const { progress, icon, needs, asks } = chainMemberBits(r, state);
     const slice = feat ? (feat.slices.find((s) => (m.ticketId && s.ticketId === m.ticketId) || (m.pipelineId && s.pipelineId === m.pipelineId)) || feat.slices[i]) : null;
     return { ...m, pipelineId: m.pipelineId || (r && r.pipelineId) || null, state, progress, icon, needs, asks, runId: r ? r.runId : '',
       title: slice ? `${slice.index} · ${slice.title}` : m.title,
@@ -30192,8 +30198,67 @@ function runsChainItem(c, open) {
     ...(feat ? { feature: { id: feat.id }, href: featHref } : {}),
     ...chainProgress(members, feat ? { noun: 'Slice' } : undefined) };
 }
+// #770: a slice's server state (featureView) as a member state, for a slice this tab has neither live nor in History.
+const SLICE_MEMBER_STATE = Object.freeze({ done: 'done', planned: 'waiting', stopped: 'failed', error: 'failed', failed: 'failed',
+  missed: 'failed', canceled: 'failed' });
+/** #770: what every feature item reads, built once per paint (not once per feature): active History by pipeline id,
+ *  and the pipeline ids the Running section lists. */
+function runsFeatureCtx() {
+  return { hist: new Map((state.historyAll || []).filter(Boolean).map((p) => [String(p.id), p])),
+    listed: new Set(overviewRuns().map((x) => String(x.pipelineId || '')).filter(Boolean)) };
+}
+/** #770: a server feature group (schedulesView.features()) as the list's chain item: the feature row in every state.
+ *  A member's state: this tab's live run, else its History row (after a restart), else the server's slice state. */
+function runsFeatureItem(f, { hist, listed } = runsFeatureCtx()) {
+  const key = `chain:f:${f.id}`;
+  const featHref = `#feature/${encodeURIComponent(f.id)}`;
+  const members = (f.members || []).map((s) => {
+    const r = (s.pipelineId ? latestPipelineRun(s.pipelineId) : null) || (s.ticketId ? runs.get(s.ticketId) || null : null);
+    const rec = s.pipelineId ? hist.get(s.pipelineId) || null : null;
+    const status = r ? r.status : rec ? rec.status : '';
+    // memberState (runs-list.mjs) knows every History word (complete, failed, aborted…), not just RD_TERMINAL's three.
+    const st = status ? memberState(status) : SLICE_MEMBER_STATE[s.state] || 'current';
+    const pr = s.pr && typeof s.pr.url === 'string' && /^https:\/\/\S+$/i.test(s.pr.url) ? s.pr : null;
+    const bits = chainMemberBits(r, st);
+    // After a restart a parked slice exists only in History: give it the paused glyph, so its dot is not the blue
+    // "running" one (rule runs-list-needs-before-collapse, "chain member dots").
+    if (!r && st === 'current' && rec && ['paused', 'pausing', 'interrupted'].includes(rec.status)) bits.icon = 'paused';
+    return { era: s.era || 'slice', state: st, ...bits,
+      pipelineId: s.pipelineId || (r && r.pipelineId) || null, ticketId: s.ticketId || null, runId: r ? r.runId : '',
+      title: s.era === 'replan' ? String(s.title || 'Re-plan the rest') : `${s.index} · ${s.title}`,
+      // D17: a started slice opens its run; one that has not started opens the feature page.
+      href: r ? `#running/${r.runId}` : s.pipelineId && s.historyKey ? `#history/${s.historyKey}/${s.pipelineId}` : featHref,
+      prUrl: pr ? pr.url : null, prNumber: pr ? pr.number : null, prState: pr ? pr.state : null,
+      archived: !!s.archived && !rec };
+  });
+  const first = (f.members || []).find((m) => m.pipelineId) || {};
+  const g = runsGroupFor({ pipelineId: first.pipelineId || '', projectKey: f.projectKey || '' });
+  // Clarify 3: the feature stays in Active while a slice runs or waits (a waiting slice has only a ticket), or while a
+  // run of it is in active History or the Running section. Not latestPipelineRun: the runs map keeps settled (and
+  // archived) runs until a restart. Members' resolved pipeline ids count too: a slice that fired since the last feed load.
+  const hasActive = members.some((m) => m.state === 'current' || m.state === 'waiting')
+    || [...(f.pipelineIds || []), ...members.map((m) => m.pipelineId).filter(Boolean)]
+      .some((pid) => hist.has(String(pid)) || listed.has(String(pid)));
+  return { id: `f:${f.id}`, title: f.title, members, groupKey: g.key, groupName: g.name,
+    open: runsUi.chainsToggled.has(key) ? runsUi.chainsToggled.get(key) : undefined,
+    feature: { id: f.id }, href: featHref, hasActive,
+    extraKeys: [...(f.pipelineIds || []).map((p) => `p:${p}`), ...(f.ticketIds || []).map((t) => `t:${t}`)],
+    ...chainProgress(members.filter((m) => m.era === 'slice'), { noun: 'Slice' }) };
+}
+/** #770: the list's chain items: the feature rows first (they win a run a plain chain also claims), then every chain
+ *  that is not one of those features (gate off, an older server, or a feature beyond the server's cap keep D17's path). */
+function runsChainItems() {
+  const groups = shapeFirstOn() ? schedulesView.features() : [];
+  const grouped = new Set(groups.flatMap((f) => f.featureIds || [f.id]));
+  const ctx = runsFeatureCtx();
+  return [
+    ...groups.map((f) => runsFeatureItem(f, ctx)),
+    ...schedulesView.chains().filter((c) => !(c.feature && grouped.has(c.feature.id))).map((c) => runsChainItem(c, chainOpen(c))),
+  ];
+}
 /** D17: a plain chain is collapsed by default (chainsOpen); a feature row is open by default and a person's toggle
- *  wins for the session (chainsToggled). */
+ *  wins for the session (chainsToggled). #770: a feature group's row (runsFeatureItem) is open by default only while
+ *  live or needy (buildRunsModel). */
 function chainOpen(c) {
   const key = `chain:${c.id}`;
   return c.feature && shapeFirstOn() ? (runsUi.chainsToggled.has(key) ? runsUi.chainsToggled.get(key) : true) : runsUi.chainsOpen.has(key);
@@ -30226,7 +30291,7 @@ function runsSchedItem(t) {
 // A member's icon and asks: the fields its dot reads, so a paused member that gains a question (icon stays 'paused')
 // repaints amber.
 const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base,
-  r.needs ? 1 : 0, r.hint, r.resumes ? 1 : 0, r.progress ? 1 : 0, r.retained ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.href, m.icon, !!m.asks])] : 0];
+  r.needs ? 1 : 0, r.hint, r.resumes ? 1 : 0, r.progress ? 1 : 0, r.retained ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.prNumber, m.href, m.icon, !!m.asks, m.era || '', !!m.archived])] : 0];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over (same slot first), then the
@@ -30257,7 +30322,7 @@ function paintRunsList() {
     live: liveItems,
     history: histItems,
     scheduled: schedulesView.upcoming(SCHEDULED_GROUP_WINDOW_MS).map(runsSchedItem),
-    chains: schedulesView.chains().map((c) => runsChainItem(c, chainOpen(c))),
+    chains: runsChainItems(),
     person: viewer.shared ? state.historyPerson : '',
     query: runsUi.query, filter: runsUi.filter, groupBy: runsUi.groupBy, collapsed: runsUi.collapsed, now: Date.now(),
   });
@@ -30331,7 +30396,11 @@ function runsAgePlan() {
   const now = Date.now();
   const person = viewer.shared ? state.historyPerson : '';
   const rows = (state.historyAll || []).filter(Boolean).map((p) => histRow(runsHistItem(p), now)).filter((r) => !person || r.by === person);
-  return olderThan(rows, runsUi.ageDays, now);
+  // #770: a feature is archived whole by the age rule too.
+  const ctx = runsFeatureCtx();
+  const together = (shapeFirstOn() ? schedulesView.features() : []).map((f) => ({
+    ids: f.pipelineIds || [], open: runsFeatureItem(f, ctx).members.some((m) => m.state === 'current' || m.state === 'waiting') }));
+  return olderThan(rows, runsUi.ageDays, now, { together });
 }
 function setRunsSelecting(on, { focus = false } = {}) {
   runsUi.selecting = !!on;
@@ -30411,6 +30480,28 @@ async function restoreRunRow(row) {
     notify({ tone: 'err', title: 'Could not restore the run', detail: `${rec.title || rec.id}: ${err.message}`, key: `restore-${rec.id}` });
   }
 }
+/** #770: restore every run of an archived feature row, one confirm; the failures are named in one toast. */
+async function restoreFeatureRow(row) {
+  const recs = (row.memberRows || []).map(runsRecordFor).filter(Boolean);
+  if (!recs.length) return;
+  const ok = await confirmModal({ title: `Restore ${recs.length === 1 ? 'this run' : `${recs.length} runs`}?`, confirmLabel: 'Restore',
+    message: `${row.title}\n${recs.map((r) => `· ${r.title || r.id}`).join('\n')}\n\nThey move back into Runs with their PR links, Q&A, review verdicts and audit timelines. The run artifacts (logs, results, diff), branches and worktrees were reclaimed by the archive and are not rebuilt.` });
+  if (!ok) return;
+  const failed = [];
+  for (const rec of recs) {
+    try {
+      const res = await fetch(`/api/runs/${encodeURIComponent(rec.id)}/restore?${runActionQuery(rec.projectDir || null, rec).toString()}`, { method: 'POST' });
+      const body = await safeJson(res);
+      if (!res.ok) throw new Error((body && body.error) || `HTTP ${res.status}`);
+      state.historyArchived = (state.historyArchived || []).filter((p) => !(p && p.id === rec.id && p.projectKey === rec.projectKey));
+    } catch (err) { failed.push(`${rec.title || rec.id}: ${err && err.message ? err.message : err}`); }
+  }
+  paintRunsList();
+  loadHistoryView({ force: true });
+  notify(failed.length
+    ? { tone: 'err', title: `Could not restore ${failed.length} of ${recs.length} runs`, detail: failed.join('\n'), key: 'runs-archive' }
+    : { tone: 'ok', title: recs.length === 1 ? 'Run restored' : `Restored ${recs.length} runs` });
+}
 async function openRowInNewRun(row) {
   const rec = runsRecordFor(row);
   if (!rec) return;
@@ -30431,7 +30522,7 @@ async function copyRunId(id) {
 function runsRowAction(action, row) {
   if (!row) return;                        // the row left the list while the menu was open
   if (action === 'archive') archiveRunRows([row]);
-  else if (action === 'restore') restoreRunRow(row);
+  else if (action === 'restore') { if (row.kind === 'chain') restoreFeatureRow(row); else restoreRunRow(row); }
   else if (action === 'new-run') openRowInNewRun(row);
   else if (action === 'copy-id') copyRunId(row.pipelineId);
 }
@@ -30445,6 +30536,16 @@ function paintRunsProgress(host, model) {
       line.firstElementChild.style.width = progressWidth(r.progress.fraction);
     }
   }
+}
+// #770: shape-feature frames come in bursts (one per slice event): reload the feature feed once per 400 ms.
+let runsFeatureReloadTimer = null;
+function queueRunsFeatureReload() {
+  if (runsFeatureReloadTimer) return;
+  runsFeatureReloadTimer = setTimeout(() => {
+    runsFeatureReloadTimer = null;
+    // withWorkspaces first, like every other load (app.js:27141): load() also paints the Schedules cards' target names.
+    void withWorkspaces().then(() => schedulesView.load()).then(() => { if (inRunsView()) paintRunsList(); }).catch(() => {});
+  }, 400);
 }
 // Frames arrive in bursts (one message fans out to several repaint hooks): paint once.
 let runsPaintQueued = false;

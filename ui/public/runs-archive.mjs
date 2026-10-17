@@ -25,14 +25,29 @@ export function archiveBlock(row) {
   if (row.icon === 'scheduled') return 'scheduled';
   if (row.icon === 'paused') return 'paused';
   if (row.icon === 'ask') return 'waiting';
+  // #770: a finished feature row is archived as one: the first reason one of its runs gives blocks it whole.
+  if (row.kind === 'chain') {
+    if (!row.feature || !row.ended) return 'live';
+    const runs = row.memberRows || [];
+    for (const m of runs) { const why = archiveBlock(m); if (why) return why; }
+    return runs.length ? '' : 'live';
+  }
   if ((row.kind !== 'hist' && row.kind !== 'live') || !ENDED.has(row.icon) || !row.pipelineId) return 'live';
   if (row.retained) return 'retained';
   return '';
 }
 export const canArchive = (row) => archiveBlock(row) === '';
 
-/** The row ⋯ menu: [] for a row without one (live, paused, scheduled, chain). */
+/** The row ⋯ menu: [] for a row without one (live, paused, scheduled, a plain or live chain). */
 export function rowMenuItems(row) {
+  // #770: a finished feature row: Archive (all its runs) or, archived, Restore. A live chain has no menu.
+  if (row && row.kind === 'chain') {
+    if (!row.feature || !row.ended) return [];
+    if (row.archived) return [{ id: 'restore', label: 'Restore' }];
+    const why = archiveBlock(row);
+    return [why ? { id: 'archive', label: 'Archive', disabled: true, why: why === 'retained' ? RETAINED_WHY : `Can't archive: ${SKIP_WORDS[why]}` }
+      : { id: 'archive', label: 'Archive' }];
+  }
   if (!row || (row.kind !== 'hist' && row.kind !== 'live') || !row.pipelineId) return [];
   if (row.archived) return [{ id: 'restore', label: 'Restore' }, { id: 'copy-id', label: 'Copy run id' }];
   if (!ENDED.has(row.icon)) return [];
@@ -45,19 +60,24 @@ export function rowMenuItems(row) {
   ];
 }
 
-/** Split rows (deduplicated by key, order kept) into the ones to archive and the ones skipped, with why. */
+/** Split rows (deduplicated by key, order kept) into the ones to archive and the ones skipped, with why. A feature row
+ *  (#770) adds its runs to `eligible` and itself to `features` ({ row, rows }) so the confirm can list them. */
 export function archivePlan(rows) {
   const eligible = [];
   const skipped = [];
+  const features = [];
   const seen = new Set();
   for (const r of rows || []) {
     if (!r || seen.has(r.key)) continue;
     seen.add(r.key);
     const why = archiveBlock(r);
-    if (why) skipped.push({ row: r, why });
-    else eligible.push(r);
+    if (why) { skipped.push({ row: r, why }); continue; }
+    if (r.kind !== 'chain') { eligible.push(r); continue; }
+    const runs = (r.memberRows || []).filter((m) => !seen.has(m.key) && !!seen.add(m.key));
+    eligible.push(...runs);
+    features.push({ row: r, rows: runs });
   }
-  return { eligible, skipped };
+  return { eligible, skipped, features };
 }
 
 const runsWord = (n) => `${n} run${n === 1 ? '' : 's'}`;
@@ -73,11 +93,12 @@ export function missedLine(waiting = []) {
 }
 
 /** The shared confirm's copy for a plan, or null when nothing is eligible (no dialog then). */
-export function archiveConfirm({ eligible = [], skipped = [] } = {}, { waiting = [] } = {}) {
+export function archiveConfirm({ eligible = [], skipped = [], features = [] } = {}, { waiting = [] } = {}) {
   const n = eligible.length;
   if (!n) return null;
   const lines = [];
-  if (n === 1) lines.push(eligible[0].title, '');
+  if (n === 1 && !features.length) lines.push(eligible[0].title, '');
+  for (const f of features) lines.push(`${f.row.title}, all ${runsWord(f.rows.length)}:`, ...f.rows.map((r) => `· ${r.title}`), '');
   lines.push('Removed: the local branch, the worktree and the run files (logs, results, diff).');
   lines.push(`Kept: the remote branch, any open PR and the cost in Statistics. You can restore ${n === 1 ? 'it' : 'them'} from Show › Archived.`);
   const missed = missedLine(waiting);
@@ -92,12 +113,20 @@ export function nothingToArchive({ skipped = [] } = {}) {
   return { tone: 'info', title: 'Nothing to archive', detail: skipped.length ? skippedLine(skipped) : '' };
 }
 
-/** The age rule: finished, not archived rows whose last activity is more than `days` days before `now`,
- *  as a plan; one with retained work lands in `skipped`, never in `eligible`. Unknown times are left out. */
-export function olderThan(rows, days, now = Date.now()) {
+/** The age rule: finished, not archived rows whose last activity is more than `days` days before `now`, as a plan; one
+ *  with retained work lands in `skipped`, never in `eligible`. Unknown times are left out. `together` (#770): run groups
+ *  ({ ids: pipelineIds, open }) taken whole: none of a group's rows unless every one listed is old and the group is not open. */
+export function olderThan(rows, days, now = Date.now(), { together = [] } = {}) {
   const cutoff = now - Number(days) * DAY_MS;
-  return archivePlan((rows || []).filter((r) => r && !r.archived && ENDED.has(r.icon)
-    && Number.isFinite(r.activityMs) && r.activityMs < cutoff));
+  const old = (r) => !r.archived && ENDED.has(r.icon) && Number.isFinite(r.activityMs) && r.activityMs < cutoff;
+  const list = (rows || []).filter(Boolean);
+  const held = new Set();
+  for (const g of together || []) {
+    const ids = new Set(g.ids || []);
+    const mates = list.filter((r) => ids.has(r.pipelineId));
+    if (g.open || mates.some((r) => !old(r))) for (const r of mates) held.add(r.key);
+  }
+  return archivePlan(list.filter((r) => old(r) && !held.has(r.key)));
 }
 
 /** Send one archive at a time (there is no bulk endpoint). `request(row)` resolves { ok, error }; a

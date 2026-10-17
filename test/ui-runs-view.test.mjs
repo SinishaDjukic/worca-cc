@@ -54,7 +54,7 @@ const live = (runId, extra = {}) => ({ runId, title: runId, projectDir: PROJECT,
   startedAt: '10:00:00', pendingQuestion: null, ...extra });
 
 // `setup(window)` runs before app.js loads: a stub its module-load wiring must see goes there.
-async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [{ name: 'proj', path: PROJECT, exists: true }], history = HIST, archived = [ARCH], chains = [], setup } = {}) {
+async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [{ name: 'proj', path: PROJECT, exists: true }], history = HIST, archived = [ARCH], chains = [], features = [], setup } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
   const { window } = dom;
   windows.push(window);
@@ -79,7 +79,7 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
     if (/\/api\/history\/[^/]+\/cccc0009$/.test(s)) return ok({ state: { title: 'Archived thing', status: 'done', steps: [], stepper: null, archivedAt: ARCH.archivedAt } });
     if (s.includes('/api/runs/cccc0009/restore')) return ok({ ok: true, id: 'cccc0009', restored: true, warnings: [] });
     if (s.includes('/api/workspaces')) return ok({ workspaces: [] });
-    if (s.endsWith('/api/schedules')) return ok({ schedules: [], tickets: [], counts: {}, chains });
+    if (s.endsWith('/api/schedules')) return ok({ schedules: [], tickets: [], counts: {}, chains, features });
     return ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [], pipelines: 0, projects: 0, workspaces: 0 });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
@@ -572,6 +572,33 @@ test('D17: a feature chain is one open row titled by the feature, members "1 · 
   const member1 = host.querySelectorAll('.runs-chain-member:not(.runs-chain-open-feature)')[0];
   assert.ok(member1.classList.contains('is-needs'), 'the asking slice is amber');
   assert.ok(!member1.classList.contains('is-live'), 'and does not pulse');
+});
+
+test('#770: a feature with every slice finished is ONE collapsed row in Recent, its slices and PRs inside, no loose slice rows', async () => {
+  const hist = [1, 2, 3].map((i) => ({ id: `pres000${i}`, projectKey: KEY, projectName: 'proj', projectDir: PROJECT, status: 'done',
+    title: i === 1 ? 'Implement Run Presets Feature' : `Implement Run Presets Feature · ${i}/3: Slice ${i}`,
+    startedAt: '2026-10-17T05:00:00Z', mtime: RECENT - (4 - i) * 60_000 }));
+  const pr = (n) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN', draft: false });
+  const features = [{ id: 'feat_9', title: 'Implement Run Presets Feature', projectKey: KEY, status: 'done', total: 3, done: 3,
+    featureIds: ['feat_9'], pipelineIds: hist.map((h) => h.id), ticketIds: ['tp2', 'tp3'],
+    members: [759, 761, 769].map((n, i) => ({ era: 'slice', index: i + 1, title: `Slice ${i + 1}`, state: 'done', pipelineId: hist[i].id,
+      ticketId: i ? `tp${i + 1}` : null, pr: pr(n), historyKey: KEY, archived: false })) }];
+  const { window, doc, recv } = await boot({ features, history: hist });
+  recv({ type: 'hello', flags: { shapeFirst: true }, runs: [] });
+  go(window, 'runs'); await settle(window);
+  const host = doc.getElementById('runs-list');
+  assert.equal(host.querySelectorAll('.runs-chain').length, 1);
+  assert.equal(host.querySelectorAll('.runs-row-hist').length, 0, 'no slice is listed on its own');
+  assert.ok(host.querySelector('[data-section="recent"] .runs-chain'), 'it sits in Recent');
+  assert.equal(host.querySelector('.runs-chain .runs-row-title').textContent, 'Implement Run Presets Feature');
+  assert.match(host.querySelector('.runs-chain .runs-row-sub').textContent, /^3 of 3 slices · in review/);
+  const tog = () => host.querySelector('.runs-chain-toggle');
+  assert.equal(tog().getAttribute('aria-expanded'), 'false', 'clarify 2: collapsed with nothing live');
+  assert.ok(host.querySelector('.runs-chain > .runs-row-more'), 'a ⋯ menu to archive it whole');
+  click(window, tog()); await settle(window);
+  assert.deepEqual([...host.querySelectorAll('.runs-chain-pr')].map((a) => a.textContent), ['#759', '#761', '#769']);
+  assert.deepEqual([...host.querySelectorAll('.runs-chain-link')].map((a) => a.getAttribute('href')),
+    ['#feature/feat_9', ...hist.map((h) => `#history/${KEY}/${h.id}`)]);
 });
 
 test('a state frame and a schedules-changed frame keep the chain toggle focused, and a repaint without a text change keeps the thin line element', async () => {

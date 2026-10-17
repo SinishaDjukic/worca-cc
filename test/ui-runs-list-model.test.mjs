@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 import {
   rowTime, liveRowState, histRowState, schedRowState, countNeedsYou,
   buildRunsModel, rowSub, rowMatches, isRowSelected, renderRunsList, rowInFilter, dateBucket, RUNS_FILTERS, DATE_BUCKETS, chainRow,
-  liveRow, histRow, normalizeRunsFilter, rowDot, viewChip, normalizeRunsView,
+  liveRow, histRow, normalizeRunsFilter, rowDot, viewChip, normalizeRunsView, featureSummary, memberState,
 } from '../ui/public/runs-list.mjs';
 
 const NOW = new Date(2026, 8, 30, 15, 0).getTime();           // Wed Sep 30 2026, 15:00 local
@@ -361,6 +361,142 @@ test('the feature row needs you exactly when a member row does (one rule): a pau
   assert.deepEqual(m.needs.map((r) => r.key), ['chain:c7']);
   const quiet = buildRunsModel({ live: [liveIt('r2', { pipelineId: 'p2' })], chains: [featureChainIt()], now: NOW });
   assert.deepEqual(quiet.needs, [], 'nobody needed: the feature row is not added');
+});
+
+// #770: a feature row in every state. The fixture mirrors what runsFeatureItem (app.js) produces.
+const PR = (n) => `https://github.com/o/r/pull/${n}`;
+const presets = (extra = {}) => ({
+  id: 'f:feat_9', title: 'Implement Run Presets Feature', feature: { id: 'feat_9' }, href: '#feature/feat_9',
+  groupKey: 'worca-00000002', groupName: 'worca-cc', total: 3, index: 3, fraction: 1, tone: 'green', text: 'Slice 3 of 3',
+  hasActive: true, extraKeys: [],
+  members: [
+    { era: 'slice', state: 'done', pipelineId: 'q1', ticketId: null, runId: '', title: '1 · Presets store', href: '#history/worca-00000002/q1', prUrl: PR(759), prNumber: 759, prState: 'OPEN' },
+    { era: 'slice', state: 'done', pipelineId: 'q2', ticketId: 't2', runId: '', title: "2 · Save a finished run's setup", href: '#history/worca-00000002/q2', prUrl: PR(761), prNumber: 761, prState: 'OPEN' },
+    { era: 'slice', state: 'done', pipelineId: 'q3', ticketId: 't3', runId: '', title: '3 · Presets in schedules', href: '#history/worca-00000002/q3', prUrl: PR(769), prNumber: 769, prState: 'OPEN' },
+  ], ...extra });
+const presetRuns = (extra = {}) => [
+  histIt('q1', { title: 'Implement Run Presets Feature', mtime: NOW - 5 * 3600_000, pr: null, ...extra.q1 }),
+  histIt('q2', { title: 'Implement Run Presets Feature · 2/3: Save a finished run\'s setup', mtime: NOW - 3 * 3600_000, pr: null, ...extra.q2 }),
+  histIt('q3', { title: 'Implement Run Presets Feature · 3/3: Presets in schedules', mtime: NOW - 2 * 3600_000, pr: null, ...extra.q3 }),
+];
+const dom = () => { const doc = new JSDOM('').window.document; const host = doc.createElement('div'); doc.body.appendChild(host); return { doc, host }; };
+
+test('#770: a feature with no live slice is ONE row in Recent, collapsed, "3 of 3 slices · in review", no loose slice rows (history only, as after a restart)', () => {
+  const m = buildRunsModel({ history: [...presetRuns(), histIt('other')], chains: [presets()], now: NOW });
+  assert.deepEqual(m.sections.map((s) => s.key), ['recent']);
+  const rows = m.groups.flatMap((g) => g.rows);
+  assert.deepEqual(rows.map((r) => r.key), ['chain:f:feat_9', 'hist:worca-00000002/other'], 'newest activity first, slices folded');
+  const f = rows[0];
+  assert.equal(f.ended, true);
+  assert.equal(f.icon, 'done');
+  assert.equal(f.word, '3 of 3 slices · in review');
+  assert.equal(f.open, false, 'clarify 2: collapsed with nothing live and nobody needed');
+  assert.equal(f.activityMs, NOW - 2 * 3600_000, 'its last activity is the newest slice\'s');
+  assert.equal(rowSub(f), '3 of 3 slices · in review · 13:00');
+  assert.equal(f.progress, null, 'no thin line once nothing runs');
+  assert.deepEqual(f.memberRows.map((r) => r.pipelineId), ['q1', 'q2', 'q3']);
+});
+
+test('#770: merged and stopped features read so', () => {
+  const merged = presets({ members: presets().members.map((x) => ({ ...x, prState: 'MERGED' })) });
+  assert.equal(chainRow(merged, NOW).word, '3 of 3 slices · merged');
+  const stopped = presets({ members: presets().members.map((x, i) => (i === 0 ? x : { ...x, state: 'failed', prUrl: null })) });
+  const r = chainRow(stopped, NOW);
+  assert.deepEqual([r.icon, r.word, r.status], ['stop', '1 of 3 slices · stopped', 'stopped']);
+  assert.deepEqual(featureSummary([]), { icon: 'stop', status: 'stopped', word: '0 of 0 slices · stopped', count: '0 of 0 slices' });
+  assert.equal(featureSummary([{ state: 'done' }]).word, '1 of 1 slice · done', 'no PR: done');
+});
+
+test('#770: memberState maps every History and live status word', () => {
+  for (const s of ['done', 'complete', 'completed']) assert.equal(memberState(s), 'done', s);
+  for (const s of ['error', 'failed', 'stopped', 'aborted']) assert.equal(memberState(s), 'failed', s);
+  for (const s of ['running', 'starting', 'paused', 'pausing', 'interrupted', '']) assert.equal(memberState(s), 'current', s);
+});
+
+test('#770: one slice that needs you puts the feature under Needs you, open, and nowhere else', () => {
+  const runs = presetRuns({ q2: { status: 'paused', pauseReason: 'cost_total' } });
+  const item = presets({ members: presets().members.map((x) => (x.pipelineId === 'q2' ? { ...x, state: 'current', icon: 'paused' } : x)),
+    text: 'Slice 2 of 3 · Needs you', tone: 'amber' });
+  const m = buildRunsModel({ history: runs, chains: [item], now: NOW });
+  assert.deepEqual(m.needs.map((r) => r.key), ['chain:f:feat_9']);
+  assert.deepEqual(m.sections.map((s) => s.key), ['needs']);
+  assert.equal(m.needs[0].open, true, 'a feature that needs you opens');
+});
+
+test('#770: after a server restart an interrupted slice (History only) puts the feature under Needs you', () => {
+  const runs = presetRuns({ q3: { status: 'interrupted' } });
+  const item = presets({ members: presets().members.map((x) => (x.pipelineId === 'q3' ? { ...x, state: 'current' } : x)) });
+  const m = buildRunsModel({ history: runs, chains: [item], now: NOW });
+  assert.deepEqual(m.needs.map((r) => r.key), ['chain:f:feat_9']);
+  assert.equal(m.groups.flatMap((g) => g.rows).some((r) => r.kind === 'hist'), false);
+});
+
+test('#770: a person\'s toggle wins outside a search; a search for a slice title finds the feature row, open', () => {
+  assert.equal(buildRunsModel({ history: presetRuns(), chains: [presets({ open: true })], now: NOW }).groups[0].rows[0].open, true);
+  const m = buildRunsModel({ history: [...presetRuns(), histIt('other')], chains: [presets({ open: false })], query: 'finished run', now: NOW });
+  assert.deepEqual(m.groups.flatMap((g) => g.rows).map((r) => r.key), ['chain:f:feat_9']);
+  assert.equal(m.groups[0].rows[0].open, true, 'a search opens the matching feature');
+  const byTitle = buildRunsModel({ history: presetRuns(), chains: [presets()], query: 'presets feature', now: NOW });
+  assert.equal(byTitle.total, 1);
+  // "store" is only in a member title (1 · Presets store): no run title, feature title, project or status word has it.
+  assert.deepEqual(buildRunsModel({ history: presetRuns(), chains: [presets()], query: 'presets store', now: NOW })
+    .groups.flatMap((g) => g.rows).map((r) => r.key), ['chain:f:feat_9'], 'a slice\'s own title finds the feature');
+  assert.equal(buildRunsModel({ history: presetRuns(), chains: [presets()], query: 'nothing like it', now: NOW }).total, 0);
+});
+
+test('#770: the planning run and an earlier plan\'s runs are claimed (extraKeys), never loose', () => {
+  const m = buildRunsModel({ history: [...presetRuns(), histIt('q0', { title: 'Implement Run Presets Feature · re-plan' })],
+    chains: [presets({ extraKeys: ['p:q0'] })], now: NOW });
+  assert.deepEqual(m.groups.flatMap((g) => g.rows).map((r) => r.key), ['chain:f:feat_9']);
+});
+
+test('#770: group by date files a finished feature under its last activity, with the History rows', () => {
+  const runs = presetRuns({ q1: { mtime: NOW - 30 * 3600_000 }, q2: { mtime: NOW - 29 * 3600_000 }, q3: { mtime: NOW - 28 * 3600_000 } });
+  const m = buildRunsModel({ history: [...runs, histIt('today', { mtime: NOW - 60_000 })], chains: [presets()], groupBy: 'date', now: NOW });
+  const recent = m.sections.find((s) => s.key === 'recent');
+  assert.deepEqual(recent.groups.map((g) => [g.bucket, g.rows.map((r) => r.key)]),
+    [['today', ['hist:worca-00000002/today']], ['yesterday', ['chain:f:feat_9']]]);
+});
+
+test('#770 clarify 3: Archived lists the feature once every run in it is archived, as one row', () => {
+  const arch = presetRuns().map((p) => ({ ...p, archived: true }));
+  const part = buildRunsModel({ history: arch.slice(0, 1), chains: [presets({ hasActive: true })], filter: 'archived', now: NOW });
+  assert.equal(part.total, 0, 'a run still active: the feature stays in Active, no loose archived slice');
+  const all = buildRunsModel({ history: arch, chains: [presets({ hasActive: false })], filter: 'archived', now: NOW });
+  const rows = all.groups.flatMap((g) => g.rows);
+  assert.deepEqual(rows.map((r) => r.key), ['chain:f:feat_9']);
+  assert.equal(rows[0].archived, true);
+  assert.equal(rows[0].word, 'Archived · 3 of 3 slices');
+});
+
+test('#770: the expander lists slices with PR numbers, an archived note and the re-plan divider', () => {
+  const { doc, host } = dom();
+  const item = presets({ open: true, members: [
+    { era: 'earlier', state: 'done', pipelineId: 'q0', title: '1 · Old plan', href: '#history/worca-00000002/q0', prUrl: PR(700), prNumber: 700, prState: 'MERGED', archived: true },
+    ...presets().members,
+  ], extraKeys: [] });
+  host.append(...renderRunsList(doc, buildRunsModel({ history: [...presetRuns(), histIt('q0')], chains: [item], now: NOW }), {}));
+  assert.deepEqual([...host.querySelectorAll('.runs-chain-pr')].map((a) => a.textContent), ['#700', '#759', '#761', '#769']);
+  assert.equal(host.querySelector('.runs-chain-sep').textContent, 'After the re-plan');
+  assert.equal(host.querySelector('.runs-chain-sep').nextElementSibling.textContent.includes('1 · Presets store'), true);
+  assert.equal(host.querySelectorAll('.runs-chain-note').length, 1);
+  assert.equal(host.querySelector('.runs-chain .runs-row-prog'), null);
+  assert.equal(host.querySelector('.runs-chain-toggle').getAttribute('aria-label'), 'Hide the 3 slices in this feature',
+    'the label counts this plan\'s slices, not the earlier ones');
+});
+
+test('#770: a finished feature row has a ⋯ menu, and an enabled checkbox while selecting', () => {
+  const { doc, host } = dom();
+  host.append(...renderRunsList(doc, buildRunsModel({ history: presetRuns(), chains: [presets()], now: NOW }), {}));
+  const more = host.querySelector('.runs-chain > .runs-row-more');
+  assert.ok(more, 'a finished feature row has a ⋯ menu');
+  assert.equal(more.dataset.rowKey, 'chain:f:feat_9');
+  assert.ok(host.querySelector('.runs-chain').classList.contains('has-more'));
+  host.replaceChildren(...renderRunsList(doc, buildRunsModel({ history: presetRuns(), chains: [presets()], now: NOW }), { selecting: new Set() }));
+  const box = host.querySelector('.runs-chain > .runs-row-check');
+  assert.equal(box.dataset.rowKey, 'chain:f:feat_9');
+  assert.equal(box.disabled, false);
+  assert.equal(host.querySelector('.runs-chain > .runs-row-more'), null, 'no ⋯ while selecting');
 });
 
 test('a non-feature chain is unchanged: its member stays under Needs you; its toggle names runs', () => {

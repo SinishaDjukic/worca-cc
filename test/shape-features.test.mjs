@@ -10,12 +10,12 @@ import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { writeReview, writeClarify } from '../src/core/artifacts.mjs';
-import { getTicket, runDueTickets, updateTicket } from '../src/core/scheduler.mjs';
+import { getTicket, runDueTickets, updateTicket, purgeScheduler } from '../src/core/scheduler.mjs';
 import {
   createSliceFeature, retireFeaturesOf, sliceRequest, sliceTitle, featureView, currentFeatureId, featureOfPipeline,
   earlierSliceChanges, cancelRest, resumeFeature, rechainWaiting, replanRest, setApproveEach, featureApprovesEach,
   stackedPrBase, recordShapePlan, listShapePlans, featuresOfTickets, featureClarify, chainFeature, sliceOfPipeline, slicePrPreamble,
-  recordShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
+  recordShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES, featureGroups,
 } from '../src/core/shape/features.mjs';
 
 useTempHome(after, 'worca-shape-features-');
@@ -656,4 +656,95 @@ test('featureShipInput: per slice its summary (capped at 600) and its checklist 
   assert.equal(input.slices[1].summary, 'Second. More text.');
   assert.match(input.slices[1].checklistMd, /product-1/);
   assert.ok(Object.hasOwn(input.slices[1], 'pr'));
+});
+
+test('featureGroups (#770): a feature with no live slice is one group with every slice, its PRs and history keys (history only, as after a restart)', () => {
+  const a = mk(3, { pipelineId: pipe('done') });
+  const [, r2, r3] = tickets(a.id);
+  const p2 = pipe('done');
+  const p3 = pipe('done');
+  setTicket(r2.ticket_id, 'fired', { pipelineId: p2 });
+  setTicket(r3.ticket_id, 'fired', { pipelineId: p3 });
+  getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?").run('https://github.com/o/r/pull/759', 759, a.pid);
+  const g = featureGroups().find((x) => x.id === a.id);   // no live overlay: what a restarted server reads
+  assert.ok(g, 'a feature with nothing live is still listed');
+  assert.equal(g.title, 'Charts');
+  assert.equal(g.status, 'done');
+  assert.deepEqual(g.featureIds, [a.id]);
+  assert.deepEqual(g.members.map((m) => [m.era, m.index, m.state, m.pipelineId]),
+    [['slice', 1, 'done', a.pid], ['slice', 2, 'done', p2], ['slice', 3, 'done', p3]]);
+  assert.deepEqual(g.members[0].pr, { url: 'https://github.com/o/r/pull/759', number: 759, state: 'OPEN', draft: false });
+  assert.equal(g.members[0].historyKey, PK());
+  assert.equal(g.members[0].archived, false);
+  assert.deepEqual(new Set(g.pipelineIds), new Set([a.pid, p2, p3]));
+  assert.ok(g.ticketIds.includes(r2.ticket_id) && g.ticketIds.includes(r3.ticket_id));
+});
+
+test('featureGroups: a stopped slice and an interrupted one read from the pipelines row; an archived run is flagged', () => {
+  const a = mk(2, { pipelineId: pipe('done') });
+  const p2 = pipe('interrupted');
+  setTicket(tickets(a.id)[1].ticket_id, 'fired', { pipelineId: p2 });
+  getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?').run(new Date().toISOString(), a.pid);
+  const g = featureGroups().find((x) => x.id === a.id);
+  assert.deepEqual(g.members.map((m) => m.state), ['done', 'paused']);
+  assert.deepEqual(g.members.map((m) => m.archived), [true, false]);
+});
+
+test('featureGroups: a re-planned feature is ONE group under the newest feature, with the earlier slices that ran', () => {
+  const a = mk(3, { pipelineId: pipe('done') });
+  const res = replanRest(a.id);
+  // Before the re-plan approves an outline: the old feature is still the head, its re-plan run listed last.
+  let g = featureGroups().find((x) => x.id === a.id);
+  assert.deepEqual(g.members.map((m) => [m.era, m.index]), [['slice', 1], ['slice', 2], ['slice', 3], ['replan', null]]);
+  assert.equal(g.members[3].title, 'Re-plan the rest');
+  assert.ok(g.ticketIds.includes(res.ticketId));
+  const rp = pipe('done');
+  setTicket(res.ticketId, 'fired', { pipelineId: rp });
+  const b = createSliceFeature({ pipelineId: rp, projectDir: root, title: 'Charts', outline: outlineOf(2), perspectives: [],
+    workflowId: 'wf_shape', replaces: a.id });
+  const groups = featureGroups();
+  assert.equal(groups.some((x) => x.id === a.id), false, 'the replaced feature is no group of its own');
+  g = groups.find((x) => x.id === b.id);
+  assert.deepEqual(g.featureIds, [a.id, b.id]);
+  // a's slices 2 and 3 never ran (the re-plan cancelled them): not listed. The re-plan run IS b's slice 1, listed once.
+  assert.deepEqual(g.members.map((m) => [m.era, m.index, m.pipelineId]), [['earlier', 1, a.pid], ['slice', 1, rp], ['slice', 2, null]]);
+  assert.ok(g.pipelineIds.includes(a.pid) && g.pipelineIds.includes(rp));
+});
+
+test('featureGroups: a crash re-offer on the same origin run lists the newest plan only (the shared slice 1 once, no earlier era)', () => {
+  const origin = pipe('done');
+  const a = mk(2, { pipelineId: origin });
+  const b = mk(2, { pipelineId: origin });          // F48: same origin; createSliceFeature marks a replaced by b
+  const g = featureGroups().find((x) => x.id === b.id);
+  assert.deepEqual(g.featureIds, [a.id, b.id]);
+  assert.deepEqual(g.members.map((m) => [m.era, m.index, m.pipelineId]), [['slice', 1, origin], ['slice', 2, null]]);
+});
+
+test('featureGroups: a non-https PR URL is dropped', () => {
+  const a = mk(1, { pipelineId: pipe('done') });
+  getDb().prepare("UPDATE pipelines SET pr_url = 'javascript:alert(1)', pr_number = 5 WHERE id = ?").run(a.pid);
+  assert.equal(featureGroups().find((x) => x.id === a.id).members[0].pr, null);
+});
+
+test('featureGroups: a restarted slice\'s stopped first attempt is claimed but not listed', () => {
+  const c = mk(2, { pipelineId: pipe('done') });
+  const first = pipe('stopped');
+  setTicket(tickets(c.id)[1].ticket_id, 'fired', { pipelineId: first });
+  assert.equal(resumeFeature(c.id).action, 'restart');
+  const g = featureGroups().find((x) => x.id === c.id);
+  assert.ok(g.pipelineIds.includes(first), 'its run is claimed, so it is never a loose row');
+  assert.equal(g.members.some((m) => m.pipelineId === first), false, 'the slice shows its latest attempt');
+});
+
+test('purgeScheduler (#770): a fired slice ticket\'s pipeline is copied onto its slice row before the ticket goes', () => {
+  const a = mk(2, { pipelineId: pipe('done') });
+  const t2 = tickets(a.id)[1].ticket_id;
+  const p2 = pipe('done');
+  setTicket(t2, 'fired', { pipelineId: p2 });
+  getDb().prepare('UPDATE scheduled_runs SET updated_at = ? WHERE id = ?').run('2020-01-01T00:00:00.000Z', t2);
+  assert.ok(purgeScheduler({ now: Date.now() }).tickets >= 1);
+  assert.ok(!getTicket(t2), 'the ticket is gone');
+  assert.equal(tickets(a.id)[1].pipeline_id, p2, 'the slice row keeps its run');
+  assert.equal(featureView(a.id).slices[1].pipelineId, p2);
+  assert.ok(featureGroups().find((g) => g.id === a.id).pipelineIds.includes(p2));
 });

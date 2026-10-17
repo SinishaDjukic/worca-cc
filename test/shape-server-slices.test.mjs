@@ -140,6 +140,22 @@ test('GET /api/schedules: a chain whose first run is a slice carries its feature
   });
 });
 
+test('GET /api/schedules (#770): a finished feature is in `features` with every slice; with the gate off the list is empty', async () => {
+  const { id, pid } = mk(2, 'done');
+  const p2 = pipe('done');
+  const t2 = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = 2').get(id).ticket_id;
+  getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?").run(p2, t2);
+  const features = async () => (await (await get('/api/schedules')).json()).features;
+  await withGate(true, async () => {
+    const g = (await features()).find((x) => x.id === id);
+    assert.ok(g, 'listed with nothing live');
+    assert.deepEqual(g.members.map((m) => [m.index, m.state, m.pipelineId]), [[1, 'done', pid], [2, 'done', p2]]);
+    const chains = (await (await get('/api/schedules')).json()).chains;
+    assert.equal(chains.some((c) => c.members.some((m) => m.pipelineId === pid)), false, 'runChains still drops it: the feed is what groups it');
+  });
+  await withGate(false, async () => assert.deepEqual(await features(), []));
+});
+
 test('GET /api/shape/pipelines/:pid/slice: the slice\'s place in its feature; 404 for a plain run; the gate refuses when off', async () => {
   const f = mk(3, 'done');
   const p2 = pipe('running');
