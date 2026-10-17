@@ -237,7 +237,7 @@ test('New run: an ink pill in the bar\'s right slot, shown at every level, never
   assert.equal(btn.querySelector('.topnav-new-label').textContent, 'New run');
   assert.equal(btn.querySelector('svg path').getAttribute('d'), 'M6 4.5v15a1 1 0 0 0 1.5.9l12-7.5a1 1 0 0 0 0-1.8l-12-7.5A1 1 0 0 0 6 4.5Z', 'the play icon');
   const pill = ruleBody('.topnav-new');
-  for (const d of ['height:32px;', 'border-radius:999px;', 'background:var(--ink);', 'color:var(--on-ink);']) assert.ok(pill.includes(d), `.topnav-new has ${d}`);
+  for (const d of ['height:32px;', 'border-radius:var(--r-sm);', 'background:var(--ink);', 'color:var(--on-ink);']) assert.ok(pill.includes(d), `.topnav-new has ${d}`);
   assert.match(ruleBody('.topnav-new:focus-visible'), /outline:2px solid var\(--ink\);/);
 });
 

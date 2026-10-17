@@ -436,7 +436,7 @@ test('the look: a 34px pill, the open ring from the search tokens, a listbox as 
   assert.match(css, /--search-ring:light-dark\(rgba\(221,107,77,\.24\),rgba\(240,154,124,\.26\)\);/);
   const field = ruleBody('.tsearch-field');
   assert.match(field, /height:34px;/);
-  assert.match(field, /border-radius:999px;/);
+  assert.match(field, /border-radius:var\(--r-sm\);/);
   assert.match(field, /box-shadow:0 0 0 1px var\(--line\);/);
   assert.match(ruleBody('.tsearch.is-open .tsearch-field'), /box-shadow:0 0 0 1px var\(--search-line\),0 0 0 4px var\(--search-ring\);/);
   assert.equal(ruleBody('.tsearch-open,.tsearch-close'), 'display:none;', 'desktop: no phone buttons');
@@ -444,7 +444,7 @@ test('the look: a 34px pill, the open ring from the search tokens, a listbox as 
   const pop = ruleBody('.tsearch-pop');
   assert.match(pop, /position:absolute;z-index:30;top:calc\(100% \+ 8px\);/);
   assert.match(pop, /width:100%;min-width:360px;/);
-  assert.match(pop, /border-radius:var\(--r-card\);/);
+  assert.match(pop, /border-radius:var\(--r-md\);/);
   assert.match(pop, /var\(--shadow-pop\);/);
   assert.equal(ruleBody('.tsearch-pop[hidden]'), 'display:none;');
   assert.match(ruleBody('.tsearch-opt'), /min-height:34px;/);

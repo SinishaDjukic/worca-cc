@@ -42,11 +42,11 @@ test('Activity sits in the bar\'s right slot before New run: an outlined pill wi
   assert.deepEqual([pop.className, pop.getAttribute('role'), pop.getAttribute('aria-label'), pop.hidden, pop.children.length],
     ['activity-pop', 'dialog', 'Activity', true, 0]);
   const pill = ruleBody('.topnav-act');
-  for (const d of ['height:32px;', 'border-radius:999px;', 'background:var(--panel);', 'box-shadow:inset 0 0 0 1px var(--line-2);']) assert.ok(pill.includes(d), `.topnav-act has ${d}`);
+  for (const d of ['height:32px;', 'border-radius:var(--r-sm);', 'background:var(--panel);', 'box-shadow:inset 0 0 0 1px var(--line-2);']) assert.ok(pill.includes(d), `.topnav-act has ${d}`);
   assert.match(ruleBody('.topnav-act[aria-expanded="true"]'), /box-shadow:inset 0 0 0 1\.5px var\(--ink\);/);
   assert.match(ruleBody('.topnav-badge[data-tone="need"]'), /background:var\(--amber-bg\);color:var\(--amber-ink-strong\);/, 'the Runs badge\'s amber');
   assert.match(ruleBody('.topnav-badge[data-tone="run"]'), /background:var\(--blue-bg\);color:var\(--blue-ink-strong\);/);
-  for (const d of ['position:fixed;', 'z-index:43;', 'width:440px;', 'max-height:min(560px,calc(100vh - 72px));', 'border-radius:var(--r-card);', 'box-shadow:var(--shadow-pop);']) {
+  for (const d of ['position:fixed;', 'z-index:43;', 'width:440px;', 'max-height:min(560px,calc(100vh - 72px));', 'border-radius:var(--r-md);', 'box-shadow:var(--shadow-pop);']) {
     assert.ok(ruleBody('.activity-pop').includes(d), `.activity-pop has ${d}`);
   }
   assert.equal(ruleBody('.activity-row button'), null, 'rows carry no actions');

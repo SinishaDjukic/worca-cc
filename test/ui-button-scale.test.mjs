@@ -11,17 +11,17 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const rule = (sel) => (new RegExp(`(?:^|\\})\\s*${esc(sel)}\\{([^}]*)\\}`, 'm').exec(bare) || [])[1] ?? null;
 const B = ':is(.btn,.btn-ghost,.btn-go,.rd-cta)';
 
-test('tokens: sm 28, md 34, lg 42, one 8px radius, 14px icons', () => {
-  assert.match(css, /:root\{--btn-h-sm:28px;--btn-h-md:34px;--btn-h-lg:42px;--btn-r:8px;--btn-ic:14px;--tab-h:32px;\}/);
+test('tokens: sm 28, md 34, lg 42, one 6px radius, 14px icons', () => {
+  assert.match(css, /:root\{--btn-h-sm:28px;--btn-h-md:34px;--btn-h-lg:42px;--btn-ic:14px;--tab-h:32px;\}/);
 });
 
-test('.btn: md by default, min-height (not height), 1px --line-2 border, 8px radius, weight 500, 6px gap', () => {
+test('.btn: md by default, min-height (not height), 1px --line-2 border, 6px radius, weight 500, 6px gap', () => {
   const b = rule(B);
   assert.match(b, /--btn-h:var\(--btn-h-md\)/);
   assert.match(b, /min-height:var\(--btn-h\)/);
   assert.doesNotMatch(b, /(^|;)height:/);
   assert.match(b, /border:1px solid var\(--line-2\)/);
-  assert.match(b, /border-radius:var\(--btn-r\)/);
+  assert.match(b, /border-radius:var\(--r-sm\)/);
   assert.match(b, /font-weight:500/);
   assert.match(b, /gap:6px/);
   assert.match(rule(':is(.btn-primary,.btn-go,.rd-cta)'), /font-weight:600/);
@@ -121,12 +121,12 @@ test('tabs: run, saved-run, project and Settings tabs share --tab-h', () => {
   assert.doesNotMatch(bare, /\.crp :is\(\.rd-tab,\.hd-tab\)\{padding:6px/);
 });
 
-test('the run bar has no forced 36px heights; the opener and ⋯ are sized by .btn-icon; the splits use --btn-r', () => {
+test('the run bar has no forced 36px heights; the opener and ⋯ are sized by .btn-icon; the splits use --r-sm', () => {
   assert.doesNotMatch(bare, /\.rd-bar \.rd-pause,[^{]*\{height:36px/);
   assert.doesNotMatch(rule('.term-opener') || '', /height:36px/);
   assert.doesNotMatch(rule('.rd-bar-more') || '', /height:36px/);
   assert.doesNotMatch(bare, /\.rd-resume-more\{[^}]*height:36px/);
-  assert.match(rule('.btn-split > .btn-go:first-child'), /border-radius:var\(--btn-r\) 0 0 var\(--btn-r\)/);
+  assert.match(rule('.btn-split > .btn-go:first-child'), /border-radius:var\(--r-sm\) 0 0 var\(--r-sm\)/);
   assert.doesNotMatch(rule('.hd-after') || '', /padding/);
   assert.equal(rule('.hd-after,.rd-after'), null);
   assert.equal(rule('.hd-after:hover,.rd-after:hover'), null);
