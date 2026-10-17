@@ -640,7 +640,9 @@ test('a plain live run with a staged manifest paints the thin line and the P5 st
   go(window, 'runs'); await settle(window);
   const row = doc.querySelector('#runs-list .runs-row[data-run-id="r1"]');
   assert.ok(row.querySelector('.runs-row-prog > i'), 'the thin line');
-  assert.match(row.querySelector('.runs-row-sub').textContent, /Build · Implementer/);
+  const sub = row.querySelector('.runs-row-sub').textContent;
+  assert.match(sub, /Build/, 'the stage');
+  assert.doesNotMatch(sub, /Implementer/, 'the step is the run page detail, not the list row (#778)');
 });
 
 test('a ticket-born live chain member (server pipelineId null) shows its tone in the chain row, and a question turns it amber', async () => {
