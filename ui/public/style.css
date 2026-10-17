@@ -8738,6 +8738,17 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .ask-prcard-links{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;}
 .ask-prcard-link{color:var(--blue-ink-strong);}
 .ask-prcard-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px;}
+/* Watch PR in the chat: the pull-request card's read-only watch line, and a PR fix-run card's trigger and outcome line. */
+.ask-prcard-watch{font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}
+.ask-prcard-watch[hidden]{display:none;}
+.ask-prcard-watch.is-run{color:var(--amber-ink);}
+.ask-prcard-watch.is-bad{color:var(--red-ink);}
+.chat-rc-fix{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;margin-top:6px;font-size:12px;color:var(--ink-2);min-width:0;}
+.chat-rc-fix[hidden]{display:none;}
+.chat-rc-fix-pr{color:var(--blue-ink-strong);}
+.chat-rc-fix-pr:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px;}
+.chat-rc-fix-out.is-ok{color:var(--green-ink);}
+.chat-rc-fix-out.is-bad{color:var(--red-ink);}
 
 /* ===== Chat P3: run card ===== */
 /* The chat run card (ui/public/chat/run-card.mjs). It keeps the Ask progress card's look (.ask-rc-* above) and adds

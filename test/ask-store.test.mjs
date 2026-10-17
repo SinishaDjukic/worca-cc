@@ -14,6 +14,7 @@ import {
   createThread, getThread, listThreads, updateThread, setThreadTitle, addThreadTotals, addThreadContexts, deleteThread, sweepEmptyThreads,
   countThreads, listThreadIds, countWorktrees, countAttachments,
   appendMessage, getMessage, listMessages, finishMessage, setMessageBlocks, findCard, updateCardBlock, sweepStreamingMessages,
+  findPullRequestCards, findFixRunCards,
   addAttachment, listAttachments, getAttachment, readAttachmentText, readAttachmentRaw,
   attachmentPath,
   linkRun, updateRunLink, listRunLinks,
@@ -629,4 +630,42 @@ test('agentMode (#574): on by default; a patch stores false and true (0/1, never
   assert.equal(getDb().prepare('SELECT agent_mode FROM ask_threads WHERE id = ?').get(t.id).agent_mode, 0);
   assert.equal(updateThread(t.id, { agentMode: true }).agentMode, true);
   assert.equal(updateThread(t.id, { title: 'x' }).agentMode, true, 'other patches leave it alone');
+});
+
+test('findPullRequestCards: an applied card by its url or a workspace member url — never another state, never another PR', () => {
+  const PR1 = 'https://github.com/o/r/pull/1';
+  const card = (state, result, over = {}) => ({ kind: 'card', id: newAskId('card'), state,
+    card: { type: 'pull-request', pipelineId: 'aaaa1111', projectKey: 'shop-00000001', title: 'T', branch: 'feat/x', ...over, ...(result ? { result } : {}) } });
+  const a = createThread(); const b = createThread(); const c = createThread(); const d = createThread();
+  const one = card('applied', { url: PR1, draft: false, existed: false });
+  appendMessage(a.id, { role: 'assistant', text: '', blocks: [one], status: 'done' });
+  const ws = card('applied', { url: 'https://github.com/o/api/pull/5', draft: false, existed: false, members: [
+    { url: 'https://github.com/o/api/pull/5', draft: false, existed: false, memberKey: 'api-11111111' },
+    { url: 'https://github.com/o/web/pull/6', draft: false, existed: false, memberKey: 'web-22222222' }] },
+    { projectKey: 'workspaces/wk1', workspaceId: 'wk1', pipelineId: 'bbbb2222' });
+  appendMessage(b.id, { role: 'assistant', text: '', blocks: [ws], status: 'done' });
+  appendMessage(c.id, { role: 'assistant', text: '', blocks: [card('failed', { url: PR1, error: 'x' })], status: 'done' });   // not applied
+  appendMessage(d.id, { role: 'assistant', text: '', blocks: [card('applied', { url: `${PR1}0`, draft: false, existed: false })], status: 'done' }); // …/pull/10
+
+  assert.deepEqual(findPullRequestCards(PR1),
+    [{ threadId: a.id, cardId: one.id, pipelineId: 'aaaa1111', projectKey: 'shop-00000001', workspaceId: null, memberKey: null }]);
+  assert.deepEqual(findPullRequestCards('https://github.com/o/web/pull/6'),
+    [{ threadId: b.id, cardId: ws.id, pipelineId: 'bbbb2222', projectKey: 'workspaces/wk1', workspaceId: 'wk1', memberKey: 'web-22222222' }]);
+  assert.deepEqual(findPullRequestCards('https://github.com/o/r/pull/99'), []);
+  assert.deepEqual(findPullRequestCards(''), []);
+});
+
+test('findFixRunCards / updateCardBlock: a PR fix-run card is found by its run id and takes a `card` sub-patch; a plain track_run card does not', () => {
+  const t = createThread();
+  const fix = { kind: 'card', id: 'card_0000f001', state: 'tracked', card: { type: 'progress', pipelineId: null, runId: 'run-uuid-9', projectKey: 'p', workspaceId: null,
+    title: 'Fix PR #1 feedback', label: 'p', status: 'starting', fix: { prUrl: 'https://github.com/o/r/pull/1', memberKey: null, trigger: ['checks'], triggerLabel: 'Failing checks', once: false } } };
+  const plain = { kind: 'card', id: 'card_0000f002', state: 'tracked', card: { type: 'progress', pipelineId: 'abcd1234', runId: 'run-uuid-9', projectKey: 'p', workspaceId: null, title: 'x', label: 'p', status: 'done' } };
+  appendMessage(t.id, { role: 'system', text: 'PR watch started a fix run', blocks: [fix] });
+  appendMessage(t.id, { role: 'assistant', text: '', blocks: [plain], status: 'done' });
+  assert.deepEqual(findFixRunCards('run-uuid-9').map((x) => [x.threadId, x.block.id]), [[t.id, 'card_0000f001']]);
+  assert.deepEqual(findFixRunCards('run-uuid-0'), []);
+  const outcome = { kind: 'pushed', sha: 'abc1234', stopped: null, fixRuns: 1 };
+  const b = updateCardBlock(t.id, 'card_0000f001', { card: { pipelineId: 'fix00001', fix: { ...fix.card.fix, outcome } } });
+  assert.deepEqual([b.card.pipelineId, b.card.fix.outcome, b.card.runId, b.state], ['fix00001', outcome, 'run-uuid-9', 'tracked']);
+  assert.equal(updateCardBlock(t.id, 'card_0000f002', { card: { pipelineId: 'zzzz0000' } }).card.pipelineId, 'abcd1234', 'track_run cards stay immutable');
 });
