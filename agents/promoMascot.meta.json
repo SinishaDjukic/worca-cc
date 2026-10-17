@@ -1,0 +1,56 @@
+{
+  "key": "promoMascot",
+  "metaVersion": 2,
+  "mockRole": "generic-producer",
+  "promptHints": "Skip with a one-line report when mascots are off. Otherwise re-skin the kit base rig (promo-kit/film/mascot.js) into promo/film/mascot.js: from the attached image, or designed for the product; no arms or hands, props on the nose tip; check it on a contact sheet. Pipeline directory: {pipelineDir}",
+  "inputs": [
+    {
+      "id": "answers",
+      "type": "json",
+      "as": "answers"
+    },
+    {
+      "id": "storyboard",
+      "type": "md"
+    },
+    {
+      "id": "product",
+      "type": "md",
+      "required": false
+    },
+    {
+      "id": "timeline",
+      "type": "json",
+      "required": false,
+      "as": "file"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "mascot",
+      "type": "md",
+      "filename": "promo-mascot.md",
+      "artifactKind": "promo-mascot",
+      "extraFiles": [
+        {
+          "kind": "promo-sheet",
+          "glob": "promo/mascot-sheet.jpg"
+        }
+      ]
+    }
+  ],
+  "domain": "video",
+  "displayName": "Promo: mascot",
+  "description": "Gives the film its mascot crew: drawn from your attached image, or designed to match the product. Armless clay creatures that carry props on their nose, scaled to how much mascot you asked for. Skips itself when mascots are off.",
+  "color": "peach",
+  "icon": "<circle cx=\"11\" cy=\"13.5\" r=\"5.5\"/><path d=\"M9 8.5L7.5 4.5M12.5 8.3l1.2-4M16.2 14.5h3.8M9 19v2M13 19v2\" stroke-linecap=\"round\"/><circle cx=\"13\" cy=\"12.5\" r=\"0.9\" fill=\"currentColor\" stroke=\"none\"/>",
+  "agentFile": "worca-cc-promo-mascot.md",
+  "requiresAssets": [
+    "promo-kit"
+  ],
+  "runnerType": "producer",
+  "asksQuestions": false,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 75
+}
