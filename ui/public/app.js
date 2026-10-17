@@ -1867,6 +1867,7 @@ function onHello(msg) {
       workspaceId: r0.workspaceId || undefined,
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
       night: r0.night || undefined,
+      networkWait: r0.networkWait || null,
       tags: Array.isArray(r0.tags) ? r0.tags : undefined,
       shaping: r0.shaping || null,
     });
@@ -2016,7 +2017,7 @@ function makeRun({
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
   pauseDetail = null, limitEngine = null, limitResetAt = null, runEngine = undefined, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [],
-  shaping = null,
+  shaping = null, networkWait = null,
 }) {
   return {
     runId,
@@ -2039,6 +2040,7 @@ function makeRun({
     workspaceId,
     workspaceName,
     night,                // Away mode on this run: {optIn, override, decisions, flagged, openedAt} (hello / state)
+    networkWait,          // waiting for the network: {node, host, since, until} or null
     tags,                 // run tags (#718): normalised 'key:value' / 'key' strings (hello / run-created)
     shaping,              // Shape it first: {perspectives, rounds, approved, savedTo} on a shaping run (hello / state), or null
     // Stable ordering key: assigned once per runId, never bumped by activity
@@ -2580,6 +2582,8 @@ function onState(r, msg) {
   if (msg.setupStage !== undefined) r.setupStage = msg.setupStage;
   // Night mode switches + counters (run-harness _nightSnapshot): the run-view switch paints from them.
   if (msg.night && typeof msg.night === 'object') r.night = msg.night;
+  // Waiting for the network (run-harness _publishNetworkWait): the run page's banner.
+  if (msg.networkWait !== undefined) r.networkWait = msg.networkWait || null;
   // Sub-agents: the state snapshot is authoritative (covers late-join/replay and
   // any missed `subagent` delta). Replace wholesale when present; a snapshot that
   // omits the field (older runs / partial snapshots) leaves the delta-built array.
@@ -5926,6 +5930,14 @@ function renderRecoveryBody(r, panel, pq) {
     msg.className = 'issue-detail';
     msg.textContent = rec.message;
     panel.appendChild(msg);
+  }
+
+  if (rec.network && typeof rec.network === 'object') {
+    const note = document.createElement('div');
+    note.className = 'gate-intro recovery-network';
+    const until = new Date(rec.network.until).toTimeString().slice(0, 5);
+    note.textContent = `Waiting for network… ${rec.network.host} is unreachable. worca picks Retry by itself when it answers again (until ${until}). You can still Retry now or Pause.`;
+    panel.appendChild(note);
   }
 
   const foot = document.createElement('div');
@@ -14136,6 +14148,7 @@ async function loadSettings() {
     paintTagDimsSettings(data);
     paintNightSettings(data);
     paintSyncSettings(data);
+    paintNetworkWaitSettings(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
     await paintEngineSettings(data);
@@ -14960,6 +14973,33 @@ document.getElementById('syncDefaultsSave')?.addEventListener('click', saveSyncD
 document.getElementById('syncDefaultsReset')?.addEventListener('click', (e) => postSyncDefaults(
   { sync: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('syncDefaultsSave');
+
+// Settings › Runs › Wait for the network (network-wait.mjs).
+function paintNetworkWaitSettings(data) {
+  const d = data && data.networkWait;
+  const on = document.getElementById('networkWaitEnabled');
+  const max = document.getElementById('networkWaitMaxMin');
+  if (!d || !on || !max) return;
+  on.checked = d.enabled !== false;
+  const v = String(d.maxWaitMin);
+  if (![...max.options].some((o) => o.value === v)) {
+    const opt = document.createElement('option');
+    opt.value = v; opt.textContent = `${d.maxWaitMin} minutes`;
+    max.append(opt);
+  }
+  max.value = v;
+  settingsCardPainted('networkWaitSave');
+}
+function postNetworkWait(body, opts = {}) {
+  return postSettingsCard(body, { card: document.getElementById('network-wait-settings-card'), paint: paintNetworkWaitSettings, dirty: settingsCardDirty('networkWaitSave'), ...opts });
+}
+document.getElementById('networkWaitSave')?.addEventListener('click', (e) => postNetworkWait({ networkWait: {
+  enabled: document.getElementById('networkWaitEnabled').checked,
+  maxWaitMin: Number(document.getElementById('networkWaitMaxMin').value),
+} }, { button: e.currentTarget }));
+document.getElementById('networkWaitReset')?.addEventListener('click', (e) => postNetworkWait(
+  { networkWait: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
+settingsCardDirty('networkWaitSave');
 
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
@@ -32715,6 +32755,20 @@ function paintRdBanners(screen, r) {
     const errBanner = renderErrorPauseBanner(errDetail);
     errBanner.dataset.detail = errDetail;
     banners.prepend(errBanner);
+  }
+
+  // ---- waiting for the network (network-wait.mjs) ----
+  const nw = !isPaused(r) && r.networkWait && typeof r.networkWait === 'object' ? r.networkWait : null;
+  const nwKey = nw ? `${nw.host}|${nw.until}` : '';
+  const oldNw = banners.querySelector('.net-wait-banner');
+  if (oldNw && oldNw.dataset.key !== nwKey) oldNw.remove();
+  if (nw && !banners.querySelector('.net-wait-banner')) {
+    const b = document.createElement('div');
+    b.className = 'net-wait-banner';
+    b.dataset.key = nwKey;
+    const until = new Date(nw.until).toTimeString().slice(0, 5);
+    b.textContent = `Waiting for network… ${nw.host} is unreachable. worca checks again with backoff and retries the step by itself (until ${until}).`;
+    banners.prepend(b);
   }
 
   // ---- the worktree notice: retained work, else a live checkout ----

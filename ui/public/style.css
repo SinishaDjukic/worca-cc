@@ -3420,6 +3420,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .pause-error-banner .peb-text{color:var(--ink);font-family:var(--mono);font-size:12px;word-break:break-word;}
 .pause-error-banner .peb-hint{color:var(--ink-2);margin-top:6px;}
 .hd-banners .pause-error-banner,.rd-banners .pause-error-banner{align-self:stretch;margin:0;}
+.net-wait-banner{border-radius:var(--r-card);padding:12px 14px;font-size:13px;background:var(--amber-bg);color:var(--amber-ink);align-self:stretch;}
 /* In a run card these banners are nested boxes (--r-ctrl); in the page-level banner
    stacks they sit on .retained-banner, so they take its card radius. */
 .hd-banners .cost-banner,.hd-banners .pause-error-banner,.rd-banners .cost-banner,.rd-banners .pause-error-banner{border-radius:var(--r-card);}

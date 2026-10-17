@@ -89,7 +89,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   the paused Claude sessions (`claude --resume`) in the same worktree,
   uncommitted agent work included, or **Resume at…** schedules it. Paused runs
   survive a server restart, and a run cut off mid-step comes back as
-  *Interrupted*, resumable from its last clean point.
+  *Interrupted*, resumable from its last clean point. A step that loses the
+  network waits for it and retries by itself; a run parked by an outage resumes
+  when the network is back.
 - **Isolated worktrees** — each run works in its own git worktree on its own
   `worca-cc/…` branch, so agents never edit your checkout and parallel runs
   don't collide. When a run ends, its work is committed to that branch and the
