@@ -238,6 +238,95 @@ export function currentFeatureId(id) {
   return cur;
 }
 
+/** #770: the most features the Runs list groups (newest activity first); older ones fall back to plain rows. */
+export const FEATURE_GROUPS_MAX = 200;
+
+/** #770: the Runs list's feature rows, in every state: the newest feature of each Re-plan the rest line
+ *  (replaced_by NULL) with the runs of the features it replaced. `members` in list order: the earlier plans' slices
+ *  that ran ('earlier'), this plan's slices ('slice'), then a re-plan run that has not planned yet ('replan').
+ *  `pipelineIds` / `ticketIds`: every run the row claims (the origin run, every slice, a restarted slice's earlier
+ *  attempts, the re-plan run), so none of them is also listed on its own. Read-only. */
+export function featureGroups({ live = () => null, limit = FEATURE_GROUPS_MAX } = {}) {
+  const db = getDb();
+  const heads = db.prepare('SELECT id FROM shape_features WHERE replaced_by IS NULL ORDER BY updated_at DESC, id DESC LIMIT ?').all(limit);
+  if (!heads.length) return [];
+  const replacedOf = db.prepare('SELECT id FROM shape_features WHERE replaced_by = ? ORDER BY created_at, id');
+  const originOf = db.prepare('SELECT origin_pipeline_id AS pid FROM shape_features WHERE id = ?');
+  const runOf = db.prepare('SELECT target, project_key, workspace_key, archived_at FROM pipelines WHERE id = ?');
+  // A restarted slice's earlier tickets: every slice ticket's stored request names its feature (sliceRequest). One scan.
+  // json_valid first (as db.mjs applySchemaV39 does): one malformed request must not empty the whole feed.
+  const attempts = new Map();
+  for (const t of db.prepare(`SELECT id, pipeline_id, json_extract(request, '$.shape.slice.feature') AS fid FROM scheduled_runs
+      WHERE json_valid(request) AND json_extract(request, '$.shape.slice.feature') IS NOT NULL`).all()) {
+    if (!attempts.has(t.fid)) attempts.set(t.fid, []);
+    attempts.get(t.fid).push(t);
+  }
+  // The `#history/...` key exactly as runChains builds it (scheduler.mjs member()).
+  const where = (pid) => {
+    const r = pid ? runOf.get(pid) : null;
+    return { historyKey: !r ? null : r.target === 'workspace' && r.workspace_key ? `workspaces/${r.workspace_key}` : r.project_key || null,
+      archived: !!(r && r.archived_at) };
+  };
+  const safePr = (pr) => (pr && typeof pr.url === 'string' && /^https:\/\/\S+$/i.test(pr.url) ? pr : null);
+  const member = (era, s) => ({ era, index: s.index, title: s.title, state: s.state,
+    pipelineId: s.pipelineId, ticketId: s.ticketId, pr: safePr(s.pr), ...where(s.pipelineId) });
+  return heads.map(({ id }) => {
+    // One feature that cannot be read costs that feature its row (its runs show as plain rows), never the whole feed.
+    try { return group(id); }
+    catch (err) { console.error(`[worca] feature group ${id} failed: ${err?.message || err}`); return null; }
+  }).filter(Boolean);
+
+  function group(id) {
+    const line = lineOf(id, replacedOf);
+    const views = line.map((fid) => [fid, featureView(fid, { live })]).filter(([, v]) => !!v);
+    const head = (views.find(([fid]) => fid === id) || [])[1];
+    if (!head) return null;
+    const pids = new Set();
+    const tids = new Set();
+    const claim = (pid, tid) => { if (pid) pids.add(String(pid)); if (tid) tids.add(String(tid)); };
+    // The newest plan owns any run it shares with a replaced one (a crash re-offer keeps the origin run, F48).
+    const slices = head.slices.map((s) => member('slice', s));
+    const headPids = new Set(head.slices.map((s) => s.pipelineId).filter(Boolean).map(String));
+    const earlier = [];
+    let replan = null;
+    for (const [fid, v] of views) {
+      const newest = fid === id;
+      claim(originOf.get(fid)?.pid, null);
+      for (const t of attempts.get(fid) || []) claim(t.pipeline_id, t.id);
+      for (const s of v.slices) {
+        claim(s.pipelineId, s.ticketId);
+        // An earlier plan's slice that never ran (the re-plan cancelled it), or one the newest plan lists, is not listed.
+        if (newest || !s.pipelineId || headPids.has(String(s.pipelineId)) || earlier.some((m) => m.pipelineId === s.pipelineId)) continue;
+        earlier.push(member('earlier', s));
+      }
+      if (v.replan) {
+        claim(v.replan.pipelineId, v.replan.ticketId);
+        // Once it approved an outline the re-plan run is the next feature's slice 1, listed there.
+        if (newest && !(v.replan.pipelineId && headPids.has(String(v.replan.pipelineId)))) {
+          replan = { era: 'replan', index: null, title: 'Re-plan the rest',
+            state: sliceState({ pipelineId: v.replan.pipelineId, ticket: getTicket(v.replan.ticketId) }, live),
+            pipelineId: v.replan.pipelineId, ticketId: v.replan.ticketId, pr: null, ...where(v.replan.pipelineId) };
+        }
+      }
+    }
+    return { id, title: head.title, projectKey: head.projectKey, status: head.status, total: head.total, done: head.done,
+      featureIds: views.map(([fid]) => fid), members: [...earlier, ...slices, ...(replan ? [replan] : [])],
+      pipelineIds: [...pids], ticketIds: [...tids] };
+  }
+}
+
+/** The Re-plan the rest line that ends at `id`, oldest first; bounded like currentFeatureId. */
+function lineOf(id, replacedOf) {
+  const seen = new Set([id]);
+  const line = [id];
+  let frontier = [id];
+  for (let hop = 0; hop < REPLAN_HOPS && frontier.length; hop++) {
+    frontier = frontier.flatMap((fid) => replacedOf.all(fid).map((r) => r.id)).filter((fid) => !seen.has(fid) && !!seen.add(fid));
+    line.unshift(...frontier);
+  }
+  return line;
+}
+
 /** The feature whose slice ran as this pipeline: the run that approved the outline (origin, F48), slice 1 by row,
  *  later slices and restarts through their ticket. After an idempotent re-create, a replanned feature has the same
  *  origin: prefer the active one, then the newest. */

@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 import {
   rowTime, liveRowState, histRowState, schedRowState, countNeedsYou,
   buildRunsModel, rowSub, rowMatches, isRowSelected, renderRunsList, rowInFilter, dateBucket, RUNS_FILTERS, DATE_BUCKETS, chainRow,
-  tagFilterGroups,
+  liveRow, histRow, normalizeRunsFilter, rowDot, viewChip, normalizeRunsView, featureSummary, memberState,
 } from '../ui/public/runs-list.mjs';
 
 const NOW = new Date(2026, 8, 30, 15, 0).getTime();           // Wed Sep 30 2026, 15:00 local
@@ -50,7 +50,8 @@ test('live row states: questions name their step, pause reasons, a named failure
   assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'codex' }).word, 'Codex usage limit', 'a usage limit names its engine');
   assert.equal(histRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude' }).word, 'Claude usage limit');
   assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit' }).word, 'Usage limit', 'a limit that was not the engine\'s (OpenRouter) names none');
-  assert.equal(liveRowState({ status: 'paused', pauseReason: null }).word, 'Paused');
+  assert.equal(liveRowState({ status: 'paused', pauseReason: null }).word, 'Paused by you', 'no reason recorded: a manual pause');
+  assert.equal(liveRowState({ status: 'paused', pauseReason: 'error' }).word, 'Error');
   assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude', limitNote: 'resets 18:00' }).detail, 'resets 18:00', 'a usage-limit pause carries its reset note');
   assert.equal(histRowState({ status: 'paused', pauseReason: 'usage_limit', limitNote: 'resets 18:00' }).detail, 'resets 18:00');
   assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude' }).detail, '', 'no note: no detail');
@@ -97,29 +98,14 @@ test('scheduled rows: a clock, what they wait for, and the Schedules tab that li
     now: NOW,
   });
   assert.deepEqual(keysOf(firing), ['live:t3'], 'a firing ticket whose run is listed live is not repeated');
-});
-
-test('Needs you: questions, pauses and unread failures — each also stays in its project group', () => {
-  const m = buildRunsModel({
-    live: [
-      liveIt('ask1', { ask: { kind: 'workflow', step: 'Plan' }, groupKey: 'roll-00000003', groupName: 'Rollouts' }),
-      liveIt('pause1', { status: 'paused', groupKey: 'worca-00000002', groupName: 'worca-cc' }),
-      liveIt('fail1', { status: 'error', failedStep: 'Tester', unread: true, groupKey: 'worca-00000002', groupName: 'worca-cc' }),
-      liveIt('run1', { step: 'Implement' }),
-    ],
-    history: [histIt('h1'), histIt('h2', { status: 'error' })],
-    now: NOW,
-  });
-  assert.deepEqual(m.needs.map((r) => r.key), ['live:ask1', 'live:pause1', 'live:fail1']);
-  assert.deepEqual(m.needs.map((r) => rowSub(r, { inNeeds: true })),
-    ['Plan review · Rollouts', 'Paused · worca-cc', 'Tester failed · worca-cc']);
-  assert.deepEqual(m.groups.map((g) => g.name), ['Employee project', 'Rollouts', 'worca-cc']);
-  const worca = m.groups.find((g) => g.key === 'worca-00000002');
-  assert.deepEqual(worca.rows.map((r) => r.key),
-    ['live:pause1', 'live:fail1', 'hist:worca-00000002/h1', 'hist:worca-00000002/h2']);
-  assert.equal(worca.count, 4);
-  assert.equal(rowSub(m.groups[0].rows[0]), 'Running · Implement');
-  assert.equal(rowSub(worca.rows[2]), 'Merged · 11:17');
+  // A booked resume's ticket is the listed run's own "Resumes at": that row stands for it, live or History.
+  const resume = { id: 't4', status: 'scheduled', runAt: at(30, 17, 0), resumePipelineId: 'p1', groupKey: 'emp-00000001', groupName: 'Employee project' };
+  const liveResume = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', status: 'paused' })], scheduled: [resume], now: NOW });
+  assert.deepEqual(keysOf(liveResume), ['live:r1'], 'a resume ticket for a live run is not repeated');
+  const histResume = buildRunsModel({ history: [histIt('p1', { status: 'paused' })], scheduled: [resume], now: NOW });
+  assert.equal(keysOf(histResume).filter((k) => k.startsWith('sched:')).length, 0, 'a resume ticket for a History run is not repeated');
+  const unlisted = buildRunsModel({ scheduled: [resume], now: NOW });
+  assert.deepEqual(keysOf(unlisted), ['sched:t4'], 'a resume ticket whose run is not listed still shows');
 });
 
 test('a history row whose run is listed live is not shown twice', () => {
@@ -163,20 +149,21 @@ test('the started-by filter keeps only that person’s rows, live and finished',
 });
 
 test('a folded group keeps its head and count but no rows; a search unfolds it', () => {
-  const input = { history: [histIt('h1'), histIt('h2')], collapsed: new Set(['worca-00000002']), now: NOW };
-  const g = buildRunsModel(input).groups[0];
+  const input = { history: [histIt('h1'), histIt('h2'), histIt('x', { projectKey: 'other-00000003', groupName: 'other' })],
+    filter: 'finished', collapsed: new Set(['worca-00000002']), now: NOW };
+  const g = buildRunsModel(input).groups.find((x) => x.key === 'worca-00000002');
   assert.equal(g.collapsed, true);
   assert.equal(g.count, 2);
-  assert.equal(buildRunsModel({ ...input, query: 'h1' }).groups[0].collapsed, false);
+  assert.equal(buildRunsModel({ ...input, query: 'merged' }).groups.find((x) => x.key === 'worca-00000002').collapsed, false);
 });
 
 test('countNeedsYou agrees with the Needs you group, dedupe included', () => {
   const live = [
-    { pipelineId: 'p1', status: 'paused', ask: false, unread: false },
+    { pipelineId: 'p1', status: 'paused', pauseReason: 'cost_total', ask: false, unread: false },
     { pipelineId: '', status: 'running', ask: true, unread: false },
     { pipelineId: 'p3', status: 'error', ask: false, unread: false },
   ];
-  const history = [{ id: 'p1', status: 'paused' }, { id: 'p9', status: 'paused' }, { id: 'p8', status: 'error' }];
+  const history = [{ id: 'p1', status: 'paused', pauseReason: 'cost_total' }, { id: 'p9', status: 'paused', pauseReason: 'cost_total' }, { id: 'p8', status: 'error' }];
   assert.equal(countNeedsYou({ live, history }), 3, 'p1 once, the question, and p9 (paused after a restart)');
 });
 
@@ -190,50 +177,40 @@ test('isRowSelected: by run id, by project key and id, or by pipeline id', () =>
   assert.equal(isRowSelected({ kind: 'sched', runId: '', pipelineId: '', projectKey: '' }, { runId: '', pipelineId: '', histKey: '' }), false);
 });
 
-test('renderRunsList: Needs you on top, foldable heads, rows as links with a title and a subline', () => {
-  const { window } = new JSDOM('<!doctype html><div id="h"></div>');
-  const doc = window.document;
+test('#724 renderRunsList: sections with an amber Needs you, a dot per row, Show older, no tag chips', () => {
+  const day = 86400000;
   const m = buildRunsModel({
-    live: [liveIt('ask1', { ask: { kind: 'workflow' } })],
-    history: [histIt('h1')],
-    collapsed: new Set(['worca-00000002']),
+    live: [liveIt('ask', { ask: { kind: 'clarify', count: 3 }, tags: ['client:acme'] }), liveIt('work', { step: 'Build' }),
+      liveIt('mine', { status: 'paused' })],
+    history: [histIt('h1', { mtime: NOW - 3600000 }), histIt('old', { mtime: NOW - 20 * day })],
     now: NOW,
   });
-  const host = doc.getElementById('h');
-  host.append(...renderRunsList(doc, m));
-  const needs = host.querySelector('.runs-needs');
-  assert.match(needs.querySelector('.runs-needs-head').textContent, /Needs you\s*1/);
-  const row = needs.querySelector('a.runs-row');
-  assert.equal(row.getAttribute('href'), '#running/ask1');
-  assert.equal(row.dataset.runId, 'ask1');
-  assert.equal(row.dataset.slot, 'needs');
-  assert.equal(row.dataset.icon, 'ask', 'the click handler reads it to land the pane on the question');
-  assert.equal(row.querySelector('.runs-row-sub').textContent, 'Workflow review · Employee project');
-  assert.ok(row.querySelector('.runs-ic.runs-ic-ask svg'));
-  const groupCopy = host.querySelector('.runs-group .runs-row[data-run-id="ask1"]');
-  assert.equal(groupCopy.dataset.slot, 'group', 'the repeat in the project group is told apart for focus restore');
-  const heads = [...host.querySelectorAll('.runs-group-head')];
-  assert.deepEqual(heads.map((h) => h.getAttribute('aria-expanded')), ['true', 'false']);
-  assert.equal(host.querySelector('.runs-group[data-group-key="worca-00000002"] .runs-row'), null, 'a folded group renders no rows');
-  const empty = renderRunsList(doc, buildRunsModel({ now: NOW }), { emptyText: 'No runs yet.' });
-  assert.equal(empty[0].textContent, 'No runs yet.');
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  doc.body.append(...renderRunsList(doc, m));
+  assert.deepEqual([...doc.querySelectorAll('body > section')].map((s) => s.getAttribute('aria-label')), ['Needs you', 'Running', 'Recent']);
+  assert.ok(doc.querySelector('section.runs-needs'), 'the Needs you panel keeps its class');
+  assert.equal(doc.querySelectorAll('.runs-row').length, 4, 'each run once');
+  assert.deepEqual([...doc.querySelectorAll('.runs-row')].map((a) => a.querySelector('.runs-ic').dataset.dot), ['needs', 'work', 'paused', 'done']);
+  assert.ok(doc.querySelector('.runs-row[data-row-key="live:mine"]').classList.contains('is-dim'));
+  assert.equal(doc.querySelector('.runs-row[data-row-key="live:ask"] .runs-row-sub').textContent, 'Answer 3 questions');
+  assert.equal(doc.querySelectorAll('.tag-chip, .runs-row-tags').length, 0, 'no tag chips');
+  assert.equal(doc.querySelectorAll('.runs-ic svg').length, 0, 'a dot, not a glyph');
+  const more = doc.querySelector('section[aria-label="Recent"] button.runs-show-older');
+  assert.equal(more.textContent, 'Show older');
+  for (const q of ['client:acme', 'client:', 'acme']) {
+    assert.deepEqual(buildRunsModel({ live: [liveIt('ask', { tags: ['client:acme'] }), liveIt('x')], query: q, now: NOW }).groups.flatMap((g) => g.rows.map((r) => r.key)), ['live:ask'], q);
+  }
 });
 
-test('filters: Live keeps what has not ended, Finished what has, Needs you only its group', () => {
-  assert.deepEqual(RUNS_FILTERS, ['all', 'live', 'finished', 'needs', 'archived']);
+test('filters: Finished keeps what has ended, Active everything', () => {
   const live = [liveIt('run'), liveIt('ask', { ask: { kind: 'clarify', step: 'Plan' } }),
     liveIt('ended', { status: 'done', pipelineId: 'p-ended' })];
   const history = [histIt('h-done'), histIt('h-stop', { status: 'stopped' }), histIt('h-int', { status: 'interrupted' })];
   const titles = (filter) => buildRunsModel({ live, history, filter, now: NOW }).groups.flatMap((g) => g.rows.map((r) => r.title)).sort();
-  assert.deepEqual(titles('live'), ['ask', 'run']);
-  assert.deepEqual(titles('finished'), ['ended', 'h-done', 'h-int', 'h-stop'],
-    'a run that ended but still lingers as a live row counts as finished; interrupted is finished');
-  assert.equal(titles('all').length, 6);
-  const needs = buildRunsModel({ live, history, filter: 'needs', now: NOW });
-  assert.deepEqual(needs.groups, [], 'Needs you is the whole list');
-  assert.deepEqual(needs.needs.map((r) => r.title), ['ask']);
-  assert.equal(buildRunsModel({ live, history, filter: 'bogus', now: NOW }).filter, 'all', 'an unknown filter shows everything');
-  assert.equal(rowInFilter({ kind: 'sched', icon: 'scheduled' }, 'live'), true, 'a scheduled run has not ended');
+  assert.deepEqual(titles('finished'), ['ended', 'h-done', 'h-stop'],
+    'a run that ended but still lingers as a live row counts as finished; interrupted has not ended');
+  assert.equal(titles('active').length, 6);
+  assert.equal(buildRunsModel({ live, history, filter: 'bogus', now: NOW }).filter, 'active', 'an unknown filter shows Active');
 });
 
 test('filters: Archived keeps only rows flagged archived, with its own empty note', () => {
@@ -251,10 +228,10 @@ test('filters: Archived keeps only rows flagged archived, with its own empty not
 
 test('an archived row says "Archived" on its status line and keeps its terminal icon', () => {
   assert.deepEqual(histRowState({ status: 'done', pr: 'MERGED', archived: true }),
-    { icon: 'done', word: 'Archived', detail: '' }, 'the word replaces the glance headline');
-  assert.deepEqual(histRowState({ status: 'stopped', archived: true }), { icon: 'stop', word: 'Archived', detail: '' });
+    { icon: 'done', word: 'Archived', detail: '', hint: '' }, 'the word replaces the glance headline');
+  assert.deepEqual(histRowState({ status: 'stopped', archived: true }), { icon: 'stop', word: 'Archived', detail: '', hint: '' });
   assert.deepEqual(histRowState({ status: 'paused', pauseReason: 'cost_pipeline', archived: true }),
-    { icon: 'paused', word: 'Archived', detail: '' }, 'even a parked row reads Archived once it is archived');
+    { icon: 'paused', word: 'Archived', detail: '', hint: '' }, 'even a parked row reads Archived once it is archived');
   assert.equal(histRowState({ status: 'done', pr: 'MERGED' }).word, 'Merged', 'an active row is untouched');
   const m = buildRunsModel({ history: [histIt('h-arch', { archived: true })], filter: 'archived', now: NOW });
   const row = m.groups[0].rows[0];
@@ -291,7 +268,7 @@ test('dateBucket: a DST day is still one day', () => {
   } finally { if (prev === undefined) delete process.env.TZ; else process.env.TZ = prev; }
 });
 
-test('group by date: sections in order, empty ones dropped, History by last activity, the project in the subline', () => {
+test('group by date: buckets in order, empty ones dropped, History by last activity, the project in the subline', () => {
   const live = [liveIt('now')];
   const history = [
     histIt('late-finish', { startedAt: at(29, 23, 50), mtime: new Date(2026, 8, 30, 0, 10).getTime() }),
@@ -300,21 +277,27 @@ test('group by date: sections in order, empty ones dropped, History by last acti
   ];
   const m = buildRunsModel({ live, history, groupBy: 'date', now: NOW });
   assert.equal(m.groupBy, 'date');
-  assert.deepEqual(m.groups.map((g) => [g.key, g.name, g.rows.map((r) => r.title)]), [
-    ['date:today', 'Today', ['now', 'late-finish']],
-    ['date:yesterday', 'Yesterday', ['yday']],
-    ['date:older', 'Older', ['old']],
-  ], 'a run started yesterday that finished today is Today; mtime 0 falls back to the start');
-  const sub = (g, i) => rowSub(m.groups[g].rows[i], { bucket: m.groups[g].bucket });
-  assert.equal(sub(0, 0), 'Running · Employee project', 'a live row drops its start time');
-  assert.equal(sub(0, 1), 'Merged · worca-cc · 00:10', 'Today keeps the finish time');
+  assert.deepEqual(m.sections.map((s) => [s.key, s.groups.map((g) => [g.key, g.name, g.rows.map((r) => r.title)])]), [
+    ['running', [['running/all', '', ['now']]]],
+    ['recent', [['recent/date:today', 'Today', ['late-finish']], ['recent/date:yesterday', 'Yesterday', ['yday']]]],
+  ], 'a run started yesterday that finished today is Today; the live row sits flat in Running');
+  assert.equal(m.older, 1, 'the Sep 1 run is behind Show older');
+  const recent = m.sections[1].groups;
+  const sub = (g, i) => rowSub(recent[g].rows[i], { bucket: recent[g].bucket, project: 'worca-cc' });
+  assert.equal(rowSub(m.sections[0].groups[0].rows[0], { project: 'Employee project' }), 'Running · 12:34 · Employee project');
+  assert.equal(rowSub({ ...m.sections[0].groups[0].rows[0] }, { bucket: 'today', project: 'Employee project' }), 'Running · Employee project', 'a live row drops its start time');
+  assert.equal(sub(0, 0), 'Merged · 00:10 · worca-cc', 'Today keeps the finish time');
   assert.equal(sub(1, 0), 'Stopped · worca-cc', 'Yesterday needs no time');
-  assert.equal(sub(2, 0), 'Merged · worca-cc · Sep 1');
-  const folded = buildRunsModel({ live, history, groupBy: 'date', collapsed: new Set(['date:today']), now: NOW });
-  assert.equal(folded.groups[0].collapsed, true, 'date sections fold by their own keys');
+  const fin = buildRunsModel({ live, history, groupBy: 'date', filter: 'finished', now: NOW });
+  assert.deepEqual(fin.groups.map((g) => g.key), ['date:today', 'date:yesterday', 'date:older']);
+  const older = fin.groups[2];
+  assert.equal(rowSub(older.rows[0], { bucket: older.bucket, project: 'worca-cc' }), 'Merged · Sep 1 · worca-cc');
+  const folded = buildRunsModel({ live, history, groupBy: 'date', filter: 'finished', collapsed: new Set(['date:today']), now: NOW });
+  assert.equal(folded.groups[0].collapsed, true, 'date buckets fold by their own keys');
   const doc = new JSDOM('').window.document;
-  const heads = renderRunsList(doc, m).filter((n) => n.classList.contains('runs-group')).map((n) => n.dataset.groupKey);
-  assert.deepEqual(heads, ['date:today', 'date:yesterday', 'date:older']);
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, fin));
+  assert.deepEqual([...host.querySelectorAll('.runs-group')].map((n) => n.dataset.groupKey), ['date:today', 'date:yesterday', 'date:older']);
 });
 
 // ---- Run progress in the list (P7 thin line, P8 chain row) ----
@@ -369,15 +352,151 @@ test('a started slice waiting on a question is not its own row nor under Needs y
   });
   assert.deepEqual(m.needs.map((r) => r.key), ['chain:c7']);
   assert.deepEqual(m.groups.flatMap((g) => g.rows).map((r) => r.key), ['chain:c7']);
-  const only = buildRunsModel({ live: [liveIt('r2', { pipelineId: 'p2', ask })], chains: [featureChainIt()], filter: 'needs', now: NOW });
-  assert.deepEqual(only.needs.map((r) => r.key), ['chain:c7'], 'the Needs-you filter too');
+  const only = buildRunsModel({ live: [liveIt('r2', { pipelineId: 'p2', ask })], chains: [featureChainIt()], now: NOW });
+  assert.deepEqual(only.sections.map((s) => s.key), ['needs'], 'the feature row is listed once, under Needs you');
 });
 
 test('the feature row needs you exactly when a member row does (one rule): a paused History member counts', () => {
-  const m = buildRunsModel({ history: [histIt('p1', { status: 'paused' })], chains: [featureChainIt()], now: NOW });
+  const m = buildRunsModel({ history: [histIt('p1', { status: 'paused', pauseReason: 'cost_total' })], chains: [featureChainIt()], now: NOW });
   assert.deepEqual(m.needs.map((r) => r.key), ['chain:c7']);
   const quiet = buildRunsModel({ live: [liveIt('r2', { pipelineId: 'p2' })], chains: [featureChainIt()], now: NOW });
   assert.deepEqual(quiet.needs, [], 'nobody needed: the feature row is not added');
+});
+
+// #770: a feature row in every state. The fixture mirrors what runsFeatureItem (app.js) produces.
+const PR = (n) => `https://github.com/o/r/pull/${n}`;
+const presets = (extra = {}) => ({
+  id: 'f:feat_9', title: 'Implement Run Presets Feature', feature: { id: 'feat_9' }, href: '#feature/feat_9',
+  groupKey: 'worca-00000002', groupName: 'worca-cc', total: 3, index: 3, fraction: 1, tone: 'green', text: 'Slice 3 of 3',
+  hasActive: true, extraKeys: [],
+  members: [
+    { era: 'slice', state: 'done', pipelineId: 'q1', ticketId: null, runId: '', title: '1 · Presets store', href: '#history/worca-00000002/q1', prUrl: PR(759), prNumber: 759, prState: 'OPEN' },
+    { era: 'slice', state: 'done', pipelineId: 'q2', ticketId: 't2', runId: '', title: "2 · Save a finished run's setup", href: '#history/worca-00000002/q2', prUrl: PR(761), prNumber: 761, prState: 'OPEN' },
+    { era: 'slice', state: 'done', pipelineId: 'q3', ticketId: 't3', runId: '', title: '3 · Presets in schedules', href: '#history/worca-00000002/q3', prUrl: PR(769), prNumber: 769, prState: 'OPEN' },
+  ], ...extra });
+const presetRuns = (extra = {}) => [
+  histIt('q1', { title: 'Implement Run Presets Feature', mtime: NOW - 5 * 3600_000, pr: null, ...extra.q1 }),
+  histIt('q2', { title: 'Implement Run Presets Feature · 2/3: Save a finished run\'s setup', mtime: NOW - 3 * 3600_000, pr: null, ...extra.q2 }),
+  histIt('q3', { title: 'Implement Run Presets Feature · 3/3: Presets in schedules', mtime: NOW - 2 * 3600_000, pr: null, ...extra.q3 }),
+];
+const dom = () => { const doc = new JSDOM('').window.document; const host = doc.createElement('div'); doc.body.appendChild(host); return { doc, host }; };
+
+test('#770: a feature with no live slice is ONE row in Recent, collapsed, "3 of 3 slices · in review", no loose slice rows (history only, as after a restart)', () => {
+  const m = buildRunsModel({ history: [...presetRuns(), histIt('other')], chains: [presets()], now: NOW });
+  assert.deepEqual(m.sections.map((s) => s.key), ['recent']);
+  const rows = m.groups.flatMap((g) => g.rows);
+  assert.deepEqual(rows.map((r) => r.key), ['chain:f:feat_9', 'hist:worca-00000002/other'], 'newest activity first, slices folded');
+  const f = rows[0];
+  assert.equal(f.ended, true);
+  assert.equal(f.icon, 'done');
+  assert.equal(f.word, '3 of 3 slices · in review');
+  assert.equal(f.open, false, 'clarify 2: collapsed with nothing live and nobody needed');
+  assert.equal(f.activityMs, NOW - 2 * 3600_000, 'its last activity is the newest slice\'s');
+  assert.equal(rowSub(f), '3 of 3 slices · in review · 13:00');
+  assert.equal(f.progress, null, 'no thin line once nothing runs');
+  assert.deepEqual(f.memberRows.map((r) => r.pipelineId), ['q1', 'q2', 'q3']);
+});
+
+test('#770: merged and stopped features read so', () => {
+  const merged = presets({ members: presets().members.map((x) => ({ ...x, prState: 'MERGED' })) });
+  assert.equal(chainRow(merged, NOW).word, '3 of 3 slices · merged');
+  const stopped = presets({ members: presets().members.map((x, i) => (i === 0 ? x : { ...x, state: 'failed', prUrl: null })) });
+  const r = chainRow(stopped, NOW);
+  assert.deepEqual([r.icon, r.word, r.status], ['stop', '1 of 3 slices · stopped', 'stopped']);
+  assert.deepEqual(featureSummary([]), { icon: 'stop', status: 'stopped', word: '0 of 0 slices · stopped', count: '0 of 0 slices' });
+  assert.equal(featureSummary([{ state: 'done' }]).word, '1 of 1 slice · done', 'no PR: done');
+});
+
+test('#770: memberState maps every History and live status word', () => {
+  for (const s of ['done', 'complete', 'completed']) assert.equal(memberState(s), 'done', s);
+  for (const s of ['error', 'failed', 'stopped', 'aborted']) assert.equal(memberState(s), 'failed', s);
+  for (const s of ['running', 'starting', 'paused', 'pausing', 'interrupted', '']) assert.equal(memberState(s), 'current', s);
+});
+
+test('#770: one slice that needs you puts the feature under Needs you, open, and nowhere else', () => {
+  const runs = presetRuns({ q2: { status: 'paused', pauseReason: 'cost_total' } });
+  const item = presets({ members: presets().members.map((x) => (x.pipelineId === 'q2' ? { ...x, state: 'current', icon: 'paused' } : x)),
+    text: 'Slice 2 of 3 · Needs you', tone: 'amber' });
+  const m = buildRunsModel({ history: runs, chains: [item], now: NOW });
+  assert.deepEqual(m.needs.map((r) => r.key), ['chain:f:feat_9']);
+  assert.deepEqual(m.sections.map((s) => s.key), ['needs']);
+  assert.equal(m.needs[0].open, true, 'a feature that needs you opens');
+});
+
+test('#770: after a server restart an interrupted slice (History only) puts the feature under Needs you', () => {
+  const runs = presetRuns({ q3: { status: 'interrupted' } });
+  const item = presets({ members: presets().members.map((x) => (x.pipelineId === 'q3' ? { ...x, state: 'current' } : x)) });
+  const m = buildRunsModel({ history: runs, chains: [item], now: NOW });
+  assert.deepEqual(m.needs.map((r) => r.key), ['chain:f:feat_9']);
+  assert.equal(m.groups.flatMap((g) => g.rows).some((r) => r.kind === 'hist'), false);
+});
+
+test('#770: a person\'s toggle wins outside a search; a search for a slice title finds the feature row, open', () => {
+  assert.equal(buildRunsModel({ history: presetRuns(), chains: [presets({ open: true })], now: NOW }).groups[0].rows[0].open, true);
+  const m = buildRunsModel({ history: [...presetRuns(), histIt('other')], chains: [presets({ open: false })], query: 'finished run', now: NOW });
+  assert.deepEqual(m.groups.flatMap((g) => g.rows).map((r) => r.key), ['chain:f:feat_9']);
+  assert.equal(m.groups[0].rows[0].open, true, 'a search opens the matching feature');
+  const byTitle = buildRunsModel({ history: presetRuns(), chains: [presets()], query: 'presets feature', now: NOW });
+  assert.equal(byTitle.total, 1);
+  // "store" is only in a member title (1 · Presets store): no run title, feature title, project or status word has it.
+  assert.deepEqual(buildRunsModel({ history: presetRuns(), chains: [presets()], query: 'presets store', now: NOW })
+    .groups.flatMap((g) => g.rows).map((r) => r.key), ['chain:f:feat_9'], 'a slice\'s own title finds the feature');
+  assert.equal(buildRunsModel({ history: presetRuns(), chains: [presets()], query: 'nothing like it', now: NOW }).total, 0);
+});
+
+test('#770: the planning run and an earlier plan\'s runs are claimed (extraKeys), never loose', () => {
+  const m = buildRunsModel({ history: [...presetRuns(), histIt('q0', { title: 'Implement Run Presets Feature · re-plan' })],
+    chains: [presets({ extraKeys: ['p:q0'] })], now: NOW });
+  assert.deepEqual(m.groups.flatMap((g) => g.rows).map((r) => r.key), ['chain:f:feat_9']);
+});
+
+test('#770: group by date files a finished feature under its last activity, with the History rows', () => {
+  const runs = presetRuns({ q1: { mtime: NOW - 30 * 3600_000 }, q2: { mtime: NOW - 29 * 3600_000 }, q3: { mtime: NOW - 28 * 3600_000 } });
+  const m = buildRunsModel({ history: [...runs, histIt('today', { mtime: NOW - 60_000 })], chains: [presets()], groupBy: 'date', now: NOW });
+  const recent = m.sections.find((s) => s.key === 'recent');
+  assert.deepEqual(recent.groups.map((g) => [g.bucket, g.rows.map((r) => r.key)]),
+    [['today', ['hist:worca-00000002/today']], ['yesterday', ['chain:f:feat_9']]]);
+});
+
+test('#770 clarify 3: Archived lists the feature once every run in it is archived, as one row', () => {
+  const arch = presetRuns().map((p) => ({ ...p, archived: true }));
+  const part = buildRunsModel({ history: arch.slice(0, 1), chains: [presets({ hasActive: true })], filter: 'archived', now: NOW });
+  assert.equal(part.total, 0, 'a run still active: the feature stays in Active, no loose archived slice');
+  const all = buildRunsModel({ history: arch, chains: [presets({ hasActive: false })], filter: 'archived', now: NOW });
+  const rows = all.groups.flatMap((g) => g.rows);
+  assert.deepEqual(rows.map((r) => r.key), ['chain:f:feat_9']);
+  assert.equal(rows[0].archived, true);
+  assert.equal(rows[0].word, 'Archived · 3 of 3 slices');
+});
+
+test('#770: the expander lists slices with PR numbers, an archived note and the re-plan divider', () => {
+  const { doc, host } = dom();
+  const item = presets({ open: true, members: [
+    { era: 'earlier', state: 'done', pipelineId: 'q0', title: '1 · Old plan', href: '#history/worca-00000002/q0', prUrl: PR(700), prNumber: 700, prState: 'MERGED', archived: true },
+    ...presets().members,
+  ], extraKeys: [] });
+  host.append(...renderRunsList(doc, buildRunsModel({ history: [...presetRuns(), histIt('q0')], chains: [item], now: NOW }), {}));
+  assert.deepEqual([...host.querySelectorAll('.runs-chain-pr')].map((a) => a.textContent), ['#700', '#759', '#761', '#769']);
+  assert.equal(host.querySelector('.runs-chain-sep').textContent, 'After the re-plan');
+  assert.equal(host.querySelector('.runs-chain-sep').nextElementSibling.textContent.includes('1 · Presets store'), true);
+  assert.equal(host.querySelectorAll('.runs-chain-note').length, 1);
+  assert.equal(host.querySelector('.runs-chain .runs-row-prog'), null);
+  assert.equal(host.querySelector('.runs-chain-toggle').getAttribute('aria-label'), 'Hide the 3 slices in this feature',
+    'the label counts this plan\'s slices, not the earlier ones');
+});
+
+test('#770: a finished feature row has a ⋯ menu, and an enabled checkbox while selecting', () => {
+  const { doc, host } = dom();
+  host.append(...renderRunsList(doc, buildRunsModel({ history: presetRuns(), chains: [presets()], now: NOW }), {}));
+  const more = host.querySelector('.runs-chain > .runs-row-more');
+  assert.ok(more, 'a finished feature row has a ⋯ menu');
+  assert.equal(more.dataset.rowKey, 'chain:f:feat_9');
+  assert.ok(host.querySelector('.runs-chain').classList.contains('has-more'));
+  host.replaceChildren(...renderRunsList(doc, buildRunsModel({ history: presetRuns(), chains: [presets()], now: NOW }), { selecting: new Set() }));
+  const box = host.querySelector('.runs-chain > .runs-row-check');
+  assert.equal(box.dataset.rowKey, 'chain:f:feat_9');
+  assert.equal(box.disabled, false);
+  assert.equal(host.querySelector('.runs-chain > .runs-row-more'), null, 'no ⋯ while selecting');
 });
 
 test('a non-feature chain is unchanged: its member stays under Needs you; its toggle names runs', () => {
@@ -414,9 +533,9 @@ test('Needs you keeps listing a chain member that asks, folded or not, under eve
   const args = { live: [liveIt('r1', { pipelineId: 'p1', ask: { kind: 'workflow', step: 'Plan' } })], chains: [chainIt()], now: NOW };
   const m = buildRunsModel(args);
   assert.deepEqual(m.needs.map((r) => r.key), ['live:r1']);
-  assert.deepEqual(m.groups.flatMap((g) => g.rows).map((r) => r.key), ['chain:c1'], 'the group still folds it');
+  assert.deepEqual(m.groups.flatMap((g) => g.rows).map((r) => r.key), ['live:r1', 'chain:c1'], 'Needs you lists the member, Running the chain row');
   const only = buildRunsModel({ ...args, filter: 'needs' });
-  assert.deepEqual(only.needs.map((r) => r.key), ['live:r1']);
+  assert.deepEqual(only.needs.map((r) => r.key), ['live:r1'], 'a legacy needs filter reads as Active');
   assert.equal(countNeedsYou({ live: [{ pipelineId: 'p1', status: 'running', ask: true }] }), 1);
 });
 
@@ -496,7 +615,7 @@ test('filter Finished with a chain: the done member keeps the chain row alive, a
 
 test('a chain marks its group live and is selected by any member pipeline/run', () => {
   const m = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', groupKey: 'g', groupName: 'G' })], history: [histIt('h1')], chains: [chainIt({ groupKey: 'g', groupName: 'G' })], now: NOW });
-  assert.equal(m.groups[0].key, 'g', 'live-first');
+  assert.equal(m.groups[0].key, 'running/g', 'live-first');
   const row = m.groups[0].rows[0];
   assert.equal(isRowSelected(row, { pipelineId: 'p1' }), true);
   assert.equal(isRowSelected(row, { runId: 'r1' }), true);
@@ -533,8 +652,7 @@ test('the thin line is painted under live and chain rows only while live; a chai
 
 test('#620: a history row carries its base-check note in the subline, and search finds it', () => {
   const m = buildRunsModel({ live: [], history: [histIt('h1', { base: 'conflicts with dev' }), histIt('h2')], now: NOW });
-  const worca = m.groups.find((g) => g.key === 'worca-00000002');
-  const [h1, h2] = worca.rows;
+  const [h1, h2] = m.groups.flatMap((g) => g.rows);
   assert.equal(rowSub(h1), 'Merged · conflicts with dev · 11:17');
   assert.equal(rowSub(h2), 'Merged · 11:17', 'no note, no extra part');
   assert.equal(rowSub(h1, { bucket: 'today' }).startsWith('Merged · conflicts with dev'), true);
@@ -542,34 +660,196 @@ test('#620: a history row carries its base-check note in the subline, and search
   assert.equal(rowMatches(h2, 'conflicts'), false);
 });
 
-// Run tags (#718): rows carry tags, search matches their text, the tag filter keeps matching rows,
-// and a row shows at most 3 chips plus a +N overflow chip.
-test('run tags: search, the tag filter, chips with overflow, and the filter options', async () => {
-  const { tagFilterOptions, rowHasTag } = await import('../ui/public/runs-list.mjs');
-  const tagged = histIt('h1', { tags: ['client:acme'] });
-  const plain = histIt('h2');
-  assert.deepEqual(keysOf(buildRunsModel({ history: [tagged, plain], query: 'acme', now: NOW })), ['hist:worca-00000002/h1']);
-  assert.deepEqual(keysOf(buildRunsModel({ history: [tagged, plain], tag: 'client:acme', now: NOW })), ['hist:worca-00000002/h1']);
-  assert.deepEqual(keysOf(buildRunsModel({ history: [tagged, plain], tag: 'client', now: NOW })), ['hist:worca-00000002/h1']);
-  assert.equal(keysOf(buildRunsModel({ history: [tagged, plain], now: NOW })).length, 2);
-  assert.deepEqual(keysOf(buildRunsModel({ live: [liveIt('l1', { tags: ['team:web'] }), liveIt('l2')], tag: 'team:web', now: NOW })), ['live:l1']);
-  assert.equal(rowHasTag({ tags: [] }, ''), true);
-  const { window } = new JSDOM('<!doctype html><div id="h"></div>');
-  const doc = window.document;
-  const host = doc.getElementById('h');
-  const five = histIt('h3', { tags: ['a:1', 'b:2', 'c:3', 'd:4', 'e:5'] });
-  host.append(...renderRunsList(doc, buildRunsModel({ history: [five, plain], now: NOW })));
-  const chips = [...host.querySelectorAll('.runs-row[data-pipeline-id="h3"] .runs-row-tags .tag-chip')].map((c) => c.textContent);
-  assert.deepEqual(chips, ['a:1', 'b:2', 'c:3', '+2']);
-  assert.equal(host.querySelector('.runs-row[data-pipeline-id="h2"] .runs-row-tags'), null, 'an untagged row has no empty container');
-  assert.deepEqual(tagFilterOptions([{ tags: ['team:web', 'client:acme'] }, { tags: ['client:acme'] }, {}]), ['client:acme', 'team:web']);
+const sectionKeys = (m) => m.sections.map((s) => s.key);
+const allKeys = (m) => m.sections.flatMap((s) => s.groups.flatMap((g) => g.rows.map((r) => r.key)));
+
+test('#724 each run once: a Needs-you run is not repeated in its project group, in any view', () => {
+  const live = [
+    liveIt('ask1', { pipelineId: 'pa', ask: { kind: 'clarify', step: 'Plan', count: 2 }, groupKey: 'worca-00000002', groupName: 'worca-cc' }),
+    liveIt('pause1', { pipelineId: 'pp', status: 'paused', pauseReason: 'cost_pipeline', groupKey: 'worca-00000002', groupName: 'worca-cc' }),
+    liveIt('run1', { step: 'Build' }),
+  ];
+  const history = [histIt('pp', { status: 'paused', pauseReason: 'cost_pipeline' }), histIt('h1'), histIt('h2', { status: 'error' })];
+  for (const filter of ['active', 'finished', 'archived']) {
+    for (const groupBy of ['project', 'date']) {
+      const keys = allKeys(buildRunsModel({ live, history, filter, groupBy, now: NOW }));
+      assert.equal(new Set(keys).size, keys.length, `${filter}/${groupBy}: no key twice`);
+    }
+  }
+  const m = buildRunsModel({ live, history, now: NOW });
+  assert.deepEqual(sectionKeys(m), ['needs', 'running', 'recent']);
+  assert.deepEqual(m.sections[0].groups.flatMap((g) => g.rows.map((r) => r.key)), ['live:ask1', 'live:pause1']);
+  assert.ok(!m.sections[1].groups.some((g) => g.rows.some((r) => r.key === 'live:pause1')), 'not again under Running');
 });
 
-test('tagFilterGroups: one group per configured dimension, then the rest; none configured = flat list', () => {
-  const rows = [{ tags: ['cc:4410', 'client:acme'] }, { tags: ['cc:4420', 'spike', 'cc'] }];
-  assert.deepEqual(tagFilterGroups(rows, []), { groups: [], rest: ['cc', 'cc:4410', 'cc:4420', 'client:acme', 'spike'] });
-  assert.deepEqual(tagFilterGroups(rows, [{ key: 'cc', label: 'Cost centre', values: [], required: false }]), {
-    groups: [{ label: 'Cost centre', any: 'cc', tags: ['cc:4410', 'cc:4420'] }],
-    rest: ['client:acme', 'spike'],
+test('#724 sections: Running lists live runs, then dimmed paused-by-you, resuming and waiting ones', () => {
+  const m = buildRunsModel({
+    live: [
+      liveIt('mine', { status: 'paused', pauseReason: '' }),
+      liveIt('auto', { status: 'paused', pauseReason: 'usage_limit', resumeAt: NOW + 3600000 }),
+      liveIt('work', { step: 'Build' }),
+    ],
+    scheduled: [{ id: 't1', title: 'Nightly', status: 'scheduled', after: { id: 'p0', title: 'Billing export' }, groupKey: 'emp-00000001', groupName: 'Employee project' }],
+    now: NOW,
   });
+  assert.deepEqual(sectionKeys(m), ['running'], 'Needs you is absent when empty; nothing finished');
+  assert.deepEqual(m.sections[0].groups.flatMap((g) => g.rows.map((r) => r.key)), ['live:work', 'live:mine', 'live:auto', 'sched:t1']);
+  assert.deepEqual(m.sections[0].groups.flatMap((g) => g.rows.map(rowDot)), ['work', 'paused', 'wait', 'wait']);
+});
+
+test('#724 Recent: finished in the last 7 days, newest first; older ones only behind Show older', () => {
+  const day = 86400000;
+  const history = [
+    histIt('d1', { mtime: NOW - 1 * day }), histIt('d0', { mtime: NOW - 3600000 }),
+    histIt('d6', { mtime: NOW - 6 * day }), histIt('d9', { mtime: NOW - 9 * day }), histIt('d30', { mtime: NOW - 30 * day }),
+  ];
+  const m = buildRunsModel({ history, now: NOW });
+  const recent = m.sections.find((s) => s.key === 'recent');
+  assert.deepEqual(recent.groups.flatMap((g) => g.rows.map((r) => r.pipelineId)), ['d0', 'd1', 'd6']);
+  assert.equal(recent.older, 2);
+  const fin = buildRunsModel({ history, filter: 'finished', now: NOW });
+  assert.equal(fin.sections.length, 1);
+  assert.equal(fin.sections[0].count, 5, 'Finished is the full history');
+  const onlyOld = buildRunsModel({ history: [histIt('d30', { mtime: NOW - 30 * day })], now: NOW });
+  assert.deepEqual(sectionKeys(onlyOld), ['recent'], 'Recent stays to carry Show older');
+  assert.equal(onlyOld.sections[0].count, 0);
+});
+
+test('#724 filters: Active | Finished | Archived; old stored values read back as Active', () => {
+  assert.deepEqual(RUNS_FILTERS, ['active', 'finished', 'archived']);
+  for (const v of ['all', 'live', 'needs', 'bogus', null]) assert.equal(normalizeRunsFilter(v), 'active');
+  assert.equal(normalizeRunsFilter('finished'), 'finished');
+  const live = [liveIt('run'), liveIt('ended', { status: 'done', pipelineId: 'p-ended' })];
+  const history = [histIt('h-done'), histIt('h-paused', { status: 'paused' }), histIt('h-int', { status: 'interrupted' })];
+  const titles = (filter) => buildRunsModel({ live, history, filter, now: NOW }).groups.flatMap((g) => g.rows.map((r) => r.title)).sort();
+  assert.deepEqual(titles('finished'), ['ended', 'h-done'], 'a paused or interrupted History row is not finished');
+  assert.equal(buildRunsModel({ live, history, filter: 'needs', now: NOW }).filter, 'active');
+});
+
+test('#724 one project: no project headers, the subline names the project', () => {
+  const g = { groupKey: 'worca-00000002', groupName: 'worca-cc' };
+  const one = buildRunsModel({ live: [liveIt('a', { ...g, step: 'Build' }), liveIt('b', { ...g, status: 'paused', pauseReason: 'cost_total' })], history: [histIt('h1')], now: NOW });
+  assert.ok(one.groups.every((x) => !x.head), 'no project header in any section');
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  doc.body.append(...renderRunsList(doc, one));
+  assert.equal(doc.querySelectorAll('.runs-group-head').length, 0);
+  assert.deepEqual([...doc.querySelectorAll('.runs-row-sub')].map((n) => n.textContent),
+    ['Total budget · resume or raise it · worca-cc', 'Running · Build · worca-cc', 'Merged · 11:17 · worca-cc']);
+  const two = buildRunsModel({ live: [liveIt('a', { ...g }), liveIt('c')], now: NOW });
+  assert.deepEqual(two.sections[0].groups.map((x) => [x.head, x.key]), [[true, 'running/emp-00000001'], [true, 'running/worca-00000002']]);
+});
+
+test('#724 group by date inside the sections: Needs you and Running flat, Recent in date buckets', () => {
+  const m = buildRunsModel({
+    live: [liveIt('ask', { ask: { kind: 'clarify', count: 1 } }), liveIt('work')],
+    history: [histIt('t', { mtime: NOW - 3600000 }), histIt('y', { mtime: NOW - 86400000 })], groupBy: 'date', now: NOW,
+  });
+  assert.deepEqual(m.sections.map((s) => [s.key, s.groups.map((x) => x.bucket || '')]),
+    [['needs', ['']], ['running', ['']], ['recent', ['today', 'yesterday']]]);
+});
+
+test('#724 the dot colours and the pulse come from tokens and stop under reduced motion (style.css)', async () => {
+  const css = await readFile(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.runs-ic\[data-dot="needs"\]\{background:var\(--amber\);\}/);
+  assert.match(css, /\.runs-ic\[data-dot="work"\]\{background:var\(--peach\);animation:runs-dot-pulse 1\.6s ease-in-out infinite;\}/);
+  assert.match(css, /\.runs-ic\{[^}]*width:9px;height:9px;[^}]*background:var\(--ink-3\);/);
+  assert.match(css, /\.runs-ic\[data-dot="wait"\]\{background:transparent;border:2px solid var\(--ink-3\)/);
+  assert.match(css, /@keyframes runs-dot-pulse\{0%,100%\{opacity:1;transform:scale\(1\);\}50%\{opacity:\.45;transform:scale\(\.8\);\}\}/);
+  assert.match(css, /prefers-reduced-motion: reduce\)\{\s*\.runs-ic\[data-dot="work"\],\.rc-sic \.sic-spin,\.rd-prs-ico\.is-run,\.rd-pr-spin/);
+  assert.doesNotMatch(css, /\.rd-prs-ico\.is-run\{animation:ws-spin/);
+  assert.doesNotMatch(css, /\.runs-ic-run \.runs-glyph\{animation:wr-spin/);
+});
+
+test('#724 needsYou: only a person can move it — each pause reason placed', () => {
+  const RESUME = NOW + 3600000;
+  const one = (it) => countNeedsYou({ live: [{ runId: 'r', pipelineId: 'p', ask: false, unread: false, pauseReason: '', resumeAt: null, ...it }], history: [] });
+  assert.equal(one({ status: 'paused' }), 0, 'a manual pause (no reason) is not counted');
+  assert.equal(one({ status: 'paused', pauseReason: 'usage_limit', resumeAt: RESUME }), 0, 'auto-resuming usage limit');
+  assert.equal(one({ status: 'pausing', pauseReason: 'cost_pipeline' }), 0, 'pausing is on its way');
+  assert.equal(countNeedsYou({ live: [], history: [], scheduled: [{ id: 't1', after: { id: 'p0' } }] }), 0, 'tickets never count');
+  for (const pauseReason of ['cost_pipeline', 'cost_total', 'cost_pipeline_policy', 'cost_total_policy', 'error', 'recoverable', 'drain', 'night_guardrail', 'usage_limit']) {
+    assert.equal(one({ status: 'paused', pauseReason }), 1, `${pauseReason} needs you`);
+  }
+  assert.equal(one({ status: 'interrupted' }), 1, 'interrupted needs you');
+  assert.equal(one({ status: 'running', ask: true }), 1, 'an open question');
+  assert.equal(one({ status: 'paused', ask: true }), 1, 'a question still open on a manual pause');
+  assert.equal(one({ status: 'error', unread: true }), 1, 'a failed run nobody opened');
+  assert.equal(one({ status: 'error', unread: false }), 0, 'a failed run already opened');
+  // History rows follow the same pause rule.
+  const hist = (p) => countNeedsYou({ live: [], history: [{ id: 'h', status: 'paused', pauseReason: null, ...p }] });
+  assert.equal(hist({}), 0);
+  assert.equal(hist({ pauseReason: 'cost_total' }), 1);
+  assert.equal(hist({ pauseReason: 'usage_limit', resumeAt: RESUME }), 0);
+  assert.equal(hist({ status: 'interrupted' }), 1);
+  // D18: an archived row never needs you, whatever its pause.
+  assert.equal(histRow(histIt('a', { status: 'paused', pauseReason: 'cost_total', archived: true }), NOW).needs, false);
+  assert.equal(histRow(histIt('b', { status: 'paused', pauseReason: 'cost_total' }), NOW).needs, true);
+});
+
+test('#724 row words: paused by you, resumes at, answer N questions, waiting after a run', () => {
+  const at14 = new Date(2026, 8, 30, 14, 5).getTime() + 86400000;   // tomorrow 14:05
+  assert.equal(liveRowState({ status: 'paused', pauseReason: '' }).word, 'Paused by you');
+  assert.deepEqual(liveRowState({ status: 'paused', pauseReason: 'usage_limit', resumeAt: at14 }),
+    { icon: 'paused', word: 'Resumes at 14:05', detail: 'usage limit', hint: '' });
+  assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'codex', resumeAt: at14 }).detail, 'Codex usage limit');
+  assert.equal(liveRowState({ status: 'running', ask: { kind: 'clarify', step: 'Plan', count: 3 } }).word, 'Answer 3 questions');
+  assert.equal(liveRowState({ status: 'running', ask: { kind: 'form', step: '', count: 1 } }).word, 'Answer 1 question');
+  assert.equal(liveRowState({ status: 'running', ask: { kind: 'plan', step: '' } }).word, 'Approve the plan');
+  assert.deepEqual(schedRowState({ status: 'scheduled', after: { id: 'p0', title: 'Billing export' } }),
+    { icon: 'scheduled', word: 'Waiting', detail: 'after Billing export' });
+  const cost = liveRow(liveIt('c', { status: 'paused', pauseReason: 'cost_pipeline' }), NOW);
+  assert.equal(rowSub(cost), 'Cost limit · resume or raise it');
+  const err = liveRow(liveIt('e', { status: 'paused', pauseReason: 'error' }), NOW);
+  assert.equal(rowSub(err), 'Error · resume to retry');
+  const mine = liveRow(liveIt('m', { status: 'paused', startedAt: at(30, 9, 45) }), NOW);
+  assert.equal(rowSub(mine), 'Paused by you · 09:45');
+  assert.equal(rowSub(mine, { project: 'worca-cc' }), 'Paused by you · 09:45 · worca-cc');
+  // D19: a manual pause with a question still open needs you and says so.
+  const asked = liveRow(liveIt('q', { status: 'paused', ask: { kind: 'clarify', step: 'Plan', count: 3 } }), NOW);
+  assert.equal(asked.needs, true);
+  assert.equal(rowSub(asked), 'Paused by you · Answer 3 questions');
+  // D18: the archived override clears the hint.
+  assert.deepEqual(histRowState({ status: 'paused', pauseReason: 'cost_pipeline', archived: true }),
+    { icon: 'paused', word: 'Archived', detail: '', hint: '' });
+});
+
+test('#740 viewChip: no chip for Active · Project, one label for every other view', () => {
+  assert.equal(viewChip({ show: 'active', groupBy: 'project' }), null);
+  assert.equal(viewChip({ show: 'finished', groupBy: 'date' }), 'Finished · by date');
+  assert.equal(viewChip({ show: 'finished', groupBy: 'project' }), 'Finished · by project');
+  assert.equal(viewChip({ show: 'active', groupBy: 'date' }), 'Active · by date');
+  assert.equal(viewChip({ show: 'archived', groupBy: 'project' }), 'Archived · by project');
+  assert.equal(viewChip({ show: 'needs', groupBy: 'bogus' }), null, 'legacy and unknown values are the default view');
+  assert.equal(viewChip(), null);
+});
+
+test('#740 normalizeRunsView: a stored legacy filter of needs, live or all reads back as Active', () => {
+  for (const show of ['needs', 'live', 'all']) {
+    assert.deepEqual(normalizeRunsView({ show, groupBy: 'date' }), { show: 'active', groupBy: 'date' }, show);
+  }
+  assert.deepEqual(normalizeRunsView({ show: null, groupBy: null }), { show: 'active', groupBy: 'project' }, 'nothing stored');
+  assert.deepEqual(normalizeRunsView({ show: 'archived', groupBy: 'project' }), { show: 'archived', groupBy: 'project' });
+});
+
+test('#739: a finished row gets a ⋯ button beside (not inside) its link; a live row stays bare; select mode checkboxes', () => {
+  const { window } = new JSDOM('<!doctype html><div id="h"></div>');
+  const doc = window.document;
+  const model = buildRunsModel({
+    live: [{ runId: 'r1', pipelineId: 'p1', title: 'Live', status: 'running', startedAt: NOW }],
+    history: [{ id: 'h1', projectKey: 'k', title: 'Done', status: 'done', startedAt: NOW - 1000, mtime: NOW - 1000 }],
+    now: NOW,
+  });
+  const host = doc.getElementById('h');
+  host.append(...renderRunsList(doc, model));
+  const item = host.querySelector('.runs-item[data-row-key="hist:k/h1"]');
+  assert.ok(item, 'the finished row is wrapped');
+  const more = item.querySelector('.runs-row-more');
+  assert.equal(more.getAttribute('aria-label'), 'More actions for Done');
+  assert.equal(more.closest('a'), null, 'the ⋯ button is never inside the link');
+  assert.equal(host.querySelector('.runs-row[data-run-id="r1"]').parentElement.classList.contains('runs-item'), false);
+  host.replaceChildren(...renderRunsList(doc, model, { selecting: new Set(['hist:k/h1']) }));
+  const boxes = [...host.querySelectorAll('.runs-row-check')];
+  assert.deepEqual(boxes.map((b) => [b.dataset.rowKey, b.checked, b.disabled]), [['live:r1', false, true], ['hist:k/h1', true, false]]);
+  assert.equal(boxes[0].title, "Can't archive: still running");
+  assert.equal(host.querySelector('.runs-row-more'), null, 'no ⋯ while selecting');
 });

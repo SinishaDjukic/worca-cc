@@ -325,7 +325,7 @@ import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
-  rechainWaiting, replanRest, setApproveEach, stackedPrBase, recordShapePlan, listShapePlans, chainFeature,
+  rechainWaiting, replanRest, setApproveEach, stackedPrBase, recordShapePlan, listShapePlans, chainFeature, featureGroups,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput } from '../src/core/shape/features.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById, listNetworkWaitRuns } from '../src/core/artifacts.mjs';
@@ -3310,6 +3310,13 @@ function withChainFeatures(chains) {
   });
 }
 
+/** #770: the Runs list's feature rows, every state, gated. A failure costs the list its grouping, never the schedules. */
+function runsFeatureGroups() {
+  if (!shapeFirstEnabled()) return [];
+  try { return featureGroups({ live: liveSliceOf }); }
+  catch (err) { console.error(`[worca-ui] feature groups failed: ${err?.message || err}`); return []; }
+}
+
 // Run on the source branch: the merge back happens in teardown, AFTER `done` — the history row a client
 // fetched on `done` predates it, and a chained run waits on it (pipelineGate answers `waiting` until then).
 // orch.run()/orch.resume() settle only after teardown, so refresh both then. Best effort: never the run's outcome.
@@ -3474,6 +3481,8 @@ app.get('/api/schedules', (req, res) => {
       tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter),
       // Run progress (P8): every open "Run after" chain, unscoped (a chain may cross projects).
       chains: withChainFeatures(runChains({ isLive: liveProbe })),
+      // #770: every Shaper feature, live or not, so the Runs list keeps it as one row (runChains lists open chains only).
+      features: runsFeatureGroups(),
       counts: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },
       defaults: scheduleDefaults(),
     });

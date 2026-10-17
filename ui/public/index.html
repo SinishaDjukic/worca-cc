@@ -658,47 +658,62 @@
         <section class="view hidden" data-view="runs">
           <div class="runs-shell" id="runs-shell" data-layout="split">
             <div class="runs-list-pane" id="runs-list-pane">
+              <!-- One row (#740): search on the left, View on the right. View's menu sets Show
+                   (runs-list.mjs RUNS_FILTERS) and Group by (RUNS_GROUPINGS); runs-view-menu.mjs
+                   wires it, app.js keeps aria-checked and the chip. -->
               <div class="runs-head">
-                <span class="runs-head-tools">
-                  <!-- "Group by" (runs-list.mjs RUNS_GROUPINGS): app.js keeps aria-checked and the menu. -->
-                  <span class="runs-group-wrap">
-                    <button type="button" class="runs-search-btn runs-group-btn" id="runs-group-btn" aria-label="Group runs"
-                            title="Group runs" aria-haspopup="menu" aria-expanded="false" aria-controls="runs-group-menu">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h11M4 18h7"></path></svg>
-                    </button>
-                    <div class="runs-group-menu" id="runs-group-menu" role="menu" aria-label="Group runs by" hidden>
-                      <button type="button" role="menuitemradio" data-group-by="project" aria-checked="true">Group by project</button>
-                      <button type="button" role="menuitemradio" data-group-by="date" aria-checked="false">Group by date</button>
+                <input type="search" id="runs-search" class="runs-search" placeholder="Search runs or tags (client:acme)"
+                       aria-label="Search runs or tags" autocomplete="off" spellcheck="false">
+                <span class="runs-view-wrap">
+                  <button type="button" class="runs-view-btn" id="runs-view-btn"
+                          aria-haspopup="menu" aria-expanded="false" aria-controls="runs-view-menu">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"></path><circle cx="16" cy="7" r="2"></circle><circle cx="10" cy="17" r="2"></circle></svg>
+                    <span>View</span>
+                  </button>
+                  <div class="runs-view-menu" id="runs-view-menu" role="menu" aria-label="View runs" hidden>
+                    <div class="runs-view-group" role="group" aria-labelledby="runs-view-show-label">
+                      <div class="runs-view-label" id="runs-view-show-label">Show</div>
+                      <button type="button" role="menuitemradio" data-show="active" aria-checked="true">Active</button>
+                      <button type="button" role="menuitemradio" data-show="finished" aria-checked="false">Finished</button>
+                      <!-- Archived runs (#575), with Restore and the age rule (#739). Every level (docs/ui-levels.md). -->
+                      <button type="button" role="menuitemradio" data-show="archived" aria-checked="false" data-min-level="simple">Archived</button>
                     </div>
-                  </span>
-                  <!-- Archived runs (issue #575): the soft-deleted list, restore included. Advanced
-                       (docs/ui-levels.md). A header toggle, not a fifth chip: it swaps the list's
-                       source rather than narrowing it, and the chip row has no room at the pane's floor. -->
-                  <button type="button" class="runs-search-btn runs-archived-btn" id="runs-archived-btn" data-min-level="advanced"
-                          aria-label="Archived runs" title="Archived runs" aria-pressed="false">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5"></rect><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"></path><path d="M10 13h4"></path></svg>
-                  </button>
-                  <button type="button" class="runs-search-btn" id="runs-search-btn" aria-label="Search runs"
-                          aria-expanded="false" aria-controls="runs-search-row">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg>
-                  </button>
+                    <div class="runs-view-group" role="group" aria-labelledby="runs-view-group-label">
+                      <div class="runs-view-label" id="runs-view-group-label">Group by</div>
+                      <button type="button" role="menuitemradio" data-group-by="project" aria-checked="true">Project</button>
+                      <button type="button" role="menuitemradio" data-group-by="date" aria-checked="false">Date</button>
+                    </div>
+                  </div>
+                </span>
+                <button type="button" class="runs-select-btn" id="runs-select-btn" aria-pressed="false">Select</button>
+              </div>
+              <!-- A non-default view (runs-list.mjs viewChip): one chip; × resets to Active · by project. -->
+              <div class="runs-view-chip-row" id="runs-view-chip-row" hidden>
+                <span class="runs-view-chip">
+                  <span id="runs-view-chip-label"></span>
+                  <button type="button" class="runs-view-chip-x" id="runs-view-chip-x" aria-label="Reset view to Active · by project">&times;</button>
                 </span>
               </div>
-              <div class="runs-search-row" id="runs-search-row" hidden>
-                <input type="search" id="runs-search" class="runs-search" placeholder="Status, project or name"
-                       aria-label="Search runs by status, project or name" autocomplete="off" spellcheck="false">
+              <!-- #739: the Archived view's age rule (runs-archive.mjs olderThan). -->
+              <div class="runs-age-bar" id="runs-age-bar" hidden>
+                <label for="runs-age-days">Archive finished runs older than</label>
+                <select id="runs-age-days">
+                  <option value="7">7 days</option>
+                  <option value="30" selected>30 days</option>
+                  <option value="90">90 days</option>
+                </select>
+                <button type="button" class="runs-age-archive" id="runs-age-archive" disabled>Archive 0</button>
               </div>
-              <!-- Which runs the list shows (runs-list.mjs RUNS_FILTERS); app.js keeps aria-pressed. -->
-              <div class="seg runs-filter" id="runs-filter" role="group" aria-label="Show runs">
-                <button type="button" data-filter="all" aria-pressed="true" class="on">All</button>
-                <button type="button" data-filter="live" aria-pressed="false">Live</button>
-                <button type="button" data-filter="finished" aria-pressed="false">Finished</button>
-                <button type="button" data-filter="needs" aria-pressed="false">Needs you</button>
-              </div>
-              <div class="select-wrap runs-tag-wrap" data-flag="runTags"><select id="runs-tag" class="select runs-tag" aria-label="Filter by tag"><option value="">All tags</option></select></div>
               <!-- "Started by" pills, shared deployments only: one scrolling row. Built by renderRunsPeople(). -->
               <div class="hist-filter runs-people" id="historyFilter" role="group" aria-label="Filter runs by who started them" hidden></div>
               <div class="runs-list" id="runs-list" aria-label="Runs"></div>
+              <!-- #739: Select mode's bar, and the ONE row ⋯ menu every row shares (runs-row-menu.mjs). -->
+              <div class="runs-select-bar" id="runs-select-bar" role="region" aria-label="Selected runs" hidden>
+                <span id="runs-select-count" aria-live="polite">0 selected</span>
+                <button type="button" class="runs-select-archive" id="runs-select-archive" disabled>Archive</button>
+                <button type="button" class="runs-select-cancel" id="runs-select-cancel">Cancel</button>
+              </div>
+              <div class="runs-row-menu" id="runs-row-menu" role="menu" aria-label="Run actions" hidden></div>
             </div>
             <div class="runs-pane" id="runs-pane" data-kind="">
               <div class="runs-empty" id="runs-empty">

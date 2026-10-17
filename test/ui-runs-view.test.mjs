@@ -8,6 +8,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { levelAtLeast, minLevelFor } from '../ui/public/ui-level.mjs';
+import { confirmDialog } from './helpers/confirm-modal.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -17,12 +19,19 @@ const htmlPath = join(__dir, '..', 'ui', 'public', 'index.html');
 const appPath = join(__dir, '..', 'ui', 'public', 'app.js');
 const PROJECT = '/tmp/proj';
 const KEY = 'proj-0000abcd';
+// A second project: with rows from one project the list has no project headers (#724).
+const OTHER_DIR = '/tmp/other';
+const OTHER_KEY = 'other-0000ef01';
+// Finished minutes ago: Active's Recent lists only runs finished in the last 7 days (#724).
+const RECENT = Date.now();
 const HIST = [
   { id: 'aaaa0001', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Merged thing', status: 'done',
-    startedAt: '2026-09-29T09:18:00Z', mtime: 3, pr: { number: 7, state: 'MERGED', url: 'https://example.test/7' } },
+    startedAt: '2026-09-29T09:18:00Z', mtime: RECENT - 60_000, pr: { number: 7, state: 'MERGED', url: 'https://example.test/7' } },
   { id: 'aaaa0002', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Stopped thing', status: 'stopped',
-    startedAt: '2026-09-29T08:00:00Z', mtime: 2 },
+    startedAt: '2026-09-29T08:00:00Z', mtime: RECENT - 120_000 },
 ];
+const OTHER_HIST = { id: 'bbbb0001', projectKey: OTHER_KEY, projectName: 'other', projectDir: OTHER_DIR, title: 'Other thing',
+  status: 'done', startedAt: '2026-09-29T07:00:00Z', mtime: RECENT - 180_000 };
 const windows = [];
 afterEach(() => { while (windows.length) windows.pop().close(); });
 
@@ -35,11 +44,17 @@ const ARCH = { id: 'cccc0009', projectKey: KEY, projectName: 'proj', projectDir:
 async function settle(window, n = 4) { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); }
 function go(window, hash) { window.location.hash = hash; window.dispatchEvent(new window.Event('hashchange')); }
 const click = (window, node) => node.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+// Pick a View menu item (#740): open View, click the item; the pick closes the menu.
+async function pickView(window, doc, sel) {
+  click(window, doc.getElementById('runs-view-btn')); await settle(window);
+  click(window, doc.querySelector(`#runs-view-menu ${sel}`)); await settle(window);
+}
+const checked = (doc, sel) => doc.querySelector(`#runs-view-menu ${sel}`).getAttribute('aria-checked');
 const live = (runId, extra = {}) => ({ runId, title: runId, projectDir: PROJECT, status: 'running', kind: 'run',
   startedAt: '10:00:00', pendingQuestion: null, ...extra });
 
 // `setup(window)` runs before app.js loads: a stub its module-load wiring must see goes there.
-async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [{ name: 'proj', path: PROJECT, exists: true }], history = HIST, archived = [ARCH], chains = [], setup } = {}) {
+async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [{ name: 'proj', path: PROJECT, exists: true }], history = HIST, archived = [ARCH], chains = [], features = [], setup } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
   const { window } = dom;
   windows.push(window);
@@ -64,7 +79,7 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
     if (/\/api\/history\/[^/]+\/cccc0009$/.test(s)) return ok({ state: { title: 'Archived thing', status: 'done', steps: [], stepper: null, archivedAt: ARCH.archivedAt } });
     if (s.includes('/api/runs/cccc0009/restore')) return ok({ ok: true, id: 'cccc0009', restored: true, warnings: [] });
     if (s.includes('/api/workspaces')) return ok({ workspaces: [] });
-    if (s.endsWith('/api/schedules')) return ok({ schedules: [], tickets: [], counts: {}, chains });
+    if (s.endsWith('/api/schedules')) return ok({ schedules: [], tickets: [], counts: {}, chains, features });
     return ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [], pipelines: 0, projects: 0, workspaces: 0 });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
@@ -105,11 +120,13 @@ test('one Runs nav item; a bare #running or #history lands on #runs with the emp
 
 test('a live run groups with its registered project even before History loads', async () => {
   const { window, doc, recv } = await boot({
-    projects: [{ name: 'proj', path: PROJECT, exists: true, key: KEY }], history: [],
+    projects: [{ name: 'proj', path: PROJECT, exists: true, key: KEY }, { name: 'other', path: OTHER_DIR, exists: true, key: OTHER_KEY }], history: [],
   });
-  recv({ type: 'hello', runs: [live('r1')] });
+  recv({ type: 'hello', runs: [live('r1'), live('r2', { projectDir: OTHER_DIR })] });
   go(window, 'runs'); await settle(window);
-  assert.equal(doc.querySelector('#runs-list .runs-row[data-run-id="r1"]').closest('.runs-group').dataset.groupKey, KEY);
+  const group = doc.querySelector('#runs-list .runs-row[data-run-id="r1"]').closest('.runs-group');
+  assert.equal(group.dataset.projectKey, KEY);
+  assert.equal(group.dataset.groupKey, `running/${KEY}`, 'Active scopes the fold key to its section');
 });
 
 test('a finished run opens its saved page in the same pane and closes the live one', async () => {
@@ -222,80 +239,94 @@ test('a History reload keeps each row’s last known PR until Phase 2 answers', 
   assert.equal(word(), 'Merged', 'not "Finished" while the PR lookup runs');
 });
 
-test('list preferences — a folded group, the filter chip, the Group by choice — narrow the list and are remembered across reloads', async () => {
+test('list preferences — a folded group, View › Show, View › Group by — narrow the list and are remembered across reloads', async () => {
   // Each row boots its own page.
   await checkRows([
     { name: 'a folded project group stays folded across reloads', run: async () => {
-      const first = await boot();
+      const two = { projects: [{ name: 'proj', path: PROJECT, exists: true }, { name: 'other', path: OTHER_DIR, exists: true }], history: [...HIST, OTHER_HIST] };
+      const first = await boot(two);
       go(first.window, 'runs'); await settle(first.window);
-      const head = first.doc.querySelector(`#runs-list .runs-group-head[data-group-key="${KEY}"]`);
+      const head = first.doc.querySelector(`#runs-list .runs-group-head[data-group-key="recent/${KEY}"]`);
       click(first.window, head); await settle(first.window);
       const saved = first.window.localStorage.getItem('worca-cc.runs.collapsed');
-      assert.deepEqual(JSON.parse(saved), [KEY]);
-      const second = await boot({ storage: { 'worca-cc.runs.collapsed': saved } });
+      assert.deepEqual(JSON.parse(saved), [`recent/${KEY}`]);
+      const second = await boot({ ...two, storage: { 'worca-cc.runs.collapsed': saved } });
       go(second.window, 'runs'); await settle(second.window);
-      const head2 = second.doc.querySelector(`#runs-list .runs-group-head[data-group-key="${KEY}"]`);
+      const head2 = second.doc.querySelector(`#runs-list .runs-group-head[data-group-key="recent/${KEY}"]`);
       assert.equal(head2.getAttribute('aria-expanded'), 'false');
-      assert.equal(second.doc.querySelector(`#runs-list .runs-group[data-group-key="${KEY}"] .runs-row`), null);
+      assert.equal(second.doc.querySelector(`#runs-list .runs-group[data-group-key="recent/${KEY}"] .runs-row`), null);
     } },
-    { name: 'the filter chips narrow the list and are remembered across reloads', run: async () => {
+    { name: 'View › Show narrows the list and is remembered across reloads', run: async () => {
       const first = await boot();
       go(first.window, 'runs'); await settle(first.window);
       first.recv({ type: 'hello', runs: [live('r-live')] });
       await settle(first.window);
-      const titles = (doc) => [...doc.querySelectorAll('#runs-list .runs-group .runs-row-title')].map((n) => n.textContent);
-      const chip = (doc, f) => doc.querySelector(`#runs-filter [data-filter="${f}"]`);
-      assert.equal(chip(first.doc, 'all').getAttribute('aria-pressed'), 'true');
-      click(first.window, chip(first.doc, 'finished')); await settle(first.window);
+      const titles = (doc) => [...doc.querySelectorAll('#runs-list .runs-row-title')].map((n) => n.textContent);
+      assert.deepEqual([...first.doc.querySelectorAll('#runs-view-menu [data-show]')].map((b) => b.dataset.show), ['active', 'finished', 'archived'], 'Show lists Active, Finished, Archived');
+      assert.equal(checked(first.doc, '[data-show="active"]'), 'true');
+      await pickView(first.window, first.doc, '[data-show="finished"]');
       assert.deepEqual(titles(first.doc), ['Merged thing', 'Stopped thing']);
-      assert.equal(chip(first.doc, 'finished').getAttribute('aria-pressed'), 'true');
-      assert.equal(chip(first.doc, 'all').getAttribute('aria-pressed'), 'false');
-      click(first.window, chip(first.doc, 'live')); await settle(first.window);
-      assert.deepEqual(titles(first.doc), ['r-live']);
+      assert.equal(checked(first.doc, '[data-show="finished"]'), 'true');
+      assert.equal(checked(first.doc, '[data-show="active"]'), 'false');
       const saved = first.window.localStorage.getItem('worca-cc.runs.filter');
-      assert.equal(saved, 'live');
+      assert.equal(saved, 'finished');
+      await pickView(first.window, first.doc, '[data-show="active"]');
+      assert.deepEqual(titles(first.doc), ['r-live', 'Merged thing', 'Stopped thing'], 'Running, then Recent');
       const second = await boot({ storage: { 'worca-cc.runs.filter': saved } });
       go(second.window, 'runs'); await settle(second.window);
-      assert.equal(chip(second.doc, 'live').classList.contains('on'), true, 'the chip comes back');
-      assert.deepEqual(titles(second.doc), [], 'and still filters (no live run after this boot)');
+      assert.equal(checked(second.doc, '[data-show="finished"]'), 'true', 'the pick comes back');
+      assert.deepEqual(titles(second.doc), ['Merged thing', 'Stopped thing'], 'and still filters');
+      const legacy = await boot({ storage: { 'worca-cc.runs.filter': 'needs' } });
+      go(legacy.window, 'runs'); await settle(legacy.window);
+      assert.equal(checked(legacy.doc, '[data-show="active"]'), 'true', 'a stored Needs you filter boots on Active');
     } },
-    { name: 'the Group by menu switches to date sections, closes on a pick or a click outside, and is remembered', run: async () => {
+    { name: 'Show older opens Finished, and Finished is remembered', run: async () => {
+      const old = { ...HIST[1], id: 'aaaa0003', title: 'Old thing', mtime: RECENT - 30 * 86400000 };
+      const { window, doc } = await boot({ history: [HIST[0], old] });
+      go(window, 'runs'); await settle(window);
+      const titles = () => [...doc.querySelectorAll('#runs-list .runs-row-title')].map((n) => n.textContent);
+      assert.deepEqual(titles(), ['Merged thing'], 'Active keeps the old run behind Show older');
+      click(window, doc.querySelector('#runs-list .runs-show-older')); await settle(window);
+      assert.equal(checked(doc, '[data-show="finished"]'), 'true');
+      assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), 'finished');
+      assert.ok(titles().includes('Old thing'), 'Finished lists the older run');
+    } },
+    { name: 'View › Group by switches to date sections, closes on a pick or a click outside, and is remembered', run: async () => {
       const first = await boot();
       const { window, doc } = first;
       go(window, 'runs'); await settle(window);
       first.recv({ type: 'hello', runs: [live('r-live')] });
       await settle(window);
-      const btn = doc.getElementById('runs-group-btn');
-      const menu = doc.getElementById('runs-group-menu');
+      const btn = doc.getElementById('runs-view-btn');
+      const menu = doc.getElementById('runs-view-menu');
       assert.equal(menu.hidden, true);
       click(window, btn); await settle(window);
       assert.equal(menu.hidden, false);
       assert.equal(btn.getAttribute('aria-expanded'), 'true');
-      assert.equal(doc.activeElement, menu.querySelector('[data-group-by="project"]'), 'focus lands on the current choice');
+      assert.equal(doc.activeElement, menu.querySelector('[data-show="active"]'), 'focus lands on the first checked item');
       click(window, doc.body); await settle(window);
       assert.equal(menu.hidden, true, 'a click elsewhere closes it');
-      click(window, btn); await settle(window);
-      click(window, menu.querySelector('[data-group-by="date"]')); await settle(window);
+      await pickView(window, doc, '[data-group-by="date"]');
       assert.equal(menu.hidden, true, 'a pick closes it');
       assert.equal(menu.querySelector('[data-group-by="date"]').getAttribute('aria-checked'), 'true');
       const heads = () => [...doc.querySelectorAll('#runs-list .runs-group-name')].map((n) => n.textContent);
-      assert.equal(heads()[0], 'Today', 'the live run is happening today');
+      assert.equal(heads()[0], 'Today', 'Recent buckets by date; the live run sits flat in Running');
       assert.ok(heads().every((h) => ['Upcoming', 'Today', 'Yesterday', 'Previous 7 days', 'Older'].includes(h)));
       assert.equal(window.localStorage.getItem('worca-cc.runs.groupBy'), 'date');
       const second = await boot({ storage: { 'worca-cc.runs.groupBy': 'date' } });
       go(second.window, 'runs'); await settle(second.window);
-      assert.equal(second.doc.getElementById('runs-group-btn').classList.contains('on'), true);
-      assert.ok(second.doc.querySelector('#runs-list .runs-group[data-group-key^="date:"]'), 'date sections after a reload');
+      assert.equal(second.doc.getElementById('runs-view-chip-label').textContent, 'Active · by date');
+      assert.ok(second.doc.querySelector('#runs-list .runs-group[data-group-key^="recent/date:"]'), 'date buckets after a reload');
     } },
   ]);
 });
 
 // ── Archived Runs view (issue #575) ──────────────────────────────────────────
 
-test('the Archived toggle fetches the archived feed only when picked (and on the first paint when remembered) and lists its rows', async () => {
+test('View › Show › Archived fetches the archived feed only when picked (and on the first paint when remembered) and lists its rows', async () => {
   // Each row boots its own page.
   await checkRows([
-    { name: 'the Archived toggle fetches the archived feed only when picked, and lists its rows', run: async () => {
+    { name: 'Show › Archived fetches the archived feed only when picked, and lists its rows', run: async () => {
       const { window, doc } = await boot();
       go(window, 'runs'); await settle(window);
       let archivedFetches = 0;
@@ -305,30 +336,28 @@ test('the Archived toggle fetches the archived feed only when picked (and on the
         return inner(u, init);
       };
       window.fetch = wrapped; globalThis.fetch = wrapped;
-      assert.equal(archivedFetches, 0, 'nothing archived is fetched until the chip is picked');
-      const chip = (f) => doc.querySelector(`#runs-filter [data-filter="${f}"]`);
-      const archBtn = doc.getElementById('runs-archived-btn');
-      assert.ok(archBtn.closest('.runs-head-tools'), 'the toggle sits in the Runs header, not the chip row');
-      assert.equal(chip('archived'), null, 'no fifth chip: the row keeps fitting the pane at its 260px floor');
-      click(window, archBtn); await settle(window);
+      assert.equal(archivedFetches, 0, 'nothing archived is fetched until Archived is picked');
+      assert.ok(doc.querySelector('#runs-view-menu [data-show="archived"]').closest('.runs-head'), 'Archived sits in the Runs header View menu');
+      await pickView(window, doc, '[data-show="archived"]');
       assert.equal(archivedFetches, 1, 'one archived fetch per activation');
-      assert.equal(archBtn.getAttribute('aria-pressed'), 'true');
-      assert.ok([...doc.querySelectorAll('#runs-filter button')].every((b) => b.getAttribute('aria-pressed') === 'false'),
-        'no chip is pressed while the archived list shows');
-      const titles = () => [...doc.querySelectorAll('#runs-list .runs-group .runs-row-title')].map((n) => n.textContent);
+      assert.equal(checked(doc, '[data-show="archived"]'), 'true');
+      const titles = () => [...doc.querySelectorAll('#runs-list .runs-row-title')].map((n) => n.textContent);
       assert.deepEqual(titles(), ['Archived thing']);
       const row = doc.querySelector('#runs-list .runs-row[data-pipeline-id="cccc0009"]');
-      assert.equal(row.querySelector('.runs-row-sub').textContent, 'Archived · Sep 1', 'the word says where the run lives');
+      assert.equal(row.querySelector('.runs-row-sub').textContent, 'Archived · Sep 1 · proj', 'the word says where the run lives; one project: its name ends the line');
       assert.equal(row.dataset.icon, 'done', 'the terminal icon stays');
       assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), 'archived');
-      click(window, chip('all')); await settle(window);
+      await pickView(window, doc, '[data-show="active"]');
       assert.deepEqual(titles().sort(), ['Merged thing', 'Stopped thing'],
-        'All shows the active history only (the archived feed is a separate array)');
+        'Active shows the active history only (the archived feed is a separate array)');
       assert.equal(archivedFetches, 1, 'switching back does not re-fetch');
-      click(window, archBtn); await settle(window);
+      await pickView(window, doc, '[data-show="archived"]');
       assert.equal(archivedFetches, 2, 'each activation re-fetches (cheap, stays fresh)');
-      click(window, archBtn); await settle(window);
-      assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), 'all', 'the toggle turns back off to All');
+      await pickView(window, doc, '[data-show="archived"]');
+      assert.equal(archivedFetches, 2, 'picking Archived while it is the pick does not re-fetch');
+      await pickView(window, doc, '[data-show="finished"]');
+      assert.equal(checked(doc, '[data-show="finished"]'), 'true');
+      assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), 'finished');
     } },
     { name: 'a remembered Archived filter fetches its feed on the first paint, chip hidden or not', run: async () => {
       const { window, doc } = await boot({ storage: { 'worca-cc.runs.filter': 'archived' } });
@@ -340,9 +369,9 @@ test('the Archived toggle fetches the archived feed only when picked (and on the
       };
       window.fetch = wrapped; globalThis.fetch = wrapped;
       go(window, 'runs'); await settle(window);
-      assert.ok(archivedFetches >= 1, 'the feed loads without a chip click');
-      assert.equal(doc.getElementById('runs-archived-btn').classList.contains('on'), true);
-      const titles = () => [...doc.querySelectorAll('#runs-list .runs-group .runs-row-title')].map((n) => n.textContent);
+      assert.ok(archivedFetches >= 1, 'the feed loads without a menu pick');
+      assert.equal(checked(doc, '[data-show="archived"]'), 'true');
+      const titles = () => [...doc.querySelectorAll('#runs-list .runs-row-title')].map((n) => n.textContent);
       assert.deepEqual(titles(), ['Archived thing']);
     } },
   ]);
@@ -351,7 +380,7 @@ test('the Archived toggle fetches the archived feed only when picked (and on the
 test('an archived run’s detail offers Restore, not Archive, and hides Resume and follow-up', async () => {
   const { window, doc } = await boot();
   go(window, 'runs'); await settle(window);
-  click(window, doc.getElementById('runs-archived-btn')); await settle(window);
+  await pickView(window, doc, '[data-show="archived"]');
   const posts = [];
   const inner = window.fetch;
   const wrapped = (u, init) => {
@@ -376,15 +405,44 @@ test('an archived run’s detail offers Restore, not Archive, and hides Resume a
   assert.ok(doc.getElementById('confirm-modal').classList.contains('hidden'), 'the modal is down');
 });
 
-test('docs/ui-levels.md rule 2: the Archived toggle stays on screen below Advanced while it is the pick', async () => {
+test('#739: Show › Archived is offered at every level', async () => {
   const { window, doc } = await boot({ storage: { 'worca-cc.runs.filter': 'archived' } });
+  doc.documentElement.dataset.level = 'simple';
   go(window, 'runs'); await settle(window);
-  const archBtn = doc.getElementById('runs-archived-btn');
-  assert.equal(archBtn.dataset.minLevel, 'advanced');
-  assert.equal(archBtn.dataset.levelKeep, '1',
-    'kept visible: otherwise a Simple list shows only archived runs with no way out');
-  click(window, doc.querySelector('#runs-filter [data-filter="all"]')); await settle(window);
-  assert.equal(archBtn.dataset.levelKeep, undefined, 'once left, the toggle is Advanced-only again');
+  const archItem = doc.querySelector('#runs-view-menu [data-show="archived"]');
+  assert.equal(archItem.dataset.minLevel, 'simple');
+  assert.equal(levelAtLeast(minLevelFor(archItem), doc), true);
+});
+
+test('#740: a non-default view shows one chip; × resets to Active · by project and is remembered', async () => {
+  const { window, doc } = await boot();
+  go(window, 'runs'); await settle(window);
+  const row = doc.getElementById('runs-view-chip-row');
+  assert.equal(row.hidden, true, 'no chip for the default view');
+  await pickView(window, doc, '[data-show="finished"]');
+  await pickView(window, doc, '[data-group-by="date"]');
+  assert.equal(row.hidden, false);
+  assert.equal(doc.getElementById('runs-view-chip-label').textContent, 'Finished · by date');
+  click(window, doc.getElementById('runs-view-chip-x')); await settle(window);
+  assert.equal(row.hidden, true, '× hides the chip');
+  assert.equal(checked(doc, '[data-show="active"]'), 'true');
+  assert.equal(checked(doc, '[data-group-by="project"]'), 'true');
+  assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), 'active');
+  assert.equal(window.localStorage.getItem('worca-cc.runs.groupBy'), 'project');
+  assert.equal(doc.activeElement, doc.getElementById('runs-view-btn'), 'focus moves to View');
+});
+
+test('#740: the always-visible search filters the list and Escape clears it', async () => {
+  const { window, doc } = await boot();
+  go(window, 'runs'); await settle(window);
+  const input = doc.getElementById('runs-search');
+  assert.equal(input.placeholder, 'Search runs or tags (client:acme)');
+  input.value = 'merged';
+  input.dispatchEvent(new window.Event('input', { bubbles: true })); await settle(window);
+  assert.deepEqual([...doc.querySelectorAll('#runs-list .runs-row-title')].map((n) => n.textContent), ['Merged thing']);
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await settle(window);
+  assert.equal(input.value, '');
+  assert.equal(doc.querySelectorAll('#runs-list .runs-row-title').length, 2);
 });
 
 test('pipelines-changed refreshes a loaded Archived feed, and a mid-flight change queues one more fetch', async () => {
@@ -403,7 +461,7 @@ test('pipelines-changed refreshes a loaded Archived feed, and a mid-flight chang
   go(window, 'runs'); await settle(window);
   recv({ type: 'pipelines-changed' }); await settle(window);
   assert.equal(archivedFetches, 0, 'a never-loaded feed is not fetched on a change');
-  click(window, doc.getElementById('runs-archived-btn')); await settle(window);
+  await pickView(window, doc, '[data-show="archived"]');
   assert.equal(archivedFetches, 1);
   // Restored elsewhere (another tab, the CLI): the broadcast drops it from the open view.
   archived = [];
@@ -421,7 +479,7 @@ test('an archived run opened from the loaded feed shows its project in the glanc
   // projectDir, no title — and the glance head printed "(no project)".
   const { window, doc } = await boot();
   go(window, 'runs'); await settle(window);
-  click(window, doc.getElementById('runs-archived-btn')); await settle(window);
+  await pickView(window, doc, '[data-show="archived"]');
   click(window, doc.querySelector('#runs-list .runs-row[data-pipeline-id="cccc0009"]')); await settle(window);
   assert.equal(window.location.hash, `#history/${KEY}/cccc0009`);
   const meta = doc.querySelector('#hist-detail .hd-glance .rd-page-meta');
@@ -516,6 +574,33 @@ test('D17: a feature chain is one open row titled by the feature, members "1 · 
   assert.ok(!member1.classList.contains('is-live'), 'and does not pulse');
 });
 
+test('#770: a feature with every slice finished is ONE collapsed row in Recent, its slices and PRs inside, no loose slice rows', async () => {
+  const hist = [1, 2, 3].map((i) => ({ id: `pres000${i}`, projectKey: KEY, projectName: 'proj', projectDir: PROJECT, status: 'done',
+    title: i === 1 ? 'Implement Run Presets Feature' : `Implement Run Presets Feature · ${i}/3: Slice ${i}`,
+    startedAt: '2026-10-17T05:00:00Z', mtime: RECENT - (4 - i) * 60_000 }));
+  const pr = (n) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN', draft: false });
+  const features = [{ id: 'feat_9', title: 'Implement Run Presets Feature', projectKey: KEY, status: 'done', total: 3, done: 3,
+    featureIds: ['feat_9'], pipelineIds: hist.map((h) => h.id), ticketIds: ['tp2', 'tp3'],
+    members: [759, 761, 769].map((n, i) => ({ era: 'slice', index: i + 1, title: `Slice ${i + 1}`, state: 'done', pipelineId: hist[i].id,
+      ticketId: i ? `tp${i + 1}` : null, pr: pr(n), historyKey: KEY, archived: false })) }];
+  const { window, doc, recv } = await boot({ features, history: hist });
+  recv({ type: 'hello', flags: { shapeFirst: true }, runs: [] });
+  go(window, 'runs'); await settle(window);
+  const host = doc.getElementById('runs-list');
+  assert.equal(host.querySelectorAll('.runs-chain').length, 1);
+  assert.equal(host.querySelectorAll('.runs-row-hist').length, 0, 'no slice is listed on its own');
+  assert.ok(host.querySelector('[data-section="recent"] .runs-chain'), 'it sits in Recent');
+  assert.equal(host.querySelector('.runs-chain .runs-row-title').textContent, 'Implement Run Presets Feature');
+  assert.match(host.querySelector('.runs-chain .runs-row-sub').textContent, /^3 of 3 slices · in review/);
+  const tog = () => host.querySelector('.runs-chain-toggle');
+  assert.equal(tog().getAttribute('aria-expanded'), 'false', 'clarify 2: collapsed with nothing live');
+  assert.ok(host.querySelector('.runs-chain > .runs-row-more'), 'a ⋯ menu to archive it whole');
+  click(window, tog()); await settle(window);
+  assert.deepEqual([...host.querySelectorAll('.runs-chain-pr')].map((a) => a.textContent), ['#759', '#761', '#769']);
+  assert.deepEqual([...host.querySelectorAll('.runs-chain-link')].map((a) => a.getAttribute('href')),
+    ['#feature/feat_9', ...hist.map((h) => `#history/${KEY}/${h.id}`)]);
+});
+
 test('a state frame and a schedules-changed frame keep the chain toggle focused, and a repaint without a text change keeps the thin line element', async () => {
   const chains = [{ id: 'p:pchain01', title: 'Chain root', members: [
     { pipelineId: 'pchain01', ticketId: null, state: 'current', title: 'Chain root', projectDir: PROJECT },
@@ -591,4 +676,159 @@ test('chain freshness: no chains at first, then a schedules-changed frame folds 
   recv({ type: 'schedules-changed' });
   await settle(window);
   assert.equal(host.querySelectorAll('.runs-chain').length, 1);
+});
+
+// #739: a fetch wrapper that records DELETEs and answers them (409 for ids in `refuse`).
+function recordDeletes(window, { refuse = new Set() } = {}) {
+  const calls = [];
+  const inner = window.fetch;
+  const wrapped = (u, init) => {
+    const method = (init && init.method) || 'GET';
+    if (method === 'DELETE') {
+      const s = String(u);
+      calls.push({ url: s, method });
+      const id = /\/api\/runs\/([^?]+)/.exec(s)[1];
+      return Promise.resolve(refuse.has(id)
+        ? { ok: false, status: 409, json: async () => ({ error: 'cannot archive while retained uncommitted work exists; recover it or discard the worktree first' }) }
+        : { ok: true, status: 200, json: async () => ({ ok: true, id, archived: true, warnings: [] }) });
+    }
+    return inner(u, init);
+  };
+  window.fetch = wrapped; globalThis.fetch = wrapped;
+  return calls;
+}
+
+test('#739: the row ⋯ menu offers Archive on a finished row at the Simple level and calls DELETE /api/runs/:id after the confirm', async () => {
+  const { window, doc } = await boot();
+  doc.documentElement.dataset.level = 'simple';
+  go(window, 'runs'); await settle(window);
+  const calls = recordDeletes(window);
+  const more = doc.querySelector('#runs-list .runs-item[data-row-key="hist:proj-0000abcd/aaaa0001"] .runs-row-more');
+  assert.ok(more, 'the finished row has a ⋯ button');
+  assert.equal(levelAtLeast(minLevelFor(more), doc), true, 'shown at Simple');
+  click(window, more); await settle(window);
+  const menu = doc.getElementById('runs-row-menu');
+  assert.equal(menu.hidden, false);
+  assert.equal(levelAtLeast(minLevelFor(menu), doc), true);
+  assert.deepEqual([...menu.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent), ['Archive', 'Open in New run', 'Copy run id']);
+  click(window, menu.querySelector('[data-action="archive"]')); await settle(window);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Archive 1 run?');
+  assert.equal(calls.length, 0, 'nothing is sent before the confirm');
+  const message = await confirmDialog(window); await settle(window);
+  assert.match(message, /^Merged thing\n/);
+  assert.deepEqual(calls, [{ url: `/api/runs/aaaa0001?projectKey=${KEY}`, method: 'DELETE' }]);
+  assert.equal(doc.querySelector('#runs-list .runs-row[data-pipeline-id="aaaa0001"]'), null, 'the row left the list');
+});
+
+test('#739: archiving a finished run still listed live acknowledges it, so it does not come back', async () => {
+  const { window, doc, recv } = await boot({ storage: { 'worca-cc.lingerRuns': JSON.stringify(['r1']) } });
+  go(window, 'runs'); await settle(window);
+  // A run that finished live and was never opened: the client keeps it as a lingering live row (overviewRuns).
+  recv({ type: 'hello', runs: [live('r1', { status: 'done', pipelineId: 'aaaa0001', title: 'Merged thing' })] });
+  await settle(window);
+  const calls = recordDeletes(window);
+  const more = doc.querySelector('#runs-list .runs-item[data-row-key="live:r1"] .runs-row-more');
+  assert.ok(more, 'the lingering finished run has a ⋯ button');
+  click(window, more); await settle(window);
+  click(window, doc.querySelector('#runs-row-menu [data-action="archive"]')); await settle(window);
+  await confirmDialog(window); await settle(window, 8);
+  assert.deepEqual(calls.map((c) => c.url), [`/api/runs/aaaa0001?projectKey=${KEY}`]);
+  assert.ok(JSON.parse(window.localStorage.getItem('worca-cc.ackRuns') || '[]').includes('r1'), 'acknowledged, so a reload keeps it gone');
+  assert.equal(doc.querySelector('#runs-list .runs-row[data-pipeline-id="aaaa0001"]'), null, 'the row left the list');
+});
+
+test('#739: Select picks two rows; one archive fails and is named, the other still goes through', async () => {
+  const { window, doc } = await boot();
+  doc.documentElement.dataset.level = 'simple';
+  go(window, 'runs'); await settle(window);
+  const calls = recordDeletes(window, { refuse: new Set(['aaaa0002']) });
+  click(window, doc.getElementById('runs-select-btn')); await settle(window);
+  assert.equal(doc.getElementById('runs-select-bar').hidden, false);
+  assert.equal(doc.querySelector('#runs-list .runs-row-more'), null);
+  click(window, doc.querySelector('#runs-list .runs-row[data-pipeline-id="aaaa0001"]'));
+  click(window, doc.querySelector('#runs-list .runs-row[data-pipeline-id="aaaa0002"]'));
+  await settle(window);
+  assert.equal(window.location.hash, '#runs', 'a row click selects, it does not navigate');
+  assert.equal(doc.getElementById('runs-select-count').textContent, '2 selected');
+  click(window, doc.getElementById('runs-select-archive')); await settle(window);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Archive 2 runs?');
+  await confirmDialog(window); await settle(window, 8);
+  assert.deepEqual(calls.map((c) => c.url), [`/api/runs/aaaa0001?projectKey=${KEY}`, `/api/runs/aaaa0002?projectKey=${KEY}`]);
+  const page = doc.body.textContent;
+  assert.match(page, /Archived 1 run · 1 failed/);
+  assert.match(page, /Stopped thing: cannot archive while retained uncommitted work exists/);
+  assert.ok(doc.querySelector('#runs-list .runs-row[data-pipeline-id="aaaa0002"]'), 'the failed run stays listed');
+  assert.equal(doc.querySelector('#runs-list .runs-row[data-pipeline-id="aaaa0001"]'), null);
+});
+
+test('#739: the Archived view counts finished runs older than the chosen age and archives them after one confirm', async () => {
+  const OLD = Date.now() - 40 * 86400000;
+  const MID = Date.now() - 10 * 86400000;
+  const history = [
+    { id: 'dddd0001', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Old thing', status: 'done', startedAt: new Date(OLD).toISOString(), mtime: OLD },
+    { id: 'dddd0002', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Mid thing', status: 'stopped', startedAt: new Date(MID).toISOString(), mtime: MID },
+    { id: 'dddd0003', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Kept thing', status: 'done', startedAt: new Date(OLD).toISOString(), mtime: OLD,
+      retainedWork: { reason: 'commit-failed', members: [{ projectKey: KEY, worktreeDir: '/tmp/wt', branch: 'b' }] } },
+  ];
+  const { window, doc } = await boot({ history });
+  doc.documentElement.dataset.level = 'simple';
+  go(window, 'runs'); await settle(window);
+  await pickView(window, doc, '[data-show="archived"]');
+  const bar = doc.getElementById('runs-age-bar');
+  assert.equal(bar.hidden, false);
+  assert.equal(levelAtLeast(minLevelFor(bar), doc), true);
+  assert.equal(doc.getElementById('runs-select-btn').hidden, true, 'no Select in the Archived view');
+  const btn = doc.getElementById('runs-age-archive');
+  assert.equal(btn.textContent, 'Archive 1');
+  const days = doc.getElementById('runs-age-days');
+  days.value = '7'; days.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(btn.textContent, 'Archive 2');
+  days.value = '30'; days.dispatchEvent(new window.Event('change', { bubbles: true }));
+  const calls = recordDeletes(window);
+  btn.focus();
+  click(window, btn); await settle(window);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Archive 1 run?');
+  const message = await confirmDialog(window); await settle(window, 8);
+  assert.match(message, /Skipped \(1\): Kept thing \(has retained work\)\./);
+  assert.deepEqual(calls.map((c) => c.url), [`/api/runs/dddd0001?projectKey=${KEY}`]);
+  // The confirm took focus from the button, so the repaint cannot see it: the click handler remembers it.
+  assert.equal(btn.textContent, 'Archive 0');
+  assert.equal(btn.disabled, true);
+  assert.equal(doc.activeElement, days, 'focus moves to the age select once nothing is left to archive');
+});
+
+test('#739: in Select mode a click on a chain row still opens and closes it', async () => {
+  const chains = [{ id: 'p:pchain01', title: 'Chain root', members: [
+    { pipelineId: 'pchain01', ticketId: null, state: 'current', title: 'Chain root', projectDir: PROJECT },
+    { pipelineId: null, ticketId: 'tick0002', state: 'waiting', title: 'Chain next', projectDir: PROJECT },
+  ] }];
+  const { window, doc, recv } = await boot({ chains, history: [] });
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pchain01' })] });
+  go(window, 'runs'); await settle(window);
+  click(window, doc.getElementById('runs-select-btn')); await settle(window);
+  const host = doc.getElementById('runs-list');
+  const tog = () => host.querySelector('.runs-chain-toggle');
+  assert.equal(tog().getAttribute('aria-expanded'), 'false');
+  click(window, host.querySelector('.runs-chain .runs-row-title')); await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'true');
+  click(window, host.querySelector('.runs-chain .runs-row-title')); await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'false');
+  assert.equal(window.location.hash, '#runs');
+});
+
+test('#739: an archived row’s ⋯ → Restore posts the restore after "Restore this run?"', async () => {
+  const { window, doc } = await boot();
+  doc.documentElement.dataset.level = 'simple';
+  go(window, 'runs'); await settle(window);
+  await pickView(window, doc, '[data-show="archived"]');
+  const posts = [];
+  const inner = window.fetch;
+  const wrapped = (u, init) => { if (String(u).includes('/restore')) posts.push({ url: String(u), method: (init && init.method) || 'GET' }); return inner(u, init); };
+  window.fetch = wrapped; globalThis.fetch = wrapped;
+  click(window, doc.querySelector('#runs-list .runs-item[data-row-key="hist:proj-0000abcd/cccc0009"] .runs-row-more')); await settle(window);
+  assert.deepEqual([...doc.querySelectorAll('#runs-row-menu [role="menuitem"]')].map((b) => b.dataset.action), ['restore', 'copy-id']);
+  click(window, doc.querySelector('#runs-row-menu [data-action="restore"]')); await settle(window);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Restore this run?');
+  await confirmDialog(window); await settle(window);
+  assert.deepEqual(posts, [{ url: `/api/runs/cccc0009/restore?projectKey=${KEY}`, method: 'POST' }]);
 });

@@ -50,7 +50,7 @@ test('a deciding Auto run paints the orb placeholder, not an empty graph; the la
   assert.equal(host.querySelector('.auto-deciding-label').textContent, 'Waiting for your decision');
   ctx.showRunning(); await settle(ctx.window);
   assert.ok(inNeeds(ctx), 'the waiting proposal puts the run in Needs you');
-  assert.equal(rowWord(cardOf(ctx)), 'Workflow review', 'the row points at the proposal');
+  assert.equal(rowWord(inNeeds(ctx)), 'Workflow review', 'the row points at the proposal');
 });
 
 test('the real manifest replaces the placeholder with the graph (the orb is stopped, the host class dropped)', async () => {

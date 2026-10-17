@@ -100,7 +100,7 @@ export function helloRun(ctx, { runId, title = 'Demo run', ...extra } = {}) {
   });
 }
 
-// The run's row in its project group (a Needs-you run is repeated above it).
+// The run's row outside Needs you (#724: a Needs-you run is listed only there; use the Needs-you selector for it).
 export const runCard = (ctx, runId) =>
   ctx.window.document.querySelector(`#runs-list .runs-row[data-slot="group"][data-run-id="${runId}"]`);
 

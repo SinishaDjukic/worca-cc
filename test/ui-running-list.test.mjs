@@ -71,9 +71,9 @@ const live = (runId, extra = {}) => ({
 
 const QUESTION = { id: 'q1', kind: 'clarify', questions: [{ question: 'which db?', options: ['pg'] }] };
 
-// Live rows in their project groups (a Needs-you run is repeated above them: rule 6).
+// Live rows wherever they are listed: each run once, under Needs you or in its section (#724).
 const rowIds = (window) =>
-  [...window.document.querySelectorAll('#runs-list .runs-row[data-kind="live"][data-slot="group"]')].map((c) => c.dataset.runId);
+  [...window.document.querySelectorAll('#runs-list .runs-row[data-kind="live"]')].map((c) => c.dataset.runId);
 const needsIds = (window) =>
   [...window.document.querySelectorAll('#runs-list .runs-needs .runs-row')].map((c) => c.dataset.runId);
 const needsOf = (window) => window.document.querySelector('#runs-list .runs-needs');
@@ -111,7 +111,7 @@ test('Needs you: absent while nothing waits; leads the list with its count; runs
       assert.equal(needs, window.document.getElementById('runs-list').firstElementChild, 'it leads the list');
       assert.deepEqual(needsIds(window), ['pipe-1'], 'only the asking run');
       assert.equal(needs.querySelector('.runs-needs-head .runs-count').textContent, '1');
-      assert.deepEqual(rowIds(window).sort(), ['pipe-1', 'pipe-2'], 'both stay in their project group');
+      assert.deepEqual(rowIds(window).sort(), ['pipe-1', 'pipe-2'], 'each run is listed once: the asking one only under Needs you');
     } },
     { name: 'two waiting pipelines are both listed, and they leave Needs you as they are answered', run: async () => {
       recv({ type: 'hello', runs: [

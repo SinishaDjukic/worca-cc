@@ -343,16 +343,16 @@ test('leaving the run page or the Runs view while the modal is open tears the ov
 });
 
 // A paused run: a seed of its own (status paused, a pipeline id) — the run page still offers Stop.
-function seedPaused(ctx, { status = 'paused' } = {}) {
+function seedPaused(ctx, { status = 'paused', pauseReason = null } = {}) {
   ctx.wsBox.ws.dispatch('open', {});
   ctx.dispatch({
     type: 'hello',
     runs: [{ runId: RUN_ID, title: 'Parked work', projectDir: '/tmp/p', status,
-      startedAt: '2026-01-01T00:00:00Z', kind: 'run', pipelineId: 'p1' }],
+      startedAt: '2026-01-01T00:00:00Z', kind: 'run', pipelineId: 'p1', pauseReason }],
   });
   // What a tab really holds for a paused run: it went through done(paused) — finishRun marked
   // it _finished — like every paused run a tab learns of (a live frame or the backfill replay).
-  if (status === 'paused') ctx.dispatch({ type: 'done', runId: RUN_ID, status: 'paused' });
+  if (status === 'paused') ctx.dispatch({ type: 'done', runId: RUN_ID, status: 'paused', ...(pauseReason ? { reason: pauseReason } : {}) });
   ctx.showRunning();
 }
 
@@ -392,11 +392,11 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 
 test('a paused run stopped on the same runId finishes like a live stop: Needs you drops it at once', async () => {
   const rows = [{ id: 'p1', projectKey: 'proj-alpha-abcd1234', projectDir: '/tmp/p', title: 'Parked work',
-    status: 'paused', startedAt: '2026-01-01T00:00:00Z', mtime: 1 }];
+    status: 'paused', pauseReason: 'cost_pipeline', startedAt: '2026-01-01T00:00:00Z', mtime: 1 }];
   const okj = (b) => Promise.resolve({ ok: true, status: 200, json: async () => b });
   const ctx = await boot({ fetchHandler: (url) => (url.endsWith('/api/history/pr') ? okj({ ok: true })
     : url.endsWith('/api/history') ? okj({ pipelines: rows, ghAvailable: false }) : null) });
-  seedPaused(ctx);
+  seedPaused(ctx, { pauseReason: 'cost_pipeline' });
   openDetail(ctx);
   for (let i = 0; i < 6; i++) await tick();
   const needs = ctx.window.document.getElementById('nav-needs-count');

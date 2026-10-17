@@ -43,6 +43,8 @@ async function boot({ fetchHandler } = {}) {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch { /* keep */ }
   }
   globalThis.window = window; globalThis.document = window.document;
+  // The finished-runs list in full: Active's Recent keeps only the last 7 days (#724).
+  window.localStorage.setItem('worca-cc.runs.filter', 'finished');
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   const showRuns = () => { window.location.hash = 'runs'; window.dispatchEvent(new window.Event('hashchange')); };

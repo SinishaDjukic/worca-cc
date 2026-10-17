@@ -86,7 +86,10 @@ import { runProgress, chainProgress, progressWidth } from '../../src/shared/run-
 import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS, tagFilterGroups } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, DEFAULT_RUNS_VIEW, histRow, isRowSelected, memberState, needsYou, normalizeRunsView, renderRunsList, viewChip } from './runs-list.mjs';
+import { mountRunsViewMenu } from './runs-view-menu.mjs';
+import { archiveConfirm, archiveEach, archivePlan, archiveReport, nothingToArchive, olderThan, rowMenuItems } from './runs-archive.mjs';
+import { mountRunsRowMenu } from './runs-row-menu.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
 // History list card. They stay EXPORTED
@@ -491,6 +494,7 @@ function paintFeaturePageProgress(r) {
 }
 chatDeps.mountFeature = (host, id) => mountShapeFeature(host, id, { mode: 'summary' });   // P13: the Chat run card (F33)
 if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, mountCard: (h, id) => chatDeps.mountFeature(h, id), refresh: refreshShapeFeatures };   // test seam
+let resumeTicketsAsked = false;   // #724 D17: ensureResumeTickets tried once since the last schedules-changed
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -617,12 +621,20 @@ const el = {
   runsPane: $('#runs-pane'),
   runsEmpty: $('#runs-empty'),
   runsSearch: $('#runs-search'),
-  runsSearchBtn: $('#runs-search-btn'),
-  runsSearchRow: $('#runs-search-row'),
-  runsFilter: $('#runs-filter'),
-  runsGroupBtn: $('#runs-group-btn'),
-  runsArchivedBtn: $('#runs-archived-btn'),
-  runsGroupMenu: $('#runs-group-menu'),
+  runsViewBtn: $('#runs-view-btn'),
+  runsSelectBtn: $('#runs-select-btn'),
+  runsSelectBar: $('#runs-select-bar'),
+  runsSelectCount: $('#runs-select-count'),
+  runsSelectArchive: $('#runs-select-archive'),
+  runsSelectCancel: $('#runs-select-cancel'),
+  runsAgeBar: $('#runs-age-bar'),
+  runsAgeDays: $('#runs-age-days'),
+  runsAgeArchive: $('#runs-age-archive'),
+  runsRowMenu: $('#runs-row-menu'),
+  runsViewMenu: $('#runs-view-menu'),
+  runsViewChipRow: $('#runs-view-chip-row'),
+  runsViewChipLabel: $('#runs-view-chip-label'),
+  runsViewChipX: $('#runs-view-chip-x'),
 
   // Target selector (New Pipeline)
   targetSeg: $('#target-seg'),
@@ -1532,10 +1544,12 @@ function handleServerMessage(msg) {
   // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
   // CLI, or because the scheduler tick started/missed/skipped something).
   if (msg.type === 'schedules-changed') {
+    resumeTicketsAsked = false;
     refreshAllCounts();
     activityMenu?.schedulesChanged();   // an open Activity refetches its Scheduled tab; a closed one forgets it
     // Chat P4: a paused run in the panel offers "Resume at" off the same tickets.
-    if (currentView() === 'schedules' || inRunsView() || crpShowsRun()) void schedulesView.load().then(() => { if (inRunsView()) { paintRunsList(); rdRepaintOpenGlance(); } repaintLimitNotices(); });
+    // #724 D17: also reload when the badges loaded the tickets, then recount, so a booked or cancelled resume moves them.
+    if (currentView() === 'schedules' || inRunsView() || crpShowsRun() || schedulesView.isLoaded()) void schedulesView.load().then(() => { updateNavCounts(); if (inRunsView()) { paintRunsList(); rdRepaintOpenGlance(); } repaintLimitNotices(); });
     // Last, so even a throw could not cost the Schedules page its refresh. chatHome is null until mountChatHome (F40).
     SLICE_INFO.clear();
     refreshShapeFeatures();
@@ -1547,6 +1561,7 @@ function handleServerMessage(msg) {
     SLICE_INFO.clear();
     refreshShapeFeatures(msg.id);
     chatHome?.refreshPlans();
+    if (inRunsView() && schedulesView.isLoaded()) queueRunsFeatureReload();   // #770: a slice's state or PR moved
     return;
   }
   if (msg.type === 'extension-pair-request') { void promptExtensionPair(msg.request); return; }
@@ -27145,6 +27160,28 @@ function limitModelOf(p) {
     limitResetAt: p.limitResetAt, ticket });
 }
 
+/** #724: when this pipeline's pause will lift by itself — an open resume ticket that is scheduled or
+ *  firing (a missed one will not) — as epoch ms, else null. Read by needsYou() through the items. */
+function autoResumeAt(pipelineId) {
+  if (!pipelineId || !schedulesView.isLoaded()) return null;
+  const t = resumeTicketOf(schedulesView.tickets(), pipelineId);
+  if (!t || t.status === 'missed') return null;
+  const at = Date.parse(t.runAt);
+  return Number.isFinite(at) ? at : null;
+}
+
+// #724 D17: the badges tell an auto-resuming usage-limit pause from one that waits for a person only with the resume
+// tickets in hand. schedulesView loads on Runs / Schedules / the run panel only, so load it once from here as soon
+// as such a pause is listed, and recount when it arrives. One try per schedules-changed: a failed load never loops.
+function ensureResumeTickets(src) {
+  if (resumeTicketsAsked || schedulesView.isLoaded()) return;
+  const limited = (x) => x && x.status === 'paused' && x.pauseReason === 'usage_limit';
+  if (!src.live.some(limited) && !src.history.some(limited)) return;
+  resumeTicketsAsked = true;
+  // withWorkspaces first, like every other load (app.js:31436): load() also paints the Schedules cards' target names.
+  void withWorkspaces().then(() => schedulesView.load()).then(() => { updateNavCounts(); if (inRunsView()) paintRunsList(); });
+}
+
 /** The Runs-list / glance note on a usage-limit pause: "resets 18:00" (B), "resumes 18:05" (C), else ''. */
 function limitRowNote(x) {
   if (x.pauseReason !== 'usage_limit') return '';
@@ -27882,8 +27919,8 @@ document.addEventListener('keydown', (e) => {
   if (document.querySelector('.viewer-modal.sync-modal')) return;
   if (currentView() !== 'history') return;
   if (!el.histShell || !el.histShell.classList.contains('detail-open')) return;
-  // The search box owns its Escape (clears and closes the search).
-  if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search-row')) return;
+  // The Runs header's search field (clears) and open View menu (closes) own their Escape.
+  if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search, #runs-view-menu')) return;
   if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
   if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
@@ -27922,8 +27959,8 @@ document.addEventListener('keydown', (e) => {
   if (document.querySelector('.viewer-modal.sync-modal')) return;
   if (currentView() !== 'running') return;
   if (!el.runShell || !el.runShell.classList.contains('detail-open')) return;
-  // The search box owns its Escape (clears and closes the search).
-  if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search-row')) return;
+  // The Runs header's search field (clears) and open View menu (closes) own their Escape.
+  if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search, #runs-view-menu')) return;
   if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
   if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
@@ -30092,17 +30129,17 @@ function withWorkspaces() {
 const RUNS_COLLAPSED_KEY = 'worca-cc.runs.collapsed';   // group keys the user folded (D10)
 // reveal: a group to scroll to once the list is on screen ("Show in Runs").
 // skipRestore: bare #runs shows the list, not the remembered run, until another route (goRunsList).
-const RUNS_FILTER_KEY = 'worca-cc.runs.filter';         // the chip this browser last picked
-function loadRunsFilter() {
-  try { const v = localStorage.getItem(RUNS_FILTER_KEY); return RUNS_FILTERS.includes(v) ? v : 'all'; }
-  catch { return 'all'; }                    // private mode / storage disabled
+const RUNS_FILTER_KEY = 'worca-cc.runs.filter';         // View › Show this browser last picked
+const RUNS_GROUP_BY_KEY = 'worca-cc.runs.groupBy';     // View › Group by: 'project' (default) or 'date'
+function loadRunsView() {
+  // #724/#740: a legacy 'all' / 'live' / 'needs' reads as Active; an unknown grouping as Project.
+  try { return normalizeRunsView({ show: localStorage.getItem(RUNS_FILTER_KEY), groupBy: localStorage.getItem(RUNS_GROUP_BY_KEY) }); }
+  catch { return normalizeRunsView(); }                 // private mode / storage disabled
 }
-const RUNS_GROUP_BY_KEY = 'worca-cc.runs.groupBy';     // 'project' (default) or 'date'
-function loadRunsGroupBy() {
-  try { const v = localStorage.getItem(RUNS_GROUP_BY_KEY); return RUNS_GROUPINGS.includes(v) ? v : 'project'; }
-  catch { return 'project'; }
-}
-const runsUi = { query: '', tag: '', filter: loadRunsFilter(), groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false, chainsOpen: new Set(), chainsToggled: new Map() };
+const runsView0 = loadRunsView();
+const runsUi = { query: '', filter: runsView0.show, groupBy: runsView0.groupBy, collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false, chainsOpen: new Set(), chainsToggled: new Map(),
+  selecting: false, picked: new Set(), ageDays: 30 };   // #739: Select mode, its picked row keys, the Archived age rule
+let runsRowsByKey = new Map();                           // #739: the last paint's rows, by key (row menu, Select)
 
 function histGroupName(p) {
   return (p.target === 'workspace' && p.workspaceName) || p.projectName || p.projectKey || '(unknown project)';
@@ -30151,8 +30188,8 @@ function runsLiveItem(r) {
     runId: r.runId, pipelineId: r.pipelineId || '', title: r.title, status: r.status,
     // nodeLabel(null, id) returns the raw node id ("n3 review"): name the step only with a manifest.
     ask: pq != null ? { kind: pq.kind || '', step: pq.nodeId && r.stepper ? nodeLabel(r.stepper, pq.nodeId) : '',
-      outline: !!(pq.plan && (pq.plan.outline || pq.plan.port === 'outline')) } : null,
-    pauseReason: r.pauseReason || '', limitEngine: r.limitEngine || null, limitNote: limitRowNote(r), unread: isLingering(r),
+      outline: !!(pq.plan && (pq.plan.outline || pq.plan.port === 'outline')), count: pq.kind === 'plan' ? 0 : questionCount(pq) } : null,
+    pauseReason: r.pauseReason || '', resumeAt: r.status === 'paused' ? autoResumeAt(r.pipelineId) : null, limitEngine: r.limitEngine || null, limitNote: limitRowNote(r), unread: isLingering(r),
     step: r.status === 'running' && pq == null ? (prog && prog.text ? prog.text : runsStepWord(r)) : '',
     progress: prog && !RD_TERMINAL.includes(r.status) ? { fraction: prog.fraction, tone: prog.tone } : null,
     failedStep: failed && failed.nodeId ? nodeLabel(r.stepper, failed.nodeId) : '',
@@ -30161,7 +30198,21 @@ function runsLiveItem(r) {
     checks: rec && typeof rec.checks === 'number' ? rec.checks : null,
     files: rec && typeof rec.files === 'number' ? rec.files : null,
     tags: flagOn('runTags') ? (r.tags || []) : [],
+    retained: !!(rec && (rec.retainedWork || hdCheckoutFor(rec))),
   };
+}
+/** A chain member's bits from this tab's run `r` (null when it has none): its line, glyph, Needs-you text and asks. */
+function chainMemberBits(r, state) {
+  const progress = r && state === 'current' && isGraphRun(r) ? runDecorFor(r).stageProgress : null;
+  // The row glyph follows runStatusMeta's order: parked first, then a question.
+  const icon = !r || state !== 'current' ? '' : ['paused', 'pausing', 'interrupted'].includes(r.status) ? 'paused'
+    : r.pendingQuestion != null ? 'ask' : 'run';
+  // The amber "Needs you" text only; the Needs-you list membership comes from the model. The one rule (#724).
+  const needs = !!r && state === 'current' && needsYou({ kind: 'live', status: r.status, ask: r.pendingQuestion != null,
+    pauseReason: r.pauseReason || '', resumeAt: r.status === 'paused' ? autoResumeAt(r.pipelineId) : null });
+  // D33: an open question, whether or not the run is also paused: the member's dot turns amber.
+  const asks = !!r && state === 'current' && r.pendingQuestion != null;
+  return { progress, icon, needs, asks };
 }
 /** P8: a server chain (schedulesView.chains()) as the list's chain item, members overlaid with this tab's live runs. */
 function runsChainItem(c, open) {
@@ -30171,18 +30222,10 @@ function runsChainItem(c, open) {
   const members = c.members.map((m, i) => {
     const r = (m.pipelineId ? latestPipelineRun(m.pipelineId) : null) || (m.ticketId ? runs.get(m.ticketId) || null : null);
     const state = r ? (r.status === 'done' ? 'done' : RD_TERMINAL.includes(r.status) ? 'failed' : 'current') : m.state;
-    const progress = r && state === 'current' && isGraphRun(r) ? runDecorFor(r).stageProgress : null;
     const href = r ? `#running/${r.runId}`
       : m.pipelineId && m.historyKey ? `#history/${m.historyKey}/${m.pipelineId}`
       : m.ticketId ? '#schedules/once' : '#runs';
-    // The row glyph follows runStatusMeta's order: parked first, then a question.
-    const icon = !r || state !== 'current' ? '' : ['paused', 'pausing', 'interrupted'].includes(r.status) ? 'paused'
-      : r.pendingQuestion != null ? 'ask' : 'run';
-    // The amber "Needs you" text only; the Needs-you list membership comes from the model. Same cases as needsYou():
-    // an open question or a pause (`interrupted` is not one).
-    const needs = !!r && state === 'current' && (r.pendingQuestion != null || r.status === 'paused');
-    // D33: an open question, whether or not the run is also paused: the member's dot turns amber.
-    const asks = !!r && state === 'current' && r.pendingQuestion != null;
+    const { progress, icon, needs, asks } = chainMemberBits(r, state);
     const slice = feat ? (feat.slices.find((s) => (m.ticketId && s.ticketId === m.ticketId) || (m.pipelineId && s.pipelineId === m.pipelineId)) || feat.slices[i]) : null;
     return { ...m, pipelineId: m.pipelineId || (r && r.pipelineId) || null, state, progress, icon, needs, asks, runId: r ? r.runId : '',
       title: slice ? `${slice.index} · ${slice.title}` : m.title,
@@ -30195,8 +30238,67 @@ function runsChainItem(c, open) {
     ...(feat ? { feature: { id: feat.id }, href: featHref } : {}),
     ...chainProgress(members, feat ? { noun: 'Slice' } : undefined) };
 }
+// #770: a slice's server state (featureView) as a member state, for a slice this tab has neither live nor in History.
+const SLICE_MEMBER_STATE = Object.freeze({ done: 'done', planned: 'waiting', stopped: 'failed', error: 'failed', failed: 'failed',
+  missed: 'failed', canceled: 'failed' });
+/** #770: what every feature item reads, built once per paint (not once per feature): active History by pipeline id,
+ *  and the pipeline ids the Running section lists. */
+function runsFeatureCtx() {
+  return { hist: new Map((state.historyAll || []).filter(Boolean).map((p) => [String(p.id), p])),
+    listed: new Set(overviewRuns().map((x) => String(x.pipelineId || '')).filter(Boolean)) };
+}
+/** #770: a server feature group (schedulesView.features()) as the list's chain item: the feature row in every state.
+ *  A member's state: this tab's live run, else its History row (after a restart), else the server's slice state. */
+function runsFeatureItem(f, { hist, listed } = runsFeatureCtx()) {
+  const key = `chain:f:${f.id}`;
+  const featHref = `#feature/${encodeURIComponent(f.id)}`;
+  const members = (f.members || []).map((s) => {
+    const r = (s.pipelineId ? latestPipelineRun(s.pipelineId) : null) || (s.ticketId ? runs.get(s.ticketId) || null : null);
+    const rec = s.pipelineId ? hist.get(s.pipelineId) || null : null;
+    const status = r ? r.status : rec ? rec.status : '';
+    // memberState (runs-list.mjs) knows every History word (complete, failed, aborted…), not just RD_TERMINAL's three.
+    const st = status ? memberState(status) : SLICE_MEMBER_STATE[s.state] || 'current';
+    const pr = s.pr && typeof s.pr.url === 'string' && /^https:\/\/\S+$/i.test(s.pr.url) ? s.pr : null;
+    const bits = chainMemberBits(r, st);
+    // After a restart a parked slice exists only in History: give it the paused glyph, so its dot is not the blue
+    // "running" one (rule runs-list-needs-before-collapse, "chain member dots").
+    if (!r && st === 'current' && rec && ['paused', 'pausing', 'interrupted'].includes(rec.status)) bits.icon = 'paused';
+    return { era: s.era || 'slice', state: st, ...bits,
+      pipelineId: s.pipelineId || (r && r.pipelineId) || null, ticketId: s.ticketId || null, runId: r ? r.runId : '',
+      title: s.era === 'replan' ? String(s.title || 'Re-plan the rest') : `${s.index} · ${s.title}`,
+      // D17: a started slice opens its run; one that has not started opens the feature page.
+      href: r ? `#running/${r.runId}` : s.pipelineId && s.historyKey ? `#history/${s.historyKey}/${s.pipelineId}` : featHref,
+      prUrl: pr ? pr.url : null, prNumber: pr ? pr.number : null, prState: pr ? pr.state : null,
+      archived: !!s.archived && !rec };
+  });
+  const first = (f.members || []).find((m) => m.pipelineId) || {};
+  const g = runsGroupFor({ pipelineId: first.pipelineId || '', projectKey: f.projectKey || '' });
+  // Clarify 3: the feature stays in Active while a slice runs or waits (a waiting slice has only a ticket), or while a
+  // run of it is in active History or the Running section. Not latestPipelineRun: the runs map keeps settled (and
+  // archived) runs until a restart. Members' resolved pipeline ids count too: a slice that fired since the last feed load.
+  const hasActive = members.some((m) => m.state === 'current' || m.state === 'waiting')
+    || [...(f.pipelineIds || []), ...members.map((m) => m.pipelineId).filter(Boolean)]
+      .some((pid) => hist.has(String(pid)) || listed.has(String(pid)));
+  return { id: `f:${f.id}`, title: f.title, members, groupKey: g.key, groupName: g.name,
+    open: runsUi.chainsToggled.has(key) ? runsUi.chainsToggled.get(key) : undefined,
+    feature: { id: f.id }, href: featHref, hasActive,
+    extraKeys: [...(f.pipelineIds || []).map((p) => `p:${p}`), ...(f.ticketIds || []).map((t) => `t:${t}`)],
+    ...chainProgress(members.filter((m) => m.era === 'slice'), { noun: 'Slice' }) };
+}
+/** #770: the list's chain items: the feature rows first (they win a run a plain chain also claims), then every chain
+ *  that is not one of those features (gate off, an older server, or a feature beyond the server's cap keep D17's path). */
+function runsChainItems() {
+  const groups = shapeFirstOn() ? schedulesView.features() : [];
+  const grouped = new Set(groups.flatMap((f) => f.featureIds || [f.id]));
+  const ctx = runsFeatureCtx();
+  return [
+    ...groups.map((f) => runsFeatureItem(f, ctx)),
+    ...schedulesView.chains().filter((c) => !(c.feature && grouped.has(c.feature.id))).map((c) => runsChainItem(c, chainOpen(c))),
+  ];
+}
 /** D17: a plain chain is collapsed by default (chainsOpen); a feature row is open by default and a person's toggle
- *  wins for the session (chainsToggled). */
+ *  wins for the session (chainsToggled). #770: a feature group's row (runsFeatureItem) is open by default only while
+ *  live or needy (buildRunsModel). */
 function chainOpen(c) {
   const key = `chain:${c.id}`;
   return c.feature && shapeFirstOn() ? (runsUi.chainsToggled.has(key) ? runsUi.chainsToggled.get(key) : true) : runsUi.chainsOpen.has(key);
@@ -30205,9 +30307,11 @@ function runsHistItem(p) {
   return {
     id: p.id, projectKey: p.projectKey, title: p.title, status: p.status, pauseReason: p.pauseReason,
     limitEngine: p.limitEngine || null, limitNote: limitRowNote(p),
+    resumeAt: p.status === 'paused' ? autoResumeAt(p.id) : null,
     startedAt: p.startedAt, mtime: p.mtime, groupName: histGroupName(p), by: runsPersonKey(p.startedBy),
     pr: glancePrInput(p),
     archived: !!p.archived,
+    retained: !!(p.retainedWork || hdCheckoutFor(p)),
     checks: typeof p.checks === 'number' ? p.checks : null,
     files: typeof p.files === 'number' ? p.files : null,
     base: baseRowNote(p.baseCheck),
@@ -30216,7 +30320,7 @@ function runsHistItem(p) {
 }
 function runsSchedItem(t) {
   const g = runsGroupFor({ projectDir: t.projectDir || '', workspaceId: t.workspaceId || '', projectKey: t.projectKey || '' });
-  return { id: t.id, scheduleId: t.scheduleId || '', title: t.title, status: t.status, after: t.after || null,
+  return { id: t.id, scheduleId: t.scheduleId || '', resumePipelineId: t.resumePipelineId || '', title: t.title, status: t.status, after: t.after || null,
     queued: !!t.queued, retryAt: t.retryAt || null, runAt: t.runAt,
     groupKey: g.key, groupName: g.name, by: runsPersonKey(t.createdBy) };
 }
@@ -30226,16 +30330,18 @@ function runsSchedItem(t) {
 // `r.progress ? 1 : 0`: the line's presence is structural; its fraction/tone are patched in place (paintRunsProgress).
 // A member's icon and asks: the fields its dot reads, so a paused member that gains a question (icon stays 'paused')
 // repaints amber.
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base, (r.tags || []).join(','),
-  r.progress ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.href, m.icon, !!m.asks])] : 0];
+const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base,
+  r.needs ? 1 : 0, r.hint, r.resumes ? 1 : 0, r.progress ? 1 : 0, r.retained ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.prNumber, m.href, m.icon, !!m.asks, m.era || '', !!m.archived])] : 0];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over (same slot first), then the
 // selected row stands in; a focused group head is found by its group.
-function runsFocusTarget(host, { key, slot, pid, group, chain }) {
+function runsFocusTarget(host, { key, slot, pid, group, chain, ctl }) {
   const q = (sel) => host.querySelector(sel);
   if (chain) return q(`.runs-chain-toggle[data-chain-key="${cssEscape(chain)}"]`);
   if (group) return q(`.runs-group-head[data-group-key="${cssEscape(group)}"]`);
+  // #739: a focused checkbox or ⋯ button comes back as the same control on the same row.
+  if (ctl && key) { const c = q(`.${ctl}[data-row-key="${cssEscape(key)}"]`); if (c) return c; }
   if (!key) return null;
   const k = cssEscape(key);
   const p = pid ? cssEscape(pid) : '';
@@ -30252,16 +30358,16 @@ function paintRunsList() {
   const histSource = archivedView ? (state.historyArchived || []) : (state.historyAll || []);
   const liveItems = overviewRuns().map(runsLiveItem);
   const histItems = histSource.filter(Boolean).map(runsHistItem);
-  paintRunsTagFilter([...liveItems, ...histItems]);
   const model = buildRunsModel({
     live: liveItems,
     history: histItems,
     scheduled: schedulesView.upcoming(SCHEDULED_GROUP_WINDOW_MS).map(runsSchedItem),
-    chains: schedulesView.chains().map((c) => runsChainItem(c, chainOpen(c))),
+    chains: runsChainItems(),
     person: viewer.shared ? state.historyPerson : '',
-    tag: flagOn('runTags') ? runsUi.tag : '',
     query: runsUi.query, filter: runsUi.filter, groupBy: runsUi.groupBy, collapsed: runsUi.collapsed, now: Date.now(),
   });
+  runsRowsByKey = new Map(model.sections.flatMap((s) => s.groups.flatMap((g) => g.rows)).map((r) => [r.key, r]));
+  for (const k of runsUi.picked) if (!runsRowsByKey.has(k)) runsUi.picked.delete(k);
   const note = archivedView
     ? (state.historyArchivedError && !histSource.length ? `Could not load archived runs: ${state.historyArchivedError}` : '')
     : (state.historyError && !(state.historyAll || []).length ? `Could not load finished runs: ${state.historyError}` : '');
@@ -30269,9 +30375,8 @@ function paintRunsList() {
   // feed without a click.
   if (archivedView && state.historyArchived === null) loadHistoryArchived();
   const sig = JSON.stringify([
-    model.needs.map(runsRowSig),
-    model.groups.map((g) => [g.key, g.name, g.count, g.collapsed, g.collapsed ? [] : g.rows.map(runsRowSig)]),
-    model.total, model.searching, model.filter, model.groupBy, note,
+    model.sections.map((s) => [s.key, s.count, s.older, s.groups.map((g) => [g.key, g.name, g.count, g.head, g.collapsed, g.collapsed ? [] : g.rows.map(runsRowSig)])]),
+    model.total, model.searching, model.filter, model.groupBy, note, runsUi.selecting,
   ]);
   let refocus = null;
   if (host.dataset.sig !== sig) {
@@ -30280,7 +30385,8 @@ function paintRunsList() {
     if (a && host.contains(a)) {
       refocus = { key: a.dataset.rowKey || '', slot: a.dataset.slot || 'group',
         pid: a.dataset.pipelineId || '', group: a.dataset.rowKey ? '' : (a.dataset.groupKey || ''),
-        chain: a.classList.contains('runs-chain-toggle') ? (a.dataset.chainKey || '') : '' };
+        chain: a.classList.contains('runs-chain-toggle') ? (a.dataset.chainKey || '') : '',
+        ctl: a.classList.contains('runs-row-check') ? 'runs-row-check' : a.classList.contains('runs-row-more') ? 'runs-row-more' : '' };
     }
     // P2: each live line's current width, by row key, so its rebuilt twin starts where this one is.
     const lineFrom = new Map();
@@ -30288,7 +30394,8 @@ function paintRunsList() {
       const k = i.closest('.runs-row')?.dataset.rowKey;
       if (k && !lineFrom.has(k) && i.style.width) lineFrom.set(k, i.style.width);
     }
-    host.replaceChildren(...renderRunsList(document, model, { emptyText: 'No runs yet. Start one from New run.', note, lineFrom }));
+    host.replaceChildren(...renderRunsList(document, model, { emptyText: 'No runs yet. Start one from New run.', note, lineFrom,
+      selecting: runsUi.selecting ? runsUi.picked : null }));
     if (lineFrom.size) void host.offsetWidth;   // commit the start widths, so the patch below transitions
   }
   paintRunsProgress(host, model);   // P2/P7: fraction + tone, in place
@@ -30300,36 +30407,168 @@ function paintRunsList() {
   // Only once the section is actually shown: `inRunsView()` reads the hash, which already says
   // #runs before its hashchange routes, and a WS frame painting in that gap must not use it up.
   if (runsUi.reveal && RUNS_VIEWS.has(currentShownView)) {
-    const g = host.querySelector(`.runs-group[data-group-key="${cssEscape(runsUi.reveal)}"]`);
+    const g = host.querySelector(`.runs-group[data-project-key="${cssEscape(runsUi.reveal)}"]`);
     runsUi.reveal = '';
     if (g && typeof g.scrollIntoView === 'function') g.scrollIntoView({ block: 'start' });
   }
+  paintRunsActions();
 }
-// The Runs list tag filter (#718): every distinct tag on the loaded rows, a configured dimension's
-// tags in an optgroup of their own. A chosen tag that is no longer listed falls back to "All tags".
-// Synchronous: it reads the dimension cache and refreshes it when stale.
-function paintRunsTagFilter(items) {
-  const sel = document.getElementById('runs-tag');
-  if (!sel) return;
-  const dims = flagOn('runTags') ? (allTagDimsCache?.dims || []) : [];
-  if (flagOn('runTags') && (!allTagDimsCache || Date.now() - allTagDimsCache.at >= 15_000) && !allTagDimsInflight) {
-    loadAllTagDims().then(() => paintRunsList()).catch(() => {});
+/** #739: the Select toggle, its bottom bar and the Archived view's age bar. */
+function paintRunsActions() {
+  const archivedView = runsUi.filter === 'archived';
+  el.runsSelectBtn.hidden = archivedView;
+  el.runsSelectBtn.setAttribute('aria-pressed', runsUi.selecting ? 'true' : 'false');
+  el.runsSelectBtn.textContent = runsUi.selecting ? 'Done' : 'Select';
+  el.runsSelectBar.hidden = !runsUi.selecting;
+  const n = runsUi.picked.size;
+  el.runsSelectCount.textContent = `${n} selected`;
+  el.runsSelectArchive.disabled = !n;
+  el.runsAgeBar.hidden = !archivedView;
+  if (archivedView) {
+    const k = runsAgePlan().eligible.length;
+    const hadFocus = document.activeElement === el.runsAgeArchive;   // read before the disable blurs it
+    el.runsAgeArchive.textContent = `Archive ${k}`;
+    el.runsAgeArchive.disabled = !k;
+    if (hadFocus && !k) el.runsAgeDays.focus({ preventScroll: true });
   }
-  const { groups, rest } = tagFilterGroups(items, dims);
-  const opts = [...groups.flatMap((g) => [g.any, ...g.tags]), ...rest];
-  if (runsUi.tag && !opts.includes(runsUi.tag)) runsUi.tag = '';
-  const sig = JSON.stringify([groups, rest]);
-  if (sel.dataset.sig !== sig) {
-    sel.dataset.sig = sig;
-    const group = (g) => { const og = document.createElement('optgroup'); og.label = g.label; og.append(option(g.any, `${g.label}: any`), ...g.tags.map((t) => option(t, t))); return og; };
-    sel.replaceChildren(option('', 'All tags'), ...groups.map(group), ...rest.map((t) => option(t, t)));
-  }
-  sel.value = runsUi.tag;
 }
-document.getElementById('runs-tag')?.addEventListener('change', (e) => { runsUi.tag = e.target.value; paintRunsList(); });
+function runsAgePlan() {
+  const now = Date.now();
+  const person = viewer.shared ? state.historyPerson : '';
+  const rows = (state.historyAll || []).filter(Boolean).map((p) => histRow(runsHistItem(p), now)).filter((r) => !person || r.by === person);
+  // #770: a feature is archived whole by the age rule too.
+  const ctx = runsFeatureCtx();
+  const together = (shapeFirstOn() ? schedulesView.features() : []).map((f) => ({
+    ids: f.pipelineIds || [], open: runsFeatureItem(f, ctx).members.some((m) => m.state === 'current' || m.state === 'waiting') }));
+  return olderThan(rows, runsUi.ageDays, now, { together });
+}
+function setRunsSelecting(on, { focus = false } = {}) {
+  runsUi.selecting = !!on;
+  runsUi.picked.clear();
+  runsRowMenu.close();
+  paintRunsList();
+  if (focus) el.runsSelectBtn.focus({ preventScroll: true });
+}
+/** The History record behind a list row: the archive/restore query and Open in New run read it. Matched by
+ *  pipeline id and project key; a live row has no project key, so its pipeline id alone decides (D10b). No
+ *  hand-built fallback: a record without projectKey/target would send the wrong query for a workspace run. */
+function runsRecordFor(row) {
+  if (!row || !row.pipelineId) return null;
+  const pool = row.archived ? state.historyArchived : state.historyAll;
+  return (pool || []).find((p) => p && String(p.id) === row.pipelineId && (!row.projectKey || p.projectKey === row.projectKey)) || null;
+}
+async function archiveRequest(row) {
+  const rec = runsRecordFor(row);
+  if (!rec) return { ok: false, error: 'not in History yet; reload and try again' };
+  const res = await fetch(`/api/runs/${encodeURIComponent(rec.id)}?${runActionQuery(rec.projectDir || null, rec).toString()}`, { method: 'DELETE' });
+  const body = await safeJson(res);
+  return res.ok ? { ok: true } : { ok: false, error: (body && body.error) || `HTTP ${res.status}` };
+}
+/** D7b: the scheduled runs that wait for `row` (the run page's afterDependentsNote source); [] on any failure. */
+async function archiveDependents(row) {
+  try {
+    const res = await fetch(`/api/schedules/dependents?pipelineId=${encodeURIComponent(row.pipelineId)}`);
+    if (!res.ok) return [];
+    const { dependents } = await safeJson(res);
+    return Array.isArray(dependents) ? dependents.map((d) => (d && d.title) || '') : [];
+  } catch { return []; }
+}
+function forgetArchivedRow(row) {
+  const rec = runsRecordFor(row);
+  const pk = (rec && rec.projectKey) || row.projectKey;
+  state.historyAll = (state.historyAll || []).filter((p) => !(p && String(p.id) === row.pipelineId && (!pk || p.projectKey === pk)));
+  // D14: a finished run still listed live (lingering) is acknowledged, so overviewRuns drops it now and after a reload.
+  if (row.kind === 'live' && row.runId) acknowledgeRun(row.runId);
+  runsUi.picked.delete(row.key);
+  const m = readLastRun();
+  if (m && m.pipelineId === row.pipelineId && (!m.projectKey || !pk || m.projectKey === pk)) forgetLastRun();
+}
+/** #739: the one archive path — a row's ⋯ → Archive, the Select bar and the age rule all land here. */
+async function archiveRunRows(rows, { after = null } = {}) {
+  const plan = archivePlan(rows);
+  if (!plan.eligible.length) { notify(nothingToArchive(plan)); return; }
+  const waiting = (await Promise.all(plan.eligible.map(async (row) => ({ row, titles: await archiveDependents(row) }))))
+    .filter((w) => w.titles.length);
+  const copy = archiveConfirm(plan, { waiting });
+  if (!(await confirmModal(copy))) return;
+  const result = await archiveEach(plan.eligible, archiveRequest, { onDone: forgetArchivedRow });
+  if (result.done.length) {
+    // The same "never cache empty" guard the run page's archive uses.
+    if (state.historyAll.length) writeHistoryCache(state.historyAll, state.ghAvailable, state.adoAvailable);
+    state.historyArchived = null;           // the Archived view refetches its feed on its next paint
+    paintHistory();
+  }
+  notify(archiveReport(result));
+  if (after) after(result);
+  paintRunsList();
+}
+async function restoreRunRow(row) {
+  const rec = runsRecordFor(row);
+  if (!rec) return;
+  const ok = await confirmModal({ title: 'Restore this run?', confirmLabel: 'Restore',
+    message: `${rec.title || rec.id}\n\nIt moves back into Runs with its PR link, Q&A, review verdicts and audit timeline. The run artifacts (logs, results, diff), branch and worktree were reclaimed by the archive and are not rebuilt.` });
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/runs/${encodeURIComponent(rec.id)}/restore?${runActionQuery(rec.projectDir || null, rec).toString()}`, { method: 'POST' });
+    const body = await safeJson(res);
+    if (!res.ok) throw new Error((body && body.error) || `HTTP ${res.status}`);
+    state.historyArchived = (state.historyArchived || []).filter((p) => !(p && p.id === rec.id && p.projectKey === rec.projectKey));
+    paintRunsList();
+    loadHistoryView({ force: true });
+    notify({ tone: 'ok', title: 'Run restored', action: { label: 'Open', run: () => { location.hash = `#history/${rec.projectKey}/${rec.id}`; } } });
+  } catch (err) {
+    notify({ tone: 'err', title: 'Could not restore the run', detail: `${rec.title || rec.id}: ${err.message}`, key: `restore-${rec.id}` });
+  }
+}
+/** #770: restore every run of an archived feature row, one confirm; the failures are named in one toast. */
+async function restoreFeatureRow(row) {
+  const recs = (row.memberRows || []).map(runsRecordFor).filter(Boolean);
+  if (!recs.length) return;
+  const ok = await confirmModal({ title: `Restore ${recs.length === 1 ? 'this run' : `${recs.length} runs`}?`, confirmLabel: 'Restore',
+    message: `${row.title}\n${recs.map((r) => `· ${r.title || r.id}`).join('\n')}\n\nThey move back into Runs with their PR links, Q&A, review verdicts and audit timelines. The run artifacts (logs, results, diff), branches and worktrees were reclaimed by the archive and are not rebuilt.` });
+  if (!ok) return;
+  const failed = [];
+  for (const rec of recs) {
+    try {
+      const res = await fetch(`/api/runs/${encodeURIComponent(rec.id)}/restore?${runActionQuery(rec.projectDir || null, rec).toString()}`, { method: 'POST' });
+      const body = await safeJson(res);
+      if (!res.ok) throw new Error((body && body.error) || `HTTP ${res.status}`);
+      state.historyArchived = (state.historyArchived || []).filter((p) => !(p && p.id === rec.id && p.projectKey === rec.projectKey));
+    } catch (err) { failed.push(`${rec.title || rec.id}: ${err && err.message ? err.message : err}`); }
+  }
+  paintRunsList();
+  loadHistoryView({ force: true });
+  notify(failed.length
+    ? { tone: 'err', title: `Could not restore ${failed.length} of ${recs.length} runs`, detail: failed.join('\n'), key: 'runs-archive' }
+    : { tone: 'ok', title: recs.length === 1 ? 'Run restored' : `Restored ${recs.length} runs` });
+}
+async function openRowInNewRun(row) {
+  const rec = runsRecordFor(row);
+  if (!rec) return;
+  let prompt = '';
+  try {
+    const res = await fetch(historyDetailUrl(rec.projectDir, rec.id, rec));
+    if (res.ok) prompt = String(((await safeJson(res)) || {}).state?.prompt || '');
+  } catch { /* opens with the target and title only (D12) */ }
+  const ws = rec.target === 'workspace' && typeof rec.projectKey === 'string' ? rec.projectKey.replace(/^workspaces\//, '') : '';
+  openNewPipeline(ws ? { target: 'workspace', workspaceId: ws, title: rec.title, prompt }
+    : { target: 'project', projectDir: rec.projectDir, title: rec.title, prompt });
+}
+async function copyRunId(id) {
+  let ok = false;
+  try { await navigator.clipboard.writeText(id); ok = true; } catch { ok = legacyCopy(id); }
+  notify(ok ? { tone: 'ok', title: 'Run id copied', detail: id } : { tone: 'err', title: 'Could not copy the run id', detail: id });
+}
+function runsRowAction(action, row) {
+  if (!row) return;                        // the row left the list while the menu was open
+  if (action === 'archive') archiveRunRows([row]);
+  else if (action === 'restore') { if (row.kind === 'chain') restoreFeatureRow(row); else restoreRunRow(row); }
+  else if (action === 'new-run') openRowInNewRun(row);
+  else if (action === 'copy-id') copyRunId(row.pipelineId);
+}
 /** P2/P7: move every thin line to its fraction/tone IN PLACE — a rebuild would restart the glide. */
 function paintRunsProgress(host, model) {
-  const rows = [...model.needs, ...model.groups.flatMap((g) => (g.collapsed ? [] : g.rows))];
+  const rows = model.groups.flatMap((g) => (g.collapsed ? [] : g.rows));
   for (const r of rows) {
     if (!r.progress) continue;
     for (const line of host.querySelectorAll(`.runs-row[data-row-key="${cssEscape(r.key)}"] .runs-row-prog`)) {
@@ -30337,6 +30576,16 @@ function paintRunsProgress(host, model) {
       line.firstElementChild.style.width = progressWidth(r.progress.fraction);
     }
   }
+}
+// #770: shape-feature frames come in bursts (one per slice event): reload the feature feed once per 400 ms.
+let runsFeatureReloadTimer = null;
+function queueRunsFeatureReload() {
+  if (runsFeatureReloadTimer) return;
+  runsFeatureReloadTimer = setTimeout(() => {
+    runsFeatureReloadTimer = null;
+    // withWorkspaces first, like every other load (app.js:27141): load() also paints the Schedules cards' target names.
+    void withWorkspaces().then(() => schedulesView.load()).then(() => { if (inRunsView()) paintRunsList(); }).catch(() => {});
+  }, 400);
 }
 // Frames arrive in bursts (one message fans out to several repaint hooks): paint once.
 let runsPaintQueued = false;
@@ -30370,6 +30619,19 @@ function paintRunsSelection() {
 // Rows are links (#running/<id>, #history/<key>/<id>, #schedules) so a modifier click can
 // open a tab; a plain click routes in place. Group heads fold (D10).
 el.runsList?.addEventListener('click', (e) => {
+  if (runsUi.selecting) {
+    const box = e.target.closest('.runs-row-check');
+    const rowA = e.target.closest('a.runs-row:not(.runs-row-chain)');   // a chain row still opens and closes
+    if (box || rowA) {
+      if (rowA) e.preventDefault();                       // a row is a checkbox while selecting
+      const input = box || rowA.closest('.runs-item')?.querySelector('.runs-row-check');
+      if (!input || input.disabled) return;
+      if (rowA) input.checked = !input.checked;           // a click on the box itself has already toggled it
+      if (input.checked) runsUi.picked.add(input.dataset.rowKey); else runsUi.picked.delete(input.dataset.rowKey);
+      paintRunsActions();
+      return;
+    }
+  }
   let tog = e.target.closest && e.target.closest('.runs-chain-toggle');
   // A plain click anywhere on a chain row opens or closes it, like the chevron; a modifier click still opens the
   // row's link (the feature page, or the chain's current run) in a new tab.
@@ -30385,6 +30647,7 @@ el.runsList?.addEventListener('click', (e) => {
     paintRunsList();   // the refocus path above puts focus back on the rebuilt toggle
     return;
   }
+  if (e.target.closest && e.target.closest('.runs-show-older')) { setRunsFilter('finished'); return; }
   const head = e.target.closest && e.target.closest('.runs-group-head');
   if (head) { toggleRunsGroup(head.dataset.groupKey || ''); return; }
   const a = e.target.closest && e.target.closest('a.runs-row');
@@ -30410,52 +30673,60 @@ function toggleRunsGroup(key) {
   persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed);
   paintRunsList();
 }
-function setRunsSearchOpen(open) {
-  if (!el.runsSearchRow || !el.runsSearch || !el.runsSearchBtn) return;
-  el.runsSearchRow.hidden = !open;
-  el.runsSearchBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-  el.runsSearchBtn.classList.toggle('on', open);
-  if (open) { el.runsSearch.focus({ preventScroll: true }); return; }
-  const had = !!runsUi.query;
-  el.runsSearch.value = '';
-  runsUi.query = '';
-  if (had) paintRunsList();
-  el.runsSearchBtn.focus({ preventScroll: true });
+// View menu (#740, runs-view-menu.mjs): Show and Group by; a non-default view shows one chip.
+const runsViewMenu = el.runsViewBtn && el.runsViewMenu
+  ? mountRunsViewMenu({ button: el.runsViewBtn, menu: el.runsViewMenu, onPick: (pick) => setRunsView(pick) })
+  : null;
+// #739: the row ⋯ menu, Select mode and the Archived view's age rule.
+const runsRowMenu = mountRunsRowMenu({
+  host: el.runsList, menu: el.runsRowMenu,
+  itemsFor: (key) => (runsUi.selecting ? [] : rowMenuItems(runsRowsByKey.get(key))),
+  onPick: (action, key) => runsRowAction(action, runsRowsByKey.get(key)),
+});
+el.runsSelectBtn.addEventListener('click', () => setRunsSelecting(!runsUi.selecting));
+el.runsSelectCancel.addEventListener('click', () => setRunsSelecting(false, { focus: true }));
+el.runsSelectArchive.addEventListener('click', () => archiveRunRows(
+  [...runsUi.picked].map((k) => runsRowsByKey.get(k)).filter(Boolean),
+  { after: (r) => { if (!r.failed.length) setRunsSelecting(false, { focus: true }); } }));
+el.runsListPane.addEventListener('keydown', (e) => {
+  // The View menu and the row menu both preventDefault their own Escape: leave Select mode only for an unclaimed one.
+  if (e.key === 'Escape' && !e.defaultPrevented && runsUi.selecting && !runsRowMenu.isOpen()) setRunsSelecting(false, { focus: true });
+});
+el.runsAgeDays.addEventListener('change', () => { runsUi.ageDays = Number(el.runsAgeDays.value) || 30; paintRunsActions(); });
+// Eligible and skipped together: archivePlan re-splits them, so the confirm names the retained-work runs it leaves out.
+el.runsAgeArchive.addEventListener('click', async () => {
+  // Read now: the confirm takes focus and does not hand it back, so the repaint cannot tell the button had it.
+  const hadFocus = document.activeElement === el.runsAgeArchive;
+  const { eligible, skipped } = runsAgePlan();
+  await archiveRunRows([...eligible, ...skipped.map((s) => s.row)]);
+  if (hadFocus && el.runsAgeArchive.disabled) el.runsAgeDays.focus({ preventScroll: true });
+});
+function paintRunsView() {
+  const view = { show: runsUi.filter, groupBy: runsUi.groupBy };
+  runsViewMenu?.paint(view);
+  const chip = viewChip(view);
+  if (el.runsViewChipRow) el.runsViewChipRow.hidden = !chip;
+  if (el.runsViewChipLabel) el.runsViewChipLabel.textContent = chip || '';
 }
-el.runsSearchBtn?.addEventListener('click', () => setRunsSearchOpen(el.runsSearchRow.hidden));
-function paintRunsFilter() {
-  for (const b of el.runsFilter ? el.runsFilter.querySelectorAll('button[data-filter]') : []) {
-    const on = b.dataset.filter === runsUi.filter;
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  }
-  // The header's Archived toggle: no chip is pressed while it is on (it swaps the list's
-  // source). docs/ui-levels.md rule 2: the Advanced toggle stays on screen below Advanced
-  // while it is the stored pick — otherwise the list shows only archived runs with no way out.
-  const arch = el.runsArchivedBtn;
-  if (arch) {
-    const on = runsUi.filter === 'archived';
-    arch.classList.toggle('on', on);
-    arch.setAttribute('aria-pressed', on ? 'true' : 'false');
-    keepVisible(arch, on);
-  }
-}
-function setRunsFilter(f) {
-  if (f === runsUi.filter) return;
-  runsUi.filter = f;
-  try { localStorage.setItem(RUNS_FILTER_KEY, runsUi.filter); } catch { /* private mode */ }
+function setRunsView({ show = runsUi.filter, groupBy = runsUi.groupBy } = {}) {
+  if (show === runsUi.filter && groupBy === runsUi.groupBy) return;
+  const showChanged = show !== runsUi.filter;
+  if (showChanged) { runsUi.selecting = false; runsUi.picked.clear(); }   // D15: switching Show leaves Select mode
+  runsUi.filter = show;
+  runsUi.groupBy = groupBy;
+  try { localStorage.setItem(RUNS_FILTER_KEY, show); localStorage.setItem(RUNS_GROUP_BY_KEY, groupBy); } catch { /* private mode */ }
   // Each Archived activation refetches its feed; a never-loaded one is fetched by the
   // paint below (state.historyArchived === null), so it is not asked for twice.
-  if (runsUi.filter === 'archived' && state.historyArchived !== null) void loadHistoryArchived();
-  paintRunsFilter();
+  if (showChanged && show === 'archived' && state.historyArchived !== null) void loadHistoryArchived();
+  paintRunsView();
   paintRunsList();
 }
-el.runsFilter?.addEventListener('click', (e) => {
-  const b = e.target.closest && e.target.closest('button[data-filter]');
-  if (b) setRunsFilter(b.dataset.filter);
+function setRunsFilter(f) { setRunsView({ show: f }); }   // "Show older" opens Finished
+el.runsViewChipX?.addEventListener('click', () => {
+  setRunsView({ ...DEFAULT_RUNS_VIEW });
+  el.runsViewBtn?.focus({ preventScroll: true });          // the chip it sat on is gone
 });
-el.runsArchivedBtn?.addEventListener('click', () => setRunsFilter(runsUi.filter === 'archived' ? 'all' : 'archived'));
-paintRunsFilter();
+paintRunsView();
 
 // The Archived toggle's feed (issue #575): fetched lazily on activation, and again on
 // every pipelines-changed once loaded (an archive or restore here, in another tab or from
@@ -30488,53 +30759,20 @@ async function loadHistoryArchived() {
   refreshHdFromRow();
 }
 
-// "Group by" menu: opens under its header button; a pick, Escape or a click elsewhere closes it.
-function paintRunsGroupBy() {
-  for (const b of el.runsGroupMenu ? el.runsGroupMenu.querySelectorAll('[data-group-by]') : []) {
-    b.setAttribute('aria-checked', b.dataset.groupBy === runsUi.groupBy ? 'true' : 'false');
-  }
-  el.runsGroupBtn?.classList.toggle('on', runsUi.groupBy !== 'project');
-}
-function setRunsGroupMenuOpen(open, { focusBtn = false } = {}) {
-  if (!el.runsGroupMenu || !el.runsGroupBtn) return;
-  el.runsGroupMenu.hidden = !open;
-  el.runsGroupBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-  if (open) el.runsGroupMenu.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
-  else if (focusBtn) el.runsGroupBtn.focus({ preventScroll: true });
-}
-el.runsGroupBtn?.addEventListener('click', () => setRunsGroupMenuOpen(el.runsGroupMenu.hidden));
-el.runsGroupMenu?.addEventListener('click', (e) => {
-  const b = e.target.closest && e.target.closest('[data-group-by]');
-  if (!b) return;
-  setRunsGroupMenuOpen(false, { focusBtn: true });
-  if (b.dataset.groupBy === runsUi.groupBy) return;
-  runsUi.groupBy = b.dataset.groupBy;
-  try { localStorage.setItem(RUNS_GROUP_BY_KEY, runsUi.groupBy); } catch { /* private mode */ }
-  paintRunsGroupBy();
-  paintRunsList();
-});
-el.runsGroupMenu?.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { e.preventDefault(); setRunsGroupMenuOpen(false, { focusBtn: true }); return; }
-  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-  e.preventDefault();
-  const items = [...el.runsGroupMenu.querySelectorAll('[data-group-by]')];
-  const i = items.indexOf(document.activeElement);
-  items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus();
-});
-document.addEventListener('click', (e) => {
-  if (!el.runsGroupMenu || el.runsGroupMenu.hidden) return;
-  if (!e.target.closest || !e.target.closest('.runs-group-wrap')) setRunsGroupMenuOpen(false);
-});
-paintRunsGroupBy();
 el.runsSearch?.addEventListener('input', () => { runsUi.query = el.runsSearch.value; paintRunsList(); });
 el.runsSearch?.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
+  if (e.key !== 'Escape' || !el.runsSearch.value) return;
   e.preventDefault();
-  setRunsSearchOpen(false);
+  el.runsSearch.value = '';
+  runsUi.query = '';
+  paintRunsList();
 });
-// Projects page: "Show in Runs" unfolds the project's group and scrolls to it (D17).
+// Projects page: "Show in Runs" unfolds the project's group and scrolls to it (D17). #724 D21: Active scopes
+// fold keys by section, so the project is unfolded under each key it can have.
 function openRunsForProject(key) {
-  if (runsUi.collapsed.delete(key)) persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed);
+  let changed = false;
+  for (const k of [key, `needs/${key}`, `running/${key}`, `recent/${key}`]) changed = runsUi.collapsed.delete(k) || changed;
+  if (changed) persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed);
   runsUi.reveal = key;
   goRunsList();          // the list itself: no D6 restore over the group it reveals
 }
@@ -32356,7 +32594,7 @@ async function loadRdPrStatus(host, scope) {
 }
 const PR_STATUS_ICONS = {
   'is-ok': '<circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16 10"/>',
-  'is-run': '<path d="M12 3a9 9 0 1 0 9 9"/>',
+  'is-run': '<circle cx="12" cy="12" r="4.5" fill="currentColor" stroke="none"/>',
   'is-bad': '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>',
   'is-wait': '<circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/>',
   none: '<circle cx="12" cy="12" r="9"/>',
@@ -33184,21 +33422,23 @@ function renderPipelineTabs() {
 // bar's Activity badge reads the SAME items (activity-model.mjs activityCounts), so its amber
 // number is this one; `active` is every live run: the grey Runs number, Activity's running count.
 function runsNeedsInput() {
+  const resumeOf = (pid, status) => (status === 'paused' ? autoResumeAt(pid) : null);
   return {
-    live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r) })),
-    history: Array.isArray(state.historyAll) ? state.historyAll : [],
+    live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null,
+      unread: isLingering(r), pauseReason: r.pauseReason || '', resumeAt: resumeOf(r.pipelineId, r.status) })),
+    history: (Array.isArray(state.historyAll) ? state.historyAll : [])
+      .map((p) => (p && p.status === 'paused' ? { ...p, resumeAt: resumeOf(p.id, p.status) } : p)),
     active: liveRuns().map((r) => ({ runId: r.runId })),
   };
-}
-function runsNeedsCount() {
-  return countNeedsYou(runsNeedsInput());
 }
 function updateNavCounts() {
   const live = liveRuns().length;
   let waiting = 0;
   for (const r of runs.values()) if (r.pendingQuestion != null || pausedOnYou(r)) waiting += 1;
   alerts.updateBadge({ waitingRuns: waiting });
-  const needs = runsNeedsCount();
+  const src = runsNeedsInput();
+  ensureResumeTickets(src);
+  const needs = countNeedsYou(src);
   // One badge on Runs (D11): the amber Needs-you pill while anything needs you, else the live
   // count as a plain grey number. A zero is hidden; each element keeps its number.
   const nc = $('#nav-needs-count');

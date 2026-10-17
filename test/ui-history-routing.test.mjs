@@ -292,8 +292,9 @@ test('deep-link boot opens the detail directly and upgrades the stub record when
       // NOT "without a list paint first": on a deep-link boot prevView is null, so
       // showView DOES call loadHistoryView() and the list paints behind the track.
       // That is intended — the row is what upgrades the detail's record.
+      // A run that finished just now: Recent lists only the last 7 days (#724).
       const { window, calls } = await boot({
-        fetchHandler: handler,
+        fetchHandler: handlerFor([{ ...ROW, mtime: Date.now() }]),
         url: `http://localhost:4317/#${detailHash}`,
       });
       await settle(window, 4);

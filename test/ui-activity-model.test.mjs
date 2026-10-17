@@ -21,15 +21,15 @@ const histIt = (id, extra = {}) => ({
   id, projectKey: 'worca-2', title: id, status: 'done', pauseReason: null,
   startedAt: loc(8, 11, 17), mtime: 0, groupName: 'worca-cc', by: '', pr: null, checks: null, files: null, ...extra,
 });
-// Every edge of the Needs you rule: a question, a question while pausing / interrupted (not you),
-// a pause, a failure unread and read, a lingering finished run, and a paused History row that is
+// Every edge of the Needs you rule: a question, a question while pausing (not you), an interrupted run
+// (it needs you, #724), a cost-limit pause, a failure unread and read, a lingering finished run, and a paused History row that is
 // the same run as a live one (counted once) or a run this tab does not know (counted). `active` is
 // what liveRuns() holds: the live ones, and a workspace scan the Runs list does not show.
 const LIVE = {
   ask1: liveIt('ask1', { ask: { kind: 'workflow', step: 'Plan' }, groupName: 'Rollouts' }),
   pausing1: liveIt('pausing1', { status: 'pausing', ask: { kind: 'questions', step: '' } }),
   intr1: liveIt('intr1', { status: 'interrupted', ask: { kind: 'questions', step: '' } }),
-  paused1: liveIt('paused1', { pipelineId: 'p1', status: 'paused', groupName: 'worca-cc', startedAt: loc(8, 9, 0) }),
+  paused1: liveIt('paused1', { pipelineId: 'p1', status: 'paused', pauseReason: 'cost_pipeline', groupName: 'worca-cc', startedAt: loc(8, 9, 0) }),
   fail1: liveIt('fail1', { status: 'error', failedStep: 'Tester', unread: true }),
   fail2: liveIt('fail2', { status: 'error', unread: false }),
   run1: liveIt('run1', { step: 'Implement' }),
@@ -38,7 +38,7 @@ const LIVE = {
 };
 const RUNS = {
   live: Object.values(LIVE),
-  history: [histIt('p1', { status: 'paused' }), histIt('p9', { status: 'paused', startedAt: loc(7, 8, 0) }), histIt('p8', { status: 'error' })],
+  history: [histIt('p1', { status: 'paused', pauseReason: 'cost_pipeline' }), histIt('p9', { status: 'paused', pauseReason: 'cost_pipeline', startedAt: loc(7, 8, 0) }), histIt('p8', { status: 'error' })],
   active: [LIVE.ask1, LIVE.pausing1, LIVE.run1, LIVE.start1, liveIt('scan1', { title: 'Scan workspace', groupName: 'Platform' })],
 };
 
@@ -46,10 +46,10 @@ test('Needs you holds exactly what the Runs badge counts; Running is the sidebar
   const m = activityModel({ ...RUNS, now: NOW, tz: 'UTC' });
   assert.equal(m.counts.needs, countNeedsYou(RUNS), 'the same number as the sidebar Runs badge');
   assert.equal(m.needs.length, m.counts.needs);
-  assert.deepEqual(m.needs.map((r) => r.key), ['live:ask1', 'live:paused1', 'hist:worca-2/p9', 'live:fail1'],
-    'the Runs list order: questions, pauses (newest first), failures');
-  assert.deepEqual(m.needs.map((r) => r.sub), ['Rollouts · Plan review', 'worca-cc · Paused', 'worca-cc · Paused', 'Employee project · Tester failed']);
-  assert.deepEqual(m.needs.map((r) => r.href), ['#running/ask1', '#running/paused1', '#history/worca-2/p9', '#running/fail1']);
+  assert.deepEqual(m.needs.map((r) => r.key), ['live:ask1', 'live:intr1', 'live:paused1', 'hist:worca-2/p9', 'live:fail1'],
+    'the Runs list order: questions, pauses and interruptions (newest first), failures');
+  assert.deepEqual(m.needs.map((r) => r.sub), ['Rollouts · Plan review', 'Employee project · Interrupted', 'worca-cc · Cost limit', 'worca-cc · Cost limit', 'Employee project · Tester failed']);
+  assert.deepEqual(m.needs.map((r) => r.href), ['#running/ask1', '#running/intr1', '#running/paused1', '#history/worca-2/p9', '#running/fail1']);
   assert.deepEqual(m.running.map((r) => r.key), ['live:pausing1', 'live:run1', 'live:start1', 'live:scan1'],
     'a workspace scan runs too; the question is under Needs you');
   assert.deepEqual(m.running.map((r) => r.sub),
@@ -61,12 +61,12 @@ test('Needs you holds exactly what the Runs badge counts; Running is the sidebar
   // The light items the badge reads on every frame give the same two numbers; with nothing needing
   // you, Running is every live run — the sidebar's grey Runs number.
   const light = {
-    live: RUNS.live.map(({ runId, pipelineId, status, ask, unread }) => ({ runId, pipelineId, status, ask: ask != null, unread })),
-    history: RUNS.history.map(({ id, status }) => ({ id, status })),
+    live: RUNS.live.map(({ runId, pipelineId, status, ask, unread, pauseReason }) => ({ runId, pipelineId, status, ask: ask != null, unread, pauseReason })),
+    history: RUNS.history.map(({ id, status, pauseReason }) => ({ id, status, pauseReason })),
     active: RUNS.active.map(({ runId }) => ({ runId })),
   };
   assert.deepEqual(activityCounts(light), { needs: countNeedsYou(light), running: 4 });
-  assert.equal(countNeedsYou(light), 4);
+  assert.equal(countNeedsYou(light), 5);
   assert.deepEqual(activityCounts({ active: light.active }), { needs: 0, running: light.active.length });
 });
 
@@ -188,4 +188,17 @@ test('Scheduled day edges: midnight is the zone\'s, not UTC\'s; a week with a DS
       assert.equal(schedDayGroup(Date.parse('2026-10-22T22:30:00Z'), thu, B), 'tomorrow', 'Fri 00:30 CEST is Thursday in UTC');
     } },
   ]);
+});
+
+test('#724 activityCounts.needs equals countNeedsYou for the same input', () => {
+  const src = {
+    live: [{ runId: 'a', pipelineId: 'pa', status: 'paused', pauseReason: '', ask: false, unread: false },
+      { runId: 'b', pipelineId: 'pb', status: 'paused', pauseReason: 'usage_limit', resumeAt: Date.now() + 60000, ask: false, unread: false },
+      { runId: 'c', pipelineId: 'pc', status: 'paused', pauseReason: 'error', ask: false, unread: false }],
+    history: [{ id: 'h', status: 'paused', pauseReason: 'drain' }],
+    active: [{ runId: 'a' }, { runId: 'b' }, { runId: 'c' }],
+  };
+  assert.equal(activityCounts(src).needs, countNeedsYou(src));
+  assert.equal(countNeedsYou(src), 2);
+  assert.equal(activityCounts(src).running, 2, 'the manual and the resuming pause count as running');
 });

@@ -207,7 +207,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 | History: usage-limit notice | S |
 | "Files changed" list on the Overview | S — the stand-in for the Diff tab |
 | Overview: Perspective checklists, as on the run page (shaped runs) | S |
-| Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; ⋯ menu (Archive, Restore, Report); Artifacts tab; Archived toggle in the Runs header (with Restore) | A |
+| Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; the run page's ⋯ menu (Archive, Restore, Report); Artifacts tab | A |
+| Runs list: a finished row's ⋯ menu (Archive, Open in New run, Copy run id) and right-click; an archived row's ⋯ menu (Restore, Copy run id); Select with its "N selected · Archive · Cancel" bar; Show › Archived with "Archive finished runs older than 7 / 30 / 90 days" (#739) | S |
 | Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
 | Ship It modal: Open as draft checkbox, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |

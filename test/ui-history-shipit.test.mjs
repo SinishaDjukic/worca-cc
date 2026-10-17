@@ -531,7 +531,7 @@ test('a successful ship updates the list row, and PR-enrichment hooks repaint th
   await checkRows([
     { name: 'a successful ship updates the LIST row too (no stale Create PR)', run: async () => {
       const OTHER = row({ id: 'aaaa1111', title: 'Another run' });
-      const ctx = await bootShip({ rows: [row(), OTHER], arms: prArm(PR_OK) });
+      const ctx = await bootShip({ rows: [row({ mtime: Date.now() }), OTHER], arms: prArm(PR_OK) });   // Recent: the last 7 days (#724)
       const { window } = ctx;
       const rowSel = `#runs-list .runs-row[data-slot="group"][data-pipeline-id="${ROW.id}"]`;
       const word = () => window.document.querySelector(`${rowSel} .runs-row-sub`).textContent;
@@ -632,7 +632,7 @@ test('Create PR eligibility: never for workspace runs (detail or list, histPrEli
       // control opens the modal, and the shared predicate never offers it for a workspace
       // row, so opening that run from its list row can never arm the modal — and
       // confirming it can never 404 on POST /api/pr.
-      const ctx = await bootShip({ rows: [row({ projectKey: WKS_KEY, target: 'workspace' })] });
+      const ctx = await bootShip({ rows: [row({ projectKey: WKS_KEY, target: 'workspace', mtime: Date.now() })] });   // Recent: the last 7 days (#724)
       go(ctx.window, 'runs');                                  // nothing remembered: the bare list
       await settle(ctx.window);
       const listRow = ctx.window.document.querySelector(

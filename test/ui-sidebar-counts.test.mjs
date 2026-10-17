@@ -43,6 +43,7 @@ async function boot({ counts = { pipelines: 0, projects: 0, workspaces: 0 }, has
     if (u.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [] }) });
     if (u.includes('/api/workspaces')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ workspaces: [] }) });
     if (u.includes('/api/history')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: [], ghAvailable: false }) });
+    if (u.includes('/api/schedules')) return Promise.resolve({ ok: true, status: 200, json: async () => (box.schedules || { schedules: [], tickets: [], chains: [] }) });
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [], branches: [], workspaces: [], agents: [], channels: [] }) });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'requestAnimationFrame']) {
@@ -121,4 +122,40 @@ test('the Runs empty note turns into a row when a run appears (0 -> 1), no linge
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(doc.querySelector('#runs-list .runs-note'), null, 'placeholder removed once a run is live');
   assert.ok(doc.querySelector('#runs-list .runs-row[data-run-id="r1"]'), 'live row rendered');
+});
+
+test('#724 the Runs and Activity badges count only runs that wait for a person, the same number', async () => {
+  const { window, wsBox } = await boot({ counts: { pipelines: 0, projects: 0, workspaces: 0 } });
+  const doc = window.document;
+  // kind 'run': isPipelineRun admits only 'run' / 'workspace-run' / no kind into overviewRuns().
+  const run = (runId, extra) => ({ runId, pipelineId: `p-${runId}`, kind: 'run', title: runId, status: 'running', startedAt: '10:00:00', pendingQuestion: null, ...extra });
+  wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [
+    run('mine', { status: 'paused', pauseReason: null }),
+    run('cost', { status: 'paused', pauseReason: 'cost_pipeline' }),
+    run('ask', { pendingQuestion: { id: 'q1', kind: 'clarify', questions: [{ id: 'a', text: 'Which?' }] } }),
+    run('work'),
+  ] }) });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(doc.querySelector('#nav-needs-count').textContent, '2', 'the cost pause and the question; not the manual pause');
+  assert.equal(doc.querySelector('#nav-needs-count').hidden, false);
+  assert.equal(doc.querySelector('#topnav-activity-n').textContent, '2', 'Activity shows the same amber number');
+});
+
+test('#724 D17: an auto-resuming usage-limit pause leaves both badges once the tickets load, on any page', async () => {
+  const { window, wsBox, box, calls } = await boot({ counts: { pipelines: 0, projects: 0, workspaces: 0 } });
+  const doc = window.document;
+  const runAt = new Date(Date.now() + 3600000).toISOString();
+  box.schedules = { schedules: [], chains: [], tickets: [{ id: 't1', status: 'scheduled', runAt, resumePipelineId: 'p-lim' }] };
+  wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [
+    { runId: 'lim', pipelineId: 'p-lim', kind: 'run', title: 'lim', status: 'paused', pauseReason: 'usage_limit', startedAt: '10:00:00', pendingQuestion: null },
+  ] }) });
+  await new Promise((r) => setTimeout(r, 20));   // hello → updateNavCounts → ensureResumeTickets → load → recount
+  assert.ok(calls.some((u) => u.includes('/api/schedules')), 'the badges loaded the tickets off the Runs page');
+  assert.equal(doc.querySelector('#nav-needs-count').hidden, true, 'a booked resume is not Needs you');
+  // The ticket is cancelled elsewhere: the reload after schedules-changed brings the pause back into Needs you.
+  box.schedules = { schedules: [], chains: [], tickets: [] };
+  wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'schedules-changed' }) });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(doc.querySelector('#nav-needs-count').textContent, '1');
+  assert.equal(doc.querySelector('#topnav-activity-n').textContent, '1');
 });

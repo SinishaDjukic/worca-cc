@@ -120,7 +120,7 @@ test('account corner: a name is painted as text, never markup', async () => {
 // ── The "Started by" filter over the Runs list ───────────────────────────────────
 
 const ROW = (over = {}) => ({
-  id: 'a1', title: 'Alpha one', status: 'done', startedAt: '2026-06-01T00:00:00Z',
+  id: 'a1', title: 'Alpha one', status: 'done', startedAt: '2026-06-01T00:00:00Z', mtime: Date.now(),   // Recent: the last 7 days (#724)
   projectName: 'Alpha', projectKey: 'alpha-00000001', projectDir: '/x/alpha', ...over,
 });
 
