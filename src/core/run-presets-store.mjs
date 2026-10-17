@@ -1,6 +1,6 @@
 // src/core/run-presets-store.mjs — run presets (docs/run-presets.md): named New run setups.
 // Reads never throw on a bad row (corrupt JSON reads as {}); writes throw Error with code
-// BAD_PRESET (400), DUPLICATE (409) or NOT_FOUND (404). `owner` is the identity on a shared
+// BAD_PRESET (400), DUPLICATE (409), NOT_FOUND (404) or NO_RUN_SETUP (409). `owner` is the identity on a shared
 // deployment (askViewer) or null on a local install, where every preset is visible.
 import { randomBytes } from 'node:crypto';
 import { getDb, tx } from './db.mjs';
@@ -95,4 +95,31 @@ export function duplicatePreset(id, { name, owner = null, now = new Date() } = {
 export function deletePreset(id, { owner = null } = {}) {
   const o = ownerClause(owner);
   return getDb().prepare(`DELETE FROM run_presets WHERE id = ?${o.sql}`).run(id, ...o.args).changes > 0;
+}
+
+// Pipeline ids are worca-minted (dated slug + short hex); anything else is not a run.
+const PIPELINE_ID_RE = /^[A-Za-z0-9._-]{1,160}$/;
+
+/**
+ * The setup a run kept at start (pipelines.run_setup, v62). undefined when there is no such run; `setup: null` for a
+ * run started before v62, by the CLI, or a scan (and for a corrupt value). `target` is the run's own project/workspace.
+ */
+export function readRunSetup(pipelineId) {
+  if (typeof pipelineId !== 'string' || !PIPELINE_ID_RE.test(pipelineId) || pipelineId.includes('..')) return undefined;
+  const r = getDb().prepare('SELECT run_setup, project_key, workspace_key, target FROM pipelines WHERE id = ?').get(pipelineId);
+  if (!r) return undefined;
+  let setup = null;
+  if (typeof r.run_setup === 'string' && r.run_setup) {
+    try { const v = JSON.parse(r.run_setup); setup = v && typeof v === 'object' && !Array.isArray(v) ? v : null; } catch { setup = null; }
+  }
+  const target = r.target === 'workspace' && r.workspace_key ? { kind: 'workspace', ref: r.workspace_key } : { kind: 'project', ref: r.project_key };
+  return { setup, target };
+}
+
+/** Save setup as preset (a run's page): the run's stored setup, as is, through createPreset's rules. */
+export function createPresetFromRun(pipelineId, { name, scope } = {}, opts = {}) {
+  const run = readRunSetup(pipelineId);
+  if (run === undefined) throw fail('NOT_FOUND', 'run not found');
+  if (!run.setup) throw fail('NO_RUN_SETUP', 'This run started before Worca kept run setups, so there is nothing to save');
+  return createPreset({ name, scope, setup: run.setup }, opts);
 }

@@ -88,7 +88,7 @@ test('the hero wraps P1\'s hero slot: heading, the slot (composer untouched), th
   assert.equal(s.host.querySelector('.chat-home-aurora, .chat-aurora-orb, [class*="aurora"]'), null, 'a flat page: no aurora behind the hero');
   assert.ok(s.host.querySelector('[data-chat-hero-slot] > .ask-composer'), 'the composer stays where P1 put it');
   const body = s.host.querySelector('.chat-home-body');
-  assert.deepEqual([...body.children].map((c) => c.className.split(' ')[0]), ['chat-home-actions', 'chat-home-tabs', 'chat-home-promos']);
+  assert.deepEqual([...body.children].map((c) => c.className.split(' ')[0]), ['chat-home-actions', 'chat-home-presets', 'chat-home-tabs', 'chat-home-promos']);
   s.home.destroy();
   assert.deepEqual([...s.host.children].map((c) => c.className), ['chat-hero-slot'], 'destroy takes back everything it added');
 });

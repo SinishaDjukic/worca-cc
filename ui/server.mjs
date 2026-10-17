@@ -91,9 +91,9 @@ import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.
 import { createAwayHoursWatch } from '../src/core/night/hours-watch.mjs';
 import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
 import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal, OVERLAY_ERRORS } from '../src/core/run-overlay.mjs';
-import { listPresets, readPreset, createPreset, updatePreset, duplicatePreset, deletePreset } from '../src/core/run-presets-store.mjs';
+import { listPresets, readPreset, createPreset, updatePreset, duplicatePreset, deletePreset, readRunSetup, createPresetFromRun } from '../src/core/run-presets-store.mjs';
 import { presetRefusals, completeSnapshot } from '../src/core/run-presets-check.mjs';
-import { setupFromBody } from '../src/shared/run-presets.mjs';
+import { setupFromBody, PRESET_LIMITS } from '../src/shared/run-presets.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
 import { validatePinpointInput, runPinpoint, pinpointCwd } from '../src/core/pinpoint.mjs';
 import { demoChunks, demoPinpointReply } from '../src/core/demo-scenario.mjs';
@@ -2529,6 +2529,10 @@ const startRunHandler = async (req, res) => {
         return res.status(202).json(await scheduleRequest({ body: runOverlay ? { ...body, overlay: runOverlay } : body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
       }
       const mcpOptOut = await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws));
+      // Run presets slice 2 (#712): the run's setup, kept on the row for Save setup as preset. The RAW body
+      // overlay (D4): the checked runOverlay carries effort '' for model-only picks, which a New run save drops.
+      const runSetup = scanTarget || memoryScope ? null
+        : await runSetupOf({ ...body, workflowId, guardrailsId }, { workspaceId: ws.id });
 
       const wsBuilt = buildWorkspaceMembers(projects, branch, sourceByKey);
       const wsMembers = [];
@@ -2571,6 +2575,7 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         ...(shape ? { shape } : {}),
+        ...(runSetup ? { runSetup } : {}),
       });
 
       entry = {
@@ -2671,6 +2676,10 @@ const startRunHandler = async (req, res) => {
         return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
       }
       const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 });
+      // Run presets slice 2 (#712): the run's setup, kept on the row for Save setup as preset. The RAW body
+      // overlay (D4): the checked runOverlay carries effort '' for model-only picks, which a New run save drops.
+      const runSetup = scanTarget || memoryScope ? null
+        : await runSetupOf({ ...body, workflowId, guardrailsId }, { projectDir });
 
       // Scans and defrag never sync: skip the default-branch lookup and settings reads entirely, so
       // the window between the one-defrag-per-scope check and runs.set does not widen.
@@ -2712,6 +2721,7 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         ...(shape ? { shape } : {}),
+        ...(runSetup ? { runSetup } : {}),
       });
 
       entry = {
@@ -11155,10 +11165,11 @@ app.post('/api/workflows/:id/export', async (req, res) => {
 // graph for the basis target and fills every agent node and loop — so a later project change never
 // changes what a preset runs. presetRefusals is the ONE check (pick time here, start time in startRunHandler).
 // ---------------------------------------------------------------------------
-const PRESET_STATUS = { BAD_PRESET: 400, DUPLICATE: 409, NOT_FOUND: 404 };
+const PRESET_STATUS = { BAD_PRESET: 400, DUPLICATE: 409, NOT_FOUND: 404, NO_RUN_SETUP: 409 };
 function sendPresetError(res, err) {
   const status = PRESET_STATUS[err && err.code] || 500;
-  res.status(status).json({ error: status === 500 ? 'could not save the preset' : err.message });
+  res.status(status).json({ error: status === 500 ? 'could not save the preset' : err.message,
+    ...(err && err.code === 'NO_RUN_SETUP' ? { code: 'no-run-setup' } : {}) });
   if (status === 500) console.error('[presets]', err);
 }
 const presetBad = (message) => Object.assign(new Error(message), { code: 'BAD_PRESET' });
@@ -11235,6 +11246,21 @@ async function snapshotFor(setup, basis) {
   return completeSnapshot({ ...setup, overlay: parsed.overlay || undefined }, resolved);
 }
 
+/**
+ * The run's setup for pipelines.run_setup (v62): the normalized body's preset keys as full picks for the run's own
+ * target — the value Save setup as preset stores. Never blocks a start: any failure (or > 32 KB) keeps nothing.
+ */
+async function runSetupOf(normalized, basis) {
+  try {
+    const setup = setupFromBody(normalized, { scope: basis.workspaceId ? 'workspace' : 'project' });
+    const json = JSON.stringify(await snapshotFor(setup, basis));
+    return Buffer.byteLength(json) <= PRESET_LIMITS.setupBytes ? json : null;
+  } catch (err) {
+    console.warn('[presets] run setup not kept:', err && err.message);
+    return null;
+  }
+}
+
 app.use('/api/presets', requireFlag('runPresets'));
 
 app.get('/api/presets', (req, res) => {
@@ -11285,6 +11311,35 @@ app.post('/api/presets/:id/check', async (req, res) => {
     const ctx = await presetCheckCtx(preset.scope, target, preset.setup, { probeEngine: true });
     res.json({ broken: await presetRefusals(preset.setup, ctx) });
   } catch (err) { console.error('[presets] check', err); res.status(500).json({ error: 'could not check the preset' }); }
+});
+
+/** A run preset's scope from the run's own target: the client names only the kind (D8). null = not this run's kind / gone. */
+async function runPresetScope(kind, target) {
+  if (kind === undefined || kind === 'global') return { kind: 'global', ref: null };
+  if (kind !== target.kind) return null;
+  if (kind === 'project') return presetScopeOf({ kind: 'project', projectDir: await projectDirForKey(target.ref) });
+  return presetScopeOf({ kind: 'workspace', workspaceId: target.ref });
+}
+
+// Save setup as preset (slice 2): the setup a run kept at start (pipelines.run_setup, v62), saved into the viewer's own presets.
+app.get('/api/pipelines/:id/setup', requireFlag('runPresets'), (req, res) => {
+  const run = readRunSetup(req.params.id);
+  if (run === undefined) return res.status(404).json({ error: 'run not found' });
+  res.json({ setup: run.setup, target: run.target });
+});
+
+app.post('/api/pipelines/:id/preset', requireFlag('runPresets'), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const run = readRunSetup(req.params.id);
+    if (run === undefined) return res.status(404).json({ error: 'run not found' });
+    if (!run.setup) throw Object.assign(new Error('This run started before Worca kept run setups, so there is nothing to save'), { code: 'NO_RUN_SETUP' });
+    const scope = await runPresetScope(body.scope && body.scope.kind, run.target);
+    if (!scope) return badRequest(res, 'scope names a project or workspace worca does not know');
+    res.status(201).json({ preset: createPresetFromRun(req.params.id, { name: body.name, scope }, { owner: askViewer(req) }) });
+  } catch (err) {
+    if (!res.headersSent) sendPresetError(res, err);
+  }
 });
 
 // ---------------------------------------------------------------------------

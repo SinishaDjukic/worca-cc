@@ -62,7 +62,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 61;
+export const SCHEMA_VERSION = 62;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -846,7 +846,8 @@ const INCREMENTAL_COLUMNS = {
                             started_by: 'TEXT',   // v36: who started the run (identity.mjs; NULL = before attribution)
                             // Shaper D28, no version of their own (-4-slices owns v57); reconcileSchema adds them
                             shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
-                            run_size: 'TEXT' },   // small|medium|large from the run's changed lines/files; NULL = unknown
+                            run_size: 'TEXT',     // small|medium|large from the run's changed lines/files; NULL = unknown
+                            run_setup: 'TEXT' },  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start or a scan
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -2255,6 +2256,7 @@ export function migrate(db) {
     if (current < 60) applySchemaV60(db);
     if (current < 61) db.exec(RUN_PRESETS_DDL);      // run presets (#712)
     if (current < SCHEMA_VERSION) refreshPromoVideoSeed(db);
+    // v62 (#712 slice 2): pipelines.run_setup — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

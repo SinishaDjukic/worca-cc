@@ -69,6 +69,25 @@ New run with the preset applied; **Rename**, **Duplicate**, **Edit scope** and *
 it. A pinned preset whose project or workspace is gone shows *Project gone* (or *Workspace gone*);
 **Edit scope** can pin it again or make it global.
 
+## Save a run's setup
+
+Every run started from this version on keeps its setup: the same choices a preset keeps, with every
+agent and loop filled in, and never its task. On a finished run's page (History), **Save setup as
+preset** saves that setup as a new preset. The scope defaults to the run's own project (or
+workspace), so branch names are kept; *Any project* is offered too and drops them. The preset goes
+into your own list, also on a shared deployment.
+
+Runs from before this version, runs started from the CLI, and scans have no stored setup, so the
+button is not shown on their page.
+
+## On the Chat home
+
+With run presets on, the Chat home shows **Start from a preset**: up to 6 chips, first the presets
+pinned to New run's current project or workspace, then the *Any project* ones. Presets pinned to
+another target are left out. A chip opens New run with the preset applied, the same as **Use** in
+Settings › Presets. With more than 6, a *N more…* chip opens Settings › Presets. With no matching
+preset the section is hidden.
+
 ## Shared deployments
 
 Presets are per person. On a deployment where people sign in, each person sees, changes and
@@ -85,6 +104,8 @@ every preset.
 | `POST /api/presets/:id/duplicate` | A copy named *… (copy)* |
 | `DELETE /api/presets/:id` | Delete it |
 | `POST /api/presets/:id/check` | `{ projectDir }` or `{ workspaceId }` → `{ broken: [{ item, ref, message, reset }] }` |
+| `GET /api/pipelines/:id/setup` | The setup a run kept at start → `{ setup, target }`; `setup` is `null` for a run from before this version, the CLI or a scan |
+| `POST /api/pipelines/:id/preset` | `{ name, scope: { kind: 'global' \| 'project' \| 'workspace' } }` → 201 `{ preset }`; the server takes the project or workspace from the run itself. 409 `{ code: 'no-run-setup' }` when the run has no stored setup |
 
 `setup` takes the `POST /api/run` keys `workflowId`, `engine`, `guardrailsId`, `mcpOptOut`, `mock`,
 `nightMode`, `humanInLoop`, `sourceBranch`, `sourceBranchByKey`, `sameAsSource`, `syncBeforeStart`,
