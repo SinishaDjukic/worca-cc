@@ -469,12 +469,17 @@ function featurePageDeps(host) {
       // One ask element per page host, moved into each rebuild's slot. chatPaintQuestion rebuilds only when the
       // question changes and registers the panel in CHAT_QPANELS (postAnswer's busy sweep, 422 marks, clearQpanel).
       if (!host.__featureAsk) {
-        host.__featureAsk = document.createElement('div');
-        host.__featureAsk.className = 'shape-feature-ask';
-        host.__featureAsk.appendChild(Object.assign(document.createElement('div'), { className: 'qpanel hidden' }));
+        const ask = host.__featureAsk = document.createElement('div');
+        ask.className = 'shape-feature-ask';
+        ask.appendChild(Object.assign(document.createElement('div'), { className: 'qpanel hidden' }));
+        // #764: the gate, recovery and question buttons answer THIS slice's run through the run page's router. Bound
+        // once here so a repaint never adds a second listener; the ref is read at click time (a resume moves the runId).
+        ask.addEventListener('click', (e) => routeQpanelAnswer(e, chatLiveRun(ask.__askRef)));
       }
+      const ref = { runId: s.runId || null, pipelineId: s.pipelineId || null };
+      host.__featureAsk.__askRef = ref;
       slot.replaceWith(host.__featureAsk);
-      chatPaintQuestion({ runId: s.runId || null, pipelineId: s.pipelineId || null }, host.__featureAsk);
+      chatPaintQuestion(ref, host.__featureAsk);
     },
   };
 }
@@ -32762,6 +32767,21 @@ function paintRdWorktreeNotice(screen, r) {
   });
 }
 
+// A run question's answer buttons and what each one decides. One list for every host that mounts the run page's
+// renderers outside a Chat run card: #run-detail, the Chat run panel's .crp-host and the Feature page's ask host.
+// (ui/public/chat/run-card.mjs keeps its own copy: it answers through controls.answer and shows its own error.)
+const QPANEL_ANSWER_BUTTONS = '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort';
+const QPANEL_DECISIONS = { 'gate-continue': 'continue', 'gate-another': 'another', 'recovery-retry': 'retry', 'recovery-pause': 'pause', 'recovery-abort': 'abort' };
+/** Route a click on a question panel's answer button to postAnswer / submitAnswer for run `r`. True when it handled one. */
+function routeQpanelAnswer(e, r) {
+  const qbtn = r && e.target.closest && e.target.closest(QPANEL_ANSWER_BUTTONS);
+  if (!qbtn || qbtn.closest('.qpanel-workflow')) return false;   // Auto's workflow panel wires its own buttons
+  const cls = Object.keys(QPANEL_DECISIONS).find((c) => qbtn.classList.contains(c));
+  if (cls) postAnswer(r, { decision: QPANEL_DECISIONS[cls] });
+  else submitAnswer(r, qbtn.closest('.qpanel'));
+  return true;
+}
+
 // Delegated controls on the rebuilt parts of the detail screen. #run-detail is a
 // static node, so one listener survives every repaint. The direct bindings in
 // openRunDetail cover only the template's OWN, never-replaced controls. C8b: ONE
@@ -32776,16 +32796,7 @@ function onRdDelegatedClick(e) {
   const past = e.target.closest && e.target.closest('.cb-past-team-cap');
   if (past) { confirmPastTeamCap(r.runId, past); return; }             // team-policy board 9
   if (e.target.closest && e.target.closest('.cb-policy-open')) { location.hash = 'team-policy'; return; }
-  const qbtn = e.target.closest && e.target.closest(
-    '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
-  if (!qbtn) return;
-  if (qbtn.closest('.qpanel-workflow')) return;            // same guard, early-return shape
-  if (qbtn.classList.contains('gate-continue')) postAnswer(r, { decision: 'continue' });
-  else if (qbtn.classList.contains('gate-another')) postAnswer(r, { decision: 'another' });
-  else if (qbtn.classList.contains('recovery-retry')) postAnswer(r, { decision: 'retry' });
-  else if (qbtn.classList.contains('recovery-pause')) postAnswer(r, { decision: 'pause' });
-  else if (qbtn.classList.contains('recovery-abort')) postAnswer(r, { decision: 'abort' });
-  else submitAnswer(r, qbtn.closest('.qpanel'));
+  routeQpanelAnswer(e, r);
 }
 el.runDetail?.addEventListener('click', onRdDelegatedClick);
 
