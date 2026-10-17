@@ -5356,6 +5356,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     openRunPanel: (ref, opts) => chatDep('openRunPanel', ref, opts),
     mountFeature: (host, id) => chatDep('mountFeature', host, id),
     openArtifact: (ref, artifact) => chatDep('openArtifact', ref, artifact),
+    openFiles: (o) => chatDep('openFiles', o),
     openShipIt: (ref, link) => chatDep('openShipIt', ref, link),
     runLinkFor: (ref) => runLinkFor(ref || {}),
     appendToComposer: (text) => appendToComposer(text),

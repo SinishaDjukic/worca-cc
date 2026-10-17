@@ -109,7 +109,7 @@ import {
   listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
   findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
   addAttachment as askAddAttachment, listAttachments as askListAttachments,
-  getAttachment as askGetAttachment, attachmentPath as askAttachmentPath,
+  getAttachment as askGetAttachment, attachmentPath as askAttachmentPath, readAttachmentText as askReadAttachmentText,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline,
   finishMessage as askFinishMessage,
@@ -11927,7 +11927,8 @@ app.get('/api/ask/threads/:id', (req, res) => {
       // has left the catalog.
       thread: { ...thread, engine: askChatEngine(id, thread) },
       messages: askListMessages(id),
-      attachments: askListAttachments(id),
+      // show_files copies (message_id null, docs/show-files.md) are not uploads: they never join the run card's @ picker.
+      attachments: askListAttachments(id).filter((a) => a.messageId != null),
       runLinks: askListRunLinks(id),
       // P4 §10: the SAME narrow envelope the list_worktrees MCP tool and the
       // ask-worktrees frame carry — never the full row.
@@ -12124,6 +12125,7 @@ app.delete('/api/ask/threads/:id/worktrees/:wtId', async (req, res) => {
   }
 });
 
+const ASK_TEXT_PREVIEW_MAX = 2 * 1024 * 1024; // the viewer's TEXT_PREVIEW_MAX_BYTES (artifacts/common.mjs)
 app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
@@ -12139,24 +12141,34 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
     // this is what makes an HTML attachment (a text kind labelled text/html)
     // safe: with nosniff it is shown as source, never rendered or run on the
     // worca origin, so text/html must never be served here. Binary bodies are
-    // sniff-verified allowlisted mimes only (never scriptable markup like SVG),
-    // so serving their real mime inline is safe — and it is what lets the
-    // transcript render <img> thumbnails (#398).
+    // sniff-verified allowlisted mimes only, so serving their real mime inline
+    // is safe — and it is what lets the transcript render <img> thumbnails
+    // (#398). The one scriptable binary is a show_files SVG copy, which gets the
+    // sandbox CSP below.
     const type = att.kind === 'text' ? 'text/plain; charset=utf-8' : (att.mime || 'application/octet-stream');
+    // The chat files card's viewer reads a text body as JSON {text}, like the artifact text route (docs/show-files.md).
+    if (req.query.as === 'text') {
+      if (att.kind !== 'text') return res.status(415).json({ error: 'not a text attachment' });
+      if (att.bytes > ASK_TEXT_PREVIEW_MAX) return res.status(413).json({ error: 'too large to preview' });
+      const r = askReadAttachmentText(id, attId);
+      if (!r) return res.status(404).json({ error: 'not found' });
+      res.set('Cache-Control', 'private, no-store');
+      return res.json({ text: r.text });
+    }
     // Streamed, not readFileSync + send: a body is immutable under its
     // store-minted id, so a stat-based ETag/Last-Modified plus a year-long
     // private immutable cache replaces a 5 MB sync read and sha1 per request —
     // the transcript re-creates every <img> on each structural render.
+    const headers = { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline',
+      'Cache-Control': 'private, max-age=31536000, immutable' };
+    // A show_files SVG is drawn through <img> only; opened in its own tab, the sandbox CSP keeps its scripts dead
+    // (the ask-files route's rule).
+    if (att.mime === 'image/svg+xml') headers['Content-Security-Policy'] = "sandbox; default-src 'none'";
     res.sendFile(path.basename(file), {
       root: path.dirname(file),
       dotfiles: 'deny',
       cacheControl: false,
-      headers: {
-        'Content-Type': type,
-        'X-Content-Type-Options': 'nosniff',
-        'Content-Disposition': 'inline',
-        'Cache-Control': 'private, max-age=31536000, immutable',
-      },
+      headers,
     }, (err) => {
       if (!err || res.headersSent) return;
       if (err.code === 'ENOENT' || err.status === 404) return res.status(404).json({ error: 'attachment not found' });
@@ -12464,7 +12476,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
     // newest first — inlined current files must not be double-listed, so the
     // earlier set excludes the whole current message, not just `listed` ids.
     const earlier = askListAttachments(threadId)
-      .filter((a) => !currentMessageId || a.messageId !== currentMessageId)
+      .filter((a) => a.messageId != null && (!currentMessageId || a.messageId !== currentMessageId))   // uploads only: a show_files copy never takes a header slot
       .slice(-ASK_LIMITS.headerAttachments)
       .reverse()
       .map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));

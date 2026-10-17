@@ -8779,6 +8779,23 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-rc-fix-out.is-ok{color:var(--green-ink);}
 .chat-rc-fix-out.is-bad{color:var(--red-ink);}
 
+/* ===== Chat: files card (show_files, docs/show-files.md) ===== */
+.ask-filescard .ask-mcard-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ask-filescard-grid,.ask-filescard-list,.ask-filescard-skipped{margin-top:12px}
+.ask-filescard-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.ask-filescard-grid.is-single{grid-template-columns:minmax(0,420px)}
+.ask-filescard-thumb{display:flex;align-items:center;justify-content:center;padding:0;aspect-ratio:4/3;overflow:hidden;border:1px solid var(--line);border-radius:8px;background:var(--surface);cursor:zoom-in}
+.ask-filescard-grid.is-single .ask-filescard-thumb{aspect-ratio:auto;max-height:320px}
+.ask-filescard-thumb:focus-visible{outline:2px solid var(--ink-2);outline-offset:2px}
+.ask-filescard-img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+.ask-filescard-list{display:flex;flex-direction:column;gap:6px}
+.ask-filescard-file{display:flex;align-items:center;gap:10px;min-width:0}
+.ask-filescard-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0;border:0;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;text-decoration:underline;text-decoration-color:var(--line-2)}
+.ask-filescard-meta{flex:none;color:var(--ink-3);font-size:12px}
+.ask-filescard-dl{flex:none;margin-left:auto;font-size:12px}
+.ask-filescard-skipped{margin-bottom:0;color:var(--ink-3);font-size:12px}
+@media (max-width:480px){.ask-filescard-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
 /* ===== Chat P3: run card ===== */
 /* The chat run card (ui/public/chat/run-card.mjs). It keeps the Ask progress card's look (.ask-rc-* above) and adds
    the Workflows graph well, the inline question, the result region and the run controls. The well is a

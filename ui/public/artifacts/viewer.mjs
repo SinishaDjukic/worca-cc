@@ -7,7 +7,7 @@
 import {
   relOf, baseName, displayPath, formatBytes, previewKindFor, RAW_PREVIEW_KINDS, TEXT_PREVIEW_MAX_BYTES,
 } from './common.mjs';
-import { renderPreview } from './preview.mjs';
+import { renderPreview, PINNABLE_PREVIEW_KINDS } from './preview.mjs';
 
 const GLYPH = {
   prev: '<path d="M15 6l-6 6 6 6"/>',
@@ -110,7 +110,7 @@ export async function downloadArtifact({ doc, fetch: fetchFn, url, name = '' }) 
  * @param {Document} o.doc
  * @param {Window} [o.win]
  * @param {(url:string, opts?:object) => Promise<Response>} o.fetch
- * @param {{kind?:string, relPath?:string, path?:string, bytes?:number, nodeId?:string|null, cycle?:number|null}} o.artifact
+ * @param {{kind?:string, relPath?:string, path?:string, bytes?:number, nodeId?:string|null, cycle?:number|null, previewKind?:string}} o.artifact
  * @param {{text(rel:string):string, raw(rel:string):string, download(rel:string):string}} o.urls
  * @param {Array<object>} [o.list]   the files ←/→ step through (o.artifact among them)
  * @param {{step?:string, cycle?:number}} [o.meta]   the first file's step and cycle (CONTRACT §7)
@@ -297,7 +297,9 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
     const live = () => my === token && !closed;
     const rel = relOf(a);
     const shown = displayPath(rel);             // what an alt text, a frame title or a player's label may say
-    const kind = previewKindFor(a.kind, rel);
+    const kind = a.previewKind
+      ? (a.previewKind === 'none' || PINNABLE_PREVIEW_KINDS.has(a.previewKind) ? a.previewKind : 'none')
+      : previewKindFor(a.kind, rel);
     try {
       if (kind === 'none') { info(stage, a, 'No preview for this file type'); return; }
       if (RAW_PREVIEW_KINDS.has(kind)) {
@@ -309,7 +311,7 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
         const err = probe.ok ? null : { status: probe.status };
         if (err && (err.status === 413 || err.status === 415)) { info(stage, a, errorText(err)); return; }
         if (err) { fail(stage, errorText(err)); return; }
-        await renderPreview({ kind: a.kind || null, relPath: shown, url }, stage, deps);
+        await renderPreview({ kind: a.kind || null, relPath: shown, url, previewKind: a.previewKind || null }, stage, deps);
         // A player the browser cannot feed (an HEVC .mp4, a damaged file) says so instead of sitting there dead.
         const media = stage.querySelector('audio, video');
         if (media) {
@@ -340,10 +342,10 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
         const wide = text.charCodeAt(0) === 0xfffd && text.charCodeAt(1) === 0xfffd ? await utf16Text(fetchFn, urls.download(rel)) : null;
         if (!live()) return;
         if (wide == null) { info(stage, a, 'No preview for this file type'); return; }
-        await renderPreview({ kind: a.kind || null, relPath: shown, text: wide }, stage, deps);
+        await renderPreview({ kind: a.kind || null, relPath: shown, text: wide, previewKind: a.previewKind || null }, stage, deps);
         return;
       }
-      await renderPreview({ kind: a.kind || null, relPath: shown, text }, stage, deps);
+      await renderPreview({ kind: a.kind || null, relPath: shown, text, previewKind: a.previewKind || null }, stage, deps);
       if (live() && typeof decorate === 'function') {
         try { undecorate = decorate({ artifact: a, stage, body, root }) || null; } catch { undecorate = null; }
       }

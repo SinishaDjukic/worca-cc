@@ -69,7 +69,8 @@ export function askSkillsAllowRules(threadId) {
 /**
  * The per-thread Read allow rules: the chat's worktrees (P4 §6) and its stored
  * attachment bodies (#398 — read_attachment hands the model an `att/` path for
- * an image or PDF, and the model views it with its own Read tool). Explicit
+ * an image or PDF, and the model views it with its own Read tool) and its output
+ * folder (`out/`, $WORCA_ASK_OUT: what Ask saves for show_files). Explicit
  * intent more than enforcement: under the engine's measured `unmatched ⇒ allow`
  * (gate E1, claude 2.1.241 — a path in neither list is read, verified OUTSIDE
  * the process cwd; and Grep ignored both `Read(<path>)` and `Grep(<path>)`
@@ -81,7 +82,7 @@ export function askSkillsAllowRules(threadId) {
  */
 export function askWorktreeAllowRules(threadId) {
   if (typeof threadId !== 'string' || !/^ask_[0-9a-f]{8}$/.test(threadId)) return [];
-  return [`Read(//**/.worca-cc/ask/${threadId}/wt/**)`, `Read(//**/.worca-cc/ask/${threadId}/att/**)`];
+  return [`Read(//**/.worca-cc/ask/${threadId}/wt/**)`, `Read(//**/.worca-cc/ask/${threadId}/att/**)`, `Read(//**/.worca-cc/ask/${threadId}/out/**)`];
 }
 
 const NOTE_HEAD = "You are a sub-agent of Worca's assistant and run in the same sandbox: the only tools available are Task, Read, Grep, Glob and " +

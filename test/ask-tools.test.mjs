@@ -1242,3 +1242,16 @@ test('an Ask chat with a composer bundle lists the drafts and the graph proposal
   for (const n of ['get_canvas', 'edit_canvas']) assert.equal(names.includes(n), false, n);
   assert.ok(names.includes('propose_run') && names.includes('propose_workflow'), 'Ask keeps its own proposals');
 });
+
+test('show_files: gated by deps.showFiles; validates counts; hands rows through resolveRow', async () => {
+  assert.equal(createAskTools(fake).list().some((t) => t.name === 'show_files'), false, 'no bundle, no tool');
+  const calls = [];
+  const t = createAskTools({ ...fake, showFiles: { show: async (req) => { calls.push(req); await req.rowFor('r_missing').catch((e) => calls.push(e.message)); return { ok: true, items: [] }; } } });
+  const def = t.list().find((d) => d.name === 'show_files');
+  assert.ok(def && def.inputSchema.additionalProperties === false && def.description.length > 20);
+  await assert.rejects(t.call('show_files', {}), /at least one/);
+  await assert.rejects(t.call('show_files', { attachmentIds: Array.from({ length: 13 }, (_, i) => `att_${i}`) }), /at most 12/);
+  await t.call('show_files', { files: [{ path: '$WORCA_ASK_OUT/a.png' }], caption: 'Home' });
+  assert.equal(calls[0].caption, 'Home');
+  assert.match(calls[1], /show_files: run not found/);
+});

@@ -512,6 +512,11 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   beside the project's own setting with its reason on hover; change or reset any of them before
   **Start run**. The picks apply to that run only — turn on **Save as project defaults** to keep
   them ([`docs/models.md`](docs/models.md#per-agent-models-for-one-run)).
+- **Files in the chat** — when Ask makes or finds a file you should see (a screenshot it took with
+  `run_command`, a chart, a report, a run artifact), it puts it into the reply as a files card: images
+  inline, other files as rows, and a click opens a viewer with zoom, next/prev and Download. Files are
+  copied into the chat; credential files and anything outside the chat's folders are refused
+  ([`docs/show-files.md`](docs/show-files.md)).
 - **Memory** — say "remember …" or state a lasting preference, and Ask saves it to Worca's
   memory: global for how you work, per project for facts about one repository. Pipeline agents
   load the same memory; view, edit, delete or restore it on Settings › **Memory** and on a

@@ -34,6 +34,13 @@ export function attachmentsDir(threadId) {
   return join(askRoot(), threadId, 'att');
 }
 
+/** Ask's output folder for one chat — $WORCA_ASK_OUT in its run_command shells (commands.mjs). What Ask saves there,
+ *  show_files may show. Under the thread folder, so deleteThread's rm -r of ask/<id> removes it. */
+export function askOutDir(threadId) {
+  if (typeof threadId !== 'string' || !ASK_ID_RE.test(threadId)) throw new Error('askOutDir: refusing a thread id the store never minted');
+  return join(askRoot(), threadId, 'out');
+}
+
 const now = () => new Date().toISOString();
 const parse = (v, fallback) => { if (v == null) return fallback; try { return JSON.parse(v); } catch { return fallback; } };
 const str = (v) => (v === undefined || v === null ? null : JSON.stringify(v));

@@ -24,6 +24,7 @@ import { createAskTools } from './tools.mjs';
 import { createRpcServer } from './rpc-server.mjs';
 import { defaultToolDeps } from './tool-deps.mjs';
 import { defaultWorktreeDeps } from './worktree-deps.mjs';
+import { defaultShowFilesDeps } from './show-files-deps.mjs';
 import { defaultMemoryDeps } from './memory-deps.mjs';
 import { defaultScriptDeps } from './script-deps.mjs';
 import { defaultCommentDeps } from './comment-deps.mjs';
@@ -69,6 +70,7 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
     tools: createAskTools({
       ...defaultToolDeps({ threadId, viewer: reader }),
       ...defaultWorktreeDeps({ threadId }),
+      ...defaultShowFilesDeps({ threadId }),
       ...defaultMemoryDeps({ threadId }),
       // The life signal (already built for propose_workflow's nested classifier): the turn
       // ending or being stopped also stops a bench run still going.

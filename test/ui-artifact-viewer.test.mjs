@@ -1328,3 +1328,40 @@ test('closing a viewer that replaced another, after a repaint: still the identic
   v2.close();
   assert.equal([...pane.children].indexOf(p.doc.activeElement), 2);
 });
+
+test('a pinned previewKind (the chat files card): html source as highlighted code, never a frame; a JSON body in out.txt as json', async () => {
+  const p = page((url) => (url.startsWith('/t?rel=att_1') ? { status: 200, body: { text: '<script>x</script>' } }
+    : url.startsWith('/t?rel=att_2') ? { status: 200, body: { text: '{"a":1}' } } : null));
+  await p.open({ artifact: { relPath: 'att_1/page.html', bytes: 18, previewKind: 'code' }, deps: { hljsLoader: fakeLoader() } }).ready;
+  const pre = p.doc.querySelector('.apv-stage pre.apv-code');
+  assert.ok(pre, 'code view');
+  assert.equal(pre.textContent, '<script>x</script>');
+  assert.equal(p.doc.querySelector('.apv iframe, .apv script'), null, 'nothing framed, nothing run');
+  assert.ok(p.calls.includes('GET /t?rel=att_1%2Fpage.html'), 'text route, not raw');
+  await p.open({ artifact: { relPath: 'att_2/out.txt', bytes: 7, previewKind: 'json' } }).ready;
+  assert.equal(p.doc.querySelector('.apv-stage pre.artifact-json').textContent, '{\n  "a": 1\n}');
+});
+
+test('a pinned image is drawn through <img> from the raw route, even under a name that would frame (svg saved as .html)', async () => {
+  const p = page();
+  await p.open({ artifact: { relPath: 'att_3/logo.svg', bytes: 300, previewKind: 'image' } }).ready;
+  assert.equal(p.doc.querySelector('.apv-stage img').getAttribute('src'), '/raw/att_3/logo.svg');
+  await p.open({ artifact: { relPath: 'att_4/page.html', bytes: 300, previewKind: 'image' } }).ready;
+  assert.equal(p.doc.querySelector('.apv iframe'), null);
+  assert.equal(p.doc.querySelector('.apv-stage img').getAttribute('src'), '/raw/att_4/page.html');
+  const m = mountIn();
+  await renderPreview({ relPath: 'att_5/page.html', text: '<b>x</b>', previewKind: 'text' }, m, {});
+  assert.equal(m.querySelector('iframe'), null);
+  assert.equal(m.querySelector('pre.artifact-text').textContent, '<b>x</b>');
+});
+
+test('a pinned html (or c4, or junk) view is never framed: the renderer reads it as text, the viewer as no preview', async () => {
+  const m = mountIn();
+  await renderPreview({ relPath: 'att_6/page.html', text: '<b>x</b>', url: '/raw/att_6/page.html', previewKind: 'html' }, m, {});
+  assert.equal(m.querySelector('iframe'), null);
+  assert.equal(m.querySelector('pre.artifact-text').textContent, '<b>x</b>');
+  const p = page();
+  await p.open({ artifact: { relPath: 'att_6/page.html', bytes: 8, previewKind: 'html' } }).ready;
+  assert.equal(p.doc.querySelector('.apv iframe'), null);
+  assert.ok(!p.calls.some((c) => c.includes('/raw/att_6')), 'never fetched as raw bytes');
+});

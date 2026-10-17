@@ -557,6 +557,61 @@ test('attachment download: text/plain + nosniff + inline (an HTML attachment too
   ]);
 });
 
+test('show_files copies on the attachment route: an SVG gets the sandbox CSP; ?as=text is JSON {text} for text kinds only, capped, owner-only', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const url = (t, a, q = '') => `${base}/api/ask/threads/${t}/attachments/${a}${q}`;
+  await checkRows([
+    { name: 'an SVG copy is served as image/svg+xml with the sandbox CSP; a PNG has no CSP', run: async () => {
+      const t = store.createThread();
+      const svg = store.addAttachment(t.id, null, { name: 'logo.svg', kind: 'image', mime: 'image/svg+xml', data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>') });
+      const png = store.addAttachment(t.id, null, { name: 'a.png', kind: 'image', mime: 'image/png', data: Buffer.from('89504e470d0a1a0a', 'hex') });
+      const r = await fetch(url(t.id, svg.id));
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get('content-type'), 'image/svg+xml');
+      assert.equal(r.headers.get('content-security-policy'), "sandbox; default-src 'none'");
+      const rp = await fetch(url(t.id, png.id));
+      assert.equal(rp.status, 200);
+      assert.equal(rp.headers.get('content-security-policy'), null);
+    } },
+    { name: '?as=text: a markdown copy comes back as {text}, never cached; an SVG is 415; a text body over 2 MiB is 413', run: async () => {
+      const t = store.createThread();
+      const md = store.addAttachment(t.id, null, { name: 'r.md', kind: 'text', mime: 'text/markdown', text: '# Report' });
+      const svg = store.addAttachment(t.id, null, { name: 'logo.svg', kind: 'image', mime: 'image/svg+xml', data: Buffer.from('<svg/>') });
+      const big = store.addAttachment(t.id, null, { name: 'big.md', kind: 'text', mime: 'text/markdown', text: 'a'.repeat(2 * 1024 * 1024 + 1) });
+      const r = await fetch(url(t.id, md.id, '?as=text'));
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get('cache-control'), 'private, no-store');
+      assert.deepEqual(await r.json(), { text: '# Report' });
+      assert.equal((await fetch(url(t.id, svg.id, '?as=text'))).status, 415);
+      assert.equal((await fetch(url(t.id, big.id, '?as=text'))).status, 413);
+    } },
+    { name: 'shared sign-in: another person gets 404 on ?as=text, the owner gets 200', run: async () => {
+      const prev = process.env.WORCA_IDENTITY_HEADER;
+      process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+      try {
+        const t = store.createThread({ createdBy: 'bob@example.com' });
+        const md = store.addAttachment(t.id, null, { name: 'r.md', kind: 'text', mime: 'text/markdown', text: 'mine' });
+        assert.equal((await fetch(url(t.id, md.id, '?as=text'), { headers: { 'x-test-user': 'ada@example.com' } })).status, 404);
+        assert.equal((await fetch(url(t.id, md.id, '?as=text'), { headers: { 'x-test-user': 'bob@example.com' } })).status, 200);
+      } finally {
+        if (prev === undefined) delete process.env.WORCA_IDENTITY_HEADER; else process.env.WORCA_IDENTITY_HEADER = prev;
+      }
+    } },
+  ]);
+});
+
+test('show_files copies (message_id null) are not uploads: the thread GET and the context header leave them out', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const t = store.createThread();
+  const msg = store.appendMessage(t.id, { role: 'user', text: 'x' });
+  const up = store.addAttachment(t.id, msg.id, { name: 'up.md', text: 'mine' });
+  store.addAttachment(t.id, null, { name: 'shot.png', kind: 'image', mime: 'image/png', data: Buffer.from('89504e470d0a1a0a', 'hex') });
+  const j = await (await fetch(`${base}/api/ask/threads/${t.id}`)).json();
+  assert.deepEqual(j.attachments.map((a) => a.id), [up.id]);
+  const ctx = await mod._testing.resolveAskContext(t.id, {}, []);
+  assert.deepEqual((ctx.attachments || []).map((a) => a.id), [up.id]);
+});
+
 test('GET /api/ask/models and the hello ask array (unknown-thread subscribe is a no-op)', async () => {
   await checkRows([
     { name: 'GET /api/ask/models returns the chat catalog', run: async () => {

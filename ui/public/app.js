@@ -107,6 +107,7 @@ import { createAskPanel } from './ask-panel.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards.mjs';
+import { registerFilesCard, filesForViewer, fileViewerUrls } from './chat/files-card.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
@@ -30057,6 +30058,18 @@ async function downloadRunArtifact(ctx, artifact) {
 // Chat P5 (CONTRACT §3): the Chat opens artifacts in this same popup. ask-panel reads chatDeps.openArtifact at call
 // time; chatDeps is P1's, declared at the top of this file beside askPanel, so it exists when this statement runs.
 chatDeps.openArtifact = (ref, artifact) => { openRunArtifactPopup(ref || {}, artifact); };
+// The chat files card (show_files, docs/show-files.md) opens its files in the same popup, over the attachment route.
+chatDeps.openFiles = ({ threadId, items, index = 0 }) => {
+  if (!threadId || !Array.isArray(items) || !items.length) return null;
+  const list = filesForViewer(items);
+  return openArtifactViewer({
+    doc: document, win: window, fetch: (u, o) => fetch(u, o),
+    artifact: list[index] || list[0], list,
+    urls: fileViewerUrls(threadId),
+    metaFor: () => ({ step: null, cycle: null }),
+    deps: { ...artifactViewerDeps(), hljsLoader: diffHljsLoader },
+  });
+};
 
 // One clickable artifact row (kind chip · name · byte size) for the Agents tab's per-node list. It opens the popup with
 // its node's rows as the ←/→ list.
@@ -35954,6 +35967,8 @@ if (bootTarget === 'workspace') setRunTarget('workspace');
 // run panel (no link). chatDeps is P1's top-level const; openShipItFor is a hoisted function declaration.
 registerChatActionCards();
 chatDeps.openShipIt = openShipItFor;
+// The chat files card (show_files) and its built-in file renderers, registered before the chat mounts too.
+registerFilesCard();
 
 // worca Chat P6 (CONTRACT §2/§8): the composer's intent chip — a composer add-on, registered before the chat mounts.
 // A send from the home arms the hero → dock glide (chatHome.armFlip). The home itself mounts right after the page

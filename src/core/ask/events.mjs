@@ -169,6 +169,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'propose_away_mode_change': return 'Proposing an Away mode change';
     case 'track_run': return 'Tracking a run';
     case 'read_attachment': return `Reading ${(attachmentNames && attachmentNames[id]) || 'attachment'}`;
+    case 'show_files': return 'Showing files';
     case 'list_diff_comments': return id ? `Reading comments on ${id.slice(0, 12)}` : 'Reading diff comments';
     case 'add_diff_comment': return 'Writing a diff comment';
     case 'reply_to_diff_comment': return 'Replying to a diff comment';
@@ -296,6 +297,7 @@ export function createTurnReducer({
   onScheduleMutation = null,     // a direct schedule write succeeded in the MCP child
   onTrackRun = null,
   onRunCommand = null,           // run_command RESULT (#574): the command card
+  onShowFiles = null,            // show_files RESULT: the files card
   onAwaySwitch = null,           // set_away_now / set_run_away_mode RESULT (the parent applies the switch)
   onChatAction = null,           // worca Chat P2: a CHAT_ACTION_TOOLS RESULT (the parent applies it and posts its card)
   onAwayProposal = null,         // propose_away_mode_change RESULT (Away mode card; the parent re-validates the input)
@@ -765,6 +767,13 @@ export function createTurnReducer({
         // Agent mode (#574): the result names the block; the card's live state comes from ask-command frames.
         try {
           const ret = onRunCommand({ toolUseId: b.id, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__show_files' && typeof onShowFiles === 'function') {
+        // The parent re-reads every item from THIS thread's attachment rows (turn.mjs _onShowFiles).
+        try {
+          const ret = onShowFiles({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
