@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   runProgress, chainProgress, ordinal, progressWidth, progressTone, askWhat,
-  PROGRESS_STAGES, STAGE_LABEL, REVIEW_STEP, REVIEW_CAP,
+  PROGRESS_STAGES, STAGE_LABEL, REVIEW_STEP, REVIEW_CAP, STAGE_START,
 } from '../src/shared/run-progress.mjs';
 import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
@@ -73,11 +73,11 @@ test('stages map: the wf_default shape moves Plan → Build → Review → Ready
       assert.equal(p.stage, 'plan');
       assert.equal(p.text, 'Plan');
     } },
-    { name: 'implementer active → Build · Implementation, plan quarter whole', run: () => {
+    { name: 'implementer active → Build · Implementation, plan quarter whole, Build shows its start share (never stuck at the Plan border)', run: () => {
       const p = runProgress(S({ steps: [row('n_clarify'), row('n_plan'), row('n_refine'), row('n_impl', 1, { status: 'start' })], active: [live('n_impl')] }));
       assert.equal(p.stage, 'build');
       assert.equal(p.text, 'Build · step: Implementation');
-      near(p.fraction, 0.25);
+      near(p.fraction, 0.25 + STAGE_START / 4);
     } },
     { name: 'reviewer active at cycle 1 → Review · 1st pass', run: () => {
       const p = runProgress(S({ steps: [row('n_plan'), row('n_impl'), row('n_rev', 1, { status: 'start' })], active: [live('n_rev')] }));
@@ -209,10 +209,10 @@ test('build by tasks: a decomposition feeding a build agent moves the fill on ta
       }));
       assert.equal(p.tasks.done, 1);
     } },
-    { name: 'decomposer active with no tasks yet → "Build · Decompose" at .25', run: () => {
+    { name: 'decomposer active with no tasks yet → "Build · Decompose" just past .25 (the start share)', run: () => {
       const p = runProgress(TS({ steps: [row('n_decomp', 1, { status: 'start' })], active: [live('n_decomp')] }));
       assert.equal(p.text, 'Build · step: Decompose');
-      near(p.fraction, 0.25);
+      near(p.fraction, 0.25 + STAGE_START / 4);
     } },
   ]);
 });

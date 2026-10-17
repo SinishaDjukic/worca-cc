@@ -15,6 +15,9 @@ export const STAGE_LABEL = Object.freeze({ plan: 'Plan', build: 'Build', review:
 export const REVIEW_STEP = 0.25;
 /** …capped below the quarter's end until the review passes. */
 export const REVIEW_CAP = 0.8;
+/** A stage that has begun shows at least this share of its quarter, so the fill visibly crosses into it: one long
+ *  step with nothing to count (a single Implementation) no longer looks stuck at the end of the stage before. */
+export const STAGE_START = 0.1;
 
 const ORDER = Object.freeze([...PROGRESS_STAGES, 'ready']);
 const BOOKENDS = new Set(BOOKEND_EXECUTION_IDS);
@@ -251,7 +254,7 @@ export function runProgress(st, memo = null) {
   PROGRESS_STAGES.forEach((s, i) => {
     if (ready || PROGRESS_STAGES.slice(i + 1).some((x) => inStage[x].length && begun(x))) { c[s] = 1; return; }
     if (!inStage[s].length) { c[s] = PROGRESS_STAGES.slice(0, i).every((x) => c[x] === 1) ? 1 : 0; return; }
-    c[s] = begun(s) ? clamp01(within[s]()) : 0;
+    c[s] = begun(s) ? clamp01(Math.max(STAGE_START, within[s]())) : 0;
   });
   const reached = PROGRESS_STAGES.reduce((acc, s, i) => (begun(s) ? i : acc), -1);
   const rawIdx = ready ? 3 : reached >= 0 ? reached : PROGRESS_STAGES.indexOf(present[0]);
