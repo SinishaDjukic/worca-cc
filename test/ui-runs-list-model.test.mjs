@@ -694,3 +694,26 @@ test('#740 normalizeRunsView: a stored legacy filter of needs, live or all reads
   assert.deepEqual(normalizeRunsView({ show: null, groupBy: null }), { show: 'active', groupBy: 'project' }, 'nothing stored');
   assert.deepEqual(normalizeRunsView({ show: 'archived', groupBy: 'project' }), { show: 'archived', groupBy: 'project' });
 });
+
+test('#739: a finished row gets a ⋯ button beside (not inside) its link; a live row stays bare; select mode checkboxes', () => {
+  const { window } = new JSDOM('<!doctype html><div id="h"></div>');
+  const doc = window.document;
+  const model = buildRunsModel({
+    live: [{ runId: 'r1', pipelineId: 'p1', title: 'Live', status: 'running', startedAt: NOW }],
+    history: [{ id: 'h1', projectKey: 'k', title: 'Done', status: 'done', startedAt: NOW - 1000, mtime: NOW - 1000 }],
+    now: NOW,
+  });
+  const host = doc.getElementById('h');
+  host.append(...renderRunsList(doc, model));
+  const item = host.querySelector('.runs-item[data-row-key="hist:k/h1"]');
+  assert.ok(item, 'the finished row is wrapped');
+  const more = item.querySelector('.runs-row-more');
+  assert.equal(more.getAttribute('aria-label'), 'More actions for Done');
+  assert.equal(more.closest('a'), null, 'the ⋯ button is never inside the link');
+  assert.equal(host.querySelector('.runs-row[data-run-id="r1"]').parentElement.classList.contains('runs-item'), false);
+  host.replaceChildren(...renderRunsList(doc, model, { selecting: new Set(['hist:k/h1']) }));
+  const boxes = [...host.querySelectorAll('.runs-row-check')];
+  assert.deepEqual(boxes.map((b) => [b.dataset.rowKey, b.checked, b.disabled]), [['live:r1', false, true], ['hist:k/h1', true, false]]);
+  assert.equal(boxes[0].title, "Can't archive: still running");
+  assert.equal(host.querySelector('.runs-row-more'), null, 'no ⋯ while selecting');
+});

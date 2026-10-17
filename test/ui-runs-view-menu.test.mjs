@@ -27,7 +27,7 @@ function setup({ level = 'advanced' } = {}) {
   return { window, doc, button, menu, api, picks, key, click, item };
 }
 
-test('the Runs header renders exactly one search field and one View button, and no status filter bar', () => {
+test('the Runs header renders exactly one search field, one View button and the Select toggle, and no status filter bar', () => {
   const { doc } = setup();
   const head = doc.querySelector('#runs-list-pane .runs-head');
   const searches = head.querySelectorAll('input[type="search"]');
@@ -37,7 +37,7 @@ test('the Runs header renders exactly one search field and one View button, and 
   const menuButtons = head.querySelectorAll('button[aria-haspopup="menu"]');
   assert.equal(menuButtons.length, 1);
   assert.equal(menuButtons[0].textContent.trim(), 'View');
-  assert.equal(head.querySelectorAll('button:not([role="menuitemradio"])').length, 1, 'View is the only header button');
+  assert.deepEqual([...head.querySelectorAll('button:not([role="menuitemradio"])')].map((b) => b.id), ['runs-view-btn', 'runs-select-btn']);
   for (const id of ['runs-filter', 'runs-archived-btn', 'runs-group-btn', 'runs-search-btn', 'runs-search-row']) {
     assert.equal(doc.getElementById(id), null, `#${id} is gone`);
   }
@@ -120,17 +120,11 @@ test('a click outside closes the menu; a click inside the menu chrome does not',
   assert.equal(menu.hidden, true);
 });
 
-test('below Advanced the arrows skip Show › Archived, unless it is kept visible as the pick', () => {
+test('#739: at Simple the arrows reach Show › Archived', () => {
   const { doc, menu, button, key, click, item } = setup({ level: 'simple' });
   click(button);
   key(doc.activeElement, 'ArrowDown');
   key(doc.activeElement, 'ArrowDown');
-  assert.equal(doc.activeElement, item('[data-group-by="project"]'), 'Finished → Project: Archived is hidden');
-  key(doc.activeElement, 'Escape');
-  item('[data-show="archived"]').dataset.levelKeep = '1';
-  click(button);
-  key(doc.activeElement, 'ArrowDown');
-  key(doc.activeElement, 'ArrowDown');
-  assert.equal(doc.activeElement, item('[data-show="archived"]'), 'a kept Archived item is reachable');
+  assert.equal(doc.activeElement, item('[data-show="archived"]'), 'Active → Finished → Archived');
   assert.equal(menu.hidden, false);
 });

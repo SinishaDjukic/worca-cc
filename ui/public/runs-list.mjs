@@ -5,16 +5,17 @@
 //
 // Item shapes (the adapters live in app.js: runsLiveItem / runsHistItem / runsSchedItem):
 //   live:  { runId, pipelineId, title, status, ask: {kind, step}|null, pauseReason, unread,
-//            step, failedStep, startedAt, groupKey, groupName, by, pr, checks, files, tags,
+//            step, failedStep, startedAt, groupKey, groupName, by, pr, checks, files, tags, retained,
 //            progress: {fraction, tone}|null }
 //   hist:  { id, projectKey, title, status, pauseReason, startedAt, mtime, groupName, by,
 //            pr (a glance input: glancePrInput's output), checks, files,
-//            archived, archivedAt (archived-feed rows only), tags }
+//            archived, archivedAt (archived-feed rows only), tags, retained }
 //   sched: { id, scheduleId, title (may be null), status, after, queued, retryAt, runAt, groupKey, groupName, by }
 //   chain: { id, title, members[], total, index, fraction, tone, text, groupKey, groupName, open }
 import { glanceCopy } from './run-glance.mjs';
 import { renderRowLine } from './run-progress-bar.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
+import { archiveBlock, ENDED as ENDED_ICONS, rowMenuItems, SKIP_WORDS } from './runs-archive.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -207,6 +208,7 @@ export function liveRow(it, now = Date.now()) {
     title: String(it.title || '(untitled)'), status,
     groupKey: String(it.groupKey || ''), groupName: String(it.groupName || ''), by: String(it.by || ''),
     tags: Array.isArray(it.tags) ? it.tags.map(String) : [],
+    retained: !!it.retained,
     unread: !!it.unread, needs: needsOf('live', it), resumeAt: it.resumeAt ?? null,
     resumes: status === 'paused' && autoParked(it.pauseReason, it.resumeAt ?? null) === 'resumes',
     progress: it.progress || null,
@@ -254,6 +256,7 @@ export function histRow(p, now = Date.now()) {
     title: String(p.title || p.id || '(untitled)'), status,
     groupKey: key, groupName: String(p.groupName || key || '(unknown project)'), by: String(p.by || ''),
     tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
+    retained: !!p.retained,
     archived: !!(p && p.archived),
     base: String(p.base || ''),                      // #620: "conflicts with dev" / "dev moved", else ''
     unread: false, needs: !p.archived && needsOf('hist', p), resumeAt: p.resumeAt ?? null,
@@ -307,7 +310,6 @@ export function normalizeRunsFilter(f) { return RUNS_FILTERS.includes(f) ? f : '
 /** Recent keeps runs that finished in the last RECENT_DAYS; older ones are behind "Show older" (Finished). */
 export const RECENT_DAYS = 7;
 const SECTION_NAMES = Object.freeze({ needs: 'Needs you', running: 'Running', recent: 'Recent' });
-const ENDED_ICONS = new Set(['done', 'stop', 'fail']);
 // A run ended: its icon says so. A History row that is paused, interrupted or still running has not.
 const isFinishedRow = (r) => (r.kind === 'hist' || r.kind === 'live') && ENDED_ICONS.has(r.icon);
 export function rowInFilter(row, filter) {
@@ -532,6 +534,40 @@ function renderRow(doc, r, { inNeeds = false, bucket = '', project = '', lineFro
   return a;
 }
 
+/** A row with a ⋯ menu, or any row while selecting (#739): a wrapper holding the row's <a> and either
+ *  the ⋯ button (a sibling, never inside the link) or a leading checkbox. Otherwise the bare row. */
+function renderItem(doc, r, opts, selecting) {
+  const a = renderRow(doc, r, opts);
+  if (!selecting && !rowMenuItems(r).length) return a;
+  const wrap = doc.createElement('div');
+  wrap.className = selecting ? 'runs-item is-selecting' : 'runs-item';
+  wrap.dataset.rowKey = r.key;
+  if (selecting) {
+    const why = archiveBlock(r);
+    const box = doc.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'runs-row-check';
+    box.dataset.rowKey = r.key;
+    box.checked = selecting.has(r.key);
+    box.disabled = !!why;
+    box.setAttribute('aria-label', why ? `${r.title}: can't archive, ${SKIP_WORDS[why]}` : `Select ${r.title}`);
+    if (why) box.title = `Can't archive: ${SKIP_WORDS[why]}`;
+    wrap.append(box, a);
+    return wrap;
+  }
+  const more = doc.createElement('button');
+  more.type = 'button';
+  more.className = 'runs-row-more';
+  more.dataset.rowKey = r.key;
+  more.setAttribute('aria-haspopup', 'menu');
+  more.setAttribute('aria-expanded', 'false');
+  more.setAttribute('aria-controls', 'runs-row-menu');
+  more.setAttribute('aria-label', `More actions for ${r.title}`);
+  more.textContent = '⋯';
+  wrap.append(a, more);
+  return wrap;
+}
+
 const MEMBER_GLYPH = Object.freeze({ done: '✓', current: '●', waiting: '○', failed: '✕' });
 function renderChainRow(doc, r, opts) {
   const wrap = doc.createElement('div');
@@ -598,11 +634,11 @@ function chevron(doc) {
   return s;
 }
 
-function renderGroup(doc, g, { searching, inNeeds, lineFrom }) {
+function renderGroup(doc, g, { searching, inNeeds, lineFrom, selecting }) {
   // No project header above the row: the project joins its subline (#724 D9).
   const rowEl = (r) => {
     const opts = { inNeeds, bucket: g.bucket || '', project: g.head && !g.bucket ? '' : r.groupName, lineFrom };
-    return r.kind === 'chain' ? renderChainRow(doc, r, opts) : renderRow(doc, r, opts);
+    return r.kind === 'chain' ? renderChainRow(doc, r, opts) : renderItem(doc, r, opts, selecting);
   };
   if (!g.head) return g.rows.map(rowEl);
   const sec = doc.createElement('section');
@@ -626,7 +662,7 @@ function renderGroup(doc, g, { searching, inNeeds, lineFrom }) {
 
 /** The list's children (#724): one <section> per model section (Needs you · Running · Recent in Active, one
  *  untitled section in Finished / Archived), "Show older" at the end of Recent, then a note when empty. */
-export function renderRunsList(doc, model, { emptyText = 'No runs yet.', note = '', lineFrom = null } = {}) {
+export function renderRunsList(doc, model, { emptyText = 'No runs yet.', note = '', lineFrom = null, selecting = null } = {}) {
   const out = [];
   for (const s of model.sections) {
     const sec = doc.createElement('section');
@@ -639,7 +675,7 @@ export function renderRunsList(doc, model, { emptyText = 'No runs yet.', note = 
       head.append(textEl(doc, 'span', 'runs-sec-title', s.name), textEl(doc, 'span', 'runs-count', String(s.count)));
       sec.appendChild(head);
     }
-    for (const g of s.groups) sec.append(...renderGroup(doc, g, { searching: model.searching, inNeeds: s.key === 'needs', lineFrom }));
+    for (const g of s.groups) sec.append(...renderGroup(doc, g, { searching: model.searching, inNeeds: s.key === 'needs', lineFrom, selecting }));
     if (s.older) {
       const more = textEl(doc, 'button', 'runs-show-older', 'Show older');
       more.type = 'button';

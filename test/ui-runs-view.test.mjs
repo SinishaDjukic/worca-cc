@@ -8,6 +8,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { levelAtLeast, minLevelFor } from '../ui/public/ui-level.mjs';
+import { confirmDialog } from './helpers/confirm-modal.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -403,15 +405,13 @@ test('an archived run’s detail offers Restore, not Archive, and hides Resume a
   assert.ok(doc.getElementById('confirm-modal').classList.contains('hidden'), 'the modal is down');
 });
 
-test('docs/ui-levels.md rule 2: Show › Archived stays on screen below Advanced while it is the pick', async () => {
+test('#739: Show › Archived is offered at every level', async () => {
   const { window, doc } = await boot({ storage: { 'worca-cc.runs.filter': 'archived' } });
+  doc.documentElement.dataset.level = 'simple';
   go(window, 'runs'); await settle(window);
   const archItem = doc.querySelector('#runs-view-menu [data-show="archived"]');
-  assert.equal(archItem.dataset.minLevel, 'advanced');
-  assert.equal(archItem.dataset.levelKeep, '1',
-    'kept visible: otherwise a Simple list shows only archived runs with no way out');
-  await pickView(window, doc, '[data-show="active"]');
-  assert.equal(archItem.dataset.levelKeep, undefined, 'once left, the item is Advanced-only again');
+  assert.equal(archItem.dataset.minLevel, 'simple');
+  assert.equal(levelAtLeast(minLevelFor(archItem), doc), true);
 });
 
 test('#740: a non-default view shows one chip; × resets to Active · by project and is remembered', async () => {
@@ -649,4 +649,159 @@ test('chain freshness: no chains at first, then a schedules-changed frame folds 
   recv({ type: 'schedules-changed' });
   await settle(window);
   assert.equal(host.querySelectorAll('.runs-chain').length, 1);
+});
+
+// #739: a fetch wrapper that records DELETEs and answers them (409 for ids in `refuse`).
+function recordDeletes(window, { refuse = new Set() } = {}) {
+  const calls = [];
+  const inner = window.fetch;
+  const wrapped = (u, init) => {
+    const method = (init && init.method) || 'GET';
+    if (method === 'DELETE') {
+      const s = String(u);
+      calls.push({ url: s, method });
+      const id = /\/api\/runs\/([^?]+)/.exec(s)[1];
+      return Promise.resolve(refuse.has(id)
+        ? { ok: false, status: 409, json: async () => ({ error: 'cannot archive while retained uncommitted work exists; recover it or discard the worktree first' }) }
+        : { ok: true, status: 200, json: async () => ({ ok: true, id, archived: true, warnings: [] }) });
+    }
+    return inner(u, init);
+  };
+  window.fetch = wrapped; globalThis.fetch = wrapped;
+  return calls;
+}
+
+test('#739: the row ⋯ menu offers Archive on a finished row at the Simple level and calls DELETE /api/runs/:id after the confirm', async () => {
+  const { window, doc } = await boot();
+  doc.documentElement.dataset.level = 'simple';
+  go(window, 'runs'); await settle(window);
+  const calls = recordDeletes(window);
+  const more = doc.querySelector('#runs-list .runs-item[data-row-key="hist:proj-0000abcd/aaaa0001"] .runs-row-more');
+  assert.ok(more, 'the finished row has a ⋯ button');
+  assert.equal(levelAtLeast(minLevelFor(more), doc), true, 'shown at Simple');
+  click(window, more); await settle(window);
+  const menu = doc.getElementById('runs-row-menu');
+  assert.equal(menu.hidden, false);
+  assert.equal(levelAtLeast(minLevelFor(menu), doc), true);
+  assert.deepEqual([...menu.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent), ['Archive', 'Open in New run', 'Copy run id']);
+  click(window, menu.querySelector('[data-action="archive"]')); await settle(window);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Archive 1 run?');
+  assert.equal(calls.length, 0, 'nothing is sent before the confirm');
+  const message = await confirmDialog(window); await settle(window);
+  assert.match(message, /^Merged thing\n/);
+  assert.deepEqual(calls, [{ url: `/api/runs/aaaa0001?projectKey=${KEY}`, method: 'DELETE' }]);
+  assert.equal(doc.querySelector('#runs-list .runs-row[data-pipeline-id="aaaa0001"]'), null, 'the row left the list');
+});
+
+test('#739: archiving a finished run still listed live acknowledges it, so it does not come back', async () => {
+  const { window, doc, recv } = await boot({ storage: { 'worca-cc.lingerRuns': JSON.stringify(['r1']) } });
+  go(window, 'runs'); await settle(window);
+  // A run that finished live and was never opened: the client keeps it as a lingering live row (overviewRuns).
+  recv({ type: 'hello', runs: [live('r1', { status: 'done', pipelineId: 'aaaa0001', title: 'Merged thing' })] });
+  await settle(window);
+  const calls = recordDeletes(window);
+  const more = doc.querySelector('#runs-list .runs-item[data-row-key="live:r1"] .runs-row-more');
+  assert.ok(more, 'the lingering finished run has a ⋯ button');
+  click(window, more); await settle(window);
+  click(window, doc.querySelector('#runs-row-menu [data-action="archive"]')); await settle(window);
+  await confirmDialog(window); await settle(window, 8);
+  assert.deepEqual(calls.map((c) => c.url), [`/api/runs/aaaa0001?projectKey=${KEY}`]);
+  assert.ok(JSON.parse(window.localStorage.getItem('worca-cc.ackRuns') || '[]').includes('r1'), 'acknowledged, so a reload keeps it gone');
+  assert.equal(doc.querySelector('#runs-list .runs-row[data-pipeline-id="aaaa0001"]'), null, 'the row left the list');
+});
+
+test('#739: Select picks two rows; one archive fails and is named, the other still goes through', async () => {
+  const { window, doc } = await boot();
+  doc.documentElement.dataset.level = 'simple';
+  go(window, 'runs'); await settle(window);
+  const calls = recordDeletes(window, { refuse: new Set(['aaaa0002']) });
+  click(window, doc.getElementById('runs-select-btn')); await settle(window);
+  assert.equal(doc.getElementById('runs-select-bar').hidden, false);
+  assert.equal(doc.querySelector('#runs-list .runs-row-more'), null);
+  click(window, doc.querySelector('#runs-list .runs-row[data-pipeline-id="aaaa0001"]'));
+  click(window, doc.querySelector('#runs-list .runs-row[data-pipeline-id="aaaa0002"]'));
+  await settle(window);
+  assert.equal(window.location.hash, '#runs', 'a row click selects, it does not navigate');
+  assert.equal(doc.getElementById('runs-select-count').textContent, '2 selected');
+  click(window, doc.getElementById('runs-select-archive')); await settle(window);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Archive 2 runs?');
+  await confirmDialog(window); await settle(window, 8);
+  assert.deepEqual(calls.map((c) => c.url), [`/api/runs/aaaa0001?projectKey=${KEY}`, `/api/runs/aaaa0002?projectKey=${KEY}`]);
+  const page = doc.body.textContent;
+  assert.match(page, /Archived 1 run · 1 failed/);
+  assert.match(page, /Stopped thing: cannot archive while retained uncommitted work exists/);
+  assert.ok(doc.querySelector('#runs-list .runs-row[data-pipeline-id="aaaa0002"]'), 'the failed run stays listed');
+  assert.equal(doc.querySelector('#runs-list .runs-row[data-pipeline-id="aaaa0001"]'), null);
+});
+
+test('#739: the Archived view counts finished runs older than the chosen age and archives them after one confirm', async () => {
+  const OLD = Date.now() - 40 * 86400000;
+  const MID = Date.now() - 10 * 86400000;
+  const history = [
+    { id: 'dddd0001', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Old thing', status: 'done', startedAt: new Date(OLD).toISOString(), mtime: OLD },
+    { id: 'dddd0002', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Mid thing', status: 'stopped', startedAt: new Date(MID).toISOString(), mtime: MID },
+    { id: 'dddd0003', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Kept thing', status: 'done', startedAt: new Date(OLD).toISOString(), mtime: OLD,
+      retainedWork: { reason: 'commit-failed', members: [{ projectKey: KEY, worktreeDir: '/tmp/wt', branch: 'b' }] } },
+  ];
+  const { window, doc } = await boot({ history });
+  doc.documentElement.dataset.level = 'simple';
+  go(window, 'runs'); await settle(window);
+  await pickView(window, doc, '[data-show="archived"]');
+  const bar = doc.getElementById('runs-age-bar');
+  assert.equal(bar.hidden, false);
+  assert.equal(levelAtLeast(minLevelFor(bar), doc), true);
+  assert.equal(doc.getElementById('runs-select-btn').hidden, true, 'no Select in the Archived view');
+  const btn = doc.getElementById('runs-age-archive');
+  assert.equal(btn.textContent, 'Archive 1');
+  const days = doc.getElementById('runs-age-days');
+  days.value = '7'; days.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(btn.textContent, 'Archive 2');
+  days.value = '30'; days.dispatchEvent(new window.Event('change', { bubbles: true }));
+  const calls = recordDeletes(window);
+  btn.focus();
+  click(window, btn); await settle(window);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Archive 1 run?');
+  const message = await confirmDialog(window); await settle(window, 8);
+  assert.match(message, /Skipped \(1\): Kept thing \(has retained work\)\./);
+  assert.deepEqual(calls.map((c) => c.url), [`/api/runs/dddd0001?projectKey=${KEY}`]);
+  // The confirm took focus from the button, so the repaint cannot see it: the click handler remembers it.
+  assert.equal(btn.textContent, 'Archive 0');
+  assert.equal(btn.disabled, true);
+  assert.equal(doc.activeElement, days, 'focus moves to the age select once nothing is left to archive');
+});
+
+test('#739: in Select mode a click on a chain row still opens and closes it', async () => {
+  const chains = [{ id: 'p:pchain01', title: 'Chain root', members: [
+    { pipelineId: 'pchain01', ticketId: null, state: 'current', title: 'Chain root', projectDir: PROJECT },
+    { pipelineId: null, ticketId: 'tick0002', state: 'waiting', title: 'Chain next', projectDir: PROJECT },
+  ] }];
+  const { window, doc, recv } = await boot({ chains, history: [] });
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pchain01' })] });
+  go(window, 'runs'); await settle(window);
+  click(window, doc.getElementById('runs-select-btn')); await settle(window);
+  const host = doc.getElementById('runs-list');
+  const tog = () => host.querySelector('.runs-chain-toggle');
+  assert.equal(tog().getAttribute('aria-expanded'), 'false');
+  click(window, host.querySelector('.runs-chain .runs-row-title')); await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'true');
+  click(window, host.querySelector('.runs-chain .runs-row-title')); await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'false');
+  assert.equal(window.location.hash, '#runs');
+});
+
+test('#739: an archived row’s ⋯ → Restore posts the restore after "Restore this run?"', async () => {
+  const { window, doc } = await boot();
+  doc.documentElement.dataset.level = 'simple';
+  go(window, 'runs'); await settle(window);
+  await pickView(window, doc, '[data-show="archived"]');
+  const posts = [];
+  const inner = window.fetch;
+  const wrapped = (u, init) => { if (String(u).includes('/restore')) posts.push({ url: String(u), method: (init && init.method) || 'GET' }); return inner(u, init); };
+  window.fetch = wrapped; globalThis.fetch = wrapped;
+  click(window, doc.querySelector('#runs-list .runs-item[data-row-key="hist:proj-0000abcd/cccc0009"] .runs-row-more')); await settle(window);
+  assert.deepEqual([...doc.querySelectorAll('#runs-row-menu [role="menuitem"]')].map((b) => b.dataset.action), ['restore', 'copy-id']);
+  click(window, doc.querySelector('#runs-row-menu [data-action="restore"]')); await settle(window);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Restore this run?');
+  await confirmDialog(window); await settle(window);
+  assert.deepEqual(posts, [{ url: `/api/runs/cccc0009/restore?projectKey=${KEY}`, method: 'POST' }]);
 });

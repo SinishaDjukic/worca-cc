@@ -676,8 +676,8 @@
                       <div class="runs-view-label" id="runs-view-show-label">Show</div>
                       <button type="button" role="menuitemradio" data-show="active" aria-checked="true">Active</button>
                       <button type="button" role="menuitemradio" data-show="finished" aria-checked="false">Finished</button>
-                      <!-- Archived runs (#575), with Restore. Advanced (docs/ui-levels.md); kept visible while picked. -->
-                      <button type="button" role="menuitemradio" data-show="archived" aria-checked="false" data-min-level="advanced">Archived</button>
+                      <!-- Archived runs (#575), with Restore and the age rule (#739). Every level (docs/ui-levels.md). -->
+                      <button type="button" role="menuitemradio" data-show="archived" aria-checked="false" data-min-level="simple">Archived</button>
                     </div>
                     <div class="runs-view-group" role="group" aria-labelledby="runs-view-group-label">
                       <div class="runs-view-label" id="runs-view-group-label">Group by</div>
@@ -686,6 +686,7 @@
                     </div>
                   </div>
                 </span>
+                <button type="button" class="runs-select-btn" id="runs-select-btn" aria-pressed="false">Select</button>
               </div>
               <!-- A non-default view (runs-list.mjs viewChip): one chip; × resets to Active · by project. -->
               <div class="runs-view-chip-row" id="runs-view-chip-row" hidden>
@@ -694,9 +695,26 @@
                   <button type="button" class="runs-view-chip-x" id="runs-view-chip-x" aria-label="Reset view to Active · by project">&times;</button>
                 </span>
               </div>
+              <!-- #739: the Archived view's age rule (runs-archive.mjs olderThan). -->
+              <div class="runs-age-bar" id="runs-age-bar" hidden>
+                <label for="runs-age-days">Archive finished runs older than</label>
+                <select id="runs-age-days">
+                  <option value="7">7 days</option>
+                  <option value="30" selected>30 days</option>
+                  <option value="90">90 days</option>
+                </select>
+                <button type="button" class="runs-age-archive" id="runs-age-archive" disabled>Archive 0</button>
+              </div>
               <!-- "Started by" pills, shared deployments only: one scrolling row. Built by renderRunsPeople(). -->
               <div class="hist-filter runs-people" id="historyFilter" role="group" aria-label="Filter runs by who started them" hidden></div>
               <div class="runs-list" id="runs-list" aria-label="Runs"></div>
+              <!-- #739: Select mode's bar, and the ONE row ⋯ menu every row shares (runs-row-menu.mjs). -->
+              <div class="runs-select-bar" id="runs-select-bar" role="region" aria-label="Selected runs" hidden>
+                <span id="runs-select-count" aria-live="polite">0 selected</span>
+                <button type="button" class="runs-select-archive" id="runs-select-archive" disabled>Archive</button>
+                <button type="button" class="runs-select-cancel" id="runs-select-cancel">Cancel</button>
+              </div>
+              <div class="runs-row-menu" id="runs-row-menu" role="menu" aria-label="Run actions" hidden></div>
             </div>
             <div class="runs-pane" id="runs-pane" data-kind="">
               <div class="runs-empty" id="runs-empty">
