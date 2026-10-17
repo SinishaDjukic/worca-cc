@@ -140,3 +140,49 @@ test('with the flag off a ticket that follows a preset fails and says so', async
     assert.match(now.failReason, /follows the run preset "Flagged", and run presets are turned off/);
   } finally { process.env.WORCA_FLAGS = 'runPresets'; }
 });
+
+// PR #769 review: the keys a start set apart from the preset are kept at fire time; the rest follow the preset.
+test('overriddenKeys names the keys a start changed; bodyFollowingPreset keeps exactly those', async () => {
+  const { overriddenKeys, bodyFollowingPreset } = await import('../src/shared/run-presets.mjs');
+  const preset = { id: 'rp_x', scope: { kind: 'project', ref: 'p' }, setup: { workflowId: 'wf_default', engine: 'claude' } };
+  // An Ask card on a Permissive preset (no guardrailsId) that had to name Normal, and picked another workflow.
+  const card = { projectDir: '/p', prompt: 'x', workflowId: 'wf_other', engine: 'claude', guardrailsId: 'normal' };
+  const keep = overriddenKeys(card, preset.setup);
+  assert.deepEqual(keep, ['workflowId', 'guardrailsId']);
+  const later = { ...preset, setup: { workflowId: 'wf_default', engine: 'codex' } };   // the preset edited after scheduling
+  const body = bodyFollowingPreset(card, later, { keep });
+  assert.equal(body.guardrailsId, 'normal', 'the card\'s guardrails win over a Permissive preset');
+  assert.equal(body.workflowId, 'wf_other', 'the card\'s workflow is kept');
+  assert.equal(body.engine, 'codex', 'a key left as the preset had it follows the preset');
+  assert.equal(body.presetId, 'rp_x');
+});
+
+test('a field changed in the form before scheduling stays as set when the preset is edited later', { timeout: 120000 }, async () => {
+  const preset = await savePreset('Form change', { guardrailsId: 'normal', overlay: { nodes: { n_plan: { model: 'claude-haiku-4-5' } } } });
+  const made = await scheduleFrom(preset, { guardrailsId: 'secure' });   // the person picked Secure in the form
+  const { getTicket } = await import('../src/core/scheduler.mjs');
+  assert.deepEqual(getTicket(made.runId, { withRequest: true }).request.internal.presetOverrides, ['guardrailsId']);
+  const put = await send('PUT', `/api/presets/${preset.id}`, { setup: { ...preset.setup, guardrailsId: 'normal',
+    overlay: { nodes: { n_plan: { model: 'claude-sonnet-4-6', effort: 'high' } } } }, basis: { projectDir: project.path } });
+  assert.equal(put.status, 200, await put.clone().text());
+  const fired = await runNow(made.runId);
+  assert.equal(fired.status, 'fired', JSON.stringify(fired));
+  const { readRunSetup } = await import('../src/core/run-presets-store.mjs');
+  const pid = await until(() => getTicket(made.runId)?.pipelineId);
+  const kept = await until(() => readRunSetup(pid)?.setup);
+  assert.equal(kept.guardrailsId, 'secure', 'the form change is kept');
+  assert.equal(kept.overlay.nodes.n_plan.model, 'claude-sonnet-4-6', 'an untouched key follows the edited preset');
+});
+
+test('a ticket from an Ask card never fires on Permissive, whatever the preset resolves to', async () => {
+  const preset = await savePreset('Loose', {});   // no guardrailsId: a start reads it as Permissive
+  const { createTicket } = await import('../src/core/scheduler.mjs');
+  // A ticket stored without presetOverrides (as one made before the fix): the card's Normal is not kept.
+  const t = createTicket({ title: 'nightly', projectDir: project.path, runAtMs: Date.now() + 86400000,
+    request: { projectDir: project.path, prompt: 'nightly', guardrailsId: 'normal', internal: { presetName: 'Loose' } },
+    askThreadId: 'th_test', askCardId: 'card_test', presetId: preset.id });
+  const now = await runNow(t.id);
+  assert.equal(now.status, 'failed');
+  assert.match(now.failReason, /scheduled from Ask Worca and the run preset "Loose" now resolves to Permissive guardrails/);
+  assert.equal(now.pipelineId ?? null, null, 'no run was started');
+});

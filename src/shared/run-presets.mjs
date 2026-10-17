@@ -49,14 +49,23 @@ export function presetRunBody(preset, task) {
   return { ...bodyFromSetup(preset.setup, task), presetId: preset.id };
 }
 
+const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+/** The setup keys a start set to something other than the preset's own value (a field changed on the form, a choice
+ *  an Ask card made). A schedule keeps these as chosen; every other key follows the preset at fire time. */
+export function overriddenKeys(body, setup) {
+  return PRESET_SETUP_KEYS.filter((k) => body && body[k] !== undefined && !sameValue(body[k], setup ? setup[k] : undefined));
+}
+
 /** A fired ticket that follows a preset (D4): the stored request's task, the preset's CURRENT setup. Every setup key
- *  of the stored copy is dropped first, so a pick removed from the preset is removed from the run. An Any project
- *  preset stores no branch names, so the request's own stay. */
-export function bodyFollowingPreset(request, preset) {
+ *  of the stored copy is dropped first, so a pick removed from the preset is removed from the run — except the keys
+ *  in `keep`, the ones the start overrode (overriddenKeys), which stay as the person or the card chose them. An Any
+ *  project preset stores no branch names, so the request's own stay. */
+export function bodyFollowingPreset(request, preset, { keep = [] } = {}) {
   const keepBranches = !preset.scope || preset.scope.kind === 'global';
   const task = {};
   for (const [k, v] of Object.entries(request || {})) {
-    if (PRESET_SETUP_KEYS.includes(k) && !(keepBranches && BRANCH_KEYS.includes(k))) continue;
+    if (PRESET_SETUP_KEYS.includes(k) && !keep.includes(k) && !(keepBranches && BRANCH_KEYS.includes(k))) continue;
     task[k] = v;
   }
   return presetRunBody(preset, task);

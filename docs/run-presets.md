@@ -97,6 +97,11 @@ fires. Edit the preset, and the next run uses the new setup. The prompt, title, 
 schedule stay the schedule's own. For an *Any project* preset, the schedule also keeps its own
 source branch.
 
+A field you changed in the form before scheduling (or a choice an Ask Worca card made) stays as
+you set it: only the fields you left as the preset had them follow later edits to the preset.
+A schedule made from an Ask Worca card never starts on *Permissive* guardrails: if the preset
+resolves to Permissive when it fires, the run ends *failed* and says so.
+
 The Schedules page names the preset in each row (`preset Quick fix`), and **Details** has a
 **Preset** row. When a run fires, the preset is checked like any preset start, and a run that
 cannot start ends *failed* with the reason:

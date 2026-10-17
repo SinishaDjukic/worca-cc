@@ -152,11 +152,11 @@ function cleanNote(v, max = ASK_LIMITS.proposalNoteMaxChars) {
 
 function safeIds(plugin) { try { return realListProfileIds(plugin); } catch { return []; } }
 
+const given = (v) => v !== undefined && v !== null && v !== '';
+
 /**
  * @param {{listProjects?:Function, readWorkspace?:Function, readWorkflow?:Function, assertRunnableWorkflow?:Function, readGuardrailSet?:Function, isGitRepo?:Function, pathExists?:Function, shapeFirst?:Function, estimate?:Function|null}} [deps]
  */
-const given = (v) => v !== undefined && v !== null && v !== '';
-
 export function createProposalValidator({
   listProjects = realListProjects,
   readWorkspace = realReadWorkspace,

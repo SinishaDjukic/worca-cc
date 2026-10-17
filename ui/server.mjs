@@ -93,7 +93,7 @@ import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartP
 import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal, OVERLAY_ERRORS } from '../src/core/run-overlay.mjs';
 import { listPresets, readPreset, createPreset, updatePreset, duplicatePreset, deletePreset, readRunSetup, createPresetFromRun } from '../src/core/run-presets-store.mjs';
 import { presetRefusals, completeSnapshot } from '../src/core/run-presets-check.mjs';
-import { setupFromBody, bodyFollowingPreset, PRESET_LIMITS } from '../src/shared/run-presets.mjs';
+import { setupFromBody, bodyFollowingPreset, overriddenKeys, PRESET_LIMITS } from '../src/shared/run-presets.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
 import { validatePinpointInput, runPinpoint, pinpointCwd } from '../src/core/pinpoint.mjs';
 import { demoChunks, demoPinpointReply } from '../src/core/demo-scenario.mjs';
@@ -2529,7 +2529,7 @@ const startRunHandler = async (req, res) => {
           if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
         }
         return res.status(202).json(await scheduleRequest({ body: runOverlay ? { ...body, overlay: runOverlay } : body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy,
-          preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner } : null }));
+          preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner, overrides: overriddenKeys(body, presetRow.setup) } : null }));
       }
       const mcpOptOut = await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws));
       // Run presets slice 2 (#712): the run's setup, kept on the row for Save setup as preset. The RAW body
@@ -2677,7 +2677,7 @@ const startRunHandler = async (req, res) => {
           if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
         }
         return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy,
-          preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner } : null }));
+          preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner, overrides: overriddenKeys(body, presetRow.setup) } : null }));
       }
       const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 });
       // Run presets slice 2 (#712): the run's setup, kept on the row for Save setup as preset. The RAW body
@@ -3110,7 +3110,8 @@ async function storedRequestOf(body, stageId, projectDir, startedBy = null, pres
   const extrasPaths = await writeExtras(stageId, body.extras, path.join(scheduleStageDir(stageId), 'extras'));
   // The preset a ticket follows is named in `internal` for messages and read by its owner (D3).
   request.internal = { extrasPaths, ...(startedBy ? { startedBy } : {}),
-    ...(preset ? { presetName: preset.name, ...(typeof preset.owner === 'string' && preset.owner ? { presetOwner: preset.owner } : {}) } : {}) };
+    ...(preset ? { presetName: preset.name, ...(typeof preset.owner === 'string' && preset.owner ? { presetOwner: preset.owner } : {}),
+      ...(Array.isArray(preset.overrides) && preset.overrides.length ? { presetOverrides: preset.overrides } : {}) } : {}) };
   return request;
 }
 
@@ -3280,7 +3281,13 @@ async function fireTicket(ticket) {
     if (!flagEnabled('runPresets')) return { ok: false, error: `it follows the run preset "${name}", and run presets are turned off (Settings › Experimental)`, transient: false };
     const preset = readPreset(ticket.presetId, { owner: typeof stored.presetOwner === 'string' && stored.presetOwner ? stored.presetOwner : null });
     if (!preset) return { ok: false, error: `Preset "${name}" no longer exists`, transient: false };
-    body = bodyFollowingPreset(body, preset);
+    const keep = Array.isArray(stored.presetOverrides) ? stored.presetOverrides.filter((k) => typeof k === 'string') : [];
+    body = bodyFollowingPreset(body, preset, { keep });
+    // An Ask card can never propose Permissive (D9 / R-sec-2), so an unattended run from one never starts on it,
+    // whatever the preset says now. (A missing guardrailsId starts as Permissive.)
+    if (ticket.askCardId && (!body.guardrailsId || body.guardrailsId === 'permissive')) {
+      return { ok: false, error: `it was scheduled from Ask Worca and the run preset "${name}" now resolves to Permissive guardrails; pick a stricter set in the preset or schedule it again`, transient: false };
+    }
   }
   if (body.source && body.source.type === 'plugin') {
     try {
