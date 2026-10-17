@@ -55,6 +55,13 @@ another system is referenced, and read when the run starts.
 A workflow that asks questions behaves exactly as designed: an unattended run waits
 for the answer (chat can deliver it). Nothing in the engine changes.
 
+A schedule made from a [run preset](run-presets.md#schedules) follows the preset: it stores a
+link, and each time it fires the preset's **current** setup (workflow, engine, guardrails, agent
+picks, branches, tags) replaces the stored choices, while the prompt, title and target stay the
+schedule's own. A choice you changed from the preset before scheduling (in the form, or on an Ask
+Worca card) is kept as you made it. A preset that was deleted, or that can no longer start, fails
+the run with a reason that names the preset or the broken item.
+
 ## Missed slots
 
 Overdue tickets are judged at boot and on every tick. Within the grace window

@@ -150,7 +150,7 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
     'list_memory', 'read_memory', 'remember', 'forget',
     'list_schedules', 'get_schedule', 'list_schedule_activity', 'preview_schedule', 'propose_schedule_change',
     'pause_schedule', 'resume_schedule', 'skip_next_run', 'mark_schedule_activity_read',
-    'list_task_sources', 'find_tasks', 'get_task',
+    'list_task_sources', 'find_tasks', 'get_task', 'list_presets',
     'list_scripts', 'get_script', 'save_script', 'test_script',
     'build_workflow', 'draft_agent', 'draft_script', 'get_agent', 'get_workflow',
     'list_models', 'get_providers', 'test_provider', 'list_copilot_models', 'list_endpoint_models', 'propose_model_change', 'propose_clone_project',
