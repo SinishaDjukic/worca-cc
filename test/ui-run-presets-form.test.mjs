@@ -1,0 +1,286 @@
+// test/ui-run-presets-form.test.mjs — run presets on the New run form (app.js boot, #712): the hand-made body the
+// extract pins, a pick → prompt → start body with the run-only lane and 0 project-config writes, the source-branch
+// switch, Start disabled on a broken item until Reset, the Simple-mode note, the late run-defaults race, the Save
+// dialog's duplicate name, and the picker gated by the runPresets flag.
+import { test, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { JSDOM } from 'jsdom';
+import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
+import { renderIndexHtml } from '../src/core/index-html.mjs';
+import { GRAPH_DEFAULT_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
+
+const trackDom = useDomRelease(afterEach);
+const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
+const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
+const tick = () => new Promise((r) => setTimeout(r, 0));
+async function waitFor(pred, ms = 3000) {
+  const end = Date.now() + ms;
+  while (!pred()) {
+    if (Date.now() > end) throw new Error('waitFor timed out');
+    await tick();
+  }
+}
+const ok = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
+const PROJECTS = [{ name: 'web', key: 'web-11111111', path: '/a/web', exists: true }, { name: 'api', key: 'api-22222222', path: '/a/api', exists: true }];
+// No members: the per-member branch pickers (and their branch fetches) stay out of these tests.
+const WORKSPACES = [{ id: 'ws_1', name: 'Both', description: '', projectPaths: [], projectKeys: [], exists: [], createdAt: 'x', updatedAt: 'x' }];
+const MODELS = [{ id: 'claude-opus-5-5', efforts: ['medium', 'high'], harnesses: ['claude'] }, { id: 'claude-haiku-4-5', efforts: ['medium', 'high'], harnesses: ['claude'] }];
+const NODES4 = { n_plan: { model: 'claude-haiku-4-5', effort: 'medium' }, n_refine: { model: 'claude-opus-5-5', effort: 'high' },
+  n_impl: { model: 'claude-opus-5-5', effort: 'high' }, n_review: { model: 'claude-opus-5-5', effort: 'high' } };
+const preset = (over = {}) => ({ id: 'rp_aaaaaaaaaaaa', name: 'Quick fix', scope: { kind: 'global', ref: null }, updatedAt: '2026-10-16T00:00:00Z',
+  setup: { workflowId: 'wf_default', guardrailsId: 'normal', humanInLoop: false, overlay: { nodes: { n_plan: { model: 'claude-haiku-4-5', effort: 'medium' } } } }, ...over });
+
+let offPrev = null;
+async function boot({ presets = [], check = () => ({ broken: [] }), runDefaults = null, runReply = null, wsConfigDelayMs = 0, namesDelayMs = 0 } = {}) {
+  if (offPrev) offPrev();   // flags.mjs's listener map is shared across boots: drop the previous app's subscription
+  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/#new' }));
+  const { window } = dom;
+  window.Element.prototype.scrollIntoView = function () {};
+  window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
+  const calls = [];
+  const posted = [];
+  let checks = 0;
+  window.fetch = (url, opts = {}) => {
+    const u = String(url);
+    const method = opts.method || 'GET';
+    calls.push({ url: u, method, body: opts.body ? JSON.parse(opts.body) : null });
+    if (u.includes('/api/run-defaults')) {
+      const body = runDefaults ? runDefaults.body : { engine: { value: 'claude', source: 'default' }, steps: { claude: {} } };
+      return new Promise((r) => setTimeout(() => r(ok(body)), runDefaults ? runDefaults.delayMs : 0));
+    }
+    if (u.includes('/api/projects')) return Promise.resolve(ok({ projects: PROJECTS }));
+    // namesDelayMs: the workspace list answers after the presets (a fresh page load).
+    if (u.includes('/api/workspaces')) return new Promise((r) => setTimeout(() => r(ok({ workspaces: WORKSPACES })), namesDelayMs));
+    // The real Default graph (its node ids are what a preset's overlay names); its stage metas come from the offline fallback.
+    if (u.includes('/api/workflows/wf_default')) return Promise.resolve(ok(GRAPH_DEFAULT_WORKFLOW));
+    if (u.endsWith('/api/workflows')) return Promise.resolve(ok({ workflows: [{ id: 'wf_default', name: 'Default', version: 2 }] }));
+    if (u.includes('/api/workflows') || u.includes('/api/agents')) return Promise.resolve(ok({ error: 'offline' }, 404));
+    if (u.includes('/api/guardrails')) return Promise.resolve(ok({ guardrails: [{ id: 'permissive', name: 'Permissive', settings: null }, { id: 'normal', name: 'Normal', settings: {} }] }));
+    if (/\/api\/presets\/[^/]+\/check/.test(u)) { checks += 1; return Promise.resolve(ok(check(checks))); }
+    if (u.includes('/api/presets') && method === 'GET') return Promise.resolve(ok({ presets }));
+    if (u.includes('/api/presets') && method === 'POST') return Promise.resolve(ok({ preset: preset({ id: 'rp_bbbbbbbbbbbb', name: 'Saved' }) }, 201));
+    if (u.endsWith('/api/run') && method === 'POST') {
+      posted.push(JSON.parse(opts.body));
+      return Promise.resolve(ok(runReply ? runReply(posted.length) : { runId: `run-${posted.length}` }));
+    }
+    if (u.includes('/api/config')) {
+      const body = ok({ config: { steps: {}, customModels: [], activeWorkflowId: 'wf_default' }, models: MODELS, efforts: ['medium', 'high'] });
+      // wsConfigDelayMs: the workspace target's config load (no projectDir) answers late, after the preset's own pickers.
+      const delay = method === 'GET' && !u.includes('projectDir') ? wsConfigDelayMs : 0;
+      return delay ? new Promise((r) => setTimeout(() => r(body), delay)) : Promise.resolve(body);
+    }
+    return Promise.resolve(ok({}));
+  };
+  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'HTMLInputElement', 'HTMLSelectElement']) {
+    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch { /* read-only */ }
+  }
+  globalThis.window = window; globalThis.document = window.document;
+  window.localStorage.clear();
+  window.localStorage.setItem('worca-cc.runTarget', 'project');
+  window.localStorage.setItem('worca-cc.lastProject', 'web');
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
+  offPrev = window.__np && window.__np.offPresetsFlag;
+  const doc = window.document;
+  await waitFor(() => doc.querySelector('#projectSelect').value === '/a/web');
+  for (let i = 0; i < 10; i++) await tick();
+  return { window, doc, calls, posted, checks: () => checks };
+}
+const configWrites = (calls) => calls.filter((c) => c.url.includes('/api/config') && (c.method === 'POST' || c.method === 'PATCH'));
+async function pick(ctx, id, flags = { runPresets: true }) {
+  applyFlags(flags, ctx.doc);
+  await waitFor(() => [...ctx.doc.querySelectorAll('#presetSelect option')].some((o) => o.value === id));
+  const sel = ctx.doc.querySelector('#presetSelect');
+  sel.value = id;
+  sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  await waitFor(() => /Preset — changes here apply to this run only/.test(ctx.doc.querySelector('#preset-chip').textContent));
+  for (let i = 0; i < 5; i++) await tick();
+}
+async function submit(ctx) {
+  ctx.doc.querySelector('#prompt').value = 'fix it';
+  const n = ctx.posted.length;
+  ctx.doc.querySelector('#run-form').dispatchEvent(new ctx.window.Event('submit', { bubbles: true, cancelable: true }));
+  await waitFor(() => ctx.posted.length > n);
+  for (let i = 0; i < 5; i++) await tick();
+  return ctx.posted[ctx.posted.length - 1];
+}
+
+test('no preset: the hand-made body is pinned, with no presetId, overlay or humanInLoop', async () => {
+  const ctx = await boot();
+  const gr = ctx.doc.querySelector('#guardrailsSelect');
+  gr.value = 'normal';
+  gr.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  ctx.doc.querySelector('#mock').checked = true;
+  const wf = ctx.doc.querySelector('#workflowSelect');
+  wf.value = 'wf_default';
+  wf.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  for (let i = 0; i < 5; i++) await tick();
+  const body = await submit(ctx);
+  assert.deepEqual(body, { workflowId: 'wf_default', guardrailsId: 'normal', mock: true, projectDir: '/a/web', prompt: 'fix it' });
+});
+
+test('pick → prompt → start sends the run-only lane and writes no project config, even after a Planner model change', async () => {
+  const ctx = await boot({ presets: [preset()] });
+  await pick(ctx, 'rp_aaaaaaaaaaaa');
+  const model = ctx.doc.querySelector('.agent-row[data-node-id="n_plan"] .step-model');
+  assert.ok(model, 'the Planner row renders');
+  assert.equal(model.value, 'claude-haiku-4-5', 'the row shows the preset\'s pick');
+  assert.equal(ctx.doc.querySelector('#agentsReset').hidden, true, 'no Reset: it would delete the project\'s rows');
+  model.value = 'claude-opus-5-5';
+  model.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  await waitFor(() => /modified/.test(ctx.doc.querySelector('#preset-chip').textContent));
+  const body = await submit(ctx);
+  assert.equal(ctx.posted.length, 1);
+  assert.equal(body.presetId, 'rp_aaaaaaaaaaaa');
+  assert.equal(body.humanInLoop, false);
+  assert.equal(body.overlay.nodes.n_plan.model, 'claude-opus-5-5');
+  // The overlay refuses a null toggle (fanOut/askQuestions must be true or false): an inherit is sent as the default.
+  for (const pick of Object.values(body.overlay.nodes)) for (const v of Object.values(pick)) assert.notEqual(v, null);
+  assert.equal(typeof body.overlay.nodes.n_plan.fanOut, 'boolean');
+  assert.equal(body.guardrailsId, 'normal');
+  assert.deepEqual(configWrites(ctx.calls), []);
+});
+
+test('a preset saved with Run on the source branch turns it on, and on again after a start', async () => {
+  const ctx = await boot({ presets: [preset({ setup: { workflowId: 'wf_default', sameAsSource: true } })] });
+  await pick(ctx, 'rp_aaaaaaaaaaaa');
+  assert.equal(ctx.doc.querySelector('#sameAsSource').checked, true);
+  const body = await submit(ctx);
+  assert.equal(body.sameAsSource, true);
+  await waitFor(() => ctx.doc.querySelector('#sameAsSource').checked === true);
+  assert.equal(ctx.doc.querySelector('#sameAsSource').checked, true);
+});
+
+test('a broken item disables Start and names it; Reset clears it once the check passes', async () => {
+  const item = { item: 'model', ref: 'n_plan', message: 'Planner: model my-gateway-opus is no longer in the catalog', reset: true };
+  // Broken until Reset, not "on the first check": a previous boot's debounced check can reach this boot's stub first.
+  let reset = false;
+  const ctx = await boot({ presets: [preset({ setup: { workflowId: 'wf_default', overlay: { nodes: { n_plan: { model: 'my-gateway-opus' } } } } })],
+    check: () => ({ broken: reset ? [] : [item] }) });
+  await pick(ctx, 'rp_aaaaaaaaaaaa');
+  await waitFor(() => ctx.doc.querySelectorAll('.preset-broken-row').length === 1);
+  const start = ctx.doc.querySelector('#start-btn');
+  assert.equal(start.disabled, true);
+  assert.equal(start.title, item.message);
+  assert.equal(ctx.doc.querySelector('.preset-broken-row span').textContent, item.message);
+  const before = ctx.checks();
+  reset = true;
+  ctx.doc.querySelector('.preset-broken-row button').click();
+  await waitFor(() => ctx.checks() > before && ctx.doc.querySelectorAll('.preset-broken-row').length === 0);
+  assert.equal(start.disabled, false);
+});
+
+test('Simple mode: the hidden-settings note names the preset\'s picks and Away mark, not agent overrides', async () => {
+  // n_clarify holds only its toggles (the stored full picks name every agent node): it is not an agent pick.
+  const nodes = { ...NODES4, n_clarify: { fanOut: false, askQuestions: true } };
+  const ctx = await boot({ presets: [preset({ setup: { workflowId: 'wf_default', nightMode: true, overlay: { nodes } } })] });
+  ctx.doc.documentElement.dataset.level = 'simple';
+  await pick(ctx, 'rp_aaaaaaaaaaaa');
+  const note = ctx.doc.querySelector('#level-hidden-note');
+  assert.equal(note.hidden, false);
+  assert.match(note.textContent, /4 agent picks/);
+  assert.match(note.textContent, /Away mark/);
+  assert.doesNotMatch(note.textContent, /agent override/);
+});
+
+test('a pinned preset survives the late run-defaults answer: its engine and tags stay', async () => {
+  const pinned = preset({ scope: { kind: 'project', ref: 'api-22222222' }, setup: { workflowId: 'wf_default', engine: 'claude', tags: ['team:api'] } });
+  const ctx = await boot({ presets: [pinned], runDefaults: { delayMs: 60, body: { engine: { value: 'codex', source: 'project' }, steps: { codex: {} }, tags: ['team:web'], projectKey: 'web-11111111' } } });
+  applyFlags({ runTags: true }, ctx.doc);
+  await pick(ctx, 'rp_aaaaaaaaaaaa', { runPresets: true, runTags: true });
+  assert.equal(ctx.doc.querySelector('#projectSelect').value, '/a/api', 'the pin switched the project');
+  await new Promise((r) => setTimeout(r, 120));   // the late /api/run-defaults lands
+  const body = await submit(ctx);
+  assert.equal(body.engine, 'claude');
+  assert.deepEqual(body.tags, ['team:api']);
+  assert.equal(body.projectDir, '/a/api');
+  applyFlags({ runTags: false }, ctx.doc);
+});
+
+test('a workspace-pinned preset keeps its workflow, guardrails and Human in the loop over the workspace config load', async () => {
+  const pinned = preset({ scope: { kind: 'workspace', ref: 'ws_1' }, setup: { workflowId: 'wf_auto', guardrailsId: 'normal', humanInLoop: false } });
+  const ctx = await boot({ presets: [pinned], wsConfigDelayMs: 80 });
+  await pick(ctx, 'rp_aaaaaaaaaaaa');
+  await new Promise((r) => setTimeout(r, 150));   // past the late workspace config load
+  assert.equal(ctx.doc.querySelector('#workflowSelect').value, 'wf_auto');
+  assert.equal(ctx.doc.querySelector('#guardrailsSelect').value, 'normal');
+  assert.equal(ctx.doc.querySelector('#humanInLoop').checked, false, 'the switch shows what the body sends');
+  const body = await submit(ctx);
+  assert.equal(body.workspaceId, 'ws_1');
+  assert.equal(body.workflowId, 'wf_auto');
+  assert.equal(body.guardrailsId, 'normal');
+  assert.equal(body.humanInLoop, false);
+  assert.equal(body.presetId, 'rp_aaaaaaaaaaaa');
+});
+
+test('changing the project in preset mode puts the preset\'s workflow and guardrails back and checks again', async () => {
+  const ctx = await boot({ presets: [preset({ setup: { workflowId: 'wf_auto', guardrailsId: 'normal', humanInLoop: false } })] });
+  await pick(ctx, 'rp_aaaaaaaaaaaa');
+  const before = ctx.checks();
+  const proj = ctx.doc.querySelector('#projectSelect');
+  proj.value = '/a/api';
+  proj.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  await waitFor(() => ctx.checks() > before);
+  for (let i = 0; i < 10; i++) await tick();
+  assert.equal(ctx.doc.querySelector('#workflowSelect').value, 'wf_auto', 'the project\'s activeWorkflowId did not win');
+  assert.equal(ctx.doc.querySelector('#guardrailsSelect').value, 'normal');
+  assert.match(ctx.doc.querySelector('#preset-chip').textContent, /Preset — changes here apply to this run only/, 'the setup is unchanged, so not modified');
+  const check = ctx.calls.filter((c) => /\/api\/presets\/[^/]+\/check/.test(c.url)).at(-1);
+  assert.equal(check.body.projectDir, '/a/api');
+  const body = await submit(ctx);
+  assert.equal(body.projectDir, '/a/api');
+  assert.equal(body.workflowId, 'wf_auto');
+  assert.equal(body.guardrailsId, 'normal');
+});
+
+test('after a fresh load the menu labels pinned presets with the project and workspace names, not their keys', async () => {
+  const presets = [preset({ id: 'rp_pppppppppppp', name: 'P', scope: { kind: 'project', ref: 'api-22222222' } }),
+    preset({ id: 'rp_wwwwwwwwwwww', name: 'W', scope: { kind: 'workspace', ref: 'ws_1' } })];
+  const ctx = await boot({ presets, namesDelayMs: 40 });
+  applyFlags({ runPresets: true }, ctx.doc);
+  await waitFor(() => ctx.doc.querySelectorAll('#presetSelect optgroup').length === 2);
+  await new Promise((r) => setTimeout(r, 80));
+  const labels = [...ctx.doc.querySelectorAll('#presetSelect optgroup')].map((g) => g.label);
+  assert.deepEqual(labels.sort(), ['Both', 'api']);
+});
+
+test('Settings › Presets after a fresh load names the pinned workspace, with no false Workspace gone badge', async () => {
+  const presets = [preset({ id: 'rp_wwwwwwwwwwww', name: 'W', scope: { kind: 'workspace', ref: 'ws_1' } })];
+  const ctx = await boot({ presets, namesDelayMs: 40 });
+  applyFlags({ runPresets: true }, ctx.doc);
+  ctx.window.location.hash = '#settings/presets';
+  await waitFor(() => /Only workspace/.test(ctx.doc.querySelector('#presets-list').textContent));
+  assert.match(ctx.doc.querySelector('#presets-list').textContent, /Only workspace Both/);
+  assert.equal(ctx.doc.querySelector('#presets-list .preset-gone'), null);
+  ctx.window.location.hash = '#new';
+});
+
+test('Save current setup… under a name the menu holds reopens with the duplicate message and sends nothing', async () => {
+  const ctx = await boot({ presets: [preset()] });
+  applyFlags({ runPresets: true }, ctx.doc);
+  await waitFor(() => ctx.doc.querySelectorAll('#presetSelect option').length > 2);
+  ctx.doc.querySelector('#preset-save').click();
+  await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
+  const name = ctx.doc.querySelector('#confirm-f-name');
+  name.value = 'quick FIX';
+  name.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  ctx.doc.querySelector('#confirm-ok').click();
+  await waitFor(() => /A preset with this name already exists/.test(ctx.doc.querySelector('#confirm-fields').textContent));
+  assert.equal(ctx.doc.querySelector('#confirm-f-name').value, 'quick FIX', 'the typed name stays');
+  ctx.doc.querySelector('#confirm-cancel').click();
+  await tick();
+  assert.equal(ctx.calls.filter((c) => c.url.includes('/api/presets') && c.method === 'POST').length, 0);
+});
+
+test('with the flag off the picker is gated and no /api/presets request is made', async () => {
+  const ctx = await boot({ presets: [preset()] });
+  for (let i = 0; i < 10; i++) await tick();
+  assert.equal(ctx.calls.filter((c) => c.url.includes('/api/presets')).length, 0);
+  const html = renderIndexHtml(readFileSync(htmlPath, 'utf8'), 'light', 'expert', { runPresets: false });
+  const gated = new JSDOM(html).window.document;
+  assert.match(gated.querySelector('#flag-gates').textContent, /\[data-flag~="runPresets"\]/);
+  assert.equal(gated.querySelector('#preset-row').dataset.flag, 'runPresets');
+  applyFlags({ runPresets: false }, ctx.doc);
+});

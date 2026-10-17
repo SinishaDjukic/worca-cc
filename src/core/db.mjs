@@ -60,7 +60,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 59;
+export const SCHEMA_VERSION = 60;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1064,6 +1064,22 @@ CREATE TABLE IF NOT EXISTS run_tag_events (
 CREATE INDEX IF NOT EXISTS idx_run_tag_events_pipeline ON run_tag_events (pipeline_id, id);
 `;
 
+// v60 (#712): run presets — named New run setups (src/core/run-presets-store.mjs). Names are unique per owner
+// (created_by; NULL on a local install), ignoring case.
+const RUN_PRESETS_DDL = `
+CREATE TABLE IF NOT EXISTS run_presets (
+  id TEXT PRIMARY KEY,                          -- rp_ + 12 hex
+  name TEXT NOT NULL,
+  scope_kind TEXT NOT NULL DEFAULT 'global',    -- global | project | workspace
+  scope_ref TEXT,                               -- project key or workspace id; NULL for global
+  setup TEXT NOT NULL DEFAULT '{}',             -- JSON: src/shared/run-presets.mjs PRESET_SETUP_KEYS
+  created_by TEXT,                              -- identity name on a shared deployment, else NULL
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS run_presets_owner_name ON run_presets (COALESCE(created_by, ''), name COLLATE NOCASE);
+`;
+
 const SHAPE_SLICES_DDL = `
 CREATE TABLE IF NOT EXISTS shape_features (
   id TEXT PRIMARY KEY,
@@ -1137,6 +1153,7 @@ const INCREMENTAL_TABLES = {
   shape_plans: SHAPE_SLICES_DDL,
   run_tags:       RUN_TAGS_DDL,
   run_tag_events: RUN_TAGS_DDL,
+  run_presets:    RUN_PRESETS_DDL,
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -2221,6 +2238,7 @@ export function migrate(db) {
     if (current < 57) db.exec(SHAPE_SLICES_DDL);     // Shape it first: sliced features + Plans
     // v58 (D24): shape_features ship columns, shape_feature_slices.draft_pr_url — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 59) db.exec(RUN_TAGS_DDL);         // run tags + tag-edit audit (#718); 57-58 are Shaper's (#708, #730)
+    if (current < 60) db.exec(RUN_PRESETS_DDL);      // run presets (#712)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
