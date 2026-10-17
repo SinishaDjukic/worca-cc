@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "missingTake",
+      "name": "a take the notes name but that does not exist is reported, not thrown",
+      "inputs": {
+        "recording": {
+          "text": "# Recording\n\nTake: `video-takes/demo-cycle1.webm`, 0:42.\n"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "expect": {
+        "verdict": "clean",
+        "summaryIncludes": "no take"
+      }
+    }
+  ]
+}

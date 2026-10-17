@@ -1,0 +1,77 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>terminal</title>
+<style>
+  :root { --bg:#f1f1ef; --win:#ffffff; --bar:#ececea; --ink:#19191b; --dim:#76767c; --prompt:#2f7a38; }
+  :root[data-theme="dark"] { --bg:#0e0e10; --win:#1c1c1f; --bar:#26262a; --ink:#ededef; --dim:#8a8a92; --prompt:#8fd48f; }
+  html, body { margin:0; height:100%; background:var(--bg); }
+  body { display:grid; place-items:center; font-family:"JetBrains Mono", "SF Mono", Menlo, ui-monospace, monospace; }
+  .win { width:min(1500px, 92vw); border-radius:12px; background:var(--win); box-shadow:0 24px 70px rgba(0,0,0,.22), 0 2px 6px rgba(0,0,0,.08); overflow:hidden; }
+  .bar { height:38px; display:flex; align-items:center; gap:8px; padding:0 14px; background:var(--bar); }
+  .dot { width:12px; height:12px; border-radius:50%; } .r{background:#ff5f57}.y{background:#febc2e}.g{background:#28c840}
+  .title { flex:1; text-align:center; margin-right:52px; font:500 13px system-ui, sans-serif; color:var(--dim); }
+  pre { margin:0; padding:18px 22px 22px; color:var(--ink); font:inherit; font-size:18px; line-height:1.55; white-space:pre-wrap; word-break:break-word; overflow:hidden; }
+  .p { color:var(--prompt); font-weight:600; }
+  .caret { display:inline-block; width:.6em; height:1.15em; vertical-align:-.2em; background:var(--ink); animation:blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+  .b{font-weight:700}.d{opacity:.7}.i{font-style:italic}.u{text-decoration:underline}
+  .c30{color:#3a3a3e}.c31{color:#d9473a}.c32{color:#3e9b54}.c33{color:#b5751a}.c34{color:#3782a8}.c35{color:#8c4fd6}.c36{color:#2a8a80}.c37{color:#9a9aa1}
+  :root[data-theme="dark"] .c31{color:#ec6b5e} :root[data-theme="dark"] .c32{color:#5dbb72} :root[data-theme="dark"] .c33{color:#f0b45a} :root[data-theme="dark"] .c34{color:#86c4e3} :root[data-theme="dark"] .c35{color:#b3a8ee} :root[data-theme="dark"] .c36{color:#86d3ca} :root[data-theme="dark"] .c30{color:#9a9aa1} :root[data-theme="dark"] .c37{color:#d6d6d2}
+</style></head>
+<body>
+<div class="win"><div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><div class="title" id="title"></div></div><pre id="out"></pre></div>
+<script>
+(() => {
+  const out = document.getElementById('out');
+  let prompt = '$ ', rows = 28, line = null;
+  const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+  // Minimal SGR: bold, dim, italic, underline, 30–37 / 90–97 foregrounds, reset.
+  function ansi(text) {
+    let html = '', open = 0, cls = new Set();
+    const parts = text.split(/\x1b\[([0-9;]*)m/);
+    for (let i = 0; i < parts.length; i++) {
+      if (i % 2 === 0) { html += esc(parts[i]); continue; }
+      for (const raw of (parts[i] || '0').split(';')) {
+        const n = Number(raw || 0);
+        if (n === 0) cls.clear();
+        else if (n === 1) cls.add('b'); else if (n === 2) cls.add('d'); else if (n === 3) cls.add('i'); else if (n === 4) cls.add('u');
+        else if ((n >= 30 && n <= 37) || (n >= 90 && n <= 97)) { for (const c of [...cls]) if (c[0] === 'c') cls.delete(c); cls.add('c' + (n >= 90 ? n - 60 : n)); }
+      }
+      html += '</span>'.repeat(open); open = 0;
+      if (cls.size) { html += `<span class="${[...cls].join(' ')}">`; open = 1; }
+    }
+    return html + '</span>'.repeat(open);
+  }
+  function trim() {
+    const lines = out.innerHTML.split('\n');
+    if (lines.length > rows) out.innerHTML = lines.slice(lines.length - rows).join('\n');
+  }
+  function newPrompt() {
+    out.insertAdjacentHTML('beforeend', `<span class="p">${esc(prompt)}</span><span class="cmd"></span><span class="caret"></span>`);
+    line = out.querySelector('.cmd:last-of-type');
+    trim();
+  }
+  window.__term = {
+    init({ title, prompt: p, cols, rows: r, theme }) {
+      document.documentElement.dataset.theme = theme;
+      document.getElementById('title').textContent = title;
+      prompt = p; rows = r;
+      out.style.width = `${cols}ch`;
+      out.style.height = `${r * 1.55}em`;
+      out.innerHTML = '';
+      newPrompt();
+    },
+    typeChar(c) { const cmds = out.querySelectorAll('.cmd'); cmds[cmds.length - 1].textContent += c; },
+    async run(output) {
+      out.querySelector('.caret')?.remove();
+      out.insertAdjacentHTML('beforeend', '\n');
+      for (const l of String(output).replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n')) {
+        if (output) out.insertAdjacentHTML('beforeend', ansi(l) + '\n');
+        trim();
+        await new Promise((res) => setTimeout(res, 18));
+      }
+      newPrompt();
+    },
+  };
+})();
+</script>
+</body></html>

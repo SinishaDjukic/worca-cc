@@ -1,0 +1,47 @@
+{
+  "metaVersion": 2,
+  "domain": "product-video",
+  "requiresSkills": [
+    "product-video"
+  ],
+  "key": "videoReviewer",
+  "displayName": "Video Review",
+  "description": "Reads the contact sheets of the take and checks every scene against the storyboard: captions match, nothing covers the action, no placeholder text, no dead frames.",
+  "color": "peach",
+  "icon": "<path d=\"M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z\"/><circle cx=\"12\" cy=\"12\" r=\"2.5\"/>",
+  "agentFile": "videoReviewer.md",
+  "runnerType": "verifier",
+  "promptHints": "Pipeline directory: {pipelineDir}. Cycle: {cycle}.",
+  "verdict": {
+    "filename": "video-review-cycle{cycle}.json"
+  },
+  "inputs": [
+    {
+      "id": "sheets",
+      "type": "md",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "video-review-cycle{cycle}.md",
+      "artifactKind": "video-review"
+    },
+    {
+      "id": "findings",
+      "type": "md",
+      "when": "blocking",
+      "filename": "video-findings-cycle{cycle}.md",
+      "artifactKind": "video-review"
+    },
+    {
+      "id": "pass",
+      "type": "void",
+      "when": "clean"
+    }
+  ],
+  "order": 913
+}

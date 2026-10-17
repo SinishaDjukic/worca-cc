@@ -1,0 +1,259 @@
+{
+  "name": "Product Video",
+  "version": 2,
+  "domain": "product-video",
+  "nodes": [
+    {
+      "id": "n_task",
+      "kind": "task",
+      "x": 40,
+      "y": 220,
+      "config": {}
+    },
+    {
+      "id": "n_check",
+      "kind": "script",
+      "key": "videoPreflight",
+      "x": 300,
+      "y": 220,
+      "config": {}
+    },
+    {
+      "id": "n_clarify",
+      "kind": "agent",
+      "key": "clarify",
+      "x": 560,
+      "y": 220,
+      "config": {}
+    },
+    {
+      "id": "n_story",
+      "kind": "agent",
+      "key": "videoStoryboard",
+      "x": 820,
+      "y": 220,
+      "config": {}
+    },
+    {
+      "id": "n_approve",
+      "kind": "agent",
+      "key": "videoApproval",
+      "x": 1080,
+      "y": 220,
+      "config": {
+        "askQuestions": true
+      }
+    },
+    {
+      "id": "n_record",
+      "kind": "agent",
+      "key": "videoRecorder",
+      "x": 1340,
+      "y": 220,
+      "config": {
+        "awaitAll": true
+      }
+    },
+    {
+      "id": "n_sheets",
+      "kind": "script",
+      "key": "videoSheets",
+      "x": 1600,
+      "y": 220,
+      "config": {}
+    },
+    {
+      "id": "n_review",
+      "kind": "agent",
+      "key": "videoReviewer",
+      "x": 1860,
+      "y": 220,
+      "config": {}
+    },
+    {
+      "id": "n_finish",
+      "kind": "script",
+      "key": "videoFinish",
+      "x": 2120,
+      "y": 220,
+      "config": {}
+    },
+    {
+      "id": "n_end",
+      "kind": "end",
+      "x": 2380,
+      "y": 220,
+      "config": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_check",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w2",
+      "from": {
+        "node": "n_check",
+        "port": "tools"
+      },
+      "to": {
+        "node": "n_clarify",
+        "port": "await"
+      }
+    },
+    {
+      "id": "w3",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_clarify",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w4",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_story",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w5",
+      "from": {
+        "node": "n_clarify",
+        "port": "answers"
+      },
+      "to": {
+        "node": "n_story",
+        "port": "answers"
+      }
+    },
+    {
+      "id": "w6",
+      "from": {
+        "node": "n_story",
+        "port": "storyboard"
+      },
+      "to": {
+        "node": "n_approve",
+        "port": "storyboard"
+      }
+    },
+    {
+      "id": "w7",
+      "from": {
+        "node": "n_story",
+        "port": "storyboard"
+      },
+      "to": {
+        "node": "n_record",
+        "port": "storyboard"
+      }
+    },
+    {
+      "id": "w8",
+      "from": {
+        "node": "n_approve",
+        "port": "answers"
+      },
+      "to": {
+        "node": "n_record",
+        "port": "approval"
+      }
+    },
+    {
+      "id": "w9",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_record",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w10",
+      "from": {
+        "node": "n_record",
+        "port": "recording"
+      },
+      "to": {
+        "node": "n_sheets",
+        "port": "recording"
+      }
+    },
+    {
+      "id": "w11",
+      "from": {
+        "node": "n_sheets",
+        "port": "sheets"
+      },
+      "to": {
+        "node": "n_review",
+        "port": "sheets"
+      }
+    },
+    {
+      "id": "w12",
+      "from": {
+        "node": "n_review",
+        "port": "findings"
+      },
+      "to": {
+        "node": "n_record",
+        "port": "fixes"
+      },
+      "config": {
+        "maxCycles": 3
+      }
+    },
+    {
+      "id": "w13",
+      "from": {
+        "node": "n_review",
+        "port": "pass"
+      },
+      "to": {
+        "node": "n_finish",
+        "port": "await"
+      }
+    },
+    {
+      "id": "w14",
+      "from": {
+        "node": "n_record",
+        "port": "recording"
+      },
+      "to": {
+        "node": "n_finish",
+        "port": "recording"
+      }
+    },
+    {
+      "id": "w15",
+      "from": {
+        "node": "n_finish",
+        "port": "package"
+      },
+      "to": {
+        "node": "n_end",
+        "port": "result"
+      }
+    }
+  ]
+}

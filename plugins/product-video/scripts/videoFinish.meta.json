@@ -1,0 +1,52 @@
+{
+  "metaVersion": 2,
+  "key": "videoFinish",
+  "displayName": "Video: encode MP4",
+  "description": "After a clean review: trims the blank lead-in of the approved take, applies any post-process zooms, and encodes video/<slug>.mp4 (H.264) and a copy under 10 MB, then writes video-package.md with sizes, what is real and what was scripted, how to re-record, and the upload note.",
+  "color": "green",
+  "icon": "",
+  "domain": "product-video",
+  "order": 914,
+  "runtime": "node",
+  "file": "videoFinish.mjs",
+  "timeoutMs": 2700000,
+  "params": [
+    {
+      "id": "slug",
+      "type": "string",
+      "required": false,
+      "label": "File name",
+      "description": "Base name of the MP4 files; default: the take name without -cycleN."
+    },
+    {
+      "id": "smallMb",
+      "type": "number",
+      "required": false,
+      "label": "Small copy limit (MB)",
+      "description": "The small copy stays under this size.",
+      "default": 9.5
+    }
+  ],
+  "inputs": [
+    {
+      "id": "recording",
+      "type": "md",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "package",
+      "type": "md",
+      "when": "always",
+      "filename": "video-package.md",
+      "artifactKind": "video-package",
+      "extraFiles": [
+        {
+          "kind": "video",
+          "glob": "video/*.mp4"
+        }
+      ]
+    }
+  ]
+}

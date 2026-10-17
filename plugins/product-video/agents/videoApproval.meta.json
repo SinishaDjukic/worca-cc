@@ -1,0 +1,173 @@
+{
+  "metaVersion": 2,
+  "domain": "product-video",
+  "key": "videoApproval",
+  "displayName": "Video Approval",
+  "description": "Puts the storyboard in front of you before anything is recorded: approve it, or approve it with notes the recorder applies.",
+  "color": "red",
+  "icon": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M8 12.5l2.5 2.5L16 9.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\"/>",
+  "agentFile": "videoApproval.md",
+  "runnerType": "clarifier",
+  "asksQuestions": true,
+  "questionsLocked": true,
+  "questionsDefault": true,
+  "promptHints": "Pipeline directory: {pipelineDir}.",
+  "inputs": [
+    {
+      "id": "storyboard",
+      "type": "md",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "answers",
+      "type": "json",
+      "filename": "video-approval.json",
+      "artifactKind": "video-approval"
+    }
+  ],
+  "ask": {
+    "forms": {
+      "approve-storyboard": {
+        "version": 1,
+        "title": "Approve the storyboard",
+        "data": {
+          "type": "object",
+          "required": [
+            "summary",
+            "scenes"
+          ],
+          "properties": {
+            "summary": {
+              "type": "string",
+              "maxLength": 8000
+            },
+            "scenes": {
+              "type": "array",
+              "maxItems": 40,
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "scene"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 16
+                  },
+                  "scene": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "caption": {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  "seconds": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 600
+                  },
+                  "zoom": {
+                    "type": "string",
+                    "maxLength": 120
+                  }
+                }
+              }
+            }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "required": [
+            "decision"
+          ],
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": [
+                "Record as planned",
+                "Record with my notes"
+              ],
+              "default": "Record as planned"
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 4000
+            }
+          }
+        },
+        "layout": [
+          {
+            "widget": "markdown",
+            "bind": "data.summary"
+          },
+          {
+            "widget": "table",
+            "bind": "data.scenes",
+            "label": "Scenes",
+            "columns": [
+              {
+                "key": "id",
+                "label": "#"
+              },
+              {
+                "key": "scene",
+                "label": "Scene"
+              },
+              {
+                "key": "caption",
+                "label": "Caption"
+              },
+              {
+                "key": "zoom",
+                "label": "Zoom"
+              },
+              {
+                "key": "seconds",
+                "label": "Seconds"
+              }
+            ]
+          },
+          {
+            "widget": "select",
+            "field": "decision",
+            "label": "Go ahead?",
+            "style": "cards"
+          },
+          {
+            "widget": "textarea",
+            "field": "notes",
+            "label": "Your notes",
+            "placeholder": "What to change before recording — scenes to drop, a different caption, another surface to show…",
+            "rows": 4,
+            "when": {
+              "decision": "Record with my notes"
+            }
+          }
+        ],
+        "example": {
+          "summary": "**Medium:** browser take of the web UI at 1920×1080, light theme.\n\n**Scripted:** Explain and Alternatives answers (mock mode calls no model).",
+          "scenes": [
+            {
+              "id": "1",
+              "scene": "Title card",
+              "caption": "Pinpoint",
+              "seconds": 3
+            },
+            {
+              "id": "2",
+              "scene": "Select text in a chat answer; toolbar appears",
+              "caption": "Select any text — a toolbar appears",
+              "seconds": 6,
+              "zoom": "the toolbar — 1.8 s"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "order": 911
+}
