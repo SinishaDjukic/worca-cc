@@ -4843,6 +4843,11 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .run-prog[hidden]{display:none;}
 .run-prog-track,.run-chain-track{position:relative;height:6px;border-radius:999px;background:var(--field);overflow:hidden;}
 .run-prog-fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:inherit;background:var(--blue);transition:width .6s ease;}
+/* A working run's fill pulses at its leading edge: it is alive even while one long step gives the bar nothing to count. */
+.run-prog[data-tone="blue"] > .run-prog-track .run-prog-fill::after{content:"";position:absolute;right:0;top:0;bottom:0;width:14px;
+  border-radius:inherit;background:var(--blue);animation:run-prog-edge 1.6s ease-in-out infinite;}
+@keyframes run-prog-edge{0%,100%{opacity:1;}50%{opacity:.35;}}
+@media (prefers-reduced-motion:reduce){.run-prog[data-tone="blue"] > .run-prog-track .run-prog-fill::after{animation:none;}}
 .run-prog[data-tone="amber"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="amber"] .run-prog-fill{background:var(--amber);}
 .run-prog[data-tone="green"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="green"] .run-prog-fill{background:var(--green);}
 .run-prog[data-tone="red"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="red"] .run-prog-fill{background:var(--red);}
