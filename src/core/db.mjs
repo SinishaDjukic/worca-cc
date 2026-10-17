@@ -60,7 +60,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 61;
+export const SCHEMA_VERSION = 62;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -880,11 +880,13 @@ const INCREMENTAL_COLUMNS = {
                             description_origin: 'TEXT',     // v40: 'generated' | 'edited'; NULL = before v40
                             actions_json: 'TEXT' },         // v47: stack actions { stacks:[…] } (issue #529); NULL = none
   schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT',   // v31: the Ask Worca card a series came from
-                            created_by: 'TEXT', updated_by: 'TEXT' },   // v39: who made / last changed it (identity.mjs actor)
+                            created_by: 'TEXT', updated_by: 'TEXT',   // v39: who made / last changed it (identity.mjs actor)
+                            preset_id: 'TEXT' },   // v62: the run preset the series follows (read at fire time); NULL = none
   scheduled_runs:         { after_kind: 'TEXT', after_id: 'TEXT', after_policy: "TEXT NOT NULL DEFAULT 'done'",
                             source_from_previous: 'INTEGER NOT NULL DEFAULT 0',   // v34: run chains
                             created_by: 'TEXT', updated_by: 'TEXT',   // v39: who made / last changed it
-                            resume_pipeline_id: 'TEXT' },   // v44: a one-off "resume this paused run" ticket (NULL = starts a new run)
+                            resume_pipeline_id: 'TEXT',   // v44: a one-off "resume this paused run" ticket (NULL = starts a new run)
+                            preset_id: 'TEXT' },   // v62: the run preset this run follows (read at fire time); NULL = none
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -2241,6 +2243,7 @@ export function migrate(db) {
     if (current < 59) db.exec(RUN_TAGS_DDL);         // run tags + tag-edit audit (#718); 57-58 are Shaper's (#708, #730)
     if (current < 60) db.exec(RUN_PRESETS_DDL);      // run presets (#712)
     // v61 (#712 slice 2): pipelines.run_setup — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v62 (#712 slice 3): schedules.preset_id, scheduled_runs.preset_id — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

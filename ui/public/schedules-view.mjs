@@ -126,6 +126,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     if (item.summary.sourceBranch) bits.push(`from ${item.summary.sourceBranch}`);
     if (item.sourceFromPrevious) bits.push('from the run before it');
     if (item.summary.mock) bits.push('mock');
+    if (item.presetId) bits.push(item.presetName ? `preset ${item.presetName}` : 'preset deleted');
     return bits.filter(Boolean).join(' · ');
   }
 
@@ -143,6 +144,8 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       row('Feature branch', item.summary.sameAsSource ? 'none — commits onto the source branch'
         : (item.summary.featureBranch ? (item.kind === 'recurring' ? `${item.summary.featureBranch}-<date>` : item.summary.featureBranch) : '')),
       row('Guardrails', item.summary.guardrailsId && item.summary.guardrailsId !== 'permissive' ? item.summary.guardrailsId : ''),
+      row('Preset', item.presetId ? (item.presetName ? `${item.presetName} — read when the run starts`
+        : `${item.presetGoneName || 'A preset'} — deleted; the next run will fail`) : ''),
       row('Extra files', item.summary.extras ? String(item.summary.extras) : ''),
       item.after ? null : row('If Worca is not running', item.ifMissed === 'skip' ? 'Skip it' : `Start it late, at most ${item.graceMin >= 60 && item.graceMin % 60 === 0 ? `${item.graceMin / 60} h` : `${item.graceMin} min`}`),
       item.kind === 'recurring' ? row('If the previous run is still going', { skip: 'Skip this one', queue: 'Wait, then start', start: 'Start anyway' }[item.overlap]) : null,

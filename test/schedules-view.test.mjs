@@ -65,3 +65,16 @@ test('chains() is empty without a server list, and reflects the loaded chains ot
     assert.equal(view.chains(), view.chains(), 'the same array until the next load()');
   } finally { view.destroy(); }
 });
+
+test('a row that follows a preset names it; a deleted preset says the next run will fail', async () => {
+  const live = ticketAt('t_preset', 3600_000, { presetId: 'rp_aaaaaaaaaaaa', presetName: 'Quick fix' });
+  const gone = ticketAt('t_gone', 7200_000, { presetId: 'rp_bbbbbbbbbbbb', presetName: null, presetGoneName: 'Old fix' });
+  const view = await mount({ tickets: [live, gone] });
+  try {
+    const text = document.body.textContent;
+    assert.match(text, /preset Quick fix/);
+    assert.match(text, /Quick fix — read when the run starts/);
+    assert.match(text, /preset deleted/);
+    assert.match(text, /Old fix — deleted; the next run will fail/);
+  } finally { view.destroy(); }
+});

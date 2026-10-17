@@ -4,8 +4,9 @@ A run preset is a named New run setup. Save the choices you make for a kind of r
 pick the preset, type only the prompt and press **Start run**. The run gets the preset's choices
 for that run only: the project's saved settings never change.
 
-Run presets are experimental and off by default. Turn them on in **Settings › Experimental ›
-Run presets** (flag `runPresets`, see [Feature flags](feature-flags.md)).
+Run presets are in beta and on by default. Turn them off in **Settings › Experimental ›
+Run presets** (flag `runPresets`, see [Feature flags](feature-flags.md)), or with
+`worca flags off runPresets`.
 
 ## What a preset keeps
 
@@ -87,6 +88,61 @@ pinned to New run's current project or workspace, then the *Any project* ones. P
 another target are left out. A chip opens New run with the preset applied, the same as **Use** in
 Settings › Presets. With more than 6, a *N more…* chip opens Settings › Presets. With no matching
 preset the section is hidden.
+
+## Schedules
+
+**Schedule…** on New run with a preset applied makes a schedule that **follows the preset**. The
+schedule keeps a link to the preset, not a copy of its picks, and reads the preset each time it
+fires. Edit the preset, and the next run uses the new setup. The prompt, title, target and
+schedule stay the schedule's own. For an *Any project* preset, the schedule also keeps its own
+source branch.
+
+The Schedules page names the preset in each row (`preset Quick fix`), and **Details** has a
+**Preset** row. When a run fires, the preset is checked like any preset start, and a run that
+cannot start ends *failed* with the reason:
+
+- a broken item, for example *Preset "Tight run" cannot start: Guardrail set gr_1a2b3c4d no
+  longer exists*;
+- a deleted preset: *Preset "Quick fix" no longer exists*. The row then reads *preset deleted*,
+  and its details say the next run will fail. Re-create the schedule from New run to fix it;
+- run presets turned off: the run says it follows a preset and that run presets are off.
+
+A failed start counts towards a series' *Pause after failures in a row*, as any failed start does.
+On a shared deployment a schedule reads the preset of the person who made it.
+
+## From the terminal
+
+```
+worca run --preset "Quick fix" --prompt "Fix the login bug" [--title T] [--project DIR | --workspace ID]
+```
+
+`worca run` starts a run from a preset with just a prompt. It sends the run to the running Worca
+server, so start one first with `worca ui`. The name matches in any case, among the *Any project*
+presets and the ones pinned to the project (the current directory, or `--project`) or to
+`--workspace`. It prints the run id and how to follow it (`worca logs ID`).
+
+| Exit | When |
+|---|---|
+| 0 | The run started |
+| 1 | No preset by that name here (the in-scope names are listed), the preset is pinned to another project or workspace, the preset cannot start (one line per broken item), no Worca server is running, or run presets are turned off |
+| 2 | A usage error: no `--preset`, no `--prompt`, or an unknown option |
+
+`worca run` works against a local Worca server. A server that asks you to sign in answers with
+its sign-in hint.
+
+## Ask Worca
+
+Ask Worca can propose a run from one of your presets. Its `list_presets` tool lists the presets
+that fit the chat's pinned project or workspace (and the *Any project* ones), and `propose_run`
+takes a `presetId`. The card then shows *From preset Quick fix* and the preset's workflow,
+guardrails, engine and agent models. Anything Ask Worca names itself wins over the preset.
+**Start** sends the preset's other picks too (human in the loop, Away mark, opt-outs, loop
+budgets) and the server checks the preset again. Switching the card to another workflow drops the
+preset's agent picks, and the card says so.
+
+A preset on the Permissive guardrail set (or with none) is not proposed as is: Ask Worca must name
+a stricter guardrail set. A preset's tags reach the card only while Run tags are on, because the
+card sends tags only through its tag row.
 
 ## Shared deployments
 

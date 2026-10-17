@@ -93,7 +93,7 @@ import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartP
 import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal, OVERLAY_ERRORS } from '../src/core/run-overlay.mjs';
 import { listPresets, readPreset, createPreset, updatePreset, duplicatePreset, deletePreset, readRunSetup, createPresetFromRun } from '../src/core/run-presets-store.mjs';
 import { presetRefusals, completeSnapshot } from '../src/core/run-presets-check.mjs';
-import { setupFromBody, PRESET_LIMITS } from '../src/shared/run-presets.mjs';
+import { setupFromBody, bodyFollowingPreset, PRESET_LIMITS } from '../src/shared/run-presets.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
 import { validatePinpointInput, runPinpoint, pinpointCwd } from '../src/core/pinpoint.mjs';
 import { demoChunks, demoPinpointReply } from '../src/core/demo-scenario.mjs';
@@ -2169,10 +2169,12 @@ const startRunHandler = async (req, res) => {
 
     // Run presets (#712): a start from a preset is checked as a whole first, so the named broken items win over the
     // per-field 400s below. The check runs on the body being started — the person's in-form replacements count.
+    // A fired ticket reads its preset as the person who scheduled it (stored at schedule time, never from HTTP).
+    const presetOwner = internal ? (typeof stored.presetOwner === 'string' && stored.presetOwner ? stored.presetOwner : null) : askViewer(req);
     let presetRow = null;
     if (body.presetId !== undefined) {
       if (!flagEnabled('runPresets')) return badRequest(res, 'presetId needs the Run presets feature (Settings › Experimental features)');
-      presetRow = readPreset(body.presetId, { owner: askViewer(req) });
+      presetRow = readPreset(body.presetId, { owner: presetOwner });
       // 404 like the preset routes: a missing and another person's preset answer the same (R-sec-3).
       if (!presetRow) return res.status(404).json({ error: `preset ${JSON.stringify(String(body.presetId).slice(0, 40))} not found` });
       const pinned = presetRow.scope;
@@ -2526,7 +2528,8 @@ const startRunHandler = async (req, res) => {
           const refusal = await probe.engineStartRefusal();
           if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
         }
-        return res.status(202).json(await scheduleRequest({ body: runOverlay ? { ...body, overlay: runOverlay } : body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
+        return res.status(202).json(await scheduleRequest({ body: runOverlay ? { ...body, overlay: runOverlay } : body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy,
+          preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner } : null }));
       }
       const mcpOptOut = await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws));
       // Run presets slice 2 (#712): the run's setup, kept on the row for Save setup as preset. The RAW body
@@ -2673,7 +2676,8 @@ const startRunHandler = async (req, res) => {
           const refusal = await probe.engineStartRefusal();
           if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
         }
-        return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
+        return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy,
+          preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner } : null }));
       }
       const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 });
       // Run presets slice 2 (#712): the run's setup, kept on the row for Save setup as preset. The RAW body
@@ -3093,9 +3097,9 @@ async function validateResumeTarget(pipelineId) {
 }
 
 /** The request a ticket stores: the validated body minus schedule fields and uploads. */
-async function storedRequestOf(body, stageId, projectDir, startedBy = null) {
+async function storedRequestOf(body, stageId, projectDir, startedBy = null, preset = null) {
   const request = { ...body };
-  // presetId: slice 1 of run presets (#712) never stores the link a schedule would follow.
+  // presetId: the link lives in the ticket's preset_id column (v62), never in the replayed body.
   for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal', 'presetId']) delete request[k];
   // Text the user authored is part of the request: a prompt FILE is frozen now, so a
   // file deleted or half-edited overnight cannot fail an unattended run.
@@ -3104,22 +3108,24 @@ async function storedRequestOf(body, stageId, projectDir, startedBy = null) {
     request.source = { type: 'markdown', promptText };
   }
   const extrasPaths = await writeExtras(stageId, body.extras, path.join(scheduleStageDir(stageId), 'extras'));
-  request.internal = { extrasPaths, ...(startedBy ? { startedBy } : {}) };
+  // The preset a ticket follows is named in `internal` for messages and read by its owner (D3).
+  request.internal = { extrasPaths, ...(startedBy ? { startedBy } : {}),
+    ...(preset ? { presetName: preset.name, ...(typeof preset.owner === 'string' && preset.owner ? { presetOwner: preset.owner } : {}) } : {}) };
   return request;
 }
 
 /** Turn a validated run request into a ticket (or a recurring schedule). 202 body. */
-async function scheduleRequest({ body, sched, title, askLink, budget, projectDir, workspaceId = null, startedBy = null }) {
+async function scheduleRequest({ body, sched, title, askLink, budget, projectDir, workspaceId = null, startedBy = null, preset = null }) {
   const target = workspaceId ? { workspaceId } : { projectDir };
   let ticket, schedule = null;
   if (sched.repeat) {
     const id = `sch_${randomBytes(4).toString('hex')}`;
-    const request = await storedRequestOf(body, id, projectDir, startedBy);
+    const request = await storedRequestOf(body, id, projectDir, startedBy, preset);
     ({ schedule, ticket } = createSchedule({
       id, title, ...target, request, rule: sched.repeat.rule, overlap: sched.repeat.overlap,
       maxFailures: sched.repeat.maxFailures, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
       askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null,
-      createdBy: startedBy,
+      presetId: preset ? preset.id : null, createdBy: startedBy,
     }));
     // An Ask card that became a repeating schedule follows the SERIES, not one run of it.
     if (askLink) {
@@ -3128,13 +3134,13 @@ async function scheduleRequest({ body, sched, title, askLink, budget, projectDir
     }
   } else {
     const id = randomUUID();
-    const request = await storedRequestOf(body, id, projectDir, startedBy);
+    const request = await storedRequestOf(body, id, projectDir, startedBy, preset);
     // Both arms carry ifMissed / graceMin: parseScheduleRequest filled them with the Settings defaults
     // (an after body may not name them), and a chained ticket later moved to a time shows them.
     const chain = sched.after ? {
       after: { kind: sched.afterRef.kind, id: sched.afterRef.id }, afterPolicy: sched.afterPolicy, sourceFromPrevious: sched.sourceFromPrevious, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
     } : { runAtMs: sched.runAtMs, ifMissed: sched.ifMissed, graceMin: sched.graceMin };
-    ticket = createTicket({ id, title, ...target, request, ...chain, askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null, createdBy: startedBy });
+    ticket = createTicket({ id, title, ...target, request, ...chain, askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null, presetId: preset ? preset.id : null, createdBy: startedBy });
     if (askLink) {
       try { flipCard(askLink.threadId, askLink.cardId, { state: 'scheduled', runId: id, scheduledFor: sched.after ? null : ticket.runAt, after: sched.after ? { kind: sched.afterRef.kind, id: sched.afterRef.id, title: sched.afterRef.title } : null }); }
       catch (err) { console.error(`[worca-ui] ask card schedule flip failed: ${err && err.message ? err.message : err}`); }
@@ -3265,7 +3271,17 @@ async function fireResumeTicket(ticket, pipelineId) {
 async function fireTicket(ticket) {
   const resumePipelineId = resumeTargetOf(ticket);
   if (resumePipelineId) return fireResumeTicket(ticket, resumePipelineId);
-  const body = { ...(ticket.request || {}) };
+  let body = { ...(ticket.request || {}) };
+  // A ticket that follows a preset gets the preset's CURRENT setup before anything else reads the body (D4).
+  // A missing preset or a disabled flag is a permanent failure that names the preset; a broken one is the handler's 409.
+  if (ticket.presetId) {
+    const stored = body.internal && typeof body.internal === 'object' ? body.internal : {};
+    const name = typeof stored.presetName === 'string' && stored.presetName ? stored.presetName : ticket.presetId;
+    if (!flagEnabled('runPresets')) return { ok: false, error: `it follows the run preset "${name}", and run presets are turned off (Settings › Experimental)`, transient: false };
+    const preset = readPreset(ticket.presetId, { owner: typeof stored.presetOwner === 'string' && stored.presetOwner ? stored.presetOwner : null });
+    if (!preset) return { ok: false, error: `Preset "${name}" no longer exists`, transient: false };
+    body = bodyFollowingPreset(body, preset);
+  }
   if (body.source && body.source.type === 'plugin') {
     try {
       await resolveTaskInput(body.source, { projectDir: ticket.projectDir || undefined });
@@ -3469,6 +3485,20 @@ function withAfter(t) {
   return { ...t, after: { ...t.after, title: p.title || null, status: p.status || null, pipelineId: p.pipelineId || null } };
 }
 
+// GET /api/schedules and GET /api/schedules/:id: the current name of the preset a row follows (D14). null = deleted.
+// Name only, read as the local install (owner null): whoever can list schedules already sees their full requests.
+// A deleted preset also carries presetGoneName, the name stored at schedule time (request.internal.presetName);
+// list rows carry no request, so that one row is re-read with it — only for rows whose preset is gone.
+const presetNameOf = (x, reread) => {
+  if (!x || !x.presetId) return x;
+  const live = readPreset(x.presetId, { owner: null });
+  if (live) return { ...x, presetName: live.name };
+  const gone = reread(x.id)?.request?.internal?.presetName;
+  return { ...x, presetName: null, ...(typeof gone === 'string' && gone ? { presetGoneName: gone } : {}) };
+};
+const ticketPresetName = (x) => presetNameOf(x, (id) => getTicket(id, { withRequest: true }));
+const schedulePresetName = (x) => presetNameOf(x, (id) => getSchedule(id, { withRequest: true }));
+
 // GET /api/schedules[?projectDir=|workspaceId=][&all=1] -> { schedules, tickets, counts, defaults }
 app.get('/api/schedules', (req, res) => {
   try {
@@ -3476,8 +3506,8 @@ app.get('/api/schedules', (req, res) => {
     const workspaceId = typeof req.query.workspaceId === 'string' && req.query.workspaceId.trim() ? req.query.workspaceId.trim() : null;
     const all = req.query.all === '1' || req.query.all === 'true';
     res.json({
-      schedules: listSchedules({ projectDir, workspaceId }),
-      tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter),
+      schedules: listSchedules({ projectDir, workspaceId }).map(schedulePresetName),
+      tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter).map(ticketPresetName),
       // Run progress (P8): every open "Run after" chain, unscoped (a chain may cross projects).
       chains: withChainFeatures(runChains({ isLive: liveProbe })),
       counts: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },
@@ -3652,7 +3682,7 @@ app.get('/api/schedules/:id', (req, res) => {
   const found = findScheduleItem(req.params.id);
   if (!found) return res.status(404).json({ error: 'schedule not found' });
   const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50 }).reverse() : [];
-  res.json({ ...found, item: found.kind === 'once' ? withAfter(found.item) : found.item, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50, reader: notifReader(req) }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
+  res.json({ ...found, item: found.kind === 'once' ? ticketPresetName(withAfter(found.item)) : schedulePresetName(found.item), history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50, reader: notifReader(req) }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
 });
 
 // One schedule change, for the REST routes AND an applied Ask Worca schedule card — so the
