@@ -1,0 +1,39 @@
+{
+  "key": "toolchainApprove",
+  "displayName": "Toolchain: approve",
+  "description": "Shows the resolved toolchain plan as one question (Install all / Install selected / Skip) and writes approved.json with exactly the rows the user chose.",
+  "color": "amber",
+  "icon": "",
+  "agentFile": "toolchainApprove.md",
+  "runnerType": "producer",
+  "scope": "project",
+  "domain": "toolchains",
+  "fanOut": false,
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 99,
+  "promptHints": "",
+  "requiresSkills": [],
+  "requiresAssets": [],
+  "metaVersion": 2,
+  "inputs": [
+    {
+      "id": "plan",
+      "type": "json",
+      "required": true,
+      "as": "file"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "approved",
+      "type": "json",
+      "when": "always",
+      "filename": "toolchain-approved.json",
+      "store": "run",
+      "artifactKind": "approved"
+    }
+  ],
+  "portSummary": "Reads plan; produces approved."
+}

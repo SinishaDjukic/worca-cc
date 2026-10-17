@@ -1,0 +1,27 @@
+{
+  "key": "toolchainAskBootstrap",
+  "displayName": "Toolchain: ask to install mise",
+  "description": "mise is missing: asks the user once (Install / Skip) and writes their answer. Never decides for them.",
+  "color": "amber",
+  "icon": "",
+  "agentFile": "toolchainAskBootstrap.md",
+  "runnerType": "producer",
+  "scope": "project",
+  "domain": "toolchains",
+  "fanOut": false,
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 99,
+  "promptHints": "",
+  "requiresSkills": [],
+  "requiresAssets": [],
+  "metaVersion": 2,
+  "inputs": [
+    { "id": "bootstrap", "type": "json", "required": true, "as": "file" }
+  ],
+  "outputs": [
+    { "id": "decision", "type": "json", "when": "always", "filename": "toolchain-mise-decision.json", "store": "run", "artifactKind": "decision" }
+  ],
+  "portSummary": "Reads bootstrap; produces decision."
+}
