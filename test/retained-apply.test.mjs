@@ -16,6 +16,7 @@ import { lookupPipelineRow, retainedWorkFor, branchRecordsOf, recordArtifact } f
 import { updateBranchRecords } from '../src/core/checkout.mjs';
 import { applyRetainedWork } from '../src/core/pipeline-delete.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
+import { setCommitMessage } from '../src/core/settings.mjs';
 import { writeRunManifest, readRunManifest } from '../src/core/run-manifest.mjs';
 import { projectStorePath } from '../src/core/store.mjs';
 
@@ -42,6 +43,18 @@ async function retainedRun({ status = 'done', sameAsSource = false, runRootMode 
   return { repo, id, key, wt };
 }
 const recordOf = (key, id) => branchRecordsOf(lookupPipelineRow(key, id))[0][1];
+
+test('applies: the Commit message settings drop the "worca:" prefix and the Worca-Run trailer', async () => {
+  await setCommitMessage({ prefix: false, runTrailer: false });
+  try {
+    const { repo, id, key, wt } = await retainedRun();
+    const report = await applyRetainedWork({ key, id });
+    assert.equal(report.failed.length, 0, JSON.stringify(report));
+    const msg = git(repo, ['log', '-1', '--format=%B', wt.branch]).stdout.trim();
+    assert.equal(msg.split('\n')[0], 'Add login', msg);
+    assert.doesNotMatch(msg, /Worca-Run:/, msg);
+  } finally { await setCommitMessage(null); }
+});
 
 test('applies: commits on the branch, clears the stamp, releases the worktree, keeps the branch', async () => {
   const { repo, id, key, wt } = await retainedRun();

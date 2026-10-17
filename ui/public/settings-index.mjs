@@ -40,6 +40,7 @@ export const CARDS = Object.freeze([
   card('runs', 'network-proxy-settings-card', 'Network proxy', { alts: ['proxy', 'corporate proxy', 'ntlm', 'firewall', 'network'] }),
   card('runs', 'network-wait-settings-card', 'Wait for the network', { min: 'advanced', alts: ['offline', 'internet', 'connection', 'retry', 'wifi'] }),
   card('runs', 'run-limits-settings-card', 'Machine load', { min: 'advanced', alts: ['queue', 'concurrent', 'parallel', 'cpu', 'workers', 'retention', 'prune', 'disk', 'cleanup'] }),
+  card('runs', 'commit-message-settings-card', 'Commit message', { min: 'advanced', alts: ['git', 'commit', 'prefix', 'trailer', 'worca-run'] }),
   card('runs', 'actions-settings-card', 'Actions', { min: 'advanced', alts: ['ci', 'checks', 'github actions'] }),
   card('runs', 'pr-settings-card', 'Pull requests', { alts: ['pr', 'merge', 'github', 'review', 'draft'] }),
   card('runs', 'ws-scan-models-card', 'Workspaces', { min: 'advanced', alts: ['scan', 'workspace', 'monorepo'] }),

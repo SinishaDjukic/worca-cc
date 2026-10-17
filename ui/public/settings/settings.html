@@ -704,6 +704,33 @@
               </div>
             </section>
 
+            <!-- Commit message (commitMessage; commit-message.mjs buildRunCommitMessage): the "worca:" prefix and
+                 the Worca-Run trailer of the commit a run makes of its work. -->
+            <section class="card settings-card" id="commit-message-settings-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Commit message</h2>
+                  <button type="button" class="info-tip" aria-label="About the commit message">i<span class="tip-content hidden">
+                    When a run finishes, worca commits its work onto the run's branch. The message reads "worca: &lt;title&gt;", then a short summary and the changed files, and ends with a "Worca-Run: &lt;id&gt;" trailer. Turn the prefix off for a plain title, and the trailer off to leave the run id out.
+                  </span></button>
+                </div>
+              </div>
+              <div class="drows">
+              <label class="drow switch-drow" id="commitMessagePrefixRow">
+                <span class="drow-label">Start the message with "worca:"</span>
+                <span class="drow-control"><input id="commitMessagePrefix" data-setting="commitMessage.prefix" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
+              </label>
+              <label class="drow switch-drow" id="commitMessageRunTrailerRow">
+                <span class="drow-label">End the message with a Worca-Run trailer</span>
+                <span class="drow-control"><input id="commitMessageRunTrailer" data-setting="commitMessage.runTrailer" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
+              </label>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="commitMessageReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="commitMessageSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+            </section>
+
             <!-- Network proxy (docs/network-proxy.md, networkProxy.enabled): the corporate proxy Worca's local
                  proxy logs in to, and the saved login (domain, user, NT hash). The body is built by
                  settings-network-proxy.mjs; timeouts and the local port fold under "More". -->

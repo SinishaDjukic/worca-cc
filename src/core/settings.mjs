@@ -1290,6 +1290,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'sync',                                    // sync before run (#527) { beforeRun, remote, refreshMinutes, onDiverged }
   'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
   'runLimits',                               // Settings › Runs › Machine load { maxConcurrentRuns, testWorkers, keepRunsDays }
+  'commitMessage',                           // Settings › Runs › Commit message { prefix, runTrailer }
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
   'modelRoles',                              // Models › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
@@ -3231,4 +3232,40 @@ export async function setNetworkProxy(patch) {
   if (next !== undefined) settings.networkProxy = next; else delete settings.networkProxy;
   await persistSettings(settings);
   return networkProxySettings();
+}
+
+// ── Commit message (Settings › Runs › Commit message) ────────────────────────
+// The commit a run makes of its work (commit-message.mjs buildRunCommitMessage). `prefix` puts "worca: " in
+// front of the title; `runTrailer` adds the closing "Worca-Run: <id>" trailer. Both on unless turned off.
+export const DEFAULT_COMMIT_MESSAGE = Object.freeze({ prefix: true, runTrailer: true });
+
+/** Merge `v` over the defaults, keeping only valid keys. Pure. */
+export function normalizeCommitMessage(v) {
+  const o = isObj(v) ? v : {};
+  return Object.fromEntries(Object.keys(DEFAULT_COMMIT_MESSAGE)
+    .map((k) => [k, typeof o[k] === 'boolean' ? o[k] : DEFAULT_COMMIT_MESSAGE[k]]));
+}
+export function commitMessageSettings() { return normalizeCommitMessage(readSettings().commitMessage); }
+
+/** @throws {Error} on anything but a partial, valid commitMessage object (null / '' resets; a null key resets that key). */
+export function assertCommitMessageInput(patch) {
+  if (patch === null || patch === '') return;
+  if (!isObj(patch)) throw new Error('commitMessage must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (!Object.hasOwn(DEFAULT_COMMIT_MESSAGE, k)) throw new Error(`unknown commitMessage setting: ${k}`);
+    if (v !== null && typeof v !== 'boolean') throw new Error(`commitMessage.${k} must be true or false`);
+  }
+}
+
+export async function setCommitMessage(patch) {
+  assertCommitMessageInput(patch);
+  const settings = readSettings();
+  // Store only the keys someone set: a key left out follows the built-in default.
+  const prev = isObj(settings.commitMessage) ? settings.commitMessage : {};
+  const next = patch === null || patch === '' ? {}
+    : Object.fromEntries(Object.keys(DEFAULT_COMMIT_MESSAGE).filter((k) => typeof prev[k] === 'boolean').map((k) => [k, prev[k]]));
+  if (isObj(patch)) for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
+  if (Object.keys(next).length) settings.commitMessage = next; else delete settings.commitMessage;
+  await persistSettings(settings);
+  return commitMessageSettings();
 }

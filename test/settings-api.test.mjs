@@ -309,6 +309,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       sync: null,
       networkWait: null,
       runLimits: null,
+      commitMessage: null,
       actions: {},
       runEngine: null, stepModels: {}, utilityModels: {},   // cascading settings (Plan 2a): null / {} change nothing
       modelRoles: {},                                        // Models › Roles: {} changes nothing

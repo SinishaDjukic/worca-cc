@@ -16367,6 +16367,7 @@ async function loadSettings() {
     paintSyncSettings(data);
     paintNetworkWaitSettings(data);
     paintRunLimitsSettings(data);
+    paintCommitMessageSettings(data);
     paintSmartNamingSettings(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
@@ -17258,6 +17259,27 @@ document.getElementById('networkWaitSave')?.addEventListener('click', (e) => pos
 document.getElementById('networkWaitReset')?.addEventListener('click', (e) => postNetworkWait(
   { networkWait: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('networkWaitSave');
+
+// Settings › Runs › Commit message (commitMessage: commit-message.mjs buildRunCommitMessage).
+function paintCommitMessageSettings(data) {
+  const d = data && data.commitMessage;
+  const prefix = document.getElementById('commitMessagePrefix');
+  const trailer = document.getElementById('commitMessageRunTrailer');
+  if (!d || !prefix || !trailer) return;
+  prefix.checked = d.prefix !== false;
+  trailer.checked = d.runTrailer !== false;
+  settingsCardPainted('commitMessageSave');
+}
+function postCommitMessage(body, opts = {}) {
+  return postSettingsCard(body, { card: document.getElementById('commit-message-settings-card'), paint: paintCommitMessageSettings, dirty: settingsCardDirty('commitMessageSave'), ...opts });
+}
+document.getElementById('commitMessageSave')?.addEventListener('click', (e) => postCommitMessage({ commitMessage: {
+  prefix: document.getElementById('commitMessagePrefix').checked,
+  runTrailer: document.getElementById('commitMessageRunTrailer').checked,
+} }, { button: e.currentTarget }));
+document.getElementById('commitMessageReset')?.addEventListener('click', (e) => postCommitMessage(
+  { commitMessage: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
+settingsCardDirty('commitMessageSave');
 
 // Settings › Runs › Machine load (runLimits: run-slots.mjs, the agents' WORCA_TEST_CONCURRENCY, run-retention.mjs).
 function paintRunLimitsSettings(data) {

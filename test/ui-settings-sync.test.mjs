@@ -16,7 +16,8 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const BUILT_IN = { beforeRun: true, remote: 'origin', refreshMinutes: 10, onDiverged: 'ask' };
 const NET_DEFAULT = { enabled: true, maxWaitMin: 240 };
-const SETTINGS = { sync: BUILT_IN, networkWait: NET_DEFAULT, schedule: { ifMissed: 'run', graceMin: 60, maxFailures: 3 }, app: {}, theme: {}, chat: {} };
+const COMMIT_DEFAULT = { prefix: true, runTrailer: true };
+const SETTINGS = { sync: BUILT_IN, networkWait: NET_DEFAULT, commitMessage: COMMIT_DEFAULT, schedule: { ifMissed: 'run', graceMin: 60, maxFailures: 3 }, app: {}, theme: {}, chat: {} };
 
 async function boot({ settings = SETTINGS, postStatus = 200 } = {}) {
   const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
@@ -37,6 +38,7 @@ async function boot({ settings = SETTINGS, postStatus = 200 } = {}) {
           const next = body.sync === null ? {} : Object.fromEntries(Object.entries(body.sync).filter(([, v]) => v !== null));
           box.settings = { ...box.settings, sync: { ...BUILT_IN, ...next } };
         }
+        if ('commitMessage' in body) box.settings = { ...box.settings, commitMessage: { ...COMMIT_DEFAULT, ...(body.commitMessage || {}) } };
         if ('networkWait' in body) box.settings = { ...box.settings, networkWait: { ...NET_DEFAULT, ...(body.networkWait || {}) } };
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...box.settings }) });
       }
@@ -148,4 +150,28 @@ test('Wait for the network (Runs tab, Advanced): paints the stored value; Save p
   assert.deepEqual(posts.at(-1), { networkWait: null });
   assert.equal(doc.getElementById('networkWaitEnabled').checked, true);
   assert.equal(doc.getElementById('networkWaitMaxMin').value, '240');
+});
+
+test('Commit message (Runs tab, Advanced): paints the stored value; Save posts both fields; Use defaults posts commitMessage:null', async () => {
+  const { window, openSettings, posts, tick } = await boot({ settings: { ...SETTINGS, commitMessage: { prefix: false, runTrailer: true } } });
+  await openSettings();
+  const doc = window.document;
+  const card = doc.getElementById('commit-message-settings-card');
+  assert.ok(card.closest('.settings-pane[data-tab="runs"]'), 'on the Runs tab');
+  assert.equal(card.dataset.minLevel, 'advanced');
+  assert.equal(card.querySelector('h2').textContent.trim(), 'Commit message');
+  assert.equal(doc.getElementById('commitMessagePrefix').checked, false);
+  assert.equal(doc.getElementById('commitMessageRunTrailer').checked, true);
+
+  edit(window, doc.getElementById('commitMessagePrefix'), true);
+  edit(window, doc.getElementById('commitMessageRunTrailer'), false);
+  doc.getElementById('commitMessageSave').click();
+  await tick(); await tick();
+  assert.deepEqual(posts.at(-1), { commitMessage: { prefix: true, runTrailer: false } });
+
+  doc.getElementById('commitMessageReset').click();
+  await tick(); await tick();
+  assert.deepEqual(posts.at(-1), { commitMessage: null });
+  assert.equal(doc.getElementById('commitMessagePrefix').checked, true);
+  assert.equal(doc.getElementById('commitMessageRunTrailer').checked, true);
 });

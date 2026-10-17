@@ -107,7 +107,7 @@ import {
   actionsSettings, setActionsSettings, assertActionsInput,
   syncDefaults, setSyncDefaults, assertSyncSettingsInput, DEFAULT_SYNC_SETTINGS,
   networkWaitSettings, assertNetworkWaitInput, setNetworkWait, effectiveNetworkWait,
-  runLimits, assertRunLimitsInput, setRunLimits, autoTestWorkers,
+  runLimits, assertRunLimitsInput, setRunLimits, autoTestWorkers, assertCommitMessageInput, setCommitMessage,
   networkProxySettings, networkProxyEnabled, migrateCorporateProxyFlag,
   keepAwakeEnabled, setKeepAwake, assertKeepAwakeInput, migrateKeepAwakeFlag,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
@@ -8009,6 +8009,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasActionsKey = has('actions');
   const hasNetworkWaitKey = has('networkWait');
   const hasRunLimitsKey = has('runLimits');
+  const hasCommitMessageKey = has('commitMessage');
   const wsScanModels = hasWorkspaceScanKey ? (autoModels || defragModels || await listModels('')) : null;
   // #422: the title model is a SELECT over the catalog, so an id that is not a
   // catalog member is a client bug (or a stale option) — refuse it here rather
@@ -8111,6 +8112,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
     if (hasNetworkWaitKey) asSettingsField('networkWait', () => assertNetworkWaitInput(body.networkWait));
     if (hasRunLimitsKey) asSettingsField('runLimits', () => assertRunLimitsInput(body.runLimits));
+    if (hasCommitMessageKey) asSettingsField('commitMessage', () => assertCommitMessageInput(body.commitMessage));
     if (hasFlagsKey) asSettingsField('flags', () => checkFlags(body.flags));   // validate + cascade dry run, before anything is written
     if (has('tagDimensions')) asSettingsField('tagDimensions', () => {
       const { errors } = normaliseDimensions(body.tagDimensions ?? []);
@@ -8173,6 +8175,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('sync')) await setSyncDefaults(body.sync);
     if (hasNetworkWaitKey) await setNetworkWait(body.networkWait);
     if (hasRunLimitsKey) { await setRunLimits(body.runLimits); scheduleRunRetention(); }
+    if (hasCommitMessageKey) await setCommitMessage(body.commitMessage);
     if (has('tagDimensions')) await asSettingsField('tagDimensions', () => setUserTagDimensions(body.tagDimensions));
     if (has('enforceTags')) await asSettingsField('enforceTags', () => setUserEnforceTags(body.enforceTags));
     // Live runs re-evaluate their open question against the new night settings.
@@ -8182,7 +8185,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasCommitMessageKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
