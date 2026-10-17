@@ -2060,6 +2060,23 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .wiz-models{border-left:1px solid var(--line);padding-left:24px;}
 .wiz-models-title{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);margin:2px 0 12px;}
 .wiz-model-pair{display:grid;grid-template-columns:minmax(0,1fr) 108px;gap:8px;}
+/* Import (Add… / paste): what a pick or a paste found, as rows like the project list's. */
+.wiz-import{display:flex;flex-direction:column;gap:8px;margin-top:12px;}
+.wiz-import-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.wiz-import-bar .hint{margin-top:0;}
+.wiz-import-lead{font-size:12.5px;color:var(--ink-2);}
+.wiz-import-deep{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:12.5px;color:var(--ink-2);cursor:pointer;}
+.wiz-import-deep input{margin:0;cursor:pointer;}
+.wiz-import-paste{min-height:58px;font-family:var(--mono);font-size:12.5px;}
+.wiz-import-paste::placeholder{color:var(--ink-2);}   /* ink-3 misses 4.5:1 on the grey field (theme proof) */
+.wiz-import-list[hidden]{display:none;}
+#wiz-import-list{max-height:min(36vh,320px);overflow-y:auto;}
+.wiz-import-row{flex-wrap:wrap;}
+.wiz-import-why{flex-basis:100%;padding-left:24px;font-size:12px;color:var(--ink-2);}
+.wiz-import-row[data-status="problem"] .wiz-import-why{color:var(--red-ink);}
+/* A problem row's box is disabled, and .opt-row:has(input:disabled) fades the whole row to .55:
+   keep its red reason readable. */
+.opt-row.wiz-import-row[data-status="problem"]{opacity:1;}
 @media (max-width:760px){.wiz-grid{grid-template-columns:1fr;}.wiz-models{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:16px;}}
 
 /* Live scan loader (role=status aria-live=polite). */

@@ -1288,7 +1288,22 @@
                       <label class="wiz-select-all"><input type="checkbox" id="wiz-select-all" /> Select all</label>
                     </div>
                     <div class="wiz-proj-list" id="wiz-projects"></div>
-                    <small class="hint" id="wiz-step1-hint">Onboard at least two projects to create a workspace.</small>
+                    <!-- Import: repositories that are not projects yet. Scan registers the ticked new rows first. -->
+                    <div class="wiz-import">
+                      <div class="wiz-import-bar">
+                        <button type="button" id="wiz-import-add" class="btn btn-ghost btn-mini">Add…</button>
+                        <span class="wiz-import-lead">repositories, a folder of repositories or a <code>.code-workspace</code> file</span>
+                        <label class="wiz-import-deep"><input type="checkbox" id="wiz-import-deep" /> Look two levels deep</label>
+                      </div>
+                      <textarea id="wiz-import-paste" class="textarea wiz-import-paste" rows="2" spellcheck="false"
+                        aria-label="Paths to add, one per line" placeholder="…or paste paths, one per line"></textarea>
+                      <div class="wiz-import-bar">
+                        <button type="button" id="wiz-import-paste-add" class="btn btn-ghost btn-mini">Add paths</button>
+                        <small class="hint" id="wiz-import-hint" role="status" aria-live="polite"></small>
+                      </div>
+                      <div class="wiz-proj-list wiz-import-list" id="wiz-import-list" role="group" aria-label="Found repositories" hidden></div>
+                    </div>
+                    <small class="hint" id="wiz-step1-hint">Pick at least two projects, or bring repositories in with Add… or the paste box above.</small>
                     <div class="wiz-size-note" id="wiz-size-note" role="status" aria-live="polite" hidden></div>
                   </div>
                 </div>
