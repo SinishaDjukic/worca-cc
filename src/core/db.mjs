@@ -28,6 +28,8 @@ import { GRAPH_PRESENTATION_WORKFLOW, presentationGraphFingerprint, PRESENTATION
   from './graph/presentation-workflow.mjs';
 import { GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS }
   from './graph/architecture-workflow.mjs';
+import { GRAPH_PROMO_VIDEO_WORKFLOW, promoVideoGraphFingerprint, PROMO_VIDEO_SHIPPED_FINGERPRINTS }
+  from './graph/promo-video-workflow.mjs';
 
 const _require = createRequire(import.meta.url);
 let _DatabaseSync; // cached node:sqlite DatabaseSync ctor (lazy-loaded once)
@@ -60,7 +62,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 61;
+export const SCHEMA_VERSION = 62;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -845,7 +847,7 @@ const INCREMENTAL_COLUMNS = {
                             // Shaper D28, no version of their own (-4-slices owns v57); reconcileSchema adds them
                             shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
                             run_size: 'TEXT',     // small|medium|large from the run's changed lines/files; NULL = unknown
-                            run_setup: 'TEXT' },  // v61 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v61, a CLI start or a scan
+                            run_setup: 'TEXT' },  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start or a scan
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -1065,7 +1067,7 @@ CREATE TABLE IF NOT EXISTS run_tag_events (
 CREATE INDEX IF NOT EXISTS idx_run_tag_events_pipeline ON run_tag_events (pipeline_id, id);
 `;
 
-// v60 (#712): run presets — named New run setups (src/core/run-presets-store.mjs). Names are unique per owner
+// v61 (#712): run presets — named New run setups (src/core/run-presets-store.mjs). Names are unique per owner
 // (created_by; NULL on a local install), ignoring case.
 const RUN_PRESETS_DDL = `
 CREATE TABLE IF NOT EXISTS run_presets (
@@ -1622,6 +1624,11 @@ function applySchemaV55(db) {
   seedShippedWorkflow(db, GRAPH_ARCHITECTURE_WORKFLOW);
 }
 
+/** v60: seed the shipped Promo video workflow — V41's shape for a third shipped graph. */
+function applySchemaV60(db) {
+  seedShippedWorkflow(db, GRAPH_PROMO_VIDEO_WORKFLOW);
+}
+
 /** INSERT OR IGNORE one shipped v2 workflow row (see applySchemaV41). */
 function seedShippedWorkflow(db, t) {
   if (!presentationSeedable(db)) return;
@@ -1660,6 +1667,11 @@ function refreshPresentationSeed(db) {
 /** The Architecture (C4) seed's refresh — the same rules, its own shipped shapes. */
 function refreshArchitectureSeed(db) {
   refreshShippedSeed(db, GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS);
+}
+
+/** The Promo video seed's refresh — the same rules, its own shipped shapes. */
+function refreshPromoVideoSeed(db) {
+  refreshShippedSeed(db, GRAPH_PROMO_VIDEO_WORKFLOW, promoVideoGraphFingerprint, PROMO_VIDEO_SHIPPED_FINGERPRINTS);
 }
 
 function refreshShippedSeed(db, t, fingerprint, shipped) {
@@ -2239,8 +2251,12 @@ export function migrate(db) {
     if (current < 57) db.exec(SHAPE_SLICES_DDL);     // Shape it first: sliced features + Plans
     // v58 (D24): shape_features ship columns, shape_feature_slices.draft_pr_url — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 59) db.exec(RUN_TAGS_DDL);         // run tags + tag-edit audit (#718); 57-58 are Shaper's (#708, #730)
-    if (current < 60) db.exec(RUN_PRESETS_DDL);      // run presets (#712)
-    // v61 (#712 slice 2): pipelines.run_setup — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // The shipped Promo video workflow: one-shot seed at its own rung, refresh on every bump
+    // (the Presentation seed's two halves, above).
+    if (current < 60) applySchemaV60(db);
+    if (current < 61) db.exec(RUN_PRESETS_DDL);      // run presets (#712)
+    if (current < SCHEMA_VERSION) refreshPromoVideoSeed(db);
+    // v62 (#712 slice 2): pipelines.run_setup — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

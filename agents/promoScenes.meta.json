@@ -1,0 +1,62 @@
+{
+  "key": "promoScenes",
+  "metaVersion": 2,
+  "mockRole": "generic-producer",
+  "promptHints": "Build promo/film/scenes/<id>.js (and .css) for every timeline scene against promo-kit/CONTRACT.md, drafted by one sub-agent per scene group; rebuild data.js, then fix every snap violation and fluency problem. Pipeline directory: {pipelineDir}. Cycle: {cycle}.",
+  "inputs": [
+    {
+      "id": "storyboard",
+      "type": "md"
+    },
+    {
+      "id": "timeline",
+      "type": "json"
+    },
+    {
+      "id": "plates",
+      "type": "json"
+    },
+    {
+      "id": "mascot",
+      "type": "md",
+      "required": false
+    },
+    {
+      "id": "fixes",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "as": "fix-review",
+      "directive": "## Fix cycle\n\nAddress EVERY critical and major finding in the review named below. Change only the scene files those findings name; keep every other scene byte-identical; rebuild data.js, re-run snap and fluency, and list what changed under \"Changed this cycle\" in your report."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "film",
+      "type": "md",
+      "filename": "promo-film-cycle{cycle}.md",
+      "artifactKind": "promo-film",
+      "extraFiles": [
+        {
+          "kind": "promo-sheet",
+          "glob": "promo/film-sheet.jpg"
+        }
+      ]
+    }
+  ],
+  "domain": "video",
+  "displayName": "Promo: scenes",
+  "description": "Animates the film scene by scene on the kit: the real UI plates, the mascot crew, captions and chapter cards, every beat synced to the narrated words. Checks its own frames for pops, flashes, frozen holds and blank frames.",
+  "color": "green",
+  "icon": "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"1.5\"/><path d=\"M7 5v14M17 5v14M3 9h4M3 15h4M17 9h4M17 15h4\"/><path d=\"M10.5 9.5v5l4-2.5z\" stroke-linejoin=\"round\"/>",
+  "agentFile": "worca-cc-promo-scenes.md",
+  "requiresAssets": [
+    "promo-kit"
+  ],
+  "runnerType": "producer",
+  "fanOut": true,
+  "asksQuestions": false,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 76
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "silent-skips",
+      "name": "Silent video: no voices, no network",
+      "cwd": { "kind": "scratch" },
+      "inputs": {
+        "answers": { "text": "{\"form\":\"promo-setup\",\"version\":1,\"values\":{\"audio\":\"Silent video\",\"voiceGender\":\"Either\"}}" }
+      },
+      "expect": { "verdict": "clean", "fired": ["voices"], "summaryIncludes": "skipped (silent video)" }
+    },
+    {
+      "id": "defaults-silent",
+      "name": "No setup values: the default is a silent video",
+      "cwd": { "kind": "scratch" },
+      "inputs": {
+        "answers": { "text": "{}" }
+      },
+      "expect": { "verdict": "clean", "fired": ["voices"], "summaryIncludes": "skipped (silent video)" }
+    }
+  ]
+}

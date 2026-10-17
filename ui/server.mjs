@@ -11247,7 +11247,7 @@ async function snapshotFor(setup, basis) {
 }
 
 /**
- * The run's setup for pipelines.run_setup (v61): the normalized body's preset keys as full picks for the run's own
+ * The run's setup for pipelines.run_setup (v62): the normalized body's preset keys as full picks for the run's own
  * target — the value Save setup as preset stores. Never blocks a start: any failure (or > 32 KB) keeps nothing.
  */
 async function runSetupOf(normalized, basis) {
@@ -11321,7 +11321,7 @@ async function runPresetScope(kind, target) {
   return presetScopeOf({ kind: 'workspace', workspaceId: target.ref });
 }
 
-// Save setup as preset (slice 2): the setup a run kept at start (pipelines.run_setup, v61), saved into the viewer's own presets.
+// Save setup as preset (slice 2): the setup a run kept at start (pipelines.run_setup, v62), saved into the viewer's own presets.
 app.get('/api/pipelines/:id/setup', requireFlag('runPresets'), (req, res) => {
   const run = readRunSetup(req.params.id);
   if (run === undefined) return res.status(404).json({ error: 'run not found' });

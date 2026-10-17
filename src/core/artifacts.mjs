@@ -1144,7 +1144,7 @@ export async function readPromptFile(projectDir, promptFile) {
  * @param {string} [opts.sourceType]  'prompt' | 'markdown' | 'plugin' (defaults derived)
  * @param {object} [opts.sourceMeta]  { plugin, sourceId, taskId, url, title } | null
  * @param {string} [opts.guardrailsId] the run's selected guardrail set id (per-run)
- * @param {string|null} [opts.runSetup] JSON of the run's setup (pipelines.run_setup, v61); never on the state object
+ * @param {string|null} [opts.runSetup] JSON of the run's setup (pipelines.run_setup, v62); never on the state object
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store

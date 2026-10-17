@@ -101,8 +101,8 @@ export function deletePreset(id, { owner = null } = {}) {
 const PIPELINE_ID_RE = /^[A-Za-z0-9._-]{1,160}$/;
 
 /**
- * The setup a run kept at start (pipelines.run_setup, v61). undefined when there is no such run; `setup: null` for a
- * run started before v61, by the CLI, or a scan (and for a corrupt value). `target` is the run's own project/workspace.
+ * The setup a run kept at start (pipelines.run_setup, v62). undefined when there is no such run; `setup: null` for a
+ * run started before v62, by the CLI, or a scan (and for a corrupt value). `target` is the run's own project/workspace.
  */
 export function readRunSetup(pipelineId) {
   if (typeof pipelineId !== 'string' || !PIPELINE_ID_RE.test(pipelineId) || pipelineId.includes('..')) return undefined;

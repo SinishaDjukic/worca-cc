@@ -28,6 +28,7 @@ import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared
 import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-meta.mjs';
 import { probePython } from './graph/python-probe.mjs';
+import { mediaToolProblems } from './graph/media-preflight.mjs';
 import { mockEnabled } from './claude-runner.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { checkPlan } from './shape/check.mjs';
@@ -207,6 +208,7 @@ export class GraphOrchestrator extends RunHarness {
     }
     this._preflightScriptKeys(this.resolved.scriptKeys);
     await this._preflightScriptRuntimes();
+    await this._preflightMediaTools();
     // The manifest is built from the RESOLVED template, the resolver's registry
     // slice and its EFFECTIVE per-node/per-wire values (P2 contract): the run
     // monitor shows exactly what the engine will run.
@@ -618,6 +620,7 @@ export class GraphOrchestrator extends RunHarness {
     this._preflightAgentKeys(this.resolved.agentKeys);
     this._preflightScriptKeys(this.resolved.scriptKeys);
     await this._preflightScriptRuntimes();
+    await this._preflightMediaTools();
     this.state.stepper = manifest;
     // PR #434 review, finding 3: the pending proposal is kept until HERE. A throw before the
     // workflowId swap above (mintAutoWorkflowId, writeGraphWorkflow, resolveGraph) unwinds
@@ -834,6 +837,20 @@ export class GraphOrchestrator extends RunHarness {
     const probe = await probePython();
     if (probe.ok) return;
     throw new Error(keys.map((key) => pythonMissingSentence(key)).join('\n'));
+  }
+
+  /**
+   * Promo video spec §Preflight: a card that drives a browser or encodes video (promoCapture,
+   * promoRender) needs Chrome and ffmpeg on THIS host — checked here, beside the Python preflight and
+   * by the same mock rule, so a host without them is refused with one line per missing tool and its
+   * install hint instead of failing an hour into the run. `opts.mediaTools` injects the lookups (tests).
+   */
+  async _preflightMediaTools() {
+    const lines = await mediaToolProblems(this.resolved?.nodeCtx, {
+      mocked: mockEnabled({ mock: this.claude?.mock }),
+      tools: this.opts?.mediaTools || null,
+    });
+    if (lines.length) throw new Error(lines.join('\n'));
   }
 
   // ── hook 2: run the graph ──────────────────────────────────────────────────
@@ -2739,6 +2756,7 @@ export class GraphOrchestrator extends RunHarness {
     this._preflightAgentKeys(this.resolved.agentKeys);
     this._preflightScriptKeys(this.resolved.scriptKeys);
     await this._preflightScriptRuntimes();
+    await this._preflightMediaTools();
     // Prompt bodies + frontmatter tools: the one thing the manifest never carries.
     const cache = new Map();
     for (const nc of Object.values(this.resolved.nodeCtx)) {
