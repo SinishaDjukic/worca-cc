@@ -266,6 +266,17 @@ function killTree(child, signal = 'SIGTERM') {
   try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch { /* gone */ } }
 }
 
+/** POSIX: wait until no process of the child's group is left, at most `ms` — a signalled grandchild still holds its
+ *  port until it has died. A zombie still counts, so the wait stays bounded. win32: taskkill /T /F has already waited. */
+async function treeGone(child, ms = 3000) {
+  if (!child || process.platform === 'win32') return;
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    try { process.kill(-child.pid, 0); } catch (e) { if (e.code === 'ESRCH') return; }   // EPERM: still there
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 /**
  * argv for spawn (never a shell string): on win32 a .cmd/.bat shim (npm, npx, pnpm…) can only run through cmd.exe,
  * so it becomes `cmd.exe /d /s /c "<quoted line>"` with verbatim arguments; everything else is spawned directly.
@@ -283,7 +294,8 @@ export function spawnArgv(cmd, args = [], { env = process.env, platform = proces
  * Start the app under test in a sandbox and wait until `readyUrl` answers (any status < 500).
  * - argv array (no shell); `$PORT` / `${PORT}` in args and readyUrl become the port; env PORT is set too
  * - HOME / USERPROFILE (and APPDATA/LOCALAPPDATA, XDG_* dirs) point into a fresh temp dir unless `env` provides HOME
- * - stop() kills the whole process tree (POSIX process group; win32 taskkill /T /F) and removes the temp HOME
+ * - stop() kills the whole process tree (POSIX process group; win32 taskkill /T /F), returns once it is gone (its port is
+ *   free; POSIX waits at most 3 s) and removes the temp HOME
  * @returns {Promise<{url:string, port:number, home:string, pid:number, output:()=>string, stop:()=>Promise<void>}>}
  */
 export async function startApp({ cmd, args = [], cwd, env = {}, port, readyUrl, timeoutMs = 120000, onOutput } = {}) {
@@ -328,6 +340,7 @@ export async function startApp({ cmd, args = [], cwd, env = {}, port, readyUrl, 
         if (t === 'timeout') { killTree(child, 'SIGKILL'); await Promise.race([exited, new Promise((r) => setTimeout(r, 3000).unref())]); }
       }
       killTree(child, 'SIGKILL');   // POSIX: reap a grandchild that outlived its parent (the group stays addressable)
+      await treeGone(child);        // ...and return once it has died, so its port is free
       if (!own) { try { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* locked on Windows: leave it */ } }
     },
   };
