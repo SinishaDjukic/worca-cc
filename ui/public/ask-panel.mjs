@@ -10,6 +10,7 @@ import { formatInstant, describeRule } from '../../src/shared/schedule/recurrenc
 import { createThreadModel } from './ask-model.mjs';
 import { credentialBadge } from './credential-badges.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
+import { createRefChips } from './ask-ref-chips.mjs';
 import { createDotOrbs, turnPhase } from './dot-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
 import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
@@ -273,6 +274,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   };
   const el = {}; // element refs, filled by the builders
   const renderer = createMarkdownRenderer({ doc, load: loadMarkdown, hljsLoader });
+  // Answer chips (ask-ref-chips.mjs): the PRs, issues, work items, runs and chats an answer names. The run chips follow
+  // the run store like the run cards; lookups go out once an answer is done (renderAnswerPiece).
+  const refChips = createRefChips({ doc, fetch, runStore, now, root: () => el.transcript || null });
   const orbs = createDotOrbs({ doc, win });   // the live turn's orb (ensureThinking), the Workflows chat's dot sphere
 
   // ---- storage --------------------------------------------------------------
@@ -5933,6 +5937,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       div.classList.add('ask-md');
       div.classList.remove('ask-answer-plain');
       div.replaceChildren(out.frag);
+      refChips.decorate(div, { live: isLive });
       if (!isLive) renderer.highlight(div); // fire-and-forget; §10.5: highlight on done
     } else {
       div.classList.add('ask-answer-plain');
@@ -6638,6 +6643,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (clearRo) { clearRo.disconnect(); clearRo = null; }
     if (st.runTick) { clearInterval(st.runTick); st.runTick = null; }
     if (st.runUnsub) { try { st.runUnsub(); } catch { /* ignore */ } st.runUnsub = null; }
+    refChips.destroy();
     pruneCardEls();                                  // every card graph mount and its ResizeObserver goes with the sheet
     destroyAddons();
     st.queues.clear();
