@@ -23,6 +23,7 @@ import { worcaHome } from './projects.mjs';
 import { parseRemoteUrl } from './git-info.mjs';
 import { forgeOf } from './forge.mjs';
 import { mapWithCap } from './fanout.mjs';
+import { gitAvailable, gitMissingResult } from './git-available.mjs';
 
 export const INTERACTIVE_TTL_MS = 45_000;
 export const INTERACTIVE_TIMEOUT_MS = 8_000;
@@ -104,7 +105,7 @@ function defaultRun(args, { cwd, timeoutMs = LOCAL_TIMEOUT_MS, env = null } = {}
     child.on('close', (code) => { liveGroups.delete(child.pid); finish({ ok: code === 0, stdout, stderr, code: code ?? -1, timedOut: false }); });
   });
 }
-let _run = defaultRun;
+let _runner = defaultRun; const _run = (args, o) => (gitAvailable() ? _runner(args, o) : Promise.resolve({ ...gitMissingResult(), timedOut: false }));
 const inflight = new Map();   // `${realpath}\0${remote}` -> Promise<fetch result>
 // Negative cache: a failed fetch does not refresh FETCH_HEAD, so without this every
 // interactive caller offline would wait the full timeout again. Only callers that
@@ -934,8 +935,8 @@ export const _testing = {
   defaultRun,
   QUIET_ENV,
   NETWORK_CMDS,
-  setRunner(fn) { _run = typeof fn === 'function' ? fn : defaultRun; },
-  reset() { _run = defaultRun; inflight.clear(); failed.clear(); ownFetch.clear(); lastGood.clear(); },
+  setRunner(fn) { _runner = typeof fn === 'function' ? fn : defaultRun; },
+  reset() { _runner = defaultRun; inflight.clear(); failed.clear(); ownFetch.clear(); lastGood.clear(); },
   /** Forget this process's fetch memory only (simulates another process; the runner stays). */
   forgetProcess() { inflight.clear(); failed.clear(); ownFetch.clear(); lastGood.clear(); },
 };

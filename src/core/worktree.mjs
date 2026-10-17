@@ -26,6 +26,7 @@ import { runRootMode } from './settings.mjs';
 import {
   readRunManifest, rmGuarded, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo,
 } from './run-manifest.mjs';
+import { gitAvailable, gitMissingResult } from './git-available.mjs';
 
 const WORKTREES_DIRNAME = join('.worca-cc', 'worktrees');
 const BRANCH_PREFIX = 'worca-cc/';
@@ -54,6 +55,7 @@ const SLOW_GIT_TIMEOUT_MS = 120_000;
  *  `env` is MERGED OVER process.env (never a replacement): the git binary and the
  *  credential helper need PATH/HOME. Only the Ask Worca callers pass it. */
 function git(cwd, args, { signal, timeout = 30_000, env, maxBytes = 0 } = {}) {
+  if (!gitAvailable()) return Promise.resolve(gitMissingResult());
   return new Promise((res) => {
     let child;
     try {

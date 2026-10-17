@@ -323,6 +323,7 @@ workflow to stdout instead. Commit and push the file afterwards.
 ## Requirements
 
 - **git ≥ 2.31** on every machine that records or reads team metrics.
+- Without git on the machine, **Set up team metrics…** answers `git is not installed on this machine` inside its dialog, and discovery and pushes wait until git is installed.
 - Metrics commits and pushes **bypass the repository's client hooks and commit signing** — the
   metrics git worktree shares `.git/hooks` (and `core.hooksPath`) with the project, so every
   metrics git command runs with an empty `core.hooksPath` and `commit.gpgsign=false` /

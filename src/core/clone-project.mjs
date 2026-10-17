@@ -18,6 +18,7 @@ import { join, resolve, sep } from 'node:path';
 import { githubEnv } from './github-credentials.mjs';
 import { gitEnvFor } from './host-credentials.mjs';
 import { isAzureHost, parseAzurePath } from '../shared/azure-remote.mjs';
+import { gitAvailable, GIT_MISSING } from './git-available.mjs';
 
 export const CLONE_TIMEOUT_MS = 10 * 60_000;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
@@ -119,6 +120,7 @@ function classify(stderr, host = 'github.com') {
 
 /** Run `git clone` for a plan. Resolves the plan; rejects with CloneError after removing the folder. */
 export async function runClone(plan, { timeoutMs = CLONE_TIMEOUT_MS, credential = githubEnv, spawnImpl = spawn } = {}) {
+  if (!gitAvailable()) throw new CloneError('git-missing', GIT_MISSING.message);
   // Each host gets ITS read credential for this one command (gitEnvFor); GitHub keeps the injectable seam.
   const cred = await gitEnvFor('read', plan.url, { githubEnvImpl: credential });
   if (cred.error) throw new CloneError('auth-failed', cred.error);

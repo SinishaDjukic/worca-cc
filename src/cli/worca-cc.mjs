@@ -52,6 +52,7 @@ import {
 } from '../core/ui-instance.mjs';
 import { useEnvProxy, proxyNotice } from '../core/env-proxy.mjs';
 import { startEgressPolicy, egressNotice } from '../core/egress-policy.mjs';
+import { gitState, gitAvailable, GIT_MISSING } from '../core/git-available.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -1368,6 +1369,7 @@ async function cmdResume(argv) {
     process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes] [--engine <name>] [--model <id> [--effort <e>]] [--allow-unguarded-engine] [--ignore-cost-cap] [--past-team-cap [--reason "<why>"]]\n');
     return 1;
   }
+  if (!gitAvailable()) { process.stderr.write(`worca: ${GIT_MISSING.message}\n`); return 1; }   // replaced by P1a (resume reads state.workMode)
   const mock = argv.includes('--mock');
   const auto = argv.includes('--yes') || argv.includes('--non-interactive');
   const ignoreCap = argv.includes('--ignore-cost-cap');
@@ -3243,6 +3245,7 @@ async function main() {
   // Only problems are printed: stdout belongs to the subcommand (some emit JSON).
   const proxyLine = proxyNotice(useEnvProxy());
   if (proxyLine?.level === 'warn') process.stderr.write(`worca: ${proxyLine.text}\n`);
+  const argv2 = process.argv.slice(2); if (argv2[0] !== 'ui' && argv2[0] !== 'help' && !argv2.includes('--ui')) await gitState();
   const sub = process.argv[2];
   // `worca help` is what every CLI user types first; it is not a subcommand and
   // not a near-miss of one, so without this line it became a PROMPT and ran a
@@ -3329,6 +3332,7 @@ async function main() {
       fail('Provide a task with --prompt "<text>" or --file <markdown>. See --help.');
     }
   }
+  if (!gitAvailable()) fail(GIT_MISSING.message);   // replaced by P1a (workModeForStart): a Folder run needs no git
 
   const projectDir = resolve(flags.project);
   // A NAMED --file must be readable BEFORE anything starts. The readers used to

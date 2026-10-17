@@ -19,6 +19,7 @@ import { normalizeManifest, findEscapingSymlinks } from './plugin-manifest.mjs';
 import { githubEnv } from './github-credentials.mjs';
 import { withAzureToken, readAzureCredentials } from './azure-credentials.mjs';
 import { mcpUpdatePreview } from './mcp/plugin-lifecycle.mjs';
+import { gitAvailable, gitMissingError } from './git-available.mjs';
 
 const execFileP = promisify(execFile);
 
@@ -130,6 +131,7 @@ async function tipSha(cache, ref, exec) {
  *   warnings:string[], marketplace:{name:string, description:string}|null}}
  */
 export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null } = {}) {
+  if (!gitAvailable()) throw gitMissingError();
   // `owner/repo` shorthand -> GitHub URL (spec §4.3) — only when it is not a
   // real local path (local fixture repos in tests stay untouched).
   if (/^[\w.-]+\/[\w.-]+$/.test(repoUrl) && !existsSync(repoUrl)) {
@@ -316,6 +318,7 @@ async function computeManifestDelta(name, cache, entry, pinnedSha, candidateSha,
  * Read-only; performing the update is Task 5's updatePlugin.
  */
 export async function fetchCandidate(name, { exec = defaultExec, fullDiff = false } = {}) {
+  if (!gitAvailable()) throw gitMissingError();
   const entry = readPluginsLock()[name];
   if (!entry || !entry.repo) throw new Error(`plugin "${name}" is not installed from a repo`);
   const cache = await ensureCache(entry.repo, exec);
@@ -353,6 +356,7 @@ export async function fetchCandidate(name, { exec = defaultExec, fullDiff = fals
  * @returns {Promise<{versionDir:string, warnings:string[]}>}
  */
 export async function exportVersion(name, sha, { exec = defaultExec, repoUrl, subdir } = {}) {
+  if (!gitAvailable()) throw gitMissingError();
   const entry = readPluginsLock()[name] || {};
   const repo = repoUrl ?? entry.repo;
   const sub = subdir ?? entry.subdir ?? '';

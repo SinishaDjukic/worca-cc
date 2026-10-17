@@ -701,8 +701,15 @@ Requirements:
 
 - **Node.js >= 22.13.0** — the store is the built-in `node:sqlite`; on an older
   Node the CLI says so and exits.
-- **git** — every run, mock included, works in its own git worktree. The
-  GitHub CLI (`gh`) is optional: it opens pull requests and issues.
+- **git** — runs, pull requests, Check out, Sync and Clone from URL need it
+  (on Windows, Git for Windows' `git.exe` on `PATH`). Without git — on macOS,
+  without the Xcode Command Line Tools — worca still opens and never runs git:
+  it hides the branch, pull-request, Sync and Clone controls, a run start
+  answers `git is not installed on this machine`, and Workspaces, Marketplace,
+  Team metrics and Team policy stay but answer the same when an action needs
+  git; installing git brings everything back without a restart. `WORCA_GIT=0`
+  hides them on purpose, `WORCA_GIT=1` skips the check. The GitHub CLI (`gh`)
+  is optional: it opens pull requests and issues.
 - **The [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI**
   (`claude`) on your `PATH` and signed in (`claude`, then `/login`; an
   `ANTHROPIC_API_KEY` works too) — for real runs only; mock mode starts no

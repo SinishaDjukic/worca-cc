@@ -10,12 +10,13 @@ import { worcaHome, listProjects } from '../projects.mjs';
 import { projectKey, canonicalProjectRoot } from '../store.mjs';
 import { listRemotes, parseRemoteUrl } from '../git-info.mjs';
 import { gitEnvFor, githubOnlyEnv, hostLookupNeeded, stripHostCredentials } from '../host-credentials.mjs';
+import { gitAvailable, gitMissingResult, gitMissingError, onGitChange } from '../git-available.mjs';
 
 const NETWORK_GIT = new Set(['fetch', 'push', 'ls-remote', 'clone', 'pull']);
 
 /** The URL of origin in `cwd`, or '' (no cwd, no origin, not a repo). */
 async function originUrl(cwd) {
-  if (!cwd) return '';
+  if (!cwd || !gitAvailable()) return '';
   try {
     return await new Promise((ok) => execFile('git', ['remote', 'get-url', 'origin'], { cwd, timeout: 10_000 }, (e, out) => ok(e ? '' : String(out).trim())));
   } catch { return ''; }
@@ -124,7 +125,7 @@ async function defaultGit(cwd, args, { timeoutMs = 60_000, env = null } = {}) {
     }));
   });
 }
-let _git = defaultGit;
+let _gitImpl = defaultGit; const _git = (cwd, args, o) => (gitAvailable() ? _gitImpl(cwd, args, o) : Promise.resolve(gitMissingResult()));
 export function runGit(cwd, args, opts) { return _git(cwd, args, opts); }
 
 function metricsError(code, message, extra = {}) {
@@ -483,6 +484,7 @@ export async function resolveWorkspaceSink(workspaceId, { discover = true } = {}
 export async function ensureWorktree(slug, projectDir) {
   const dir = worktreePath(slug);
   if (existsSync(dir)) {
+    if (!gitAvailable()) return dir;   // no git: a health check that cannot run finds no broken checkout — keep the cache
     const top = await _git(dir, ['rev-parse', '--show-toplevel'], { timeoutMs: 10_000 });
     let healthy = false;
     // .native on both sides: JS realpathSync keeps the caller's case, git reports the on-disk case
@@ -582,6 +584,7 @@ async function validateDelegateTarget(delegateTo, ownSlug) {
  * @returns {Promise<{action:'created'|'joined'|'changed', slug:string, config:object|null}>}
  */
 export async function enableTeamMetrics(projectDir, { mode = 'here', attribution = 'git-user', delegateTo = null, change = false, now = new Date(), by = null } = {}) {
+  if (!gitAvailable()) throw gitMissingError();
   if (mode !== 'here' && mode !== 'delegate') throw metricsError('BAD_REQUEST', `mode must be "here" or "delegate"`);
   const { slug, hasOrigin } = await projectSlug(projectDir);
   if (!hasOrigin) throw metricsError('NO_ORIGIN', 'this project has no origin remote — team metrics push to origin, so there is nowhere to record');
@@ -1012,7 +1015,7 @@ export async function projectMetricsStatus(p, { discover = false, recordsBySink 
   // refuses it) or a git repo without an origin remote (setup would fail NO_ORIGIN).
   // Only undiscovered projects pay for these git spawns; discovered ones carry the
   // answer in prefs.
-  if (status.hasOrigin == null && p.exists) {
+  if (status.hasOrigin == null && p.exists && gitAvailable()) {
     if (!isGitRepo(p.path)) { status.hasOrigin = false; status.noGit = true; }
     else {
       const { hasOrigin, slug } = await projectSlug(p.path);
@@ -1143,27 +1146,36 @@ export async function routeWorkspaceMembers(workspaceId) {
   return { home: sink.slug, results };
 }
 
+/** The background loop's git gate: discovery and the outbox flush run git; the local sweeps do not. */
+export function metricsLoopCanSync() { return gitAvailable(); }
+
 /** UI server: discovery + flush on start, then hourly (§4.5, §4.6). Returns a stop function. */
 export function startTeamMetricsBackground({ log = (m) => console.warn(m) } = {}) {
   const tick = async (force) => {
-    try { await discoverAll({ force }); } catch (err) { log(`[worca-ui] team metrics discovery: ${err?.message || err}`); }
+    if (metricsLoopCanSync()) {
+      try { await discoverAll({ force }); } catch (err) { log(`[worca-ui] team metrics discovery: ${err?.message || err}`); }
+    }
     try { await sweepOutboxRetention(); } catch { /* best-effort */ }
     try { sweepRunLedger(); } catch { /* best-effort: one file per run would otherwise accumulate forever */ }
-    try { for (const slug of await listOutboxSlugs()) if ((await listOutbox(slug)).length) scheduleFlush(slug); }
-    catch (err) { log(`[worca-ui] team metrics flush: ${err?.message || err}`); }
+    if (metricsLoopCanSync()) {
+      try { for (const slug of await listOutboxSlugs()) if ((await listOutbox(slug)).length) scheduleFlush(slug); }
+      catch (err) { log(`[worca-ui] team metrics flush: ${err?.message || err}`); }
+    }
   };
   tick(true);
   // Half the TTL: a tick exactly one TTL after the last check finds checkedAt just under the TTL
   // and skips, which would make "hourly" discovery run every two hours.
   const timer = setInterval(() => tick(false), DISCOVERY_TTL_MS / 2);
   timer.unref?.();
-  return () => clearInterval(timer);
+  // git arriving runs discovery at once instead of waiting up to half the TTL.
+  const offGit = onGitChange((s) => { if (s.available) void tick(true); });
+  return () => { offGit(); clearInterval(timer); };
 }
 
 export { readRunLedger };
 
 export const _testing = {
-  setGit(fn) { _git = fn; },
-  reset() { _git = defaultGit; _queues.clear(); _scheduled.clear(); _lastFailedAt.clear(); },
+  setGit(fn) { _gitImpl = fn; },
+  reset() { _gitImpl = defaultGit; _queues.clear(); _scheduled.clear(); _lastFailedAt.clear(); },
   defaultGit,
 };

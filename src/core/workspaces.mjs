@@ -26,6 +26,7 @@ import { createHash } from 'node:crypto';
 
 import { worcaHome, normalizeProjectPath } from './projects.mjs';
 import { canonicalProjectRoot, projectKey, workspaceStorePath } from './store.mjs';
+import { gitAvailable, GIT_MISSING } from './git-available.mjs';
 import { slugify, retainedWorkFor, checkoutRecordsFor } from './artifacts.mjs';
 import { getDb, prepare, tx } from './db.mjs';
 import { WORKSPACE_MAX_PROJECTS, scanDescriptionBudget } from '../shared/workspace-size.mjs';
@@ -94,7 +95,7 @@ function isDir(p) {
  * no longer a git repo (§2.6 step 3) using the SAME check createWorkspace applies.
  */
 export function isGitRepo(p) {
-  if (!isDir(p)) return false;
+  if (!isDir(p) || !gitAvailable()) return false;
   try {
     execFileSync('git', ['rev-parse', '--is-inside-work-tree'],
       { cwd: p, stdio: ['ignore', 'pipe', 'ignore'] });
@@ -120,6 +121,7 @@ export function scanMemberProblems(projectPaths) {
   const out = [];
   for (const p of Array.isArray(projectPaths) ? projectPaths : []) {
     if (!isDir(p)) { out.push(`${p} does not exist`); continue; }
+    if (!gitAvailable()) { out.push(`${p}: ${GIT_MISSING.message}`); continue; }
     const top = git(p, ['rev-parse', '--show-toplevel']);
     if (!top || real(top) !== real(p)) out.push(`${p} is not its own git repository`);
     else if (git(p, ['rev-parse', '--verify', '-q', 'HEAD']) === null) out.push(`${p} has no commit`);
@@ -380,6 +382,7 @@ const LIVE_GIT = { rootOf: canonicalProjectRoot, isRepo: isGitRepo };
 function checkNewMembers(paths, isRepo = isGitRepo) {
   for (const p of paths) {
     if (!isDir(p)) throw err(`member path does not exist or is not a directory: ${p}`, 'BAD_REQUEST');
+    if (!gitAvailable()) throw err(GIT_MISSING.message, 'GIT_MISSING');
     if (!isRepo(p)) throw err(`member path is not a git repository: ${p}`, 'BAD_REQUEST');
   }
 }

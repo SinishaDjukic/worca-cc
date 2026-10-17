@@ -146,6 +146,7 @@ import { usageLimitSwitches, engineList, engineLabel } from '../shared/engine-sw
 import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
 import { shapeRecordFrom, buildShapeStats } from './shape/stats.mjs';
+import { gitAvailable, gitMissingResult } from './git-available.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -6370,6 +6371,7 @@ export class RunHarness extends EventEmitter {
    * 30-minute limit killed it.
    */
   _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS } = {}) {
+    if (!gitAvailable()) return Promise.resolve(gitMissingResult());
     return new Promise((resolveP) => {
       let child;
       try {

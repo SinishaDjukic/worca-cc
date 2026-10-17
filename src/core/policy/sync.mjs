@@ -25,6 +25,7 @@ import {
 import { canonicalMetricsSlug, sameMetricsSlug } from '../../shared/team-metrics/slug.mjs';
 import { normalizePolicyDoc, emptyPolicyDoc, serializePolicyDoc, POLICY_SCHEMA, fieldMeta } from './registry.mjs';
 import { capSummary, fieldCount, effectiveRows } from './effective.mjs';
+import { gitAvailable, gitMissingError, onGitChange } from '../git-available.mjs';
 
 export const POLICY_BRANCH = 'worca-policy';
 export const POLICY_DIR = '.worca-policy';
@@ -284,6 +285,7 @@ function sameContent(a, b) {
  * @returns {Promise<{action:'created'|'joined'|'changed', slug:string}>}
  */
 export async function enableTeamPolicy(projectDir, { mode = 'here', delegateTo = null, change = false, title = '', now = new Date(), by = null } = {}) {
+  if (!gitAvailable()) throw gitMissingError();
   if (mode !== 'here' && mode !== 'follow') throw policyError('BAD_REQUEST', 'mode must be "here" or "follow"');
   const { slug, hasOrigin } = await projectSlug(projectDir);
   if (!hasOrigin) throw policyError('NO_ORIGIN', 'this project has no origin remote — a team policy lives on origin, so there is nowhere to put it');
@@ -346,6 +348,7 @@ async function rewriteMarker(slug, projectDir, doc) {
  * @returns {Promise<{ok:true, slug:string, sha:string|null, doc:object}>}
  */
 export async function publishPolicy(projectDir, rawDoc, { message = null, now = new Date(), by = null } = {}) {
+  if (!gitAvailable()) throw gitMissingError();
   const prefs = (await discoverPolicy(projectDir, { force: true }).catch(() => null)) || readTeamPolicyPrefs(projectKey(projectDir)) || {};
   if (!prefs.present) throw policyError('NOT_HOME', `this project has no ${POLICY_BRANCH} branch`);
   if (!prefs.docKnown) throw policyError('FETCH_FAILED', `could not read the ${POLICY_BRANCH} branch; try again`);
@@ -408,7 +411,7 @@ export async function projectPolicyStatus(p, { discover = false } = {}) {
     origin: prefs.originDisplay ?? null, checkedAt: prefs.checkedAt ?? null, lastDiscoveryError: prefs.lastDiscoveryError ?? null,
     carries: carriesPolicy(prefs),
   };
-  if (status.hasOrigin == null && p.exists) {
+  if (status.hasOrigin == null && p.exists && gitAvailable()) {
     try { const { hasOrigin, slug } = await projectSlug(p.path); status.hasOrigin = hasOrigin; if (status.slug == null) status.slug = slug; } catch { /* leave null */ }
   }
   if (!status.present || !p.exists) return status;
@@ -506,16 +509,22 @@ export async function listPolicyScopes({ discover = false } = {}) {
   return { projects, workspaces, scopes, homes: [...homes.values()], anyEnabled: scopes.projects.length + scopes.workspaces.length > 0 };
 }
 
+/** The background loop's git gate: discovery and the server's onTick (marketplace seeding) run git. */
+export function policyLoopCanSync() { return gitAvailable(); }
+
 /** UI server: discovery on start, then hourly (half-TTL interval, like metrics). Returns a stop function. */
 export function startTeamPolicyBackground({ log = (m) => console.warn(m), onTick = null } = {}) {
   const tick = async (force) => {
+    if (!policyLoopCanSync()) return;
     try { await discoverAllPolicies({ force }); } catch (err) { log(`[worca-ui] team policy discovery: ${err?.message || err}`); }
     if (onTick) { try { await onTick(); } catch (err) { log(`[worca-ui] team policy tick: ${err?.message || err}`); } }
   };
   tick(true);
   const timer = setInterval(() => tick(false), DISCOVERY_TTL_MS / 2);
   timer.unref?.();
-  return () => clearInterval(timer);
+  // git arriving runs discovery at once instead of waiting up to half the TTL.
+  const offGit = onGitChange((s) => { if (s.available) void tick(true); });
+  return () => { offGit(); clearInterval(timer); };
 }
 
 export const _testing = { reset() { _queues.clear(); } };

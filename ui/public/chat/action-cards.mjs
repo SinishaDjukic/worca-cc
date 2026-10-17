@@ -209,6 +209,7 @@ export function buildPullRequestCard(block, ctx) {
   root.appendChild(err);
   if (block.state === 'proposed') {
     const actions = make(doc, 'div', 'ask-mcard-actions');
+    actions.dataset.needsGit = '';
     const later = makeButton(doc, 'ask-card-not-now', 'Not now', 'data-chat-pr-decline');
     const create = makeButton(doc, 'ask-card-start', 'Create pull request', 'data-chat-pr-create');
     const lock = (on) => { later.disabled = on; create.disabled = on; };

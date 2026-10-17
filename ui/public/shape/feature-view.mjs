@@ -164,13 +164,18 @@ export function renderFeature(doc, f, deps) {
     if (b.isConnected) b.disabled = false;
   };
   if (deps.page) {
-    if (f.slices.length > 1) el.appendChild(h('div', 'shape-feature-order', 'Merge in order: each slice\'s branch starts from the one before.'));
+    if (f.slices.length > 1) {
+      const order = h('div', 'shape-feature-order', 'Merge in order: each slice\'s branch starts from the one before.');
+      order.dataset.needsGit = '';
+      el.appendChild(order);
+    }
     if (f.ship && f.ship.mode) {
       const done = h('div', 'shape-feature-shipped', f.ship.mode === 'one' ? 'Shipped as one PR' : 'Shipped as stacked PRs');
       if (f.ship.prUrl) { const a = h('a', null, ' · open it'); a.href = f.ship.prUrl; a.target = '_blank'; a.rel = 'noopener'; done.appendChild(a); }
       el.appendChild(done);
     } else if (f.ship && f.ship.ready) {
       const box = h('div', 'shape-feature-ship');
+      box.dataset.needsGit = '';
       box.appendChild(h('div', 'shape-feature-ship-head', 'Ship as'));
       for (const [mode, label] of [['stacked', 'Stacked PRs'], ['one', 'One PR']]) {
         const b = btn(`shape-feature-ship-${mode}${f.ship.suggested === mode ? ' btn-primary' : ''}`,

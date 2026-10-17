@@ -10,6 +10,7 @@ import { existsSync, realpathSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve, dirname, basename, isAbsolute } from 'node:path';
 import { worcaHome } from './projects.mjs';
+import { gitAvailable } from './git-available.mjs';
 
 const _keyCache = new Map();
 
@@ -43,6 +44,7 @@ export function canonicalProjectRoot(projectDir) {
   const marker = gitMarker(dir);
   const hit = _rootCache.get(dir);
   if (hit && marker && hit.marker === marker && existsSync(hit.common)) return hit.root;
+  if (!gitAvailable()) { _rootCache.delete(dir); try { return realpathSync(dir); } catch { return dir; } }
   try {
     const common = execFileSync('git', ['rev-parse', '--git-common-dir'], {
       cwd: dir,
@@ -79,7 +81,7 @@ export function projectKey(projectDir) {
     basename(root).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
   const hash = createHash('sha1').update(root).digest('hex').slice(0, 8);
   const key = `${slug}-${hash}`;
-  _keyCache.set(cacheKey, key);
+  if (gitAvailable()) _keyCache.set(cacheKey, key);
   return key;
 }
 

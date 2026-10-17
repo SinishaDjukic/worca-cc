@@ -232,6 +232,7 @@ import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/a
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, decorateFlagChips, flagOn } from './flags.mjs';
+import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor } from './tag-input.mjs';
 import { normaliseTags, formatTag } from '../../src/shared/run-tags.mjs';
 import { splitByDimensions, tagGroupOptions, dimensionLabel, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
@@ -1460,6 +1461,7 @@ function handleServerMessage(msg) {
     if (flagsTabCtl && currentView() === 'settings' && currentSettingsTab === 'experimental') void flagsTabCtl.load();
     return;
   }
+  if (msg.type === 'git') { applyGit(msg.git); return; }
 
   if (msg.type === 'channel-status') {
     onChannelStatus(msg);
@@ -1827,6 +1829,7 @@ function onHello(msg) {
   noteBoot(state, msg.bootId, runs);   // a restarted server numbers run events from 1 again
   applyServerMock(msg.serverMock);     // every hello: a restarted server may have changed mode
   if (msg.flags) applyFlags(msg.flags);  // every hello: a frame missed while the socket was down, or a restart with a new WORCA_FLAGS
+  if (msg.git) applyGit(msg.git);   // every hello: git may have been installed meanwhile
   syncShapeFirstUi();
   // A restarted server lists only the runs IT started, and nothing below drops the old ones: mark
   // every entry stale, and the upserts below clear the ones it lists. The saved run's bar skips a
@@ -7675,7 +7678,7 @@ async function populateBranchSelect(select, projectDir) {
   // A response for a superseded request is dropped.
   const gen = (select._branchGen = (select._branchGen || 0) + 1);
   const stale = () => select._branchGen !== gen;
-  if (!projectDir) { seedBranchPlaceholder(select, 'current branch (auto)'); syncPreviousBranchOption(select); return; }
+  if (!projectDir || !gitOn()) { seedBranchPlaceholder(select, 'current branch (auto)'); syncPreviousBranchOption(select); return; }
   const placeholder = seedBranchPlaceholder(select, 'Loading branches…');
   try {
     const r = await fetch(`/api/branches?projectDir=${encodeURIComponent(projectDir)}`);
@@ -7817,6 +7820,7 @@ function shownAutoSync() {
 }
 /** Is there a remote to start from anywhere in the table? Without one there is nothing to choose. */
 function syncApplies() {
+  if (!gitOn()) return false;
   if (state.runTarget === 'workspace') return Object.values(state.sync.members).some((b) => b && b.remote);
   // "Branch off the run before it": that start is the previous run's branch, not HEAD's.
   if (el.sourceBranch && el.sourceBranch.value === PREVIOUS_BRANCH) return false;
@@ -7938,6 +7942,7 @@ const paintSyncRowNow = paintBranches;
 
 /** GET /api/sync for the current base (no network: the list fetch already fetched). */
 async function refreshSyncStatusQuiet() {
+  if (!gitOn()) return;
   const base = effectiveBase();
   const projectDir = selectedProjectPath();
   if (!base || !projectDir || state.runTarget === 'workspace' || syncHasRemote === false) return;
@@ -8827,6 +8832,7 @@ function buildWorkspaceRow(w, known) {
   table.hidden = true;
   table.id = `ws-table-${w.id}`;
   toggle.setAttribute('aria-controls', table.id);
+  for (const x of [roll, members, sep, syncAll, toggle, table]) x.dataset.needsGit = '';
   item.append(row, table);
   if (!known) item.setAttribute('aria-busy', 'true');
   return item;
@@ -9098,7 +9104,7 @@ const WD_TABS = [
   { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (sec, id) => buildWdOverview(sec, id) },
   { key: 'map', label: 'Map', level: 'advanced', badge: () => null, visible: () => true, build: (sec, id) => buildWdMap(sec, id) },
   { key: 'team', label: 'Team', level: 'expert', badge: () => null, visible: () => true, build: (sec, id) => buildWdTeam(sec, id) },
-  { key: 'actions', label: 'Actions', level: 'advanced', badge: () => null, visible: () => true, build: (sec, id) => buildWdActions(sec, id) },
+  { key: 'actions', needsGit: true, label: 'Actions', level: 'advanced', badge: () => null, visible: () => true, build: (sec, id) => buildWdActions(sec, id) },
 ];
 function initWdTabs(screen, w) {
   initDetailTabs(screen, WD_TABS.map((t) => ({ ...t, icon: PD_TAB_ICONS[t.key] })), w, {
@@ -9120,7 +9126,7 @@ function initWdTabs(screen, w) {
 function activateWsTab(tab) {
   const tabs = detailTabsOf(wsDetail && wsDetail.screen);
   if (!tabs) return;
-  tabs.activate(tabs.cells.has(tab) ? tab : 'overview');
+  tabs.activate(tabs.cells.has(tab) && (gitOn() || !tabs.cells.get(tab).tab.needsGit) ? tab : 'overview');
 }
 
 // ---- Overview tab: the stat cards, the projects, the description ----
@@ -11550,6 +11556,7 @@ function buildProjectRow(p) {
   // status read skips (a folder that is gone).
   const sync = document.createElement('div');
   sync.className = 'pl-sync';
+  sync.dataset.needsGit = '';
   if (p.key) {
     const syncSlot = document.createElement('div');
     syncSlot.className = 'proj-sync';
@@ -11865,6 +11872,7 @@ function paintProjFilters() {
 function syncCheckedNodes() {
   const wrap = document.createElement('span');
   wrap.className = 'sync-checked';
+  wrap.dataset.needsGit = '';
   const txt = document.createElement('span');
   txt.className = 'sync-checked-txt';
   const btn = document.createElement('button');
@@ -11907,6 +11915,7 @@ let syncChipsLoaded = false;   // the Branch cards say "checking…" until the f
 let syncChipsBusy = false;
 let syncChipsQueued = false;
 function refreshSyncChips() {
+  if (!gitOn()) return;
   if (syncChipsTimer) return;
   syncChipsTimer = setTimeout(async () => {
     syncChipsTimer = null;
@@ -12031,8 +12040,10 @@ function renderProjectsList() {
   filters.setAttribute('role', 'group');
   filters.setAttribute('aria-label', 'Filter by sync state');
   filters.hidden = true;
+  filters.dataset.needsGit = '';
   const tools = document.createElement('div');
   tools.className = 'proj-head-tools';
+  el.projectsSyncAll.dataset.needsGit = '';
   tools.append(syncCheckedNodes(), el.projectsSyncAll);
   head.append(title, filters, tools);
 
@@ -12042,6 +12053,7 @@ function renderProjectsList() {
   cols.setAttribute('aria-hidden', 'true');
   const colSync = document.createElement('span');
   colSync.className = 'proj-cols-sync';
+  colSync.dataset.needsGit = '';
   colSync.append(...['Branch', 'Origin', ''].map((t) => Object.assign(document.createElement('span'), { textContent: t })));
   const colTeam = Object.assign(document.createElement('span'), { textContent: 'Team' });
   tagLevel(colTeam, 'expert');
@@ -12344,7 +12356,7 @@ const PD_TABS = [
   { key: 'memory', label: 'Memory', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdMemory(sec, key) },
   { key: 'settings', label: 'Settings', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdSettings(sec, key) },
   { key: 'mcp', label: 'Sets', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdMcp(sec, key) },
-  { key: 'actions', label: 'Actions', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdActions(sec, key) },
+  { key: 'actions', needsGit: true, label: 'Actions', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdActions(sec, key) },
 ];
 function initPdTabs(screen, p) {
   initDetailTabs(screen, PD_TABS.map((t) => ({ ...t, icon: PD_TAB_ICONS[t.key] })), p, {
@@ -12377,7 +12389,7 @@ function initPdTabs(screen, p) {
 function activateProjTab(tab, sub = '') {
   const tabs = detailTabsOf(projDetail && projDetail.screen);
   if (!tabs) return;
-  tabs.activate(tabs.cells.has(tab) ? tab : 'overview');
+  tabs.activate(tabs.cells.has(tab) && (gitOn() || !tabs.cells.get(tab).tab.needsGit) ? tab : 'overview');
   if (tab !== 'memory' || !projDetail.memCtl) return;
   const ctl = projDetail.memCtl;
   const name = sub ? safeDecode(sub) : '';
@@ -12467,6 +12479,7 @@ function buildPdOverview(sec, key) {
 function pdBranchCard(kind, label) {
   const card = pdStatCard(kind, label, '…', 'checking…');
   card.classList.add('pd-ov-branch');
+  card.dataset.needsGit = '';
   const value = card.querySelector('.pd-ov-value');
   value.classList.remove('mono');
   const status = document.createElement('div');
@@ -12871,6 +12884,7 @@ function setProjAddMsg(text, kind) {
 }
 
 function openProjectAddModal(path, { mode = 'folder' } = {}) {
+  void refreshGit().then((on) => { if (!on && projAddMode === 'clone' && !cloneFollow) setProjAddMode('folder'); });
   el.projAddPath.value = path || '';
   el.projAddName.value = path ? basenameOf(path) : '';
   if (el.projCloneUrl) {
@@ -12893,7 +12907,7 @@ function openProjectAddModal(path, { mode = 'folder' } = {}) {
 let projAddMode = 'folder';
 
 function setProjAddMode(mode) {
-  projAddMode = mode === 'clone' && el.projAddClonePane ? 'clone' : 'folder';
+  projAddMode = mode === 'clone' && el.projAddClonePane && gitOn() ? 'clone' : 'folder';
   if (!el.projAddTabs) return;
   for (const t of el.projAddTabs.querySelectorAll('.md-tab')) t.setAttribute('aria-selected', String(t.dataset.mode === projAddMode));
   el.projAddFolderPane.hidden = projAddMode !== 'folder';
@@ -12998,7 +13012,8 @@ function closeProjectAddModal() {
 // needs no folder at all. No folder picker here (a container or hosted worca): the repository is the way in.
 async function addProjectFlow() {
   setProjectsMsg('');
-  openProjectAddModal('', { mode: (await folderPickerAvailable()) ? 'folder' : 'clone' });
+  const [picker] = await Promise.all([folderPickerAvailable(), refreshGit()]);
+  openProjectAddModal('', { mode: picker || !gitOn() ? 'folder' : 'clone' });
 }
 
 async function saveProjectAdd() {
@@ -13704,6 +13719,7 @@ el.form.addEventListener('submit', async (e) => {
     if (schedSync && typeof schedSync.beforeRun === 'boolean') body.syncBeforeStart = schedSync.beforeRun;
     if (schedSync && (schedSync.onDiverged === 'origin' || schedSync.onDiverged === 'fail')) body.syncOnDiverged = schedSync.onDiverged;
   }
+  if (!gitOn()) for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
 
   // #555: withButton owns #start-btn from here, and reads undefined as success, so every exit
   // returns an explicit { ok }. A failed or cancelled start never shows "Started".
@@ -15499,15 +15515,23 @@ async function addMarketplaceFromInput() {
 // replaces the progress one — visible from Team policy as well as the Plugins page.
 // `onInstalled` lets the caller repaint its own page (Team policy) after a success.
 function openInstallConsent(entry, { onInstalled = null } = {}) {
-  pluginModal(`Will install: ${entry.name}`, renderInstallConsent(entry, entry.inventory || {}), [
+  const err = Object.assign(document.createElement('small'), { className: 'hint err', hidden: true });
+  const body = document.createElement('div');
+  body.append(renderInstallConsent(entry, entry.inventory || {}), err);
+  pluginModal(`Will install: ${entry.name}`, body, [
     ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
-    ['Install', 'btn btn-primary btn-mini', async () => {
+    ['Install', 'btn btn-primary btn-mini', async (ev) => {
+      if (ev && ev.detail > 1) return;   // a double click's second click: the first one is already asking
+      const req = { repoUrl: entry.repoUrl, subdir: entry.subdir, name: entry.name, sha: entry.sha,
+        ...(entry.marketplace ? { marketplace: entry.marketplace } : {}) };
+      // No git here: the server decides (a later transport may install without git); its GIT_MISSING stays in this dialog (U17).
+      const btn = ev && ev.currentTarget; if (btn && !gitOn()) btn.disabled = true;
+      const pre = gitOn() ? null : await pluginApi('POST', '/api/plugins/install', req);
+      if (pre && !pre.ok && pre.data && pre.data.code === 'GIT_MISSING') { err.textContent = pre.data.error || GIT_MISSING_TEXT; err.hidden = false; if (btn) btn.disabled = false; return; }
       closePluginModal();
       const key = `plugin-install-${entry.name}`;
       notify({ tone: 'info', title: `Installing ${entry.name}…`, key, timeout: 0 });
-      const { ok, data } = await pluginApi('POST', '/api/plugins/install',
-        { repoUrl: entry.repoUrl, subdir: entry.subdir, name: entry.name, sha: entry.sha,
-          ...(entry.marketplace ? { marketplace: entry.marketplace } : {}) });
+      const { ok, data } = pre || await pluginApi('POST', '/api/plugins/install', req);
       if (!ok) {
         // A cached snapshot can point at a sha the remote no longer has (force-push,
         // rebase): git's raw complaint is unreadable, so map it to the real fix (C3).
@@ -21399,7 +21423,7 @@ function setHdMode(screen, mode, tab = '', { focus = true } = {}) {
   screen.querySelector('.hd-to-run').hidden = !details;
   if (details) {
     const tabs = detailTabsOf(screen);
-    if (tabs && tab && tabs.cells.has(tab) && levelAtLeast(tabs.cells.get(tab).tab.level || 'simple')) tabs.activate(tab);
+    if (tabs && tab && tabs.cells.has(tab) && levelAtLeast(tabs.cells.get(tab).tab.level || 'simple') && (gitOn() || !tabs.cells.get(tab).tab.needsGit)) tabs.activate(tab);
     else if (!tabs && tab) screen.dataset.wantTab = tab;   // the data is still loading
   }
   if (changed && el.histDetail) el.histDetail.scrollTop = 0;
@@ -21652,7 +21676,7 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
   if (want) {
     delete screen.dataset.wantTab;
     const tabs = detailTabsOf(screen);
-    if (tabs && tabs.cells.has(want) && levelAtLeast(tabs.cells.get(want).tab.level || 'simple')) tabs.activate(want);
+    if (tabs && tabs.cells.has(want) && levelAtLeast(tabs.cells.get(want).tab.level || 'simple') && (gitOn() || !tabs.cells.get(want).tab.needsGit)) tabs.activate(want);
   }
   paintHdGlance(screen, rec, data);
 
@@ -22229,7 +22253,7 @@ function chainItemFor(r) {
 
 /** Some PR host is reachable (gh, or an Azure DevOps token); the Ship-it modal and the server name the
  *  missing one for the chosen remote (D8). */
-function prHostAvailable() { return !!(state.ghAvailable || state.adoAvailable); }
+function prHostAvailable() { return gitOn() && !!(state.ghAvailable || state.adoAvailable); }
 
 // --- Ship-it, workspace mode: one row per affected member repo --------------
 
@@ -23829,6 +23853,7 @@ function paintHdBase(screen, record, data) {
   const box = screen.querySelector('.hd-base-check');
   const list = box && box.querySelector('.hd-base-members');
   if (!box || !list) return;
+  if (!gitOn()) { box.hidden = true; return; }
   if (hdBaseMsgsFor !== record.id) { hdBaseMsgs.clear(); hdBaseMsgsFor = record.id; }
   const status = String((data && data.state && data.state.status) || record.status || '').toLowerCase();
   const members = BASE_FINISHED.has(status) && record.id ? hdBaseMembers(record, data) : [];
@@ -24509,6 +24534,7 @@ function initDetailTabs(screen, tabs, ctx, opts) {
     btn.id = `${idPrefix}-tab-${t.key}`;
     btn.setAttribute('role', 'tab');
     if (t.level) tagLevel(btn, t.level);                       // interface mode (docs/ui-levels.md)
+    if (t.needsGit) btn.dataset.needsGit = '';
     if (t.icon) btn.innerHTML = t.icon;                        // static markup, no interpolation
     btn.appendChild(document.createTextNode(' ' + t.label));
     const badge = t.badge(ctx);
@@ -24566,7 +24592,7 @@ function initDetailTabs(screen, tabs, ctx, opts) {
   if (!cells.size) return;
   // The opening tab is always one the interface mode shows: History prefers Diff and Running the
   // live log, both advanced, so Simple lands on Overview instead of on a tab with no pill lit.
-  const showsTab = (k) => cells.has(k) && levelAtLeast(cells.get(k).tab.level || 'simple');
+  const showsTab = (k) => cells.has(k) && levelAtLeast(cells.get(k).tab.level || 'simple') && (gitOn() || !cells.get(k).tab.needsGit);
   const want = initial ? initial(ctx) : null;
   const first = [...cells.keys()].find(showsTab);
   activate(showsTab(want) ? want : (first || cells.keys().next().value));
@@ -24575,8 +24601,9 @@ function initDetailTabs(screen, tabs, ctx, opts) {
 // the first tab the new mode shows takes over. (A deep link never lands here: tabs have no route.)
 function reselectHiddenDetailTabs() {
   for (const active of $$('.rd-tab.active, .hd-tab.active, .pd-tab.active')) {
-    if (levelAtLeast(active.dataset.minLevel || 'simple')) continue;
-    const next = [...active.parentElement.children].find((b) => levelAtLeast(b.dataset.minLevel || 'simple'));
+    const shows = (b) => levelAtLeast(b.dataset.minLevel || 'simple') && (gitOn() || b.dataset.needsGit === undefined);
+    if (shows(active)) continue;
+    const next = [...active.parentElement.children].find(shows);
     if (next) next.click();
   }
 }
@@ -24601,7 +24628,7 @@ const HD_TABS = [
   // get there, coarse to fine (Workflow · Q&A · Logs · Agents). "Details ›" opens the first shown tab; the trail
   // opens Workflow.
   { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (...a) => buildHdOverview(...a) },
-  { key: 'diff', label: 'Diff', level: 'advanced',
+  { key: 'diff', label: 'Diff', level: 'advanced', needsGit: true,
     badge: (d) => (d.results && d.results.summary
       ? String((d.results.summary.filesNew || 0) + (d.results.summary.filesChanged || 0)) : null),
     visible: () => true, build: (...a) => buildHdDiff(...a) },
@@ -24616,7 +24643,7 @@ const HD_TABS = [
     },
     visible: (d) => Array.isArray(d.artifacts) && d.artifacts.some(isDisplayableArtifact),
     build: (...a) => buildHdArtifacts(...a) },
-  { key: 'actions', label: 'Actions', level: 'advanced', badge: () => null, visible: () => true,
+  { key: 'actions', label: 'Actions', level: 'advanced', needsGit: true, badge: () => null, visible: () => true,
     build: (...a) => buildHdActions(...a) },
   // The graph, moved off the page body into its own tab (as on the Running page).
   // loadHistDetailScreen paints it into `.hd-graph` before the tabs exist; the builder
@@ -26050,6 +26077,7 @@ function buildHdDiff(sec, record, data) {
 function hdWorktreeRow(word, dir) {
   const row = document.createElement('div');
   row.className = 'hd-ov-wt';
+  row.dataset.needsGit = '';
   row.dataset.sig = `${word}|${dir}`;
   const l =document.createElement('span'); l.className = 'hd-ov-label'; l.textContent = 'WORKTREE';
   const w = document.createElement('span'); w.className = 'hd-ov-wt-state'; w.textContent = word;
@@ -26114,6 +26142,7 @@ function hdFilesChangedBox(sec, results) {
   l.textContent = rows.length === 1 ? 'FILES CHANGED · 1' : `FILES CHANGED · ${rows.length}`;
   const open = tagLevel(document.createElement('button'), 'advanced');
   open.type = 'button'; open.className = 'link-btn'; open.textContent = 'Open the diff';
+  open.dataset.needsGit = '';
   open.addEventListener('click', () => {
     const screen = histDetailState && histDetailState.screen;   // the state is keyed on the cloned template root
     const tabs = screen && detailTabState.get(screen);
@@ -26177,10 +26206,12 @@ function buildHdOverview(sec, record, data) {
   // The open pull request(s) as GitHub sees them now, beside the review's verdict from the run.
   const prs = document.createElement('div');
   prs.className = 'hd-ov-prs';
+  prs.dataset.needsGit = '';
   wrap.appendChild(prs);
   paintHdOvPrs(prs, record);
   if (isTerminalStatus(record.status)) {
     const strip = document.createElement('div'); strip.className = 'act-strip'; tagLevel(strip, 'advanced');
+    strip.dataset.needsGit = '';
     wrap.appendChild(strip);
     paintActionsStrip(strip, record.id, runActionQuery(record.projectDir, record).toString());
   }
@@ -26602,7 +26633,7 @@ const RD_TABS = [
     build: (sec, ctx) => buildRdOverview(sec, ctx),
   },
   {
-    key: 'diff', label: 'Diff', icon: HD_TAB_ICONS.diff, level: 'advanced',
+    key: 'diff', label: 'Diff', icon: HD_TAB_ICONS.diff, level: 'advanced', needsGit: true,
     badge: (ctx) => rdDiffBadge(ctx.run),
     visible: () => true,
     build: (sec, ctx) => buildRdDiff(sec, ctx),
@@ -26618,7 +26649,7 @@ const RD_TABS = [
     build: (sec, ctx) => buildRdArtifacts(sec, ctx),
   },
   {
-    key: 'actions', label: 'Actions', icon: HD_TAB_ICONS.actions, level: 'advanced',
+    key: 'actions', label: 'Actions', icon: HD_TAB_ICONS.actions, level: 'advanced', needsGit: true,
     badge: () => null, visible: () => true,
     build: (sec, ctx) => buildRdActions(sec, ctx),
   },
@@ -26948,7 +26979,7 @@ function ensureRdTabs(screen, r) {
   if (want) {
     delete screen.dataset.wantTab;
     const tabs = detailTabsOf(screen);
-    if (tabs && tabs.cells.has(want) && levelAtLeast(tabs.cells.get(want).tab.level || 'simple')) tabs.activate(want);
+    if (tabs && tabs.cells.has(want) && levelAtLeast(tabs.cells.get(want).tab.level || 'simple') && (gitOn() || !tabs.cells.get(want).tab.needsGit)) tabs.activate(want);
   }
 }
 
@@ -27542,6 +27573,7 @@ function buildRdOverview(sec, ctx) {
   // user on every arriving `state` frame.
   // Actions strip: terminal runs only, filled once the run has its pipeline id.
   const strip = document.createElement('div'); strip.className = 'act-strip'; tagLevel(strip, 'advanced');
+  strip.dataset.needsGit = '';
   strip.hidden = true;
   const skills = tagLevel(document.createElement('div'), 'advanced');   // the set skills it got (§6 board 9)
   skills.className = 'hd-ov-skills-host';
@@ -30080,6 +30112,7 @@ const schedulesView = createSchedulesView({
       const statusWord = row ? (PAUSED_STATUSES.includes(String(row.status || '').toLowerCase()) ? 'paused' : String(row.status || 'unknown')) : 'unknown';
       return { title: (row && row.title) || pipelineId, statusWord };
     },
+    gitOn: () => gitOn(),
   },
 });
 
@@ -30210,7 +30243,7 @@ function runsHistItem(p) {
     archived: !!p.archived,
     checks: typeof p.checks === 'number' ? p.checks : null,
     files: typeof p.files === 'number' ? p.files : null,
-    base: baseRowNote(p.baseCheck),
+    base: gitOn() ? baseRowNote(p.baseCheck) : '',
     tags: flagOn('runTags') ? (p.tags || []) : [],
   };
 }
@@ -30825,7 +30858,7 @@ function setRdMode(screen, mode, tab = '', { focus = true } = {}) {
   screen.querySelector('.rd-to-run').hidden = !details;
   if (details) {
     const tabs = detailTabsOf(screen);
-    if (tabs && tab && tabs.cells.has(tab) && levelAtLeast(tabs.cells.get(tab).tab.level || 'simple')) tabs.activate(tab);
+    if (tabs && tab && tabs.cells.has(tab) && levelAtLeast(tabs.cells.get(tab).tab.level || 'simple') && (gitOn() || !tabs.cells.get(tab).tab.needsGit)) tabs.activate(tab);
     // A deep link that lands before `hello` has no tabs yet: ensureRdTabs opens it later.
     else if (!tabs && tab) screen.dataset.wantTab = tab;
     // The graph laid out while its section sat in a hidden subtree measured 0px wide;
@@ -31973,7 +32006,9 @@ function rdActivityGroups(screen, values = {}) {
       }
       // The tab's own icon, cloned from its pill, so the row and the tab can never differ.
       const icon = cell.btn.querySelector('svg');
-      rows.push(rdSheetRow({ label: cell.tab.label, value, tab: key, icon: icon ? icon.cloneNode(true) : null }));
+      const row = rdSheetRow({ label: cell.tab.label, value, tab: key, icon: icon ? icon.cloneNode(true) : null });
+      if (cell.tab.needsGit) row.dataset.needsGit = '';
+      rows.push(row);
     }
     if (rows.length) out.push(rdSheetGroup(title, rows));
   }
@@ -34175,6 +34210,7 @@ function showView(name, param = '') {
   } else {
     runsUi.skipRestore = false;
   }
+  if (name === 'projects' || name === 'new') void refreshGit();
   // #report-modal is a top-level `position:fixed;inset:0` overlay with a live document
   // keydown listener — the same class as #stop-modal below. Leaving the view with one
   // up would float a dialog for a run the user has navigated away from over the next
@@ -34489,6 +34525,7 @@ onLevelChange(() => reselectHiddenDetailTabs());
 onLevelChange(() => {                                       // node decorations are expert detail
   for (const host of $$('.run-flow.gv-host')) { const slot = GRAPH_MOUNTS.get(host); if (slot && slot.m.repaint) slot.m.repaint(); }
 });                          // tiles above the mode wear their level
+onGitFlip((on) => { reselectHiddenDetailTabs(); const v = currentView(); if (on && (v === 'projects' || v === 'workspaces')) void refreshSyncChips(); if (on && v === 'new' && state.runTarget !== 'workspace') void populateBranchSelect(el.sourceBranch, selectedProjectPath()); if (!on && projAddMode === 'clone' && !cloneFollow) setProjAddMode('folder'); if (!on && projFilter !== 'all') { projFilter = 'all'; paintProjFilters(); } });
 for (const t of ['input', 'change', 'click']) {
   document.getElementById('run-form')?.addEventListener(t, () => setTimeout(paintHiddenSettings, 0));
 }

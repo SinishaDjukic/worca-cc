@@ -174,6 +174,8 @@ cache at all pays one bounded fetch. A CLI-only machine refreshes with `worca po
 A missing, unreadable or newer-schema policy means your local settings apply, with one loud line
 in the run log and a red chip on the Projects row (the sentence is on the project page's Team tab).
 
+Without git on the machine, policy discovery waits; **Set up team policy…** answers `git is not installed on this machine` inside its dialog, and publishing an edited policy answers the same.
+
 ## Getting started
 
 The checklist's ninth tile, **Set a team policy** (docs/getting-started.md), walks the

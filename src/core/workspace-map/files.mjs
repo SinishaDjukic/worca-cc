@@ -9,6 +9,7 @@ import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { LIMITS } from '../../shared/workspace-map/limits.mjs';
+import { gitAvailable } from '../git-available.mjs';
 
 export const SKIP_DIRS = Object.freeze(['.git', 'node_modules', 'vendor', 'dist', 'build', 'target', 'out',
   '.next', '.nuxt', 'coverage', 'graphify-out', '.venv', 'venv', '__pycache__', '.gradle', '.idea', '.vscode',
@@ -68,7 +69,7 @@ const inside = (root, abs) => {
  *  (untrimmed: callers trim), or null on any failure — and for a missing / non-string `dir`
  *  (never the process cwd). */
 export function gitOutput(dir, args, { timeoutMs = 30000, maxBuffer = 256 * 1024 * 1024 } = {}) {
-  if (typeof dir !== 'string' || !dir || !Array.isArray(args)) return Promise.resolve(null);
+  if (typeof dir !== 'string' || !dir || !Array.isArray(args) || !gitAvailable()) return Promise.resolve(null);
   const env = { ...process.env };
   for (const k of GIT_ENV_DROP) delete env[k];
   return new Promise((done) => {

@@ -16,6 +16,7 @@ import { branchExists, branchPushedTo, restoreBranchFromRemote, prLifecycleState
 import { actionsSettings } from './settings.mjs';
 import { busyRunIdsFromPidFile, actionsPidFile } from './actions/registry.mjs';
 import { terminalPidFile } from './terminal/paths.mjs';
+import { gitAvailable } from './git-available.mjs';
 
 const execFileP = promisify(execFile);
 const FINISHED = new Set(['done', 'stopped', 'error']);
@@ -76,6 +77,7 @@ function assertEligible(row, isLive) {
 
 /** Drop registrations whose folder is gone, so a hand-deleted checkout never reads as "checked out elsewhere". */
 async function pruneWorktrees(projectDir) {
+  if (!gitAvailable()) return;
   await execFileP('git', ['worktree', 'prune'], { cwd: projectDir, windowsHide: true }).catch(() => {});
 }
 
@@ -337,6 +339,7 @@ export function listCheckouts() {
 }
 
 export async function enforceCheckoutCap({ max, busy = busyRunIds(), stopServices = async () => {} }) {
+  if (!gitAvailable()) return { evicted: [] };   // force-discard: the patch that saves uncommitted edits needs git
   const all = listCheckouts();
   const evicted = [];
   let over = all.length - max;
@@ -351,6 +354,7 @@ export async function enforceCheckoutCap({ max, busy = busyRunIds(), stopService
 
 /** until-pr (D11): release checkouts whose PR merged or closed. */
 export async function releaseKeptCheckouts({ busy = busyRunIds(), stopServices = async () => {}, prState = prLifecycleState } = {}) {
+  if (!gitAvailable()) return { released: [] };  // force-discard: the patch that saves uncommitted edits needs git
   const released = [];
   for (const c of listCheckouts().filter((x) => x.policy === 'until-pr' && !busy.has(x.runId))) {
     const pr = readPrState(c.runId);                                     // { url, number, state } | null

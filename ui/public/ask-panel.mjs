@@ -33,6 +33,7 @@ import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 import { flagOn } from './flags.mjs';
+import { gitOn } from './git-gate.mjs';
 import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
 import { shapeFirstOn } from './chat/shape-gate.mjs';
 import { INTENTS, splitIntentLead } from './chat/intent.mjs';
@@ -2862,7 +2863,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   /** The chat's open worktrees, or null while it has none. Synchronous: st.worktrees is the DOM mirror,
    *  fed by the snapshot or the last frame, and flushExtra refreshes it BEFORE rebuilding the popover. */
   function worktreesSection() {
-    if (!st.worktrees.length) return null;
+    if (!st.worktrees.length || !gitOn(doc)) return null;
     const box = popSection('ask-ctx-worktrees', 'Worktrees', String(st.worktrees.length), 'expert');
     renderWorktreeRows(box, st.worktrees);
     return box;
@@ -4861,9 +4862,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           fillSelect(projSel, opts.projects.map((p) => ({ value: p.path, label: p.exists === false ? `${p.name} (missing)` : p.name })), card.projectDir || (opts.projects[0] && opts.projects[0].path) || '');
           // The fill is async: the sub-line reads the select again when the branches land,
           // or a proposed sourceBranch would read "branch current" until the user touches it.
-          loadBranchesInto(srcSel, projSel.value, card.sourceBranch || '').then(updateTargetSub);
+          if (gitOn(doc)) loadBranchesInto(srcSel, projSel.value, card.sourceBranch || '').then(updateTargetSub);
         }
-        projSel.addEventListener('change', () => { loadBranchesInto(srcSel, projSel.value, '').then(updateTargetSub); updateTargetSub(); reloadLane(); });
+        projSel.addEventListener('change', () => { if (gitOn(doc)) loadBranchesInto(srcSel, projSel.value, '').then(updateTargetSub); updateTargetSub(); reloadLane(); });
         // #527: "from origin/x (remote only, 2 behind)" describes the PROPOSED branch only.
         const srcField = rpField('Source branch', srcSel, sourceRefNote(card.sourceRef));
         const srcHint = srcField.querySelector('.ask-rp-hint');
@@ -4873,6 +4874,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         });
         const featureField = lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch);
         const sameField = lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource);
+        for (const f of [srcField, featureField, sameField]) f.dataset.needsGit = '';
         if (local.shapeBranchHost) {
           // Shaper (D20): Project and Base branch on the small card, at every level; the rest in Advanced.
           srcField.querySelector('.ask-rp-label').firstChild.textContent = 'Base branch';
@@ -4922,9 +4924,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       wsSel.addEventListener('change', renderMembers);
       const wsField = rpField('Workspace', wsSel);
       wsField.appendChild(members);
-      grid.append(wsField, lvTag(rpField('Source branch', srcInput, 'default for members'), 'advanced', !!card.sourceBranch),
+      const wsGitFields = [lvTag(rpField('Source branch', srcInput, 'default for members'), 'advanced', !!card.sourceBranch),
         lvTag(rpField('Feature branch', feature), 'advanced', !!card.featureBranch),
-        lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource));
+        lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource)];
+      for (const f of [...wsGitFields, details]) f.dataset.needsGit = '';
+      grid.append(wsField, ...wsGitFields);
       targetHost.appendChild(grid);      // attach BEFORE filling: renderMembers → updateTargetSub finds the select through rootEl
       targetHost.appendChild(details);
       if (opts) {

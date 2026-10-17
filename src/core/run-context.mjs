@@ -46,6 +46,7 @@ import { screenMcpSecrets, mcpSecretsMode } from './mcp-secrets.mjs';
 import { brokerEnabled } from './broker-client.mjs';
 import { PROBLEM_REASONS, skipMessage } from './mcp/registry.mjs';
 import { managedSettingsFiles } from './skills-registry/host.mjs';
+import { gitAvailable } from './git-available.mjs';
 
 /**
  * The `--allowedTools` grant shape this build emits for merged MCP servers.
@@ -176,6 +177,7 @@ const byProjectKey = (a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey 
 
 /** `git -C dir <args>` stdout, or null. Sync + fail-safe (mirrors store.mjs). */
 function gitOut(dir, args) {
+  if (!gitAvailable()) return null;
   try {
     return execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'] })
       .toString().trim() || null;
@@ -926,9 +928,10 @@ async function readSettingsObject(file, onError) {
   } catch { return null; }
 }
 
-/** Whether `file` is tracked in the git checkout it sits in (a repository ships it). Untracked: git says so (exit 1)
- *  or the folder is no repository (128); anything else (no git, an error) counts as tracked. */
+/** Whether `file` is tracked in the git checkout it sits in (a repository ships it). Untracked: git says so (exit 1),
+ *  the folder is no repository (128), or git is missing (the decided flip); any other error counts as tracked. */
 function trackedInGit(file) {
+  if (!gitAvailable()) return false;
   try {
     execFileSync('git', ['ls-files', '--error-unmatch', '--', basename(file)], { cwd: dirname(file), stdio: 'ignore' });
     return true;

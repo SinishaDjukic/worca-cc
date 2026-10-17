@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { pluginsRoot, readPluginsLock } from './plugins-lock.mjs';
 import { addPluginRepo, repoCacheDir, repoSlug } from './plugin-repo.mjs';
 import { inventoryFromCache } from './plugin-inventory.mjs';
+import { gitAvailable, gitMissingError } from './git-available.mjs';
 
 export function marketplacesFile() { return join(pluginsRoot(), 'marketplaces.json'); }
 
@@ -139,6 +140,7 @@ export async function addMarketplace(url, { exec } = {}) {
   if (readMarketplaces().marketplaces[id]) { // cheap pre-check: fail before any git work
     throw Object.assign(new Error(`marketplace already added: ${norm}`), { code: 'EXISTS' });
   }
+  if (!gitAvailable()) throw gitMissingError();
   const entry = {
     id, url: norm, name: id, description: '',
     addedAt: new Date().toISOString(), lastSync: null, plugins: [], warnings: [],
@@ -172,6 +174,7 @@ function mutateEntry(id, apply) {
 export async function syncMarketplace(id, { exec } = {}) {
   const cur = readMarketplaces().marketplaces[id];
   if (!cur) throw Object.assign(new Error(`marketplace "${id}" not found`), { code: 'NOT_FOUND' });
+  if (!gitAvailable()) throw gitMissingError();
   const clone = { ...cur, plugins: [...(cur.plugins || [])], warnings: [...(cur.warnings || [])] };
   await syncEntry(clone, { exec });
   const saved = mutateEntry(id, (e) => Object.assign(e, {
@@ -185,6 +188,7 @@ export async function syncMarketplace(id, { exec } = {}) {
 /** Sequential, per-entry tolerant: a dead repo (sync warning) AND an entry removed
  *  mid-refresh (NOT_FOUND) both leave the others intact. */
 export async function refreshAllMarketplaces({ exec } = {}) {
+  if (!gitAvailable()) { const all = readMarketplaces().marketplaces; return Object.keys(all).sort().map((id) => all[id]); }
   const out = [];
   for (const id of Object.keys(readMarketplaces().marketplaces).sort()) {
     try { out.push(await syncMarketplace(id, { exec })); }

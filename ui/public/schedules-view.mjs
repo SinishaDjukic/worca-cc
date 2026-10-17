@@ -123,8 +123,9 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
 
   function metaLine(item) {
     const bits = [deps.targetLabel(item), deps.workflowLabel(item.summary.workflowId)];
-    if (item.summary.sourceBranch) bits.push(`from ${item.summary.sourceBranch}`);
-    if (item.sourceFromPrevious) bits.push('from the run before it');
+    const git = typeof deps.gitOn !== 'function' || deps.gitOn();
+    if (git && item.summary.sourceBranch) bits.push(`from ${item.summary.sourceBranch}`);
+    if (git && item.sourceFromPrevious) bits.push('from the run before it');
     if (item.summary.mock) bits.push('mock');
     return bits.filter(Boolean).join(' · ');
   }
@@ -133,15 +134,16 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     const body = h('div', { class: 'sched-details-body', hidden: true });
     const row = (k, v) => (v ? h('div', { class: 'sched-kv' }, h('span', { class: 'sched-k', text: k }), h('span', { class: 'sched-v', text: v })) : null);
     const src = item.summary.source && item.summary.source.type === 'plugin' ? item.summary.source : null;
+    const git = typeof deps.gitOn !== 'function' || deps.gitOn();
     body.append(...[
       row('Task', src ? `${src.plugin} · ${src.taskId} — fetched when the run starts` : (item.summary.prompt || '—')),
       row('Created by', shown(item.createdBy)),
       shown(item.updatedBy) && shown(item.updatedBy) !== shown(item.createdBy) ? row('Changed by', shown(item.updatedBy)) : null,
       item.after ? row('After', `${(item.after.title || item.after.id.slice(0, 8))} · ${afterWord(item.after)}`) : null,
       item.after ? row('If it fails', item.after.policy === 'any' ? 'Start anyway' : 'Do not start') : null,
-      item.sourceFromPrevious ? row('Source branch', 'the run before it') : null,
-      row('Feature branch', item.summary.sameAsSource ? 'none — commits onto the source branch'
-        : (item.summary.featureBranch ? (item.kind === 'recurring' ? `${item.summary.featureBranch}-<date>` : item.summary.featureBranch) : '')),
+      git && item.sourceFromPrevious ? row('Source branch', 'the run before it') : null,
+      git ? row('Feature branch', item.summary.sameAsSource ? 'none — commits onto the source branch'
+        : (item.summary.featureBranch ? (item.kind === 'recurring' ? `${item.summary.featureBranch}-<date>` : item.summary.featureBranch) : '')) : null,
       row('Guardrails', item.summary.guardrailsId && item.summary.guardrailsId !== 'permissive' ? item.summary.guardrailsId : ''),
       row('Extra files', item.summary.extras ? String(item.summary.extras) : ''),
       item.after ? null : row('If Worca is not running', item.ifMissed === 'skip' ? 'Skip it' : `Start it late, at most ${item.graceMin >= 60 && item.graceMin % 60 === 0 ? `${item.graceMin / 60} h` : `${item.graceMin} min`}`),

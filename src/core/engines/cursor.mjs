@@ -41,6 +41,7 @@ import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
+import { gitAvailable } from '../git-available.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const cursorDefaultBin = () => process.env.WORCA_CURSOR_BIN || 'cursor-agent';
@@ -127,7 +128,7 @@ export function cursorMcpDocument(servers) {
 
 // ── the run checkout's .cursor files ─────────────────────────────────────────
 
-const git = (cwd, args) => { try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } };
+const git = (cwd, args) => { if (!gitAvailable()) return null; try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } };
 const EXCLUDE_NOTE = '# worca: Cursor engine config written into run checkouts (engines/cursor.mjs)';
 /** Whether `dir` or a parent holds a `.git` (so a failed `git rev-parse` is a git failure, not "no repository"). */
 const gitAbove = (dir) => { for (let d = resolve(dir); ; d = dirname(d)) { if (existsSync(join(d, '.git'))) return true; if (dirname(d) === d) return false; } };
@@ -194,7 +195,7 @@ export function writeCursorProjectFiles(cwd, files) {
   if (!entries.length) return;
   if (linked) throw new Error(`${join(cwd, '.cursor')} is a symlink — worca will not write Cursor's config through it (it may point outside the checkout)`);
   const inside = git(cwd, ['rev-parse', '--is-inside-work-tree']);
-  if (inside === null && gitAbove(cwd)) throw new Error(`git cannot read the repository around ${cwd} — worca will not write Cursor's config blind`);
+  if (inside === null && gitAvailable() && gitAbove(cwd)) throw new Error(`git cannot read the repository around ${cwd} — worca will not write Cursor's config blind`);
   const inTree = inside === 'true';
   if (inTree) {
     const tracked = git(cwd, ['ls-files', '--', ...entries.map(([rel]) => `:(icase)${rel}`)]);

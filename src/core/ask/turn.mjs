@@ -20,6 +20,7 @@ import { CLAUDE_SIGNED_OUT_CODE } from '../preflight.mjs';
 import { failedBecauseSignedOut } from '../claude-auth.mjs';
 import { resolveModelEnv, resolveModelCost, estimateCost, liveCostRates as defaultLiveCostRates } from '../config.mjs';
 import { worcaHome } from '../projects.mjs';
+import { gitAvailable } from '../git-available.mjs';
 import { generateTitle } from '../title.mjs';
 import { cleanText } from '../../shared/graph/assemble.mjs';
 import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../../shared/mcp-tool-name.mjs';
@@ -254,6 +255,8 @@ class AskTurn extends EventEmitter {
       resolveModelCost: deps.resolveModelCost ?? resolveModelCost,
       worcaHome: deps.worcaHome ?? worcaHome,
       buildMcpConfig: deps.buildMcpConfig ?? buildMcpConfig,
+      // git on this machine (P0): handed to the classic MCP child (WORCA_GIT) and to the sub-agent note.
+      gitAvailable: deps.gitAvailable ?? gitAvailable,
       // ({threadId, reader, web}) => {url, token, dispose()} | null. Set by the server when agents run
       // under their own users (agent-pool.mjs): the chat's claude then runs as the person's
       // agent user and its worca tools run in the server through this relay. null = classic.
@@ -1214,7 +1217,7 @@ class AskTurn extends EventEmitter {
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.engine === 'codex' ? { engine: 'codex' } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.engine === 'codex' ? { engine: 'codex' } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group: the
         // scratch dir is setgid worca-share (2770), so 0640 reaches the agent users and nobody
@@ -1311,6 +1314,7 @@ class AskTurn extends EventEmitter {
         registry: this.mcp,   // MCP registry §9.2: EVERY attempt, the resume-fallback retry included
         ...(this.engine === 'codex' ? { engine: 'codex' } : {}),
         commands: this.commands,
+        git: d.gitAvailable(),
         ...(this.composer ? { composer: true } : {}),   // the Workflows chat: no Task built-in (spawn.mjs)
         // Skills registry §4.4: every attempt too, until the sideload safety net drops the layer.
         skills: this.skills && this.skillMount ? { pluginDirs: this.skillMount.pluginDirs, names: this.skillNames } : null,

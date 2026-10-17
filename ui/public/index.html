@@ -457,7 +457,7 @@
                 <!-- Branches (design v3): one table for a project or a workspace — a project
                      run is the same table with one row. One choice (where the code comes from),
                      then each row says in words what the run will get. -->
-                <div class="field field-compact branches" id="branch-fields" data-min-level="advanced">
+                <div class="field field-compact branches" id="branch-fields" data-min-level="advanced" data-needs-git>
                   <div class="branches-head">
                     <span class="branches-title" id="branches-title">Branches</span>
                     <span class="branches-ctx" id="branches-ctx"></span>
@@ -796,7 +796,7 @@
                        copies the name, like the Details header's (paintPageBranch). -->
                   <header class="rd-page-head">
                     <h1 class="rd-page-title" tabindex="-1"></h1>
-                    <p class="rd-page-meta"><button type="button" class="rd-page-branch" hidden data-min-level="advanced" aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
+                    <p class="rd-page-meta"><button type="button" class="rd-page-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
                   </header>
                 </div>
                 <div class="rd-sheet">
@@ -821,7 +821,7 @@
                   </div>
                   <div class="rd-banners">
                     <!-- The worktree notice (worktree-notice.mjs): retained work, or a live checkout. -->
-                    <div class="retained-banner" role="alert" hidden></div>
+                    <div class="retained-banner" data-needs-git role="alert" hidden></div>
                   </div>
                   <!-- Time · Cost · Changes, in every state (the time ticks while live). -->
                   <div class="rd-facts"></div>
@@ -834,7 +834,7 @@
                   <div class="rd-result" hidden></div>
                   <!-- The pull request button: one node for the screen's life, outside the result
                        (rebuilt), so its loading placeholder can morph into it (paintPrCta). -->
-                  <div class="rd-pr-box">
+                  <div class="rd-pr-box" data-needs-git>
                     <div class="rd-pr-slot" hidden></div>
                     <!-- The open PR's checks, conflicts and Watch PR, as the button's footer (paintRdPrStatus). -->
                     <div class="rd-pr-status" hidden></div>
@@ -870,8 +870,8 @@
                   </div>
                   <div class="rd-meta mono"></div>
                   <div class="rd-row3">
-                    <span class="rd-base mono" hidden data-min-level="advanced"></span>
-                    <button type="button" class="rd-branch-copy mono" hidden data-min-level="advanced" title="Copy branch name" aria-label="Copy branch name">
+                    <span class="rd-base mono" hidden data-min-level="advanced" data-needs-git></span>
+                    <button type="button" class="rd-branch-copy mono" hidden data-min-level="advanced" data-needs-git title="Copy branch name" aria-label="Copy branch name">
                       <span class="rd-branch-name"></span>
                       <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
                       <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -880,7 +880,7 @@
                          off copyBranchToClipboard's own 1200ms `.copied` window. -->
                     <span class="rd-copied">Copied</span>
                     <!-- Sync before run (#527): shown only when the run has a Sync row; opens its log. -->
-                    <button type="button" class="rd-sync" hidden data-min-level="advanced" title="Show the Sync log"></button>
+                    <button type="button" class="rd-sync" hidden data-min-level="advanced" data-needs-git title="Show the Sync log"></button>
                     <span class="rd-spacer"></span>
                   </div>
                 </header>
@@ -960,7 +960,7 @@
                 <div class="rd-now">
                   <header class="rd-page-head">
                     <h1 class="rd-page-title" tabindex="-1"></h1>
-                    <p class="rd-page-meta"><button type="button" class="rd-page-branch" hidden data-min-level="advanced" aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
+                    <p class="rd-page-meta"><button type="button" class="rd-page-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
                   </header>
                 </div>
                 <div class="rd-sheet">
@@ -973,8 +973,8 @@
                   <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
                   <div class="hd-banners">
                     <span class="badge hist-retained-badge" hidden>Work retained</span>
-                    <div class="retained-banner" role="alert" hidden></div>
-                    <div class="merge-back-banner" role="status" hidden></div>
+                    <div class="retained-banner" data-needs-git role="alert" hidden></div>
+                    <div class="merge-back-banner" data-needs-git role="status" hidden></div>
                   </div>
                   <div class="rd-facts"></div>
                   <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
@@ -984,7 +984,7 @@
                   <div class="rd-result hd-result"></div>
                   <!-- The pull request button, mirrored from the Details header: one node, outside
                        the result paintHdGlance rebuilds on every paint (paintPrCta). -->
-                  <div class="rd-pr-box">
+                  <div class="rd-pr-box" data-needs-git>
                     <div class="rd-pr-slot" hidden></div>
                     <!-- The open PR's checks, conflicts and Watch PR, as the button's footer (paintRdPrStatus). -->
                     <div class="rd-pr-status" hidden></div>
@@ -998,23 +998,23 @@
                 <div class="hd-row1">
                   <h1 class="hd-title"></h1>
                   <span class="auto-badge" hidden></span>
-                  <span class="hist-merge" hidden data-min-level="expert"></span>
-                  <button type="button" class="hd-pr" hidden data-min-level="advanced">Create PR</button>
+                  <span class="hist-merge" hidden data-min-level="expert" data-needs-git></span>
+                  <button type="button" class="hd-pr" hidden data-min-level="advanced" data-needs-git>Create PR</button>
                   <!-- Publish branch (#618): push a finished run's branch without a PR. Painted by paintHdPublish. -->
-                  <button type="button" class="hd-publish btn-ghost" hidden data-min-level="advanced">Publish branch</button>
+                  <button type="button" class="hd-publish btn-ghost" hidden data-min-level="advanced" data-needs-git>Publish branch</button>
                   <span class="act-pill-slot"></span>
-                  <a class="hd-pr-link" hidden data-min-level="advanced" target="_blank" rel="noopener"></a>
-                  <button type="button" class="hd-push" hidden data-min-level="advanced"></button>
+                  <a class="hd-pr-link" hidden data-min-level="advanced" data-needs-git target="_blank" rel="noopener"></a>
+                  <button type="button" class="hd-push" hidden data-min-level="advanced" data-needs-git></button>
                 </div>
                 <!-- "Published to <remote>/<branch>" (#618): its own line, so a long branch never squeezes the title. -->
-                <p class="hd-published hint mono" hidden data-min-level="advanced"></p>
+                <p class="hd-published hint mono" hidden data-min-level="advanced" data-needs-git></p>
                 <!-- Base conflicts (#620): the stored check of each branch against its base. Painted by paintHdBase. -->
-                <div class="hd-base-check" hidden>
+                <div class="hd-base-check" data-needs-git hidden>
                   <ul class="hd-base-members"></ul>
                 </div>
                 <!-- Workspace runs: one line per member repo (View PR / Merged / No changes).
                      Painted by paintHdPr; never shown for a single-project run. -->
-                <ul class="hd-pr-repos" hidden data-min-level="advanced" aria-label="Pull requests per repository"></ul>
+                <ul class="hd-pr-repos" hidden data-min-level="advanced" data-needs-git aria-label="Pull requests per repository"></ul>
                 <!-- Status pip leads the META line, not row 1: it reads as the icon
                      for the status WORD it now sits next to (same pairing the list
                      card uses), and row 1 stays title + PR actions. -->
@@ -1028,8 +1028,8 @@
                   <div class="hd-meta mono"></div>
                 </div>
                 <div class="hd-row3">
-                  <span class="hd-base mono" data-min-level="advanced"></span>
-                  <button type="button" class="hd-branch-copy mono" hidden data-min-level="advanced" title="Copy branch name" aria-label="Copy branch name">
+                  <span class="hd-base mono" data-min-level="advanced" data-needs-git></span>
+                  <button type="button" class="hd-branch-copy mono" hidden data-min-level="advanced" data-needs-git title="Copy branch name" aria-label="Copy branch name">
                     <span class="hd-branch-name"></span>
                     <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
                     <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -1911,7 +1911,7 @@
             <!-- Scheduled runs: the defaults a NEW schedule inherits. Each schedule keeps
                  its own copy, so a change here never rewrites an existing one. -->
             <!-- Sync before run (#527): the instance defaults each project inherits. -->
-            <section class="card settings-card" id="sync-settings-card" data-min-level="advanced">
+            <section class="card settings-card" id="sync-settings-card" data-min-level="advanced" data-needs-git>
               <div class="card-head">
                 <div class="label-row">
                   <h2>Sync before run</h2>
@@ -2048,7 +2048,7 @@
 
             <!-- Actions (issue #529): keep policy for finished-run checkouts, the port range for
                  automatic port variables, editor/terminal overrides and the checkout cap. -->
-            <section class="card settings-card" id="actions-settings-card" data-min-level="advanced">
+            <section class="card settings-card" id="actions-settings-card" data-min-level="advanced" data-needs-git>
               <div class="card-head"><div class="label-row"><h2>Actions</h2>
                 <button type="button" class="info-tip" aria-label="About actions">i<span class="tip-content hidden">
                   Check out a finished run and run its project's actions from Worca. Actions are off on hosted
@@ -2820,7 +2820,7 @@
              where no folder picker exists (a container or hosted worca). -->
         <div class="md-tabs proj-add-tabs" id="proj-add-tabs" role="tablist" aria-label="How to add the project">
           <button type="button" class="md-tab" role="tab" id="proj-add-tab-folder" data-mode="folder" aria-selected="true" aria-controls="proj-add-folder-pane">Folder</button>
-          <button type="button" class="md-tab" role="tab" id="proj-add-tab-clone" data-mode="clone" aria-selected="false" aria-controls="proj-add-clone-pane">Clone from URL</button>
+          <button type="button" class="md-tab" role="tab" id="proj-add-tab-clone" data-needs-git data-mode="clone" aria-selected="false" aria-controls="proj-add-clone-pane">Clone from URL</button>
         </div>
         <div id="proj-add-folder-pane" role="tabpanel" aria-labelledby="proj-add-tab-folder">
           <div class="field">

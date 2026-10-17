@@ -23,6 +23,8 @@ import { stripHostCredentials } from '../host-credentials.mjs';
 import { agentIdentity, agentSpawn, killAgentGroupSync } from '../agent-user.mjs';
 import { agentIdentityFor } from '../agent-pool.mjs';
 import { currentOwner } from '../billing.mjs';
+import { gitAvailable } from '../git-available.mjs';
+import { withNoGitPath } from '../nogit-stub.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./script-child.mjs', import.meta.url));
 /** The `python` harness (workbench spec §7), spawned as `<python> -u worca_script.py <program.py>`. */
@@ -163,6 +165,9 @@ export function envForShell(envelope, baseEnv = process.env) {
   env.WORCA_RUN_ID = c.runId || '';
   env.WORCA_PLATFORM = c.platform || process.platform;
   env.WORCA_MOCK = c.mock ? '1' : '0';
+  // P0: a script child never probes git; it gets this process's answer (server / CLI / Ask child), so the
+  // built-in workspace-map scripts keep git ls-files and origins where git is installed (CONTRACT §0, S1).
+  env.WORCA_GIT = gitAvailable() ? '1' : '0';
   // W12: set on a bench run, ABSENT on a pipeline run (a shell's `${WORCA_BENCH+set}`
   // must not see it) — and never inherited from a worca that is itself under test.
   if (c.bench) env.WORCA_BENCH = '1'; else delete env.WORCA_BENCH;
@@ -177,7 +182,7 @@ export function envForShell(envelope, baseEnv = process.env) {
 export function scriptBaseEnv(claudeOpts, platform = process.platform) {
   const scrubbed = buildSpawnEnv(claudeOpts?.envScrub, claudeOpts?.envAllowlist);
   // Never a GitHub or Azure DevOps credential, like the agents (src/core/host-credentials.mjs).
-  return stripHostCredentials(scrubbed ? { ...scrubbedEnv(platform), ...scrubbed } : process.env);
+  return withNoGitPath(stripHostCredentials(scrubbed ? { ...scrubbedEnv(platform), ...scrubbed } : process.env), { platform });
 }
 
 export function parseFrame(text) {

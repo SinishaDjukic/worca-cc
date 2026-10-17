@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { membersOfRow, checkoutPathFor } from '../checkout.mjs';
 import { checkoutRecordsFor } from '../artifacts.mjs';
 import { actionBaseEnv } from '../actions/spawn.mjs';
+import { withNoGitPath } from '../nogit-stub.mjs';
 import { RUN_ROOT_REMOVE as FINISHED } from '../worktree.mjs';   // done | stopped | error
 
 export const LIVE_WARNING = 'This pipeline is still running and changing these files. Changes you make here are committed with the run when it ends.';
@@ -39,9 +40,9 @@ const envPart = (s) => String(s).toUpperCase().replace(/[^A-Z0-9]+/g, '_').repla
  */
 export function terminalEnv({ base = process.env, sessionId, mode, runId = null, member = null, projectKey = null, branch = null,
   cwd, workspace = false, actionSnaps = [], shellEnv = {}, agent = false }) {
-  const env = { ...actionBaseEnv(base), ...shellEnv,
+  const env = withNoGitPath({ ...actionBaseEnv(base), ...shellEnv,
     TERM: mode === 'pty' ? 'xterm-256color' : 'dumb', COLORTERM: 'truecolor',
-    WORCA_TERMINAL: '1', WORCA_TERMINAL_SESSION: sessionId, WORCA_WORKTREE: cwd };
+    WORCA_TERMINAL: '1', WORCA_TERMINAL_SESSION: sessionId, WORCA_WORKTREE: cwd });
   delete env.PORT;                   // worca's own port (`worca ui`, the Docker image): an app started here must not bind it
   if (mode !== 'pty' || agent) { env.PAGER = 'cat'; env.GIT_PAGER = 'cat'; }   // no tty, or a program reading it: a pager would wait forever
   if (agent) { env.GIT_TERMINAL_PROMPT = '0'; env.WORCA_TERMINAL_NORC = '1'; }  // Ask (#574): no password prompt, none of the person's rc

@@ -9,6 +9,7 @@ import { listProjects } from './projects.mjs';
 import { readWorkspace } from './workspaces.mjs';
 import { currentBranch, resolveDefaultBranch } from './worktree.mjs';
 import { mapWithCap, fanoutCap } from './fanout.mjs';
+import { gitAvailable, onGitChange } from './git-available.mjs';
 import {
   syncRepo, remoteInfo, incomingCommits, commitInfo, isSafeBranchName, lastFetchedAt,
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS,
@@ -97,6 +98,8 @@ export function worstChipState(blocks) {
   return (blocks || []).map(chipState).filter(Boolean).sort((a, b) => RANK[b] - RANK[a])[0] || null;
 }
 
+const syncLoopCanRun = () => gitAvailable();
+
 /**
  * Scheduled background fetch (NOT per page load): one project at a time, each only when its
  * FETCH_HEAD is older than its refreshMinutes (0 = never). Emits 'changed' {projectKey} when a
@@ -118,6 +121,7 @@ export function startProjectSyncBackground({ log = (m) => console.warn(m), tickM
     return !at || Date.now() - Date.parse(at) >= s.refreshMinutes * 60_000;
   };
   const runTick = async () => {
+    if (!syncLoopCanRun()) return;
     try {
       for (const p of await listProjectsFn()) {
         if (stopped) return;                       // stop() lands between projects
@@ -143,8 +147,9 @@ export function startProjectSyncBackground({ log = (m) => console.warn(m), tickM
   void tick();
   const timer = setInterval(() => { void tick(); }, tickMs);
   timer.unref?.();
+  const offGit = onGitChange((s) => { if (s.available) void tick(); });
   /** Stop the timer; resolves once a tick already in flight has finished (tests await it). */
-  return async () => { stopped = true; clearInterval(timer); await (busy || null); };
+  return async () => { offGit(); stopped = true; clearInterval(timer); await (busy || null); };
 }
 
 export const _testing = { RANK };

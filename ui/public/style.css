@@ -2609,6 +2609,16 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
   #projects-list .pl-team{justify-self:start;display:flex;flex-wrap:wrap;gap:4px 14px;}
   #projects-list .pl-team-item{display:inline-flex;align-items:center;gap:6px;}
 }
+/* No git (data-git="off"): no sync column — the row is project | team | chevron. */
+:root[data-git="off"] #projects-list .proj-cols,
+:root[data-git="off"] #projects-list .pl-row{grid-template-columns:minmax(0,1fr) var(--pl-team-col) 30px;}
+:root[data-git="off"] #projects-list .pl-row{grid-template-areas:"proj team chev";}
+@container pl-list (max-width:1000px){
+  :root[data-git="off"] #projects-list .pl-row{grid-template-columns:minmax(0,1fr) auto 30px;grid-template-areas:"proj team chev";}
+}
+@container pl-list (max-width:560px){
+  :root[data-git="off"] #projects-list .pl-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"proj chev" "team team";}
+}
 .proj-path{
   font-family:var(--mono);font-size:12px;color:var(--ink-2);
   margin-top:4px;word-break:break-all;
@@ -6945,6 +6955,7 @@ a.ask-card-task-title:hover{text-decoration-color:currentColor;}
 :root[data-level="advanced"] [data-max-level="simple"],
 :root[data-level="expert"] [data-max-level="simple"],
 :root[data-level="expert"] [data-max-level="advanced"]{display:none !important;}
+:root[data-git="off"] [data-needs-git]{display:none !important;}
 
 /* The icon (the Settings card, the dialog's cards): a stack of layers, unlit ones ghosted. */
 .lv-icon .lv-off{opacity:.26;}

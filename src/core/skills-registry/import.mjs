@@ -17,6 +17,7 @@ import { githubEnv } from '../github-credentials.mjs';
 import { hasTokenShape } from '../mcp-secrets.mjs';
 import { SKILL_LIMITS, SKILL_LINKS_AND_FOLDERS_MAX, inspectSkillDir, isValidSkillFolderName, readSkillMd, skillFileDigests, skillNameProblem } from './inspect.mjs';
 import { SkillLibraryError, stagesDir, stageDirOf, skillsDir, readSkillLibrary } from './library.mjs';
+import { gitAvailable, GIT_MISSING } from '../git-available.mjs';
 
 const fail = (status, message, extra) => { throw new SkillLibraryError(status, message, extra); };
 
@@ -292,6 +293,7 @@ const lastLine = (e) => String(e?.stderr || e?.message || e).trim().split('\n').
 
 // `exact` (updates): the origin's folder as recorded ('' = the root), never a fresh pick.
 async function stageGit(source, dir, fetchGit, exact) {
+  if (!gitAvailable()) fail(409, GIT_MISSING.message, { code: GIT_MISSING.code });
   const ref = source.ref || null;
   const subdir = exact ? (source.subdir ?? '') : (source.subdir || null);
   let got;

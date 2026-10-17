@@ -21,6 +21,8 @@ export const ACTION_LEVEL = Object.freeze({
 });
 /** Actions a server-side switch can take away: action → key of the flags the home loads (deps.flags). */
 export const ACTION_FLAG = Object.freeze({ script: 'scripts', tasks: 'tasks', shape: 'shapeFirst' });
+/** Actions that need git: their tiles carry data-needs-git, hidden while git is missing (git-gate.mjs). */
+export const ACTION_NEEDS_GIT = Object.freeze(['clone', 'diff']);
 /** Before the flags load: script tools on (the setting's default), task sources unknown = none, Shape it first off
  *  until a hello turns it on. */
 export const DEFAULT_FLAGS = Object.freeze({ scripts: true, tasks: false, shapeFirst: false });
@@ -59,6 +61,7 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
     b.type = 'button';
     b.className = 'chat-home-act';
     b.dataset.minLevel = ACTION_LEVEL[id] || 'simple';
+    if (ACTION_NEEDS_GIT.includes(id)) b.dataset.needsGit = '';
     b.appendChild(homeIcon(doc, icon, 20));
     const l = doc.createElement('span');
     l.className = 'chat-home-act-l';

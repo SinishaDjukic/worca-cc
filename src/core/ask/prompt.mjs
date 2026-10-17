@@ -8,6 +8,7 @@
 //  - attachment inlining and the DB-replay restore prompt.
 import { WORKSPACE_KEY_RE } from '../workspaces.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { GIT_ONLY_ASK_TOOLS } from './tools.mjs';
 import { RECIPE_GUIDE, WORKSPACE_GUIDE } from '../auto/recipes.mjs';
 import { MODEL_PICK_POLICY, compareFacts, factsLine } from '../model-tiers.mjs';   // prompt DATA: names stages, never agent keys
 import { isGroupBy } from '../../shared/team-metrics/aggregate.mjs';
@@ -95,6 +96,24 @@ export function codexSystemRules(rules = ASK_SYSTEM_RULES) {
     if (at < 0 || out.indexOf(from, at + 1) >= 0) throw new Error(`codexSystemRules: the Claude rule text changed — "${from.slice(0, 60)}…" must occur exactly once`);
     out = out.slice(0, at) + to + out.slice(at + from.length);
   }
+  return out;
+}
+
+/** The no-git variant of the rules (P0, git missing on this machine): rule 1 lists no git-only tool, rule 7 says there is
+ *  no repository view, and the pull-request and clone sentences go. Applied after the Codex rewrite and the hosting rule. */
+export const ASK_NO_GIT_RULE_7 = '7. This machine has no git: there are no worktrees, branches or git history to read, and no git tool. Read a run through get_run, get_run_diff and its artifacts.';
+const NO_GIT_EDITS = [   // [from, to]; each `from` must occur exactly once when present (test-pinned)
+  [' For a finished run with changes and no pull request, propose_pull_request puts a card whose button opens the Ship it dialog; the user opens the pull request there — never claim one was opened.', ''],
+  ["To add a project, call propose_clone_project with the repository's https:// URL (and a branch or folder name only when the user gives one): the user applies the card and worca clones it into the projects folder with this deployment's read credential and registers it.",
+    'Cloning a repository needs git, which this server does not have.'],
+];
+export function noGitSystemRules(text) {
+  let out = text.split('\n').filter((l) => !l.startsWith('   - WORCA_CLONE_ALLOW limits')).map((l) => {
+    if (l.startsWith('7. Worktrees')) return ASK_NO_GIT_RULE_7;
+    return l.replace(/^(1\. Answer only from the worca tools \()([^)]*)\)/,
+      (_, head, list) => `${head}${list.split(', ').filter((n) => !GIT_ONLY_ASK_TOOLS.includes(n)).join(', ')})`);
+  }).join('\n');
+  for (const [from, to] of NO_GIT_EDITS) out = out.replace(from, to);
   return out;
 }
 
@@ -372,9 +391,11 @@ export function renderCommandsSection() {
  *  (docs/guardrails.md "Web access") are the host-dependent parts: null keeps the prompt byte-identical to a chat
  *  without script or web tools. `shape` (Shape it first, spec D9) adds its section after mcp. `commands` (agent mode,
  *  #574) appends the commands section last. */
-export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local', web = null, mcp = null, commands = false, engine = 'claude', shape = false } = {}) {
+export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local', web = null, mcp = null, commands = false, engine = 'claude', shape = false, git = true } = {}) {
   const own = engine === 'codex' ? codexSystemRules() : ASK_SYSTEM_RULES;
-  const rules = deployment === 'container' || deployment === 'hosted' ? `${own}\n${ASK_HOSTING_RULE}` : own;
+  const hosted = deployment === 'container' || deployment === 'hosted' ? `${own}\n${ASK_HOSTING_RULE}` : own;
+  // `git` (P0): false = this machine has no git — the rules then name no git-only tool (noGitSystemRules).
+  const rules = git === false ? noGitSystemRules(hosted) : hosted;
   const base = `${rules}\n\n${renderCatalog(catalog)}`;
   const withScripts = scripts ? `${base}\n\n${renderScriptsSection(scripts)}` : base;
   const withWeb = web && web.enabled === true ? `${withScripts}\n\n${renderWebSection(web, { engine })}` : withScripts;

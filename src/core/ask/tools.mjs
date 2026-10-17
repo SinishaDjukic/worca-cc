@@ -12,6 +12,9 @@ export class AskToolError extends Error {
   constructor(message) { super(message); this.name = 'AskToolError'; }
 }
 
+// The tools that only work with git on this machine: neither listed nor callable while deps.gitAvailable() is false.
+export const GIT_ONLY_ASK_TOOLS = Object.freeze(['list_branches', 'open_worktree', 'list_worktrees', 'remove_worktree', 'git', 'propose_clone_project', 'propose_pull_request']);
+
 const MEMBER_HEADER_RE = /^# ([a-z0-9][a-z0-9-]*-[0-9a-f]{8})$/;   // workspace patches = member patches joined as `# <projectKey>\n<patch>`
 const DIFF_GIT = 'diff --git ';
 const FROM_RE = /^(?:rename|copy) from /;   // extended-header line naming the SOURCE file of a rename/copy
@@ -371,6 +374,8 @@ const DRAFT_SCRIPT_PROPS = { displayName: SCHEMA.s('display name'), key: SCHEMA.
  */
 export function createAskTools(deps) {
   const L = deps.limits;
+  // git missing on this machine (P0): an absent dep means git is on, so every existing caller is unchanged.
+  const gitOff = () => typeof deps.gitAvailable === 'function' && deps.gitAvailable() === false;
 
   // #397: the user-pinned scope of this conversation — {projectKey}|{workspaceId}|
   // null — re-read per call so a mid-conversation selector change is honoured.
@@ -1329,6 +1334,7 @@ export function createAskTools(deps) {
   }
   /** Branch sync status on the same rows (#527): the last fetch, no network. No-op without the dep. */
   async function listProjectsSync(out) {
+    if (gitOff()) return out;
     const b = deps.branches && typeof deps.branches.status === 'function' ? deps.branches : null;
     if (!b || !out || !Array.isArray(out.projects)) return out;
     let m = null;
@@ -1342,6 +1348,7 @@ export function createAskTools(deps) {
   }
   /** { commits, fetchedAt } | null — offline; only for rows that recorded a start commit. */
   async function baseMovedOf(row, baseSha, source) {
+    if (gitOff()) return null;
     if (!baseSha || !source || !row || !row.project_key) return null;
     if (!deps.branches || typeof deps.branches.baseMoved !== 'function' || typeof deps.readStoreMeta !== 'function') return null;
     const meta = deps.readStoreMeta(row.project_key);
@@ -2767,8 +2774,9 @@ export function createAskTools(deps) {
   };
 
   return {
-    list: () => defs.filter((d) => !composerMode || COMPOSER_ALLOW.has(d.name)).map((d) => ({ ...d })),
+    list: () => defs.filter((d) => (!composerMode || COMPOSER_ALLOW.has(d.name)) && !(gitOff() && GIT_ONLY_ASK_TOOLS.includes(d.name))).map((d) => ({ ...d })),
     async call(name, input) {
+      if (gitOff() && GIT_ONLY_ASK_TOOLS.includes(name)) throw new AskToolError(`${name}: git is not installed on this machine`);
       if (composerMode && !COMPOSER_ALLOW.has(name)) throw new AskToolError(`${name}: not available in the Workflows chat`);
       if (!composerMode && CANVAS_TOOLS.has(name)) throw new AskToolError(`${name}: only the Workflows view's chat edits a canvas`);
       const fn = Object.prototype.hasOwnProperty.call(handlers, name) ? handlers[name] : null;

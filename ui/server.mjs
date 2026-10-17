@@ -52,6 +52,7 @@ import {
 } from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
+import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
 import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError } from '../src/core/flags.mjs';
 import { createKeepAwake, countWorking } from '../src/core/keep-awake.mjs';
 import {
@@ -460,6 +461,10 @@ preflightNode();
 // (express, ws and htmlparser2 are imported statically above, so a missing one of
 // those still fails at load, before this line.)
 preflightDeps();
+// CONTRACT §0: one git answer before anything can spawn git — at import, so every process that loads this module has it:
+// `npm start` / `worca ui`, and the CDP proofs and screenshot tools (tools/verify-*-cdp.mjs) that import the server and call
+// listen themselves. WORCA_GIT=0|1 answers without a probe (the suite runs with 1).
+await gitState();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -828,6 +833,7 @@ wss.on('connection', (ws, req) => {
   const id = requestedRunId || requestedGenId || requestedBenchId || requestedInstanceId;
 
   send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), flags: allFlags(), runs: summarizeRuns(), ask: askHello(ws),
+    git: { available: gitAvailable() },
     extensionPairs: REMOTE_MODE ? [] : extensionPairing.pendingPublic() });
 
   if (id && runs.has(id)) {
@@ -924,6 +930,8 @@ function broadcast(obj) {
     }
   }
 }
+// CONTRACT §0: a git flip (installed / removed) reaches every open tab as one `git` frame.
+onGitChange((s) => broadcast({ type: 'git', git: { available: s.available, version: s.version } }));
 
 // Per-person delivery of Ask frames (step 3): on a shared sign-in an ask-* frame that names a
 // thread goes only to sockets of that thread's owner (and to non-shared sockets, e.g. an
@@ -1572,6 +1580,28 @@ app.use(express.json({ limit: '8mb' }));
 // AFTER the body parsers: their stream callbacks would otherwise run outside this context.
 app.use((req, _res, next) => withBillTo(resolveIdentity(req).name, next));
 
+// CONTRACT §0: routes whose whole purpose is git answer 409 GIT_MISSING while git is missing. Registered before their
+// handlers, so next() reaches the real route when git is there. Body-dependent refusals stay inline (terminal branch,
+// skills, run start/resume, clone jobs from Ask cards).
+const gitMissing = (res) => res.status(409).json({ error: GIT_MISSING.message, code: GIT_MISSING.code });
+const GIT_ONLY_ROUTES = Object.freeze([
+  ['post', '/api/projects/clone'], ['delete', '/api/projects/:key/terminal/worktrees'],
+  ['post', '/api/runs/:id/checkout'], ['delete', '/api/runs/:id/checkout'], ['get', '/api/runs/:id/checkout/diff'],
+  ['post', '/api/projects/:key/actions/:actionId/try'],
+  ['get', '/api/pr/remotes'], ['post', '/api/pr'], ['post', '/api/pr/resolve'], ['post', '/api/runs/:id/publish'],
+  ['post', '/api/push'], ['post', '/api/shape/features/:id/ship'],
+  ['post', '/api/sync'], ['post', '/api/projects/:key/sync'], ['post', '/api/sync/all'], ['post', '/api/workspaces/:id/sync'],
+  ['post', '/api/runs/:id/base-check'], ['post', '/api/runs/:id/update-branch'],
+  ['post', '/api/runs/:id/resolve-pipeline'], ['post', '/api/runs/:id/resolve-terminal'],
+  ['post', '/api/runs/:id/apply-retained'], ['post', '/api/runs/:id/discard-worktree'],
+  ['post', '/api/workspaces/scan'], ['post', '/api/workspaces/:id/scan'],
+  ['post', '/api/workspaces/metrics-scan'], ['post', '/api/workspaces/:id/metrics-route'], ['post', '/api/workspaces/:id/policy-route'],
+  ['post', '/api/projects/:key/team-metrics/enable'], ['post', '/api/team-metrics/flush'], ['post', '/api/team-metrics/discover'],
+  ['put', '/api/policy'], ['post', '/api/policy/discover'], ['post', '/api/projects/:key/policy/enable'],
+  ['post', '/api/plugins/install'], ['post', '/api/plugins/:name/update'],
+]);
+for (const [method, route] of GIT_ONLY_ROUTES) app[method](route, (_req, res, next) => (gitAvailable() ? next() : gitMissing(res)));
+
 if (HLJS_ASSETS) {
   const sendHljsModule = (file) => (_req, res, next) => {
     res.type('text/javascript');
@@ -1739,7 +1769,7 @@ const INDEX_FILE = path.join(PUBLIC_DIR, 'index.html');
 }
 function sendIndex(res) {
   let html;
-  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme(), effectiveUiLevel(), allFlags()); }
+  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable() }); }
   catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');
@@ -1796,12 +1826,14 @@ function workspaceErrorStatus(code) {
   if (code === 'RETAINED_WORKTREE') return 409;   // retained uncommitted work blocks deletion
   if (code === 'NOT_FOUND') return 404;
   if (code === 'BAD_REQUEST') return 400;
+  if (code === 'GIT_MISSING') return 409;
   return 500;
 }
 
 /** Answer a workspaces.mjs coded error with its HTTP status (workspaceErrorStatus). */
 function workspaceFail(res, err) {
-  return res.status(workspaceErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
+  return res.status(workspaceErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err),
+    ...(err?.code === 'GIT_MISSING' ? { code: 'GIT_MISSING' } : {}) });
 }
 
 // Single source of truth for path normalization lives in the core registry.
@@ -2141,6 +2173,7 @@ async function tagGate(res, body, { projectDir = null, workspaceId = null, start
 const startRunHandler = async (req, res) => {
   // B2: a draining server starts nothing new (the scan arm and the scheduler come through here too).
   if (DRAIN.on) return res.status(503).json(DRAIN_REFUSAL);
+  if (!gitAvailable()) return gitMissing(res);   // replaced by P1a (workModeForStart decides Folder mode); P3's noProject passes there
   try {
     const body = req.body || {};
     // Scheduled runs: `internal` is set ONLY by fireTicket() (never from HTTP) — the
@@ -3245,6 +3278,8 @@ async function fireTicket(ticket) {
       if (inherited.length) body.tags = inherited;
     }
     if (ticket.sourceFromPrevious) {
+      // Before the branch checks: isValidSourceRef answers false while git is missing, and "no longer exists" would be stored as a fact.
+      if (!gitAvailable()) return { ok: false, error: GIT_MISSING.message, transient: false };
       const prev = p.pipelineId ? previousBranchesOf(p.pipelineId) : null;
       // Backstop only: the gate already waits for a merge back (pipelineGate). A FORCED ticket skips the gate.
       if (prev && prev.pending) return { ok: false, error: 'the run before it is still merging its work back', transient: true };
@@ -4742,6 +4777,7 @@ async function resumeTargetDirs(saved) {
 async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false, auto = false, resumeCause = null } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
+  if (!gitAvailable()) throw new ResumeError(409, { error: GIT_MISSING.message, code: GIT_MISSING.code });   // replaced by P1a: only state.workMode === 'git'
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
   const saved = readPipelineForResume(pipelineId);
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
@@ -5530,6 +5566,7 @@ function metricsErrorStatus(code) {
     case 'NOT_FOUND': case 'NOT_ENABLED': return 404;
     case 'PUSH_REJECTED': case 'FETCH_FAILED': case 'REMOTE_UNREACHABLE': case 'PUSH_RETRIES_EXHAUSTED': return 502;
     case 'LOCK_TIMEOUT': return 503;
+    case 'GIT_MISSING': return 409;
     default: return 500;
   }
 }
@@ -5712,7 +5749,7 @@ app.post('/api/workspaces/:id/metrics-route', async (req, res) => {
 const POLICY_ERROR_STATUS = {
   BAD_REQUEST: 400, NOT_FOUND: 404, NO_ORIGIN: 400, DELEGATE_INVALID: 400, NOT_HOME: 409, NOT_ENABLED: 409,
   REMOTE_UNREACHABLE: 502, FETCH_FAILED: 502, WORKTREE_FAILED: 500, COMMIT_FAILED: 500,
-  PUSH_REJECTED: 409, PUSH_RETRIES_EXHAUSTED: 409,
+  PUSH_REJECTED: 409, PUSH_RETRIES_EXHAUSTED: 409, GIT_MISSING: 409,
 };
 function sendPolicyError(res, err) {
   const code = (err && err.code) || 'INTERNAL';
@@ -7004,6 +7041,7 @@ app.post('/api/projects/:key/terminal', async (req, res) => {
         branch, by, cols: req.body?.cols, rows: req.body?.rows });
       return res.status(201).json({ session, warning: null });
     }
+    if (!gitAvailable()) return gitMissing(res);
     const wt = await openBranchWorktree({ projectKey: p.key, projectDir: p.path, branch: req.body?.branch, by });
     let session;
     try {
@@ -8634,6 +8672,7 @@ function publicCloneJob(j) {
   return { id, url, name, dir, state, code, error, project, startedAt, endedAt };
 }
 async function startCloneJob(req) {
+  if (!gitAvailable()) throw new CloneError('git-missing', GIT_MISSING.message);
   const plan = planClone(req, { projectsRoot: getProjectsRoot() });   // throws CloneError at once
   if ([...CLONE_JOBS.values()].some((j) => j.state === 'running' && j.dir === plan.dir)) {
     throw new CloneError('exists', `${plan.dir} is being cloned already`);
@@ -8988,8 +9027,7 @@ app.post('/api/workspaces', async (req, res) => {
     emitChanged('workspaces-changed', 'created');
     res.status(201).json({ workspace, metricsHomeAuto });
   } catch (err) {
-    const status = workspaceErrorStatus(err && err.code);
-    return res.status(status).json({ error: err && err.message ? err.message : String(err) });
+    return workspaceFail(res, err);
   }
 });
 
@@ -9146,8 +9184,7 @@ app.post('/api/workspaces/:id/members', async (req, res) => {
     if (clearedHomes.includes('policy')) emitChanged('team-policy-changed', 'policy-home');
     res.json({ workspace, clearedHomes, rescan });
   } catch (err) {
-    const status = workspaceErrorStatus(err && err.code);
-    return res.status(status).json({ error: err && err.message ? err.message : String(err) });
+    return workspaceFail(res, err);
   }
 });
 
@@ -9532,6 +9569,7 @@ const settingsState = () => ({
   networkWait: networkWaitSettings(),                     // Settings › Runs › Wait for the network
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
   flags: allFlags(),                                      // { key: bool } resolved (docs/feature-flags.md)
+  git: (({ available, version }) => ({ available, version }))(currentGitState()),   // is git usable here (CONTRACT §0)
   memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
   memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: the built-in's own model
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
@@ -9591,6 +9629,13 @@ app.get('/api/health', (req, res) => {
     port: addr || PORT,
     startedAt: startedAtIso(),
   });
+});
+
+// CONTRACT §0: is git usable here, re-probed at most once a minute (U4: installing git needs no restart).
+// A flip broadcasts the `git` frame through onGitChange.
+app.get('/api/git', async (_req, res) => {
+  const s = await gitState({ maxAgeMs: 60_000 });
+  res.json({ available: s.available, version: s.version, reason: s.reason, checkedAt: s.checkedAt });
 });
 
 // Who this request is, for the header's "Signed in as" (identity.mjs). Attribution only.
@@ -11846,7 +11891,7 @@ function askWebAccessFor(threadId, ctx) {
  *  askMcpPromptInput()). Memory is mounted, not rendered. */
 async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
-  return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands,
+  return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, git: gitAvailable(),
     ...(engine === 'codex' ? { engine } : {}), ...(shapeFirstEnabled() ? { shape: true } : {}) });
 }
 
@@ -13806,6 +13851,7 @@ function pluginErrorStatus(code) {
   if (code === 'BAD_REQUEST') return 400;
   if (code === 'REFERENCED') return 409;
   if (code === 'EXISTS') return 409;
+  if (code === 'GIT_MISSING') return 409;
   return 500;
 }
 function sendPluginError(res, err) {
@@ -13813,7 +13859,7 @@ function sendPluginError(res, err) {
   if (err && (err.name === 'ReferencedError' || err.code === 'REFERENCED')) {
     return res.status(409).json({ error: message, references: err.references || [] });
   }
-  res.status(pluginErrorStatus(err && err.code)).json({ error: message });
+  res.status(pluginErrorStatus(err && err.code)).json({ error: message, ...(err?.code === 'GIT_MISSING' ? { code: 'GIT_MISSING' } : {}) });
 }
 
 // Load the installed manifest through the current/ symlink. null = broken
@@ -14646,7 +14692,8 @@ function hostedGitRefusal(url) {
 function sendSkillsError(res, err) {
   if (err instanceof skLibrary.SkillLibraryError || err instanceof McpStoreError) {
     return res.status(err.status || 400).json({ error: err.message,
-      ...(Array.isArray(err.candidates) ? { candidates: err.candidates } : {}), ...(Array.isArray(err.problems) ? { problems: err.problems } : {}) });
+      ...(Array.isArray(err.candidates) ? { candidates: err.candidates } : {}), ...(Array.isArray(err.problems) ? { problems: err.problems } : {}),
+      ...(err.code === 'GIT_MISSING' ? { code: err.code } : {}) });
   }
   res.status(500).json({ error: err?.message || String(err) });
 }
@@ -15560,6 +15607,13 @@ if (isMain) {
     }
   }
 
+  // The git answer resolved at import (the `await gitState()` after preflightDeps), logged once at boot.
+  {
+    const g = currentGitState();
+    console.log(g.available ? `[worca-ui] git ${g.version || '(WORCA_GIT=1)'}${g.path ? ` at ${g.path}` : ''}`
+      : `[worca-ui] git: not available (${g.reason}); git features are hidden`);
+  }
+
   try {
     seedBuiltinMarketplace();
   } catch (err) {
@@ -15685,7 +15739,7 @@ export const _testing = {
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor,
-  startCloneJob, followCloneCard, CLONE_JOBS,
+  startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,

@@ -428,3 +428,16 @@ test('defaultBranchDeps.status: sync for existing projects only; baseMoved count
   } finally { _testing.reset(); }
   assert.equal(await b.baseMoved({ projectDir: clone, source: '-x', baseSha }), null);
 });
+
+// P0 Task 10: while git is missing no sync fact is read — list_projects carries no sync, get_run / get_run_progress no baseMoved.
+test('git missing: list_projects never asks branches.status, get_run / get_run_progress never ask baseMoved', async () => {
+  let status = 0; let moved = 0;
+  const branches = { async status() { status += 1; return new Map([['web-00000001', { base: 'dev', ahead: 1, behind: 2, dirty: false, fetchedAt: null }]]); },
+    async baseMoved() { moved += 1; return { commits: 4, fetchedAt: null }; } };
+  const r = runRow({ source: 'dev', feature: 'worca-cc/x', baseSha: 'c'.repeat(40) });
+  const tools = createAskTools(runDeps(r, { branches, gitAvailable: () => false }));
+  assert.equal((await tools.call('list_projects', {})).projects.some((p) => 'sync' in p), false);
+  assert.equal('baseMoved' in (await tools.call('get_run', { id: 'abcd1234' })), false);
+  assert.equal('baseMoved' in (await tools.call('get_run_progress', { runId: 'abcd1234' })), false);
+  assert.deepEqual([status, moved], [0, 0]);
+});
