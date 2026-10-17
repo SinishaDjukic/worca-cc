@@ -5,7 +5,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseRemoteUrl, remoteRepoSlug, sameRepo, listRemotes, listRemoteBranches, prHeadRef,
-  pushBranch, createPr, prMergeable, findPrForBranch, prLifecycleState, prProviderFor, prHostsAvailable, anyPrHost,
+  pushBranch, createPr, ghRepoAccess, ghForkRepo, prMergeable, findPrForBranch, prLifecycleState, prProviderFor, prHostsAvailable, anyPrHost,
   markPrReady, closePr, _testing as gitInfo,
 } from '../src/core/git-info.mjs';
 import { forgeOf, forgeOfPrUrl, prNumberFromUrl } from '../src/core/forge.mjs';
@@ -458,6 +458,62 @@ test('prProviderFor / prHostsAvailable / anyPrHost', async () => {
     assert.deepEqual(await prHostsAvailable(), { github: false, azure: false });
     assert.equal(await anyPrHost(), false);
   });
+});
+
+test('ghRepoAccess: .permissions.push → canPush; no permissions block (App token) → null; gh failure → ok:false', async () => {
+  await withEnv(CLOSED_GATES, () => checkRows([
+    { name: 'push:true, exact argv', run: async () => {
+      const seen = [];
+      gitInfo.setRunner((cmd, args) => { seen.push([cmd, ...args]); return okOut('{"admin":false,"push":true,"pull":true}\n'); });
+      assert.deepEqual(await ghRepoAccess({ repo: 'acme/market' }), { ok: true, canPush: true });
+      assert.deepEqual(seen, [['gh', 'api', 'repos/acme/market', '--jq', '.permissions']]);
+    } },
+    { name: 'push:false', run: async () => {
+      gitInfo.setRunner(() => okOut('{"push":false,"pull":true}\n'));
+      assert.deepEqual(await ghRepoAccess({ repo: 'acme/market' }), { ok: true, canPush: false });
+    } },
+    { name: 'no permissions block → unknown', run: async () => {
+      gitInfo.setRunner(() => okOut('null\n'));
+      assert.deepEqual(await ghRepoAccess({ repo: 'acme/market' }), { ok: true, canPush: null });
+    } },
+    { name: 'gh fails', run: async () => {
+      gitInfo.setRunner(() => fail('HTTP 404: Not Found (https://api.github.com/repos/acme/market)'));
+      const r = await ghRepoAccess({ repo: 'acme/market' });
+      assert.equal(r.ok, false);
+      assert.match(r.error, /404/);
+    } },
+  ]));
+});
+
+test('ghForkRepo: POST /forks, then waits until the fork answers; times out with a reason', async () => {
+  await withEnv(CLOSED_GATES, () => checkRows([
+    { name: 'forks, polls once, returns the fork', run: async () => {
+      const seen = []; let views = 0;
+      gitInfo.setRunner((cmd, args) => {
+        seen.push([cmd, ...args]);
+        if (args.includes('POST')) return okOut('me/market\n');
+        views += 1;
+        return views === 1 ? fail('HTTP 404: Not Found') : okOut('me/market\n');
+      });
+      const r = await ghForkRepo({ repo: 'acme/market', sleep: async () => {} });
+      assert.deepEqual(r, { ok: true, owner: 'me', repo: 'market', slug: 'me/market' });
+      assert.deepEqual(seen[0], ['gh', 'api', '-X', 'POST', 'repos/acme/market/forks', '-F', 'default_branch_only=true', '--jq', '.full_name']);
+      assert.deepEqual(seen[1], ['gh', 'api', 'repos/me/market', '--jq', '.full_name']);
+      assert.equal(seen.length, 3);
+    } },
+    { name: 'fork refused (App installation token)', run: async () => {
+      gitInfo.setRunner(() => fail('HTTP 403: Resource not accessible by integration'));
+      const r = await ghForkRepo({ repo: 'acme/market', sleep: async () => {} });
+      assert.equal(r.ok, false);
+      assert.match(r.error, /403/);
+    } },
+    { name: 'never ready → timeout', run: async () => {
+      gitInfo.setRunner((cmd, args) => (args.includes('POST') ? okOut('me/market\n') : fail('HTTP 404')));
+      const r = await ghForkRepo({ repo: 'acme/market', waitMs: 0, sleep: async () => {} });
+      assert.equal(r.ok, false);
+      assert.match(r.error, /me\/market was not ready/);
+    } },
+  ]));
 });
 
 test('markPrReady and closePr: gh argv; an already-ready PR counts as ready; a missing URL is refused', () => withEnv(CLOSED_GATES, async () => {

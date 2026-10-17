@@ -124,6 +124,8 @@ import {
 import { groupCommentThreads, commentWhen } from './comment-thread.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
 import { exportSlugPreview } from './export-slug.mjs';
+import { fillMarketplaceSelect, marketplaceExportBody, marketplaceNameProblem, marketplacePlanExtras, marketplaceDoneView,
+  renderMarketplaceSkipped, marketplaceLoadError, syncMarketplaceButtons, requestTicket, ticketIsCurrent } from './export-marketplace.mjs';
 import { createCodeEditor } from './code-editor.mjs';
 import { previewAskFromDef, previewFileUrl } from './ask/form-preview.mjs';
 import { projectForm } from '../../src/shared/forms/project.mjs';
@@ -35354,16 +35356,28 @@ async function exportApply(id, opts) { return exportCall(id, opts); }
 // first — one Export… per row instead of one button per format.
 // `planned`: a Preview (dry run) for the CURRENT inputs is on screen. Export runs
 // its own dry run when there is none, so the primary button is never dead.
-const exportModalState = { item: null, format: 'json', destination: 'global', conflicts: [], planned: false };
+// `targets`: the PR-capable marketplaces (null until read; a failed read leaves it null so the next
+// open retries), `skipped`: the registered ones the server left out, with why. `targetsLoad`: the
+// read in flight, shared by every caller while it runs and reset per open (a reopen reads afresh;
+// the older read's late answer is dropped). `busy`: a marketplace request is in flight. `seq`: bumped by every
+// plan invalidation, close and open; a Preview answer that lands after a bump is for a dialog that no longer exists.
+const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, skipped: [], targetsLoad: null, busy: false, conflicts: [], planned: false, seq: 0 };
+const exportModalHidden = () => { const m = document.getElementById('export-modal'); return !m || m.classList.contains('hidden'); };
 
 function openExportModal(item) {
   const modal = document.getElementById('export-modal');
   if (!modal) return;
+  exportModalState.seq++;                                 // a Preview still in flight belongs to the previous open
   exportModalState.item = item;
   exportModalState.format = 'json';
   exportModalState.destination = 'global';
+  exportModalState.pluginDest = 'folder';
+  exportModalState.targets = null;                       // re-read: a marketplace may have been added since
+  exportModalState.targetsLoad = null;                   // a read still in flight belongs to the previous open: its answer is dropped
+  exportModalState.skipped = [];
   exportModalState.conflicts = [];
   exportModalState.planned = false;
+  document.getElementById('export-draft').checked = false;   // draft is opt-in per export, never remembered
   document.getElementById('export-slug').value = '';
   document.getElementById('export-folder').value = '';
   document.getElementById('export-plugin-name').value = '';
@@ -35380,6 +35394,7 @@ function openExportModal(item) {
 function closeExportModal() {
   const modal = document.getElementById('export-modal');
   if (modal) modal.classList.add('hidden');
+  exportModalState.seq++;                                 // a Preview still in flight has no dialog to land in
   exportSetDone(false);
 }
 /** Swap the form for the result view (or back). The dialog stays open so the
@@ -35389,7 +35404,9 @@ function exportSetDone(done) {
   g('export-form').classList.toggle('hidden', done);
   g('export-done').classList.toggle('hidden', !done);
   for (const id of ['export-cancel', 'export-plan-btn', 'export-apply-btn']) g(id).classList.toggle('hidden', done);
-  if (!done && exportModalState.item) exportSyncFormat();          // Preview visibility is format-driven
+  // Preview visibility is format-driven. Not while the dialog is hidden: closing swaps the view back too, and with
+  // Marketplace selected the sync would read the publish targets into a dialog nobody sees (its error line included).
+  if (!done && exportModalState.item && !exportModalHidden()) exportSyncFormat();
   g('export-done-close').classList.toggle('hidden', !done);
   if (done) g('export-done-close').focus();
 }
@@ -35429,11 +35446,16 @@ function exportJsonFilename(id) {
 function exportSyncFormat() {
   const { format, destination } = exportModalState;
   const json = format === 'json', skill = format === 'skill', plugin = format === 'plugin';
+  const market = plugin && exportModalState.pluginDest === 'marketplace';
   const show = (id, on) => document.getElementById(id).classList.toggle('hidden', !on);
   for (const b of document.querySelectorAll('#export-format .seg-btn')) b.classList.toggle('on', b.dataset.format === format);
   for (const b of document.querySelectorAll('#export-dest .seg-btn')) b.classList.toggle('on', b.dataset.dest === destination);
+  for (const b of document.querySelectorAll('#export-plugin-dest .seg-btn')) b.classList.toggle('on', b.dataset.pdest === exportModalState.pluginDest);
   show('export-dest-field', skill);
-  show('export-folder-field', (skill && destination === 'project') || plugin);
+  show('export-plugin-dest-field', plugin);
+  show('export-folder-field', (skill && destination === 'project') || (plugin && !market));
+  show('export-marketplace-field', market);
+  show('export-keep-version-row', plugin && !market);
   document.getElementById('export-folder-label').textContent = plugin ? 'Plugin folder' : 'Folder';
   document.getElementById('export-folder').placeholder = plugin ? '/path/to/my-plugin' : '/path/to/repo';
   show('export-plugin-field', plugin);
@@ -35444,38 +35466,108 @@ function exportSyncFormat() {
   // (dry run); Export runs that dry run itself and writes unless it finds a
   // conflict, which the user then resolves per file before exporting again.
   document.getElementById('export-plan-btn').classList.toggle('hidden', json);
+  document.getElementById('export-plan-btn').disabled = false;
   const apply = document.getElementById('export-apply-btn');
-  apply.textContent = json ? 'Download' : 'Export';
+  apply.textContent = json ? 'Download' : market ? 'Open pull request' : 'Export';
   apply.disabled = false;
   const name = exportModalState.item ? exportModalState.item.name : '';
   document.getElementById('export-subtitle').textContent = json
     ? `Download "${name}" as a JSON file another Worca user can import.`
-    : plugin
-      ? `Export "${name}" as a Worca plugin folder to share with other Worca users.`
-      : `Export "${name}" as a runnable /command skill.`;
+    : market
+      ? `Open a pull request that adds "${name}" to a team marketplace as a Worca plugin.`
+      : plugin
+        ? `Export "${name}" as a Worca plugin folder to share with other Worca users.`
+        : `Export "${name}" as a runnable /command skill.`;
   document.getElementById('export-format-hint').textContent = json
     ? 'The saved graph only — no agents or skills travel with it. The recipient uses Import… in their saved list.'
-    : plugin
-      ? 'Bundles the pipeline, your own agents it uses and the skills they need. Built-in agents are not copied. The recipient runs: worca plugin link <folder>'
-      : 'Writes a SKILL.md plus the agents it dispatches under .claude/, so the pipeline runs inside Claude Code without Worca.';
+    : market
+      ? 'Builds the plugin in a fresh copy of the marketplace, lists it in worca-cc-marketplace.json, validates it (lint, script cases, the marketplace\'s own discovery) and opens one pull request on worca/plugin/<name>.'
+      : plugin
+        ? 'Bundles the pipeline, your own agents it uses and the skills they need. Built-in agents are not copied. The recipient runs: worca plugin link <folder>'
+        : 'Writes a SKILL.md plus the agents it dispatches under .claude/, so the pipeline runs inside Claude Code without Worca.';
+  if (market) void exportLoadTargets();
+}
+const exportIsMarketplace = () => exportModalState.format === 'plugin' && exportModalState.pluginDest === 'marketplace';
+/** Fetch the PR-capable marketplaces once per open, fill the select, and disable Preview/Open pull request when
+ *  there are none. A failed read is not "no marketplaces": it is said as an error, both buttons stay disabled, and
+ *  nothing is cached, so the next open (or the next switch to Marketplace) retries. When the list is empty but the
+ *  server skipped registered marketplaces, the hint under the select says why. */
+async function exportLoadTargets() {
+  const select = document.getElementById('export-marketplace');
+  const skippedEl = document.getElementById('export-marketplace-skipped');
+  if (exportModalState.targets === null) {
+    exportSyncMarketplaceButtons(0);                       // nothing to send to until the list is in
+    fillMarketplaceSelect(select, [], { doc: document, emptyText: 'Loading marketplaces…' });   // never the previous open's list
+    renderMarketplaceSkipped(skippedEl, [], { doc: document });
+    if (!exportModalState.targetsLoad) exportModalState.targetsLoad = exportFetchTargets();
+    const load = exportModalState.targetsLoad;
+    const loaded = await load;
+    if (exportModalState.targetsLoad !== load) return;     // the dialog was reopened meanwhile: this answer is stale, the new open reads again
+    exportModalState.targetsLoad = null;
+    if (!exportIsMarketplace()) return;                    // switched away while reading: nothing to show
+    if (loaded.error !== undefined) {
+      fillMarketplaceSelect(select, [], { doc: document, emptyText: 'Marketplaces could not be loaded' });
+      renderMarketplaceSkipped(skippedEl, [], { doc: document });
+      exportSyncMarketplaceButtons(0);
+      exportSay(marketplaceLoadError(loaded.error), true);
+      return;
+    }
+    exportModalState.targets = loaded.targets;
+    exportModalState.skipped = loaded.skipped;
+  }
+  const n = fillMarketplaceSelect(select, exportModalState.targets, { doc: document, keep: select.value });
+  renderMarketplaceSkipped(skippedEl, n === 0 ? exportModalState.skipped : [], { doc: document });
+  exportSyncMarketplaceButtons(n);
+}
+/** GET /api/marketplaces/publish-targets → {targets, skipped} | {error} (the server's message, else the status or the network error). */
+async function exportFetchTargets() {
+  try {
+    const r = await fetch('/api/marketplaces/publish-targets');
+    const j = await safeJson(r);
+    if (!r.ok) return { error: j.error || `HTTP ${r.status}` };
+    return { targets: j.targets || [], skipped: j.skipped || [] };
+  } catch (err) { return { error: err && err.message ? err.message : String(err) }; }
+}
+function exportSyncMarketplaceButtons(n = (exportModalState.targets || []).length) {
+  if (!exportIsMarketplace()) return;
+  syncMarketplaceButtons({ plan: document.getElementById('export-plan-btn'), apply: document.getElementById('export-apply-btn') },
+    { busy: exportModalState.busy, targets: n });
+}
+/** A marketplace request starts (`busy`) or ends: both buttons off while it runs, then back by the dialog's rule
+ *  (a no-op when the user switched destination meanwhile — that destination's own sync already set them). The inputs
+ *  the request was built from (name, marketplace, draft) are locked too, so the answer is for what the dialog shows;
+ *  they are unlocked UNCONDITIONALLY — the name field is shared with Local folder, whose sync never touches it. */
+function exportSetBusy(busy) {
+  exportModalState.busy = busy;
+  for (const id of ['export-plugin-name', 'export-marketplace', 'export-draft']) document.getElementById(id).disabled = busy;
+  if (busy) {
+    document.getElementById('export-plan-btn').disabled = true;
+    document.getElementById('export-apply-btn').disabled = true;
+    return;
+  }
+  exportSyncMarketplaceButtons();
 }
 /** Plugin names are kebab-case (worca-cc-plugin.json `name`). Derive one from
  *  what the user typed, else from the folder's basename, and say so under the
  *  field — the same look-before-you-export the skill slug has. */
 function exportPluginName() {
   const typed = document.getElementById('export-plugin-name').value.trim();
+  const market = exportIsMarketplace();
   const folder = document.getElementById('export-folder').value.trim().replace(/[\\/]+$/, '');
-  const raw = typed || folder.split(/[\\/]/).pop() || '';
+  const fallback = market ? (exportModalState.item ? exportModalState.item.name : '') : (folder.split(/[\\/]/).pop() || '');
+  const raw = typed || fallback;
   const name = raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
-  return { raw, name, fromFolder: !typed };
+  return { raw, name, fromFolder: !typed && !market, fromPipeline: !typed && market };
 }
 function exportSyncPluginNamePreview() {
-  const { raw, name, fromFolder } = exportPluginName();
+  const { raw, name, fromFolder, fromPipeline } = exportPluginName();
   const el = document.getElementById('export-plugin-name-preview');
   if (!raw) { el.textContent = 'Plugin name: (choose a folder first)'; return; }
-  el.textContent = name
-    ? `Plugin name: ${name}${fromFolder ? ' (from the folder name)' : ''}`
-    : 'Plugin name: needs at least one letter or digit';
+  if (!name) { el.textContent = 'Plugin name: needs at least one letter or digit'; return; }
+  const problem = exportIsMarketplace() ? marketplaceNameProblem({ raw, name }) : '';
+  if (problem) { el.textContent = `${problem} Got "${name}".`; return; }
+  el.textContent = `Plugin name: ${name}${fromFolder ? ' (from the folder name)' : fromPipeline ? ' (from the pipeline name)' : ''}`
+    + (exportIsMarketplace() ? ` · branch worca/plugin/${name}` : '');
 }
 function exportSyncSlugPreview() {
   const raw = document.getElementById('export-slug').value;
@@ -35486,6 +35578,12 @@ function exportSyncSlugPreview() {
 function exportBuildOpts() {
   const dest = exportModalState.destination;
   if (exportModalState.format === 'plugin') {
+    if (exportModalState.pluginDest === 'marketplace') {
+      return marketplaceExportBody({
+        marketplaceId: document.getElementById('export-marketplace').value,
+        pluginName: exportPluginName().name, draft: document.getElementById('export-draft').checked,
+      });
+    }
     const opts = {
       destination: 'plugin',
       pluginDir: document.getElementById('export-folder').value.trim(),
@@ -35569,6 +35667,7 @@ function exportUpdateApplyEnabled() {
 // If any of those change afterward, the shown plan (and its gathered resolutions) no longer
 // matches what Apply would do — drop it and re-disable Apply so the user must re-Plan.
 function exportInvalidatePlan() {
+  exportModalState.seq++;                                 // a Preview in flight was asked for the old inputs: its answer is dropped
   exportModalState.conflicts = [];
   exportModalState.planned = false;
   const planEl = document.getElementById('export-plan');
@@ -35576,6 +35675,7 @@ function exportInvalidatePlan() {
   // Export re-plans on its own, so a stale preview never leaves the button dead.
   const applyBtn = document.getElementById('export-apply-btn');
   if (applyBtn) applyBtn.disabled = false;
+  exportSyncMarketplaceButtons();
   exportSay('');
 }
 function bindExportModal() {
@@ -35587,6 +35687,11 @@ function bindExportModal() {
   for (const b of document.querySelectorAll('#export-dest .seg-btn')) {
     b.addEventListener('click', () => { exportModalState.destination = b.dataset.dest; exportInvalidatePlan(); exportSyncFormat(); });
   }
+  for (const b of document.querySelectorAll('#export-plugin-dest .seg-btn')) {
+    // the name fallback changes with the destination (folder basename ↔ pipeline name), so re-render its preview
+    b.addEventListener('click', () => { exportModalState.pluginDest = b.dataset.pdest; exportInvalidatePlan(); exportSyncFormat(); exportSyncPluginNamePreview(); });
+  }
+  document.getElementById('export-marketplace').addEventListener('change', exportInvalidatePlan);
   document.getElementById('export-slug').addEventListener('input', () => { exportSyncSlugPreview(); exportInvalidatePlan(); });
   document.getElementById('export-include-agents').addEventListener('change', exportInvalidatePlan);
   document.getElementById('export-folder').addEventListener('input', exportInvalidatePlan);
@@ -35608,13 +35713,36 @@ function bindExportModal() {
   document.getElementById('export-cancel').addEventListener('click', closeExportModal);
   document.getElementById('export-done-close').addEventListener('click', closeExportModal);
   // Preview: the optional dry run — shows what Export would write, writes nothing.
+  // The destination and the body are read ONCE, before the request, and the answer is shown only when the
+  // dialog still asks the same question: nothing invalidated the plan meanwhile (a typed name, another
+  // marketplace, a switched destination, a close) and the inputs still build the body that was sent. A
+  // marketplace plan has no `created` list, so rendering it after a switch to Local folder would also throw.
   document.getElementById('export-plan-btn').addEventListener('click', async () => {
+    const market = exportIsMarketplace();
+    const nameProblem = market ? marketplaceNameProblem(exportPluginName()) : '';
+    if (nameProblem) { exportSay(nameProblem, true); return; }
     exportSay('Previewing…');
+    if (market) exportSetBusy(true);
+    const opts = exportBuildOpts();
+    const ticket = requestTicket(exportModalState.seq, opts);
+    const current = () => !exportModalHidden() && exportIsMarketplace() === market && ticketIsCurrent(ticket, exportModalState.seq, exportBuildOpts());
     try {
-      const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
+      const plan = await exportPlan(exportModalState.item.id, opts);
+      if (!current()) return;
+      if (market) {
+        exportRenderPlan({ ...plan.files, warnings: plan.warnings, conflicts: [] });
+        document.getElementById('export-plan').appendChild(marketplacePlanExtras(plan, { doc: document }));
+        exportSay(plan.status === 'unchanged' ? 'No changes — the marketplace already has this export.'
+          : 'Preview only — nothing is pushed until you click Open pull request.');
+        return;
+      }
       exportRenderPlan(plan);
       exportSay(plan.conflicts.length ? 'Resolve each conflict below, then Export.' : 'Preview only — nothing is written until you click Export.');
-    } catch (err) { exportSay(`Preview failed: ${err.message}`, true); }
+    } catch (err) {
+      if (current()) exportSay(`Preview failed: ${err.message}`, true);
+    } finally {
+      if (market) exportSetBusy(false);
+    }
   });
   // Export: writes. Without a preview for the current inputs it runs the dry run
   // itself first; a conflict (only the skill format can raise one) stops it and is
@@ -35633,6 +35761,28 @@ function bindExportModal() {
         lines: [['File', exportJsonFilename(exportModalState.item.id)], ['Pipeline', exportModalState.item.name]],
         next: 'Send the file to another Worca user — they pick it up with Import… in their saved pipelines. Agents and skills do not travel with it; share a plugin for those.',
       });
+      return;
+    }
+    if (exportIsMarketplace()) {
+      const nameProblem = marketplaceNameProblem(exportPluginName());
+      if (nameProblem) { exportSay(nameProblem, true); return; }
+      exportSay('Building the plugin in a copy of the marketplace, validating, then opening the pull request…');
+      exportSetBusy(true);                                 // about a minute: a second click must not start a second export
+      // The inputs are locked while it runs, so the result is for what the dialog shows — it reports what
+      // happened, not what would happen, so it is never stale. Only a dialog closed meanwhile is not painted:
+      // the log keeps the outcome (and the PR link) either way.
+      try {
+        const r = await exportApply(exportModalState.item.id, exportBuildOpts());
+        appendLog({ source: 'ui', level: 'info', text: `exported ${exportModalState.item.name} to marketplace ${r.marketplace.name}: ${r.status}${r.prUrl ? ` ${r.prUrl}` : ''}` });
+        if (exportModalHidden()) return;
+        exportShowDone(marketplaceDoneView(r, { doc: document }));
+      } catch (err) {
+        if (exportModalHidden()) { appendLog({ source: 'ui', level: 'error', text: `marketplace export of ${exportModalState.item.name} failed: ${err.message}` }); return; }
+        exportInvalidatePlan();
+        exportSay(`Export failed: ${err.message}`, true);
+      } finally {
+        exportSetBusy(false);
+      }
       return;
     }
     exportSay('Exporting…');
@@ -35692,8 +35842,16 @@ function bindExportModal() {
       exportSay(`Export failed: ${err.message}`, true);
     }
   });
-  // Backdrop click (the overlay itself, not the inner card) closes the modal.
+  // Backdrop click (the overlay itself, not the inner card) and Escape close the modal, matching the viewer and the
+  // folder browser — unless that browser is open on top (Browse…): its own Escape handler closes it, this dialog stays.
+  // Capture phase (like the model editor): the folder browser's bubble-phase listener was registered earlier and would
+  // otherwise run first, hide the browser, and let this guard see it as already closed — one Escape closing both.
   modal.addEventListener('click', (e) => { if (e.target === modal) closeExportModal(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || modal.classList.contains('hidden')) return;
+    if (el.folderBrowser && !el.folderBrowser.classList.contains('hidden')) return;
+    closeExportModal();
+  }, true);
 }
 bindExportModal();
 
