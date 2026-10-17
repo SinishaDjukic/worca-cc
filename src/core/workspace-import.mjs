@@ -165,7 +165,7 @@ function git(cwd, args) {
 }
 
 // One request's git probes, memoized by folder: inputs that name one folder probe it once.
-async function probeContext(projects) {
+async function probeContext(projects, outsideProblem = null) {
   const memo = (fn) => { const m = new Map(); return (p) => { const k = resolve(p); if (!m.has(k)) m.set(k, fn(k)); return m.get(k); }; };
   const registered = (Array.isArray(projects) ? projects : []).filter((p) => p && typeof p.key === 'string');
   // The folder each registered project's path opens (realpath(3) resolves a symlink, the letter
@@ -185,7 +185,7 @@ async function probeContext(projects) {
     byReal: new Map(registered.map((p, i) => [reals[i], p])),   // null: a path that opens nothing, never looked up
     // Folders the "holds repositories?" probes (describeInput) may visit, for the whole request.
     // Spent, a folder inside a repository simply stands for that repository again.
-    probe: { dirs: IMPORT_SCAN_MAX_DIRS, cut: false },
+    probe: { dirs: IMPORT_SCAN_MAX_DIRS, cut: false, outside: outsideProblem },
   };
 }
 
@@ -210,8 +210,9 @@ async function expandCodeWorkspace(it) {
 
 // The git repositories in `dir`: each subfolder holding a `.git` (a folder, or a worktree's `.git`
 // file), never descending into one, and at depth 2 the same one level further down. Hidden
-// folders and node_modules are skipped; symlinked folders are followed; `budget` caps the walk
-// (only folders count, so a file after the last allowed folder never reads as a cut).
+// folders and node_modules are skipped; symlinked folders are followed, except one `budget.outside`
+// refuses (a hosted Worca's link out of its folders: skipped unread, as the folder browser hides it);
+// `budget` caps the walk (only folders count, so a file after the last allowed folder never reads as a cut).
 async function reposUnder(dir, depth, budget) {
   let entries;
   try { entries = await readdir(dir, { withFileTypes: true }); } catch { return []; }
@@ -220,6 +221,7 @@ async function reposUnder(dir, depth, budget) {
   for (const d of entries) {
     if (d.name.startsWith('.') || d.name === 'node_modules') continue;
     const p = join(dir, d.name);
+    if (d.isSymbolicLink() && budget.outside && (await budget.outside(p))) continue;
     if (!d.isDirectory() && !(d.isSymbolicLink() && (await statOrNull(p))?.isDirectory())) continue;
     if (budget.dirs <= 0) { budget.cut = true; break; }
     budget.dirs -= 1;
@@ -346,15 +348,19 @@ function mergeRows(rows) {
 
 /**
  * @param {string[]} inputs  picked or pasted paths (absolute, or starting with ~)
- * @param {{ depth?: 1|2, projects?: {key: string, name: string, path: string}[] }} [opts]
+ * @param {{ depth?: 1|2, projects?: {key: string, name: string, path: string}[],
+ *   outsideProblem?: ((path: string) => Promise<string|null>) | null }} [opts]
  *   projects: the registered projects (listProjects()), matched by key or by the folder their path opens
+ *   outsideProblem: on a hosted Worca, why a path may not be read here (null when it may). Asked for
+ *   each input before it is read and for each listed row before it is probed; a refused one is a
+ *   problem row and nothing else about it is read.
  * @returns {Promise<{ candidates: {path: string, name: string, key: string, status: 'registered'|'new'|'problem',
  *   problem: string|null, liftedFrom: string[]}[], workspaceName: string|null, truncated: boolean }>}
  */
-export async function importCandidates(inputs, { depth = 1, projects = [] } = {}) {
+export async function importCandidates(inputs, { depth = 1, projects = [], outsideProblem = null } = {}) {
   const levels = depth === 2 ? 2 : 1;
-  const ctx = await probeContext(projects);
-  const budget = { dirs: IMPORT_SCAN_MAX_DIRS, cut: false };   // the parent-folder scans', per request (D13)
+  const ctx = await probeContext(projects, outsideProblem);
+  const budget = { dirs: IMPORT_SCAN_MAX_DIRS, cut: false, outside: outsideProblem };   // the parent-folder scans', per request (D13)
   const raw = [];
   let workspaceName = null;
   let truncated = false;
@@ -362,7 +368,10 @@ export async function importCandidates(inputs, { depth = 1, projects = [] } = {}
   for (const input of list) {
     // Never resolved against the server's working folder: that path means nothing to the user.
     if (!isAbsolute(input) && !HOME_PATH_RE.test(input)) { raw.push({ path: input, problem: 'Not a full path: start it with / or ~/' }); continue; }
-    const it = await describeInput(normalizeProjectPath(input), ctx, levels);
+    const path = normalizeProjectPath(input);
+    const refused = outsideProblem ? await outsideProblem(path) : null;
+    if (refused) { raw.push({ path, problem: refused }); continue; }
+    const it = await describeInput(path, ctx, levels);
     const source = it.problem ? null : IMPORT_SOURCES.find((s) => s.match(it));
     if (!source) { raw.push({ path: it.path, problem: it.problem || 'Not a folder or a .code-workspace file' }); continue; }
     const out = await source.expand(it, { depth: levels, budget });
@@ -373,6 +382,13 @@ export async function importCandidates(inputs, { depth = 1, projects = [] } = {}
   }
   if (raw.length > IMPORT_MAX_CANDIDATES) { raw.length = IMPORT_MAX_CANDIDATES; truncated = true; }
   if (budget.cut) truncated = true;
+  if (outsideProblem) {
+    for (const r of raw) {
+      if (r.problem) continue;
+      const refused = await outsideProblem(r.path);
+      if (refused) r.problem = refused;
+    }
+  }
   const rows = await mapLimit(raw, PROBE_CONCURRENCY, (r) => classify(r, ctx));
   return { candidates: mergeRows(rows), workspaceName, truncated };
 }

@@ -9361,7 +9361,7 @@ async function scanRequest(req, res, { id, name, projectPaths, rescan, models })
 // repositories, a VS Code .code-workspace file) as review rows — registered (the existing project),
 // new (the wizard registers it through POST /api/projects/bulk before it scans) or problem (with
 // the reason). Reads folders and runs `git rev-parse` only: it never writes (src/core/workspace-
-// import.mjs). Localhost-only like every route here (global isLocalRequest middleware).
+// import.mjs). On a hosted Worca it reads only inside Worca's own folders (fs-scope.mjs).
 app.post('/api/workspaces/import-candidates', async (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   if (body.paths !== undefined && !Array.isArray(body.paths)) return badRequest(res, 'paths must be an array of paths');
@@ -9375,7 +9375,10 @@ app.post('/api/workspaces/import-candidates', async (req, res) => {
     ])];
     if (!inputs.length) return badRequest(res, 'give at least one path (paths or text)');
     if (inputs.length > IMPORT_MAX_INPUTS) return badRequest(res, `at most ${IMPORT_MAX_INPUTS} paths per import`);
-    res.json(await importCandidates(inputs, { depth: body.depth === 2 ? 2 : 1, projects: await listProjects() }));
+    // On a hosted Worca the import reads only inside Worca's own folders, like the folder browser.
+    const roots = fsLimitedHere(req) ? await fsAllowedRoots() : null;
+    const outsideProblem = roots ? async (p) => ((await checkInside(p, roots)).inside ? null : outsideAllowedMessage(p)) : null;
+    res.json(await importCandidates(inputs, { depth: body.depth === 2 ? 2 : 1, projects: await listProjects(), outsideProblem }));
   } catch (err) {
     if (!res.headersSent) res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
