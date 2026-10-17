@@ -156,6 +156,9 @@ yet come in through **Add…** or the box under it — paste paths, one per line
 - Importing only reads: it lists folders, reads the `.code-workspace` file and runs
   `git rev-parse`. It never writes into a repository. The projects Scan registers are ordinary
   projects from then on, with the same background fetches as a project added under **Projects**.
+- On a hosted Worca with the terminal and actions off, importing reads only inside Worca's data and
+  projects folders, like the folder browser: a path outside them (or a `.code-workspace` entry
+  pointing outside) is listed with that reason, and a symlink leading out is not followed.
   The wizard calls `POST /api/workspaces/import-candidates` with
   `{ "paths": [...], "text": "...", "depth": 1 | 2 }`.
 
