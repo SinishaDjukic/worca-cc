@@ -164,6 +164,8 @@ function page(respond = () => null) {
 const tick = async (win, n = 8) => { for (let i = 0; i < n; i += 1) await new Promise((r) => win.setTimeout(r, 0)); };
 const press = (win, el, key, extra = {}) => el.dispatchEvent(new win.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra }));
 const tap = (win, el, detail = 1) => el.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true, detail }));
+// A press and its release on the same node (a click on the backdrop has to start there too).
+const pressTap = (win, el, detail = 1) => { el.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true, cancelable: true, detail })); tap(win, el, detail); };
 
 test('the viewer opens as a modal: the file, its step · cycle · size, focus inside, the text preview', async () => {
   const p = page((url) => (url.startsWith('/t?') ? { status: 200, body: { rel: 'plans/notes.txt', text: 'hello' } } : null));
@@ -204,9 +206,12 @@ test('Esc, the backdrop and Close dismiss it, unload the preview and hand focus 
   const root = p.doc.querySelector('.apv');
   tap(p.win, root.querySelector('.apv-card'));
   assert.ok(p.doc.querySelector('.apv'), 'a click inside the card keeps it');
-  tap(p.win, root, 2);
+  pressTap(p.win, root, 2);
   assert.ok(p.doc.querySelector('.apv'), 'the second press of a double click does not close it');
+  root.querySelector('.apv-card').dispatchEvent(new p.win.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
   tap(p.win, root);
+  assert.ok(p.doc.querySelector('.apv'), 'a selection dragged out of the card (pressed inside, released on the overlay) keeps it');
+  pressTap(p.win, root);
   assert.equal(p.doc.querySelector('.apv'), null, 'the backdrop closes it');
 
   await p.open({ artifact: html }).ready;

@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick, dragOut, pressEscape, discardPrompt, discardChanges } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -153,6 +154,76 @@ test('cancelling the Remove confirm issues no DELETE and keeps the page; the mod
       await tick();
       doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       assert.equal(window.location.hash, '#projects');
+    } },
+  ]);
+});
+
+test('the shared confirm: press + release on the overlay is the safe No; a prompt never closes on the backdrop, and Escape on typed text asks first', async () => {
+  const { window } = await boot();
+  await goProjects(window);
+  const doc = window.document;
+  const modal = doc.getElementById('confirm-modal');
+  await checkRows([
+    { name: 'confirm: a selection dragged out of the card does not answer; a backdrop click answers No', run: async () => {
+      const p = window.__projects.confirmModal({ title: 'Remove it?', message: 'Gone for good.' });
+      dragOut(window, doc.getElementById('confirm-message'), modal);
+      assert.equal(modal.classList.contains('hidden'), false);
+      backdropClick(window, modal);
+      assert.equal(await p, false);
+      assert.equal(modal.classList.contains('hidden'), true);
+    } },
+    { name: 'prompt: no backdrop close; Escape on typed text asks; an Enter meant for the question does not submit; Discard answers null', run: async () => {
+      const p = window.__projects.promptModal({ title: 'Name it', fields: [{ id: 'name', label: 'Name' }] });
+      const input = doc.getElementById('confirm-f-name');
+      input.value = 'draft';
+      input.dispatchEvent(new window.Event('input', { bubbles: true }));
+      backdropClick(window, modal);
+      assert.equal(modal.classList.contains('hidden'), false);
+      pressEscape(window);
+      const q = discardPrompt(doc);
+      assert.ok(q, 'asks first');
+      q.querySelector('.discard-keep').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      assert.equal(modal.classList.contains('hidden'), false, 'that Enter belonged to the question');
+      doc.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      assert.equal(modal.classList.contains('hidden'), false, 'and so does one with the focus on the page, while the question is up');
+      discardChanges(doc);
+      assert.equal(await p, null);
+      assert.equal(modal.classList.contains('hidden'), true);
+    } },
+    { name: 'prompt: an untouched one (prefilled by the caller) closes on Escape with no question', run: async () => {
+      const p = window.__projects.promptModal({ title: 'Name it', fields: [{ id: 'name', label: 'Name', value: 'prefilled' }] });
+      pressEscape(window);
+      assert.equal(discardPrompt(doc), null);
+      assert.equal(await p, null);
+    } },
+    { name: 'two calls stacked on the one shell (a double-click): the newer settles the older as No, so Escape leaves none live and a later OK answers only its own', run: async () => {
+      const answers = [];
+      const ask = (id) => { void window.__projects.confirmModal({ title: `${id}?` }).then((v) => answers.push([id, v])); };
+      ask('A');
+      ask('B');
+      pressEscape(window);
+      await tick();
+      assert.deepEqual(answers, [['A', false], ['B', false]], 'Escape answers both No');
+      ask('C');
+      click(window, doc.getElementById('confirm-ok'));
+      await tick();
+      assert.deepEqual(answers, [['A', false], ['B', false], ['C', true]], 'the OK answers C alone');
+    } },
+    { name: 'a new call takes the shell while a prompt\'s "Discard changes?" is open: Discard then settles nothing more, and the new call stays up', run: async () => {
+      const answers = [];
+      void window.__projects.promptModal({ title: 'Name it', fields: [{ id: 'name', label: 'Name' }] }).then((v) => answers.push(['P', v]));
+      const input = doc.getElementById('confirm-f-name');
+      input.value = 'draft';
+      input.dispatchEvent(new window.Event('input', { bubbles: true }));
+      pressEscape(window);
+      assert.ok(discardPrompt(doc), 'asks first');
+      void window.__projects.confirmModal({ title: 'C?' }).then((v) => answers.push(['C', v]));
+      discardChanges(doc);
+      await tick();
+      assert.equal(modal.classList.contains('hidden'), false, 'the new call is still on screen');
+      click(window, doc.getElementById('confirm-ok'));
+      await tick();
+      assert.deepEqual(answers, [['P', null], ['C', true]]);
     } },
   ]);
 });
@@ -628,4 +699,33 @@ test('rows carry compact team chips (status only, no controls); the project page
   await tick(); await tick();
   assert.equal(patches.length, 1);
   assert.deepEqual(patches[0], { record: false });
+});
+
+test('Set up team metrics: while the enable POST is out, Escape and the header Close do nothing; a failure lands in the dialog that stayed open', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { window } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.includes('/api/team-metrics/scopes')) return Promise.resolve({ ok: true, status: 200, json: async () => TM_SCOPES });
+      if (/\/team-metrics\/enable$/.test(u) && opts.method === 'POST') return gate;
+      return null;
+    },
+  });
+  await goHash(window, 'projects/alpha-00000001/team');
+  await tick(); await tick();
+  const doc = window.document;
+  click(window, doc.querySelector('#proj-detail .pd-team-metrics .tm-enable'));
+  await tick(); await tick();
+  const modal = doc.getElementById('plugin-modal');
+  click(window, modal.querySelector('.tm-enable-submit'));
+  await tick();
+  pressEscape(window);
+  click(window, doc.getElementById('plugin-modal-close'));
+  assert.equal(modal.classList.contains('hidden'), false, 'no way out while the request is out');
+  release({ ok: false, status: 500, json: async () => ({ error: 'push rejected' }) });
+  await tick(); await tick();
+  assert.equal(modal.classList.contains('hidden'), false);
+  assert.equal(modal.querySelector('.tm-enable-err').textContent, 'push rejected');
+  pressEscape(window);
+  assert.equal(modal.classList.contains('hidden'), true, 'once it answered, Escape closes it');
 });

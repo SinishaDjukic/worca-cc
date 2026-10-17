@@ -747,8 +747,12 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     inp.setAttribute('aria-label', 'Name');
     body.append(h(doc, 'label', '', 'Name'), inp);
     return new Promise((resolve) => {
-      modal.open(title, body, [['Cancel', 'btn btn-ghost btn-mini', () => { modal.close(); resolve(null); }],
-        ['Save', 'btn btn-primary btn-mini', () => { modal.close(); resolve(inp.value.trim() || null); }]]);
+      // The shell's own dismissal (header Close, Escape) answers "no name" too — never a caller waiting forever.
+      let unhook = null;
+      const settle = (v) => { if (unhook) { unhook(); unhook = null; } modal.close(); resolve(v); };
+      if (typeof modal.onClose === 'function') unhook = modal.onClose(() => settle(null));
+      modal.open(title, body, [['Cancel', 'btn btn-ghost btn-mini', () => settle(null)],
+        ['Save', 'btn btn-primary btn-mini', () => settle(inp.value.trim() || null)]]);
     });
   }
 
