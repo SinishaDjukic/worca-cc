@@ -284,3 +284,29 @@ test('with the flag off the picker is gated and no /api/presets request is made'
   assert.equal(gated.querySelector('#preset-row').dataset.flag, 'runPresets');
   applyFlags({ runPresets: false }, ctx.doc);
 });
+
+test('the Chat home lists the scoped presets and picking one opens New run with the form filled', async () => {
+  const ctx = await boot({ presets: [preset(), preset({ id: 'rp_bbbbbbbbbbbb', name: 'Elsewhere', scope: { kind: 'project', ref: 'other-99999999' } })] });
+  applyFlags({ runPresets: true }, ctx.doc);
+  ctx.window.location.hash = '#chat/new';
+  await waitFor(() => ctx.doc.querySelectorAll('.chat-home-preset').length > 0);
+  assert.deepEqual([...ctx.doc.querySelectorAll('.chat-home-preset')].map((b) => b.textContent), ['Quick fix'], 'another project\'s pinned preset is not listed');
+  ctx.doc.querySelector('.chat-home-preset').click();
+  await waitFor(() => ctx.window.location.hash === '#new' && ctx.doc.getElementById('presetSelect').value === 'rp_aaaaaaaaaaaa');
+  await waitFor(() => /Preset — changes here apply to this run only/.test(ctx.doc.querySelector('#preset-chip').textContent));
+  await waitFor(() => ctx.doc.querySelector('#guardrailsSelect').value === 'normal');
+  await waitFor(() => ctx.doc.activeElement === ctx.doc.getElementById('prompt'));
+  assert.equal(ctx.doc.getElementById('prompt').value, '');
+  applyFlags({ runPresets: false }, ctx.doc);
+});
+
+test('Settings › Presets Use opens New run with the preset applied and the prompt focused', async () => {
+  const ctx = await boot({ presets: [preset()] });
+  applyFlags({ runPresets: true }, ctx.doc);
+  ctx.window.location.hash = '#settings/presets';
+  await waitFor(() => ctx.doc.querySelector('#presets-list [data-act="use"]'));
+  ctx.doc.querySelector('#presets-list [data-act="use"]').click();
+  await waitFor(() => ctx.window.location.hash === '#new' && ctx.doc.getElementById('presetSelect').value === 'rp_aaaaaaaaaaaa');
+  await waitFor(() => ctx.doc.activeElement === ctx.doc.getElementById('prompt'));
+  applyFlags({ runPresets: false }, ctx.doc);
+});

@@ -235,6 +235,7 @@ import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
+import { runPresetScopeOptions, runPresetRequest, runPresetErrorText, RUN_PRESET_SAVED_NOTE } from './run-presets-save.mjs';
 import { renderPresetsList } from './run-presets-view.mjs';
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor } from './tag-input.mjs';
@@ -21731,6 +21732,7 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     }
     paintHdPr(screen, rec, data);
     paintHdAfter(screen, rec, data);
+    void paintHdSavePreset(screen, data);
     // histCanShip carries both old belts plus the workspace rule:
     //  - `!rec.pr` (single runs) — the stale-button -> double-POST race is fixed at the
     //    source (the ship path calls patchHistoryPr); this is the backstop.
@@ -22229,6 +22231,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
       if (screen) {
         paintHdPr(screen, record, histDetailState.data);
         paintHdAfter(screen, record, histDetailState.data);
+        void paintHdSavePreset(screen, histDetailState.data);
         const mergeEl = screen.querySelector('.hist-merge');
         if (mergeEl) {
           setMergePill(mergeEl, dd.mergeable);
@@ -22762,6 +22765,7 @@ function hdSyncPr(projectKey, id, row) {
   paintHdOvPrs(histDetailState.screen.querySelector('.hd-ov-prs'), histDetailState.record);
   paintHdBase(histDetailState.screen, histDetailState.record, histDetailState.data);   // an open PR owns the pipeline Resolve
   paintHdAfter(histDetailState.screen, histDetailState.record, histDetailState.data);
+  void paintHdSavePreset(histDetailState.screen, histDetailState.data);
   paintHdGlance(histDetailState.screen, histDetailState.record, histDetailState.data);
 }
 
@@ -22846,6 +22850,65 @@ function paintHdGlance(screen, record, data) {
 // Run chains: every pipeline can be waited for — the button deep-links to New pipeline with the pick made.
 // The record's status is the list row's (fresher than the load-time payload); a deep link's stub has
 // none, so the detail payload's stands in.
+// Run presets slice 2 (#712): Save setup as preset on a run's page. Shown only with the flag on and a stored setup
+// (pipelines.run_setup, v61); a run from before v61, the CLI or a scan has none. One GET per run id per page load.
+const runSetupKnown = new Map();   // pipeline id -> setup object | null
+async function paintHdSavePreset(screen, data) {
+  const btn = screen && screen.querySelector('.hd-save-preset');
+  if (!btn) return;
+  const run = data && data.state;
+  const id = run && run.id;
+  if (!id || !flagOn('runPresets')) { btn.hidden = true; btn.onclick = null; return; }
+  if (!runSetupKnown.has(id)) {
+    btn.hidden = true;
+    const r = await mcpApi('GET', `/api/pipelines/${encodeURIComponent(id)}/setup`);
+    if (!r.ok) return;                                  // 404 / offline: stay hidden, ask again on the next paint
+    runSetupKnown.set(id, (r.data && r.data.setup) || null);
+  }
+  if (!histDetailState || histDetailState.data !== data) return;   // closed, or another run opened while this one was asked about
+  const setup = runSetupKnown.get(id);
+  btn.hidden = !setup;
+  btn.onclick = setup ? () => void saveRunPresetDialog(run, btn) : null;
+}
+
+async function saveRunPresetDialog(run, btn) {
+  if (!state.presets.length) await loadPresets();
+  const scopeOptions = runPresetScopeOptions(run, presetTargetNames());
+  let name = '';
+  let scope = scopeOptions[0].value;
+  let error = '';
+  for (;;) {
+    const v = await promptModal({
+      title: 'Save run setup as a preset', confirmLabel: 'Save preset',
+      fields: [
+        { id: 'name', label: 'Name', value: name, required: true, ...(error ? { hint: error } : {}) },
+        { id: 'scope', label: 'Scope', value: scope, options: scopeOptions, hint: RUN_PRESET_SAVED_NOTE },
+      ],
+    });
+    if (!v) return;
+    name = v.name || '';
+    scope = v.scope || 'global';
+    error = saveDialogError(name, state.presets.map((p) => p.name));
+    if (error) continue;
+    const r = await mcpApi('POST', `/api/pipelines/${encodeURIComponent(run.id)}/preset`, runPresetRequest(name, scope));
+    if (!r.ok) {
+      const text = runPresetErrorText(r.status, r.data);
+      if (r.data && r.data.code === 'no-run-setup') {
+        runSetupKnown.set(run.id, null);
+        if (btn) btn.hidden = true;
+        notify({ tone: 'err', title: 'Could not save the preset', detail: text });
+        return;
+      }
+      error = text;
+      continue;
+    }
+    state.presets = [...state.presets, r.data.preset];
+    paintPresetMenu();
+    notify({ tone: 'ok', title: `Saved preset "${r.data.preset.name}"`, detail: 'Pick it in New run or on the Chat home' });
+    return;
+  }
+}
+
 function paintHdAfter(screen, record, data = null) {
   const btn = screen.querySelector('.hd-after');
   if (!btn) return;
@@ -24265,6 +24328,7 @@ function setupHdActions(screen, record, data) {
 
   paintHdPr(screen, record, data);
   paintHdAfter(screen, record, data);
+  void paintHdSavePreset(screen, data);
   paintHdPublish(screen, record, data);
   hdBaseAutoFor = record.id;
   paintHdBase(screen, record, data);
@@ -24472,6 +24536,7 @@ function refreshHdFromRow() {
   refreshHistResumeGating();
   paintHdPr(screen, row, data);                         // idempotent; re-binds btn.onclick
   paintHdAfter(screen, row, data);
+  void paintHdSavePreset(screen, data);
   paintHdBase(screen, row, data);                       // #620: a post-run check that landed after the open
   paintHdLive(screen, row, data);
   paintHdGlance(screen, row, data);   // the head's project/day/clock line re-reads the record
@@ -35239,6 +35304,13 @@ async function applyPreset(id) {
   paintHiddenSettings();
 }
 
+/** Settings › Presets' Use and the Chat home chips: New run with the preset applied, then the (empty) prompt focused. */
+async function usePresetOnNewRun(id) {
+  location.hash = '#new';
+  await applyPreset(id);
+  el.prompt.focus();
+}
+
 /** "Run on the source branch" follows the applied preset, again after each start (clearTask unchecks it, #688). */
 function applyPresetSwitches() {
   if (!state.preset || !el.sameAsSource) return;
@@ -35347,7 +35419,7 @@ async function loadPresetsView() {
   const after = async (r) => { if (!r.ok) presetError(r); await loadPresetsView(); };
   host.replaceChildren(renderPresetsList(document, state.presets, {
     names,
-    onUse: (p) => { location.hash = '#new'; void applyPreset(p.id); },
+    onUse: (p) => void usePresetOnNewRun(p.id),
     onRename: async (p) => {
       const v = await promptModal({ title: 'Rename preset', fields: [{ id: 'name', label: 'Name', value: p.name, required: true }] });
       if (v) await after(await mcpApi('PUT', `/api/presets/${encodeURIComponent(p.id)}`, { name: v.name }));
@@ -35377,6 +35449,8 @@ async function loadPresetsView() {
 
 if (flagOn('runPresets')) void loadPresets();
 const offPresetsFlag = onFlagChange('runPresets', (on) => {
+  if (histDetailState?.screen) void paintHdSavePreset(histDetailState.screen, histDetailState.data);
+  if (chatHome && lastChatHomeFlags) chatHome.update({ flags: { ...lastChatHomeFlags, runPresets: on } });
   if (on) { void loadPresets(); return; }
   if (state.preset) leavePresetMode();
   state.presets = [];
@@ -35552,8 +35626,28 @@ function mountChatHome() {
       level: () => currentLevel(),
       plans: chatHomePlans,
       mountFeature: mountShapeFeature,
+      presets: chatHomePresets,
+      usePreset: (id) => void usePresetOnNewRun(id),   // Settings › Presets' Use path (D14)
     },
   });
+}
+
+/** The Chat home's presets (#712 slice 2): the viewer's list, fresh per visit, and New run's current target. */
+async function chatHomePresets() {
+  if (!flagOn('runPresets')) return { presets: [], target: null };
+  await loadPresets();
+  return { presets: state.presets, target: presetTargetNow() };
+}
+/** New run's current target as a preset scope ({ kind, ref }), or null before a project is chosen. The same reads
+ *  as buildRunBody / runPresetCheck: the workspace select's value, or selectedProjectPath() (there is no state.workspaceId). */
+function presetTargetNow() {
+  if (state.runTarget === 'workspace') {
+    const id = (el.workspaceSelect && el.workspaceSelect.value) || '';
+    return id ? { kind: 'workspace', ref: id } : null;
+  }
+  const dir = selectedProjectPath();
+  const p = dir ? (state.projects || []).find((x) => x && x.path === dir) : null;
+  return p && p.key ? { kind: 'project', ref: p.key } : null;
 }
 
 /** The home's runs: Needs you (the Runs badge's rule — live items and History rows this tab has no live run for),
@@ -35668,6 +35762,7 @@ async function chatHomeFlags() {
   } catch { /* none known */ }
   // Read after the awaits: a boot's first load, started before the hello, would otherwise keep a stale gate.
   out['shapeFirst'] = shapeFirstOn();
+  out.runPresets = flagOn('runPresets');
   lastChatHomeFlags = { ...out };
   return out;
 }

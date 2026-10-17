@@ -4685,11 +4685,11 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-shell.no-anim > *{transition:none !important;}
 /* Run after this one (the list card's old schedule-after button): a quiet pill beside Pause/Stop,
    on the run page's bar and the saved run's (.hd-after). */
-.hd-after,.rd-after{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--line);
+.hd-after,.rd-after,.hd-save-preset{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--line);
   border-radius:999px;background:var(--panel);font:600 12.5px var(--sans);color:var(--ink-2);cursor:pointer;}
-.hd-after[hidden],.rd-after[hidden]{display:none;}
-.hd-after:hover,.rd-after:hover{border-color:var(--ink-2);color:var(--ink);}
-.hd-after:focus-visible,.rd-after:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.hd-after[hidden],.rd-after[hidden],.hd-save-preset[hidden]{display:none;}
+.hd-after:hover,.rd-after:hover,.hd-save-preset:hover{border-color:var(--ink-2);color:var(--ink);}
+.hd-after:focus-visible,.rd-after:focus-visible,.hd-save-preset:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* "Resume on <other engine>" after a usage limit (.hd-resume-switch): the same quiet pill. */
 .hd-resume-switch{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--line);
   border-radius:999px;background:var(--panel);font:600 12.5px var(--sans);color:var(--ink-2);cursor:pointer;}
@@ -9403,13 +9403,19 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-home-promo-d{color:var(--ink-2);font-size:12px;}
 .chat-home-promo-b{margin-top:4px;height:28px;padding:0 12px;border:1px solid var(--line-2);border-radius:999px;background:var(--panel);color:var(--ink);font:500 12px/26px var(--sans);cursor:pointer;}
 .chat-home-promo-b:hover{border-color:var(--hover-outline);}
+/* Start from a preset (#712 slice 2): one wrapping row of chips below the quick actions. */
+.chat-home-presets{display:flex;flex-direction:column;gap:8px;}
+.chat-home-presets-h{font-size:13px;font-weight:600;margin:0;color:var(--ink-2);}
+.chat-home-preset-row{display:flex;flex-wrap:wrap;gap:8px;}
+.chat-home-preset,.chat-home-preset-more{border:1px solid var(--line);border-radius:999px;padding:4px 12px;background:var(--panel);color:var(--ink);font:inherit;cursor:pointer;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.chat-home-preset-more{background:transparent;color:var(--ink-2);}
 /* The composer's intent chip (in P1's lead row). */
 .chat-intent{display:inline-flex;align-items:center;gap:6px;flex:none;max-width:220px;height:26px;padding:0 3px 0 9px;box-sizing:border-box;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink);font:500 12px/1 var(--sans);}
 .chat-intent-l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .chat-intent-x{display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:none;color:inherit;cursor:pointer;}
 .chat-intent-x:hover{background:color-mix(in srgb,var(--violet) 18%,transparent);}
 :is(.chat-home-act,.chat-run-tile-answer,.chat-home-tab-n,.chat-run-tile-note)[hidden]{display:none;}
-:is(.chat-home-act,.chat-home-tab,.chat-home-panel,.chat-home-chat,.chat-home-wf,.chat-home-promo-b,.chat-run-tile-answer,.chat-intent-x,.chat-home-more-link):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+:is(.chat-home-act,.chat-home-tab,.chat-home-panel,.chat-home-chat,.chat-home-wf,.chat-home-promo-b,.chat-run-tile-answer,.chat-intent-x,.chat-home-more-link,.chat-home-preset,.chat-home-preset-more):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* The tab strip scrolls sideways (overflow-x:auto clips y too, at the tabs' own 36px): the ring goes inside the tab. */
 .chat-home-tab:focus-visible{outline-offset:-2px;border-radius:6px;}
 /* A long rotating example never wraps to a clipped second line in the one-row hero composer (390px). */

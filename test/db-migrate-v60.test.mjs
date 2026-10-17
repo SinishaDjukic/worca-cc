@@ -8,7 +8,7 @@ test('v60 adds run_presets to a v59 DB, names unique per owner ignoring case', (
   migrate(db);
   db.exec('DROP TABLE run_presets; PRAGMA user_version = 59');
   migrate(db);
-  assert.equal(SCHEMA_VERSION, 60);
+  assert.ok(SCHEMA_VERSION >= 60);
   assert.deepEqual(db.prepare('PRAGMA table_info(run_presets)').all().map((c) => c.name),
     ['id', 'name', 'scope_kind', 'scope_ref', 'setup', 'created_by', 'created_at', 'updated_at']);
   const ins = db.prepare("INSERT INTO run_presets (id, name, created_by, created_at, updated_at) VALUES (?, ?, ?, 'x', 'x')");
