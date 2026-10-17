@@ -4647,7 +4647,7 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-item{position:relative;}
 .runs-item:not(.is-selecting) > .runs-row{padding-right:34px;}
 .runs-row-more{position:absolute;top:6px;right:4px;width:26px;height:26px;border:0;border-radius:6px;background:none;
-  color:var(--ink-3);font:700 15px/1 var(--sans);cursor:pointer;opacity:0;}
+  color:var(--ink-2);font:700 15px/1 var(--sans);cursor:pointer;opacity:0;}   /* --ink-2: --ink-3 is 2.8:1 on white */
 .runs-item:hover .runs-row-more,.runs-item:focus-within .runs-row-more,.runs-row-more[aria-expanded="true"]{opacity:1;}
 .runs-row-more:hover{background:var(--hover);color:var(--ink);}
 .runs-row-more:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;opacity:1;}
