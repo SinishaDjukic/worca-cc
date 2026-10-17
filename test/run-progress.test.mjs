@@ -64,7 +64,7 @@ test('stages map: the wf_default shape moves Plan → Build → Review → Ready
       assert.equal(p.mode, 'stages');
       assert.equal(p.stage, 'plan');
       near(p.fraction, (2 / 3) / 4);
-      assert.equal(p.text, 'Plan · Refine');
+      assert.equal(p.text, 'Plan · step: Refine');
       assert.equal(p.tone, 'blue');
     } },
     { name: 'a step named like its stage ("Plan" in Plan) reads just the stage, not "Plan · Plan" (#778)', run: () => {
@@ -76,7 +76,7 @@ test('stages map: the wf_default shape moves Plan → Build → Review → Ready
     { name: 'implementer active → Build · Implementation, plan quarter whole', run: () => {
       const p = runProgress(S({ steps: [row('n_clarify'), row('n_plan'), row('n_refine'), row('n_impl', 1, { status: 'start' })], active: [live('n_impl')] }));
       assert.equal(p.stage, 'build');
-      assert.equal(p.text, 'Build · Implementation');
+      assert.equal(p.text, 'Build · step: Implementation');
       near(p.fraction, 0.25);
     } },
     { name: 'reviewer active at cycle 1 → Review · 1st pass', run: () => {
@@ -211,7 +211,7 @@ test('build by tasks: a decomposition feeding a build agent moves the fill on ta
     } },
     { name: 'decomposer active with no tasks yet → "Build · Decompose" at .25', run: () => {
       const p = runProgress(TS({ steps: [row('n_decomp', 1, { status: 'start' })], active: [live('n_decomp')] }));
-      assert.equal(p.text, 'Build · Decompose');
+      assert.equal(p.text, 'Build · step: Decompose');
       near(p.fraction, 0.25);
     } },
   ]);

@@ -1488,9 +1488,9 @@ test('a staged manifest reads "<Stage> · …" on the glance line and the header
   staged.graph.nodes[0].progressStage = 'build';
   const { screen } = await openProgressRun({ stepper: staged });
   const sub = screen.querySelector('.rd-now-sub').textContent;
-  assert.equal(sub, 'Build · Implementer');
+  assert.equal(sub, 'Build · step: Implementer');
   assert.ok(!/^Step/.test(sub));
-  assert.equal(screen.querySelector('.rd-meta .rd-step').textContent, 'Build · Implementer');
+  assert.equal(screen.querySelector('.rd-meta .rd-step').textContent, 'Build · step: Implementer');
   assert.equal(screen.querySelector('.rd-glance .rd-prog').dataset.tone, 'blue');
 });
 

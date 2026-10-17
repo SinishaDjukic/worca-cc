@@ -30153,7 +30153,8 @@ function runsLiveItem(r) {
     ask: pq != null ? { kind: pq.kind || '', step: pq.nodeId && r.stepper ? nodeLabel(r.stepper, pq.nodeId) : '',
       outline: !!(pq.plan && (pq.plan.outline || pq.plan.port === 'outline')) } : null,
     pauseReason: r.pauseReason || '', limitEngine: r.limitEngine || null, limitNote: limitRowNote(r), unread: isLingering(r),
-    step: r.status === 'running' && pq == null ? (prog && prog.text ? prog.text : runsStepWord(r)) : '',
+    // The Runs list row names the stage only ("Running · Plan"); the step is the run page's detail (#778).
+    step: r.status === 'running' && pq == null ? (prog && (prog.label || prog.text) ? (prog.label || prog.text) : runsStepWord(r)) : '',
     progress: prog && !RD_TERMINAL.includes(r.status) ? { fraction: prog.fraction, tone: prog.tone } : null,
     failedStep: failed && failed.nodeId ? nodeLabel(r.stepper, failed.nodeId) : '',
     startedAt: r.startedAt, groupKey: g.key, groupName: g.name, by: runsPersonKey(r.startedBy),
