@@ -33,7 +33,7 @@ test('the Runs header renders exactly one search field, one View button and the 
   const searches = head.querySelectorAll('input[type="search"]');
   assert.equal(searches.length, 1);
   assert.equal(searches[0].id, 'runs-search');
-  assert.equal(searches[0].placeholder, 'Search runs or tags (client:acme)');
+  assert.equal(searches[0].placeholder, 'Search');
   const menuButtons = head.querySelectorAll('button[aria-haspopup="menu"]');
   assert.equal(menuButtons.length, 1);
   assert.equal(menuButtons[0].textContent.trim(), 'View');

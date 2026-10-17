@@ -436,7 +436,7 @@ test('#740: the always-visible search filters the list and Escape clears it', as
   const { window, doc } = await boot();
   go(window, 'runs'); await settle(window);
   const input = doc.getElementById('runs-search');
-  assert.equal(input.placeholder, 'Search runs or tags (client:acme)');
+  assert.equal(input.placeholder, 'Search');
   input.value = 'merged';
   input.dispatchEvent(new window.Event('input', { bubbles: true })); await settle(window);
   assert.deepEqual([...doc.querySelectorAll('#runs-list .runs-row-title')].map((n) => n.textContent), ['Merged thing']);
