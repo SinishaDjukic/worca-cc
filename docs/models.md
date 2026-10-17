@@ -646,6 +646,12 @@ agent step (`propose_run` `nodes`), from the models the run's engine runs:
   so "inherit" over a model the project set itself rides as the workflow default's model when
   the workflow names one; when it names none, Start refuses it: pick a model, or save it as the
   project default.
+- **Loop budgets for one run** — the same body key takes `overlay.wires`:
+  `{ "<wireId>": { "maxCycles": 2 } }`, a whole number from 1 to 100 per loop wire of the
+  workflow. It merges per wire over the project's saved budgets for that run only, and the run
+  records it beside the nodes (`runOverlay.wires`). A wire that is not a wire of the workflow is
+  refused; any other top-level key is refused with *overlay takes nodes and wires only*. A
+  [run preset](run-presets.md) sends its loop budgets this way.
 
 ## Troubleshooting
 

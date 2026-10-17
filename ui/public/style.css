@@ -830,6 +830,18 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .split-row .seg{flex-wrap:wrap;}
 .target-panes{min-width:0;}
 @media (max-width:760px){ .split-row{grid-template-columns:1fr;} }
+
+/* Run presets (#712): the Preset picker above the target row, its applied chip, and the broken card. */
+.preset-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px;}
+.preset-row > label{font-weight:600;}
+.preset-row select{min-width:200px;}
+#preset-broken{flex:1 0 100%;}
+#preset-broken:empty{display:none;}
+.preset-broken{display:flex;flex-direction:column;gap:6px;padding:10px 12px;background:var(--amber-wash);border:1px solid var(--amber-line);}
+.preset-broken[hidden]{display:none;}
+.preset-broken-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;justify-content:space-between;}
+.presets-list{display:flex;flex-direction:column;gap:8px;}
+.preset-card .pl-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
 /* Workflow (60%) and the engine that runs it (40%) share a row; the engine hints span it below. */
 .wf-engine-row{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);column-gap:18px;align-items:start;}
 .wf-engine-row > *{min-width:0;}

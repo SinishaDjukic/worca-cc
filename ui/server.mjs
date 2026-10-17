@@ -52,7 +52,7 @@ import {
 } from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
-import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError } from '../src/core/flags.mjs';
+import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError, requireFlag } from '../src/core/flags.mjs';
 import { createKeepAwake, countWorking } from '../src/core/keep-awake.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
@@ -90,7 +90,10 @@ import { effectiveNightConfig, nightLayers } from '../src/core/night/effective.m
 import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.mjs';
 import { createAwayHoursWatch } from '../src/core/night/hours-watch.mjs';
 import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
-import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal } from '../src/core/run-overlay.mjs';
+import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal, OVERLAY_ERRORS } from '../src/core/run-overlay.mjs';
+import { listPresets, readPreset, createPreset, updatePreset, duplicatePreset, deletePreset } from '../src/core/run-presets-store.mjs';
+import { presetRefusals, completeSnapshot } from '../src/core/run-presets-check.mjs';
+import { setupFromBody } from '../src/shared/run-presets.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
 import { validatePinpointInput, runPinpoint, pinpointCwd } from '../src/core/pinpoint.mjs';
 import { demoChunks, demoPinpointReply } from '../src/core/demo-scenario.mjs';
@@ -249,7 +252,7 @@ import {
 } from '../src/core/guardrail-store.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
-  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow,
+  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow, resolveGraph,
 } from '../src/core/workflows.mjs';
 import { mintAutoWorkflowId, sanitizeProposalAnswer } from '../src/core/auto/proposal.mjs';
 import {
@@ -2130,6 +2133,9 @@ async function tagGate(res, body, { projectDir = null, workspaceId = null, start
   return false;
 }
 
+/** An engine refusal's message on a preset start names the preset (#712). */
+const presetEngineMessage = (presetRow, runEngine, msg) => (presetRow ? `Preset "${presetRow.name}" cannot start: Engine ${runEngine.engine}: ${msg}` : msg);
+
 const startRunHandler = async (req, res) => {
   // B2: a draining server starts nothing new (the scan arm and the scheduler come through here too).
   if (DRAIN.on) return res.status(503).json(DRAIN_REFUSAL);
@@ -2159,6 +2165,32 @@ const startRunHandler = async (req, res) => {
     }
     if (!hasWorkspace && !hasProjectDir) {
       return badRequest(res, 'workspaceId or projectDir is required');
+    }
+
+    // Run presets (#712): a start from a preset is checked as a whole first, so the named broken items win over the
+    // per-field 400s below. The check runs on the body being started — the person's in-form replacements count.
+    let presetRow = null;
+    if (body.presetId !== undefined) {
+      if (!flagEnabled('runPresets')) return badRequest(res, 'presetId needs the Run presets feature (Settings › Experimental features)');
+      presetRow = readPreset(body.presetId, { owner: askViewer(req) });
+      // 404 like the preset routes: a missing and another person's preset answer the same (R-sec-3).
+      if (!presetRow) return res.status(404).json({ error: `preset ${JSON.stringify(String(body.presetId).slice(0, 40))} not found` });
+      const pinned = presetRow.scope;
+      const bodyDir = body.workspaceId ? null : resolveProjectDir(body.projectDir);
+      if (pinned.kind === 'project' && (!bodyDir || projectKey(bodyDir) !== pinned.ref)) {
+        return badRequest(res, `preset "${presetRow.name}" is pinned to project ${pinned.ref}`);
+      }
+      if (pinned.kind === 'workspace' && body.workspaceId !== pinned.ref) return badRequest(res, `preset "${presetRow.name}" is pinned to workspace ${pinned.ref}`);
+      // body.overlay is not parsed until the overlay block below; shape-check it here so a malformed
+      // overlay is the usual 400, never a TypeError inside presetRefusals (the catch would send 500).
+      const shaped = body.overlay === undefined || body.overlay === null ? { overlay: null } : parseRunOverlay(body.overlay);
+      if (shaped.error) return badRequest(res, shaped.error);
+      const setup = { ...setupFromBody(body, { scope: 'project' }), overlay: shaped.overlay || undefined };   // the body being started, branch names included
+      const target = body.workspaceId ? { workspaceId: body.workspaceId } : { projectDir: body.projectDir };
+      const broken = await presetRefusals(setup, await presetCheckCtx(pinned, target, setup, { probeEngine: false }));
+      if (broken.length) {
+        return res.status(409).json({ error: `Preset "${presetRow.name}" cannot start: ${broken.map((b) => b.message).join('; ')}`, code: 'preset-broken', broken });
+      }
     }
 
     // Ask Worca card link (§8.1): both or neither; the thread must exist and
@@ -2367,11 +2399,14 @@ const startRunHandler = async (req, res) => {
       if (refusal) return badRequest(res, refusal);
       if (!internal) {
         const checked = checkRunOverlay(runOverlay.nodes, {
-          workflow: workflowRow, engine: runEngine.engine || 'claude',
+          workflow: workflowRow, engine: runEngine.engine || 'claude', wires: runOverlay.wires,
           models: await listModels(hasWorkspace ? '' : (resolveProjectDir(body.projectDir) || '')),
         });
         if (checked.errors.length) return badRequest(res, checked.errors.join('; '));
-        runOverlay = { nodes: checked.nodes };
+        runOverlay = {
+          ...(Object.keys(checked.nodes).length ? { nodes: checked.nodes } : {}),
+          ...(Object.keys(checked.wires).length ? { wires: checked.wires } : {}),
+        };
       }
     }
 
@@ -2489,7 +2524,7 @@ const startRunHandler = async (req, res) => {
             mcpOptOut: await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws)), claude: { mock, ...runEngine },
           });
           const refusal = await probe.engineStartRefusal();
-          if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
+          if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
         }
         return res.status(202).json(await scheduleRequest({ body: runOverlay ? { ...body, overlay: runOverlay } : body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
       }
@@ -2631,7 +2666,7 @@ const startRunHandler = async (req, res) => {
             claude: { mock, ...runEngine },
           });
           const refusal = await probe.engineStartRefusal();
-          if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
+          if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
         }
         return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
       }
@@ -2700,7 +2735,7 @@ const startRunHandler = async (req, res) => {
     // arrive as the run's error event.
     if (runEngine.engine) {
       const refusal = await orch.engineStartRefusal();
-      if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
+      if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
     }
 
     if (internal) {
@@ -3050,7 +3085,8 @@ async function validateResumeTarget(pipelineId) {
 /** The request a ticket stores: the validated body minus schedule fields and uploads. */
 async function storedRequestOf(body, stageId, projectDir, startedBy = null) {
   const request = { ...body };
-  for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal']) delete request[k];
+  // presetId: slice 1 of run presets (#712) never stores the link a schedule would follow.
+  for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal', 'presetId']) delete request[k];
   // Text the user authored is part of the request: a prompt FILE is frozen now, so a
   // file deleted or half-edited overnight cannot fail an unattended run.
   if (request.source && request.source.type === 'markdown' && request.source.promptFile && !request.source.promptText) {
@@ -11110,6 +11146,145 @@ app.post('/api/workflows/:id/export', async (req, res) => {
   } catch (err) {
     res.status(workflowExportErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Run presets (docs/run-presets.md, #712): named New run setups in SQLite (run_presets), behind the
+// experimental `runPresets` flag (404 when off). Per person on a shared deployment (askViewer): another
+// owner's preset answers 404, as Ask threads do. A saved setup is full picks — snapshotFor resolves the
+// graph for the basis target and fills every agent node and loop — so a later project change never
+// changes what a preset runs. presetRefusals is the ONE check (pick time here, start time in startRunHandler).
+// ---------------------------------------------------------------------------
+const PRESET_STATUS = { BAD_PRESET: 400, DUPLICATE: 409, NOT_FOUND: 404 };
+function sendPresetError(res, err) {
+  const status = PRESET_STATUS[err && err.code] || 500;
+  res.status(status).json({ error: status === 500 ? 'could not save the preset' : err.message });
+  if (status === 500) console.error('[presets]', err);
+}
+const presetBad = (message) => Object.assign(new Error(message), { code: 'BAD_PRESET' });
+
+/** The engine a setup runs on a target ('claude' when none), or throws BAD_PRESET with runEngineOpts' message. */
+function presetEngineOf(setup, target) {
+  const r = runEngineOpts(setup, target.workspaceId ? { workspace: true } : { projectDir: target.projectDir || '' });
+  if (r.error) throw presetBad(r.error);
+  return r.opts || {};
+}
+
+/** A request's scope { kind, ref } from { kind, projectDir | workspaceId }; null when the target is unknown. */
+async function presetScopeOf(raw) {
+  if (!raw || raw.kind === undefined || raw.kind === 'global') return { kind: 'global', ref: null };
+  if (raw.kind === 'project') {
+    const dir = resolveProjectDir(raw.projectDir);
+    return dir && (await registeredProjectForDir(dir)) ? { kind: 'project', ref: projectKey(dir) } : null;
+  }
+  if (raw.kind === 'workspace') {
+    const id = String(raw.workspaceId || '');
+    return WORKSPACE_KEY_RE.test(id) && (await readWorkspace(id)) ? { kind: 'workspace', ref: id } : null;
+  }
+  return null;
+}
+async function presetScopeExists(scope) {
+  if (scope.kind === 'project') return !!(await projectDirForKey(scope.ref));
+  if (scope.kind === 'workspace') return !!(await readWorkspace(scope.ref));
+  return true;
+}
+
+/** The engine gate's early refusal for a setup on a target, without starting anything (pick-time check only). */
+async function presetEngineRefusal(setup, target, runEngine) {
+  const base = { prompt: 'probe', agentsDir: AGENTS_DIR, workflowId: setup.workflowId || 'wf_default', guardrailsId: setup.guardrailsId || 'permissive', claude: { mock: !!setup.mock, ...runEngine } };
+  const probe = await createOrchestratorFor(target.workspaceId
+    ? { ...base, workspace: { id: target.workspaceId, key: target.workspaceId, name: target.workspaceId, projects: [] } }
+    : { ...base, projectDir: target.projectDir });
+  const refusal = await probe.engineStartRefusal();
+  return refusal ? engineRefusalFor(refusal.error, 'ui') : null;
+}
+
+/** The check context for a target ({ projectDir } | { workspaceId }). probeEngine only on pick: at start the handler's own gate runs. */
+async function presetCheckCtx(scope, target, setup, { probeEngine }) {
+  const t = target.workspaceId ? { workspaceId: target.workspaceId } : { projectDir: resolveProjectDir(target.projectDir) || '' };
+  let runEngine = {};
+  let engineError = null;
+  try { runEngine = presetEngineOf(setup, t); } catch (e) { engineError = e.message; }
+  return {
+    scope, scopeExists: presetScopeExists,
+    models: await listModels(t.workspaceId ? '' : t.projectDir),
+    engine: runEngine.engine || 'claude',
+    assertWorkflow: (id) => assertRunnableWorkflow(id),
+    guardrailExists: async (id) => !!(await readGuardrailSet(id)),
+    engineRefusal: engineError ? async () => engineError
+      // Same rule as the start gate: only a non-Claude engine is probed, so a Claude preset's check builds no orchestrator.
+      : probeEngine && runEngine.engine && runEngine.engine !== 'claude' && (t.workspaceId || t.projectDir) ? () => presetEngineRefusal(setup, t, runEngine) : null,
+  };
+}
+
+/** Full picks: resolve the graph for the basis target and fill every agent node and loop (D2). */
+async function snapshotFor(setup, basis) {
+  const wf = setup.workflowId || 'wf_default';
+  const parsed = setup.overlay === undefined || setup.overlay === null ? { overlay: null } : parseRunOverlay(setup.overlay);
+  if (parsed.error) throw presetBad(parsed.error);
+  if (wf === 'wf_auto') {
+    if (parsed.overlay) throw presetBad(OVERLAY_ERRORS.auto);
+    return { ...setup, overlay: undefined };
+  }
+  const ws = basis.workspaceId && WORKSPACE_KEY_RE.test(String(basis.workspaceId)) ? await readWorkspace(basis.workspaceId) : null;
+  const dir = ws ? ((await workspaceMembers(ws.id)) || [])[0]?.projectDir || null : resolveProjectDir(basis.projectDir) || null;
+  const runEngine = presetEngineOf(setup, ws ? { workspaceId: ws.id } : { projectDir: dir || '' });
+  const resolved = await resolveGraph(dir, wf, loadAgentRegistry(AGENTS_DIR), AGENTS_DIR, {
+    engine: runEngine.engine || 'claude', isWorkspace: !!ws, ...(parsed.overlay ? { overlay: parsed.overlay } : {}),
+  });
+  return completeSnapshot({ ...setup, overlay: parsed.overlay || undefined }, resolved);
+}
+
+app.use('/api/presets', requireFlag('runPresets'));
+
+app.get('/api/presets', (req, res) => {
+  res.json({ presets: listPresets({ owner: askViewer(req) }) });
+});
+
+app.post('/api/presets', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const scope = await presetScopeOf(body.scope);
+    if (!scope) return badRequest(res, 'scope names a project or workspace worca does not know');
+    const setup = await snapshotFor(body.setup && typeof body.setup === 'object' ? body.setup : {}, body.basis || {});
+    res.status(201).json({ preset: createPreset({ name: body.name, scope, setup }, { owner: askViewer(req) }) });
+  } catch (err) { sendPresetError(res, err); }
+});
+
+app.put('/api/presets/:id', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const patch = {};
+    if (body.name !== undefined) patch.name = body.name;
+    if (body.scope !== undefined) {
+      patch.scope = await presetScopeOf(body.scope);
+      if (!patch.scope) return badRequest(res, 'scope names a project or workspace worca does not know');
+    }
+    if (body.setup !== undefined) patch.setup = await snapshotFor(body.setup && typeof body.setup === 'object' ? body.setup : {}, body.basis || {});
+    res.json({ preset: updatePreset(req.params.id, patch, { owner: askViewer(req) }) });
+  } catch (err) { sendPresetError(res, err); }
+});
+
+app.post('/api/presets/:id/duplicate', (req, res) => {
+  try { res.status(201).json({ preset: duplicatePreset(req.params.id, { name: req.body?.name, owner: askViewer(req) }) }); } catch (err) { sendPresetError(res, err); }
+});
+
+app.delete('/api/presets/:id', (req, res) => {
+  if (!deletePreset(req.params.id, { owner: askViewer(req) })) return res.status(404).json({ error: 'preset not found' });
+  res.json({ ok: true });
+});
+
+// Pick-time check: the body { projectDir } | { workspaceId } is the form's target; a pinned preset's own target wins.
+app.post('/api/presets/:id/check', async (req, res) => {
+  try {
+    const preset = readPreset(req.params.id, { owner: askViewer(req) });
+    if (!preset) return res.status(404).json({ error: 'preset not found' });
+    const target = preset.scope.kind === 'project' ? { projectDir: (await projectDirForKey(preset.scope.ref)) || '' }
+      : preset.scope.kind === 'workspace' ? { workspaceId: preset.scope.ref }
+      : { projectDir: req.body?.projectDir, workspaceId: req.body?.workspaceId };
+    const ctx = await presetCheckCtx(preset.scope, target, preset.setup, { probeEngine: true });
+    res.json({ broken: await presetRefusals(preset.setup, ctx) });
+  } catch (err) { console.error('[presets] check', err); res.status(500).json({ error: 'could not check the preset' }); }
 });
 
 // ---------------------------------------------------------------------------

@@ -172,12 +172,20 @@ export class GraphOrchestrator extends RunHarness {
     // A model always names its effort ('' = the model's default) so a stored effort never rides under it (resolveGraph
     // merges per key): the route's check names it, but a firing schedule ticket's re-parse drops the '' — Auto's
     // proposal uses the same form (auto/proposal.mjs).
-    const rawNodes = this.opts && this.opts.overlay && typeof this.opts.overlay === 'object' ? this.opts.overlay.nodes : null;
+    // Loop budgets ride the same overlay (`wires: { wireId: { maxCycles } }`, a run preset's loops).
+    const rawOver = this.opts && this.opts.overlay && typeof this.opts.overlay === 'object' ? this.opts.overlay : {};
+    const rawNodes = rawOver.nodes;
     const overlayNodes = rawNodes && typeof rawNodes === 'object' && !Array.isArray(rawNodes)
       ? Object.fromEntries(Object.entries(rawNodes).filter(([, e]) => e && typeof e === 'object' && !Array.isArray(e))
         .map(([id, e]) => [id, typeof e.model === 'string' && e.model && e.effort === undefined ? { ...e, effort: '' } : { ...e }]))
       : {};
-    const overlay = Object.keys(overlayNodes).length ? { nodes: overlayNodes } : null;
+    const overlayWires = {};
+    for (const [id, w] of Object.entries(rawOver.wires && typeof rawOver.wires === 'object' ? rawOver.wires : {})) {
+      if (w && Number.isInteger(w.maxCycles) && w.maxCycles >= 1) overlayWires[id] = { maxCycles: w.maxCycles };
+    }
+    const hasNodes = Object.keys(overlayNodes).length > 0;
+    const hasWires = Object.keys(overlayWires).length > 0;
+    const overlay = hasNodes || hasWires ? { ...(hasNodes ? { nodes: overlayNodes } : {}), ...(hasWires ? { wires: overlayWires } : {}) } : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
       engine: this.claude.engine || 'claude', isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
       ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}),
@@ -209,7 +217,7 @@ export class GraphOrchestrator extends RunHarness {
     });
     // What THIS run was told to use over the project's settings, beside the cells it resolved to (the run page marks
     // those pills "this run only"; resume reads the cells, never this).
-    if (overlay) manifest.runOverlay = { nodes: structuredClone(overlay.nodes) };
+    if (overlay) manifest.runOverlay = structuredClone(overlay);
     return {
       manifest,
       agentKeys: new Set(this.resolved.agentKeys),
