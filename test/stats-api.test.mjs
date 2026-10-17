@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { getStats } from '../src/core/stats.mjs';
+import { getStats, shapingGroups } from '../src/core/stats.mjs';
 import { recordCostDelta, recordAskCostDelta } from '../src/core/cost-budget.mjs';
 import { app, runs } from '../ui/server.mjs';
 
@@ -183,6 +183,22 @@ test('GET /api/stats serves the shape; defaults to month; 400 on bad range', asy
   assert.ok((await res.json()).error);
 });
 
+test('GET /api/stats passes filter, groupBy, custom range; malformed input → 400', async () => {
+  let res = await fetch(`${base}/api/stats?range=custom&from=2026-08-01&to=2026-08-31&groupBy=person&tag=client:acme&tag=spike`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.range, 'custom');
+  assert.deepEqual(body.filter.tags, ['client:acme', 'spike']);
+  assert.equal(body.groupBy, 'person');
+  assert.ok(Array.isArray(body.groups.rows));
+  for (const q of ['groupBy=tag:', 'tag=client:', 'range=custom&from=2026-08-09', 'range=custom&from=2026-08-09&to=2026-08-01', 'range=lastYear']) {
+    res = await fetch(`${base}/api/stats?${q}`);
+    assert.equal(res.status, 400, q);
+  }
+  res = await fetch(`${base}/api/stats?range=lastMonth`);
+  assert.equal(res.status, 200);
+});
+
 test('totals carry humanHours and savedUsd = hours × rate − spent; prev too; rate is reported', () => {
   const s = getStats({ range: 'month', now: NOW });
   assert.equal(s.humanRateUsd, 35);
@@ -196,4 +212,67 @@ test('totals carry humanHours and savedUsd = hours × rate − spent; prev too; 
   const all = getStats({ range: 'all', now: NOW });
   assert.equal(all.totals.humanHours, 16.5);
   assert.equal(all.totals.savedUsd, Math.round((16.5 * 35 - all.totals.spentUsd) * 100) / 100);
+});
+
+test('a reply\'s next-prompt suggestion books its own ledger row on the reply id: one more cost, not one more turn', () => {
+  const before = getStats({ range: 'all', now: NOW }).totals.ask;
+  recordAskCostDelta({ threadId: 'ask_aaaaaaaa', messageId: 'askm_00000001', amountUsd: 0.01,
+    tokens: 30, model: 'claude-haiku-4-5', tsMs: +new Date(2026, 7, 3, 12) });
+  recordAskCostDelta({ threadId: 'ask_aaaaaaaa', messageId: 'askm_00000009', amountUsd: 0.02,
+    tokens: 300, model: 'claude-opus-5-5', tsMs: +new Date(2026, 7, 3, 13) });
+  const now = getStats({ range: 'all', now: NOW }).totals.ask;
+  assert.equal(now.turns, before.turns + 1, 'the suggestion row is the same turn');
+  assert.equal(now.sessions, before.sessions);
+  assert.equal(now.spendUsd, Math.round((before.spendUsd + 0.03) * 1e6) / 1e6);
+});
+
+test('GET /api/stats byTag: tagGroups with the configured keys first; a bad tagKey → 400; no byTag → null', async () => {
+  let res = await fetch(`${base}/api/stats?range=month&byTag=1&tagKey=cc`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.tagGroups[0].key, 'cc');
+  res = await fetch(`${base}/api/stats?range=month`);
+  assert.equal((await res.json()).tagGroups, null);
+  for (const q of ['byTag=1&tagKey=', 'byTag=1&tagKey=Bad%20key']) {
+    res = await fetch(`${base}/api/stats?range=month&${q}`);
+    assert.equal(res.status, 400, q);
+  }
+});
+
+// Shaper (D28): appended last (the tests above count this DB's rows); seeded in February 2026, a month no
+// other test uses.
+const setShape = (id, size, stats) => getDb().prepare('UPDATE pipelines SET run_size = ?, shape_stats = ? WHERE id = ?')
+  .run(size, stats ? JSON.stringify(stats) : null, id);
+
+test('shapingGroups: finished runs with a size, shaped vs unshaped per size', async () => {
+  const mk = async (cost, size, shaped, status = 'done') => {
+    const { id } = await seedPipeline('/tmp/p', { status, totalCostUsd: cost, totalActiveMs: 60000 });
+    setStarted(id, iso(2026, 2, 10));
+    setShape(id, size, shaped ? { reviewCycles: 1 } : null);
+    return id;
+  };
+  await mk(10, 'small', true); await mk(30, 'small', false); await mk(50, 'small', false);
+  await mk(90, 'large', true); await mk(99, 'large', true, 'stopped');   // not finished: left out
+  const { id: unsized } = await seedPipeline('/tmp/p', { status: 'done', totalCostUsd: 7 });
+  setStarted(unsized, iso(2026, 2, 10));                                  // no run_size: left out
+  const from = new Date(2026, 1, 1).getTime(); const to = new Date(2026, 2, 1).getTime();
+  const g = shapingGroups(from, to).groups;
+  assert.deepEqual(g.map((x) => x.size), ['small', 'large']);
+  assert.equal(g[0].shaped.runs, 1);
+  assert.equal(g[0].unshaped.runs, 2);
+  assert.equal(g[0].unshaped.avgCostUsd, 40);
+  assert.equal(g[0].shaped.avgActiveMs, 60000);
+  assert.equal(g[1].shaped.runs, 1);
+  assert.equal(g[1].unshaped.runs, 0);
+  assert.equal(g[1].unshaped.avgCostUsd, null);
+});
+
+test('GET /api/stats: shaping only with the shapeFirst flag on', async () => {
+  const saved = process.env.WORCA_FLAGS;
+  try {
+    process.env.WORCA_FLAGS = '-shapeFirst';
+    assert.equal('shaping' in await (await fetch(`${base}/api/stats?range=month`)).json(), false);
+    process.env.WORCA_FLAGS = 'shapeFirst';
+    assert.ok(Array.isArray((await (await fetch(`${base}/api/stats?range=all`)).json()).shaping.groups));
+  } finally { if (saved === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = saved; }
 });

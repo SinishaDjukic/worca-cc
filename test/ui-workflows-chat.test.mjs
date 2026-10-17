@@ -1664,3 +1664,19 @@ test('a reopened thread: the hint is "Reply", the orb is still, no live line', a
   assert.equal(root.querySelector('.wfc-act').hidden, true);
   assert.equal(root.querySelector('#wfc-input').placeholder, 'Reply');
 });
+
+test('card-views: one DOM for both chats — a draft card shows the state its host passes, a build card takes an optional graph', async () => {
+  const { cardKit, draftCardView, buildCardView } = await imp('card-views.mjs');
+  const dom = new JSDOM('<!doctype html><body></body>');
+  const { h, button } = cardKit(dom.window.document);
+  const b = card('card_0000f001', 'proposed', { type: 'agent-draft', draft: { key: 'releaseNotes', meta: { displayName: 'Release Notes', inputs: [{ id: 'plan', type: 'md' }] }, markdown: '# x' } });
+  const shownSaved = draftCardView(b, { h, button, state: 'saved', onEdit: () => {}, onDecline: () => {}, onSave: () => {} });
+  assert.equal(shownSaved.querySelector('.wfc-chip').textContent, 'saved');
+  assert.equal(shownSaved.querySelectorAll('.wfc-actions button').length, 0);
+  assert.match(shownSaved.textContent, /✓ Saved to your agents/);
+  const graph = h('div', 'my-graph');
+  const build = buildCardView(card('card_0000f002', 'proposed', { type: 'workflow-build', name: 'G', workflow: { nodes: [], wires: [] }, counts: {} }),
+    { h, graph, actions: (row) => row.appendChild(h('span', 'x', 'act')) });
+  assert.ok(build.querySelector('.my-graph'));
+  assert.equal(build.querySelector('.wfc-actions').textContent, 'act');
+});

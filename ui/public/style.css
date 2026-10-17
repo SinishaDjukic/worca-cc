@@ -1542,6 +1542,15 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
   background:var(--panel-wash);color:var(--ink);font-family:var(--mono);font-size:11.5px;
   white-space:pre-wrap;word-break:break-all;}
 .retained-banner a,.merge-back-banner a{color:var(--amber-ink);font-weight:700;}
+/* The worktree notice (worktree-notice.mjs) is this banner: amber for retained work, neutral for a live checkout. */
+.retained-banner[data-kind="checkout"]{border-color:var(--line);background:var(--panel-wash);color:var(--ink);}
+.retained-banner[data-kind="checkout"] h4{color:var(--ink);}
+.retained-banner .wt-actions,.retained-banner .wt-member-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.retained-banner .wt-actions{margin-top:10px;}
+.retained-banner .wt-member-actions{margin-top:6px;}
+.retained-banner .wt-since{font-size:11.5px;}
+.retained-banner .wt-manual{margin-top:10px;}
+.retained-banner .wt-manual summary{cursor:pointer;font-weight:600;}
 .hist-empty{color:var(--ink-3);font-size:13px;padding:22px 4px;text-align:center;}
 
 /* ---------- Started-by filter pills (the Runs list's .runs-people row) ---------- */
@@ -2848,7 +2857,17 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 #plugin-modal .card:has(.grv-editor){max-width:960px;width:min(94vw,960px);}
 
 /* ---------- Statistics view ---------- */
-.stats-filter{display:flex;margin-bottom:18px;}
+.stats-filter{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:18px;}
+/* Six range buttons no longer fit a narrow screen on one line. */
+#stats-range{flex-wrap:wrap;}
+.stats-custom{display:inline-flex;gap:6px;align-items:center;}
+.stats-scope .tag-input{min-width:240px;}
+.groups-table tr.groups-row-none td,.groups-table tr.groups-row-ask td{color:var(--ink-3);font-style:italic;}
+.groups-table tfoot td{font-weight:500;border-top:1px solid var(--line);padding:8px 10px 8px 0;}
+.alloc-grid>*{min-width:0;}
+.alloc-csv{font-size:12px;}
+.alloc-table tr.alloc-more td:first-child{padding-left:14px;color:var(--ink-3);}
+.tm-view{margin-bottom:14px;}
 .stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;}
 .stat-tile{padding:18px 20px;}
 .stat-label{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12.5px;font-weight:600;}
@@ -2871,6 +2890,8 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .chart-card{padding:20px 22px;}
 /* Stats › By person (credential broker): one full-width card, a table with a share bar. */
 .people-grid{grid-template-columns:1fr;}
+/* Without this the card grows to the table's width on narrow screens instead of scrolling. */
+.people-grid>*{min-width:0;}
 .people-scroll{overflow-x:auto;}
 .people-table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;}
 .people-table th{text-align:left;font-weight:500;color:var(--ink-3);font-size:12px;padding:6px 10px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap;}
@@ -3801,23 +3822,23 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-archive:hover:not([disabled]),.pd-remove:hover:not([disabled]){border-color:var(--red);}
 .hd-archive[disabled],.pd-remove[disabled]{opacity:.55;cursor:not-allowed;}
 /* align-items:flex-start, NOT the default stretch: `.badge.hist-retained-badge`
-   (696) and `.hist-discard` (856) are inline-flex with no width, so a stretching
-   column blows both up to the full body width. Only the two BANNERS want the full
-   row — an unstretched `.cost-banner` renders ~738px inside a 1068px column and
-   its own `.cb-actions{justify-content:flex-end}` then right-aligns short of the
-   edge. */
+   (696) is inline-flex with no width, so a stretching column blows it up to the
+   full body width. Only the BANNERS want the full row (the Discard worktree button
+   lives inside the worktree notice now) — an unstretched `.cost-banner` renders
+   ~738px inside a 1068px column and its own `.cb-actions{justify-content:flex-end}`
+   then right-aligns short of the edge. */
 .hd-banners{display:flex;flex-direction:column;align-items:flex-start;gap:12px;}
 /* Both reused banners carry legacy margins from their old hosts —
    `.retained-banner{margin:0 0 18px}` (714) and `.cost-banner{margin-top:12px}`
    (1505) — which double up with this column's own `gap:12px`. Zero them here
    rather than editing the shared rules. */
 .hd-banners .retained-banner,.hd-banners .cost-banner,.hd-banners .merge-back-banner{align-self:stretch;margin:0;}
-/* NOT `.hd-banners:empty` — the container always holds three template children
-   (badge, banner, discard button), just hidden, so :empty never matches and the
-   top margin would always apply. Key the margin off "has a visible child". */
+/* NOT `.hd-banners:empty` — the container always holds its template children
+   (badge, worktree notice, merge-back banner), just hidden, so :empty never matches
+   and the top margin would always apply. Key the margin off "has a visible child". */
 .hd-banners:has(> :not([hidden])){margin-top:18px;}
-/* .hist-discard's existing rules (856-860) are card-scoped only by position; keep
-   them and let the detail banner button ride them unchanged. */
+/* .hist-discard's existing rules (1661-1665) still style the worktree notice's own
+   Discard worktree button, which lives inside the notice. */
 
 /* Destructive confirm (spec §5.2). The id keeps it out of .btn-primary's way with
    no !important. confirmModal removes the class on close, so it never leaks. */
@@ -4599,6 +4620,31 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-row-body{min-width:0;display:flex;flex-direction:column;gap:2px;}
 .runs-row-title{font:500 13.5px/1.3 var(--sans);overflow-wrap:anywhere;}   /* wraps, as in the mockup */
 .runs-row-sub{font-size:12px;font-weight:300;color:var(--ink-2);}
+/* Run tags (#718): up to 3 chips under the title, then +N. The tag filter sits under the status chips. */
+.runs-row-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+.runs-tag-wrap{flex:none;margin:0 12px 12px;}
+.runs-tag-wrap[hidden]{display:none;}
+/* P7: the Runs list's 3px line, live rows only. */
+.runs-row-prog{display:block;height:3px;margin-top:5px;border-radius:2px;background:var(--field);overflow:hidden;}
+.runs-row-prog > i{display:block;height:100%;width:0;background:var(--blue);transition:width .6s ease;}
+.runs-row-prog[data-tone="amber"] > i{background:var(--amber);}
+.runs-row-prog[data-tone="green"] > i{background:var(--green);}
+.runs-row-prog[data-tone="red"] > i{background:var(--red);}
+.runs-chain{position:relative;}
+.runs-chain-toggle{position:absolute;top:8px;right:6px;border:0;background:none;color:var(--ink-3);padding:4px;cursor:pointer;}
+.runs-chain-toggle[aria-expanded="true"] .runs-chev{transform:rotate(180deg);}
+.runs-chain-members{list-style:none;margin:0 0 6px 30px;padding:0;font-size:12px;}
+.runs-chain-member{display:flex;gap:6px;align-items:baseline;padding:2px 0;color:var(--ink-2);}
+.runs-chain-member.is-done .runs-chain-glyph{color:var(--green-ink);}
+.runs-chain-member.is-current .runs-chain-glyph{color:var(--blue-ink);}
+/* D34: amber means "needs you" and nothing else; a paused slice with nothing to answer is grey. */
+.runs-chain-member.is-needs .runs-chain-glyph{color:var(--amber-ink);}
+.runs-chain-member.is-paused .runs-chain-glyph{color:var(--ink-3);}
+/* The slice that is working pulses (blue, as the running pills and the progress line; green is "done"). */
+.runs-chain-member.is-live .runs-chain-glyph{display:inline-block;animation:wr-pulse 1.6s ease-in-out infinite;}
+@media (prefers-reduced-motion: reduce){.runs-chain-member.is-live .runs-chain-glyph{animation:none;}}
+.runs-chain-member.is-failed .runs-chain-glyph{color:var(--red-ink);}
+.runs-chain-pr{margin-left:auto;color:var(--blue-ink);}
 .runs-note{margin:0;padding:18px 12px;color:var(--ink-2);font-size:13px;text-align:center;}
 .runs-note-err{color:var(--red-ink);}
 .runs-pane{position:relative;min-width:0;min-height:0;background:var(--bg);}
@@ -4751,6 +4797,34 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
    for it, while the header and the panel keep their 544px measure and do not move. */
 .rd-glance:has(> .rd-questions:not([hidden])){max-width:1216px;}
 .rd-glance:has(> .rd-questions:not([hidden])) > :is(.rd-now,.rd-sheet,.rd-night-sec){width:100%;max-width:544px;align-self:center;}
+/* Run progress (spec 2026-10-14 P2/P4/P7/P8/P11). Fill colours are the status families (runStatusMeta). */
+.run-prog{position:relative;margin-top:10px;outline:none;}
+.run-prog[hidden]{display:none;}
+.run-prog-track,.run-chain-track{position:relative;height:6px;border-radius:999px;background:var(--field);overflow:hidden;}
+.run-prog-fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:inherit;background:var(--blue);transition:width .6s ease;}
+.run-prog[data-tone="amber"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="amber"] .run-prog-fill{background:var(--amber);}
+.run-prog[data-tone="green"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="green"] .run-prog-fill{background:var(--green);}
+.run-prog[data-tone="red"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="red"] .run-prog-fill{background:var(--red);}
+.run-prog-tick{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--surface);}
+.run-prog-marks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-top:5px;font-size:11px;color:var(--ink-3);}
+.run-prog-mark[data-state="done"]{color:var(--ink-2);}
+.run-prog-mark[data-state="current"]{color:var(--ink);font-weight:600;}
+.run-prog-mark[data-state="skipped"]{opacity:.5;}
+.run-prog-detail{display:none;position:absolute;z-index:20;bottom:calc(100% + 6px);left:0;min-width:240px;padding:10px 12px;
+  border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);color:var(--ink-2);font-size:12px;}
+.run-prog:hover > .run-prog-detail,.run-prog:focus-within > .run-prog-detail{display:block;}
+.run-prog:focus-visible .run-prog-track{box-shadow:0 0 0 2px var(--blue-line);}
+.run-prog-stages,.run-prog-agents{list-style:none;margin:0;padding:0;}
+.run-prog-agents{padding-left:12px;color:var(--ink-3);}
+.run-prog-stage.is-current > .run-prog-stage-name,.run-prog-agent.is-current{color:var(--ink);font-weight:600;}
+.run-prog.is-compact{margin-top:10px;}
+.run-prog.is-compact .run-prog-marks{display:none;}
+.ask-rc-prog{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* P8: the chain's overall bar — equal parts, finished green, the current one filling. */
+.run-chain-label{font-size:11px;color:var(--ink-3);margin-bottom:4px;}
+.run-chain-track{display:flex;gap:3px;background:none;}
+.run-chain-part{position:relative;flex:1 1 0;height:6px;border-radius:999px;background:var(--field);overflow:hidden;}
+@media (prefers-reduced-motion: reduce){.run-prog-fill,.runs-row-prog > i{transition:none;}}
 .rd-now{display:flex;flex-direction:column;gap:18px;}
 /* The run's name is the page's subject: the largest type on it. */
 .rd-page-head{min-width:0;}
@@ -4774,9 +4848,12 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .rd-page-branch.copied .ico-check{display:inline;color:var(--green-ink);}
 /* The card's head: the status line top left, the Live view switch (app.js paintRdLive)
    top right, level with the state word. */
-.rd-sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;min-width:0;}
-.rd-sheet-head > .rd-now-top{flex:1 1 auto;}
-.rd-sheet-head > .rd-live-row{flex:none;height:23px;}   /* the state word's line box (18px × 1.3) */
+.rd-sheet-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;min-width:0;}
+.rd-sheet-head > .rd-now-top{grid-area:1 / 1;}
+.rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:23px;margin-left:16px;}   /* the state word's line box (18px × 1.3) */
+/* The progress bars take the card's full width, under the status line (a flex row squeezed them to ~128px). */
+.rd-sheet-head > .run-prog{grid-column:1 / -1;}
+.rd-sheet-head > .rd-slice-line{grid-column:1 / -1;}   /* own row: never the Live view column (D22) */
 /* The status line: what is happening now. A state word, then what it concerns. */
 .rd-now-top{display:flex;align-items:center;gap:12px;min-width:0;}
 .rd-orb{flex:none;display:flex;}
@@ -4990,17 +5067,16 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-graph .run-flow-wrap{margin:0;}
 
 /* ---------- Running detail: banners ---------- */
-/* align-items:flex-start, NOT the default stretch: `.hist-discard` is an
-   inline-flex button with no width and a stretching column would blow it up to
-   the full body width. Only the two BANNERS want the full row. Same shape as
-   .hd-banners. */
+/* align-items:flex-start, NOT the default stretch, as .hd-banners: only the
+   BANNERS want the full row. The container holds the worktree notice only; its
+   Discard worktree button (`.hist-discard`) lives inside the notice. */
 .rd-banners{display:flex;flex-direction:column;align-items:flex-start;gap:12px;}
 /* Both reused banners carry legacy margins from their old hosts —
    `.retained-banner{margin:0 0 18px}` and `.cost-banner{margin-top:12px}` —
    which double up with this column's own gap. */
 .rd-banners .retained-banner,.rd-banners .cost-banner{align-self:stretch;margin:0;}
-/* NOT `:empty` — the container always holds its two template children, just
-   hidden. Key the margin off "has a visible child", as .hd-banners does. */
+/* NOT `:empty` — the container always holds its template child (the worktree
+   notice), just hidden. Key the margin off "has a visible child", as .hd-banners does. */
 .rd-banners:has(> :not([hidden])){margin-top:18px;}
 
 /* ---------- Running detail: question panel ---------- */
@@ -5112,6 +5188,10 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
   .rd-glance[data-live="on"] > .rd-now{grid-column:1;grid-row:1;}
   .rd-glance[data-live="on"] > .rd-sheet{grid-column:1;grid-row:2;}
   .rd-glance[data-live="on"] > .rd-questions{grid-column:1 / -1;}
+  /* D30: a shaped run waiting on the person — the card in row 2, right under the title; folded, one column */
+  .rd-glance[data-live="on"][data-shaper-wait] > .rd-questions{grid-row:2;}
+  .rd-glance[data-live="on"][data-shaper-wait] > :is(.rd-sheet,.rd-live){grid-row:3;}
+  .rd-glance[data-live="on"][data-shaper-wait]:not([data-wait-open]):not([hidden]){display:flex;max-width:608px;}
   /* Away mode's answers stay under the run card, never beside the title in the graph's column. */
   .rd-glance[data-live="on"] > .rd-night-sec{grid-column:1;}
   /* Wide: as tall as the card (320px at least), its top level with the card's; it slides
@@ -5531,6 +5611,8 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-msg[data-ask-enter]{animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
 .ask-user-bubble{align-self:flex-end;max-width:78%;padding:10px 14px;border-radius:var(--r-card) var(--r-card) 4px var(--r-card);
   background:var(--field);color:var(--ink);font-size:13.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
+/* Shaper (D21): the intent chip above the person's bubble — the lead itself went to the model only. */
+.ask-user-intent{align-self:flex-end;display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink);font:500 11.5px/1 var(--sans);}
 .ask-user-pills{justify-content:flex-end;margin-top:0;}
 .ask-attachment-pill{padding-right:12px;}
 .ask-attachment-thumb-link{display:inline-block;line-height:0;}
@@ -5760,6 +5842,22 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rp-foot .ask-card-not-now{height:34px;padding:0 14px;font-size:12.5px;}
 .ask-rp-foot .ask-card-start{height:36px;padding:0 18px 0 15px;font-size:12.5px;color:var(--on-ink);box-shadow:var(--shadow-pop);}
 .ask-rp-foot .ask-card-start svg{width:11px;height:11px;}
+/* Shaper (D20): the small proposal card — clamped brief, the main fields, a collapsed Advanced. */
+.ask-rp-kicker.ask-rp-kicker-shape{color:var(--violet-ink);}
+.ask-rp-shape-main{display:flex;flex-direction:column;gap:10px;}
+.ask-rp-shape-main > .ask-rp-sec{padding:0;border:0;}
+/* On the small card the chips sit in a plain Perspectives field, not in the nudge's amber box (.shape-card). */
+.ask-rp-shape-main .shape-card{padding:0;border:0;background:none;}
+.ask-rp-brief-preview{display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink-2);line-height:1.5;}
+.ask-rp-brief-preview[hidden],.ask-rp-brief-more[hidden],.ask-rp-brief-host[hidden]{display:none;}
+.ask-rp-brief-more{align-self:flex-start;font-size:12px;}
+.ask-rp-shape-what{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;font-size:12.5px;color:var(--ink-2);}
+.ask-rp-adv{border-bottom:1px solid var(--line);}
+.ask-rp-adv > summary{padding:10px 18px;font-size:12px;color:var(--ink-3);overflow-wrap:anywhere;}
+.ask-rp-adv > .ask-rp-why,.ask-rp-adv > .ask-rp-adv-sched{padding:0 18px 12px;}
+.ask-rp-adv > .ask-rp-sec:last-of-type{border-bottom:0;}
+/* With the lane summary gone from the shaped footer, the link keeps Not now and Start planning on the right. */
+.ask-rp-foot .ask-card-open-np.link-btn{margin-right:auto;}
 .ask-rp .ask-card-err{padding:0 18px 10px;}
 .ask-rp .ask-card-scope-warn{margin:12px 18px 0;}
 .ask-pop-at{width:288px;padding:6px;border-radius:var(--r-card);max-height:min(320px,60%);overflow-y:auto;}
@@ -5894,6 +5992,15 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-wfcard-warn{font-size:13px;line-height:1.5;color:var(--amber-ink);background:var(--amber-wash);border:1px solid var(--amber-line);border-radius:10px;padding:8px 12px;}
 .ask-wfcard-meta{margin-top:8px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;}
 @media (prefers-reduced-motion: reduce){.ask-wfcard-graph{transition:none;}}
+/* ---------- the canvas well (ui/public/graph/proposal-host.mjs): a chat card's graph as the Workflows canvas draws it ---------- */
+/* The nav never prevents pointerdown (a press must still click a chip), so a drag-pan would select card text: like .gv-canvas. */
+.gv-well{user-select:none;-webkit-user-select:none;}
+.gv-well .gv-stage,.gv-well .gv-world .node{cursor:grab;}
+.gv-well .gv-stage.panning,.gv-well .gv-stage.panning *{cursor:grabbing !important;}
+.gv-well > .gv-nav{right:12px;bottom:12px;}
+/* Only the well outgrows a build card's 760px text column (.ask-ccard): up to the chat card width, centred on the column.
+   An Auto card (.ask-card) is that wide already (.chat-convo .ask-msg > .ask-card). */
+.chat-convo .ask-ccard .ask-wfcard-graph.gv-well{width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
 
 /* ---------- workflow card build (ui/public/auto-build.mjs; mockup §B/§F motion) ---------- */
 .ask-wfcard-graph .gv-world .node{transition:opacity .28s cubic-bezier(.2,.7,.3,1),translate .28s cubic-bezier(.2,.7,.3,1);}
@@ -5963,6 +6070,40 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-composer-msg{font-size:11.5px;color:var(--red-ink);padding:0 6px;}
 .ask-composer-msg[hidden]{display:none;}
 .ask-composer-row{display:flex;align-items:center;gap:8px;position:relative;}
+/* The queue: messages sent while a reply runs, stacked above the box, oldest card nearest the input. */
+.ask-queue{width:100%;max-width:var(--ask-col-max);margin:0 auto 6px;display:flex;flex-direction:column;gap:4px;}
+.ask-queue[hidden]{display:none;}
+.ask-queue-bar{display:flex;align-items:center;gap:8px;padding:0 6px;font-size:11.5px;color:var(--ink-3);}
+.ask-queue-resume{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink);font:inherit;font-size:11.5px;padding:2px 10px;cursor:pointer;transition:.15s;}
+.ask-queue-resume:hover{border-color:var(--hover-outline);}
+.ask-queue-resume[hidden]{display:none;}
+.ask-queue-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;}
+.ask-queue-item{display:flex;align-items:center;gap:6px;padding:4px 4px 4px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink-2);font-size:12.5px;transition:transform .2s cubic-bezier(.65,.02,.28,1),opacity .15s;}
+.ask-queue-item.is-entering{animation:ask-queue-in .16s ease-out backwards;}
+.ask-queue-item.is-sending{opacity:.55;}
+.ask-queue-text{flex:1 1 auto;min-width:0;padding:2px 0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+.ask-queue-text:disabled{cursor:default;}
+.ask-queue-meta{flex:none;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.ask-queue-x{flex:none;width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--ink-3);cursor:pointer;transition:.15s;}
+.ask-queue-x:hover{color:var(--ink);background:var(--hover);}
+.ask-queue-x:disabled{visibility:hidden;}
+.ask-queue-pen{flex:none;display:grid;place-items:center;width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--ink-3);cursor:pointer;transition:.15s;}
+.ask-queue-pen:hover{color:var(--ink);background:var(--hover);}
+.ask-queue-pen:disabled{visibility:hidden;}
+.ask-queue-item.is-editing{border-color:var(--hover-outline);color:var(--ink);}
+.ask-queue-item.is-editing .ask-queue-text{display:none;}
+.ask-queue-item.is-editing .ask-queue-pen{color:var(--ink);}
+.ask-queue-item textarea.ask-queue-edit{flex:1 1 auto;width:auto;min-width:0;min-height:0;height:auto;max-height:120px;margin:0;padding:2px 0;
+  border:0;border-radius:0;outline:0;resize:none;background:transparent;color:inherit;font:inherit;line-height:1.4;overflow-y:auto;}
+/* The card's is-editing border is the focus cue; the field itself stays flat. */
+.ask-queue-item textarea.ask-queue-edit:focus{background:transparent;border-color:transparent;}
+.ask-queue-item textarea.ask-queue-edit:focus-visible{outline:none;}
+.ask-queue-ghost{position:absolute;margin:0;pointer-events:none;animation:ask-queue-out .2s cubic-bezier(.65,.02,.28,1) both;}
+.ask-composer :is(.ask-queue-text,.ask-queue-pen,.ask-queue-x,.ask-queue-resume):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-send:disabled,.ask-send:disabled:hover{opacity:.4;cursor:default;box-shadow:none;}
+@keyframes ask-queue-in{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+@keyframes ask-queue-out{from{opacity:1;transform:none;}to{opacity:0;transform:translateY(-18px);}}
+@media (prefers-reduced-motion: reduce){.ask-queue-item,.ask-queue-item.is-entering,.ask-queue-ghost{animation:none;transition:none;}}
 .ask-meter{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10.5px;
   color:var(--ink-3);white-space:nowrap;}
 .ask-meter-cost{color:var(--ink-2);}
@@ -7837,6 +7978,42 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .mcp-usedby .hint{margin-top:0;color:var(--ink-2);}
 .mcp-chip{display:inline-flex;align-items:center;gap:6px;}
 .mcp-x{border:0;background:none;cursor:pointer;color:var(--ink-3);font:inherit;padding:0 2px;}
+/* Run tags (#718): an outlined pill (the .person-chip shape); the chip field wraps chips and its input. */
+.tag-chip{display:inline-flex;align-items:center;gap:4px;max-width:240px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);
+  color:var(--ink-2);font-size:11.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tag-x{border:0;background:none;cursor:pointer;color:var(--ink-3);font:inherit;padding:0 2px;}
+.tag-x:hover{color:var(--ink);}
+.tag-input{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.tag-input-chips{display:contents;}
+.tag-input-text{flex:1 1 160px;min-width:120px;}
+.tag-input-text::placeholder{color:var(--ink-2);}   /* ink-3 misses 4.5:1 on the grey field (theme proof) */
+.tag-input-text[aria-invalid="true"]{border-color:var(--red-ink);}
+.tag-input-hint{flex-basis:100%;margin-top:0;}
+.tag-input-hint:empty{display:none;}
+.tag-input-hint:not(:empty){color:var(--red-ink);}
+/* Tag dimensions (run tags, slice 3): the New run slots and the Settings editor rows, spaced like .tag-input. */
+.tag-dims{display:flex;flex-wrap:wrap;gap:6px 12px;margin-bottom:6px;}
+.tag-dims[hidden]{display:none;}
+.tag-dim-slot{display:flex;flex-wrap:wrap;align-items:center;gap:6px;flex:1 1 220px;}
+.tag-dim-label{font-size:12px;color:var(--ink-2);}
+.tag-dim-req{font-size:11px;padding:0 6px;border-radius:999px;border:1px solid var(--line);color:var(--ink-3);}
+.tag-dim-input{flex:1 1 140px;min-width:120px;}
+.tag-dim-input[aria-invalid="true"]{border-color:var(--red-ink);}
+.tag-dim-hint{flex-basis:100%;margin-top:0;color:var(--red-ink);}
+.tag-dim-hint:empty{display:none;}
+.tag-dim-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:6px;}
+.tag-dim-table th{font-size:12px;font-weight:500;color:var(--ink-3);text-align:left;padding:4px 6px;}
+.tag-dim-table td{padding:6px;border-top:1px solid var(--line);vertical-align:top;}
+.tag-dim-tag{display:flex;flex-direction:column;gap:2px;}
+.tag-dim-key-small{font-family:var(--mono);font-size:11px;color:var(--ink-3);border-color:transparent;background:transparent;padding:0 2px;height:auto;}
+.tag-value-chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;}
+.tag-value-chips .tag-value-input{flex:1;min-width:80px;}
+.tag-rule-pickers{display:inline-flex;gap:6px;align-items:center;flex:none;}
+.ask-rp-tags{display:flex;flex-wrap:nowrap;gap:6px;overflow-x:auto;align-items:center;}
+.hd-tags{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.hd-tags-editor{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.hd-tags .tag-input{flex:1 1 280px;}
+.rd-page-meta > .tag-chip{margin-left:6px;}
 .mcp-member{padding:14px 16px;margin-top:10px;}
 .mcp-member .pl-enable{margin-left:0;}
 [data-view="connectors"] .mono,.mcp-def .mono,.mcp-fields .mono{font-family:var(--mono);}
@@ -8378,6 +8555,9 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfc-actions .wfv-btn{height:26px;padding:0 10px;border:1px solid var(--line-2);font-size:11.5px;}
 .wfc-actions .wfv-btn-primary{border-color:var(--ink);}
 .wfc :is(.wfv-btn,.wfc-link)[aria-disabled="true"]{opacity:.55;cursor:default;}
+.ask-ccard :is(.wfv-btn,.wfc-link)[aria-disabled="true"]{opacity:.55;cursor:default;}
+.ask-ccard{margin:6px 0;max-width:760px;font-size:12.5px;line-height:1.5;}
+.ask-ccard .ask-wfcard-body{margin:4px 0;}
 .wfc-suggest{display:flex;flex-wrap:wrap;gap:6px;}
 .wfc-chip-btn{height:26px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink);font:500 11.5px/24px var(--sans);cursor:pointer;}
 :is(.wfc-ibtn,.wfc-scope,.wfc-sel,.wfc-link,.wfc-chip-btn):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
@@ -8433,7 +8613,7 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-page[data-view="home"] .chat-head [data-ask-new-btn]{visibility:hidden;}
 /* New chat (ask-panel.mjs newChatButton): the ghost .ask-icon-btn widened for its plus glyph and label. */
 .ask-icon-btn.chat-new-btn{width:auto;gap:6px;padding:0 10px 0 8px;font:500 12.5px/1 var(--sans);white-space:nowrap;}
-.chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(32px,16vh,160px) 16px 32px;}
+.chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(24px,8vh,80px) 16px 32px;}
 .chat-hero-slot{width:100%;max-width:var(--chat-text-max);}
 .chat-hero-slot .ask-composer{padding:0;--ask-col-inset:0px;}
 .chat-page[data-view="thread"] .chat-home{display:none;}
@@ -8461,10 +8641,10 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-page .ask-composer-box:has(.guide-target){-webkit-backdrop-filter:none;backdrop-filter:none;}
 .chat-convo .ask-msg > :is(.ask-card,.ask-card-stub){width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
 /* The composer's popovers ride the composer (ask-panel.mjs openPopover): above the box in the dock, under it on
-   home, and never sized against the composer's own height. */
+   home, and never sized against the composer's own height. On home the cap is 100vh less .chat-home's 8vh top padding. */
 .chat-page .ask-composer{--ask-box-top:calc(100% - 10px);}
 .chat-page .ask-composer > .ask-pop{max-height:min(420px,calc(100vh - 240px));}
-.chat-page[data-view="home"] .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(84vh - 230px));}
+.chat-page[data-view="home"] .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(92vh - 230px));}
 .chat-panel{flex:none;min-width:0;min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--panel);}
 .chat-panel[hidden]{display:none;}
 /* The Chat row's unread dot (a .nav-count, so the rail parks it in the square's corner) and the logo links. */
@@ -9237,3 +9417,213 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .branches-new > label.same-src-row{display:flex;margin:8px 0 0;}
 #sameAsSourceHint[hidden]{display:none;}   /* .hint{display:block} beats the UA [hidden] rule */
 #featureBranch:disabled{opacity:.65;cursor:not-allowed;}   /* no global .input:disabled rule exists */
+
+/* ---------- Shape it first (spec §3.3–§3.5): the plan ask, the shaping Clarify, the Chat proposal/tile/run card ---------- */
+.plan-body{display:flex;flex-direction:column;gap:10px;padding-top:10px;font-size:12.5px;}
+.plan-meta{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);}
+.plan-perspectives{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.plan-perspectives-ro{font-size:12px;color:var(--ink-2);}
+.plan-check{display:flex;flex-wrap:wrap;gap:6px;}
+.plan-check-ok{padding:3px 9px;border-radius:999px;background:var(--green-bg);color:var(--green-ink);font-size:11.5px;font-weight:500;}
+/* Wraps on a narrow card: the detail's basis sends it to its own line rather than shrinking it to nothing under Fix. */
+.plan-check-bad{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;width:100%;padding:6px 10px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);}
+.plan-check-label{font-weight:600;}
+.plan-check-detail{flex:1 1 12em;min-width:0;color:var(--ink-2);}
+.plan-md{position:relative;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);overflow-wrap:anywhere;}
+.plan-md.collapsed{max-height:40vh;overflow:hidden;}
+.plan-md.collapsed::after{content:'';position:absolute;inset:auto 0 0;height:48px;background:linear-gradient(transparent,var(--panel));pointer-events:none;}
+.plan-md pre{white-space:pre-wrap;margin:0;}
+.plan-tag{margin-left:8px;padding:2px 8px;border-radius:999px;background:var(--hover);color:var(--ink-2);font-size:10.5px;font-weight:600;vertical-align:middle;}
+.plan-ground{margin-left:6px;font-size:10.5px;font-weight:600;}
+.plan-ground.found{color:var(--green-ink);}
+.plan-ground.new{color:var(--ink-3);}
+.plan-ground.missing{color:var(--red-ink);}
+.plan-versions{display:flex;flex-direction:column;gap:6px;}
+.plan-version summary{cursor:pointer;color:var(--ink-2);font-size:12px;}
+.plan-version .plan-md{margin-top:6px;}
+.plan-err{color:var(--red-ink);font-size:12px;}
+.plan-err.ok{color:var(--green-ink);}
+.plan-err[hidden]{display:none;}
+.plan-typed{display:flex;align-items:flex-end;gap:8px;}
+.plan-typed textarea{flex:1;min-width:0;resize:vertical;}
+.plan-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.plan-actions .plan-stop{margin-left:auto;}
+.shape-chips{display:flex;flex-wrap:wrap;gap:6px;}
+.shape-chip{padding:4px 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink-2);font:500 11.5px/1.2 var(--sans);cursor:pointer;}
+.shape-chip.on{border-color:var(--ink);background:var(--ink);color:var(--on-ink);}
+.shape-chip:disabled{cursor:not-allowed;opacity:.5;}
+.shape-chip-more{padding:4px 8px;border:0;background:none;color:var(--ink-2);font:500 11.5px/1.2 var(--sans);cursor:pointer;}
+.shape-card,.ask-card-shape{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--amber-line);border-radius:var(--r-ctrl);background:var(--amber-wash);}
+.shape-nudge-head{font-weight:600;color:var(--amber-ink);}
+.shape-nudge-list{margin:0;padding-left:18px;color:var(--ink-2);font-size:12px;}
+.shape-choices{display:flex;flex-wrap:wrap;gap:8px;}
+.shape-choice{display:flex;flex-direction:column;align-items:flex-start;gap:2px;}
+.shape-choice.primary{border-color:var(--amber);}
+.shape-est{font-size:11px;color:var(--ink-3);font-weight:400;}
+.clarify-defaults{margin-right:8px;}
+.clarify-defaults-err{margin-top:8px;color:var(--red-ink);font-size:12px;}
+.clarify-defaults-err[hidden]{display:none;}
+/* D30–D34: the decision card. Amber stays on the heading's disc only; rows and chips are neutral. */
+.plan-sub{color:var(--ink-2);font-size:12px;}
+.plan-summary{margin:0;color:var(--ink);font-size:13px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+.plan-fold{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;padding:2px 0;border:0;background:none;color:var(--ink-2);font:500 12px/1.4 var(--sans);cursor:pointer;}
+.plan-chev{display:inline-block;transition:transform .15s;}
+.plan-fold[aria-expanded="true"] .plan-chev{transform:rotate(90deg);}
+.plan-checks{display:flex;flex-direction:column;gap:2px;padding-left:4px;}
+.plan-check-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;padding:3px 0;color:var(--ink);}
+.plan-check-mark{flex:none;width:1em;font-weight:700;color:var(--ink-3);}
+.plan-check-row:not(.ok) .plan-check-mark{color:var(--ink);}
+.plan-fix-all{align-self:flex-start;margin-top:4px;}
+.plan-persp-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;color:var(--ink-2);font-size:12px;}
+.plan-persp-edit{padding:0;border:0;background:none;color:var(--ink);font:inherit;text-decoration:underline;cursor:pointer;}
+.plan-full-view{display:flex;flex-direction:column;gap:8px;}
+.plan-actions .plan-more{margin-left:auto;}
+.plan-unmet{color:var(--ink-2);font-size:12px;}
+/* D31: a shaped run's bar — the three controls live in the ⋯ menu */
+.rd-bar[data-shaped] .rd-bar-end > :is(.rd-night-wrap,.rd-after,.term-opener){display:none;}
+/* .btn-ghost alone is a 13px×20px-padded pill: size ⋯ like the terminal opener next to it (style.css:5451) */
+.rd-bar-more{display:inline-flex;align-items:center;justify-content:center;flex:none;width:36px;height:36px;padding:0;box-sizing:border-box;color:var(--ink-2);}
+/* D30: while a shaped run waits on the person, Results / How it ran and the graph fold under "Run details ›" */
+.rd-wait-more{align-self:flex-start;padding:4px 10px;font-size:12.5px;color:var(--ink-2);}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) :is(.rd-result,.rd-live,.rd-live-row){display:none;}
+/* D30, D33: while a shaped run waits on the person, the card says what is needed; the status panel is one line —
+   the stage words and "Run details ›" — with no "Waiting for you" of its own. Run details › (data-wait-open) and
+   the run working again bring today's panel back. */
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 16px;padding:10px 16px;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > :is(.rd-facts,.rd-nowlist,.rd-pr-box){display:none;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > :is(.rd-banners,.rd-away-note){flex-basis:100%;margin:0;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-sheet-head{display:flex;flex:1 1 auto;min-width:0;flex-wrap:wrap;align-items:center;gap:6px 16px;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-sheet-head > :is(.rd-now-top,.rd-prog-chain){display:none;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-sheet-head > .rd-slice-line{flex-basis:100%;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-prog{margin-top:0;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-prog[data-mode="stages"] > .run-prog-track{display:none;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-prog:focus-visible{outline:2px solid var(--blue-line);outline-offset:2px;border-radius:4px;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-prog .run-prog-marks{display:flex;gap:12px;margin-top:0;font-size:12px;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > .rd-wait-more{align-self:center;}
+.chat-rc-shaped{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:8px;font-size:12px;color:var(--ink-2);}
+.chat-rc-shaped:empty{display:none;}
+.chat-rc-shaped-stages{color:var(--green-ink);font-weight:500;}
+.chat-rc-shaped-plan,.chat-rc-shaped-saved{font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere;}
+/* Same word as Settings › Experimental; never wraps (the ellipsis is a safety net only). */
+.chat-home-act-badge{max-width:100%;box-sizing:border-box;padding:1px 7px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* Poppins SemiBold "Experimental" is ~81px at 10px: below a 960px home the 4- and 9-column tiles are 64–93px, so only
+   the tile that carries a badge (the gated shape tile) drops its inline padding and the badge goes compact (~61px).
+   After the base rule on purpose: same specificity, so source order makes it win. */
+@container chat-home (max-width:960px){.chat-home-act:has(> .chat-home-act-badge){padding-inline:0;}.chat-home-act-badge{font-size:8.5px;padding:1px 3px;letter-spacing:-.02em;}}
+.shape-checklists{margin:12px 0;display:flex;flex-direction:column;gap:6px;}
+.shape-cl-title{font-size:13px;margin:0;color:var(--ink-2);}
+.shape-cl-cycle{border:1px solid var(--line);border-radius:var(--r-ctrl);padding:6px 10px;background:var(--panel);
+  display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
+.shape-cl-caption{margin:0;font-size:12px;font-weight:600;color:var(--ink-2);}
+.shape-cl-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;align-self:stretch;}
+.shape-cl-item{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;font-size:12px;}
+.shape-cl-status{font-weight:600;min-width:84px;}
+.shape-cl-item.st-met .shape-cl-status{color:var(--green-ink);}
+.shape-cl-item.st-unmet .shape-cl-status,.shape-cl-item.st-missing .shape-cl-status{color:var(--red-ink);}
+.shape-cl-item.st-na .shape-cl-status{color:var(--ink-3);}
+.shape-cl-id{font-family:var(--mono);}
+.shape-cl-evidence{flex-basis:100%;padding-left:90px;color:var(--ink-2);overflow-wrap:anywhere;}
+.shape-cl-toggle{font-size:12px;display:inline-flex;align-items:center;gap:4px;}
+.shape-cl-toggle .chev{display:inline-block;transition:transform .2s;text-decoration:none;}
+.shape-cl-toggle[aria-expanded="true"] .chev{transform:rotate(180deg);}
+.shape-cl-earlier{display:flex;flex-direction:column;gap:6px;align-self:stretch;}
+@media (max-width:480px){.shape-cl-evidence{padding-left:0;}}
+@media (prefers-reduced-motion:reduce){.shape-cl-toggle .chev{transition:none;}}
+.chat-rc-checklist{font-size:12px;color:var(--green-ink);margin:4px 0;}
+.chat-rc-checklist.is-open{color:var(--red-ink);}
+.outline-why{margin:0;color:var(--ink-2);}
+.outline-why[hidden]{display:none;}
+.outline-slices{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none;counter-reset:outline;}
+.outline-slice{counter-increment:outline;display:flex;flex-direction:column;gap:4px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);}
+.outline-slice-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
+.outline-slice-title::before{content:counter(outline) '. ';color:var(--ink-3);font-weight:500;}
+.outline-est{padding:1px 8px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink);font-size:10.5px;font-weight:600;}
+.outline-est.small{background:var(--green-bg);color:var(--green-ink);}
+.outline-goal{color:var(--ink-2);overflow-wrap:anywhere;}
+.outline-acceptance{margin:0;padding-left:18px;color:var(--ink-2);font-size:12px;overflow-wrap:anywhere;}
+.outline-slice-tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;}
+.outline-approve-each{display:flex;align-items:center;gap:6px;color:var(--ink-2);cursor:pointer;}
+.outline-undo{align-self:flex-start;}
+.outline-undo[hidden]{display:none;}
+/* D30–D32: the slice outline as a decision card (outline-body.mjs renderCard); plan-card classes do the rest. */
+.plan-card .outline-slices{gap:4px;}
+.plan-card .outline-slice{gap:2px;padding:6px 10px;}
+.plan-card .outline-goal{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.outline-under{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;font-size:12px;}
+.outline-under .outline-approve-each{font-size:12px;}
+.outline-under .outline-edit{font-size:12px;}
+.chat-rc-feature{margin:8px 0;}
+.chat-rc-feature[hidden]{display:none;}
+.shape-feature{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;}
+.shape-feature-title{font-weight:600;overflow-wrap:anywhere;}
+.shape-feature-head{color:var(--ink-2);}
+.shape-feature.is-halted .shape-feature-head{color:var(--amber-ink);}
+/* D33: the page's "you are here" line. :not(.is-halted) leaves a halted page to the existing amber rule above,
+   which this more specific rule would otherwise beat. .is-needs below has the same specificity as the ink rule
+   and comes later, so amber wins there. */
+.shape-feature.is-page:not(.is-halted) .shape-feature-head{color:var(--ink);}
+.shape-feature.is-page .shape-feature-head{font-weight:600;}
+.shape-feature.is-page .shape-feature-head.is-needs{color:var(--amber-ink);}
+.shape-feature-more{margin-left:auto;min-width:32px;}
+.shape-feature-replanned{color:var(--ink-3);font-size:12px;}
+.shape-feature-bar{height:6px;border-radius:999px;background:var(--line);overflow:hidden;}
+.shape-feature-fill{display:block;height:100%;background:var(--amber);}
+.shape-feature-slices{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;}
+.shape-feature-slice{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:6px 8px;border:1px solid var(--line);border-radius:var(--r-ctrl);}
+.shape-feature-slice-title{flex:1 1 140px;min-width:0;overflow-wrap:anywhere;}
+.shape-feature-slice-state{padding:1px 8px;border-radius:999px;background:var(--line);color:var(--ink-3);font-size:10.5px;font-weight:600;}
+.shape-feature-slice.is-done .shape-feature-slice-state{background:var(--green-bg);color:var(--green-ink);}
+.shape-feature-slice.is-stopped .shape-feature-slice-state,.shape-feature-slice.is-error .shape-feature-slice-state,.shape-feature-slice.is-failed .shape-feature-slice-state{background:var(--red-bg);color:var(--red-ink);}
+.shape-feature-slice.is-approval .shape-feature-slice-state,.shape-feature-slice.is-questions .shape-feature-slice-state,.shape-feature-slice.is-paused .shape-feature-slice-state{background:var(--amber-bg);color:var(--amber-ink);}
+.shape-feature-slice.is-missed .shape-feature-slice-state,.shape-feature-slice.is-canceled .shape-feature-slice-state{color:var(--ink-3);}
+.shape-feature-slice.is-missed .shape-feature-slice-title,.shape-feature-slice.is-canceled .shape-feature-slice-title{color:var(--ink-3);}
+.shape-feature-pr{color:var(--ink-2);font-size:12px;}
+.shape-feature-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
+.shape-feature-approve-each{display:flex;align-items:center;gap:6px;color:var(--ink-2);cursor:pointer;}
+.shape-feature-err{padding:6px 8px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);overflow-wrap:anywhere;}
+.shape-feature-err[hidden]{display:none;}
+/* D16: the feature page (#feature/ID), full width; one bar part per slice, tinted by its state. */
+.feature-page{padding:16px 20px;}
+.feature-page-gone,.feature-page-loading{color:var(--ink-3);}
+.shape-feature.is-page{width:100%;box-sizing:border-box;font-size:14px;}
+.shape-feature-segs{display:flex;gap:3px;height:8px;}
+.shape-feature-seg{flex:1 1 0;border-radius:999px;background:var(--line);}
+.shape-feature-seg[data-state="done"]{background:var(--green);}
+.shape-feature-seg[data-state="running"],.shape-feature-seg[data-state="shaping"],.shape-feature-seg[data-state="starting"]{background:var(--blue);}
+.shape-feature-seg[data-state="approval"],.shape-feature-seg[data-state="questions"],.shape-feature-seg[data-state="paused"]{background:var(--amber);}
+.shape-feature-seg[data-state="stopped"],.shape-feature-seg[data-state="error"],.shape-feature-seg[data-state="failed"]{background:var(--red);}
+.shape-feature-merge{padding:1px 8px;border-radius:999px;background:var(--blue-bg);color:var(--blue-ink);font-size:10.5px;font-weight:600;}
+.shape-feature-current{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-ctrl);}
+.shape-feature-current-title{font-weight:600;}
+.shape-feature-order{color:var(--ink-3);font-size:12px;}
+.shape-feature-ship{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
+.shape-feature-ship-head{font-weight:600;flex-basis:100%;}
+.shape-feature-ship-why{flex-basis:100%;color:var(--ink-2);font-size:12px;}
+.shape-feature-shipped{color:var(--green-ink);}
+/* P13: the Chat run card's summary of the feature. */
+.shape-feature-sum{display:flex;flex-direction:column;gap:6px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;}
+.shape-feature-sum.is-needs .shape-feature-sum-line,.shape-feature-sum.is-halted .shape-feature-sum-line{color:var(--amber-ink);}
+.shape-feature-sum-open{align-self:flex-start;}
+/* D19: why a later slice's plan stopped. */
+.shape-plan-outline-change{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--amber-wash);border:1px solid var(--amber-line);}
+.shape-plan-outline-change-head{font-weight:600;color:var(--amber-ink);}
+.shape-plan-outline-change-text{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;}
+/* D16, D22: a slice's place in its feature, on its run page. */
+.rd-slice-line{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;}
+.rd-slice-line[hidden]{display:none;}
+.rd-slice-link{color:var(--blue-ink-strong);}
+.shipit-slice-note[hidden]{display:none;}
+.chat-home-plans{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;}
+.chat-home-plan{display:flex;flex-direction:column;gap:4px;}
+.chat-home-plan-open{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:10px;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.chat-home-plan-open:hover{background:var(--hover);}
+.chat-home-plan-col{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0;}
+.chat-home-plan-t{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-home-plan-m{color:var(--ink-2);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-home-plan-state{flex:none;padding:1px 8px;border-radius:999px;background:var(--line);color:var(--ink-3);font-size:10.5px;font-weight:600;}
+.chat-home-plan-state.is-done{background:var(--green-bg);color:var(--green-ink);}
+.chat-home-plan-state.is-stopped{background:var(--red-bg);color:var(--red-ink);}
+.chat-home-plan-state.is-waiting,.chat-home-plan-state.is-paused{background:var(--amber-bg);color:var(--amber-ink);}
+.chat-home-plan-feature{margin:0 10px 4px;color:var(--ink-2);font-size:12px;}
+.chat-home-plan-feature>summary{cursor:pointer;}
+.chat-home-plan-feature-body{margin-top:6px;}

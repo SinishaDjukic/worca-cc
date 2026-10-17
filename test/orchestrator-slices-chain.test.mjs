@@ -1,0 +1,124 @@
+// test/orchestrator-slices-chain.test.mjs — Shape it first slice 4, spec §6 end to end: the outline is approved, the
+// feature and its tickets are created, slice 2 is planned just in time against slice 1's output (L5, L6, L9, D14).
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { useTempHome } from './helpers/temp-home.mjs';
+import { gitDir } from './helpers/git-dir.mjs';
+import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { runDueTickets, previousBranchesOf, setTicketPipeline, getTicket } from '../src/core/scheduler.mjs';
+import { featureView, resumeFeature } from '../src/core/shape/features.mjs';
+import { readRunResultsById } from '../src/core/artifacts.mjs';
+import { getDb } from '../src/core/db.mjs';
+import { _testing } from '../src/core/graph/executor.mjs';
+import { runClaude } from '../src/core/claude-runner.mjs';
+
+useTempHome(after);
+
+let sandboxHome;
+const prevEnv = {};
+before(async () => {
+  sandboxHome = await mkdtemp(join(tmpdir(), 'worca-slices-chain-home-'));
+  for (const k of ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK']) prevEnv[k] = process.env[k];
+  process.env.HOME = sandboxHome;
+  process.env.USERPROFILE = sandboxHome;
+  process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+});
+after(async () => {
+  _testing.runClaude = null;
+  for (const k of ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK']) {
+    if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k];
+  }
+  await rm(sandboxHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+});
+
+const waitFor = async (pred, ms = 60000) => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (pred()) return; await new Promise((r) => setTimeout(r, 10)); }
+  throw new Error('waitFor timed out');
+};
+const isOutline = (q) => q.kind === 'plan' && q.plan?.outline;
+
+/** Every agent spawn's prompt, in order — the real runner still runs (the mock engine). */
+const prompts = [];
+function capturePrompts() {
+  prompts.length = 0;
+  _testing.runClaude = (opts) => { prompts.push({ prompt: opts.prompt }); return runClaude(opts); };
+}
+
+/** A mock run whose plan asks (outline and plan) are all approved, except the ones `hold` keeps open. */
+function startRun(opts, { hold = () => false } = {}) {
+  const orch = createOrchestrator({ workflowId: 'wf_shape', claude: { mock: true }, ...opts });
+  const asks = [];
+  orch.on('question', (q) => {
+    asks.push(q);
+    if (q.kind === 'plan') { if (!hold(q)) setImmediate(() => orch.answer(q.id, { decision: 'approve' })); return; }
+    if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+  });
+  return { orch, asks, done: orch.run() };
+}
+
+test('chain: slice 1 approved and done, slice 2 planned just in time on slice 1\'s branch, stop, then restart after slice 1', async () => {
+  capturePrompts();
+  const dir = gitDir('slices-chain');
+  const perspectives = ['product', 'architect', 'qa'];
+
+  // 1. Slice 1: the outline ask and the plan ask are both approved. The run ends done on its feature branch.
+  const one = startRun({ projectDir: dir, prompt: 'Plan this in slices: demo', shape: { perspectives } });
+  const res1 = await one.done;
+  assert.equal(res1.status, 'done', res1.error);
+  assert.deepEqual(one.asks.filter((q) => q.kind === 'plan').map((q) => q.id), ['plan-outline-n_plan-1', 'plan-n_refine-1']);
+  const pid1 = one.orch.getState().id;
+  const f = getDb().prepare('SELECT * FROM shape_features WHERE origin_pipeline_id = ?').get(pid1);
+  assert.ok(f, 'the feature row');
+  const prev = previousBranchesOf(pid1);
+  assert.ok(prev?.sourceBranch, 'the pipelines row has slice 1\'s feature branch');
+  const slice1Results = await readRunResultsById(pid1);
+  const slice1Files = [...(slice1Results?.newFiles || []), ...(slice1Results?.changedFiles || [])].map((x) => x.path).filter(Boolean);
+  assert.ok(slice1Files.length > 0, 'slice 1 changed files (results.json)');
+
+  // 2. The scheduler fires slice 2's ticket the way fireTicket does: the stored request plus the predecessor's branch.
+  let two = null;
+  let sourceSeen = null;
+  const out = await runDueTickets({
+    now: Date.now() + 60_000,
+    start: async (ticket) => {
+      const body = { ...ticket.request, ...previousBranchesOf(ticket.after.id) };
+      sourceSeen = body.sourceBranch;
+      two = startRun({
+        projectDir: body.projectDir, workflowId: body.workflowId, prompt: body.prompt, title: body.title,
+        claude: { mock: body.mock === true }, shape: body.shape, branch: { source: body.sourceBranch },
+      }, { hold: () => true });
+      await waitFor(() => two.orch.getState().id && two.asks.some((q) => q.kind === 'plan'));
+      setTicketPipeline(ticket.id, two.orch.getState().id);
+      return { ok: true, pipelineId: two.orch.getState().id };
+    },
+  });
+  assert.equal(out.fired.length, 1, JSON.stringify(out));
+  const pid2 = two.orch.getState().id;
+
+  // 3. Slice 2 starts from slice 1's branch, asks its plan first (no outline), and is scoped by slice 1's output.
+  assert.equal(sourceSeen, prev.sourceBranch);
+  const row2 = getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(pid2);
+  assert.equal(JSON.parse(row2.branch).source, prev.sourceBranch, 'slice 2\'s run starts from slice 1\'s feature branch');
+  assert.equal(two.asks.find((q) => q.kind === 'plan').id, 'plan-n_refine-1', 'its first plan ask is the Refine one');
+  assert.ok(!two.asks.some(isOutline), 'slices:off raises no outline ask');
+  const planner = prompts.filter((p) => /MOCK_ROLE: planner\b/.test(p.prompt)).at(-1);
+  assert.ok(planner, 'a Planner spawn was captured');
+  assert.ok(planner.prompt.includes('## This is slice 2 of 2'), 'the Planner prompt carries the slice scope');
+  assert.ok(planner.prompt.includes(slice1Files[0]), `the Planner prompt names slice 1's file ${slice1Files[0]}`);
+
+  // 4. Stop slice 2: the feature halts there and a restart chains after slice 1's pipeline.
+  two.orch.stop();
+  assert.equal((await two.done).status, 'stopped');
+  const view = featureView(f.id);
+  assert.equal(view.halted.index, 2);
+  assert.equal(view.halted.state, 'stopped');
+  const resume = resumeFeature(f.id);
+  assert.equal(resume.action, 'restart');
+  assert.deepEqual(getTicket(resume.ticketId).after, { kind: 'pipeline', id: pid1, policy: 'done' });
+  assert.equal(getTicket(resume.ticketId).sourceFromPrevious, true);
+  assert.notEqual(pid2, pid1);
+});

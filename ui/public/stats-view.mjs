@@ -10,6 +10,9 @@
 // DEFAULT_FMT keeps pure tests standalone.
 
 import { renderTeamCapPauseBanner, POLICY_PAUSE_REASONS } from './team-policy-view.mjs';
+import { rowsToCsv } from '../../src/shared/csv.mjs';
+import { allocationModel, fromStatsRows, renderAllocationTables } from './tag-allocation.mjs';
+import { dimensionLabel } from '../../src/shared/tag-dimensions.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -94,8 +97,8 @@ function deltaChip(doc, cur, prevVal, range) {
   if (range === 'all' || prevVal == null || !(prevVal > 0)) return null;
   const pct = Math.round(((cur - prevVal) / prevVal) * 100);
   const chip = h(doc, 'span', 'stat-delta', `${pct >= 0 ? '↑' : '↓'} ${Math.abs(pct)}%`);
-  chip.title = range === 'today' ? 'vs yesterday'
-    : range === 'week' ? 'vs previous week' : 'vs previous month';
+  chip.title = range === 'today' ? 'vs yesterday' : range === 'week' ? 'vs previous week'
+    : range === 'lastMonth' ? 'vs the month before' : range === 'custom' ? 'vs the previous period' : 'vs previous month';
   return chip;
 }
 
@@ -165,7 +168,7 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
   // window's own spend explicitly instead.
   const limit = budget ? budget.totalLimitUsd : null;
   const windowRange = budget && budget.resetPeriod === 'weekly' ? 'week' : 'month';
-  const limitInRange = limit != null && range === windowRange;
+  const limitInRange = limit != null && range === windowRange && !model.filtered;
   const spentMeter = limitInRange
     ? (() => {
         const m = meterEl(doc, 'stat-meter', (totals.spentUsd / limit) * 100);
@@ -179,7 +182,7 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
     chip: prev ? deltaChip(doc, totals.spentUsd, prev.spentUsd, range) : null,
     valueNodes: [doc.createTextNode(fmt.usd(totals.spentUsd))],
     meter: spentMeter,
-    sub: limit == null
+    sub: model.filtered ? 'Filtered' : limit == null
       ? 'No total limit set'
       : limitInRange
         ? `of ${fmt.usd(limit)} · resets in ${fmtIn(budget.msUntilReset)}`
@@ -605,20 +608,153 @@ export function renderPeopleCard(byPerson, rangeLabel, { doc = globalThis.docume
   return card;
 }
 
+/** The /api/stats query string for the page's state. */
+export function statsQuery({ range, from = '', to = '', tags = [], person = '', groupBy = '', byTag = false, tagKeys = [] }) {
+  const q = new URLSearchParams({ range });
+  if (range === 'custom') { q.set('from', from); q.set('to', to); }
+  for (const t of tags) q.append('tag', t);
+  if (person) q.set('person', person);
+  if (groupBy) q.set('groupBy', groupBy);
+  if (byTag) { q.set('byTag', '1'); for (const k of tagKeys) q.append('tagKey', k); }
+  return q.toString();
+}
+
+const GROUP_CSV_COLS = ['spendUsd', 'runs', 'finished', 'stopped', 'failed', 'running', 'paused', 'prsOpened', 'prsMerged'];
+
+/** The grouped rows as CSV (BOM, RFC 4180). The first column is named after the group (client / person). */
+export function groupsToCsv(groups) {
+  return rowsToCsv([groups.label, ...GROUP_CSV_COLS], groups.rows.map((r) => [
+    r.label, r.spentUsd, r.runs, r.finished, r.stopped, r.failed, r.running, r.paused, r.prsOpened, r.prsMerged,
+  ]));
+}
+
+/**
+ * "By <client|person>": spend, share and outcomes per group in the stats window. Rows reconcile
+ * to the Spent tile. The Export CSV button is wired by app.js (renderers attach no listeners).
+ */
+export function renderGroupsCard(groups, rangeLabel, { doc = globalThis.document, fmt = DEFAULT_FMT, totalUsd = 0, totalRuns = 0 } = {}) {
+  const card = chartCard(doc, `By ${groups.label}`, rangeLabel);
+  card.classList.add('groups-card');
+  const exp = h(doc, 'button', 'btn btn-sm stats-export', 'Export CSV');
+  exp.type = 'button';
+  exp.disabled = !groups.rows.length;
+  card.querySelector('.card-head').appendChild(exp);     // chartCard builds section.card > div.card-head > h2
+  if (!groups.rows.length) {
+    card.appendChild(h(doc, 'p', 'chart-empty hint', 'Nothing spent and no runs in this period.'));
+    return card;
+  }
+  const top = Math.max(...groups.rows.map((r) => r.spentUsd), 0);
+  const table = h(doc, 'table', 'people-table groups-table');
+  const head = h(doc, 'tr', null);
+  const label = groups.label === 'person' ? 'Person' : groups.label;
+  for (const t of [label, 'Spend', 'Share', 'Runs', 'Finished', 'Stopped', 'Failed', 'PRs merged']) head.appendChild(h(doc, 'th', null, t));
+  const thead = h(doc, 'thead', null); thead.appendChild(head); table.appendChild(thead);
+  const tbody = h(doc, 'tbody', null);
+  for (const r of groups.rows) {
+    const tr = h(doc, 'tr', r.kind === 'none' ? 'groups-row-none' : r.kind === 'ask' ? 'groups-row-ask' : null);
+    tr.appendChild(h(doc, 'td', 'people-name', r.label));
+    const spend = h(doc, 'td', 'people-spend');
+    const bar = h(doc, 'span', 'people-bar');
+    const fill = h(doc, 'span', 'people-bar-fill');
+    fill.style.width = `${top > 0 ? Math.max(2, Math.round((r.spentUsd / top) * 100)) : 0}%`;
+    bar.appendChild(fill);
+    spend.appendChild(h(doc, 'span', 'people-usd', fmt.usd(r.spentUsd)));
+    spend.appendChild(bar);
+    tr.appendChild(spend);
+    tr.appendChild(h(doc, 'td', 'num', totalUsd > 0 ? `${Math.round((r.spentUsd / totalUsd) * 100)}%` : '—'));
+    for (const c of ['runs', 'finished', 'stopped', 'failed', 'prsMerged']) {
+      tr.appendChild(h(doc, 'td', 'num', r.kind === 'ask' ? '—' : String(r[c])));
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  const tfoot = h(doc, 'tfoot', null);
+  const ft = h(doc, 'tr', null);
+  ft.appendChild(h(doc, 'td', null, 'Total'));
+  ft.appendChild(h(doc, 'td', 'people-usd', fmt.usd(totalUsd)));
+  ft.appendChild(h(doc, 'td', 'num', ''));
+  ft.appendChild(h(doc, 'td', 'num', String(totalRuns)));
+  for (let i = 0; i < 4; i++) ft.appendChild(h(doc, 'td', 'num', ''));   // finished … PRs merged: 8 cells, like the head
+  tfoot.appendChild(ft); table.appendChild(tfoot);
+  const scroll = h(doc, 'div', 'people-scroll');
+  scroll.appendChild(table);
+  card.appendChild(scroll);
+  card.appendChild(h(doc, 'small', 'hint', 'Runs are counted in the period they started; spend is counted when it happened, so a row can show spend with 0 runs.'));
+  return card;
+}
+
+/** The card hint for a stats model's window: "Aug 1 – Aug 31", one day for today, "last 12 months" for all. */
+export function statsRangeLabel(model) {
+  return model.range === 'all'
+    ? 'last 12 months'
+    : model.range === 'today'
+      ? tipDate(model.windowStartMs, 'day')
+      : `${tipDate(model.windowStartMs, 'day')} – ${tipDate(model.windowEndMs - 1, 'day')}`;
+}
+
+/** The By person / By tag chips (#718 slice 4): that table alone, without the KPI row and charts. */
+export function renderStatsView(model, view, opts = {}) {
+  const { doc = globalThis.document, fmt = DEFAULT_FMT, dims = [] } = opts;
+  const rangeLabel = statsRangeLabel(model);
+  if (view === 'tag') {
+    const tables = (model.tagGroups || []).map((t) => allocationModel({
+      key: t.key, label: dimensionLabel(dims, t.key) || t.key, rows: fromStatsRows(t.rows),
+    }));
+    return renderAllocationTables(tables, { doc, fmt, rangeLabel, empty: 'No tagged runs in this period.' });
+  }
+  const g = h(doc, 'div', 'charts-grid people-grid');
+  g.appendChild(renderGroupsCard(model.groups || { label: 'person', rows: [] }, rangeLabel,
+    { ...opts, totalUsd: model.totals.spentUsd, totalRuns: model.totals.runs }));
+  return g;
+}
+
+const SIZE_LABELS = { small: 'Small', medium: 'Medium', large: 'Large' };
+
+/** Shaper (D28): finished runs of the same size, planned with the person vs not. */
+export function renderShapingCard(shaping, rangeLabel, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
+  const card = chartCard(doc, 'Shaper', rangeLabel);
+  card.classList.add('shaping-card');
+  const groups = shaping?.groups || [];
+  if (!groups.length) {
+    card.appendChild(h(doc, 'p', 'chart-empty hint', 'No finished runs with a recorded size in this period.'));
+    return card;
+  }
+  const table = h(doc, 'table', 'people-table');
+  const head = h(doc, 'tr', null);
+  for (const t of ['Size', 'Planned', 'Runs', 'Average cost', 'Average active time', 'Average review cycles']) head.appendChild(h(doc, 'th', null, t));
+  const thead = h(doc, 'thead', null); thead.appendChild(head); table.appendChild(thead);
+  const tbody = h(doc, 'tbody', null);
+  const dash = (v, f) => (v == null ? '–' : f(v));
+  for (const g of groups) {
+    for (const [i, [label, c]] of [['With Shaper', g.shaped], ['Without', g.unshaped]].entries()) {
+      const tr = h(doc, 'tr', null);
+      if (i === 0) { const size = h(doc, 'td', 'people-name', SIZE_LABELS[g.size] || g.size); size.rowSpan = 2; tr.appendChild(size); }
+      tr.appendChild(h(doc, 'td', null, label));
+      tr.appendChild(h(doc, 'td', 'num', String(c.runs)));
+      tr.appendChild(h(doc, 'td', 'num', dash(c.avgCostUsd, fmt.usd)));
+      tr.appendChild(h(doc, 'td', 'num', dash(c.avgActiveMs, fmt.duration)));
+      tr.appendChild(h(doc, 'td', 'num', dash(c.avgReviewCycles, String)));
+      tbody.appendChild(tr);
+    }
+  }
+  table.appendChild(tbody);
+  const scroll = h(doc, 'div', 'people-scroll');
+  scroll.appendChild(table);
+  card.appendChild(scroll);
+  card.appendChild(h(doc, 'small', 'hint', 'Finished runs started in this period. Size comes from the lines and files each run changed: small is up to 150 lines and 5 files, medium up to 800 lines and 20 files.'));
+  return card;
+}
+
 export function renderStatsBody(model, opts = {}) {
   const { doc = globalThis.document } = opts;
   const wrap = h(doc, 'div', null);
   wrap.appendChild(renderKpiRow(model, opts));
   const grid = h(doc, 'div', 'charts-grid');
-  const rangeLabel = model.range === 'all'
-    ? 'last 12 months'
-    : model.range === 'today'
-      ? tipDate(model.windowStartMs, 'day')
-      : `${tipDate(model.windowStartMs, 'day')} – ${tipDate(model.windowEndMs - 1, 'day')}`;
+  const rangeLabel = statsRangeLabel(model);
   const currentBucketStartMs = model.series.length
     ? model.series[model.series.length - 1].bucketStartMs : 0;
   if (!model.totals.runs && !model.series.some((p) => p.spentUsd > 0)) {
-    const emptyText = model.range === 'all'
+    const emptyText = model.filtered ? 'No runs match these filters in this period.' : model.range === 'all'
       ? 'No pipelines yet — run one from New run.'
       : 'No runs in this period.';
     for (const title of ['Spend', 'Runs']) {
@@ -633,10 +769,21 @@ export function renderStatsBody(model, opts = {}) {
       currentBucketStartMs, rangeLabel }, opts));
   }
   wrap.appendChild(grid);
+  if (model.groups) {
+    const g = h(doc, 'div', 'charts-grid people-grid');
+    g.appendChild(renderGroupsCard(model.groups, rangeLabel, { ...opts, totalUsd: model.totals.spentUsd, totalRuns: model.totals.runs }));
+    wrap.appendChild(g);
+  }
   if (model.byPerson) {
     const people = h(doc, 'div', 'charts-grid people-grid');
     people.appendChild(renderPeopleCard(model.byPerson, rangeLabel, opts));
     wrap.appendChild(people);
+  }
+  if (model.shaping) {
+    const shapingGrid = h(doc, 'div', 'charts-grid people-grid');
+    // the server counts all time for `all` (Decision 14); rangeLabel says "last 12 months" there, which is the charts' span
+    shapingGrid.appendChild(renderShapingCard(model.shaping, model.range === 'all' ? 'all time' : rangeLabel, opts));
+    wrap.appendChild(shapingGrid);
   }
   return wrap;
 }

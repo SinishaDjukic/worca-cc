@@ -139,6 +139,26 @@ export function collectScriptToolsToggle(root) {
   return { scriptTools: cb ? cb.checked : true };
 }
 
+/** Settings → Ask Worca "Suggest a next prompt" row: the ghost text after each reply (one cheap model call per reply).
+ *  Default ON; saved with the Ask Worca card. */
+export function renderSuggestionsToggle({ prefs } = {}, { doc = globalThis.document } = {}) {
+  const row = h(doc, 'label', 'check-row');
+  row.setAttribute('for', 'askSuggestions');
+  const cb = h(doc, 'input', 'ask-suggestions');
+  cb.type = 'checkbox';
+  cb.id = 'askSuggestions';
+  cb.checked = prefs?.suggestions !== false;
+  row.appendChild(cb);
+  row.appendChild(doc.createTextNode(' Suggest a next prompt after each reply'));
+  return row;
+}
+
+/** collectSuggestionsToggle(root) -> the {chat} patch part for the toggle. */
+export function collectSuggestionsToggle(root) {
+  const cb = root && typeof root.querySelector === 'function' ? root.querySelector('input.ask-suggestions') : null;
+  return { suggestions: cb ? cb.checked : true };
+}
+
 /** Ask Worca → Web access (docs/guardrails.md "Web access"): off by default; the allowlist is enforced by worca's server. */
 export function renderAskWebFields({ askWeb } = {}, { doc = globalThis.document } = {}) {
   const w = askWeb || { enabled: false, anyHost: false, allowedDomains: [], search: null };

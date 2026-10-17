@@ -6,7 +6,7 @@
 // never shell out to real git/gh/GitHub. Nothing here ever throws.
 
 import { spawn } from 'node:child_process';
-import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, readFile, copyFile, rename, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { githubEnv } from './github-credentials.mjs';
@@ -191,6 +191,79 @@ export async function untrackedPatch(projectDir, relPath) {
   let added = 0;
   if (!binary) for (const line of patch.split('\n')) if (line.startsWith('+') && !line.startsWith('+++')) added += 1;
   return { patch, added, binary };
+}
+
+/** Env that must never point the temporary-index commands below at another repository or index. */
+const PATCH_ENV_STRIP = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_COMMON_DIR', 'GIT_PREFIX'];
+
+/**
+ * Read-only patch of a folder's uncommitted work against `base` (tracked edits, deletions, and untracked
+ * files git does not ignore), written to `outFile` via `<outFile>.part` + rename. The folder's REAL index is
+ * never touched: a copy of it (or `base`'s tree when there is none) goes to a temporary GIT_INDEX_FILE,
+ * `add -A` stages the working tree THERE, and `diff --cached --binary` renders it. So it is safe on a
+ * person's own clone (a linked checkout folder) and on a checkout left mid-merge (its conflicts stay
+ * unresolved). The only trace is the blobs `add` hashes into the object store (unreferenced; gc drops them).
+ * Never throws.
+ * @returns {Promise<{ok:true, file:string|null, bytes:number}|{ok:false, step:string, message:string}>}
+ *   file null = nothing uncommitted.
+ */
+export async function uncommittedPatch(dir, { base = 'HEAD', outFile } = {}) {
+  if (!dir || !outFile) return { ok: false, step: 'path', message: 'dir and outFile are required' };
+  const env = { ...process.env };
+  for (const k of PATCH_ENV_STRIP) delete env[k];
+  let tmp = null;
+  try {
+    tmp = await mkdtemp(join(tmpdir(), 'worca-uncommitted-'));
+    const run = (args) => _run('git', args, { cwd: dir, timeout: DIFF_TIMEOUT_MS, env });
+    const fail = (step, r) => ({ ok: false, step, message: String(r.stderr || '').trim() || `git exited ${r.code}` });
+    const fromBase = async () => {
+      await rm(env.GIT_INDEX_FILE, { force: true });
+      return run(['read-tree', base]);
+    };
+    // Seed from the real index: its stat cache keeps `add -A` fast, and its skip-worktree / assume-unchanged
+    // bits keep what the person hides out of the patch. `--git-path` is per worktree. Ask BEFORE setting
+    // GIT_INDEX_FILE: git answers `--git-path index` with $GIT_INDEX_FILE whenever it is set.
+    const real = await _run('git', ['rev-parse', '--git-path', 'index'], { cwd: dir, env });
+    const realPath = real.ok ? real.stdout.trim() : '';
+    env.GIT_INDEX_FILE = join(tmp, 'index');
+    let seeded = false;
+    if (realPath) {
+      seeded = await copyFile(isAbsolute(realPath) ? realPath : join(dir, realPath), env.GIT_INDEX_FILE)
+        .then(() => true, () => false);
+    }
+    if (!seeded) {
+      const rt = await fromBase();
+      if (!rt.ok) return fail('read-tree', rt);
+    }
+    let add = await run(['add', '-A']);
+    if (!add.ok && seeded) {
+      // A copied index git cannot use here (a split index, an odd version): start from base's tree instead.
+      const rt = await fromBase();
+      if (!rt.ok) return fail('read-tree', rt);
+      add = await run(['add', '-A']);
+    }
+    if (!add.ok) return fail('add', add);
+    const part = `${outFile}.part`;
+    // Fixed a/ b/ prefixes, no textconv and short submodule hunks: a person's diff.noprefix / diff.mnemonicPrefix /
+    // textconv driver / diff.submodule would otherwise produce a patch `git apply` cannot use.
+    const diff = await run(['-c', 'core.quotePath=false', 'diff', '--cached', '--binary', '--no-color', '--no-ext-diff',
+      '--no-textconv', '--submodule=short', '--src-prefix=a/', '--dst-prefix=b/', `--output=${part}`, base, '--']);
+    if (!diff.ok) {
+      await rm(part, { force: true }).catch(() => {});
+      return fail('diff', diff);
+    }
+    const bytes = await stat(part).then((s) => s.size, () => 0);
+    if (!bytes) {
+      await rm(part, { force: true }).catch(() => {});
+      return { ok: true, file: null, bytes: 0 };
+    }
+    await rename(part, outFile);
+    return { ok: true, file: outFile, bytes };
+  } catch (e) {
+    return { ok: false, step: 'io', message: e?.message || String(e) };
+  } finally {
+    if (tmp) await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /** True iff `branch` exists locally in `projectDir`. False on a missing repo/branch. */
@@ -1036,6 +1109,29 @@ export function prWatchReply(opts = {}) {
 }
 export function prWatchComment(opts = {}) {
   return azureWatch(opts.prUrl) ? azurePr.prComment(opts) : ghPrComment(opts);
+}
+async function ghMarkPrReady({ projectDir = null, prUrl } = {}) {
+  const cred = await githubEnv('write', { repo: ownerRepoOfPrUrl(prUrl) });
+  if (cred.error) return { ok: false, error: cred.error };
+  const r = await _run('gh', ['pr', 'ready', prUrl], { cwd: projectDir || undefined, env: cred.env });
+  // An already-ready PR is a success for "mark ready".
+  return r.ok || /not a draft|already/i.test(r.stderr || '') ? { ok: true } : { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+}
+async function ghClosePr({ projectDir = null, prUrl, comment = '' } = {}) {
+  const cred = await githubEnv('write', { repo: ownerRepoOfPrUrl(prUrl) });
+  if (cred.error) return { ok: false, error: cred.error };
+  const r = await _run('gh', ['pr', 'close', prUrl, ...(comment ? ['--comment', String(comment)] : [])], { cwd: projectDir || undefined, env: cred.env });
+  return r.ok ? { ok: true } : { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+}
+/** D24: mark a draft PR ready for review, by the URL's forge. */
+export function markPrReady(opts = {}) {
+  if (!opts.prUrl) return Promise.resolve({ ok: false, error: 'prUrl is required' });
+  return azureWatch(opts.prUrl) ? azurePr.markReady(opts) : ghMarkPrReady(opts);
+}
+/** D24: close a PR with a comment, by the URL's forge (Azure: abandoned). */
+export function closePr(opts = {}) {
+  if (!opts.prUrl) return Promise.resolve({ ok: false, error: 'prUrl is required' });
+  return azureWatch(opts.prUrl) ? azurePr.closePr(opts) : ghClosePr(opts);
 }
 /** The PR card's checks rollup, mergeability and merge verdict, by forge (see ghPrChecks). null on any failure. */
 export async function prChecks({ projectDir, prUrl } = {}) {

@@ -25,6 +25,7 @@ import { readPolicyState } from './policy/state.mjs';
 import { memoryTotals } from './memory-sync.mjs';
 import { actorLabel } from './identity.mjs';
 import { attachWatchPipeline } from './pr-watch.mjs';
+import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -594,7 +595,7 @@ export function readReviewRow(pipelineId, kind, cycle) {
  * (readStepQuestions, chronological insert order). Always returns arrays (never
  * null) so callers render unconditionally.
  * @param {string} pipelineId
- * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
+ * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string,checklist?:Array}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
  */
 export function readPipelineExtras(pipelineId) {
   const c = getDb().prepare('SELECT questions, answers FROM clarify WHERE pipeline_id = ?').get(pipelineId);
@@ -616,6 +617,7 @@ export function readPipelineExtras(pipelineId) {
       cycle: r.cycle,
       issues: Array.isArray(v.issues) ? v.issues : [],
       summary: typeof v.summary === 'string' ? v.summary : '',
+      ...(Array.isArray(v.checklist) ? { checklist: v.checklist } : {}),
     };
   });
   return { clarify, reviews, stepQuestions: readStepQuestions(pipelineId) };
@@ -1155,7 +1157,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null, startedBy = null, prWatchRunId = null,
+    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [],
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1290,6 +1292,9 @@ export async function createPipeline(projectDir, opts = {}) {
   // (rememberDir) so appendAudit resolves this run without any call-site change
   // (A4). recordArtifact runs AFTER the row exists (FK -> pipelines).
   await writeState(dir, state, { prWatchRunId });
+  // Run tags (#718): written once, after the row exists (FK) and after writeState's tx has
+  // committed (tx cannot nest). writeState updates never touch them.
+  insertRunTags(id, tags);
   recordArtifact(id, 'prompt', 'prompt.md');
   if (workspaceKey) recordArtifact(id, 'workspace-description', 'workspace-description.md');
   for (const rel of copiedExtras) recordArtifact(id, 'extra', rel);
@@ -1403,11 +1408,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null } 
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1417,6 +1422,8 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null } 
         tools=excluded.tools,
         resume_point=excluded.resume_point,
         outcome=excluded.outcome,
+        shape_stats=COALESCE(excluded.shape_stats, shape_stats),
+        run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
     `).run(toPipelineRow(obj));
@@ -1919,6 +1926,9 @@ function toPipelineRow(o) {
     source_ref: s(o.sourceMeta),
     guardrails_id: o.guardrailsId ?? null,
     started_by: o.startedBy ?? null,
+    // Shaper D28: a writer without them (an unshaped run, a pre-results persist) keeps the column (COALESCE)
+    shape_stats: o.shapeStats ? s(o.shapeStats) : null,
+    run_size: o.runSize ?? null,
     // §5.9 outcome: the derived run-level v2 facts, so a rehydrated state matches
     // a live one. NULL for a v1 run (nothing to say), so v1 rows are unchanged.
     outcome: (o.engine === 2 || o.endReached !== undefined || (typeof o.runEngine === 'string' && o.runEngine !== 'claude'))
@@ -1985,6 +1995,19 @@ export function mergeBackFor(row) {
       paths: Array.isArray(mb?.paths) ? mb.paths : [] });
   }
   return members.length ? { merged: members.every((m) => m.merged === true), members } : null;
+}
+
+/** A recorded "not merged back" goes stale once the work lands by hand (or the source catches up): the hidden branch
+ *  is then gone or no longer ahead of its source, and the card's "the work is on <branch>" is false. Read live, like
+ *  retainedWorkFor's self-clearing; the stored record is left as it was. Single-project rows only (`repoDir`). */
+async function settleLandedMergeBack(mb, repoDir, feature, source) {
+  if (!mb || mb.merged || !repoDir || !feature || !source) return mb;
+  const members = await Promise.all(mb.members.map(async (m) => {
+    if (m.merged !== false || m.branch !== feature) return m;
+    const landed = !(await branchExists(repoDir, feature)) || (await commitsAhead(repoDir, source, feature)) === 0;
+    return landed ? { ...m, merged: true, kind: null, reason: null, landed: true } : m;
+  }));
+  return { merged: members.every((m) => m.merged === true), members };
 }
 
 /**
@@ -2062,6 +2085,13 @@ async function readResultsJson(dir) {
   } catch {
     return null;
   }
+}
+
+/** A finished run's results.json by pipeline id (null when the row, its dir or the file is missing). */
+export async function readRunResultsById(pipelineId) {
+  const row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(String(pipelineId));
+  if (!row) return null;
+  try { return await readResultsJson(await runDirForRow(row)); } catch { return null; }
 }
 
 /**
@@ -2194,7 +2224,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     }
   }
   const { cost, active } = totalsFor(row);
-  const mergeBack = mergeBackFor(row);
+  const mergeBack = await settleLandedMergeBack(mergeBackFor(row), repoDir, feature, source);
   const entry = {
     id: row.id,
     dir: row.dir,
@@ -2303,6 +2333,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
     const ownPrimary = workspaceKey ? j(row.workspace_meta, null)?.projects?.[0]?.projectDir : null;
     out.push(await rowToHistoryEntry(row, ownPrimary || projectDir, opts));
   }
+  const tagMap = readTagsFor(out.map((e) => e.id));
+  for (const e of out) e.tags = tagMap.get(e.id) || [];
   out.sort((a, b) => b.mtime - a.mtime);
   return out;
 }
@@ -2396,6 +2428,8 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
     }));
     out.push(...built);
   }
+  const tagMap = readTagsFor(out.map((e) => e.id));
+  for (const e of out) e.tags = tagMap.get(e.id) || [];
 
   // Newest-first, with a deterministic tiebreaker so equal-mtime rows do not
   // reorder run-to-run now that build order is non-deterministic (parallel).
@@ -2559,6 +2593,7 @@ function rowToState(row) {
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),
+    tags: readRunTags(row.id),
   };
   // The pause cause rides resume_point (no column): expose it on the DETAIL payload
   // too, so a deep-linked History detail no longer waits for the LIST row.
@@ -2570,6 +2605,8 @@ function rowToState(row) {
   state.limitEngine = typeof rp?.limitEngine === 'string' ? rp.limitEngine : null;
   state.limitResetAt = typeof rp?.limitResetAt === 'string' ? rp.limitResetAt : null;
   state.runEngine = runEngineOfRow(row);
+  // Shaper D28: only a shaped run carries shapeStats (run_size is write-only: Statistics reads the column)
+  if (row.shape_stats) state.shapeStats = j(row.shape_stats, null);
   const outcome = j(row.outcome, null);
   if (outcome) {
     state.engine = 2;

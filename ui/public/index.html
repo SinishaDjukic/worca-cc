@@ -346,6 +346,14 @@
                   <input id="title" name="title" class="input" type="text" placeholder="Short name for this run" spellcheck="false" />
                   <small class="hint">Leave empty and Worca will propose one.</small>
                 </div>
+                <!-- Run tags (#718): who the work is for, so its cost can be allocated. Chips from tag-input.mjs. -->
+                <div class="field field-compact run-tags-field" data-flag="runTags" data-flag-chip>
+                  <label>Tags <span class="opt">(optional)</span></label>
+                  <div id="runTagDimsField" hidden></div>
+                  <small class="hint tag-dims-warn" id="runTagDimsWarn" aria-live="polite" hidden></small>
+                  <div id="runTagsField"></div>
+                  <small class="hint">Used to allocate cost. <button type="button" class="link-btn" id="runTagsSaveDefault">Save as project default</button></small>
+                </div>
 
                 <!-- Workflow picker (Default + saved) and the engine that runs it, on one row: the
                      workflow takes 60%, the engine 40%. app.js populates the workflows from GET
@@ -420,6 +428,7 @@
                       <span id="mdFileName" class="state hint"></span>
                       <input id="mdFile" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden />
                     </div>
+                    <p class="shape-chat-link" id="shapeChatLink" data-min-level="advanced" hidden><button type="button" class="link-btn" id="shapeChatLinkBtn">Not sure what to build yet? Try Shaper in Chat →</button></p>
                   </div>
                   <div id="plugin-source-pane" class="source-pane hidden"></div>
                   <!-- #687: a started run takes its task with it; this puts it back (app.js#clearTask). -->
@@ -687,6 +696,7 @@
                 <button type="button" data-filter="finished" aria-pressed="false">Finished</button>
                 <button type="button" data-filter="needs" aria-pressed="false">Needs you</button>
               </div>
+              <div class="select-wrap runs-tag-wrap" data-flag="runTags"><select id="runs-tag" class="select runs-tag" aria-label="Filter by tag"><option value="">All tags</option></select></div>
               <!-- "Started by" pills, shared deployments only: one scrolling row. Built by renderRunsPeople(). -->
               <div class="hist-filter runs-people" id="historyFilter" role="group" aria-label="Filter runs by who started them" hidden></div>
               <div class="runs-list" id="runs-list" aria-label="Runs"></div>
@@ -769,6 +779,10 @@
                   <button type="button" class="term-opener btn-ghost" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7.5 9.5l3 2.5-3 2.5"></path><path d="M13 15h3.5"></path></svg>
                   </button>
+                  <!-- Shaper (D31): a shaped run's Away mode, Run after and terminal in one menu (paintRdHeader). -->
+                  <button type="button" class="rd-bar-more btn-ghost" aria-haspopup="menu" aria-expanded="false" title="More for this run" aria-label="More for this run" hidden>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
+                  </button>
                 </span>
               </div>
               <!-- Inline error slot for failed actions, under the bar so the graph or a tab
@@ -795,6 +809,9 @@
                         <p class="rd-now-sub"></p>
                       </div>
                     </div>
+                    <div class="rd-slice-line" hidden></div>
+                    <div class="run-prog run-prog-chain rd-prog-chain" hidden></div>
+                    <div class="run-prog rd-prog" tabindex="0" aria-label="Run progress" hidden></div>
                     <!-- Live view: the running step(s), centred in a fogged graph beside the card
                          (below it when the page is narrow). Only while the run is not over. -->
                     <div class="switch-row rd-live-row" hidden>
@@ -803,8 +820,8 @@
                     </div>
                   </div>
                   <div class="rd-banners">
+                    <!-- The worktree notice (worktree-notice.mjs): retained work, or a live checkout. -->
                     <div class="retained-banner" role="alert" hidden></div>
-                    <button type="button" class="hist-discard btn-ghost" hidden>Discard worktree</button>
                   </div>
                   <!-- Time · Cost · Changes, in every state (the time ticks while live). -->
                   <div class="rd-facts"></div>
@@ -812,6 +829,8 @@
                        check, and a jump to the first one to check (paintAwayAnswers). -->
                   <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-ghost btn-mini rd-away-jump">See the answers</button></div>
                   <div class="rd-nowlist"></div>
+                  <!-- D30: while a shaped run waits on the person, Results / How it ran / the graph fold here (paintShaperWait). -->
+                  <button type="button" class="rd-wait-more btn-ghost" aria-expanded="false" hidden>Run details <span aria-hidden="true">›</span></button>
                   <div class="rd-result" hidden></div>
                   <!-- The pull request button: one node for the screen's life, outside the result
                        (rebuilt), so its loading placeholder can morph into it (paintPrCta). -->
@@ -937,6 +956,7 @@
                    failure, an archive failure); writers resolve it with screen.querySelector. -->
               <div class="hd-error" hidden></div>
               <section class="rd-glance hd-glance" aria-label="Run status">
+                <div class="rd-slice-line" hidden></div>
                 <div class="rd-now">
                   <header class="rd-page-head">
                     <h1 class="rd-page-title" tabindex="-1"></h1>
@@ -955,7 +975,6 @@
                     <span class="badge hist-retained-badge" hidden>Work retained</span>
                     <div class="retained-banner" role="alert" hidden></div>
                     <div class="merge-back-banner" role="status" hidden></div>
-                    <button type="button" class="hist-discard btn-ghost" hidden>Discard worktree</button>
                   </div>
                   <div class="rd-facts"></div>
                   <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
@@ -1064,6 +1083,9 @@
         </section>
         <!-- /view runs -->
 
+        <!-- ===== VIEW: FEATURE (Shaper, D16) ===== -->
+        <section class="view hidden" data-view="feature"><div class="feature-page"></div></section>
+
         <!-- ===== VIEW: STATISTICS ===== -->
         <section class="view hidden" data-view="schedules">
           <div class="topbar">
@@ -1101,8 +1123,27 @@
               <button type="button" data-range="today">Today</button>
               <button type="button" data-range="week">This week</button>
               <button type="button" data-range="month">This month</button>
+              <button type="button" data-range="lastMonth">Last month</button>
               <button type="button" data-range="all">All time</button>
+              <button type="button" data-range="custom">Custom</button>
             </div>
+            <span class="stats-custom" id="stats-custom" hidden>
+              <input type="date" class="input" id="stats-from" aria-label="From">
+              <span aria-hidden="true">–</span>
+              <input type="date" class="input" id="stats-to" aria-label="To">
+              <small class="hint err" id="stats-custom-err" hidden>The end date is before the start date.</small>
+            </span>
+          </div>
+          <div class="stats-filter stats-scope">
+            <span class="stats-tags" id="stats-tags" data-flag="runTags"></span>
+            <div class="select-wrap"><select id="stats-person" class="select" aria-label="Filter by person"><option value="">Everyone</option></select></div>
+            <div class="seg seg-sm" id="stats-view" role="group" aria-label="View" data-flag="runTags">
+              <button type="button" data-stats-view="overview" class="on" aria-pressed="true">Overview</button>
+              <button type="button" data-stats-view="person" aria-pressed="false">By person</button>
+              <button type="button" data-stats-view="tag" aria-pressed="false" hidden>By tag</button>
+            </div>
+            <div class="select-wrap" id="stats-group-wrap"><select id="stats-group" class="select" aria-label="Group by"><option value="">No grouping</option><option value="person">Group by person</option></select></div>
+            <small class="hint" id="stats-filter-note" hidden>Filtered: Ask Worca chat spend is not included.</small>
           </div>
           <div id="stats-body"><small class="hint">Loading…</small></div>
           <div id="stats-tip" class="chart-tip" hidden></div>
@@ -1135,6 +1176,7 @@
             <span class="tm-custom" id="tm-custom" hidden>
               <input type="date" id="tm-from" class="input" aria-label="From" /> – <input type="date" id="tm-to" class="input" aria-label="To" />
             </span>
+            <select id="tm-tag" class="select select-sm" aria-label="Filter by tag" hidden></select>
           </div>
           <div class="tm-active-filters" id="tm-filters" hidden></div>
           <div id="tm-body"><small class="hint">Loading…</small></div>
@@ -1544,6 +1586,7 @@
             <!-- Ordered by mode (Simple, Advanced, Expert) so each mode sees a gap-free prefix of the
                  strip. Plugins, Sets, Models and Providers left for the Add-ons pages. -->
             <button type="button" class="on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
+            <button type="button" data-tab="tags" data-min-level="simple" data-flag="runTags" aria-pressed="false">Tags</button>
             <button type="button" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
             <!-- Experimental (docs/feature-flags.md) shows at every level: flags are not levels. -->
             <button type="button" data-tab="experimental" data-min-level="simple" aria-pressed="false">Experimental</button>
@@ -1755,6 +1798,23 @@
             </section>
           </section>
           <!-- /pane general -->
+
+          <!-- ===== TAB: TAGS — run tag rules (Settings › Tags): tag rows and "Require mandatory tags".
+               Every level while runTags is on. The pane has no data-flag (a deep link would show a blank
+               page); the chip and the card carry it, and parseSettingsParam sends #settings/tags to General. ===== -->
+          <section class="settings-pane hidden" data-tab="tags">
+            <section class="card settings-card" id="tag-dims-settings-card" data-min-level="simple" data-flag="runTags">
+              <div class="card-head"><div class="label-row"><h2>Tags</h2></div></div>
+              <p class="hint" id="tagsTeamNote" hidden></p>
+              <label class="check-row"><input type="checkbox" id="tagsEnforce" data-setting="enforceTags"> Require mandatory tags to start a run</label>
+              <p class="hint" id="tagsEnforceNone" hidden>No tag is marked Mandatory yet, so runs are not blocked.</p>
+              <p class="hint">On: a run cannot start without its mandatory tags (pre-filled where they can be). Off: tags are optional. A tag with values accepts only those values.</p>
+              <div id="tagDimsEditor" data-setting="tagDimensions"></div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" class="btn btn-primary btn-mini" id="tagDimsSave">Save</button>
+              </div>
+            </section>
+          </section><!-- /pane tags -->
 
           <!-- ===== TAB: RUNS — how pipeline runs are capped, scheduled and reported.
                Simple, for Budget; the two Advanced cards keep their own level. ===== -->
@@ -2115,6 +2175,9 @@
               <!-- Scripts workbench W20: the chat's save_script / test_script switch. Body
                    rendered by chat-settings-view.mjs; saved with this card's Save button. -->
               <div class="field" id="ask-script-tools-host"></div>
+              <!-- Ask next-prompt suggestions (ghost text after each reply): rendered by chat-settings-view.mjs; saved with
+                   this card's Save button. -->
+              <div class="field" id="ask-suggestions-host"></div>
               <!-- Ask web access (off by default): rendered by chat-settings-view.mjs; saved with this
                    card's Save button, and only when one of its fields was touched. -->
               <div class="field" id="ask-web-host"></div>
@@ -2617,6 +2680,7 @@
           <small class="shipit-closes hint" hidden></small>
         </div>
         <div class="shipit-try" hidden data-min-level="advanced" aria-label="Try it first"></div>
+        <p class="shipit-slice-note" hidden></p>
         <div class="shipit-actions" data-card-actions>
           <button type="button" class="shipit-cancel btn-ghost">Cancel</button>
           <button type="button" class="shipit-ok">Open pull request</button>

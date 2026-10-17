@@ -82,8 +82,11 @@ import { createLogDrawer } from './log-drawer.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
+import { runProgress, chainProgress, progressWidth } from '../../src/shared/run-progress.mjs';
+import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
+import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS, tagFilterGroups } from './runs-list.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
 // History list card. They stay EXPORTED
@@ -95,7 +98,7 @@ import {
   renderMemoryHistory, MEMORY_NAME_HELP,
 } from './memory-view.mjs';
 import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
-import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningActionRows, historyActionBadges, createActionsController } from './actions-view.mjs';
+import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout } from './actions-view.mjs';
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
@@ -132,7 +135,7 @@ import {
   renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
   renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList,
 } from './plugins-view.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
@@ -160,7 +163,7 @@ import {
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
-import { renderStatsBody, renderBudgetReadout, renderCostPauseBanner } from './stats-view.mjs';
+import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv } from './stats-view.mjs';
 import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
 import { createComposer, isReservedWorkflowId } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
@@ -197,7 +200,7 @@ import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNo
 import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
-import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton, renderPooledBudgetTile } from './team-metrics-view.mjs';
+import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton, renderPooledBudgetTile, renderTagFilterSelect } from './team-metrics-view.mjs';
 // Team policy (team-policy design §11): the Projects cell, the enable dialog, the page (read +
 // edit), the workspace line, the Settings readout, the New pipeline notes, the Plugins strip.
 import {
@@ -207,7 +210,8 @@ import {
   renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel, renderMcpStrip, renderMcpConsent, handleTeamSkillClick,
 } from './team-policy-view.mjs';
 import { mcpRunsLabel, renderMcpRunsPop, renderRunSkills } from './mcp-run-picker.mjs';
-import { aggregate, toCsv } from '../../src/shared/team-metrics/aggregate.mjs';
+import { aggregate, toCsv, recordTags, tagBreakdowns } from '../../src/shared/team-metrics/aggregate.mjs';
+import { allocationModel, fromBreakdownRows, allocationCsv } from './tag-allocation.mjs';
 import { buildWorkItems, prLookupFor } from '../../src/shared/team-metrics/timeline.mjs';
 import { renderTimeline, renderTimelinePopover, timelineWindow, shiftAnchor, TL_MODES, TL_ZOOMS } from './team-metrics-timeline.mjs';
 import {
@@ -229,7 +233,10 @@ import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdow
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
-import { applyFlags, decorateFlagChips } from './flags.mjs';
+import { applyFlags, decorateFlagChips, flagOn } from './flags.mjs';
+import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor } from './tag-input.mjs';
+import { normaliseTags, formatTag } from '../../src/shared/run-tags.mjs';
+import { splitByDimensions, tagGroupOptions, dimensionLabel, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
@@ -244,6 +251,15 @@ import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.m
 import { activeAgents } from './ask-run-card.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
+import { shapeFirstOn, onShapeFirstChange } from './chat/shape-gate.mjs';
+import { renderPlanBody } from './shape/plan-body.mjs';
+import { renderOutlineBody } from './shape/outline-body.mjs';
+import { renderFeature, renderFeatureSummary, featureWhere } from './shape/feature-view.mjs';
+import { sliceLineCopy } from './shape/slice-line.mjs';
+import { decorateShapingQuestions } from './shape/questions.mjs';
+import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
+import { renderChecklistGroups } from './shape/checklist-view.mjs';
+import { toggleMenu } from './workflows/menu.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
 import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
@@ -255,6 +271,25 @@ const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader()
 function testHookInt(name, fallback) {
   const v = window.__worcaTestHooks?.[name];
   return Number.isInteger(v) && v > 0 ? v : fallback;
+}
+
+// Machine-wide tag dimensions (GET /api/tag-dimensions with no target): one cached loader (15 s with an
+// in-flight dedupe, like loadTpScopes), shared by Statistics, the Runs list and Team metrics. Declared
+// up here, above any paint that can run during module evaluation.
+let allTagDimsCache = null;
+let allTagDimsInflight = null;
+function loadAllTagDims() {
+  if (allTagDimsCache && Date.now() - allTagDimsCache.at < 15_000) return Promise.resolve(allTagDimsCache.dims);
+  if (allTagDimsInflight) return allTagDimsInflight;
+  allTagDimsInflight = (async () => {
+    let dims = [];
+    try { const r = await fetch('/api/tag-dimensions'); dims = r.ok ? ((await safeJson(r))?.dims || []) : []; } catch {}
+    if (!Array.isArray(dims)) dims = [];
+    allTagDimsCache = { at: Date.now(), dims };
+    allTagDimsInflight = null;
+    return dims;
+  })();
+  return allTagDimsInflight;
 }
 
 // One markdown pipeline for the whole page — Ask answers AND diff-comment bodies
@@ -300,10 +335,164 @@ const pinpointDraft = (quote, text) => openChat({ text, quote });
 let chatPanelRouter = null;    // (segments: ['<runId>', '<tab>'?]) => void — [] closes the panel
 let chatPanelContext = null;   // () => ({ runId?, pipelineId?, projectDir?, projectKey?, workspaceId?, runPage?, diffPath? })
 let chatEntryPending = false;  // openChat() is routing to a bare #chat: enterChatView reopens the LAST chat, not an unread one
+let pendingShapeEntry = null;   // the New run link (§3.6): {text}, armed once Chat home is open
+let lastChatHomeFlags = null;   // the switches chatHomeFlags last read: onHello re-pushes them with the gate, no fetch
 const chatDeps = {
   openRunPanel: (ref, opts) => chatOpenRunPage(ref, opts),
   openArtifact: (ref, artifact) => chatDeps.openRunPanel(ref, { tab: 'artifacts' }),
 };
+
+/** L11: open feature views by id, repainted on `shape-feature` and `schedules-changed`. host -> feature id. */
+const SHAPE_FEATURE_HOSTS = new Map();
+/** P11: slice info per pipeline id (GET /api/shape/pipelines/:pid/slice). Not in the map = not asked; null = asked
+ *  (pending, or not a slice). Every caller's onLoad runs when the answer lands (readyEngines' rule): the run page, the
+ *  Chat home and the Ship it dialog can ask for the same pipeline at once. Cleared on shape-feature and
+ *  schedules-changed frames (a slice's next state and PRs change there). */
+const SLICE_INFO = new Map();
+const SLICE_INFO_WAITERS = new Map();      // pipelineId → Set<onLoad>
+function sliceInfoFor(pipelineId, onLoad) {
+  if (!pipelineId || !shapeFirstOn()) return null;
+  const known = SLICE_INFO.get(pipelineId);
+  if (known) return known;
+  if (typeof onLoad === 'function') {
+    if (!SLICE_INFO_WAITERS.has(pipelineId)) SLICE_INFO_WAITERS.set(pipelineId, new Set());
+    SLICE_INFO_WAITERS.get(pipelineId).add(onLoad);
+  }
+  if (SLICE_INFO.has(pipelineId)) return null;   // pending, or not a slice
+  SLICE_INFO.set(pipelineId, null);
+  fetch(`/api/shape/pipelines/${encodeURIComponent(pipelineId)}/slice`)
+    .then((r) => (r && r.ok ? r.json() : null)).catch(() => null)
+    .then((info) => {
+      const waiters = [...(SLICE_INFO_WAITERS.get(pipelineId) || [])]; SLICE_INFO_WAITERS.delete(pipelineId);
+      if (!info || !info.featureId) return;
+      SLICE_INFO.set(pipelineId, info);
+      for (const fn of waiters) { try { fn(info); } catch { /* a repaint hint only */ } }
+    });
+  return null;
+}
+/** D16, D22: the run page's slice line (live and History glances); a fixed host rebuilt in place. */
+function paintSliceLine(host, line) {
+  if (!host) return;
+  host.hidden = !line;
+  host.replaceChildren();
+  if (!line) return;
+  const a = document.createElement('a'); a.className = 'rd-slice-link'; a.href = line.href; a.textContent = line.text;
+  host.appendChild(a);
+  if (line.openFeature) {
+    const b = document.createElement('a'); b.className = 'btn rd-slice-open'; b.href = line.href; b.textContent = 'Open feature';
+    host.appendChild(b);
+  }
+}
+/** F33: Chat's own run panel (chatDeps.openRunPanel is openChatRunPanel once Chat is installed): it stays in Chat.
+ *  The full ref: a run id alone can be a superseded paused copy, or one a restarted server no longer knows. */
+function openShapeRun(ref, projectKey) {
+  const r = { ...(ref.runId ? { runId: ref.runId } : {}), ...(ref.pipelineId ? { pipelineId: ref.pipelineId, projectKey } : {}) };
+  return r.runId || r.pipelineId ? chatDeps.openRunPanel(r) : null;
+}
+async function paintShapeFeature(host) {
+  const id = SHAPE_FEATURE_HOSTS.get(host);
+  if (!id) return;
+  // Bumped on every path, the gate-off one too, so a fetch in flight never lands after the host was cleared.
+  const seq = (host.__shapeSeq = (host.__shapeSeq || 0) + 1);       // the last paint wins (act + WS frames race)
+  if (!shapeFirstOn()) { host.replaceChildren(); host.dataset.painted = ''; host.__shapeWant = null; return; }
+  // The page's first paint of this feature: say so while it loads, not a blank page (a busy server takes seconds).
+  if (host.__shapeMode === 'page' && host.dataset.painted !== id) {
+    host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-loading', textContent: 'Loading feature…' }));
+  }
+  const r = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
+  const f = r && r.ok ? await r.json().catch(() => null) : null;
+  if (seq !== host.__shapeSeq || SHAPE_FEATURE_HOSTS.get(host) !== id) return;
+  if (!f) {
+    // An unknown feature (404) empties the host. Any other failure keeps the last view and its error line.
+    if (r && r.status === 404) {
+      host.replaceChildren(...(host.__shapeMode === 'page'
+        ? [Object.assign(document.createElement('p'), { className: 'feature-page-gone', textContent: 'This feature no longer exists.' })] : []));
+      host.dataset.painted = ''; host.__shapeShown = null; host.__shapeShownView = null;
+    } else if (host.querySelector('.feature-page-loading')) {
+      host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-gone', textContent: 'Could not load this feature. Reload to try again.' }));
+    }
+    return;
+  }
+  // F47: the route follows replaced_by, so f.id can be a newer feature than the host's id. Frames name f.id, and the
+  // actions must reach it.
+  host.__shapeShown = f.id;
+  // A rebuild drops the focus (rule: app-js-repaint-drops-focus): give it back to the same control. An action names
+  // its control itself (F39: in Chromium the disabled button has already lost the focus); a WS repaint reads it.
+  const act = host.__shapeFocus
+    || (host.contains(document.activeElement) && document.activeElement.dataset ? document.activeElement.dataset.act : null);
+  host.__shapeFocus = null;
+  const fullDeps = {
+    confirm: confirmModal,
+    error: host.__shapeErr || null,
+    openSlice: (s) => openShapeRun(s, f.projectKey),
+    openRun: (ref) => openShapeRun(ref, f.projectKey),
+    act: async (action, body, { focus = null } = {}) => {
+      const res = await fetch(`/api/shape/features/${encodeURIComponent(f.id)}/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) }).catch(() => null);
+      const out = res ? await res.json().catch(() => ({})) : {};
+      host.__shapeErr = res && res.ok ? null : (out.error || 'That did not work. Try again.');
+      host.__shapeFocus = focus;
+      await paintShapeFeature(host);                         // carries the error (deps.error) across the rebuild
+      return res && res.ok ? { ok: true } : { ok: false, error: host.__shapeErr };
+    },
+  };
+  // P13: the Chat run card gets the summary; the feature page (D16) the full view with its page extras.
+  host.__shapeShownView = host.__shapeMode === 'page' ? f : null;
+  host.replaceChildren(host.__shapeMode === 'summary'
+    ? renderFeatureSummary(document, f, { openFeature: (fid) => { location.hash = `#feature/${encodeURIComponent(fid)}`; } })
+    : renderFeature(document, f, { ...fullDeps, ...(host.__shapeMode === 'page' ? featurePageDeps(host) : {}) }));
+  host.dataset.painted = id;
+  if (act) { const again = host.querySelector(`[data-act="${act}"]`); if (again && !again.disabled) again.focus(); }
+}
+/** Mount (or re-point) a host. F41: the run card calls it on every repaint (once a second), so it fetches only when
+ *  the host is pointed at a new id. A pending or failed fetch is not retried from here: `shape-feature`,
+ *  `schedules-changed` and `hello` repaint every host. */
+function mountShapeFeature(host, id, { mode = 'full' } = {}) {
+  if (host.__shapeWant === id && host.__shapeMode === mode) return;
+  host.__shapeWant = id; host.__shapeMode = mode;
+  SHAPE_FEATURE_HOSTS.set(host, id);
+  host.__shapeErr = null;
+  paintShapeFeature(host);
+}
+function refreshShapeFeatures(id = null) {
+  for (const [host, fid] of SHAPE_FEATURE_HOSTS) {
+    if (!host.isConnected) { SHAPE_FEATURE_HOSTS.delete(host); continue; }
+    if (host.closest('.view.hidden')) continue;              // the feature page while away: showView repaints it on return
+    if (!id || fid === id || host.__shapeShown === id) paintShapeFeature(host);
+  }
+}
+/** D16: the page's extras: the live slice's progress (for the "you are here" line), and its ask in a persistent host (P12). */
+const featureLiveRun = (s) => (s.runId ? runs.get(s.runId) : null) || (s.pipelineId ? latestPipelineRun(s.pipelineId) : null);
+function featureProgress(s) { const r = featureLiveRun(s); return r && isGraphRun(r) ? runDecorFor(r).stageProgress : null; }
+function featurePageDeps(host) {
+  return {
+    page: true,
+    progressOf: featureProgress,
+    mountAsk: (slot, s) => {
+      // One ask element per page host, moved into each rebuild's slot. chatPaintQuestion rebuilds only when the
+      // question changes and registers the panel in CHAT_QPANELS (postAnswer's busy sweep, 422 marks, clearQpanel).
+      if (!host.__featureAsk) {
+        host.__featureAsk = document.createElement('div');
+        host.__featureAsk.className = 'shape-feature-ask';
+        host.__featureAsk.appendChild(Object.assign(document.createElement('div'), { className: 'qpanel hidden' }));
+      }
+      slot.replaceWith(host.__featureAsk);
+      chatPaintQuestion({ runId: s.runId || null, pipelineId: s.pipelineId || null }, host.__featureAsk);
+    },
+  };
+}
+/** D33: move the feature page's "you are here" line on a run frame, without a fetch. */
+function paintFeaturePageProgress(r) {
+  if (currentShownView !== 'feature' || !r || !r.pipelineId) return;
+  const page = document.querySelector('[data-view="feature"] .feature-page');
+  const box = page && page.querySelector('.shape-feature-current');
+  const head = page && page.querySelector('.shape-feature.is-page .shape-feature-head');
+  const f = page && page.__shapeShownView;                 // the last view JSON paintShapeFeature drew in page mode
+  const cur = f && box ? f.slices.find((s) => String(s.index) === box.dataset.slice) : null;
+  if (!cur || !head || (cur.pipelineId !== r.pipelineId && cur.runId !== r.runId)) return;
+  head.textContent = featureWhere(f, featureProgress(cur));
+}
+chatDeps.mountFeature = (host, id) => mountShapeFeature(host, id, { mode: 'summary' });   // P13: the Chat run card (F33)
+if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, mountCard: (h, id) => chatDeps.mountFeature(h, id), refresh: refreshShapeFeatures };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -1084,7 +1273,8 @@ function applyBudgetToNewView() {
   const start = document.getElementById('start-btn');
   if (!note || !start) return;
   const blocked = !!(b && b.blocked);
-  start.disabled = blocked || startSubmitInFlight;
+  const tagReason = runTagGate();
+  start.disabled = blocked || startSubmitInFlight || !!tagReason;
   note.hidden = !blocked;
   if (blocked) {
     const w = b.resetPeriod === 'weekly' ? 'week' : 'month';
@@ -1094,7 +1284,7 @@ function applyBudgetToNewView() {
     note.textContent = msg;
     start.title = msg;
   } else {
-    start.title = '';
+    start.title = tagReason || '';
   }
 }
 
@@ -1347,7 +1537,18 @@ function handleServerMessage(msg) {
     refreshAllCounts();
     activityMenu?.schedulesChanged();   // an open Activity refetches its Scheduled tab; a closed one forgets it
     // Chat P4: a paused run in the panel offers "Resume at" off the same tickets.
-    if (currentView() === 'schedules' || inRunsView() || crpShowsRun()) void schedulesView.load().then(() => { if (inRunsView()) paintRunsList(); repaintLimitNotices(); });
+    if (currentView() === 'schedules' || inRunsView() || crpShowsRun()) void schedulesView.load().then(() => { if (inRunsView()) { paintRunsList(); rdRepaintOpenGlance(); } repaintLimitNotices(); });
+    // Last, so even a throw could not cost the Schedules page its refresh. chatHome is null until mountChatHome (F40).
+    SLICE_INFO.clear();
+    refreshShapeFeatures();
+    chatHome?.refreshPlans();
+    return;
+  }
+  // Shape it first: a feature's slices changed (an action, a slice's run, the scheduler tick). L11.
+  if (msg.type === 'shape-feature') {
+    SLICE_INFO.clear();
+    refreshShapeFeatures(msg.id);
+    chatHome?.refreshPlans();
     return;
   }
   if (msg.type === 'extension-pair-request') { void promptExtensionPair(msg.request); return; }
@@ -1517,6 +1718,7 @@ function handleServerMessage(msg) {
       kind: msg.kind || 'run',
       workspaceId: msg.workspaceId || undefined,
       projectNames: Array.isArray(msg.projectNames) && msg.projectNames.length ? msg.projectNames : undefined,
+      tags: Array.isArray(msg.tags) ? msg.tags : undefined,
     });
     updateNavCounts();
     renderPipelineTabs();
@@ -1560,6 +1762,7 @@ function handleServerMessage(msg) {
       break;
     case 'state':
       onState(r, msg);
+      paintFeaturePageProgress(r);
       break;
     case 'title':
       onTitle(r, msg);
@@ -1605,6 +1808,17 @@ function handleServerMessage(msg) {
   if (crp.waiting && crp.want && msg.runId && (msg.runId === crp.want.id || (runs.get(msg.runId) || {}).pipelineId === crp.want.id)) crpRetryPending();
 }
 
+// Shape it first's UI that nothing else rebuilds: the New run link and the Chat home tile. Run on every hello and
+// whenever the flag flips (Settings › Experimental, or a `flags` frame).
+function syncShapeFirstUi() {
+  refreshShapeFeatures();   // a view emptied while the gate was off comes back
+  const shapeLink = document.getElementById('shapeChatLink');
+  if (shapeLink) shapeLink.hidden = !shapeFirstOn();
+  // The spread keeps scripts/tasks: setFlags replaces the set.
+  if (chatHome && lastChatHomeFlags) chatHome.update({ flags: { ...lastChatHomeFlags, shapeFirst: shapeFirstOn() } });
+}
+onShapeFirstChange(syncShapeFirstUi);
+
 // hello greeting carries the server's authoritative run list. We upsert each
 // into our map, backfill-subscribe to non-terminal runs whose buffer we don't
 // yet have, and refresh whatever view is showing.
@@ -1615,6 +1829,7 @@ function onHello(msg) {
   noteBoot(state, msg.bootId, runs);   // a restarted server numbers run events from 1 again
   applyServerMock(msg.serverMock);     // every hello: a restarted server may have changed mode
   if (msg.flags) applyFlags(msg.flags);  // every hello: a frame missed while the socket was down, or a restart with a new WORCA_FLAGS
+  syncShapeFirstUi();
   // A restarted server lists only the runs IT started, and nothing below drops the old ones: mark
   // every entry stale, and the upserts below clear the ones it lists. The saved run's bar skips a
   // stale entry (hdPipelineRun), which would otherwise offer a Pause / Stop the server answers
@@ -1654,6 +1869,8 @@ function onHello(msg) {
       workspaceId: r0.workspaceId || undefined,
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
       night: r0.night || undefined,
+      tags: Array.isArray(r0.tags) ? r0.tags : undefined,
+      shaping: r0.shaping || null,
     });
     // Seed the run's stepper from the hello summary so the live card resolves
     // sub-agents to their real nodes BEFORE any subagent delta paints — closing
@@ -1686,6 +1903,16 @@ function onHello(msg) {
       }
     }
     // Terminal runs (done|error|stopped) are simply excluded from liveRuns().
+  }
+  // A restarted server never re-listed these: a run the old process was running died with it. Without this it reads
+  // as running (spinner, live cost) until a page reload; History (reloaded below) has its real state. A paused run
+  // keeps its pause: the new server can resume it.
+  if (rebooted) {
+    for (const r of runs.values()) {
+      if (!r.staleBoot || !['starting', 'running', 'pausing'].includes(r.status)) continue;
+      r.status = 'interrupted';
+      r.pendingQuestion = null;
+    }
   }
 
   pokeAskRuns(null, 'hello');
@@ -1790,7 +2017,8 @@ function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
   pauseDetail = null, limitEngine = null, limitResetAt = null, runEngine = undefined, startedBy = null, lastAction = null,
-  workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined,
+  workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [],
+  shaping = null,
 }) {
   return {
     runId,
@@ -1813,6 +2041,8 @@ function makeRun({
     workspaceId,
     workspaceName,
     night,                // Away mode on this run: {optIn, override, decisions, flagged, openedAt} (hello / state)
+    tags,                 // run tags (#718): normalised 'key:value' / 'key' strings (hello / run-created)
+    shaping,              // Shape it first: {perspectives, rounds, approved, savedTo} on a shaping run (hello / state), or null
     // Stable ordering key: assigned once per runId, never bumped by activity
     // and never re-minted if the run is dropped and re-materialized.
     // hello seeds runs in server registration order, so this tracks true
@@ -1833,8 +2063,8 @@ function makeRun({
     autoscroll: true,   // Auto-scroll toggle state (source of truth; template default is ON)
     subAgents: [],     // Array<record> — sub-agent lifecycle for this run (see onSubagent/onState)
     artifacts: [],     // Array<{kind, path}> — what the run has written so far.
-                       // The detail's retained-work banner needs it to offer the
-                       // recovery-patch link (addRecoveryPatchLink).
+                       // The detail's worktree notice needs it to offer the
+                       // recovery-patch link (paintWorktreeNotice).
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
     stepGraphify: {}, // {`${nodeId}|${cycle}`: number} — MAIN-agent graphify-use count per group
     // v2 (graph-engine) run-level outcome fields; a v1 run never sends them.
@@ -1859,7 +2089,23 @@ function upsertRun(partial) {
     }
     r.staleBoot = false;   // every caller relays the current server: it knows this runId
   }
+  dropSupersededPaused(r);
   return r;
+}
+
+// A resume runs under a NEW runId. resumeRunFromCard drops the old paused copy when THIS tab resumed it; a resume
+// from elsewhere (the usage-limit auto-resume, another tab, the feature page) only shows up as the new run going
+// live, so drop the older paused/interrupted copies of its pipeline here — the server evicts the same lineage
+// (ui/server.mjs, /api/resume). Without this the copy lingers as a phantom "Paused" row under Needs you.
+function dropSupersededPaused(r) {
+  if (!r || !r.pipelineId || (r.status !== 'starting' && r.status !== 'running')) return;
+  for (const [id, e] of runs) {
+    if (id === r.runId || e.pipelineId !== r.pipelineId || (e.status !== 'paused' && e.status !== 'interrupted')) continue;
+    if ((e.orderKey || 0) > (r.orderKey || 0)) continue;   // a resurrected stale frame never evicts a newer copy
+    alerts.onResolved(alertRun(e));
+    runs.delete(id);
+    if (state.selectedRunId === id) state.selectedRunId = '';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2287,6 +2533,7 @@ function addNightDecisions(r, list) {
 
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
+  if (msg.shaping && typeof msg.shaping === 'object') r.shaping = msg.shaping;
   if (msg.startedAt) r.startedAt = msg.startedAt;
   // The harness mirrors startedBy onto its state (creation-immutable), so a live card
   // learns who started the run from the first state snapshot.
@@ -2299,6 +2546,7 @@ function onState(r, msg) {
   // hello snapshot, i.e. after a page reload — and /api/resume keys on it.
   // Guard: id-less pre-createPipeline snapshots must not clobber a captured id.
   if (typeof msg.id === 'string' && msg.id) r.pipelineId = msg.id;
+  dropSupersededPaused(r);
   if (msg && msg.branch && typeof msg.branch === 'object') {
     // Keep the WHOLE branch record, not just .feature: the detail header's
     // `base →` row needs .source, and the retained-work banner needs
@@ -2339,7 +2587,7 @@ function onState(r, msg) {
   // omits the field (older runs / partial snapshots) leaves the delta-built array.
   r.subAgents = msg.subAgents || r.subAgents;
   // v2 run-level outcome fields (ignored by v1 runs, which never send them).
-  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate']) {
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts']) {
     if (msg[k] !== undefined) r[k] = msg[k];
   }
   // Skills registry §6 board 9: the run's set skills (run-harness state.skillMount) for its Overview.
@@ -2579,7 +2827,7 @@ let wfvSheet = '';          // '' | 'agent' | 'agent-new' | 'script'
 let wfvRuntimes = null;     // the script runtime probe (GET /api/scripts/runtimes), read once: the Library's "python not found" chip
 let wfvChat = null;         // the composer chat dock (workflows/chat-dock.mjs), mounted with the view
 const WFV_SESSION = mintId('cs_');   // this page load's composer session: the chat applies only cards stamped with it
-const wfvPendingDraft = { agent: null, script: null };   // a chat draft's Edit…, handed to the route it opens
+const wfvPendingDraft = { agent: null, script: null, build: null };   // a chat draft's Edit… (and Ask's graph card's Open in Workflows), handed to the route it opens
 const gvNewIds = new Set(); // workflows imported this page session (a NEW pill until reload)
 // A saved workflow id, by the server's own rule (workflows.mjs isSafeWorkflowId): a minted `wf_<slug>` (no
 // length cap), a plugin's `wfp_<plugin>_<slug>`, or any safe id a POST /api/workflows body kept (`myflow`).
@@ -2870,6 +3118,28 @@ function wfvChatActions() {
   };
 }
 
+/** Ask Worca's draft and graph cards (ask-composer-cards.mjs): the Workflows chat's save and editor actions, plus Open
+ *  in Workflows for a graph nobody saved yet. Ask reads the library itself (libraryHas here is empty off the view). */
+function askComposerActions() {
+  const a = wfvChatActions();
+  return {
+    notify: a.notify,
+    saveAgentDraft: a.saveAgentDraft,
+    saveScriptDraft: a.saveScriptDraft,
+    openAgentDraft: a.openAgentDraft,
+    openScriptDraft: a.openScriptDraft,
+    openBuild: (build) => openBuildFromAsk(build),
+  };
+}
+
+/** Ask's graph card → the canvas as a NEW unsaved workflow (the composer's Apply: loadDraft after the discard prompt),
+ *  handed to routeWorkflows through wfvPendingDraft.build, like a draft's Edit…. */
+async function openBuildFromAsk(build) {
+  wfvPendingDraft.build = build;
+  if (location.hash.slice(1) === 'workflows' && gvComposer) await routeWorkflows('');
+  else location.hash = 'workflows';
+}
+
 /** Route the view's param (D6). In-view hops (sheet ↔ canvas, tab ↔ tab) only route. */
 async function routeWorkflows(param = '') {
   const [head, ...rest] = String(param || '').split('/');
@@ -2895,6 +3165,14 @@ async function routeWorkflows(param = '') {
     return;
   }
   wfvCloseSheet();
+  // Ask's graph card (Open in Workflows): a NEW unsaved workflow, after the discard prompt — the composer's Apply.
+  if (!head && wfvPendingDraft.build) {
+    const build = wfvPendingDraft.build;
+    wfvPendingDraft.build = null;
+    await gvLoadAgents();                          // drafts the card saved from the chat are placeable now
+    if (await gvComposer.guardDiscard()) { gvComposer.loadDraft(build); gvComposer.fit(); }
+    return;
+  }
   if (!head) return;
   // Any other head names a saved workflow (Ask's "Open in Workflows", the top-bar search, a bookmark): open it
   // and normalise the hash, or say why not — never nothing.
@@ -3049,7 +3327,7 @@ function wfvGoCanvas() {
 // The headless-Chrome probe seam (tools/verify-composer-cdp.mjs): the live engine and its view.
 if (typeof window !== 'undefined') window.__gv = () => (gvComposer ? { c: gvComposer, v: gvComposer.view } : null);
 if (typeof window !== 'undefined') window.__gvImport = (obj) => gvImportWorkflowObject(obj);   // test seam for the Import dialog
-if (typeof window !== 'undefined') window.__wfv = { routeWorkflows, wfvOpenSheet, wfvCloseSheet, openAgentDraft, openScriptDraft, sheet: () => wfvSheet, library: () => wfvLibrary, chat: () => wfvChat, session: WFV_SESSION };
+if (typeof window !== 'undefined') window.__wfv = { routeWorkflows, wfvOpenSheet, wfvCloseSheet, openAgentDraft, openScriptDraft, openBuildFromAsk, sheet: () => wfvSheet, library: () => wfvLibrary, chat: () => wfvChat, session: WFV_SESSION };
 
 // Leave-guard: the engine stays MOUNTED (DOM + undo ring), its document listeners go, the sheet closes.
 function workflowsExit() {
@@ -4237,18 +4515,108 @@ function paintEngineHints() {
     el.engineDefaultHint.hidden = !el.engineDefaultHint.textContent;
   }
 }
+// Run tags (#718): the New run form's chip field, shown while the runTags flag is on. It starts from the
+// project's default tags; once the person edits it, later project changes leave it alone.
+const runTagInput = createTagInput(document, { suggest: fetchTagVocabulary });
+document.getElementById('runTagsField')?.appendChild(runTagInput.el);
+// Tag dimensions (slice 3): one slot per configured key above the free-form field. The slots own the
+// dimension keys; the free-form field keeps every other key. Required only warns, never blocks.
+let runTagDims = createDimensionSlots(document, []);
+document.getElementById('runTagDimsField')?.appendChild(runTagDims.el);
+state.tagDims = { source: null, home: null, dims: [], enforce: false };
+
+/** Enforced tags (D12, D19): the one-line reason Start is disabled, or null. The server sends enforce only with runTags on. */
+function runTagGate() {
+  if (!state.tagDims?.enforce) return null;
+  return tagsProblemText(state.tagDims.dims, normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags);
+}
+/** The line under the tag field: enforced → the reason Start is off (or a server 422's `reason`); else today's warning. */
+function paintRunTagDimsWarn(reason = null) {
+  const warn = document.getElementById('runTagDimsWarn');
+  if (!warn) return;
+  const gate = reason || runTagGate();
+  if (state.tagDims.enforce || reason) {
+    warn.hidden = !gate; warn.textContent = gate || ''; warn.classList.toggle('err', !!gate);
+  } else {
+    warn.hidden = true; warn.textContent = ''; warn.classList.remove('err');   // policy off: tags are optional
+  }
+  applyBudgetToNewView();                 // Start follows the gate
+}
+/** Rebuild the slots for a new target. Painted whatever the flag: the .run-tags-field CSS gate hides it when runTags is off. */
+function paintRunTagDims(info, tags) {
+  state.tagDims = info && Array.isArray(info.dims) ? info : { source: null, home: null, dims: [], enforce: false };
+  const dims = state.tagDims.dims;
+  const typed = runTagDims.dirty() ? runTagDims.get() : [];          // keep what the user typed into a slot
+  const next = createDimensionSlots(document, dims, { value: [...tags, ...typed] });
+  next.onChange(() => paintRunTagDimsWarn());
+  runTagDims.el.replaceWith(next.el);
+  runTagDims = next;
+  const host = document.getElementById('runTagDimsField');
+  if (host) host.hidden = !dims.length;
+  // The policy (Settings › Tags "Require mandatory tags", or team policy) decides: on with a tag ticked Mandatory, the
+  // field says so and Start waits for it; off, tags are optional.
+  const opt = document.querySelector('.run-tags-field .opt');
+  if (opt) opt.textContent = state.tagDims.enforce && dims.some((d) => d.required) ? '· mandatory tags required' : '(optional)';
+  paintRunTagDimsWarn();
+}
+runTagInput.onChange(() => paintRunTagDimsWarn());
+
+// Fetch the current target's dimensions and repaint. Its own generation counter, so a workspace
+// switch does not have to re-run loadRunDefaults (and its engine defaults).
+let runTagDimsGen = 0;
+async function refreshRunTagDims() {
+  const gen = ++runTagDimsGen;
+  // No target yet → no slots. Never fall back to the bare GET: that is the machine-wide union (D9).
+  const q = state.runTarget === 'workspace'
+    ? (state.selectedWorkspaceId ? `?workspaceId=${encodeURIComponent(state.selectedWorkspaceId)}` : null)
+    : (state.projectDir ? `?projectDir=${encodeURIComponent(state.projectDir)}` : null);
+  let info = null;
+  if (q) { try { const r = await fetch(`/api/tag-dimensions${q}`); info = r.ok ? await safeJson(r) : null; } catch {} }
+  if (gen !== runTagDimsGen) return;
+  const { slots, rest } = splitByDimensions(state.runTagDefaults || [], info?.dims || []);
+  if (!runTagInput.dirty()) runTagInput.set(rest);
+  // D4: the server's pre-fill (project default → Default → last used) when it sent one.
+  const slotTags = Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
+  paintRunTagDims(info, slotTags);
+}
+document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  const key = state.runTagsProjectKey;
+  if (!key) return;
+  const label = 'Save as project default';
+  let msg = 'Saved';
+  const tags = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;   // the dimension slots too
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(key)}/tags/defaults`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tags }),
+    });
+    const data = await safeJson(res);
+    if (res.ok) state.runTagDefaults = (data && data.tags) || tags;
+    else msg = (data && data.error) || `Could not save (HTTP ${res.status})`;
+  } catch (err) { msg = err && err.message ? err.message : 'Could not save'; }
+  btn.textContent = msg;
+  setTimeout(() => { btn.textContent = label; }, 2000);
+});
+
 let runDefaultsGen = 0;
 async function loadRunDefaults(projectDir) {
   const gen = ++runDefaultsGen;
   let data = null;
   try { const res = await fetch(projectDir ? `/api/run-defaults?projectDir=${encodeURIComponent(projectDir)}` : '/api/run-defaults'); data = res.ok ? await safeJson(res) : null; } catch {}
   if (gen !== runDefaultsGen) return;
+  // Run tags (#718): kept apart from state.runDefaults, which is nulled when the engine is unknown.
+  state.runTagsProjectKey = data?.projectKey ?? null;
+  state.runTagDefaults = data?.tags || [];
+  if (!runTagInput.dirty()) runTagInput.set(state.runTagDefaults);
+  const saveDefault = document.getElementById('runTagsSaveDefault');
+  if (saveDefault) saveDefault.hidden = !state.runTagsProjectKey;
   const prevSteps = JSON.stringify(state.runDefaults?.steps ?? null);
   state.runDefaults = data?.engine && ENGINE_NAMES.includes(data.engine.value) ? data : null;
   if (state.runDefaults && !state.engineTouched) setRunEngine(data.engine.value); else paintEngineHints();
   // The rows show the slot defaults: repaint them only when those changed (setRunEngine repaints
   // on an engine change itself). An idle repaint re-arms the policy/MCP preview debounce.
   if (JSON.stringify(state.runDefaults?.steps ?? null) !== prevSteps) void renderWorkflowConfig(state.workflowId);
+  await refreshRunTagDims();
 }
 
 /** The gate's 409 under the form, with the consent when it lifts the refusal; null clears
@@ -5924,7 +6292,11 @@ registerAskRenderer('clarify', {
     // The ACTIVE agent names the panel (the v1 phase vocabulary is gone).
     : `${(activeNodes(ctx.run)[0] || {}).label || 'Pipeline'} needs your input`),
   count: (pq) => { const n = realQuestions(pq).length; return `${n} question${n === 1 ? '' : 's'}`; },
-  render: (panel, pq, ctx) => renderClarifyBody(ctx.run, panel, pq),
+  // title: unchanged. The visible "A few questions before the plan" heading is askHeading's.
+  render: (panel, pq, ctx) => {
+    renderClarifyBody(ctx.run, panel, pq);
+    if (shapeFirstOn() && isShapingRun(ctx.run)) decorateShapingQuestions(panel, pq, ctx);
+  },
   // `panel` is null only for a caller that has no panel node; r._answers is the
   // no-panel fallback renderClarifyBody keeps writing.
   collect: (panel) => ({
@@ -5947,6 +6319,51 @@ registerAskRenderer('workflow', {
   count: () => 'workflow',
   render: (panel, pq, ctx) => renderWorkflowBody(ctx.run, panel, pq),
 });
+// Shape it first (S4): registered ungated: the only way to answer a run still held when the gate goes off.
+// title/count fill the hidden .qpanel-head (F28); askHeading is what people read. Kept for completeness.
+registerAskRenderer('plan', {
+  title: (pq) => (pq.plan && pq.plan.outline ? `Slices ready for your approval · v${pq.plan.round || 1}` : `Plan ready for your approval · v${(pq.plan && pq.plan.round) || 1}`),
+  count: (pq) => { const c = pq.plan && pq.plan.check; return c && Number.isFinite(c.total) ? `${pq.plan.outline ? 'Outline' : 'Shape'} ${c.passed}/${c.total}` : null; },
+  render: (panel, pq, ctx) => (pq.plan && pq.plan.outline
+    ? renderOutlineBody(panel, pq, outlineBodyDeps(ctx))
+    : renderPlanBody(panel, pq, planBodyDeps(ctx))),
+  setErrors: (panel, errors) => { if (panel && panel.__plan) panel.__plan.setErrors(errors); },
+});
+
+/** The outline body's deps: the plan body's posting rule (the gate read at post time, S4) and its confirm dialog. */
+function outlineBodyDeps(ctx) {
+  const r = ctx.run;
+  return { doc: ctx.doc, run: r, extras: shapeFirstOn(), confirm: confirmModal,
+    submit: (payload) => postAnswer(r, payload, { plan: shapeFirstOn() }) };
+}
+
+function planBodyDeps(ctx) {
+  const r = ctx.run;
+  const extras = shapeFirstOn();
+  const runUrl = (tail) => `/api/runs/${encodeURIComponent(r.runId)}${tail}`;
+  return {
+    doc: document, run: r, extras,
+    fetchPlan: (round) => (extras
+      ? fetch(runUrl(`/plan${round ? `?round=${encodeURIComponent(round)}` : ''}`)).then((res) => (res.ok ? res.json() : null)).catch(() => null)
+      : Promise.resolve(null)),
+    markdown: { ensure: bindMarkdownReady, render: (t) => hdMarkdown.render(t) },
+    // The route is chosen when the answer is POSTED: the panel is rebuilt only when the question id changes, and a hello
+    // can turn the gate off in between. The gated route would then answer 404 and strand the run (D12).
+    submit: (payload) => postAnswer(r, payload, { plan: shapeFirstOn() }),
+    openFull: () => {
+      // openRunArtifactPopup rejects only a falsy artifact; {relPath:''} would open an empty viewer.
+      const file = r.pendingQuestion && r.pendingQuestion.plan ? r.pendingQuestion.plan.file : '';
+      if (file) openRunArtifactPopup({ pipelineId: r.pipelineId || null, runId: r.runId }, { relPath: file, kind: 'plan' });
+    },
+    // makeRun defaults a missing title to '(untitled)': never prefill that string.
+    openInNewRun: (text) => openNewPipeline({ target: 'project', projectDir: r.projectDir, workflowId: 'wf_auto',
+      promptMarkdown: text, title: r.title && r.title !== '(untitled)' ? r.title : '' }),
+    savePlan: (overwrite) => fetch(runUrl('/plan/save'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overwrite }) }).then(async (res) => ({ status: res.status, body: await safeJson(res) }))
+      .catch(() => null),
+    confirm: (opts) => confirmModal(opts),
+  };
+}
 
 // Gather the answer from the panel that was submitted and POST it. The shape is
 // the registered renderer's business; a renderer that returns null has refused
@@ -5967,7 +6384,7 @@ function submitAnswer(r, panel = null) {
 // Returns TRUE only when the POST came back 200 — the workflow panel's Revise
 // echo is recorded off that, so a failed send never claims a round the server
 // never saw. Every other caller ignores the return.
-async function postAnswer(r, payload) {
+async function postAnswer(r, payload, { plan = false } = {}) {
   if (!r || !r.pendingQuestion) return false;
   // Re-entrancy guard: an answer is already in flight for this run. Without
   // this a synthetic/double click (or a re-triggered handler) could fire a
@@ -5982,11 +6399,15 @@ async function postAnswer(r, payload) {
   r._answering = true;
 
   try {
-    const res = await fetch('/api/answer', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ runId, id, payload }),
-    });
+    const res = plan
+      // Shape it first (S4): the gated plan route while the gate is on; /api/answer otherwise, so a held run is never stranded.
+      ? await fetch(`/api/runs/${encodeURIComponent(runId)}/answer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...payload }) })
+      : await fetch('/api/answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId, id, payload }),
+      });
     // Gate 3 said no. That is an ANSWER outcome, not a transport failure: the
     // question stays open, the panel keeps every typed value, and the renderer
     // marks the offending fields. pendingQuestion is deliberately untouched.
@@ -6545,6 +6966,14 @@ el.mdFile.addEventListener('change', async () => {
   }
 });
 
+// Shape it first's New run link (§3.6): the Markdown goes to the Chat home with Shaper armed.
+document.getElementById('shapeChatLinkBtn')?.addEventListener('click', () => {
+  pendingShapeEntry = { text: el.promptMarkdown ? el.promptMarkdown.value.trim() : '' };
+  // The link lives on #new, and enterChatView swaps #chat/new to #chat at once, so the address is never already
+  // #chat/new here: this always fires a hashchange. Home: `head` is set, so no last-chat pick.
+  location.hash = 'chat/new';
+});
+
 // Selected extra files live in this array, not in the <input>: a FileList is
 // read-only, and both per-file removal and re-picking the same file after a
 // removal need mutable state. The input is only the OS picker trigger.
@@ -6631,6 +7060,12 @@ function clearTask(submitted) {
   if (!sameTask(snapshotTask(), submitted)) return;
   lastTask = submitted;
   setTask({ title: '', prompt: '', markdown: '', mdFileName: '', extras: [] });
+  { // #718: the next run starts from the project's defaults again, the dimension keys in their slots
+    const { slots, rest } = splitByDimensions(state.runTagDefaults || [], state.tagDims.dims);
+    runTagInput.set(rest, { clearText: true });
+    runTagDims.set(Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value })));
+    paintRunTagDimsWarn();
+  }
   el.reuseTask.hidden = false;
 }
 el.reuseTaskBtn.addEventListener('click', () => {
@@ -8214,6 +8649,8 @@ async function ensureWorkspaceOptions({ keepMembers = false } = {}) {
     state.selectedWorkspaceId = '';
     placeholder.selected = true;
   }
+  // The select is filled without a change event: the tag-dimension slots follow the restored workspace.
+  if (state.runTarget === 'workspace') void refreshRunTagDims();
   // A background list refresh (keepMembers) leaves a still-selected workspace's member rows and
   // branch picks alone; only a changed selection repaints them.
   if (keepMembers && state.selectedWorkspaceId && state.selectedWorkspaceId === shown) return;
@@ -8237,6 +8674,7 @@ if (el.workspaceSelect) {
     renderWorkspaceMembers();
     renderWorkspaceSourceBranches();
     schedulePolicyLine();                   // team policy notes for the new target (design board 8)
+    if (state.runTarget === 'workspace') void refreshRunTagDims();
     // Same as onProjectChanged: a workspace has its own binding (or inherits
     // one from its members), so the resolved profile can differ.
     if (state.activePluginSource && state.activePluginSource.multiProfile) {
@@ -13179,6 +13617,12 @@ el.form.addEventListener('submit', async (e) => {
     // to be Claude (a failed or stale defaults read must not let the server pick a Codex default).
     engine: state.engine !== 'claude' ? state.engine : (state.runDefaults?.engine?.value === 'claude' ? undefined : 'claude'),
     allowUnguardedEngine: state.engine !== 'claude' && el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
+    // Run tags (#718): omitted when empty, so a legacy body stays byte-identical. A slot wins its key.
+    tags: (() => {
+      if (!flagOn('runTags')) return undefined;
+      const all = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
+      return all.length ? all : undefined;
+    })(),
   };
   // Run on the source branch: a flag on the wire, never a feature name (the run auto-names its hidden branch).
   if (el.sameAsSource && el.sameAsSource.checked) { body.sameAsSource = true; delete body.featureBranch; }
@@ -13318,6 +13762,12 @@ el.form.addEventListener('submit', async (e) => {
         showEngineRefusal(data);
         return notStarted(data.overridable ? 'Tick Allow unguarded to run anyway, or pick Claude.' : (data.error || 'The engine cannot run this.'));
       }
+      // Enforced tags (D13): the server's reason goes under the tag field, not into a card alert.
+      if (res.status === 422 && data?.fields?.tags) {
+        startSubmitInFlight = false;
+        paintRunTagDimsWarn(data.fields.tags);
+        return { ok: false };
+      }
       if (!res.ok || !data.runId) {
         startSubmitInFlight = false;
         // The alert title already says "Run not started" / "Not scheduled".
@@ -13364,7 +13814,7 @@ el.form.addEventListener('submit', async (e) => {
       return notStarted(`Error: ${err.message}`);
     }
   }, { busy: scheduling ? 'Scheduling…' : 'Starting…', done: scheduling ? 'Scheduled' : 'Started',
-    idleDisabled: () => !!budgetState.budget?.blocked || startSubmitInFlight });
+    idleDisabled: () => !!budgetState.budget?.blocked || startSubmitInFlight || !!runTagGate() });
 });
 
 // #555: card alerts for New pipeline go into #run-form, directly above its own action row
@@ -13685,6 +14135,7 @@ async function loadSettings() {
     paintBudgetSettings(data);
     paintAskSettings(data);
     paintScheduleSettings(data);
+    paintTagDimsSettings(data);
     paintNightSettings(data);
     paintSyncSettings(data);
     paintActionsSettings(data);
@@ -14418,6 +14869,61 @@ document.getElementById('schedIfMissed')?.addEventListener('change', (e) => {
   if (grace) grace.disabled = e.target.value !== 'run';
 });
 
+// Settings › Tags: the local tag rows and "Require mandatory tags" (a team policy that sets either locks it, D8).
+const tagDimsEditor = createDimensionEditor(document, { value: [] });
+document.getElementById('tagDimsEditor')?.appendChild(tagDimsEditor.el);
+let tagsTeam = null;            // { home, dims, enforce } | null — GET /api/tag-dimensions (machine-wide)
+let tagsLocal = { tagDimensions: [], enforceTags: false };
+
+function paintTagsTab() {
+  const note = document.getElementById('tagsTeamNote');
+  const sw = document.getElementById('tagsEnforce');
+  const save = document.getElementById('tagDimsSave');
+  const dimsLocked = !!tagsTeam?.dims;
+  const enforceLocked = dimsLocked || tagsTeam?.enforce != null;
+  tagDimsEditor.set(dimsLocked ? tagsTeam.dims : tagsLocal.tagDimensions);
+  tagDimsEditor.setLocked(dimsLocked);          // after set(): set() re-creates the rows
+  if (sw) { sw.checked = enforceLocked ? tagsTeam?.enforce === true : tagsLocal.enforceTags === true; sw.disabled = enforceLocked; }
+  if (note) { note.hidden = !tagsTeam; note.textContent = tagsTeam ? `Set by your team (${tagsTeam.home}).` : ''; }
+  if (save) save.hidden = dimsLocked && enforceLocked;
+  paintTagsEnforceNone();
+  settingsCardPainted('tagDimsSave');
+}
+// The switch on with no tag ticked Mandatory requires nothing: say so, so turning it on never looks like it did nothing.
+function paintTagsEnforceNone() {
+  const sw = document.getElementById('tagsEnforce');
+  const hint = document.getElementById('tagsEnforceNone');
+  if (sw && hint) hint.hidden = !sw.checked || tagDimsEditor.get().some((d) => d.required);
+}
+function paintTagDimsSettings(data) {
+  tagsLocal = { tagDimensions: Array.isArray(data?.tagDimensions) ? data.tagDimensions : [], enforceTags: data?.enforceTags === true };
+  paintTagsTab();
+}
+async function loadTagsTeam() {
+  // safeJson answers {} on a bad body, so `?.team ?? null` covers it.
+  let next = null;
+  try { const r = await fetch('/api/tag-dimensions'); next = r.ok ? ((await safeJson(r))?.team ?? null) : null; } catch { next = null; }
+  // Runs on every visit to the tab: repaint only when the lock changed, so unsaved edits survive a tab switch.
+  if (JSON.stringify(next) === JSON.stringify(tagsTeam)) return;
+  tagsTeam = next;
+  paintTagsTab();
+}
+const tagDimsCard = () => document.getElementById('tag-dims-settings-card');
+document.getElementById('tagsEnforce')?.addEventListener('change', () => {
+  paintTagsEnforceNone();
+  document.getElementById('tagDimsEditor')?.dispatchEvent(new Event('input', { bubbles: true }));   // marks the card dirty (the tracker listens for input)
+});
+// A Mandatory tick, a row added or removed: the hint follows (the editor's own inputs bubble input / change / click).
+for (const ev of ['input', 'change', 'click']) document.getElementById('tagDimsEditor')?.addEventListener(ev, () => paintTagsEnforceNone());
+document.getElementById('tagDimsSave')?.addEventListener('click', (e) => {
+  const body = {};
+  if (!document.getElementById('tagsEnforce').disabled) body.enforceTags = document.getElementById('tagsEnforce').checked;
+  if (!tagsTeam?.dims) body.tagDimensions = tagDimsEditor.get();
+  postSettingsCard(body, { card: tagDimsCard(), button: e.currentTarget,
+    paint: (d) => { paintTagDimsSettings(d); allTagDimsCache = null; }, dirty: settingsCardDirty('tagDimsSave') });
+});
+settingsCardDirty('tagDimsSave');
+
 // Settings › Runs › Sync before run (#527): the instance defaults every project inherits.
 function paintSyncSettings(data) {
   const d = data && data.sync;
@@ -14470,6 +14976,8 @@ function paintAskSettings(data) {
   // the GET and from every save response without a second fetch.
   const scriptHost = document.getElementById('ask-script-tools-host');
   if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
+  const suggestHost = document.getElementById('ask-suggestions-host');
+  if (suggestHost) suggestHost.replaceChildren(renderSuggestionsToggle({ prefs: data.chat || {} }, { doc: document }));
   // Web access: repainted from every GET and save response, which also resets its dirty flag.
   const webHost = document.getElementById('ask-web-host');
   if (webHost) webHost.replaceChildren(renderAskWebFields({ askWeb: data.askWeb }, { doc: document }));
@@ -14519,8 +15027,13 @@ function saveAskLimits(e) {
   const scriptHost = document.getElementById('ask-script-tools-host');
   const webHost = document.getElementById('ask-web-host');
   const askWebBody = webHost ? collectAskWebFields(webHost) : null;   // null = the web fields were not touched
+  const suggestHost = document.getElementById('ask-suggestions-host');
+  const chat = {
+    ...(scriptHost ? collectScriptToolsToggle(scriptHost) : {}),
+    ...(suggestHost ? collectSuggestionsToggle(suggestHost) : {}),
+  };
   postAskLimits({ askMaxTurns, askMaxBudgetUsd,
-    ...(scriptHost ? { chat: collectScriptToolsToggle(scriptHost) } : {}),
+    ...(Object.keys(chat).length ? { chat } : {}),
     ...(askWebBody ? { askWeb: askWebBody } : {}) }, { button: e?.currentTarget || null });
 }
 document.getElementById('askLimitsSave')?.addEventListener('click', saveAskLimits);
@@ -17584,7 +18097,68 @@ if (el.modelShareBtn) {
 // ---------------------------------------------------------------------------
 // Statistics view
 // ---------------------------------------------------------------------------
-const statsState = { range: null };
+// A remembered view chip (#718 slice 4), per browser. A missing or throwing localStorage, or a stale value,
+// falls back, so module evaluation never breaks on it.
+const VIEW_CHIPS = ['overview', 'person', 'tag'];
+const STATS_VIEW_KEY = 'worca-cc.stats.view';
+function storedChoice(key, allowed, fallback) {
+  try { const v = localStorage.getItem(key); return allowed.includes(v) ? v : fallback; } catch { return fallback; }
+}
+function storeChoice(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* private mode */ }
+}
+
+const statsState = { range: null, from: '', to: '', tags: [], person: '', groupBy: '', view: storedChoice(STATS_VIEW_KEY, VIEW_CHIPS, 'overview'), last: null };
+const statsTagInput = createTagInput(document, { suggest: fetchTagVocabulary, placeholder: 'Filter: client:acme…' });
+document.getElementById('stats-tags')?.appendChild(statsTagInput.el);
+statsTagInput.onChange((tags) => { statsState.tags = tags; loadStatsView(); });
+
+// document.createElement, not `new Option`: the jsdom test harness exposes only `document`.
+const statsOption = (text, value) => Object.assign(document.createElement('option'), { textContent: text, value });
+
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+async function paintStatsGroupOptions() {
+  const sel = document.getElementById('stats-group');
+  // /api/tags → { keys: [{ key, count, plain, valued }], values } (run-tags-store.mjs tagVocabulary)
+  const keys = flagOn('runTags') ? ((await fetchTagVocabulary())?.keys || []).map((k) => k.key) : [];
+  // Configured tag dimensions come first, by label ("Group by Cost centre"); none configured = slice 2's list.
+  const dims = flagOn('runTags') ? await loadAllTagDims() : [];
+  const sig = JSON.stringify([keys, dims.map((d) => [d.key, d.label])]);
+  if (sel.dataset.sig === sig) return;
+  sel.dataset.sig = sig;
+  sel.replaceChildren(statsOption('No grouping', ''), statsOption('Group by person', 'person'),
+    ...tagGroupOptions(dims, keys).map((o) => statsOption(o.text, o.value)));
+  sel.value = statsState.groupBy;
+  if (sel.value !== statsState.groupBy) statsState.groupBy = '';   // a key that vanished
+}
+
+/** Flag on: paint #stats-view (By tag only while a tag exists or a dimension is configured) → the view to show
+ *  and the dims it was decided with. A stored `tag` while By tag is unavailable shows Overview but stays stored. */
+async function paintStatsViewChips() {
+  const keys = (await fetchTagVocabulary())?.keys || [];
+  const dims = await loadAllTagDims();
+  const tagOk = keys.length > 0 || dims.length > 0;
+  const seg = document.getElementById('stats-view');
+  seg.querySelector('[data-stats-view="tag"]').hidden = !tagOk;
+  const view = statsState.view === 'tag' && !tagOk ? 'overview' : statsState.view;
+  for (const b of seg.querySelectorAll('button[data-stats-view]')) {
+    const on = b.dataset.statsView === view;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  }
+  return { view, dims };
+}
+
+function paintStatsPeople(people) {
+  const sel = document.getElementById('stats-person');
+  const sig = (people || []).join('\u0000');
+  if (sel.dataset.sig !== sig) {
+    sel.dataset.sig = sig;
+    sel.replaceChildren(statsOption('Everyone', ''), ...(people || []).map((p) => statsOption(p, p)));
+  }
+  sel.value = statsState.person;
+}
 
 function defaultStatsRange() {
   const period = budgetState.budget?.resetPeriod;
@@ -17597,13 +18171,34 @@ async function loadStatsView() {
   for (const b of el.statsRange.querySelectorAll('button')) {
     b.classList.toggle('on', b.dataset.range === statsState.range);
   }
+  // Custom: show the dates; an inverted pair is refused here, so no request is sent for it.
+  const custom = statsState.range === 'custom';
+  document.getElementById('stats-custom').hidden = !custom;
+  const inverted = custom && statsState.from && statsState.to && statsState.to < statsState.from;
+  for (const id of ['stats-from', 'stats-to']) {
+    if (inverted) document.getElementById(id).setAttribute('aria-invalid', 'true');
+    else document.getElementById(id).removeAttribute('aria-invalid');
+  }
+  document.getElementById('stats-custom-err').hidden = !inverted;
+  if (inverted) return;
   const body = el.statsBody;
-  if (body.childElementCount) body.classList.add('is-loading');
+  if (body.childElementCount) body.classList.add('is-loading');   // before any await: painted synchronously
+  const chips = flagOn('runTags');
+  document.getElementById('stats-group-wrap').hidden = chips;
+  const { view, dims } = chips
+    ? await paintStatsViewChips().catch(() => ({ view: 'overview', dims: [] }))
+    : { view: null, dims: [] };
+  if (!chips) await paintStatsGroupOptions().catch(() => {});      // a vanished tag key resets groupBy before the query
   // A network-level rejection is not an !res.ok — without this catch it escapes
   // as an unhandled rejection and leaves the body stuck in .is-loading.
   let res, data;
   try {
-    res = await fetch(`/api/stats?range=${encodeURIComponent(statsState.range)}`);
+    // Flag on: the chip decides groupBy and byTag. Flag off: the tag field is hidden, so its chips must not
+    // narrow the numbers either.
+    const query = chips
+      ? { ...statsState, groupBy: view === 'person' ? 'person' : '', byTag: view === 'tag', tagKeys: dims.map((d) => d.key) }
+      : { ...statsState, tags: [] };
+    res = await fetch(`/api/stats?${statsQuery(query)}`);
     data = await safeJson(res);
   } catch (err) {
     body.classList.remove('is-loading');
@@ -17617,8 +18212,13 @@ async function loadStatsView() {
       { className: 'hint err', textContent: data.error || `HTTP ${res.status}` }));
     return;
   }
-  body.replaceChildren(renderStatsBody(data, {
-    fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));
+  statsState.last = data;                               // the export reads the rows on screen
+  paintStatsPeople(data.people);
+  document.getElementById('stats-filter-note').hidden = !data.filtered;
+  const fmt = { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle };
+  body.replaceChildren(view && view !== 'overview'
+    ? renderStatsView(data, view, { fmt, dims })
+    : renderStatsBody(data, { fmt }));
   loadTmScopes().then((d) => { const a = document.getElementById('stats-tm-hint'); if (a) a.hidden = !d.anyEnabled; });
 }
 
@@ -18168,7 +18768,49 @@ el.statsRange.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-range]');
   if (!btn) return;
   statsState.range = btn.dataset.range;
+  if (statsState.range === 'custom' && !statsState.from) {
+    const now = new Date();
+    statsState.from = ymd(new Date(now.getFullYear(), now.getMonth(), 1));
+    statsState.to = ymd(now);
+    document.getElementById('stats-from').value = statsState.from;
+    document.getElementById('stats-to').value = statsState.to;
+  }
   loadStatsView();
+});
+for (const id of ['stats-from', 'stats-to']) {
+  document.getElementById(id)?.addEventListener('change', () => {
+    statsState.from = document.getElementById('stats-from').value;
+    statsState.to = document.getElementById('stats-to').value;
+    if (statsState.from && statsState.to) loadStatsView();
+  });
+}
+document.getElementById('stats-person')?.addEventListener('change', (e) => { statsState.person = e.target.value; loadStatsView(); });
+document.getElementById('stats-group')?.addEventListener('change', (e) => { statsState.groupBy = e.target.value; loadStatsView(); });
+document.getElementById('stats-view')?.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-stats-view]');
+  if (!b || b.hidden) return;
+  statsState.view = b.dataset.statsView;
+  storeChoice(STATS_VIEW_KEY, statsState.view);
+  loadStatsView();
+});
+function downloadStatsCsv(csv, name) {
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+el.statsBody.addEventListener('click', (e) => {
+  const csv = e.target.closest('.alloc-csv');
+  if (csv) {
+    const t = statsState.last?.tagGroups?.find((g) => g.key === csv.dataset.key);
+    if (!t) return;
+    const label = dimensionLabel(allTagDimsCache?.dims || [], t.key) || t.key;
+    downloadStatsCsv(groupsToCsv({ label, rows: t.rows }), `statistics-${statsState.range}-tag-${t.key}.csv`);
+    return;
+  }
+  if (!e.target.closest('.stats-export') || !statsState.last?.groups) return;
+  downloadStatsCsv(groupsToCsv(statsState.last.groups),
+    `statistics-${statsState.range}-${(statsState.last.groupBy || '').replace(':', '-')}.csv`);
 });
 
 const statsSection = document.querySelector('section[data-view="stats"]');
@@ -19157,13 +19799,17 @@ async function paintPooledBudgetTile(scopeId, records) {
 /** First paint caps the run table for layout; "Show all" lifts it (§4.9). Declared BEFORE
  *  tmState: tmState's initialiser reads it, and a const read above its declaration throws. */
 const TM_RUN_PAGE = 50;
+const TM_VIEW_KEY = 'worca.teamMetrics.view';
 const tmState = {
   scopeId: localStorage.getItem('worca.teamMetrics.scope') || '',
   range: 'this-month', from: '', to: '', groupBy: 'workflow',
   filter: {}, sort: {}, data: null, loading: false, loadSeq: 0,
+  tag: '', dims: [],                // run tags: the #tm-tag filter, and the configured dimensions (labels)
   runLimit: TM_RUN_PAGE,            // raised by "Show all N runs" (§4.9 "every record in range")
   cache: new Map(),                 // scopeId → last payload this session: switching back paints at once
   tab: 'overview',                  // 'overview' | 'timeline' — the hash param (#team-metrics/timeline)
+  view: storedChoice(TM_VIEW_KEY, VIEW_CHIPS, 'overview'),   // the Overview tab's chip (#718 slice 4)
+  lastTagTables: [],                // the By tag allocationModels last painted (the per-table CSV reads them)
   // Timeline: calendar position, grouping (kept per viewer) and the tile filter.
   tl: {
     zoom: 'month', anchor: Date.now(), filter: null,
@@ -19205,6 +19851,8 @@ async function loadTeamMetricsView({ refresh = false } = {}) {
   // of index.html) must not throw out of the loader the way an unguarded chip.hidden would.
   if (!body || !chip || !scopeSel) return;
   const seq = ++tmState.loadSeq;
+  // Dimension labels for the tag group-by: repaint as soon as the list arrives, not only on the next render.
+  if (flagOn('runTags')) loadAllTagDims().then((d) => { tmState.dims = d; if (tmState.data && tmState.tab === 'overview') renderTeamMetrics(); });
   body.classList.add('is-loading');
   body.setAttribute('aria-busy', 'true');
   setTmChipBusy(true);
@@ -19315,6 +19963,8 @@ function applyTmTab() {
   if (custom) custom.hidden = tl || tmState.range !== 'custom';
   const chips = document.getElementById('tm-filters');
   if (chips && tl) chips.hidden = true;
+  const tagSel = document.getElementById('tm-tag');
+  if (tagSel && tl) tagSel.hidden = true;
   // No data yet (skeleton, empty state, an error): #tm-body says so on either tab.
   const showTl = tl && !!tmState.data;
   const body = document.getElementById('tm-body');
@@ -19456,9 +20106,16 @@ function renderTeamMetrics() {
   const body = document.getElementById('tm-body');
   const data = tmState.data;
   if (!body || !data) return;
+  // Run tags: the keys and tags on the loaded records; a group-by or tag filter they no longer carry falls back.
+  const tagsOn = flagOn('runTags');
+  const loadedTags = tagsOn ? [...new Set((data.records || []).flatMap(recordTags))] : [];
+  const tagKeys = [...new Set(loadedTags.map((t) => t.split(':')[0]))].sort();
+  if (tmState.groupBy.startsWith('tag:') && !tagKeys.includes(tmState.groupBy.slice(4))) tmState.groupBy = 'workflow';
+  if (tmState.tag && !loadedTags.includes(tmState.tag)) tmState.tag = '';
+  const aggFilter = { ...tmState.filter, ...(tmState.tag ? { tags: [tmState.tag] } : {}) };
   let agg;
   try {
-    agg = aggregate(data.records, { range: tmState.range, from: tmState.from || null, to: tmState.to || null, groupBy: tmState.groupBy, filter: tmState.filter, now: Date.now(), humanRateUsd: data.humanRateUsd ?? 0 });
+    agg = aggregate(data.records, { range: tmState.range, from: tmState.from || null, to: tmState.to || null, groupBy: tmState.groupBy, filter: aggFilter, now: Date.now(), humanRateUsd: data.humanRateUsd ?? 0 });
   } catch (err) {
     body.classList.remove('is-loading');
     body.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint err', textContent: err.message }));
@@ -19472,13 +20129,26 @@ function renderTeamMetrics() {
     homeHint.append('Metrics home ', Object.assign(document.createElement('code'), { className: 'mono', textContent: data.scope.home || '—' }),
       ` · records from ${(data.scope.sources || []).length} member repositor${(data.scope.sources || []).length === 1 ? 'y' : 'ies'}, grouped by workspace name`);
   }
+  // View chips (flag on only): By tag while a dimension is configured or a loaded record carries a tag.
+  const tagChip = tagsOn && (tmState.dims.length > 0 || loadedTags.length > 0);
+  const view = !tagsOn ? null : (tmState.view === 'tag' && !tagChip ? 'overview' : tmState.view);
+  const tagTables = view !== 'tag' ? [] : tagBreakdowns(data.records, {
+    range: tmState.range, from: tmState.from || null, to: tmState.to || null, filter: aggFilter, now: Date.now(),
+    keys: tmState.dims.map((d) => d.key),
+  }).map((t) => allocationModel({ key: t.key, label: dimensionLabel(tmState.dims, t.key) || t.key, rows: fromBreakdownRows(t.rows) }));
+  tmState.lastTagTables = tagTables;
   body.classList.remove('is-loading');
-  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit }));
+  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, tagChip, tagTables }));
   tmState.lastAgg = agg;
+  // The #tm-tag select, beside the range controls (replaced on every render; hidden with the flag off).
+  const tagSel = renderTagFilterSelect(tagsOn ? data.records || [] : [], tmState.tag, { doc: document });
+  if (tmState.tab === 'timeline') tagSel.hidden = true;
+  const oldTag = document.getElementById('tm-tag');
+  oldTag?.replaceWith(tagSel);
   void paintPooledBudgetTile(tmState.scopeId, data.records || []);   // team policy (design board 10): advisory tile, when the scope's policy sets one
   const chips = document.getElementById('tm-filters');
   const active = Object.entries(tmState.filter).filter(([, v]) => v != null);
-  chips.hidden = !active.length;
+  chips.hidden = !(active.length || tmState.tag);
   chips.replaceChildren(...active.map(([dim, key]) => {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'chip tm-filter-chip'; b.dataset.dim = dim;
@@ -19487,6 +20157,12 @@ function renderTeamMetrics() {
     b.textContent = `${dim}: ${row ? row.label : key === '__none__' ? 'none' : key} ×`;
     return b;
   }));
+  if (tmState.tag) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip tm-filter-chip'; b.dataset.dim = 'tag';
+    b.textContent = `tag: ${tmState.tag} ×`;
+    chips.append(b);
+  }
 }
 
 // Delegated events on the view section.
@@ -19504,6 +20180,7 @@ if (tmSection) {
     if (e.target.id === 'tm-scope') {
       tmState.scopeId = e.target.value;
       tmState.filter = {};
+      tmState.tag = '';
       tmState.sort = {};                                  // column sorts belong to the old scope's rows
       tmState.runLimit = TM_RUN_PAGE;                     // a new scope starts capped again
       tmState.data = null; tmState.lastAgg = null;        // never render the old scope under the new name
@@ -19512,6 +20189,7 @@ if (tmSection) {
       loadTeamMetricsView();
     }
     else if (e.target.id === 'tm-group') { tmState.groupBy = e.target.value; renderTeamMetrics(); }
+    else if (e.target.id === 'tm-tag') { tmState.tag = e.target.value; renderTeamMetrics(); }
     else if (e.target.id === 'tm-from' || e.target.id === 'tm-to') { tmState[e.target.id === 'tm-from' ? 'from' : 'to'] = e.target.value; if (tmState.from && tmState.to) renderTeamMetrics(); }
   });
   tmSection.addEventListener('click', async (e) => {
@@ -19519,6 +20197,23 @@ if (tmSection) {
     if (tabBtn) {
       closeTlPopover();
       location.hash = tabBtn.dataset.tmTab === 'timeline' ? 'team-metrics/timeline' : 'team-metrics';
+      return;
+    }
+    const viewBtn = e.target.closest('[data-tm-view]');
+    if (viewBtn) {
+      tmState.view = viewBtn.dataset.tmView;
+      storeChoice(TM_VIEW_KEY, tmState.view);
+      renderTeamMetrics();
+      return;
+    }
+    const allocCsv = e.target.closest('.alloc-csv');
+    if (allocCsv) {
+      const m = (tmState.lastTagTables || []).find((t) => t.key === allocCsv.dataset.key);
+      if (!m) return;
+      const url = URL.createObjectURL(new Blob([allocationCsv(m)], { type: 'text/csv;charset=utf-8' }));
+      const a = Object.assign(document.createElement('a'), { href: url, download: `team-metrics-${tmState.scopeId.replace(/[^a-z0-9-]+/gi, '-')}-${tmState.range}-tag-${m.key}.csv` });
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
       return;
     }
     if (e.target.closest('#tm-timeline')) { onTimelineClick(e); return; }
@@ -19546,7 +20241,11 @@ if (tmSection) {
     }
     if (e.target.closest('.tm-show-all')) { tmState.runLimit = Infinity; return renderTeamMetrics(); }
     const chipBtn = e.target.closest('.tm-filter-chip');
-    if (chipBtn) { tmState.filter = { ...tmState.filter, [chipBtn.dataset.dim]: null }; return renderTeamMetrics(); }
+    if (chipBtn) {
+      if (chipBtn.dataset.dim === 'tag') tmState.tag = '';
+      else tmState.filter = { ...tmState.filter, [chipBtn.dataset.dim]: null };
+      return renderTeamMetrics();
+    }
     if (e.target.closest('.tm-export')) {
       const csv = toCsv(tmState.lastAgg ? tmState.lastAgg.runs : []);
       const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
@@ -19980,142 +20679,234 @@ function mergeBackRecipe(m, p) {
   }
 }
 
-// Paint both the collapsed warning badge and the expanded manual-recovery
-// instructions. Every value is assigned through textContent: git stderr and
-// repository paths are data, never markup.
-function renderRetainedWork(node, p) {
-  const retained = p && p.retainedWork;
-  const members = Array.isArray(retained?.members) ? retained.members : [];
-  const badge = node.querySelector('.hist-retained-badge');
-  if (badge) badge.hidden = !members.length;
-  const banner = node.querySelector('.retained-banner');
-  if (!banner || !members.length) {
-    if (banner) banner.hidden = true;
+// The summary card's worktree notice (worktree-notice.mjs) in its host, `.retained-banner` inside
+// `.rd-banners` / `.hd-banners`, so the Chat run panel carries it too. It shows at every level. It is
+// rebuilt ONLY when what it shows changes: the run page repaints on every frame of any run, and in Chrome
+// a button replaced between press and release loses its click. The handlers therefore read the run or
+// the record at click time.
+function paintWorktreeNotice(screen, model, { sig = '', recovery = null, handlers = {} } = {}) {
+  const badge = screen.querySelector('.hist-retained-badge');
+  if (badge) badge.hidden = !(model && model.kind === 'retained');
+  const host = screen.querySelector('.retained-banner');
+  if (!host) return;
+  if (!model) {
+    host.hidden = true;
+    if (host.dataset.key) { host.replaceChildren(); delete host.dataset.key; delete host.dataset.kind; }
     return;
   }
-  banner.hidden = false;
-  banner.innerHTML = '';
-  const title = document.createElement('h4');
-  title.textContent = 'Commit failed — uncommitted work retained';
-  const intro = document.createElement('p');
-  intro.textContent = 'The pipeline result is unchanged, but this work is not safely stored on the branch yet. Commit it manually, or save a recovery patch and discard the worktree below.';
-  const list = document.createElement('ul');
-  for (const member of members) {
-    const li = document.createElement('li');
-    const label = document.createElement('strong');
-    label.textContent = member.projectKey || member.branch || 'Project';
-    li.appendChild(label);
-    const detail = document.createElement('span');
-    detail.textContent = ` — git ${member.step || 'commit'}: ${member.message || 'failed'}`;
-    li.appendChild(detail);
-    const path = document.createElement('div');
-    path.textContent = `Worktree: ${member.worktreeDir || '(unknown)'}`;
-    li.appendChild(path);
-    if (member.branch) {
-      const branch = document.createElement('div');
-      branch.textContent = `Branch: ${member.branch} (the uncommitted work is not on it yet)`;
-      li.appendChild(branch);
+  host.hidden = false;
+  host.dataset.kind = model.kind;
+  host.setAttribute('role', model.kind === 'retained' ? 'alert' : 'status');
+  const key = JSON.stringify([sig, model, recovery]);
+  if (host.dataset.key === key) return;
+  host.dataset.key = key;
+  host.replaceChildren(renderWorktreeNotice(model, { doc: document, handlers, recovery, when: fmtDate }));
+}
+
+/** Workspace member names from History's row (`members[].memberKey/name`), for the notice's member lines. */
+function memberNamesOf(rec) {
+  const members = rec && Array.isArray(rec.members) ? rec.members : [];
+  return Object.fromEntries(members.filter((m) => m && m.memberKey && m.name).map((m) => [m.memberKey, m.name]));
+}
+
+/** The run's live checkout from History's row (checkoutRecordsFor, existsSync-gated on the server), or null.
+ *  writeHistoryCache keeps `checkout`, so a cache-warm row can show a checkout discarded since. The fresh
+ *  row corrects it one fetch later, and the routes answer a gone checkout harmlessly. */
+function hdCheckoutFor(record) {
+  const c = record && record.checkout;
+  return c && Array.isArray(c.members) && c.members.length ? c : null;
+}
+
+/** The notice's recovery-patch link: the retained-work snapshot, else the run's diff (GET …/recovery-patch). */
+function recoveryLinkOf(projectDir, p, model) {
+  if (!model || model.kind !== 'retained' || !model.recoveryPatch || !p || !p.id) return null;
+  const retained = model.recoveryPatch === 'retained';
+  return { kind: model.recoveryPatch,
+    href: `/api/runs/${encodeURIComponent(p.id)}/recovery-patch?${runActionQuery(projectDir, p)}`,
+    download: retained ? `retained-work-${p.id}.patch` : `diff-patch-${p.id}.patch` };
+}
+
+/** After a successful Apply / Discard worktree: mark the open History detail's state branch released. A
+ *  cache-warm repaint (rows stripped of retainedWork) would otherwise rebuild a PROVISIONAL retention from its
+ *  stale commitFailed stamp; hdRetainedFor skips a branch whose worktreeRemoved is true. */
+function hdForgetRetained(p) {
+  const ds = histDetailState && p && histDetailState.id === p.id && histDetailState.data && histDetailState.data.state;
+  if (!ds || !ds.branch || typeof ds.branch !== 'object') return;
+  // Copy, never mutate: the loaded detail object can be shared (a test fixture served by reference).
+  histDetailState.data = { ...histDetailState.data, state: { ...ds, branch: { ...ds.branch, worktreeRemoved: true } } };
+}
+
+// Discard worktree (retained work): POST discard-worktree after the confirm, a recovery patch saved first.
+// `onDiscarded` runs after a FULLY successful discard (remaining === 0). The run page needs it: it derives
+// retention from the live run model, which the server-side clear writes only to the DB.
+async function discardRetainedWorktree(btn, projectDir, p, onDiscarded) {
+  // The title carries the question and the OK button carries the verb, so the
+  // body no longer repeats either (it used to open "Discard the retained
+  // worktree?" and end "Continue?" because an OS alert has neither).
+  const msg = 'Any work NOT yet committed exists only in the retained worktree; a recovery patch of uncommitted changes will be saved in the pipeline directory before anything is removed.\n\nIf you already committed the work manually, discarding just removes the now-redundant checkout and clears the warning. The pipeline history and feature branch are kept.';
+  const ok = await confirmModal({
+    title: 'Discard the retained worktree?', danger: true, confirmLabel: 'Discard',
+    message: msg,
+  });
+  if (!ok) return;
+  btn.disabled = true;
+  const previous = btn.textContent;
+  btn.textContent = 'Saving patch…';
+  try {
+    const qs = runActionQuery(projectDir, p);
+    const res = await fetch(`/api/runs/${encodeURIComponent(p.id)}/discard-worktree?${qs}`, { method: 'POST' });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    if (data.remaining > 0) {
+      // Partial failure: the checkout is still on disk, so the retained state
+      // is still true — repaint nothing away, tell the user what happened.
+      btn.disabled = false;
+      btn.textContent = previous;
+      const text = 'The retained worktree could not be fully removed:\n\n' +
+        `${Array.isArray(data.warnings) && data.warnings.length ? data.warnings.join('\n') : 'unknown error'}\n\n` +
+        'The retained-work warning stays until the checkout is gone.';
+      notify({ tone: 'warn', title: 'Discard incomplete', detail: 'The retained checkout is still on disk.', key: 'discard-wt',
+        action: { label: 'Details', run: () => showViewer('Discard incomplete', text) } });
+      return;
     }
-    const command = document.createElement('code');
-    command.textContent = `git -C ${shellSingleQuote(member.worktreeDir)} status\ngit -C ${shellSingleQuote(member.worktreeDir)} add -A\ngit -C ${shellSingleQuote(member.worktreeDir)} commit`;
-    li.appendChild(command);
-    list.appendChild(li);
+    p.retainedWork = null;
+    hdForgetRetained(p);
+    writeHistoryCache(state.historyAll, state.ghAvailable, state.adoAvailable);
+    paintHistory();
+    // The Actions model offered the retained worktree as "Use that folder" (it held the branch): refetch it.
+    void refreshActionsModel(p.id, qs.toString());
+    // Restore the control unconditionally: the repaint may drop the notice (and this node) or keep it.
+    btn.disabled = false;
+    btn.textContent = previous;
+    if (typeof onDiscarded === 'function') onDiscarded(data);
+    const paths = Array.isArray(data.patches) ? data.patches : [];
+    const text = paths.length
+      ? `Recovery patch${paths.length === 1 ? '' : 'es'} saved before removal:\n\n${paths.join('\n')}`
+      : 'No recovery patch was needed (nothing uncommitted remained to save); the retained checkout is gone.';
+    notify({ tone: 'ok', title: 'Retained worktree discarded',
+      detail: paths.length ? `${paths.length} recovery patch${paths.length === 1 ? '' : 'es'} saved.` : 'Nothing uncommitted needed saving.',
+      key: 'discard-wt', action: paths.length ? { label: 'Details', run: () => showViewer('Retained worktree discarded', text) } : null });
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = previous;
+    btn.title = `Could not discard retained worktree: ${err.message}`;
+    notify({ tone: 'err', title: 'Could not discard the retained worktree', detail: err.message, key: 'discard-wt',
+      action: { label: 'Retry', run: () => btn.isConnected && btn.click() } });
   }
-  const archiveNote = document.createElement('p');
-  archiveNote.textContent = 'Archive is disabled until the retained worktree has been recovered or discarded.';
-  const clearNote = document.createElement('p');
-  clearNote.textContent = 'After committing manually, use "Discard worktree" to remove the now-redundant checkout and clear this warning (a patch of anything still uncommitted is saved first). Your changes are already staged in that checkout, so git status will list them under "Changes to be committed".';
-  banner.append(title, intro, list, archiveNote, clearNote);
 }
 
-function addRecoveryPatchLink(node, projectDir, p, artifacts) {
-  const banner = node.querySelector('.retained-banner');
-  if (!banner || banner.hidden || !Array.isArray(artifacts)) return;
-  const retained = artifacts.some((a) => a && a.kind === 'retained-work-patch');
-  const diff = artifacts.some((a) => a && a.kind === 'diff-patch');
-  if (!retained && !diff) return;
-  if (banner.querySelector('.retained-patch-link')) return;
-  const line = document.createElement('p');
-  line.className = 'retained-patch-link';
-  line.appendChild(document.createTextNode('Alternate recovery: '));
-  const link = document.createElement('a');
-  link.href = `/api/runs/${encodeURIComponent(p.id)}/recovery-patch?${runActionQuery(projectDir, p)}`;
-  link.download = retained ? `retained-work-${p.id}.patch` : `diff-patch-${p.id}.patch`;
-  link.textContent = retained
-    ? 'download the recovery patch (snapshot taken when the work was retained)'
-    : 'download the pipeline diff patch';
-  link.addEventListener('click', (e) => e.stopPropagation());
-  line.appendChild(link);
-  banner.appendChild(line);
-}
-
-// `onDiscarded` runs after a FULLY successful discard (remaining === 0), for a
-// caller whose screen the History repaint below does not reach. The Running
-// detail needs it: it derives retention from the live run model, which the
-// server-side clear only writes to the DB.
-function setupDiscardWorktreeButton(node, projectDir, p, onDiscarded) {
-  const btn = node.querySelector('.hist-discard');
-  if (!btn) return;
-  const retained = p && p.retainedWork;
-  const members = Array.isArray(retained?.members) ? retained.members : [];
-  btn.hidden = !members.length;
-  if (!members.length) return;
-  btn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    // The title carries the question and the OK button carries the verb, so the
-    // body no longer repeats either (it used to open "Discard the retained
-    // worktree?" and end "Continue?" because an OS alert has neither).
-    const msg = 'Any work NOT yet committed exists only in the retained worktree; a recovery patch of uncommitted changes will be saved in the pipeline directory before anything is removed.\n\nIf you already committed the work manually, discarding just removes the now-redundant checkout and clears the warning. The pipeline history and feature branch are kept.';
-    const ok = await confirmModal({
-      title: 'Discard the retained worktree?', danger: true, confirmLabel: 'Discard',
-      message: msg,
-    });
-    if (!ok) return;
-    btn.disabled = true;
-    const previous = btn.textContent;
-    btn.textContent = 'Saving patch…';
-    try {
-      const qs = runActionQuery(projectDir, p);
-      const res = await fetch(`/api/runs/${encodeURIComponent(p.id)}/discard-worktree?${qs}`, { method: 'POST' });
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
-      if (data.remaining > 0) {
-        // Partial failure: the checkout is still on disk, so the retained state
-        // is still true — repaint nothing away, tell the user what happened.
-        btn.disabled = false;
-        btn.textContent = previous;
-        const text = 'The retained worktree could not be fully removed:\n\n' +
-          `${Array.isArray(data.warnings) && data.warnings.length ? data.warnings.join('\n') : 'unknown error'}\n\n` +
-          'The retained-work warning stays until the checkout is gone.';
-        notify({ tone: 'warn', title: 'Discard incomplete', detail: 'The retained checkout is still on disk.', key: 'discard-wt',
-          action: { label: 'Details', run: () => showViewer('Discard incomplete', text) } });
-        return;
-      }
-      p.retainedWork = null;
-      writeHistoryCache(state.historyAll, state.ghAvailable, state.adoAvailable);
-      paintHistory();
-      // Restore the control unconditionally. History never noticed it was missing
-      // — paintHistory() rebuilds the node — but the Running detail reuses this
-      // same button and repaints from its own painter, so leaving it here would
-      // strand a dead control reading "Saving patch…".
-      btn.disabled = false;
-      btn.textContent = previous;
-      if (typeof onDiscarded === 'function') onDiscarded(data);
-      const paths = Array.isArray(data.patches) ? data.patches : [];
-      const text = paths.length
-        ? `Recovery patch${paths.length === 1 ? '' : 'es'} saved before removal:\n\n${paths.join('\n')}`
-        : 'No recovery patch was needed (nothing uncommitted remained to save); the retained checkout is gone.';
-      notify({ tone: 'ok', title: 'Retained worktree discarded',
-        detail: paths.length ? `${paths.length} recovery patch${paths.length === 1 ? '' : 'es'} saved.` : 'Nothing uncommitted needed saving.',
-        key: 'discard-wt', action: paths.length ? { label: 'Details', run: () => showViewer('Retained worktree discarded', text) } : null });
-    } catch (err) {
-      btn.disabled = false;
-      btn.textContent = previous;
-      btn.title = `Could not discard retained worktree: ${err.message}`;
-      notify({ tone: 'err', title: 'Could not discard the retained worktree', detail: err.message, key: 'discard-wt',
+// Apply to branch (retained work): POST apply-retained after the confirm. On success (every member applied,
+// or nothing was left), `p.retainedWork = null` is History's authoritative clear, and `onApplied` runs. The
+// run page passes `onApplied` to set `r._retainedApplied`, because later state frames still carry the old
+// commitFailed stamp. A commit that fails again leaves everything as it was and shows git's message.
+async function applyRetainedFlow(btn, p, model, onApplied = null) {
+  const ok = await confirmModal({ title: 'Apply the work to the branch?', confirmLabel: 'Apply', message: applyConfirmMessage(model) });
+  if (!ok) return;
+  const previous = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Applying…';
+  let res = null;
+  let data = null;
+  try {
+    res = await fetch(`/api/runs/${encodeURIComponent(p.id)}/apply-retained?${runActionQuery(p.projectDir || null, p)}`, { method: 'POST' });
+    data = await safeJson(res);
+  } catch (e) {
+    data = { error: e.message };
+  }
+  btn.disabled = false;
+  btn.textContent = previous;
+  const failed = Array.isArray(data && data.failed) ? data.failed : [];
+  if (!res || !res.ok) {
+    const error = (data && data.error) || `HTTP ${res ? res.status : 0}`;
+    btn.title = `Could not apply the work: ${error}`;
+    if (failed.length) {
+      const text = failed.map((f) => `${f.projectKey ? `${f.projectKey}\n` : ''}git ${f.step} failed:\n${f.message}`).join('\n\n');
+      notify({ tone: 'err', title: 'The commit failed again', detail: String(failed[0].message || '').split('\n')[0], key: 'wt-apply',
+        action: { label: 'Details', run: () => showViewer('The commit failed again', text) } });
+    } else {
+      notify({ tone: 'err', title: 'Could not apply the work', detail: error, key: 'wt-apply',
         action: { label: 'Retry', run: () => btn.isConnected && btn.click() } });
     }
-  });
+    return;
+  }
+  btn.title = '';
+  if (!failed.length) {
+    p.retainedWork = null;
+    hdForgetRetained(p);
+    writeHistoryCache(state.historyAll, state.ghAvailable, state.adoAvailable);
+    if (typeof onApplied === 'function') onApplied(data);
+  }
+  paintHistory();
+  rdRepaintOpenGlance(p.id);
+  // A released worktree no longer holds the branch: refetch the Actions model so Check out is offered again.
+  if (Array.isArray(data && data.applied) && data.applied.length) void refreshActionsModel(p.id, runActionQuery(p.projectDir || null, p).toString());
+  notify({ ...applyOutcome(data), key: 'wt-apply' });
+}
+
+/** Drop released members from a History row's checkout (null once none is left). */
+function dropCheckoutMembers(p, keys) {
+  const left = (p.checkout && Array.isArray(p.checkout.members) ? p.checkout.members : []).filter((x) => !keys.includes(x.projectKey));
+  p.checkout = left.length ? { members: left } : null;
+}
+
+// Discard / Unlink from the notice: the Actions tab's flow and copy (actions-view.mjs releaseCheckout).
+// Check out / Discard emit only `pipelines-changed`, never `actions-changed`, so the strips' model cache
+// is refetched here.
+async function releaseCheckoutFlow(btn, p, m) {
+  const scope = runActionQuery(p.projectDir || null, p).toString();
+  btn.disabled = true;
+  let r;
+  try {
+    r = await releaseCheckout({ api: actionsCall, url: actionsRunUrl(p.id, '/checkout', scope), members: [m.projectKey],
+      external: !!m.external, dir: m.dir, confirm: confirmModal });
+  } finally {
+    if (btn.isConnected) btn.disabled = false;
+  }
+  if (!r) return;
+  if (!r.ok) {
+    notify({ tone: 'err', title: m.external ? 'Could not unlink the folder' : 'Could not discard the checkout',
+      detail: (r.data && r.data.error) || `HTTP ${r.status}`, key: 'wt-release' });
+    return;
+  }
+  dropCheckoutMembers(p, [m.projectKey]);
+  writeHistoryCache(state.historyAll, state.ghAvailable, state.adoAvailable);
+  paintHistory();
+  rdRepaintOpenGlance(p.id);
+  void refreshActionsModel(p.id, scope);
+  const patches = Array.isArray(r.data && r.data.patches) ? r.data.patches : [];
+  notify({ tone: 'ok', title: m.external ? 'Folder unlinked' : 'Checkout discarded', key: 'wt-release',
+    detail: m.external ? 'The folder stays as it was.'
+      : (patches.length ? 'Uncommitted changes were saved as a patch in the run\'s files.' : 'Nothing uncommitted needed saving.') });
+}
+
+// Get the diff: a read-only patch of the checkout's uncommitted changes against its own HEAD
+// (GET …/checkout/diff, built in a temporary git index), downloaded as a file. 204 = nothing uncommitted.
+async function downloadCheckoutDiff(btn, p, m) {
+  const qs = runActionQuery(p.projectDir || null, p);
+  if (m.projectKey) qs.set('member', m.projectKey);
+  btn.disabled = true;
+  let res = null;
+  let blob = null;
+  let error = '';
+  try {
+    res = await fetch(`/api/runs/${encodeURIComponent(p.id)}/checkout/diff?${qs}`);
+    if (res.ok && res.status !== 204) blob = await res.blob();
+    else if (!res.ok) { const data = await safeJson(res); error = (data && data.error) || `HTTP ${res.status}`; }
+  } catch (e) {
+    error = e.message;
+  } finally {
+    if (btn.isConnected) btn.disabled = false;
+  }
+  if (error) { notify({ tone: 'err', title: 'Could not get the diff', detail: error, key: 'wt-diff' }); return; }
+  if (!blob) { notify({ tone: 'info', title: 'Nothing uncommitted', detail: 'The folder has no uncommitted changes.', key: 'wt-diff' }); return; }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = uncommittedPatchName(m.branch || p.id);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);   // not 0: Firefox can cancel a download whose URL is revoked at once
 }
 
 // Resume a paused pipeline from its history card. POST /api/resume returns the
@@ -21042,6 +21833,13 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
     const bs = data.baseStatus && typeof data.baseStatus === 'object' ? data.baseStatus : null;
     const paintBaseWarn = () => {
       if (!baseWarn) return;
+      // A base the base remote does not have (a run started from a local-only branch) cannot take a PR.
+      const pick = shipItChosenBase(modal, record);
+      if (!box.hidden && pick && Array.isArray(byRemote[baseSel.value]) && !byRemote[baseSel.value].includes(pick)) {
+        baseWarn.hidden = false;
+        baseWarn.textContent = `${pick} is not on ${baseSel.value}. Push it there first, or pick a base branch that is.`;
+        return;
+      }
       const n = bs && Number(bs.movedSinceRun);
       // Measured on bs.remote: a PR into another remote's copy of the same branch name says nothing.
       const sameRemote = box.hidden || !baseSel.value || baseSel.value === (bs && bs.remote ? bs.remote : 'origin');
@@ -21145,6 +21943,16 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   if (!modal.classList.contains('hidden')) return false;  // double-open guard: a second open
                                                           // would stack a second onOk -> two POSTs
   modal.dataset.pipelineId = String((record && record.id) || '');   // Chat P4: whose dialog this is (crpCloseShipItFor)
+  // D22: a slice with a next slice says to merge this PR first. The first open usually finds the cache empty: the
+  // answer fills the note, if the dialog still shows this run.
+  const sliceNote = modal.querySelector('.shipit-slice-note');
+  const paintSliceNote = (info) => {
+    if (!sliceNote) return;
+    sliceNote.hidden = !(info && info.next);
+    sliceNote.textContent = info && info.next ? `Slice ${info.next.index} builds on this branch: merge this PR first.` : '';
+  };
+  const slicePid = String((record && record.id) || '');
+  paintSliceNote(slicePid ? sliceInfoFor(slicePid, (info) => { if (modal.dataset.pipelineId === slicePid) paintSliceNote(info); }) : null);
   if (record.target === 'workspace') return openShipItWsModal(record, data, { link, onClose });
   modal.querySelector('#shipit-repos').hidden = true;   // a previous workspace open may have shown it
   const q = (sel) => modal.querySelector(sel);
@@ -21366,7 +22174,19 @@ function rdRepaintOpenGlance(pipelineId = null) {
   const r = typeof rdOpenRun === 'function' ? rdOpenRun() : null;
   if (!r || !runDetailState || !runDetailState.screen) return;
   if (pipelineId && r.pipelineId !== pipelineId) return;
+  paintRdBanners(runDetailState.screen, r);   // the worktree notice reads these rows too (checkout, retained work)
   paintRdGlance(runDetailState.screen, r);
+}
+
+/** The open chain `r` belongs to, as a runsChainItem; null for a single run (P8: no overall bar). */
+function chainItemFor(r) {
+  if (!r || !(r.pipelineId || r.runId)) return null;
+  if (!schedulesView.isLoaded()) {
+    if (!chainsAsked) { chainsAsked = true; void withWorkspaces().then(() => schedulesView.load()).then(() => rdRepaintOpenGlance()).catch(() => {}); }
+    return null;
+  }
+  const c = schedulesView.chains().find((x) => x.members.some((m) => (r.pipelineId && m.pipelineId === r.pipelineId) || m.ticketId === r.runId));
+  return c ? runsChainItem(c, false) : null;
 }
 
 /** Some PR host is reachable (gh, or an Azure DevOps token); the Ship-it modal and the server name the
@@ -21868,6 +22688,9 @@ function paintHdGlance(screen, record, data) {
   const checks = results ? hdChecks(results) : [];
   const s = results && results.summary;
   const pr = glancePrInput(record);
+  // D16, D22: a finished slice's place in its feature (the line is a fixed host, rebuilt in place: no duplicates).
+  const info = record && record.id ? sliceInfoFor(record.id, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }) : null;
+  paintSliceLine(glance.querySelector('.rd-slice-line'), sliceLineCopy(info, { done: st.status === 'done' }));
   const copy = glanceCopy(run, {
     pill: { text: meta.word }, checks: results ? checks.length : null, lastLine: '',
     pr, files: s ? (s.filesNew || 0) + (s.filesChanged || 0) + (s.filesDeleted || 0) : null,
@@ -22388,6 +23211,67 @@ function hdDot() {
   return d;
 }
 
+// Run tags on the finished run page (#718): chips plus "Edit tags" (or "Add tags"), or the open editor,
+// in the landing page's head (the glance) and in Details › Overview. The editor stays in the head it was
+// opened from; the element itself survives a header repaint, so its uncommitted chips are kept.
+let hdTagEditor = null;   // { pipelineId, el, input, host }
+function paintHdTags(screen, record, data) {
+  const hosts = { glance: screen.querySelector('.hd-glance .rd-page-meta'), row2: screen.querySelector('.hd-row2') };
+  for (const host of Object.values(hosts)) host?.querySelector('.hd-tags')?.remove();
+  if (!flagOn('runTags')) return;
+  const st = data.state;
+  const repaint = () => paintHdTags(screen, record, data);
+  for (const [where, host] of Object.entries(hosts)) {
+    if (!host) continue;
+    const box = document.createElement('span');
+    box.className = 'hd-tags';
+    if (hdTagEditor && hdTagEditor.pipelineId === st.id && hdTagEditor.host === where) {
+      box.appendChild(hdTagEditor.el);
+      host.appendChild(box);
+      continue;
+    }
+    const tags = st.tags || [];
+    box.append(...tags.map((t) => tagChip(document, t)));
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'link-btn hd-tags-edit';
+    edit.textContent = tags.length ? 'Edit tags' : 'Add tags';
+    edit.addEventListener('click', () => { hdTagEditor = { ...hdTagEditorFor(st, repaint), host: where }; repaint(); });
+    box.appendChild(edit);
+    host.appendChild(box);
+  }
+}
+function hdTagEditorFor(st, repaint) {
+  const el = document.createElement('span');
+  el.className = 'hd-tags-editor';
+  const input = createTagInput(document, { value: st.tags || [], suggest: fetchTagVocabulary });
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'btn btn-primary btn-mini hd-tags-save';
+  save.textContent = 'Save';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'link-btn hd-tags-cancel';
+  cancel.textContent = 'Cancel';
+  const hint = input.el.querySelector('.tag-input-hint');
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      const res = await fetch(`/api/runs/${encodeURIComponent(st.id)}/tags`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tags: input.get() }),
+      });
+      const json = await safeJson(res);
+      if (res.ok) { st.tags = (json && json.tags) || []; hdTagEditor = null; repaint(); return; }
+      hint.textContent = res.status === 404 ? 'This run no longer exists.' : ((json && json.error) || `Could not save (HTTP ${res.status})`);
+    } catch (err) {
+      hint.textContent = err && err.message ? err.message : 'Could not save';
+    } finally { save.disabled = false; }
+  });
+  cancel.addEventListener('click', () => { hdTagEditor = null; repaint(); });
+  el.append(input.el, save, cancel);
+  return { pipelineId: st.id, el, input };
+}
+
 function paintHdHeaderMeta(screen, record, data) {
   const st = data.state;
   paintAutoBadge(screen.querySelector('.hd-row1 .auto-badge'), st && st.stepper);
@@ -22441,6 +23325,7 @@ function paintHdHeaderMeta(screen, record, data) {
   row2?.querySelector('.person-chip')?.remove();
   const by = personShown(st.startedBy) || personShown(record && record.startedBy);
   if (by && row2) row2.appendChild(personChip(by, st.scheduledFor ? 'Scheduled by' : 'Started by'));
+  paintHdTags(screen, record, data);
   // spec §8: the End card's result chip, repeated in the header meta (History D5
   // untouched — no model/effort). A path links through the keyed artifact route.
   if (st.endReached === true && st.result) {
@@ -22702,10 +23587,6 @@ async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspac
   }
 }
 
-// { screen, record } the Discard-worktree listener is currently bound to, so
-// paintHdBanners can re-bind when either changes (see the comment inside it).
-let hdDiscardBound = null;
-
 // Retained work is a LIST-row field (and the server gates it on existsSync of the
 // worktree). A deep-linked or cache-warm detail has no authoritative value, so
 // derive a PROVISIONAL one from the state.branch.commitFailed stamp and let the
@@ -22720,8 +23601,8 @@ let hdDiscardBound = null;
 // lives in state.historyAll, so materializing a derived retention would grow a
 // "Work retained" badge on the LIST card, computed from a commitFailed stamp the
 // server would have suppressed via its existsSync gate. Instead a provisional
-// retention paints the banner from a throwaway carrier and binds NO Discard — the
-// button appears one fetch later, when the authoritative row arrives.
+// retention paints the worktree notice with the facts but offers no action — Apply
+// and Discard appear one fetch later, when the authoritative row arrives.
 //
 // LIMIT: the provisional derivation is single-project only. A workspace run's
 // retention comes from workspace_meta.branches, and the detail payload carries no
@@ -22828,47 +23709,31 @@ function paintHdBanners(screen, record, data) {
     banners.prepend(banner);
   }
 
-  // Retained work. renderRetainedWork rebuilds the banner from scratch each call
-  // (and tolerates a missing node), so it is safe to re-run;
-  // `setupDiscardWorktreeButton` is NOT idempotent (it adds a listener on every
-  // call), so it must be bound at most once PER RECORD OBJECT.
-  //
-  // "Per record object", not "per screen". The bound handler closes over the
-  // record it was handed and mutates THAT object on success
-  // (`p.retainedWork = null`) before calling paintHistory(). On the deep-link path
-  // refreshHdFromRow REPLACES histDetailState.record with the real list row, so a
-  // bind-once-per-screen guard would leave the handler mutating the orphaned
-  // minimal record: the POST succeeds and the worktree really is discarded, but
-  // the repaint reads the still-retained ROW — the banner stays and Archive stays
-  // disabled until a full reload. Re-bind whenever the record identity changes,
-  // dropping the stale listener by replacing the button node first
-  // (addEventListener leaves no removal handle).
+  // The worktree notice: retained work (the end-of-run commit failed), else a live checkout. A PROVISIONAL
+  // retention (deep link, cache-warm row) shows the facts but offers no action: Apply and Discard must act
+  // on the authoritative row, which arrives one fetch later and re-runs this painter. Handlers read the
+  // record at click time (hdCurrentRecord): refreshHdFromRow REPLACES histDetailState.record.
   const { retained, provisional } = hdRetainedFor(record, st);
-  // renderRetainedWork only READS `p.retainedWork`, so a provisional paint may use
-  // a throwaway carrier; every MUTATING helper below is handed `record` itself.
-  renderRetainedWork(screen, provisional ? { ...record, retainedWork: retained } : record);
+  const checkout = hdCheckoutFor(record);
   renderMergeBack(screen, record);
-  let dbtn = screen.querySelector('.hist-discard');
-  if (retained && !provisional) {
-    // Keyed on BOTH screen and record: a new visit builds a fresh screen from the
-    // template (unbound button) while `record` may be the very same list-row
-    // object, so a record-only key would skip the bind on the new screen.
-    if (!hdDiscardBound || hdDiscardBound.screen !== screen || hdDiscardBound.record !== record) {
-      if (dbtn) { const fresh = dbtn.cloneNode(true); dbtn.replaceWith(fresh); dbtn = fresh; }
-      hdDiscardBound = { screen, record };
-      setupDiscardWorktreeButton(screen, record.projectDir || null, record);
-    }
-  } else {
-    // Provisional retention shows the banner but NOT the action: discarding must
-    // act on the authoritative row (which arrives one fetch later and re-runs this
-    // painter), never on a stub or a cache-warm row whose retention we inferred.
-    hdDiscardBound = null;
-    if (dbtn) dbtn.hidden = true;   // renderRetainedWork does not touch this button
-  }
-  // Must run AFTER renderRetainedWork unhides the banner: addRecoveryPatchLink
-  // bails on a hidden banner and self-guards against duplicates.
-  addRecoveryPatchLink(screen, record.projectDir || null, record, data.artifacts);
-  return retained;
+  const model = worktreeNoticeModel({
+    retained, checkout, provisional,
+    workspace: record.target === 'workspace', names: memberNamesOf(record),
+    recoveryPatch: recoveryPatchKind(data.artifacts),
+  });
+  const cur = () => hdCurrentRecord(record);
+  paintWorktreeNotice(screen, model, {
+    sig: `hd|${record.id}`,
+    recovery: recoveryLinkOf(record.projectDir || null, record, model),
+    handlers: {
+      onApply: (btn) => applyRetainedFlow(btn, cur(), model),
+      onDiscardRetained: (btn) => discardRetainedWorktree(btn, cur().projectDir || null, cur()),
+      onReleaseCheckout: (m, btn) => releaseCheckoutFlow(btn, cur(), m),
+      onDiff: (m, btn) => downloadCheckoutDiff(btn, cur(), m),
+      onOpenActions: () => hdGoDetails('actions'),
+    },
+  });
+  return { retained, checkout };
 }
 
 // THE record accessor for detail-screen click handlers. `setupHdActions` binds
@@ -22886,7 +23751,7 @@ function hdCurrentRecord(fallback) {
   return (histDetailState && histDetailState.record) || fallback;
 }
 
-function hdSetArchiveGate(btn, retained) {
+function hdSetArchiveGate(btn, retained, checkout = null) {
   if (!btn) return;
   // An IN-FLIGHT archive owns its button outright — the mirror of
   // refreshHistResumeGating's `resumeState === 'busy'` guard. The DELETE removes a
@@ -22896,8 +23761,9 @@ function hdSetArchiveGate(btn, retained) {
   // "Archiving…" (second click = second DELETE, whose 404 stamps an error for an
   // archive that in fact succeeded).
   if (btn.dataset.archiveState === 'busy') return;
-  btn.disabled = !!retained;
-  btn.title = retained ? 'Recover or discard the retained uncommitted work before archiving.' : '';
+  btn.disabled = !!(retained || checkout);
+  btn.title = retained ? 'Recover or discard the retained uncommitted work before archiving.'
+    : checkout ? 'Discard the checkout (or unlink your folder) before archiving.' : '';
 }
 
 // Base conflicts (#620): one line per branch from the loaded detail (data.state), Re-check / Update branch /
@@ -23059,7 +23925,7 @@ async function hdBaseAction(screen, record, data, m, action, button) {
 
 function setupHdActions(screen, record, data) {
   const st = data.state;
-  const retained = paintHdBanners(screen, record, data);
+  const held = paintHdBanners(screen, record, data);
 
   // The bar's run controls. Bound unconditionally, once: their visibility follows the
   // pipeline's live run (paintHdLive, every frame), so a pipeline that pauses after the
@@ -23166,7 +24032,7 @@ function setupHdActions(screen, record, data) {
   const archived = !!st.archivedAt;
   if (!archived && isDeletableEntry({ ...record, status: st.status })) {
     archiveBtn.hidden = false;
-    hdSetArchiveGate(archiveBtn, retained);
+    hdSetArchiveGate(archiveBtn, held.retained, held.checkout);
     archiveBtn.addEventListener('click', async () => {
       if (archiveBtn.disabled) return;
       const r = hdCurrentRecord(record);              // never the load-time object
@@ -23318,7 +24184,7 @@ function setupHdActions(screen, record, data) {
 // There is deliberately NO `row === histDetailState.record` early-out. The row and
 // the detail's record are usually the SAME object (histRecordFor returns it), and
 // the flows that matter mutate it in place before calling paintHistory():
-// setupDiscardWorktreeButton sets `p.retainedWork = null`, and the ship-it path
+// discardRetainedWorktree sets `p.retainedWork = null`, and the ship-it path
 // sets `record.pr`. An identity guard would skip exactly those repaints and strand
 // a cleared worktree behind a live banner + a disabled Archive. The painters are
 // cheap and idempotent, and paintHistory() is not a hot path.
@@ -23508,8 +24374,8 @@ function refreshHdFromRow() {
   histDetailState.record = row;
   const { screen, data } = histDetailState;
   paintHdHeaderMeta(screen, row, data);
-  const retained = paintHdBanners(screen, row, data);   // corrects in BOTH directions
-  hdSetArchiveGate(screen.querySelector('.hd-archive'), retained);
+  const held = paintHdBanners(screen, row, data);       // corrects in BOTH directions
+  hdSetArchiveGate(screen.querySelector('.hd-archive'), held.retained, held.checkout);
   refreshHistResumeGating();
   paintHdPr(screen, row, data);                         // idempotent; re-binds btn.onclick
   paintHdAfter(screen, row, data);
@@ -25281,6 +26147,10 @@ function buildHdOverview(sec, record, data) {
     paintActionsStrip(strip, record.id, runActionQuery(record.projectDir, record).toString());
   }
   if (checks.length) wrap.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
+  if (shapeFirstOn()) {   // spec D7: the same groups as the run page
+    const cl = renderChecklistGroups(document, data.reviews);
+    if (cl) wrap.appendChild(cl);
+  }
 
   // 2) Stat cards.
   const grid = document.createElement('div');
@@ -26603,6 +27473,24 @@ function paintRunSkills(host, mount) {
   host.replaceChildren(...(card ? [card] : []));
 }
 
+/** Spec D7: the Overview's Perspective checklists, from the saved review rows. While the run is live it
+ *  re-fetches when its status or a node's state moves (a review cycle finished); a live run that is not shaping
+ *  never fetches for it. */
+function paintRdChecklists(host, run) {
+  if (!shapeFirstOn()) { host.hidden = true; host.replaceChildren(); delete host.dataset.sig; return; }
+  const live = !RD_TERMINAL.includes(run.status);
+  if (live && !isShapingRun(run)) { host.hidden = true; return; }
+  const sig = `${run.status}|${JSON.stringify(run.nodeStatus || {})}`;
+  if (host.dataset.sig === sig) return;
+  host.dataset.sig = sig;
+  void rdLoadData(run, { force: live }).then((data) => {
+    if (!host.isConnected || host.dataset.sig !== sig) return;
+    const el = renderChecklistGroups(document, data && data.reviews);
+    host.hidden = !el;
+    host.replaceChildren(...(el ? [el] : []));
+  });
+}
+
 function buildRdOverview(sec, ctx) {
   sec.innerHTML = '';
   const wrap = document.createElement('div');
@@ -26619,14 +27507,17 @@ function buildRdOverview(sec, ctx) {
   strip.hidden = true;
   const skills = tagLevel(document.createElement('div'), 'advanced');   // the set skills it got (§6 board 9)
   skills.className = 'hd-ov-skills-host';
-  wrap.append(banner, strip, grid, skills, rdOvTask(ctx.run));
+  const checklists = document.createElement('div');   // Perspective checklists (spec D7)
+  checklists.className = 'rd-checklists';
+  checklists.hidden = true;
+  wrap.append(banner, strip, grid, checklists, skills, rdOvTask(ctx.run));
   sec.appendChild(wrap);
   const paintStrip = (run) => {
     const on = isTerminalStatus(run.status) && !!run.pipelineId;
     strip.hidden = !on;
     if (on && strip.dataset.runId !== run.pipelineId) paintActionsStrip(strip, run.pipelineId, rdScopeQuery(run));
   };
-  const paint = (c) => { rdOvStateBanner(banner, c.run); paintStrip(c.run); rdOvStats(grid, c.run); paintRunSkills(skills, c.run.skillMount); };
+  const paint = (c) => { rdOvStateBanner(banner, c.run); paintStrip(c.run); rdOvStats(grid, c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
   paint(ctx);
   sec.__update = paint;
 }
@@ -27508,8 +28399,10 @@ function graphModelLabel(id) { return id ? (modelById(id)?.label || id) : null; 
 function runDecorFor(r, mode = 'monitor') {
   const seq = r._decorSeq || 0;
   if (!r._decorCache || r._decorCache.seq !== seq) {
-    r._decorCache = { seq, views: new Map(),
-      decor: decorFromState(r, { live: isLive(r), now: Date.now(), subsOf: (id) => subAgentsForNode(r, id), lastLines: liveLinesOf(r), modelLabel: graphModelLabel }) };
+    const decor = decorFromState(r, { live: isLive(r), now: Date.now(), subsOf: (id) => subAgentsForNode(r, id), lastLines: liveLinesOf(r), modelLabel: graphModelLabel });
+    // Run progress (P3): the memo lives on the RUN, not the per-generation bag, so the fill never drops.
+    r._progressMemo ||= { fraction: 0, stage: 0 };
+    r._decorCache = { seq, views: new Map(), decor: { ...decor, stageProgress: runProgress(r, r._progressMemo) } };
   }
   const cache = r._decorCache;
   let bag = cache.views.get(mode);
@@ -27534,11 +28427,10 @@ function paintQuiescenceBanner(host, decor) {
   el.hidden = !show;
 }
 
-/** `3/6 done` — D15 forbids a bar, not a number. '' on a v1 run. */
+/** The P5 line ("Build · task 2 of 4"); supersedes the D15 "3/6 done" counter (spec 2026-10-14 P12). '' on a v1 run. */
 function progressText(r) {
   if (!isGraphRun(r)) return '';
-  const { done, total } = runDecorFor(r).progress;
-  return `${done}/${total} done`;
+  return runDecorFor(r).stageProgress.text;
 }
 
 // ---- Ask Worca run store (spec seam 2): the chat's progress cards read the SAME run models the Running list
@@ -27553,11 +28445,13 @@ function askRunSnapshot(r) {
     title: r.title || '', projectKey: null, workspaceId: r.workspaceId || null, projectDir: r.projectDir || '',
     projectNames: Array.isArray(r.projectNames) ? r.projectNames : null,
     status: r.status, pauseReason: r.pauseReason || null, pendingQuestion: r.pendingQuestion || null,
+    ...(r.shaping ? { shaping: r.shaping } : {}),
     live: isLive(r), terminal: !!r._finished || isTerminalStatus(r.status),
     startedAt: r.startedAt || null, elapsedMs: liveTotalMs(r.steps, Date.now()),
     costUsd: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,   // null: cost unknown (Cursor), never $0.00
     // Chat P3 (U10): activeNodes' model + effort, named through the catalog, plus the execution's cycle.
     progress: decor ? decor.progress : null, active: graph ? activeAgents(decor, r.stepper, { modelLabel: graphModelLabel }) : [],
+    stageProgress: decor ? decor.stageProgress : null,
     stepper: graph ? r.stepper : null, decor,
     // Chat P3 (CONTRACT §5): the chat run card's extra facts. A live run model holds no results.json numbers,
     // artifact rows or PR — the card reads those over REST once the run is over (GET /api/ask/runs/:id `extras`).
@@ -29040,7 +29934,7 @@ function buildHdArtifacts(sec, record, data) {
 
 
 // Frontier step for the compact card row (design §4.3): DONE agent nodes over
-// agent nodes (D15: a number, never a bar), the active-node copy, and the active
+// agent nodes (a count, not the bar; the run progress bar is src/shared/run-progress.mjs, spec 2026-10-14 P12 supersedes D15), the active-node copy, and the active
 // node's `model · effort` caption. Every run is a graph run now.
 function runStepLabel(r) {
   const d = runDecorFor(r);
@@ -29170,7 +30064,7 @@ function loadRunsGroupBy() {
   try { const v = localStorage.getItem(RUNS_GROUP_BY_KEY); return RUNS_GROUPINGS.includes(v) ? v : 'project'; }
   catch { return 'project'; }
 }
-const runsUi = { query: '', filter: loadRunsFilter(), groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false };
+const runsUi = { query: '', tag: '', filter: loadRunsFilter(), groupBy: loadRunsGroupBy(), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false, chainsOpen: new Set(), chainsToggled: new Map() };
 
 function histGroupName(p) {
   return (p.target === 'workspace' && p.workspaceName) || p.projectName || p.projectKey || '(unknown project)';
@@ -29214,18 +30108,60 @@ function runsLiveItem(r) {
   const terminal = RD_TERMINAL.includes(r.status);
   const rec = terminal && r.pipelineId ? rdHistoryRecord(r) : null;
   const failed = r.status === 'error' ? ledgerRows(r).filter((x) => x.status === 'error').pop() : null;
+  const prog = isGraphRun(r) ? runDecorFor(r).stageProgress : null;
   return {
     runId: r.runId, pipelineId: r.pipelineId || '', title: r.title, status: r.status,
     // nodeLabel(null, id) returns the raw node id ("n3 review"): name the step only with a manifest.
-    ask: pq != null ? { kind: pq.kind || '', step: pq.nodeId && r.stepper ? nodeLabel(r.stepper, pq.nodeId) : '' } : null,
+    ask: pq != null ? { kind: pq.kind || '', step: pq.nodeId && r.stepper ? nodeLabel(r.stepper, pq.nodeId) : '',
+      outline: !!(pq.plan && (pq.plan.outline || pq.plan.port === 'outline')) } : null,
     pauseReason: r.pauseReason || '', limitEngine: r.limitEngine || null, limitNote: limitRowNote(r), unread: isLingering(r),
-    step: r.status === 'running' && pq == null ? runsStepWord(r) : '',
+    step: r.status === 'running' && pq == null ? (prog && prog.text ? prog.text : runsStepWord(r)) : '',
+    progress: prog && !RD_TERMINAL.includes(r.status) ? { fraction: prog.fraction, tone: prog.tone } : null,
     failedStep: failed && failed.nodeId ? nodeLabel(r.stepper, failed.nodeId) : '',
     startedAt: r.startedAt, groupKey: g.key, groupName: g.name, by: runsPersonKey(r.startedBy),
     pr: terminal ? glancePrInput(rec) : null,
     checks: rec && typeof rec.checks === 'number' ? rec.checks : null,
     files: rec && typeof rec.files === 'number' ? rec.files : null,
+    tags: flagOn('runTags') ? (r.tags || []) : [],
   };
+}
+/** P8: a server chain (schedulesView.chains()) as the list's chain item, members overlaid with this tab's live runs. */
+function runsChainItem(c, open) {
+  // D17: a chain that is a feature shows the feature title and its slices ("1 · Run tags"), and opens the feature page.
+  const feat = c.feature && shapeFirstOn() ? c.feature : null;
+  const featHref = feat ? `#feature/${encodeURIComponent(feat.id)}` : '';
+  const members = c.members.map((m, i) => {
+    const r = (m.pipelineId ? latestPipelineRun(m.pipelineId) : null) || (m.ticketId ? runs.get(m.ticketId) || null : null);
+    const state = r ? (r.status === 'done' ? 'done' : RD_TERMINAL.includes(r.status) ? 'failed' : 'current') : m.state;
+    const progress = r && state === 'current' && isGraphRun(r) ? runDecorFor(r).stageProgress : null;
+    const href = r ? `#running/${r.runId}`
+      : m.pipelineId && m.historyKey ? `#history/${m.historyKey}/${m.pipelineId}`
+      : m.ticketId ? '#schedules/once' : '#runs';
+    // The row glyph follows runStatusMeta's order: parked first, then a question.
+    const icon = !r || state !== 'current' ? '' : ['paused', 'pausing', 'interrupted'].includes(r.status) ? 'paused'
+      : r.pendingQuestion != null ? 'ask' : 'run';
+    // The amber "Needs you" text only; the Needs-you list membership comes from the model. Same cases as needsYou():
+    // an open question or a pause (`interrupted` is not one).
+    const needs = !!r && state === 'current' && (r.pendingQuestion != null || r.status === 'paused');
+    // D33: an open question, whether or not the run is also paused: the member's dot turns amber.
+    const asks = !!r && state === 'current' && r.pendingQuestion != null;
+    const slice = feat ? (feat.slices.find((s) => (m.ticketId && s.ticketId === m.ticketId) || (m.pipelineId && s.pipelineId === m.pipelineId)) || feat.slices[i]) : null;
+    return { ...m, pipelineId: m.pipelineId || (r && r.pipelineId) || null, state, progress, icon, needs, asks, runId: r ? r.runId : '',
+      title: slice ? `${slice.index} · ${slice.title}` : m.title,
+      // D17: a slice that has not started opens the feature page; a started one opens its run.
+      href: feat && !r && !m.pipelineId ? featHref : href };
+  });
+  const first = c.members[0] || {};
+  const g = runsGroupFor({ pipelineId: first.pipelineId || '', projectDir: first.projectDir || '', workspaceId: first.workspaceId || '', projectKey: first.projectKey || '' });
+  return { id: c.id, title: feat ? feat.title : c.title, members, open, groupKey: g.key, groupName: g.name,
+    ...(feat ? { feature: { id: feat.id }, href: featHref } : {}),
+    ...chainProgress(members, feat ? { noun: 'Slice' } : undefined) };
+}
+/** D17: a plain chain is collapsed by default (chainsOpen); a feature row is open by default and a person's toggle
+ *  wins for the session (chainsToggled). */
+function chainOpen(c) {
+  const key = `chain:${c.id}`;
+  return c.feature && shapeFirstOn() ? (runsUi.chainsToggled.has(key) ? runsUi.chainsToggled.get(key) : true) : runsUi.chainsOpen.has(key);
 }
 function runsHistItem(p) {
   return {
@@ -29237,6 +30173,7 @@ function runsHistItem(p) {
     checks: typeof p.checks === 'number' ? p.checks : null,
     files: typeof p.files === 'number' ? p.files : null,
     base: baseRowNote(p.baseCheck),
+    tags: flagOn('runTags') ? (p.tags || []) : [],
   };
 }
 function runsSchedItem(t) {
@@ -29248,13 +30185,18 @@ function runsSchedItem(t) {
 
 // pipelineId: a live row painted before its id arrived must repaint once it does (selection
 // and the focus fallbacks below match on it).
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base];
+// `r.progress ? 1 : 0`: the line's presence is structural; its fraction/tone are patched in place (paintRunsProgress).
+// A member's icon and asks: the fields its dot reads, so a paused member that gains a question (icon stays 'paused')
+// repaints amber.
+const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base, (r.tags || []).join(','),
+  r.progress ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.href, m.icon, !!m.asks])] : 0];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over (same slot first), then the
 // selected row stands in; a focused group head is found by its group.
-function runsFocusTarget(host, { key, slot, pid, group }) {
+function runsFocusTarget(host, { key, slot, pid, group, chain }) {
   const q = (sel) => host.querySelector(sel);
+  if (chain) return q(`.runs-chain-toggle[data-chain-key="${cssEscape(chain)}"]`);
   if (group) return q(`.runs-group-head[data-group-key="${cssEscape(group)}"]`);
   if (!key) return null;
   const k = cssEscape(key);
@@ -29270,11 +30212,16 @@ function paintRunsList() {
   // state.historyAll (that keeps meaning "active history").
   const archivedView = runsUi.filter === 'archived';
   const histSource = archivedView ? (state.historyArchived || []) : (state.historyAll || []);
+  const liveItems = overviewRuns().map(runsLiveItem);
+  const histItems = histSource.filter(Boolean).map(runsHistItem);
+  paintRunsTagFilter([...liveItems, ...histItems]);
   const model = buildRunsModel({
-    live: overviewRuns().map(runsLiveItem),
-    history: histSource.filter(Boolean).map(runsHistItem),
+    live: liveItems,
+    history: histItems,
     scheduled: schedulesView.upcoming(SCHEDULED_GROUP_WINDOW_MS).map(runsSchedItem),
+    chains: schedulesView.chains().map((c) => runsChainItem(c, chainOpen(c))),
     person: viewer.shared ? state.historyPerson : '',
+    tag: flagOn('runTags') ? runsUi.tag : '',
     query: runsUi.query, filter: runsUi.filter, groupBy: runsUi.groupBy, collapsed: runsUi.collapsed, now: Date.now(),
   });
   const note = archivedView
@@ -29294,10 +30241,19 @@ function paintRunsList() {
     const a = document.activeElement;
     if (a && host.contains(a)) {
       refocus = { key: a.dataset.rowKey || '', slot: a.dataset.slot || 'group',
-        pid: a.dataset.pipelineId || '', group: a.dataset.rowKey ? '' : (a.dataset.groupKey || '') };
+        pid: a.dataset.pipelineId || '', group: a.dataset.rowKey ? '' : (a.dataset.groupKey || ''),
+        chain: a.classList.contains('runs-chain-toggle') ? (a.dataset.chainKey || '') : '' };
     }
-    host.replaceChildren(...renderRunsList(document, model, { emptyText: 'No runs yet. Start one from New run.', note }));
+    // P2: each live line's current width, by row key, so its rebuilt twin starts where this one is.
+    const lineFrom = new Map();
+    for (const i of host.querySelectorAll('.runs-row-prog > i')) {
+      const k = i.closest('.runs-row')?.dataset.rowKey;
+      if (k && !lineFrom.has(k) && i.style.width) lineFrom.set(k, i.style.width);
+    }
+    host.replaceChildren(...renderRunsList(document, model, { emptyText: 'No runs yet. Start one from New run.', note, lineFrom }));
+    if (lineFrom.size) void host.offsetWidth;   // commit the start widths, so the patch below transitions
   }
+  paintRunsProgress(host, model);   // P2/P7: fraction + tone, in place
   paintRunsSelection();   // before the focus restore: its last fallback is the selected row
   if (refocus) {
     const back = runsFocusTarget(host, refocus);
@@ -29309,6 +30265,39 @@ function paintRunsList() {
     const g = host.querySelector(`.runs-group[data-group-key="${cssEscape(runsUi.reveal)}"]`);
     runsUi.reveal = '';
     if (g && typeof g.scrollIntoView === 'function') g.scrollIntoView({ block: 'start' });
+  }
+}
+// The Runs list tag filter (#718): every distinct tag on the loaded rows, a configured dimension's
+// tags in an optgroup of their own. A chosen tag that is no longer listed falls back to "All tags".
+// Synchronous: it reads the dimension cache and refreshes it when stale.
+function paintRunsTagFilter(items) {
+  const sel = document.getElementById('runs-tag');
+  if (!sel) return;
+  const dims = flagOn('runTags') ? (allTagDimsCache?.dims || []) : [];
+  if (flagOn('runTags') && (!allTagDimsCache || Date.now() - allTagDimsCache.at >= 15_000) && !allTagDimsInflight) {
+    loadAllTagDims().then(() => paintRunsList()).catch(() => {});
+  }
+  const { groups, rest } = tagFilterGroups(items, dims);
+  const opts = [...groups.flatMap((g) => [g.any, ...g.tags]), ...rest];
+  if (runsUi.tag && !opts.includes(runsUi.tag)) runsUi.tag = '';
+  const sig = JSON.stringify([groups, rest]);
+  if (sel.dataset.sig !== sig) {
+    sel.dataset.sig = sig;
+    const group = (g) => { const og = document.createElement('optgroup'); og.label = g.label; og.append(option(g.any, `${g.label}: any`), ...g.tags.map((t) => option(t, t))); return og; };
+    sel.replaceChildren(option('', 'All tags'), ...groups.map(group), ...rest.map((t) => option(t, t)));
+  }
+  sel.value = runsUi.tag;
+}
+document.getElementById('runs-tag')?.addEventListener('change', (e) => { runsUi.tag = e.target.value; paintRunsList(); });
+/** P2/P7: move every thin line to its fraction/tone IN PLACE — a rebuild would restart the glide. */
+function paintRunsProgress(host, model) {
+  const rows = [...model.needs, ...model.groups.flatMap((g) => (g.collapsed ? [] : g.rows))];
+  for (const r of rows) {
+    if (!r.progress) continue;
+    for (const line of host.querySelectorAll(`.runs-row[data-row-key="${cssEscape(r.key)}"] .runs-row-prog`)) {
+      line.dataset.tone = r.progress.tone || 'blue';
+      line.firstElementChild.style.width = progressWidth(r.progress.fraction);
+    }
   }
 }
 // Frames arrive in bursts (one message fans out to several repaint hooks): paint once.
@@ -29332,7 +30321,8 @@ function paintRunsSelection() {
   if (!host) return;
   const sel = runsSelection();
   for (const a of host.querySelectorAll('.runs-row')) {
-    const row = { kind: a.dataset.kind, runId: a.dataset.runId || '', pipelineId: a.dataset.pipelineId || '', projectKey: a.dataset.projectKey || '' };
+    const row = { kind: a.dataset.kind, runId: a.dataset.runId || '', pipelineId: a.dataset.pipelineId || '', projectKey: a.dataset.projectKey || '',
+      memberKeys: new Set((a.dataset.memberKeys || '').split(' ').filter(Boolean)) };
     const on = isRowSelected(row, sel);
     a.classList.toggle('selected', on);
     if (on) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current');
@@ -29342,6 +30332,21 @@ function paintRunsSelection() {
 // Rows are links (#running/<id>, #history/<key>/<id>, #schedules) so a modifier click can
 // open a tab; a plain click routes in place. Group heads fold (D10).
 el.runsList?.addEventListener('click', (e) => {
+  let tog = e.target.closest && e.target.closest('.runs-chain-toggle');
+  // A plain click anywhere on a chain row opens or closes it, like the chevron; a modifier click still opens the
+  // row's link (the feature page, or the chain's current run) in a new tab.
+  const chainRow = !tog && e.target.closest && e.target.closest('a.runs-row-chain');
+  if (chainRow && (e.button || 0) === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+    tog = chainRow.parentElement && chainRow.parentElement.querySelector(':scope > .runs-chain-toggle');
+  }
+  if (tog) {
+    e.preventDefault();
+    const k = tog.dataset.chainKey;
+    if (tog.dataset.feature === '1') runsUi.chainsToggled.set(k, tog.getAttribute('aria-expanded') !== 'true');
+    else if (runsUi.chainsOpen.has(k)) runsUi.chainsOpen.delete(k); else runsUi.chainsOpen.add(k);
+    paintRunsList();   // the refocus path above puts focus back on the rebuilt toggle
+    return;
+  }
   const head = e.target.closest && e.target.closest('.runs-group-head');
   if (head) { toggleRunsGroup(head.dataset.groupKey || ''); return; }
   const a = e.target.closest && e.target.closest('a.runs-row');
@@ -29966,6 +30971,38 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
     if (r && r.pipelineId) location.hash = `#new/after/${r.pipelineId}`;
   });
 
+  // D30: "Run details ›" opens Results, How it ran and the graph while a shaped run waits on the person.
+  screen.querySelector('.rd-wait-more').addEventListener('click', (e) => {
+    const glance = screen.querySelector('.rd-glance');
+    const open = !glance.hasAttribute('data-wait-open');
+    glance.toggleAttribute('data-wait-open', open);
+    e.currentTarget.setAttribute('aria-expanded', String(open));
+  });
+
+  // D31: a shaped run's ⋯ drives the bar controls CSS hides — the same select, button and pane.
+  screen.querySelector('.rd-bar-more').addEventListener('click', (e) => {
+    const anchor = e.currentTarget;
+    const ns = screen.querySelector('.rd-night');
+    const after = screen.querySelector('.rd-after');
+    const items = [];
+    if (ns && !ns.closest('.rd-night-wrap').hidden) {
+      const pill = screen.querySelector('.rd-night-pill');
+      items.push({ header: 'Away mode on this run' });
+      for (const o of RUN_SWITCH_OPTIONS) {
+        const on = ns.value === o.value;
+        items.push({ label: o.label, title: o.tip, checked: on, hint: on && pill ? pill.textContent : '',
+          onSelect: () => { if (on) return; ns.value = o.value; ns.dispatchEvent(new Event('change')); } });
+      }
+      items.push({ sep: true });
+    }
+    if (after && !after.hidden && levelAtLeast('advanced')) {
+      items.push({ label: after.querySelector('.rd-btn-label').textContent, title: after.title, onSelect: () => after.click() });
+    }
+    // The Chat panel hides the terminal opener on purpose (.crp .term-opener): no Terminal item there either.
+    if (screen.dataset.presentation !== 'panel') items.push({ label: 'Terminal', onSelect: () => terminalPane?.toggle() });
+    toggleMenu({ doc: document, anchor, items, align: 'end', label: 'More for this run' });
+  });
+
   const r = runs.get(runId);
   if (r) repaintRunDetail(r);
   else {                                                         // deep link before hello
@@ -30044,6 +31081,7 @@ function paintRunDetail(r) {
   if (isGraphRun(r)) paintQuiescenceBanner(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
   paintRdGraph(screen, r);
   paintRdQuestions(screen, r);
+  paintShaperWait(screen, r);
   paintRdGlance(screen, r);
   paintNightDecisions(screen, r);
 }
@@ -30774,13 +31812,22 @@ function paintRdGlance(screen, r) {
   }
   const live = r;
   r = terminal ? rdGlanceRun(r) : r;
+  const prog = isGraphRun(live) ? runDecorFor(live).stageProgress : null;
   const copy = glanceCopy(r, {
     pill: statusPill(live), checks: rdChecksCount(live), lastLine: rdLastLine(live), limitNote: limitRowNote(live),
     pr: terminal ? glancePrInput(rdHistoryRecord(live)) : null, files: terminal ? rdFilesChanged(live) : null,
+    progress: prog,
   });
   screen.dataset.glance = copy.state;
 
   paintGlanceStatus(screen.querySelector('.rd-glance'), copy);
+  // Run progress (P2/P4): stopped and error keep today's red glance with no bar.
+  paintProgressBar(screen.querySelector('.rd-glance .rd-prog'), prog && prog.tone !== 'red' ? prog : null);
+  // D16, D22: a slice names its feature (and, once done, the next slice) instead of the unnamed chain bar.
+  const info = live.pipelineId ? sliceInfoFor(live.pipelineId, () => rdRepaintOpenGlance()) : null;
+  paintSliceLine(screen.querySelector('.rd-glance .rd-slice-line'), sliceLineCopy(info, { done: live.status === 'done' }));
+  const chain = chainItemFor(live);
+  paintChainBar(screen.querySelector('.rd-glance .rd-prog-chain'), chain && (chain.feature || info) ? null : chain);
   // Only while a question waits is the status header a control (see openRunDetail).
   const statusTop = screen.querySelector('.rd-now-top');
   const asking = copy.state === 'ask';
@@ -31496,9 +32543,19 @@ function paintRdResult(screen, r, { glance = 'run', trailCount = 0 } = {}) {
 // The heading over a waiting question on the glance: what is asked, by which step. It
 // replaces the panel's own header row (title + count badge).
 function askHeading(r, pq) {
+  // Shape it first: a shaping run's Clarify reads as the step before the plan (spec §3.3).
+  if (askKindOf(pq) === 'clarify' && shapeFirstOn() && isShapingRun(r)) return 'A few questions before the plan';
   const who = pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '';
   const n = Array.isArray(pq.questions) ? pq.questions.length : (Array.isArray(pq.issues) ? pq.issues.length : 1);
   switch (pq.kind) {
+    case 'plan': {                                 // spec §3.4; D30: the gate on says whose turn it is
+      const p = pq.plan || {};
+      if (shapeFirstOn()) return p.outline ? 'Your turn: approve the slices' : 'Your turn: approve the plan';
+      const c = p.check;
+      if (p.outline) return `Slices ready for your approval · v${p.round || 1}${c && Number.isFinite(c.total) ? ` · Outline ${c.passed}/${c.total}` : ''}`;
+      const score = c && Number.isFinite(c.total) ? ` · Shape ${c.passed}/${c.total}` : '';
+      return `Plan ready for your approval · v${p.round || 1}${score}`;
+    }
     case 'workflow': return 'Review the workflow';
     case 'form': return pq.title ? String(pq.title) : (who ? `${who} needs your input` : 'Your input is needed');
     case 'gate': return who ? `${who} needs a decision` : 'A decision is needed';
@@ -31507,6 +32564,27 @@ function askHeading(r, pq) {
       if (!who) return n > 1 ? `${n} questions` : 'A question';
       return n > 1 ? `${n} questions from ${who}` : `A question from ${who}`;
   }
+}
+
+/** D30: a shaped run waiting on Shaper's own step puts its card first and folds Results / How it ran. */
+function paintShaperWait(screen, r) {
+  const glance = screen.querySelector('.rd-glance');
+  const host = screen.querySelector('.rd-questions');
+  if (!glance || !host) return;
+  const wait = shaperWait(r, shapeFirstOn());
+  if (wait) glance.dataset.shaperWait = wait;
+  else { delete glance.dataset.shaperWait; glance.removeAttribute('data-wait-open'); }
+  const more = screen.querySelector('.rd-wait-more');
+  if (more) {
+    more.hidden = !wait;
+    more.setAttribute('aria-expanded', String(!!wait && glance.hasAttribute('data-wait-open')));
+  }
+  // The Chat panel moved .rd-questions into its own head (presentRunScreenInPanel): leave it there.
+  if (host.parentElement !== glance) return;
+  const now = glance.querySelector(':scope > .rd-now');
+  const night = glance.querySelector(':scope > .rd-night-sec');
+  if (wait && now && host.previousElementSibling !== now) now.after(host);
+  else if (!wait && night && host.nextElementSibling !== night) night.before(host);
 }
 
 function paintRdQuestions(screen, r) {
@@ -31567,12 +32645,6 @@ function paintRdQuestions(screen, r) {
   }
 }
 
-// { screen, runId } the detail's Discard-worktree listener is currently bound to.
-// setupDiscardWorktreeButton adds a listener on EVERY call and hands back no
-// removal handle, so paintRdBanners re-binds only when either identity changes —
-// the same guard paintHdBanners keeps for the History screen.
-let rdDiscardBound = null;
-
 // Live twin of hdRetainedFor. A run model has no authoritative `retainedWork`
 // field — that one is minted by /api/history from an existsSync gate — so derive
 // it from the state snapshot's branch.commitFailed stamp, which is exactly the
@@ -31583,7 +32655,7 @@ function rdRetainedFor(r) {
   // `state` frame from an orchestrator that still carries the stamp — so the
   // clear has to live on the run, outside `branch`, or the banner comes back
   // claiming work is retained for a worktree that is gone.
-  if (r._retainedDiscarded) return null;
+  if (r._retainedDiscarded || r._retainedApplied) return null;   // cleared here: Discard worktree / Apply to branch
   const br = r.branch && typeof r.branch === 'object' ? r.branch : {};
   if (!br.commitFailed || !br.worktreeDir || br.worktreeRemoved === true) return null;
   return {
@@ -31647,39 +32719,49 @@ function paintRdBanners(screen, r) {
     banners.prepend(errBanner);
   }
 
-  // ---- retained work (D11) ----
-  // renderRetainedWork only READS `p.retainedWork`, so a derived carrier is fine
-  // for the paint; every MUTATING helper below gets the same carrier so the
-  // discard handler's `p.retainedWork = null` lands somewhere harmless.
-  const retained = rdRetainedFor(r);
-  const carrier = { id: r.pipelineId || '', projectDir: r.projectDir || '', retainedWork: retained };
-  renderRetainedWork(screen, carrier);
-  let dbtn = screen.querySelector('.hist-discard');
-  if (retained && r.pipelineId) {
-    if (!rdDiscardBound || rdDiscardBound.screen !== screen || rdDiscardBound.runId !== r.runId) {
-      // addEventListener leaves no removal handle — drop any stale listener by
-      // replacing the node first.
-      if (dbtn) { const swap = dbtn.cloneNode(true); dbtn.replaceWith(swap); dbtn = swap; }
-      rdDiscardBound = { screen, runId: r.runId };
-      // `carrier.retainedWork = null` lands on a throwaway, so the run itself
-      // carries the clear; repaint from here because the success path's own
-      // repaint (writeHistoryCache + paintHistory) is History-only. Safe to
-      // re-enter: rdRetainedFor now returns null, so this takes the else branch,
-      // hides the button and rebinds nothing.
-      setupDiscardWorktreeButton(screen, r.projectDir || null, carrier, () => {
-        r._retainedDiscarded = true;
-        const open = runDetailState.screen;
-        if (open && runDetailState.runId === r.runId) paintRdBanners(open, r);
-      });
-    }
-  } else {
-    rdDiscardBound = null;
-    if (dbtn) dbtn.hidden = true;   // renderRetainedWork does not touch this button
-  }
-  // Must run AFTER renderRetainedWork unhides the banner: addRecoveryPatchLink
-  // bails on a hidden banner and self-guards against duplicates. It needs a
-  // pipeline id for the URL, so skip it until one is known.
-  if (r.pipelineId) addRecoveryPatchLink(screen, r.projectDir || null, carrier, r.artifacts || []);
+  // ---- the worktree notice: retained work, else a live checkout ----
+  paintRdWorktreeNotice(screen, r);
+}
+
+/** The scope the notice's routes need (runActionQuery): History's row once it has one, else from the run. */
+function rdNoticeCarrier(r) {
+  const rec = rdHistoryRecord(r);
+  if (rec) return rec;
+  const ws = r.workspaceId ? String(r.workspaceId).replace(/^workspaces\//, '') : '';
+  return { id: r.pipelineId || '', projectDir: r.projectDir || '', projectKey: ws ? `workspaces/${ws}` : (r.projectKey || null),
+    ...(ws ? { target: 'workspace' } : {}), retainedWork: rdRetainedFor(r) };
+}
+
+// The run page's worktree notice. Retained work comes from History's row when it lists some (every member,
+// existsSync-gated), else from the live run's branch.commitFailed (a run whose row has not landed yet). A
+// checkout comes from History's row only: a Check out is a DB write the run's own frames never carry, and
+// `pipelines-changed` reloads the rows on this view (rdRepaintOpenGlance then repaints here). The clears
+// live on the run, outside `branch`, because every later `state` frame replaces `r.branch` wholesale.
+function paintRdWorktreeNotice(screen, r) {
+  const rec = r.pipelineId ? rdHistoryRecord(r) : null;
+  const cleared = r._retainedDiscarded || r._retainedApplied;
+  const retained = cleared ? null : ((rec && rec.retainedWork) || rdRetainedFor(r));
+  const checkout = RD_TERMINAL.includes(r.status) ? hdCheckoutFor(rec) : null;
+  const model = worktreeNoticeModel({
+    retained, checkout, provisional: !r.pipelineId,
+    workspace: !!(r.workspaceId || (rec && rec.target === 'workspace')), names: memberNamesOf(rec),
+    recoveryPatch: recoveryPatchKind(r.artifacts),
+  });
+  const repaint = () => {
+    const open = runDetailState.screen;
+    if (open && runDetailState.runId === r.runId) paintRdBanners(open, r);
+  };
+  paintWorktreeNotice(screen, model, {
+    sig: `rd|${r.runId}|${r.pipelineId || ''}`,
+    recovery: r.pipelineId ? recoveryLinkOf(r.projectDir || null, rdNoticeCarrier(r), model) : null,
+    handlers: {
+      onApply: (btn) => applyRetainedFlow(btn, rdNoticeCarrier(r), model, () => { r._retainedApplied = true; repaint(); }),
+      onDiscardRetained: (btn) => discardRetainedWorktree(btn, r.projectDir || null, rdNoticeCarrier(r), () => { r._retainedDiscarded = true; repaint(); }),
+      onReleaseCheckout: (m, btn) => releaseCheckoutFlow(btn, rdNoticeCarrier(r), m),
+      onDiff: (m, btn) => downloadCheckoutDiff(btn, rdNoticeCarrier(r), m),
+      onOpenActions: () => rdGoDetails('actions'),
+    },
+  });
 }
 
 // Delegated controls on the rebuilt parts of the detail screen. #run-detail is a
@@ -31848,6 +32930,9 @@ function paintRdHeader(screen, r) {
   screen.querySelector('.rd-page-meta .person-chip')?.remove();
   const starter = personShown(r.startedBy);
   if (starter) screen.querySelector('.rd-page-meta').append(personChip(starter));
+  // Run tags (#718): read-only chips after the person chip, replaced on every paint.
+  for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();
+  if (flagOn('runTags')) screen.querySelector('.rd-page-meta').append(...(r.tags || []).map((t) => tagChip(document, t)));
 
   // Meta: project · started · elapsed · cost · step n/m · step name.
   const meta = screen.querySelector('.rd-meta');
@@ -31856,8 +32941,9 @@ function paintRdHeader(screen, r) {
   // Guard on `name`, not on `n`: runStepLabel always returns n >= 1, so `step.n`
   // can never be falsy and an unresolvable node would render `step 1/7 · ` with a
   // dangling separator.
+  const prog = isGraphRun(r) ? runDecorFor(r).stageProgress : null;
   const stepText = isGraphRun(r) && step
-    ? (RD_TERMINAL.includes(r.status) || isPaused(r) ? '' : (nowRows(r).map((x) => x.label).join(' · ') || (preflightOpen(r) ? 'Preflight' : '') || step.name || ''))   // names what runs, never a count (graphs loop and branch)
+    ? (RD_TERMINAL.includes(r.status) || isPaused(r) ? '' : (prog && prog.text ? prog.text : (nowRows(r).map((x) => x.label).join(' · ') || (preflightOpen(r) ? 'Preflight' : '') || step.name || '')))   // the P5 line; names what runs, never a count (graphs loop and branch)
     : (step && step.name ? `step ${step.n}/${step.m} · ${step.name}` : '');
   const segs = [
     ['rd-project', projectName(r.projectDir), false],
@@ -31930,9 +33016,15 @@ function paintRdHeader(screen, r) {
   const stopBtn = screen.querySelector('.rd-stop');
   // Hidden iff the run is OVER. A paused/pausing run keeps both controls: it is parked,
   // not finished. An interrupted one keeps no Stop: it is only ever resumed.
-  pauseBtn.hidden = terminal;
+  // D30: Pause goes while a shaped run waits on the person (a paused run keeps it: it is Resume there).
+  pauseBtn.hidden = terminal || (!!shaperWait(r, shapeFirstOn()) && !paused);
   // An interrupted run is never stopped — it stays resumable (stop-paused.mjs refuses it).
   stopBtn.hidden = terminal || r.status === 'interrupted';
+  // D31: a shaped run's bar folds Away mode, Run after and the terminal into one ⋯ (CSS hides the three).
+  const shapedBar = shapeFirstOn() && isShapingRun(r);
+  screen.querySelector('.rd-bar')?.toggleAttribute('data-shaped', shapedBar);
+  const barMore = screen.querySelector('.rd-bar-more');
+  if (barMore) barMore.hidden = !shapedBar;
   // Run after this one (the list card's old schedule-after button): a pipeline run with a pipeline
   // id, in every state. A finished run is followed up, as on the saved run's bar (paintHdAfter).
   const afterBtn = screen.querySelector('.rd-after');
@@ -32020,7 +33112,8 @@ function paintRdHeader(screen, r) {
       }
       ns.closest('.rd-night-wrap').title = RUN_SWITCH_TIP;
     }
-    if (document.activeElement !== ns) ns.value = (r.night && r.night.override) || 'auto';
+    // A ⋯ menu pick leaves focus on ⋯: the change handler disables the select for its whole POST (D31).
+    if (document.activeElement !== ns && !ns.disabled) ns.value = (r.night && r.night.override) || 'auto';
     paintRdAwayPill(screen, r);
   }
 }
@@ -32842,7 +33935,7 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers'];
+const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature'];
 // One Runs page, three route names: the bare list (#runs) and the two detail routes every
 // deep link already uses (#running/<id>…, #history/<projectKey>/<id>…). All three render
 // the `data-view="runs"` section and light the one Runs nav button.
@@ -32878,7 +33971,7 @@ const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'adv
 const VIEW_TITLES = Object.freeze({
   chat: 'Chat', stats: 'Statistics', workflows: 'Workflows', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'team-metrics': 'Team metrics', 'team-policy': 'Team policy',
-  guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca',
+  guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca', tags: 'Tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules',
 });
@@ -32925,10 +34018,10 @@ document.addEventListener('worca:level', () => {
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
+const SETTINGS_TABS = ['general', 'tags', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
 // Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
 // it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
-const SETTINGS_FORM_TABS = ['general', 'runs', 'ask'];
+const SETTINGS_FORM_TABS = ['general', 'tags', 'runs', 'ask'];
 const settingsPanes = $$('[data-view="settings"] .settings-pane');
 // Old addresses keep working. The hashchange listener DROPS a view it does not know
 // and parseSettingsParam reads an unknown tab as General, so without this map a
@@ -32955,6 +34048,7 @@ function parseSettingsParam(param = '') {
   const i = param.indexOf('/');
   const tab = i === -1 ? param : param.slice(0, i);
   const sub = i === -1 ? '' : param.slice(i + 1);
+  if (tab === 'tags' && !flagOn('runTags')) return ['general', ''];   // the Tags tab exists only while runTags is on
   return SETTINGS_TABS.includes(tab) ? [tab, sub] : ['general', ''];
 }
 // The canonical param for a tab: General is plain '#settings', never '#settings/general'.
@@ -32993,6 +34087,8 @@ if (typeof window !== 'undefined') {
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
+  // D16: the feature page lives behind the Shaper flag and needs an id; otherwise Chat, as any unknown view.
+  if (name === 'feature' && (!shapeFirstOn() || !param)) return showView('chat', '');
   // A caller that still names a Settings tab that became a page ('settings' + 'providers…')
   // lands on that page: parseSettingsParam would read the unknown tab as General.
   if (name === 'settings') {
@@ -33036,8 +34132,12 @@ function showView(name, param = '') {
   // Same guard for the composer: unbind its keyboard and cancel any live gesture
   // so Delete/arrows/⌘Z can never edit the graph from another view.
   if (currentShownView === 'workflows' && name !== 'workflows') workflowsExit();
-  // worca Chat: leaving hides the page (voice stops, popovers close); the panel keeps its chat for the way back.
-  if (currentShownView === 'chat' && name !== 'chat') askPanel?.close();
+  // worca Chat: leaving hides the page (voice stops, popovers close); the panel keeps its chat for the way back. An
+  // armed intent no send carries is dropped, so a later visit never finds it armed.
+  if (currentShownView === 'chat' && name !== 'chat') {
+    askPanel?.close();
+    chatIntent.leave();
+  }
   // Leaving the wizard resets it (a scan, once started, is a run on Running — nothing to abort).
   if (currentShownView === 'workspace-create' && name !== 'workspace-create') resetWizard();
   // Settings is tabbed, so its two body-level overlays must be torn down on a TAB
@@ -33195,6 +34295,13 @@ function showView(name, param = '') {
     else routeProjectDetail(param);
   }
   if (name === 'chat') enterChatView(param, prevView);
+  if (name === 'feature') {
+    const host = document.querySelector('[data-view="feature"] .feature-page');
+    const id = decodeURIComponent(param);
+    // A re-mount with the same id is a no-op: repaint, to catch up after the time away (the hidden page skips frames).
+    if (host.__shapeWant !== id || host.__shapeMode !== 'page') mountShapeFeature(host, id, { mode: 'page' });
+    else if (prevView !== 'feature') paintShapeFeature(host);
+  }
   if (name === 'workflows') void enterWorkflowsView(param, prevView);
   if (name === 'settings') showSettingsTab(param);
   if (name === 'marketplace') loadPluginsView({ refresh: true });
@@ -33261,6 +34368,7 @@ function showSettingsTab(param = '') {
     // '#settings/runs/actions' and the like: a link to one card (the Actions tab's "Set one in Settings").
     void loadSettings().then(() => focusSettingsCard(settingsPanes.find((p) => p.dataset.tab === tab), sub));
   }
+  if (tab === 'tags') void loadTagsTeam();
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
@@ -33486,6 +34594,12 @@ function enterChatView(param = '', prevView = null) {
     }
   }
   askPanel?.open({ threadId });
+  // The New run link's entry: consumed on ANY Chat entry, so a stale one (home never reached) can't arm a later visit.
+  if (pendingShapeEntry) {
+    const { text } = pendingShapeEntry;
+    pendingShapeEntry = null;
+    if (!threadId && chatIntent.set('shape', { focus: true }) && text) chatPrefill(text);
+  }
   if (typeof chatPanelRouter === 'function') {
     try { chatPanelRouter(parts[1] === 'run' ? parts.slice(2) : []); } catch (e) { console.warn('[worca] the chat panel route failed', e); }
   }
@@ -33707,6 +34821,8 @@ function getPageContext() {
 
 function openNewPipeline(prefill) {
   newPipelinePrefill = prefill || null;
+  // Run tags (#718): marked dirty, so the project defaults loaded by the prefill's project switch keep off them.
+  if (prefill?.tags?.length) runTagInput.set(prefill.tags, { dirty: true });
   // hash already #new fires no hashchange — call showView directly (the
   // nav-click guard at the navLinks handler models this exact case).
   if (location.hash.slice(1) === 'new') showView('new');
@@ -33731,12 +34847,13 @@ async function applyAskPrefill() {
   setRunTarget(p.target === 'workspace' ? 'workspace' : 'project');
   // The card's engine pick (none: the defaults the project change loads decide). Touched, so they keep off it.
   if (p.engine) { state.engineTouched = true; setRunEngine(p.engine); }
-  // force the prompt source — the three-step reset of the segment handler
+  // pick the source from the prefill (a Markdown handoff, else the prompt) — the three-step reset of the segment handler
+  const src = typeof p.promptMarkdown === 'string' ? 'markdown' : 'prompt';
   state.activePluginSource = null;
-  el.sourceRadios.forEach((r) => { r.checked = r.value === 'prompt'; });
+  el.sourceRadios.forEach((r) => { r.checked = r.value === src; });
   document.querySelectorAll('#source-seg button[data-src]').forEach((b) => {
-    b.classList.toggle('on', b.dataset.src === 'prompt');
-    b.setAttribute('aria-pressed', String(b.dataset.src === 'prompt')); // the real handlers keep it: :4662/:4666 (static), :4692 (plugin buttons)
+    b.classList.toggle('on', b.dataset.src === src);
+    b.setAttribute('aria-pressed', String(b.dataset.src === src)); // the real handlers keep it: :4662/:4666 (static), :4692 (plugin buttons)
   });
   document.querySelectorAll('#source-seg button[data-plugin-src]').forEach((b) => {
     b.classList.remove('on');
@@ -33756,7 +34873,8 @@ async function applyAskPrefill() {
     // AWAITED: onProjectChanged → loadConfig → loadWorkflowsInto/loadGuardrailsInto — un-awaited, that tail lands after our own awaits and resets both pickers.
     await onProjectChanged();
   }
-  el.prompt.value = p.prompt || '';
+  el.prompt.value = src === 'prompt' ? (p.prompt || '') : '';
+  if (el.promptMarkdown) el.promptMarkdown.value = src === 'markdown' ? p.promptMarkdown : el.promptMarkdown.value;
   refreshMentionHighlights();
   const titleInput = document.getElementById('title');
   if (titleInput) titleInput.value = p.title || '';
@@ -33969,6 +35087,8 @@ function mountChatHome() {
       // through goRunsList (runsUi.skipRestore), as "Show in Runs" does.
       navigate: (hash) => { const to = String(hash || '').replace(/^#/, ''); if (to === 'runs') goRunsList(); else location.hash = to; },
       level: () => currentLevel(),
+      plans: chatHomePlans,
+      mountFeature: mountShapeFeature,
     },
   });
 }
@@ -34032,7 +35152,9 @@ function chatHomeFinishedHere(hist) {
 function chatHomeTile(r) {
   const g = runsGroupFor({ pipelineId: r.pipelineId || '', projectDir: r.projectDir || '', workspaceId: r.kind === 'workspace-run' ? (r.workspaceId || '') : '' });
   const tpl = r.stepper && r.stepper.template;
-  return { ...askRunSnapshot(r), key: `live:${r.runId}`, project: g.name || '', workflow: (tpl && tpl.name) || '' };
+  const info = r.pipelineId ? sliceInfoFor(r.pipelineId, () => chatHome?.update()) : null;   // the home's own repaint
+  return { ...askRunSnapshot(r), key: `live:${r.runId}`, project: g.name || '', workflow: (tpl && tpl.name) || '',
+    ...(info ? { slice: { index: info.index, total: info.total, title: info.sliceTitle } } : {}) };
 }
 /** A History row that needs you (paused, its run not live in this tab): the tile's stand-in, no graph. */
 function chatHomeHistTile(p) {
@@ -34053,6 +35175,12 @@ async function chatHomeThreads() {
   const res = await fetch('/api/ask/threads?limit=6');
   const data = await safeJson(res);
   return res.ok && data && Array.isArray(data.threads) ? data.threads : [];
+}
+/** The Plans tab's rows (gated GET /api/shape/plans): a shaped run per Chat card, with its feature view. */
+async function chatHomePlans() {
+  const res = await fetch('/api/shape/plans');
+  const data = await safeJson(res);
+  return res.ok && data && Array.isArray(data.plans) ? data.plans : [];
 }
 async function chatHomeWorkflows() {
   const [list, all, scripts] = await Promise.all([
@@ -34075,6 +35203,9 @@ async function chatHomeFlags() {
     const data = await safeJson(res);
     if (res.ok && data && Array.isArray(data.sources)) out.tasks = data.sources.some((s) => s && s.type === 'plugin');
   } catch { /* none known */ }
+  // Read after the awaits: a boot's first load, started before the hello, would otherwise keep a stale gate.
+  out['shapeFirst'] = shapeFirstOn();
+  lastChatHomeFlags = { ...out };
   return out;
 }
 /** A quick action's prefill: an empty composer takes the text as is (a trailing space kept, the caret at the end);
@@ -34109,6 +35240,7 @@ askPanel = createAskPanel({
   getPageContext,
   openNewPipeline,
   openComposer: (id) => { openWorkflowFromAsk(id); },
+  composerActions: askComposerActions(),        // Ask's draft and graph cards: the Workflows chat's actions (ask-composer-cards.mjs)
   openClaudeSetup: () => { openClaudeSetup(); },
   loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,
@@ -34146,6 +35278,8 @@ pinpoint.addSurface(askPanel.root, {
 // render already has it (the section is still hidden here: the visit starts when the route shows it).
 mountChatHome();
 askRunStore.subscribe((runId, type) => { if (type !== 'log') chatHome?.update(); });   // a log line changes no tile
+
+let chainsAsked = false;   // module-level, ABOVE the boot showView (TDZ: app-js-boot-route-before-async)
 
 // Boot: parse view + optional param so a reload on a deep link (#running/<id>)
 // restores the Running view instead of silently resetting to Chat (worca Chat U5: the app's home).

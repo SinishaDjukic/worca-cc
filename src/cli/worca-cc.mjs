@@ -28,6 +28,7 @@ import {
   normalizeProjectPath,
 } from '../core/projects.mjs';
 import { projectKey } from '../core/store.mjs';
+import { normaliseTags } from '../shared/run-tags.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal, formatResumeHints } from './render.mjs';
 // Ask forms (spec §8): the prompt FORMATTING lives in render.mjs too (a second import
 // statement, not a longer first one); the field-by-field asker lives in forms.mjs.
@@ -37,7 +38,9 @@ import { createFormAsker } from './forms.mjs';
 import { kindLabel } from '../shared/away-mode/labels.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
 import { effectiveDebugSpawn } from '../core/settings.mjs';
-import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule } from './schedule.mjs';
+import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule, resolveAfterId } from './schedule.mjs';
+import { applyTagRules } from '../core/tag-dimensions.mjs';
+import { inheritedTagsAtCreation } from '../core/scheduler.mjs';
 import { cmdRuns } from './runs.mjs';
 import { cmdLogs } from './logs.mjs';
 import { cmdControl } from './control.mjs';
@@ -111,6 +114,7 @@ function parseArgs(argv) {
     file: null,
     title: null,
     extras: [],
+    tags: [],
     ui: false,
     model: undefined,
     permissionMode: undefined,
@@ -137,6 +141,7 @@ function parseArgs(argv) {
     '--file',
     '--title',
     '--extras',
+    '--tag',
     '--model',
     '--engine',
     '--permission-mode',
@@ -155,6 +160,7 @@ function parseArgs(argv) {
     '--file': 'file',
     '--title': 'title',
     '--extras': 'extras',
+    '--tag': 'tags',
     '--model': 'model',
     '--engine': 'engine',
     '--permission-mode': 'permissionMode',
@@ -227,6 +233,9 @@ function parseArgs(argv) {
           const p = part.trim();
           if (p) out.extras.push(p);
         }
+      } else if (key === 'tags') {
+        // Repeatable, never comma-split: a value may hold commas ("client:müller & söhne, gmbh").
+        out.tags.push(String(value));
       } else if (key === 'permissionMode' && !PERMISSION_MODES.includes(String(value))) {
         // A pipeline run's mode reaches claude-runner as-is. `dontAsk` is a legitimate
         // headless mode for a REAL run (allowedTools decide what runs); only the
@@ -328,6 +337,7 @@ Options:
   --prompt <text>          Task prompt text
   --file <md>              Markdown file used as the prompt (alternative to --prompt)
   --title <text>           Human-readable run title
+  --tag <tag>              tag the run for cost allocation, e.g. --tag client:acme (repeatable)
   --extras <paths>         Extra files copied into the pipeline's extras/ folder
                            (comma-separated; repeatable)
   --model <m>              Claude model id
@@ -677,6 +687,17 @@ async function attachAndDrive(orch, flags, start) {
   // which the header formatter resolves against the manifest.
   orch.on('question', async (payload) => {
     const { id, kind, questions, issues, recovery, agent } = payload;
+    if (kind === 'plan') {
+      // A plan approval needs a person and is answered in the worca app (shape-it-first D2). Pause, so the hold
+      // stays in the resume point. Deferred one microtask, like abandonAnswer (:608): _ask emits `question`
+      // before it parks pendingQuestion.
+      out(c('yellow', `The plan ${payload.plan?.file || ''} is waiting for approval in the worca app; pausing the run.`));
+      queueMicrotask(() => {
+        if (orch.pauseRequested || !orch.state || orch.state.status !== 'running') return;
+        orch.pause();
+      });
+      return;
+    }
     if (flags.auto || !rl) return; // auto mode resolves internally
     answering = true;
     const ctrl = new AbortController();
@@ -2423,7 +2444,8 @@ async function cmdWorkflow(argv) {
       case 'list': {
         // The built-ins (Default, Memory defragment) are not in the user store, so
         // prepend them — mirrors the server/UI, which always show them first.
-        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(await wf.listWorkflows())];
+        const { shapeFirstEnabled } = await import('../core/shape/gate.mjs');
+        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(shapeFirstEnabled() ? [wf.GRAPH_SHAPE_WORKFLOW] : []), ...(await wf.listWorkflows())];
         for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
         return 0;
       }
@@ -3298,6 +3320,9 @@ async function main() {
   }
 
   const flags = parseArgs(process.argv.slice(2));
+  const tagCheck = normaliseTags(flags.tags);
+  if (tagCheck.errors.length) fail(`--tag: ${tagCheck.errors[0]}`);
+  flags.tags = tagCheck.tags;
 
   if (flags.help) {
     process.stdout.write(HELP);
@@ -3403,11 +3428,24 @@ async function main() {
     try { row = await assertRunnableWorkflow(flags.workflow); }
     catch (err) { fail(`${err && err.message ? err.message : String(err)}`); }
   }
+  if (flags.workflow) {
+    const { isShapeWorkflowId } = await import('../core/shape/run.mjs');
+    if (isShapeWorkflowId(flags.workflow)) {
+      fail(`workflow "${flags.workflow}" is started from the worca app (POST /api/run with shape), not the CLI`);
+    }
+  }
   {
     const { validateMemoryScope } = await import('../core/memory-sync.mjs');
     const reason = validateMemoryScope({ workflowId: flags.workflow || 'wf_default', memoryScope: flags.memoryScope, isWorkspace: false });
     if (reason) fail(reason);
   }
+  // Enforced tags (D14): project-only, no identity (no last-used source); the server's message, exit 2.
+  // A Run after with no --tag checks the tags the chain will inherit and stores none (D9a, like tagGate).
+  const inherits = !!flags.after && !flags.tags.length;
+  const tagBase = inherits ? inheritedTagsAtCreation(resolveAfterId(flags.after, fail)) : flags.tags;
+  const tagGate = await applyTagRules({ projectDir, tags: tagBase, person: null });
+  if (tagGate.error) fail(tagGate.error);
+  if (tagGate.enforced && !inherits) flags.tags = tagGate.tags;      // requestFromFlags and buildOrch both read flags.tags
 
   // Scheduled runs: write the ticket (or the repeating schedule) and exit — unless --wait
   // holds this terminal, in which case the run starts HERE, through the path below.
@@ -3443,11 +3481,13 @@ async function main() {
     auto: flags.auto,
     humanInLoop: flags.humanInLoop === false ? false : undefined,
     ...(flags.nightMode ? { nightMode: true } : {}),
+    ...(flags.tags.length ? { tags: flags.tags } : {}),
   });
 
   if (waitTicketId) {
     const code = await waitAndRun({
       ticketId: waitTicketId, tz: spec.tz, out, c,
+      retag: (tags) => { flags.tags = tags; },
       drive: async (onPipelineId) => {
         const o = await buildOrch();
         o.on('state', (st) => { if (st && typeof st.id === 'string' && st.id) onPipelineId(st.id); });

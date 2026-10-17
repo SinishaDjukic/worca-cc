@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {
   parseRemoteUrl, remoteRepoSlug, sameRepo, listRemotes, listRemoteBranches, prHeadRef,
   pushBranch, createPr, ghRepoAccess, ghForkRepo, prMergeable, findPrForBranch, prLifecycleState, prProviderFor, prHostsAvailable, anyPrHost,
-  _testing as gitInfo,
+  markPrReady, closePr, _testing as gitInfo,
 } from '../src/core/git-info.mjs';
 import { forgeOf, forgeOfPrUrl, prNumberFromUrl } from '../src/core/forge.mjs';
 import * as azurePr from '../src/core/pr/azure.mjs';
@@ -515,3 +515,18 @@ test('ghForkRepo: POST /forks, then waits until the fork answers; times out with
     } },
   ]));
 });
+
+test('markPrReady and closePr: gh argv; an already-ready PR counts as ready; a missing URL is refused', () => withEnv(CLOSED_GATES, async () => {
+  const seen = [];
+  gitInfo.setRunner((cmd, args) => { seen.push([cmd, ...args]); return okOut(''); });
+  assert.deepEqual(await markPrReady({ prUrl: 'https://github.com/o/r/pull/5' }), { ok: true });
+  assert.deepEqual(await closePr({ prUrl: 'https://github.com/o/r/pull/5', comment: 'Shipped as one pull request: https://github.com/o/r/pull/9' }), { ok: true });
+  assert.deepEqual(seen[0], ['gh', 'pr', 'ready', 'https://github.com/o/r/pull/5']);
+  assert.deepEqual(seen[1], ['gh', 'pr', 'close', 'https://github.com/o/r/pull/5', '--comment', 'Shipped as one pull request: https://github.com/o/r/pull/9']);
+  gitInfo.setRunner(() => fail('pull request #5 is not a draft'));
+  assert.deepEqual(await markPrReady({ prUrl: 'https://github.com/o/r/pull/5' }), { ok: true });
+  gitInfo.setRunner(() => fail('could not close'));
+  assert.deepEqual(await closePr({ prUrl: 'https://github.com/o/r/pull/5' }), { ok: false, error: 'could not close' });
+  assert.equal((await markPrReady({})).ok, false);
+  assert.equal((await closePr({})).ok, false);
+}));

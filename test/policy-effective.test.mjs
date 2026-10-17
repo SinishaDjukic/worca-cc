@@ -3,7 +3,7 @@
 // document with the developer's settings, per run kind; the deviation codes a run records.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fieldsForRun, effectiveCap, effectiveDefault, effectiveRows, deviationsFor, capSummary, fieldCount, effectiveWebEnabled } from '../src/core/policy/effective.mjs';
+import { fieldsForRun, effectiveCap, effectiveDefault, effectiveRows, deviationsFor, capSummary, fieldCount, effectiveWebEnabled, fmtValue } from '../src/core/policy/effective.mjs';
 import { normalizePolicyDoc } from '../src/core/policy/registry.mjs';
 
 const doc = normalizePolicyDoc({
@@ -128,4 +128,20 @@ test('policy docs from before the fix: a team "default" on web fields is dropped
   const r = normalizePolicyDoc({ schema: 1, fields: { 'ask.webEnabled': { kind: 'default', value: true }, 'ask.webAllowedDomains': { kind: 'default', value: ['evil.example'] } } });
   assert.equal(r.doc.fields['ask.webEnabled'], undefined);
   assert.equal(r.doc.fields['ask.webAllowedDomains'], undefined);
+});
+
+test('deviationsFor: a missing required tag dimension warns with tag-missing:KEY only when tags are passed', () => {
+  const f = fieldsForRun(normalizePolicyDoc({ schema: 1, fields: { 'runs.tagDimensions': { kind: 'soft', value: [
+    { key: 'cc', label: 'Cost centre', required: true }, { key: 'client', label: 'Client' },
+  ] } } }).doc);
+  const dev = deviationsFor(f, { tags: ['client:acme'] });
+  assert.deepEqual(dev.map((d) => [d.code, d.level]), [['tag-missing:cc', 'warn']]);
+  assert.match(dev[0].text, /Cost centre \(cc\) is a required tag/);
+  assert.deepEqual(deviationsFor(f, { tags: ['cc:4410'] }), []);
+  assert.deepEqual(deviationsFor(f, {}), [], 'no ctx.tags (e.g. /api/policy/notes) → no tag finding');
+});
+
+test('fmtValue: tagDimensions reads as labels, not [object Object]', () => {
+  assert.equal(fmtValue({ type: 'tagDimensions' }, [{ key: 'cc', label: 'Cost centre', values: [], required: true }]), 'Cost centre (cc) required');
+  assert.equal(fmtValue({ type: 'tagDimensions' }, []), '(none)');
 });

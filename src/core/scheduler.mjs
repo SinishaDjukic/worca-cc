@@ -31,6 +31,7 @@ import { projectKey } from './store.mjs';
 import { addNotification, resolveNotifications } from './notifications.mjs';
 import { usageLimitSwitches, engineList } from '../shared/engine-switch.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
+import { readRunTags } from './run-tags-store.mjs';
 import {
   normalizeRule, nextOccurrence, describeRule, OVERLAP_POLICIES, MISSED_POLICIES,
 } from '../shared/schedule/recurrence.mjs';
@@ -520,6 +521,25 @@ export function previousBranchesOf(pipelineId, { now = Date.now() } = {}) {
   return typeof br === 'string' && br ? { sourceBranch: br } : null;
 }
 
+const AFTER_TAG_HOPS = 10;
+/**
+ * D9a: the tags a Run after ticket that names none will inherit when it fires (#718 reads the
+ * predecessor's run tags then). A pipeline → its tags; a ticket → its own stored tags, else its
+ * run's tags, else its own predecessor's. [] when nothing is known yet.
+ */
+export function inheritedTagsAtCreation(after) {
+  let cur = after;
+  for (let hop = 0; cur && cur.id && hop < AFTER_TAG_HOPS; hop++) {
+    if (cur.kind === 'pipeline') return readRunTags(cur.id);
+    const t = getTicket(cur.id, { withRequest: true });   // a plain getTicket has no `request`
+    if (!t) return [];
+    if (Array.isArray(t.request?.tags)) return t.request.tags;
+    if (t.pipelineId) return readRunTags(t.pipelineId);
+    cur = t.after;
+  }
+  return [];
+}
+
 /** Open tickets that wait for the given run — what a cancel or an archive would strand. */
 export function dependentsOfRun({ ticketId = null, pipelineId = null } = {}) {
   const ids = [];
@@ -579,6 +599,98 @@ export function chainBaseBranchesOf(pipelineId) {
     cur = predId;
   }
   return chain;
+}
+
+// ── run progress: chains (spec 2026-10-14 run-progress P8) ───────────────────
+
+const CHAIN_TICKET_SQL = 'SELECT id, title, status, after_kind, after_id, pipeline_id, project_key, project_dir, workspace_id, created_at FROM scheduled_runs';
+const CHAIN_PIPELINE_SQL = 'SELECT id, title, status, target, project_key, workspace_key, pr_url FROM pipelines WHERE id = ?';
+const WAITING_TICKET = new Set(['scheduled', 'firing']);
+const PR_URL_RE = /^https:\/\/\S+$/i;   // the expander makes it a link: never a javascript:/data: href
+
+/**
+ * Every "Run after" chain with a run still going or waiting, root first. A chain is one tree of
+ * `after` links (a ticket waits on a ticket or a pipeline; a fired ticket IS its pipeline), read in
+ * pre-order with siblings by creation time: a plain line reads in its own order, a fork lists each
+ * branch whole. A link whose predecessor ticket was purged starts its own chain; a hand-made cycle
+ * has no root and is never listed. Read-only.
+ * Member: { ticketId, pipelineId, title, state: done|current|waiting|failed, prUrl, historyKey, projectKey, workspaceId, projectDir }.
+ * @param {{isLive?: (q:{id:string, pipelineId:string|null}) => boolean}} [opts]
+ * @returns {Array<{id:string, title:string|null, members:object[]}>}
+ */
+export function runChains({ isLive = null } = {}) {
+  const db = getDb();
+  const linked = db.prepare(`${CHAIN_TICKET_SQL} WHERE after_id IS NOT NULL ORDER BY created_at ASC, id ASC`).all();
+  if (!linked.length) return [];
+  const tickets = new Map(linked.map((t) => [t.id, t]));
+  const ticketRow = (id) => {
+    if (!tickets.has(id)) tickets.set(id, db.prepare(`${CHAIN_TICKET_SQL} WHERE id = ?`).get(String(id)) || null);
+    return tickets.get(id);
+  };
+  const keyOf = (t) => (t.pipeline_id ? `p:${t.pipeline_id}` : `t:${t.id}`);
+  const nodes = new Map();
+  const node = (key) => {
+    if (!nodes.has(key)) nodes.set(key, { key, ticket: null, pipelineId: key.startsWith('p:') ? key.slice(2) : null, parent: null, children: [] });
+    return nodes.get(key);
+  };
+  for (const t of linked) {
+    const self = node(keyOf(t));
+    self.ticket = t;
+    let parentKey;
+    if (t.after_kind === 'ticket') {
+      const pt = ticketRow(t.after_id);
+      if (!pt) continue;
+      parentKey = keyOf(pt);
+      const p = node(parentKey);
+      if (!p.ticket) p.ticket = pt;
+    } else parentKey = `p:${t.after_id}`;
+    if (parentKey === self.key || self.parent) continue;
+    self.parent = parentKey;
+    node(parentKey).children.push(self.key);
+  }
+  const created = (n) => (n.ticket && n.ticket.created_at) || '';
+  const member = (n) => {
+    const t = n.ticket;
+    const row = n.pipelineId ? db.prepare(CHAIN_PIPELINE_SQL).get(n.pipelineId) || null : null;
+    let state;
+    if (n.pipelineId) {
+      if (!row) state = 'failed';
+      else if ((isLive && isLive({ id: t ? t.id : row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status)) state = 'current';
+      else if (row.status === 'done') state = 'done';
+      else if (BAD_PIPELINE_REASON[row.status]) state = 'failed';
+      else state = 'current';                      // an unknown status: still going (pipelineGate's reading)
+    } else if (WAITING_TICKET.has(t.status)) state = 'waiting';
+    else if (t.status === 'fired') state = 'current';   // fired, its pipeline not linked yet
+    else state = 'failed';                              // canceled | skipped | failed | missed
+    const projectKey = (row && row.target === 'project' ? row.project_key : null) || (t && t.project_key) || null;
+    return {
+      ticketId: t ? t.id : null, pipelineId: n.pipelineId, title: (t && t.title) || (row && row.title) || null, state,
+      prUrl: row && typeof row.pr_url === 'string' && PR_URL_RE.test(row.pr_url) ? row.pr_url : null,
+      // The `#history/<key>/<id>` key, exactly as listAllPipelines builds it (artifacts.mjs ~2339).
+      historyKey: !row ? null : row.target === 'workspace' && row.workspace_key ? `workspaces/${row.workspace_key}` : row.project_key || null,
+      projectKey, workspaceId: (row && row.workspace_key) || (t && t.workspace_id) || null, projectDir: (t && t.project_dir) || null,
+    };
+  };
+  const out = [];
+  const seen = new Set();
+  for (const root of nodes.values()) {
+    if (root.parent) continue;
+    const order = [];
+    const walk = (n) => {
+      if (!n || seen.has(n.key) || order.length >= CHAIN_DEPTH_CAP) return;
+      seen.add(n.key);
+      order.push(n);
+      n.children.map((k) => nodes.get(k))
+        .sort((a, b) => created(a).localeCompare(created(b)) || a.key.localeCompare(b.key))
+        .forEach(walk);
+    };
+    walk(root);
+    if (order.length < 2) continue;
+    const members = order.map(member);
+    if (!members.some((m) => m.state === 'current' || m.state === 'waiting')) continue;
+    out.push({ id: root.key, title: members[0].title, members });
+  }
+  return out;
 }
 
 /**
@@ -889,6 +1001,22 @@ export function dueTickets({ now = Date.now() } = {}) {
  *   isLive({id,pipelineId}) -> boolean   (optional: the host's in-memory run view)
  * Returns a summary { fired, missed, skipped, failed, retried, waiting }.
  */
+/**
+ * Park a due ticket as skipped with its reason (info feed item). A series occurrence also records
+ * Last: skipped and plans the next one; a one-shot drops its stage, like the failure arm. Not a
+ * failure: the streak is untouched.
+ */
+export function skipTicket(t, reason, { now = Date.now(), schedule = t.scheduleId ? getSchedule(t.scheduleId) : null } = {}) {
+  touchTicket(t.id, "status = 'skipped', fail_reason = ?, forced = 0", [reason], now);
+  addNotification({
+    kind: 'skipped', severity: 'info', scheduleId: t.scheduleId, ticketId: t.id,
+    pipelineId: t.resumePipelineId || null, projectDir: t.projectDir, title: t.title,
+    message: `was skipped: ${reason}.`, now: new Date(now),
+  });
+  if (schedule) { setLastResult(schedule.id, 'skipped', now); materializeNext(schedule.id, { now }); }
+  else removeStage(t.id);
+}
+
 export async function runDueTickets({
   now = Date.now(), start, isLive = null, pid = process.pid, host = hostname(), pidAlive = defaultPidAlive,
   onlyOwned = false, staggerMs = 0, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -972,12 +1100,7 @@ export async function runDueTickets({
     // (Mirrors the overlap-skip arm above; 'skipped' is a known terminal status —
     // TICKET_STATUSES / purgeScheduler.)
     if (res && res.skip) {
-      touchTicket(t.id, "status = 'skipped', fail_reason = ?, forced = 0", [(res && res.error) || 'no longer applies'], now);
-      addNotification({
-        kind: 'skipped', severity: 'info', scheduleId: t.scheduleId, ticketId: t.id,
-        pipelineId: t.resumePipelineId || null, projectDir: t.projectDir, title: t.title,
-        message: `was skipped: ${(res && res.error) || 'no longer applies'}.`, now: new Date(now),
-      });
+      skipTicket(t, (res && res.error) || 'no longer applies', { now, schedule });
       out.skipped.push(t.id);
       continue;
     }

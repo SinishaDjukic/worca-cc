@@ -216,6 +216,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   cases, which it can test) that you **Save** from their card. It never runs
   anything: save the workflow, then start a run from **New run**. **New chat**
   starts over.
+- **From Ask Worca too** — the main chat drafts agents and scripts and proposes whole workflows (scripts, gates and
+  new agents included) with the same cards, without a canvas: **Save** a draft or open it in its editor, and **Save as
+  workflow**, **Open in Workflows** (a new unsaved workflow on the canvas) or **Decline** a proposed graph.
 - **Saved pipelines** — the Library's **Workflows** tab lists them with domain
   chips; click a row to open it. The built-in **Default** and **Memory
   defragment** open read-only (Save makes a copy). Saved pipelines are offered
@@ -435,14 +438,15 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   and agents, schedules, team metrics and policy, models, Actions, and tasks from installed
   trackers. It reads code in read-only, detached worktrees with an allowlisted `git` (`log`,
   `diff`, `blame`, `grep`…), takes attached text files, images and PDFs, and never edits a file
-  itself. Settings › **Ask Worca** (Advanced) sets the turn limit, a per-turn cost cap, script
-  creation and opt-in web access with an allowed-domain list; chat spend counts toward the total
+  itself. Settings › **Ask Worca** (Advanced) sets the turn limit, a per-turn cost cap, whether it may
+  change and test-run your scripts, and opt-in web access with an allowed-domain list; chat spend counts toward the total
   budget, and a team policy can preset the limits or narrow web access, never widen it.
 - **Changes are cards you confirm** — work becomes a **run card** (project, workflow, guardrails,
   branches and brief, all editable) that starts nothing until you click **Start run**, or
   **Schedule…** to run it later ([`docs/scheduled-runs.md`](docs/scheduled-runs.md#ask-worca)).
   Ask for "auto", or for work no saved workflow fits, and it drafts a **workflow card** you tune
-  and **Save as workflow**. Model and provider, workspace, Actions, team-metrics, team-policy and
+  and **Save as workflow** — or, when the work needs a script, a gate or a new agent, a graph card with **draft
+  cards** for the new agents and scripts. Model and provider, workspace, Actions, team-metrics, team-policy and
   Away mode changes, cloning a repo and reading a new website are cards too: nothing changes
   until you apply one. A started run becomes a live card — status, elapsed, cost, its agents and
   its workflow graph, with **Open run** — where you **Pause**, **Resume** or **Stop** the run and
@@ -882,6 +886,7 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Architecture](docs/ARCHITECTURE.md) — the whole stack in one picture, and how Auto picks a run's topology
 - [Scripts](docs/scripts.md) — script cards that run your own program instead of an agent, the Library's Scripts tab, testing a script by itself
 - [Scheduled runs](docs/scheduled-runs.md) — start a run later, once or on a repeat, from the web UI, the CLI or the API
+- [Shape it first](docs/shape-it-first.md) — plan a task with Worca before it builds, in Chat, and cut a large one into slices
 - [Guardrails](docs/guardrails.md) — per-run policy sets (Permissive, Normal, Strict), enforcement, honest limitations
 - [Workspace map](docs/workspace-map.md) — how a workspace scan maps relations, reviewing them, measuring a scan
 - [Actions](docs/actions.md) — check out a finished run and run the project's commands from Worca

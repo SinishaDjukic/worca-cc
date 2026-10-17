@@ -34,36 +34,21 @@ import { posix } from './helpers/posix-path.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
-import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { runOpts, RESUME_HEADER, READ_WRITE_TOOLS, IMPLEMENTER_TOOLS } from '../src/core/phases.mjs';
+import { buildAgentPrompt, taskSourcedPorts } from '../src/core/graph/executor.mjs';
 import {
-  buildAgentPrompt, allocateOutputs, allocateVerdict, expandsOutputPort,
-  taskSourcedPorts,
-} from '../src/core/graph/executor.mjs';
+  REGISTRY, TASK_PROMPT, ORDINAL, nodeId, BUILTIN_KEYS, PARITY_TPL,
+  frontmatterTools, makeCtxFor,
+} from './helpers/prompt-ctx.mjs';
 
 // `store:'project'` allocations resolve under worcaHome() — isolate it FIRST.
 useTempHome(after);
-
-const AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
-/** Builtin layer only — the pin is about the 14 coding/workspace files that ship
- *  in agents/, plus the two architecture builtins (architectSetup, architect), which
- *  have no v1 prompt but take the same generic builder and so get the same
- *  marker + whole-prompt pins. The eight presentation-domain builtins (wf_presentation) embed the
- *  designing-presentations criteria and their own directions block; they are not
- *  part of this byte-for-byte coding-prompt pin, so they are excluded here. */
-const RAW_REGISTRY = loadAgentRegistry(AGENTS_DIR, { userAgentsDir: null, includePlugins: false });
-const REGISTRY = Object.fromEntries(Object.entries(RAW_REGISTRY).filter(([, m]) => m.domain !== 'presentation'));
-const portsFn = registryPortsFn(REGISTRY);
 
 const scratch = [];
 const tmp = (p) => { const d = mkdtempSync(join(tmpdir(), p)); scratch.push(d); return d; };
 after(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
 const projectDir = tmp('worca-parity-proj-');
 const pipelineDir = tmp('worca-parity-pipe-');
-
-const TASK_PROMPT = 'BUILD THE THING';
-const ORDINAL = 2;                       // proves {cycle} still renders the cycle
 
 // ── the v1 bytes (verbatim copies; see the header note) ──────────────────────
 
@@ -130,82 +115,7 @@ const V1_RESUME_HEADER =
 const V2_FIX_REVIEW_ARM = '(the review to address — fix EVERY critical and major issue)';
 const V2_ANSWERS_ARM = '(the clarifying questions and the answers already given)';
 
-// ── the graph the builtins are wired into ────────────────────────────────────
-// Only two wire facts matter to the prompt: which ports a `kind:'task'` node feeds
-// (the request/attachments gate), and which output lands on an `expands` input (the
-// decomposer's contract block + MOCK markers). Everything else is sidecar data.
-
-const nodeId = (key) => `n_${key}`;
-const BUILTIN_KEYS = Object.keys(REGISTRY).sort();
-
-const PARITY_TPL = {
-  id: 'wf_parity', name: 'Parity', version: 2, domain: 'coding',
-  nodes: [
-    { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
-    ...BUILTIN_KEYS.map((key, i) => ({ id: nodeId(key), kind: 'agent', key, x: 200 + i * 40, y: 0, config: {} })),
-  ],
-  wires: [
-    { id: 'w_t_clarify', from: { node: 'n_task', port: 'task' }, to: { node: nodeId('clarify'), port: 'task' } },
-    { id: 'w_t_planner', from: { node: 'n_task', port: 'task' }, to: { node: nodeId('planner'), port: 'task' } },
-    { id: 'w_dec_impl', from: { node: nodeId('decomposer'), port: 'tasks' }, to: { node: nodeId('implementer'), port: 'task' } },
-  ],
-};
-
-/** The frontmatter `tools:` line of an agent .md — what resolveGraph stamps onto
- *  `node.tools` in production (workflows.mjs#parseFrontmatterTools, private). */
-function frontmatterTools(key) {
-  const file = REGISTRY[key].agentFile;
-  const text = readFileSync(join(AGENTS_DIR, file), 'utf8');
-  const m = /^---\s*\n([\s\S]*?)\n---/.exec(text);
-  const line = m ? m[1].split(/\r?\n/).find((l) => /^tools\s*:/.test(l)) : null;
-  return line ? line.replace(/^tools\s*:/, '').split(',').map((s) => s.trim()).filter(Boolean) : [];
-}
-
-const tok = (over = {}) => ({ seq: 1, type: 'md', ...over });
-
-/** Bind a port to a plausible absolute artifact path; a void port binds a
- *  payload-free token (which is exactly what an `as:'worktree'` input gets). */
-function bind(port) {
-  if (port.type === 'void') return tok({ type: 'void' });
-  return tok({ type: port.type, path: `/abs/${port.id}.${port.type === 'json' ? 'json' : 'md'}` });
-}
-
-/**
- * The ctx `runAgentExecution` hands its builder, assembled the way `prepare` does —
- * real sidecar meta, real allocation, graph-derived expands port. `only` names the
- * ports to bind; absent it, every REQUIRED input is bound (the steady-state first
- * execution). Optional inputs (the reviewer's `as:'worktree'` `done`, the planner's
- * `answers`/`revise`) are bound only when named.
- */
-function ctxFor(key, { only = null, workspace = null, extras = [], slice = null, runRoot = null } = {}) {
-  const meta = REGISTRY[key];
-  const node = {
-    id: nodeId(key), kind: 'agent', key, x: 0, y: 0, config: {},
-    fanOut: !!meta.fanOut, agentPrompt: `You are ${meta.displayName}.`, tools: frontmatterTools(key),
-  };
-  const ports = portsFn(node);                 // spreads the meta: ports.verdict IS the sidecar block
-  let v = 0;
-  const runCtx = {
-    pipelineDir, projectDir, baseName: 'feature', datePrefix: '01-01-26',
-    workspaceKey: null, duplicateKey: false, slice: slice?.id ?? null,
-    planVersion: () => { v += 1; return v; },
-  };
-  const chosen = (ports.inputs || []).filter((p) => p.id !== 'await' && (only ? only.includes(p.id) : p.required));
-  const bindings = {};
-  for (const port of chosen) bindings[port.id] = bind(port);
-  const executionId = `x:${node.id}:${ORDINAL}`;
-  return {
-    node, nodeId: node.id, ports, meta, bindings,
-    trigger: { wireIds: [], freshPorts: Object.keys(bindings) },
-    ordinal: ORDINAL, cycle: ORDINAL, executionId, runCtx, slice,
-    outputs: allocateOutputs({ node, ports, executionId, ordinal: ORDINAL, runCtx }),
-    verdict: allocateVerdict({ node, ports, ordinal: ORDINAL, runCtx }),
-    expandsPort: expandsOutputPort(PARITY_TPL, portsFn, node.id),
-    projectDir, pipelineDir, taskPrompt: TASK_PROMPT, toolInstruction: 'TOOLS',
-    checkpointRef: 'abc1234', extras, workspace, runRoot, template: PARITY_TPL,
-    priorAnswers: [], agentPrompts: {}, claudeOpts: { mock: true },
-  };
-}
+const ctxFor = makeCtxFor({ pipelineDir, projectDir });
 
 const promptFor = (key, opts) => buildAgentPrompt(ctxFor(key, opts));
 

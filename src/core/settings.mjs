@@ -66,6 +66,7 @@ import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
+import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -968,8 +969,9 @@ const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused', 'away', 'prWa
  * enabled (an absent "<plugin>/<channelId>" key means enabled — presence with
  * {enabled:false} is the opt-out record); `scriptTools` (scripts-workbench W20) is the
  * chat's "Create and run scripts" switch and defaults ON, so only a stored false ever
- * takes save_script / test_script away.
- * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean}}
+ * takes save_script / test_script away. `suggestions` is Ask Worca's next-prompt ghost text after
+ * each reply (one cheap model call per reply), default ON as well.
+ * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean}}
  */
 export function chatPrefs() {
   const raw = readSettings().chat;
@@ -980,13 +982,14 @@ export function chatPrefs() {
   for (const [key, v] of Object.entries(chat.channels && typeof chat.channels === 'object' ? chat.channels : {})) {
     channels[key] = { enabled: v?.enabled !== false };
   }
-  return { notify, channels, scriptTools: chat.scriptTools !== false };
+  // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
+  return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false };
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?, away?},
- * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean}. Unknown
- * notify keys and a non-boolean scriptTools are rejected (400 at the API layer);
+ * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean}.
+ * Unknown notify keys and a non-boolean scriptTools / suggestions are rejected (400 at the API layer);
  * channels merge per key.
  */
 export async function setChatPrefs(patch = {}) {
@@ -996,6 +999,8 @@ export async function setChatPrefs(patch = {}) {
   }
   const hasScriptTools = Object.prototype.hasOwnProperty.call(patch, 'scriptTools');
   if (hasScriptTools && typeof patch.scriptTools !== 'boolean') throw new Error('chat scriptTools must be true or false');
+  const hasSuggestions = Object.prototype.hasOwnProperty.call(patch, 'suggestions');
+  if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1008,6 +1013,7 @@ export async function setChatPrefs(patch = {}) {
       },
     } : {}),
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
+    ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
   };
   await persistSettings(settings);
   return chatPrefs();
@@ -1140,6 +1146,8 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
   'askEngine', 'askModels',                  // Ask Worca's engine for new chats and its model per engine (user-only, D17)
+  'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
+  'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
 ]);
 
 let projectLayerReader = null;
@@ -2331,6 +2339,37 @@ export async function setScheduleDefaults(patch = {}) {
   if (has('maxFailures')) put('scheduleMaxFailures', patch.maxFailures);
   await persistSettings(settings);
   return scheduleDefaults();
+}
+
+/** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */
+export function userTagDimensions() {
+  if (homeGuarded()) return [];
+  return normaliseDimensions(readSettings().tagDimensions).dims;
+}
+
+/** Replace the local list; [] or null clears it. Throws { code: 'BAD_TAG_DIMENSIONS' } before any write. */
+export async function setUserTagDimensions(list) {
+  const { dims, errors } = normaliseDimensions(list ?? []);
+  if (errors.length) throw Object.assign(new Error(errors[0]), { code: 'BAD_TAG_DIMENSIONS' });
+  const settings = readSettings();
+  if (dims.length) settings.tagDimensions = dims; else delete settings.tagDimensions;
+  await persistSettings(settings);
+  return userTagDimensions();
+}
+
+/** Settings › Tags › "Require mandatory tags to start a run" (local; a team policy's runs.enforceTags wins). */
+export function userEnforceTags() {
+  if (homeGuarded()) return false;
+  return readSettings().enforceTags === true;
+}
+
+/** true/false; false removes the key. Throws { code: 'BAD_ENFORCE_TAGS' } before any write. */
+export async function setUserEnforceTags(v) {
+  if (typeof v !== 'boolean') throw Object.assign(new Error('enforceTags must be true or false'), { code: 'BAD_ENFORCE_TAGS' });
+  const settings = readSettings();
+  if (v) settings.enforceTags = true; else delete settings.enforceTags;
+  await persistSettings(settings);
+  return userEnforceTags();
 }
 
 // ── Sync before run (#527) ─────────────────────────────────────────────────

@@ -13,9 +13,9 @@
 // network commands run in their own session instead, so ssh has no tty to prompt on (defaultRun).
 
 import { spawn, spawnSync } from 'node:child_process';
-import { stat, realpath, readFile, readdir } from 'node:fs/promises';
+import { stat, realpath, readFile, readdir, writeFile, rm, mkdtemp } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
-import { devNull } from 'node:os';
+import { devNull, tmpdir } from 'node:os';
 import { githubEnv } from './github-credentials.mjs';
 import { azureEnv } from './azure-credentials.mjs';
 import { stripHostCredentials } from './host-credentials.mjs';
@@ -868,6 +868,68 @@ export function runSyncOptions(input) {
 }
 
 // Test seam: swap the git runner. Mirrors git-info.mjs#_testing.
+/**
+ * D25: write one file on a branch and commit it, whether or not the branch is checked out. Checked out in ONE clean
+ * worktree that is on the branch at its tip: a normal commit there. Not checked out: a temporary index on the tip,
+ * commit-tree and a compare-and-swap update-ref (mergeBaseInto's rule). `update(text)` gets the file's text on the
+ * branch ('' when it has none) and returns the new text; the same text commits nothing. Never throws.
+ * @returns {Promise<{ok:true, sha:string, via:'commit'|'commit-tree'|'unchanged'}|{ok:false, kind:string, error:string}>}
+ */
+export async function commitFileOnBranch(dir, { branch, path, update, message }) {
+  if (!isSafeBranchName(branch) || !path || path.includes('..') || isAbsolute(path)) {
+    return { ok: false, kind: 'bad-request', error: 'invalid branch or path' };
+  }
+  const head = await shaOf(dir, `refs/heads/${branch}`);
+  if (!head) return { ok: false, kind: 'bad-request', error: `no branch ${branch}` };
+  const shown = await _run(['show', `${head}:${path}`], { cwd: dir });
+  const next = update(shown.ok ? shown.stdout : '');
+  if (shown.ok && next === shown.stdout) return { ok: true, sha: head, via: 'unchanged' };   // a retried ship: no empty commit
+  const holders = await checkoutsOf(dir, branch);
+  if (holders === null || holders.length > 1) return { ok: false, kind: 'in-use', error: 'git could not tell where the branch is checked out' };
+  // No identity helper here (mergeBaseInto's rule): a missing user.name/email is git's own error, as kind 'identity'.
+  const commitFail = (stderr) => ({
+    ok: false, kind: /Author identity unknown|tell me who you are|unable to auto-detect email/i.test(stderr || '') ? 'identity' : 'failed',
+    error: scrubGitText(stderr) || 'git commit failed' });
+  if (holders.length === 1) {
+    const wt = holders[0];
+    const on = await _run(['symbolic-ref', '-q', 'HEAD'], { cwd: wt });
+    if (!(on.ok && on.stdout.trim() === `refs/heads/${branch}`)) return { ok: false, kind: 'in-use', error: `${wt} is not on ${branch}` };
+    if (await shaOf(wt, 'HEAD') !== head) return { ok: false, kind: 'moved', error: `${branch} moved: try again` };
+    const st = await _run(['status', '--porcelain', '--untracked-files=no'], { cwd: wt });
+    if (!st.ok || st.stdout.trim()) return { ok: false, kind: 'dirty', error: `${wt} has uncommitted changes` };
+    try { await writeFile(join(wt, path), next, 'utf8'); } catch (err) { return { ok: false, kind: 'failed', error: err.message }; }
+    const added = await _run(['add', '--', path], { cwd: wt });
+    // `commit -- path` commits only that path: nothing else staged in the worktree is swept in.
+    const c = added.ok ? await _run(['commit', '-q', '--no-verify', '-m', message, '--', path], { cwd: wt }) : added;
+    if (!c.ok) return commitFail(c.stderr);
+    return { ok: true, sha: await shaOf(wt, 'HEAD'), via: 'commit' };
+  }
+  let tmp = null;
+  try {
+    tmp = await mkdtemp(join(tmpdir(), 'worca-commit-'));
+    // _run's env REPLACES the environment: start from the credential-free one, as defaultRun does.
+    const env = { ...stripHostCredentials(process.env), GIT_INDEX_FILE: join(tmp, 'index') };
+    const blobFile = join(tmp, 'blob');
+    await writeFile(blobFile, next, 'utf8');
+    const blob = await _run(['hash-object', '-w', '--', blobFile], { cwd: dir });
+    if (!blob.ok) return { ok: false, kind: 'failed', error: scrubGitText(blob.stderr) || 'git hash-object failed' };
+    const steps = (await _run(['read-tree', head], { cwd: dir, env })).ok
+      && (await _run(['update-index', '--add', '--cacheinfo', `100644,${blob.stdout.trim()},${path}`], { cwd: dir, env })).ok;
+    const tree = steps ? await _run(['write-tree'], { cwd: dir, env }) : null;
+    if (!tree?.ok || !SHA_RE.test(tree.stdout.trim())) return { ok: false, kind: 'failed', error: 'could not write the tree' };
+    const c = await _run(['commit-tree', tree.stdout.trim(), '-p', head, '-m', message], { cwd: dir });
+    if (!c.ok || !SHA_RE.test(c.stdout.trim())) return commitFail(c.stderr);
+    const sha = c.stdout.trim();
+    // Belt and braces (mergeBaseInto): a checkout that appeared meanwhile must not see its ref move.
+    const again = await checkoutsOf(dir, branch);
+    if (again === null || again.length) return { ok: false, kind: 'in-use', error: `${branch} was checked out meanwhile` };
+    const u = await _run(['update-ref', '-m', `worca: ${message}`, `refs/heads/${branch}`, sha, head], { cwd: dir });
+    return u.ok ? { ok: true, sha, via: 'commit-tree' } : { ok: false, kind: 'moved', error: `${branch} moved while writing: try again` };
+  } catch (err) {
+    return { ok: false, kind: 'failed', error: scrubGitText(err?.message) || 'could not write the file' };
+  } finally { if (tmp) await rm(tmp, { recursive: true, force: true }).catch(() => {}); }
+}
+
 export const _testing = {
   defaultRun,
   QUIET_ENV,

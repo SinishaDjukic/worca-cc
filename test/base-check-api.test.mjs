@@ -11,6 +11,7 @@ import { _resetForTests as closeDbForTests, getDb } from '../src/core/db.mjs';
 import { writeStoreMeta, findPipelineRowById, persistPrState } from '../src/core/artifacts.mjs';
 import { setWatch, updateWatch } from '../src/core/pr-watch.mjs';
 import { updateBranchRecords } from '../src/core/checkout.mjs';
+import { insertRunTags, readRunTags } from '../src/core/run-tags-store.mjs';
 import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
 import { stopAndSettle } from './helpers/stop-and-settle.mjs';
 import { g, GITCONFIG, world as makeWorld, teammatePush, commitOnFeat } from './helpers/base-world.mjs';
@@ -228,6 +229,7 @@ test('simultaneous resolve-pipeline requests start exactly one run', async () =>
 });
 
 test('POST resolve-pipeline starts a mock run on the existing branch and marks the original', async () => {
+  insertRunTags(conflict.id, ['client:acme']);   // #718: the resolve run is the parent's work
   const r = await post('resolve-pipeline', conflict.id, { projectKey: conflict.key });
   assert.equal(r.status, 200, JSON.stringify(r.json));
   const { runId } = r.json;
@@ -249,6 +251,7 @@ test('POST resolve-pipeline starts a mock run on the existing branch and marks t
   assert.equal(own.feature, 'feat');
   assert.equal(own.reusedExisting, true);
   assert.deepEqual(own.resolves, { runId: conflict.id, member: conflict.key });
+  assert.deepEqual(readRunTags(entry.orch.state.id), ['client:acme'], 'the resolve run carries the original run\'s tags');
   await stopAndSettle(mod.runs, (e) => e === entry);
   // Stopped, the resolve run's post-run step copied its check onto the original: still conflicting, mark kept.
   const after = brOf(conflict.id);

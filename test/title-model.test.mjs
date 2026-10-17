@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveTitleModel, describeTitleModel, generateTitle, DEFAULT_TITLE_MODEL } from '../src/core/title.mjs';
+import { resolveTitleModel, describeTitleModel, generateTitle, auxTextCall, DEFAULT_TITLE_MODEL } from '../src/core/title.mjs';
 import { AUX_EFFORT } from '../src/core/model-env.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -140,11 +140,11 @@ test('generateTitle reports a failed call ONCE through onError (with the model),
   }
 });
 
-test('generateTitle: a throwing onError sink never breaks the caller; no report in mock mode success', async () => {
+test('generateTitle: a throwing onError sink never breaks the caller (the mock marker is reported)', async () => {
   const t = await generateTitle('Add a settings page with dark mode', {
     cwd: process.cwd(), mock: true, runModel: 'm1', onError: () => { throw new Error('sink boom'); },
   });
-  assert.ok(t.length > 0, 'mock title produced');
+  assert.equal(t, '', 'a mock marker is never a title');
 });
 
 // The `run` seam stands in for runClaude: it records each attempt's model and
@@ -260,4 +260,22 @@ test('run-harness passes the run model + an onError sink to generateTitle', asyn
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('auxTextCall: forwards the prompts, books a priced result, rethrows a spawn failure', async () => {
+  const seen = [];
+  const costs = [];
+  const run = async (o) => {
+    seen.push(o);
+    o.onEvent({ type: 'result', costUsd: 0.001, raw: { type: 'result', usage: { input_tokens: 5, output_tokens: 2 } } });
+    return { text: 'Open a PR\n' };
+  };
+  const out = await auxTextCall({ systemPrompt: 'SYS', prompt: 'P', model: 'claude-haiku-4-5' }, { ...offline, run, onCost: (c) => costs.push(c), cwd: '/tmp' });
+  assert.equal(out, 'Open a PR\n');
+  assert.equal(seen[0].systemPrompt, 'SYS');
+  assert.equal(seen[0].prompt, 'P');
+  assert.deepEqual(seen[0].tools, []);
+  assert.equal(costs.length, 1);
+  assert.equal(costs[0].model, 'claude-haiku-4-5');
+  await assert.rejects(auxTextCall({ systemPrompt: 'S', prompt: 'P', model: 'm' }, { ...offline, run: async () => { throw new Error('boom'); } }), /boom/);
 });

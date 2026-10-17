@@ -275,7 +275,7 @@ const LIVE = new Set(['starting', 'running', 'paused']);
 
 /**
  * The Watch PR state machine. Every side effect is injected so the server owns the IO:
- *   originOf(w)                       → { pipelineId, projectKey, projectDir, branch, sourceBranch, baseRemote, guardrailsId, engine, mock } | null
+ *   originOf(w)                       → { pipelineId, projectKey, projectDir, branch, sourceBranch, baseRemote, guardrailsId, engine, mock, tags?: string[] } | null
  *   host.{snapshot, jobLog, reply, comment, rerun}  (by the PR URL's forge: GitHub or Azure DevOps)
  *   git.{fetch, status, fastForward, push}   ({ projectDir, branch, remote }); git.subjects({ projectDir, from, to }) → { ok, subjects }
  *                                     git.checkMerge({ projectDir, baseSha, from, to }) → { ok, merged, markers }
@@ -409,6 +409,8 @@ export function createPrWatcher(deps = {}) {
       workflowId: FIX_WORKFLOW_ID,
       humanInLoop: false,
       ...(origin.guardrailsId ? { guardrailsId: origin.guardrailsId } : {}),
+      // The fix run is the parent's work, so its cost is allocated the same way (#718).
+      ...(origin.tags?.length ? { tags: origin.tags } : {}),
       ...(origin.engine ? { engine: origin.engine } : {}),
       ...(origin.mock ? { mock: true } : {}),
       ...(origin.sourceBranch ? { sourceBranch: origin.sourceBranch } : {}),

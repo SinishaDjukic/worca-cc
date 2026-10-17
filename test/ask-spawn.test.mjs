@@ -227,7 +227,7 @@ test('buildMcpConfig: resolved base, argv twins of the env, execPath default', (
   // v7: the chat's claude is env-scrubbed (envScrub:true above), so the nested classifier's knobs must ride mcpServers.env — only when set.
   const fwd = buildMcpConfig({ homeBase: '/b', threadId: 't', serverPath: '/s.mjs', env: { WORCA_CLAUDE_BIN: '/x/claude.exe', WORCA_AUTO_MODEL: 'claude-sonnet-5', HOME: '/h', WORCA_MOCK: '1' } });
   assert.deepEqual(fwd.mcpServers.worca.env, { WORCA_HOME: resolve('/b'), WORCA_ASK_THREAD_ID: 't', WORCA_CLAUDE_BIN: '/x/claude.exe', WORCA_AUTO_MODEL: 'claude-sonnet-5' }, 'HOME / WORCA_MOCK are not forwarded');
-  assert.deepEqual(MCP_FORWARD_ENV, ['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW']);
+  assert.deepEqual(MCP_FORWARD_ENV, ['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW', 'WORCA_FLAGS']);
   assert.ok(!MCP_FORWARD_ENV.some((k) => /TOKEN|KEY|SECRET|GH_/.test(k)), 'no credential is ever forwarded to the MCP child');
   assert.throws(() => buildAskSpawnOptions({ ...base(), scratchDir: '' }), /scratchDir/);
   assert.throws(() => buildAskSpawnOptions({ ...base(), mcpConfigPath: undefined }), /mcpConfigPath/);
@@ -317,8 +317,8 @@ const REG = () => ({
 const EMPTY = () => ({ servers: {}, env: {}, secretValues: [], grants: [], disallowedTools: [], copies: [], skipped: [], skippedTools: [], sets: [] });
 
 test('§9.3 sandboxNote: today\'s two notes byte for byte without copies; with copies the network sentence names them', () => {
-  assert.equal(sha(sandboxNote()), '8ab44f358b39922fcd3d5f55cf973c4d7b97bc896bcbf6a450a4a91577fbd177', 'SANDBOX_NOTE at 61848e83');
-  assert.equal(sha(sandboxNote({ web: true })), '9ec3a6190db6856e94d8c04ec0fdcc3f9c537baa1f0735f9de9c3108c1101262', 'SANDBOX_NOTE_WEB at 61848e83');
+  assert.equal(sha(sandboxNote()), '28a815086c21a419427a8ead81c3f79badd494f5bbe6a1a1d116df5cb0edd4f7', 'SANDBOX_NOTE (+ the draft/graph sentence)');
+  assert.equal(sha(sandboxNote({ web: true })), '7783dc037cc92451e0f184e32dfd8b7a4f0689d9b4ff192e9adb160b59f22a74', 'SANDBOX_NOTE_WEB (+ the draft/graph sentence)');
   assert.equal(sandboxNote({ web: false, copies: [] }), SANDBOX_NOTE);
   assert.equal(sandboxNote({ web: true, copies: [] }), SANDBOX_NOTE_WEB);
   const off = sandboxNote({ copies: ['jira', 'sentry_billing'] });

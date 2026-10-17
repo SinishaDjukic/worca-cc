@@ -86,6 +86,22 @@ nothing it could change. A sentence appears under the table only when it matters
 yet, a stale home, or the home's "Include my runs" switch turned off on this machine (your
 workspace runs follow that switch).
 
+## By tag
+
+While the `runTags` feature flag is on, the Overview tab opens with three chips: **Overview** (the
+page as before), **By person** (the By actor table on its own) and **By tag**. By tag shows one table
+per tag key over the runs in the range, after the filters: configured tag dimensions first, then every
+other key a run in the range carries, by spend. Each table lists the values by spend, an **Untagged**
+row and a **Total** equal to the Spend tile; Share is an integer percent that adds up to 100%. More
+than 8 values fold into the top 7 and an **Other (n)** row that expands in place. By tag only appears
+when a dimension is configured or a loaded run carries a tag. The chosen chip is remembered in this
+browser.
+
+A run's whole cost lands in the period it **started** (team records carry one total per run), unlike
+Statistics, which counts spend when it happened. Team records carry no Ask Worca spend, so there is no
+Ask Worca row. Each table's **CSV** link downloads `team-metrics-<scope>-<range>-tag-<key>.csv` with the
+columns: the key, `spendUsd`, `sharePct`, `runs`.
+
 ## Timeline
 
 The Team metrics page has two tabs: **Overview** (the KPIs, charts and tables above) and
