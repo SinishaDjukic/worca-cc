@@ -274,7 +274,8 @@ export function runProgress(st, memo = null) {
     }
     if (stage === 'build' && expandsFromBuild && tasks.total) return `task ${Math.min(tasks.done + 1, tasks.total)} of ${tasks.total}`;
     if (now.length > 1) return `${now.length} steps`;
-    if (now.length === 1) return now[0];
+    // A step named like its stage (wf_default's "Plan") adds nothing: "Plan", never "Plan · Plan" (#778).
+    if (now.length === 1) return now[0].trim().toLowerCase() === label.toLowerCase() ? '' : now[0];
     return !rows.length && !active.size ? 'starting' : '';
   };
   const what = waitWhat() || workingWhat();
