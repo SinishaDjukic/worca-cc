@@ -161,7 +161,7 @@ test('no sidebar toggle in the top bar: its left slot is the phone hamburger and
     'past the phone-only hamburger, the row starts with the page title');
 });
 
-test('the collapse toggle sits once in the sidebar\'s logo row, after the MOCK pill: a small round double chevron, mirrored on the rail', () => {
+test('the collapse toggle sits once in the sidebar\'s logo row, after the MOCK pill: a small double chevron with the 6px corner (#775), mirrored on the rail', () => {
   const doc = new JSDOM(html).window.document;
   const btns = doc.querySelectorAll('.side-toggle');
   assert.equal(btns.length, 1, 'one toggle');
@@ -175,7 +175,7 @@ test('the collapse toggle sits once in the sidebar\'s logo row, after the MOCK p
   assert.equal(btn.querySelector('svg').innerHTML, '<path d="M11 17l-5-5 5-5"></path><path d="M18 17l-5-5 5-5"></path>');
   assert.equal(btn.querySelector('svg').getAttribute('aria-hidden'), 'true');
   const base = ruleBody('.side-toggle');
-  for (const d of ['width:24px;', 'height:24px;', 'border-radius:50%;', 'background:transparent;', 'color:var(--ink-2);']) {
+  for (const d of ['width:24px;', 'height:24px;', 'border-radius:var(--r-sm);', 'background:transparent;', 'color:var(--ink-2);']) {
     assert.ok(base.includes(d), `.side-toggle has ${d}`);
   }
   assert.match(ruleBody('.side-toggle svg'), /width:16px;height:16px;/);
