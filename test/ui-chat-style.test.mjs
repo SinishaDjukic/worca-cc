@@ -105,7 +105,7 @@ test('the mockup look (2026-10-10): the composer is frosted glass the transcript
   assert.equal(ruleBody('.ask-card.chat-rc'), 'gap:0;border-radius:16px;box-shadow:var(--shadow-card);');
   assert.match(ruleBody(':root'), /--shadow-card:0 1px 2px light-dark\(/);
   assert.match(ruleBody(':root'), /--shadow-glass:0 2px 6px light-dark\(/);
-  assert.equal(ruleBody('.chat-head-btn.chat-history-toggle'), 'width:32px;height:32px;border-radius:8px;', 'the menu toggle\'s square (.side-toggle)');
+  assert.equal(ruleBody('.chat-head-btn.chat-history-toggle'), 'width:32px;height:32px;border-radius:8px;', 'a 32px square');
   assert.equal(ruleBody('.chat-history-toggle:hover,.chat-history-toggle[aria-pressed="true"]'), 'background:var(--field);color:var(--ink);', 'open: the wash marks the state');
   assert.doesNotMatch(bare, /chat-history-toggle-(line|fill)/, 'the panel glyph\'s open/closed parts are gone');
 });

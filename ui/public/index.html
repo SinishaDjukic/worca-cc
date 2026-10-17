@@ -23,6 +23,15 @@
           <a class="logo-mark" href="#chat/new" aria-label="worca — Chat" title="Chat"></a>
           <!-- The server's mock mode (WS hello serverMock, app.js#applyServerMock): every run is a mock. -->
           <span class="badge amber side-mock-pill" id="side-mock-pill" title="Server started with WORCA_MOCK=1 — all runs are mock." hidden>MOCK</span>
+          <!-- Collapse/expand the sidebar (desktop only: style.css hides it from 1080px down, where the tablet
+               rail is forced and phones use the hamburger). One static double chevron pointing left; style.css
+               mirrors it while the sidebar is a rail, off aria-expanded, which app.js#applySidebarCollapsed keeps
+               (with the label). On the rail it stacks under the mark. -->
+          <button type="button" class="side-toggle" id="side-toggle"
+                  aria-expanded="true" aria-controls="side-rail"
+                  title="Collapse sidebar" aria-label="Collapse sidebar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 17l-5-5 5-5"></path><path d="M18 17l-5-5 5-5"></path></svg>
+          </button>
           <button type="button" class="side-close" id="side-close" aria-label="Close menu" title="Close menu">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
           </button>
@@ -198,16 +207,6 @@
             <button type="button" class="mbar-menu" id="mbar-menu" aria-controls="side-rail" aria-expanded="false" aria-label="Menu" title="Menu">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
               <span class="nav-rollup" id="mbar-rollup" hidden title="A pipeline needs your input"></span>
-            </button>
-            <!-- Collapse/expand the sidebar (desktop only: style.css hides it from 1080px down,
-                 where the tablet rail is forced and phones use the hamburger). A static
-                 panel icon: a rounded frame with an inset bar, a thin line while the menu is open
-                 and a filled block while it is a rail — style.css swaps them off aria-expanded,
-                 which app.js#applySidebarCollapsed keeps (with the label). -->
-            <button type="button" class="side-toggle" id="side-toggle"
-                    aria-expanded="true" aria-controls="side-rail"
-                    title="Collapse menu" aria-label="Collapse menu">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="4.5"></rect><path class="side-toggle-line" d="M7.25 9v6"></path><rect class="side-toggle-fill" x="6" y="8.25" width="4" height="7.5" rx="1.5" fill="currentColor" stroke="none"></rect></svg>
             </button>
             <h1 class="topnav-title" id="topnav-title"></h1>
           </div>

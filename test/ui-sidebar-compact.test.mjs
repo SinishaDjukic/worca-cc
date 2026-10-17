@@ -45,8 +45,8 @@ test('the column is 254px and never scrolls itself; #side-scroll is the one scro
   assert.match(ruleBody('.side-foot'), /flex:none;/);
   assert.match(ruleBody('.side-foot'), /padding:8px 10px 10px;/);
   assert.match(ruleBody('.sidebar.collapsed'), /width:60px;flex:0 0 60px;/);
-  assert.match(ruleBody('.sidebar.collapsed .brand'), /gap:3px;padding:0;/, 'the rail keeps the 48px band');
-  assert.doesNotMatch(ruleBody('.sidebar.collapsed .brand'), /height:/, 'it inherits the column\'s 48px');
+  assert.match(ruleBody('.sidebar.collapsed .brand'), /gap:3px;height:auto;min-height:48px;padding:0;/,
+    'the rail band never drops below the top bar\'s 48px (the tablet rail stays exactly 48px) and grows on the desktop rail to stack the toggle');
   assert.match(ruleBody('.topnav'), /height:48px;/);
   assert.match(ruleBody('.brand .logo-mark'), /width:26px;height:26px;/);
 });
@@ -137,22 +137,37 @@ test('the 60px rail: 40x34 squares 3px apart, section labels as 1px hairlines, c
   assert.doesNotMatch(css, /\.sidebar\.collapsed \.nav button/);
 });
 
-test('the MOCK pill sits in the logo row after the wordmark; on the rail it stacks under the mark (the collapse toggle lives in the top bar)', () => {
+test('the logo row: wordmark, MOCK pill, then the collapse toggle; on the rail the mark, the toggle under it, the pill last', () => {
   const order = [...doc.querySelector('.brand').children].map((el) => el.id || el.className);
   assert.ok(order.indexOf('logo') < order.indexOf('side-mock-pill'), 'after the wordmark');
-  assert.ok(order.indexOf('logo-mark') < order.indexOf('side-mock-pill'), 'the rail\'s mark first, the pill under it');
-  assert.equal(order.indexOf('side-toggle'), -1, 'no toggle in the logo row');
+  assert.ok(order.indexOf('logo-mark') < order.indexOf('side-mock-pill'), 'the rail\'s mark first');
+  assert.ok(order.indexOf('side-mock-pill') < order.indexOf('side-toggle'), 'the toggle at the right of the column\'s row');
   assert.equal(ruleBody('.brand .side-mock-pill'), 'margin-right:auto;padding:3px 7px;cursor:default;background:var(--amber-ink);color:var(--on-status);',
     'no comment inside the rule body (house rule)');
-  assert.match(ruleBody('.sidebar.collapsed .brand'), /flex-direction:column;/);
+  const rail = ruleBody('.sidebar.collapsed .brand');
+  assert.match(rail, /flex-direction:column;/);
+  assert.match(rail, /height:auto;min-height:48px;/, 'the band grows to stack the toggle and never drops below the top bar\'s 48px');
+  assert.match(rail, /padding:0;/, 'the tablet rail (toggle hidden) keeps today\'s 48px band');
+  assert.match(css, /@media \(min-width:1081px\)\{\n {2}\.sidebar\.collapsed \.brand\{padding:8px 0;gap:4px;\}\n\}/,
+    'only the desktop rail, where the toggle shows, pads the stack');
+  assert.match(ruleBody('.sidebar.collapsed .brand .side-mock-pill'), /^order:1;/, 'the » sits directly under the mark, the pill last');
   assert.equal(ruleBody('.sidebar.collapsed .logo-mark'), 'display:block;', 'the rail shows the mark at every width');
   assert.equal(ruleBody('.sidebar.collapsed .brand > .logo-mark'), null, 'nothing hides it on the desktop rail any more');
+});
+
+test('the rail\'s mark is the Worca favicon disc drawn in --ink (follows the theme), never a letter', () => {
+  const mark = doc.querySelector('.brand .logo-mark');
+  assert.equal(mark.textContent, '', 'no letter W or any text');
+  assert.equal(mark.children.length, 0);
+  const body = ruleBody('.brand .logo-mark');
+  assert.match(body, /border-radius:50%;background:var\(--ink\);/);
+  assert.match(body, /mask:url\(\/assets\/worca-mark-mask\.png\) center\/contain no-repeat;mask-mode:luminance;/);
 });
 
 test('npm run verify:theme forces :hover on the new hover-only rules (the Running actions rows and their Stop)', () => {
   const tool = readFileSync(new URL('../tools/verify-theme-cdp.mjs', import.meta.url), 'utf8');
   const list = tool.slice(tool.indexOf('const HOVER_SELECTORS = ['), tool.indexOf('];', tool.indexOf('const HOVER_SELECTORS = [')));
-  for (const sel of ['.act-srow', '.act-stop', '.topnav-new']) assert.ok(list.includes(`'${sel}'`), sel);
+  for (const sel of ['.act-srow', '.act-stop', '.topnav-new', '.side-toggle']) assert.ok(list.includes(`'${sel}'`), sel);
 });
 
 test('the needs-you pill reads at 4.5:1 or better in both themes (--amber-ink-strong on --amber-bg)', () => {
