@@ -82,7 +82,7 @@ test('a global preset saved from a run drops the branch names, like one saved in
   assert.equal(p.setup.sameAsSource, true);
 });
 
-test('a pre-v61 run has no setup: readRunSetup answers null and saving throws NO_RUN_SETUP; an unknown run is NOT_FOUND', () => {
+test('a pre-v62 run has no setup: readRunSetup answers null and saving throws NO_RUN_SETUP; an unknown run is NOT_FOUND', () => {
   seedRun('legacy02', null);
   assert.deepEqual(readRunSetup('legacy02'), { setup: null, target: { kind: 'project', ref: 'api-12345678' } });
   assert.throws(() => createPresetFromRun('legacy02', { name: 'x', scope: { kind: 'global' } }), (e) => e.code === 'NO_RUN_SETUP');

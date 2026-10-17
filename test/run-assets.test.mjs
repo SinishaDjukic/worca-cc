@@ -10,7 +10,7 @@ import { mkdtemp, rm, mkdir, writeFile, readFile, readdir } from 'node:fs/promis
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isValidAssetName, collectRequiredAssets, stageAssets } from '../src/core/run-assets.mjs';
+import { isValidAssetName, collectRequiredAssets, stageAssets, APP_ROOT_MARKER } from '../src/core/run-assets.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 test('isValidAssetName rejects the path-segment escapes', () => {
@@ -41,8 +41,20 @@ test('stageAssets copies the folder tree into the run folder', async () => {
     await writeFile(join(root, 'assets', 'deck-kit', 'nested', 'x.txt'), 'deep\n');
 
     assert.deepEqual(await stageAssets(['deck-kit'], { root, target }), ['deck-kit']);
-    assert.deepEqual((await readdir(join(target, 'deck-kit'))).sort(), ['build-standalone.mjs', 'nested']);
+    assert.deepEqual((await readdir(join(target, 'deck-kit'))).sort(), ['.worca-app-root', 'build-standalone.mjs', 'nested']);
     assert.equal(await readFile(join(target, 'deck-kit', 'nested', 'x.txt'), 'utf8'), 'deep\n');
+  } finally { await rm(root, { recursive: true, force: true }); await rm(target, { recursive: true, force: true }); }
+});
+
+test('stageAssets records worca\'s package root in each staged folder (.worca-app-root) so a staged kit can resolve worca\'s deps', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'worca-assets-root-'));
+  const target = await mkdtemp(join(tmpdir(), 'worca-assets-target-'));
+  try {
+    await mkdir(join(root, 'assets', 'kit'), { recursive: true });
+    await writeFile(join(root, 'assets', 'kit', 'f.js'), 'x\n');
+    await stageAssets(['kit'], { root, target });
+    assert.equal(APP_ROOT_MARKER, '.worca-app-root');
+    assert.equal((await readFile(join(target, 'kit', APP_ROOT_MARKER), 'utf8')).trim(), root);
   } finally { await rm(root, { recursive: true, force: true }); await rm(target, { recursive: true, force: true }); }
 });
 

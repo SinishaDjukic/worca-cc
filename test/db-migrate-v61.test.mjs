@@ -1,19 +1,18 @@
-// test/db-migrate-v61.test.mjs — v61 (#712 slice 2): pipelines.run_setup, the run's setup kept at start.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 
-const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
-
-test('v61 adds pipelines.run_setup to a v60 DB; an existing run keeps NULL (no backfill)', () => {
+test('v61 adds run_presets to a v60 DB, names unique per owner ignoring case', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
-  db.exec("INSERT INTO pipelines (id, project_key) VALUES ('legacy01', 'p-12345678')");
-  db.exec('ALTER TABLE pipelines DROP COLUMN run_setup; PRAGMA user_version = 60');
+  db.exec('DROP TABLE run_presets; PRAGMA user_version = 60');
   migrate(db);
   assert.ok(SCHEMA_VERSION >= 61);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
-  assert.ok(cols(db, 'pipelines').includes('run_setup'));
-  assert.equal(db.prepare("SELECT run_setup FROM pipelines WHERE id = 'legacy01'").get().run_setup, null);
+  assert.deepEqual(db.prepare('PRAGMA table_info(run_presets)').all().map((c) => c.name),
+    ['id', 'name', 'scope_kind', 'scope_ref', 'setup', 'created_by', 'created_at', 'updated_at']);
+  const ins = db.prepare("INSERT INTO run_presets (id, name, created_by, created_at, updated_at) VALUES (?, ?, ?, 'x', 'x')");
+  ins.run('rp_1', 'Quick fix', null);
+  assert.throws(() => ins.run('rp_2', 'quick FIX', null), /UNIQUE/);
+  ins.run('rp_3', 'Quick fix', 'ana');
 });

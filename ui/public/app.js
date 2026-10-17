@@ -22851,7 +22851,7 @@ function paintHdGlance(screen, record, data) {
 // The record's status is the list row's (fresher than the load-time payload); a deep link's stub has
 // none, so the detail payload's stands in.
 // Run presets slice 2 (#712): Save setup as preset on a run's page. Shown only with the flag on and a stored setup
-// (pipelines.run_setup, v61); a run from before v61, the CLI or a scan has none. One GET per run id per page load.
+// (pipelines.run_setup, v62); a run from before v62, the CLI or a scan has none. One GET per run id per page load.
 const runSetupKnown = new Map();   // pipeline id -> setup object | null
 async function paintHdSavePreset(screen, data) {
   const btn = screen && screen.querySelector('.hd-save-preset');

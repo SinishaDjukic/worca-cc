@@ -83,7 +83,10 @@ test('agentVocabulary: derived/identical blurbs do not repeat, a missing .md lea
 });
 
 test('the prompts carry the cards, the recipes, the models, the HITL rule, the fingerprint, extras, feedback and the capped task', () => {
-  const sys = buildClassifierSystemPrompt({ agents: agentVocabulary(REG), models: [...MODELS, { id: 'claude-hidden-9', efforts: ['medium'], hidden: true }], humanInLoop: false });
+  // The run classifies with domain 'coding' (orchestrator _autoRound): coding + shared + general cards. The
+  // other domains' builtins (presentation, architecture, video) would overflow the card budget on their own.
+  const CODING = agentVocabulary(REG, { domain: 'coding' });
+  const sys = buildClassifierSystemPrompt({ agents: CODING, models: [...MODELS, { id: 'claude-hidden-9', efforts: ['medium'], hidden: true }], humanInLoop: false });
   for (const s of ['```json', 'manualWebUiTesting', 'Recipes', 'claude-opus-5-5', 'medium/high/max', 'NO human is in the loop',
     '"size": "small" | "medium" | "large"', '"signals"',
     'purpose: ', 'role (agent file): ', 'hints: ', 'tools: ', 'Drives the RUNNING web UI', 'plugin_playwright_playwright MCP (14 tools',
@@ -100,10 +103,10 @@ test('the prompts carry the cards, the recipes, the models, the HITL rule, the f
   assert.ok(!sys.includes('A human is in the loop'), 'the HITL sentences are mutually exclusive');
   assert.ok(!sys.includes('You are the **'), 'agent bodies never reach the classifier');
   assert.ok(!/worca-cc-[a-z-]+\.md/.test(sys), 'no file names or paths in the prompt');
-  const sysOn = buildClassifierSystemPrompt({ agents: agentVocabulary(REG), models: MODELS, humanInLoop: true });
+  const sysOn = buildClassifierSystemPrompt({ agents: CODING, models: MODELS, humanInLoop: true });
   assert.ok(sysOn.includes('A human is in the loop') && !sysOn.includes('NO human is in the loop'));
   // Budget degradation is deterministic: hints go first, then roles; cards never truncate mid-line.
-  const cards = agentVocabulary(REG);
+  const cards = CODING;
   const full = renderAgentCards(cards);
   const noHints = renderAgentCards(cards, { maxChars: full.length - 1 });
   assert.ok(!noHints.includes('\n  hints: ') && noHints.includes('role (agent file): '));

@@ -80,7 +80,7 @@ test('an invalid graph is 422 with the SHARED validator issues, byte for byte', 
   assert.deepEqual(r.body.errors, expected.errors);
   assert.deepEqual(r.body.warnings, expected.warnings);
   assert.equal(r.body.errors[0].code, 'V7', "the single-wire rule is what n_end.result's second wire trips");
-  assert.equal(prepare('SELECT count(*) AS n FROM workflows').get().n, 3, 'nothing was written (wf_presentation + wf_architecture_c4 seeds + the one GOOD save)');
+  assert.equal(prepare('SELECT count(*) AS n FROM workflows').get().n, 4, 'nothing was written (wf_presentation + wf_architecture_c4 + wf_promo_video seeds + the one GOOD save)');
 });
 
 test('a malformed nodes/wires entry is 422, never a 500 and never a written row', async () => {
@@ -97,7 +97,7 @@ test('a malformed nodes/wires entry is 422, never a 500 and never a written row'
   const nulled = await api('POST', '/api/workflows', { ...GOOD, name: 'Nulled', nodes: [null, ...GOOD.nodes] });
   assert.equal(nulled.status, 422);
   assert.ok(nulled.body.errors.some((e) => e.code === 'V1' && /nodes\[0\] must be an object \(got null\)/.test(e.message)));
-  assert.equal(prepare('SELECT count(*) AS n FROM workflows').get().n, 3, 'nothing was written (wf_presentation + wf_architecture_c4 seeds + the one GOOD save)');
+  assert.equal(prepare('SELECT count(*) AS n FROM workflows').get().n, 4, 'nothing was written (wf_presentation + wf_architecture_c4 + wf_promo_video seeds + the one GOOD save)');
 });
 
 test('a v2 save validates agent node config against the model catalog', async () => {
@@ -108,7 +108,7 @@ test('a v2 save validates agent node config against the model catalog', async ()
   const r = await api('POST', '/api/workflows', bad);
   assert.equal(r.status, 400);
   assert.equal(r.body.error, 'unknown model "nope"', 'the same text PATCH .../defaults returns');
-  assert.equal(prepare('SELECT count(*) AS n FROM workflows').get().n, 3, 'nothing was written (wf_presentation + wf_architecture_c4 seeds + the one GOOD save)');
+  assert.equal(prepare('SELECT count(*) AS n FROM workflows').get().n, 4, 'nothing was written (wf_presentation + wf_architecture_c4 + wf_promo_video seeds + the one GOOD save)');
 });
 
 test('GET /api/workflows/:id — 404 with the archive message', async () => {
