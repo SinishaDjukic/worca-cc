@@ -8732,7 +8732,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 /* ===== Chat P2: Action cards ===== */
 /* Receipts (act, then undo), the stop warning and the pull-request offer (ui/public/chat/action-cards.mjs), on the Ask
    card chrome. Emphasis is a background wash, never an edge line. Text colours keep 4.5:1 in both themes. */
-.ask-rcard .ask-mcard-title,.ask-prcard .ask-mcard-title,.ask-shipcard .ask-mcard-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.ask-rcard .ask-mcard-title,.ask-prcard .ask-mcard-title,.ask-shipcard .ask-mcard-title,.ask-changescard .ask-mcard-title,.ask-routecard .ask-mcard-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .ask-rcard :is(.ask-mcard-before,.ask-mcard-target){color:var(--ink-2);}
 .ask-rcard-change{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-family:var(--mono);font-size:12px;min-width:0;}
 .ask-rcard-change .ask-mcard-before{overflow-wrap:anywhere;}
@@ -8772,17 +8772,43 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .release-row-source{font-size:11.5px;color:var(--ink-2);}
 .release-row-err{font-size:11.5px;color:var(--red-ink);}
 .release-row-err:empty{display:none;}
-/* Watch PR in the chat: the pull-request card's read-only watch line, and a PR fix-run card's trigger and outcome line. */
-.ask-prcard-watch{font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}
-.ask-prcard-watch[hidden]{display:none;}
-.ask-prcard-watch.is-run{color:var(--amber-ink);}
-.ask-prcard-watch.is-bad{color:var(--red-ink);}
+/* Watch PR in the chat: a PR fix-run card's trigger and outcome line (the pull-request card's watch is its link's tooltip). */
 .chat-rc-fix{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;margin-top:6px;font-size:12px;color:var(--ink-2);min-width:0;}
 .chat-rc-fix[hidden]{display:none;}
 .chat-rc-fix-pr{color:var(--blue-ink-strong);}
 .chat-rc-fix-pr:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px;}
 .chat-rc-fix-out.is-ok{color:var(--green-ink);}
 .chat-rc-fix-out.is-bad{color:var(--red-ink);}
+
+/* Shaper s5: Ask for changes (ui/public/chat/ask-changes.mjs), the Changes and Route cards (ui/public/shape/changes-card.mjs,
+   route-card.mjs), and the run card's ideas and stopped-watch lines. Existing tokens, tight radii, no pills. */
+.ask-changes{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin-top:8px;min-width:0;}
+.ask-changes[hidden]{display:none;}
+.ask-changes-input{flex:1;min-width:0;padding:4px 8px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font:inherit;font-size:12.5px;}
+.ask-changes-input:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.ask-changes-err{flex-basis:100%;font-size:11.5px;color:var(--red-ink);}
+.ask-changes-err:empty{display:none;}
+.ask-changescard-quote,.ask-routecard-quote{margin:0;padding:2px 0 2px 8px;border-left:2px solid var(--line);color:var(--ink);font-size:12.5px;white-space:pre-wrap;overflow-wrap:anywhere;}
+.ask-changescard-where{font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}
+.ask-changescard-done,.ask-routecard-done{font-weight:600;color:var(--green-ink);}
+.ask-routecard-guess{font-size:12px;color:var(--ink-2);}
+.ask-routecard-options{display:flex;flex-direction:column;gap:4px;margin-top:4px;}
+.ask-routecard-option{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12.5px;color:var(--ink);cursor:pointer;}
+.ask-routecard-sub{font-size:11.5px;color:var(--ink-2);}
+.ask-routecard-where{padding:1px 4px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font:inherit;font-size:12px;}
+.ask-routecard-open{padding:0;border:0;background:none;color:var(--blue-ink-strong);font:inherit;cursor:pointer;}
+.ask-routecard-open:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px;}
+.chat-rc-notes{margin-top:4px;font-size:12px;color:var(--ink-2);}
+.chat-rc-notes[hidden]{display:none;}
+.chat-rc-watch{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin-top:6px;font-size:12px;color:var(--red-ink);min-width:0;}
+.chat-rc-watch[hidden]{display:none;}
+.chat-rc-watch-pr{color:var(--blue-ink-strong);}
+.chat-rc-watch-ask{padding:0;border:0;background:none;color:var(--blue-ink-strong);font:inherit;cursor:pointer;}
+.chat-rc-watch-pr:focus-visible,.chat-rc-watch-ask:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px;}
+.chat-rc-changes[hidden]{display:none;}
+.shape-plan-notes{padding:8px 10px;border-radius:var(--r-ctrl);border:1px solid var(--line);}
+.shape-plan-notes-head{font-weight:600;color:var(--ink);}
+.shape-plan-notes-list{margin:4px 0 0;padding-left:18px;overflow-wrap:anywhere;}
 
 /* ===== Chat P3: run card ===== */
 /* The chat run card (ui/public/chat/run-card.mjs). It keeps the Ask progress card's look (.ask-rc-* above) and adds

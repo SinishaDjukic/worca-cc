@@ -243,15 +243,16 @@ resets its run allowance. Worca replies to review threads without resolving them
 With the watch off, or waiting for a person, Resolve on a conflicted PR merges the
 base branch in once.
 
-A pull request opened from an Ask Worca card shows the same watch on that card, as one read-only line per pull
-request (Watching, Fixing, Resolving conflicts, Merging `dev` in, Pushing the fix, or Stopped with the reason). The
-line is hidden while the pull request is not watched. Every fix run on it, whether Watch PR started it or Resolve
+A pull request opened from an Ask Worca card shows the same watch on that card, as its link's tooltip
+(`PR #781 · watched`, `PR #781 · watch stopped`, or just `PR #781` while it is not watched). With Shaper on, a fix
+run is a round of the run whose PR it fixes: it shows on that run's card, not as a card of its own (see
+[Iterate in the chat](shape-it-first.md#iterate-in-the-chat-s5)). With Shaper off, every fix run on it, whether Watch PR started it or Resolve
 did, appears in that chat by itself as a live run card. The card says what started the run (merge conflicts,
 failing checks, review comments, changes requested) and links to the pull request. It ends with the outcome: the
 pushed fix, why nothing was pushed, or that the watch gave up after three fix runs. The card is saved with the
 chat, so it is there when the chat is opened later. The Chat row's dot lights when it lands in a chat that is not
 on screen. Nothing else is posted: switching the watch, a stop that needs a person, and a clean base merge show
-only on the line.
+only in the tooltip.
 
 ### Workflows
 
@@ -337,7 +338,11 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: live run card, the feature strip of a sliced plan: progress, each slice's state and PR, Review plan / Answer / Open / Resume slice / Re-plan the rest / Cancel the rest / Open the re-plan, "Approve each slice's plan" | S |
 | Ask: run card result, the checklist tally ("Checklist: 3 met · 1 unmet · 1 n/a") on a finished shaped run | S |
 | Ask: the run card's agent model label, its artifact chips and "All artifacts", Create pull request / View pull request | A — as on the run page |
-| Ask: the pull-request card's Watch PR line (read-only; the switch stays on the run page) | all |
+| Ask: the pull-request card's Watch PR state, as its PR link tooltip (read-only; the switch stays on the run page) | all |
+| Ask: the run card's stopped-watch line (`Watch stopped · …`, Open PR, Ask for changes) | all (rule 1) |
+| Ask: the Ask for changes field on finished run, feature, Ship and pull-request cards | all (rule 1) |
+| Ask: the Changes card (`Changes to …`, Start round 2 / Add to Run 3's plan / Add Run 4 / Start Run 4, Not now) | all (rule 1) |
+| Ask: the Route card (`Where does this go?`, Add to … / Own run now / Save for later, Not now) | all (rule 1) |
 | Ask: a PR fix-run card — what started it, the pull request, the outcome | all |
 | Ask: the run card's agent "cycle N" label | E — a loop badge |
 | Ask: a proposal's own schedule (the "Schedule" action and its time), schedule-change cards | S — the answer the user asked for |

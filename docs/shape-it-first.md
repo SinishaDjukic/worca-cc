@@ -236,6 +236,71 @@ and is not retried.
 with their state. A sliced feature's row opens its card underneath. The tab shows
 only while Shaper is on.
 
+## Iterate in the chat (s5)
+
+Iterating is one action: say it in the chat. Every finished run card, finished feature card, Ship card (ready or
+shipped) and opened pull-request card carries an **Ask for changes** field. Sending it posts one proposal card,
+**Changes**, into the same thread. Worca decides where the change goes (`src/shared/shape/landing.mjs`):
+
+| The run or feature | Card title | Primary |
+|---|---|---|
+| A run is done, its PR not merged | `Changes to Run 2 · same branch, same PR` | `Start round 2` |
+| A feature with runs still to go | `Changes to Charts · into Run 3's plan` | `Add to Run 3's plan` |
+| A feature whose last run is still building | `Changes to Charts · as Run 4 after Run 3` | `Add Run 4` |
+| A feature that is done, not merged | `Changes to Run 3 · same branch, before Ship` | `Start round 2` |
+| Already merged | `Follow-up to Charts · Run 4 from dev, own PR` | `Start Run 4` |
+
+A feature with a stopped or failed run has no landing: resume or re-plan it first. Workspace runs get no field.
+
+**Rounds.** A round runs on the origin run's PR head branch with "Run on the source branch" (`sameAsSource`), so
+its work lands on that branch. It adds no member row and no card of its own: the origin's card reads
+`Running · Round 2 · Build` while it runs, and its log keeps `Round 1 · …` above `Round 2 · <request>`. The round
+is marked on its own `pipelines.branch` record as `branch.roundOf = {pipelineId, round, request}`. `pipelineId`
+always names round 1, so "the rounds of run X" is one lookup on the `idx_pipelines_round_of` index. The marker is
+set in-process only, never from an HTTP body. A later group-membership record can absorb it as
+`{member, of: roundOf.pipelineId, role: 'round', n: roundOf.round}`. A round's number is taken when it starts.
+Rounds run the project's default workflow: a round never re-shapes a decided run. They carry the origin's tags.
+While a round of a feature's run is live, Ship waits (`a round of run 3 is still going`).
+
+**Pushing a round.** Nothing is pushed by itself. A plain run's round updates its PR through the run's Push action
+(`POST /api/push`); a feature's goes out with Ship.
+
+**Notes.** "Add to the feature" stores a `plan` note for the next run not started yet, in `shape_feature_notes`. That
+run's Planner reads it, and its Plan step always stops for you, even with Ask before each run off; the step card
+lists it under **From the chat**. "Save for later" stores an `idea` note: it is shown (`1 idea saved for the next
+checkpoint` on the feature card, and on the next Plan step card) but not fed to the Planner. A note made when no
+run is left goes to the next run added to the feature.
+
+**Thread replies and the Route card.** In a thread that follows a run, a reply goes to Worca's router first:
+- A question (it ends with `?`, or starts with what, why, how, when, where, who, which, can, could, does, did, is,
+  are or should) stays plain chat.
+- A statement while the open step is a Plan or Split step is sent as your revise for that step.
+- Any other statement in a feature with runs still to go gets a **Where does this go?** card (chip `Route`): Add to
+  the feature (into the next run's plan, or as an extra run), Own run now (from the base, its own PR), or Save for
+  later. Worca preselects a guess with a one-line reason: fix words (`hotfix`, `urgent`, `broken`, `crash`, `prod`,
+  `asap`) guess Own run now; a word of four or more letters shared with an upcoming run's title or goal guesses
+  Add, naming that run; a run still to go guesses Add; otherwise Save for later. The rule is deterministic, not a
+  model call.
+- A finished feature or a finished plain run gets the Changes card.
+
+A Clarify, Gate or Recovery step is never answered by a free reply.
+
+**Base merge before the next run.** When `dev` (the feature's base) moved while a run was building, run 3 merges it
+into its fresh branch before its first agent. A clean merge moves the run's diff base to the merge commit, so the
+base's commits never count as the run's changes. The audit line `` Base `dev` moved: merged into `branch` (3 commits). ``
+shows on the feature card as `dev moved · run 3 starts from it`. On conflicts nothing is merged and the card says
+`dev moved · run 3 has conflicts with it in 2 files`.
+
+**Watch PR fixes are rounds.** A Watch PR fix run is a round of the run whose PR it fixes. Its marker also carries
+`by: 'watch'`, the trigger `kinds`, and once the watch lets go of it, its `outcome`. While it runs, the run's card
+reads `Running · Round 2 · fix failing checks` (the trigger words: `fix failing checks`, `fix review comments`,
+`address changes requested`, `resolve conflicts`, `merge dev in`). Its log line ends with the outcome:
+`Round 2 · fix failing checks · pushed a1b2c3d`, or `· nothing pushed: conflict markers left`. With Shaper on, no
+card is posted per fix run. When the watch gives up, the run card says so under its log
+(`Watch stopped · 3 fix runs, checks still failing`) with **Open PR** and **Ask for changes**. On the pull-request
+card the watch is only the PR link's tooltip (`PR #781 · watched`). With Shaper off, each fix run still gets its own
+`PR fix run` card.
+
 ## Limits
 
 - Workspace runs are not sliced, and their checklists are not merged: a shaped

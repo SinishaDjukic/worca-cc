@@ -18,6 +18,7 @@ import {
   stackedPrBase, recordShapePlan, listShapePlans, featuresOfTickets, featureClarify, chainFeature, sliceOfPipeline, slicePrPreamble,
   recordShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
   liveSliceFrom, shaperCard, featureThread,
+  addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf,
 } from '../src/core/shape/features.mjs';
 
 useTempHome(after, 'worca-shape-features-');
@@ -742,4 +743,68 @@ test('featureThread: the origin\'s link row; a re-planned feature walks replaces
   const pidR = pipe('running');
   const r = mk(2, { pipelineId: pidR, replaces: id });
   assert.deepEqual(featureThread(r.id), { threadId: t.id, cardId: 'card_x' });
+});
+
+// ---- Shaper s5: notes, appended runs, live rounds -----------------------------------------------------------------
+
+/** A 3-run feature: run 1 done, run 2 running, run 3 planned (or every run done). */
+const three = ({ allDone = false } = {}) => {
+  const f = doneFeature(3);
+  if (!allDone) {
+    setPipe(f.pids[1], 'running');
+    getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = NULL WHERE feature_id = ? AND idx = 3').run(f.id);
+    setTicket(tickets(f.id)[2].ticket_id, 'scheduled');
+  }
+  return f;
+};
+
+test('s5: addFeatureNote targets the next run not started; featureNotes lists it for that run only', () => {
+  const { id } = three();                                      // run 2 running, run 3 planned
+  assert.equal(addFeatureNote(id, { kind: 'plan', text: 'make the legend smaller' }).runIndex, 3);
+  addFeatureNote(id, { kind: 'idea', text: 'export as PNG' });
+  assert.deepEqual(featureNotes(id, 3).map((n) => [n.kind, n.text]), [['plan', 'make the legend smaller'], ['idea', 'export as PNG']]);
+  assert.deepEqual(featureNotes(id, 2), []);
+  assert.equal(featureView(id).notes.ideas, 1);
+});
+
+test('s5: a plan note with no run left to plan stores nothing (an idea still keeps run_index NULL)', () => {
+  const { id } = three({ allDone: true });
+  assert.deepEqual(addFeatureNote(id, { kind: 'plan', text: 'too late' }), { id: null, runIndex: null });
+  assert.equal(getDb().prepare("SELECT COUNT(*) AS n FROM shape_feature_notes WHERE feature_id = ? AND kind = 'plan'").get(id).n, 0);
+  assert.equal(addFeatureNote(id, { kind: 'idea', text: 'later' }).runIndex, null);
+});
+
+test('s5: appendFeatureRun(extra) adds run 4 after run 3; the outline grows; held notes move to it', () => {
+  const { id, pids } = three({ allDone: true });
+  addFeatureNote(id, { kind: 'idea', text: 'later' });          // no run left: run_index NULL
+  const r = appendFeatureRun(id, { title: 'Bigger legend', goal: 'make the legend smaller', kind: 'extra' });
+  assert.equal(r.index, 4);
+  const v = featureView(id);
+  assert.equal(v.total, 4);
+  assert.equal(v.slices[3].kind, 'extra');
+  const t = getTicket(r.ticketId, { withRequest: true });     // .request is only there with withRequest
+  assert.equal(t.request.shape.slice.total, 4);
+  assert.equal(t.request.sourceBranch, undefined, 'sourceFromPrevious: the branch comes at fire time');
+  assert.deepEqual([t.after.kind, t.after.id], ['pipeline', pids[2]]);   // after also carries policy
+  assert.equal(featureNotes(id, 4).length, 1);
+});
+
+test('s5: appendFeatureRun(follow-up) fires from the feature base with no predecessor', () => {
+  const { id } = three({ allDone: true });
+  getDb().prepare("UPDATE shape_features SET source_branch = 'dev' WHERE id = ?").run(id);   // nullable in seeds
+  const r = appendFeatureRun(id, { title: 'Follow-up: blue bars', goal: 'make the bars blue', kind: 'follow-up' });
+  const t = getTicket(r.ticketId, { withRequest: true });
+  assert.equal(featureBase(id), 'dev');
+  assert.equal(t.request.sourceBranch, 'dev');
+  assert.equal(t.after, null);
+  assert.equal(featureView(id).slices[3].kind, 'follow-up');
+});
+
+test('s5: a live round holds the Ship card back and is listed on its run', () => {
+  const { id, pids } = three({ allDone: true });
+  seedPipelineRow({ id: 'r0000002', status: 'running', branch: { source: 'feat/x', sameAsSource: true, roundOf: { pipelineId: pids[2], round: 2, request: 'blue' } } });
+  const v = featureView(id);
+  assert.deepEqual(v.slices[2].rounds.map((r) => r.round), [2]);
+  assert.equal(v.ship.ready, false);
+  assert.equal(liveRoundOf(id).pipelineId, 'r0000002');
 });

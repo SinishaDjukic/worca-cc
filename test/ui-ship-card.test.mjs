@@ -111,3 +111,20 @@ test('shipSummaryLine leaves out unknown counts', () => {
   assert.equal(shipSummaryLine({ runs: 1 }), '1 run');
   assert.equal(shipSummaryLine({ runs: 2, files: 1, added: 5, deleted: null }), '2 runs · 1 file · +5 −0');
 });
+
+test('s5: Ask for changes shows in ready and applied, never in waiting or declined; the chat card posts the feature ref', async () => {
+  const onAskChanges = async () => {};
+  for (const phase of ['ready', 'applied']) assert.ok(renderShipCard(docOf(), { phase, title: 'Charts', result: { mode: 'one' } }, { onShip: async () => {}, onAskChanges }).querySelector('.ask-changes'), phase);
+  for (const phase of ['waiting', 'declined']) assert.equal(renderShipCard(docOf(), { phase, title: 'Charts' }, { onAskChanges }).querySelector('.ask-changes'), null, phase);
+  assert.equal(renderShipCard(docOf(), { phase: 'ready', title: 'Charts' }, { onShip: async () => {} }).querySelector('.ask-changes'), null, 'no handler: no field');
+  const doc = docOf(); const sent = [];
+  const block = { kind: 'card', id: 'card_1', state: 'applied', card: { ...READY, result: { mode: 'one' } } };
+  const ctx = { doc, postCard: async () => ({}), postChanges: async (ref, t) => { sent.push([ref, t]); } };
+  assert.equal(buildShipChatCard(block, ctx).el.querySelector('.ask-changes'), null, 'gate off: no field');
+  doc.documentElement.dataset.flags = 'shapeFirst';
+  const { el } = buildShipChatCard(block, ctx);
+  const input = el.querySelector('.ask-changes-input');
+  input.value = 'one more'; input.dispatchEvent(new doc.defaultView.Event('input'));
+  el.querySelector('.ask-changes-send').click(); await tick();
+  assert.deepEqual(sent, [[{ featureId: 'feat_1' }, 'one more']]);
+});

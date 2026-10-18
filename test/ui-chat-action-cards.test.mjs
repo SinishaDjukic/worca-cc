@@ -208,7 +208,7 @@ test('registerChatActionCards registers the three types with P1\'s card registry
   _resetChatExtensions();
   registerChatActionCards();
   registerChatActionCards();                         // app.js runs again on every jsdom boot
-  for (const t of ['receipt', 'run-stop', 'pull-request', 'ship']) assert.equal(typeof chatCardBuilder(t), 'function', t);
+  for (const t of ['receipt', 'run-stop', 'pull-request', 'ship', 'changes', 'route']) assert.equal(typeof chatCardBuilder(t), 'function', t);
 });
 
 test('receipt: a Revert another tab already made says so in the note, no error, Revert stays off (mutation killer)', async () => {
@@ -286,7 +286,7 @@ test('refine cycle 3 mutation killers: a disabled Revert / Keep running / Not no
     '.ask-rcard.is-reverted .ask-rcard-change .ask-mcard-after{color:var(--ink-2);font-weight:400;}']) assert.ok(p2.includes(rule), rule);
 });
 
-test('pull-request: an applied card shows each PR\'s watch as one read-only line, re-read on pr-watch-changed; hidden when not watched', async () => {
+test('pull-request: an applied card shows no watch line; each PR link\'s tooltip says whether it is watched, re-read on pr-watch-changed', async () => {
   const views = { '': { watching: true, status: 'fixing', reason: null, activePipelineId: 'f1', resolving: false, mergingBase: null },
     'api-11111111': { watching: true, status: 'watching', reason: null, activePipelineId: null, resolving: false, mergingBase: null },
     'web-22222222': { watching: true, status: 'needs-person', reason: 'cap', activePipelineId: null, resolving: false, mergingBase: null } };
@@ -298,38 +298,60 @@ test('pull-request: an applied card shows each PR\'s watch as one read-only line
   };
   const { ctx } = ctxOf({ fetch });
   await checkRows([
-    { name: 'project run: one line from GET /api/pr/watch', run: async () => {
-      const card = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7', draft: false, existed: false } } }, ctx);
+    { name: 'project run: the link title from GET /api/pr/watch', run: async () => {
+      const card = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/781', draft: false, existed: false } } }, ctx);
       await tick(); await tick();
-      const line = card.el.querySelector('.ask-prcard-watch');
+      const link = card.el.querySelector('.ask-prcard-link');
       assert.equal(calls[0], '/api/pr/watch?id=aaaa0005&projectKey=shop-1a2b3c4d');
-      assert.deepEqual([line.hidden, line.textContent, line.classList.contains('is-run')], [false, 'Fixing', true]);
-      views[''] = { ...views[''], watching: false, status: 'watching' };
+      assert.equal(card.el.querySelectorAll('.ask-prcard-watch').length, 0, 'no watch line');
+      assert.equal(link.title, 'PR #781 · watched');
+      views[''] = { ...views[''], status: 'needs-person', reason: 'cap' };
       assert.equal(refreshChatPrWatch({ type: 'pr-watch-changed', projectKey: 'shop-1a2b3c4d', pipelineId: 'aaaa0005', memberKey: null }), 1);
       await tick(); await tick();
-      assert.equal(line.hidden, true, 'not watched: no line');
+      assert.equal(link.title, 'PR #781 · watch stopped');
+      views[''] = { ...views[''], watching: false, status: 'watching', reason: null };
+      refreshChatPrWatch({ pipelineId: 'aaaa0005', memberKey: null });
+      await tick(); await tick();
+      assert.equal(link.title, 'PR #781', 'not watched');
       card.dispose();
       assert.equal(refreshChatPrWatch({ pipelineId: 'aaaa0005', memberKey: null }), 0, 'a disposed card is not read again');
     } },
-    { name: 'workspace run: one line per member PR, named; a frame re-reads only its member', run: async () => {
+    { name: 'workspace run: one tooltip per member PR; a frame re-reads only its member', run: async () => {
       calls.length = 0;
       const card = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, projectKey: 'workspaces/wk1', workspaceId: 'wk1', result: { url: 'https://x/pull/1', draft: false, existed: false,
         members: [{ url: 'https://x/pull/1', memberKey: 'api-11111111' }, { url: 'https://x/pull/2', memberKey: 'web-22222222' }] } } }, ctx);
       await tick(); await tick();
-      assert.deepEqual([...card.el.querySelectorAll('.ask-prcard-watch')].map((l) => l.textContent), ['api · Watching', `web · Stopped: gave up after 3 fix runs`]);
+      assert.deepEqual([...card.el.querySelectorAll('.ask-prcard-link')].map((l) => l.title), ['PR #1 · watched', 'PR #2 · watch stopped']);
       calls.length = 0;
       assert.equal(refreshChatPrWatch({ pipelineId: 'aaaa0005', memberKey: 'web-22222222' }), 1);
       assert.deepEqual(calls, ['/api/pr/watch?id=aaaa0005&projectKey=workspaces%2Fwk1&memberKey=web-22222222']);
       card.dispose();
     } },
-    { name: 'a PR the server cannot answer for (merged, closed) and a ctx without fetch show no line', run: async () => {
+    { name: 'a PR the server cannot answer for (merged, closed) and a ctx without fetch: a plain PR tooltip, or none', run: async () => {
       views[''] = undefined;
       const card = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7' } } }, ctx);
       await tick(); await tick();
-      assert.equal(card.el.querySelector('.ask-prcard-watch').hidden, true);
+      assert.equal(card.el.querySelector('.ask-prcard-link').title, 'PR #7');
       card.dispose();
       const bare = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7' } } }, ctxOf().ctx);
-      assert.equal(bare.el.querySelector('.ask-prcard-watch'), null);
+      assert.equal(bare.el.querySelector('.ask-prcard-link').title, '');
     } },
   ]);
+});
+
+test('s5: an applied pull-request card carries the Ask for changes field while the gate is on; it posts the run ref', async () => {
+  const { ctx } = ctxOf();
+  const sent = [];
+  ctx.postChanges = async (ref, text) => { sent.push([ref, text]); };
+  const applied = { ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7' } } };
+  assert.equal(buildPullRequestCard(applied, ctx).el.querySelector('.ask-changes'), null, 'gate off: no field');
+  ctx.doc.documentElement.dataset.flags = 'shapeFirst';
+  assert.equal(buildPullRequestCard(PR, ctx).el.querySelector('.ask-changes'), null, 'proposed: no field');
+  const ws = { ...applied, card: { ...applied.card, workspaceId: 'ws_1' } };
+  assert.equal(buildPullRequestCard(ws, ctx).el.querySelector('.ask-changes'), null, 'workspace run: no field');
+  const { el } = buildPullRequestCard(applied, ctx);
+  const input = el.querySelector('.ask-changes-input');
+  input.value = 'make it blue'; input.dispatchEvent(new ctx.win.Event('input'));
+  el.querySelector('.ask-changes-send').click(); await tick();
+  assert.deepEqual(sent, [[{ pipelineId: 'aaaa0005' }, 'make it blue']]);
 });

@@ -577,6 +577,12 @@ test('context header: typed card lines (workflow, metrics, policy) and the team 
         { id: 'card_0000cc01', type: 'metrics', state: 'applied', summary: 'Turn "Include my runs" off for gateway' },
       ] });
       assert.ok(cards.includes('cards: card_3f2a9c01 proposed (wf_review on worca-cc), metrics card_0000cc01 applied "Turn "Include my runs" off for gateway"'), cards);
+      // Shaper s5: the changes and Route cards print their summary line
+      const s5 = buildContextHeader({ ...CTX, cards: [
+        { id: 'card_0000dd01', type: 'changes', state: 'proposed', summary: 'Changes to Run 2 · same branch, same PR' },
+        { id: 'card_0000dd02', type: 'route', state: 'applied', summary: 'Where does this go: an idea: Saved for the next checkpoint' },
+      ] });
+      assert.ok(s5.includes('cards: changes card_0000dd01 proposed "Changes to Run 2 · same branch, same PR", route card_0000dd02 applied "Where does this go: an idea: Saved for the next checkpoint"'), s5);
     } },
   ]);
 });

@@ -379,3 +379,144 @@ test('Ship card: Not now declines it (no release allowed); it cannot ship any mo
   assert.equal((await post(url, { verb: 'ship-stacked' })).status, 409);
   assert.equal(seen.filter((a) => a[0] === 'gh' && a[1] === 'pr').length, 0);
 }));
+
+// ── Shaper s5: Ask for changes, the Route card, thread replies, card-started runs and fix rounds ────────────────────
+const { execSync: sh } = await import('node:child_process');
+const blocksOf = (threadId) => listMessages(threadId).flatMap((m) => m.blocks || []).filter((b) => b && b.kind === 'card');
+async function pipelineOfRun(runId, ms = 90000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) { const e = runs.get(runId); if (e && e.pipelineId) return e.pipelineId; await sleep(50); }
+  throw new Error(`run ${runId} has no pipeline`);
+}
+const branchRow = (pid) => JSON.parse(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(pid)?.branch || 'null');
+/** The run's branch record once its worktree is set up, then the run is stopped: these cases read only the stored
+ *  marker, and a run under the suite's fresh HOME waits at its Clarify questions. */
+async function branchThenStop(runId, ms = 90000) {
+  const pid = await pipelineOfRun(runId, ms);
+  const t0 = Date.now();
+  while (!branchRow(pid)?.worktreeDir && Date.now() - t0 < ms) await sleep(50);
+  const e = runs.get(runId);
+  if (e && !settled.has(String(e.status || ''))) await post('/api/stop', { runId });
+  await untilSettled(runId);
+  return { pid, branch: branchRow(pid) };
+}
+/** A finished plain run on `feat/x` in a real repo, with PR 41 open and a thread that follows it. */
+async function doneRunWithPr(tag) {
+  const { persistPrState } = await import('../src/core/artifacts.mjs');
+  const dir = gitDir(tag);
+  sh('git branch feat/x', { cwd: dir });
+  const src = sh('git rev-parse --abbrev-ref HEAD', { cwd: dir }).toString().trim();
+  const { id } = await seedPipeline(dir, { title: 'Add a chart', status: 'done', branch: { source: src, feature: 'feat/x' } });
+  persistPrState(id, { url: 'https://github.com/o/r/pull/41', number: 41, state: 'OPEN' });
+  const thread = createThread();
+  askLinkRun(thread.id, { runId: `run-${id}`, pipelineId: id, cardId: 'card_s5000001' });
+  return { dir, id, thread };
+}
+
+test('s5 gate off: /changes and /reply are 404', () => withGate(false, async () => {
+  const thread = createThread();
+  assert.equal((await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: 'aaaa0001', text: 'x' })).status, 404);
+  assert.equal((await post(`/api/ask/threads/${thread.id}/reply`, { text: 'x' })).status, 404);
+}));
+
+test('s5: /changes posts a changes card with the run\'s PR; foreign verbs 400; Not now declines once', () => withGate(true, async () => {
+  const { id, thread } = await doneRunWithPr('s5-changes');
+  const r = await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: id, text: 'make it blue' });
+  assert.equal(r.status, 201, await r.clone().text());
+  const card = blocksOf(thread.id).at(-1);
+  assert.equal(card.card.type, 'changes');
+  assert.equal(card.card.landing.target.pr.number, 41);
+  assert.equal(card.card.landing.title, 'Changes to Add a chart · same branch, same PR');
+  const url = `/api/ask/threads/${thread.id}/cards/${card.id}`;
+  assert.equal((await post(url, { verb: 'ship-one' })).status, 400);
+  const nn = await post(url, { verb: 'not-now' });
+  assert.equal(nn.status, 200);
+  assert.equal((await nn.json()).block.state, 'declined');
+  assert.equal((await post(url, { verb: 'not-now' })).status, 409);
+}));
+
+test('s5: a round starts tag-exempt with its origin\'s bare-key tag (saved before key:value) and carries round 2', () => withGate(true, async () => {
+  const { id, thread } = await doneRunWithPr('s5-round');
+  getDb().prepare("INSERT INTO run_tags (pipeline_id, key, value) VALUES (?, 'acme', '')").run(id);
+  await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: id, text: 'make it blue' });
+  const card = blocksOf(thread.id).at(-1);
+  assert.deepEqual(card.card.run.tags, ['acme']);
+  const r = await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { verb: 'start' });
+  assert.equal(r.status, 200, await r.clone().text());
+  const block = (await r.json()).block;
+  assert.deepEqual([block.state, block.card.result.round, block.card.result.pr], ['applied', 2, 41]);
+  const { branch } = await branchThenStop(block.card.result.runId);
+  assert.deepEqual(branch.roundOf, { pipelineId: id, round: 2, request: 'make it blue' });
+  // The HTTP body cannot claim either: `_cardStart` from a body is not the exemption, `roundOf` from a body is no marker.
+  const dir = gitDir('s5-body');
+  const bad = await post('/api/run', { prompt: 'x', projectDir: dir, _cardStart: true, tags: ['acme'] });
+  assert.equal(bad.status, 400, await bad.clone().text());
+  const plain = await post('/api/run', { prompt: 'x', projectDir: dir, roundOf: { pipelineId: id, round: 2, request: 'x' } });
+  assert.equal(plain.status, 200, await plain.clone().text());
+  const { runId } = await plain.json();
+  assert.equal((await branchThenStop(runId)).branch.roundOf, undefined);
+}));
+
+test('s5: Route cards from /reply: Save for later stores an idea; Own run now starts from the base with no marker', () => withGate(true, async () => {
+  const { createSliceFeature, featureView } = await import('../src/core/shape/features.mjs');
+  const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
+  const dir = gitDir('s5-route');
+  sh('git branch dev', { cwd: dir });
+  const p1 = 'asf5r0001';
+  seedPipelineRow({ id: p1, projectKey: projectKey(dir), status: 'done', title: p1, branch: { source: 'dev', feature: 'feat/a' } });
+  const f = createSliceFeature({ pipelineId: p1, projectDir: dir, title: 'Charts', perspectives: ['product'], workflowId: 'wf_shape',
+    outline: { why: 'w', slices: [1, 2].map((i) => ({ id: `s${i}`, title: `Part ${i}`, goal: 'g', inScope: [], outOfScope: [], acceptance: [], dependsOn: [], estimate: 'M' })) } });
+  const thread = createThread();
+  askLinkRun(thread.id, { runId: 'run-asf5r1', pipelineId: p1, cardId: 'card_s5r00001' });
+  const q = await post(`/api/ask/threads/${thread.id}/reply`, { text: 'why is it slow?' });
+  assert.deepEqual(await q.json(), { action: 'chat' });
+  assert.equal(listMessages(thread.id).length, 0, 'a question adds no row');
+  const one = await (await post(`/api/ask/threads/${thread.id}/reply`, { text: 'also export a PNG' })).json();
+  assert.equal(one.action, 'route');
+  const routeUrl = `/api/ask/threads/${thread.id}/cards/${one.message.blocks[0].id}`;
+  assert.equal((await post(routeUrl, { verb: 'start' })).status, 400, 'a changes-card verb on a Route card');
+  assert.equal((await post(routeUrl, { verb: 'add', where: 'later' })).status, 400, 'Add needs next or extra');
+  const save = await post(routeUrl, { verb: 'save' });
+  assert.equal(save.status, 200, await save.clone().text());
+  assert.equal(featureView(f.id).notes.ideas, 1);
+  assert.equal((await post(routeUrl, { verb: 'own' })).status, 409, 'a second answer');
+  assert.equal(featureView(f.id).notes.ideas, 1, 'the second answer changed nothing');
+  const two = await (await post(`/api/ask/threads/${thread.id}/reply`, { text: 'hotfix: login is broken' })).json();
+  const own = await post(`/api/ask/threads/${thread.id}/cards/${two.message.blocks[0].id}`, { verb: 'own' });
+  assert.equal(own.status, 200, await own.clone().text());
+  const { runId } = (await own.json()).block.card.result;
+  const { branch } = await branchThenStop(runId);
+  assert.equal(branch.source, 'dev');
+  assert.equal(branch.roundOf, undefined);
+}));
+
+test('s5: a reply that answers an open revisable plan step is the person\'s revise; no Route card', () => withGate(true, async () => {
+  const thread = createThread();
+  const seen = [];
+  runs.set('live-s5plan', { id: 'live-s5plan', kind: 'run', status: 'running', events: [], pipelineId: 'asf5p0001',
+    orch: { answer: (...a) => { seen.push(a); return true; } },
+    pendingQuestion: { id: 'plan-n_refine-1', kind: 'plan', plan: { revisable: true } } });
+  askLinkRun(thread.id, { runId: 'live-s5plan', pipelineId: 'asf5p0001', cardId: 'card_s5p00001' });
+  try {
+    const r = await (await post(`/api/ask/threads/${thread.id}/reply`, { text: 'shorter please' })).json();
+    assert.deepEqual([r.action, r.stepId], ['answered', 'plan-n_refine-1']);
+    assert.deepEqual(seen[0].slice(0, 2), ['plan-n_refine-1', { decision: 'revise', feedback: 'shorter please' }]);
+    assert.equal(blocksOf(thread.id).filter((b) => b.card.type === 'route').length, 0);
+  } finally { runs.delete('live-s5plan'); }
+}));
+
+test('s5: a Watch PR fix run started through prWatcherDeps is stored as round 2 of the PR\'s run; no block in its thread', () => withGate(true, async () => {
+  const { _testing: testing } = await import('../ui/server.mjs');
+  const { id, dir, thread } = await doneRunWithPr('s5-fix');
+  const before = blocksOf(thread.id).length;
+  const runId = `fix-${id}`;
+  const r = await testing.prWatcherDeps.startRun({ prompt: 'fix it', projectDir: dir, mock: true, featureBranch: 'feat/x', syncBeforeStart: false },
+    { startedBy: 'pr-watch', runId, roundOf: { pipelineId: id, request: 'fix failing checks', kinds: ['checks'] } });   // no pr_watch_runs reservation here
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const { pid, branch } = await branchThenStop(runId);
+  assert.deepEqual(branch.roundOf, { pipelineId: id, round: 2, request: 'fix failing checks', by: 'watch', kinds: ['checks'] });
+  const got = await (await fetch(`${base}/api/ask/runs/${id}`)).json();
+  assert.deepEqual(got.extras.rounds.map((x) => [x.round, x.pipelineId, x.by]), [[2, pid, 'watch']]);
+  assert.equal(blocksOf(thread.id).length, before);
+}));

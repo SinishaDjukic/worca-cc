@@ -6,6 +6,7 @@
 import { liveRowState, renderRowIcon } from '../runs-list.mjs';
 import { chainProgress } from '../../../src/shared/run-progress.mjs';
 import { stepKind } from './step-card.mjs';
+import { watchStoppedText } from '../chat/pr-watch-words.mjs';
 
 export const SLICE_STATE_LABELS = Object.freeze({
   planned: 'Planned', starting: 'Starting', shaping: 'Planning', questions: 'Waiting for your answers', approval: 'Waiting for your plan approval',
@@ -13,7 +14,7 @@ export const SLICE_STATE_LABELS = Object.freeze({
   failed: 'Could not start', missed: 'Waiting', canceled: 'Canceled',
 });
 
-const ICON_WORD = Object.freeze({ ask: 'Needs you', fail: 'Failed', stop: 'Stopped', paused: 'Paused', run: 'Running', start: 'Running', scheduled: 'Waiting', done: 'Done' });
+export const ICON_WORD = Object.freeze({ ask: 'Needs you', fail: 'Failed', stop: 'Stopped', paused: 'Paused', run: 'Running', start: 'Running', scheduled: 'Waiting', done: 'Done' });
 const STATE_ICON = Object.freeze({ approval: 'ask', questions: 'ask', paused: 'paused', stopped: 'stop', canceled: 'stop', error: 'fail',
   failed: 'fail', running: 'run', shaping: 'run', starting: 'start', planned: 'scheduled', missed: 'scheduled', done: 'done' });
 const STATE_STAGE = Object.freeze({ shaping: 'Plan', questions: 'Plan', approval: 'Plan', running: 'Build' });
@@ -85,10 +86,24 @@ export function featureCardModel({ own = null, card = null, snapOf = () => null 
   const done = slices.filter((s) => s.state === 'done').length;
   const cur = (view.halted && slices[view.halted.index - 1]) || slices.find((s) => CURRENT.has(s.state)) || slices.find((s) => s.state !== 'done') || null;
   const m = cur ? snap(cur) : null;
+  // s5 (D16): a live round of a run is what the card is doing now; rounds never add member rows.
+  const roundNow = (() => {
+    for (const s of slices) for (const r of (s.rounds || [])) {
+      const rm = snapOf(r.pipelineId);
+      if ((rm && isLive(rm)) || (!rm && (r.status === 'running' || r.status === 'starting'))) return { s, r, m: rm };
+    }
+    return null;
+  })();
   let icon;
   let status;
   if (view.status === 'canceled') { icon = 'stop'; status = `Canceled · ${done}/${total}`; }
   else if (view.status === 'replanning' || view.status === 'replanned') { icon = 'run'; status = `Re-planning · ${done}/${total}`; }
+  else if (roundNow && (!cur || cur.state === 'done')) {
+    icon = roundNow.m ? liveRowState({ status: roundNow.m.status, ask: asks(roundNow.m) }).icon : 'run';
+    // A Watch PR fix round says what it fixes; any other round names its stage (D21).
+    const doing = roundNow.r.by === 'watch' ? roundNow.r.request : (roundNow.m && roundNow.m.stageProgress && roundNow.m.stageProgress.label) || 'Build';
+    status = [ICON_WORD[icon] || 'Running', `Round ${roundNow.r.round}`, doing].join(' · ');
+  }
   else if (!cur) { icon = 'done'; status = `${view.ship && view.ship.mode ? 'Shipped' : 'Ready to ship'} · ${done}/${total}`; }
   else {
     icon = iconOf(cur, m);
@@ -109,10 +124,17 @@ export function featureCardModel({ own = null, card = null, snapOf = () => null 
       state: s.pr && s.pr.url ? prWords(s.pr) : waiting.has(s.index) ? 'Waiting' : SLICE_STATE_LABELS[s.state] || s.state,
       runId: s.runId || null, pipelineId: s.pipelineId || null })),
   ];
+  // s5: ideas saved from the chat (D11), and a watch that gave up on a run's PR (D23)
+  const ideas = (view.notes && view.notes.ideas) || 0;
+  const watched = slices.find((s) => s.watch);
+  const lastFix = watched ? [...(watched.rounds || [])].reverse().find((r) => r.by === 'watch') : null;
+  const wText = watched ? watchStoppedText(watched.watch, lastFix ? lastFix.kinds : []) : null;
   return { phase: 'feature', chip: `Feature · ${cur ? cur.index : total}/${total}`, icon, word: ICON_WORD[icon] || '', status,
     run: cur && isLive(m) ? m.stageProgress || null : null,
     group: { ...chain, text: cur ? `Run ${cur.index} of ${total}` : `${done} of ${total} runs done` },
-    log: view.log || [], step, members, controls: controlsOf(view, cur, m) };
+    log: view.log || [], step, members, controls: controlsOf(view, cur, m),
+    notesLine: ideas ? `${ideas} ${ideas === 1 ? 'idea' : 'ideas'} saved for the next checkpoint` : null,
+    watch: wText ? { text: wText, prUrl: watched.watch.prUrl || null } : null };
 }
 
 const sigOf = (host, list) => { const sig = JSON.stringify(list); if (host.dataset.sig === sig) return false; host.dataset.sig = sig; return true; };

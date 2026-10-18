@@ -249,6 +249,7 @@ import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.m
 import { activeAgents } from './ask-run-card.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
+import { registerThreadRouteAddon } from './chat/thread-route.mjs';
 import { shapeFirstOn, onShapeFirstChange } from './chat/shape-gate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
@@ -498,6 +499,8 @@ function paintFeaturePageProgress(r) {
   const ours = f && (f.slices.some((s) => s.pipelineId === r.pipelineId) || (f.replan && f.replan.pipelineId === r.pipelineId));
   if (ours && el) refreshFeatureStatus(el, f, (pid) => askRunStore.byPipeline(pid));
 }
+/** Shaper s5: the Chat run-card controller (registerChatRunCard), so a round-changed frame re-reads a finished card. */
+let chatRunCards = null;
 /** Shaper s2 (D12, D13): the Chat feature card's data per planning pipeline (GET /api/shape/pipelines/:pid/card). A card
  *  asks on every repaint (once a second), so this fetches once per pipeline until a refresh; each listener hears every
  *  answer (a disposed card's listener is a no-op: the controller checks its entry). */
@@ -1579,6 +1582,14 @@ function handleServerMessage(msg) {
     // Exact identity: the run's store key, its id and (a workspace's) member.
     refreshRdPrStatus(msg.projectKey, msg.pipelineId, msg.memberKey || '');
     refreshChatPrWatch(msg);                       // the chat's pull-request cards show the same watch, read-only
+    chatRunCards?.refreshPipeline(msg.pipelineId);  // Shaper s5 (D23): a stopped watch shows on the run's card
+    return;
+  }
+  // Shaper s5 (D16): a round of a run (Ask for changes, a Watch PR fix run) changed: its origin's card re-reads its
+  // rounds. `threadIds` is for the Runs redesign's unread mark.
+  if (msg.type === 'round-changed') {
+    chatRunCards?.refreshPipeline(msg.origin);
+    refreshShaperCards();
     return;
   }
 
@@ -28911,8 +28922,9 @@ const chatRunControls = {
 };
 if (typeof window !== 'undefined' && window.__np) window.__np.chatRunControls = chatRunControls;
 // CONTRACT §3: registered before createAskPanel runs (this line evaluates long before the mount at the end of the file).
-registerChatRunCard({ controls: chatRunControls, runStore: askRunStore });
+chatRunCards = registerChatRunCard({ controls: chatRunControls, runStore: askRunStore });
 registerDirectionAddon();                      // R10: the composer's "→ <run title>" chip
+registerThreadRouteAddon();                    // Shaper s5 (D8): a thread reply answers the open step or becomes a card
 
 /** History Overview DURATION sub-line: `9 executions · 2 loop deliveries`. */
 function histCountsLine(st) {

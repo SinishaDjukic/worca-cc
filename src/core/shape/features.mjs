@@ -10,6 +10,8 @@ import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
+import { roundsOf } from './rounds.mjs';
+import { getWatch, stoppedWatchFact } from '../pr-watch.mjs';
 
 const j = (t, d) => { try { return t ? JSON.parse(t) : d; } catch { return d; } };
 const iso = (ms) => new Date(ms).toISOString();
@@ -128,7 +130,7 @@ function sliceRows(featureId) {
   return getDb().prepare('SELECT * FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(String(featureId)).map((r) => {
     const ticket = r.ticket_id ? getTicket(r.ticket_id) : null;
     return { index: r.idx, sliceId: r.slice_id, title: r.title, ticketId: r.ticket_id, ticket,
-      pipelineId: r.pipeline_id || ticket?.pipelineId || null, draftPrUrl: r.draft_pr_url || null };
+      pipelineId: r.pipeline_id || ticket?.pipelineId || null, draftPrUrl: r.draft_pr_url || null, kind: r.kind || null };
   });
 }
 
@@ -179,6 +181,7 @@ function featureLog(f, slices) {
       return { index: s.index, title: s.title, goal: o.goal || '', acceptance: Array.isArray(o.acceptance) ? o.acceptance : [] };
     }),
     replan,
+    rounds: slices.flatMap((s) => (s.rounds || []).map((r) => ({ run: s.index, ...r }))),
   });
 }
 
@@ -186,7 +189,9 @@ export function featureView(id, { live = () => null } = {}) {
   const f = featureRow(id);
   if (!f) return null;
   let ask = null;
-  const slices = sliceRows(id).map((r) => {
+  const rows = sliceRows(id);
+  const rounds = roundsOf(rows.map((r) => r.pipelineId));
+  const slices = rows.map((r) => {
     const state = sliceState(r, live);
     const l = r.pipelineId ? live(r.pipelineId) : null;
     if (!ask && l && l.ask) ask = { index: r.index, runId: l.runId || null, pipelineId: r.pipelineId, id: l.ask.id, kind: l.ask.kind };
@@ -195,8 +200,13 @@ export function featureView(id, { live = () => null } = {}) {
     const pr = pr0 ? { ...pr0, draft: !f.ship_mode && !!r.draftPrUrl && r.draftPrUrl === pr0.url } : null;
     const s = f.outline.slices[r.index - 1] || {};
     return { index: r.index, title: r.title, goal: s.goal || '', estimate: s.estimate || null, state,
-      runId: l?.runId || null, pipelineId: r.pipelineId, ticketId: r.ticketId, pr };
+      runId: l?.runId || null, pipelineId: r.pipelineId, ticketId: r.ticketId, pr,
+      kind: r.kind || null, rounds: (r.pipelineId && rounds.get(r.pipelineId)) || [],
+      watch: pr && pr.url ? stoppedWatchFact(getWatch(pr.url)) : null };
   });
+  const roundLive = slices.some((s) => s.rounds.some((x) => LIVE_ROUND.has(x.status)));
+  const ideas = getDb().prepare(`SELECT COUNT(*) AS n FROM shape_feature_notes WHERE feature_id = ? AND kind = 'idea'
+    AND (run_index IS NULL OR run_index NOT IN (SELECT idx FROM shape_feature_slices WHERE feature_id = ? AND pipeline_id IS NOT NULL))`).get(f.id, f.id).n;
   const done = slices.filter((s) => s.state === 'done').length;
   const h = slices.find((s, i) => HALTS.has(s.state) || (i > 0 && STUCK.has(s.state) && slices[i - 1].state === 'done'));
   const waiting = h ? slices.filter((s) => s.index > h.index && (s.state === 'planned' || s.state === 'missed')).map((s) => s.index) : [];
@@ -205,7 +215,7 @@ export function featureView(id, { live = () => null } = {}) {
   // async (featureShipSuggestion); the GET route merges it.
   const lastPrUrl = slices.length ? (slices[slices.length - 1].pr?.url || null) : null;
   const release = f.release_version ? { version: f.release_version, url: f.release_url || null, error: f.release_error || null } : null;
-  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !f.ship_mode,
+  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !f.ship_mode && !roundLive,
     mode: f.ship_mode || null, prUrl: f.ship_pr_url || null, lastPrUrl, suggested: null, linesAdded: null,
     linesRemoved: null, files: null, release,
     // s4: what the applied Ship card shows, wherever it renders (chat, group page, Plans).
@@ -225,11 +235,78 @@ export function featureView(id, { live = () => null } = {}) {
     halted: h ? { index: h.index, state: h.state, waiting } : null,
     open: slices.some((s) => ['planned', 'missed'].includes(s.state)),
     replacedBy: f.replaced_by || null, replan, slices, ship,
-    originPipelineId: f.origin_pipeline_id, ask, log: featureLog(f, slices),
+    originPipelineId: f.origin_pipeline_id, ask, log: featureLog(f, slices), notes: { ideas },
   };
 }
 
 export const ONE_PR_MAX_LINES = 1500;
+
+const NOT_STARTED = new Set(['planned', 'missed']);
+const LIVE_ROUND = new Set(['running', 'starting', 'paused']);
+
+/** Shaper s5 (D11): a note on the feature for the next run not started yet (NULL when none is left). A plan note
+ *  with no run left to plan is not stored ({id: null, runIndex: null}): the card's caller refuses it. */
+export function addFeatureNote(featureId, { kind, text, by = null, now = Date.now() }) {
+  if (kind !== 'plan' && kind !== 'idea') throw new TypeError('kind must be plan or idea');
+  const v = featureView(featureId);
+  if (!v) return null;
+  const next = v.slices.find((s) => NOT_STARTED.has(s.state));
+  if (kind === 'plan' && !next) return { id: null, runIndex: null };
+  const id = `note_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+  getDb().prepare('INSERT INTO shape_feature_notes (id, feature_id, kind, text, run_index, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(id, featureId, kind, String(text).slice(0, 4000), next ? next.index : null, by, iso(now));
+  return { id, runIndex: next ? next.index : null };
+}
+
+/** The notes for run `index`, oldest first. */
+export function featureNotes(featureId, index) {
+  return getDb().prepare('SELECT kind, text FROM shape_feature_notes WHERE feature_id = ? AND run_index = ? ORDER BY created_at, rowid')
+    .all(String(featureId), Number(index)).map((r) => ({ kind: r.kind, text: r.text }));
+}
+
+/** The feature's base branch (slice 1's source): what a later run merges first (D14) and a follow-up starts from (D13). */
+export function featureBase(featureId) {
+  return getDb().prepare('SELECT source_branch FROM shape_features WHERE id = ?').get(String(featureId))?.source_branch || null;
+}
+
+/** D16: the feature's live round, or null (the ship verbs refuse while one runs). */
+export function liveRoundOf(featureId) {
+  const pids = sliceRows(featureId).map((s) => s.pipelineId).filter(Boolean);
+  for (const list of roundsOf(pids).values()) for (const r of list) if (LIVE_ROUND.has(r.status)) return r;
+  return null;
+}
+
+/** Shaper s5 (D13): run N+1 of the feature. 'extra' chains after the last run; 'follow-up' fires now from the base. */
+export function appendFeatureRun(featureId, { title, goal, kind, by = null, now = Date.now() }) {
+  if (kind !== 'extra' && kind !== 'follow-up') throw new TypeError('kind must be extra or follow-up');
+  const db = getDb();
+  const f = featureRow(featureId);
+  if (!f) return null;
+  const rows = sliceRows(featureId);
+  const index = rows.length + 1;
+  const last = rows[rows.length - 1];
+  const s = { id: `s${index}`, title: String(title).slice(0, 120), goal: String(goal || ''), inScope: [], outOfScope: [],
+    acceptance: [], dependsOn: [], estimate: null };
+  const outline = { ...f.outline, slices: [...f.outline.slices, s] };
+  const feature = { id: f.id, title: f.title };
+  let ticketId = null;
+  tx(() => {
+    const after = last.pipelineId ? { kind: 'pipeline', id: last.pipelineId } : { kind: 'ticket', id: last.ticketId };
+    const t = createTicket({
+      title: sliceTitle(f.title, index, index, s), projectDir: f.project_dir,
+      request: sliceRequest({ feature, index, outline, perspectives: f.perspectives, workflowId: f.workflow_id, base: f.base,
+        projectDir: f.project_dir, startedBy: by, sourceBranch: kind === 'follow-up' ? f.source_branch : null }),
+      ...(kind === 'extra' ? { after, afterPolicy: 'done', sourceFromPrevious: true } : { runAtMs: now }),
+      createdBy: by, now,
+    });
+    ticketId = t.id;
+    db.prepare('INSERT INTO shape_feature_slices (feature_id, idx, slice_id, title, ticket_id, pipeline_id, kind) VALUES (?, ?, ?, ?, ?, NULL, ?)')
+      .run(f.id, index, s.id, s.title, t.id, kind);
+    db.prepare("UPDATE shape_features SET outline = ?, status = 'active', updated_at = ? WHERE id = ?").run(JSON.stringify(outline), iso(now), f.id);
+    db.prepare('UPDATE shape_feature_notes SET run_index = ? WHERE feature_id = ? AND run_index IS NULL').run(index, f.id);
+  });
+  return { index, ticketId };
+}
 
 /** D24: openSliceDraft's draft, so the page can say "draft" (pipelines.pr_state stays OPEN, P18). */
 export function recordSliceDraft(pipelineId, url) {

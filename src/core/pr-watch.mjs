@@ -250,6 +250,24 @@ export function fixTrigger(pending) {
   return { kinds: hit.map(([k]) => k), label: text[0].toUpperCase() + text.slice(1) };
 }
 
+const ROUND_WORDS = Object.freeze({ checks: 'fix failing checks', comments: 'fix review comments',
+  changes: 'address changes requested', conflict: 'resolve conflicts' });
+/** Shaper s5 (D20): a fix run's round words, lower case, from the same reserved `pending` as fixTrigger. A workspace
+ *  member's PR is prefixed with its member key. → { request, kinds } */
+export function fixRoundWords(pending, memberKey = '') {
+  const { kinds } = fixTrigger(pending);
+  const base = pending && pending.conflict && pending.conflict.base;
+  const words = kinds.map((k) => (k === 'behind' ? `merge ${base || 'the base'} in` : ROUND_WORDS[k])).filter(Boolean);
+  const text = words.length ? words.join(' and ') : 'address pull request feedback';
+  return { request: memberKey ? `${memberKey} · ${text}` : text, kinds };
+}
+
+/** Shaper s5 (D23): the facts a run card shows when the watch gave up, or null while it still watches. */
+export function stoppedWatchFact(w) {
+  return w && w.status === 'needs-person'
+    ? { prUrl: w.prUrl, status: w.status, reason: w.reason || null, fixRuns: Number(w.fixRuns) || 0 } : null;
+}
+
 /** How one fix run ended, from the watch that still held it (`prev`) and the watch after the transition that let go
  *  of it (`next`): pushed (and whether the watch then stopped, e.g. `cap`), not pushed because the PR ended, or failed. */
 export function fixOutcome(prev, next) {
@@ -460,7 +478,9 @@ export function createPrWatcher(deps = {}) {
       syncBeforeStart: false,
     };
     let r;
-    try { r = await deps.startRun(body, { startedBy: 'pr-watch', runId, prWatchRunId: runId }); }
+    // Shaper s5 (D20): the fix run is a round of the PR's run; the server numbers it (roundsOf).
+    try { r = await deps.startRun(body, { startedBy: 'pr-watch', runId, prWatchRunId: runId,
+      roundOf: { pipelineId: w.pipelineId, ...fixRoundWords(pending, w.memberKey) } }); }
     catch { r = { status: 500 }; }
     const cur = getWatch(w.prUrl);
     if (r?.status !== 200) {

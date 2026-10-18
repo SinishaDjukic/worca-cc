@@ -108,6 +108,16 @@ test('D19: plan.outlineChange shows the planner\'s note as text; without it ther
   assert.equal(setup().$('.shape-plan-outline-change'), null);
 });
 
+test('s5: notes from the chat list as "From the chat", the same with the gate on and off', () => {
+  const notes = [{ kind: 'plan', text: 'A' }, { kind: 'idea', text: 'B' }];
+  for (const extras of [true, false]) {
+    const { $, $$ } = setup({ extras, pq: ask({ notes }) });
+    assert.equal($('.shape-plan-notes-head').textContent, 'From the chat');
+    assert.deepEqual($$('.shape-plan-notes li').map((li) => li.textContent), ['Added to this run: A', 'Saved for later: B']);
+  }
+  assert.equal(setup().$('.shape-plan-notes'), null);
+});
+
 test('the meta line shows the file and Shape p/t, then sections and words once the text loads', async () => {
   const { $ } = setup({ fetchPlan: async () => new Promise(() => {}) });
   assert.equal($('.plan-meta').textContent, 'feature-v2.md · Shape 2/3');

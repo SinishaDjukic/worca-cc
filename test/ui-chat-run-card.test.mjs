@@ -1460,3 +1460,202 @@ test('progressIdent carries a fix card\'s `fix`, and adds no key to any other ca
   assert.deepEqual(progressIdent({ id: 'card_3', state: 'tracked', card: { type: 'progress', pipelineId: null, runId: 'r', projectKey: 'p', title: 'T', label: 'L', fix } }),
     { cardId: 'card_3', pipelineId: null, runId: 'r', projectKey: 'p', workspaceId: null, title: 'T', label: 'L', fix });
 });
+
+// ── Shaper s5: rounds, Ask for changes, saved ideas, Watch PR fix rounds ─────────────────────────────────────────────
+const SP = (label, over = {}) => ({ mode: 'stages', stage: label.toLowerCase(), label, text: label, tone: 'blue', fraction: 0.3, stages: [], passes: 0, ...over });   // run-progress.mjs's shape
+const ROUND2 = (over = {}) => ({ ...live({}, {}), source: 'live', runId: 'run-r2', pipelineId: 'beef00r2', status: 'running', stageProgress: SP('Build'), ...over });
+
+test('s5: a round 2 of the last run shows "Running · Round 2 · Build", adds no member row, keeps "Round 1 · …"', () => {
+  try {
+    setShapeFirst(true);
+    const { card, $ } = mk({});
+    const $$ = (q) => [...card.el.querySelectorAll(q)];
+    const last = SL(3, 'done', { pipelineId: 'beef0003', rounds: [{ round: 2, pipelineId: 'beef00r2', status: 'running', request: 'make it blue' }] });
+    const v = VIEW3([SL(1, 'done', { pipelineId: 'abcd1234' }), SL(2, 'done', { pipelineId: 'beef0002' }), last],
+      { log: [{ key: 'round-3-1', run: 3, text: 'Round 1 · Part 3', detail: [] }, { key: 'round-3-2', run: 3, text: 'Round 2 · make it blue', detail: [] }] });
+    card.update(shaped({ pipelineId: 'abcd1234', feature: v, log: [] }, { beef00r2: ROUND2() }, { status: 'done', terminal: true }, { status: 'done', active: [] }));
+    assert.equal($('.chat-rc-fstatus').textContent, 'Running · Round 2 · Build');
+    assert.equal($$('.chat-rc-member').length, 4, 'Planning + 3 runs, no row for the round');
+    assert.deepEqual($$('.chat-rc-log-text').map((e) => e.textContent), ['Round 1 · Part 3', 'Round 2 · make it blue']);
+  } finally { setShapeFirst(false); }
+});
+
+test('s5: a plain run with a live round 2 says so in its status line and log', () => {
+  try {
+    setShapeFirst(true);
+    const { card, $ } = mk({});
+    const $$ = (q) => [...card.el.querySelectorAll(q)];               // the card never reads a run store: the controller fills roundSnaps
+    card.update(done(null, { title: 'Add a chart', rounds: [{ round: 2, pipelineId: 'beef00r2', status: 'running', request: 'make it blue' }],
+      roundSnaps: { beef00r2: ROUND2() } }));
+    assert.equal($('.chat-rc-fstatus').textContent, 'Running · Round 2 · Build');
+    assert.deepEqual($$('.chat-rc-log-text').map((e) => e.textContent), ['Round 1 · Add a chart', 'Round 2 · make it blue']);
+    assert.equal($$('.chat-rc-member').length, 0);
+  } finally { setShapeFirst(false); }
+});
+
+test('s5: a plain run\'s round that needs you shows the shared icon, the word and the round\'s progress; Done once it ends', () => {
+  try {
+    setShapeFirst(true);
+    const { card, $ } = mk({});
+    const rounds = [{ round: 2, pipelineId: 'beef00r2', status: 'running', request: 'make it blue' }];
+    const asking = ROUND2({ pendingQuestion: { id: 'plan-1', kind: 'plan' }, stageProgress: SP('Plan', { text: 'Plan · 1/3' }) });
+    card.update(done(null, { title: 'Add a chart', rounds, roundSnaps: { beef00r2: asking } }));
+    assert.equal($('.chat-rc-fstatus').textContent, 'Needs you · Round 2 · Plan');
+    assert.equal($('.ask-rc-pill-text').textContent, 'Needs you');
+    assert.ok($('.ask-rc-pill').classList.contains('st-amber'));
+    assert.equal($('.chat-rc-dot-ic').dataset.icon, 'ask');
+    assert.equal($('.ask-rc-prog').textContent, 'Plan · 1/3');
+    card.update(done(null, { title: 'Add a chart', rounds: [{ ...rounds[0], status: 'done' }], roundSnaps: {} }));
+    assert.equal($('.ask-rc-pill-text').textContent, 'Done');
+    assert.equal($('.chat-rc-dot-ic'), null, 'the plain dot again');
+    assert.notEqual($('.ask-rc-prog').textContent, 'Plan · 1/3');
+  } finally { setShapeFirst(false); }
+});
+
+test('s5: Ask for changes — a finished run posts its pipeline ref; a finished feature posts its feature ref; typed text survives a repaint', async () => {
+  try {
+    setShapeFirst(true);
+    const posts = [];
+    const { card, $ } = mk({ ctx: { postChanges: async (ref, text) => posts.push([ref, text]) } });
+    card.update(done(null, { pipelineId: 'abcd1234' }));
+    const input = $('.chat-rc-changes .ask-changes-input');
+    input.value = 'make it blue'; input.dispatchEvent(new input.ownerDocument.defaultView.Event('input'));
+    card.update(done(null, { pipelineId: 'abcd1234', elapsedMs: 5000 }));
+    assert.equal($('.chat-rc-changes .ask-changes-input'), input, 'the same field');
+    assert.equal(input.value, 'make it blue');
+    $('.chat-rc-changes .ask-changes-send').click(); await settle();
+    assert.deepEqual(posts, [[{ pipelineId: 'abcd1234' }, 'make it blue']]);
+    const f = mk({ ctx: { postChanges: async (ref, text) => posts.push([ref, text]) } });
+    const v = VIEW3([SL(1, 'done', { pipelineId: 'abcd1234' }), SL(2, 'done', { pipelineId: 'beef0002' }), SL(3, 'done', { pipelineId: 'beef0003' })], { status: 'done' });
+    f.card.update(shaped({ pipelineId: 'abcd1234', feature: v, log: [] }, {}, { status: 'done', terminal: true }, { status: 'done', active: [] }));
+    assert.match(f.$('.chat-rc-fstatus').textContent, /^Ready to ship/);
+    const fi = f.$('.chat-rc-changes .ask-changes-input');
+    fi.value = 'one more'; fi.dispatchEvent(new fi.ownerDocument.defaultView.Event('input'));
+    f.$('.chat-rc-changes .ask-changes-send').click(); await settle();
+    assert.deepEqual(posts[1], [{ featureId: 'feat-1' }, 'one more']);
+  } finally { setShapeFirst(false); }
+});
+
+test('s5: ideas saved show under the log', () => {
+  try {
+    setShapeFirst(true);
+    const all = [SL(1, 'done', { pipelineId: 'abcd1234' }), SL(2, 'done', { pipelineId: 'beef0002' }), SL(3, 'done', { pipelineId: 'beef0003' })];
+    for (const [ideas, want] of [[1, '1 idea saved for the next checkpoint'], [2, '2 ideas saved for the next checkpoint']]) {
+      const { card, $ } = mk({});
+      card.update(shaped({ pipelineId: 'abcd1234', feature: VIEW3(all, { notes: { ideas } }), log: [] }, {}, { status: 'done', terminal: true }, { status: 'done', active: [] }));
+      assert.equal($('.chat-rc-notes').hidden, false);
+      assert.equal($('.chat-rc-notes').textContent, want);
+    }
+    const { card, $ } = mk({});
+    card.update(shaped({ pipelineId: 'abcd1234', feature: VIEW3(all, { notes: { ideas: 0 } }), log: [] }, {}, { status: 'done', terminal: true }, { status: 'done', active: [] }));
+    assert.equal($('.chat-rc-notes').hidden, true);
+  } finally { setShapeFirst(false); }
+});
+
+test('s5: no Ask for changes field on a running card, a halted feature or a workspace run', () => {
+  try {
+    setShapeFirst(true);
+    const ctx = { postChanges: async () => {} };
+    const shownField = ($) => { const slot = $('.chat-rc-changes'); return !!(slot && !slot.hidden && slot.querySelector('.ask-changes')); };
+    const running = mk({ ctx });
+    running.card.update(live({}));
+    assert.equal(shownField(running.$), false, 'running');
+    const ws = mk({ ctx });
+    ws.card.update(done(null, { kind: 'workspace-run', workspaceId: 'ws_1' }));
+    assert.equal(shownField(ws.$), false, 'workspace run');
+    const halted = mk({ ctx });
+    const v = VIEW3([SL(1, 'done', { pipelineId: 'abcd1234' }), SL(2, 'stopped', { pipelineId: 'beef0002' }), SL(3, 'planned')],
+      { halted: { index: 2, state: 'stopped', waiting: [] } });
+    halted.card.update(shaped({ pipelineId: 'abcd1234', feature: v, log: [] }, {}, { status: 'done', terminal: true }, { status: 'done', active: [] }));
+    assert.equal(shownField(halted.$), false, 'halted feature');
+    const ok = mk({ ctx });
+    ok.card.update(done(null, {}));
+    assert.equal(shownField(ok.$), true, 'a finished plain run has it');
+  } finally { setShapeFirst(false); }
+});
+
+test('s5 controller: a round\'s live snapshot reaches the card as roundSnaps; refreshPipeline re-reads the finished card', async () => {
+  try {
+    setShapeFirst(true);
+    const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
+    const round = ROUND2();
+    const runStore = { subscribe: () => () => {}, byPipeline: (pid) => (pid === 'beef00r2' ? round : null), get: () => null };
+    const calls = [];
+    const fetch = async (url) => { calls.push(url); return { ok: true, json: async () => ({ state: STATE({ status: 'done', active: [] }), live: null,
+      extras: { rounds: [{ round: 2, pipelineId: 'beef00r2', status: 'running', request: 'make it blue' }] } }) }; };
+    const ctl = createRunCardController({ runStore, tickMs: 0 });
+    const built = ctl.build({ id: 'card_00000001', card: { type: PROGRESS_CARD_TYPE, pipelineId: 'abcd1234', runId: 'run-uuid-1', title: 'Fix login' } },
+      { doc: dom.window.document, win: dom.window, fetch });
+    dom.window.document.body.appendChild(built.el);
+    await settle(); await settle();
+    assert.equal(built.el.querySelector('.chat-rc-fstatus').textContent, 'Running · Round 2 · Build');
+    const n = calls.length;
+    ctl.refreshPipeline('abcd1234');
+    await settle(); await settle();
+    assert.equal(calls.length, n + 1);
+    assert.equal(calls.at(-1), '/api/ask/runs/abcd1234');
+    built.dispose(); ctl.destroy();
+  } finally { setShapeFirst(false); }
+});
+
+test('s5 controller: a feature round\'s live snapshot from the run store drives the feature card\'s status', () => {
+  try {
+    setShapeFirst(true);
+    const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
+    const round = ROUND2({ pendingQuestion: PQ_PLAN, stageProgress: SP('Plan') });
+    const own = live({ shaping: { feature: { id: 'feat-1' } } }, { status: 'done' });
+    const runStore = { subscribe: () => () => {}, byPipeline: (pid) => (pid === 'abcd1234' ? own : pid === 'beef00r2' ? round : null), get: () => null };
+    const last = SL(3, 'done', { pipelineId: 'beef0003', rounds: [{ round: 2, pipelineId: 'beef00r2', status: 'running', request: 'make it blue' }] });
+    const cardJson = { pipelineId: 'abcd1234', log: [], feature: VIEW3([SL(1, 'done', { pipelineId: 'abcd1234' }), SL(2, 'done', { pipelineId: 'beef0002' }), last]) };
+    const ctl = createRunCardController({ runStore, tickMs: 0 });
+    const built = ctl.build({ id: 'card_00000001', card: { type: PROGRESS_CARD_TYPE, pipelineId: 'abcd1234', runId: 'run-uuid-1', title: 'Fix login' } },
+      { doc: dom.window.document, win: dom.window, shaperCard: () => cardJson });
+    dom.window.document.body.appendChild(built.el);
+    assert.equal(built.el.querySelector('.chat-rc-fstatus').textContent, 'Needs you · Round 2 · Plan');
+    built.dispose(); ctl.destroy();
+  } finally { setShapeFirst(false); }
+});
+
+test('s5: a plain run\'s live round hides the Ask for changes field; it comes back once the round is done', () => {
+  try {
+    setShapeFirst(true);
+    const { card, $ } = mk({ ctx: { postChanges: async () => {} } });
+    const shownField = () => { const slot = $('.chat-rc-changes'); return !!(slot && !slot.hidden && slot.querySelector('.ask-changes')); };
+    card.update(done(null, { title: 'Add a chart', rounds: [{ round: 2, pipelineId: 'beef00r2', status: 'running', request: 'make it blue' }],
+      roundSnaps: { beef00r2: ROUND2() } }));
+    assert.equal($('.chat-rc-fstatus').textContent, 'Running · Round 2 · Build');
+    assert.equal(shownField(), false, 'no field while round 2 runs');
+    card.update(done(null, { title: 'Add a chart', rounds: [{ round: 2, pipelineId: 'beef00r2', status: 'done', request: 'make it blue' }] }));
+    assert.equal(shownField(), true, 'the field is back once the round is done');
+  } finally { setShapeFirst(false); }
+});
+
+test('s5: a Watch PR fix round reports into the run card: status words, outcome on the log line, no member row', () => {
+  try {
+    setShapeFirst(true);
+    const fix = { ...live({}, {}), source: 'live', runId: 'run-f2', pipelineId: 'beef00f2', status: 'running', stageProgress: SP('Implement') };
+    const { card, $ } = mk({});
+    const $$ = (q) => [...card.el.querySelectorAll(q)];
+    card.update(done(null, { title: 'Add a chart', roundSnaps: { beef00f2: fix },
+      rounds: [{ round: 2, pipelineId: 'beef00f2', status: 'running', request: 'fix failing checks', by: 'watch', kinds: ['checks'] }] }));
+    assert.equal($('.chat-rc-fstatus').textContent, 'Running · Round 2 · fix failing checks');
+    assert.equal($$('.chat-rc-member').length, 0);
+    card.update(done(null, { title: 'Add a chart',
+      rounds: [{ round: 2, pipelineId: 'beef00f2', status: 'done', request: 'fix failing checks', by: 'watch', kinds: ['checks'], outcome: { kind: 'pushed', sha: 'a1b2c3d' } }] }));
+    assert.deepEqual($$('.chat-rc-log-text').map((e) => e.textContent), ['Round 1 · Add a chart', 'Round 2 · fix failing checks · pushed a1b2c3d']);
+  } finally { setShapeFirst(false); }
+});
+
+test('s5: a watch that gave up shows on the run card with Open PR and Ask for changes', () => {
+  try {
+    setShapeFirst(true);
+    const { card, $ } = mk({ ctx: { postChanges: async () => {} } });
+    card.update(done(null, { title: 'Add a chart', pipelineId: 'abcd1234',
+      watch: { prUrl: 'https://github.com/o/r/pull/781', status: 'needs-person', reason: 'cap', fixRuns: 3 },
+      rounds: [{ round: 4, pipelineId: 'beef00f4', status: 'done', request: 'fix failing checks', by: 'watch', kinds: ['checks'], outcome: { kind: 'failed', reason: 'fix-failed' } }] }));
+    assert.equal($('.chat-rc-watch-text').textContent, 'Watch stopped · 3 fix runs, checks still failing');
+    assert.equal($('.chat-rc-watch-pr').getAttribute('href'), 'https://github.com/o/r/pull/781');
+    $('.chat-rc-watch-ask').click();
+    assert.equal($('.chat-rc-changes .ask-changes-input').ownerDocument.activeElement, $('.chat-rc-changes .ask-changes-input'));
+  } finally { setShapeFirst(false); }
+});

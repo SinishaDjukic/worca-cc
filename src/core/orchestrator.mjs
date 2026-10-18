@@ -34,7 +34,7 @@ import { registryPortsFn } from './graph/registry-ports.mjs';
 import { checkPlan } from './shape/check.mjs';
 import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
-import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureApprovesEach, featureClarify } from './shape/features.mjs';
+import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureApprovesEach, featureClarify, featureNotes } from './shape/features.mjs';
 import { checkSlices, applyOutlineEdits, normalizeOutline, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
 import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
@@ -1186,21 +1186,24 @@ export class GraphOrchestrator extends RunHarness {
       this._shapingRound(q, check);
       const sl = this.runShape?.slice;
       const outlineChange = await this._outlineChangeText();
+      // Shaper s5 (D12): notes from the chat force the stop, like outlineChange.
+      const notes = (await this._shapeSliceScope())?.notes || [];
       if (sl && sl.index > 1 && !featureApprovesEach(sl.feature) && !this._nightActiveNow()) {
         // D19: plan once, confirm later: the plan stops only when its check fails or the planner says the slice
         // cannot be built as outlined. A missing check (null: it errored) stops too.
-        if (check?.ok === true && !outlineChange) {
+        if (check?.ok === true && !outlineChange && !notes.length) {
           this._log('orchestrator', 'info', `plan approval ${q.id}: approved (Approve each slice's plan is off)`);
           await appendAudit(this.pipeline.dir, 'Plan approval **approve** (Approve each slice\'s plan is off).').catch(() => {});
           return { decision: 'approve' };
         }
-        const why = outlineChange ? 'the planner says this slice cannot be built as outlined' : 'the shape check did not pass';
+        const why = outlineChange ? 'the planner says this slice cannot be built as outlined'
+          : notes.length ? 'the chat added notes to this run' : 'the shape check did not pass';
         await appendAudit(this.pipeline.dir, `Plan approval held: ${why}.`).catch(() => {});
       }
       const perspectives = this._shapePerspectives();
       return this._enqueueAsk(() => this._ask({
         id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId,
-        plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(outlineChange ? { outlineChange } : {}) },
+        plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}) },
         validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives }),
       }));
     })();
@@ -1329,7 +1332,12 @@ export class GraphOrchestrator extends RunHarness {
       try { earlier = await earlierSliceChanges(sl.feature, sl.index); }
       catch (err) { this._log('orchestrator', 'warn', `slice scope: cannot read the earlier slices: ${err?.message || err}`); }
     }
-    this._sliceScopeCache = { index: sl.index, total: sl.total, outline: sl.outline, earlier,
+    let notes = [];
+    if (sl.index > 1) {
+      try { notes = featureNotes(sl.feature, sl.index); }
+      catch (err) { this._log('orchestrator', 'warn', `slice scope: cannot read the feature's notes: ${err?.message || err}`); }
+    }
+    this._sliceScopeCache = { index: sl.index, total: sl.total, outline: sl.outline, earlier, notes,
       ...(sl.index > 1 ? { outlineChangeFile: join(this.pipeline.dir, OUTLINE_CHANGE_FILE) } : {}) };
     return this._sliceScopeCache;
   }

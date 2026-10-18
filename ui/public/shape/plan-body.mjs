@@ -64,6 +64,16 @@ export function renderPlanBody(panel, pq, deps) {
     body.appendChild(note);
   }
 
+  // Shaper s5 (D12): what the chat added to this run, and the ideas saved for it
+  if (Array.isArray(plan.notes) && plan.notes.length) {
+    const box = h('div', 'shape-plan-notes');
+    box.appendChild(h('div', 'shape-plan-notes-head', 'From the chat'));
+    const ul = h('ul', 'shape-plan-notes-list');
+    for (const n of plan.notes) ul.appendChild(h('li', null, `${n.kind === 'idea' ? 'Saved for later' : 'Added to this run'}: ${n.text}`));
+    box.appendChild(ul);
+    body.appendChild(box);
+  }
+
   // one check line, folded; neutral rows with ✓ / ✕ (D7); Fix all lives in ⋯ (D8)
   if (items.length) { const f = buildCheckFold(doc, check, 'Shape'); body.append(f.line, f.rows); }
 

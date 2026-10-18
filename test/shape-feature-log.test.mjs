@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { buildDecisionLog, parseDecisionLine, clarifyText, planApprovedText, splitText, gateText, replanText, NOT_SPLIT_TEXT }
+import { buildDecisionLog, parseDecisionLine, clarifyText, planApprovedText, splitText, gateText, replanText, NOT_SPLIT_TEXT,
+  roundText, roundOutcomeText }
   from '../src/shared/shape/feature-log.mjs';
 
 const SLICES = [1, 2, 3].map((i) => ({ index: i, title: `Part ${i}`, goal: `Goal ${i}`, acceptance: [`ok ${i}`] }));
@@ -59,4 +60,33 @@ test('shaping, no feature: an unanswered Clarify logs nothing; a plan approval h
 test('re-planning lists the re-planned runs last', () => {
   const log = buildDecisionLog({ sliced: true, slices: [...SLICES, { index: 4, title: 'Part 4', goal: '', acceptance: [] }], replan: [3, 4] });
   assert.deepEqual(log.at(-1), { key: 'replan', run: null, text: 'Re-planning runs 3–4', detail: ['3 · Part 3', '4 · Part 4'] });
+});
+
+test('s5: rounds add "Round 1 · …" then "Round n · request" under their run, after its decisions', () => {
+  const log = buildDecisionLog({ sliced: true, slices: SLICES, origin: ['Plan approval **approve** by ann.'],
+    rounds: [{ run: 1, round: 2, request: 'make it blue', status: 'running' }] });
+  assert.deepEqual(log.slice(-2).map((l) => [l.run, l.text]), [[1, 'Round 1 · Part 1'], [1, 'Round 2 · make it blue']]);
+});
+
+test('s5: a stopped round says so', () => {
+  const log = buildDecisionLog({ sliced: true, slices: SLICES, rounds: [{ run: 3, round: 2, request: 'blue', status: 'stopped' }] });
+  assert.equal(log.at(-1).text, 'Round 2 · blue · stopped');
+});
+
+test('s5: the base line names the run once and carries no run tag', () => {
+  const log = buildDecisionLog({ sliced: true, slices: SLICES, runs: [{ index: 3, events: ['Base `dev` moved: merged into `worca/c-3` (2 commits).'] }] });
+  assert.deepEqual(log.map((l) => [l.run, l.text]), [[null, 'dev moved · run 3 starts from it']]);
+  const c = buildDecisionLog({ sliced: true, slices: SLICES, runs: [{ index: 3, events: ['Base `dev` moved: conflicts in 2 files.'] }] });
+  assert.equal(c[0].text, 'dev moved · run 3 has conflicts with it in 2 files');
+});
+
+test('s5: a fix round\'s log line ends with its outcome', () => {
+  assert.equal(roundText(2, 'fix failing checks', 'done', { kind: 'pushed', sha: 'a1b2c3d' }), 'Round 2 · fix failing checks · pushed a1b2c3d');
+  assert.equal(roundText(3, 'resolve conflicts', 'done', { kind: 'failed', reason: 'conflict-markers' }),
+    'Round 3 · resolve conflicts · nothing pushed: conflict markers left');
+  assert.equal(roundOutcomeText({ kind: 'ended', reason: 'merged' }), 'nothing pushed: the PR was merged');
+  assert.equal(roundOutcomeText({ kind: 'failed', reason: 'remote-moved' }), 'nothing pushed: remote moved');
+  const log = buildDecisionLog({ sliced: true, slices: SLICES,
+    rounds: [{ run: 3, round: 2, request: 'fix failing checks', status: 'done', by: 'watch', outcome: { kind: 'pushed', sha: 'a1b2c3d' } }] });
+  assert.equal(log.at(-1).text, 'Round 2 · fix failing checks · pushed a1b2c3d');
 });

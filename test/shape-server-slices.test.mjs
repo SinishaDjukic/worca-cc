@@ -523,6 +523,16 @@ shipT('Ship as: a bad mode is 400, a feature not yet done is 409, an unknown one
   assert.equal((await ship(half.id, 'one')).status, 409);
 });
 
+shipT('s5: a live round of run 3 holds Ship back with a 409 naming it', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();
+  seedPipelineRow({ id: 'rnd5s003', status: 'running', branch: { source: w.last, sameAsSource: true, roundOf: { pipelineId: w.pids[2], round: 2, request: 'blue' } } });
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).error, 'a round of run 3 is still going');
+  assert.equal(ghCalls(seen, 'create').length, 0);
+});
+
 shipT('stacked: CHANGELOG.md on the last slice\'s branch, pushed, gh pr ready ×3 in order; the feature reads stacked', async () => {
   const seen = []; stubShip(seen);
   const w = shipWorld();

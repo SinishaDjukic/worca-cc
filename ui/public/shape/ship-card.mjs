@@ -1,6 +1,8 @@
 // ui/public/shape/ship-card.mjs — Shaper s4: the Ship card. One renderer for the chat card (type 'ship') and the
 // group page / Plans tab (feature-view.mjs shipBlock). Chrome: .ask-card .ask-mcard (style.css "Chat P2: Action cards").
 import { renderReleaseRow } from './release-row.mjs';
+import { renderAskChanges } from '../chat/ask-changes.mjs';
+import { shapeFirstOn } from '../chat/shape-gate.mjs';
 
 const MINUS = '\u2212';
 const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -55,6 +57,7 @@ export function renderShipCard(doc, m, handlers = {}) {
     body.appendChild(done);
     if (r.closed > 0) body.appendChild(h('div', 'ask-shipcard-closed', `Closed ${count(r.closed, 'draft', 'drafts')}`));
     if (r.release) body.appendChild(releaseLine(h, r.release));
+    if (handlers.onAskChanges) body.appendChild(renderAskChanges(doc, { onSend: handlers.onAskChanges }).el);   // Shaper s5
     return root;
   }
   // ready
@@ -64,6 +67,7 @@ export function renderShipCard(doc, m, handlers = {}) {
   const row = renderReleaseRow(doc, m.hint || null);
   const relSlot = h('div', 'ask-shipcard-release'); relSlot.appendChild(row.el);
   body.appendChild(relSlot);
+  if (handlers.onAskChanges) body.appendChild(renderAskChanges(doc, { onSend: handlers.onAskChanges }).el);     // Shaper s5
   const err = h('div', 'ask-card-err'); err.setAttribute('aria-live', 'polite');
   root.appendChild(err);
   const actions = h('div', 'ask-mcard-actions');
@@ -117,6 +121,7 @@ export function buildShipChatCard(block, ctx) {
       say(mode === 'one' ? `Shipped ${c.title} as one PR` : `Shipped ${c.title} as stacked PRs`);
     },
     onNotNow: async () => { await ctx.postCard(block, { verb: 'not-now' }); say('Ship card dismissed'); },
+    ...(shapeFirstOn(ctx.doc) && typeof ctx.postChanges === 'function' ? { onAskChanges: (t) => ctx.postChanges({ featureId: c.featureId }, t) } : {}),
   });
   return { el };
 }
