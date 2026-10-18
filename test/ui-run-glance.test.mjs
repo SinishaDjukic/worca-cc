@@ -197,6 +197,11 @@ test('glanceCopy: the progress option replaces the step line while running or wa
   assert.equal(glanceCopy({ status: 'paused' }, { progress, pill: { text: 'Paused' } }).sub, 'Resume to continue where it left off');
 });
 
+test('glanceCopy: role reviews read "Running" over "Plan · role reviews" (spec §4a)', () => {
+  const g = glanceCopy(loopedBranched, { progress: { text: 'Plan · role reviews' } });
+  assert.deepEqual([g.title, g.sub], ['Running', 'Plan · role reviews']);
+});
+
 test('glanceCopy: a stopped or done run ignores the progress option (P5)', () => {
   const progress = { text: 'Build · task 2 of 4' };
   for (const status of ['stopped', 'done']) {

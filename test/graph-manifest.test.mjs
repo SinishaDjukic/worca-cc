@@ -259,3 +259,13 @@ test('codeGraph:false is frozen into the manifest (resume decides the same); abs
   assert.equal('codeGraph' in build(), false);
   assert.equal('codeGraph' in GRAPH_DEFAULT_WORKFLOW, false);
 });
+
+test('role reviews: a loop wire\'s onExhausted rides the manifest and the rebuilt template (a resumed run keeps it)', () => {
+  const tpl = { ...TPL, wires: TPL.wires.map((w) => (w.id === 'w3' ? { ...w, config: { maxCycles: 2, onExhausted: 'clean' } } : w)) };
+  const m = buildGraphManifest(tpl, AGENTS);
+  assert.equal(m.graph.wires.find((w) => w.id === 'w3').onExhausted, 'clean');
+  assert.equal('onExhausted' in m.graph.wires.find((w) => w.id === 'w5'), false, 'only where authored');
+  const back = manifestTemplate(m).wires;
+  assert.deepEqual(back.find((w) => w.id === 'w3').config, { maxCycles: 2, onExhausted: 'clean' });
+  assert.deepEqual(back.find((w) => w.id === 'w5').config, { maxCycles: 3 });
+});

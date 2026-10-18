@@ -584,3 +584,17 @@ test('V23 Shape-it-first agent config: approve, maxQuestions, promptHints', () =
   assert.deepEqual(v23(fine), []);
   assert.deepEqual(V(fine).warnings.filter((w) => w.code === 'V17'), [], 'maxQuestions / promptHints are known keys');
 });
+
+test('V24 role reviews: roleReview is a known agent key; onExhausted is clean|gate on a loop wire only', () => {
+  const withWire = (cfg, id = 'w5') => { const t = ok(); t.wires = t.wires.map((w) => (w.id === id ? { ...w, config: { ...(w.config || {}), ...cfg } } : w)); return t; };
+  const v24 = (t) => V(t).errors.filter((e) => e.code === 'V24');
+  const role = ok(); role.nodes = role.nodes.map((n) => (n.id === 'n_rev' ? A('n_rev', 'reviewer', { roleReview: true }) : n));
+  assert.deepEqual(V(role).warnings.filter((w) => w.code === 'V17'), [], 'roleReview is a known key');
+  for (const mode of ['clean', 'gate']) {
+    const r = V(withWire({ onExhausted: mode }));
+    assert.deepEqual(v24(withWire({ onExhausted: mode })), []);
+    assert.deepEqual(r.warnings, [], JSON.stringify(r.warnings));
+  }
+  assert.match(v24(withWire({ onExhausted: 'nope' }))[0].message, /onExhausted must be 'clean' or 'gate'/);
+  assert.match(v24(withWire({ onExhausted: 'clean' }, 'w2'))[0].message, /onExhausted but is not a loop wire/);
+});

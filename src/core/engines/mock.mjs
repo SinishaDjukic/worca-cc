@@ -979,6 +979,11 @@ async function mockRefiner(m, cycle, onEvent) {
             },
           ],
         };
+  // Role reviews (spec §3): the refiner fed the merged findings says which ids it fixed — here, every one listed.
+  if (m.MOCK_FINDINGS) {
+    const findings = await readFile(m.MOCK_FINDINGS, 'utf8').catch(() => '');
+    review.addressed = [...findings.matchAll(/\*\*([a-z]+-\d+-\d+)\*\*/g)].map((x) => x[1]);
+  }
 
   if (jsonPath) {
     await ensureDir(jsonPath);
@@ -1138,7 +1143,30 @@ async function mockReviewer(m, cycle, onEvent) {
   return JSON.stringify(review);
 }
 
+/** Role mode (spec §3): `WORCA_MOCK_ROLE_REVIEW='{"ux":{"1":"critical"}}'` picks a role's severity per round;
+ *  'none' = no issue. Default: one minor finding (non-blocking), so mock shape runs do one round unless a test asks. */
+function roleSeverity(role, cycle) {
+  let table = {};
+  try { table = JSON.parse(process.env.WORCA_MOCK_ROLE_REVIEW || '{}') || {}; } catch { table = {}; }
+  return table?.[role]?.[String(cycle)] || 'minor';
+}
+
 async function mockPlanReview(m, cycle, onEvent) {
+  const role = m.MOCK_PERSPECTIVE || null;
+  if (role) {
+    const severity = roleSeverity(role, cycle);
+    const blocking = severity === 'critical' || severity === 'major';
+    const ids = String(m.MOCK_CHECKLIST || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const review = {
+      summary: `[mock] ${role} review, round ${cycle}`,
+      issues: severity === 'none' ? [] : [{ severity, title: `${role}: mock finding`, section: 'Testing', fix: 'Add the missing case.', detail: 'mock' }],
+      checklist: ids.map((id) => ({ id, status: blocking ? 'unmet' : 'met', evidence: 'mock' })),
+    };
+    await emitLog(onEvent, `[mock] ${role} role review (round ${cycle})`);
+    if (m.MOCK_JSON) { await ensureDir(m.MOCK_JSON); await writeFile(m.MOCK_JSON, JSON.stringify(review, null, 2) + '\n', 'utf8'); }
+    if (m.MOCK_OUT) { await ensureDir(m.MOCK_OUT); await writeFile(m.MOCK_OUT, `# ${role} findings (mock)\n`, 'utf8'); }
+    return JSON.stringify(review);
+  }
   const mdPath = m.MOCK_OUT;
   const jsonPath = m.MOCK_JSON;
   await emitLog(onEvent, `[mock] plan reviewer reviewing the plan (cycle ${cycle})`);

@@ -4,7 +4,9 @@
 // test fixture. `fixtures.mjs` re-exports it as FIXTURE_DEFAULT so the engine
 // tests and the shipping default can never drift apart.
 //
-// Pure data + one pure helper — no IO, no imports, no dependency on the registry.
+// Pure data + one pure helper — no IO, no dependency on the registry. The one import is the pure
+// role-review round cap, a shared shape constant.
+import { ROLE_REVIEW_MAX_ROUNDS } from '../../shared/shape/role-review.mjs';
 
 /** Recursively freeze a value and everything reachable from it, returning the
  *  same reference. A shallow `Object.freeze` is NOT enough here: it passes
@@ -204,6 +206,23 @@ export const SHAPE_CLARIFY_HINTS = 'Shaping: ask at most 3 questions — only de
   + 'and that the repo can\'t answer. Give each question a recommended option.';
 const SHAPE_CLARIFY_CONFIG = { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS };
 const SHAPE_APPROVE_CONFIG = { approve: { kind: 'plan', port: 'plan' } };
+const SHAPE_ROLES_CONFIG = { roleReview: true, model: 'claude-sonnet-5-5', effort: 'medium' };   // spec decision 1
+/** Refine waits for the reviewed plan AND its findings, both from n_roles (one publish), so it fires once per round. */
+const SHAPE_REFINE_CONFIG = { ...SHAPE_APPROVE_CONFIG, awaitAll: true };
+/** Spec §3: plan → role reviews → refine, one loop of at most 2 rounds that ends at the plan approval. Default's
+ *  w4/w5 ids are kept (per-project loop budgets are keyed by wire id); w17/w18 are new. */
+const SHAPE_HEAD_WIRES = [
+  { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_clarify', port: 'task' } },
+  { id: 'w2', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+  { id: 'w3', from: { node: 'n_clarify', port: 'answers' }, to: { node: 'n_plan', port: 'answers' } },
+  { id: 'w4', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_roles', port: 'plan' } },
+  { id: 'w17', from: { node: 'n_roles', port: 'plan' }, to: { node: 'n_refine', port: 'plan' } },
+  { id: 'w18', from: { node: 'n_roles', port: 'findings' }, to: { node: 'n_refine', port: 'findings' } },
+  { id: 'w5', from: { node: 'n_refine', port: 'revise' }, to: { node: 'n_roles', port: 'revise' },
+    config: { maxCycles: ROLE_REVIEW_MAX_ROUNDS, onExhausted: 'clean' } },
+];
+const SHAPE_ROLES_NODE = { id: 'n_roles', kind: 'agent', key: 'planReviewer', x: 740, y: 380, config: { ...SHAPE_ROLES_CONFIG } };
+const copyWire = (w) => ({ ...w, from: { ...w.from }, to: { ...w.to }, ...(w.config ? { config: { ...w.config } } : {}) });
 
 export const GRAPH_SHAPE_WORKFLOW = deepFreeze({
   id: SHAPE_WORKFLOW_ID,
@@ -216,12 +235,16 @@ export const GRAPH_SHAPE_WORKFLOW = deepFreeze({
     { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
     { id: 'n_clarify', kind: 'agent', key: 'clarify', x: 320, y: 200, config: { ...SHAPE_CLARIFY_CONFIG } },
     { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: {} },
-    { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_APPROVE_CONFIG } },
+    { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_REFINE_CONFIG } },
     { id: 'n_impl', kind: 'agent', key: 'implementer', x: 1160, y: 200, config: {} },
     { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: {} },
     { id: 'n_end', kind: 'end', x: 1720, y: 200, config: {} },
+    { ...SHAPE_ROLES_NODE, config: { ...SHAPE_ROLES_CONFIG } },
   ],
-  wires: GRAPH_DEFAULT_WORKFLOW.wires.map((w) => ({ ...w, from: { ...w.from }, to: { ...w.to }, ...(w.config ? { config: { ...w.config } } : {}) })),
+  wires: [
+    ...SHAPE_HEAD_WIRES.map(copyWire),
+    ...GRAPH_DEFAULT_WORKFLOW.wires.filter((w) => !['w1', 'w2', 'w3', 'w4', 'w5'].includes(w.id)).map(copyWire),
+  ],
 });
 
 /** wf_shape + the manual-test stages (UX picked): wf_full-no-decompose's verifier tail. There is no
@@ -237,20 +260,17 @@ export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
     { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
     { id: 'n_clarify', kind: 'agent', key: 'clarify', x: 320, y: 200, config: { ...SHAPE_CLARIFY_CONFIG } },
     { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: {} },
-    { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_APPROVE_CONFIG } },
+    { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_REFINE_CONFIG } },
     { id: 'n_impl', kind: 'agent', key: 'implementer', x: 1160, y: 200, config: {} },
     { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: {} },
     { id: 'n_check', kind: 'agent', key: 'manualTestsChecklist', x: 1720, y: 200, config: {} },
     { id: 'n_webui', kind: 'agent', key: 'manualWebUiTesting', x: 2000, y: 200, config: {} },
     { id: 'n_end', kind: 'end', x: 2280, y: 200, config: {} },
     { id: 'n_or', kind: 'or', x: 1580, y: 430, config: { arity: 2 } },
+    { ...SHAPE_ROLES_NODE, config: { ...SHAPE_ROLES_CONFIG } },
   ],
   wires: [
-    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_clarify', port: 'task' } },
-    { id: 'w2', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
-    { id: 'w3', from: { node: 'n_clarify', port: 'answers' }, to: { node: 'n_plan', port: 'answers' } },
-    { id: 'w4', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_refine', port: 'plan' } },
-    { id: 'w5', from: { node: 'n_refine', port: 'revise' }, to: { node: 'n_refine', port: 'revise' }, config: { maxCycles: 3 } },
+    ...SHAPE_HEAD_WIRES.map(copyWire),
     { id: 'w6', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
     { id: 'w7', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_review', port: 'plan' } },
     { id: 'w8', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_review', port: 'done' } },

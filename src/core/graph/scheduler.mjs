@@ -220,6 +220,8 @@ export function createScheduler(opts) {
   /** This scheduler's 1-arg ports lookup (the shared `portsOf(portsFn, node)` is 2-arg). */
   const portsOfNode = (node) => (typeof portsFn === 'function' ? portsFn(node) : null) || {};
   const isFlow = (node) => FLOW_KINDS.includes(node.kind);   // FLOW_KINDS is a frozen ARRAY (P1)
+  /** Spec §3: a role-review node is composite on EVERY firing, the round-2 loop re-fire included. */
+  const isRoleReview = (node) => !isFlow(node) && node?.config?.roleReview === true;
   const spentOf = (nodeId) => consumed.get(nodeId) || new Map();
 
   /** A port is a loop input when the classification says so OR its meta declares it.
@@ -351,7 +353,7 @@ export function createScheduler(opts) {
     execs.set(executionId, entry);
     running.set(node.id, executionId);
     emitExec(node, entry, 'start');
-    return { node, entry, args: argsFor(node, entry), composite: !!expandsPort };
+    return { node, entry, args: argsFor(node, entry), composite: !!expandsPort || isRoleReview(node) };
   }
 
   function argsFor(node, entry) {
@@ -415,7 +417,7 @@ export function createScheduler(opts) {
    * per task. Pause/abort is checked at every phase boundary.
    */
   async function runComposite(h) {
-    const portId = h.entry.expandsPort;
+    const portId = h.entry.expandsPort ?? null;       // null: a role-review fan-out (no expands input)
     const expanded = await execute({ ...h.args, composite: 'expand', expandsPort: portId });
     // A pause raised INSIDE the expansion (the adapter converted a throw) settles the
     // shell row here, with its expands binding intact. Falling through to
@@ -424,7 +426,10 @@ export function createScheduler(opts) {
     // decomposition would never be re-read.
     if (expanded?.paused === true) return { paused: true };
     const phases = Array.isArray(expanded?.phases) ? expanded.phases : [];
-    if (!phases.length) return runUnexpanded(h, portId);
+    // A role review with every role skipped still publishes its findings: never a plain execution.
+    if (!phases.length) {
+      return portId ? runUnexpanded(h, portId) : await execute({ ...h.args, composite: 'finish', expandsPort: null, phases });
+    }
 
     // A halted run returns WITHOUT `finish`: nothing is staged and no phase is falsely
     // marked done. A PAUSE answers `{ paused: true }` so the shell row stays
@@ -530,10 +535,9 @@ export function createScheduler(opts) {
       parentExecutionId: entry.executionId,
       taskIndex: index + 1,                                   // 1-based within its phase (the CLI's "task 3/7")
       taskTotal: (Array.isArray(ph.tasks) ? ph.tasks : []).length,
-      bindings: {
-        ...entry.bindings,
-        [portId]: { seq: entry.bindings[portId]?.seq, type: 'md', path: task.path ?? null },
-      },
+      bindings: portId
+        ? { ...entry.bindings, [portId]: { seq: entry.bindings[portId]?.seq, type: 'md', path: task.path ?? null } }
+        : { ...entry.bindings },
       trigger: entry.trigger,
     };
     execs.set(sub.executionId, sub);
@@ -551,6 +555,7 @@ export function createScheduler(opts) {
         title: task.title ?? null,
         phase: ph.ordinal,
         path: task.path ?? null,
+        role: task.role ?? null,
         index,
         siblings: (Array.isArray(ph.tasks) ? ph.tasks : [])
           .filter((t) => t.id !== task.id)
@@ -727,7 +732,11 @@ export function createScheduler(opts) {
     for (const w of outs) {
       const st = wireState.get(w.id);
       if (st) {
-        if (st.deliveries >= st.allowance) { holdAt(w, token, verdict, node, executionId); continue; }
+        if (st.deliveries >= st.allowance) {
+          if (w.config?.onExhausted === 'clean') { exhaustClean(w, token, verdict, node, executionId); continue; }
+          holdAt(w, token, verdict, node, executionId);
+          continue;
+        }
         st.deliveries += 1;
       }
       tokens.set(`${w.to.node}.${w.to.port}`, token);
@@ -800,6 +809,14 @@ export function createScheduler(opts) {
     askGate(entry);
   }
 
+  /** Spec §3 "at most 2 rounds, then the person decides": a spent wire set to onExhausted:'clean' fires the source's
+   *  clean outputs (forceClean, the gate's "continue" path) carrying the open issues — no ask, no hold. */
+  function exhaustClean(wire, token, verdict, node, executionId) {
+    const issues = blockingIssues(verdict);
+    onEvent('gate', { wireId: wire.id, nodeId: node.id, executionId, issues, status: 'exhausted' });
+    forceClean({ wireId: wire.id, nodeId: node.id, executionId, token, issues });
+  }
+
   function resolveGate(wireId, answer) {
     if (settled) return;                      // the run already resolved: the resume re-asks this hold (P3-36)
     if (!outstanding.has(wireId)) return;     // withdrawn by End (or already answered) — a no-op
@@ -862,7 +879,12 @@ export function createScheduler(opts) {
     for (const inp of portsOfNode(node).inputs || []) {
       if (inp.id === AWAIT_ID || isLoopPort(node.id, inp)) continue;
       const w = wireById.get(wiredIn.get(node.id)?.get(inp.id));
-      const src = w ? nodeById.get(w.from.node) : null;
+      let src = w ? nodeById.get(w.from.node) : null;
+      // Spec §3: role reviews sit between the Planner and Refine; "Ask for changes" still goes to the Planner.
+      if (src && isRoleReview(src)) {
+        const up = wireById.get(wiredIn.get(src.id)?.get('plan'));
+        src = up ? nodeById.get(up.from.node) : null;
+      }
       if (!src || src.kind !== 'agent') continue;
       const rev = (portsOfNode(src).inputs || []).find((p) => p.id === 'revise' && p.type === 'md');
       if (rev) return { node: src.id, port: rev.id };
@@ -926,13 +948,21 @@ export function createScheduler(opts) {
       // see a stale rewrite beside the Planner's new plan (R16). Latched tokens stay bound on every later execution.
       // The person's revise starts a new shaping round: each loop into this node gets its full budget back. `holds`
       // stays, so later gate ask ids remain unique.
-      const node = nodeById.get(nodeId);
-      for (const inp of (node && portsOfNode(node).inputs) || []) {
-        if (!isLoopPort(nodeId, inp)) continue;
-        tokens.delete(`${nodeId}.${inp.id}`);
-        const wireId = wiredIn.get(nodeId)?.get(inp.id);
-        const st = wireId ? wireState.get(wireId) : null;
-        if (st) { st.deliveries = 0; st.allowance = initialAllowance(wireId); }
+      // A role node feeding this one (spec §3) gets the same reset: the revise opens a new pass of role reviews.
+      const resetLoops = (id) => {
+        const n = nodeById.get(id);
+        for (const inp of (n && portsOfNode(n).inputs) || []) {
+          if (!isLoopPort(id, inp)) continue;
+          tokens.delete(`${id}.${inp.id}`);
+          const wireId = wiredIn.get(id)?.get(inp.id);
+          const st = wireId ? wireState.get(wireId) : null;
+          if (st) { st.deliveries = 0; st.allowance = initialAllowance(wireId); }
+        }
+      };
+      resetLoops(nodeId);
+      for (const wireId of wiredIn.get(nodeId)?.values() || []) {
+        const src = nodeById.get(wireById.get(wireId)?.from.node);
+        if (src && isRoleReview(src)) resetLoops(src.id);
       }
       // Re-queue the producer with the feedback on its loop input; it re-fires (any-fresh), its new plan re-fires
       // this node via the non-loop wire and the stop is raised again as round N+1.
@@ -1036,7 +1066,8 @@ export function createScheduler(opts) {
       const node = nodeById.get(entry.nodeId);
       if (!node) continue;
       running.set(node.id, entry.executionId);
-      const h = { node, entry, args: argsFor(node, entry), composite: !!entry.expandsPort };
+      // A resumed role-review shell re-runs its fan-out, not a plain execution (it never sets entry.expandsPort).
+      const h = { node, entry, args: argsFor(node, entry), composite: !!entry.expandsPort || isRoleReview(node) };
       if (!isFlow(node) && !h.composite) pools[poolOf(node)].active += 1;
       let p;
       try { p = invoke(h); } catch (err) { p = Promise.reject(err); }

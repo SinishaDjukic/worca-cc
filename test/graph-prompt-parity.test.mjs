@@ -35,10 +35,10 @@ import { checkRows } from './helpers/rows.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { runOpts, RESUME_HEADER, READ_WRITE_TOOLS, IMPLEMENTER_TOOLS } from '../src/core/phases.mjs';
-import { buildAgentPrompt, taskSourcedPorts } from '../src/core/graph/executor.mjs';
+import { buildAgentPrompt, taskSourcedPorts, allocateOutputs, allocateVerdict } from '../src/core/graph/executor.mjs';
 import {
   REGISTRY, TASK_PROMPT, ORDINAL, nodeId, BUILTIN_KEYS, PARITY_TPL,
-  frontmatterTools, makeCtxFor,
+  frontmatterTools, makeCtxFor, portsFn,
 } from './helpers/prompt-ctx.mjs';
 
 // `store:'project'` allocations resolve under worcaHome() — isolate it FIRST.
@@ -350,4 +350,45 @@ test('every builtin prompt matches its committed whole-prompt snapshot', () => {
       + 'If the change is deliberate, review the diff and regenerate with '
       + 'UPDATE_PROMPT_SNAPSHOTS=1 (see this file\'s header).');
   }
+});
+
+// ── role reviews (spec §3) ───────────────────────────────────────────────────
+
+const RECORDED_PLAN = readFileSync(new URL('./fixtures/role-review/recorded-plan.md', import.meta.url), 'utf8');
+
+/** A role-review slice ctx as the orchestrator builds it: the roleReview port set, the slice, the role and its plan. */
+function roleSliceCtx(role, siblings) {
+  const base = ctxFor('planReviewer', { slice: { id: `role-${role}`, title: role, phase: 1, path: null, role, index: 0, siblings } });
+  const node = { ...base.node, config: { roleReview: true } };
+  const ports = portsFn(node);
+  const executionId = base.executionId;
+  return {
+    ...base, node, ports, bindings: { plan: { seq: 1, type: 'md', path: '/abs/plan.md' } },
+    outputs: allocateOutputs({ node, ports, executionId, ordinal: ORDINAL, runCtx: base.runCtx }),
+    verdict: allocateVerdict({ node, ports, ordinal: ORDINAL, runCtx: base.runCtx }),
+    role, rolePlanText: RECORDED_PLAN,
+  };
+}
+
+test('role reviews: a role slice prompt carries its own brief and markers only, no siblings block', () => {
+  const ux = buildAgentPrompt(roleSliceCtx('ux', [{ id: 'role-qa', title: 'QA', file: null }]));
+  assert.equal(ux.match(/## Your role:/g).length, 1);
+  assert.match(ux, /## Your role: UX/);
+  assert.doesNotMatch(ux, /## Your role: QA|`R-qa-/);
+  assert.match(ux, /^MOCK_PERSPECTIVE: ux$/m);
+  assert.match(ux, /^MOCK_CHECKLIST: R-ux-1,R-ux-2,/m);
+  assert.match(ux, /^MOCK_ROLE: plan-review$/m);
+  assert.doesNotMatch(ux, /Parallel siblings/);
+  assert.doesNotMatch(ux, /^MOCK_FINDINGS:/m);
+  const plain = promptFor('planReviewer');
+  assert.doesNotMatch(plain, /## Your role:|MOCK_PERSPECTIVE|MOCK_CHECKLIST/);
+});
+
+test('role reviews: the refiner renders the findings directive and MOCK_FINDINGS only when findings is bound', () => {
+  const bound = promptFor('refiner', { only: ['plan', 'findings'] });
+  assert.match(bound, /## Role reviews/);
+  assert.match(bound, /"addressed": \["ux-1-1"/);
+  assert.match(bound, /^MOCK_FINDINGS: \/abs\/findings\.md$/m);
+  const plain = promptFor('refiner');
+  assert.doesNotMatch(plain, /## Role reviews|MOCK_FINDINGS/);
 });

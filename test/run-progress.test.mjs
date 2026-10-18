@@ -8,7 +8,7 @@ import {
 } from '../src/shared/run-progress.mjs';
 import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
-import { GRAPH_DEFAULT_WORKFLOW, GRAPH_PR_FIX_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_WORKSPACE_SCAN_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
+import { GRAPH_DEFAULT_WORKFLOW, GRAPH_PR_FIX_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_WORKSPACE_SCAN_WORKFLOW, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 import { GRAPH_ARCHITECTURE_WORKFLOW } from '../src/core/graph/architecture-workflow.mjs';
 import { GRAPH_PRESENTATION_WORKFLOW } from '../src/core/graph/presentation-workflow.mjs';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
@@ -119,6 +119,8 @@ test('shipped workflows built from the real sidecars: staged ones get stages, th
   await checkRows([
     { name: 'wf_default', run: () => assert.equal(modeOf(GRAPH_DEFAULT_WORKFLOW), 'stages') },
     ...SEED_TEMPLATES.map((tpl) => ({ name: `seed ${tpl.id}`, run: () => assert.equal(modeOf(tpl), 'stages') })),
+    { name: 'wf_shape', run: () => assert.equal(modeOf(GRAPH_SHAPE_WORKFLOW), 'stages') },
+    { name: 'wf_shape_ux', run: () => assert.equal(modeOf(GRAPH_SHAPE_UX_WORKFLOW), 'stages') },
     { name: 'wf_pr_fix', run: () => assert.equal(modeOf(GRAPH_PR_FIX_WORKFLOW), 'stages') },
     { name: 'wf_architecture_c4', run: () => assert.equal(modeOf(GRAPH_ARCHITECTURE_WORKFLOW), 'stages') },
     { name: 'wf_memory_defrag', run: () => assert.equal(modeOf(GRAPH_MEMORY_DEFRAG_WORKFLOW), 'nodes') },
@@ -434,4 +436,54 @@ test('chainProgress: one equal part per run', async () => {
       assert.equal(e.text, '');
     } },
   ]);
+});
+
+// ── role reviews (spec §3/§4a): "Plan · role reviews[, round N]", and never "Plan · Plan" ──
+
+test('role reviews: the shape workflows read "Plan · role reviews[, round 2]" while n_roles runs; an active Planner reads "Plan"', async () => {
+  const registry = loadAgentRegistry(undefined, { userAgentsDir: null });
+  const sliceRow = (ordinal, role, status) => step({ executionId: `x:n_roles:${ordinal}:role-${role}`, nodeId: 'n_roles', ordinal,
+    kind: 'task', taskId: `role-${role}`, phaseOrdinal: 1, status });
+  const rows = [];
+  for (const tpl of [GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW]) {
+    const stepper = buildGraphManifest(tpl, registry);
+    const at = (over) => runProgress(S({ stepper, ...over }));
+    rows.push({ name: `${tpl.id} planner`, run: () => {
+      const p = at({ steps: [row('n_clarify')], active: [live('n_plan')] });
+      assert.equal(p.text, 'Plan', 'known bug 1: never "Plan · Plan"');
+    } });
+    rows.push({ name: `${tpl.id} round 1`, run: () => {
+      const p = at({ steps: [row('n_clarify'), row('n_plan'), sliceRow(1, 'ux', 'start')], active: [live('n_roles')],
+        progressFacts: { tasks: {}, reviews: {}, roleReview: { nodeId: 'n_roles', round: 1 } } });
+      assert.equal(p.text, 'Plan · role reviews');
+      assert.equal(p.stage, 'plan');
+    } });
+    rows.push({ name: `${tpl.id} round 2`, run: () => {
+      const p = at({ steps: [row('n_clarify'), row('n_plan'), sliceRow(1, 'ux', 'done'), row('n_refine'), sliceRow(2, 'ux', 'start')],
+        active: [live('n_roles', 2)], progressFacts: { tasks: {}, reviews: {}, roleReview: { nodeId: 'n_roles', round: 2 } } });
+      assert.equal(p.text, 'Plan · role reviews, round 2');
+      assert.equal(p.stage, 'plan');
+    } });
+    rows.push({ name: `${tpl.id} replay never decreases`, run: () => {
+      const memo = {};
+      const fact = (round) => ({ tasks: {}, reviews: {}, roleReview: { nodeId: 'n_roles', round } });
+      const frames = [
+        { steps: [row('n_clarify')], active: [live('n_plan')] },
+        { steps: [row('n_clarify'), row('n_plan')], active: [live('n_roles')], progressFacts: fact(1) },
+        { steps: [row('n_clarify'), row('n_plan'), sliceRow(1, 'ux', 'done')], active: [live('n_refine')], progressFacts: fact(1) },
+        { steps: [row('n_clarify'), row('n_plan'), sliceRow(1, 'ux', 'done'), row('n_refine')], active: [live('n_roles', 2)], progressFacts: fact(2) },
+        { steps: [row('n_clarify'), row('n_plan'), sliceRow(1, 'ux', 'done'), row('n_refine'), sliceRow(2, 'ux', 'done')],
+          active: [live('n_refine', 2)], progressFacts: fact(2) },
+      ];
+      let prev = -1;
+      for (const f of frames) {
+        const p = runProgress(S({ stepper, ...f }), memo);
+        assert.equal(p.stage, 'plan');
+        assert.ok(p.fraction >= prev, `${p.fraction} < ${prev}`);
+        assert.doesNotMatch(p.text, /Plan · Plan/);
+        prev = p.fraction;
+      }
+    } });
+  }
+  await checkRows(rows);
 });

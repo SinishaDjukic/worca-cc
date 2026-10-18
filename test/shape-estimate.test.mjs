@@ -20,8 +20,8 @@ function fakeHistory(agents, { n = 3 } = {}) {
   return new Map(agents.map((a) => [a, { cost: [...cost], ms: [...ms] }]));
 }
 
-test('estimateGraph: sums per-agent medians, split into planning (clarify, planner, refiner) and build', () => {
-  assert.deepEqual(PLANNING_AGENTS, ['clarify', 'planner', 'refiner']);
+test('estimateGraph: sums per-agent medians, split into planning (clarify, planner, planReviewer, refiner) and build', () => {
+  assert.deepEqual(PLANNING_AGENTS, ['clarify', 'planner', 'planReviewer', 'refiner']);
   const got = estimateGraph(GRAPH_DEFAULT_WORKFLOW, fakeHistory(DEFAULT_AGENTS));
   assert.deepEqual(got, { costUsd: 10, planningUsd: 6, buildUsd: 4, minutes: 10, samples: 3 });
 });
@@ -61,19 +61,29 @@ test('estimateGraph: no number without enough history', () => {
   assert.equal(estimateGraph(GRAPH_DEFAULT_WORKFLOW, null), null, 'no history at all');
 });
 
-test('estimateChoices: Shaper includes its planning, the same agents give the same honest figure', () => {
+test('estimateChoices: Shaper includes its planning; with no planReviewer history the reviewers borrow the refiner median', () => {
   const history = fakeHistory(DEFAULT_AGENTS);
   const got = estimateChoices({ asIs: GRAPH_DEFAULT_WORKFLOW, shaped: GRAPH_SHAPE_WORKFLOW }, { history });
   assert.equal('same' in got, false);
-  assert.deepEqual(got.asIs, got.shaped);
-  assert.deepEqual(got.shaped, { costUsd: 10, planningUsd: 6, buildUsd: 4, minutes: 10, samples: 3 });
-  assert.ok(got.shaped.planningUsd > 0, 'the shaped estimate includes planning');
+  assert.deepEqual(got.asIs, { costUsd: 10, planningUsd: 6, buildUsd: 4, minutes: 10, samples: 3 });
+  const refinerMedian = 2;
+  assert.equal(got.shaped.planningUsd, got.asIs.planningUsd + refinerMedian, 'the role reviews are planning cost');
+  assert.equal(got.shaped.buildUsd, got.asIs.buildUsd);
+  assert.deepEqual(got.shaped, { costUsd: 12, planningUsd: 8, buildUsd: 4, minutes: 12, samples: 3 });
+});
+
+test('estimateGraph: with 3 planReviewer samples its own median is used', () => {
+  const history = fakeHistory(DEFAULT_AGENTS);
+  history.set('planReviewer', { cost: [5, 6, 7], ms: [60_000, 60_000, 60_000] });
+  assert.equal(estimateGraph(GRAPH_SHAPE_WORKFLOW, history).planningUsd, 6 + 6);
+  history.set('planReviewer', { cost: [5, 6], ms: [1, 2] });
+  assert.equal(estimateGraph(GRAPH_SHAPE_WORKFLOW, history).planningUsd, 6 + 2, 'too few samples: the refiner median');
 });
 
 test('estimateChoices: the UX workflow adds its build agents', () => {
   const history = fakeHistory([...DEFAULT_AGENTS, 'manualTestsChecklist', 'manualWebUiTesting']);
   const got = estimateChoices({ asIs: GRAPH_DEFAULT_WORKFLOW, shaped: GRAPH_SHAPE_UX_WORKFLOW }, { history });
-  assert.deepEqual(got.shaped, { costUsd: 14, planningUsd: 6, buildUsd: 8, minutes: 14, samples: 3 });
+  assert.deepEqual(got.shaped, { costUsd: 16, planningUsd: 8, buildUsd: 8, minutes: 16, samples: 3 });
 });
 
 test('estimateChoices: the Auto stub has no estimate', () => {
@@ -81,7 +91,7 @@ test('estimateChoices: the Auto stub has no estimate', () => {
   const got = estimateChoices({ asIs: AUTO_WORKFLOW_STUB, shaped: GRAPH_SHAPE_WORKFLOW }, { history });
   assert.equal('same' in got, false);
   assert.equal(got.asIs, null);
-  assert.deepEqual(got.shaped, { costUsd: 10, planningUsd: 6, buildUsd: 4, minutes: 10, samples: 3 });
+  assert.deepEqual(got.shaped, { costUsd: 12, planningUsd: 8, buildUsd: 4, minutes: 12, samples: 3 });
 });
 
 const homes = [];

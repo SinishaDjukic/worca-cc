@@ -26,7 +26,7 @@ useTempHome(after);
 
 const edge = (w) => `${w.from.node}.${w.from.port}->${w.to.node}.${w.to.port}`;
 
-test('wf_shape: Default\'s graph with the Clarify cap and the plan approval hold on Refine', () => {
+test('wf_shape: Default\'s graph with the Clarify cap, role reviews before Refine and the plan approval hold on Refine', () => {
   const wf = GRAPH_SHAPE_WORKFLOW;
   assert.equal(SHAPE_WORKFLOW_ID, 'wf_shape');
   assert.equal(SHAPE_UX_WORKFLOW_ID, 'wf_shape_ux');
@@ -35,9 +35,16 @@ test('wf_shape: Default\'s graph with the Clarify cap and the plan approval hold
   assert.deepEqual(wf.nodes.find((n) => n.id === 'n_clarify').config, { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS });
   assert.deepEqual(wf.nodes.find((n) => n.id === 'n_refine').config.approve, { kind: 'plan', port: 'plan' });
   assert.deepEqual(wf.nodes.map((n) => [n.id, n.kind, n.key ?? null]),
-    GRAPH_DEFAULT_WORKFLOW.nodes.map((n) => [n.id, n.kind, n.key ?? null]));
-  assert.deepEqual(wf.wires, GRAPH_DEFAULT_WORKFLOW.wires, 'the same wires and loop budgets as Default w1–w10');
-  assert.ok(Object.isFrozen(wf) && Object.isFrozen(wf.nodes[1].config) && Object.isFrozen(wf.wires[4].config), 'deep-frozen');
+    [...GRAPH_DEFAULT_WORKFLOW.nodes.map((n) => [n.id, n.kind, n.key ?? null]), ['n_roles', 'agent', 'planReviewer']]);
+  assert.deepEqual(wf.wires.map(edge), [
+    'n_task.task->n_clarify.task', 'n_task.task->n_plan.task', 'n_clarify.answers->n_plan.answers',
+    'n_plan.plan->n_roles.plan', 'n_roles.plan->n_refine.plan', 'n_roles.findings->n_refine.findings',
+    'n_refine.revise->n_roles.revise',
+    ...GRAPH_DEFAULT_WORKFLOW.wires.filter((w) => !['w1', 'w2', 'w3', 'w4', 'w5'].includes(w.id)).map(edge),
+  ]);
+  assert.deepEqual(wf.wires.filter((w) => !['w4', 'w5', 'w17', 'w18'].includes(w.id)),
+    GRAPH_DEFAULT_WORKFLOW.wires.filter((w) => !['w4', 'w5'].includes(w.id)), 'Default\'s other wires and loop budgets, unchanged');
+  assert.ok(Object.isFrozen(wf) && Object.isFrozen(wf.nodes[1].config) && Object.isFrozen(wf.wires.find((w) => w.id === 'w5').config), 'deep-frozen');
 });
 
 test('wf_shape_ux: the same head plus the manual-test tail, with no review.pass → end wire', () => {
@@ -50,7 +57,7 @@ test('wf_shape_ux: the same head plus the manual-test tail, with no review.pass 
   assert.ok(!wf.wires.some((w) => w.from.node === 'n_review' && w.from.port === 'pass' && w.to.node === 'n_end'));
   assert.ok(wf.wires.some((w) => edge(w) === 'n_webui.pass->n_end.result'));
   assert.ok(wf.wires.some((w) => edge(w) === 'n_or.out->n_impl.fix'));
-  assert.ok(Object.isFrozen(wf) && Object.isFrozen(wf.nodes[1].config) && Object.isFrozen(wf.wires[4].config), 'deep-frozen');
+  assert.ok(Object.isFrozen(wf) && Object.isFrozen(wf.nodes[1].config) && Object.isFrozen(wf.wires.find((w) => w.id === 'w5').config), 'deep-frozen');
 });
 
 test('both are reserved ids, in the server list and the composer twin', () => {
@@ -60,6 +67,24 @@ test('both are reserved ids, in the server list and the composer twin', () => {
     assert.ok(COMPOSER_RESERVED.has(id), `composer ${id}`);
   }
   assert.deepEqual([...COMPOSER_RESERVED].sort(), [...['wf_default', 'wf_memory_defrag', 'wf_shape', 'wf_shape_ux']].sort());
+});
+
+test('role reviews (spec §3): both shape graphs fan the plan out to n_roles and loop only roles → refine, at most 2 rounds', () => {
+  for (const wf of [GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW]) {
+    const roles = wf.nodes.find((n) => n.id === 'n_roles');
+    assert.equal(roles.key, 'planReviewer', wf.id);
+    assert.deepEqual(roles.config, { roleReview: true, model: 'claude-sonnet-5-5', effort: 'medium' }, wf.id);
+    assert.equal(wf.nodes.find((n) => n.id === 'n_refine').config.awaitAll, true, wf.id);
+    assert.ok(!wf.wires.some((w) => edge(w) === 'n_refine.revise->n_refine.revise'), `${wf.id}: no refiner self-loop`);
+    const w5 = wf.wires.find((w) => w.id === 'w5');
+    assert.equal(edge(w5), 'n_refine.revise->n_roles.revise', wf.id);
+    assert.deepEqual(w5.config, { maxCycles: 2, onExhausted: 'clean' }, wf.id);
+    for (const e of ['n_plan.plan->n_roles.plan', 'n_roles.plan->n_refine.plan', 'n_roles.findings->n_refine.findings']) {
+      assert.ok(wf.wires.some((w) => edge(w) === e), `${wf.id}: ${e}`);
+    }
+  }
+  assert.ok(GRAPH_DEFAULT_WORKFLOW.wires.some((w) => w.id === 'w5' && edge(w) === 'n_refine.revise->n_refine.revise'), 'wf_default keeps its self-loop');
+  assert.ok(!GRAPH_DEFAULT_WORKFLOW.nodes.some((n) => n.key === 'planReviewer'));
 });
 
 test('both validate with zero errors and zero warnings', () => {
