@@ -149,7 +149,7 @@ test('GET /api/shape/pipelines/:pid/slice: the slice\'s place in its feature; 40
     assert.equal(r.status, 200);
     const body = await r.json();
     assert.deepEqual({ ...body, state: undefined }, { featureId: f.id, title: 'Charts', index: 2, total: 3, sliceTitle: 'Slice 2',
-      state: undefined, next: { index: 3, title: 'Slice 3', state: 'planned' } });
+      state: undefined, next: { index: 3, title: 'Slice 3', state: 'planned' }, threadId: null });
     assert.equal((await get('/api/shape/pipelines/p-plain-zz/slice')).status, 404);
   });
   await withGate(false, async () => {
@@ -647,4 +647,52 @@ shipT('a failed ready then a retry: CHANGELOG.md keeps one ### Charts entry; two
 
 test('Ship as with the gate off answers the gate\'s refusal', () => withGate(false, async () => {
   assert.equal((await post('/api/shape/features/feat_x/ship', { mode: 'one' })).status, 404);
+}));
+
+// ── Shaper s2: the Chat feature card route, the slice route's thread ─────────────
+const fire = (featureId, idx, pid) => getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?")
+  .run(pid, getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(featureId, idx).ticket_id);
+
+test('GET /api/shape/pipelines/:pid/card: 404 gate off, unknown or plain run; a shaped run\'s log; the feature with its ask', () => withGate(true, async () => {
+  assert.equal((await get('/api/shape/pipelines/p-nope-zz/card')).status, 404);
+  const plain = pipe('running');
+  const ePlain = liveEntry(plain);                                   // orch.state.shaping = {} is truthy: give it none
+  ePlain.orch.state = {};
+  assert.equal((await get(`/api/shape/pipelines/${plain}/card`)).status, 404, 'a plain run is no feature card');
+  dropEntry(ePlain);
+  const shapedPid = pipe('running');
+  const eShaped = liveEntry(shapedPid);                              // shaping: {} (live, outline not yet approved)
+  const s = await get(`/api/shape/pipelines/${shapedPid}/card`);
+  assert.equal(s.status, 200);
+  assert.deepEqual(await s.json(), { pipelineId: shapedPid, feature: null, log: [] });
+  dropEntry(eShaped);
+  const { id: fid, pid: p1 } = mk(3, 'done');
+  const p2 = pipe('running');
+  fire(fid, 2, p2);
+  const e2 = liveEntry(p2, { pending: { id: 'plan-n_refine-1', kind: 'plan', plan: {} } });
+  try {
+    const r = await get(`/api/shape/pipelines/${p1}/card`);
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.pipelineId, p1);
+    assert.deepEqual(body.feature.ask, { index: 2, runId: e2.id, pipelineId: p2, id: 'plan-n_refine-1', kind: 'plan' });
+    await withGate(false, async () => assert.equal((await get(`/api/shape/pipelines/${p1}/card`)).status, 404));
+  } finally {
+    dropEntry(e2);
+    getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id IN (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ?)").run(fid);
+  }
+}));
+
+test('GET /api/shape/pipelines/:pid/slice carries the feature thread', () => withGate(true, async () => {
+  const { id: fid, pid: p1 } = mk(2, 'done');
+  const p2 = pipe('running');
+  fire(fid, 2, p2);
+  const thread = createThread({ title: 'charts' });
+  askLinkRun(thread.id, { runId: 'run-x', pipelineId: p1, cardId: 'card_x' });
+  try {
+    const info = await (await get(`/api/shape/pipelines/${p2}/slice`)).json();
+    assert.equal(info.threadId, thread.id);
+  } finally {
+    getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id IN (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ?)").run(fid);
+  }
 }));

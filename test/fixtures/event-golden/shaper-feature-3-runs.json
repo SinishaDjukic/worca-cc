@@ -1,0 +1,328 @@
+[
+ {
+  "label": "proposal",
+  "chip": "Shaping",
+  "status": "Running · Plan",
+  "bars": {
+   "run": {
+    "stage": "plan",
+    "tone": "blue"
+   },
+   "group": null
+  },
+  "log": [],
+  "step": null,
+  "members": []
+ },
+ {
+  "label": "clarify",
+  "chip": "Shaping",
+  "status": "Needs you · Plan",
+  "bars": {
+   "run": {
+    "stage": "plan",
+    "tone": "amber"
+   },
+   "group": null
+  },
+  "log": [],
+  "step": {
+   "index": null,
+   "kind": "clarify"
+  },
+  "members": []
+ },
+ {
+  "label": "split",
+  "chip": "Shaping",
+  "status": "Needs you · Plan",
+  "bars": {
+   "run": {
+    "stage": "plan",
+    "tone": "amber"
+   },
+   "group": null
+  },
+  "log": [
+   "Clarify · 2 answers"
+  ],
+  "step": {
+   "index": null,
+   "kind": "outline"
+  },
+  "members": []
+ },
+ {
+  "label": "run1-plan",
+  "chip": "Feature · 1/3",
+  "status": "Needs you · Run 1 · Plan",
+  "bars": {
+   "run": {
+    "stage": "plan",
+    "tone": "amber"
+   },
+   "group": {
+    "text": "Run 1 of 3",
+    "parts": [
+     "done",
+     "current",
+     "waiting",
+     "waiting"
+    ]
+   }
+  },
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs"
+  ],
+  "step": {
+   "index": 1,
+   "kind": "plan"
+  },
+  "members": [
+   "Planning · Done",
+   "1 · Store chart definitions · Waiting for your plan approval",
+   "2 · Ask for a chart in Chat · Planned",
+   "3 · Show charts on the run page · Planned"
+  ]
+ },
+ {
+  "label": "run1-build",
+  "chip": "Feature · 1/3",
+  "status": "Running · Run 1 · Build",
+  "bars": {
+   "run": {
+    "stage": "build",
+    "tone": "blue"
+   },
+   "group": {
+    "text": "Run 1 of 3",
+    "parts": [
+     "done",
+     "current",
+     "waiting",
+     "waiting"
+    ]
+   }
+  },
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes"
+  ],
+  "step": null,
+  "members": [
+   "Planning · Done",
+   "1 · Store chart definitions · Building",
+   "2 · Ask for a chart in Chat · Planned",
+   "3 · Show charts on the run page · Planned"
+  ]
+ },
+ {
+  "label": "run2-plan",
+  "chip": "Feature · 2/3",
+  "status": "Needs you · Run 2 · Plan",
+  "bars": {
+   "run": {
+    "stage": "plan",
+    "tone": "amber"
+   },
+   "group": {
+    "text": "Run 2 of 3",
+    "parts": [
+     "done",
+     "done",
+     "current",
+     "waiting"
+    ]
+   }
+  },
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes"
+  ],
+  "step": {
+   "index": 2,
+   "kind": "plan"
+  },
+  "members": [
+   "Planning · Done",
+   "1 · Store chart definitions · Done",
+   "2 · Ask for a chart in Chat · Waiting for your plan approval",
+   "3 · Show charts on the run page · Planned"
+  ]
+ },
+ {
+  "label": "run2-build",
+  "chip": "Feature · 2/3",
+  "status": "Running · Run 2 · Build",
+  "bars": {
+   "run": {
+    "stage": "build",
+    "tone": "blue"
+   },
+   "group": {
+    "text": "Run 2 of 3",
+    "parts": [
+     "done",
+     "done",
+     "current",
+     "waiting"
+    ]
+   }
+  },
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes",
+   "Run 2 · Plan approved"
+  ],
+  "step": null,
+  "members": [
+   "Planning · Done",
+   "1 · Store chart definitions · Done",
+   "2 · Ask for a chart in Chat · Building",
+   "3 · Show charts on the run page · Planned"
+  ]
+ },
+ {
+  "label": "run3-plan",
+  "chip": "Feature · 3/3",
+  "status": "Needs you · Run 3 · Plan",
+  "bars": {
+   "run": {
+    "stage": "plan",
+    "tone": "amber"
+   },
+   "group": {
+    "text": "Run 3 of 3",
+    "parts": [
+     "done",
+     "done",
+     "done",
+     "current"
+    ]
+   }
+  },
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes",
+   "Run 2 · Plan approved"
+  ],
+  "step": {
+   "index": 3,
+   "kind": "plan"
+  },
+  "members": [
+   "Planning · Done",
+   "1 · Store chart definitions · Done",
+   "2 · Ask for a chart in Chat · Done",
+   "3 · Show charts on the run page · Waiting for your plan approval"
+  ]
+ },
+ {
+  "label": "run3-review",
+  "chip": "Feature · 3/3",
+  "status": "Running · Run 3 · Review",
+  "bars": {
+   "run": {
+    "stage": "review",
+    "tone": "blue"
+   },
+   "group": {
+    "text": "Run 3 of 3",
+    "parts": [
+     "done",
+     "done",
+     "done",
+     "current"
+    ]
+   }
+  },
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes",
+   "Run 2 · Plan approved",
+   "Run 3 · Plan approved"
+  ],
+  "step": null,
+  "members": [
+   "Planning · Done",
+   "1 · Store chart definitions · Done",
+   "2 · Ask for a chart in Chat · Done",
+   "3 · Show charts on the run page · Building"
+  ]
+ },
+ {
+  "label": "gate",
+  "chip": "Feature · 3/3",
+  "status": "Needs you · Run 3 · Review",
+  "bars": {
+   "run": {
+    "stage": "review",
+    "tone": "amber"
+   },
+   "group": {
+    "text": "Run 3 of 3",
+    "parts": [
+     "done",
+     "done",
+     "done",
+     "current"
+    ]
+   }
+  },
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes",
+   "Run 2 · Plan approved",
+   "Run 3 · Plan approved"
+  ],
+  "step": {
+   "index": 3,
+   "kind": "gate"
+  },
+  "members": [
+   "Planning · Done",
+   "1 · Store chart definitions · Done",
+   "2 · Ask for a chart in Chat · Done",
+   "3 · Show charts on the run page · Waiting for your answers"
+  ]
+ },
+ {
+  "label": "ready",
+  "chip": "Feature · 3/3",
+  "status": "Ready to ship · 3/3",
+  "bars": {
+   "run": null,
+   "group": {
+    "text": "3 of 3 runs done",
+    "parts": [
+     "done",
+     "done",
+     "done",
+     "done"
+    ]
+   }
+  },
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes",
+   "Run 2 · Plan approved",
+   "Run 3 · Plan approved",
+   "Run 3 · Another cycle approved"
+  ],
+  "step": null,
+  "members": [
+   "Planning · Done",
+   "1 · Store chart definitions · Done",
+   "2 · Ask for a chart in Chat · Done",
+   "3 · Show charts on the run page · Done"
+  ]
+ }
+]

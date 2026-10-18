@@ -8,6 +8,8 @@ import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } f
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
+import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
+import { PLAN_ASK_KIND } from './run.mjs';
 
 const j = (t, d) => { try { return t ? JSON.parse(t) : d; } catch { return d; } };
 const iso = (ms) => new Date(ms).toISOString();
@@ -149,12 +151,45 @@ function sliceState(row, live) {
   return (p && PIPELINE_STATE[p.status]) || 'starting';
 }
 
+/** L8: the runs-map entry as featureView's `live` reads it (ui/server.mjs liveSliceOf). `waiting` is a pending plan
+ *  ask, `asking` any other pending ask; `ask` names it for the feature card's open step (s2, D9). */
+export function liveSliceFrom({ runId, status, pendingQuestion = null, approved = false }) {
+  const pq = pendingQuestion || null;
+  const plan = !!pq && pq.kind === PLAN_ASK_KIND;
+  return { runId, status: String(status || ''), waiting: plan, asking: !!pq && !plan, approved: !!approved,
+    ask: pq ? { id: pq.id || null, kind: plan && pq.plan && pq.plan.outline ? 'outline' : pq.kind } : null };
+}
+
+const auditTexts = (pid) => (pid ? getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(String(pid)).map((r) => r.text) : []);
+function clarifyOf(pid) {
+  const r = readClarifyRow(pid);
+  return { questions: Array.isArray(r.questions?.questions) ? r.questions.questions : [], answers: Array.isArray(r.answers?.answers) ? r.answers.answers : [] };
+}
+/** D7: the feature card's step log, from the origin run's clarify row and audit lines, each later run's audit lines,
+ *  and (while re-planning) every run after the last done one: replanBrief re-plans the halted run with the canceled. */
+function featureLog(f, slices) {
+  const lastDone = Math.max(0, ...slices.filter((s) => s.state === 'done').map((s) => s.index));
+  const replan = f.status === 'replanning' || f.status === 'replanned'
+    ? slices.filter((s) => s.index > lastDone).map((s) => s.index) : null;
+  return buildDecisionLog({
+    clarify: clarifyOf(f.origin_pipeline_id), origin: auditTexts(f.origin_pipeline_id), sliced: true,
+    runs: slices.filter((s) => s.index > 1 && s.pipelineId).map((s) => ({ index: s.index, events: auditTexts(s.pipelineId) })),
+    slices: slices.map((s) => {
+      const o = f.outline.slices[s.index - 1] || {};
+      return { index: s.index, title: s.title, goal: o.goal || '', acceptance: Array.isArray(o.acceptance) ? o.acceptance : [] };
+    }),
+    replan,
+  });
+}
+
 export function featureView(id, { live = () => null } = {}) {
   const f = featureRow(id);
   if (!f) return null;
+  let ask = null;
   const slices = sliceRows(id).map((r) => {
     const state = sliceState(r, live);
     const l = r.pipelineId ? live(r.pipelineId) : null;
+    if (!ask && l && l.ask) ask = { index: r.index, runId: l.runId || null, pipelineId: r.pipelineId, id: l.ask.id, kind: l.ask.kind };
     const pr0 = r.pipelineId ? readPrState(r.pipelineId) : null;
     // D24: the PR openSliceDraft opened as a draft reads "draft" until the feature ships (pr_state stays OPEN, P18).
     const pr = pr0 ? { ...pr0, draft: !f.ship_mode && !!r.draftPrUrl && r.draftPrUrl === pr0.url } : null;
@@ -179,6 +214,7 @@ export function featureView(id, { live = () => null } = {}) {
     halted: h ? { index: h.index, state: h.state, waiting } : null,
     open: slices.some((s) => ['planned', 'missed'].includes(s.state)),
     replacedBy: f.replaced_by || null, replan, slices, ship,
+    originPipelineId: f.origin_pipeline_id, ask, log: featureLog(f, slices),
   };
 }
 
@@ -236,6 +272,34 @@ export function currentFeatureId(id) {
     cur = r.replaced_by;
   }
   return cur;
+}
+
+/** Shaper s2 (D10): what the Chat feature card reads for the run its thread started — the feature view (log and open
+ *  ask included) once the outline is approved, else, for a run `shaped(pid)` names (its runs-map entry carries
+ *  orch.state.shaping), the run's own decision log. null for an unknown run and for a plain one. */
+export function shaperCard(pipelineId, { live = () => null, shaped = () => false } = {}) {
+  const pid = String(pipelineId);
+  if (!getDb().prepare('SELECT 1 FROM pipelines WHERE id = ?').get(pid)) return null;
+  const at = featureOfPipeline(pid);
+  const feature = at ? featureView(currentFeatureId(at.featureId), { live }) : null;
+  if (!feature && !shaped(pid)) return null;
+  return { pipelineId: pid, feature, log: feature ? feature.log : buildDecisionLog({ clarify: clarifyOf(pid), origin: auditTexts(pid) }) };
+}
+
+/** Shaper s2 (D14): the Chat thread that started a feature — its origin run's link row — walking `replaces` back
+ *  through Re-plan the rest (that run has no link of its own). null when no thread started it (a CLI run). */
+export function featureThread(featureId) {
+  const feat = getDb().prepare('SELECT origin_pipeline_id AS pid, replaces FROM shape_features WHERE id = ?');
+  const link = getDb().prepare('SELECT thread_id AS threadId, card_id AS cardId FROM ask_run_links WHERE pipeline_id = ? ORDER BY created_at LIMIT 1');
+  let cur = featureId ? String(featureId) : null;
+  for (let i = 0; i < REPLAN_HOPS && cur; i++) {
+    const f = feat.get(cur);
+    if (!f) return null;
+    const l = link.get(f.pid);
+    if (l) return { threadId: l.threadId, cardId: l.cardId || null };
+    cur = f.replaces || null;
+  }
+  return null;
 }
 
 /** The feature whose slice ran as this pipeline: the run that approved the outline (origin, F48), slice 1 by row,

@@ -326,7 +326,8 @@ import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shap
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, stackedPrBase, recordShapePlan, listShapePlans, chainFeature,
-  sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput } from '../src/core/shape/features.mjs';
+  sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput,
+  liveSliceFrom, shaperCard, featureThread } from '../src/core/shape/features.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById, listNetworkWaitRuns } from '../src/core/artifacts.mjs';
 import { createNetworkWatch, NETWORK_ACTOR } from '../src/core/network-wait.mjs';
@@ -1294,7 +1295,7 @@ function wireRun(entry) {
       // Clarify's questions, changes no status, so key on everything the view reads. Gated and caught (F42).
       if (orch.runShape?.slice && (name === 'question' || name === 'state' || name === 'exec' || name === 'done')) {
         const pq = entry.pendingQuestion;
-        const key = `${entry.status}|${pq ? pq.kind : ''}|${orch.state?.shaping?.approved ? 1 : 0}`;
+        const key = `${entry.status}|${pq ? `${pq.kind}:${pq.id || ''}` : ''}|${orch.state?.shaping?.approved ? 1 : 0}`;
         if (key !== entry._featureKey) {
           entry._featureKey = key;
           broadcastFeaturesOf(() => [featureOfPipeline(entry.pipelineId)?.featureId].filter(Boolean));
@@ -4254,9 +4255,7 @@ function liveSliceOf(id) {
   if (!e || !e.orch) return null;
   const status = String(e.status || '');
   if (SETTLED_RUN.has(status) && status !== 'paused') return null;
-  const pq = e.pendingQuestion;
-  return { runId: e.id, status, waiting: !!(pq && pq.kind === PLAN_ASK_KIND), asking: !!(pq && pq.kind !== PLAN_ASK_KIND),
-    approved: !!e.orch.state?.shaping?.approved };
+  return liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved });
 }
 function broadcastFeature(id) { if (id && shapeFirstEnabled()) broadcast({ type: 'shape-feature', id }); }
 /** F42: the run-event and tick hooks. Gate first (no query while it is off), and never let a throw escape: in wireRun
@@ -4300,6 +4299,18 @@ app.get('/api/shape/pipelines/:pid/slice', (req, res) => {
   try {
     const out = sliceOfPipeline(req.params.pid, { live: liveSliceOf });
     if (!out) return res.status(404).json({ error: 'not a slice' });
+    res.json({ ...out, threadId: featureThread(out.featureId)?.threadId || null });   // s2 D14: the thread that started the feature
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+// Shaper s2 (D10): the Chat feature card — the planning run's decision log, and once split the feature view with its
+// open ask. Synchronous: Express 4 catches a sync throw, and shapeRouteError answers it.
+app.get('/api/shape/pipelines/:pid/card', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    // shaped: the entry's in-memory shaping (state.shaping is never persisted). A settled entry still carries it.
+    const out = shaperCard(req.params.pid, { live: liveSliceOf, shaped: (pid) => !!liveRunEntry(pid)?.orch?.state?.shaping });
+    if (!out) return res.status(404).json({ error: 'not a shaped run' });
     res.json(out);
   } catch (err) { shapeRouteError(res, err); }
 });

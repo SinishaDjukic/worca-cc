@@ -9,7 +9,8 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { runDueTickets, previousBranchesOf, setTicketPipeline, getTicket } from '../src/core/scheduler.mjs';
-import { featureView, resumeFeature } from '../src/core/shape/features.mjs';
+import { featureView, resumeFeature, featureThread, liveSliceFrom } from '../src/core/shape/features.mjs';
+import { createThread, linkRun } from '../src/core/ask/store.mjs';
 import { readRunResultsById } from '../src/core/artifacts.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { _testing } from '../src/core/graph/executor.mjs';
@@ -109,6 +110,19 @@ test('chain: slice 1 approved and done, slice 2 planned just in time on slice 1\
   assert.ok(planner, 'a Planner spawn was captured');
   assert.ok(planner.prompt.includes('## This is slice 2 of 2'), 'the Planner prompt carries the slice scope');
   assert.ok(planner.prompt.includes(slice1Files[0]), `the Planner prompt names slice 1's file ${slice1Files[0]}`);
+
+  // 3b. Shaper s2: the feature thread is slice 1's; the feature view names slice 2's open plan ask, and its log comes
+  // from the harness's own audit lines.
+  const thread = createThread({ title: 'demo' });
+  linkRun(thread.id, { runId: 'run-1', pipelineId: pid1, cardId: 'card_1' });
+  assert.deepEqual(featureThread(f.id), { threadId: thread.id, cardId: 'card_1' });
+  const q2 = two.asks.filter((q) => q.kind === 'plan').at(-1);
+  const live = (pid) => (pid === pid2 ? liveSliceFrom({ runId: 'run-2', status: two.orch.getState().status, pendingQuestion: q2 }) : null);
+  const v2 = featureView(f.id, { live });
+  assert.deepEqual(v2.ask, { index: 2, runId: 'run-2', pipelineId: pid2, id: 'plan-n_refine-1', kind: 'plan' });
+  assert.ok(v2.log.some((l) => l.text === 'Split into 2 runs'), JSON.stringify(v2.log));
+  assert.ok(v2.log.some((l) => l.run === 1 && l.text === 'Plan approved'), JSON.stringify(v2.log));
+
 
   // 4. Stop slice 2: the feature halts there and a restart chains after slice 1's pipeline.
   two.orch.stop();

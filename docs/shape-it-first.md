@@ -150,11 +150,25 @@ slice's plan. Either way an audit line records what happened, and in Away mode a
 plan always waits for a person. Only a person can change the switch; a proposal
 from Ask cannot.
 
-**The feature card.** Slice 1's live run card in Chat grows a strip for the whole
-feature: progress, each slice's state and its pull request. A slice is planned,
+**The feature card.** The planning run's card in Chat becomes the card for the whole
+feature, in the thread that started it. Its head reads `Shaping` until the outline is
+approved, then `Feature · n/N`. Below the stats:
+
+- a status line for the whole feature, such as `Needs you · Run 2 · Plan`,
+  `Running · Run 2 · Build`, `Failed · Run 2 · Review` or `Ready to ship · 3/3`;
+- the group bar, one part for planning and one per run, and the current run's bar;
+- the step log: each answered step as a named decision (`Clarify · 2 answers`,
+  `Split into 3 runs`, `Run 1 · Plan approved`), each with **Show**, which unfolds
+  what was answered in place;
+- the open step, whichever run asks it: run 2's plan approval is answered in this
+  card too;
+- a row per run (`Planning · Done`, then `n · title · state`, or its pull request's
+  state once it has one); a row opens that run in Chat's panel.
+
+A later run's **Answer** in Chat home opens the feature's thread. A slice is planned,
 starting, shaping, waiting for your answers, waiting for approval, running, paused,
-done, stopped, error, failed, missed or canceled. When a slice halts, the card says
-"Slice k stopped · slices k+1–N waiting" and offers:
+done, stopped, error, failed, missed or canceled. When a slice halts, the feature page
+says "Slice k stopped · slices k+1–N waiting" and offers:
 
 - **Review plan**, **Answer** or **Open**, which open that slice's run in Chat's panel;
 - **Resume slice k**, which resumes a paused slice and restarts a stopped one as a

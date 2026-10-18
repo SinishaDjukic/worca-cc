@@ -491,8 +491,62 @@ function paintFeaturePageProgress(r) {
   if (!cur || !head || (cur.pipelineId !== r.pipelineId && cur.runId !== r.runId)) return;
   head.textContent = featureWhere(f, featureProgress(cur));
 }
+/** Shaper s2 (D12, D13): the Chat feature card's data per planning pipeline (GET /api/shape/pipelines/:pid/card). A card
+ *  asks on every repaint (once a second), so this fetches once per pipeline until a refresh; each listener hears every
+ *  answer (a disposed card's listener is a no-op: the controller checks its entry). */
+const SHAPER_CARDS = new Map();   // pipelineId -> { card, miss, loading, again, listeners: Set }
+function shaperCardFor(pid, onChange) {
+  if (!pid || !shapeFirstOn()) return null;
+  let e = SHAPER_CARDS.get(pid);
+  if (!e) { e = { card: null, miss: false, loading: false, again: false, listeners: new Set() }; SHAPER_CARDS.set(pid, e); loadShaperCard(pid, e); }
+  if (typeof onChange === 'function') e.listeners.add(onChange);
+  return e.card;
+}
+function loadShaperCard(pid, e) {
+  if (e.loading) { e.again = true; return; }
+  e.loading = true;
+  fetch(`/api/shape/pipelines/${encodeURIComponent(pid)}/card`)
+    .then((r) => {
+      if (r && r.status === 404) { e.miss = true; return null; }   // a plain run (or the gate off): never re-read
+      return r && r.ok ? r.json() : null;
+    }).catch(() => null)
+    .then((card) => {
+      e.loading = false;
+      if (card && card.pipelineId === pid) { e.card = card; e.miss = false; }   // the envelope, not any 200
+      for (const fn of [...e.listeners]) { try { fn(); } catch { /* a repaint hint only */ } }
+      if (e.again) { e.again = false; loadShaperCard(pid, e); }
+    });
+}
+/** Re-read every cached card, or one pipeline's; a miss (404) is skipped. A gate flip clears the cache. */
+function refreshShaperCards(pid = null) {
+  for (const [k, e] of SHAPER_CARDS) if ((!pid || k === pid) && !e.miss) loadShaperCard(k, e);
+}
+/** A question frame of pipeline `pid`: re-read the cards it shows on — its own (the planning run) and any cached
+ *  feature card that lists it as a member (run k's ask on the planning run's card). */
+function refreshShaperCardsOf(pid) {
+  if (!pid) return;
+  for (const [k, e] of SHAPER_CARDS) {
+    if (e.miss) continue;
+    const member = !!(e.card && e.card.feature && (e.card.feature.slices || []).some((s) => s.pipelineId === pid));
+    if (k === pid || member) loadShaperCard(k, e);
+  }
+}
+onShapeFirstChange(() => SHAPER_CARDS.clear());
+chatDeps.shaperCard = (pid, onChange) => shaperCardFor(pid, onChange);
+
+/** Shaper s2 (D14): a feature run's ask opens the thread that started the feature, where its card shows the ask. */
+async function featureThreadFor(ref) {
+  const pid = ref && ref.pipelineId;
+  if (!pid || !shapeFirstOn()) return null;
+  try {
+    const r = await fetch(`/api/shape/pipelines/${encodeURIComponent(pid)}/slice`);
+    const info = r && r.ok ? await r.json() : null;
+    return (info && typeof info.threadId === 'string' && info.threadId) || null;
+  } catch { return null; }
+}
 chatDeps.mountFeature = (host, id) => mountShapeFeature(host, id, { mode: 'summary' });   // P13: the Chat run card (F33)
-if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, mountCard: (h, id) => chatDeps.mountFeature(h, id), refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host) };   // test seam
+if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, mountCard: (h, id) => chatDeps.mountFeature(h, id), refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host),
+  shaperCard: shaperCardFor, threadForRun: featureThreadFor };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -1541,6 +1595,7 @@ function handleServerMessage(msg) {
     // Last, so even a throw could not cost the Schedules page its refresh. chatHome is null until mountChatHome (F40).
     SLICE_INFO.clear();
     refreshShapeFeatures();
+    refreshShaperCards();
     chatHome?.refreshPlans();
     return;
   }
@@ -1548,6 +1603,7 @@ function handleServerMessage(msg) {
   if (msg.type === 'shape-feature') {
     SLICE_INFO.clear();
     refreshShapeFeatures(msg.id);
+    refreshShaperCards();
     chatHome?.refreshPlans();
     return;
   }
@@ -2143,6 +2199,7 @@ function dropPendingQuestion(r) {
 // late or duplicate resolution cannot wipe a NEWER pending question.
 function onQuestionResolved(r, msg) {
   alerts.onResolved(alertRun(r), msg);
+  refreshShaperCardsOf(r && r.pipelineId);   // Shaper s2 (D13): before the early returns
   if (!r.pendingQuestion) return;
   if (msg && msg.id && r.pendingQuestion.id !== msg.id) return;
   dropPendingQuestion(r);
@@ -5554,6 +5611,7 @@ function onQuestion(r, msg) {
   // A new question supersedes any half-finished answer attempt.
   r._answering = false;
   alerts.onQuestion(alertRun(r), msg);
+  refreshShaperCardsOf(r && r.pipelineId);   // Shaper s2 (D13): the planning run's card shows a member's ask
 }
 
 // The `?` glyph used in the panel head. Built fresh each call (a node can only
@@ -35031,7 +35089,7 @@ function mountChatHome() {
       threads: chatHomeThreads,
       workflows: chatHomeWorkflows,
       flags: chatHomeFlags,
-      threadForRun: (ref) => findFollowingThread((...args) => fetch(...args), ref),
+      threadForRun: async (ref) => (await featureThreadFor(ref)) || findFollowingThread((...args) => fetch(...args), ref),
       openThread: (id) => openChat({ threadId: id }),
       openRunPanel: (ref, opts) => chatDeps.openRunPanel(ref, opts),     // P4 swaps chatDeps.openRunPanel for the panel
       setIntent: (id, opts) => chatIntent.set(id, opts),

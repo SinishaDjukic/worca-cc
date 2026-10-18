@@ -9,13 +9,15 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { writeReview, writeClarify } from '../src/core/artifacts.mjs';
+import { writeReview, writeClarify, appendAuditById } from '../src/core/artifacts.mjs';
+import { createThread, linkRun } from '../src/core/ask/store.mjs';
 import { getTicket, runDueTickets, updateTicket } from '../src/core/scheduler.mjs';
 import {
   createSliceFeature, retireFeaturesOf, sliceRequest, sliceTitle, featureView, currentFeatureId, featureOfPipeline,
   earlierSliceChanges, cancelRest, resumeFeature, rechainWaiting, replanRest, setApproveEach, featureApprovesEach,
   stackedPrBase, recordShapePlan, listShapePlans, featuresOfTickets, featureClarify, chainFeature, sliceOfPipeline, slicePrPreamble,
   recordShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
+  liveSliceFrom, shaperCard, featureThread,
 } from '../src/core/shape/features.mjs';
 
 useTempHome(after, 'worca-shape-features-');
@@ -427,6 +429,15 @@ test('replanRest: cancels open tickets, queues a slicing-auto run from the last 
   assert.deepEqual({ ...old }, { status: 'replanned', replaced_by: b.id });
 });
 
+test('replanRest after a stopped run: the log names it with the canceled ones, every run after the last done', () => {
+  const a = mk(3, { pipelineId: pipe('done') });
+  setTicket(tickets(a.id)[1].ticket_id, 'fired', { pipelineId: pipe('stopped') });
+  replanRest(a.id);
+  const v = featureView(a.id);
+  assert.deepEqual(v.slices.map((s) => s.state), ['done', 'stopped', 'canceled']);
+  assert.deepEqual([v.log.at(-1).text, v.log.at(-1).detail], ['Re-planning runs 2–3', ['2 · Slice 2', '3 · Slice 3']]);
+});
+
 test('replanRest with nothing done starts from the stored source branch', () => {
   const a = mk(2, { pipelineId: pipe('stopped') });
   const res = replanRest(a.id);
@@ -656,4 +667,52 @@ test('featureShipInput: per slice its summary (capped at 600) and its checklist 
   assert.equal(input.slices[1].summary, 'Second. More text.');
   assert.match(input.slices[1].checklistMd, /product-1/);
   assert.ok(Object.hasOwn(input.slices[1], 'pr'));
+});
+
+test('liveSliceFrom: plan ask → waiting, other ask → asking, and the ask named with its kind (outline for a Split)', () => {
+  assert.deepEqual(liveSliceFrom({ runId: 'r', status: 'running', pendingQuestion: { id: 'plan-n_refine-1', kind: 'plan', plan: {} } }),
+    { runId: 'r', status: 'running', waiting: true, asking: false, approved: false, ask: { id: 'plan-n_refine-1', kind: 'plan' } });
+  assert.equal(liveSliceFrom({ runId: 'r', status: 'running', pendingQuestion: { id: 'o', kind: 'plan', plan: { outline: { slices: [] } } } }).ask.kind, 'outline');
+  assert.deepEqual(liveSliceFrom({ runId: 'r', status: 'running', pendingQuestion: { id: 'g', kind: 'gate' } }).ask, { id: 'g', kind: 'gate' });
+  assert.equal(liveSliceFrom({ runId: 'r', status: 'running', approved: { round: 1 } }).ask, null);
+});
+
+test('featureView: originPipelineId, the first asking slice as ask, and the log from the audit lines', async () => {
+  const { id, pid } = mk(3);
+  await writeClarify(pid, { questions: { questions: [{ id: 'q1', question: 'Where?' }, { id: 'q2', question: 'How?' }] },
+    answers: { answers: [{ id: 'q1', choice: 'Redis' }, { id: 'q2', choice: 'JSON' }] } });
+  appendAuditById(pid, 'Slice outline **approve** (round 1).');
+  appendAuditById(pid, 'Plan approval **approve**.');
+  const pid2 = pipe('running');
+  setTicket(getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = 2').get(id).ticket_id, 'fired', { pipelineId: pid2 });
+  const live = (p) => (p === pid2 ? liveSliceFrom({ runId: 'r2', status: 'running', pendingQuestion: { id: 'plan-n_refine-1', kind: 'plan', plan: {} } }) : null);
+  const v = featureView(id, { live });
+  assert.equal(v.originPipelineId, pid);
+  assert.deepEqual(v.ask, { index: 2, runId: 'r2', pipelineId: pid2, id: 'plan-n_refine-1', kind: 'plan' });
+  assert.deepEqual(v.log.map((l) => [l.run, l.text]), [[null, 'Clarify · 2 answers'], [null, 'Split into 3 runs'], [1, 'Plan approved']]);
+});
+
+test('shaperCard: null for an unknown or unshaped run, the shaped run\'s own log before a split, the feature after it', async () => {
+  assert.equal(shaperCard('p-nope'), null);
+  const solo = pipe('running');
+  appendAuditById(solo, 'Plan approval **revise**.');
+  appendAuditById(solo, 'Plan approval **approve**.');
+  assert.equal(shaperCard(solo), null, 'in no feature and not a live shaped run: a plain run card');
+  assert.deepEqual(shaperCard(solo, { shaped: (p) => p === solo }),
+    { pipelineId: solo, feature: null, log: [{ key: 'p-1', run: null, text: 'Plan approved · after 1 round of changes', detail: [] }] });
+  const { id, pid } = mk(2);
+  const c = shaperCard(pid);                         // a feature needs no live entry (restart, pre-upgrade rows)
+  assert.equal(c.feature.id, id);
+  assert.equal(c.log, c.feature.log);
+});
+
+test('featureThread: the origin\'s link row; a re-planned feature walks replaces back; null without a link', () => {
+  const { id, pid } = mk(2);
+  assert.equal(featureThread(id), null);
+  const t = createThread({ title: 'charts' });
+  linkRun(t.id, { runId: 'run-uuid-x', pipelineId: pid, cardId: 'card_x' });
+  assert.deepEqual(featureThread(id), { threadId: t.id, cardId: 'card_x' });
+  const pidR = pipe('running');
+  const r = mk(2, { pipelineId: pidR, replaces: id });
+  assert.deepEqual(featureThread(r.id), { threadId: t.id, cardId: 'card_x' });
 });

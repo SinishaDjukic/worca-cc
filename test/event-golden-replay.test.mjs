@@ -16,6 +16,8 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { createTurnReducer } from '../src/core/ask/events.mjs';
 import { runClaude, MOCK_WRITER_ROLES, extractResultCost } from '../src/core/claude-runner.mjs';
+import { recordShaperFeature } from './helpers/shaper-fixture.mjs';
+import { featureCardModel } from '../ui/public/shape/feature-card.mjs';
 
 useTempHome(after);
 const REPO = fileURLToPath(new URL('../', import.meta.url));
@@ -123,3 +125,36 @@ for (const file of fixtureDir('ask')) {
     check(`spawn-ask-${name}`, replayAsk(ordered));
   });
 }
+
+// Shaper s2 (D18): the Chat feature card over a recorded 3-run feature (test/helpers/shaper-fixture.mjs), every frame.
+test('golden: Shaper feature, 3 runs — proposal → clarify → split → run 1..3 → gate → ready, every frame', async () => {
+  const frames = await recordShaperFeature();
+  const out = frames.map((f) => {
+    const m = featureCardModel({ own: f.own, card: f.card, snapOf: (pid) => f.snaps[pid] || null });
+    return { label: f.label, chip: m.chip, status: m.status,
+      bars: { run: m.run ? { stage: m.run.stage, tone: m.run.tone } : null, group: m.group ? { text: m.group.text, parts: m.group.parts.map((p) => p.state) } : null },
+      log: m.log.map((l) => (l.run ? `Run ${l.run} · ${l.text}` : l.text)),
+      step: m.step ? { index: m.step.index, kind: m.step.kind } : null,
+      members: m.members.map((r) => `${r.label} · ${r.state}`) };
+  });
+  // The acceptance words, pinned here as well as in the golden file.
+  assert.deepEqual(out.map((o) => [o.label, o.chip, o.status]), [
+    ['proposal', 'Shaping', 'Running · Plan'],
+    ['clarify', 'Shaping', 'Needs you · Plan'],
+    ['split', 'Shaping', 'Needs you · Plan'],
+    ['run1-plan', 'Feature · 1/3', 'Needs you · Run 1 · Plan'],
+    ['run1-build', 'Feature · 1/3', 'Running · Run 1 · Build'],
+    ['run2-plan', 'Feature · 2/3', 'Needs you · Run 2 · Plan'],
+    ['run2-build', 'Feature · 2/3', 'Running · Run 2 · Build'],
+    ['run3-plan', 'Feature · 3/3', 'Needs you · Run 3 · Plan'],
+    ['run3-review', 'Feature · 3/3', 'Running · Run 3 · Review'],
+    ['gate', 'Feature · 3/3', 'Needs you · Run 3 · Review'],
+    ['ready', 'Feature · 3/3', 'Ready to ship · 3/3'],
+  ]);
+  assert.deepEqual(out.at(-1).log, ['Clarify · 2 answers', 'Split into 3 runs', 'Run 1 · Plan approved · after 1 round of changes',
+    'Run 2 · Plan approved', 'Run 3 · Plan approved', 'Run 3 · Another cycle approved']);
+  assert.deepEqual(out.map((o) => o.step && o.step.kind), [null, 'clarify', 'outline', 'plan', null, 'plan', null, 'plan', null, 'gate', null]);
+  assert.deepEqual(out.find((o) => o.label === 'run1-build').members.slice(0, 2), ['Planning · Done', '1 · Store chart definitions · Building']);
+  assert.deepEqual(out.find((o) => o.label === 'run2-plan').bars.group.parts, ['done', 'done', 'current', 'waiting']);
+  check('shaper-feature-3-runs', out);
+});

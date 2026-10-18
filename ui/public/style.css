@@ -9503,6 +9503,20 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-rc-shaped:empty{display:none;}
 .chat-rc-shaped-stages{color:var(--green-ink);font-weight:500;}
 .chat-rc-shaped-plan,.chat-rc-shaped-saved{font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere;}
+/* Shaper s2: the feature card's status line, group bar, step log and member rows — divided rows, no boxes */
+.chat-rc-fstatus{margin-top:2px;}
+.chat-rc-dot-ic{width:16px;height:16px;margin-top:0;}
+.chat-rc-chain{margin-top:8px;}
+.chat-rc-log,.chat-rc-members{list-style:none;margin:8px 0 0;padding:0;border-top:1px solid var(--line);}
+.chat-rc-log-row,.chat-rc-member{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--line);font-size:12px;color:var(--ink-2);}
+.chat-rc-log-check{width:16px;height:16px;}
+.chat-rc-log-run{color:var(--ink-3);}
+.chat-rc-log-run::after{content:" \00B7";}
+.chat-rc-log-show{margin-left:auto;background:none;border:0;padding:0 2px;color:var(--ink-2);font:inherit;cursor:pointer;text-decoration:underline;}
+.chat-rc-log-detail{flex-basis:100%;list-style:none;margin:2px 0 0 22px;padding:0;color:var(--ink-3);}
+.chat-rc-member-open{display:flex;width:100%;gap:4px;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;}
+.chat-rc-member-open:disabled{cursor:default;opacity:.7;}
+.chat-rc-member-open:focus-visible,.chat-rc-log-show:focus-visible{outline:2px solid currentColor;outline-offset:2px;}
 /* Same word as Settings › Experimental; never wraps (the ellipsis is a safety net only). */
 .chat-home-act-badge{max-width:100%;box-sizing:border-box;padding:1px 7px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 /* Poppins SemiBold "Experimental" is ~81px at 10px: below a 960px home the 4- and 9-column tiles are 64–93px, so only
@@ -9555,8 +9569,6 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .qpanel .step-head{height:auto;min-height:24px;flex-wrap:wrap;margin-bottom:8px;}
 .qpanel .step-head .ask-mcard-title{white-space:normal;min-width:0;flex:1 1 auto;overflow-wrap:anywhere;}
 .outline-row-more{margin-left:auto;}
-.chat-rc-feature{margin:8px 0;}
-.chat-rc-feature[hidden]{display:none;}
 .shape-feature{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;}
 .shape-feature-title{font-weight:600;overflow-wrap:anywhere;}
 .shape-feature-head{color:var(--ink-2);}

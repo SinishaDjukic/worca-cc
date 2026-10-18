@@ -417,3 +417,35 @@ test('the Chat run card mounts the summary and Open feature routes to the page; 
   await ctx.settle(5);
   assert.ok(plans.querySelector('.shape-feature') && !plans.querySelector('.shape-feature-sum') && !plans.querySelector('.is-page'));
 });
+
+// ---- Shaper s2: the feature card's data and the feature thread (D12–D14) -------------------------------------------
+
+test('s2: threadForRun reads the slice route\'s threadId; shaperCard GETs once, and shape-feature / a member\'s question re-read it', async () => {
+  const cardGets = [];
+  const CARD = { pipelineId: 'p1', log: [], feature: { id: 'f', slices: [{ index: 1, pipelineId: 'p1' }, { index: 2, pipelineId: 'p2' }] } };
+  const fetchHandler = (url) => {
+    if (url === '/api/shape/pipelines/p2/slice') return res(200, { featureId: 'f', threadId: 't-1' });
+    if (url === '/api/shape/pipelines/p1/card') { cardGets.push(url); return res(200, CARD); }
+    return null;
+  };
+  const ctx = await bootApp({ fetchHandler });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', ...GATE, runs: [{ runId: 'run-p2', pipelineId: 'p2', title: 'Run 2', projectDir: '/tmp/p', status: 'running', kind: 'run',
+    startedAt: '2026-01-01T00:00:00Z' }] });
+  await ctx.settle();
+  const seam = ctx.window.__shapeFeature;
+  assert.equal(await seam.threadForRun({ pipelineId: 'p2' }), 't-1');
+  let heard = 0;
+  seam.shaperCard('p1', () => { heard += 1; });
+  seam.shaperCard('p1', () => {});
+  await ctx.settle(5);
+  assert.equal(cardGets.length, 1, 'two asks, one GET');
+  assert.equal(seam.shaperCard('p1').pipelineId, 'p1');
+  assert.ok(heard >= 1, 'the listener heard the answer');
+  ctx.dispatch({ type: 'shape-feature', id: 'f' });
+  await ctx.settle(5);
+  assert.equal(cardGets.length, 2, 'a shape-feature frame re-reads the card');
+  ctx.dispatch({ type: 'question', runId: 'run-p2', id: 'plan-n_refine-1', kind: 'plan', plan: { round: 1 } });
+  await ctx.settle(5);
+  assert.equal(cardGets.length, 3, 'run 2\'s question re-reads the planning run\'s card (refreshShaperCardsOf)');
+});

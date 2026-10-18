@@ -4,8 +4,8 @@
 // postAnswer BEFORE its POST (question-resolved can land before the 200).
 import { applyOutlineEdits } from '../../../src/shared/shape/slices.mjs';
 import { askKindOf } from '../ask/registry.mjs';
+import { clarifyText, planApprovedText, splitText, gateText, NOT_SPLIT_TEXT } from '../../../src/shared/shape/feature-log.mjs';
 
-const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 const NAMED = new Map();          // `${runId}|${questionId}` → { text, answers }
 const NAMED_MAX = 200;
 
@@ -15,7 +15,7 @@ export function stepReceipt(pq, payload, { shaping = false } = {}) {
   const p = payload || {};
   const d = p.decision;
   const kind = askKindOf(pq);
-  if (kind === 'gate') return d === 'another' ? 'Another cycle approved' : 'Continued with what you have';
+  if (kind === 'gate') return gateText(d);
   if (kind === 'recovery') return d === 'retry' ? 'Retried' : d === 'abort' ? 'Aborted' : 'Paused';
   if (kind === 'plan') {
     const plan = pq.plan || {};
@@ -23,22 +23,22 @@ export function stepReceipt(pq, payload, { shaping = false } = {}) {
       if (d === 'approve') {
         const r = applyOutlineEdits(plan.outline, Array.isArray(p.edits) ? p.edits : []);
         const n = (r.ok ? r.outline : plan.outline).slices.length;
-        return n < 2 ? 'Planned as one run' : `Split into ${n} runs`;
+        return splitText(n);
       }
-      if (d === 'flat') return 'Not split · planned as one run';
+      if (d === 'flat') return NOT_SPLIT_TEXT;
       if (d === 'stop') return 'Stopped at the split';
       return 'Changes asked · Runs';
     }
     if (d === 'approve') {
       const k = (Number(plan.round) || 1) - 1;
-      return k > 0 ? `Plan approved · after ${plural(k, 'round')} of changes` : 'Plan approved';
+      return planApprovedText(k);
     }
     if (d === 'stop') return 'Stopped at the plan';
     return Array.isArray(p.perspectives) ? 'Changes asked · perspectives' : 'Changes asked · Plan';
   }
   if (kind === 'clarify' && shaping && Array.isArray(p.answers)) {
     const k = p.answers.filter((a) => a && typeof a.choice === 'string' && a.choice.trim()).length;
-    return k ? `Clarify · ${plural(k, 'answer')}` : 'Clarify · no answers';
+    return clarifyText(k);
   }
   return null;
 }
