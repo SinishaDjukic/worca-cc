@@ -249,7 +249,6 @@ import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.m
 import { activeAgents } from './ask-run-card.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
-import { registerThreadRouteAddon } from './chat/thread-route.mjs';
 import { shapeFirstOn, onShapeFirstChange } from './chat/shape-gate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
@@ -28924,7 +28923,6 @@ if (typeof window !== 'undefined' && window.__np) window.__np.chatRunControls = 
 // CONTRACT §3: registered before createAskPanel runs (this line evaluates long before the mount at the end of the file).
 chatRunCards = registerChatRunCard({ controls: chatRunControls, runStore: askRunStore });
 registerDirectionAddon();                      // R10: the composer's "→ <run title>" chip
-registerThreadRouteAddon();                    // Shaper s5 (D8): a thread reply answers the open step or becomes a card
 
 /** History Overview DURATION sub-line: `9 executions · 2 loop deliveries`. */
 function histCountsLine(st) {

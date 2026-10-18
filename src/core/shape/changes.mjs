@@ -1,12 +1,12 @@
-// src/core/shape/changes.mjs — Shaper s5: Ask for changes (D5), the Route card (D6) and thread replies (D8–D10).
+// src/core/shape/changes.mjs — Shaper s5: Ask for changes (D5), the Route card (D6) and the two Ask Worca tools' thread rule.
 // The card logic is pure over injected deps (startRun(body, extra) → startRunAs, addNote → addFeatureNote,
 // appendRun → appendFeatureRun, answer → answerRun, tick → schedulerTick), so the rules are tested without Express.
 import { landingFor } from '../../shared/shape/landing.mjs';
-import { routeGuess, routeLabel, isQuestion } from '../../shared/shape/route.mjs';
+import { routeLabel, ROUTE_CHOICES } from '../../shared/shape/route.mjs';
 import { getDb } from '../db.mjs';
 import { readStoreMeta } from '../artifacts.mjs';
 import { roundsOf, roundOrigin } from './rounds.mjs';
-import { featureOfPipeline, currentFeatureId, featureBase } from './features.mjs';
+import { featureOfPipeline, currentFeatureId, featureBase, featureView } from './features.mjs';
 
 const MAX = 4000;
 const clip = (t) => String(t || '').trim().slice(0, MAX);
@@ -58,12 +58,16 @@ export async function applyChanges(card, deps) {
   return r.status < 300 ? { ok: true, result: { runId: r.body.runId } } : startError(r);
 }
 
-/** The `route` card (state 'proposed'). */
-export function routeCard({ text, feature }) {
-  const guess = routeGuess(text, feature);
-  const hasNext = (feature.slices || []).some((s) => s.state === 'planned' || s.state === 'missed');
+const oneLine = (t, n) => String(t || '').replace(/\s+/g, ' ').trim().slice(0, n);
+const NOT_STARTED = new Set(['planned', 'missed']);
+
+/** The `route` card (state 'proposed'). `guess` = Ask Worca's { choice, reason } (route_message), checked by the caller. */
+export function routeCard({ text, feature, guess }) {
+  const hasNext = (feature.slices || []).some((s) => NOT_STARTED.has(s.state));
+  const choice = ROUTE_CHOICES.includes(guess && guess.choice) ? guess.choice : 'save';
+  const g = { choice, where: choice === 'add' ? (hasNext ? 'next' : 'extra') : null, reason: oneLine(guess && guess.reason, 200) };
   return { type: 'route', text: clip(text), featureId: feature.id, featureTitle: feature.title, base: feature.base || null,
-    projectDir: feature.projectDir || null, tags: feature.tags || [], guess, hasNext, primary: routeLabel(guess.choice, feature.title) };
+    projectDir: feature.projectDir || null, tags: feature.tags || [], guess: g, hasNext, primary: routeLabel(g.choice, feature.title) };
 }
 
 export async function applyRoute(card, v, deps) {
@@ -77,25 +81,6 @@ export async function applyRoute(card, v, deps) {
   const r = await deps.startRun({ prompt: card.text, projectDir: card.projectDir, ...(card.base ? { sourceBranch: card.base } : {}),
     ...(card.tags && card.tags.length ? { tags: card.tags } : {}) }, {});
   return r.status < 300 ? { ok: true, result: { runId: r.body.runId } } : startError(r);
-}
-
-const answerable = (pq) => !!pq && pq.kind === 'plan' && !!pq.plan && pq.plan.revisable === true;   // Plan and Split asks
-
-/** D8–D10: what a thread reply does. `open` = {runId, pq} of the thread's open step (pq = the live pendingQuestion). */
-export function replyAction({ text, open, feature, run }, deps) {
-  if (isQuestion(text)) return { action: 'chat' };
-  if (open && answerable(open.pq)) {
-    deps.answer(open.runId, open.pq.id, { decision: 'revise', feedback: clip(text) });
-    return { action: 'answered', stepId: open.pq.id };
-  }
-  if (open) return { action: 'chat' };
-  if (feature) {
-    const toGo = (feature.slices || []).some((s) => s.state !== 'done' && s.state !== 'canceled');
-    if (feature.status === 'active' && toGo) return { action: 'route' };
-    return feature.status === 'done' || !toGo ? { action: 'changes' } : { action: 'chat' };
-  }
-  if (run && run.finished) return { action: 'changes' };
-  return { action: 'chat' };
 }
 
 // ---- the facts landingFor reads, from the DB. `deps` = the server's readers: { readPrState, findPipelineRowById,
@@ -114,7 +99,7 @@ export function landingFacts(pipelineId, deps) {
   const row = deps.findPipelineRowById(origin);
   if (!row || row.target === 'workspace') return null;
   const rounds = roundsOf([row.id]).get(row.id) || [];
-  return { feature: null, run: { pipelineId: row.id, title: row.title || 'this run', projectDir: readStoreMeta(row.project_key)?.path ?? null,
+  return { feature: null, run: { pipelineId: row.id, title: row.title || 'this run', status: row.status, projectDir: readStoreMeta(row.project_key)?.path ?? null,
     finished: FINISHED.has(row.status) && !rounds.some((r) => LIVE_ROUND.has(r.status)),
     branch: parse(row.branch), pr: deps.readPrState(row.id), rounds: 1 + rounds.length, tags: tagsOf(deps, row.id) } };
 }
@@ -135,4 +120,108 @@ export function landingFactsOfFeature(featureId, deps) {
   const shipPr = !shipUrl ? null : (owner && deps.readPrState(owner.id)) || (slices.length ? slices[slices.length - 1].pr : null);
   return { run: null, feature: { id: fid, title: v.title, status: v.status, base: featureBase(fid), projectDir: (row && row.project_dir) || null,
     shipPr, tags: tagsOf(deps, row && row.origin_pipeline_id), slices } };
+}
+
+// ---- the two Ask Worca tools (propose_changes, route_message): which work a thread follows, and the rule ----
+const HALTS = new Set(['stopped', 'error', 'failed', 'paused']);
+const STEP = { plan: 'Plan', outline: 'Split', questions: 'Clarify', gate: 'Gate' };
+
+/** What a thread follows. `links` = ask_run_links rows, newest first. The first feature found wins, else the newest run.
+ *  deps = { live?, readPrState, findPipelineRowById, readRunTags }; `live` is the server's runs overlay (liveSliceOf),
+ *  absent in the MCP child, so `open` is always null there (D7). → null when the thread follows nothing. */
+export function threadWork(links, deps) {
+  const live = deps.live || (() => null);
+  const fv = (fid) => featureView(fid, { live });
+  const factDeps = { readPrState: deps.readPrState, findPipelineRowById: deps.findPipelineRowById, readRunTags: deps.readRunTags, featureView: fv };
+  for (const l of links) {
+    const at = l.pipelineId ? featureOfPipeline(roundOrigin(l.pipelineId)) : null;
+    if (!at || !at.featureId) continue;
+    const fid = currentFeatureId(at.featureId);
+    const feature = fv(fid);
+    if (!feature) continue;
+    const ask = feature.ask;
+    return { feature, run: null, facts: landingFactsOfFeature(fid, factDeps), open: ask ? { index: ask.index, kind: ask.kind } : null };
+  }
+  const l = links[0];
+  if (!l) return null;
+  const facts = l.pipelineId ? landingFacts(l.pipelineId, factDeps) : null;
+  return { feature: null, run: (facts && facts.run) || null, facts, open: null };
+}
+
+/** The links of one run's work: the same round origin, or a run of the same feature (its current successor). */
+export function linksOfWork(links, pipelineId) {
+  const featureOf = (pid) => { const at = featureOfPipeline(pid); return at && at.featureId ? currentFeatureId(at.featureId) : null; };
+  const origin = roundOrigin(pipelineId);
+  const fid = featureOf(origin);
+  return links.filter((l) => {
+    if (!l.pipelineId) return false;
+    const o = roundOrigin(l.pipelineId);
+    return o === origin || (fid != null && featureOf(o) === fid);
+  });
+}
+
+/** D5: the thread rule both tools obey (what the removed thread reply decided), plus the ids and the card.
+ *  kind 'changes': input { pipelineId, request }; kind 'route': input { featureId, text, guess, reason }.
+ *  → { ok: true, card } | { ok: false, error } — the error is what the model reads. Pure over `work`. */
+export function shapeToolFit(kind, input, work) {
+  const no = (error) => ({ ok: false, error });
+  const raw = String((kind === 'changes' ? input.request : input.text) || '').trim();
+  const field = kind === 'changes' ? 'request' : 'text';
+  if (!raw) return no(`${field} is required`);
+  if (raw.length > MAX) return no(`${field} must be at most ${MAX} characters`);
+  if (!work) return no('this chat follows no run or feature');
+  const f = work.feature;
+  if (kind === 'route') {
+    if (!f) return no('route_message is for a chat that follows a feature: use propose_changes for a run');
+    if (currentFeatureId(String(input.featureId || '')) !== f.id) return no(`this chat follows feature ${f.id}`);
+    if (!ROUTE_CHOICES.includes(input.guess)) return no('guess must be add, own or save');
+    if (!oneLine(input.reason, 200)) return no('reason is required');
+  }
+  if (work.open) {
+    const who = work.open.index != null ? `Run ${work.open.index}` : 'The re-plan';    // featureView's re-plan ask has index null
+    return no(`${who} is waiting at its ${STEP[work.open.kind] || 'open'} step: the user answers it on its step card, not in the chat`);
+  }
+  if (f) {
+    const toGo = (f.slices || []).some((s) => s.state !== 'done' && s.state !== 'canceled');
+    const routeFits = f.status === 'active' && toGo;
+    if (kind === 'route') {
+      if (!routeFits) return no(`${f.title} has no runs to go: use propose_changes`);
+      const ff = work.facts.feature;
+      return { ok: true, card: routeCard({ text: raw, feature: { ...f, base: ff.base, projectDir: ff.projectDir, tags: ff.tags },
+        guess: { choice: input.guess, reason: input.reason } }) };
+    }
+    if (routeFits) return no(`${f.title} still has runs to go: use route_message`);
+    if (f.status !== 'done' && toGo) return no(`${f.title} is ${f.status}`);
+    const halted = work.facts.feature.slices.find((s) => HALTS.has(s.state));
+    if (halted) return no(`Run ${halted.index} stopped: resume or re-plan it first`);
+  } else if (!work.run) return no('this run has no single branch to change');
+  else if (work.run.finished === false) return no('the run is still going');
+  const card = changesCard({ text: raw, facts: work.facts });
+  return card ? { ok: true, card } : no('this run has no single branch to change');
+}
+
+/** D5: from the thread's links to the verdict (the child calls it without `live`, the parent with it). */
+export function shapeToolCheck(kind, input, links, deps) {
+  if (kind !== 'changes' && kind !== 'route') return { ok: false, error: 'unknown tool' };
+  if (kind === 'route') return shapeToolFit(kind, input, threadWork(links, deps));
+  const pid = String(input.pipelineId || '');
+  const mine = pid ? linksOfWork(links, pid) : [];
+  if (!mine.length) return { ok: false, error: `this chat does not follow run ${pid || '(none)'}` };
+  return shapeToolFit(kind, input, threadWork(mine, deps));
+}
+
+/** D9: the read-only facts Ask Worca gets in the turn context, or null. */
+export function shapeThreadFacts(work) {
+  if (!work) return null;
+  const prOf = (pr) => (pr && pr.url ? { number: pr.number ?? null, state: String(pr.state || 'open').toLowerCase() } : null);
+  const f = work.feature;
+  if (f) {
+    const next = (f.slices || []).find((s) => NOT_STARTED.has(s.state));
+    return { feature: { id: f.id, title: f.title, status: f.status,
+      runs: (f.slices || []).map((s) => ({ index: s.index, state: s.state, pr: prOf(s.pr) })),
+      next: next ? next.index : null, shipPr: prOf(work.facts && work.facts.feature && work.facts.feature.shipPr),
+      open: work.open ? { index: work.open.index ?? null, step: STEP[work.open.kind] || work.open.kind } : null } };
+  }
+  const r = work.run;
+  return r ? { run: { id: r.pipelineId, title: r.title, status: r.status || '', finished: r.finished !== false, pr: prOf(r.pr), rounds: r.rounds || 1 } } : null;
 }

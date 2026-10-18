@@ -333,7 +333,8 @@ import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, ca
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput,
   liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf } from '../src/core/shape/features.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
-import { changesCard, applyChanges, routeCard, applyRoute, replyAction, landingFacts, landingFactsOfFeature } from '../src/core/shape/changes.mjs';
+import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts } from '../src/core/shape/changes.mjs';
+import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
 import { routeCardVerb, changesCardVerb } from '../src/shared/shape/route.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById, listNetworkWaitRuns } from '../src/core/artifacts.mjs';
@@ -9974,7 +9975,10 @@ const askChatActions = createChatActionHost({
 function askChatTurnDeps(turnReader) {
   return {
     awaySwitch: (req) => askChatActions.awaySwitch(req, { actor: turnReader || 'local', person: turnReader }),
-    chatAction: (req) => askChatActions.apply(req, { actor: askActorFor(turnReader) }),
+    // Shaper's two card tools need the thread (what it follows); every other kind is the chat action host's.
+    chatAction: (req, o = {}) => (req && (req.kind === 'changes' || req.kind === 'route')
+      ? askShapeAction(req, o.threadId || null)
+      : askChatActions.apply(req, { actor: askActorFor(turnReader) })),
   };
 }
 
@@ -10046,6 +10050,8 @@ function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillR
         return { status: live.orch.state?.status ?? live.status ?? null, night: live.orch.state?.night || null, waiting: live.orch.pendingQuestion != null,
           projectDir: dir, projectKey: dir ? projectKey(dir) : null };
       },
+      // Shaper (D7): here the tools see the live runs, so an open step's refusal reaches the model as the tool result.
+      ...defaultShapeToolDeps({ threadId, live: (id) => liveSliceOf(id) }),
     },
   });
   askRelays.set(token, entry);
@@ -12297,6 +12303,11 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       };
     });
     if (links.length) out.linkedRuns = links;
+    // Shaper (D9): what this thread follows, read-only, for propose_changes / route_message. Gate off: no line.
+    if (shapeFirstEnabled()) {
+      try { const s = shapeThreadFacts(threadWork(askListRunLinks(threadId), shapeToolFactDeps)); if (s) out.shape = s; }
+      catch { /* absent line */ }
+    }
     const cards = [];
     for (const m of askListMessages(threadId)) {
       if (!Array.isArray(m.blocks)) continue;
@@ -12982,7 +12993,7 @@ app.post('/api/pinpoint', async (req, res) => {
   }
 });
 
-// ---- Shaper s5: Ask for changes, the Route card and thread replies (D5, D8–D10) ----
+// ---- Shaper s5: Ask for changes and the Route card (D5, D6); the tools' parent half ----
 const factDeps = { readPrState, findPipelineRowById, readRunTags, featureView: (fid) => featureView(fid, { live: liveSliceOf }) };
 /** A turn of this thread is still being written (askInFlight: the job while it runs). */
 const threadTurnBusy = (threadId) => askInFlight(threadId) != null;
@@ -12995,28 +13006,16 @@ function postThreadExchange(threadId, text, card) {
   broadcast({ type: 'ask-message', threadId, message });
   return message;
 }
-/** What a thread follows: its feature (the first one found, newest link first) or its newest run, and the open step's
- *  live ask. `runId` is always the runs-map UUID (answerRun looks it up there). */
-function threadWork(threadId) {
-  const links = askListRunLinks(threadId);                     // newest first
-  const openOf = (runId, want = null) => {
-    const e = runId ? liveRunEntry(runId) : null;
-    const pq = e && !SETTLED_RUN.has(String(e.status || '')) ? e.pendingQuestion : null;
-    return pq && (want == null || pq.id === want) ? { runId: e.id || runId, pq } : null;
-  };
-  for (const l of links) {
-    const at = l.pipelineId ? featureOfPipeline(roundOrigin(l.pipelineId)) : null;
-    if (!at || !at.featureId) continue;
-    const fid = currentFeatureId(at.featureId);
-    const feature = featureView(fid, { live: liveSliceOf });
-    if (!feature) continue;
-    const ask = feature.ask;
-    return { feature, run: null, featureFacts: landingFactsOfFeature(fid, factDeps), open: ask && ask.runId ? openOf(ask.runId, ask.id) : null };
-  }
-  const l = links[0];
-  if (!l) return { feature: null, run: null, featureFacts: null, open: null };
-  const facts = l.pipelineId ? landingFacts(l.pipelineId, factDeps) : null;
-  return { feature: null, run: (facts && facts.run) || null, featureFacts: facts && facts.feature ? facts : null, open: openOf(l.runId) };
+/** Shaper (ordinary stays ordinary, D6): propose_changes / route_message, applied in the parent. Re-checked NOW with the
+ *  live runs overlay (an open step the classic MCP child cannot see, D7); a refusal is a notice in the reply. */
+const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags };
+function askShapeAction(req, threadId) {
+  if (!shapeFirstEnabled()) return { ok: false, notice: 'Not applied: Shaper is off' };
+  if (!threadId) return { ok: false, notice: 'Not applied: no chat to post to' };
+  let r;
+  try { r = shapeToolCheck(req.kind, req, askListRunLinks(threadId), shapeToolFactDeps); }
+  catch (err) { return { ok: false, notice: `Could not do that: ${err && err.message ? err.message : err}` }; }
+  return r.ok ? { ok: true, block: { state: 'proposed', card: r.card } } : { ok: false, notice: `Not applied: ${r.error}` };
 }
 
 // Shaper s5 (D5): Ask for changes from a finished card. body { pipelineId? | featureId?, text } → 201 { message }
@@ -13040,42 +13039,6 @@ app.post('/api/ask/threads/:id/changes', async (req, res) => {
     const message = postThreadExchange(id, text.trim(), card);
     res.status(201).json({ message });
   } catch (err) {
-    if (!res.headersSent) res.status(500).json({ error: err && err.message ? err.message : String(err) });
-  }
-});
-
-// Shaper s5 (D8): a thread reply. body { text } → { action: 'answered'|'changes'|'route'|'chat', message? }
-app.post('/api/ask/threads/:id/reply', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
-  try {
-    const id = askIdParam(res, req.params.id, 'thread');
-    if (!id) return;
-    const text = req.body && req.body.text;
-    if (typeof text !== 'string' || !text.trim()) return badRequest(res, 'text is required');
-    if (text.length > 4000) return badRequest(res, 'text must be at most 4000 characters');
-    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
-    if (threadTurnBusy(id)) return res.json({ action: 'chat' });
-    const ctx = threadWork(id);
-    const r = replyAction({ text, ...ctx }, { answer: (runId, qid, payload) => {
-      // answerRun never checks the id: on a mismatch orch.answer returns false and resolvePending is a no-op, so the
-      // reply would be reported 'answered' while the step still waits. Re-check, and let plain Ask take it.
-      if (liveRunEntry(runId)?.pendingQuestion?.id !== qid) throw Object.assign(new Error('the step moved on'), { status: 409 });
-      return answerRun(runId, qid, payload, actorOf(req));
-    } });
-    if (r.action === 'chat') return res.json(r);
-    if (r.action === 'answered') {
-      const message = askAppendMessage(id, { role: 'user', text: text.trim(), blocks: [] });
-      broadcast({ type: 'ask-message', threadId: id, message });
-      return res.json({ ...r, message });
-    }
-    const card = r.action === 'route'
-      ? routeCard({ text, feature: { ...ctx.feature, base: ctx.featureFacts.feature.base, projectDir: ctx.featureFacts.feature.projectDir, tags: ctx.featureFacts.feature.tags } })
-      : changesCard({ text, facts: ctx.featureFacts || { run: ctx.run } });
-    if (!card) return res.json({ action: 'chat' });
-    res.json({ ...r, message: postThreadExchange(id, text.trim(), card) });
-  } catch (err) {
-    if (err && err.code === 'INVALID_ANSWER') return res.status(422).json({ error: 'invalid answer', errors: err.errors || [] });
-    if (err && err.status === 409) return res.json({ action: 'chat' });     // the step moved on: plain Ask takes it
     if (!res.headersSent) res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -16123,7 +16086,7 @@ export const _testing = {
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
-  applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
+  applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
   openSliceDraft, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
   networkWatchTick: () => networkWatch().tick(),
   setNetworkProbe(fn) { _networkProbe = fn; },

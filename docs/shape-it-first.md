@@ -271,19 +271,18 @@ lists it under **From the chat**. "Save for later" stores an `idea` note: it is 
 checkpoint` on the feature card, and on the next Plan step card) but not fed to the Planner. A note made when no
 run is left goes to the next run added to the feature.
 
-**Thread replies and the Route card.** In a thread that follows a run, a reply goes to Worca's router first:
-- A question (it ends with `?`, or starts with what, why, how, when, where, who, which, can, could, does, did, is,
-  are or should) stays plain chat.
-- A statement while the open step is a Plan or Split step is sent as your revise for that step.
-- Any other statement in a feature with runs still to go gets a **Where does this go?** card (chip `Route`): Add to
-  the feature (into the next run's plan, or as an extra run), Own run now (from the base, its own PR), or Save for
-  later. Worca preselects a guess with a one-line reason: fix words (`hotfix`, `urgent`, `broken`, `crash`, `prod`,
-  `asap`) guess Own run now; a word of four or more letters shared with an upcoming run's title or goal guesses
-  Add, naming that run; a run still to go guesses Add; otherwise Save for later. The rule is deterministic, not a
-  model call.
-- A finished feature or a finished plain run gets the Changes card.
+**Ask Worca and the Route card.** Every message in a chat goes to Ask Worca, as in any other chat: worca never
+reroutes it. In a chat that follows a run or a feature, with Shaper on, Ask Worca sees the run's state and PR, or the
+feature's runs, its next run and its open step, and it has two tools it calls when your message asks for a change:
+- **propose_changes** posts the Changes card (where it lands follows the table above). It fits a finished plain run
+  or a finished feature.
+- **route_message** posts a **Where does this go?** card (chip `Route`) while the feature has runs to go: Add to the
+  feature (into the next run's plan, or as an extra run), Own run now (from the base, its own PR), or Save for later.
+  The preselected choice and its one-line reason are Ask Worca's guess; you can pick another.
 
-A Clarify, Gate or Recovery step is never answered by a free reply.
+worca refuses a call that does not fit the chat (the wrong tool for the feature's state, a run that is still going,
+an open step), and Ask Worca answers in words instead. A Plan, Split, Clarify or Gate step is answered on its step
+card only, never from a chat message.
 
 **Base merge before the next run.** When `dev` (the feature's base) moved while a run was building, run 3 merges it
 into its fresh branch before its first agent. A clean merge moves the run's diff base to the merge commit, so the

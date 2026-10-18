@@ -347,6 +347,7 @@ export function renderShapeSection() {
     'propose_run takes `shape: { perspectives }` to start the run on the Shaper workflow: it asks at most 3 questions, writes the plan for the picked perspectives, and the run waits for the user to approve the plan before anything is built. Use it when the message starts with "Shape this task first", or when the user asks to plan or agree on the work before it is built. perspectives: product (always on) plus the 2–4 of architect, qa, ux, security, devops, release that fit. Never give workflowId, when, every or after with shape.',
     'A large shaped task may be planned in slices (separate pull requests, one after another): keep `slices: \'auto\'` (or leave it out) when the user asks for that or the task is large, and give `slices: \'off\'` when they ask to keep it as one.',
     'On every propose_run for a coding task, shaped or not, give `assess: { size, openDecisions, perspectives }` (on a shaped run only its size is read: it tells the run the task was judged large): size as you judged it (rule 4); openDecisions = the decisions the brief leaves open that change what gets built and that the repo cannot answer (short phrases, at most 6, [] when none). The card uses it to offer Shaper; do not ask the user these decisions yourself.',
+    'In a chat that follows a run or a feature (the `feature` or `followed run` line of the context), two more tools may be listed. propose_changes puts a Changes card in the chat when the user asks to change a finished run or a finished feature; worca picks where it lands (a new round on the same branch and PR, before Ship, or a follow-up run). route_message puts a "Where does this go?" card when the user brings a new idea while the feature still has runs to go, with your guess (add, own or save) and a one-line reason. Every other message is answered as usual: a question, a summary, thanks or "open the PR" never takes either tool. An open Plan or Split step is answered on its step card, never by these tools.',
   ].join('\n');
 }
 
@@ -560,6 +561,18 @@ export function buildContextHeader(ctx = {}, { maxChars = ASK_LIMITS.contextHead
     const runs = Array.isArray(ctx.linkedRuns) ? ctx.linkedRuns.slice(0, ASK_LIMITS.headerRuns) : [];
     if (!drop.has('runs') && runs.length) {
       push(`runs from this thread: ${runs.map((r) => `${label(r.id)} "${clip(r.title, titleMax)}" status=${label(r.status ?? '-')}${r.phase ? ` phase=${label(r.phase)}` : ''}`).join('; ')}`);
+    }
+    // Shaper (ordinary stays ordinary): what this thread follows, for propose_changes / route_message. Rides the runs drop.
+    const sh = drop.has('runs') ? null : ctx.shape;
+    const prTxt = (pr) => (pr ? ` PR #${label(pr.number ?? '?')} ${label(pr.state)}` : '');
+    if (sh && sh.feature) {
+      const f = sh.feature;
+      const runsTxt = (f.runs || []).slice(0, 12).map((r) => `run ${label(r.index)} ${label(r.state)}${prTxt(r.pr)}`).join(', ');
+      const openTxt = f.open ? ` · open step: ${label(f.open.step)} ${f.open.index != null ? `of run ${label(f.open.index)}` : 'of the re-plan'} (answered on its step card)` : '';
+      push(`feature ${label(f.id)} "${clip(f.title, titleMax)}" ${label(f.status)}: ${runsTxt}${f.next != null ? ` · next run ${label(f.next)}` : ''}${f.shipPr ? ` · ship${prTxt(f.shipPr)}` : ''}${openTxt}`);
+    } else if (sh && sh.run) {
+      const r = sh.run;
+      push(`followed run ${label(r.id)} "${clip(r.title, titleMax)}" ${label(r.status || (r.finished ? 'done' : 'running'))}${prTxt(r.pr)}${r.rounds > 1 ? ` · ${label(r.rounds)} rounds` : ''}`);
     }
     const cards = Array.isArray(ctx.cards) ? ctx.cards.slice(0, ASK_LIMITS.headerCards) : [];
     if (!drop.has('cards') && cards.length) {

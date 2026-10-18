@@ -406,6 +406,25 @@ test('list(): forty-five tools with JSON-Schema inputs', () => {
   assert.deepEqual(tools.list().find((d) => d.name === 'propose_run').inputSchema.required, ['brief']);
 });
 
+test('Shaper tools: listed only with chatActions, the gate and a followed thread; the child\'s refusal is the model\'s result', async () => {
+  const { PERSPECTIVE_KEYS } = await import('../src/shared/shape/perspectives.mjs');
+  const seen = [];
+  const shapeTools = (follows, verdict) => ({ follows: () => follows, check: (kind, input) => { seen.push([kind, input]); return verdict; } });
+  const on = { shapeFirstOn: () => true, perspectiveKeys: PERSPECTIVE_KEYS, chatActions: {} };
+  const names = (deps) => createAskTools({ ...fake, ...deps }).list().map((d) => d.name).filter((n) => n === 'propose_changes' || n === 'route_message');
+  assert.deepEqual(names({ ...on, shapeTools: shapeTools(true, { ok: true }) }), ['propose_changes', 'route_message']);
+  assert.deepEqual(names({ ...on, shapeTools: shapeTools(false, { ok: true }) }), [], 'a thread that follows nothing');
+  assert.deepEqual(names({ ...on, shapeFirstOn: () => false, shapeTools: shapeTools(true, { ok: true }) }), [], 'gate off');
+  assert.deepEqual(names({ shapeFirstOn: () => true, perspectiveKeys: PERSPECTIVE_KEYS, shapeTools: shapeTools(true, { ok: true }) }), [], 'no chatActions bundle');
+  await assert.rejects(createAskTools({ ...fake, ...on }).call('propose_changes', { pipelineId: 'aaaa0001', request: 'x' }), /propose_changes: unavailable/);
+  const ok = await createAskTools({ ...fake, ...on, shapeTools: shapeTools(true, { ok: true }) }).call('propose_changes', { pipelineId: 'aaaa0001', request: 'make it blue' });
+  assert.deepEqual([ok.ok, ok.requested], [true, { kind: 'changes', pipelineId: 'aaaa0001', request: 'make it blue' }]);
+  const no = await createAskTools({ ...fake, ...on, shapeTools: shapeTools(true, { ok: false, error: 'the run is still going' }) })
+    .call('route_message', { featureId: 'f1', text: 'x', guess: 'add', reason: 'r' });
+  assert.deepEqual(no, { ok: false, error: 'the run is still going' });
+  assert.deepEqual(seen.at(-1), ['route', { featureId: 'f1', text: 'x', guess: 'add', reason: 'r' }]);
+});
+
 test('list_projects / list_workflows come from the shared catalog', async () => {
   assert.deepEqual(await tools.call('list_projects', {}), {
     projects: [{ key: 'demo-00000001', name: 'Demo', path: '/p/demo' }],

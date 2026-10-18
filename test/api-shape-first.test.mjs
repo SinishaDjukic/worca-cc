@@ -12,7 +12,7 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { shipKit, stubShip, withShip, ghCalls } from './helpers/ship-world.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { createThread, linkRun as askLinkRun, listMessages } from '../src/core/ask/store.mjs';
+import { createThread, linkRun as askLinkRun, listMessages, appendMessage as askAppendMessage } from '../src/core/ask/store.mjs';
 
 useTempHome(after);
 
@@ -413,6 +413,31 @@ async function doneRunWithPr(tag) {
   return { dir, id, thread };
 }
 
+const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; while (!(await fn())) { if (Date.now() > end) throw new Error('timed out'); await sleep(25); } };
+/** One Ask turn. The previous turn's row can read 'done' a beat before its job leaves askInFlight → 409 'turn in flight': retry. */
+const postTurn = async (threadId, text) => {
+  const end = Date.now() + 10000;
+  for (;;) {
+    const r = await post(`/api/ask/threads/${threadId}/messages`, { text, model: 'claude-opus-5-5', effort: 'high' });
+    if (r.status !== 409 || Date.now() > end) return r;
+    await sleep(50);
+  }
+};
+/** A two-run feature whose run 1 is the origin pipeline `p1`, and a thread that follows it. */
+async function seedFeature(tag, p1) {
+  const { createSliceFeature } = await import('../src/core/shape/features.mjs');
+  const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
+  const dir = gitDir(tag);
+  sh('git branch dev', { cwd: dir });
+  seedPipelineRow({ id: p1, projectKey: projectKey(dir), status: 'done', title: p1, branch: { source: 'dev', feature: 'feat/a' } });
+  const f = createSliceFeature({ pipelineId: p1, projectDir: dir, title: 'Charts', perspectives: ['product'], workflowId: 'wf_shape',
+    outline: { why: 'w', slices: [1, 2].map((i) => ({ id: `s${i}`, title: `Part ${i}`, goal: 'g', inScope: [], outOfScope: [], acceptance: [], dependsOn: [], estimate: 'M' })) } });
+  const thread = createThread();
+  askLinkRun(thread.id, { runId: `run-${p1}`, pipelineId: p1, cardId: 'card_5f000001' });
+  return { dir, f, thread };
+}
+
 test('s5 gate off: /changes and /reply are 404', () => withGate(false, async () => {
   const thread = createThread();
   assert.equal((await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: 'aaaa0001', text: 'x' })).status, 404);
@@ -457,54 +482,90 @@ test('s5: a round starts tag-exempt with its origin\'s bare-key tag (saved befor
   assert.equal((await branchThenStop(runId)).branch.roundOf, undefined);
 }));
 
-test('s5: Route cards from /reply: Save for later stores an idea; Own run now starts from the base with no marker', () => withGate(true, async () => {
-  const { createSliceFeature, featureView } = await import('../src/core/shape/features.mjs');
-  const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
-  const { projectKey } = await import('../src/core/store.mjs');
-  const dir = gitDir('s5-route');
-  sh('git branch dev', { cwd: dir });
-  const p1 = 'asf5r0001';
-  seedPipelineRow({ id: p1, projectKey: projectKey(dir), status: 'done', title: p1, branch: { source: 'dev', feature: 'feat/a' } });
-  const f = createSliceFeature({ pipelineId: p1, projectDir: dir, title: 'Charts', perspectives: ['product'], workflowId: 'wf_shape',
-    outline: { why: 'w', slices: [1, 2].map((i) => ({ id: `s${i}`, title: `Part ${i}`, goal: 'g', inScope: [], outOfScope: [], acceptance: [], dependsOn: [], estimate: 'M' })) } });
-  const thread = createThread();
-  askLinkRun(thread.id, { runId: 'run-asf5r1', pipelineId: p1, cardId: 'card_s5r00001' });
-  const q = await post(`/api/ask/threads/${thread.id}/reply`, { text: 'why is it slow?' });
-  assert.deepEqual(await q.json(), { action: 'chat' });
-  assert.equal(listMessages(thread.id).length, 0, 'a question adds no row');
-  const one = await (await post(`/api/ask/threads/${thread.id}/reply`, { text: 'also export a PNG' })).json();
-  assert.equal(one.action, 'route');
-  const routeUrl = `/api/ask/threads/${thread.id}/cards/${one.message.blocks[0].id}`;
+test('ordinary stays ordinary: in a thread with a finished run, chat messages are Ask turns — no card, and /reply is gone', () => withGate(true, async () => {
+  const { thread } = await doneRunWithPr('s5-ordinary');
+  assert.equal((await post(`/api/ask/threads/${thread.id}/reply`, { text: 'make it blue' })).status, 404);
+  for (const text of ['summarize the diff', 'thanks, now open the PR']) {
+    const r = await postTurn(thread.id, text);
+    assert.ok(r.status < 300, await r.clone().text());
+    await waitFor(() => listMessages(thread.id).filter((m) => m.role === 'assistant' && m.status === 'done').length
+      === listMessages(thread.id).filter((m) => m.role === 'user').length);
+  }
+  assert.deepEqual(listMessages(thread.id).filter((m) => m.role === 'user').map((m) => m.text), ['summarize the diff', 'thanks, now open the PR']);
+  assert.equal(blocksOf(thread.id).filter((b) => b.card && (b.card.type === 'changes' || b.card.type === 'route')).length, 0);
+}));
+
+test('propose_changes (askShapeAction) posts the same changes card /reply posted: the run\'s PR, round 2', () => withGate(true, async () => {
+  const { _testing: t } = await import('../ui/server.mjs');
+  const { id, thread } = await doneRunWithPr('s5-tool-changes');
+  const r = t.askShapeAction({ kind: 'changes', pipelineId: id, request: 'make it blue' }, thread.id);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.block.state, 'proposed');
+  assert.equal(r.block.card.type, 'changes');
+  assert.equal(r.block.card.landing.title, 'Changes to Add a chart · same branch, same PR');
+  assert.equal(r.block.card.landing.target.pr.number, 41);
+  assert.equal(r.block.card.landing.start, 'Start round 2');
+  assert.match(t.askShapeAction({ kind: 'route', featureId: 'f1', text: 'x', guess: 'add', reason: 'r' }, thread.id).notice, /^Not applied: route_message is for a chat that follows a feature/);
+  assert.equal(t.askShapeAction({ kind: 'changes', pipelineId: 'beef0001', request: 'x' }, thread.id).notice, 'Not applied: this chat does not follow run beef0001');
+  assert.equal(listMessages(thread.id).length, 0, 'askShapeAction itself appends nothing: the turn stores the block');
+}));
+
+test('route_message (askShapeAction): the model\'s guess on the Route card; Save for later stores an idea; Own run now starts from the base', () => withGate(true, async () => {
+  const { _testing: t } = await import('../ui/server.mjs');
+  const { featureView } = await import('../src/core/shape/features.mjs');
+  const { f, thread } = await seedFeature('s5-tool-route', 'asf5t0001');
+  const r = t.askShapeAction({ kind: 'route', featureId: f.id, text: 'also export a PNG', guess: 'save', reason: 'nothing to plan it into yet' }, thread.id);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.block.card.guess, { choice: 'save', where: null, reason: 'nothing to plan it into yet' });
+  assert.equal(r.block.card.primary, 'Save for later');
+  assert.equal(t.askShapeAction({ kind: 'changes', pipelineId: 'asf5t0001', request: 'x' }, thread.id).notice, 'Not applied: Charts still has runs to go: use route_message');
+  // The card applies through the unchanged card route, stored the way turn.mjs stores it (card ids match ASK_ID_RE: 8 hex).
+  const msg = askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_5e000002', ...r.block }] });
+  const routeUrl = `/api/ask/threads/${thread.id}/cards/${msg.blocks[0].id}`;
   assert.equal((await post(routeUrl, { verb: 'start' })).status, 400, 'a changes-card verb on a Route card');
-  assert.equal((await post(routeUrl, { verb: 'add', where: 'later' })).status, 400, 'Add needs next or extra');
   const save = await post(routeUrl, { verb: 'save' });
   assert.equal(save.status, 200, await save.clone().text());
   assert.equal(featureView(f.id).notes.ideas, 1);
   assert.equal((await post(routeUrl, { verb: 'own' })).status, 409, 'a second answer');
-  assert.equal(featureView(f.id).notes.ideas, 1, 'the second answer changed nothing');
-  const two = await (await post(`/api/ask/threads/${thread.id}/reply`, { text: 'hotfix: login is broken' })).json();
-  const own = await post(`/api/ask/threads/${thread.id}/cards/${two.message.blocks[0].id}`, { verb: 'own' });
+  const two = t.askShapeAction({ kind: 'route', featureId: f.id, text: 'hotfix: login is broken', guess: 'own', reason: 'a fix that cannot wait' }, thread.id);
+  const m2 = askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_5e000003', ...two.block }] });
+  const own = await post(`/api/ask/threads/${thread.id}/cards/${m2.blocks[0].id}`, { verb: 'own' });
   assert.equal(own.status, 200, await own.clone().text());
-  const { runId } = (await own.json()).block.card.result;
-  const { branch } = await branchThenStop(runId);
+  const { branch } = await branchThenStop((await own.json()).block.card.result.runId);
   assert.equal(branch.source, 'dev');
   assert.equal(branch.roundOf, undefined);
 }));
 
-test('s5: a reply that answers an open revisable plan step is the person\'s revise; no Route card', () => withGate(true, async () => {
-  const thread = createThread();
+test('an open Plan step: free text is an Ask turn (never the step\'s answer) and both tools are refused', () => withGate(true, async () => {
+  const { _testing: t } = await import('../ui/server.mjs');
+  const p1 = 'asf5o0001';
+  const { f, thread } = await seedFeature('s5-open', p1);
+  // Run 1 of the feature IS the origin pipeline (createSliceFeature stores slice 1 with pipeline_id = p1), so a live entry
+  // driving p1 with a pending plan ask makes featureView(…, { live: liveSliceOf }).ask = { index: 1, kind: 'plan' }.
   const seen = [];
-  runs.set('live-s5plan', { id: 'live-s5plan', kind: 'run', status: 'running', events: [], pipelineId: 'asf5p0001',
-    orch: { answer: (...a) => { seen.push(a); return true; } },
+  runs.set('live-s5open', { id: 'live-s5open', kind: 'run', status: 'running', events: [], pipelineId: p1,
+    orch: { answer: (...a) => { seen.push(a); return true; }, state: {} },
     pendingQuestion: { id: 'plan-n_refine-1', kind: 'plan', plan: { revisable: true } } });
-  askLinkRun(thread.id, { runId: 'live-s5plan', pipelineId: 'asf5p0001', cardId: 'card_s5p00001' });
   try {
-    const r = await (await post(`/api/ask/threads/${thread.id}/reply`, { text: 'shorter please' })).json();
-    assert.deepEqual([r.action, r.stepId], ['answered', 'plan-n_refine-1']);
-    assert.deepEqual(seen[0].slice(0, 2), ['plan-n_refine-1', { decision: 'revise', feedback: 'shorter please' }]);
-    assert.equal(blocksOf(thread.id).filter((b) => b.card.type === 'route').length, 0);
-  } finally { runs.delete('live-s5plan'); }
+    assert.match(t.askShapeAction({ kind: 'route', featureId: f.id, text: 'shorter please', guess: 'add', reason: 'r' }, thread.id).notice, /Run 1 is waiting at its Plan step/);
+    assert.match(t.askShapeAction({ kind: 'changes', pipelineId: p1, request: 'shorter please' }, thread.id).notice, /Run 1 is waiting at its Plan step/);
+    const r = await postTurn(thread.id, 'shorter please');
+    assert.ok(r.status < 300, await r.clone().text());
+    await waitFor(() => listMessages(thread.id).some((m) => m.role === 'assistant' && m.status === 'done'));
+    assert.equal(seen.length, 0, 'the step was not answered from the chat');
+    assert.equal(blocksOf(thread.id).filter((b) => b.card && (b.card.type === 'changes' || b.card.type === 'route')).length, 0, 'no Changes or Route card');
+  } finally { runs.delete('live-s5open'); }
 }));
+
+test('the turn context: gate on, a followed run gives ctx.shape; gate off, none (nothing changes vs dev)', async () => {
+  const { _testing: t } = await import('../ui/server.mjs');
+  const { id, thread } = await withGate(true, () => doneRunWithPr('s5-ctx'));
+  await withGate(true, async () => {
+    const ctx = await t.resolveAskContext(thread.id, {}, []);
+    assert.deepEqual(ctx.shape, { run: { id, title: 'Add a chart', status: 'done', finished: true, pr: { number: 41, state: 'open' }, rounds: 1 } });
+  });
+  await withGate(false, async () => assert.equal('shape' in (await t.resolveAskContext(thread.id, {}, [])), false));
+});
 
 test('s5: a Watch PR fix run started through prWatcherDeps is stored as round 2 of the PR\'s run; no block in its thread', () => withGate(true, async () => {
   const { _testing: testing } = await import('../ui/server.mjs');

@@ -878,9 +878,22 @@ test('shape section: after mcp and before commands, only with shape; the default
     'Never give workflowId, when, every or after with shape']) assert.ok(s.includes(phrase), `states: ${phrase}`);
   for (const phrase of ['planned in slices', "`slices: 'auto'`", "`slices: 'off'`", 'On every propose_run for a coding task, shaped or not',
     'on a shaped run only its size is read']) assert.ok(s.includes(phrase), `states: ${phrase}`);
+  for (const phrase of ['propose_changes', 'route_message', 'never takes either tool', 'answered on its step card']) assert.ok(s.includes(phrase), `states: ${phrase}`);
   assert.ok(!s.includes('On every other propose_run'), 'the old contradicting opening is gone');
   assert.ok(!/^\s*\d+\. /m.test(s), 'not a numbered rule');
   for (const key of ['implementer', 'planner', 'refiner', 'reviewer', 'clarify', 'decomposer']) assert.ok(!s.includes(key), `no agent key (${key})`);
+});
+
+test('Shaper thread facts: a feature line and a followed-run line; none without ctx.shape', () => {
+  const f = buildContextHeader({ shape: { feature: { id: 'f1', title: 'Charts', status: 'active', next: 3, shipPr: null,
+    runs: [{ index: 1, state: 'done', pr: { number: 7, state: 'open' } }, { index: 2, state: 'running', pr: null }, { index: 3, state: 'planned', pr: null }],
+    open: { index: 2, step: 'Plan' } } } });
+  assert.match(f, /^feature f1 "Charts" active: run 1 done PR #7 open, run 2 running, run 3 planned · next run 3 · open step: Plan of run 2 \(answered on its step card\)$/m);
+  const r = buildContextHeader({ shape: { run: { id: 'aaaa0002', title: 'Add a chart', status: 'done', finished: true, pr: { number: 41, state: 'open' }, rounds: 2 } } });
+  assert.match(r, /^followed run aaaa0002 "Add a chart" done PR #41 open · 2 rounds$/m);
+  const rp = buildContextHeader({ shape: { feature: { id: 'f1', title: 'Charts', status: 'active', next: null, shipPr: null, runs: [], open: { index: null, step: 'Plan' } } } });
+  assert.match(rp, /· open step: Plan of the re-plan \(answered on its step card\)$/m, 'a re-plan ask has no run index');
+  assert.ok(!/^(feature|followed run) /m.test(buildContextHeader({})));
 });
 
 test('Ask proposes graphs and drafts like the composer: rule 11 teaches build_workflow / draft_*, the catalog carries the graph rules, the scripts section drafts and saves only with W20 on', () => {
