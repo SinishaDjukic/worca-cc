@@ -28,6 +28,8 @@ import { GRAPH_PRESENTATION_WORKFLOW, presentationGraphFingerprint, PRESENTATION
   from './graph/presentation-workflow.mjs';
 import { GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS }
   from './graph/architecture-workflow.mjs';
+import { GRAPH_PROMO_VIDEO_WORKFLOW, promoVideoGraphFingerprint, PROMO_VIDEO_SHIPPED_FINGERPRINTS }
+  from './graph/promo-video-workflow.mjs';
 
 const _require = createRequire(import.meta.url);
 let _DatabaseSync; // cached node:sqlite DatabaseSync ctor (lazy-loaded once)
@@ -60,7 +62,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 59;
+export const SCHEMA_VERSION = 60;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1604,6 +1606,11 @@ function applySchemaV55(db) {
   seedShippedWorkflow(db, GRAPH_ARCHITECTURE_WORKFLOW);
 }
 
+/** v60: seed the shipped Promo video workflow — V41's shape for a third shipped graph. */
+function applySchemaV60(db) {
+  seedShippedWorkflow(db, GRAPH_PROMO_VIDEO_WORKFLOW);
+}
+
 /** INSERT OR IGNORE one shipped v2 workflow row (see applySchemaV41). */
 function seedShippedWorkflow(db, t) {
   if (!presentationSeedable(db)) return;
@@ -1642,6 +1649,11 @@ function refreshPresentationSeed(db) {
 /** The Architecture (C4) seed's refresh — the same rules, its own shipped shapes. */
 function refreshArchitectureSeed(db) {
   refreshShippedSeed(db, GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS);
+}
+
+/** The Promo video seed's refresh — the same rules, its own shipped shapes. */
+function refreshPromoVideoSeed(db) {
+  refreshShippedSeed(db, GRAPH_PROMO_VIDEO_WORKFLOW, promoVideoGraphFingerprint, PROMO_VIDEO_SHIPPED_FINGERPRINTS);
 }
 
 function refreshShippedSeed(db, t, fingerprint, shipped) {
@@ -2221,6 +2233,10 @@ export function migrate(db) {
     if (current < 57) db.exec(SHAPE_SLICES_DDL);     // Shape it first: sliced features + Plans
     // v58 (D24): shape_features ship columns, shape_feature_slices.draft_pr_url — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 59) db.exec(RUN_TAGS_DDL);         // run tags + tag-edit audit (#718); 57-58 are Shaper's (#708, #730)
+    // The shipped Promo video workflow: one-shot seed at its own rung, refresh on every bump
+    // (the Presentation seed's two halves, above).
+    if (current < 60) applySchemaV60(db);
+    if (current < SCHEMA_VERSION) refreshPromoVideoSeed(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

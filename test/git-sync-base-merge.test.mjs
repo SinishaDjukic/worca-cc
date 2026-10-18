@@ -118,6 +118,21 @@ test('missing branch and missing base', async () => {
   assert.equal((await checkBaseMerge(w.a, { base: '-x', feature: 'feat' })).kind, 'bad-base');
 });
 
+test('a remote-tracking source (origin/dev) checks against dev on origin; a local branch named origin/dev stays', async () => {
+  const w = world();
+  commitOnFeat(w, 'f.txt', 'feature\n');
+  teammatePush(w, 'f.txt', 'upstream\n');
+  const c = await checkBaseMerge(w.a, { base: 'origin/dev', feature: 'feat' });
+  assert.equal(c.status, 'conflicts', 'not missing-base');
+  assert.deepEqual([c.base, c.baseRef, c.remote], ['dev', 'origin/dev', 'origin']);
+  assert.equal(c.baseSha, g(w.a, 'rev-parse', 'refs/remotes/origin/dev'));
+
+  const initSha = g(w.a, 'rev-parse', 'dev');
+  g(w.a, 'branch', 'origin/dev', initSha);
+  const k = await checkBaseMerge(w.a, { base: 'origin/dev', feature: 'feat' });
+  assert.deepEqual([k.status, k.base, k.baseRef, k.baseSha], ['up-to-date', 'origin/dev', 'origin/dev', initSha], 'the local branch is the base');
+});
+
 test('git too old: exit 129 maps to kind git-too-old', async () => {
   const w = world();
   commitOnFeat(w, 'f.txt', 'feature\n'); teammatePush(w, 'g.txt', 'u\n');

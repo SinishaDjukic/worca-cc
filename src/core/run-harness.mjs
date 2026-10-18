@@ -79,7 +79,7 @@ import {
 import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS } from './git-sync.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
-import { classifyError, rateLimitHint, brokerHint, freeDailyHint, limitResetAt } from './recoverable-error.mjs';
+import { classifyError, rateLimitHint, brokerHint, freeDailyHint, limitResetAt, untilText } from './recoverable-error.mjs';
 import { CODEX_DEFAULT_MODEL, CODEX_COMMAND_RULE_REACH } from './engines/codex.mjs';
 import { CURSOR_PROJECT_FILES, cursorOwns, excludeLine } from './engines/cursor.mjs';
 import { helperEngineFor } from './model-env.mjs';
@@ -138,7 +138,9 @@ import { runNightAnalysis, readMemoryText } from './night/analysis.mjs';
 import { resolveDeciderPair } from './night/decider-model.mjs';
 import { writeNightDecision, countNightDecisions, nightCounts, nightGateCycles, nightSpendSinceUsd } from './night/store.mjs';
 import { NIGHT_ACTOR, NIGHT_TOGGLES, nightNeverDecides } from './night/config.mjs';
-import { nightModeToggleFor, nightModeHereSinceFor, personAwayStatus, awayPerPerson, awayPersonKey } from './settings.mjs';
+import { nightModeToggleFor, nightModeHereSinceFor, personAwayStatus, awayPerPerson, awayPersonKey, effectiveNetworkWait } from './settings.mjs';
+import { probeTargetForModel, probeReachable, hostOf } from './upstream-probe.mjs';
+import { waitForNetwork, NETWORK_ACTOR } from './network-wait.mjs';
 import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../shared/mcp-tool-name.mjs';
 import { usageLimitSwitches, engineList, engineLabel } from '../shared/engine-switch.mjs';
 import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
@@ -149,6 +151,8 @@ import { shapeRecordFrom, buildShapeStats } from './shape/stats.mjs';
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
 // in agent-registry.mjs, which is the single source for the built-in agents dir).
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
+/** "14:05" in local time, for log and prompt text. */
+const hhmm = (ms) => new Date(ms).toTimeString().slice(0, 5);
 
 /** The disabled plugin that ships `<subdir>/<key>.meta.json`, or null. Shared by the
  *  agent preflight (`agents`) and the orchestrator's script preflight (`scripts`). */
@@ -912,6 +916,15 @@ export class RunHarness extends EventEmitter {
     this.pauseAbort = new AbortController(); // aborts ONLY node children on pause
     this.pauseReason = null;                 // WHY the run paused: 'cost_pipeline'|'cost_total'|'error'|<usage-limit line>|null
     this.pauseDetail = null;                 // the human detail behind pauseReason ('error': the clipped message)
+    this.pauseClass = null;                  // the class behind a 'recoverable' pause (resume point `pauseClass`)
+    // The current network outage: { since, origin, reachable, waiting } or null. `since` is the
+    // FIRST network failure; the max wait counts from it, across resumes (resume point `network`).
+    this._net = null;
+    this._netWaiters = 0;                    // nodes waiting right now (the banner stays while any waits)
+    // Seams: a probe and a clock (tests). A mock run reaches no endpoint, so it never probes
+    // unless a probe is injected.
+    this._netProbe = this.opts.networkProbe || null;
+    this._netClock = this.opts.networkClock || { now: () => Date.now(), sleep: sleepAbortable };
     this.limitEngine = null;                 // 'usage_limit' only: the engine whose own limit it is (_pauseFor)
     this.limitResetAt = null;                // ISO: when the usage limit behind this pause resets (D3)
     this._autoLimitResumes = 0;              // D7: automatic limit resumes in a row (reset by a manual resume or a finished step)
@@ -1043,6 +1056,7 @@ export class RunHarness extends EventEmitter {
     };
     this._nightClock = this.opts.nightClock || { now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (id) => clearTimeout(id) };
     this.state.night = this._nightSnapshot();
+    this.state.networkWait = null;           // the run page's "waiting for network…" banner (_publishNetworkWait)
   }
 
   /** @returns {object} a deep-ish snapshot of current state. */
@@ -1069,7 +1083,7 @@ export class RunHarness extends EventEmitter {
     // the answer (answeredBy on the row) and audited for decisions below.
     const settle = (value) => {
       if (typeof by === 'string' && by) this._answeredBy.set(id, by);
-      if (this._night && by !== NIGHT_ACTOR) this._night.since = null;   // someone is back: the unattended stretch ends
+      if (this._night && by !== NIGHT_ACTOR && by !== NETWORK_ACTOR) this._night.since = null;   // someone is back: the unattended stretch ends
       this._auditDecision(pq, value, typeof by === 'string' && by ? by : null);
     };
     if (!pq || pq.id !== id) {
@@ -1235,6 +1249,7 @@ export class RunHarness extends EventEmitter {
   _clearPauseReason() {
     this.pauseReason = null;
     this.pauseDetail = null;
+    this.pauseClass = null;
     this.limitEngine = null;
     this.limitResetAt = null;
     this.state.pauseReason = null;
@@ -1293,6 +1308,7 @@ export class RunHarness extends EventEmitter {
     const resetMs = reason === REASON.USAGE_LIMIT ? limitResetAt(err) : null;
     const recorded = this._setPauseReason(reason, limitText, limitEngine,
       resetMs != null ? new Date(resetMs).toISOString() : null);
+    if (recorded && reason === REASON.RECOVERABLE && cls) this.pauseClass = cls;
     // First writer wins: a sibling's unwind that lost the race logs nothing.
     if (recorded && reason === REASON.USAGE_LIMIT && resetMs == null) {
       this._log(where, 'info', 'usage-limit reset time not recognised', meta);
@@ -1827,6 +1843,9 @@ export class RunHarness extends EventEmitter {
       };
       // The saved point carries the pause that produced it; a resumed run is running.
       this._clearPauseReason();
+      // A network outage keeps its first-failure time across a resume: the max wait counts from it (D6).
+      this._net = rp.network && typeof rp.network.since === 'string'
+        ? { since: rp.network.since, origin: rp.network.origin ?? null, reachable: null, waiting: false } : null;
       // D7: only a resume the server made for a usage limit continues the streak.
       const prevAuto = Number.isSafeInteger(rp.autoLimitResumes) ? rp.autoLimitResumes : 0;
       this._autoLimitResumes = this.opts.autoLimitResume ? prevAuto + 1 : 0;
@@ -1862,6 +1881,7 @@ export class RunHarness extends EventEmitter {
       await this._persist();
       this._startHeartbeat();
       await this._auditAction('resume', String(rehydrated.audit || '').replace(/\.\s*$/, ''));
+      if (this.opts.resumeCause === 'network') this._log('orchestrator', 'info', 'network back — resumed');
       this._emit('state', this.getState());
       this._rehydrated = true;
       // The pause that parked this run is over; it must not colour a later failure
@@ -5049,13 +5069,36 @@ export class RunHarness extends EventEmitter {
    * and re-resolves with the answer. The per-class dedupe map shares ONE answer
    * across siblings; a sibling that receives a pause verdict second finds
    * pauseRequested already set and unwinds as that same pause.
-   * @returns {Promise<{outcome:'retry'|'pause'|'error', reason?:string}>}
+   * A network-class failure first probes the step's endpoint (network-wait.mjs): when it
+   * does not answer, an auto run waits for it and then retries with a fresh budget, and
+   * an interactive run opens the prompt at once and answers Retry itself when it answers.
+   * @returns {Promise<{outcome:'retry'|'pause'|'error', reason?:string, reset?:boolean}>}
    */
-  async _recover({ node, cls, err, attempt }) {
+  async _recover({ node, cls, err, attempt, model = null }) {
     const verdict = resolveFailure({ site: 'node', cls, auto: this.auto, attempt });
-    if (verdict.outcome !== 'retry' && verdict.outcome !== 'prompt') return verdict;   // no recovery round
+    // A network-class failure first asks whether the step's endpoint answers at all.
+    // Reachable (or not probeable) → today's verdict, unchanged. Unreachable → wait for it.
+    const net = cls === 'network' ? await this._networkCheck(model) : null;
+    const waitNow = !!(net && !net.reachable);
+    if (!waitNow && verdict.outcome !== 'retry' && verdict.outcome !== 'prompt') return verdict;   // no recovery round
     this._log(node.key, 'warn', `recoverable ${cls} error: ${err.message}`, err?.stream ? ERR_STREAM : null);
     await appendAudit(this.pipeline.dir, `Recoverable **${cls}** error on ${node.key}: ${firstLine(err.message)}`).catch(() => {});
+
+    if (waitNow && this.auto) {
+      const out = await this._networkWait(node.key, net);
+      if (out === 'back') {
+        this._log(node.key, 'info', `network back — retrying ${node.key}`);
+        await appendAudit(this.pipeline.dir, `Network back: ${net.host} answers again — retrying ${node.key}${byActor(NETWORK_ACTOR)}.`, { actor: NETWORK_ACTOR }).catch(() => {});
+        return { outcome: 'retry', reset: true };                          // a fresh retry budget (D7)
+      }
+      if (out === 'aborted') return { outcome: 'retry' };                  // the caller unwinds as the pause / stop
+      if (out === 'timeout') {
+        this._log(node.key, 'warn', `network still down after ${untilText(net.maxWaitMs)} — pausing (the max wait is reached)`);
+        return resolveFailure({ site: 'node', cls, auto: true, attempt: Number.MAX_SAFE_INTEGER });   // today's final verdict
+      }
+      // 'disabled': switched off mid-wait — today's path from here.
+    }
+    if (waitNow && !this.auto) return this._networkPrompt({ node, cls, err, attempt, verdict, net });
 
     if (verdict.outcome === 'retry') {
       const delayMs = recoveryDelayMs({ cls, attempt, err });
@@ -5063,10 +5106,15 @@ export class RunHarness extends EventEmitter {
       await this._backoff(attempt, this.pauseAbort.signal, { cls, err, delayMs });
       return verdict;
     }
+    if (verdict.outcome !== 'prompt') return verdict;   // a spent auto budget whose network wait ended 'disabled'
+    return this._promptRecovery({ cls, err, attempt, verdict });
+  }
 
+  /** Today's interactive round: ONE shared prompt per class, re-resolved with the answer. */
+  async _promptRecovery({ cls, err, attempt, verdict, network = null }) {
     this._recovery ||= new Map();
     if (!this._recovery.has(cls)) {
-      const p = this._enqueueRecoveryPrompt(cls, firstLine(err.message), verdict.options, attempt)
+      const p = this._enqueueRecoveryPrompt(cls, firstLine(err.message), verdict.options, attempt, network)
         .finally(() => { if (this._recovery) this._recovery.delete(cls); });
       this._recovery.set(cls, p);
     }
@@ -5074,19 +5122,134 @@ export class RunHarness extends EventEmitter {
     return resolveFailure({ site: 'node', cls, auto: this.auto, attempt, answer });
   }
 
+  /** Interactive + unreachable: the prompt opens now with the wait note; a probe loop answers Retry when it passes. */
+  _networkPrompt({ node, cls, err, attempt, verdict, net }) {
+    const until = Date.parse(this._net.since) + net.maxWaitMs;
+    this._log(node.key, 'warn', `waiting for network… ${net.host} is unreachable; worca retries by itself when it answers (until ${hhmm(until)}), or pick Retry / Pause`);
+    return this._promptRecovery({ cls, err, attempt, verdict,
+      network: { nodeKey: node.key, origin: net.origin, host: net.host, since: this._net.since, until: new Date(until).toISOString(), maxWaitMs: net.maxWaitMs } });
+  }
+
   /** Open a recovery prompt for one class, serialized behind any in-flight
    *  recovery prompt (the question gate has a single pendingQuestion slot, so
    *  distinct classes must queue — see the clarify answer). The prompt carries the
    *  row's options (what the give-up choice does); resolves the policy answer
-   *  'retry' | 'giveup' (the legacy `{ decision: 'abort' }` wire value is a give-up). */
-  _enqueueRecoveryPrompt(cls, message, options, attempt = 1) {
-    const run = () =>
-      this._ask({
-        id: `recovery-${cls}-${this._recoveryNonce()}`,
-        kind: 'recovery',
-        recovery: { cls, message, options, attempt },
-      }).then((ans) => answerFromDecision(ans && ans.decision));
+   *  'retry' | 'giveup' (the legacy `{ decision: 'abort' }` wire value is a give-up).
+   *  With `network` (the endpoint is down) the prompt carries the wait note and a
+   *  probe loop answers Retry by itself once the endpoint answers. */
+  _enqueueRecoveryPrompt(cls, message, options, attempt = 1, network = null) {
+    const run = () => {
+      const id = `recovery-${cls}-${this._recoveryNonce()}`;
+      const asked = this._ask({
+        id, kind: 'recovery',
+        recovery: { cls, message, options, attempt, ...(network ? { network: { host: network.host, since: network.since, until: network.until } } : {}) },
+      });
+      // _ask installs pendingQuestion synchronously (no await before its Promise executor),
+      // and the arm awaits a probe before it ever answers — no extra tick needed.
+      const disarm = network ? this._armNetworkAnswer(id, network) : null;
+      return asked.finally(() => disarm?.()).then((ans) => answerFromDecision(ans && ans.decision));
+    };
     return this._enqueueAsk(run);
+  }
+
+  /** Stop and pause both end a network wait (a bare pauseAbort would leave a stop waiting). */
+  _runSignal(extra = null) {
+    return AbortSignal.any([this.abort.signal, this.pauseAbort.signal, ...(extra ? [extra] : [])]);
+  }
+
+  /**
+   * Probe the step's endpoint once. null = do not wait (switched off, a mock run with no
+   * injected probe, no probeable target, or a pause/stop landed mid-probe).
+   * @returns {Promise<{origin:string, host:string, reachable:boolean, maxWaitMs:number}|null>}
+   */
+  async _networkCheck(model) {
+    const cfg = effectiveNetworkWait();
+    if (!cfg.enabled) return null;
+    if (this.claude.mock && !this._netProbe) return null;
+    const target = probeTargetForModel(model);
+    if (!target) return null;
+    this._net ||= { since: new Date(this._netClock.now()).toISOString(), origin: target.origin, reachable: null, waiting: false };
+    let reachable;
+    try { reachable = await this._probeOnce(target.origin, this._runSignal()); }
+    catch { return null; }                                   // our own abort: a pause or stop is unwinding
+    this._net.origin = target.origin;
+    this._net.reachable = reachable;
+    return { origin: target.origin, host: hostOf(target.origin), reachable, maxWaitMs: cfg.maxWaitMs };
+  }
+
+  _probeOnce(origin, signal) {
+    return this._netProbe ? this._netProbe(origin, { signal }) : probeReachable(origin, { signal });
+  }
+
+  /** Auto: wait until the endpoint answers, the window closes, the user pauses/stops, or the feature is switched off. */
+  async _networkWait(nodeKey, net) {
+    const until = Date.parse(this._net.since) + net.maxWaitMs;
+    this._log(nodeKey, 'warn', `waiting for network… ${net.host} is unreachable; worca checks again with backoff and retries by itself (until ${hhmm(until)})`);
+    this._publishNetworkWait(nodeKey, until, +1);
+    let out;
+    try {
+      out = await waitForNetwork({
+        probe: (signal) => this._probeOnce(net.origin, signal), until,
+        now: () => this._netClock.now(), sleep: (ms, s) => this._netClock.sleep(ms, s),
+        signal: this._runSignal(), isEnabled: () => effectiveNetworkWait().enabled,
+      });
+    } catch (e) {
+      // A --yes run must never hang: any failure of the wait falls back to today's retries.
+      this._log(nodeKey, 'warn', `network wait failed (${e?.message || e}) — falling back to the usual retries`);
+      out = 'disabled';
+    } finally {
+      this._publishNetworkWait(nodeKey, until, -1);
+    }
+    if (this._net) this._net.reachable = out === 'back' ? true : out === 'timeout' ? false : this._net.reachable;
+    return out;
+  }
+
+  /** Interactive: answer the open recovery prompt with Retry once the endpoint answers. Returns a disarm(). */
+  _armNetworkAnswer(id, network) {
+    const ctrl = new AbortController();
+    const signal = this._runSignal(ctrl.signal);
+    const until = Date.parse(network.until);
+    this._publishNetworkWait(network.nodeKey, until, +1);
+    (async () => {
+      const out = await waitForNetwork({
+        probe: (s) => this._probeOnce(network.origin, s), until,
+        now: () => this._netClock.now(), sleep: (ms, s) => this._netClock.sleep(ms, s),
+        signal, isEnabled: () => effectiveNetworkWait().enabled,
+      });
+      if (out === 'timeout') this._log(network.nodeKey, 'warn', `network still down after ${untilText(network.maxWaitMs)} — the recovery prompt waits for your answer`);
+      if (out !== 'back' || signal.aborted) return;
+      // Re-check after the await: the user may have answered, paused, or switched the feature off.
+      if (this.pendingQuestion?.id !== id || !effectiveNetworkWait().enabled) return;
+      if (this._net) this._net.reachable = true;
+      this._log(network.nodeKey, 'info', `network back — ${network.host} answers again; retrying for you`);
+      if (this.answer(id, { decision: 'retry' }, NETWORK_ACTOR)) this._emit('recovery-auto', { id, kind: 'recovery', decision: 'retry' });
+    })()
+      .catch((e) => this._log('orchestrator', 'warn', `network watch on the recovery prompt failed: ${e?.message || e}`))
+      .finally(() => this._publishNetworkWait(network.nodeKey, until, -1));
+    return () => ctrl.abort();
+  }
+
+  /**
+   * The run page's "waiting for network…" banner (state.networkWait) and the crash stamp:
+   * while any node waits, the resume point carries network.waiting=true so the server's
+   * network watch can resume a run that died mid-wait (a restart). Persisted at each edge.
+   */
+  _publishNetworkWait(nodeKey, until, delta) {
+    this._netWaiters = Math.max(0, this._netWaiters + delta);
+    const waiting = this._netWaiters > 0 && !!this._net;
+    if (this._net) this._net.waiting = waiting;
+    this.state.networkWait = waiting
+      ? { node: nodeKey, host: hostOf(this._net.origin), since: this._net.since, until: new Date(until).toISOString() }
+      : null;
+    // Never null the point here (a crash before the next completion would leave the row unresumable).
+    if (this.state.resumePoint) this.state.resumePoint = { ...this.state.resumePoint, network: this._net ? { ...this._net } : undefined };
+    this._emit('state', this.getState());
+    this._persist().catch(() => {});
+  }
+
+  /** An execution succeeded: the outage is over unless a sibling still waits (D6). */
+  _networkSettled() {
+    if (this._net && this._netWaiters === 0) this._net = null;
   }
 
   /** Serialize an _ask-producing thunk behind any in-flight prompt (the gate

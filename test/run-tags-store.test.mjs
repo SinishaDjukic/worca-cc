@@ -66,3 +66,13 @@ test('lastUsedTags: this person\'s newest tagged pipeline in the project; others
   assert.deepEqual(lastUsedTags('web-1', 'cy@x.io'), []);
   assert.deepEqual(lastUsedTags('web-1', null), []);
 });
+
+test('editRunTags: new tags must be key:value; a bare key already on the run is kept', () => {
+  seedPipelineRow({ id: 'bbbbbbb2' });
+  insertRunTags('bbbbbbb2', ['client:acme', 'urgent']);            // stored before the rule (lenient insert)
+  assert.deepEqual(editRunTags('bbbbbbb2', ['urgent', 'client:globex']).tags, ['client:globex', 'urgent']);
+  assert.throws(() => editRunTags('bbbbbbb2', ['urgent', 'spike']),
+    (e) => e.code === 'BAD_TAGS' && e.message === '"spike": a tag is key:value, for example client:acme');
+  assert.throws(() => editRunTags('bbbbbbb2', ['hello world']), (e) => e.code === 'BAD_TAGS');
+  assert.deepEqual(readRunTags('bbbbbbb2'), ['client:globex', 'urgent']);
+});

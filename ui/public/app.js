@@ -62,7 +62,7 @@ const state = {
   sync: freshSyncState(),    // #527: the New-pipeline Sync row (branch-sync.mjs#freshSyncState)
   syncChips: {},             // #527: projectKey -> SyncBlock, from GET /api/sync/projects
   // --- Creation wizard (ephemeral; reset on wizard entry and exit) ---
-  wizard: { name: '', selectedPaths: [], starting: false },
+  wizard: { name: '', selectedPaths: [], starting: false, imports: [], importing: false },
   // --- Agent creation wizard (ephemeral; reset on wizard close) ---
   agentWizard: { step: 1, genId: '', abort: null, draft: null, ownMd: false },
   // --- Pluggable task sources (New Pipeline) ---
@@ -104,7 +104,7 @@ import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, s
 import { createAskPanel } from './ask-panel.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
-import { registerChatActionCards } from './chat/action-cards.mjs';
+import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
@@ -657,6 +657,12 @@ const el = {
   wizClose: $('#wiz-close'),
   wizScanModel: $('#wiz-scan-model'),
   wizScanEffort: $('#wiz-scan-effort'),
+  wizImportAdd: $('#wiz-import-add'),
+  wizImportDeep: $('#wiz-import-deep'),
+  wizImportPaste: $('#wiz-import-paste'),
+  wizImportPasteAdd: $('#wiz-import-paste-add'),
+  wizImportHint: $('#wiz-import-hint'),
+  wizImportList: $('#wiz-import-list'),
 
   viewerCard: $('#viewer-card'),
   viewerTitle: $('#viewer-title'),
@@ -1505,6 +1511,7 @@ function handleServerMessage(msg) {
   if (msg.type === 'pr-watch-changed') {
     // Exact identity: the run's store key, its id and (a workspace's) member.
     refreshRdPrStatus(msg.projectKey, msg.pipelineId, msg.memberKey || '');
+    refreshChatPrWatch(msg);                       // the chat's pull-request cards show the same watch, read-only
     return;
   }
 
@@ -1869,6 +1876,7 @@ function onHello(msg) {
       workspaceId: r0.workspaceId || undefined,
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
       night: r0.night || undefined,
+      networkWait: r0.networkWait || null,
       tags: Array.isArray(r0.tags) ? r0.tags : undefined,
       shaping: r0.shaping || null,
     });
@@ -2018,7 +2026,7 @@ function makeRun({
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
   pauseDetail = null, limitEngine = null, limitResetAt = null, runEngine = undefined, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [],
-  shaping = null,
+  shaping = null, networkWait = null,
 }) {
   return {
     runId,
@@ -2041,6 +2049,7 @@ function makeRun({
     workspaceId,
     workspaceName,
     night,                // Away mode on this run: {optIn, override, decisions, flagged, openedAt} (hello / state)
+    networkWait,          // waiting for the network: {node, host, since, until} or null
     tags,                 // run tags (#718): normalised 'key:value' / 'key' strings (hello / run-created)
     shaping,              // Shape it first: {perspectives, rounds, approved, savedTo} on a shaping run (hello / state), or null
     // Stable ordering key: assigned once per runId, never bumped by activity
@@ -2582,6 +2591,8 @@ function onState(r, msg) {
   if (msg.setupStage !== undefined) r.setupStage = msg.setupStage;
   // Night mode switches + counters (run-harness _nightSnapshot): the run-view switch paints from them.
   if (msg.night && typeof msg.night === 'object') r.night = msg.night;
+  // Waiting for the network (run-harness _publishNetworkWait): the run page's banner.
+  if (msg.networkWait !== undefined) r.networkWait = msg.networkWait || null;
   // Sub-agents: the state snapshot is authoritative (covers late-join/replay and
   // any missed `subagent` delta). Replace wholesale when present; a snapshot that
   // omits the field (older runs / partial snapshots) leaves the delta-built array.
@@ -5930,6 +5941,14 @@ function renderRecoveryBody(r, panel, pq) {
     panel.appendChild(msg);
   }
 
+  if (rec.network && typeof rec.network === 'object') {
+    const note = document.createElement('div');
+    note.className = 'gate-intro recovery-network';
+    const until = new Date(rec.network.until).toTimeString().slice(0, 5);
+    note.textContent = `Waiting for network… ${rec.network.host} is unreachable. worca picks Retry by itself when it answers again (until ${until}). You can still Retry now or Pause.`;
+    panel.appendChild(note);
+  }
+
   const foot = document.createElement('div');
   foot.className = 'qpanel-foot gate-actions';
   // The give-up option comes from the failure policy's row (options ride the
@@ -8409,8 +8428,9 @@ el.folderBrowserClose.addEventListener('click', closeFolderBrowser);
 el.folderBrowser.addEventListener('click', (e) => {
   if (e.target === el.folderBrowser) closeFolderBrowser();
 });
+// The folder browser owns this Escape: later listeners (the wizard's) skip it.
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !el.folderBrowser.classList.contains('hidden')) closeFolderBrowser();
+  if (e.key === 'Escape' && !el.folderBrowser.classList.contains('hidden')) { e.preventDefault(); closeFolderBrowser(); }
 });
 
 // NOTE: New Pipeline has no inline project-delete. Removing a project is rare
@@ -9995,18 +10015,258 @@ function readScanModelPickers(ids) {
 
 // ---- Creation wizard -------------------------------------------------------
 
+// Import rows' badges, by status (one row: [badge colour, text]). Not green for "new": a ticked
+// .opt-row is filled with --green-bg, and a green badge would lose its pill there.
+const WIZ_IMPORT_BADGES = { new: ['blue', 'new'], registered: ['grey', 'already a project'], problem: ['red', "can't join"] };
+
 // Reset the ephemeral wizard state.
 function resetWizard() {
-  state.wizard = { name: '', selectedPaths: [], starting: false };
+  state.wizard = { name: '', selectedPaths: [], starting: false, imports: [], importing: false };
 }
 
-// Every entry starts clean: the wizard only collects a name and the projects.
+// Every entry starts clean: the wizard collects a name, the projects and what the import found.
 async function enterWizard() {
   resetWizard();
   if (el.wizName) el.wizName.value = '';
+  if (el.wizImportPaste) el.wizImportPaste.value = '';
+  if (el.wizImportDeep) el.wizImportDeep.checked = false;
+  setWizImportHint('');
+  setWizImportBusy(false);   // a request of the wizard just left may still run: it no longer owns the buttons
+  renderWizardImports();
   if (!state.projects.length) await loadProjects();
   renderWizardProjects();
   wizModelsPainted = paintWizardModels();
+}
+
+// One selection, two lists: tick or clear `path` in state and in every wizard box for it
+// (a registered import row and its project row above share it). A disabled box (a problem row,
+// a missing project) never shows a tick.
+function setWizardPicked(path, on) {
+  const set = new Set(state.wizard.selectedPaths);
+  if (on) set.add(path); else set.delete(path);
+  state.wizard.selectedPaths = [...set];
+  for (const cb of document.querySelectorAll('#wiz-projects .wiz-proj-cb, #wiz-import-list .wiz-import-cb')) {
+    if (cb.value === path && !cb.disabled) cb.checked = on;
+  }
+  syncWizardStartEnabled();
+}
+
+function setWizImportHint(text, tone = '') {
+  const hint = el.wizImportHint;
+  if (!hint) return;
+  hint.classList.toggle('err', tone === 'err');
+  hint.textContent = text || '';
+}
+
+function setWizImportBusy(on) {
+  for (const b of [el.wizImportAdd, el.wizImportPasteAdd]) if (b) b.disabled = on;
+}
+
+// Project names are unique, ignoring case (POST /api/projects/bulk skips a clash): a new row whose
+// name is taken gets its parent folder's name in front ("org-b-api"), then a number.
+function assignImportNames() {
+  const taken = new Set((Array.isArray(state.projects) ? state.projects : []).map((p) => String((p && p.name) || '').toLowerCase()));
+  for (const r of state.wizard.imports) {
+    if (r.status !== 'new') continue;
+    const base = r.suggested;
+    // The parent folder's name; a Windows drive root (`C:\api`) gives "C", never "C:".
+    const parent = basenameOf(r.path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '')).replace(/:$/, '');
+    let name = [base, parent ? `${parent}-${base}` : ''].find((n) => n && !taken.has(n.toLowerCase()));
+    for (let i = 2; !name; i += 1) if (!taken.has(`${base}-${i}`.toLowerCase())) name = `${base}-${i}`;
+    taken.add(name.toLowerCase());
+    r.name = name;
+  }
+}
+
+// Merge one answer's rows into the review list, one row per path: a fresh answer replaces an older
+// row, whose tick stays unless the path can no longer join. A new joinable row starts ticked while
+// the pick is under the member cap. → { kept: the rows merged, capped: joinable rows the cap left
+// unticked, listed: rows skipped because the list already holds their repository under another path }.
+function mergeWizardImports(candidates) {
+  const kept = [];
+  let capped = 0;
+  let listed = 0;
+  for (const c of candidates) {
+    if (!c || typeof c.path !== 'string' || !c.path) continue;
+    const status = WIZ_IMPORT_BADGES[c.status] ? c.status : 'problem';
+    const suggested = typeof c.name === 'string' && c.name.trim() ? c.name.trim() : basenameOf(c.path);
+    const fresh = {
+      path: c.path, key: typeof c.key === 'string' ? c.key : '', status, suggested, name: suggested,
+      problem: typeof c.problem === 'string' ? c.problem : '',
+      liftedFrom: Array.isArray(c.liftedFrom) ? c.liftedFrom.filter((p) => typeof p === 'string') : [],
+    };
+    // One row per repository too: a later answer can spell a listed repository another way (a
+    // symlink, or its top folder for a subfolder), and the 2–40 count must not see it twice.
+    if (fresh.key && state.wizard.imports.some((r) => r.key === fresh.key && r.path !== fresh.path)) { listed += 1; continue; }
+    kept.push(fresh);
+    const at = state.wizard.imports.findIndex((r) => r.path === fresh.path);
+    const wasJoinable = at >= 0 && state.wizard.imports[at].status !== 'problem';
+    if (at >= 0) state.wizard.imports[at] = fresh; else state.wizard.imports.push(fresh);
+    const picked = state.wizard.selectedPaths.includes(fresh.path);
+    if (status === 'problem') {
+      if (picked) state.wizard.selectedPaths = state.wizard.selectedPaths.filter((p) => p !== fresh.path);
+      continue;
+    }
+    if (picked || wasJoinable) continue;   // a re-import keeps the user's tick (or untick)
+    if (state.wizard.selectedPaths.length < WORKSPACE_MAX_PROJECTS) state.wizard.selectedPaths = [...state.wizard.selectedPaths, fresh.path];
+    else capped += 1;
+  }
+  assignImportNames();
+  return { kept, capped, listed };
+}
+
+// The review list: rows that can join first (in the order found), then the ones that cannot, with
+// why. A registered row's box is the same pick as its project's row above (setWizardPicked).
+function renderWizardImports() {
+  const host = el.wizImportList;
+  if (!host) return;
+  host.replaceChildren();
+  const rows = state.wizard.imports;
+  host.hidden = !rows.length;
+  for (const r of [...rows.filter((x) => x.status !== 'problem'), ...rows.filter((x) => x.status === 'problem')]) {
+    const row = document.createElement('label');
+    row.className = 'wiz-proj opt-row wiz-import-row';
+    row.dataset.status = r.status;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'wiz-import-cb';
+    cb.value = r.path;
+    cb.disabled = r.status === 'problem';
+    cb.checked = !cb.disabled && state.wizard.selectedPaths.includes(r.path);
+    cb.addEventListener('change', () => setWizardPicked(r.path, cb.checked));
+    const name = document.createElement('span');
+    name.className = 'opt-name';
+    name.textContent = r.name || basenameOf(r.path);
+    const sub = document.createElement('span');
+    sub.className = 'opt-sub';
+    sub.textContent = r.path;
+    const [tone, label] = WIZ_IMPORT_BADGES[r.status];
+    const badge = document.createElement('span');
+    badge.className = `badge ${tone}`;
+    badge.textContent = label;
+    row.append(cb, name, sub, badge);
+    const why = r.status === 'problem' ? r.problem
+      : r.liftedFrom.length ? `Repository top folder of ${r.liftedFrom.join(', ')}` : '';
+    if (why) {
+      const note = document.createElement('span');
+      note.className = 'wiz-import-why';
+      note.textContent = why;
+      row.appendChild(note);
+    }
+    host.appendChild(row);
+  }
+}
+
+// The import hint: what one answer did to the review list (the rows merged, plus the ones skipped
+// because their repository is listed already).
+function importSummary(rows, { capped = 0, listed = 0, truncated = false } = {}) {
+  const n = (s) => rows.filter((r) => r.status === s).length;
+  const parts = [];
+  if (n('new')) parts.push(`${n('new')} new`);
+  if (n('registered')) parts.push(`${n('registered')} already a project`);
+  if (n('problem')) parts.push(`${n('problem')} that can't join`);
+  if (listed) parts.push(`${listed} already in the list`);
+  let text = parts.length ? `Found ${parts.join(', ')}.` : 'Found nothing to add.';
+  if (capped) text += ` ${capped} left unticked: a workspace holds up to ${WORKSPACE_MAX_PROJECTS} projects.`;
+  if (truncated) text += ' The search stopped early: pick a narrower folder.';
+  return text;
+}
+
+// Ask the server what each path is (POST /api/workspaces/import-candidates) and merge the answer
+// into the review list. A .code-workspace file's name fills an EMPTY workspace name. → true on 200.
+// `wiz` pins the wizard this request belongs to: resetWizard() replaces state.wizard, so an answer
+// that arrives after the user left (and maybe re-entered) the wizard is dropped, never merged.
+async function importWizardPaths({ paths = [], text = '' } = {}) {
+  const wiz = state.wizard;
+  if (wiz.importing) { setWizImportHint('Still looking at the last paths: add these again in a moment.', 'err'); return false; }
+  wiz.importing = true;
+  setWizImportBusy(true);
+  setWizImportHint('Looking…');
+  try {
+    const res = await fetch('/api/workspaces/import-candidates', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths, text, depth: el.wizImportDeep && el.wizImportDeep.checked ? 2 : 1 }),
+    });
+    const data = await safeJson(res);
+    if (state.wizard !== wiz) return false;
+    if (!res.ok) { setWizImportHint(data.error || `Import failed (${res.status})`, 'err'); return false; }
+    const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+    const { kept, capped, listed } = mergeWizardImports(candidates);
+    if (typeof data.workspaceName === 'string' && data.workspaceName && el.wizName && !el.wizName.value.trim()) {
+      el.wizName.value = data.workspaceName;
+      state.wizard.name = data.workspaceName;
+    }
+    renderWizardImports();
+    renderWizardProjects();   // a registered row ticked its project above
+    setWizImportHint(importSummary(kept, { capped, listed, truncated: data.truncated === true }));
+    return true;
+  } catch (err) {
+    if (state.wizard === wiz) setWizImportHint(err.message, 'err');
+    return false;
+  } finally {
+    wiz.importing = false;
+    if (state.wizard === wiz) setWizImportBusy(false);
+  }
+}
+
+// Add…: the system dialog (folders, and on macOS .code-workspace files too: purpose 'repos'),
+// else Worca's own folder browser (folders; a .code-workspace path goes in the paste box).
+async function addWizardImports() {
+  // Worca's folder browser moves no focus: Enter on Add… behind it would reopen it and drop its ticks.
+  if (el.folderBrowser && !el.folderBrowser.classList.contains('hidden')) return;
+  setWizImportBusy(true);
+  try {
+    const data = await pickFolder('repos', { multiple: true });   // never throws
+    if (data.status === 'picked' && pickedPaths(data).length) await importWizardPaths({ paths: pickedPaths(data) });
+    else if (data.status === 'canceled') { /* the user dismissed the dialog */ }
+    else if (data.status === 'busy') setWizImportHint('A folder dialog is already open — finish or cancel it first.', 'err');
+    else {
+      await openFolderBrowser('', (p) => { void importWizardPaths({ paths: [p] }); },
+        { multiple: true, onSelectMany: (paths) => { void importWizardPaths({ paths }); } });
+    }
+  } finally {
+    if (!state.wizard.importing) setWizImportBusy(false);
+  }
+}
+
+// Add paths (or Ctrl/Cmd+Enter in the box): the box clears once the server has answered, unless
+// the user changed it meanwhile (a line typed while the request ran is kept).
+async function addWizardPastedPaths() {
+  const text = el.wizImportPaste ? el.wizImportPaste.value : '';
+  if (!text.trim()) { setWizImportHint('Paste one path per line first.', 'err'); return; }
+  if (await importWizardPaths({ text }) && el.wizImportPaste.value === text) el.wizImportPaste.value = '';
+}
+
+// Register the `new` rows among `paths` (the scan's members) as projects (POST /api/projects/bulk,
+// answered row by row) before the scan names them. → null when every one is a project now, else
+// the text to show (no scan).
+async function registerWizardImports(paths) {
+  const picked = new Set(paths);
+  const rows = state.wizard.imports.filter((r) => r.status === 'new' && picked.has(r.path));
+  if (!rows.length) return null;
+  assignImportNames();   // against the freshest project list (a retry after a name clash)
+  const res = await fetch('/api/projects/bulk', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projects: rows.map((r) => ({ name: r.name, path: r.path })) }),
+  });
+  const data = await safeJson(res);
+  // No per-row answer is no registration: the scan must not run on rows that never became projects.
+  if (!res.ok || !Array.isArray(data.results)) return `projects not added: ${data.error || `HTTP ${res.status}`}`;
+  if (Array.isArray(data.projects)) state.projects = data.projects;
+  const refused = [];
+  for (const r of Array.isArray(data.results) ? data.results : []) {
+    const row = rows[r.index];
+    if (!row) continue;
+    if (r.status === 'added') { row.status = 'registered'; if (r.name) row.name = r.name; }
+    // Registered meanwhile (another tab, or a worktree of a repository this batch added): the scan
+    // de-duplicates members by repository, so the row joins as it is.
+    else if (/already registered/.test(r.reason || '')) row.status = 'registered';
+    else refused.push(`${row.path} (${r.reason || 'not added'})`);
+  }
+  renderWizardProjects();
+  renderWizardImports();
+  renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || '');   // New pipeline lists them too
+  return refused.length ? `not added as projects: ${refused.join('; ')}` : null;
 }
 
 // The Models column starts from Settings › Runs › Workspaces every time the wizard opens.
@@ -10052,13 +10312,8 @@ function renderWizardProjects() {
     cb.className = 'wiz-proj-cb';
     cb.value = p.path;
     cb.disabled = !p.exists;
-    cb.checked = state.wizard.selectedPaths.includes(p.path);
-    cb.addEventListener('change', () => {
-      const set = new Set(state.wizard.selectedPaths);
-      if (cb.checked) set.add(p.path); else set.delete(p.path);
-      state.wizard.selectedPaths = [...set];
-      syncWizardStartEnabled();
-    });
+    cb.checked = !cb.disabled && state.wizard.selectedPaths.includes(p.path);   // setWizardPicked never clears a disabled box
+    cb.addEventListener('change', () => setWizardPicked(p.path, cb.checked));
     const txt = document.createElement('span');
     txt.className = 'opt-name';
     txt.textContent = p.name;
@@ -10103,7 +10358,7 @@ function syncWizardStartEnabled() {
   const next = document.getElementById('wiz-start-scan');
   const count = state.wizard.selectedPaths.length;
   // A workspace holds 2–40 projects (D22): Scan stays off outside that range.
-  if (next) next.disabled = count < 2 || count > WORKSPACE_MAX_PROJECTS;
+  if (next) next.disabled = state.wizard.starting || count < 2 || count > WORKSPACE_MAX_PROJECTS;
   paintWizardSizeNote();
   syncWizardSelectAll();
 }
@@ -10133,6 +10388,7 @@ if (el.wizSelectAll) el.wizSelectAll.addEventListener('change', () => {
     if (on) set.add(cb.value); else set.delete(cb.value);
   }
   state.wizard.selectedPaths = [...set];
+  renderWizardImports();
   syncWizardStartEnabled();
 });
 
@@ -10146,23 +10402,33 @@ if (el.wizSelectAll) el.wizSelectAll.addEventListener('change', () => {
 async function startWizardScan() {
   const name = el.wizName ? el.wizName.value.trim() : '';
   if (!name) { if (el.wizName) el.wizName.focus(); return; }
-  const count = state.wizard.selectedPaths.length;
-  if (count < 2 || count > WORKSPACE_MAX_PROJECTS || state.wizard.starting) return;
-  state.wizard.starting = true;
+  const wiz = state.wizard;   // resetWizard() replaces it if the user leaves while this runs
+  // The members are what is ticked NOW: a tick or an import answer that lands while the new rows
+  // register would join unregistered and unreviewed.
+  const paths = [...wiz.selectedPaths];
+  const count = paths.length;
+  if (count < 2 || count > WORKSPACE_MAX_PROJECTS || wiz.starting) return;
+  wiz.starting = true;
   if (el.wizStartScan) el.wizStartScan.disabled = true;
   try {
+    // Ticked import rows that are not projects yet become projects first: a workspace's members
+    // are projects like any other (runs, metrics, the New pipeline list).
+    const refused = await registerWizardImports(paths);
+    if (state.wizard !== wiz) return;
+    if (refused) { setWizStep1Error(refused); return; }
     await wizModelsPainted;   // never rejects (paintWizardModels catches its own fetches)
+    if (state.wizard !== wiz) return;
     const res = await fetch('/api/workspaces/scan', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectPaths: state.wizard.selectedPaths, name, models: readScanModelPickers(WIZ_MODEL_IDS) }),
+      body: JSON.stringify({ projectPaths: paths, name, models: readScanModelPickers(WIZ_MODEL_IDS) }),
     });
     const data = await safeJson(res);
-    if (!res.ok || !data.runId) { setWizStep1Error(data.error || `Scan failed (${res.status})`, data.code); return; }
+    if (!res.ok || !data.runId) { if (state.wizard === wiz) setWizStep1Error(data.error || `Scan failed (${res.status})`, data.code); return; }
     beginScanRun(data, name);
   } catch (err) {
-    setWizStep1Error(err.message);
+    if (state.wizard === wiz) setWizStep1Error(err.message);
   } finally {
-    state.wizard.starting = false;
+    wiz.starting = false;
     syncWizardStartEnabled();
   }
 }
@@ -10170,11 +10436,13 @@ async function startWizardScan() {
 function resetWizStep1Hint() {
   const hint = el.wizStep1Hint;
   if (!hint) return;
-  const usable = (Array.isArray(state.projects) ? state.projects : []).filter((p) => p && p.exists);
   hint.classList.remove('err');
   claudeSignedOutHints.delete(hint);
-  hint.textContent = usable.length < 2
-    ? 'Onboard at least two projects (in New run) to create a workspace.'
+  // Existing projects plus import rows that can join: what the user can tick right now.
+  const paths = new Set((Array.isArray(state.projects) ? state.projects : []).filter((p) => p && p.exists).map((p) => p.path));
+  for (const r of state.wizard.imports || []) if (r.status !== 'problem') paths.add(r.path);
+  hint.textContent = paths.size < 2
+    ? 'Pick at least two projects, or bring repositories in with Add… or the paste box above.'
     : 'Select two or more projects to scan their interconnections.';
 }
 
@@ -10212,16 +10480,25 @@ function beginScanRun(data, name) {
 if (el.wizStartScan) el.wizStartScan.addEventListener('click', () => startWizardScan());
 if (el.wizClose) el.wizClose.addEventListener('click', () => { location.hash = 'new'; });
 if (el.wizName) el.wizName.addEventListener('input', () => { state.wizard.name = el.wizName.value; });
+if (el.wizImportAdd) el.wizImportAdd.addEventListener('click', () => { void addWizardImports(); });
+if (el.wizImportPasteAdd) el.wizImportPasteAdd.addEventListener('click', () => { void addWizardPastedPaths(); });
+if (el.wizImportPaste) el.wizImportPaste.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey)) return;
+  e.preventDefault();
+  if (el.wizImportPasteAdd && el.wizImportPasteAdd.disabled) return;   // a pick or an import is running
+  void addWizardPastedPaths();
+});
 
-// A11y: Escape in the wizard view triggers #wiz-close (which navigates away;
-// the showView leave-guard resets the wizard). Scoped to the wizard view so
-// it never collides with the viewer-modal Escape handler.
+// A11y: Escape in the wizard view triggers #wiz-close (which navigates away; the showView
+// leave-guard resets the wizard). A layer above the wizard owns its own Escape: an Escape another
+// handler already took (the folder browser hides itself first, then calls preventDefault), the Ask
+// dock, the terminal, and any open dialog or guide (the mobile-nav handler's selector).
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
   if (currentView() !== 'workspace-create') return;
+  if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
-  if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return; // modal owns Escape
-  if (el.folderBrowser && !el.folderBrowser.classList.contains('hidden')) return; // modal owns Escape
+  if (document.querySelector('.viewer-modal:not(.hidden), .guide-layer')) return; // a dialog or the guide owns Escape
   if (el.wizClose) el.wizClose.click();
 });
 
@@ -10231,7 +10508,7 @@ if (typeof window !== 'undefined') {
     setRunTarget, ensureWorkspaceOptions, loadWorkspaces, loadWorkspacesView,
     renderWorkspaces, buildWorkspaceRow, routeWsDetail, enterWizard,
     renderWizardProjects, startWizardScan, resetWizard,
-    renderWorkspaceSourceBranches,
+    renderWorkspaceSourceBranches, importWizardPaths, renderWizardImports,
   };
 }
 
@@ -14138,6 +14415,7 @@ async function loadSettings() {
     paintTagDimsSettings(data);
     paintNightSettings(data);
     paintSyncSettings(data);
+    paintNetworkWaitSettings(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
     await paintEngineSettings(data);
@@ -14962,6 +15240,33 @@ document.getElementById('syncDefaultsSave')?.addEventListener('click', saveSyncD
 document.getElementById('syncDefaultsReset')?.addEventListener('click', (e) => postSyncDefaults(
   { sync: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('syncDefaultsSave');
+
+// Settings › Runs › Wait for the network (network-wait.mjs).
+function paintNetworkWaitSettings(data) {
+  const d = data && data.networkWait;
+  const on = document.getElementById('networkWaitEnabled');
+  const max = document.getElementById('networkWaitMaxMin');
+  if (!d || !on || !max) return;
+  on.checked = d.enabled !== false;
+  const v = String(d.maxWaitMin);
+  if (![...max.options].some((o) => o.value === v)) {
+    const opt = document.createElement('option');
+    opt.value = v; opt.textContent = `${d.maxWaitMin} minutes`;
+    max.append(opt);
+  }
+  max.value = v;
+  settingsCardPainted('networkWaitSave');
+}
+function postNetworkWait(body, opts = {}) {
+  return postSettingsCard(body, { card: document.getElementById('network-wait-settings-card'), paint: paintNetworkWaitSettings, dirty: settingsCardDirty('networkWaitSave'), ...opts });
+}
+document.getElementById('networkWaitSave')?.addEventListener('click', (e) => postNetworkWait({ networkWait: {
+  enabled: document.getElementById('networkWaitEnabled').checked,
+  maxWaitMin: Number(document.getElementById('networkWaitMaxMin').value),
+} }, { button: e.currentTarget }));
+document.getElementById('networkWaitReset')?.addEventListener('click', (e) => postNetworkWait(
+  { networkWait: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
+settingsCardDirty('networkWaitSave');
 
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
@@ -18109,7 +18414,7 @@ function storeChoice(key, value) {
 }
 
 const statsState = { range: null, from: '', to: '', tags: [], person: '', groupBy: '', view: storedChoice(STATS_VIEW_KEY, VIEW_CHIPS, 'overview'), last: null };
-const statsTagInput = createTagInput(document, { suggest: fetchTagVocabulary, placeholder: 'Filter: client:acme…' });
+const statsTagInput = createTagInput(document, { suggest: fetchTagVocabulary, placeholder: 'Filter: client:acme…', strict: false });
 document.getElementById('stats-tags')?.appendChild(statsTagInput.el);
 statsTagInput.onChange((tags) => { statsState.tags = tags; loadStatsView(); });
 
@@ -32717,6 +33022,20 @@ function paintRdBanners(screen, r) {
     const errBanner = renderErrorPauseBanner(errDetail);
     errBanner.dataset.detail = errDetail;
     banners.prepend(errBanner);
+  }
+
+  // ---- waiting for the network (network-wait.mjs) ----
+  const nw = !isPaused(r) && r.networkWait && typeof r.networkWait === 'object' ? r.networkWait : null;
+  const nwKey = nw ? `${nw.host}|${nw.until}` : '';
+  const oldNw = banners.querySelector('.net-wait-banner');
+  if (oldNw && oldNw.dataset.key !== nwKey) oldNw.remove();
+  if (nw && !banners.querySelector('.net-wait-banner')) {
+    const b = document.createElement('div');
+    b.className = 'net-wait-banner';
+    b.dataset.key = nwKey;
+    const until = new Date(nw.until).toTimeString().slice(0, 5);
+    b.textContent = `Waiting for network… ${nw.host} is unreachable. worca checks again with backoff and retries the step by itself (until ${until}).`;
+    banners.prepend(b);
   }
 
   // ---- the worktree notice: retained work, else a live checkout ----

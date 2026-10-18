@@ -6,6 +6,7 @@ import { writeState } from '../src/core/artifacts.mjs';
 import {
   collectTriggers, countsAsRequest, reserveBatch, setWatch, getWatch, replyBody, buildFixTask, updateWatch,
   attachWatchPipeline, createPrWatcher, createPrWatchRunner, MAX_FIX_RUNS, FIX_WORKFLOW_ID, BASE_WAIT_MS, RERUN_SETTLE_MS, _testing,
+  fixTrigger, fixOutcome,
 } from '../src/core/pr-watch.mjs';
 
 useTempHome(after, 'pr-watch-');
@@ -30,7 +31,7 @@ const openPr = (over = {}) => ({ url: URL, state: 'OPEN', branch: 'feat/x', head
 /** In-memory IO: a fake repo, GitHub and run launcher. */
 function harness({ pr = openPr(), clock = { t: Date.now() } } = {}) {
   const repo = { hasLocal: true, hasRemote: true, headSha: 'R1', remoteSha: 'R1', ahead: 0, behind: 0 };
-  const calls = { start: [], reply: [], comment: [], push: [], ff: [], notify: [], snapshot: 0, free: [], attach: [], rerun: [] };
+  const calls = { start: [], reply: [], comment: [], push: [], ff: [], notify: [], snapshot: 0, free: [], attach: [], rerun: [], fix: [] };
   const live = new Map(); const durable = new Map();
   const io = {
     pr, repo, calls, live, durable, clock,
@@ -72,6 +73,7 @@ function harness({ pr = openPr(), clock = { t: Date.now() } } = {}) {
     pipelineStatus: async (id) => durable.get(id) || null,
     attachPr: async (pid, pr) => { calls.attach.push([pid, pr.url]); },
     notify: (e) => calls.notify.push(e.kind),
+    onFixRun: (e) => calls.fix.push(e),
   };
   return { io, deps, watcher: createPrWatcher(deps) };
 }
@@ -689,6 +691,86 @@ test('Resolve after a capped watch: runs once more, then the cap still holds', a
   await watcher.tick(); await watcher.tick();
   const w = getWatch(URL);
   assert.deepEqual([w.status, w.reason, io.calls.push], ['needs-person', 'cap', ['M1']]);
+});
+
+// --- What a fix run is for and how it ended: the Ask chat's fix-run card (onFixRun) ---
+
+test('fixTrigger names what a fix run is for, from its reserved pending', () => {
+  const k = (...keys) => ({ handledKeys: keys });
+  assert.deepEqual(fixTrigger({ conflict: { base: 'main', baseSha: 'B' }, handledKeys: ['conflict:R@B'] }), { kinds: ['conflict'], label: 'Merge conflicts' });
+  assert.deepEqual(fixTrigger({ conflict: { base: 'dev', why: 'behind', checks: ['ci'] }, handledKeys: ['behind:ci'] }),
+    { kinds: ['behind'], label: 'Behind dev: merging it in' });
+  assert.deepEqual(fixTrigger(k('check:c1@R', 'status:ci/x@R')), { kinds: ['checks'], label: 'Failing checks' });
+  assert.deepEqual(fixTrigger(k('comment:4')), { kinds: ['comments'], label: 'Review comments' });
+  assert.deepEqual(fixTrigger(k('check:c1@R', 'comment:4', 'review:9')),
+    { kinds: ['checks', 'comments', 'changes'], label: 'Failing checks, review comments and changes requested' });
+  assert.deepEqual(fixTrigger(null), { kinds: [], label: 'Pull request feedback' });
+});
+
+test('fixOutcome: pushed (and a watch that stopped after it), the PR ended, or failed with its reason', () => {
+  const held = { activeRunId: 'r', fixRuns: 3, pending: { pushedSha: 'abcdef0123' } };
+  assert.deepEqual(fixOutcome(held, { status: 'watching', fixRuns: 2 }), { kind: 'pushed', sha: 'abcdef0', stopped: null, fixRuns: 2 });
+  assert.deepEqual(fixOutcome(held, { status: 'needs-person', reason: 'cap', fixRuns: 3 }), { kind: 'pushed', sha: 'abcdef0', stopped: 'cap', fixRuns: 3 });
+  assert.deepEqual(fixOutcome({ pending: {} }, { status: 'ended', reason: 'merged', fixRuns: 1 }), { kind: 'ended', reason: 'merged', fixRuns: 1 });
+  assert.deepEqual(fixOutcome({ pending: {} }, { status: 'needs-person', reason: 'fix-failed', fixRuns: 1 }), { kind: 'failed', reason: 'fix-failed', fixRuns: 1 });
+});
+
+test('onFixRun: started with the run id and trigger, then ended with the pushed outcome — once each', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const { io, watcher } = harness({ pr: openPr({ contexts: [failing(11)], threads: [thread('T1', 21)] }) });
+  await watcher.tick();
+  const runId = io.calls.start[0].opts.runId;
+  assert.equal(io.calls.fix.length, 1);
+  const [s] = io.calls.fix;
+  assert.deepEqual([s.phase, s.runId, s.once, s.watch.prUrl, s.trigger.kinds], ['started', runId, false, URL, ['checks', 'comments']]);
+  const w = getWatch(URL);
+  finishRun(io, w);
+  await watcher.tick(); await watcher.tick();          // fixing → publishing → pushed
+  assert.equal(io.calls.fix.length, 2);
+  const e = io.calls.fix[1];
+  assert.deepEqual([e.phase, e.runId, e.pipelineId, e.outcome], ['ended', runId, w.activePipelineId, { kind: 'pushed', sha: 'C1', stopped: null, fixRuns: 1 }]);
+  await watcher.tick();
+  assert.equal(io.calls.fix.length, 2, 'no event without a fix run');
+});
+
+test('onFixRun: a failed fix ends with its reason; the run that used the last allowance says the watch gave up', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const { io, watcher } = harness({ pr: openPr({ threads: [thread('T1', 1)] }) });
+  await watcher.tick();
+  io.durable.set(getWatch(URL).activePipelineId, 'error');
+  io.live.delete(getWatch(URL).activePipelineId); io.live.delete(io.calls.start[0].opts.runId);
+  await watcher.tick();
+  assert.deepEqual(io.calls.fix.map((e) => [e.phase, e.outcome?.kind, e.outcome?.reason]),
+    [['started', undefined, undefined], ['ended', 'failed', 'fix-failed']]);
+
+  const o2 = seedOrigin();
+  setWatch({ prUrl: URL2, pipelineId: o2, enabled: true });
+  getDb().prepare('UPDATE pr_watches SET fix_runs=? WHERE pr_url=?').run(MAX_FIX_RUNS - 1, URL2);
+  const h2 = harness({ pr: openPr({ url: URL2, threads: [thread('T2', 2)] }) });
+  await h2.watcher.tickOne(getWatch(URL2));
+  finishRun(h2.io, getWatch(URL2));
+  await h2.watcher.tickOne(getWatch(URL2)); await h2.watcher.tickOne(getWatch(URL2));
+  assert.deepEqual(h2.io.calls.fix.at(-1).outcome, { kind: 'pushed', sha: 'C1', stopped: 'cap', fixRuns: MAX_FIX_RUNS });
+});
+
+test('onFixRun: Resolve reports its run as a one-shot conflict fix; a refused start reports no started run', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: false });
+  const h = harness({ pr: conflicted() });
+  const r = await h.watcher.resolveOnce(getWatch(URL));
+  assert.equal(r.ok, true);
+  assert.deepEqual([h.io.calls.fix[0].phase, h.io.calls.fix[0].once, h.io.calls.fix[0].trigger.kinds], ['started', true, ['conflict']]);
+
+  const o2 = seedOrigin();
+  setWatch({ prUrl: URL2, pipelineId: o2, enabled: true });
+  const h2 = harness({ pr: openPr({ url: URL2, threads: [thread('T3', 3)] }) });
+  h2.io.startStatus = 500;
+  await h2.watcher.tickOne(getWatch(URL2));
+  assert.equal(h2.io.calls.fix.some((e) => e.phase === 'started'), false);
+  // The refused reservation still lets go of the watch: an `ended` event the server matches to no card.
+  assert.deepEqual(h2.io.calls.fix.map((e) => [e.phase, e.outcome.reason]), [['ended', 'start-refused']]);
 });
 
 // --- Failures the PR did not cause, flaky checks, and a base with no result yet ---

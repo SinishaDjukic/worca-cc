@@ -1143,6 +1143,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'nightMode',                               // night mode user layer (night/config.mjs fields)
   'nightModeToggle',                         // night mode live switch: auto | on | off
   'sync',                                    // sync before run (#527) { beforeRun, remote, refreshMinutes, onDiverged }
+  'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
   'askEngine', 'askModels',                  // Ask Worca's engine for new chats and its model per engine (user-only, D17)
@@ -2414,4 +2415,59 @@ export async function setSyncDefaults(patch) {
   }
   await persistSettings(settings);
   return syncDefaults();
+}
+
+// ── Wait for the network (auto-resume on network errors) ─────────────────────
+// A network-class step failure waits for the step's endpoint to answer again, then retries,
+// up to maxWaitMin from the FIRST network failure; past it a run behaves as before.
+// Env pins (tests, CI) win when non-empty: WORCA_NETWORK_WAIT (0/false = off) and
+// WORCA_NETWORK_WAIT_MAX_MS (the cap in ms).
+export const DEFAULT_NETWORK_WAIT = Object.freeze({ enabled: true, maxWaitMin: 240 });
+const isNetworkMaxWaitMin = (v) => Number.isInteger(v) && v >= 1 && v <= 1440;
+
+/** Merge `v` over the defaults, keeping only valid keys. Pure. */
+export function normalizeNetworkWait(v, base = DEFAULT_NETWORK_WAIT) {
+  const o = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  return {
+    enabled: typeof o.enabled === 'boolean' ? o.enabled : base.enabled,
+    maxWaitMin: isNetworkMaxWaitMin(o.maxWaitMin) ? o.maxWaitMin : base.maxWaitMin,
+  };
+}
+export function networkWaitSettings() { return normalizeNetworkWait(readSettings().networkWait); }
+
+/** @throws {Error} on anything but a partial, valid networkWait object (null / '' resets; a null key resets that key). */
+export function assertNetworkWaitInput(patch) {
+  if (patch === null || patch === '') return;
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('networkWait must be an object');
+  for (const k of Object.keys(patch)) if (!Object.hasOwn(DEFAULT_NETWORK_WAIT, k)) throw new Error(`unknown networkWait setting: ${k}`);
+  const set = (k) => k in patch && patch[k] !== null;
+  if (set('enabled') && typeof patch.enabled !== 'boolean') throw new Error('networkWait.enabled must be true or false');
+  if (set('maxWaitMin') && !isNetworkMaxWaitMin(patch.maxWaitMin)) throw new Error('networkWait.maxWaitMin must be a whole number of minutes from 1 to 1440');
+}
+
+export async function setNetworkWait(patch) {
+  assertNetworkWaitInput(patch);
+  const settings = readSettings();
+  if (patch === null || patch === '') delete settings.networkWait;
+  else {
+    // Store only the keys someone set: a key left out follows the built-in default as it changes.
+    const prev = settings.networkWait && typeof settings.networkWait === 'object' && !Array.isArray(settings.networkWait) ? settings.networkWait : {};
+    const next = {};
+    for (const k of Object.keys(DEFAULT_NETWORK_WAIT)) if (Object.hasOwn(prev, k)) next[k] = normalizeNetworkWait(prev)[k];
+    for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
+    if (Object.keys(next).length) settings.networkWait = next; else delete settings.networkWait;
+  }
+  await persistSettings(settings);
+  return networkWaitSettings();
+}
+
+/** What a run does right now: the stored setting, with a non-empty env pin winning. */
+export function effectiveNetworkWait(env = process.env) {
+  const s = networkWaitSettings();
+  const flag = env?.WORCA_NETWORK_WAIT;
+  const enabled = flag !== undefined && flag !== '' ? !/^(0|false|off|no)$/i.test(String(flag).trim()) : s.enabled;
+  const raw = env?.WORCA_NETWORK_WAIT_MAX_MS;
+  const n = Number(raw);
+  const maxWaitMs = raw != null && raw !== '' && Number.isFinite(n) && n >= 0 ? n : s.maxWaitMin * 60_000;
+  return { enabled, maxWaitMs };
 }

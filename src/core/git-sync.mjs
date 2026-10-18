@@ -20,7 +20,7 @@ import { githubEnv } from './github-credentials.mjs';
 import { azureEnv } from './azure-credentials.mjs';
 import { stripHostCredentials } from './host-credentials.mjs';
 import { worcaHome } from './projects.mjs';
-import { parseRemoteUrl } from './git-info.mjs';
+import { parseRemoteUrl, prBaseBranch } from './git-info.mjs';
 import { forgeOf } from './forge.mjs';
 import { mapWithCap } from './fanout.mjs';
 
@@ -668,6 +668,8 @@ export async function checkBaseMerge(dir, { base, feature, remote = 'origin', fe
     if (!f.ok && (f.kind === 'no-remote' || f.kind === 'bad-remote')) useRemote = false;
     else if (!f.ok) fetchError = { kind: f.kind, message: f.error };
   }
+  // A run started from `origin/dev` records that name: its base is `dev` on origin (prBaseBranch).
+  if (useRemote) base = await prBaseBranch(dir, base, [r]);
   const headSha = await shaOf(dir, `refs/heads/${feature}`);
   if (!headSha) return { status: 'no-branch', base, feature, files: [], fileCount: 0, at };
   const tip = await baseTip(dir, base, useRemote ? r : null);

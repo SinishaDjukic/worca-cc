@@ -509,6 +509,10 @@ async function askRecovery(rl, recovery) {
   out('');
   out(c('yellow', c('bold', `Recoverable ${String(rec.cls || 'error').replace('_', ' ')} error — the pipeline could not reach the model.`)));
   if (rec.message) out(c('gray', `  ${rec.message}`));
+  if (rec.network) {
+    const until = new Date(rec.network.until).toTimeString().slice(0, 5);
+    out(c('gray', `  Waiting for network… ${rec.network.host} is unreachable. worca answers Retry by itself when it answers again (until ${until}).`));
+  }
   if (rec.cls === 'auth') out(c('gray', '  Fix: re-authenticate (claude setup-token or /login) in another terminal, then retry.'));
   else out(c('gray', '  Fix: wait out the limit / restore connectivity / top up credit, then retry.'));
   options.forEach((o, i) => out(`  ${i + 1}) ${o.label}`));
@@ -781,6 +785,12 @@ async function attachAndDrive(orch, flags, start) {
       ? `paused: ${String(record.rationale || record.guardrail).replace(/^Paused:\s*/, '')}`
       : `answered ${kindLabel(kind)} ${id}: ${String(record?.choice).slice(0, 120)}`;
     out(c('magenta', `Away mode ${what}${record?.flagged && !record?.guardrail ? ' (please check)' : ''}`));
+  });
+
+  orch.on('recovery-auto', ({ id }) => {
+    // The network came back and the harness answered Retry: close the readline prompt it made moot.
+    if (promptAbort && promptAbort.questionId === id) promptAbort.abort();
+    out(c('green', 'Network back — retrying.'));
   });
 
   // Ctrl+C: 1st -> graceful pause (falls back to stop when not pausable);
@@ -3320,7 +3330,7 @@ async function main() {
   }
 
   const flags = parseArgs(process.argv.slice(2));
-  const tagCheck = normaliseTags(flags.tags);
+  const tagCheck = normaliseTags(flags.tags, { strict: true });
   if (tagCheck.errors.length) fail(`--tag: ${tagCheck.errors[0]}`);
   flags.tags = tagCheck.tags;
 

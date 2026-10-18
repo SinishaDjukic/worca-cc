@@ -1,0 +1,273 @@
+{
+  "key": "promoSetup",
+  "metaVersion": 2,
+  "mockRole": "clarify",
+  "promptHints": "List the image attachments from the task's \"## Attached files\" section as data.images (id and file \"extras/<file name>\", relative to the pipeline directory), write {\"form\":\"promo-setup\",\"data\":{\"images\":[…]}} to the answers path and stop. Never ask for, read or write the ElevenLabs key: the engine resolves it.",
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "answers",
+      "type": "json",
+      "filename": "promo-setup.json",
+      "artifactKind": "promo-setup"
+    }
+  ],
+  "domain": "video",
+  "displayName": "Promo: setup",
+  "description": "Asks how the promo video should feel and sound: tone, length, pace, mascots (designed, or from an attached image, and how much of them) and audio (silent, or narrated with ElevenLabs: key, voice, music). One Ask form; every later step reads the answers.",
+  "color": "red",
+  "icon": "<rect x=\"3\" y=\"9\" width=\"18\" height=\"11\" rx=\"1.5\"/><path d=\"M3 9l2.2-5h15.6L21 9M8.5 4l-2 5M13.5 4l-2 5M18.5 4l-2 5\" stroke-linejoin=\"round\"/>",
+  "agentFile": "worca-cc-promo-setup.md",
+  "runnerType": "clarifier",
+  "asksQuestions": true,
+  "questionsLocked": true,
+  "questionsDefault": true,
+  "order": 70,
+  "ask": {
+    "forms": {
+      "promo-setup": {
+        "version": 1,
+        "title": "Promo video: tone, length and sound",
+        "data": {
+          "type": "object",
+          "properties": {
+            "images": {
+              "type": "array",
+              "maxItems": 12,
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "file"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 300
+                  },
+                  "file": {
+                    "type": "file",
+                    "accept": [
+                      "image/*"
+                    ]
+                  },
+                  "name": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              }
+            },
+            "defaultImage": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "required": [
+            "tone",
+            "length",
+            "pace",
+            "audio"
+          ],
+          "properties": {
+            "tone": {
+              "type": "string",
+              "enum": [
+                "Playful",
+                "Professional",
+                "Bold",
+                "Calm"
+              ],
+              "default": "Playful"
+            },
+            "length": {
+              "type": "string",
+              "enum": [
+                "30 s",
+                "60 s",
+                "90 s",
+                "2.5 min"
+              ],
+              "default": "60 s"
+            },
+            "pace": {
+              "type": "string",
+              "enum": [
+                "Relaxed",
+                "Lively",
+                "Fast"
+              ],
+              "default": "Lively"
+            },
+            "mascots": {
+              "type": "boolean",
+              "default": true
+            },
+            "mascotSource": {
+              "type": "string",
+              "enum": [
+                "Design one for me",
+                "Use my attached image"
+              ],
+              "default": "Design one for me"
+            },
+            "mascotImage": {
+              "type": "string",
+              "maxLength": 300,
+              "enumFrom": "data.images[].id",
+              "defaultFrom": "data.defaultImage"
+            },
+            "mascotAmount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100,
+              "default": 40
+            },
+            "audio": {
+              "type": "string",
+              "enum": [
+                "Narrated (ElevenLabs)",
+                "Silent video"
+              ],
+              "default": "Silent video"
+            },
+            "apiKey": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "voiceGender": {
+              "type": "string",
+              "enum": [
+                "Female",
+                "Male",
+                "Either"
+              ],
+              "default": "Either"
+            },
+            "music": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        },
+        "layout": [
+          {
+            "widget": "select",
+            "field": "tone",
+            "label": "Tone",
+            "style": "cards",
+            "descriptions": {
+              "Playful": "Witty and bouncy",
+              "Professional": "Clear and composed",
+              "Bold": "Big claims, quick cuts",
+              "Calm": "Unhurried and warm"
+            }
+          },
+          {
+            "widget": "select",
+            "field": "length",
+            "label": "Length",
+            "style": "segmented"
+          },
+          {
+            "widget": "select",
+            "field": "pace",
+            "label": "Pace",
+            "style": "segmented"
+          },
+          {
+            "widget": "toggle",
+            "field": "mascots",
+            "label": "Mascots"
+          },
+          {
+            "widget": "select",
+            "field": "mascotSource",
+            "label": "Mascot look",
+            "style": "segmented",
+            "when": {
+              "mascots": true
+            }
+          },
+          {
+            "widget": "gallery",
+            "bind": "data.images",
+            "field": "mascotImage",
+            "label": "Image",
+            "fileKey": "file",
+            "captionKey": "name",
+            "help": "From the files attached on New run.",
+            "when": {
+              "mascots": true,
+              "mascotSource": "Use my attached image"
+            }
+          },
+          {
+            "widget": "slider",
+            "field": "mascotAmount",
+            "label": "How much mascot",
+            "minLabel": "Cameo",
+            "maxLabel": "Star of the show",
+            "when": {
+              "mascots": true
+            }
+          },
+          {
+            "widget": "select",
+            "field": "audio",
+            "label": "Audio",
+            "style": "segmented",
+            "help": "All sound comes from ElevenLabs: a silent video has no voice, music or sound effects."
+          },
+          {
+            "widget": "text",
+            "field": "apiKey",
+            "label": "ElevenLabs API key",
+            "secret": true,
+            "envDefault": "ELEVENLABS_API_KEY",
+            "mono": true,
+            "help": "Used for this run only and never written to disk or stored with the run.",
+            "when": {
+              "audio": "Narrated (ElevenLabs)"
+            }
+          },
+          {
+            "widget": "select",
+            "field": "voiceGender",
+            "label": "Voice",
+            "style": "segmented",
+            "when": {
+              "audio": "Narrated (ElevenLabs)"
+            }
+          },
+          {
+            "widget": "toggle",
+            "field": "music",
+            "label": "Music",
+            "when": {
+              "audio": "Narrated (ElevenLabs)"
+            }
+          }
+        ],
+        "example": {
+          "images": [
+            {
+              "id": "extras/mascot.png",
+              "file": "extras/mascot.png",
+              "name": "mascot.png"
+            }
+          ],
+          "defaultImage": "extras/mascot.png"
+        }
+      }
+    }
+  }
+}

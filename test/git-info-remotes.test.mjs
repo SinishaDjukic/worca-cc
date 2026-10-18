@@ -4,12 +4,16 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseRemoteUrl, remoteRepoSlug, sameRepo, listRemotes, listRemoteBranches, prHeadRef,
+  parseRemoteUrl, remoteRepoSlug, sameRepo, listRemotes, listRemoteBranches, prBaseBranch, prHeadRef,
   pushBranch, createPr, ghRepoAccess, ghForkRepo, prMergeable, findPrForBranch, prLifecycleState, prProviderFor, prHostsAvailable, anyPrHost,
   markPrReady, closePr, _testing as gitInfo,
 } from '../src/core/git-info.mjs';
 import { forgeOf, forgeOfPrUrl, prNumberFromUrl } from '../src/core/forge.mjs';
 import * as azurePr from '../src/core/pr/azure.mjs';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { checkRows } from './helpers/rows.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 
@@ -175,6 +179,39 @@ test('listRemoteBranches: groups local refs by remote (longest prefix), drops HE
       assert.deepEqual(await listRemoteBranches('', ['origin']), { ok: false, byRemote: {}, error: 'projectDir is required' });
     } },
   ]);
+});
+
+test('prBaseBranch: a remote-tracking source names its branch on the remote; local branches stay (real git)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-prbase-'));
+  try {
+    const git = (...a) => execFileSync('git', a, { cwd: dir, stdio: 'pipe' });
+    git('init', '-q', '-b', 'main');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    for (const ref of ['origin/dev', 'origin/feat/x', 'origin/origin/kept', 'origin/kept', 'team/fork/main']) git('update-ref', `refs/remotes/${ref}`, 'HEAD');
+    git('branch', 'origin/kept');                     // a real local branch that only LOOKS like a remote ref
+    const names = ['origin', 'team', 'team/fork'];
+    await checkRows([
+      { name: 'origin/dev (no local branch, refs/remotes/origin/dev) -> dev', run: async () => assert.equal(await prBaseBranch(dir, 'origin/dev', names), 'dev') },
+      { name: 'a nested branch keeps its slashes', run: async () => assert.equal(await prBaseBranch(dir, 'origin/feat/x', names), 'feat/x') },
+      { name: 'a remote whose name holds a slash: the longest prefix wins', run: async () => assert.equal(await prBaseBranch(dir, 'team/fork/main', names), 'main') },
+      { name: 'a local branch named origin/kept stays', run: async () => assert.equal(await prBaseBranch(dir, 'origin/kept', names), 'origin/kept') },
+      { name: 'a bare branch, an unknown remote, a missing ref and a bare remote stay', run: async () => {
+        assert.equal(await prBaseBranch(dir, 'main', names), 'main');
+        assert.equal(await prBaseBranch(dir, 'upstream/dev', names), 'upstream/dev');
+        assert.equal(await prBaseBranch(dir, 'origin/gone', names), 'origin/gone');
+        assert.equal(await prBaseBranch(dir, 'origin/', names), 'origin/');
+      } },
+      { name: 'no git call unless the name starts with a remote; a git failure keeps the name', run: async () => {
+        const seen = [];
+        gitInfo.setRunner((cmd, args) => { seen.push([cmd, ...args]); return fail('fatal: not a git repository', 128); });
+        assert.equal(await prBaseBranch('/nope', 'dev', names), 'dev');
+        assert.deepEqual(seen, []);
+        assert.equal(await prBaseBranch('/nope', 'origin/dev', names), 'origin/dev');
+        assert.deepEqual(seen, [['git', 'for-each-ref', '--format=%(refname)', 'refs/heads/origin/dev', 'refs/remotes/origin/dev']]);
+        gitInfo.reset();
+      } },
+    ]);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
 test('fork argv: pushBranch remote (default origin); createPr no repo / same-repo / cross-repo', async () => {
