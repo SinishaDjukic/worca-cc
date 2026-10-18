@@ -1027,6 +1027,11 @@ export class GraphOrchestrator extends RunHarness {
       workspace: this.isWorkspace ? { projects: this._workspaceProjects() } : null,
       pauseReason: this.pauseReason || null,
       pauseDetail: this.pauseDetail || null,
+      // Written only when set (smoke DB identity): the class behind a recoverable pause,
+      // the current network outage, and --yes — the server's network watch reads all three.
+      ...(this.pauseClass ? { pauseClass: this.pauseClass } : {}),
+      ...(this._net ? { network: { ...this._net } } : {}),
+      ...(this.auto ? { runAuto: true } : {}),
       ...(this.limitEngine ? { limitEngine: this.limitEngine } : {}),
       // The EFFECTIVE instruction at dispatch time (post in-worktree graph
       // build), not the detect-time tools.instruction.
@@ -2126,15 +2131,20 @@ export class GraphOrchestrator extends RunHarness {
   async _runNodeAttempts(nc, ctx) {
     for (let attempt = 1; ; attempt++) {
       try {
-        return await this._runOnce(nc, ctx);
+        const out = await this._runOnce(nc, ctx);
+        this._networkSettled();
+        return out;
       } catch (err) {
         if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) throw pauseErr();
         if (isAbort(err) || isPause(err)) throw err;
         if (this.abort.signal.aborted || this.state.status === 'stopped') throw err;  // a stop is in flight: _execute marks it 'stopped'
         const cls = classifyError(err);
-        const verdict = await this._recover({ node: { key: nc.key || ctx.nodeId }, cls, err, attempt });
+        const verdict = await this._recover({ node: { key: nc.key || ctx.nodeId }, cls, err, attempt,
+          model: nc.kind === 'agent' ? (ctx.claudeOpts?.model ?? null) : null });
         if (this.pauseRequested) throw pauseErr();          // a pause landed during backoff/prompt: its reason stands
-        if (verdict.outcome === 'retry') { this._execStep(ctx, 'start'); continue; }   // back to running for the retry
+        if (this.abort.signal.aborted || this.state.status === 'stopped') throw err;   // a stop landed during the network wait
+        // Back to running for the retry; the network came back → a fresh retry budget.
+        if (verdict.outcome === 'retry') { if (verdict.reset) attempt = 0; this._execStep(ctx, 'start'); continue; }
         if (verdict.outcome === 'pause') { this._pauseFor(verdict.reason, err, { nc, ctx, cls }); throw pauseErr(); }
         throw markTerminal(err);                           // terminal: _execute's catch ends the run
       }

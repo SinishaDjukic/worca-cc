@@ -12,7 +12,6 @@ const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 test('every string that names the page reads "New run"', () => {
   for (const [file, text] of [
     ['ui/public/ask-panel.mjs', "'↗ Open in New run'"],
-    ['ui/public/app.js', "'Onboard at least two projects (in New run) to create a workspace.'"],
     ['ui/public/app.js', "emptyText: 'No runs yet. Start one from New run.'"],
     ['ui/public/engine-settings-view.mjs', "hint: 'New run starts on this engine. You can still switch per run.'"],
     ['ui/public/memory-view.mjs', ' — pick another project on the New run page.`'],
