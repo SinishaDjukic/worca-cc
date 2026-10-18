@@ -653,6 +653,44 @@ agent step (`propose_run` `nodes`), from the models the run's engine runs:
   refused; any other top-level key is refused with *overlay takes nodes and wires only*. A
   [run preset](run-presets.md) sends its loop budgets this way.
 
+## When the network drops
+
+A step whose error is network-class (a refused or reset connection, a DNS failure,
+"fetch failed", a timeout, an HTTP 500) first checks whether the endpoint that step
+talks to answers at all.
+
+- **What is checked** — the real upstream behind the step: the Anthropic API by
+  default, an ambient `ANTHROPIC_BASE_URL`, a catalog entry's own base URL, a bridged
+  model's provider, or the broker slot's upstream. Never the local bridge or broker
+  hop, which can be up while the internet is not. The check is a header-less `HEAD`
+  to the origin only: no key, path or query is ever sent or logged. Bedrock, Vertex
+  and Foundry are not checked.
+- **The endpoint answers** — nothing changes: three retries with backoff, then a
+  recoverable pause (or the recovery prompt). So a storm of 500s or a missing
+  `claude` binary still pauses as before.
+- **The endpoint does not answer** — a `--yes` run waits: it checks again after 5s,
+  10s, 20s, 40s, then every minute, and retries the step by itself as soon as the
+  endpoint answers ("network back — retrying", with a fresh retry budget). An
+  interactive run opens the recovery prompt at once with a "waiting for network…"
+  note; the prompt picks Retry by itself when the endpoint answers, and you can
+  still pick Retry or Pause yourself. The run page shows a "Waiting for network…"
+  banner while a step waits. Pause and Stop end the wait at once.
+- **The longest wait** — 4 hours by default, counted from the run's FIRST network
+  failure and kept across resumes. Past it, a `--yes` run pauses as recoverable and
+  an interactive prompt waits for your answer, as before.
+- **Runs that stopped waiting** — the server checks at start and every minute. A run
+  that paused because the endpoint stayed down, or that a restart cut off while it
+  waited, is resumed in the server once its endpoint answers, inside the same
+  window. A `--yes` run stays `--yes`. A run with a pending *Resume at…* is left to
+  that time. Cost-cap, usage-limit, sign-in, quota, model and error pauses, and your
+  own pauses, are never resumed. The audit trail says "Network back: … run resumed
+  by worca (network watch)": the system resumed it, not a person.
+- **Settings** — *Settings › Runs › Wait for the network* (Advanced) switches it off
+  or changes the longest wait (30 minutes to 24 hours); `settings.json` key
+  `networkWait: { enabled, maxWaitMin }`. For tests and CI the env wins when set:
+  `WORCA_NETWORK_WAIT` (`0` / `false` = off), `WORCA_NETWORK_WAIT_MAX_MS` (the longest
+  wait in ms) and `WORCA_NETWORK_PROBE_MS` (the first check delay in ms).
+
 ## Troubleshooting
 
 - **An imported local model has no Prompt limit, or a wrong one** — the server did
@@ -689,6 +727,9 @@ agent step (`propose_run` `nodes`), from the models the run's engine runs:
   20s (longer when the upstream sends `retry-after`, at most 40s a wait), on top
   of the CLI's own ~3 minutes of retries, then pauses as recoverable — resume it
   once the limit clears.
+- **A step loses the network** — worca waits for the endpoint (up to 4 hours by
+  default, Settings › Runs › Wait for the network) and retries by itself; see
+  [When the network drops](#when-the-network-drops).
 - **"prompt is too long" early in a run** — expected on a translated model:
   Copilot's prompt limits are well below Anthropic's, and the run compacts.
 - **"model not found"** — the upstream id is not offered to your account; pick

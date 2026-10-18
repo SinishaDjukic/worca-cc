@@ -27,3 +27,19 @@ Save a New run setup as a named preset, pick it later, type a prompt and start: 
 - Every new run keeps its setup, and a finished run's page has **Save setup as preset** to turn it into a preset.
 - The Chat home shows your presets as one-click chips under **Start from a preset**.
 - Schedules follow their preset, `worca run --preset NAME --prompt "…"` starts one from the terminal, and Ask Worca proposes runs from your presets. Run presets are now in beta and on by default.
+
+## Watch PR fix runs in the chat
+
+**The chat that opened a pull request sees its fix runs.**
+
+A pull-request card in Ask Worca now shows the PR's Watch PR status, live. When Watch PR (or Resolve) starts a fix run
+on that PR, the chat gets a live run card for it by itself — what started it (conflicts, failing checks, review
+comments) and, at the end, whether the fix was pushed — even when the chat was closed.
+
+Chips: Ask Worca · Watch PR · fix runs
+
+Read it: [UI levels › History](../ui-levels.md#history)
+
+Pull requests (add each number when it opens):
+
+- Watch PR fix runs in the chat

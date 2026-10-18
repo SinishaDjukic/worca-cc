@@ -228,6 +228,38 @@ export function buildFixTask({ pr, triggers, logs = [] }) {
   return out.join('\n');
 }
 
+const TRIGGER_WORDS = [
+  ['checks', ['check:', 'status:'], 'failing checks'],
+  ['comments', ['comment:'], 'review comments'],
+  ['changes', ['review:'], 'changes requested'],
+];
+/** What a fix run was started for, from its reserved `pending` (the conflict, else its handled keys): the chat's
+ *  fix-run card names it. → { kinds, label } */
+export function fixTrigger(pending) {
+  const p = pending && typeof pending === 'object' ? pending : {};
+  if (p.conflict) {
+    return p.conflict.why === 'behind'
+      ? { kinds: ['behind'], label: `Behind ${p.conflict.base || 'its base'}: merging it in` }
+      : { kinds: ['conflict'], label: 'Merge conflicts' };
+  }
+  const keys = (Array.isArray(p.handledKeys) ? p.handledKeys : []).map(String);
+  const hit = TRIGGER_WORDS.filter(([, prefixes]) => keys.some((k) => prefixes.some((x) => k.startsWith(x))));
+  if (!hit.length) return { kinds: [], label: 'Pull request feedback' };
+  const words = hit.map(([, , w]) => w);
+  const text = words.length > 1 ? `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}` : words[0];
+  return { kinds: hit.map(([k]) => k), label: text[0].toUpperCase() + text.slice(1) };
+}
+
+/** How one fix run ended, from the watch that still held it (`prev`) and the watch after the transition that let go
+ *  of it (`next`): pushed (and whether the watch then stopped, e.g. `cap`), not pushed because the PR ended, or failed. */
+export function fixOutcome(prev, next) {
+  const pushed = prev && prev.pending && prev.pending.pushedSha;
+  const fixRuns = (next && next.fixRuns) ?? (prev && prev.fixRuns) ?? 0;
+  if (pushed) return { kind: 'pushed', sha: String(pushed).slice(0, 7), stopped: next && next.status === 'needs-person' ? next.reason || null : null, fixRuns };
+  if (next && next.status === 'ended') return { kind: 'ended', reason: next.reason || 'closed', fixRuns };
+  return { kind: 'failed', reason: (next && next.reason) || 'fix-failed', fixRuns };
+}
+
 const SUMMARY_SUBJECTS = 10;
 /** The reply's short summary: the pushed sha and the fix run's commit subjects (oldest first), capped. */
 export function fixSummary(sha, subjects = []) {
@@ -290,13 +322,23 @@ const LIVE = new Set(['starting', 'running', 'paused']);
  *   pipelineStatus(id)      → durable pipeline status | null
  *   attachPr(pipelineId, pr) → persist the PR facts on the fix row (throws when not persisted)
  *   notify({ kind, title, message }), onChange(watch), audit?(pipelineId, text)
+ *   onFixRun({ phase: 'started', watch, runId, trigger, once } | { phase: 'ended', watch, runId, pipelineId, outcome })
+ *                             a fix run began (after startRun answered 200) / the watch let go of it (best effort)
  */
 export function createPrWatcher(deps = {}) {
   const now = deps.now || Date.now;
   const newId = deps.newId || randomUUID;
+  const fixRun = (event) => {
+    try { deps.onFixRun?.(event); } catch { /* the chat is told best effort; never ownership */ }
+  };
   const transition = (w, patch) => {
     const next = updateWatch(w.prUrl, patch);
     try { deps.onChange?.(next); } catch { /* broadcasts never break ownership */ }
+    // Every exit of a fix run (pushed, failed, refused, the PR ended, cap) clears activeRunId here.
+    if (w.activeRunId && next && !next.activeRunId) {
+      fixRun({ phase: 'ended', watch: next, runId: w.activeRunId,
+        pipelineId: w.activePipelineId || watchRun(w.activeRunId)?.pipelineId || null, outcome: fixOutcome(w, next) });
+    }
     return next;
   };
   const notify = (kind, w, message) => {
@@ -427,6 +469,7 @@ export function createPrWatcher(deps = {}) {
       return cur;
     }
     notify('started', cur || reserved, once ? 'Conflict fix started.' : `Fix run ${reserved.fixRuns} of ${MAX_FIX_RUNS} started.`);
+    fixRun({ phase: 'started', watch: cur || reserved, runId, trigger: fixTrigger(pending), once });
     return cur;
   }
 

@@ -216,6 +216,32 @@ test('a refused scan (409) stays in the wizard with the error as TEXT and Scan r
       click(window, hint.querySelector('a'));
       assert.equal(setup.classList.contains('hidden'), false, 'Sign in… opens the dialog');
     } },
+    { name: 'a refusal that lands after the wizard was left and re-entered writes nothing into the new wizard', run: async () => {
+      let refuse;
+      const answer = new Promise((r) => { refuse = () => r({ ok: false, status: 409, json: async () => ({ error: 'late refusal' }) }); });
+      const { window, calls } = await boot({
+        fetchHandler: (u, opts) => (u.endsWith('/api/workspaces/scan') && opts.method === 'POST' ? answer : null),
+      });
+      goCreate(window);
+      await tick();
+      const doc = window.document;
+      doc.querySelector('#wiz-name').value = 'X';
+      pick(window, ['/a/svc-iam', '/a/svc-ui']);
+      click(window, doc.querySelector('#wiz-start-scan'));
+      for (let i = 0; i < 6; i += 1) await tick();
+      assert.ok(calls.some((c) => c.u.endsWith('/api/workspaces/scan')), 'the scan request is out');
+      window.location.hash = 'new';
+      window.dispatchEvent(new window.Event('hashchange'));
+      await tick();
+      goCreate(window);
+      await tick();
+      const hint = doc.querySelector('#wiz-step1-hint');
+      const fresh = hint.textContent;
+      refuse();
+      for (let i = 0; i < 6; i += 1) await tick();
+      assert.equal(hint.textContent, fresh);
+      assert.equal(hint.classList.contains('err'), false);
+    } },
   ]);
 });
 
@@ -410,4 +436,425 @@ test('size limits: no note up to 10, warnings above 10 and 20, Scan blocked abov
       assert.equal(doc.querySelector('#wiz-start-scan').disabled, false, 'back in range');
     } },
   ]);
+});
+
+const settle = async () => { for (let i = 0; i < 6; i += 1) await tick(); };
+const json = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
+const FOUND = [
+  { path: '/a/svc-iam', name: 'svc-iam', key: 'svc-iam-0000aaaa', status: 'registered', problem: null, liftedFrom: [] },
+  { path: '/x/api', name: 'api', key: 'api-0000bbbb', status: 'new', problem: null, liftedFrom: [] },
+  { path: '/x/mono', name: 'mono', key: 'mono-0000cccc', status: 'new', problem: null, liftedFrom: ['/x/mono/packages/web'] },
+  { path: '/x/docs', name: 'docs', key: '', status: 'problem', problem: 'Not in a git repository', liftedFrom: [] },
+];
+// The import routes, recording each request body in `sent`: Add… (pick-folder), the candidates,
+// the bulk registration, the scan, and a one-folder listing for Worca's folder browser.
+function importRoutes({ pick = { status: 'picked', path: '/x/acme.code-workspace', paths: ['/x/acme.code-workspace'] },
+  found = FOUND, workspaceName = null, importStatus = 200, bulk = null, sent = {} } = {}) {
+  const log = (k, opts) => (sent[k] ||= []).push(JSON.parse(opts.body || '{}'));
+  return (u, opts) => {
+    if (u.endsWith('/api/fs/pick-folder')) { log('pick', opts); return json(pick); }
+    if (u.endsWith('/api/workspaces/import-candidates')) {
+      log('import', opts);
+      return importStatus === 200 ? json({ candidates: found, workspaceName, truncated: false }) : json({ error: 'give at least one path (paths or text)' }, importStatus);
+    }
+    if (u.endsWith('/api/projects/bulk')) { log('bulk', opts); return json(bulk); }
+    if (u.endsWith('/api/workspaces/scan') && opts.method === 'POST') {
+      log('scan', opts);
+      return json({ runId: 'run-scan-1', workspaceId: 'wks-acme-0000abcd', title: 'Workspace scan: Acme', projectDir: '/a/svc-iam', projectNames: [] });
+    }
+    if (u.includes('/api/fs/dirs')) return json({ path: '/x', parent: '/', home: '/x', dirs: [{ name: 'api', path: '/x/api' }] });
+    return null;
+  };
+}
+const importBox = (doc, path) => [...doc.querySelectorAll('#wiz-import-list .wiz-import-cb')].find((c) => c.value === path);
+const projectBox = (doc, path) => [...doc.querySelectorAll('#wiz-projects .wiz-proj-cb')].find((c) => c.value === path);
+const untick = (window, cb) => { cb.checked = false; cb.dispatchEvent(new window.Event('change', { bubbles: true })); };
+const tickBox = (window, cb) => { cb.checked = true; cb.dispatchEvent(new window.Event('change', { bubbles: true })); };
+const addPasted = async (window, text) => {
+  window.document.querySelector('#wiz-import-paste').value = text;
+  click(window, window.document.querySelector('#wiz-import-paste-add'));
+  await settle();
+};
+// The wizard with its import answer held until release(): what the user does while it runs.
+async function bootHeldImport(body) {
+  let release;
+  const answer = new Promise((r) => { release = () => r({ ok: true, status: 200, json: async () => body }); });
+  const rest = importRoutes();
+  const { window } = await boot({ fetchHandler: (u, opts) => (u.endsWith('/api/workspaces/import-candidates') ? answer : rest(u, opts)) });
+  goCreate(window);
+  await tick();
+  return { window, doc: window.document, release: () => release() };
+}
+
+test('Add… asks for folders and .code-workspace files, then lists what it found: new and registered rows ticked, a problem row with its reason, the file name as the workspace name', async () => {
+  const sent = {};
+  const { window } = await boot({ fetchHandler: importRoutes({ workspaceName: 'acme', sent }) });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  click(window, doc.querySelector('#wiz-import-add'));
+  await settle();
+  assert.deepEqual(sent.pick, [{ purpose: 'repos', multiple: true }]);
+  assert.deepEqual(sent.import, [{ paths: ['/x/acme.code-workspace'], text: '', depth: 1 }]);
+  const rows = [...doc.querySelectorAll('#wiz-import-list .wiz-import-row')];
+  assert.deepEqual(rows.map((r) => r.dataset.status), ['registered', 'new', 'new', 'problem']);
+  assert.equal(importBox(doc, '/x/api').checked, true);
+  assert.equal(importBox(doc, '/a/svc-iam').checked, true);
+  assert.equal(projectBox(doc, '/a/svc-iam').checked, true, 'a registered row ticks its project in the list above');
+  assert.equal(importBox(doc, '/x/docs').disabled, true);
+  assert.equal(importBox(doc, '/x/docs').checked, false);
+  assert.match(rows[3].textContent, /Not in a git repository/);
+  assert.match(rows[2].textContent, /Repository top folder of \/x\/mono\/packages\/web/);
+  assert.equal(doc.querySelector('#wiz-name').value, 'acme');
+  assert.match(doc.querySelector('#wiz-import-hint').textContent, /Found 2 new, 1 already a project, 1 that can't join\./);
+  assert.equal(doc.querySelector('#wiz-start-scan').disabled, false, 'three ticked');
+  untick(window, importBox(doc, '/a/svc-iam'));
+  assert.equal(projectBox(doc, '/a/svc-iam').checked, false, 'one pick, two lists');
+});
+
+test('Scan registers the ticked new rows (POST /api/projects/bulk), then scans every ticked path', async () => {
+  const sent = {};
+  const bulk = { projects: [...PROJECTS, { name: 'api', path: '/x/api', exists: true }],
+    results: [{ index: 0, status: 'added', key: 'api-0000bbbb', name: 'api', path: '/x/api' }] };
+  const { window, calls } = await boot({ fetchHandler: importRoutes({ bulk, sent, workspaceName: 'from-file' }) });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  doc.querySelector('#wiz-name').value = 'Acme';
+  click(window, doc.querySelector('#wiz-import-add'));
+  await settle();
+  assert.equal(doc.querySelector('#wiz-name').value, 'Acme', "a typed name is never replaced by the file's name");
+  untick(window, importBox(doc, '/x/mono'));
+  click(window, doc.querySelector('#wiz-start-scan'));
+  await settle();
+  assert.deepEqual(sent.bulk, [{ projects: [{ name: 'api', path: '/x/api' }] }]);
+  assert.deepEqual(sent.scan.map((s) => s.projectPaths), [['/a/svc-iam', '/x/api']]);
+  const order = calls.map((c) => c.u).filter((u) => u.endsWith('/api/projects/bulk') || u.endsWith('/api/workspaces/scan'));
+  assert.deepEqual(order.map((u) => u.slice(u.indexOf('/api/'))), ['/api/projects/bulk', '/api/workspaces/scan']);
+  assert.ok(viewShown(doc, 'runs'), 'the scan run took over');
+});
+
+test('a new row the server would not register stops the scan and names it; one registered meanwhile counts as registered', async () => {
+  const run = async (results) => {
+    const sent = {};
+    const bulk = { projects: [...PROJECTS, { name: 'mono', path: '/x/mono', exists: true }], results };
+    const { window } = await boot({ fetchHandler: importRoutes({ bulk, sent }) });
+    goCreate(window);
+    await tick();
+    const doc = window.document;
+    doc.querySelector('#wiz-name').value = 'Acme';
+    click(window, doc.querySelector('#wiz-import-add'));
+    await settle();
+    click(window, doc.querySelector('#wiz-start-scan'));
+    await settle();
+    return { doc, sent };
+  };
+  const added = { index: 1, status: 'added', key: 'mono-0000cccc', name: 'mono', path: '/x/mono' };
+  await checkRows([
+    { name: 'a refused row: no scan, the reason as text, Scan enabled again', run: async () => {
+      const { doc, sent } = await run([{ index: 0, status: 'skipped', name: 'api', path: '/x/api', reason: 'folder does not exist' }, added]);
+      assert.equal(sent.scan, undefined, 'no scan request');
+      const hint = doc.querySelector('#wiz-step1-hint');
+      assert.ok(hint.classList.contains('err'));
+      assert.match(hint.textContent, /\/x\/api \(folder does not exist\)/);
+      assert.equal(importBox(doc, '/x/mono').closest('.wiz-import-row').dataset.status, 'registered');
+      assert.equal(doc.querySelector('#wiz-start-scan').disabled, false);
+    } },
+    { name: 'already registered by someone else: the scan goes ahead with the row', run: async () => {
+      const { sent } = await run([{ index: 0, status: 'skipped', name: 'api', path: '/x/api', reason: 'this project path is already registered' }, added]);
+      assert.deepEqual(sent.scan.map((s) => s.projectPaths), [['/a/svc-iam', '/x/api', '/x/mono']]);
+    } },
+    { name: 'a 200 with no per-row results registered nothing: no scan', run: async () => {
+      const { doc, sent } = await run(undefined);
+      assert.equal(sent.scan, undefined, 'no scan request');
+      assert.match(doc.querySelector('#wiz-step1-hint').textContent, /projects not added: HTTP 200/);
+    } },
+  ]);
+});
+
+test('Scan stays off while it registers the new rows, and scans what was ticked when it was pressed', async () => {
+  const sent = {};
+  let releaseBulk;
+  const bulkAnswer = new Promise((r) => { releaseBulk = r; });
+  const answers = [[FOUND[1]], [{ path: '/x/late', name: 'late', key: 'late-0000dddd', status: 'new', problem: null, liftedFrom: [] }]];
+  const rest = importRoutes({ sent });
+  const { window } = await boot({ fetchHandler: (u, opts) => {
+    if (u.endsWith('/api/workspaces/import-candidates')) return json({ candidates: answers.shift() || [], workspaceName: null, truncated: false });
+    if (u.endsWith('/api/projects/bulk')) { (sent.bulk ||= []).push(JSON.parse(opts.body)); return bulkAnswer; }
+    return rest(u, opts);
+  } });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  doc.querySelector('#wiz-name').value = 'Acme';
+  pick(window, ['/a/svc-iam']);
+  await addPasted(window, '/x/api');
+  const start = doc.querySelector('#wiz-start-scan');
+  click(window, start);
+  await settle();
+  pick(window, ['/a/svc-ui']);
+  assert.equal(start.disabled, true, 'a tick while the rows register leaves Scan off');
+  await addPasted(window, '/x/late');
+  assert.ok(importBox(doc, '/x/late'), 'the late answer is listed');
+  releaseBulk({ ok: true, status: 200, json: async () => ({ projects: [...PROJECTS, { name: 'api', path: '/x/api', exists: true }],
+    results: [{ index: 0, status: 'added', key: 'api-0000bbbb', name: 'api', path: '/x/api' }] }) });
+  await settle();
+  assert.deepEqual(sent.bulk, [{ projects: [{ name: 'api', path: '/x/api' }] }]);
+  assert.deepEqual(sent.scan.map((s) => s.projectPaths), [['/a/svc-iam', '/x/api']], 'neither the later tick nor the unregistered late row joins');
+});
+
+test('the paste box sends its text (Add paths or Ctrl+Enter) with the depth pick; it clears on success and keeps the text on a refusal', async () => {
+  const open = async (opts) => {
+    const { window } = await boot({ fetchHandler: importRoutes(opts) });
+    goCreate(window);
+    await tick();
+    return window;
+  };
+  await checkRows([
+    { name: 'Add paths sends the text; the box clears', run: async () => {
+      const sent = {};
+      const doc = (await open({ sent })).document;
+      doc.querySelector('#wiz-import-paste').value = '~/dev/api\n~/dev/web';
+      click(doc.defaultView, doc.querySelector('#wiz-import-paste-add'));
+      await settle();
+      assert.deepEqual(sent.import, [{ paths: [], text: '~/dev/api\n~/dev/web', depth: 1 }]);
+      assert.equal(doc.querySelector('#wiz-import-paste').value, '');
+    } },
+    { name: 'Look two levels deep sends depth 2; Ctrl+Enter adds', run: async () => {
+      const sent = {};
+      const window = await open({ sent });
+      const doc = window.document;
+      doc.querySelector('#wiz-import-deep').checked = true;
+      const box = doc.querySelector('#wiz-import-paste');
+      box.value = '/x';
+      box.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
+      await settle();
+      assert.deepEqual(sent.import, [{ paths: [], text: '/x', depth: 2 }]);
+    } },
+    { name: 'a refused import keeps the text and shows the error', run: async () => {
+      const doc = (await open({ importStatus: 400 })).document;
+      doc.querySelector('#wiz-import-paste').value = 'relative';
+      click(doc.defaultView, doc.querySelector('#wiz-import-paste-add'));
+      await settle();
+      assert.equal(doc.querySelector('#wiz-import-paste').value, 'relative');
+      const hint = doc.querySelector('#wiz-import-hint');
+      assert.ok(hint.classList.contains('err'));
+      assert.match(hint.textContent, /at least one path/);
+    } },
+    { name: 'a line typed while the import runs stays in the box', run: async () => {
+      const { window, doc, release } = await bootHeldImport({ candidates: [FOUND[1]], workspaceName: null, truncated: false });
+      const box = doc.querySelector('#wiz-import-paste');
+      box.value = '/x/api';
+      click(window, doc.querySelector('#wiz-import-paste-add'));
+      await settle();
+      box.value = '/x/api\n/x/web';
+      release();
+      await settle();
+      assert.ok(importBox(doc, '/x/api'), 'the answer was merged');
+      assert.equal(box.value, '/x/api\n/x/web');
+    } },
+  ]);
+});
+
+test('new rows get unique project names: a taken name gets its parent folder in front', async () => {
+  const sent = {};
+  const found = [
+    { path: '/org-a/api', name: 'api', key: 'k1', status: 'new', problem: null, liftedFrom: [] },
+    { path: '/org-b/api', name: 'api', key: 'k2', status: 'new', problem: null, liftedFrom: [] },
+    { path: '/z/svc-ui', name: 'svc-ui', key: 'k3', status: 'new', problem: null, liftedFrom: [] },
+  ];
+  const bulk = { projects: PROJECTS, results: found.map((f, index) => ({ index, status: 'added', name: '', path: f.path })) };
+  const { window } = await boot({ fetchHandler: importRoutes({ found, bulk, sent }) });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  doc.querySelector('#wiz-name').value = 'Names';
+  click(window, doc.querySelector('#wiz-import-add'));
+  await settle();
+  click(window, doc.querySelector('#wiz-start-scan'));
+  await settle();
+  assert.deepEqual(sent.bulk[0].projects.map((p) => p.name), ['api', 'org-b-api', 'z-svc-ui']);
+});
+
+test('an import past the 40-project cap ticks the first 40 and says so', async () => {
+  const found = Array.from({ length: 41 }, (_, i) => ({ path: `/big/r${i}`, name: `r${i}`, key: `r${i}-k`, status: 'new', problem: null, liftedFrom: [] }));
+  const { window } = await boot({ fetchHandler: importRoutes({ found }) });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  click(window, doc.querySelector('#wiz-import-add'));
+  await settle();
+  const boxes = [...doc.querySelectorAll('#wiz-import-list .wiz-import-cb')];
+  assert.equal(boxes.filter((b) => b.checked).length, 40);
+  assert.equal(boxes[40].checked, false);
+  assert.match(doc.querySelector('#wiz-import-hint').textContent, /1 left unticked: a workspace holds up to 40 projects/);
+  assert.equal(doc.querySelector('#wiz-start-scan').disabled, false);
+});
+
+test("no system dialog: Add… opens Worca's folder browser in multi-select, and its picks are imported", async () => {
+  const sent = {};
+  const { window } = await boot({ fetchHandler: importRoutes({ pick: { status: 'unsupported' }, sent }) });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  click(window, doc.querySelector('#wiz-import-add'));
+  await settle();
+  const fb = doc.querySelector('#folder-browser');
+  assert.ok(!fb.classList.contains('hidden'), 'the folder browser is open');
+  assert.ok(fb.classList.contains('multi'), 'in multi-select');
+  const cb = doc.querySelector('#folderList .folder-pick');
+  cb.checked = true;
+  cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  click(window, doc.querySelector('#folderSelectMany'));
+  await settle();
+  assert.deepEqual(sent.import, [{ paths: ['/x/api'], text: '', depth: 1 }]);
+});
+
+test('leaving the wizard forgets the import: rows, ticks, paste text and the depth pick', async () => {
+  const { window } = await boot({ fetchHandler: importRoutes() });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  click(window, doc.querySelector('#wiz-import-add'));
+  await settle();
+  doc.querySelector('#wiz-import-paste').value = '/left/over';
+  doc.querySelector('#wiz-import-deep').checked = true;
+  window.location.hash = 'new';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await tick();
+  goCreate(window);
+  await settle();
+  assert.equal(doc.querySelectorAll('#wiz-import-list .wiz-import-row').length, 0);
+  assert.equal(doc.querySelector('#wiz-import-list').hidden, true);
+  assert.equal(doc.querySelector('#wiz-import-paste').value, '');
+  assert.equal(doc.querySelector('#wiz-import-deep').checked, false);
+  assert.equal(projectBox(doc, '/a/svc-iam').checked, false);
+});
+
+test('an import answer that lands after the wizard was left and re-entered adds nothing to the new wizard', async () => {
+  const { window, doc, release } = await bootHeldImport({ candidates: [FOUND[1]], workspaceName: 'late', truncated: false });
+  doc.querySelector('#wiz-import-paste').value = '/x/api';
+  click(window, doc.querySelector('#wiz-import-paste-add'));
+  await settle();
+  window.location.hash = 'new';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await tick();
+  goCreate(window);
+  await settle();
+  assert.equal(doc.querySelector('#wiz-import-paste-add').disabled, false, 're-entry frees the buttons');
+  release();
+  await settle();
+  assert.equal(doc.querySelectorAll('#wiz-import-list .wiz-import-row').length, 0);
+  assert.equal(doc.querySelector('#wiz-name').value, '');
+  assert.equal(doc.querySelector('#wiz-import-hint').textContent, '');
+  assert.equal(doc.querySelector('#wiz-import-paste-add').disabled, false);
+});
+
+test('a later answer that names a listed repository another way adds no second row or tick, and the hint says it is listed already', async () => {
+  const answers = [
+    [{ path: '/x/api', name: 'api', key: 'api-0000bbbb', status: 'new', problem: null, liftedFrom: [] }],
+    [{ path: '/link/api', name: 'api', key: 'api-0000bbbb', status: 'new', problem: null, liftedFrom: [] }],
+  ];
+  const rest = importRoutes();
+  const { window } = await boot({ fetchHandler: (u, opts) => (u.endsWith('/api/workspaces/import-candidates')
+    ? json({ candidates: answers.shift() || [], workspaceName: null, truncated: false })
+    : rest(u, opts)) });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  for (const text of ['/x/api', '/link/api']) {
+    doc.querySelector('#wiz-import-paste').value = text;
+    click(window, doc.querySelector('#wiz-import-paste-add'));
+    await settle();
+  }
+  assert.deepEqual([...doc.querySelectorAll('#wiz-import-list .wiz-import-cb')].map((c) => c.value), ['/x/api']);
+  assert.equal(doc.querySelector('#wiz-start-scan').disabled, true, 'one tick, not two');
+  assert.equal(doc.querySelector('#wiz-import-hint').textContent, 'Found 1 already in the list.', 'the hint counts no row it did not add');
+});
+
+test("a re-import keeps the user's untick; a ticked row that comes back as a problem loses its tick and stays out of the scan", async () => {
+  const sent = {};
+  const api = { path: '/x/api', name: 'api', key: 'api-0000bbbb', status: 'new', problem: null, liftedFrom: [] };
+  const answers = [[api], [api], [{ ...api, key: '', status: 'problem', problem: 'Has no commit yet' }]];
+  const rest = importRoutes({ sent });
+  const { window } = await boot({ fetchHandler: (u, opts) => (u.endsWith('/api/workspaces/import-candidates')
+    ? json({ candidates: answers.shift() || [], workspaceName: null, truncated: false })
+    : rest(u, opts)) });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  await addPasted(window, '/x/api');
+  assert.equal(importBox(doc, '/x/api').checked, true, 'a new row starts ticked');
+  untick(window, importBox(doc, '/x/api'));
+  await addPasted(window, '/x/api');
+  assert.equal(importBox(doc, '/x/api').checked, false, 'the same row again keeps the untick');
+  tickBox(window, importBox(doc, '/x/api'));
+  pick(window, ['/a/svc-iam', '/a/svc-ui']);
+  await addPasted(window, '/x/api');
+  assert.equal(importBox(doc, '/x/api').disabled, true);
+  assert.equal(importBox(doc, '/x/api').checked, false);
+  doc.querySelector('#wiz-name').value = 'Acme';
+  click(window, doc.querySelector('#wiz-start-scan'));
+  await settle();
+  assert.equal(sent.bulk, undefined, 'no new row to register');
+  assert.deepEqual(sent.scan.map((s) => s.projectPaths), [['/a/svc-iam', '/a/svc-ui']]);
+});
+
+test("a disabled box never shows a tick: a problem row, even when the project row with its path is ticked, and a project the list still shows as missing; Add… does nothing while Worca's browser is open", async () => {
+  const sent = {};
+  const found = [
+    { path: '/a/svc-ui', name: 'svc-ui', key: '', status: 'problem', problem: 'Has no commit yet', liftedFrom: [] },
+    // Back on disk since the page read the project list: the import finds it registered.
+    { path: '/a/gone', name: 'gone', key: 'gone-0000eeee', status: 'registered', problem: null, liftedFrom: [] },
+  ];
+  const { window } = await boot({ fetchHandler: importRoutes({ found, pick: { status: 'unsupported' }, sent }) });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  doc.querySelector('#wiz-import-paste').value = '/a/svc-ui';
+  click(window, doc.querySelector('#wiz-import-paste-add'));
+  await settle();
+  assert.equal(importBox(doc, '/a/gone').checked, true, 'the registered row is ticked');
+  assert.equal(projectBox(doc, '/a/gone').checked, false, 'the missing project row stays clear: it could never be unticked');
+  const cb = projectBox(doc, '/a/svc-ui');
+  cb.checked = true;
+  cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(importBox(doc, '/a/svc-ui').checked, false, 'the disabled box stays clear');
+  click(window, doc.querySelector('#wiz-import-add'));
+  await settle();
+  assert.ok(!doc.querySelector('#folder-browser').classList.contains('hidden'), 'the browser is open');
+  click(window, doc.querySelector('#wiz-import-add'));
+  await settle();
+  assert.equal(sent.pick.length, 1, 'no second dialog request while the browser is open');
+});
+
+test('Escape in the Connect Claude Code dialog closes the dialog, not the wizard', async () => {
+  const { window } = await boot({ fetchHandler: importRoutes() });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  doc.querySelector('#wiz-name').value = 'Keep me';
+  doc.querySelector('#claude-setup-modal').classList.remove('hidden');
+  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await settle();
+  assert.ok(doc.querySelector('#claude-setup-modal').classList.contains('hidden'), 'the dialog closed');
+  assert.ok(viewShown(doc, 'workspace-create'), 'the wizard stayed');
+  assert.equal(doc.querySelector('#wiz-name').value, 'Keep me');
+});
+
+test("Escape closes Worca's folder browser but leaves the wizard and its import list alone", async () => {
+  const { window } = await boot({ fetchHandler: importRoutes({ pick: { status: 'unsupported' } }) });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  doc.querySelector('#wiz-name').value = 'Keep me';
+  click(window, doc.querySelector('#wiz-import-add'));
+  await settle();
+  assert.ok(!doc.querySelector('#folder-browser').classList.contains('hidden'), 'the browser is open');
+  // cancelable: a real key event is; without it preventDefault() is a no-op in jsdom.
+  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await settle();
+  assert.ok(doc.querySelector('#folder-browser').classList.contains('hidden'), 'the browser closed');
+  assert.ok(viewShown(doc, 'workspace-create'), 'the wizard stayed');
+  assert.equal(doc.querySelector('#wiz-name').value, 'Keep me');
 });
