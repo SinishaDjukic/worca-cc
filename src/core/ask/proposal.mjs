@@ -460,8 +460,8 @@ export function createProposalValidator({
       }
     }
 
-    // Run tags (#718): the one normaliser; the card carries the clean list.
-    const tagCheck = normaliseTags(inp.tags);
+    // Run tags (#718): the one normaliser; the card carries the clean list. A proposal writes tags: key:value only.
+    const tagCheck = normaliseTags(inp.tags, { strict: true });
     for (const e of tagCheck.errors) errors.push(`tags: ${e}`);
     if (shape && spec.schedule) errors.push(PROPOSAL_ERRORS.shapeScheduled);
     const nudgeBase = !shape && !spec.schedule && shapeFirst() ? nudgeFor(inp.assess) : null;

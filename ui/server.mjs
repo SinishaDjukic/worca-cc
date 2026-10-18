@@ -2202,6 +2202,12 @@ function askSettlePrFixCards({ runId, pipelineId, outcome }) {
 // body (workspace):      { workspaceId, prompt?, ... } — mutually exclusive with
 //                        projectDir (§2.6). Single-project behavior is byte-identical.
 // ---------------------------------------------------------------------------
+// A project's stored default tags, for the key:value write rule's grandfathering; [] for a workspace or an unknown dir.
+function storedDefaultTags(rawDir) {
+  if (typeof rawDir !== 'string' || !rawDir) return [];
+  try { const dir = resolveProjectDir(rawDir); return dir ? readProjectDefaultTags(projectKey(dir)) : []; } catch { return []; }
+}
+
 /**
  * Enforced run tags (D9, D9a, D10, D13): pre-fill, then refuse a missing mandatory tag or an off-list value
  * with 422 { error, fields: { tags } }. Returns true when it answered. On pass, body.tags holds the filled
@@ -2401,16 +2407,19 @@ const startRunHandler = async (req, res) => {
     // Run tags (#718): normalised once, written back so a stored schedule keeps the clean list and
     // its firing re-validates it. Absent = no tags (legacy bodies unchanged). An explicit [] stays []:
     // "no tags", which also opts an `after` run out of inheriting its predecessor's tags.
+    // A person's tags must be key:value; the project's stored defaults (the form pre-fills them) may keep a
+    // bare key saved before that rule.
+    // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
+    // Their tags are stored data (a ticket's request, a predecessor's or parent's tags), so the key:value rule skips them too.
+    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
+      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
     let tags = [];
     if (body.tags !== undefined) {
-      const t = normaliseTags(body.tags);
+      const t = normaliseTags(body.tags, tagExempt ? {} : { strict: true, keep: storedDefaultTags(body.projectDir) });
       if (t.errors.length) return badRequest(res, `tags: ${t.errors[0]}`);
       tags = t.tags;
       body.tags = tags;
     }
-    // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
-    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
-      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
@@ -5999,7 +6008,7 @@ app.get('/api/projects/:key/tags/defaults', async (req, res) => {
 });
 app.put('/api/projects/:key/tags/defaults', async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;
-  const t = normaliseTags(req.body?.tags);
+  const t = normaliseTags(req.body?.tags, { strict: true, keep: readProjectDefaultTags(p.key) });
   if (!Array.isArray(req.body?.tags) || t.errors.length) return badRequest(res, t.errors[0] || 'tags must be a list of strings');
   res.json({ tags: writeProjectDefaultTags(p.key, t.tags) });
 });

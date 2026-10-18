@@ -131,6 +131,10 @@ test('tags (#718): normalised onto the card when given, no key when absent, refu
   assert.equal(Object.hasOwn(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: [] })), 'tags'), false);
   assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: ['client:'] })), ['tags: "client:" needs a value after the colon']);
   assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: 'client:acme' })), ['tags: tags must be a list of strings']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: ['hello world'] })),
+    ['tags: "hello world": a tag is key:value, for example client:acme']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: ['client'] })),
+    ['tags: "client": a tag is key:value, for example client:acme']);
 });
 
 test('isSyntacticRef: git ref-format rules, no shell-outs', () => {
