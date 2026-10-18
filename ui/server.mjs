@@ -303,7 +303,7 @@ import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
-import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
+import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
   markPrReady, closePr, uncommittedPatch } from '../src/core/git-info.mjs';
@@ -4751,10 +4751,12 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
       const remote = isSafeRemoteName(b.sync?.remote) ? b.sync.remote : effectiveSyncSettings(key).remote;
       const f = await fetchRemote(dir, { remote, maxAgeMs: INTERACTIVE_TTL_MS });
       if (!f.ok && (f.kind === 'no-remote' || f.kind === 'bad-remote')) return null;
-      const st = await syncStatus(dir, { base: b.source, remote });
+      // A source of `origin/dev` is measured as `dev` on origin (prBaseBranch).
+      const base = await prBaseBranch(dir, b.source, [remote]);
+      const st = await syncStatus(dir, { base, remote });
       if (!st.ok) return null;
       if (!st.hasLocal && !st.hasRemote) {
-        // Not a branch at all (a tag, or 'origin/dev', both accepted by isValidSourceRef):
+        // Not a branch at all (a tag, or another remote's 'upstream/dev', both accepted by isValidSourceRef):
         // nothing to measure. Only a source that resolves nowhere is "missing".
         if (await isValidSourceRef(dir, b.source)) return null;
         return { projectKey: key, base: b.source, remote, exists: false, onRemote: false, movedBy: null, stale: !f.ok };
@@ -4763,8 +4765,8 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
       // fetch, baseSha is a local tip that may already have been behind, and baseSha..remote would
       // count commits that landed BEFORE the run as "since this run started".
       const from = b.sync?.remoteSha || b.baseSha;
-      const movedBy = from && st.hasRemote ? await commitsBetween(dir, from, `refs/remotes/${remote}/${b.source}`) : null;
-      return { projectKey: key, base: b.source, remote, exists: true, onRemote: st.hasRemote, movedBy, stale: !f.ok };
+      const movedBy = from && st.hasRemote ? await commitsBetween(dir, from, `refs/remotes/${remote}/${base}`) : null;
+      return { projectKey: key, base, remote, exists: true, onRemote: st.hasRemote, movedBy, stale: !f.ok };
     });
     return rows.filter(Boolean);
   } catch { return []; /* never block a resume on a read error */ }
@@ -7761,16 +7763,19 @@ app.get('/api/pr/remotes', async (req, res) => {
   const repoDir = target.repoDir;                     // null when store_meta is missing
   if (!repoDir) return badRequest(res, 'pipeline has no project directory');
   const { feature, source } = target;
+  const rl = await listRemotes(repoDir);
+  const remoteNames = rl.remotes.map((r) => r.name);
   // chainBaseBranchesOf answers [] for a workspace row, so a member's chain is its own source.
+  // A remote-tracking source (`origin/dev`) offers the branch it names on the remote (`dev`).
   const walked = chainBaseBranchesOf(resolved.state.id || resolved.id);
-  const chain = (walked.length ? walked : (source ? [source] : [])).filter((b) => b !== feature);
+  const chain = (await Promise.all((walked.length ? walked : (source ? [source] : []))
+    .map((b) => prBaseBranch(repoDir, b, remoteNames)))).filter((b) => b !== feature);
   const pipelineId = resolved.state.id || resolved.id;
   // L10: a slice's PR stacks on the previous slice's branch until that slice's PR merges. The route is async with
   // no try/catch (F29): a failed feature lookup keeps the chain-root default instead of rejecting.
   let stacked = null;
   try { stacked = stackedPrBase(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
   const defaultBase = stacked || chain[0] || null;
-  const rl = await listRemotes(repoDir);
   if (!rl.ok) {
     const issue = runSourceIssue(pipelineId, { memberKey: target.memberKey });
     return res.status(500).json({ error: `git remote failed: ${rl.error}`, chain, defaultBase, issue });
@@ -7783,7 +7788,8 @@ app.get('/api/pr/remotes', async (req, res) => {
   // Measure from the remote tip recorded at start only when it is the SAME ref we compare
   // against: a fork's base remote is `upstream` and a chained run's base is the chain root,
   // not this run's source; there, the recorded origin tip would count old commits.
-  const sameRef = runBranch.sync?.remote === baseRemote && runBranch.source === defaultBase;
+  const sameRef = runBranch.sync?.remote === baseRemote
+    && await prBaseBranch(repoDir, runBranch.source, remoteNames) === defaultBase;
   const baseSha = (sameRef && runBranch.sync?.remoteSha) || runBranch.baseSha || null;
   const bf = isSafeRemoteName(baseRemote) ? await fetchRemote(repoDir, { remote: baseRemote, maxAgeMs: INTERACTIVE_TTL_MS }) : null;
   const rb = await listRemoteBranches(repoDir, rl.remotes.map((r) => r.name));
@@ -7845,6 +7851,8 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const picked = await pickPrRemotes(chosen, repoDir);
   if (picked.error) return { ok: false, status: picked.status, error: picked.error };
   const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
+  // A remote-tracking source (`origin/dev`) names the branch `dev` on the remote.
+  base = await prBaseBranch(repoDir, base, remotes.map((r) => r.name));
   // Always target the chosen base repo explicitly (gh's default-repo guess prefers
   // a remote named upstream over origin); use the owner:branch head only when the
   // branch lives in a different repository than the PR (gh matches by head label).
