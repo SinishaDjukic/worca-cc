@@ -8,6 +8,7 @@
 // "Chat P2: Action cards" adds the rest. Emphasis is a background wash, never an edge line.
 import { registerChatCard } from './extensions.mjs';
 import { buildShipChatCard } from '../shape/ship-card.mjs';
+import { prWatchLine } from './pr-watch-words.mjs';
 
 export const RECEIPT_CHIPS = Object.freeze({
   setting: 'Setting', pause: 'Paused', resume: 'Resumed', 'away-now': 'Away mode', 'run-away': 'Away mode',
@@ -167,6 +168,46 @@ export function buildRunStopCard(block, ctx) {
   return { el: root };
 }
 
+/** The read-only watch lines on applied pull-request cards (one per PR), live while their card is: refreshChatPrWatch
+ *  re-reads the ones a pr-watch-changed frame names; a card's dispose drops its lines. */
+const watchLines = new Set();
+
+function paintWatchLine(line, view) {
+  const shown = prWatchLine(view);
+  line.el.hidden = !shown;
+  line.el.className = `ask-prcard-watch${shown ? ` is-${shown.tone}` : ''}`;
+  line.el.textContent = shown ? (line.prefix ? `${line.prefix} · ${shown.text}` : shown.text) : '';
+}
+/** GET /api/pr/watch for one line; a change announced while a read is out reads once more after it. */
+function loadWatchLine(line) {
+  if (line.dead) return;
+  if (line.loading) { line.again = true; return; }
+  line.loading = true;
+  const q = new URLSearchParams({ id: line.pipelineId, projectKey: line.projectKey, ...(line.memberKey ? { memberKey: line.memberKey } : {}) });
+  // The read goes out now (a throw becomes a rejection); its answer paints later.
+  new Promise((resolve) => resolve(line.fetch(`/api/pr/watch?${q}`)))
+    .then((r) => (r && r.ok ? r.json() : null))
+    .catch(() => null)
+    .then((view) => {
+      line.loading = false;
+      if (line.dead) return;
+      if (line.again) { line.again = false; loadWatchLine(line); return; }
+      paintWatchLine(line, view);
+    });
+}
+/** pr-watch-changed (app.js): re-read every chat watch line for that run's PR — the frame names the run that opened it
+ *  and, on a workspace run, the member. → the number of lines re-read */
+export function refreshChatPrWatch(frame) {
+  if (!frame || typeof frame.pipelineId !== 'string') return 0;
+  let n = 0;
+  for (const line of watchLines) {
+    if (line.pipelineId !== frame.pipelineId || (line.memberKey || '') !== (frame.memberKey || '')) continue;
+    loadWatchLine(line);
+    n += 1;
+  }
+  return n;
+}
+
 export function buildPullRequestCard(block, ctx) {
   const doc = ctx.doc;
   const card = block.card || {};
@@ -191,6 +232,7 @@ export function buildPullRequestCard(block, ctx) {
     body.appendChild(make(doc, 'div', 'ask-prcard-stat', `${files} · +${Number(card.additions) || 0} −${Number(card.deletions) || 0}`));   // U+2212: a count
   }
   const result = card.result || null;
+  const lines = [];
   if (block.state === 'applied' && result) {
     const links = make(doc, 'div', 'ask-prcard-links');
     const entries = Array.isArray(result.members) && result.members.length ? result.members : [result];
@@ -202,6 +244,21 @@ export function buildPullRequestCard(block, ctx) {
       if (m.draft) links.appendChild(make(doc, 'span', 'ask-mcard-kind', 'Draft'));
     }
     body.appendChild(links);
+    // Watch PR: one read-only line per PR, hidden while it is not watched (the run page keeps the switch).
+    if (card.pipelineId && typeof ctx.fetch === 'function') {
+      for (const m of entries) {
+        if (!m || !m.url) continue;
+        const el = make(doc, 'div', 'ask-prcard-watch');
+        el.hidden = true;
+        el.setAttribute('role', 'status');
+        body.appendChild(el);
+        const line = { el, fetch: ctx.fetch, pipelineId: card.pipelineId, projectKey: card.projectKey || '', memberKey: m.memberKey || null,
+          prefix: entries.length > 1 && m.memberKey ? shortKey(m.memberKey) : '', loading: false, again: false, dead: false };
+        watchLines.add(line);
+        lines.push(line);
+        loadWatchLine(line);
+      }
+    }
   }
   if (block.state === 'failed') body.appendChild(make(doc, 'div', 'ask-mcard-failed', `Could not open: ${block.error || (result && result.error) || 'unknown error'}`));
   root.appendChild(body);
@@ -238,7 +295,7 @@ export function buildPullRequestCard(block, ctx) {
     actions.append(make(doc, 'span', 'ask-card-actions-spacer'), later, create);
     root.appendChild(actions);
   }
-  return { el: root };
+  return { el: root, dispose: () => { for (const l of lines) { l.dead = true; watchLines.delete(l); } } };
 }
 
 /** Register the three cards (and the Shaper's Ship card) with the chat's card registry (CONTRACT §2) — app.js calls it before the chat mounts. A second

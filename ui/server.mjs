@@ -110,6 +110,7 @@ import {
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline,
   finishMessage as askFinishMessage, newAskId,
+  newAskId as askNewId, findPullRequestCards as askFindPullRequestCards, findFixRunCards as askFindFixRunCards,
 } from '../src/core/ask/store.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
@@ -216,6 +217,7 @@ import { syncPluginSlots } from '../src/core/plugin-broker-slots.mjs';
 import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import { realRoots, checkInside, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
+import { importCandidates, parsePathList, IMPORT_MAX_INPUTS } from '../src/core/workspace-import.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, foreignRunModel, assertSlotModels, stepSlotDefaults,
@@ -303,7 +305,7 @@ import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
-import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
+import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
   markPrReady, closePr, uncommittedPatch } from '../src/core/git-info.mjs';
@@ -1995,12 +1997,14 @@ function fallbackRunTitle(effectivePrompt, source) {
 // and ask-run-status frames. Used by POST /api/run at launch AND by resumeRun
 // (a resumed pipeline is a NEW orchestrator; the paused lineage's follower
 // detached on done{paused}, so the link must be re-followed — review of PR #376).
-function attachAskFollower(orch, { threadId, runId, cardId }) {
+function attachAskFollower(orch, { threadId, runId, cardId, quiet = false }) {
   const follower = attachRunFollower(orch, {
     threadId,
     runId,
     cardId,
-    post: ({ text, href }) => {
+    // Quiet (a PR fix-run card, askPostPrFixCards): the link and the ask-run-status frames, never a notice — the card
+    // shows the run, and the watcher's outcome lands on it.
+    post: quiet ? () => {} : ({ text, href }) => {
       try {
         const m = askAppendMessage(threadId, {
           role: 'system', text, blocks: [{ kind: 'notice', text, href }],
@@ -2120,12 +2124,93 @@ function askTrackRun(threadId, input, pin) {
   return { ok: true, card: { type: 'progress', pipelineId, runId: liveRunId, projectKey: projKey, workspaceId, title, label, status } };
 }
 
+/** A run link that belongs to a PR fix-run card (askPostPrFixCards) follows its run quietly: no Run resumed / finished
+ *  rows — the card shows the run, and its outcome. */
+function askLinkIsPrFix(link) {
+  if (!link || !link.cardId) return false;
+  try { return !!askFindCard(link.threadId, link.cardId)?.block?.card?.fix; } catch { return false; }
+}
+
+/**
+ * PR watch → Ask (pr-watch.mjs onFixRun), with no model turn: `started` posts ONE fix-run card (track_run's progress
+ * card plus `fix`) into every chat holding an applied pull-request card for the PR; `ended` writes the outcome onto
+ * those cards. Best effort: a chat write never reaches back into the watch. → [{ threadId, cardId }] touched
+ */
+function askPrFixRun(event) {
+  if (!event || typeof event.runId !== 'string' || !event.runId || !event.watch || typeof event.watch.prUrl !== 'string') return [];
+  if (event.phase === 'started') return askPostPrFixCards(event);
+  if (event.phase === 'ended') return askSettlePrFixCards(event);
+  return [];
+}
+
+function askPostPrFixCards({ watch, runId, trigger, once }) {
+  const posted = [];
+  const seen = new Set(askFindFixRunCards(runId).map((c) => c.threadId));   // one card per fix run per chat
+  const entry = runs.get(runId) || null;                                    // startRunHandler set it before answering 200
+  let origin = null;
+  if (!entry || !entry.projectDir) { try { origin = prWatchOrigin(watch); } catch { origin = null; } }
+  const dir = (entry && entry.projectDir) || (origin && origin.projectDir) || '';
+  const why = trigger && typeof trigger === 'object' && typeof trigger.label === 'string' ? trigger : { kinds: [], label: 'Pull request feedback' };
+  for (const link of askFindPullRequestCards(watch.prUrl)) {
+    if (seen.has(link.threadId)) continue;
+    seen.add(link.threadId);
+    try {
+      const cardId = askNewId('card');
+      const status = (entry && entry.status) || 'starting';
+      const card = {
+        type: 'progress', pipelineId: null, runId,
+        projectKey: dir ? projectKey(dir) : ((origin && origin.projectKey) || null), workspaceId: null,
+        title: (entry && entry.title) || 'PR fix run',
+        label: String(dir).split(/[\\/]/).filter(Boolean).pop() || '',
+        status,
+        fix: { prUrl: watch.prUrl, memberKey: link.memberKey, originPipelineId: link.pipelineId,
+          trigger: Array.isArray(why.kinds) ? why.kinds : [], triggerLabel: why.label, once: once === true },
+      };
+      const text = `PR watch started a fix run on ${watch.prUrl}: ${why.label}`;
+      const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'card', id: cardId, state: 'tracked', card }] });
+      try { askLinkRun(link.threadId, { runId, cardId, status }); } catch { /* a link for this run exists already: the card finds it by run id */ }
+      if (entry && entry.orch && !SETTLED_RUN.has(String(entry.status || '')) && !askFollowerAttached(link.threadId, runId)) {
+        attachAskFollower(entry.orch, { threadId: link.threadId, runId, cardId, quiet: true });
+      }
+      broadcast({ type: 'ask-message', threadId: link.threadId, message: m, unread: true });
+      posted.push({ threadId: link.threadId, cardId });
+    } catch (err) {
+      console.error(`[worca-ui] PR fix-run card for ${watch.prUrl} failed: ${err && err.message ? err.message : err}`);
+    }
+  }
+  return posted;
+}
+
+function askSettlePrFixCards({ runId, pipelineId, outcome }) {
+  const settled = [];
+  const out = outcome && typeof outcome === 'object' ? outcome : { kind: 'failed', reason: 'unknown' };
+  for (const { threadId, block } of askFindFixRunCards(runId)) {
+    if (block.card.fix.outcome) continue;                                 // written once
+    try {
+      askUpdateCardBlock(threadId, block.id, { card: { pipelineId: block.card.pipelineId || pipelineId || null, fix: { ...block.card.fix, outcome: out } } });
+      // A system row is never held by a turn's reducer: the whole message goes out, as flipCard sends an out-of-turn flip.
+      const found = askFindCard(threadId, block.id);
+      if (found) broadcast({ type: 'ask-message', threadId, message: found.message, unread: true });
+      settled.push({ threadId, cardId: block.id });
+    } catch (err) {
+      console.error(`[worca-ui] PR fix-run outcome for ${runId} failed: ${err && err.message ? err.message : err}`);
+    }
+  }
+  return settled;
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/run  -> start a new orchestration run
 // body (single-project): { projectDir, prompt?, promptMarkdown?, title?, mock? }
 // body (workspace):      { workspaceId, prompt?, ... } — mutually exclusive with
 //                        projectDir (§2.6). Single-project behavior is byte-identical.
 // ---------------------------------------------------------------------------
+// A project's stored default tags, for the key:value write rule's grandfathering; [] for a workspace or an unknown dir.
+function storedDefaultTags(rawDir) {
+  if (typeof rawDir !== 'string' || !rawDir) return [];
+  try { const dir = resolveProjectDir(rawDir); return dir ? readProjectDefaultTags(projectKey(dir)) : []; } catch { return []; }
+}
+
 /**
  * Enforced run tags (D9, D9a, D10, D13): pre-fill, then refuse a missing mandatory tag or an off-list value
  * with 422 { error, fields: { tags } }. Returns true when it answered. On pass, body.tags holds the filled
@@ -2325,16 +2410,19 @@ const startRunHandler = async (req, res) => {
     // Run tags (#718): normalised once, written back so a stored schedule keeps the clean list and
     // its firing re-validates it. Absent = no tags (legacy bodies unchanged). An explicit [] stays []:
     // "no tags", which also opts an `after` run out of inheriting its predecessor's tags.
+    // A person's tags must be key:value; the project's stored defaults (the form pre-fills them) may keep a
+    // bare key saved before that rule.
+    // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
+    // Their tags are stored data (a ticket's request, a predecessor's or parent's tags), so the key:value rule skips them too.
+    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
+      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
     let tags = [];
     if (body.tags !== undefined) {
-      const t = normaliseTags(body.tags);
+      const t = normaliseTags(body.tags, tagExempt ? {} : { strict: true, keep: storedDefaultTags(body.projectDir) });
       if (t.errors.length) return badRequest(res, `tags: ${t.errors[0]}`);
       tags = t.tags;
       body.tags = tags;
     }
-    // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
-    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
-      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
@@ -4752,10 +4840,12 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
       const remote = isSafeRemoteName(b.sync?.remote) ? b.sync.remote : effectiveSyncSettings(key).remote;
       const f = await fetchRemote(dir, { remote, maxAgeMs: INTERACTIVE_TTL_MS });
       if (!f.ok && (f.kind === 'no-remote' || f.kind === 'bad-remote')) return null;
-      const st = await syncStatus(dir, { base: b.source, remote });
+      // A source of `origin/dev` is measured as `dev` on origin (prBaseBranch).
+      const base = await prBaseBranch(dir, b.source, [remote]);
+      const st = await syncStatus(dir, { base, remote });
       if (!st.ok) return null;
       if (!st.hasLocal && !st.hasRemote) {
-        // Not a branch at all (a tag, or 'origin/dev', both accepted by isValidSourceRef):
+        // Not a branch at all (a tag, or another remote's 'upstream/dev', both accepted by isValidSourceRef):
         // nothing to measure. Only a source that resolves nowhere is "missing".
         if (await isValidSourceRef(dir, b.source)) return null;
         return { projectKey: key, base: b.source, remote, exists: false, onRemote: false, movedBy: null, stale: !f.ok };
@@ -4764,8 +4854,8 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
       // fetch, baseSha is a local tip that may already have been behind, and baseSha..remote would
       // count commits that landed BEFORE the run as "since this run started".
       const from = b.sync?.remoteSha || b.baseSha;
-      const movedBy = from && st.hasRemote ? await commitsBetween(dir, from, `refs/remotes/${remote}/${b.source}`) : null;
-      return { projectKey: key, base: b.source, remote, exists: true, onRemote: st.hasRemote, movedBy, stale: !f.ok };
+      const movedBy = from && st.hasRemote ? await commitsBetween(dir, from, `refs/remotes/${remote}/${base}`) : null;
+      return { projectKey: key, base, remote, exists: true, onRemote: st.hasRemote, movedBy, stale: !f.ok };
     });
     return rows.filter(Boolean);
   } catch { return []; /* never block a resume on a read error */ }
@@ -5001,10 +5091,14 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   for (const link of askFindRunLinksByPipeline(pipelineId)) {
     try {
       if (!askUpdateRunLink(link.threadId, link.runId, { runId, status: 'running' })) continue;
-      const text = `Run resumed — "${saved.row.title || 'run'}"`;
-      const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'notice', text, href: `#running/${runId}` }] });
-      broadcast({ type: 'ask-message', threadId: link.threadId, message: m });
-      attachAskFollower(orch, { threadId: link.threadId, runId, cardId: link.cardId });
+      // A PR fix-run card follows quietly (askPostPrFixCards): it shows the resumed run itself — no "Run resumed" row.
+      const quiet = askLinkIsPrFix(link);
+      if (!quiet) {
+        const text = `Run resumed — "${saved.row.title || 'run'}"`;
+        const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'notice', text, href: `#running/${runId}` }] });
+        broadcast({ type: 'ask-message', threadId: link.threadId, message: m });
+      }
+      attachAskFollower(orch, { threadId: link.threadId, runId, cardId: link.cardId, quiet });
     } catch (err) {
       console.error(`[worca-ui] ask follower re-attach failed: ${err && err.message ? err.message : err}`);
     }
@@ -5994,7 +6088,7 @@ app.get('/api/projects/:key/tags/defaults', async (req, res) => {
 });
 app.put('/api/projects/:key/tags/defaults', async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;
-  const t = normaliseTags(req.body?.tags);
+  const t = normaliseTags(req.body?.tags, { strict: true, keep: readProjectDefaultTags(p.key) });
   if (!Array.isArray(req.body?.tags) || t.errors.length) return badRequest(res, t.errors[0] || 'tags must be a list of strings');
   res.json({ tags: writeProjectDefaultTags(p.key, t.tags) });
 });
@@ -6804,7 +6898,7 @@ function prWatchFrame(pipelineId, memberKey) {
   const projectKey = !row ? null : (row.target === 'workspace' || row.workspace_key) ? `workspaces/${row.workspace_key}` : row.project_key;
   return { type: 'pr-watch-changed', projectKey, pipelineId: row?.id || pipelineId, memberKey: memberKey || null };
 }
-const prWatcher = createPrWatcher({
+const prWatcherDeps = {
   originOf: prWatchOrigin,
   host: { snapshot: prWatchSnapshot, jobLog: prWatchJobLog, rerun: prWatchRerun, reply: prWatchReply, comment: prWatchComment },
   git: {
@@ -6838,10 +6932,13 @@ const prWatcher = createPrWatcher({
     if (readPrState(pipelineId)?.url !== pr.url) throw new Error('the fix run did not record its pull request');
   },
   notify: (event) => chatNotifier.notifyPrWatch(event),
+  // Ask: the chats that opened this PR get each fix run's card, then its outcome (askPrFixRun).
+  onFixRun: (event) => { askPrFixRun(event); },
   audit: (pipelineId, text) => appendAuditById(pipelineId, text, { actor: 'pr-watch' }),
   onChange: (w) => broadcast(prWatchFrame(w.pipelineId, w.memberKey)),
   log: (m) => console.warn(`[worca-ui] ${m}`),
-});
+};
+const prWatcher = createPrWatcher(prWatcherDeps);
 /** Nudge the loop after a toggle; a no-op unless it started (listen) and WORCA_PR_WATCH is on. */
 const kickPrWatch = () => { void prWatcher.runner.kick(); };
 
@@ -7755,16 +7852,19 @@ app.get('/api/pr/remotes', async (req, res) => {
   const repoDir = target.repoDir;                     // null when store_meta is missing
   if (!repoDir) return badRequest(res, 'pipeline has no project directory');
   const { feature, source } = target;
+  const rl = await listRemotes(repoDir);
+  const remoteNames = rl.remotes.map((r) => r.name);
   // chainBaseBranchesOf answers [] for a workspace row, so a member's chain is its own source.
+  // A remote-tracking source (`origin/dev`) offers the branch it names on the remote (`dev`).
   const walked = chainBaseBranchesOf(resolved.state.id || resolved.id);
-  const chain = (walked.length ? walked : (source ? [source] : [])).filter((b) => b !== feature);
+  const chain = (await Promise.all((walked.length ? walked : (source ? [source] : []))
+    .map((b) => prBaseBranch(repoDir, b, remoteNames)))).filter((b) => b !== feature);
   const pipelineId = resolved.state.id || resolved.id;
   // L10: a slice's PR stacks on the previous slice's branch until that slice's PR merges. The route is async with
   // no try/catch (F29): a failed feature lookup keeps the chain-root default instead of rejecting.
   let stacked = null;
   try { stacked = stackedPrBase(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
   const defaultBase = stacked || chain[0] || null;
-  const rl = await listRemotes(repoDir);
   if (!rl.ok) {
     const issue = runSourceIssue(pipelineId, { memberKey: target.memberKey });
     return res.status(500).json({ error: `git remote failed: ${rl.error}`, chain, defaultBase, issue });
@@ -7777,7 +7877,8 @@ app.get('/api/pr/remotes', async (req, res) => {
   // Measure from the remote tip recorded at start only when it is the SAME ref we compare
   // against: a fork's base remote is `upstream` and a chained run's base is the chain root,
   // not this run's source; there, the recorded origin tip would count old commits.
-  const sameRef = runBranch.sync?.remote === baseRemote && runBranch.source === defaultBase;
+  const sameRef = runBranch.sync?.remote === baseRemote
+    && await prBaseBranch(repoDir, runBranch.source, remoteNames) === defaultBase;
   const baseSha = (sameRef && runBranch.sync?.remoteSha) || runBranch.baseSha || null;
   const bf = isSafeRemoteName(baseRemote) ? await fetchRemote(repoDir, { remote: baseRemote, maxAgeMs: INTERACTIVE_TTL_MS }) : null;
   const rb = await listRemoteBranches(repoDir, rl.remotes.map((r) => r.name));
@@ -7839,6 +7940,8 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const picked = await pickPrRemotes(chosen, repoDir);
   if (picked.error) return { ok: false, status: picked.status, error: picked.error };
   const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
+  // A remote-tracking source (`origin/dev`) names the branch `dev` on the remote.
+  base = await prBaseBranch(repoDir, base, remotes.map((r) => r.name));
   // Always target the chosen base repo explicitly (gh's default-repo guess prefers
   // a remote named upstream over origin); use the owner:branch head only when the
   // branch lives in a different repository than the PR (gh matches by head label).
@@ -9442,6 +9545,35 @@ async function scanRequest(req, res, { id, name, projectPaths, rescan, models })
     pendingScans.delete(hash);
   }
 }
+
+// POST /api/workspaces/import-candidates {paths?: string[], text?: string, depth?: 1|2}
+//   -> 200 {candidates, workspaceName, truncated}
+// The creation wizard's Add… and paste box: what each path is (a repository, a folder of
+// repositories, a VS Code .code-workspace file) as review rows — registered (the existing project),
+// new (the wizard registers it through POST /api/projects/bulk before it scans) or problem (with
+// the reason). Reads folders and runs `git rev-parse` only: it never writes (src/core/workspace-
+// import.mjs). On a hosted Worca it reads only inside Worca's own folders (fs-scope.mjs).
+app.post('/api/workspaces/import-candidates', async (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  if (body.paths !== undefined && !Array.isArray(body.paths)) return badRequest(res, 'paths must be an array of paths');
+  if (body.text !== undefined && typeof body.text !== 'string') return badRequest(res, 'text must be a string');
+  try {
+    // Picked and pasted paths, duplicates removed BEFORE the count: the same 60 paths picked and
+    // pasted are 60 inputs. parsePathList stops just past the limit, so a huge paste stays cheap.
+    const inputs = [...new Set([
+      ...(body.paths || []).filter((p) => typeof p === 'string' && p.trim()).map((p) => p.trim()),
+      ...parsePathList(body.text || '', IMPORT_MAX_INPUTS),
+    ])];
+    if (!inputs.length) return badRequest(res, 'give at least one path (paths or text)');
+    if (inputs.length > IMPORT_MAX_INPUTS) return badRequest(res, `at most ${IMPORT_MAX_INPUTS} paths per import`);
+    // On a hosted Worca the import reads only inside Worca's own folders, like the folder browser.
+    const roots = fsLimitedHere(req) ? await fsAllowedRoots() : null;
+    const outsideProblem = roots ? async (p) => ((await checkInside(p, roots)).inside ? null : outsideAllowedMessage(p)) : null;
+    res.json(await importCandidates(inputs, { depth: body.depth === 2 ? 2 : 1, projects: await listProjects(), outsideProblem }));
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
 
 // POST /api/workspaces/scan (first scan): validated exactly as the save will be (D4).
 app.post('/api/workspaces/scan', async (req, res) => {
@@ -15803,6 +15935,7 @@ export const _testing = {
   validateResumeTarget, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
+  prWatcherDeps, askPrFixRun, askLinkIsPrFix,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
   openSliceDraft, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
   networkWatchTick: () => networkWatch().tick(),

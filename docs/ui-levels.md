@@ -243,6 +243,16 @@ resets its run allowance. Worca replies to review threads without resolving them
 With the watch off, or waiting for a person, Resolve on a conflicted PR merges the
 base branch in once.
 
+A pull request opened from an Ask Worca card shows the same watch on that card, as one read-only line per pull
+request (Watching, Fixing, Resolving conflicts, Merging `dev` in, Pushing the fix, or Stopped with the reason). The
+line is hidden while the pull request is not watched. Every fix run on it, whether Watch PR started it or Resolve
+did, appears in that chat by itself as a live run card. The card says what started the run (merge conflicts,
+failing checks, review comments, changes requested) and links to the pull request. It ends with the outcome: the
+pushed fix, why nothing was pushed, or that the watch gave up after three fix runs. The card is saved with the
+chat, so it is there when the chat is opened later. The Chat row's dot lights when it lands in a chat that is not
+on screen. Nothing else is posted: switching the watch, a stop that needs a person, and a clean base merge show
+only on the line.
+
 ### Workflows
 
 The full-screen editor (`#workflows`) is Simple, and nothing inside it is
@@ -270,7 +280,7 @@ inside the view.
 | Projects list, add, project page Overview, remove | S |
 | Project Memory tab (view and edit files) | A |
 | Project page Actions tab | A |
-| Workspaces list, create wizard, workspace page Overview (projects, description, re-scan, delete) | A |
+| Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, description, re-scan, delete) | A |
 | Workspace page Map tab (coverage, graph, edges, confirm / reject / clear, add / delete manual edges, Regenerate description) | A |
 | Workspace page Actions tab | A |
 | Memory health, Defragment, snapshot restore | E — the health card stays visible when overdue or failing |
@@ -327,6 +337,8 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: live run card, the feature strip of a sliced plan: progress, each slice's state and PR, Review plan / Answer / Open / Resume slice / Re-plan the rest / Cancel the rest / Open the re-plan, "Approve each slice's plan" | S |
 | Ask: run card result, the checklist tally ("Checklist: 3 met · 1 unmet · 1 n/a") on a finished shaped run | S |
 | Ask: the run card's agent model label, its artifact chips and "All artifacts", Create pull request / View pull request | A — as on the run page |
+| Ask: the pull-request card's Watch PR line (read-only; the switch stays on the run page) | all |
+| Ask: a PR fix-run card — what started it, the pull request, the outcome | all |
 | Ask: the run card's agent "cycle N" label | E — a loop badge |
 | Ask: a proposal's own schedule (the "Schedule" action and its time), schedule-change cards | S — the answer the user asked for |
 | Ask: a proposal's tracker task (id, title, link) in place of the brief; the "Auto" workflow option when Ask proposed it | S |

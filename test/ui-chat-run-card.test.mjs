@@ -38,13 +38,13 @@ const live = (over = {}, stateOver = {}, extras = null) => ({ ...snapshotFromSta
 const done = (extras, over = {}) => live({ terminal: true, active: [], ...over }, { status: 'done', active: [], steps: [step({ executionId: 'x:n_plan:1', nodeId: 'n_plan', ordinal: 1 }), step({ executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1 })] }, extras);
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
-function mk({ controls = {}, ctx: ctxOver = {} } = {}) {
+function mk({ controls = {}, ctx: ctxOver = {}, ident = {} } = {}) {
   const dom = trackDom(new JSDOM('<!doctype html><html><body></body></html>'));
   const doc = dom.window.document;
   const calls = [];
   const ctx = { openRunPanel: (...a) => calls.push(['panel', ...a]), openArtifact: (...a) => calls.push(['artifact', ...a]), announce: (t) => calls.push(['announce', t]), mountFeature: (host, id) => calls.push(['feature', host, id]), ...ctxOver };
   const refreshed = [];
-  const card = createChatRunCard({ doc, win: dom.window, snapshot: null, ctx, controls, ident: { ...IDENT }, refresh: () => refreshed.push(1) });
+  const card = createChatRunCard({ doc, win: dom.window, snapshot: null, ctx, controls, ident: { ...IDENT, ...ident }, refresh: () => refreshed.push(1) });
   doc.body.appendChild(card.el);
   const $ = (sel) => card.el.querySelector(sel);
   return { dom, doc, card, calls, refreshed, $, win: dom.window };
@@ -1049,7 +1049,9 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
         card.update(live({ shaping: SHAPING() }));
         const line = $('.chat-rc-shaped');
         assert.equal(line.hidden, false);
-        assert.equal(line.previousElementSibling, $('.ask-rc-sub'));
+        // Under the sub-line: only the PR fix-run line (hidden on any other card) sits between them.
+        assert.equal(line.previousElementSibling, $('.chat-rc-fix'));
+        assert.deepEqual([$('.chat-rc-fix').hidden, $('.chat-rc-fix').previousElementSibling], [true, $('.ask-rc-sub')]);
         assert.equal(line.nextElementSibling, $('.ask-rc-stats'));
         assert.equal($('.chat-rc-shaped-stages').textContent, 'Clarify ✓ · Plan ✓ · Refine ✓ while planning');
         assert.equal($('.chat-rc-shaped-plan').textContent, 'Plan: 2026-10-14-login.md');
@@ -1433,4 +1435,28 @@ test('re-plan from the card: Re-planning runs 2–3 in the log, and the re-plan 
     assert.ok(painted.includes('rp1'), 'the Split step paints from the re-plan run');
     assert.deepEqual([...card.el.querySelectorAll('.chat-rc-factions > button')].map((b) => b.textContent), ['⋯']);
   } finally { setShapeFirst(false); }
+});
+
+test('a PR fix-run card: its kicker, what triggered it, the PR, and the outcome once the watcher is done', () => {
+  const fix = { prUrl: 'https://github.com/o/r/pull/7', memberKey: null, trigger: ['checks'], triggerLabel: 'Failing checks', once: false };
+  const { $, card } = mk({ ident: { fix } });
+  assert.equal($('.ask-rc-kicker').textContent, 'PR fix run');
+  assert.equal($('.chat-rc-fix').hidden, false);
+  assert.equal($('.chat-rc-fix-why').textContent, 'Failing checks');
+  const pr = $('.chat-rc-fix-pr');
+  assert.deepEqual([pr.textContent, pr.href, pr.target, pr.rel], ['PR #7', 'https://github.com/o/r/pull/7', '_blank', 'noopener noreferrer']);
+  assert.equal($('.chat-rc-fix-out'), null, 'no outcome while the watcher has the run');
+  card.setFix({ ...fix, outcome: { kind: 'pushed', sha: 'abc1234', stopped: null, fixRuns: 1 } });
+  assert.equal($('.chat-rc-fix-out').textContent, 'Pushed the fix (abc1234)');
+  assert.ok($('.chat-rc-fix-out').classList.contains('is-ok'));
+  // A plain track_run card: no fix line, the usual kicker.
+  const plain = mk();
+  assert.equal(plain.$('.ask-rc-kicker').textContent, 'Pipeline run');
+  assert.equal(plain.$('.chat-rc-fix').hidden, true);
+});
+
+test('progressIdent carries a fix card\'s `fix`, and adds no key to any other card', () => {
+  const fix = { prUrl: 'https://x/pull/1', triggerLabel: 'Merge conflicts' };
+  assert.deepEqual(progressIdent({ id: 'card_3', state: 'tracked', card: { type: 'progress', pipelineId: null, runId: 'r', projectKey: 'p', title: 'T', label: 'L', fix } }),
+    { cardId: 'card_3', pipelineId: null, runId: 'r', projectKey: 'p', workspaceId: null, title: 'T', label: 'L', fix });
 });

@@ -3284,7 +3284,7 @@ async function main() {
   }
 
   const flags = parseArgs(process.argv.slice(2));
-  const tagCheck = normaliseTags(flags.tags);
+  const tagCheck = normaliseTags(flags.tags, { strict: true });
   if (tagCheck.errors.length) fail(`--tag: ${tagCheck.errors[0]}`);
   flags.tags = tagCheck.tags;
 

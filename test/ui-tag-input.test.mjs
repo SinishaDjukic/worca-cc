@@ -46,8 +46,8 @@ test('Enter commits a normalised chip and never submits; Tab commits only valid 
   assert.equal(f.input.value, '');
   assert.deepEqual(seen, [['client:acme']]);
   assert.equal(f.t.dirty(), true);
-  assert.equal(f.type('spike', 'Tab').defaultPrevented, true);
-  assert.deepEqual(f.t.get(), ['client:acme', 'spike']);
+  assert.equal(f.type('team:web', 'Tab').defaultPrevented, true);
+  assert.deepEqual(f.t.get(), ['client:acme', 'team:web']);
   assert.equal(f.type('client:', 'Tab').defaultPrevented, false, 'an invalid entry never traps focus');
 });
 
@@ -84,10 +84,10 @@ test('set() replaces the chips and resets dirty unless told otherwise', () => {
 
 test('the 21st tag is refused', () => {
   const f = field({ value: Array.from({ length: 20 }, (_, i) => `k${i}`) });
-  f.type('one-more');
+  f.type('k20:x');
   assert.equal(f.t.get().length, 20);
   assert.equal(f.hint(), 'At most 20 tags per run');
-  assert.equal(f.input.value, 'one-more');
+  assert.equal(f.input.value, 'k20:x');
 });
 
 test('focus loads the vocabulary once and fills the datalist; tagChip is a plain chip', async () => {
@@ -211,4 +211,27 @@ test('dimension editor: set() paints rows with their Default; setLocked disables
   assert.ok([...ed.el.querySelectorAll('.tag-x')].every((b) => b.disabled));
   assert.ok([...ed.el.querySelectorAll('.tag-dim-remove')].every((b) => b.hidden));
   assert.equal(ed.el.querySelector('.tag-dim-add').hidden, true);
+});
+
+test('write mode: free text or a bare key is not committed — the message shows and the text stays (Enter and Tab)', () => {
+  const f = field({ value: ['urgent'] });           // a stored bare key on the run still shows as a chip
+  assert.deepEqual(f.chips(), ['urgent']);
+  f.type('hello world');
+  assert.equal(f.hint(), '"hello world": a tag is key:value, for example client:acme');
+  assert.equal(f.input.getAttribute('aria-invalid'), 'true');
+  assert.equal(f.input.value, 'hello world');
+  const tab = f.type('client', 'Tab');
+  assert.equal(tab.defaultPrevented, false, 'focus is never trapped');
+  assert.equal(f.hint(), '"client": a tag is key:value, for example client:acme');
+  assert.equal(f.input.value, 'client');
+  assert.deepEqual(f.t.get(), ['urgent']);
+  f.type('client:acme');
+  assert.deepEqual(f.t.get(), ['client:acme', 'urgent']);
+});
+
+test('a filter field (strict: false) still takes a bare key', () => {
+  const f = field({ strict: false });
+  f.type('client');
+  assert.deepEqual(f.t.get(), ['client']);
+  assert.equal(f.hint(), '');
 });

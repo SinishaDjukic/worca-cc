@@ -19,6 +19,7 @@ import { featureCardModel, paintFeatureLog, paintFeatureMembers } from '../shape
 import { namedAnswer, forgetAnswer } from '../shape/step-receipt.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
 import { paintFeatureActions } from '../shape/feature-actions.mjs';
+import { fixOutcomeText } from './pr-watch-words.mjs';
 
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
@@ -60,7 +61,9 @@ export function progressIdent(block) {
   const card = (block && block.card) || {};
   if (card.type === PROGRESS_CARD_TYPE) {
     return { cardId: block.id, pipelineId: card.pipelineId || null, runId: card.runId || null, projectKey: card.projectKey || null,
-      workspaceId: card.workspaceId || null, title: card.title || '', label: card.label || '' };
+      workspaceId: card.workspaceId || null, title: card.title || '', label: card.label || '',
+      // A PR fix run's card (ui/server.mjs askPrFixRun): what started it and, later, its outcome.
+      ...(card.fix && typeof card.fix === 'object' ? { fix: card.fix } : {}) };
   }
   return { cardId: block.id, pipelineId: null, runId: block.runId || null, projectKey: card.projectKey || null, workspaceId: card.workspaceId || null,
     title: card.title || card.brief || 'run', label: card.workspaceName || card.projectName || '' };
@@ -168,7 +171,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const pillText = h('span', 'ask-rc-pill-text', 'Starting');
   const dot = h('span', 'ask-rc-dot');                // a feature card swaps in the runs-list glyph (D5)
   pill.append(dot, pillText);
-  const kicker = h('span', 'ask-rc-kicker', 'Pipeline run');
+  const kicker = h('span', 'ask-rc-kicker', id.fix ? 'PR fix run' : 'Pipeline run');
   const open = h('a', 'ask-rc-open', 'Open run');
   const chev = h('span', 'chat-rc-chev', ' ›');
   chev.setAttribute('aria-hidden', 'true');
@@ -181,6 +184,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const autoEl = h('span', 'chat-rc-auto');
   autoEl.hidden = true;
   sub.append(where, autoEl);
+  // ---- a PR fix run (PR watch): what started it · the PR · the watcher's outcome
+  const fixEl = h('div', 'chat-rc-fix');
+  fixEl.hidden = true;
   // ---- Shape it first: the approved plan this run was shaped into (snapshot.shaping)
   const shapedEl = h('div', 'chat-rc-shaped');
   shapedEl.hidden = true;
@@ -258,7 +264,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   membersEl.hidden = true;
   membersEl.setAttribute('aria-label', 'Runs');
   // fStatus goes AFTER stats: the shaped line's order `.ask-rc-sub → .chat-rc-shaped → .ask-rc-stats` stays pinned.
-  el.append(head, title, sub, shapedEl, stats, fStatus, progBar, chainBar, agentsBox, well, logEl, qSec, membersEl, resultSec, reason, foot);
+  el.append(head, title, sub, fixEl, shapedEl, stats, fStatus, progBar, chainBar, agentsBox, well, logEl, qSec, membersEl, resultSec, reason, foot);
 
   let last = null, graph = null, agentsSig = null, resultSig = '', painted = null, sent = null, inFlight = false, dead = false, pauseAsked = '';
   let shownFor = null;   // the question whose receipt shows the "Answered" fallback (its answer may still be in flight)
@@ -704,7 +710,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       pill.className = `ask-rc-pill st-${PILL_FAMILY[m.icon] || 'peach'}`;
       pillText.textContent = m.word;
     }
-    kicker.textContent = (m && m.chip) || 'Pipeline run';
+    kicker.textContent = (m && m.chip) || (id.fix ? 'PR fix run' : 'Pipeline run');
     const icon = m ? m.icon : '';
     if (dot.dataset.icon !== icon) {
       dot.dataset.icon = icon;
@@ -720,6 +726,21 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
 
   function relayout() { if (graph) graph.repaint(); }
 
+  function paintFix() {
+    const f = id.fix && typeof id.fix === 'object' ? id.fix : null;
+    if (!f) { fixEl.hidden = true; fixEl.replaceChildren(); return; }
+    const parts = [h('span', 'chat-rc-fix-why', f.triggerLabel || 'Pull request feedback')];
+    if (isWebUrl(f.prUrl)) {
+      const a = h('a', 'chat-rc-fix-pr', `PR #${String(f.prUrl).replace(/\/+$/, '').split('/').pop()}`);
+      a.href = f.prUrl; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      parts.push(h('span', 'chat-rc-fix-sep', '·'), a);
+    }
+    const out = fixOutcomeText(f.outcome);
+    if (out) parts.push(h('span', 'chat-rc-fix-sep', '·'), h('span', `chat-rc-fix-out is-${out.tone}`, out.text));
+    fixEl.replaceChildren(...parts);
+    fixEl.hidden = false;
+  }
+
   function destroy() {
     dead = true;
     keptStop();
@@ -727,6 +748,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     call(controls.releaseQuestion, qBody);
   }
 
+  paintFix();
   update(snapshot);
   return {
     el,
@@ -734,6 +756,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     update,
     relayout,
     setReason(text) { reason.textContent = text || ''; reason.hidden = !text; },
+    /** A PR fix-run card's `fix` changed (its outcome landed): repaint the line in place. */
+    setFix(fix) { id.fix = fix && typeof fix === 'object' ? fix : null; paintFix(); },
     destroy,
     get snapshot() { return last; },
   };
@@ -924,7 +948,15 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
     if (!(snap && snap.source === 'live') && ident.pipelineId) hydrate(entry);
     return {
       el: entry.card.el,
-      handle: { parts: entry.card.parts, relayout: (w) => entry.card.relayout(w) },
+      handle: { parts: entry.card.parts, relayout: (w) => entry.card.relayout(w),
+        // The panel hands a same-state payload change here (buildCard): a PR fix-run card's outcome and its fix run's
+        // pipeline id land on the block once the watcher is done with the run (ui/server.mjs askSettlePrFixCards).
+        blockChanged: (next) => {
+          const fresh = progressIdent(next);
+          if (fresh.pipelineId && !entry.ident.pipelineId) entry.ident.pipelineId = fresh.pipelineId;
+          entry.card.setFix(fresh.fix || null);
+          repaint(entry);
+        } },
       dispose: () => {
         if (entries.get(block.id) === entry) entries.delete(block.id);
         entry.card.destroy();

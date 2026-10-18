@@ -355,12 +355,48 @@ export function findCard(threadId, cardId) {
   return null;
 }
 
+/** Every card block whose message's JSON holds `needle` (a PR url, a run id), in thread then seq order: a cheap instr()
+ *  prefilter in SQL, the exact match by the caller on the parsed block. → [{ threadId, block }] */
+function cardsMentioning(needle) {
+  getDb();
+  if (typeof needle !== 'string' || !needle) return [];
+  const out = [];
+  const rows = prepare('SELECT thread_id, blocks FROM ask_messages WHERE blocks IS NOT NULL AND instr(blocks, ?) > 0 ORDER BY thread_id, seq').all(needle);
+  for (const r of rows) {
+    const blocks = parse(r.blocks, null);
+    if (!Array.isArray(blocks)) continue;
+    for (const b of blocks) if (b && b.kind === 'card' && b.card && typeof b.card === 'object') out.push({ threadId: r.thread_id, block: b });
+  }
+  return out;
+}
+
+/** The applied pull-request cards that opened this PR — its url, or one workspace member's (receipt.mjs prCardResult):
+ *  how PR watch reaches their chats without a turn. → [{ threadId, cardId, pipelineId, projectKey, workspaceId, memberKey }] */
+export function findPullRequestCards(prUrl) {
+  const out = [];
+  for (const { threadId, block } of cardsMentioning(prUrl)) {
+    const c = block.card;
+    if (c.type !== 'pull-request' || block.state !== 'applied' || !c.result || typeof c.result !== 'object') continue;
+    const member = Array.isArray(c.result.members) ? c.result.members.find((m) => m && m.url === prUrl) || null : null;
+    if (!member && c.result.url !== prUrl) continue;
+    out.push({ threadId, cardId: block.id, pipelineId: c.pipelineId || null, projectKey: c.projectKey || null,
+      workspaceId: c.workspaceId || null, memberKey: (member && member.memberKey) || null });
+  }
+  return out;
+}
+
+/** The PR fix-run cards (a `progress` card with `fix`, ui/server.mjs askPrFixRun) posted for this fix run. → [{ threadId, block }] */
+export function findFixRunCards(runId) {
+  return cardsMentioning(runId).filter(({ block }) => block.card.type === 'progress' && !!block.card.fix && block.card.runId === runId);
+}
+
 // scheduledFor: a run card the user scheduled (state 'scheduled'); scheduleId + sentence: one that became a
 // repeating schedule (docs/scheduled-runs.md "Ask Worca").
 const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId', 'scheduledFor', 'scheduleId', 'sentence', 'after'];
 
 /** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') and a
- *  METRICS, POLICY, SCHEDULE or MODEL card (card.type 'metrics' | 'policy' | 'schedule' | 'model', whose `result` lands at Apply) also take a SHALLOW `card` sub-patch; a run
+ *  METRICS, POLICY, SCHEDULE or MODEL card (card.type 'metrics' | 'policy' | 'schedule' | 'model', whose `result` lands at Apply),
+ *  and a PR fix-run `progress` card, whose outcome lands later, also take a SHALLOW `card` sub-patch; a run
  *  card's `card` is never touched (its key set is pinned). The 'proposed' precondition is the caller's (route) business. */
 export function updateCardBlock(threadId, cardId, patch = {}) {
   return tx(() => {
@@ -375,7 +411,8 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
         || b.card.type === 'policy' || b.card.type === 'schedule' || b.card.type === 'model' || b.card.type === 'clone' || b.card.type === 'web'
         || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away'
         || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship'
-        || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'));
+        || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'
+        || (b.card.type === 'progress' && !!b.card.fix)));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });
     prepare('UPDATE ask_messages SET blocks = ? WHERE id = ?').run(JSON.stringify(blocks), found.message.id);
