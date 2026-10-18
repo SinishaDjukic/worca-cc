@@ -869,7 +869,7 @@ test('schedule card: before / after, Decline and the action\'s own Apply post th
   ctx.flush();
   const apply = ctx.doc.querySelector('[data-ask-scard="proposed"] [data-ask-sc-apply]');
   assert.equal(apply.textContent, 'Delete');
-  assert.ok(apply.classList.contains('is-danger'), 'a removal reads as one');
+  assert.ok(apply.classList.contains('btn-danger'), 'a removal reads as one');
 });
 
 const AFTER_S = { kind: 'after', after: { kind: 'pipeline', id: 'p1', title: 'Refactor', status: 'running' }, policy: 'any', sourceFromPrevious: true, text: 'After ‘Refactor’ finishes' };
@@ -960,7 +960,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       assert.equal(rmEl.querySelector('.ask-mcard-arrow'), null, 'a removal lists what goes, no arrows');
       const apply = rmEl.querySelector('[data-ask-mod-apply]');
       assert.equal(apply.textContent, 'Remove');
-      assert.ok(apply.classList.contains('is-danger'));
+      assert.ok(apply.classList.contains('btn-danger'));
       const prov = { type: 'model', kind: 'provider', target: 'openai', summary: 'Change the OpenAI-compatible provider', rows: [{ field: 'Base URL', before: 'a', after: 'b' }], warnings: [] };
       ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000c', state: 'declined', card: prov }, threadId: TID, messageId: MID, seq: 6 });
       ctx.flush();
@@ -1104,7 +1104,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       ctx.flush();
       const rmEl = ctx.doc.querySelector('[data-ask-wscard="proposed"]');
       assert.equal(rmEl.querySelector('.ask-mcard-kind').textContent, 'Remove member');
-      assert.ok(rmEl.querySelector('[data-ask-ws-apply]').classList.contains('is-danger'), 'a removal reads as one');
+      assert.ok(rmEl.querySelector('[data-ask-ws-apply]').classList.contains('btn-danger'), 'a removal reads as one');
       rmEl.querySelector('[data-ask-ws-decline]').click();
       await ctx.tick();
       assert.deepEqual(rec.cardPosts.at(-1), ['card_00000012', { state: 'declined' }]);

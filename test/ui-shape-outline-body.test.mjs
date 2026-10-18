@@ -112,7 +112,8 @@ test('gate on: the check line expands to neutral ✓ / ✕ rows; one Fix all pos
   $('.plan-check-line').click();
   assert.equal($('.plan-checks').hidden, false);
   assert.equal($('.plan-check-line').getAttribute('aria-expanded'), 'true');
-  assert.deepEqual($$('.plan-check-mark').map((m) => m.textContent), ['✓', '✓', '✓', '✕', '✓']);
+  assert.deepEqual($$('.plan-check-mark').map((m) => m.getAttribute('aria-label')), ['met', 'met', 'met', 'unmet', 'met']);
+  assert.ok($$('.plan-check-mark').every((m) => m.querySelector('svg') && m.textContent === ''), 'the marks are icons, not ✓ / ✕ characters');
   assert.equal($$('.plan-check-row.ok').length, 4);
   assert.equal($$('.plan-fix').length, 0, 'no per-row Fix');
   assert.equal($$('.plan-fix-all').length, 1);

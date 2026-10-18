@@ -140,9 +140,9 @@ test('chat question parity: the card host renders the run page body, a 422 marks
       assert.equal(await controls.answer(ref, ASK.id, { values: { verdict: 'changes', notes: 'x' } }), false);
       const slot = [...panel.querySelectorAll('.af-err')].find((s) => !s.hidden);
       assert.equal(slot.textContent, 'At most 4000 characters.');
-      assert.equal(panel.querySelector('.btn-go').disabled, false);
+      assert.equal(panel.querySelector('.btn-primary').disabled, false);
       assert.equal(await controls.answer(ref, ASK.id, { values: { verdict: 'approve' } }), true);
-      assert.equal(panel.querySelector('.btn-go').disabled, true, 'busy until the run resumes');
+      assert.equal(panel.querySelector('.btn-primary').disabled, true, 'busy until the run resumes');
     } },
     { name: 'question-resolved clears the card panel; the next paint returns null', run: async () => {
       ctx.dispatch({ type: 'question-resolved', runId: RUN_ID, id: ASK.id });
@@ -208,7 +208,7 @@ test('the registered progress card goes live from frames, shows the run page que
   assert.equal(q.querySelector('.chat-rc-q-head').textContent, 'A question from Planner');
   assert.equal(el.querySelector('.chat-rc-agent.is-waiting .chat-rc-agent-name').textContent, 'Planner');
   q.querySelector('.qopt').click();
-  q.querySelector('.btn-go').click();
+  q.querySelector('.btn-primary').click();
   await ctx.settle();
   const post = ctx.calls.find((c) => c.url === '/api/answer');
   assert.ok(post, 'POST /api/answer');
@@ -277,7 +277,7 @@ test('chat question parity: a card panel mounted while an answer is in flight is
   const pending = controls.answer({ pipelineId: PID }, ASK.id, { values: { verdict: 'approve' } });
   const late = mkHost();
   controls.paintQuestion({ pipelineId: PID }, late);
-  assert.equal(late.querySelector('.btn-go').disabled, true);
+  assert.equal(late.querySelector('.btn-primary').disabled, true);
   for (const r of waits) r({ ok: true, status: 200, json: async () => ({ ok: true }) });
   await pending;
 });
@@ -492,10 +492,10 @@ test('two cards for one run in one chat (a started proposal and a track_run card
   const qb = B.el.querySelector('.chat-rc-q');
   assert.ok(qa.querySelector('.qopt') && qb.querySelector('.qopt'), 'both cards show the question');
   qa.querySelector('.qopt').click();
-  qa.querySelector('.btn-go').click();
+  qa.querySelector('.btn-primary').click();
   await ctx.settle();
   assert.equal(ctx.calls.filter((c) => c.url === '/api/answer').length, 1);
-  assert.equal(qb.querySelector('.btn-go').disabled, true, 'the other card\'s panel is busy too');
+  assert.equal(qb.querySelector('.btn-primary').disabled, true, 'the other card\'s panel is busy too');
   ctx.dispatch({ type: 'question-resolved', runId: RUN_ID, id: 'q-1' });   // before the 200, as answerRun broadcasts it
   for (const r of waits) r({ ok: true, status: 200, json: async () => ({ ok: true }) });
   await ctx.settle(6);
@@ -507,7 +507,7 @@ test('two cards for one run in one chat (a started proposal and a track_run card
   assert.ok(qa.querySelector('.af-form') && qb.querySelector('.af-form'));
   B.dispose();
   qa.querySelectorAll('.af-choice')[0].dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  qa.querySelector('.btn-go').click();
+  qa.querySelector('.btn-primary').click();
   await ctx.settle(6);
   assert.equal([...qa.querySelectorAll('.af-err')].find((s) => !s.hidden).textContent, 'Pick one.', 'disposing B released only B\'s panel');
   A.dispose();

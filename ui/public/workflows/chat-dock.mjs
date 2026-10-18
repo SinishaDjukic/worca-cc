@@ -6,6 +6,7 @@
 // data-canvas-keys="off" (on #wfc), so typing never edits the graph. The worca orb (dot-orb.mjs) leads the input row: still
 // while idle, moving while a reply runs (thinking · a tool call · writing) — collapsed too — and right above it a
 // shimmering line says what the reply does (a chip over the pill while collapsed).
+import { icon } from '../icons.mjs';
 import { createComposerChatClient } from './chat-client.mjs';
 import { createDotOrbs, turnPhase } from '../dot-orb.mjs';
 import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
@@ -74,7 +75,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     return s;
   };
   const iconBtn = (id, label, icon) => {
-    const b = h('button', 'wfc-ibtn');
+    const b = h('button', 'btn btn-sm btn-quiet btn-icon wfc-ibtn');
     b.type = 'button'; b.id = id; b.title = label; b.setAttribute('aria-label', label);
     b.appendChild(svg(icon));
     return b;
@@ -132,7 +133,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   input.rows = 1;
   input.placeholder = PLACEHOLDERS[0];
   input.setAttribute('aria-label', 'Message the composer chat');
-  const scopeBtn = h('button', 'wfc-scope');
+  const scopeBtn = h('button', 'btn btn-sm btn-quiet wfc-scope');
   scopeBtn.type = 'button';
   scopeBtn.id = 'wfc-scope';
   scopeBtn.setAttribute('aria-haspopup', 'menu');
@@ -343,7 +344,8 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
         img.src = `data:${f.mime};base64,${f.dataBase64}`;
         chip.appendChild(img);
       }
-      const x = h('button', 'wfc-file-x', '×');
+      const x = h('button', 'wfc-file-x');
+      x.append(icon(doc, 'x', 12));
       x.type = 'button';
       x.setAttribute('aria-label', `Remove ${f.name}`);
       x.addEventListener('click', () => removeFile(f));
@@ -448,7 +450,9 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     const i = b.input && typeof b.input === 'object' ? b.input : {};
     const target = i.summary || i.name || i.displayName || i.key || (short === 'read_attachment' ? attachmentName(i.id) : '') || '';
     const el = h('div', `wfc-tool is-${b.status || 'running'}`);
-    el.append(h('span', 'wfc-tool-i', b.status === 'done' ? '✓' : b.status === 'error' ? '!' : '…'),
+    const mark = h('span', 'wfc-tool-i', b.status === 'done' ? null : b.status === 'error' ? '!' : '…');
+    if (b.status === 'done') mark.append(icon(doc, 'check', 12));
+    el.append(mark,
       h('span', 'mono', `${TOOL_VERB[short] || short}${target ? ` ${String(target).slice(0, 80)}` : ''}`));
     if (b.status === 'error' && b.error) el.title = b.error;
     return el;

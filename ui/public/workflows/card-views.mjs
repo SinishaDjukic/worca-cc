@@ -11,7 +11,7 @@ const RUNNER_SIDE = { code: 'code — edits the worktree (implementer tool set)'
 export function cardKit(doc, { onChange = () => {} } = {}) {
   const h = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const button = (text, cls, onClick) => {
-    const b = h('button', cls || 'wfv-btn', text);
+    const b = h('button', cls || 'btn btn-sm', text);
     b.type = 'button';
     let busy = false;
     b.addEventListener('click', async () => {
@@ -76,17 +76,17 @@ export function draftCardView(b, { h, button, state = b.state, notAdded = '', on
   if (state === 'declined') row.appendChild(h('span', 'wfc-muted', `Declined — ${name}`));
   else if (state === 'failed') row.appendChild(h('span', 'wfc-err', b.error || 'failed'));
   else if (state === 'added') row.appendChild(h('span', 'wfc-chip-ok', '✓ Saved and added'));
-  else if (state === 'superseded') row.append(h('span', 'wfc-muted', 'Replaced by a newer draft'), h('span', 'wfc-spacer'), button('Decline', 'wfv-btn', () => onDecline()));
+  else if (state === 'superseded') row.append(h('span', 'wfc-muted', 'Replaced by a newer draft'), h('span', 'wfc-spacer'), button('Decline', 'btn btn-sm', () => onDecline()));
   else if (state === 'saved') {
     if (notAdded) el.appendChild(h('p', 'wfc-err', `Not added to the canvas — ${notAdded}`));   // above the actions row
     row.appendChild(h('span', 'wfc-chip-ok', `✓ Saved to your ${isAgent ? 'agents' : 'scripts'}`));
     if (savedExtra) savedExtra(row);
   } else {
     row.append(
-      button('Edit…', 'wfv-btn', () => onEdit(d)),
-      button('Decline', 'wfv-btn', () => onDecline()),
+      button('Edit…', 'btn btn-sm', () => onEdit(d)),
+      button('Decline', 'btn btn-sm', () => onDecline()),
       h('span', 'wfc-spacer'),
-      button(isAgent ? 'Save agent' : 'Save script', 'wfv-btn', () => onSave()),
+      button(isAgent ? 'Save agent' : 'Save script', 'btn btn-sm', () => onSave()),
     );
     if (proposedExtra) proposedExtra(row);
   }

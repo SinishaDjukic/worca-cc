@@ -4,7 +4,7 @@ import { SEND_FAILED } from './plan-body.mjs';
 
 export function decorateShapingQuestions(panel, pq, ctx) {
   const foot = panel.querySelector('.qpanel-foot');
-  const submit = foot && foot.querySelector('.btn-go');
+  const submit = foot && foot.querySelector('.btn-primary');
   if (!foot || !submit) return;
   const label = [...submit.childNodes].find((n) => n.nodeType === 3);
   if (label) label.textContent = 'Answer and draft';

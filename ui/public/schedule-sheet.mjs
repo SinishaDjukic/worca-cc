@@ -221,9 +221,9 @@ export function openScheduleSheet({
     const engineRow = engineSel ? h('div', { class: 'field field-compact' }, h('label', { for: 'sched-engine', text: 'Resume on' }), engineSel) : null;
 
     const err = h('div', { class: 'hint err sched-err', hidden: true });
-    const cancelBtn = h('button', { type: 'button', class: 'btn btn-mini sched-cancel', text: 'Cancel' });
-    const okBtn = h('button', { type: 'button', class: 'btn btn-primary btn-mini sched-ok', text: confirmLabel });
-    const closeBtn = h('button', { type: 'button', class: 'btn btn-mini', text: 'Close' });
+    const cancelBtn = h('button', { type: 'button', class: 'btn btn-sm sched-cancel', text: 'Cancel' });
+    const okBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm sched-ok', text: confirmLabel });
+    const closeBtn = h('button', { type: 'button', class: 'btn btn-sm', text: 'Close' });
 
     const card = h('div', { class: 'card sched-card' },
       h('div', { class: 'card-head' }, h('h2', { id: 'sched-title', text: heading }), closeBtn),

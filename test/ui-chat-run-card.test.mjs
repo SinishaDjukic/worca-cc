@@ -220,7 +220,7 @@ test('chat run card controls: Pause / Resume / Stop through `controls`, disabled
 test('chat run card question: the run page body mounts through controls.paintQuestion, answers go to controls.answer, a receipt follows the resolution', async () => {
   const CLARIFY = { id: 'q-1', kind: 'clarify', heading: 'A question from Planner', step: 'Planner' };
   const PQ = { id: 'q-1', kind: 'questions', nodeId: 'n_plan', questions: [{ id: 'q1', question: 'Which database?' }] };
-  const BODY = '<button class="qopt">Postgres</button><div class="qpanel-foot"><button class="btn-go">Submit</button></div>';
+  const BODY = '<button class="qopt">Postgres</button><div class="qpanel-foot"><button class="btn btn-primary" data-qpanel-submit>Submit</button></div>';
   await checkRows([
     { name: 'a clarify answer posts the collected answers under the QUESTION id, then the receipt counts them', run: async () => {
       const q = questionStub(CLARIFY, BODY, [{ id: 'q1', question: 'Which database?', choice: 'Postgres' }]);
@@ -229,7 +229,7 @@ test('chat run card question: the run page body mounts through controls.paintQue
       card.update(live({ pendingQuestion: PQ }));
       assert.equal($('.chat-rc-q').hidden, false);
       assert.equal($('.chat-rc-q-head').textContent, 'A question from Planner');
-      $('.chat-rc-q .btn-go').click();
+      $('.chat-rc-q .btn-primary').click();
       await settle();
       assert.deepEqual(answers, [['run-uuid-1', 'q-1', { answers: [{ id: 'q1', question: 'Which database?', choice: 'Postgres' }] }]]);
       assert.deepEqual(calls.at(-1), ['announce', 'Answer sent']);
@@ -243,12 +243,12 @@ test('chat run card question: the run page body mounts through controls.paintQue
       const q = questionStub(CLARIFY, BODY, [{ id: 'q1', question: 'Which database?', choice: '' }]);
       const { card, $ } = mk({ controls: { ...q, answer: () => Promise.resolve(false) } });
       card.update(live({ pendingQuestion: PQ }));
-      $('.chat-rc-q .btn-go').click();
+      $('.chat-rc-q .btn-primary').click();
       await settle();
       assert.equal($('.chat-rc-q-err').hidden, false);
       assert.equal($('.chat-rc-q-err').textContent, 'Answer not sent');
       assert.equal($('.chat-rc-receipt').hidden, true);
-      assert.ok($('.chat-rc-q .btn-go'), 'the form is still there');
+      assert.ok($('.chat-rc-q .btn-primary'), 'the form is still there');
     } },
     { name: 'a question that goes away because the run paused or was interrupted leaves no "Answered" receipt; one answered elsewhere while the run goes on does', run: async () => {
       const q = questionStub(CLARIFY, BODY, []);
@@ -278,12 +278,12 @@ test('chat run card question: the run page body mounts through controls.paintQue
       assert.equal($('.chat-rc-receipt summary').textContent, 'One more fix round · Cycle gate');
     } },
     { name: 'the workflow body owns its buttons; a REST snapshot never mounts a question; a run that ends while asking leaves no receipt', run: async () => {
-      const q = questionStub({ id: 'w-1', kind: 'workflow', heading: 'Review the workflow', step: '' }, '<button class="btn-go">Accept</button>');
+      const q = questionStub({ id: 'w-1', kind: 'workflow', heading: 'Review the workflow', step: '' }, '<button class="btn btn-primary" data-qpanel-submit>Accept</button>');
       const answers = [];
       const { card, $ } = mk({ controls: { ...q, answer: (...a) => { answers.push(a); return Promise.resolve(true); } } });
       card.update(live({ pendingQuestion: { id: 'w-1', kind: 'workflow' } }));
       $('.chat-rc-q .qpanel').classList.add('qpanel-workflow');
-      $('.chat-rc-q .btn-go').click();
+      $('.chat-rc-q .btn-primary').click();
       await settle();
       assert.deepEqual(answers, [], 'the workflow arm is not the card\'s delegate');
       card.update(live({ status: 'stopped', terminal: true, pendingQuestion: null, active: [] }));
@@ -411,7 +411,7 @@ test('chat run card helpers: progressIdent, runRefOf, autoChip, resultWord, answ
       assert.equal(midTrunc('short.md'), 'short.md');
     } },
     { name: 'destroy tears the graph down and hands the question host back', run: async () => {
-      const q = questionStub({ id: 'q-1', kind: 'clarify', heading: 'H', step: 'S' }, '<button class="btn-go">Submit</button>');
+      const q = questionStub({ id: 'q-1', kind: 'clarify', heading: 'H', step: 'S' }, '<button class="btn btn-primary" data-qpanel-submit>Submit</button>');
       const { card, $ } = mk({ controls: q });
       card.update(live({ pendingQuestion: { id: 'q-1', kind: 'questions', questions: [{}] } }));
       assert.ok($('.chat-rc-graph .gv-world'));
@@ -425,10 +425,10 @@ test('chat run card helpers: progressIdent, runRefOf, autoChip, resultWord, answ
 
 test('chat run card: an answer whose question-resolved frame lands before its 200 still names what was sent', async () => {
   let release;
-  const q = questionStub({ id: 'q-1', kind: 'clarify', heading: '2 questions from Plan', step: 'Plan' }, '<button class="btn-go">Submit</button>', [{ id: 'a', question: 'Q1', choice: 'x' }]);
+  const q = questionStub({ id: 'q-1', kind: 'clarify', heading: '2 questions from Plan', step: 'Plan' }, '<button class="btn btn-primary" data-qpanel-submit>Submit</button>', [{ id: 'a', question: 'Q1', choice: 'x' }]);
   const { card, $ } = mk({ controls: { ...q, answer: () => new Promise((r) => { release = r; }) } });
   card.update(live({ pendingQuestion: { id: 'q-1', kind: 'questions', questions: [{}] } }));
-  $('.chat-rc-q .btn-go').click();
+  $('.chat-rc-q .btn-primary').click();
   card.update(live({ pendingQuestion: null }));            // ui/server.mjs answerRun: question-resolved goes out before the 200
   assert.equal($('.chat-rc-receipt summary').textContent, 'Answered · Plan');
   release(true);
@@ -439,13 +439,13 @@ test('chat run card: an answer whose question-resolved frame lands before its 20
 test('chat run card: what the card sent and its error survive same-question frames; Create PR only for a run with changes to ship; the gate pip focuses the question', async () => {
   const CLARIFY = { id: 'q-1', kind: 'clarify', heading: 'A question from Planner', step: 'Planner' };
   const PQ = { id: 'q-1', kind: 'questions', nodeId: 'n_plan', questions: [{ id: 'q1', question: 'Which database?' }] };
-  const BODY = '<button class="qopt">Postgres</button><div class="qpanel-foot"><button class="btn-go">Submit</button></div>';
+  const BODY = '<button class="qopt">Postgres</button><div class="qpanel-foot"><button class="btn btn-primary" data-qpanel-submit>Submit</button></div>';
   await checkRows([
     { name: 'a tick between the 200 and question-resolved keeps the receipt counted', run: async () => {
       const q = questionStub(CLARIFY, BODY, [{ id: 'q1', question: 'Which database?', choice: 'Postgres' }]);
       const { card, $ } = mk({ controls: { ...q, answer: () => Promise.resolve(true) } });
       card.update(live({ pendingQuestion: PQ }));
-      $('.chat-rc-q .btn-go').click();
+      $('.chat-rc-q .btn-primary').click();
       await settle();
       card.update(live({ pendingQuestion: PQ }));          // the controller's 1 s tick before the run resumes
       card.update(live());
@@ -455,7 +455,7 @@ test('chat run card: what the card sent and its error survive same-question fram
       const q = questionStub(CLARIFY, BODY, [{ id: 'q1', question: 'Which database?', choice: '' }]);
       const { card, $ } = mk({ controls: { ...q, answer: () => Promise.resolve(false) } });
       card.update(live({ pendingQuestion: PQ }));
-      $('.chat-rc-q .btn-go').click();
+      $('.chat-rc-q .btn-primary').click();
       await settle();
       card.update(live({ pendingQuestion: PQ }));
       assert.equal($('.chat-rc-q-err').hidden, false);
@@ -510,7 +510,7 @@ test('chat run card result words follow the run page: Ready to review when the r
 test('chat run card question: a pause from any surface leaves no "Answered" receipt — the server resolves the question AFTER the `pausing` frame', () => {
   const CLARIFY = { id: 'q-1', kind: 'clarify', heading: 'A question from Planner', step: 'Planner' };
   const PQ = { id: 'q-1', kind: 'questions', nodeId: 'n_plan', questions: [{ id: 'q1', question: 'Which database?' }] };
-  const q = questionStub(CLARIFY, '<div class="qpanel-foot"><button class="btn-go">Submit</button></div>', []);
+  const q = questionStub(CLARIFY, '<div class="qpanel-foot"><button class="btn btn-primary" data-qpanel-submit>Submit</button></div>', []);
   const { card, $ } = mk({ controls: q });
   card.update(live({ pendingQuestion: PQ }));
   card.update(live({ status: 'pausing', pendingQuestion: PQ }));   // ui/server.mjs pauseRun: orch.pause() emits `pausing` …
@@ -570,7 +570,7 @@ test('chat run card CSS: the Runs page ask card in one column (the run side pane
   assert.deepEqual(chatRules.filter((m) => /--amber-line/.test(m[2])).map((m) => m[2].trim()), ['border-color:var(--amber-line);']);
   assert.deepEqual(chatRules.filter((m) => /--amber-wash/.test(m[2])).map((m) => m[1].trim()), [], 'no amber wash in the chat question');
   // P2's ask-card field metrics stand down inside the question, so its fields keep the Runs page's own.
-  assert.ok(css.includes('.ask-card :is(select,input[type="text"],textarea):where(:not(.chat-rc-q *)){font-size:12.5px;padding:8px 11px;border-radius:10px;}'));
+  assert.ok(css.includes('.ask-card :is(select,input[type="text"],textarea):where(:not(.chat-rc-q *)){font-size:12.5px;padding:8px 11px;border-radius:var(--r-sm);}'));
 });
 
 // ---- The question's styles, replayed over style.css. jsdom computes no cascade, so (as test/ui-functional-css.test.mjs
@@ -632,11 +632,11 @@ function cascaded(el, props, pseudo = '') {
  *  the workflow body), as far as the question's styles reach — the form's group box (widgets-layout.mjs groupWidget),
  *  the workflow's "Round N revised" echo and its proposal warnings (renderWorkflowBody, auto-proposal.mjs) included. */
 const ASK_HTML = {
-  clarify: '<div class="qpanel-head"><b>Questions</b></div><div class="qblock"><div class="qtext"><span class="qn">1</span>Which port?</div><div class="qopts"><button type="button" class="qopt" data-key="A"><span class="qopt-txt">8080</span></button></div><input class="qfree" type="text"></div><div class="qpanel-foot"><span class="qanswered">0 of 1 answered</span><button type="button" class="btn-go">Submit</button></div>',
-  form: '<div class="qpanel-head"><b>A form</b></div><div class="qbody"><div class="af-form"><div class="af-grp"><h3 class="af-grp-title">Scope</h3><div class="af-fld"><label class="af-label">Name</label><input type="text" class="af-inp"></div></div></div><div class="qpanel-foot"><span class="qanswered">0 of 1 answered</span><button type="button" class="btn-go">Submit</button></div></div>',
+  clarify: '<div class="qpanel-head"><b>Questions</b></div><div class="qblock"><div class="qtext"><span class="qn">1</span>Which port?</div><div class="qopts"><button type="button" class="qopt" data-key="A"><span class="qopt-txt">8080</span></button></div><input class="qfree" type="text"></div><div class="qpanel-foot"><span class="qanswered">0 of 1 answered</span><button type="button" class="btn btn-primary" data-qpanel-submit>Submit</button></div>',
+  form: '<div class="qpanel-head"><b>A form</b></div><div class="qbody"><div class="af-form"><div class="af-grp"><h3 class="af-grp-title">Scope</h3><div class="af-fld"><label class="af-label">Name</label><input type="text" class="af-inp"></div></div></div><div class="qpanel-foot"><span class="qanswered">0 of 1 answered</span><button type="button" class="btn btn-primary" data-qpanel-submit>Submit</button></div></div>',
   gate: '<div class="qpanel-head"><b>Cycle gate</b></div><div class="gate-intro">This cycle reached its limit.</div><ul class="issues"><li class="issue sev-major"><div class="issue-head"><span class="issue-sev">major</span><span class="issue-title">Login leaks</span></div><div class="issue-loc">srv.mjs:12</div></li></ul><div class="qpanel-foot gate-actions"><button type="button" class="btn gate-continue">Don\'t approve another cycle and continue</button><button type="button" class="btn btn-primary gate-another">I approve another cycle</button></div>',
   recovery: '<div class="qpanel-head"><b>Step failed</b></div><div class="gate-intro">This step could not reach the model.</div><div class="issue-detail">429 rate limited</div><div class="qpanel-foot gate-actions"><button type="button" class="btn recovery-pause">Pause run</button><button type="button" class="btn btn-primary recovery-retry">Retry</button></div>',
-  workflow: '<div class="qpanel-head"><b>Workflow</b></div><div class="qbody"><div class="ask-wfcard-body"><div class="qnote"><b>Round 1 revised: </b>“skip the docs step”</div><div class="ask-wfcard-warnings"><div class="ask-wfcard-warn">This project\'s saved settings for that workflow are not applied to Auto runs.</div></div></div></div><textarea class="qfree qfree-area" hidden></textarea><div class="qpanel-foot"><button type="button" class="qcancel wf-cancel">Cancel run</button><button type="button" class="btn-go wf-accept">Accept &amp; run</button></div>',
+  workflow: '<div class="qpanel-head"><b>Workflow</b></div><div class="qbody"><div class="ask-wfcard-body"><div class="qnote"><b>Round 1 revised: </b>“skip the docs step”</div><div class="ask-wfcard-warnings"><div class="ask-wfcard-warn">This project\'s saved settings for that workflow are not applied to Auto runs.</div></div></div></div><textarea class="qfree qfree-area" hidden></textarea><div class="qpanel-foot"><button type="button" class="qcancel wf-cancel">Cancel run</button><button type="button" class="btn btn-primary wf-accept" data-qpanel-submit>Accept &amp; run</button></div>',
 };
 const ASK_KINDS = Object.keys(ASK_HTML);
 /** Both mounts of one kind in one document: the chat card's (createChatRunCard, its painter stamping data-kind as
@@ -766,10 +766,10 @@ test('chat run card: a receipt with nothing to expand is no tab stop and does no
   assert.equal(sum.tabIndex, -1);
   sum.click();
   assert.equal(g.$('.chat-rc-receipt').open, false);
-  const clar = questionStub({ id: 'q-1', kind: 'clarify', heading: 'A question from Plan', step: 'Plan' }, '<button class="btn-go">Submit</button>', [{ id: 'a', question: 'Q1', choice: 'x' }]);
+  const clar = questionStub({ id: 'q-1', kind: 'clarify', heading: 'A question from Plan', step: 'Plan' }, '<button class="btn btn-primary" data-qpanel-submit>Submit</button>', [{ id: 'a', question: 'Q1', choice: 'x' }]);
   const c = mk({ controls: { ...clar, answer: async () => true } });
   c.card.update(live({ pendingQuestion: { id: 'q-1', kind: 'questions', questions: [{}] } }));
-  c.$('.chat-rc-q .btn-go').click();
+  c.$('.chat-rc-q .btn-primary').click();
   await settle();
   c.card.update(live({ pendingQuestion: null }));
   assert.equal(c.$('.chat-rc-receipt summary').tabIndex, 0);
@@ -789,10 +789,10 @@ test('chat run card: the question section is shown BEFORE controls.paintQuestion
 });
 
 test('chat run card: an answer that does not land announces nothing and is never named as sent', async () => {
-  const q = questionStub({ id: 'q-1', kind: 'clarify', heading: 'A question from Plan', step: 'Plan' }, '<button class="btn-go">Submit</button>', [{ id: 'a', question: 'Q1', choice: 'x' }]);
+  const q = questionStub({ id: 'q-1', kind: 'clarify', heading: 'A question from Plan', step: 'Plan' }, '<button class="btn btn-primary" data-qpanel-submit>Submit</button>', [{ id: 'a', question: 'Q1', choice: 'x' }]);
   const { card, $, calls } = mk({ controls: { ...q, answer: () => Promise.resolve(false) } });
   card.update(live({ pendingQuestion: { id: 'q-1', kind: 'questions', questions: [{}] } }));
-  $('.chat-rc-q .btn-go').click();
+  $('.chat-rc-q .btn-primary').click();
   await settle();
   assert.deepEqual(calls.filter((c) => c[0] === 'announce'), []);
   card.update(live());                                     // answered elsewhere after all
@@ -854,16 +854,17 @@ test('chat run card CSS: the result counts and error, a hovered file row or Stop
   };
   const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
   // Chrome, light theme, as plain status inks: −d on --field 4.45, on a hovered row 4.03; +a on a hovered row 4.44; a
-  // hovered Stop (--red-ink on --hover) 4.03. The "K of N answered" lead is the Runs page's --ink on the white pill footer.
+  // hovered Stop was --red-ink on --hover 4.03; Stop is now .btn-danger (red text on --red-bg, hover tinted by the component).
+  // The "K of N answered" lead is the Runs page's --ink on the white pill footer.
   const mixed = (tok) => `color-mix(in srgb, var(${tok}) 85%, var(--ink))`;
   for (const rule of [
     `.chat-rc-add{color:${mixed('--green-ink')};}`,
     `.chat-rc-del{color:${mixed('--red-ink')};}`,
     `.chat-rc-res-err{margin-right:auto;font-size:12px;color:${mixed('--red-ink')};}`,
-    '.chat-rc-stop:hover{background:var(--panel);border-color:var(--red);}',
     '.chat-rc-agent-model{min-width:0;flex:0 100000 auto;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);font-family:var(--mono);font-size:10.5px;font-weight:500;}',
     '.chat-rc-deciding{padding:28px 16px;text-align:center;color:var(--ink-2);font-size:12.5px;}',
   ]) assert.ok(p3.includes(rule), rule);
+  assert.ok(!p3.includes('.chat-rc-stop:hover'), 'Stop takes the .btn-danger hover, no rule of its own');
   assert.ok(css.includes(':is(.rd-questions,.chat-rc-q) .qanswered{font:600 14px var(--sans);color:var(--ink);}'));
   const ink = pair('--ink');
   for (const [fg, mix, bgs] of [['--green-ink', true, ['--field', '--hover']], ['--red-ink', true, ['--field', '--hover']],
@@ -905,7 +906,7 @@ test('chat run card CSS: an agent chip never runs out of a narrow card (a long m
 });
 
 test('chat run card levels (docs/ui-levels.md): the agent model, the artifacts and the pull-request actions are Advanced, a cycle label Expert; the controls, the question and the result words show in Simple', () => {
-  const q = questionStub({ id: 'q-1', kind: 'clarify', heading: 'A question from Implementer', step: 'Implementer' }, '<button class="btn-go">Submit</button>');
+  const q = questionStub({ id: 'q-1', kind: 'clarify', heading: 'A question from Implementer', step: 'Implementer' }, '<button class="btn btn-primary" data-qpanel-submit>Submit</button>');
   const { card, $ } = mk({ controls: { ...q, prHost: () => true } });
   card.update(live({ active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2', label: 'Implementer', color: 'green', model: 'claude-opus-5-5', modelLabel: 'Opus 5.5', cycle: 2 }],
     pendingQuestion: { id: 'q-1', kind: 'questions', nodeId: 'n_impl', questions: [{}] } }));
@@ -1081,7 +1082,7 @@ test('chat run card: the feature strip mounts the feature card for snap.shaping.
 test('chat run card: a plan question paints through the registered `plan` ask renderer, and its Submit collects through it', async () => {
   const seen = { render: 0, collect: 0 };
   registerAskRenderer('plan', {
-    render(panel, pq) { seen.render += 1; panel.innerHTML = `<div class="plan-body">${pq.round}</div><button class="btn-go">Approve</button>`; },
+    render(panel, pq) { seen.render += 1; panel.innerHTML = `<div class="plan-body">${pq.round}</div><button class="btn btn-primary" data-qpanel-submit>Approve</button>`; },
     collect() { seen.collect += 1; return { decision: 'approve' }; },
   });
   const pq = { id: 'p-1', kind: 'plan', nodeId: 'n_plan', round: 1 };
@@ -1102,7 +1103,7 @@ test('chat run card: a plan question paints through the registered `plan` ask re
   assert.equal(seen.render, 1, 'the plan renderer drew the question');
   assert.equal($('.chat-rc-q').hidden, false);
   assert.equal($('.chat-rc-q .plan-body').textContent, '1');
-  $('.chat-rc-q .btn-go').click();
+  $('.chat-rc-q .btn-primary').click();
   await settle();
   assert.equal(seen.collect, 1);
   assert.deepEqual(sent, [['p-1', { decision: 'approve' }]]);

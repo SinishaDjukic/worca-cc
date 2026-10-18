@@ -530,7 +530,8 @@ test('roomy rows: 14px names, 12px second lines, 26px tiles, 14.5px folder rows 
   assert.match(rule('.wfl-folder svg'), /width:20px;height:20px;/);
   assert.match(rule('.wfl-detail'), /font-size:13px;/);
   assert.match(rule('.wfl-pchip'), /font:500 11\.5px/);
-  assert.match(rule('.wfl-actions .wfv-btn'), /height:28px;.*font-size:12\.5px;/);
+  assert.equal(css.indexOf('.wfl-actions .wfv-btn'), -1, 'the actions are .btn .btn-sm (28px, 12.5px): no skin of their own');
+  assert.match(rule('.btn-sm'), /height:28px;.*font-size:12\.5px;/);
 });
 
 test('the search box slides over the title (reduced motion: at once); folders and tabs show the house focus ring; the breadcrumb and back-row rules are gone', async () => {

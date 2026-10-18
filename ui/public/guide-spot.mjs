@@ -107,7 +107,7 @@ export function createGuideSpot({
   if (typeof onNext === 'function') {
     const next = doc.createElement('button');
     next.type = 'button';
-    next.className = 'guide-next';
+    next.className = 'btn btn-sm btn-primary guide-next';
     next.textContent = nextLabel || 'Next';
     // The caller re-derives the hop and replaces this layer; nothing is dismissed here.
     next.addEventListener('click', () => { if (alive) onNext(); });
@@ -221,11 +221,6 @@ export function createGuideSpot({
     } catch { el.classList.add('guide-target-static'); }
     line.textContent = texts[which] ?? texts[0] ?? '';
     layer.dataset.target = targets[which];
-    // The ring follows the control's own corner radius (a pill stays a pill).
-    try {
-      const r = win.getComputedStyle(el).borderTopLeftRadius;
-      if (r && r !== '0px') ring.style.borderRadius = `calc(${r} + 6px)`;
-    } catch { /* jsdom: keep the stylesheet's radius */ }
     const lifted = [];
     for (const sel of lift) {
       const a = el.closest(sel);

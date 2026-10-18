@@ -26,11 +26,11 @@ function phoneBlock() {
   return tiers.slice(at, tiers.indexOf('\n}\n', at));
 }
 
-test('Activity sits in the bar\'s right slot before New run: an outlined pill with its icon, a hidden badge and a hidden dialog, at every level', () => {
+test('Activity sits in the bar\'s right slot before New run: a quiet button with its icon, a hidden badge and a hidden dialog, at every level', () => {
   const doc = new JSDOM(html).window.document;
   assert.deepEqual([...doc.querySelector('#topnav > .topnav-r').children].map((n) => n.id), ['topnav-activity', 'activity-pop', 'topnav-new']);
   const b = doc.getElementById('topnav-activity');
-  assert.deepEqual([b.tagName, b.type, b.className], ['BUTTON', 'button', 'topnav-act']);
+  assert.deepEqual([b.tagName, b.type, b.className], ['BUTTON', 'button', 'btn btn-quiet topnav-act']);
   for (const [k, v] of [['aria-haspopup', 'dialog'], ['aria-expanded', 'false'], ['aria-controls', 'activity-pop'], ['aria-label', 'Activity'], ['data-min-level', 'simple']]) {
     assert.equal(b.getAttribute(k), v, k);
   }
@@ -41,9 +41,9 @@ test('Activity sits in the bar\'s right slot before New run: an outlined pill wi
   const pop = doc.getElementById('activity-pop');
   assert.deepEqual([pop.className, pop.getAttribute('role'), pop.getAttribute('aria-label'), pop.hidden, pop.children.length],
     ['activity-pop', 'dialog', 'Activity', true, 0]);
-  const pill = ruleBody('.topnav-act');
-  for (const d of ['height:32px;', 'border-radius:999px;', 'background:var(--panel);', 'box-shadow:inset 0 0 0 1px var(--line-2);']) assert.ok(pill.includes(d), `.topnav-act has ${d}`);
-  assert.match(ruleBody('.topnav-act[aria-expanded="true"]'), /box-shadow:inset 0 0 0 1\.5px var\(--ink\);/);
+  const own = ruleBody('.topnav-act');
+  for (const d of ['height:', 'border-radius:', 'box-shadow:']) assert.ok(!own.includes(d), `.topnav-act leaves ${d} to .btn`);
+  assert.match(ruleBody('.topnav-act[aria-expanded="true"]'), /background:var\(--hover\);/, 'open: the hover tint, no ring');
   assert.match(ruleBody('.topnav-badge[data-tone="need"]'), /background:var\(--amber-bg\);color:var\(--amber-ink-strong\);/, 'the Runs badge\'s amber');
   assert.match(ruleBody('.topnav-badge[data-tone="run"]'), /background:var\(--blue-bg\);color:var\(--blue-ink-strong\);/);
   for (const d of ['position:fixed;', 'z-index:43;', 'width:440px;', 'max-height:min(560px,calc(100vh - 72px));', 'border-radius:var(--r-card);', 'box-shadow:var(--shadow-pop);']) {
@@ -53,7 +53,7 @@ test('Activity sits in the bar\'s right slot before New run: an outlined pill wi
   // The time, the line under the title and an empty tab's text carry information: --ink-2 (4.5:1 and up on --panel
   // and --hover in both themes), not the --ink-3 of labels (2.8:1 on white).
   for (const sel of ['.activity-row-time', '.activity-row-sub', '.activity-empty']) assert.match(ruleBody(sel), /color:var\(--ink-2\);/, sel);
-  const last = css.indexOf('.topnav-new:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}');
+  const last = css.indexOf('.topnav-new svg{width:14px;height:14px;flex:none;}');
   assert.ok(last > 0 && css.indexOf('\n.topnav-act{') > last && css.indexOf('\n.topnav-act{') < css.indexOf('\n.topbar{'),
     'the Activity rules follow the top bar\'s');
 });

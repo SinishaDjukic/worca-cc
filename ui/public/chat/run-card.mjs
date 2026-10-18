@@ -27,7 +27,7 @@ const DONE_STATUS = new Set(['done', 'complete', 'completed']);
 const NODE_COLORS = new Set(['violet', 'blue', 'green', 'red', 'peach', 'amber']);
 const KEYED = new Set(['agent', 'script']);
 /** The run page's answer buttons (app.js #run-detail delegate), minus the workflow arm, which binds its own. */
-const Q_BUTTONS = '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort';
+const Q_BUTTONS = '.qpanel [data-qpanel-submit], .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort';
 const DECISIONS = { 'gate-continue': 'continue', 'gate-another': 'another', 'recovery-retry': 'retry', 'recovery-pause': 'pause', 'recovery-abort': 'abort' };
 const SVG_NS = 'http://www.w3.org/2000/svg';
 /** 24-unit stroked glyphs (module literals only — never run data). */
@@ -226,8 +226,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   // ---- run controls (live, parked or resumable runs)
   const foot = h('div', 'chat-rc-foot');
   foot.hidden = true;
-  const pauseBtn = button('chat-rc-btn chat-rc-pause', 'Pause');
-  const stopBtn = button('chat-rc-btn chat-rc-stop', 'Stop');
+  const pauseBtn = button('btn btn-sm chat-rc-pause', 'Pause');
+  const stopBtn = button('btn btn-sm btn-danger chat-rc-stop', 'Stop');
   stopBtn.title = 'Stop this pipeline';
   const footErr = h('span', 'chat-rc-err');
   footErr.hidden = true;

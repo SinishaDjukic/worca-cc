@@ -92,7 +92,8 @@ test('the card: summary, footer of four, no Stop, no Run anyway', async () => {
   assert.equal($('.plan-sub').textContent, 'Plan demo · v2');
   assert.equal($('.plan-summary').hidden, false);
   assert.equal($('.plan-summary').textContent, 'Why.');
-  assert.deepEqual($$('.plan-actions > button').map((b) => b.textContent), ['Approve and build', 'Ask for changes', 'Full plan', '⋯']);
+  assert.deepEqual($$('.plan-actions > button').map((b) => b.textContent || b.getAttribute('aria-label')), ['Approve and build', 'Ask for changes', 'Full plan', 'More for this plan']);
+  assert.ok($('.plan-more svg'), '⋯ is a stroke icon, not a character');
   assert.equal($('.plan-stop'), null);
   assert.equal($('.plan-open-full'), null);
   assert.doesNotMatch($('.plan-body').textContent, /Run anyway/);
@@ -122,7 +123,8 @@ test('checks are folded on one line; rows are neutral with ✓ / ✕; one Fix al
   assert.equal($('.plan-checks').hidden, true);
   line.click();
   assert.equal($('.plan-checks').hidden, false);
-  assert.deepEqual($$('.plan-check-row').map((r) => r.querySelector('.plan-check-mark').textContent), ['✓', '✕']);
+  assert.deepEqual($$('.plan-check-row').map((r) => r.querySelector('.plan-check-mark').getAttribute('aria-label')), ['met', 'unmet']);
+  assert.ok($$('.plan-check-mark').every((m) => m.querySelector('svg') && m.textContent === ''), 'the marks are icons, not ✓ / ✕ characters');
   assert.equal($$('.plan-check-bad').length + $$('.plan-fix').length, 0);
   assert.equal($$('.plan-fix-all').length, 1);
   $('.plan-fix-all').click();
@@ -366,7 +368,7 @@ test('Open in New run from the ⋯ menu sends the plan text', async () => {
   assert.deepEqual(calls.openNew, [PLAN_MD]);
 });
 
-test('no button in the body uses .btn-go', () => {
+test('the body keeps one primary, Approve and build: no former .btn-go became a second one', () => {
   const { $$ } = setup();
-  assert.equal($$('.btn-go').length, 0);
+  assert.deepEqual($$('.btn-primary').map((b) => b.textContent), ['Approve and build']);
 });

@@ -129,7 +129,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
       const card = h('div', 'chat-home-promo');
       card.dataset.promo = p.id;
       card.dataset.minLevel = p.min;
-      const b = h('button', 'chat-home-promo-b', p.button);
+      const b = h('button', 'btn btn-sm chat-home-promo-b', p.button);
       b.type = 'button';
       b.addEventListener('click', () => {
         deps.setIntent(p.intent);

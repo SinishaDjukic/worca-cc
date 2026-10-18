@@ -203,7 +203,7 @@ export function createLibrary({ doc, host, actions }) {
   const head = h('div', 'wfl-head');
   const title = h('h2', 'wfl-title', 'Library');
   const sbox = h('div', 'wfl-sbox');
-  const searchBtn = h('button', 'wfv-icon-btn wfl-filter-btn');
+  const searchBtn = h('button', 'btn btn-quiet btn-icon wfl-filter-btn');
   searchBtn.type = 'button';
   searchBtn.id = 'wfl-filter-btn';
   searchBtn.title = 'Search';
@@ -216,9 +216,10 @@ export function createLibrary({ doc, host, actions }) {
   input.autocomplete = 'off';
   input.spellcheck = false;
   sbox.append(searchBtn, input);
-  const closeBtn = h('button', 'wfv-icon-btn wfl-close');
+  const closeBtn = h('button', 'btn btn-quiet btn-icon wfl-close');
   closeBtn.type = 'button';
   closeBtn.id = 'wfl-close';
+  closeBtn.setAttribute('aria-label', 'Close');
   closeBtn.appendChild(svg(CLOSE_GLYPH));
   head.append(title, sbox, closeBtn);
   function syncHead() {
@@ -286,7 +287,7 @@ export function createLibrary({ doc, host, actions }) {
     row.appendChild(seg);
     if (hasChips()) {
       const agents = st.top === 'agents';
-      const nb = h('button', 'wfv-icon-btn wfl-new');
+      const nb = h('button', 'btn btn-quiet btn-icon wfl-new');
       nb.type = 'button';
       nb.id = agents ? 'wfl-new-agent' : 'wfl-new-script';
       nb.title = agents ? 'New agent' : 'New script';
@@ -356,7 +357,7 @@ export function createLibrary({ doc, host, actions }) {
   function actionsRow(list, base = '') {
     const row = h('div', 'wfl-actions');
     list.forEach(([label, fn, primary], i) => {
-      const b = h('button', `wfv-btn${primary ? ' wfv-btn-primary' : ''}${label === 'Delete' ? ' wfl-danger' : ''}`, label);
+      const b = h('button', `btn btn-sm${primary ? ' btn-primary' : ''}${label === 'Delete' ? ' btn-danger wfl-danger' : ''}`, label);
       b.type = 'button';
       if (base) b.dataset.focusKey = `${base}:${label}`;
       b.addEventListener('click', fn);
@@ -399,7 +400,7 @@ export function createLibrary({ doc, host, actions }) {
     main.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(); } });
     row.appendChild(main);
     if (draggable) {
-      const add = h('button', 'wfv-icon-btn wfl-add');
+      const add = h('button', 'btn btn-sm btn-quiet btn-icon wfl-add');
       add.type = 'button';
       add.title = 'Add to canvas';
       add.setAttribute('aria-label', `Add ${name} to canvas`);
@@ -461,7 +462,7 @@ export function createLibrary({ doc, host, actions }) {
       detail: () => {
         const d = h('div', 'wfl-detail');
         d.appendChild(h('p', 'wfl-desc', s.description || ''));
-        if (s.ports === 'config') d.appendChild(h('div', 'wfl-k', 'ports per card'));
+        if (s.ports === 'config') d.appendChild(h('div', 'wfl-k', 'Ports per card'));
         else d.append(h('div', 'wfl-k', 'Inputs'), portChips(s.inputs, { dir: 'in', script: true }), h('div', 'wfl-k', 'Outputs'), portChips(s.outputs, { dir: 'out', script: true }));
         const params = Array.isArray(s.params) ? s.params : [];
         if (params.length) {
@@ -530,7 +531,7 @@ export function createLibrary({ doc, host, actions }) {
     item.appendChild(main);
     const tail = h('span', 'wfl-wf-actions');
     if (v2) {
-      const ex = h('button', 'wfv-icon-btn wfl-export');
+      const ex = h('button', 'btn btn-sm btn-quiet btn-icon wfl-export');
       ex.type = 'button';
       ex.title = 'Export as a JSON file, a Claude Code skill or a Worca plugin';
       ex.setAttribute('aria-label', `Export "${w.name || w.id}"`);
@@ -539,7 +540,7 @@ export function createLibrary({ doc, host, actions }) {
       tail.appendChild(ex);
     }
     if (!RESERVED.has(w.id)) {
-      const del = h('button', 'wfv-icon-btn wfl-del');
+      const del = h('button', 'btn btn-sm btn-quiet btn-icon wfl-del');
       del.type = 'button';
       del.title = 'Delete pipeline';
       del.setAttribute('aria-label', `Delete "${w.name || w.id}"`);
@@ -564,7 +565,7 @@ export function createLibrary({ doc, host, actions }) {
     main.appendChild(txt);
     item.appendChild(main);
     const tail = h('span', 'wfl-wf-actions');
-    const del = h('button', 'wfv-icon-btn wfl-del');
+    const del = h('button', 'btn btn-sm btn-quiet btn-icon wfl-del');
     del.type = 'button';
     del.title = 'Delete permanently';
     del.setAttribute('aria-label', `Delete "${w.name || w.id}" permanently`);
@@ -590,7 +591,7 @@ export function createLibrary({ doc, host, actions }) {
     if (st.data.loadError) {
       const err = h('p', 'wfl-empty', st.data.loadError);
       if (typeof st.data.retry === 'function') {
-        const b = h('button', 'wfv-btn', 'Retry');
+        const b = h('button', 'btn btn-sm', 'Retry');
         b.type = 'button';
         b.addEventListener('click', () => st.data.retry());
         err.appendChild(b);

@@ -504,7 +504,7 @@ test('an unrelated live frame does not wipe the answers already picked on the de
   assert.equal(panel().querySelectorAll('.qfree')[1].value, 'typed by hand',
     'and so does the free text being typed');
 
-  panel().querySelector('.btn-go').dispatchEvent(new window.Event('click', { bubbles: true }));
+  panel().querySelector('.btn-primary').dispatchEvent(new window.Event('click', { bubbles: true }));
   await settle(window, 5);
   assert.equal(posts.length, 1);
   assert.equal(posts[0].payload.answers[0].choice, 'OAuth',
@@ -1160,7 +1160,7 @@ test('a finished run with an open or merged pull request links to it, behind its
       frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
       await settle(ctx.window, 10);
       const slot = rd.querySelector('.rd-pr-slot');
-      const link = slot.querySelector('a.rd-cta');
+      const link = slot.querySelector('a[data-rd-cta]');
       assert.ok(link, 'the pull request is a link');
       assert.equal(link.getAttribute('href'), url);
       assert.equal(link.textContent, 'View pull request');

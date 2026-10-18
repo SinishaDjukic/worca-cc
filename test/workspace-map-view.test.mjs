@@ -79,7 +79,7 @@ test('edge table: every effective edge, rejected greyed, a missing confirmed edg
   assert.deepEqual(texts(missing.querySelectorAll('.wm-actions button')), ['Clear']);
   assert.ok(missing.querySelector(`.wm-clear[data-edge="${X_GONE}"]`));
   const auto = rowOf(root, X_HTTP);
-  assert.deepEqual([...auto.querySelectorAll('.wm-actions button')].map((b) => b.className), ['btn-ghost btn-mini wm-confirm', 'btn-ghost btn-mini wm-reject']);
+  assert.deepEqual([...auto.querySelectorAll('.wm-actions button')].map((b) => b.className), ['btn btn-sm wm-confirm', 'btn btn-sm wm-reject']);
   assert.equal(auto.querySelector('.wm-confirm').getAttribute('aria-label'), 'Confirm web → billing-api GET /invoices/{id}');
   assert.equal(auto.querySelector('.wm-kind').textContent, 'REST API');
   assert.equal(auto.querySelector('.wm-conf').textContent, 'exact');

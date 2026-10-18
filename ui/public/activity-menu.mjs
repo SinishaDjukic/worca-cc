@@ -49,7 +49,7 @@ export function createActivityMenu({
   panel.setAttribute('role', 'tabpanel');
   const all = make('a', 'activity-foot-link', 'Open Schedules');
   all.setAttribute('href', '#schedules');
-  const plan = make('button', 'btn btn-mini activity-foot-new', 'Schedule…');
+  const plan = make('button', 'btn btn-sm activity-foot-new', 'Schedule…');
   plan.type = 'button';
   plan.dataset.href = '#new/schedule';
   const foot = make('div', 'activity-foot');

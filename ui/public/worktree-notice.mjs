@@ -15,7 +15,7 @@ const h = (doc, tag, cls, text) => {
 };
 /** A notice button. `onClick(button)` receives the node, so a flow can show its busy state on it. */
 const button = (doc, label, cls, onClick, tip) => {
-  const b = h(doc, 'button', `btn btn-mini ${cls}`, label);
+  const b = h(doc, 'button', `btn btn-sm ${cls}`, label);
   b.type = 'button';
   if (tip) b.title = tip;
   b.addEventListener('click', (e) => { e.stopPropagation(); onClick(b); });
@@ -152,7 +152,7 @@ function renderRetained(doc, frag, model, { handlers, recovery, when }) {
     row.append(span);
   }
   if (!model.provisional && handlers.onDiscardRetained) {
-    row.append(button(doc, 'Discard worktree', 'btn-ghost hist-discard', handlers.onDiscardRetained,
+    row.append(button(doc, 'Discard worktree', 'btn hist-discard', handlers.onDiscardRetained,
       'Save a patch of anything uncommitted, then remove the worktree. The branch is kept.'));
   }
   if (row.childNodes.length) frag.append(row);
@@ -181,13 +181,13 @@ function renderCheckout(doc, frag, model, { handlers, when }) {
     const acts = h(doc, 'div', 'wt-member-actions');
     if (!model.provisional && handlers.onReleaseCheckout) {
       acts.append(m.external
-        ? button(doc, 'Unlink', 'btn-ghost wt-release', (b) => handlers.onReleaseCheckout(m, b),
+        ? button(doc, 'Unlink', 'btn wt-release', (b) => handlers.onReleaseCheckout(m, b),
           'Stop using your folder for this run. Running services stop; the folder and its changes stay as they are.')
-        : button(doc, 'Discard', 'btn-ghost wt-release', (b) => handlers.onReleaseCheckout(m, b),
+        : button(doc, 'Discard', 'btn wt-release', (b) => handlers.onReleaseCheckout(m, b),
           'Delete the checkout folder. Running services stop, and uncommitted changes are saved as a patch first.'));
     }
     if (!model.provisional && handlers.onDiff) {
-      acts.append(button(doc, 'Get the diff', 'btn-ghost wt-diff', (b) => handlers.onDiff(m, b),
+      acts.append(button(doc, 'Get the diff', 'btn wt-diff', (b) => handlers.onDiff(m, b),
         'Download a patch of the folder\'s uncommitted changes. Read-only: nothing in the folder is staged or changed.'));
     }
     if (acts.childNodes.length) li.append(acts);
@@ -198,7 +198,7 @@ function renderCheckout(doc, frag, model, { handlers, when }) {
     // The Actions tab itself is Advanced (docs/ui-levels.md): only this link is gated, never the notice.
     const row = h(doc, 'div', 'wt-actions wt-actions-row');
     row.dataset.minLevel = 'advanced';
-    row.append(button(doc, 'Actions tab ›', 'btn-ghost wt-actions-tab', () => handlers.onOpenActions(),
+    row.append(button(doc, 'Actions tab ›', 'btn wt-actions-tab', () => handlers.onOpenActions(),
       'Open the run\'s Actions tab: services, setup, editor and terminal'));
     frag.append(row);
   }

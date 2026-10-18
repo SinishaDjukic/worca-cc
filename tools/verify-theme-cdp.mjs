@@ -36,6 +36,7 @@ import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auditButtons, BUTTON_SPEC } from './button-audit.mjs';
 
 const args = process.argv.slice(2);
 // A bare flag (no value, or followed by another flag) yields '' so the caller can
@@ -56,6 +57,10 @@ const ONLY = (flag('--states') || '').split(',').filter(Boolean);
 if (SNAPSHOT && COMPARE) { console.error('--snapshot and --compare are mutually exclusive: write the snapshot in one run, compare in the next'); process.exit(2); }
 if (COMPARE && ONLY.length) console.warn('WARN --states given: the identity compare is skipped (partial runs cannot be compared with a full snapshot)');
 const BASELINE_FILE = new URL('test/fixtures/contrast-baseline-light.json', ROOT);
+// The one-button-style gate (runs-redesign spec §5.2, known bug 4): every visible button in every state is .btn in
+// one of 3 sizes x 4 variants. auditButtons is self-contained, so its source runs in the page as is.
+const BUTTON_AUDIT = `(${auditButtons})(document.body, ${JSON.stringify(BUTTON_SPEC)}, null)`;
+const buttonReport = [];   // { state, theme, sig, rule, got, text }
 const FIXTURE_FILE = new URL('test/fixtures/theme-kitchen-sink.html', ROOT);
 
 const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -258,7 +263,11 @@ async function clickSel(sel) { const ok = await ev(`(()=>{const e=document.query
 // without the flag every pass re-serialised up to 8000 × 14 strings for nothing).
 const WALKER = (rootSel, withStyles = false) => `(() => {
   const withStyles = ${withStyles ? 'true' : 'false'};
-  const parse = (s) => { const m = /rgba?\\(([^)]+)\\)/.exec(s || ''); if (!m) return null;
+  // A color-mix() (the .btn hovers) computes to color(srgb r g b / a) with 0-1 channels, not rgb().
+  const parse = (s) => { const m = /rgba?\\(([^)]+)\\)/.exec(s || '');
+    if (!m) { const c = /color\\(srgb ([^)]+)\\)/.exec(s || ''); if (!c) return null;
+      const [ch, a] = c[1].split('/'); const q = ch.trim().split(/\\s+/).map((x) => parseFloat(x) * 255);
+      return [q[0], q[1], q[2], a ? parseFloat(a) : 1]; }
     const p = m[1].split(',').map((x) => parseFloat(x)); return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1]; };
   const over = (fg, bg) => { const a = fg[3]; return [fg[0]*a + bg[0]*(1-a), fg[1]*a + bg[1]*(1-a), fg[2]*a + bg[2]*(1-a), 1]; };
   const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4); };
@@ -333,10 +342,10 @@ const WALKER = (rootSel, withStyles = false) => `(() => {
 
 // Hover-only rules (a dozen Task 2 entries) are sampled with the :hover pseudo-class
 // FORCED through the CSS domain, element by element, in every theme.
-// A selector with no element on the current screen is skipped (nodeId 0). At 5a22ca47 `.icon-btn` and `.field-clear`
-// have hover RULES but no live element (the buttons are `.ask-icon-btn`; `.field-clear` lives only in a mockup) — kept
-// so a future element is sampled. `.topnav-new` is New run in the top bar (an ink pill: its hover is a wash).
-const HOVER_SELECTORS = ['.icon-btn', '.ask-icon-btn', '.btn', '.btn-ghost', '.btn-primary', '.runs-row', '.runs-group-head', '.wiz-proj', '.sp-row', '.grv-source-row',
+// A selector with no element on the current screen is skipped (nodeId 0). `.field-clear` has a hover RULE but no
+// live element (it lives only in a mockup) — kept
+// so a future element is sampled. `.topnav-new` is New run in the top bar (a primary .btn: its hover is a tint).
+const HOVER_SELECTORS = ['.btn', '.btn-quiet', '.btn-danger', '.btn-primary', '.runs-row', '.runs-group-head', '.wiz-proj', '.sp-row', '.grv-source-row',
   '.gr-rm', '.field-clear', '.agent-row-head', '.topnav-new', '.nav button', '.acct', '.mi', '.hd-tree-file', '.ap',
   '.act-srow', '.act-stop'];
 async function hoverSamples() {
@@ -437,6 +446,10 @@ const states = [
   ['workspace-create', async () => { await go('workspace-create'); }],
   ['stats', async () => { await go('stats'); }],
   ['team-metrics', async () => { await go('team-metrics'); }],
+  // Spec §5.2's walk: the views the matrix did not visit yet (schedules, connectors, team policy, two settings tabs).
+  ['schedules', async () => { await go('schedules'); }],
+  ['connectors', async () => { await go('connectors'); }],
+  ['team-policy', async () => { await go('team-policy'); }],
   ['settings-general', async () => { await go('settings'); await until(`document.querySelector('.settings-pane[data-tab="general"]:not(.hidden) .card')`, 'general pane'); }],
   // Tooltips open on mouseover / focusin (app.js TIP_SELECTOR handlers), not on click: a bubbling
   // synthetic mouseover reaches the document listener whatever the page's focus state.
@@ -447,6 +460,11 @@ const states = [
   // Budget, Scheduled runs and Chat notifications, and the Ask Worca card, left General for tabs of
   // their own; each is audited where it now lives.
   ['settings-runs', async () => { await go('settings/runs'); await until(`document.querySelector('.settings-pane[data-tab="runs"]:not(.hidden) #budget-settings-card')`, 'runs pane'); }],
+  // The Tags tab exists only while the runTags flag is on (app.js SETTINGS_TABS): switch it on for this state alone.
+  ['settings-tags', async () => { await api('/api/flags', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runTags: true }) });
+    await go('settings/tags'); await until(`document.querySelector('.settings-pane[data-tab="tags"]:not(.hidden)')`, 'the tags pane'); },
+  async () => { await api('/api/flags', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runTags: null }) }); }],
+  ['settings-experimental', async () => { await go('settings/experimental'); }],
   ['settings-ask', async () => { await go('settings/ask'); await until(`document.querySelector('.settings-pane[data-tab="ask"]:not(.hidden) #ask-web-host .ask-web')`, 'ask pane'); }],
   ['settings-guardrails', async () => { await go('settings/guardrails'); }],
   ['settings-models', async () => { await go('models'); }],
@@ -529,6 +547,10 @@ async function auditCurrent(stateId) {
   await until(`!document.querySelector('.rd-pr-slot:is(.is-morph,.is-out)')`, 'the PR button morph to finish');
   for (const theme of THEMES) {
     await setTheme(theme);
+    // THEMES entries are [id, data-theme, emulated scheme]; only the explicit light and dark themes are audited.
+    if (theme[0] === 'light' || theme[0] === 'dark') {
+      for (const v of await ev(BUTTON_AUDIT, 90000)) buttonReport.push({ state: stateId, theme: theme[0], ...v });
+    }
     const { samples, styles, capped } = await ev(WALKER(null, theme[0] === 'light'), 90000);   // identity rows only for the light pass
     if (capped) cappedStates.push(`${stateId}/${theme[0]}`);
     const extra = [...await focusSamples(), ...await hoverSamples()];
@@ -629,6 +651,9 @@ try {
     console.log(`${sysLight.length ? 'FAIL' : 'PASS'} system-light equals light: ${sysLight.length} failures outside the light baseline`);
     if (sysLight.length) failed += 1;
   }
+  await writeFile(path.join(OUT, 'button-audit.json'), JSON.stringify(buttonReport, null, 1));
+  console.log(`${buttonReport.length ? 'FAIL' : 'PASS'} one button style: ${buttonReport.length} button(s) outside 3 sizes x 4 variants`);
+  if (buttonReport.length) { failed += 1; console.log(JSON.stringify(buttonReport.slice(0, 60), null, 1)); }
   console.log(`${pageErrors.length ? 'FAIL' : 'PASS'} no page errors (${pageErrors.length})`);
   if (pageErrors.length) { failed += 1; console.log(pageErrors.slice(0, 10).join('\n')); }
   if (consoleErrors.length) console.warn(`WARN ${consoleErrors.length} console.error call(s) (report-only):\n${consoleErrors.slice(0, 10).join('\n')}`);

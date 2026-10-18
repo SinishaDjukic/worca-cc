@@ -407,7 +407,7 @@ export function createPinpoint({ doc = document, win = doc.defaultView, fetch: f
     let on = 0;
     const focus = (i) => {
       on = i;
-      $$('.pp-alt', host).forEach((c, k) => { c.classList.toggle('is-on', k === i); c.querySelector('[data-use]').classList.toggle('pp-pri', k === i); });
+      $$('.pp-alt', host).forEach((c, k) => { c.classList.toggle('is-on', k === i); c.querySelector('[data-use]').classList.toggle('btn-primary', k === i); });
       host.querySelector(`[data-use="${i}"]`)?.focus({ preventScroll: true });
     };
     const use = async (i) => {
@@ -431,7 +431,7 @@ export function createPinpoint({ doc = document, win = doc.defaultView, fetch: f
         <div class="pp-alt-h"><span class="pp-alt-n">${i + 1}</span><span class="pp-alt-t">${esc(a.title)}</span></div>
         ${a.detail ? `<div class="pp-alt-d">${inlineMd(a.detail)}</div>` : ''}
         ${a.tradeoffs.length ? `<div class="pp-tags">${a.tradeoffs.map((t) => `<span class="pp-tag" data-t="${t.tone}">${esc(t.text)}</span>`).join('')}</div>` : ''}
-        <div class="pp-alt-a"><button type="button" class="pp-btn${i === 0 ? ' pp-pri' : ''}" data-use="${i}">Use this</button><button type="button" class="pp-btn pp-ghost" data-disc="${i}">Discuss</button></div>
+        <div class="pp-alt-a"><button type="button" class="btn btn-sm${i === 0 ? ' btn-primary' : ''}" data-use="${i}">Use this</button><button type="button" class="btn btn-sm btn-quiet" data-disc="${i}">Discuss</button></div>
       </div>`).join('');
       foot.innerHTML = `<span class="pp-kbd">1–${list.length}</span>pick<span class="pp-kbd">↵</span>${pending ? 'add as a change' : sel.kind === 'diff' ? 'comment' : 'use'}`;
       positionPop();
@@ -482,7 +482,7 @@ export function createPinpoint({ doc = document, win = doc.defaultView, fetch: f
       ${kind === 'disagree' ? `<div class="pp-chips" role="group" aria-label="Reason">${DISAGREE_REASONS.map((r) => `<button type="button" class="pp-chip" aria-pressed="false" data-r="${esc(r)}">${esc(r)}</button>`).join('')}</div>` : ''}
       <textarea class="pp-ta" rows="2" placeholder="${esc(ph)}" aria-label="${esc(title)}"></textarea>
       <p class="pp-err" role="alert" hidden></p>
-      <div class="pp-cf"><span class="pp-hint">${mod}↵ to ${pending ? 'add' : 'send'} · Esc to cancel</span><button type="button" class="pp-send" data-send disabled>${icon(pending ? 'check' : 'send', 13)}<span>${label}</span></button></div>
+      <div class="pp-cf"><span class="pp-hint">${mod}↵ to ${pending ? 'add' : 'send'} · Esc to cancel</span><button type="button" class="btn btn-sm btn-primary pp-send" data-send disabled>${icon(pending ? 'check' : 'send', 13)}<span>${label}</span></button></div>
     </div>`);
     const p = openPop(sel, pop);
     const ta = pop.querySelector('textarea');

@@ -108,14 +108,14 @@ export function renderSyncChip({ sync = [], stats = {}, refresh = null, fetchErr
   // regular 60 s fetch serves fresh data, and "refresh again in N s" would be a lie.
   if (refresh?.limited && !refresh.fetched) txt.append(` | refresh again in ${Math.ceil(refresh.retryInMs / 1000)} s`);
   chip.append(txt);
-  const refreshBtn = h(doc, 'button', `btn-ghost btn-mini tm-refresh${checking ? ' busy' : ''}`, 'Refresh'); refreshBtn.type = 'button';
+  const refreshBtn = h(doc, 'button', `btn btn-sm tm-refresh${checking ? ' busy' : ''}`, 'Refresh'); refreshBtn.type = 'button';
   if (checking) refreshBtn.disabled = true;
   chip.append(refreshBtn);
   // "Push now" exists only while there is something to push: with an empty outbox
   // the flush is a no-op, and a permanently visible (disabled) button read as an
   // action that was somehow unavailable rather than one that was not needed.
   if (pending > 0) {
-    const pushBtn = h(doc, 'button', 'btn-ghost btn-mini tm-push-now', 'Push now'); pushBtn.type = 'button';
+    const pushBtn = h(doc, 'button', 'btn btn-sm tm-push-now', 'Push now'); pushBtn.type = 'button';
     chip.append(pushBtn);
   }
   const err = lastError || fetchError;
@@ -431,7 +431,7 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
   const head = h(doc, 'div', 'card-head tm-runs-head');
   const title = h(doc, 'h2', null, 'Runs ');
   title.append(h(doc, 'small', 'hint', `${total} in range`));
-  const exp = h(doc, 'button', 'btn-ghost btn-mini tm-export', 'Export CSV'); exp.type = 'button'; exp.disabled = total === 0;
+  const exp = h(doc, 'button', 'btn btn-sm tm-export', 'Export CSV'); exp.type = 'button'; exp.disabled = total === 0;
   head.append(title, exp);
   card.append(head);
   if (!runs.length) { card.append(h(doc, 'div', 'chart-empty hint', 'No runs recorded in this range')); return card; }
@@ -479,7 +479,7 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
   // §4.9 asks for "every record in range". The mockup's first paint is capped for layout, so the
   // remaining rows must stay REACHABLE on screen, not only through Export CSV.
   if (shown < runs.length) {
-    const more = h(doc, 'button', 'btn-ghost btn-mini tm-show-all', `Show all ${runs.length} runs`);
+    const more = h(doc, 'button', 'btn btn-sm tm-show-all', `Show all ${runs.length} runs`);
     more.type = 'button';
     foot.append(more);
   }
@@ -633,7 +633,7 @@ export function renderTmEmptyState({ doc = globalThis.document } = {}) {
     c.append(h(doc, 'div', 'tm-step', step), h(doc, 'h3', null, title));
     const p = h(doc, 'p', 'hint');
     for (const part of body) p.append(typeof part === 'string' ? part : h(doc, 'code', 'mono', part.code));
-    const a = h(doc, 'a', primary ? 'btn btn-primary btn-mini' : 'btn btn-ghost btn-mini', label); a.href = href;
+    const a = h(doc, 'a', primary ? 'btn btn-primary btn-sm' : 'btn btn-sm', label); a.href = href;
     c.append(p, a);
     return c;
   };

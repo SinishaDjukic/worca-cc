@@ -105,8 +105,8 @@ export function buildScriptCard(s, { doc = globalThis.document, runtimes = {}, c
   main.appendChild(meta);
   card.appendChild(main);
   const actions = h(doc, 'div', 'script-actions');
-  const btn = (cls, label, kind) => { const b = h(doc, 'button', `btn ${kind} btn-mini ${cls}`, label); b.type = 'button'; return b; };
-  actions.append(btn('script-open', 'Open', 'btn-ghost'), btn('script-duplicate', 'Duplicate', 'btn-ghost'));
+  const btn = (cls, label, kind) => { const b = h(doc, 'button', `btn ${kind} btn-sm ${cls}`, label); b.type = 'button'; return b; };
+  actions.append(btn('script-open', 'Open', 'btn'), btn('script-duplicate', 'Duplicate', 'btn'));
   if (s.origin === 'user') actions.appendChild(btn('script-delete', 'Delete', 'btn-danger'));
   card.appendChild(actions);
   return card;
@@ -121,7 +121,7 @@ export function renderScriptsList(list, { doc = globalThis.document, query = '',
   const filter = doc.createElement('input');
   filter.type = 'search'; filter.className = 'input script-filter'; filter.value = query;
   filter.placeholder = 'Filter scripts'; filter.setAttribute('aria-label', 'Filter scripts');
-  const add = h(doc, 'button', 'btn btn-primary btn-mini script-new', 'New script');
+  const add = h(doc, 'button', 'btn btn-primary btn-sm script-new', 'New script');
   add.type = 'button';
   tools.append(filter, add);
   bar.append(tools);

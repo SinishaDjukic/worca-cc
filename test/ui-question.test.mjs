@@ -69,7 +69,7 @@ test('clarify question renders on the run page with lettered options (empty slot
       // Head: count chip + title with the phase label (defaults to phaseKey label).
       assert.ok(panel.querySelector('.qcount'), 'qcount chip present');
       assert.match(panel.querySelector('.qcount').textContent, /2 questions/);
-      assert.ok(panel.querySelector('.qpanel-foot .btn-go'), 'submit button present');
+      assert.ok(panel.querySelector('.qpanel-foot .btn-primary'), 'submit button present');
 
       // The list row only points at it (Needs you + its word) — the panel is not mounted there.
       ctx.showRunning();
@@ -118,7 +118,7 @@ test('selecting an option marks it + submit posts {runId,id,payload:{answers}} w
   click(ctx, blocks[1].querySelectorAll('.qopt')[0]);
 
   // Click submit.
-  click(ctx, panel.querySelector('.qpanel-foot .btn-go'));
+  click(ctx, panel.querySelector('.qpanel-foot .btn-primary'));
   await new Promise((r) => setTimeout(r, 0));
 
   assert.equal(captured.length, 1, 'one POST /api/answer issued');
@@ -165,7 +165,7 @@ test('free-text answer overrides option selection and is captured as the choice'
   free.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
   assert.equal(q1opt.classList.contains('sel'), false, 'typing free text clears the option selection');
 
-  click(ctx, panel.querySelector('.qpanel-foot .btn-go'));
+  click(ctx, panel.querySelector('.qpanel-foot .btn-primary'));
   await new Promise((r) => setTimeout(r, 0));
 
   assert.equal(captured[0].payload.answers[0].choice, 'DynamoDB', 'free-text value captured as the choice');
@@ -326,7 +326,7 @@ test('kind:questions renders the clarify-style body with the agent name in the h
   assert.ok(panel.querySelector('.qfree'), 'free text rendered');
   // Submit posts the standard answers payload.
   panel.querySelector('.qopt').click();
-  panel.querySelector('.qpanel-foot .btn-go').click();
+  panel.querySelector('.qpanel-foot .btn-primary').click();
   await new Promise((r) => setTimeout(r, 0));
   const post = ctx.calls.find((c) => c.url.includes('/api/answer'));
   assert.ok(post, 'POST /api/answer fired');
@@ -356,7 +356,7 @@ test('a recommendation shows confidence bars and a Recommended badge, is presele
       assert.equal(opts[0].getAttribute('aria-pressed'), 'false');
       // Preselected is not answered: the "Answered" pill waits for a real click.
       assert.equal(opts[1].dataset.preset, '1');
-      panel.querySelector('.btn-go').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+      panel.querySelector('.btn-primary').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
       await new Promise((r) => setTimeout(r, 0));
       const post = ctx.calls.find((c) => c.url.includes('/api/answer'));
       assert.ok(post, 'the answer was posted without a click on an option');

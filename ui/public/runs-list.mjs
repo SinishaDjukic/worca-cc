@@ -12,6 +12,7 @@
 //            archived, archivedAt (archived-feed rows only), tags }
 //   sched: { id, scheduleId, title (may be null), status, after, queued, retryAt, runAt, groupKey, groupName, by }
 //   chain: { id, title, members[], total, index, fraction, tone, text, groupKey, groupName, open }
+import { icon } from './icons.mjs';
 import { glanceCopy } from './run-glance.mjs';
 import { renderRowLine } from './run-progress-bar.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
@@ -484,7 +485,7 @@ function renderRow(doc, r, { inNeeds = false, bucket = '', lineFrom = null } = {
   return a;
 }
 
-const MEMBER_GLYPH = Object.freeze({ done: '✓', current: '●', waiting: '○', failed: '✕' });
+const MEMBER_GLYPH = Object.freeze({ done: 'check', current: '●', waiting: '○', failed: 'x' });   // check and x are stroke icons
 function renderChainRow(doc, r, opts) {
   const wrap = doc.createElement('div');
   wrap.className = 'runs-chain';
@@ -521,7 +522,10 @@ function renderChainRow(doc, r, opts) {
         : m.icon === 'paused' ? ' is-paused'
         : m.icon === 'run' ? ' is-live' : '';
       li.className = `runs-chain-member is-${m.state}${dot}`;
-      li.append(textEl(doc, 'span', 'runs-chain-glyph', MEMBER_GLYPH[m.state] || '○'));
+      const glyph = MEMBER_GLYPH[m.state] || '○';
+      const mark = textEl(doc, 'span', 'runs-chain-glyph', glyph.length > 1 ? '' : glyph);
+      if (glyph.length > 1) { mark.setAttribute('aria-label', m.state); mark.append(icon(doc, glyph, 12)); }
+      li.append(mark);
       const link = doc.createElement('a');
       link.className = 'runs-chain-link';
       link.setAttribute('href', m.href || '#runs');

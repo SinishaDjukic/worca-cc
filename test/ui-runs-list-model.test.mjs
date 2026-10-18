@@ -432,7 +432,8 @@ test('a chain of three is ONE row (Run 2 of 3) that expands to ✓ ● ○ membe
   assert.equal(rows[0].word, 'Run 2 of 3 · Plan');
   const host = doc.createElement('div');
   host.append(...renderRunsList(doc, m, {}));
-  assert.deepEqual([...host.querySelectorAll('.runs-chain-glyph')].map((g) => g.textContent), ['✓', '●', '○']);
+  assert.deepEqual([...host.querySelectorAll('.runs-chain-glyph')].map((g) => g.textContent || g.getAttribute('aria-label')), ['done', '●', '○']);
+  assert.ok(host.querySelector('.runs-chain-glyph[aria-label="done"] svg'), 'done is a stroke check icon, not a ✓ character');
   assert.deepEqual(host.querySelector('.runs-row-chain').dataset.memberKeys.split(' ').sort(), ['p:p0', 'p:p1', 'r:r1', 't:t2'],
     'the row carries its member keys so the selection repaint can rebuild them from the DOM');
 });

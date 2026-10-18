@@ -5,6 +5,7 @@
 // here (applyOutlineEdits) and posted with Plan slice 1; the server re-applies them (L4). Gate off: today's held body —
 // read-only slices, Plan slice 1 / Don't slice / Send changes / Stop (L13).
 // src/shared is served as is (ui/server.mjs:1556), the same way plan-body.mjs:5 imports it.
+import { icon } from '../icons.mjs';
 import { applyOutlineEdits, checkSlices, outlineFixAllFeedback } from '../../../src/shared/shape/slices.mjs';
 import { buildCheckRow } from './check-row.mjs';
 import { SEND_FAILED } from './plan-body.mjs';
@@ -24,7 +25,7 @@ export function renderOutlineBody(panel, pq, deps) {
   const asked = plan.outline || { why: '', slices: [] };
   const card = !!deps.extras;
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-  const btn = (cls, text) => { const b = h('button', `btn ${cls}`, text); b.type = 'button'; return b; };
+  const btn = (cls, text) => { const b = h('button', `btn btn-sm ${cls}`, text); b.type = 'button'; return b; };
   const body = h('div', card ? 'plan-body plan-card outline-body' : 'plan-body outline-body');
   const err = h('div', 'plan-err'); err.hidden = true; err.setAttribute('role', 'alert');
   // A re-ask after a failed feature creation carries the person's edits (plan.edits, L5); start from them if they
@@ -136,7 +137,8 @@ export function renderOutlineBody(panel, pq, deps) {
     const foot = h('div', 'qpanel-foot plan-actions');
     foot.appendChild(approve);
     if (typed) foot.appendChild(fold(btn('plan-ask-changes', 'Ask for changes'), typed.row, () => typed.typed.focus()));
-    const more = btn('btn-ghost plan-more', '⋯');
+    const more = btn('btn-quiet btn-icon plan-more');
+    more.append(icon(doc, 'more', 16));
     more.setAttribute('aria-label', 'More for these slices');
     more.setAttribute('aria-haspopup', 'menu');
     more.addEventListener('click', () => toggleMenu({ doc, anchor: more, align: 'end', label: 'More for these slices', items: [
@@ -179,7 +181,7 @@ export function renderOutlineBody(panel, pq, deps) {
   function paintChecks(check) {
     const rows = check.items.map((it) => {
       const row = h('div', `plan-check-row${it.pass ? ' ok' : ''}`);
-      const mark = h('span', 'plan-check-mark', it.pass ? '✓' : '✕'); mark.setAttribute('aria-label', it.pass ? 'met' : 'unmet');
+      const mark = h('span', 'plan-check-mark'); mark.append(icon(doc, it.pass ? 'check' : 'x', 12)); mark.setAttribute('aria-label', it.pass ? 'met' : 'unmet');
       row.append(mark, h('span', 'plan-check-label', it.label));
       if (!it.pass && it.detail) row.appendChild(h('span', 'plan-check-detail', it.detail));
       return row;

@@ -55,7 +55,7 @@ async function openShaping({ gate = true, shaping = SHAPING, status = 200 } = {}
 test('a shaping run\'s Clarify shows Answer and draft, Skip, draft with defaults, and the shaping heading', async () => {
   const { panel, head } = await openShaping();
   assert.ok(panel, 'the run page panel is mounted');
-  assert.match(panel.querySelector('.qpanel-foot .btn-go').textContent, /Answer and draft/);
+  assert.match(panel.querySelector('.qpanel-foot .btn-primary').textContent, /Answer and draft/);
   const skip = panel.querySelector('.qpanel-foot .clarify-defaults');
   assert.ok(skip, 'Skip, draft with defaults is offered');
   assert.equal(skip.textContent, 'Skip, draft with defaults');
@@ -93,7 +93,7 @@ for (const [name, opts] of [['a non-shaping run', { shaping: null }], ['the gate
     const { panel, head } = await openShaping(opts);
     assert.ok(panel, 'the run page panel is mounted');
     assert.equal(panel.querySelector('.clarify-defaults'), null, 'no Skip button');
-    assert.match(panel.querySelector('.qpanel-foot .btn-go').textContent, /Submit/);
+    assert.match(panel.querySelector('.qpanel-foot .btn-primary').textContent, /Submit/);
     assert.equal(panel.querySelectorAll('.qblock').length, 2);
     assert.notEqual(head.textContent, 'A few questions before the plan');
     assert.match(head.textContent, /2 questions/);

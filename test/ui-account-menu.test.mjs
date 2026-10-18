@@ -75,7 +75,7 @@ test('renderSpendCard: Spent/Saved without a limit, Limit/Spent with one, Detail
       assert.deepEqual(rows(card), [['Spent', '$163.49', ''], ['Saved', '$3,591.31', 'pos']]);
       assert.equal(card.querySelector('.mini-ring'), null, 'no limit, no ring');
       const go = card.querySelector('.mc-btn');
-      assert.deepEqual([go.textContent, go.dataset.nav, go.dataset.hash, go.getAttribute('role'), go.classList.contains('solid')], ['Details', 'stats', undefined, 'menuitem', false]);
+      assert.deepEqual([go.textContent, go.dataset.nav, go.dataset.hash, go.getAttribute('role'), go.classList.contains('btn-primary')], ['Details', 'stats', undefined, 'menuitem', false]);
       assert.equal(card.querySelector('.mc-note'), null);
       assert.match(card.title, /^Estimated spend this month: \$163\.4900 · resets .* not authoritative billing\. Saved this month: \$3,591\.31 \(Saved = estimated human hours × your rate − spent\)$/);
     } },
@@ -111,7 +111,7 @@ test('renderSpendCard: Spent/Saved without a limit, Limit/Spent with one, Detail
       assert.deepEqual(rows(card)[1], ['Spent', '$52.13', 'over']);
       assert.equal(card.querySelector('.mini-ring .arc').getAttribute('stroke-dasharray'), ringDash(1, MINI_R));
       const go = card.querySelector('.mc-btn');
-      assert.deepEqual([go.textContent, go.dataset.nav, go.dataset.hash, go.classList.contains('solid')], ['Raise limit', 'settings', 'settings/runs/budget', true]);
+      assert.deepEqual([go.textContent, go.dataset.nav, go.dataset.hash, go.classList.contains('btn-primary')], ['Raise limit', 'settings', 'settings/runs/budget', true]);
       assert.equal(card.querySelector('.mc-note').textContent, 'New runs are blocked until Sun Nov 1, 00:00.');
     } },
     { name: 'figures are painted as text', run: () => {

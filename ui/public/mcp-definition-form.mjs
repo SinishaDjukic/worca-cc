@@ -3,6 +3,7 @@
 // form itself — Name (read-only in Edit), Type, Command + Arguments or URL + one Bearer token tick,
 // Environment / Headers rows (key · value · per set · secret), `{name}` placeholders, the "Each set
 // fills in" list and live checks through POST /api/mcp/servers/validate.
+import { icon } from './icons.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -252,10 +253,13 @@ export function createDefinitionForm(doc, api, form, { edit }) {
         lab.append(cb, doc.createTextNode(` ${label}`));
         row.appendChild(lab);
       }
-      row.appendChild(button(doc, 'btn-ghost btn-mini', '×', { removeRow: String(i) }));
+      const rm = button(doc, 'btn btn-sm btn-quiet btn-icon', null, { removeRow: String(i) });
+      rm.setAttribute('aria-label', 'Remove this row');
+      rm.append(icon(doc, 'x', 14));
+      row.appendChild(rm);
       rows.appendChild(row);
     });
-    rows.appendChild(button(doc, 'btn-ghost btn-mini', form.type === 'stdio' ? '+ Add variable' : '+ Add header', { addRow: '1' }));
+    rows.appendChild(button(doc, 'btn btn-sm', form.type === 'stdio' ? '+ Add variable' : '+ Add header', { addRow: '1' }));
     parts.push(rows, derived, input('Description', 'description', { mono: false }), errorsEl);
     root.replaceChildren(...parts);
     changed();

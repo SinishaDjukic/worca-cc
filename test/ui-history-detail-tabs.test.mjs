@@ -1617,7 +1617,7 @@ test('History glance carries exactly one PR button (eligible / open / merged)', 
       const ctas = [...slot.children];
       assert.equal(ctas.length, 1, 'one button, the pull request');
       const [cta] = ctas;
-      assert.ok(cta.classList.contains('rd-cta') && cta.classList.contains(cls), `${cls}: ${cta.className}`);
+      assert.ok(cta.hasAttribute('data-rd-cta') && cta.classList.contains('btn') && cta.classList.contains(cls), `${cls}: ${cta.className}`);
       assert.equal(cta.classList.contains('alt'), false, 'no grey secondary');
       assert.equal(cta.firstElementChild.dataset.icon, icon);
       assert.equal(cta.textContent, text);
@@ -1664,7 +1664,7 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
       assert.equal(slot.getAttribute('aria-busy'), 'true');
       assert.ok(slot.querySelector('.rd-pr-spin'), 'a spinner');
       assert.match(slot.textContent, /Checking the pull request…/);
-      assert.equal(slot.querySelector('button, a, .rd-cta'), null, 'not clickable');
+      assert.equal(slot.querySelector('button, a, [data-rd-cta]'), null, 'not clickable');
       const url = 'https://github.com/o/r/pull/7';
       const timers = useAppTimers(t);
       try {
@@ -1674,7 +1674,7 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
         assert.ok(slot.classList.contains('is-morph'), slot.className);
         assert.equal(slot.getAttribute('aria-busy'), null);
         assert.ok(slot.querySelector('.rd-pr-fill.pr-merged'), 'the merged colour grows from the spinner');
-        const link = slot.querySelector('a.rd-cta.hd-g-pr-link.pr-merged');
+        const link = slot.querySelector('a[data-rd-cta].hd-g-pr-link.pr-merged');
         assert.ok(link, slot.innerHTML);
         assert.equal(link.getAttribute('href'), url);
         assert.equal(link.target, '_blank');
@@ -1686,7 +1686,7 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
         prBatch(ctx, [{ projectKey: KEY, id: ROW.id, pr: { state: 'MERGED', url } }]);
         await timers.settle();
         assert.equal(slot.classList.contains('is-morph'), false, 'the morph plays once');
-        assert.equal(slot.querySelector('a.rd-cta'), link, 'the same link');
+        assert.equal(slot.querySelector('a[data-rd-cta]'), link, 'the same link');
       } finally {
         t.mock.timers.reset();
       }
@@ -1696,7 +1696,7 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
       prBatch(ctx, [{ projectKey: KEY, id: ROW.id, pr: null }]);
       await settle(ctx.window, 4);
       assert.ok(slot.classList.contains('is-morph'), slot.className);
-      const btn = slot.querySelector('button.rd-cta.hd-g-pr');
+      const btn = slot.querySelector('button[data-rd-cta].hd-g-pr');
       assert.ok(btn, slot.innerHTML);
       assert.equal(btn.textContent, 'Create pull request');
       let forwarded = 0;

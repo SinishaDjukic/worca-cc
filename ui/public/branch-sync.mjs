@@ -3,6 +3,7 @@
 // branch dropdown, the details dialog, the diverged/offline chooser, and the Projects chips.
 // Models are pure (unit-tested without a DOM); the DOM helpers follow schedule-sheet.mjs
 // (Escape in the capture phase, outside click, focus returns to the opener).
+import { icon } from './icons.mjs';
 
 const WORD = { diverged: 'diverged', dirty: 'dirty', behind: 'behind', offline: 'offline', local: 'not on the remote', ok: 'up to date' };
 const TONE = { diverged: 'amber', dirty: 'amber', behind: 'blue', offline: 'grey', local: 'grey', ok: 'green' };
@@ -398,14 +399,14 @@ export function openSyncDialog({ title = 'Sync status', subtitle = '', sync, aut
     let refusal = '';
     let busy = false;
 
-    const xBtn = h('button', { type: 'button', class: 'btn btn-mini sync-x', 'aria-label': 'Close', text: '×' });
+    const xBtn = h('button', { type: 'button', class: 'btn btn-quiet btn-icon sync-x', 'aria-label': 'Close' }, icon(document, 'x', 16));
     const pill = h('span', { class: 'sync-pill grey' }, h('span', { class: 'sdot', 'aria-hidden': 'true' }), h('span', { class: 'sync-pill-txt' }));
     const kv = h('dl', { class: 'sync-kv' });
     const commitsHead = h('h3', { class: 'sync-commits-head', text: 'Incoming commits' });
     const commits = h('ol', { class: 'sync-commits' });
     const note = h('div', { class: 'sync-note', hidden: true });
-    const closeBtn = h('button', { type: 'button', class: 'btn btn-mini', text: 'Close' });
-    const syncBtn = h('button', { type: 'button', class: 'btn btn-primary btn-mini sync-go', text: 'Sync' });
+    const closeBtn = h('button', { type: 'button', class: 'btn btn-sm', text: 'Close' });
+    const syncBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm sync-go', text: 'Sync' });
     const prefsSection = prefs ? buildPrefsSection(prefs) : null;
     const card = h('div', { class: 'card sync-card' },
       h('div', { class: 'card-head' }, h('h2', { id: 'sync-dlg-title', text: title }), xBtn),

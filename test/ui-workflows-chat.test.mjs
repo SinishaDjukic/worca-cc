@@ -901,7 +901,7 @@ test('the dock\'s textarea opts out of the house textarea box (min-height 120px,
 test('a chat card button in flight (aria-disabled, never `disabled`) looks inactive', async () => {
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  assert.match(css, /\.wfc :is\(\.wfv-btn,\.wfc-link\)\[aria-disabled="true"\]\{opacity:\.55;cursor:default;\}/);
+  assert.match(css, /\.wfc :is\(\.btn,\.wfc-link\)\[aria-disabled="true"\]\{opacity:\.55;cursor:default;\}/);
 });
 
 test('the dock is the card controller\'s occluder: an edit landing under the open panel fits into the band above it', async () => {

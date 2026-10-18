@@ -105,12 +105,12 @@ export function notify({ tone = 'info', title = '', detail = '', action = null, 
   body.append(el(doc, 'div', 'tt', String(title)));
   if (detail) body.append(el(doc, 'div', 'td', String(detail)));
   if (action && action.label && typeof action.run === 'function') {
-    const b = el(doc, 'button', 'btn btn-ghost btn-mini toast-act', action.label);
+    const b = el(doc, 'button', 'btn btn-sm toast-act', action.label);
     b.type = 'button';
     b.addEventListener('click', () => { dismiss(t); action.run(); });
     body.append(b);
   }
-  const x = el(doc, 'button', 'toast-x');
+  const x = el(doc, 'button', 'btn btn-sm btn-quiet btn-icon toast-x');
   x.type = 'button';
   x.setAttribute('aria-label', 'Dismiss');
   x.title = 'Dismiss';
@@ -314,7 +314,7 @@ export function cardAlert(card, opts) {
   const body = el(doc, 'div', 'ca-body');
   if (title) body.append(el(doc, 'strong', 'ca-title', String(title)));
   if (detail) body.append(el(doc, 'div', 'ca-detail', String(detail)));
-  const x = el(doc, 'button', 'ca-x');
+  const x = el(doc, 'button', 'btn btn-sm btn-quiet btn-icon ca-x');
   x.type = 'button';
   x.setAttribute('aria-label', 'Dismiss');
   x.title = 'Dismiss';

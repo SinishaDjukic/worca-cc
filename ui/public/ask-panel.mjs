@@ -37,6 +37,7 @@ import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-in
 import { shapeFirstOn } from './chat/shape-gate.mjs';
 import { INTENTS, splitIntentLead } from './chat/intent.mjs';
 import { homeIcon } from './chat/home-icons.mjs';
+import { icon } from './icons.mjs';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import {
@@ -337,6 +338,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- tiny DOM helpers -----------------------------------------------------
+  /** The ✓ beside the current pick in a menu: a stroke icon, not a character (spec §1.3). */
+  function checkMark() {
+    const n = make('span', 'ask-model-check');
+    n.append(icon(doc, 'check', 12));
+    return n;
+  }
   function make(tag, className, text) {
     const n = doc.createElement(tag);
     if (className) n.className = className;
@@ -400,7 +407,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  chat/intent.mjs drops the intent). Below 1100px the overlay closes first, as after a pick, so the new chat has its
    *  room and newThread() can focus its composer. */
   function newChatButton(className) {
-    const b = make('button', `ask-icon-btn chat-new-btn ${className}`);
+    const b = make('button', `btn btn-sm btn-quiet chat-new-btn ${className}`);
     b.type = 'button';
     b.setAttribute('data-ask-new-btn', '');
     b.appendChild(svgIcon(ICONS.plus, 14, 2));
@@ -443,7 +450,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     const convo = make('div', 'chat-convo');
     const head = make('header', 'chat-head');
-    const threadsBtn = iconButton('ask-icon-btn chat-head-btn chat-history-toggle', 'History', historyIcon(), () => toggleHistory());
+    const threadsBtn = iconButton('btn btn-quiet btn-icon chat-head-btn chat-history-toggle', 'History', historyIcon(), () => toggleHistory());
     threadsBtn.setAttribute('data-ask-threads-btn', '');
     threadsBtn.setAttribute('aria-controls', 'chat-history');
     el.historyBtn = threadsBtn;
@@ -526,7 +533,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         chip.appendChild(img);
       }
       chip.appendChild(make('span', 'ask-chip-name', f.name));
-      const x = make('button', 'ask-chip-x', '×');
+      const x = make('button', 'ask-chip-x');
+      x.append(icon(doc, 'x', 12));
       x.type = 'button';
       x.setAttribute('aria-label', `Remove ${f.name}`);
       x.addEventListener('click', () => {
@@ -545,7 +553,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     chip.setAttribute('aria-label', 'Quoted text');
     const m = make('div', 'ask-chip-quote-m');
     m.append(make('div', 'ask-chip-quote-k', q.src ? `From ${q.src}` : 'Quoting'), make('div', `ask-chip-quote-t${q.code ? ' mono' : ''}`, q.text));
-    const x = make('button', 'ask-chip-x', '×');
+    const x = make('button', 'ask-chip-x');
+    x.append(icon(doc, 'x', 12));
     x.type = 'button';
     x.setAttribute('aria-label', 'Remove quote');
     x.addEventListener('click', () => { setQuote(null); focusComposer(); });
@@ -727,7 +736,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.voiceStatus.setAttribute('role', 'status');
     wrap.appendChild(el.voiceStatus);
 
-    el.mic = make('button', 'ask-voice-mic');
+    el.mic = make('button', 'btn btn-icon ask-voice-mic');
     el.mic.type = 'button';
     el.mic.setAttribute('data-ask-mic', '');
     el.mic.setAttribute('aria-pressed', 'false');
@@ -754,7 +763,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     paintMicMode(lastVoiceMode());
     wrap.appendChild(el.mic);
 
-    const caret = make('button', 'ask-voice-caret');
+    const caret = make('button', 'btn btn-quiet btn-icon ask-voice-caret');
     caret.type = 'button';
     caret.setAttribute('data-ask-voice-caret', '');
     caret.setAttribute('aria-label', 'Voice options');
@@ -776,7 +785,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         it.dataset.mode = mode;
         if (VOICE_MODE_ICONS[mode]) it.appendChild(svgIcon(VOICE_MODE_ICONS[mode], 16, 1.9));
         it.appendChild(make('span', 'ask-model-name', label));
-        if (mode === current) it.appendChild(make('span', 'ask-model-check', '✓'));
+        if (mode === current) it.appendChild(checkMark());
         return it;
       };
       p.appendChild(item('Dictate once', 'dictate', () => startVoice('dictate')));
@@ -1172,8 +1181,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pen.addEventListener('mousedown', (e) => { if (li.classList.contains('is-editing')) e.preventDefault(); });   // keep the field's focus: no blur-save first
     pen.addEventListener('click', () => { if (st.queueEdit && st.queueEdit.item === item) endQueueEdit(true); else startQueueEdit(item); });
     li.appendChild(pen);
-    const x = make('button', 'ask-queue-x', '×');
+    const x = make('button', 'btn btn-sm btn-quiet btn-icon ask-queue-x');
     x.type = 'button';
+    x.setAttribute('aria-label', 'Remove from the queue');
+    x.append(icon(doc, 'x', 14));
     x.addEventListener('click', () => removeQueuedByUser(item));
     li.appendChild(x);
     return li;
@@ -1456,7 +1467,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.fileInput.hidden = true;
     el.fileInput.addEventListener('change', () => { addFiles(el.fileInput.files); el.fileInput.value = ''; });
     row.appendChild(el.fileInput);
-    const attach = iconButton('ask-icon-btn', 'Attach files', ICONS.plus, () => el.fileInput.click());
+    const attach = iconButton('btn btn-quiet btn-icon', 'Attach files', ICONS.plus, () => el.fileInput.click());
     attach.setAttribute('data-ask-attach-btn', '');
     row.appendChild(attach);
 
@@ -1465,7 +1476,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // (attach → scope → spacer → meter …): the pill keeps its width (style.css
     // .ask-scope-btn flex:none), the spacer absorbs the slack. Its popover
     // (.ask-pop-scope) opens above the composer box, flush with its left edge.
-    const scopeBtn = make('button', 'ask-scope-btn');
+    const scopeBtn = make('button', 'btn btn-sm btn-quiet ask-scope-btn');
     scopeBtn.type = 'button';
     scopeBtn.setAttribute('data-ask-scope-btn', '');
     scopeBtn.title = 'Project scope for this chat';
@@ -1501,7 +1512,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.meterCost = make('span', 'ask-meter-cost', '');
     el.meterCost.dataset.minLevel = 'advanced';
     meter.appendChild(el.meterCost);
-    const ctxBtn = make('button', 'ask-ctx-ring');
+    const ctxBtn = make('button', 'btn btn-sm btn-quiet btn-icon ask-ctx-ring');
     ctxBtn.type = 'button';
     ctxBtn.setAttribute('data-ask-ctx-btn', '');
     ctxBtn.setAttribute('aria-haspopup', 'menu');
@@ -1513,7 +1524,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     meter.appendChild(ctxBtn);
     row.appendChild(meter);
 
-    const modelBtn = make('button', 'ask-model-btn');
+    const modelBtn = make('button', 'btn btn-sm btn-quiet ask-model-btn');
     modelBtn.type = 'button';
     modelBtn.setAttribute('data-ask-model-btn', '');
     modelBtn.dataset.minLevel = 'advanced';
@@ -1525,7 +1536,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     modelBtn.addEventListener('click', () => openModelPopover(modelBtn));
     row.appendChild(modelBtn);
 
-    el.send = make('button', 'ask-send');
+    el.send = make('button', 'btn btn-primary btn-icon ask-send');
     el.send.type = 'button';
     el.send.setAttribute('data-ask-send', '');
     el.send.setAttribute('aria-label', 'Send');
@@ -1534,7 +1545,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (createVoice) row.appendChild(buildVoiceControls());
     row.appendChild(el.send);
 
-    el.stop = make('button', 'ask-stop');
+    el.stop = make('button', 'btn btn-icon ask-stop');
     el.stop.type = 'button';
     el.stop.setAttribute('data-ask-stop', '');
     el.stop.setAttribute('aria-label', 'Stop');
@@ -2337,7 +2348,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // Credential broker: whether the signed-in person has the key this model spends from.
       const cb = credentialBadge(m.id);
       if (cb) item.appendChild(tag(cb.text, cb.missing ? 'is-err' : 'is-key', cb.title));
-      if (m.id === st.picker.model) item.appendChild(make('span', 'ask-model-check', '✓'));
+      if (m.id === st.picker.model) item.appendChild(checkMark());
       return item;
     };
     // Inside an engine's section the models group by connection, like every model picker (modelGroups); a sub-heading
@@ -2366,7 +2377,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         for (const eff of entry && Array.isArray(entry.efforts) ? entry.efforts : ['medium', 'high', 'xhigh', 'max']) {
           const item = menuItem('ask-effort-item', () => setPickerEffort(eff));
           item.appendChild(make('span', 'ask-model-name', eff));
-          if (eff === st.picker.effort) item.appendChild(make('span', 'ask-model-check', '✓'));
+          if (eff === st.picker.effort) item.appendChild(checkMark());
           panel.appendChild(item);
         }
       } else if (pane === 'more') {
@@ -2704,7 +2715,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const item = (label, on, onPick) => {
         const it = menuItem('ask-scope-item', onPick);
         it.appendChild(make('span', 'ask-model-name', label));
-        if (on) it.appendChild(make('span', 'ask-model-check', '✓'));
+        if (on) it.appendChild(checkMark());
         return it;
       };
       panel.appendChild(item('Auto (follow current page)', !st.scope.pinned, () => setScope({ pinned: false })));
@@ -3549,11 +3560,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // A workspace run fans this agent out over its projects whatever the switch says (workflows.mjs workspaceFanOut):
       // it shows on and locked, as on Auto's proposal panel.
       const forced = fanForced(lane, row);
-      const fan = rpSwitch('fanOut', 'fan-out', forced || c.fanOut, forced, (v) => { laneSet(lane, row, { fanOut: v }); renderLane(laneSec, lane, lc); }, lane.editable);
+      const fan = rpSwitch('fanOut', 'Fan-out', forced || c.fanOut, forced, (v) => { laneSet(lane, row, { fanOut: v }); renderLane(laneSec, lane, lc); }, lane.editable);
       if (forced) fan.title = 'A workspace run fans this agent out over its projects';
       l2.appendChild(fan);
       const subWrap = make('label', 'ask-rp-ctl');
-      subWrap.appendChild(make('span', null, 'sub-agents'));
+      subWrap.appendChild(make('span', null, 'Sub-agents'));
       const subSel = rpSelect('ask-rp-subagent', `Sub-agent model for ${row.label}`);
       subSel.appendChild(opt('', 'subs: default (agent picks)'));
       for (const v of lane.subagentModels) subSel.appendChild(opt(v, v === 'auto' ? 'subs: agent picks' : `subs: ${v}`));
@@ -3564,7 +3575,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       subWrap.appendChild(subSel);
       if (lane.engine === 'claude') l2.appendChild(subWrap);   // §6: sub-agents are Claude only; a Codex or Cursor run has none
       if (row.askQuestions !== null) {
-        l2.appendChild(rpSwitch('questions', 'questions', c.askQuestions, row.questionsLocked, (v) => { laneSet(lane, row, { askQuestions: v }); renderLane(laneSec, lane, lc); }, lane.editable));
+        l2.appendChild(rpSwitch('questions', 'Questions', c.askQuestions, row.questionsLocked, (v) => { laneSet(lane, row, { askQuestions: v }); renderLane(laneSec, lane, lc); }, lane.editable));
       }
       // Back to the project's own setting for this agent (the proposal's pick or the user's edit dropped).
       // A workspace pick equal to the built-in row is no edit but still rides (laneOverlay names it): it can be dropped too.
@@ -3592,7 +3603,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       ? 'Changes apply to this run only — agent defaults are per project.'
       : saving ? `Edits become this project's defaults for ${lane.wf.name || lc.workflowId()}`
         : pending ? 'Changes apply to this run only' : "Runs on this project's agent settings"));
-    const save = rpSwitch('saveDefaults', 'save as project defaults', saving, false, (v) => { lc.setSaveDefaults(v); renderLane(laneSec, lane, lc); }, !!projectDir);
+    const save = rpSwitch('saveDefaults', 'Save as project defaults', saving, false, (v) => { lc.setSaveDefaults(v); renderLane(laneSec, lane, lc); }, !!projectDir);
     if (!projectDir) save.title = 'Agent defaults are per project — pick a project target to save them';
     foot.appendChild(save);
     box.appendChild(foot);
@@ -3663,10 +3674,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       btn.disabled = false;   // the flip frame re-renders the card on success
     };
     const target = series ? block.scheduleId : block.runId;
-    const runNow = make('button', 'ask-card-not-now', 'Run now');
+    const runNow = make('button', 'btn btn-sm btn-quiet ask-card-not-now', 'Run now');
     runNow.type = 'button';
     runNow.addEventListener('click', () => call('POST', `/api/schedules/${target}/run-now`, runNow));
-    const cancel = make('button', 'ask-card-not-now', series ? 'Delete schedule' : 'Cancel schedule');
+    const cancel = make('button', 'btn btn-sm btn-quiet ask-card-not-now', series ? 'Delete schedule' : 'Cancel schedule');
     cancel.type = 'button';
     cancel.addEventListener('click', async () => {
       if (series && typeof confirm === 'function' && !(await confirm(`Delete the schedule "${title}"? Runs it already started are kept.`))) return;
@@ -3795,15 +3806,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return b;
     };
     if (proposed) {
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-wf-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-wf-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
-      const save = btn('ask-card-start', card.thenRun ? 'Save & propose run' : 'Save as workflow', 'data-ask-wf-save', WF_ICO.save);
+      const save = btn('btn btn-sm btn-primary', card.thenRun ? 'Save & propose run' : 'Save as workflow', 'data-ask-wf-save', WF_ICO.save);
       // A 200 means the row exists now: drop the cached option lists so every later consumer sees it.
       save.addEventListener('click', () => postCard(block, rootEl, { state: 'saved', name: handle.getName(), nodes: diffNodes(card.nodes, wf.nodes) }, save)
         .then((out) => { if (out) st.cardOptions = null; }));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, save);
     } else {
-      const open = btn('ask-card-open-np', 'Open in Workflows', 'data-ask-wf-open');
+      const open = btn('link-btn ask-card-open-np', 'Open in Workflows', 'data-ask-wf-open');
       open.disabled = !(typeof openComposer === 'function' && block.workflowId);   // v7: an inert button beats a dead click
       open.addEventListener('click', () => { if (typeof openComposer === 'function' && block.workflowId) openComposer(block.workflowId); });
       // No "Run with this": the save already fired the event turn, which proposes the run
@@ -3901,9 +3912,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-mc-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-mc-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
-      const apply = btn('ask-card-start', isPolicy ? pcApplyLabel(card) : (MC_APPLY_LABEL[card.kind] || 'Apply'), 'data-ask-mc-apply', WF_ICO.save);
+      const apply = btn('btn btn-sm btn-primary', isPolicy ? pcApplyLabel(card) : (MC_APPLY_LABEL[card.kind] || 'Apply'), 'data-ask-mc-apply', WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -3966,9 +3977,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const keep = btn('ask-card-not-now', 'Keep as is', 'data-ask-ac-decline');
+      const keep = btn('btn btn-sm btn-quiet ask-card-not-now', 'Keep as is', 'data-ask-ac-decline');
       keep.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, keep));
-      const apply = btn('ask-card-start', 'Apply', 'data-ask-ac-apply', WF_ICO.save);
+      const apply = btn('btn btn-sm btn-primary', 'Apply', 'data-ask-ac-apply', WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), keep, apply);
       rootEl.appendChild(actions);
@@ -4029,10 +4040,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-sc-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-sc-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
       const destructive = card.action === 'cancel' || card.action === 'delete';
-      const apply = btn(destructive ? 'ask-card-start is-danger' : 'ask-card-start', SC_APPLY_LABEL[card.action] || 'Apply', 'data-ask-sc-apply',
+      const apply = btn(destructive ? 'btn btn-sm btn-danger' : 'btn btn-sm btn-primary', SC_APPLY_LABEL[card.action] || 'Apply', 'data-ask-sc-apply',
         card.action === 'run_now' ? null : WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
@@ -4101,10 +4112,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-mod-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-mod-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
       const destructive = card.kind === 'remove_model';
-      const apply = btn(destructive ? 'ask-card-start is-danger' : 'ask-card-start', MOD_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-mod-apply', destructive ? null : WF_ICO.save);
+      const apply = btn(destructive ? 'btn btn-sm btn-danger' : 'btn btn-sm btn-primary', MOD_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-mod-apply', destructive ? null : WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -4148,12 +4159,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (block.state === 'proposed') {
       const actions = make('div', 'ask-mcard-actions');
       const btn = (cls, text, attr) => { const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, ''); return b; };
-      const decline = btn('ask-card-not-now', 'Deny', 'data-ask-web-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Deny', 'data-ask-web-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
-      const always = btn('ask-card-not-now', 'Always allow', 'data-ask-web-always');
+      const always = btn('btn btn-sm btn-quiet ask-card-not-now', 'Always allow', 'data-ask-web-always');
       always.title = `Adds ${host} to Settings → Ask Worca → Web access`;
       always.addEventListener('click', () => postCard(block, rootEl, { state: 'applied', scope: 'always' }, always));
-      const chat = btn('ask-card-start', 'Allow for this chat', 'data-ask-web-chat');
+      const chat = btn('btn btn-sm btn-primary', 'Allow for this chat', 'data-ask-web-chat');
       chat.addEventListener('click', () => postCard(block, rootEl, { state: 'applied', scope: 'chat' }, chat));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, always, chat);
       rootEl.appendChild(actions);
@@ -4208,9 +4219,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-clone-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-clone-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
-      const apply = btn('ask-card-start', 'Clone', 'data-ask-clone-apply', WF_ICO.save);
+      const apply = btn('btn btn-sm btn-primary', 'Clone', 'data-ask-clone-apply', WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -4283,10 +4294,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-ws-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-ws-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
       const destructive = card.kind === 'remove_member';
-      const apply = btn(destructive ? 'ask-card-start is-danger' : 'ask-card-start', WS_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-ws-apply', destructive ? null : WF_ICO.save);
+      const apply = btn(destructive ? 'btn btn-sm btn-danger' : 'btn btn-sm btn-primary', WS_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-ws-apply', destructive ? null : WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -4364,9 +4375,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-act-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-act-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
-      const apply = btn('ask-card-start', 'Save', 'data-ask-act-apply', WF_ICO.save);
+      const apply = btn('btn btn-sm btn-primary', 'Save', 'data-ask-act-apply', WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -4401,7 +4412,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
             t.title = cb.title;
             item.appendChild(t);
           }
-          if (m.id === cur().model) item.appendChild(make('span', 'ask-model-check', '✓'));
+          if (m.id === cur().model) item.appendChild(checkMark());
           p.appendChild(item);
         }
         p.appendChild(make('div', 'ask-pop-divider'));
@@ -4633,9 +4644,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       pillRow.replaceChildren();
       for (const p of local.pills) {
         const pill = make('span', 'ask-rp-pill', `@${p.name} `);
-        const x = make('button', null, '×');
+        const x = make('button', 'ask-rp-pill-x');
         x.type = 'button';
         x.setAttribute('aria-label', `Remove ${p.name}`);
+        x.append(icon(doc, 'x', 12));
         x.addEventListener('click', () => { local.pills = local.pills.filter((q) => q.id !== p.id); renderPills(); });   // the text stays (D9)
         pill.appendChild(x);
         pillRow.appendChild(pill);
@@ -4689,18 +4701,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     // footer
     const foot = make('footer', 'ask-rp-foot');
-    const openNp = make('button', 'ask-card-open-np', '↗ Open in New run');
+    const openNp = make('button', 'link-btn ask-card-open-np', '↗ Open in New run');
     openNp.type = 'button';
     openNp.setAttribute('data-ask-card-open-np', '');
     openNp.dataset.minLevel = 'advanced';
     // New pipeline's task-source pane cannot be pre-filled from here yet; a tracker task runs from the card.
     if (card.source) openNp.hidden = true;
     openNp.addEventListener('click', () => prefillFromCard(block, rootEl, local));
-    const dismissBtn = make('button', 'ask-card-not-now', 'Not now');
+    const dismissBtn = make('button', 'btn btn-sm btn-quiet ask-card-not-now', 'Not now');
     dismissBtn.type = 'button';
     dismissBtn.setAttribute('data-ask-card-dismiss', '');
     dismissBtn.addEventListener('click', () => dismissCard(block, rootEl));
-    const startBtn = make('button', 'ask-card-start');
+    const startBtn = make('button', 'btn btn-sm btn-primary');
     startBtn.type = 'button';
     startBtn.setAttribute('data-ask-card-start', '');
     const play = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');   // filled, unlike svgIcon's stroked glyphs
@@ -4720,7 +4732,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         ? `workspaceId=${encodeURIComponent((rootEl.querySelector('.ask-card-workspace-select') || {}).value || card.workspaceId || '')}`
         : `projectDir=${encodeURIComponent(local.projectDir())}`}`).then((r) => r.json()),
     });
-    const laterBtn = make('button', 'ask-card-not-now ask-card-later', 'Schedule…');
+    const laterBtn = make('button', 'btn btn-sm btn-quiet ask-card-not-now ask-card-later', 'Schedule…');
     laterBtn.type = 'button';
     if (card.schedule) {
       // Ask Worca proposed WHEN (propose_run when / every): scheduling is the answer, so it is the primary
@@ -4766,7 +4778,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (card.shape) {
         setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
       } else {
-        shapeBtn = make('button', 'ask-card-start ask-card-shape', 'Shaper');
+        shapeBtn = make('button', 'btn btn-sm', 'Shaper');
         shapeBtn.type = 'button';
         shapeBtn.dataset.askCardShape = '';
         shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));

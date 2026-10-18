@@ -2,6 +2,7 @@
 // Review plan / Resume / Re-plan the rest / Cancel the rest, and on the feature page a ⋯ menu
 // (Open slice run / Re-plan the rest / Cancel the rest / Approve each). One view for slice 1's Chat run card and the
 // Plans tab (L11).
+import { icon } from '../icons.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
 
 export const SLICE_STATE_LABELS = Object.freeze({
@@ -202,7 +203,8 @@ export function renderFeature(doc, f, deps) {
     }
     if (deps.page) {
       // D31: the page's rare actions sit in ⋯; the inline card carries the decision.
-      const more = btn('shape-feature-more', '⋯');
+      const more = btn('btn-quiet btn-icon shape-feature-more');
+      more.append(icon(doc, 'more', 16));
       more.title = 'More actions';
       more.setAttribute('aria-label', 'More actions');
       more.setAttribute('aria-haspopup', 'menu');

@@ -2,13 +2,15 @@
 // tools/verify-feature-page-cdp.mjs — headless-Chrome proof of Shaper's feature views (D16, D17): a 3-slice
 // feature is ONE open row in the Runs list (members "1 · …", no row of its own for slice 2's run, the row links to
 // #feature/ID), and #feature/ID renders the full-width page (one segmented bar and no stage bar, "merge first", the rare
-// actions in ⋯ with Approve each unchecked, the halted line in amber). NOT part of `npm test`: it needs Chrome. Screenshots of both land in a temp dir; their paths are printed.
+// actions in ⋯ with Approve each unchecked, the halted line in amber), and both views pass the one-button-style audit
+// (tools/button-audit.mjs) in light and dark. NOT part of `npm test`: it needs Chrome. Screenshots of both land in a temp dir; their paths are printed.
 // Run: node tools/verify-feature-page-cdp.mjs   (or: npm run verify:feature-page)
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { auditButtons, BUTTON_SPEC } from './button-audit.mjs';
 
 const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium'];
@@ -115,6 +117,17 @@ async function waitFor(expr, what, ms = 15000) {
   while (Date.now() < end) { if (await ev(expr)) return true; await sleep(150); }
   throw new Error(`timed out waiting for ${what}`);
 }
+// The one-button-style audit (runs-redesign spec §5.2) in light, then dark; the page's own theme is put back after.
+const BUTTON_AUDIT = `(${auditButtons})(document.body, ${JSON.stringify(BUTTON_SPEC)}, null)`;
+async function auditButtonsBoth(where) {
+  const before = await ev('document.documentElement.dataset.theme || ""');
+  for (const theme of ['light', 'dark']) {
+    await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
+    const bad = await ev(BUTTON_AUDIT);
+    check(bad.length === 0, `${where}, ${theme}: every button is .btn in 3 sizes x 4 variants${bad.length ? ` — ${JSON.stringify(bad.slice(0, 12))}` : ''}`);
+  }
+  await ev(`document.documentElement.dataset.theme=${JSON.stringify(before)};0`);
+}
 async function shot(name) {
   const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
   const file = path.join(tmpdir(), `worca-feature-page-${name}-${Date.now()}.png`);
@@ -145,6 +158,7 @@ check(runs.href === `#feature/${f.id}`, `the row links to the feature page (${ru
 check(runs.open, 'the row is open by default');
 check(JSON.stringify(runs.members) === JSON.stringify(['1 · Store tags', '2 · Run tags', '3 · Cost report']), `members ${JSON.stringify(runs.members)}`);
 check(runs.ownRow === 0, 'no separate row for slice 2\'s run');
+await auditButtonsBoth('the Runs list');
 const runsShot = await shot('runs');
 
 // ---- the feature page
@@ -178,6 +192,7 @@ check(page.width > 0.8 * page.mainWidth, `full width (${Math.round(page.width)} 
 const pageShot = await shot('page');
 // A second ⋯ click closes the menu (toggleMenu); a document-level Escape would not reach the menu's own keydown.
 await ev("document.querySelector('[data-view=\"feature\"] .shape-feature-more').click(), !document.querySelector('.wfv-menu')");
+await auditButtonsBoth('the feature page');
 check(errors.length === 0, `no page errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
 console.log(`screenshots:\n  ${runsShot}\n  ${pageShot}`);
 console.log(failed ? `${failed} check(s) FAILED` : 'all checks passed');

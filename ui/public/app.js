@@ -74,6 +74,7 @@ const state = {
   activePluginProfile: null,
 };
 
+import { icon } from './icons.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 import { alreadyApplied, noteBoot } from './ws-seq.mjs';
@@ -698,7 +699,7 @@ const el = {
   projectsList: $('#projects-list'),
   // Sync all rides the list card's head (design 2026-10-01): one node every render re-homes, so a
   // Sync all in flight keeps its busy state through a projects-changed repaint.
-  projectsSyncAll: Object.assign(document.createElement('button'), { type: 'button', id: 'projects-sync-all', className: 'btn btn-primary btn-mini', hidden: true, textContent: 'Sync all' }),
+  projectsSyncAll: Object.assign(document.createElement('button'), { type: 'button', id: 'projects-sync-all', className: 'btn btn-primary btn-sm', hidden: true, textContent: 'Sync all' }),
   projectsMsg: $('#projects-msg'),
   projectAddBtn: $('#project-add-btn'),
   projShell: $('#proj-shell'),
@@ -5838,7 +5839,8 @@ function renderClarifyBody(r, panel, pq) {
   recount();
   const submit = document.createElement('button');
   submit.type = 'button';
-  submit.className = 'btn-go';
+  submit.className = 'btn btn-primary';
+  submit.dataset.qpanelSubmit = '';
   submit.appendChild(playIcon());
   submit.appendChild(document.createTextNode('Submit'));
   foot.appendChild(submit);
@@ -6030,7 +6032,8 @@ function renderWorkflowBody(r, panel, pq) {
   const cancel = mk('qcancel wf-cancel', 'Cancel run');
   const revise = tagLevel(mk('qopen wf-revise', 'Revise'), 'advanced');
   const send = mk('qopen wf-send', 'Send'); send.hidden = true;
-  const accept = mk('btn-go wf-accept', 'Accept & run');
+  const accept = mk('btn btn-primary wf-accept', 'Accept & run');
+  accept.dataset.qpanelSubmit = '';
   accept.dataset.busyLabel = 'Starting…';                 // A31: setPanelBusy's primary swap reads it
   accept.prepend(playIcon());
   const stop = (fn) => (e) => { e.stopPropagation(); fn(); };   // the #run-detail delegates sit above this node
@@ -6079,7 +6082,7 @@ function openWorkflowPopup(w, wf, handle, opener) {
   const card = document.createElement('div'); card.className = 'card wf-pop-card';
   const head = document.createElement('div'); head.className = 'wf-pop-head';
   const title = document.createElement('h2'); title.textContent = `Workflow: ${handle.getName() || 'untitled'}`;
-  const close = document.createElement('button'); close.type = 'button'; close.className = 'btn btn-ghost btn-mini'; close.textContent = 'Close';
+  const close = document.createElement('button'); close.type = 'button'; close.className = 'btn btn-sm'; close.textContent = 'Close';
   head.append(title, close);
   const canvas = document.createElement('div'); canvas.className = 'wf-pop-canvas gv-host';
   const foot = document.createElement('div'); foot.className = 'wf-pop-hint'; foot.textContent = 'drag to pan \u00b7 \u2318/ctrl+scroll to zoom';
@@ -6092,7 +6095,7 @@ function openWorkflowPopup(w, wf, handle, opener) {
   });
   view.render(manifestTemplate(m), {});
   const nav = document.createElement('div'); nav.className = 'gv-nav';
-  const btn = (label, glyph, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'gv-nav-btn'; b.setAttribute('aria-label', label); b.title = label; b.textContent = glyph; b.addEventListener('click', fn); nav.appendChild(b); };
+  const btn = (label, glyph, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-icon gv-nav-btn'; b.setAttribute('aria-label', label); b.title = label; b.textContent = glyph; b.addEventListener('click', fn); nav.appendChild(b); };
   const zoom = (mult) => view.zoomAbout(view.getTransform().z * mult, canvas.clientWidth / 2, canvas.clientHeight / 2);
   // Centre the graph and let it grow to fill the popup (the shared fit never magnifies past 1x; here the point is a large view).
   const fit = () => {
@@ -6133,7 +6136,7 @@ function buildTunablesTable(w, wf, handle) {
   const table = document.createElement('table');
   table.className = 'qtune';
   table.innerHTML = '<colgroup><col><col style="width:160px"><col style="width:160px"><col style="width:90px"><col style="width:100px"></colgroup>'
-    + '<thead><tr><th>agent</th><th>model</th><th>effort</th><th>fan-out</th><th>questions</th></tr></thead>';
+    + '<thead><tr><th>Agent</th><th>Model</th><th>Effort</th><th>Fan-out</th><th>Questions</th></tr></thead>';
   const tb = document.createElement('tbody');
   const cur = (id) => ({ ...(w.nodes[id] || {}), ...(wf.nodes[id] || {}) });
   const set = (id, patch) => { wf.nodes[id] = { ...(wf.nodes[id] || {}), ...patch }; handle.setNodeTunables(id, patch); };
@@ -6245,7 +6248,8 @@ function askFormHost(r, panel, ask) {
   foot.appendChild(answered);
   const submit = document.createElement('button');
   submit.type = 'button';
-  submit.className = 'btn-go';
+  submit.className = 'btn btn-primary';
+  submit.dataset.qpanelSubmit = '';
   submit.appendChild(playIcon());
   submit.appendChild(document.createTextNode('Submit'));
   foot.appendChild(submit);
@@ -6484,7 +6488,7 @@ function setPanelBusy(r, busy) {
     // A draggable <li> is none of button/input/select/textarea, so the sweep above
     // cannot reach the rank rows. Marker-scoped so nothing else in the panel moves.
     panel.querySelectorAll('[data-af-drag]').forEach((node) => { node.draggable = !busy; });
-    const primary = panel.querySelector('.btn-go, .gate-another');
+    const primary = panel.querySelector('[data-qpanel-submit], .gate-another');
     if (primary && busy && !primary.dataset.label) {
       primary.dataset.label = primary.textContent;
       primary.textContent = primary.dataset.busyLabel || 'Resuming…';
@@ -6804,7 +6808,7 @@ async function mountPluginSourcePane(src) {
       { className: 'hint err', textContent: `Could not resolve the source profile: ${err.message}` }));
     const retry = document.createElement('button');
     retry.type = 'button';
-    retry.className = 'btn btn-ghost btn-mini';
+    retry.className = 'btn btn-sm';
     retry.textContent = 'Retry';
     retry.addEventListener('click', () => mountPluginSourcePane(src));
     box.appendChild(retry);
@@ -6866,7 +6870,7 @@ async function mountPluginSourcePane(src) {
     link.addEventListener('click', (e) => { e.preventDefault(); location.hash = 'marketplace'; });
     const retry = document.createElement('button');
     retry.type = 'button';
-    retry.className = 'btn btn-ghost btn-mini';
+    retry.className = 'btn btn-sm';
     retry.textContent = 'Test connection';
     retry.addEventListener('click', () => mountPluginSourcePane(src));
     box.append(msg, link, retry);
@@ -7007,7 +7011,7 @@ function renderExtrasPills() {
     x.type = 'button';
     x.className = 'extra-pill-x';
     x.setAttribute('aria-label', `Remove ${f.name}`);
-    x.textContent = '×';
+    x.append(icon(document, 'x', 12));
     x.addEventListener('click', () => {
       extrasFiles = extrasFiles.filter((e) => e !== f);
       renderExtrasPills();
@@ -7861,7 +7865,7 @@ function paintOutcomeCell(host, m, { onRetry = null, busy = false } = {}) {
   host.replaceChildren(icon, words);
   if (m.retry && onRetry) {
     const btn = document.createElement('button');
-    btn.type = 'button'; btn.className = 'btn btn-mini bt-retry'; btn.textContent = busy ? 'Retrying…' : 'Retry';
+    btn.type = 'button'; btn.className = 'btn btn-sm bt-retry'; btn.textContent = busy ? 'Retrying…' : 'Retry';
     btn.disabled = busy;
     btn.addEventListener('click', onRetry);
     host.appendChild(btn);
@@ -8311,7 +8315,6 @@ function syncFolderPicks() {
   el.folderPickCount.textContent = n === 1 ? '1 folder selected' : `${n} folders selected`;
   // One primary action: in multi mode "Add N selected" is it, "Select this folder" steps back.
   el.folderSelect.classList.toggle('btn-primary', !multi);
-  el.folderSelect.classList.toggle('btn-ghost', multi);
 }
 
 function closeFolderBrowser() {
@@ -8350,7 +8353,7 @@ function renderFolderScope(data) {
   for (const r of roots) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'btn btn-ghost btn-mini folder-root';
+    b.className = 'btn btn-sm folder-root';
     b.textContent = r.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || r;
     b.title = r;
     b.addEventListener('click', () => loadFolders(r));
@@ -8808,10 +8811,10 @@ function buildWorkspaceRow(w, known) {
   const actions = document.createElement('div');
   actions.className = 'ws-actions';
   const syncAll = document.createElement('button');
-  syncAll.type = 'button'; syncAll.className = 'btn btn-primary btn-mini ws-sync-all'; syncAll.hidden = true;
+  syncAll.type = 'button'; syncAll.className = 'btn btn-primary btn-sm ws-sync-all'; syncAll.hidden = true;
   const n = Array.isArray(w.projectPaths) ? w.projectPaths.length : 0;
   const toggle = document.createElement('button');
-  toggle.type = 'button'; toggle.className = 'btn btn-mini ws-toggle';
+  toggle.type = 'button'; toggle.className = 'btn btn-sm ws-toggle';
   toggle.setAttribute('aria-expanded', 'false');
   toggle.textContent = `Show ${n} project${n === 1 ? '' : 's'}`;
   const open = document.createElement('button');
@@ -8913,9 +8916,9 @@ async function openWsHomeSheet(workspaceId) {
     openTmEnableDialog(proj.key, { mode: 'here', onDone: () => openWsHomeSheet(workspaceId) });
   });
   pluginModal('Metrics home', body, [
-    ['Clear home', 'btn btn-ghost btn-mini', async () => { await patchWsHome(workspaceId, null); }],
-    ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
-    ['Save', 'btn btn-primary btn-mini', async () => { await patchWsHome(workspaceId, chosen); }],
+    ['Clear home', 'btn btn-sm', async () => { await patchWsHome(workspaceId, null); }],
+    ['Cancel', 'btn btn-sm', () => closePluginModal()],
+    ['Save', 'btn btn-primary btn-sm', async () => { await patchWsHome(workspaceId, chosen); }],
   ]);
 }
 async function patchWsHome(id, metricsProject) {
@@ -9167,7 +9170,7 @@ function buildWdOverview(sec, id) {
   mh.className = 'card-head';
   const mb = document.createElement('b'); mb.textContent = 'Projects';
   const mc = document.createElement('span'); mc.className = 'badge'; mc.textContent = String(paths.length);
-  const madd = document.createElement('button'); madd.type = 'button'; madd.className = 'btn-ghost btn-mini wd-members-add'; madd.textContent = 'Add projects';
+  const madd = document.createElement('button'); madd.type = 'button'; madd.className = 'btn btn-sm wd-members-add'; madd.textContent = 'Add projects';
   mh.append(mb, mc, madd);
   const mlist = document.createElement('div');
   mlist.className = 'wd-member-list';
@@ -9181,7 +9184,7 @@ function buildWdOverview(sec, id) {
     const name = document.createElement('div');
     name.className = 'wd-member-name';
     name.textContent = (proj && proj.name) || basenameOf(path);
-    if (!exists) { const miss = document.createElement('span'); miss.className = 'proj-missing'; miss.textContent = 'missing'; name.append(' ', miss); }
+    if (!exists) { const miss = document.createElement('span'); miss.className = 'proj-missing'; miss.textContent = 'Missing'; name.append(' ', miss); }
     const p = document.createElement('div');
     p.className = 'proj-path';
     p.textContent = path;
@@ -9192,7 +9195,7 @@ function buildWdOverview(sec, id) {
     const item = document.createElement('div');
     item.className = 'wd-member-item';
     const rm = document.createElement('button');
-    rm.type = 'button'; rm.className = 'btn-ghost btn-mini wd-member-remove'; rm.textContent = 'Remove';
+    rm.type = 'button'; rm.className = 'btn btn-sm wd-member-remove'; rm.textContent = 'Remove';
     rm.dataset.path = path;
     rm.disabled = paths.length <= 2;
     rm.title = rm.disabled ? 'A workspace keeps at least two projects' : `Remove ${name.firstChild ? name.firstChild.textContent : basenameOf(path)} from this workspace`;
@@ -9210,7 +9213,7 @@ function buildWdOverview(sec, id) {
   const dh = document.createElement('div');
   dh.className = 'card-head';
   const db = document.createElement('b'); db.textContent = 'Description';
-  const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'btn-ghost btn-mini ws-edit'; edit.textContent = 'Edit description';
+  const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'btn btn-sm ws-edit'; edit.textContent = 'Edit description';
   dh.append(db, edit);
   const view = document.createElement('div');
   view.className = 'ws-desc-view viewer';
@@ -9225,8 +9228,8 @@ function buildWdOverview(sec, id) {
     + '<textarea class="ws-desc-input textarea" rows="10" spellcheck="false"></textarea>'
     + '<div class="ws-desc-preview md-preview viewer" hidden></div>'
     + '<div class="actions" style="justify-content:flex-end;margin-top:10px">'
-    + '<button type="button" class="ws-desc-cancel btn btn-ghost btn-mini">Cancel</button>'
-    + '<button type="button" class="ws-desc-save btn btn-primary btn-mini">Save</button></div>';   // static markup
+    + '<button type="button" class="ws-desc-cancel btn btn-sm">Cancel</button>'
+    + '<button type="button" class="ws-desc-save btn btn-primary btn-sm">Save</button></div>';   // static markup
   desc.append(dh, view, pane);
   sec.appendChild(desc);
   // Sets from member projects (docs/skills.md; a workspace attaches no sets of its own): the servers and skills a run on
@@ -9666,7 +9669,9 @@ function renderWsRescan(r) {
   if (r.state === 'running') {
     lead.appendChild(Object.assign(document.createElement('div'), { className: 'spinner wd-rescan-spinner' }));
   } else {
-    lead.appendChild(Object.assign(document.createElement('span'), { className: 'wd-rescan-mark', textContent: r.state === 'done' ? '✓' : '!' }));
+    const mark = Object.assign(document.createElement('span'), { className: 'wd-rescan-mark' });
+    if (r.state === 'done') mark.append(icon(document, 'check', 12)); else mark.textContent = '!';
+    lead.appendChild(mark);
   }
   const body = document.createElement('div');
   body.className = 'wd-rescan-body';
@@ -9772,13 +9777,13 @@ function openWsAddMembers(id) {
   }
   // The header's Close is the way out; the one action adds the picks, or — with nothing to pick —
   // leads to the Projects page and opens its Add project dialog (a folder or a clone).
-  const actions = candidates.length ? [['Add', 'btn btn-primary btn-mini', async () => {
+  const actions = candidates.length ? [['Add', 'btn btn-primary btn-sm', async () => {
     if (!chosen.size) return;
     const r = await postWsMembers(id, { add: [...chosen] });
     if (r.ok) { closePluginModal(); return; }
     body.querySelector('.wd-add-err')?.remove();
     body.appendChild(Object.assign(document.createElement('small'), { className: 'hint err wd-add-err', textContent: r.error }));
-  }]] : [['Add project', 'btn btn-primary btn-mini', () => {
+  }]] : [['Add project', 'btn btn-primary btn-sm', () => {
     closePluginModal();
     location.hash = 'projects';
     void addProjectFlow();
@@ -10595,9 +10600,19 @@ function fmNote(cls) {
 function fmMini(cls, text, title) {
   const b = document.createElement('button');
   b.type = 'button';
-  b.className = `${cls} btn-ghost btn-mini`;
+  b.className = `${cls} btn btn-sm`;
   b.textContent = text;
   if (title) b.title = title;
+  return b;
+}
+// An icon-only port-row button (move up, move down, remove): its title is its name.
+function fmIconMini(cls, name, title) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = `${cls} btn btn-sm btn-quiet btn-icon`;
+  b.title = title;
+  b.setAttribute('aria-label', title);
+  b.append(icon(document, name, 14));
   return b;
 }
 
@@ -10615,25 +10630,25 @@ function buildPortRow(side, port) {
   const top = document.createElement('div');
   top.className = 'port-row-top';
   top.append(
-    fmField('id', fmInput('pf-id', p.id, { placeholder: 'portId' }), 'pf-f-id'),
-    fmField('type', fmSelect('pf-type', PORT_TYPE_OPTIONS, p.type || 'md'), 'pf-f-type'),
+    fmField('Id', fmInput('pf-id', p.id, { placeholder: 'portId' }), 'pf-f-id'),
+    fmField('Type', fmSelect('pf-type', PORT_TYPE_OPTIONS, p.type || 'md'), 'pf-f-type'),
   );
   if (side === 'in') {
     // The blank option is "the store's default" (file on a non-void input,
     // nothing on a void one) — NOT the empty string. Without it a void input is
     // unauthorable: the form would always emit as:'file', which the store 400s.
-    top.append(fmField('as', fmSelect('pf-as', [{ value: '', text: '— default' }, ...PORT_AS], p.as || ''), 'pf-f-as'));
+    top.append(fmField('As', fmSelect('pf-as', [{ value: '', text: '— default' }, ...PORT_AS], p.as || ''), 'pf-f-as'));
   } else {
     top.append(
-      fmField('when', fmSelect('pf-when', OUTPUT_WHENS, p.when || 'always'), 'pf-f-when'),
-      fmField('filename', fmInput('pf-filename', p.filename, { placeholder: '{base}.md' }), 'pf-f-filename'),
-      fmField('store', fmSelect('pf-store', PORT_STORES, p.store || 'run'), 'pf-f-store'),
+      fmField('When', fmSelect('pf-when', OUTPUT_WHENS, p.when || 'always'), 'pf-f-when'),
+      fmField('Filename', fmInput('pf-filename', p.filename, { placeholder: '{base}.md' }), 'pf-f-filename'),
+      fmField('Store', fmSelect('pf-store', PORT_STORES, p.store || 'run'), 'pf-f-store'),
     );
   }
   top.append(
-    fmMini('pf-up', '▲', 'Move this port up'),
-    fmMini('pf-down', '▼', 'Move this port down'),
-    fmMini('pf-remove', '×', 'Remove this port'),
+    fmIconMini('pf-up', 'arrow-up', 'Move this port up'),
+    fmIconMini('pf-down', 'arrow-down', 'Move this port down'),
+    fmIconMini('pf-remove', 'x', 'Remove this port'),
   );
   row.appendChild(top);
 
@@ -11536,7 +11551,7 @@ function buildProjectRow(p) {
   if (!p.exists) {
     const miss = document.createElement('span');
     miss.className = 'proj-missing';
-    miss.textContent = 'missing';
+    miss.textContent = 'Missing';
     name.append(' ', miss);
   }
   const path = document.createElement('div');
@@ -11694,7 +11709,7 @@ function syncRowCells(key, m, branchName, name) {
   if (m.action) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = `btn btn-mini ws-tbtn ws-tbtn-${m.action}`;
+    btn.className = `btn btn-sm ws-tbtn ws-tbtn-${m.action}`;
     btn.textContent = m.action === 'details' ? 'Details…' : m.action === 'retry' ? 'Retry' : 'Sync';
     btn.dataset.syncKey = key;
     btn.setAttribute('aria-label', `${btn.textContent.replace('…', '')} ${name}`);
@@ -11795,7 +11810,7 @@ function paintProjSyncBar(slot) {
   if (m.action) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'btn btn-mini ps-btn';
+    btn.className = 'btn btn-sm ps-btn';
     btn.dataset.syncKey = key;
     btn.setAttribute('aria-label', `${m.actionLabel.replace('…', '')} ${syncProjectName(key)}`);
     if (projSyncBusy.has(key)) {
@@ -11869,7 +11884,7 @@ function syncCheckedNodes() {
   txt.className = 'sync-checked-txt';
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'sync-check-now';
+  btn.className = 'btn btn-icon sync-check-now';
   btn.setAttribute('aria-label', 'Check origin now');
   btn.title = 'Fetch every project now; moves nothing';
   btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/></svg>';   // static markup
@@ -12184,7 +12199,7 @@ function paintProjHeader(screen, p) {
   if (!p.exists) {
     const miss = document.createElement('span');
     miss.className = 'proj-missing';
-    miss.textContent = 'missing';
+    miss.textContent = 'Missing';
     title.append(' ', miss);
   }
   const path = screen.querySelector('.pd-path');
@@ -12420,7 +12435,7 @@ function buildPdOverview(sec, key) {
     card.querySelector('.pd-ov-value').classList.remove('mono');
     const start = document.createElement('button');
     start.type = 'button';
-    start.className = 'btn btn-mini pd-ov-act pd-ov-start';
+    start.className = 'btn btn-sm pd-ov-act pd-ov-start';
     start.textContent = 'Start one';
     start.disabled = !p.exists;
     start.addEventListener('click', () => { newPipelineForProject(key); });
@@ -12521,7 +12536,7 @@ function paintPdBranchCards() {
     if (!behind.length) { act.replaceChildren(); return; }
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'btn btn-mini pd-ov-act';
+    btn.className = 'btn btn-sm pd-ov-act';
     btn.textContent = `Sync all (${behind.length})`;
     btn.addEventListener('click', async () => {
       btn.disabled = true; btn.classList.add('busy');
@@ -12567,8 +12582,8 @@ function buildPdNightCard(p) {
   const global = Object.assign(document.createElement('small'), { className: 'hint', textContent: '"I\'m away now" and "Pause" are global. Change them in Settings › Away mode.' });
   const actions = document.createElement('div');
   actions.className = 'add-project-actions';
-  const reset = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-ghost btn-mini pd-night-reset', textContent: 'Use my settings' });
-  const save = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-primary btn-mini pd-night-save', textContent: 'Save' });
+  const reset = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-sm pd-night-reset', textContent: 'Use my settings' });
+  const save = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-primary btn-sm pd-night-save', textContent: 'Save' });
   actions.append(reset, save);
   const msg = Object.assign(document.createElement('small'), { className: 'hint pd-night-msg' });
   card.append(head, host, global, actions, msg);
@@ -14808,7 +14823,7 @@ function paintAwayStatus(toggle, hours = true) {
   if (!bar) return;
   bar.replaceChildren(...statusActions(toggle, { hours }).map((a) => {
     const b = document.createElement('button');
-    b.type = 'button'; b.className = 'btn btn-mini'; b.textContent = a.label; b.title = a.tip; b.dataset.mode = a.mode;
+    b.type = 'button'; b.className = 'btn btn-sm'; b.textContent = a.label; b.title = a.tip; b.dataset.mode = a.mode;
     return b;
   }));
 }
@@ -15389,8 +15404,8 @@ async function openTmEnableDialog(projectKeyStr, { mode = 'here', change = false
     return done(true);
   };
   pluginModal('Set up team metrics', holder, [
-    ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
-    [view.mode === 'delegate' ? 'Create marker and enable' : 'Create branch and enable', 'btn btn-primary btn-mini tm-enable-submit', submit],
+    ['Cancel', 'btn btn-sm', () => closePluginModal()],
+    [view.mode === 'delegate' ? 'Create marker and enable' : 'Create branch and enable', 'btn btn-primary btn-sm tm-enable-submit', submit],
   ]);
   // Re-label the primary action when the mode flips (pluginModal renders actions once).
   holder.addEventListener('change', () => {
@@ -15500,8 +15515,8 @@ async function addMarketplaceFromInput() {
 // `onInstalled` lets the caller repaint its own page (Team policy) after a success.
 function openInstallConsent(entry, { onInstalled = null } = {}) {
   pluginModal(`Will install: ${entry.name}`, renderInstallConsent(entry, entry.inventory || {}), [
-    ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
-    ['Install', 'btn btn-primary btn-mini', async () => {
+    ['Cancel', 'btn btn-sm', closePluginModal],
+    ['Install', 'btn btn-primary btn-sm', async () => {
       closePluginModal();
       const key = `plugin-install-${entry.name}`;
       notify({ tone: 'info', title: `Installing ${entry.name}…`, key, timeout: 0 });
@@ -15739,12 +15754,12 @@ async function openPluginSettings(name, profile, { seeds = null } = {}) {
   // A multi-profile source with an empty roster has nothing to connect WITH.
   const connectable = sources.filter((s) => !s.multiProfile || s.profile);
   pluginModal(`Settings: ${name}`, body, [
-    ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
+    ['Cancel', 'btn btn-sm', closePluginModal],
     // Connect only exists for task sources (validateConfig is a task-source
     // op): a channels-only chat plugin would get a button whose every outcome
     // misleads — "Add a profile first." for a plugin that CANNOT have
     // profiles — so it gets no button at all.
-    ...(sources.length ? [['Connect', 'btn btn-ghost btn-mini', async () => {
+    ...(sources.length ? [['Connect', 'btn btn-sm', async () => {
       if (!connectable.length) {
         return slot.replaceChildren(renderConnectResult({ ok: false, errors: [{ message: 'Add a profile first.' }] }));
       }
@@ -15772,7 +15787,7 @@ async function openPluginSettings(name, profile, { seeds = null } = {}) {
         await connectPluginSource(name, s.id, subs[i], s.profile || undefined);
       }
     }]] : []),
-    ['Save', 'btn btn-primary btn-mini', async () => {
+    ['Save', 'btn btn-primary btn-sm', async () => {
       showErr('');
       const failed = await savePluginConfigForms(name, body);
       if (failed) return showErr(failed);
@@ -17015,7 +17030,7 @@ function openModelEditorDialog() {
   el.modelEditorModal.classList.remove('hidden');
   // A fresh create starts empty enough to type into; an edit keeps the caret out of the way.
   setTimeout(() => {
-    const first = editor.querySelector(mvState.editing ? '.mv-editor-btns .btn-go' : 'input:not([type="checkbox"]):not([disabled]), select, textarea');
+    const first = editor.querySelector(mvState.editing ? '.mv-editor-btns .btn-primary' : 'input:not([type="checkbox"]):not([disabled]), select, textarea');
     try { first?.focus({ preventScroll: true }); } catch { /* jsdom */ }
   }, 0);
 }
@@ -17754,19 +17769,19 @@ async function copyModelEnvValue(btn) {
   const id = editor && editor.dataset.id;
   const key = row && row.dataset.key;
   if (!id || !key) return;
-  const flash = (text) => {
-    const prev = btn.textContent;
-    btn.textContent = text;
-    setTimeout(() => { btn.textContent = prev; }, 1200);
+  const flash = (name) => {
+    const prev = [...btn.childNodes];
+    btn.replaceChildren(icon(document, name, 14));
+    setTimeout(() => { btn.replaceChildren(...prev); }, 1200);
   };
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}/env-value?key=${encodeURIComponent(key)}`);
     const data = await safeJson(res);
-    if (!res.ok) return flash('!');
+    if (!res.ok) return flash('x');
     await navigator.clipboard.writeText(data.value);
-    flash('✓');
+    flash('check');
   } catch {
-    flash('!');
+    flash('x');
   }
 }
 
@@ -19024,8 +19039,8 @@ async function openPolicyEnableDialog(projectKeyStr, { mode = 'here', change = f
     return done(true);
   };
   pluginModal('Set up team policy', holder, [
-    ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
-    [view.mode === 'follow' ? 'Create marker and follow' : 'Create branch and enable', 'btn btn-primary btn-mini tp-enable-submit', submit],
+    ['Cancel', 'btn btn-sm', () => closePluginModal()],
+    [view.mode === 'follow' ? 'Create marker and follow' : 'Create branch and enable', 'btn btn-primary btn-sm tp-enable-submit', submit],
   ]);
 }
 
@@ -19100,9 +19115,9 @@ async function openWsPolicyHomeSheet(workspaceId) {
     await paintWsPolicyLines(true);
   };
   pluginModal('Choose policy home', holder, [
-    ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
-    ['Clear home', 'btn btn-ghost btn-mini', () => patch(null)],
-    ['Use this home', 'btn btn-primary btn-mini', () => { const picked = holder.querySelector('input[name="tp-home"]:checked'); if (picked) patch(picked.value); }],
+    ['Cancel', 'btn btn-sm', () => closePluginModal()],
+    ['Clear home', 'btn btn-sm', () => patch(null)],
+    ['Use this home', 'btn btn-primary btn-sm', () => { const picked = holder.querySelector('input[name="tp-home"]:checked'); if (picked) patch(picked.value); }],
   ]);
 }
 
@@ -19774,8 +19789,8 @@ async function handleMcpTeamClick(e) {
     const body = renderMcpConsent(r, action, { doc: document });
     let sent = false;   // a double click posts once (a second Install would answer 409 "already installed")
     pluginModal(MCP_TEAM_TITLE[action], body, [
-      ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
-      [MCP_TEAM_VERB[action], 'btn btn-primary btn-mini', () => { if (sent) return; sent = true; void runMcpTeamAction(r, action, { owner: body }); }],
+      ['Cancel', 'btn btn-sm', closePluginModal],
+      [MCP_TEAM_VERB[action], 'btn btn-primary btn-sm', () => { if (sent) return; sent = true; void runMcpTeamAction(r, action, { owner: body }); }],
     ]);
   } finally { delete t.dataset.busy; }
 }
@@ -23285,7 +23300,7 @@ function hdTagEditorFor(st, repaint) {
   const input = createTagInput(document, { value: st.tags || [], suggest: fetchTagVocabulary });
   const save = document.createElement('button');
   save.type = 'button';
-  save.className = 'btn btn-primary btn-mini hd-tags-save';
+  save.className = 'btn btn-primary btn-sm hd-tags-save';
   save.textContent = 'Save';
   const cancel = document.createElement('button');
   cancel.type = 'button';
@@ -23879,7 +23894,7 @@ function hdBaseItem(screen, record, data, m) {
   li.append(pill);
   // The house small ghost button, compact as in other inline rows; advanced-level like Publish branch
   // (index.html), while the status line shows at every level. Gated like static markup: dataset.minLevel.
-  const btn = (cls, text, show, fn) => { const b = el('button', `${cls} btn btn-ghost btn-mini`, text); b.type = 'button'; b.hidden = !show;
+  const btn = (cls, text, show, fn) => { const b = el('button', `${cls} btn btn-sm`, text); b.type = 'button'; b.hidden = !show;
     b.dataset.minLevel = 'advanced'; b.onclick = () => fn(b); return b; };
   // The check runs on open, so Re-check is only offered where it does something more: after a failed
   // check, and to finish a resolution (it settles and pushes; the automatic check does not).
@@ -26064,7 +26079,7 @@ function hdWorktreeRow(word, dir) {
   const short = segs.length > 3 ? `…/${segs.slice(-3).join('/')}` : dir;
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'hd-branch-copy hd-ov-wt-path mono';
+  btn.className = 'btn btn-sm btn-quiet mono hd-branch-copy hd-ov-wt-path';
   btn.title = dir;
   btn.setAttribute('aria-label', 'Copy worktree path');
   const name = document.createElement('span'); name.className = 'hd-branch-name'; name.textContent = short;
@@ -26813,7 +26828,7 @@ function buildRdDiff(sec, ctx) {
   const noteText = document.createElement('span');
   const refresh = document.createElement('button');
   refresh.type = 'button';
-  refresh.className = 'btn-ghost btn-mini rd-diff-refresh';
+  refresh.className = 'btn btn-sm rd-diff-refresh';
   refresh.textContent = 'Refresh';
   note.append(noteText, refresh);
   const host = document.createElement('div');
@@ -27203,7 +27218,7 @@ function paintLimitNoticeInto(copyEl, actionsEl, p, repaint, model) {
   if (model.action?.kind === 'schedule') {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'btn btn-mini limit-resume';
+    btn.className = 'btn btn-sm limit-resume';
     btn.textContent = `Resume at ${hhmm(model.action.at)}`;
     btn.setAttribute('aria-label', `Resume at ${hhmm(model.action.at)}, when the usage limit resets`);
     btn.addEventListener('click', () => scheduleLimitResume(p.pipelineId, model.action.at, btn, repaint));
@@ -27384,7 +27399,7 @@ function rdOvStateBanner(host, r) {
   for (const other of offers) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'btn btn-mini rd-ov-switch';
+    btn.className = 'btn btn-sm rd-ov-switch';
     btn.dataset.engine = other;
     btn.textContent = `Resume on ${engineLabel(other)}`;
     btn.title = engineSwitchNote(other);
@@ -27400,7 +27415,7 @@ function rdOvStateBanner(host, r) {
   if (isPaused(r) && r.pipelineId && r.pauseReason === 'usage_limit') {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'btn btn-mini rd-ov-model';
+    btn.className = 'btn btn-sm rd-ov-model';
     btn.textContent = 'Resume with another model…';
     btn.title = 'Every remaining step runs on the model you pick';
     btn.addEventListener('click', async () => {
@@ -32221,7 +32236,8 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '' 
     ctl.target = '_blank';
     ctl.rel = 'noopener';
   }
-  ctl.className = ['rd-cta', look, cls].filter(Boolean).join(' ');
+  ctl.className = ['btn', 'btn-block', look ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');
+  ctl.setAttribute('data-rd-cta', '');
   setCtaContent(ctl, icon, label);
   slot.hidden = false;
   const wait = from === 'pending' && slot.querySelector('.rd-pr-wait');
@@ -32831,7 +32847,7 @@ function onRdDelegatedClick(e) {
   if (past) { confirmPastTeamCap(r.runId, past); return; }             // team-policy board 9
   if (e.target.closest && e.target.closest('.cb-policy-open')) { location.hash = 'team-policy'; return; }
   const qbtn = e.target.closest && e.target.closest(
-    '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
+    '.qpanel [data-qpanel-submit], .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
   if (!qbtn) return;
   if (qbtn.closest('.qpanel-workflow')) return;            // same guard, early-return shape
   if (qbtn.classList.contains('gate-continue')) postAnswer(r, { decision: 'continue' });
@@ -35791,7 +35807,7 @@ function gvConfirmScriptImport(list) {
     }
     if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', onClose);
     document.addEventListener('keydown', onKey);
-    pluginModal('Import this workflow?', body, [['Cancel', 'btn btn-ghost', () => done(false)], ['Import', 'btn btn-primary', () => done(true)]]);
+    pluginModal('Import this workflow?', body, [['Cancel', 'btn', () => done(false)], ['Import', 'btn btn-primary', () => done(true)]]);
   });
 }
 
