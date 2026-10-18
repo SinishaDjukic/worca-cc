@@ -119,6 +119,7 @@
 
   --r-card:14px;
   --r-ctrl:10px;
+  --r-xs: 2px; --r-sm: 4px;
   --shadow:0 6px 28px light-dark(rgba(25,25,27,.05),rgba(0,0,0,.45)), 0 1px 2px light-dark(rgba(25,25,27,.04),rgba(0,0,0,.35));
   --shadow-soft:0 2px 12px light-dark(rgba(25,25,27,.04),rgba(0,0,0,.35));
   --shadow-pop:0 6px 28px light-dark(rgba(25,25,27,.10),rgba(0,0,0,.55)),0 1px 2px light-dark(rgba(25,25,27,.06),rgba(0,0,0,.4));
@@ -8247,6 +8248,25 @@ button.act-srow-name{cursor:pointer}
   .engine-slot-actions{justify-content:flex-start;}
 }
 .pd-settings-card{margin-top:14px}
+/* House brief (Settings → Project): 4px corners (--r-sm), 2px on inner boxes (--r-xs), 1px dividers;
+   colours are tokens only so light and dark follow data-theme. */
+.card.house-brief{margin-top:14px;border-radius:var(--r-sm);}
+.house-brief .btn{border-radius:var(--r-sm);}
+.house-brief .hb-summary{margin:4px 0 0;}
+.house-brief .hb-text{margin:12px 0 0;padding:12px;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-word;
+  font:12px/1.55 var(--mono);color:var(--ink);background:var(--field);border:1px solid var(--line);border-radius:var(--r-xs);}
+.house-brief .hb-list{list-style:none;margin:10px 0 0;padding:0;}
+.house-brief .hb-list>li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line);font-size:13px;}
+.house-brief .hb-list>li:last-child{border-bottom:1px solid var(--line);}
+.house-brief .hb-pin-text{min-width:0;overflow-wrap:anywhere;}
+.house-brief .hb-pins-head{margin:18px 0 2px;}
+.house-brief .hb-add{display:flex;gap:9px;margin-top:10px;}
+.house-brief .hb-pin-input{flex:1;min-width:0;padding:8px 10px;font-size:13px;border:1px solid var(--line-2);border-radius:var(--r-xs);}
+.house-brief .hb-actions{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);}
+@media (max-width:600px){
+  .house-brief .hb-add{flex-direction:column;}
+  .house-brief .hb-list>li{flex-wrap:wrap;}
+}
 /* A non-Claude engine card's readiness line (GET /api/engines): text only. */
 .engine-card-status{display:block;color:var(--ink-2);font-size:12px;margin:0 0 6px}
 .engine-card-status:empty{display:none}

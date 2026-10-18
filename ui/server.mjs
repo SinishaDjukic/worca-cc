@@ -338,6 +338,7 @@ import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, pr
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
+import { ensureHouseBrief, writeHouseBriefPins } from '../src/core/house-brief.mjs';
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
 import {
   memoryRoot, GLOBAL_SCOPE, projectScope, scopeKey, isValidMemoryName, MEMORY_NAME_HELP, memoryScopeReport,
@@ -5917,6 +5918,31 @@ app.put('/api/projects/:key/tags/defaults', async (req, res) => {
   const t = normaliseTags(req.body?.tags);
   if (!Array.isArray(req.body?.tags) || t.errors.length) return badRequest(res, t.errors[0] || 'tags must be a list of strings');
   res.json({ tags: writeProjectDefaultTags(p.key, t.tags) });
+});
+
+// House brief (Settings → Project): GET rebuilds only when a source hash or the pins changed; PUT replaces the
+// pinned lines; POST refresh rebuilds now. A project with no sources answers an empty brief, not an error.
+// A missing project directory is handled inside collectHouseBriefSources (existsSync), so p.path is passed as is.
+const houseBriefOf = (p, force = false) => ensureHouseBrief({ projectKey: p.key, projectDir: p.path, force });
+app.get('/api/projects/:key/house-brief', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    res.json(await houseBriefOf(p));
+  } catch (err) { res.status(500).json({ error: err?.message || 'house brief could not be built' }); }
+});
+app.put('/api/projects/:key/house-brief/pinned', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    try { writeHouseBriefPins(p.key, req.body?.pinned); }
+    catch (err) { if (err?.code === 'EPINS') return badRequest(res, err.message); throw err; }
+    res.json(await houseBriefOf(p));
+  } catch (err) { res.status(500).json({ error: err?.message || 'house brief could not be built' }); }
+});
+app.post('/api/projects/:key/house-brief/refresh', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    res.json(await houseBriefOf(p, true));
+  } catch (err) { res.status(500).json({ error: err?.message || 'house brief could not be built' }); }
 });
 
 // Run tags (#718): replace a run's tags (any status; the UI offers it on finished runs), logging who
