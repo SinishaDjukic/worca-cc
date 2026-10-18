@@ -299,11 +299,11 @@ test('findPrForBranch with a persisted url: view wins; unreadable/empty/CLOSED f
       const seen = [];
       gitInfo.setRunner((cmd, args) => {
         seen.push([cmd, ...args]);
-        return okOut(JSON.stringify({ number: 9, state: 'MERGED', url: 'https://github.com/up/repo/pull/9' }));
+        return okOut(JSON.stringify({ number: 9, state: 'MERGED', url: 'https://github.com/up/repo/pull/9', isDraft: false, mergeable: 'UNKNOWN' }));
       });
       const pr = await findPrForBranch({ projectDir: '/repo', head: 'feat/x', prUrl: 'https://github.com/up/repo/pull/9' });
-      assert.deepEqual(pr, { state: 'MERGED', url: 'https://github.com/up/repo/pull/9', number: 9 });
-      assert.deepEqual(seen, [['gh', 'pr', 'view', 'https://github.com/up/repo/pull/9', '--json', 'number,state,url']]);
+      assert.deepEqual(pr, { state: 'MERGED', url: 'https://github.com/up/repo/pull/9', number: 9, isDraft: false, mergeable: 'UNKNOWN' });
+      assert.deepEqual(seen, [['gh', 'pr', 'view', 'https://github.com/up/repo/pull/9', '--json', 'number,state,url,isDraft,mergeable']]);
     } },
     { name: 'findPrForBranch falls back to the branch search when the url cannot be read or is empty', run: async () => {
       const seen = [];
@@ -314,11 +314,11 @@ test('findPrForBranch with a persisted url: view wins; unreadable/empty/CLOSED f
         return okOut(JSON.stringify([{ number: 3, state: 'OPEN', url: 'https://github.com/o/r/pull/3' }]));
       });
       const pr = await findPrForBranch({ projectDir: '/repo', head: 'feat/x', prUrl: 'https://github.com/o/r/pull/999' });
-      assert.deepEqual(pr, { state: 'OPEN', url: 'https://github.com/o/r/pull/3', number: 3 });
+      assert.deepEqual(pr, { state: 'OPEN', url: 'https://github.com/o/r/pull/3', number: 3, isDraft: false, mergeable: 'UNKNOWN' });
       assert.deepEqual(seen[1].slice(0, 5), ['gh', 'pr', 'list', '--head', 'feat/x'], 'the list keeps the BARE branch (owner:branch returns nothing from gh pr list)');
       viewOut = '';                              // ok exit, empty stdout (what a catch-all stub answers)
       assert.deepEqual(await findPrForBranch({ projectDir: '/repo', head: 'feat/x', prUrl: 'https://github.com/o/r/pull/999' }),
-        { state: 'OPEN', url: 'https://github.com/o/r/pull/3', number: 3 });
+        { state: 'OPEN', url: 'https://github.com/o/r/pull/3', number: 3, isDraft: false, mergeable: 'UNKNOWN' });
     } },
     { name: 'findPrForBranch: a CLOSED PR behind the url falls through to the branch search', run: async () => {
       const seen = [];
@@ -334,7 +334,19 @@ test('findPrForBranch with a persisted url: view wins; unreadable/empty/CLOSED f
       // A newer OPEN PR for the same branch wins over the stale closed url.
       listRows = [{ number: 12, state: 'OPEN', url: 'https://github.com/up/repo/pull/12' }];
       assert.deepEqual(await findPrForBranch({ projectDir: '/repo', head: 'feat/x', prUrl: 'https://github.com/up/repo/pull/9' }),
-        { state: 'OPEN', url: 'https://github.com/up/repo/pull/12', number: 12 });
+        { state: 'OPEN', url: 'https://github.com/up/repo/pull/12', number: 12, isDraft: false, mergeable: 'UNKNOWN' });
+    } },
+    { name: 'findPrForBranch includeClosed: the closed PR behind the url when the branch search finds nothing live', run: async () => {
+      let listRows = [];
+      gitInfo.setRunner((cmd, args) => (args[1] === 'view'
+        ? okOut(JSON.stringify({ number: 9, state: 'CLOSED', url: 'https://github.com/up/repo/pull/9' }))
+        : okOut(JSON.stringify(listRows))));
+      const opts = { projectDir: '/repo', head: 'feat/x', prUrl: 'https://github.com/up/repo/pull/9', includeClosed: true };
+      // A fork PR lives in the upstream repo: the cwd's branch search cannot see it.
+      assert.deepEqual(await findPrForBranch(opts),
+        { state: 'CLOSED', url: 'https://github.com/up/repo/pull/9', number: 9, isDraft: false, mergeable: 'UNKNOWN' });
+      listRows = [{ number: 12, state: 'OPEN', url: 'https://github.com/up/repo/pull/12' }];
+      assert.equal((await findPrForBranch(opts)).number, 12, 'a newer open PR still wins');
     } },
   ]);
 });
@@ -417,11 +429,39 @@ test('PR functions dispatch Azure URLs/remotes to the Azure provider; everything
       const url = 'https://dev.azure.com/acme/Shop/_git/api/pullrequest/9';
       assert.equal(await prLifecycleState({ projectDir: '/r', prUrl: url }), 'MERGED');
       assert.equal(await prMergeable({ projectDir: '/r', head: 'feat', prUrl: url }), 'MERGEABLE');
-      assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'feat', prUrl: url }), { state: 'MERGED', url, number: 9 });
+      assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'feat', prUrl: url }),
+        { state: 'MERGED', url, number: 9, isDraft: false, mergeable: 'MERGEABLE' });
       assert.equal((await findPrForBranch({ projectDir: '/r', head: 'feat' })).number, 4);   // forge learned from the remotes
       assert.equal(await prMergeable({ projectDir: '/r', head: 'feat' }), 'CONFLICTING');
     });
     assert.ok(calls.every((c) => c.startsWith('git ')), calls.join('\n'));
+  } finally { azurePr._testing.reset(); }
+});
+
+test('Azure includeClosed: the abandoned PR behind the url is the last resort, after the branch search', async () => {
+  gitInfo.setRunner((cmd, args) => (cmd === 'git' && args[0] === 'remote'
+    ? okOut('origin\thttps://dev.azure.com/acme/Shop/_git/api (fetch)\norigin\thttps://dev.azure.com/acme/Shop/_git/api (push)\n')
+    : fail('gh must not run', 1)));
+  let branchPrs = [];
+  azurePr._testing.setFetch(async (url) => ({ status: 200, ok: true, json: async () => (String(url).includes('/pullrequests/9')
+    ? { pullRequestId: 9, status: 'abandoned', isDraft: true }
+    : { value: branchPrs }) }));
+  try {
+    await withEnv({ ...NO_ADO, WORCA_ADO_TOKEN: 'pat' }, async () => {
+      const url = 'https://dev.azure.com/acme/Shop/_git/api/pullrequest/9';
+      const opts = { projectDir: '/r', head: 'feat', prUrl: url, includeClosed: true };
+      assert.deepEqual(await findPrForBranch(opts), { state: 'CLOSED', url, number: 9, isDraft: true, mergeable: 'UNKNOWN' });
+      assert.equal(await findPrForBranch({ ...opts, includeClosed: false }), null, 'every other caller reads no PR');
+      branchPrs = [{ pullRequestId: 7, status: 'abandoned' }];
+      const byRemote = { projectDir: '/r', head: 'feat', includeClosed: true };   // no stored url: the base remote's repo
+      assert.deepEqual(await findPrForBranch(byRemote),
+        { state: 'CLOSED', url: 'https://dev.azure.com/acme/Shop/_git/api/pullrequest/7', number: 7, isDraft: false, mergeable: 'UNKNOWN' });
+      assert.equal(await findPrForBranch({ ...byRemote, includeClosed: false }), null);
+      branchPrs = [{ pullRequestId: 11, status: 'abandoned' }, { pullRequestId: 10, status: 'active', isDraft: true }];
+      assert.deepEqual(await findPrForBranch(opts),
+        { state: 'OPEN', url: 'https://dev.azure.com/acme/Shop/_git/api/pullrequest/10', number: 10, isDraft: true, mergeable: 'UNKNOWN' },
+        'a live PR on the branch wins');
+    });
   } finally { azurePr._testing.reset(); }
 });
 

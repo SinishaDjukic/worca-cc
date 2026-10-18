@@ -86,7 +86,7 @@ import { runProgress, chainProgress, progressWidth } from '../../src/shared/run-
 import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS, tagFilterGroups } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, prGlyphOf, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS, tagFilterGroups } from './runs-list.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
 // History list card. They stay EXPORTED
@@ -21677,8 +21677,10 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     paintHdPr(screen, rec, data);
     paintHdAfter(screen, rec, data);
     // histCanShip carries both old belts plus the workspace rule:
-    //  - `!rec.pr` (single runs) — the stale-button -> double-POST race is fixed at the
-    //    source (the ship path calls patchHistoryPr); this is the backstop.
+    //  - no open or merged PR (single runs) — the stale-button -> double-POST race is fixed at the
+    //    source (the ship path calls patchHistoryPr, and a shipped record is OPEN); this is the
+    //    backstop. A CLOSED PR does not block, as in paintHdPr: the history-pr rows carry closed
+    //    PRs (the Runs list draws them), and the Create button offered for one must still open the dialog.
     //  - `histPrEligible(rec)` — MANDATORY. Without it the modal opens for a run whose
     //    own detail button paintHdPr just deliberately hid (gh gone, branch deleted
     //    between paint and click), and confirming fires a POST /api/pr that fails.
@@ -21967,7 +21969,7 @@ async function openShipItFor(ref = {}, link = null) {
     data = await safeJson(res);
     if (!res.ok || !data || !data.state) throw new Error((data && data.error) || `HTTP ${res.status}`);
   } catch (e) { return { opened: false, error: `Could not load this run: ${e.message}` }; }
-  if (!histCanShip(record)) return { opened: false, error: record.pr ? 'This run already has a pull request.' : 'No pull request can be opened for this run.' };
+  if (!histCanShip(record)) return { opened: false, error: prLive(record.pr) ? 'This run already has a pull request.' : 'No pull request can be opened for this run.' };
   const askLink = link && link.askThreadId && link.askCardId ? { askThreadId: link.askThreadId, askCardId: link.askCardId } : null;
   return new Promise((resolve) => {
     const shown = openShipItModal(record, data, { link: askLink, onClose: (out) => resolve(out) });
@@ -22647,7 +22649,8 @@ function histPrEligible(p) {
 function histCanShip(p) {
   if (!p) return false;
   if (p.target === 'workspace' && hasWsMembers(p)) return !wsPrPending(p) && histPrEligible(p);
-  return !p.pr && histPrEligible(p);
+  const live = p.pr && typeof p.pr === 'object' ? String(p.pr.state || '').toUpperCase() : '';
+  return live !== 'OPEN' && live !== 'MERGED' && histPrEligible(p);
 }
 
 // Run on the source branch (branch.sameAsSource): no PR. Once the work was merged back, the one shipping
@@ -30158,6 +30161,7 @@ function runsLiveItem(r) {
     failedStep: failed && failed.nodeId ? nodeLabel(r.stepper, failed.nodeId) : '',
     startedAt: r.startedAt, groupKey: g.key, groupName: g.name, by: runsPersonKey(r.startedBy),
     pr: terminal ? glancePrInput(rec) : null,
+    ...prGlyphOf(rec),
     checks: rec && typeof rec.checks === 'number' ? rec.checks : null,
     files: rec && typeof rec.files === 'number' ? rec.files : null,
     tags: flagOn('runTags') ? (r.tags || []) : [],
@@ -30207,6 +30211,7 @@ function runsHistItem(p) {
     limitEngine: p.limitEngine || null, limitNote: limitRowNote(p),
     startedAt: p.startedAt, mtime: p.mtime, groupName: histGroupName(p), by: runsPersonKey(p.startedBy),
     pr: glancePrInput(p),
+    ...prGlyphOf(p),
     archived: !!p.archived,
     checks: typeof p.checks === 'number' ? p.checks : null,
     files: typeof p.files === 'number' ? p.files : null,
@@ -30225,9 +30230,11 @@ function runsSchedItem(t) {
 // and the focus fallbacks below match on it).
 // `r.progress ? 1 : 0`: the line's presence is structural; its fraction/tone are patched in place (paintRunsProgress).
 // A member's icon and asks: the fields its dot reads, so a paused member that gains a question (icon stays 'paused')
-// repaints amber.
+// repaints amber. prIcon/prCount: a history-pr batch can turn an open PR into a draft or a conflicting one while
+// the word stays "In review".
 const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base, (r.tags || []).join(','),
-  r.progress ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.href, m.icon, !!m.asks])] : 0];
+  r.progress ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.href, m.icon, !!m.asks])] : 0,
+  r.prIcon, r.prCount];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over (same slot first), then the

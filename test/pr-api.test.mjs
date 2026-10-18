@@ -221,7 +221,7 @@ test('GET /api/runs?projectDir still returns inline pr (per-project withPr uncha
   });
   const j = await (await fetch(`${base}/api/runs?projectDir=${encodeURIComponent(repoDir)}`)).json();
   const row = j.pipelines.find((p) => p.id === rpId);
-  assert.deepEqual(row.pr, { state: 'OPEN', url: 'https://gh/r/pull/9', number: 9 });
+  assert.deepEqual(row.pr, { state: 'OPEN', url: 'https://gh/r/pull/9', number: 9, isDraft: false, mergeable: 'UNKNOWN' });
 });
 
 test('POST /api/pr/mergeable error paths: 400 without id; 200 UNKNOWN when gh is missing or the key is malformed', async () => {
