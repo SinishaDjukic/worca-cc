@@ -301,7 +301,7 @@ import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
-import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
+import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
   markPrReady, closePr, uncommittedPatch } from '../src/core/git-info.mjs';
@@ -7675,16 +7675,19 @@ app.get('/api/pr/remotes', async (req, res) => {
   const repoDir = target.repoDir;                     // null when store_meta is missing
   if (!repoDir) return badRequest(res, 'pipeline has no project directory');
   const { feature, source } = target;
+  const rl = await listRemotes(repoDir);
+  const remoteNames = rl.remotes.map((r) => r.name);
   // chainBaseBranchesOf answers [] for a workspace row, so a member's chain is its own source.
+  // A remote-tracking source (`origin/dev`) offers the branch it names on the remote (`dev`).
   const walked = chainBaseBranchesOf(resolved.state.id || resolved.id);
-  const chain = (walked.length ? walked : (source ? [source] : [])).filter((b) => b !== feature);
+  const chain = (await Promise.all((walked.length ? walked : (source ? [source] : []))
+    .map((b) => prBaseBranch(repoDir, b, remoteNames)))).filter((b) => b !== feature);
   const pipelineId = resolved.state.id || resolved.id;
   // L10: a slice's PR stacks on the previous slice's branch until that slice's PR merges. The route is async with
   // no try/catch (F29): a failed feature lookup keeps the chain-root default instead of rejecting.
   let stacked = null;
   try { stacked = stackedPrBase(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
   const defaultBase = stacked || chain[0] || null;
-  const rl = await listRemotes(repoDir);
   if (!rl.ok) {
     const issue = runSourceIssue(pipelineId, { memberKey: target.memberKey });
     return res.status(500).json({ error: `git remote failed: ${rl.error}`, chain, defaultBase, issue });
@@ -7697,7 +7700,8 @@ app.get('/api/pr/remotes', async (req, res) => {
   // Measure from the remote tip recorded at start only when it is the SAME ref we compare
   // against: a fork's base remote is `upstream` and a chained run's base is the chain root,
   // not this run's source; there, the recorded origin tip would count old commits.
-  const sameRef = runBranch.sync?.remote === baseRemote && runBranch.source === defaultBase;
+  const sameRef = runBranch.sync?.remote === baseRemote
+    && await prBaseBranch(repoDir, runBranch.source, remoteNames) === defaultBase;
   const baseSha = (sameRef && runBranch.sync?.remoteSha) || runBranch.baseSha || null;
   const bf = isSafeRemoteName(baseRemote) ? await fetchRemote(repoDir, { remote: baseRemote, maxAgeMs: INTERACTIVE_TTL_MS }) : null;
   const rb = await listRemoteBranches(repoDir, rl.remotes.map((r) => r.name));
@@ -7759,6 +7763,8 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const picked = await pickPrRemotes(chosen, repoDir);
   if (picked.error) return { ok: false, status: picked.status, error: picked.error };
   const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
+  // A remote-tracking source (`origin/dev`) names the branch `dev` on the remote.
+  base = await prBaseBranch(repoDir, base, remotes.map((r) => r.name));
   // Always target the chosen base repo explicitly (gh's default-repo guess prefers
   // a remote named upstream over origin); use the owner:branch head only when the
   // branch lives in a different repository than the PR (gh matches by head label).
