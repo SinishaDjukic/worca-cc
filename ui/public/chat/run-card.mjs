@@ -8,6 +8,7 @@
 // Pure DOM over an injected `doc`.
 import { runPill, progressRoute, projectLabel, snapshotFromState, PROGRESS_CARD_TYPE } from '../ask-run-card.mjs';
 import { registerChatCard } from './extensions.mjs';
+import { planApprovedLine } from '../log-line.mjs';
 import { mountRunGraph } from '../graph/run-hosts.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askRendererFor, askKindOf } from '../ask/registry.mjs';
@@ -121,6 +122,7 @@ export function resultWord(snap) {
 export function answerReceipt(sent, painted) {
   const step = (painted && (painted.step || painted.heading)) || '';
   const tail = (t) => (step ? `${t} · ${step}` : t);
+  if (sent && painted && painted.planAsk && sent.payload && sent.payload.decision === 'approve') return planApprovedLine(painted.roleReviews);
   if (sent && sent.kind === 'gate') return sent.payload && sent.payload.decision === 'another' ? 'One more fix round · Cycle gate' : 'Continued · Cycle gate';
   if (sent && sent.payload && Array.isArray(sent.payload.answers)) {
     const n = sent.payload.answers.length;
@@ -237,6 +239,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
 
   let last = null, graph = null, agentsSig = null, resultSig = '', painted = null, sent = null, inFlight = false, dead = false, pauseAsked = '';
   let shownFor = null;   // the question whose receipt shows the "Answered" fallback (its answer may still be in flight)
+  let planSent = null;   // slice 4: the plan card's last approve attempt, named by its `plan-answer` event (D12)
   const ref = () => runRefOf(id, last);
   /** The ref an artifact chip hands ctx.openArtifact: plus `nodeLabel(nodeId)` (the step label, from the snapshot's
    *  manifest) — P5's popup names the step with it when this tab holds no model of the run. */
@@ -265,6 +268,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       .finally(() => { inFlight = false; if (!dead) paintFoot(last); });
   });
   stopBtn.addEventListener('click', () => { footErr.hidden = true; call(controls.stop, ref(), () => call(refresh)); });
+  qBody.addEventListener('plan-answer', (e) => {
+    if (!painted) return;
+    planSent = e.detail && e.detail.decision === 'approve' ? { id: painted.id, kind: painted.kind, payload: e.detail } : null;
+  });
   qBody.addEventListener('click', (e) => {
     const b = e.target.closest && e.target.closest(Q_BUTTONS);
     if (!b || !qBody.contains(b) || b.disabled || b.closest('.qpanel-workflow')) return;
@@ -404,8 +411,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (pq) { qBody.hidden = false; qSec.hidden = false; }
     const q = pq ? call(controls.paintQuestion, ref(), qBody) : null;
     if (q) {
-      if (!painted || painted.id !== (q.id || null)) { qErr.hidden = true; sent = null; shownFor = null; }
-      painted = { id: q.id || null, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '' };
+      if (!painted || painted.id !== (q.id || null)) { qErr.hidden = true; sent = null; shownFor = null; planSent = null; }
+      const planAsk = askKindOf(pq) === 'plan' && !!pq.plan && !pq.plan.outline;
+      painted = { id: q.id || null, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '',
+        planAsk, roleReviews: planAsk ? pq.plan.roleReviews || null : null };
       qHead.textContent = painted.heading;
       qHead.hidden = !painted.heading;
       qBody.hidden = false;
@@ -419,9 +428,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     qErr.hidden = true;
     if (painted) {
       const was = painted;
-      const mine = sent && sent.id === was.id ? sent : null;
+      const mine = sent && sent.id === was.id ? sent : planSent && planSent.id === was.id ? planSent : null;
       painted = null;
       sent = null;
+      planSent = null;
       // A question that went away because the run is pausing or paused, was interrupted, stopped or failed was not
       // answered: the "Answered" fallback shows only while the run is still going (answered elsewhere: the run page,
       // the panel) — ANSWERING_STATUS, never `pausing` (a pause resolves the question after its `pausing` frame).

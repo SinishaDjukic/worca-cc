@@ -12,6 +12,8 @@ import { createChatRunCard, resultWord, answerReceipt, autoChip, midTrunc, progr
 import { registerAskRenderer, askRendererFor, askKindOf } from '../ui/public/ask/registry.mjs';
 import { setShapeFirst } from './helpers/shape-gate.mjs';
 
+const RECORDED = JSON.parse(readFileSync(new URL('./fixtures/role-review/recorded-run.json', import.meta.url), 'utf8')).plan.roleReviews;
+
 const trackDom = useDomRelease(afterEach);
 
 const agent = (id, key, over = {}) => ({
@@ -407,6 +409,9 @@ test('chat run card helpers: progressIdent, runRefOf, autoChip, resultWord, answ
       assert.equal(answerReceipt({ kind: 'clarify', payload: { answers: [{ choice: '' }] } }, { step: 'Plan' }), 'Sent without answers · Plan');
       assert.equal(answerReceipt({ kind: 'form', payload: { values: {} } }, { heading: 'Review mockups' }), 'Answer sent · Review mockups');
       assert.equal(answerReceipt(null, { step: 'Plan' }), 'Answered · Plan');
+      assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: true, roleReviews: RECORDED, step: 'Plan' }),
+        'Plan approved · 5 roles reviewed · 1 open issue accepted');
+      assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: false, step: 'Plan' }), 'Answer sent · Plan');
       assert.equal(midTrunc('abcdefghij', 5), 'ab…ij');
       assert.equal(midTrunc('short.md'), 'short.md');
     } },

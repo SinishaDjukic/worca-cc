@@ -142,6 +142,10 @@ test('gate on: a shaped mock run stops at the plan approval and approving finish
   assert.ok(pq.plan.file, 'the stop names the plan file');
   assert.equal(pq.plan.check.total, 8);
   assert.equal(pq.plan.revisable, true);
+  const rr = pq.plan.roleReviews;
+  assert.ok(rr && rr.rounds.length >= 1, 'the plan ask carries the role reviews');
+  assert.ok(rr.rounds.every((r) => r.pass === rr.rounds.at(-1).pass), 'the current pass only');
+  assert.ok(rr.rounds.at(-1).roles.some((r) => r.key === 'qa'));
 
   const a = await post(`/api/runs/${runId}/answer`, { id: pq.id, decision: 'approve' });
   assert.equal(a.status, 200, await a.text());

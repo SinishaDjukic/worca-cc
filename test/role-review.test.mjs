@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { rolesForRound, roleBriefBlock, houseBriefBlock, roleRecord, roleItems, refinerVerdict, applyAddressed, openBlocking, findingsMarkdown }
+import { rolesForRound, roleBriefBlock, houseBriefBlock, roleRecord, roleItems, refinerVerdict, applyAddressed, openBlocking, findingsMarkdown,
+  currentPass, roleSummaries, reviewedLine }
   from '../src/shared/shape/role-review.mjs';
 
 // A recorded Shaper plan (real data): the 18 Oct "Shaper as chat cards" plan v2, copied verbatim.
@@ -70,4 +71,42 @@ test('houseBriefBlock: the brief for fit only, a plain line when there is none',
   for (const k of ['product', 'ux', 'qa', 'architect', 'security']) assert.equal(houseBriefBlock(k, brief), '', k);
   assert.match(houseBriefBlock('fit', ''), /no house brief yet/);
   assert.doesNotMatch(houseBriefBlock('fit', ''), /# House brief/);
+});
+
+const RUN = JSON.parse(readFileSync(new URL('./fixtures/role-review/recorded-run.json', import.meta.url), 'utf8'));
+const RR = RUN.plan.roleReviews;
+
+test('recorded-run fixture: ids, statuses and round-2 skips are what slice 1 stores', () => {
+  for (const round of RR.rounds) {
+    for (const role of round.roles.filter((r) => !r.skipped)) {
+      const raw = { issues: role.findings.map((f) => ({ severity: f.severity, title: f.title, section: f.section, fix: f.fix })) };
+      const rec = roleRecord(role.key, round.round, raw, role.checklist.map((c) => c.id));
+      const fixed = role.findings.filter((f) => f.status === 'fixed');
+      applyAddressed({ roles: [rec] }, fixed.map((f) => f.id), fixed[0]?.fixedIn);
+      assert.deepEqual(rec.findings.map((f) => [f.id, f.status]), role.findings.map((f) => [f.id, f.status]), role.key);
+    }
+  }
+  const skips = rolesForRound(RUN.plan.perspectives, 2, RR.rounds[0]).map((r) => [r.key, r.skip]);
+  assert.deepEqual(skips, RR.rounds[1].roles.map((r) => [r.key, r.skipped]));
+});
+
+test('roleSummaries: one entry per role, earlier fixes kept, a superseded open finding dropped, ids once', () => {
+  const s = roleSummaries(RR);
+  assert.deepEqual(s.map((r) => [r.text, r.open]), [
+    ['Product · no findings', 0], ['Architect · 1 major fixed', 0], ['QA · 1 critical, 1 suggestion fixed', 0],
+    ['UX · 1 minor fixed', 0], ['Project fit · 1 major open', 1]]);
+  const ids = s.flatMap((r) => r.findings.map((f) => f.id));
+  assert.equal(new Set(ids).size, ids.length);
+  assert.ok(!ids.includes('fit-1-1'));
+  assert.equal(s.reduce((n, r) => n + r.open, 0), openBlocking(RR));
+});
+
+test('reviewedLine and currentPass: the last pass only; empty without rounds', () => {
+  assert.equal(reviewedLine(RR), 'Reviewed by 5 roles · 1 open');
+  const next = { rounds: [...RR.rounds, { pass: 2, round: 1, plan: 'p', roles: [RR.rounds[1].roles[1]] }] };
+  assert.equal(currentPass(next).rounds.length, 1);
+  assert.equal(reviewedLine(next), 'Reviewed by 1 role');
+  assert.equal(reviewedLine(null), '');
+  assert.equal(currentPass({ rounds: [] }), null);
+  assert.deepEqual(roleSummaries({ rounds: [] }), []);
 });

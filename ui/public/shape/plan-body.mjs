@@ -3,8 +3,10 @@
 // Ask for changes / Full plan / ⋯. Gate off: the held body keeps approve / revise / stop, so a held run is never
 // stranded (D12, S4).
 import { buildPerspectiveChips } from './chips.mjs';
-import { planStats, perspectiveChangeFeedback, fixAllFeedback, sectionOwners, planSummary, checkLine, unmetLine,
-  approveLabel } from './plan-text.mjs';
+import { planStats, perspectiveChangeFeedback, fixAllFeedback, sectionOwners, planSummary, unmetLine,
+  planApproveLabel } from './plan-text.mjs';
+import { fold, buildCheckFold } from './check-row.mjs';
+import { roleSummaries, reviewedLine, openBlocking } from '../../../src/shared/shape/role-review.mjs';
 import { perspectiveByKey, PERSPECTIVES, chipsHiddenFor } from '../../../src/shared/shape/perspectives.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
@@ -28,6 +30,8 @@ export function renderPlanBody(panel, pq, deps) {
   const send = (payload) => {
     if (busy) return;
     busy = true; err.hidden = true;
+    // Slice 4: the Chat run card's click delegation never sees this card's buttons; tell it what is being sent.
+    panel.dispatchEvent(new doc.defaultView.CustomEvent('plan-answer', { bubbles: true, detail: { ...payload } }));
     // submit is postAnswer: true on 200 only. A 422 has already painted its field errors through setErrors (the
     // alert is showing). Any other failure (404, 409, 500, network) is only in the run log (F33): say so here.
     Promise.resolve(deps.submit(payload))
@@ -41,16 +45,6 @@ export function renderPlanBody(panel, pq, deps) {
   let meta = null;
   let summary = null;
 
-  // A control that shows/hides `region` (folded by default).
-  const fold = (b, region, onOpen) => {
-    b.setAttribute('aria-expanded', 'false');
-    b.addEventListener('click', () => {
-      region.hidden = !region.hidden;
-      b.setAttribute('aria-expanded', String(!region.hidden));
-      if (!region.hidden && onOpen) onOpen();
-    });
-    return b;
-  };
   const typedRow = () => {
     const typed = h('textarea', 'plan-feedback');
     typed.rows = 2;
@@ -64,6 +58,33 @@ export function renderPlanBody(panel, pq, deps) {
     });
     const row = h('div', 'plan-typed'); row.append(typed, sendBtn);
     return { row, typed };
+  };
+  // A role's findings: a 2px severity chip, the plan section, the one-line fix, and fixed in vN or open (D10).
+  const findingList = (findings) => {
+    const list = h('ul', 'plan-findings'); list.hidden = true;
+    for (const f of findings) {
+      const fixed = f.status === 'fixed';
+      const li = h('li', 'plan-finding');
+      li.append(h('span', `plan-sev plan-sev-${f.severity}`, f.severity),
+        h('span', 'plan-finding-section', f.section || 'Plan'),
+        h('span', 'plan-finding-fix', f.fix || f.title),
+        h('span', `plan-finding-status${fixed ? ' fixed' : ''}`, fixed ? (Number.isFinite(f.fixedIn) ? `fixed in v${f.fixedIn}` : 'fixed') : 'open'));
+      list.appendChild(li);
+    }
+    return list;
+  };
+  // D5: a role row is a check-row row; it gets `!` when an issue is open, and a Show folded over its findings.
+  const roleRow = (row, r) => {
+    if (r.open) {
+      const mark = row.querySelector('.plan-check-mark');
+      mark.textContent = '!'; mark.setAttribute('aria-label', 'open issues');
+    }
+    if (!r.findings.length) return;
+    const list = findingList(r.findings);
+    const show = fold(btn('plan-check-show', 'Show'), list);
+    show.addEventListener('click', (e) => { e.stopPropagation(); show.textContent = list.hidden ? 'Show' : 'Hide'; });
+    row.appendChild(show);
+    row.after(list);
   };
 
   if (deps.extras) renderCard(); else renderHeld();
@@ -116,23 +137,24 @@ export function renderPlanBody(panel, pq, deps) {
 
     // one check line, folded; neutral rows with ✓ / ✕; one Fix all (D32)
     if (items.length) {
-      const rows = h('div', 'plan-checks'); rows.hidden = true;
-      for (const it of items) {
-        const row = h('div', `plan-check-row${it.pass ? ' ok' : ''}`);
-        const mark = h('span', 'plan-check-mark', it.pass ? '✓' : '✕'); mark.setAttribute('aria-label', it.pass ? 'met' : 'unmet');
-        row.append(mark, h('span', 'plan-check-label', it.label));
-        if (!it.pass && it.detail) row.appendChild(h('span', 'plan-check-detail', it.detail));
-        rows.appendChild(row);
-      }
+      const f = buildCheckFold(doc, check, 'Shape');
       if (plan.revisable && items.some((it) => !it.pass)) {
         const fixAll = btn('plan-fix-all', 'Fix all');
         fixAll.addEventListener('click', () => send({ decision: 'revise', feedback: fixAllFeedback(items) }));
-        rows.appendChild(fixAll);
+        f.rows.appendChild(fixAll);
       }
-      const line = btn('plan-fold plan-check-line', null);
-      const chev = h('span', 'plan-chev', '›'); chev.setAttribute('aria-hidden', 'true');
-      line.append(h('span', 'plan-fold-text', checkLine(check)), chev);
-      body.append(fold(line, rows), rows);
+      body.append(f.line, f.rows);
+    }
+
+    // slice 4: one row per role, as check items in the same shape; Show unfolds that role's findings
+    const roles = roleSummaries(plan.roleReviews);
+    if (roles.length) {
+      const f = buildCheckFold(doc, { items: roles.map((r) => ({ id: r.key, label: r.text, pass: r.open === 0 })) });
+      f.line.classList.add('plan-role-line');
+      f.rows.classList.add('plan-roles');
+      f.line.querySelector('.plan-fold-text').textContent = reviewedLine(plan.roleReviews);
+      [...f.rows.children].forEach((row, i) => roleRow(row, roles[i]));
+      body.append(f.line, f.rows);
     }
 
     // perspectives as a line; "edit" opens today's chips + Update plan in place (D31)
@@ -183,7 +205,7 @@ export function renderPlanBody(panel, pq, deps) {
     if (typed) { typed.row.hidden = true; body.appendChild(typed.row); }
 
     const foot = h('div', 'qpanel-foot plan-actions');
-    const approve = btn('btn-primary plan-approve', approveLabel(plan));
+    const approve = btn('btn-primary plan-approve', planApproveLabel(plan, openBlocking(plan.roleReviews)));
     approve.addEventListener('click', () => send({ decision: 'approve' }));
     foot.appendChild(approve);
     if (typed) foot.appendChild(fold(btn('plan-ask-changes', 'Ask for changes'), typed.row, () => typed.typed.focus()));

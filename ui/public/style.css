@@ -9492,6 +9492,16 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .plan-check-mark{flex:none;width:1em;font-weight:700;color:var(--ink-3);}
 .plan-check-row:not(.ok) .plan-check-mark{color:var(--ink);}
 .plan-fix-all{align-self:flex-start;margin-top:4px;}
+/* Slice 4: role review rows: Show unfolds the findings; a 2px severity chip (D14) */
+.plan-check-show{margin-left:auto;padding:1px 8px;font-size:12px;}
+.plan-findings{list-style:none;margin:0 0 4px;padding:0 0 0 calc(1em + 8px);display:flex;flex-direction:column;}
+.plan-finding{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;min-width:0;padding:4px 0;border-top:1px solid var(--line);font-size:12px;color:var(--ink);}
+.plan-finding-fix{flex:1 1 12em;min-width:0;overflow-wrap:anywhere;}
+.plan-finding-section,.plan-finding-status{color:var(--ink-2);}
+.plan-sev{flex:none;padding:0 6px;border-radius:var(--r-xs);font-size:11px;font-weight:600;}
+.plan-sev-critical{background:var(--red-bg);color:var(--red-ink-strong);}
+.plan-sev-major{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.plan-sev-minor,.plan-sev-suggestion{background:var(--line);color:var(--ink-2);}
 .plan-persp-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;color:var(--ink-2);font-size:12px;}
 .plan-persp-edit{padding:0;border:0;background:none;color:var(--ink);font:inherit;text-decoration:underline;cursor:pointer;}
 .plan-full-view{display:flex;flex-direction:column;gap:8px;}

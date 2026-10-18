@@ -6,7 +6,9 @@
 // window.__shapeFeature, the test seam app.js exposes beside its other window.__* hooks.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { bootApp, runPanel } from './helpers/run-page-boot.mjs';
+import { chatCardBuilder } from '../ui/public/chat/extensions.mjs';
 
 const GATE = { flags: { shapeFirst: true } };
 const click = (ctx, el) => el.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
@@ -378,4 +380,72 @@ test('the Chat run card mounts the summary and Open feature routes to the page; 
   seam.mount(plans, 'feat_1');
   await ctx.settle(5);
   assert.ok(plans.querySelector('.shape-feature') && !plans.querySelector('.shape-feature-sum') && !plans.querySelector('.is-page'));
+});
+
+// ---- slice 4: the plan gate with role reviews on every surface (run page, workspace run, Chat card, feature page) ----
+
+const RR_ASK = JSON.parse(readFileSync(new URL('./fixtures/role-review/recorded-run.json', import.meta.url), 'utf8'));
+const rrRun = (o = {}) => ({ runId: 'run-rr', pipelineId: 'p-rr', title: 'Role reviews', projectDir: '/tmp/p', status: 'running', kind: 'run',
+  startedAt: '2026-01-01T00:00:00Z', shaping: { perspectives: RR_ASK.plan.perspectives, rounds: [], approved: null, savedTo: null },
+  pendingQuestion: RR_ASK, ...o });
+const recordAnswers = (runId, posts, next = () => null) => (url, opts) => {
+  if (url === `/api/runs/${runId}/answer`) { posts.push(JSON.parse(opts.body)); return res(200, { ok: true }); }
+  return next(url, opts);
+};
+
+for (const workspaceId of [null, 'ws1']) {
+  test(`run page${workspaceId ? ' (workspace run)' : ''}: the plan gate with 1 open issue is approvable`, async () => {
+    const posts = [];
+    const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', posts) });
+    ctx.wsBox.ws.dispatch('open', {});
+    ctx.dispatch({ type: 'hello', ...GATE, runs: [rrRun(workspaceId ? { workspaceId } : {})] });
+    ctx.go('running/run-rr');
+    await ctx.settle();
+    const panel = runPanel(ctx);
+    const approve = panel.querySelector('.plan-approve');
+    assert.equal(approve.textContent, 'Approve with 1 open issue');
+    assert.equal(panel.querySelectorAll('.plan-roles .plan-check-row').length, 5);
+    assert.equal(panel.querySelectorAll('.plan-more').length, workspaceId ? 0 : 1);
+    click(ctx, approve);
+    await ctx.settle();
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].decision, 'approve');
+  });
+}
+
+test('Chat run card: the plan gate is approvable and the receipt names the roles and the open issue', async () => {
+  const posts = [];
+  const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', posts) });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', ...GATE, runs: [rrRun()] });
+  await ctx.settle();
+  const doc = ctx.window.document;
+  const built = chatCardBuilder('progress')(
+    { kind: 'card', id: 'c-rr', state: 'tracked', card: { type: 'progress', pipelineId: 'p-rr', runId: 'run-rr', projectKey: 'p', title: 'Role reviews' } },
+    { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel() {}, openArtifact() {}, announce() {} });
+  doc.body.appendChild(built.el);
+  await ctx.settle();
+  const approve = built.el.querySelector('.plan-approve');
+  assert.equal(approve.textContent, 'Approve with 1 open issue');
+  click(ctx, approve);
+  await ctx.settle();
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].decision, 'approve');
+  ctx.dispatch({ type: 'question-resolved', runId: 'run-rr', id: RR_ASK.id });
+  await ctx.settle();
+  assert.equal(built.el.querySelector('.chat-rc-receipt summary').textContent, 'Plan approved · 5 roles reviewed · 1 open issue accepted');
+  built.dispose();
+});
+
+test('feature (group) page: the plan gate with 1 open issue is approvable', async () => {
+  const posts = [];
+  const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
+  server.fetchHandler = recordAnswers('r2', posts, server.fetchHandler);
+  const { ctx, page } = await openFeaturePage({ server, runs: [rrRun({ runId: 'r2', pipelineId: 'p2', title: 'Run tags' })] });
+  const approve = page.querySelector('.shape-feature-ask .plan-approve');
+  assert.equal(approve.textContent, 'Approve with 1 open issue');
+  click(ctx, approve);
+  await ctx.settle();
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].decision, 'approve');
 });

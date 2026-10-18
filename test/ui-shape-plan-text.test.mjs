@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import {
   SHAPE_ATTENTION, isShapingRun, planStats, perspectiveChangeFeedback, fixFeedback, sectionOwners, defaultAnswers,
   planSummary, checkLine, unmetLine, fixAllFeedback, approveLabel, shaperWait,
+  planApproveLabel,
 } from '../ui/public/shape/plan-text.mjs';
 import { buildPerspectiveChips } from '../ui/public/shape/chips.mjs';
 import { PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
@@ -172,4 +173,12 @@ test('buildPerspectiveChips: hidden keys are not offered — no chip, not in val
   assert.deepEqual(open.value(), ['product', 'qa']);
   const shut = buildPerspectiveChips(newDoc(), { picked: ['architect', 'qa'], hidden: ['fit'] });
   assert.equal(shut.el.querySelector('.shape-chip-more').textContent, `+ ${PERSPECTIVES.length - 1 - 3} more`);
+});
+
+test('planApproveLabel: open critical/major issues are named on a plan ask only', () => {
+  assert.equal(planApproveLabel({}, 1), 'Approve with 1 open issue');
+  assert.equal(planApproveLabel({}, 2), 'Approve with 2 open issues');
+  assert.equal(planApproveLabel({}, 0), 'Approve and build');
+  assert.equal(planApproveLabel({}), 'Approve and build');
+  assert.equal(planApproveLabel({ outline: { slices: [] } }, 3), approveLabel({ outline: { slices: [] } }));
 });

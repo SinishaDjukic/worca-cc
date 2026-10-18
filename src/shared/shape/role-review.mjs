@@ -124,3 +124,50 @@ export function openBlocking(roleReviews) {
   const last = roleReviews?.rounds?.at(-1);
   return last ? last.roles.flatMap((r) => r.findings).filter((f) => f.status === 'open' && BLOCKING.has(f.severity)).length : 0;
 }
+
+const SEV_ORDER = ['critical', 'major', 'minor', 'suggestion'];
+
+/** The rounds of the latest pass (an "Ask for changes" opens a new pass): what the Plan step card describes. */
+export function currentPass(roleReviews) {
+  const rounds = Array.isArray(roleReviews?.rounds) ? roleReviews.rounds : [];
+  if (!rounds.length) return null;
+  const pass = rounds.at(-1).pass;
+  return { rounds: rounds.filter((r) => r.pass === pass) };
+}
+
+function countText(findings) {
+  if (!findings.length) return 'no findings';
+  const part = (open) => {
+    const n = SEV_ORDER.map((s) => [s, findings.filter((f) => f.severity === s && (f.status === 'open') === open).length])
+      .filter(([, k]) => k);
+    return n.length ? `${n.map(([s, k]) => `${k} ${s}`).join(', ')} ${open ? 'open' : 'fixed'}` : '';
+  };
+  return [part(true), part(false)].filter(Boolean).join(' · ');
+}
+
+/** Slice 4: one entry per role of the last round: its earlier fixed findings plus its last record, once each by id. */
+export function roleSummaries(roleReviews) {
+  const rounds = currentPass(roleReviews)?.rounds || [];
+  const last = rounds.at(-1);
+  if (!last) return [];
+  return last.roles.map((rec) => {
+    const seen = new Set();
+    const findings = [];
+    const add = (f) => { if (f && !seen.has(f.id)) { seen.add(f.id); findings.push(f); } };
+    for (const r of rounds.slice(0, -1)) {
+      for (const f of r.roles.find((x) => x.key === rec.key)?.findings || []) if (f.status === 'fixed') add(f);
+    }
+    for (const f of rec.findings || []) add(f);
+    findings.sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity));
+    const open = findings.filter((f) => f.status === 'open' && BLOCKING.has(f.severity)).length;
+    return { key: rec.key, label: rec.label, findings, open, text: `${rec.label} · ${countText(findings)}` };
+  });
+}
+
+/** "Reviewed by 5 roles · 1 open" — the card's folded line; '' without a review. */
+export function reviewedLine(roleReviews) {
+  const n = currentPass(roleReviews)?.rounds.at(-1)?.roles.length || 0;
+  if (!n) return '';
+  const open = openBlocking(roleReviews);
+  return `Reviewed by ${n} role${n === 1 ? '' : 's'}${open ? ` · ${open} open` : ''}`;
+}

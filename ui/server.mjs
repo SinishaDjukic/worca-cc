@@ -322,6 +322,7 @@ import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { shapeFirstEnabled, requireShapeFirst } from '../src/core/shape/gate.mjs';
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
+import { currentPass } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
@@ -1177,6 +1178,9 @@ function wireRun(entry) {
       const event = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }) };
 
       if (name === 'question') {
+        // Slice 4: the Plan step card's role rows read the current pass of role reviews off the plan ask (D1).
+        const rr = event.kind === 'plan' && event.plan && !event.plan.outline ? currentPass(orch.state?.roleReviews) : null;
+        if (rr) event.plan = { ...event.plan, roleReviews: rr };
         entry.pendingQuestion = event;
       }
       if (name === 'night-decision') {
