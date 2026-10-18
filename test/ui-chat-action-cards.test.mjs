@@ -3,13 +3,13 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { buildReceiptCard, buildRunStopCard, buildPullRequestCard, registerChatActionCards } from '../ui/public/chat/action-cards.mjs';
+import { buildReceiptCard, buildRunStopCard, buildPullRequestCard, registerChatActionCards, refreshChatPrWatch } from '../ui/public/chat/action-cards.mjs';
 import { chatCardBuilder, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const doms = [];
 afterEach(() => { for (const d of doms.splice(0)) d.window.close(); _resetChatExtensions(); });
-function ctxOf({ post = async () => ({}), openShipIt } = {}) {
+function ctxOf({ post = async () => ({}), openShipIt, fetch } = {}) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>');
   doms.push(dom);
   const posts = []; const said = [];
@@ -19,6 +19,7 @@ function ctxOf({ post = async () => ({}), openShipIt } = {}) {
     postCard: async (block, body) => { posts.push(body); return post(block, body); },
     announce: (t) => said.push(t),
     ...(openShipIt ? { openShipIt } : {}),
+    ...(fetch ? { fetch } : {}),
   };
   return { ctx, posts, said };
 }
@@ -283,4 +284,52 @@ test('refine cycle 3 mutation killers: a disabled Revert / Keep running / Not no
   const p2 = css.slice(css.indexOf('/* ===== Chat P2: Action cards ===== */'));
   for (const rule of [':is(.ask-rcard,.ask-stopcard,.ask-prcard) .ask-card-not-now:disabled{opacity:.55;cursor:default;background:transparent;color:var(--ink-2);}',
     '.ask-rcard.is-reverted .ask-rcard-change .ask-mcard-after{color:var(--ink-2);font-weight:400;}']) assert.ok(p2.includes(rule), rule);
+});
+
+test('pull-request: an applied card shows each PR\'s watch as one read-only line, re-read on pr-watch-changed; hidden when not watched', async () => {
+  const views = { '': { watching: true, status: 'fixing', reason: null, activePipelineId: 'f1', resolving: false, mergingBase: null },
+    'api-11111111': { watching: true, status: 'watching', reason: null, activePipelineId: null, resolving: false, mergingBase: null },
+    'web-22222222': { watching: true, status: 'needs-person', reason: 'cap', activePipelineId: null, resolving: false, mergingBase: null } };
+  const calls = [];
+  const fetch = async (url) => {
+    calls.push(url);
+    const v = views[new URL(url, 'http://x').searchParams.get('memberKey') || ''];
+    return v ? { ok: true, status: 200, json: async () => v } : { ok: false, status: 400, json: async () => ({ error: 'no open PR' }) };
+  };
+  const { ctx } = ctxOf({ fetch });
+  await checkRows([
+    { name: 'project run: one line from GET /api/pr/watch', run: async () => {
+      const card = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7', draft: false, existed: false } } }, ctx);
+      await tick(); await tick();
+      const line = card.el.querySelector('.ask-prcard-watch');
+      assert.equal(calls[0], '/api/pr/watch?id=aaaa0005&projectKey=shop-1a2b3c4d');
+      assert.deepEqual([line.hidden, line.textContent, line.classList.contains('is-run')], [false, 'Fixing', true]);
+      views[''] = { ...views[''], watching: false, status: 'watching' };
+      assert.equal(refreshChatPrWatch({ type: 'pr-watch-changed', projectKey: 'shop-1a2b3c4d', pipelineId: 'aaaa0005', memberKey: null }), 1);
+      await tick(); await tick();
+      assert.equal(line.hidden, true, 'not watched: no line');
+      card.dispose();
+      assert.equal(refreshChatPrWatch({ pipelineId: 'aaaa0005', memberKey: null }), 0, 'a disposed card is not read again');
+    } },
+    { name: 'workspace run: one line per member PR, named; a frame re-reads only its member', run: async () => {
+      calls.length = 0;
+      const card = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, projectKey: 'workspaces/wk1', workspaceId: 'wk1', result: { url: 'https://x/pull/1', draft: false, existed: false,
+        members: [{ url: 'https://x/pull/1', memberKey: 'api-11111111' }, { url: 'https://x/pull/2', memberKey: 'web-22222222' }] } } }, ctx);
+      await tick(); await tick();
+      assert.deepEqual([...card.el.querySelectorAll('.ask-prcard-watch')].map((l) => l.textContent), ['api · Watching', `web · Stopped: gave up after 3 fix runs`]);
+      calls.length = 0;
+      assert.equal(refreshChatPrWatch({ pipelineId: 'aaaa0005', memberKey: 'web-22222222' }), 1);
+      assert.deepEqual(calls, ['/api/pr/watch?id=aaaa0005&projectKey=workspaces%2Fwk1&memberKey=web-22222222']);
+      card.dispose();
+    } },
+    { name: 'a PR the server cannot answer for (merged, closed) and a ctx without fetch show no line', run: async () => {
+      views[''] = undefined;
+      const card = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7' } } }, ctx);
+      await tick(); await tick();
+      assert.equal(card.el.querySelector('.ask-prcard-watch').hidden, true);
+      card.dispose();
+      const bare = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7' } } }, ctxOf().ctx);
+      assert.equal(bare.el.querySelector('.ask-prcard-watch'), null);
+    } },
+  ]);
 });

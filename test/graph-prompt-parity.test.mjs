@@ -1,5 +1,5 @@
 // test/graph-prompt-parity.test.mjs
-// THE prompt snapshot pin, in two layers. For each of the 17 non-presentation builtins this
+// THE prompt snapshot pin, in two layers. For each of the 25 non-presentation builtins this
 // assembles the v2 task prompt through the SAME builder runAgentExecution ships
 // (buildAgentPrompt, driven by the REAL agents/*.meta.json sidecars — never a
 // fixture) and then:
@@ -187,6 +187,10 @@ const MOCK_ROLES = {
   architectSetup: 'clarify', architect: 'c4-architect',
   // The diagram interpreter rides the planner writer: same plan port.
   diagramInterpreter: 'planner-plan',
+  // The promo video crew is post-v1 too: two form clarifiers on the clarify writer, the
+  // producers on the generic writer, the review on the generic verifier (no bespoke roles).
+  promoSetup: 'clarify', promoVoice: 'clarify', promoExplorer: 'generic-producer', promoWriter: 'generic-producer',
+  promoCapture: 'generic-producer', promoMascot: 'generic-producer', promoScenes: 'generic-producer', promoReview: 'generic-verifier',
 };
 
 test('every builtin pins its v1 MOCK_ROLE and names its allocated outputs absolutely', () => {
@@ -238,7 +242,7 @@ test('planner keeps its instruction, the REVISE arm and the inline answers block
 });
 
 test('refiner, reviewer, planReviewer and workspaceReviewer keep their v1 instructions', () => {
-  assert.deepEqual(BUILTIN_KEYS.filter((k) => REGISTRY[k].verdict).sort(), ['manualWebUiTesting', 'planReviewer', 'refiner', 'reviewer', 'workspaceReviewer']);
+  assert.deepEqual(BUILTIN_KEYS.filter((k) => REGISTRY[k].verdict).sort(), ['manualWebUiTesting', 'planReviewer', 'promoReview', 'refiner', 'reviewer', 'workspaceReviewer']);
   assert.ok(promptFor('refiner').includes(V1_REFINER_INSTRUCTION));
   const rev = promptFor('reviewer', { only: ['plan', 'done'] });   // `done` is optional: bind it to reach the worktree arm
   assert.ok(rev.includes(V1_REVIEWER_INSTRUCTION));

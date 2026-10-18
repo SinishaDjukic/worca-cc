@@ -21,7 +21,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { mkdtemp, rm, mkdir, writeFile, readdir } from 'node:fs/promises';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -831,4 +831,89 @@ test('GET /api/runs and DELETE /api/runs/:id 400 without projectDir/workspaceId'
       assert.equal(r.status, 400);
     } },
   ]);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Import candidates: the creation wizard's Add… / paste box
+// ───────────────────────────────────────────────────────────────────────────
+
+test('POST /api/workspaces/import-candidates refusals: 400 without a path, for a non-array paths, a non-string text, past 100 paths', async () => {
+  await checkRows([
+    { name: 'no path at all -> 400', run: async () => {
+      const r = await post('/api/workspaces/import-candidates', {});
+      assert.equal(r.status, 400);
+      assert.match((await r.json()).error, /at least one path/);
+    } },
+    { name: 'paths that is not an array -> 400', run: async () => {
+      const r = await post('/api/workspaces/import-candidates', { paths: '/a' });
+      assert.equal(r.status, 400);
+      assert.match((await r.json()).error, /paths must be an array/);
+    } },
+    { name: 'text that is not a string -> 400', run: async () => {
+      const r = await post('/api/workspaces/import-candidates', { text: ['/a'] });
+      assert.equal(r.status, 400);
+      assert.match((await r.json()).error, /text must be a string/);
+    } },
+    { name: 'more than 100 paths -> 400', run: async () => {
+      const r = await post('/api/workspaces/import-candidates', { paths: Array.from({ length: 101 }, (_, i) => `/nowhere/${i}`) });
+      assert.equal(r.status, 400);
+      assert.match((await r.json()).error, /at most 100 paths/);
+    } },
+  ]);
+});
+
+test('POST /api/workspaces/import-candidates: a folder of repos, a .code-workspace file and pasted paths answer registered / new / problem rows', async () => {
+  const parent = await freshDir('worca-cc-wsimp-parent-');
+  const repoIn = (...rel) => templateRepo('wsimp-api', { branch: 'main', user: true, files: { 'README.md': '# hi\n' }, into: join(parent, ...rel) });
+  const a = repoIn('alpha');
+  const b = repoIn('beta');
+  repoIn('.hidden');
+  repoIn('node_modules', 'dep');
+  repoIn('group', 'gamma');
+  await mkdir(join(parent, 'notes'));
+  const reg = await post('/api/projects/bulk', { projects: [{ name: 'Alpha Project', path: a }] });
+  assert.equal(reg.status, 200);
+  assert.equal((await reg.json()).results[0].status, 'added');
+  try {
+    await checkRows([
+      { name: 'a folder of repositories: the registered one is reused, the other is new', run: async () => {
+        const r = await post('/api/workspaces/import-candidates', { paths: [parent] });
+        assert.equal(r.status, 200);
+        const j = await r.json();
+        assert.deepEqual(j.candidates.map((c) => [basename(c.path), c.status, c.name]), [
+          ['alpha', 'registered', 'Alpha Project'],
+          ['beta', 'new', 'beta'],
+        ]);
+        assert.equal(j.candidates[0].path, a, "a registered row names the project's own path");
+        assert.equal(j.workspaceName, null);
+        assert.equal(j.truncated, false);
+      } },
+      { name: 'depth 2 finds group/gamma too; hidden folders and node_modules never show up', run: async () => {
+        const j = await (await post('/api/workspaces/import-candidates', { paths: [parent], depth: 2 })).json();
+        assert.deepEqual(j.candidates.map((c) => basename(c.path)), ['alpha', 'beta', 'gamma']);
+      } },
+      { name: 'a .code-workspace file (JSONC) names the workspace and lists its folders', run: async () => {
+        const file = join(parent, 'acme.code-workspace');
+        await writeFile(file, `{
+  // VS Code keeps comments and trailing commas
+  "folders": [
+    { "path": "beta", "name": "Beta Service" },
+    { "path": ${JSON.stringify(a)} },
+    { "path": "notes" },
+  ],
+}`);
+        const j = await (await post('/api/workspaces/import-candidates', { paths: [file] })).json();
+        assert.equal(j.workspaceName, 'acme');
+        assert.deepEqual(j.candidates.map((c) => [c.status, c.name]), [['new', 'Beta Service'], ['registered', 'Alpha Project'], ['problem', 'notes']]);
+        assert.equal(j.candidates[2].problem, 'Not in a git repository');
+      } },
+      { name: 'pasted text: quotes and # lines dropped; a relative path is a problem', run: async () => {
+        const j = await (await post('/api/workspaces/import-candidates', { text: `# my repos\n"${b}"\n\nrelative/path\n` })).json();
+        assert.deepEqual(j.candidates.map((c) => c.status), ['new', 'problem']);
+        assert.match(j.candidates[1].problem, /full path/);
+      } },
+    ]);
+  } finally {
+    await (await del(`/api/projects?name=${encodeURIComponent('Alpha Project')}`)).arrayBuffer();
+  }
 });

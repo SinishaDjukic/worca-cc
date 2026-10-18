@@ -1,0 +1,22 @@
+/* mascot.css — the mascot crew (film/mascot.js). Every rule is prefixed .mascot. No animations/transitions. */
+.mascot { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; }
+.mascot .m-inner { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; }
+.mascot .m-svg { position: absolute; display: block; overflow: visible; }
+.mascot .m-say { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; z-index: 2;
+  font-family: 'Poppins', system-ui, sans-serif; }
+.mascot .m-bubble { position: absolute; left: -0.95em; bottom: 0.72em; white-space: nowrap;
+  font-weight: 600; font-size: 1em; line-height: 1.12; letter-spacing: -0.01em; color: #19191B;
+  background: #fff; border: 0.12em solid #19191B; border-radius: 0.82em; padding: 0.36em 0.74em 0.42em;
+  box-shadow: 0 0.4em 0.9em -0.45em rgba(20, 20, 30, 0.38); }
+.mascot .m-bubble::after { content: ''; position: absolute; left: 0.62em; bottom: -0.37em; width: 0.58em; height: 0.58em;
+  background: #fff; border-right: 0.12em solid #19191B; border-bottom: 0.12em solid #19191B;
+  transform: rotate(45deg) skew(14deg, 14deg); }
+.mascot .m-say.m-left .m-bubble { left: auto; right: -0.95em; }
+.mascot .m-say.m-left .m-bubble::after { left: auto; right: 0.62em; transform: rotate(45deg) skew(-14deg, -14deg); }
+.mascot .m-say-think .m-bubble { bottom: 1.25em; border-radius: 1.4em; padding: 0.42em 0.95em 0.48em; }
+.mascot .m-say-think .m-bubble::after { display: none; }
+.mascot .m-dot { position: absolute; display: block; background: #fff; border: 0.11em solid #19191B; border-radius: 50%; }
+.mascot .m-dot0 { width: 0.36em; height: 0.36em; left: -0.18em; top: -0.42em; }
+.mascot .m-dot1 { width: 0.58em; height: 0.58em; left: 0.18em; top: -1.12em; }
+.mascot .m-say.m-left .m-dot0 { left: -0.18em; }
+.mascot .m-say.m-left .m-dot1 { left: -0.76em; }

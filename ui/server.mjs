@@ -79,6 +79,7 @@ import {
   awayPerPerson, nightModeToggleFor, nightModeHereSinceFor, setPersonNightModeToggle,
   actionsSettings, setActionsSettings, assertActionsInput,
   syncDefaults, setSyncDefaults, assertSyncSettingsInput, DEFAULT_SYNC_SETTINGS,
+  networkWaitSettings, assertNetworkWaitInput, setNetworkWait, effectiveNetworkWait,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
@@ -109,6 +110,7 @@ import {
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline,
   finishMessage as askFinishMessage,
+  newAskId as askNewId, findPullRequestCards as askFindPullRequestCards, findFixRunCards as askFindFixRunCards,
 } from '../src/core/ask/store.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
@@ -215,6 +217,7 @@ import { syncPluginSlots } from '../src/core/plugin-broker-slots.mjs';
 import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import { realRoots, checkInside, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
+import { importCandidates, parsePathList, IMPORT_MAX_INPUTS } from '../src/core/workspace-import.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, foreignRunModel, assertSlotModels, stepSlotDefaults,
@@ -300,7 +303,7 @@ import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
-import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
+import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
   markPrReady, closePr, uncommittedPatch } from '../src/core/git-info.mjs';
@@ -327,7 +330,9 @@ import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, ca
   rechainWaiting, replanRest, setApproveEach, stackedPrBase, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput } from '../src/core/shape/features.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
-import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
+import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById, listNetworkWaitRuns } from '../src/core/artifacts.mjs';
+import { createNetworkWatch, NETWORK_ACTOR } from '../src/core/network-wait.mjs';
+import { probeReachable, hostOf } from '../src/core/upstream-probe.mjs';
 import { editRunTags, readRunTags, tagVocabulary } from '../src/core/run-tags-store.mjs';
 import { normaliseTags, describeTagChange, parseTag } from '../src/shared/run-tags.mjs';
 import { normaliseDimensions, prefillTags } from '../src/shared/tag-dimensions.mjs';
@@ -642,7 +647,7 @@ function liveRunIds() {
 // engine AND for the v2 shim until the graph cut-over retires it.
 // `artifact-gone` is this branch's: an indexed artifact whose file the run later
 // removed, so the client can drop the row instead of leaving one that 404s.
-const EVENT_NAMES = ['exec', 'token', 'log', 'question', 'artifact', 'artifact-gone', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title', 'night-decision'];
+const EVENT_NAMES = ['exec', 'token', 'log', 'question', 'artifact', 'artifact-gone', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title', 'night-decision', 'recovery-auto'];
 // The agentgen-* WS family (Agent Platform, Phase 2): a NEW family in the SAME
 // runs Map. createAgentGen emits many agentgen-progress then exactly one terminal
 // agentgen-done OR agentgen-error. (The scan-* family is gone: dev made a
@@ -1098,6 +1103,7 @@ function summarizeRuns() {
     ...(r.orch?.state?.shaping ? { shaping: r.orch.state.shaping } : {}),
     // Night mode switches + counters ({optIn, override, decisions, flagged}), so a reconnect paints the run-view switch.
     night: r.orch?.state?.night || null,
+    networkWait: r.orch?.state?.networkWait || null,
     // kind discriminator so the client routes runs vs agent generations vs
     // workspace runs without guessing; genId/workspaceId are the matching
     // attribution fields.
@@ -1180,6 +1186,10 @@ function wireRun(entry) {
         // card can go. A guardrail row answered nothing: its pause's `done` frame clears the
         // card, and a refused pause leaves the question open for the user.
         if (!payload.record?.guardrail) resolvePending(entry, { id: payload.id, reason: 'night-mode' });
+      }
+      if (name === 'recovery-auto') {
+        // The harness answered its own recovery prompt (the network came back): clear the card in every tab.
+        resolvePending(entry, { id: payload.id, reason: 'network-back' });
       }
       if (name === 'done') {
         entry.status = (payload && payload.status) || 'done';
@@ -1984,12 +1994,14 @@ function fallbackRunTitle(effectivePrompt, source) {
 // and ask-run-status frames. Used by POST /api/run at launch AND by resumeRun
 // (a resumed pipeline is a NEW orchestrator; the paused lineage's follower
 // detached on done{paused}, so the link must be re-followed — review of PR #376).
-function attachAskFollower(orch, { threadId, runId, cardId }) {
+function attachAskFollower(orch, { threadId, runId, cardId, quiet = false }) {
   const follower = attachRunFollower(orch, {
     threadId,
     runId,
     cardId,
-    post: ({ text, href }) => {
+    // Quiet (a PR fix-run card, askPostPrFixCards): the link and the ask-run-status frames, never a notice — the card
+    // shows the run, and the watcher's outcome lands on it.
+    post: quiet ? () => {} : ({ text, href }) => {
       try {
         const m = askAppendMessage(threadId, {
           role: 'system', text, blocks: [{ kind: 'notice', text, href }],
@@ -2109,12 +2121,93 @@ function askTrackRun(threadId, input, pin) {
   return { ok: true, card: { type: 'progress', pipelineId, runId: liveRunId, projectKey: projKey, workspaceId, title, label, status } };
 }
 
+/** A run link that belongs to a PR fix-run card (askPostPrFixCards) follows its run quietly: no Run resumed / finished
+ *  rows — the card shows the run, and its outcome. */
+function askLinkIsPrFix(link) {
+  if (!link || !link.cardId) return false;
+  try { return !!askFindCard(link.threadId, link.cardId)?.block?.card?.fix; } catch { return false; }
+}
+
+/**
+ * PR watch → Ask (pr-watch.mjs onFixRun), with no model turn: `started` posts ONE fix-run card (track_run's progress
+ * card plus `fix`) into every chat holding an applied pull-request card for the PR; `ended` writes the outcome onto
+ * those cards. Best effort: a chat write never reaches back into the watch. → [{ threadId, cardId }] touched
+ */
+function askPrFixRun(event) {
+  if (!event || typeof event.runId !== 'string' || !event.runId || !event.watch || typeof event.watch.prUrl !== 'string') return [];
+  if (event.phase === 'started') return askPostPrFixCards(event);
+  if (event.phase === 'ended') return askSettlePrFixCards(event);
+  return [];
+}
+
+function askPostPrFixCards({ watch, runId, trigger, once }) {
+  const posted = [];
+  const seen = new Set(askFindFixRunCards(runId).map((c) => c.threadId));   // one card per fix run per chat
+  const entry = runs.get(runId) || null;                                    // startRunHandler set it before answering 200
+  let origin = null;
+  if (!entry || !entry.projectDir) { try { origin = prWatchOrigin(watch); } catch { origin = null; } }
+  const dir = (entry && entry.projectDir) || (origin && origin.projectDir) || '';
+  const why = trigger && typeof trigger === 'object' && typeof trigger.label === 'string' ? trigger : { kinds: [], label: 'Pull request feedback' };
+  for (const link of askFindPullRequestCards(watch.prUrl)) {
+    if (seen.has(link.threadId)) continue;
+    seen.add(link.threadId);
+    try {
+      const cardId = askNewId('card');
+      const status = (entry && entry.status) || 'starting';
+      const card = {
+        type: 'progress', pipelineId: null, runId,
+        projectKey: dir ? projectKey(dir) : ((origin && origin.projectKey) || null), workspaceId: null,
+        title: (entry && entry.title) || 'PR fix run',
+        label: String(dir).split(/[\\/]/).filter(Boolean).pop() || '',
+        status,
+        fix: { prUrl: watch.prUrl, memberKey: link.memberKey, originPipelineId: link.pipelineId,
+          trigger: Array.isArray(why.kinds) ? why.kinds : [], triggerLabel: why.label, once: once === true },
+      };
+      const text = `PR watch started a fix run on ${watch.prUrl}: ${why.label}`;
+      const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'card', id: cardId, state: 'tracked', card }] });
+      try { askLinkRun(link.threadId, { runId, cardId, status }); } catch { /* a link for this run exists already: the card finds it by run id */ }
+      if (entry && entry.orch && !SETTLED_RUN.has(String(entry.status || '')) && !askFollowerAttached(link.threadId, runId)) {
+        attachAskFollower(entry.orch, { threadId: link.threadId, runId, cardId, quiet: true });
+      }
+      broadcast({ type: 'ask-message', threadId: link.threadId, message: m, unread: true });
+      posted.push({ threadId: link.threadId, cardId });
+    } catch (err) {
+      console.error(`[worca-ui] PR fix-run card for ${watch.prUrl} failed: ${err && err.message ? err.message : err}`);
+    }
+  }
+  return posted;
+}
+
+function askSettlePrFixCards({ runId, pipelineId, outcome }) {
+  const settled = [];
+  const out = outcome && typeof outcome === 'object' ? outcome : { kind: 'failed', reason: 'unknown' };
+  for (const { threadId, block } of askFindFixRunCards(runId)) {
+    if (block.card.fix.outcome) continue;                                 // written once
+    try {
+      askUpdateCardBlock(threadId, block.id, { card: { pipelineId: block.card.pipelineId || pipelineId || null, fix: { ...block.card.fix, outcome: out } } });
+      // A system row is never held by a turn's reducer: the whole message goes out, as flipCard sends an out-of-turn flip.
+      const found = askFindCard(threadId, block.id);
+      if (found) broadcast({ type: 'ask-message', threadId, message: found.message, unread: true });
+      settled.push({ threadId, cardId: block.id });
+    } catch (err) {
+      console.error(`[worca-ui] PR fix-run outcome for ${runId} failed: ${err && err.message ? err.message : err}`);
+    }
+  }
+  return settled;
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/run  -> start a new orchestration run
 // body (single-project): { projectDir, prompt?, promptMarkdown?, title?, mock? }
 // body (workspace):      { workspaceId, prompt?, ... } — mutually exclusive with
 //                        projectDir (§2.6). Single-project behavior is byte-identical.
 // ---------------------------------------------------------------------------
+// A project's stored default tags, for the key:value write rule's grandfathering; [] for a workspace or an unknown dir.
+function storedDefaultTags(rawDir) {
+  if (typeof rawDir !== 'string' || !rawDir) return [];
+  try { const dir = resolveProjectDir(rawDir); return dir ? readProjectDefaultTags(projectKey(dir)) : []; } catch { return []; }
+}
+
 /**
  * Enforced run tags (D9, D9a, D10, D13): pre-fill, then refuse a missing mandatory tag or an off-list value
  * with 422 { error, fields: { tags } }. Returns true when it answered. On pass, body.tags holds the filled
@@ -2314,16 +2407,19 @@ const startRunHandler = async (req, res) => {
     // Run tags (#718): normalised once, written back so a stored schedule keeps the clean list and
     // its firing re-validates it. Absent = no tags (legacy bodies unchanged). An explicit [] stays []:
     // "no tags", which also opts an `after` run out of inheriting its predecessor's tags.
+    // A person's tags must be key:value; the project's stored defaults (the form pre-fills them) may keep a
+    // bare key saved before that rule.
+    // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
+    // Their tags are stored data (a ticket's request, a predecessor's or parent's tags), so the key:value rule skips them too.
+    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
+      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
     let tags = [];
     if (body.tags !== undefined) {
-      const t = normaliseTags(body.tags);
+      const t = normaliseTags(body.tags, tagExempt ? {} : { strict: true, keep: storedDefaultTags(body.projectDir) });
       if (t.errors.length) return badRequest(res, `tags: ${t.errors[0]}`);
       tags = t.tags;
       body.tags = tags;
     }
-    // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
-    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
-      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
@@ -3406,6 +3502,38 @@ function startAwayHoursWatch() {
   watch.tick();                                   // the baseline: a restart never announces an edge
   _awayWatchTimer = setInterval(() => watch.tick(), AWAY_WATCH_TICK_MS);
   _awayWatchTimer.unref();
+}
+
+// Wait for the network (network-wait.mjs): a run that paused as recoverable/network while its
+// endpoint was unreachable, or that died while it waited (a restart), is resumed here — in this
+// process, keeping --yes — once that endpoint answers again, inside the max-wait window.
+const NETWORK_WATCH_TICK_MS = 60_000;
+let _networkProbe = (origin) => probeReachable(origin);
+let _networkWatch = null;
+function networkWatch() {
+  return (_networkWatch ||= createNetworkWatch({
+    settings: () => effectiveNetworkWait(),
+    listRuns: () => listNetworkWaitRuns(),
+    hasResumeTicket: (id) => resumeTicketsFor(id).length > 0,
+    probe: (origin) => _networkProbe(origin),
+    resume: async (r) => {
+      const out = await resumeRun(r.id, {
+        by: NETWORK_ACTOR, auto: r.resumePoint.runAuto === true, resumeCause: 'network',
+        mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK),
+      });
+      const since = new Date(r.resumePoint.network.since);
+      appendAuditById(r.id, `Network back: ${hostOf(r.resumePoint.network.origin)} answers again — run resumed${byActor(NETWORK_ACTOR)} (waiting since ${since.toISOString().slice(11, 16)} UTC).`, { actor: NETWORK_ACTOR });
+      return out;
+    },
+    log: (m) => console.warn(`[worca-ui] network watch: ${m}`),
+  }));
+}
+let _networkWatchTimer = null;
+function startNetworkWatch() {
+  if (_networkWatchTimer) return;
+  networkWatch().tick().catch(() => {});           // the boot sweep
+  _networkWatchTimer = setInterval(() => { networkWatch().tick().catch(() => {}); }, NETWORK_WATCH_TICK_MS);
+  _networkWatchTimer.unref();
 }
 
 /** A schedule item (ticket or series) by id, for the unified /api/schedules routes. */
@@ -4632,10 +4760,12 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
       const remote = isSafeRemoteName(b.sync?.remote) ? b.sync.remote : effectiveSyncSettings(key).remote;
       const f = await fetchRemote(dir, { remote, maxAgeMs: INTERACTIVE_TTL_MS });
       if (!f.ok && (f.kind === 'no-remote' || f.kind === 'bad-remote')) return null;
-      const st = await syncStatus(dir, { base: b.source, remote });
+      // A source of `origin/dev` is measured as `dev` on origin (prBaseBranch).
+      const base = await prBaseBranch(dir, b.source, [remote]);
+      const st = await syncStatus(dir, { base, remote });
       if (!st.ok) return null;
       if (!st.hasLocal && !st.hasRemote) {
-        // Not a branch at all (a tag, or 'origin/dev', both accepted by isValidSourceRef):
+        // Not a branch at all (a tag, or another remote's 'upstream/dev', both accepted by isValidSourceRef):
         // nothing to measure. Only a source that resolves nowhere is "missing".
         if (await isValidSourceRef(dir, b.source)) return null;
         return { projectKey: key, base: b.source, remote, exists: false, onRemote: false, movedBy: null, stale: !f.ok };
@@ -4644,8 +4774,8 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
       // fetch, baseSha is a local tip that may already have been behind, and baseSha..remote would
       // count commits that landed BEFORE the run as "since this run started".
       const from = b.sync?.remoteSha || b.baseSha;
-      const movedBy = from && st.hasRemote ? await commitsBetween(dir, from, `refs/remotes/${remote}/${b.source}`) : null;
-      return { projectKey: key, base: b.source, remote, exists: true, onRemote: st.hasRemote, movedBy, stale: !f.ok };
+      const movedBy = from && st.hasRemote ? await commitsBetween(dir, from, `refs/remotes/${remote}/${base}`) : null;
+      return { projectKey: key, base, remote, exists: true, onRemote: st.hasRemote, movedBy, stale: !f.ok };
     });
     return rows.filter(Boolean);
   } catch { return []; /* never block a resume on a read error */ }
@@ -4699,7 +4829,7 @@ async function resumeTargetDirs(saved) {
   return { projectDir, workspace: undefined };
 }
 
-async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false } = {}) {
+async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false, auto = false, resumeCause = null } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
@@ -4823,6 +4953,9 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     claude: { permissionMode: 'acceptEdits', mock: effMock, ...engineOpts, ...modelOpts },
     resume: saved,
     resumedBy: by || 'local',
+    // The network watch keeps a --yes run --yes across its resume (a manual resume does not).
+    ...(auto === true ? { auto: true } : {}),
+    ...(resumeCause ? { resumeCause } : {}),
     ...(autoLimitResume ? { autoLimitResume: true } : {}),
   });
   // The engine gate's refusals answer here, before the resume is committed, like POST
@@ -4878,10 +5011,14 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   for (const link of askFindRunLinksByPipeline(pipelineId)) {
     try {
       if (!askUpdateRunLink(link.threadId, link.runId, { runId, status: 'running' })) continue;
-      const text = `Run resumed — "${saved.row.title || 'run'}"`;
-      const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'notice', text, href: `#running/${runId}` }] });
-      broadcast({ type: 'ask-message', threadId: link.threadId, message: m });
-      attachAskFollower(orch, { threadId: link.threadId, runId, cardId: link.cardId });
+      // A PR fix-run card follows quietly (askPostPrFixCards): it shows the resumed run itself — no "Run resumed" row.
+      const quiet = askLinkIsPrFix(link);
+      if (!quiet) {
+        const text = `Run resumed — "${saved.row.title || 'run'}"`;
+        const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'notice', text, href: `#running/${runId}` }] });
+        broadcast({ type: 'ask-message', threadId: link.threadId, message: m });
+      }
+      attachAskFollower(orch, { threadId: link.threadId, runId, cardId: link.cardId, quiet });
     } catch (err) {
       console.error(`[worca-ui] ask follower re-attach failed: ${err && err.message ? err.message : err}`);
     }
@@ -5871,7 +6008,7 @@ app.get('/api/projects/:key/tags/defaults', async (req, res) => {
 });
 app.put('/api/projects/:key/tags/defaults', async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;
-  const t = normaliseTags(req.body?.tags);
+  const t = normaliseTags(req.body?.tags, { strict: true, keep: readProjectDefaultTags(p.key) });
   if (!Array.isArray(req.body?.tags) || t.errors.length) return badRequest(res, t.errors[0] || 'tags must be a list of strings');
   res.json({ tags: writeProjectDefaultTags(p.key, t.tags) });
 });
@@ -6681,7 +6818,7 @@ function prWatchFrame(pipelineId, memberKey) {
   const projectKey = !row ? null : (row.target === 'workspace' || row.workspace_key) ? `workspaces/${row.workspace_key}` : row.project_key;
   return { type: 'pr-watch-changed', projectKey, pipelineId: row?.id || pipelineId, memberKey: memberKey || null };
 }
-const prWatcher = createPrWatcher({
+const prWatcherDeps = {
   originOf: prWatchOrigin,
   host: { snapshot: prWatchSnapshot, jobLog: prWatchJobLog, rerun: prWatchRerun, reply: prWatchReply, comment: prWatchComment },
   git: {
@@ -6715,10 +6852,13 @@ const prWatcher = createPrWatcher({
     if (readPrState(pipelineId)?.url !== pr.url) throw new Error('the fix run did not record its pull request');
   },
   notify: (event) => chatNotifier.notifyPrWatch(event),
+  // Ask: the chats that opened this PR get each fix run's card, then its outcome (askPrFixRun).
+  onFixRun: (event) => { askPrFixRun(event); },
   audit: (pipelineId, text) => appendAuditById(pipelineId, text, { actor: 'pr-watch' }),
   onChange: (w) => broadcast(prWatchFrame(w.pipelineId, w.memberKey)),
   log: (m) => console.warn(`[worca-ui] ${m}`),
-});
+};
+const prWatcher = createPrWatcher(prWatcherDeps);
 /** Nudge the loop after a toggle; a no-op unless it started (listen) and WORCA_PR_WATCH is on. */
 const kickPrWatch = () => { void prWatcher.runner.kick(); };
 
@@ -7632,16 +7772,19 @@ app.get('/api/pr/remotes', async (req, res) => {
   const repoDir = target.repoDir;                     // null when store_meta is missing
   if (!repoDir) return badRequest(res, 'pipeline has no project directory');
   const { feature, source } = target;
+  const rl = await listRemotes(repoDir);
+  const remoteNames = rl.remotes.map((r) => r.name);
   // chainBaseBranchesOf answers [] for a workspace row, so a member's chain is its own source.
+  // A remote-tracking source (`origin/dev`) offers the branch it names on the remote (`dev`).
   const walked = chainBaseBranchesOf(resolved.state.id || resolved.id);
-  const chain = (walked.length ? walked : (source ? [source] : [])).filter((b) => b !== feature);
+  const chain = (await Promise.all((walked.length ? walked : (source ? [source] : []))
+    .map((b) => prBaseBranch(repoDir, b, remoteNames)))).filter((b) => b !== feature);
   const pipelineId = resolved.state.id || resolved.id;
   // L10: a slice's PR stacks on the previous slice's branch until that slice's PR merges. The route is async with
   // no try/catch (F29): a failed feature lookup keeps the chain-root default instead of rejecting.
   let stacked = null;
   try { stacked = stackedPrBase(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
   const defaultBase = stacked || chain[0] || null;
-  const rl = await listRemotes(repoDir);
   if (!rl.ok) {
     const issue = runSourceIssue(pipelineId, { memberKey: target.memberKey });
     return res.status(500).json({ error: `git remote failed: ${rl.error}`, chain, defaultBase, issue });
@@ -7654,7 +7797,8 @@ app.get('/api/pr/remotes', async (req, res) => {
   // Measure from the remote tip recorded at start only when it is the SAME ref we compare
   // against: a fork's base remote is `upstream` and a chained run's base is the chain root,
   // not this run's source; there, the recorded origin tip would count old commits.
-  const sameRef = runBranch.sync?.remote === baseRemote && runBranch.source === defaultBase;
+  const sameRef = runBranch.sync?.remote === baseRemote
+    && await prBaseBranch(repoDir, runBranch.source, remoteNames) === defaultBase;
   const baseSha = (sameRef && runBranch.sync?.remoteSha) || runBranch.baseSha || null;
   const bf = isSafeRemoteName(baseRemote) ? await fetchRemote(repoDir, { remote: baseRemote, maxAgeMs: INTERACTIVE_TTL_MS }) : null;
   const rb = await listRemoteBranches(repoDir, rl.remotes.map((r) => r.name));
@@ -7716,6 +7860,8 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const picked = await pickPrRemotes(chosen, repoDir);
   if (picked.error) return { ok: false, status: picked.status, error: picked.error };
   const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
+  // A remote-tracking source (`origin/dev`) names the branch `dev` on the remote.
+  base = await prBaseBranch(repoDir, base, remotes.map((r) => r.name));
   // Always target the chosen base repo explicitly (gh's default-repo guess prefers
   // a remote named upstream over origin); use the owner:branch head only when the
   // branch lives in a different repository than the PR (gh matches by head label).
@@ -8012,8 +8158,10 @@ function publishMembers(state) {
 }
 
 // One member's published state from refs only (no network): the recorded remote, else the one
-// branchPushedTo finds (a branch Ship it pushed). 'moved' = local commits since (Push changes).
-// -> 'none' (no branch here) | 'unpublished' | 'published' | 'moved'
+// branchPushedTo finds (a branch Ship it pushed). 'moved' = local commits not on the remote (Push
+// changes). A remote that is only ahead (the PR's Update branch, a collaborator's push) has nothing
+// to push: 'published'. 'diverged' = both sides have commits, so a push (never forced) is refused.
+// -> 'none' (no branch here) | 'unpublished' | 'published' | 'moved' | 'diverged'
 async function publishStatus(m) {
   if (!m.repoDir || !m.feature) return { remote: null, state: 'none' };
   const recorded = m.published?.remote || null;
@@ -8023,7 +8171,12 @@ async function publishStatus(m) {
     remote = (await branchPushedTo(m.repoDir, m.feature))?.remote || null;
     tips = await branchTips(m.repoDir, m.feature, remote);
   }
-  if (remote && tips?.remote) return { remote, state: tips.local && tips.local !== tips.remote ? 'moved' : 'published' };
+  if (remote && tips?.remote) {
+    const rel = await tipsRelation(m.repoDir, tips.local, tips.remote);
+    // null with two different tips: git could not tell, so keep reading it as local commits.
+    const moved = rel === 'ahead' || (rel === null && tips.local && tips.local !== tips.remote);
+    return { remote, state: moved ? 'moved' : rel === 'diverged' ? 'diverged' : 'published' };
+  }
   return { remote: null, state: tips?.local ? 'unpublished' : 'none' };
 }
 
@@ -9311,6 +9464,35 @@ async function scanRequest(req, res, { id, name, projectPaths, rescan, models })
   }
 }
 
+// POST /api/workspaces/import-candidates {paths?: string[], text?: string, depth?: 1|2}
+//   -> 200 {candidates, workspaceName, truncated}
+// The creation wizard's Add… and paste box: what each path is (a repository, a folder of
+// repositories, a VS Code .code-workspace file) as review rows — registered (the existing project),
+// new (the wizard registers it through POST /api/projects/bulk before it scans) or problem (with
+// the reason). Reads folders and runs `git rev-parse` only: it never writes (src/core/workspace-
+// import.mjs). On a hosted Worca it reads only inside Worca's own folders (fs-scope.mjs).
+app.post('/api/workspaces/import-candidates', async (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  if (body.paths !== undefined && !Array.isArray(body.paths)) return badRequest(res, 'paths must be an array of paths');
+  if (body.text !== undefined && typeof body.text !== 'string') return badRequest(res, 'text must be a string');
+  try {
+    // Picked and pasted paths, duplicates removed BEFORE the count: the same 60 paths picked and
+    // pasted are 60 inputs. parsePathList stops just past the limit, so a huge paste stays cheap.
+    const inputs = [...new Set([
+      ...(body.paths || []).filter((p) => typeof p === 'string' && p.trim()).map((p) => p.trim()),
+      ...parsePathList(body.text || '', IMPORT_MAX_INPUTS),
+    ])];
+    if (!inputs.length) return badRequest(res, 'give at least one path (paths or text)');
+    if (inputs.length > IMPORT_MAX_INPUTS) return badRequest(res, `at most ${IMPORT_MAX_INPUTS} paths per import`);
+    // On a hosted Worca the import reads only inside Worca's own folders, like the folder browser.
+    const roots = fsLimitedHere(req) ? await fsAllowedRoots() : null;
+    const outsideProblem = roots ? async (p) => ((await checkInside(p, roots)).inside ? null : outsideAllowedMessage(p)) : null;
+    res.json(await importCandidates(inputs, { depth: body.depth === 2 ? 2 : 1, projects: await listProjects(), outsideProblem }));
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // POST /api/workspaces/scan (first scan): validated exactly as the save will be (D4).
 app.post('/api/workspaces/scan', async (req, res) => {
   const body = req.body || {};
@@ -9486,6 +9668,7 @@ const settingsState = () => ({
   tagDimensions: userTagDimensions(),                     // Settings › Tags › Tag dimensions (local; a team policy's list wins)
   enforceTags: userEnforceTags(),                         // Settings › Tags (local; a team policy's runs.enforceTags wins)
   sync: syncDefaults(),                                   // sync before run (#527): instance defaults
+  networkWait: networkWaitSettings(),                     // Settings › Runs › Wait for the network
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
   flags: allFlags(),                                      // { key: bool } resolved (docs/feature-flags.md)
   memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
@@ -9997,6 +10180,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasAskEngineKey = has('askEngine');
   const hasAskModelsKey = has('askModels');
   const hasActionsKey = has('actions');
+  const hasNetworkWaitKey = has('networkWait');
   const wsScanModels = hasWorkspaceScanKey ? (autoModels || defragModels || await listModels('')) : null;
   // #422: the title model is a SELECT over the catalog, so an id that is not a
   // catalog member is a client bug (or a stale option) — refuse it here rather
@@ -10082,6 +10266,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('nightModeToggle')) asSettingsField('nightModeToggle', () => assertNightModeToggleInput(body.nightModeToggle));
     if (hasActionsKey) asSettingsField('actions', () => assertActionsInput(body.actions));
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
+    if (hasNetworkWaitKey) asSettingsField('networkWait', () => assertNetworkWaitInput(body.networkWait));
     if (hasFlagsKey) asSettingsField('flags', () => checkFlags(body.flags));   // validate + cascade dry run, before anything is written
     if (has('tagDimensions')) asSettingsField('tagDimensions', () => {
       const { errors } = normaliseDimensions(body.tagDimensions ?? []);
@@ -10129,6 +10314,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('nightMode')) await setNightMode(body.nightMode);
     if (has('nightModeToggle') && !(await setPersonNightModeToggle(person, body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
     if (has('sync')) await setSyncDefaults(body.sync);
+    if (hasNetworkWaitKey) await setNetworkWait(body.networkWait);
     if (has('tagDimensions')) await asSettingsField('tagDimensions', () => setUserTagDimensions(body.tagDimensions));
     if (has('enforceTags')) await asSettingsField('enforceTags', () => setUserEnforceTags(body.enforceTags));
     // Live runs re-evaluate their open question against the new night settings.
@@ -10137,7 +10323,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -15622,6 +15808,7 @@ if (isMain) {
       console.log('[worca-ui] heartbeat: reporting to WORCA_HEARTBEAT_URL every 60 s');
     }
     startAwayHoursWatch();
+    try { startNetworkWatch(); } catch (err) { console.warn(`[worca-ui] network watch: ${err?.message || err}`); }
     // Keep policy until-pr (D11): release kept checkouts whose PR merged or closed, hourly.
     const keptTimer = setInterval(() => {
       releaseKeptCheckouts({ busy: busyActionRunIds(), stopServices: stopCheckoutServices })
@@ -15645,7 +15832,10 @@ export const _testing = {
   validateResumeTarget, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
+  prWatcherDeps, askPrFixRun, askLinkIsPrFix,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
   openSliceDraft, afterRunSettled,
+  networkWatchTick: () => networkWatch().tick(),
+  setNetworkProbe(fn) { _networkProbe = fn; },
   setAutoRescan(on) { autoRescanOn = on !== false; },
 };

@@ -155,7 +155,7 @@ test('first getDb() auto-runs the fs->db migration (DB is empty + legacy JSON pr
   assert.equal(count('projects'), 2, 'projects.json -> projects');
   assert.equal(count('workspaces'), 1, 'workspaces.json -> workspaces');
   assert.equal(count('workspace_projects'), 2, 'ordered members imported');
-  assert.equal(count('workflows'), 4, 'workflows/<id>.json -> workflows, plus the wf_presentation V30, wf_architecture_c4 V54 and wf_diagram_plan V60 seeds');
+  assert.equal(count('workflows'), 5, 'workflows/<id>.json -> workflows, plus the wf_presentation V30, wf_architecture_c4 V54, wf_promo_video V57 and wf_diagram_plan V61 seeds');
   assert.equal(count('project_config'), 1, 'per-project config.json -> project_config');
   assert.ok(count('config_workflow_nodes') >= 1, 'normalized node overrides imported');
   assert.ok(count('config_workflow_feedbacks') >= 1, 'normalized feedback cycles imported');

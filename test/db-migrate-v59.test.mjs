@@ -11,7 +11,7 @@ test('v59 adds run_tags and run_tag_events to a v56 DB (57-58 belong to Shaper)'
   db.exec('DROP TABLE run_tag_events; DROP TABLE run_tags; PRAGMA user_version = 56');
   migrate(db);
   assert.ok(SCHEMA_VERSION >= 59);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);   // a later bump touches no test file (db.mjs)
   assert.deepEqual(cols(db, 'run_tags'), ['pipeline_id', 'key', 'value']);
   assert.deepEqual(cols(db, 'run_tag_events'), ['id', 'pipeline_id', 'ts', 'actor', 'before_tags', 'after_tags']);
 });

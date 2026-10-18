@@ -741,6 +741,23 @@ export async function listRemoteBranches(projectDir, remoteNames = []) {
   return { ok: true, byRemote };
 }
 
+/**
+ * The branch name a PR base means on its remote. A run's source may be a remote-tracking
+ * ref (`origin/dev`, as the Ask agent's start_run passes it): a valid start point, but no
+ * branch on the remote. Such a name maps to the part after `<remote>/` when it is no local
+ * branch and `refs/remotes/<name>` exists; a real local branch named `origin/x` stays.
+ * Every other name comes back as is, without a git call. Never throws.
+ */
+export async function prBaseBranch(projectDir, name, remoteNames = []) {
+  if (!projectDir || typeof name !== 'string') return name;
+  const remote = [...remoteNames].sort((a, b) => b.length - a.length).find((n) => name.startsWith(`${n}/`));
+  if (!remote || name.length === remote.length + 1) return name;
+  const r = await _run('git', ['for-each-ref', '--format=%(refname)', `refs/heads/${name}`, `refs/remotes/${name}`], { cwd: projectDir });
+  if (!r.ok) return name;
+  const refs = new Set((r.stdout || '').split(/\r?\n/).map((s) => s.trim()));
+  return !refs.has(`refs/heads/${name}`) && refs.has(`refs/remotes/${name}`) ? name.slice(remote.length + 1) : name;
+}
+
 // ── Check out (#529) ────────────────────────────────────────────────────────
 
 /** OPEN | MERGED | CLOSED | null — unlike findPrForBranch, CLOSED is reported (keep policy `until-pr`). */
@@ -860,6 +877,23 @@ export async function branchTips(projectDir, branch, remote) {
   // for-each-ref also matches refs UNDER a pattern (refs/heads/feat/sub), so keep exact names only.
   const sha = new Map((r.stdout || '').split(/\r?\n/).map((l) => l.trim().split(' ')).filter((p) => p.length === 2));
   return { local: sha.get(refs[0]) || null, remote: remote ? sha.get(refs[1]) || null : null };
+}
+
+/**
+ * How a local tip stands against its remote-tracking tip (two shas from branchTips): 'same',
+ * 'ahead' (commits only local: Push changes), 'behind' (commits only on the remote, e.g. the PR's
+ * Update branch or a collaborator's push) or 'diverged' (both; a plain push is refused).
+ * null when a tip is missing or git cannot tell. No network.
+ */
+export async function tipsRelation(projectDir, local, remote) {
+  if (!projectDir || !local || !remote) return null;
+  if (local === remote) return 'same';
+  const r = await _run('git', ['rev-list', '--left-right', '--count', `${remote}...${local}`], { cwd: projectDir });
+  const m = r.ok && /^(\d+)\s+(\d+)\s*$/.exec(r.stdout || '');
+  if (!m) return null;
+  const behind = Number(m[1]) > 0;
+  const ahead = Number(m[2]) > 0;
+  return ahead && behind ? 'diverged' : ahead ? 'ahead' : behind ? 'behind' : 'same';
 }
 
 /** Recreate a local branch from its remote-tracking ref (checkout D7). */

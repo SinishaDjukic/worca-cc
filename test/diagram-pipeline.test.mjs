@@ -1,5 +1,5 @@
 // test/diagram-pipeline.test.mjs
-// The Diagram → Plan workflow: the V60 seed validates against the shipped sidecars, and a mock
+// The Diagram → Plan workflow: the V61 seed validates against the shipped sidecars, and a mock
 // run with a compressed draw.io attachment goes Task → Clarify → Interpret → Refine → Implement
 // → Review → End, with the decoded sibling beside the attachment.
 import { test, after } from 'node:test';
@@ -18,7 +18,7 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 
 useTempHome(after);
 
-test('V60 seeds wf_diagram_plan on a fresh DB, and it validates against the shipped sidecars', () => {
+test('V61 seeds wf_diagram_plan on a fresh DB, and it validates against the shipped sidecars', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
   const row = db.prepare('SELECT * FROM workflows WHERE id = ?').get(DIAGRAM_WORKFLOW_ID);
@@ -36,7 +36,7 @@ test('the seed is one-shot: a user who deleted wf_diagram_plan does not get it b
   const db = new DatabaseSync(':memory:');
   migrate(db);
   db.prepare('DELETE FROM workflows WHERE id = ?').run(DIAGRAM_WORKFLOW_ID);
-  db.exec('PRAGMA user_version = 60');
+  db.exec('PRAGMA user_version = 61');
   migrate(db);
   assert.equal(db.prepare('SELECT 1 FROM workflows WHERE id = ?').get(DIAGRAM_WORKFLOW_ID), undefined);
   db.close();

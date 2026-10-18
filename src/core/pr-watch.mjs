@@ -228,6 +228,38 @@ export function buildFixTask({ pr, triggers, logs = [] }) {
   return out.join('\n');
 }
 
+const TRIGGER_WORDS = [
+  ['checks', ['check:', 'status:'], 'failing checks'],
+  ['comments', ['comment:'], 'review comments'],
+  ['changes', ['review:'], 'changes requested'],
+];
+/** What a fix run was started for, from its reserved `pending` (the conflict, else its handled keys): the chat's
+ *  fix-run card names it. → { kinds, label } */
+export function fixTrigger(pending) {
+  const p = pending && typeof pending === 'object' ? pending : {};
+  if (p.conflict) {
+    return p.conflict.why === 'behind'
+      ? { kinds: ['behind'], label: `Behind ${p.conflict.base || 'its base'}: merging it in` }
+      : { kinds: ['conflict'], label: 'Merge conflicts' };
+  }
+  const keys = (Array.isArray(p.handledKeys) ? p.handledKeys : []).map(String);
+  const hit = TRIGGER_WORDS.filter(([, prefixes]) => keys.some((k) => prefixes.some((x) => k.startsWith(x))));
+  if (!hit.length) return { kinds: [], label: 'Pull request feedback' };
+  const words = hit.map(([, , w]) => w);
+  const text = words.length > 1 ? `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}` : words[0];
+  return { kinds: hit.map(([k]) => k), label: text[0].toUpperCase() + text.slice(1) };
+}
+
+/** How one fix run ended, from the watch that still held it (`prev`) and the watch after the transition that let go
+ *  of it (`next`): pushed (and whether the watch then stopped, e.g. `cap`), not pushed because the PR ended, or failed. */
+export function fixOutcome(prev, next) {
+  const pushed = prev && prev.pending && prev.pending.pushedSha;
+  const fixRuns = (next && next.fixRuns) ?? (prev && prev.fixRuns) ?? 0;
+  if (pushed) return { kind: 'pushed', sha: String(pushed).slice(0, 7), stopped: next && next.status === 'needs-person' ? next.reason || null : null, fixRuns };
+  if (next && next.status === 'ended') return { kind: 'ended', reason: next.reason || 'closed', fixRuns };
+  return { kind: 'failed', reason: (next && next.reason) || 'fix-failed', fixRuns };
+}
+
 const SUMMARY_SUBJECTS = 10;
 /** The reply's short summary: the pushed sha and the fix run's commit subjects (oldest first), capped. */
 export function fixSummary(sha, subjects = []) {
@@ -290,13 +322,23 @@ const LIVE = new Set(['starting', 'running', 'paused']);
  *   pipelineStatus(id)      → durable pipeline status | null
  *   attachPr(pipelineId, pr) → persist the PR facts on the fix row (throws when not persisted)
  *   notify({ kind, title, message }), onChange(watch), audit?(pipelineId, text)
+ *   onFixRun({ phase: 'started', watch, runId, trigger, once } | { phase: 'ended', watch, runId, pipelineId, outcome })
+ *                             a fix run began (after startRun answered 200) / the watch let go of it (best effort)
  */
 export function createPrWatcher(deps = {}) {
   const now = deps.now || Date.now;
   const newId = deps.newId || randomUUID;
+  const fixRun = (event) => {
+    try { deps.onFixRun?.(event); } catch { /* the chat is told best effort; never ownership */ }
+  };
   const transition = (w, patch) => {
     const next = updateWatch(w.prUrl, patch);
     try { deps.onChange?.(next); } catch { /* broadcasts never break ownership */ }
+    // Every exit of a fix run (pushed, failed, refused, the PR ended, cap) clears activeRunId here.
+    if (w.activeRunId && next && !next.activeRunId) {
+      fixRun({ phase: 'ended', watch: next, runId: w.activeRunId,
+        pipelineId: w.activePipelineId || watchRun(w.activeRunId)?.pipelineId || null, outcome: fixOutcome(w, next) });
+    }
     return next;
   };
   const notify = (kind, w, message) => {
@@ -377,10 +419,22 @@ export function createPrWatcher(deps = {}) {
         if (!f?.ok) return retry(w, 'preflight', f || {});
       }
       triggers = { ...triggers, conflict: { ...triggers.conflict, remote } };
+      // The local branch is ahead of the PR and already holds the base: a resolution committed but never
+      // pushed (a stopped fix run's teardown commit, a merge made by hand). A fix run would find nothing
+      // to merge, so the merge guards check everything the push sends, then it is pushed as it is.
+      if (pre.startSha !== pre.expectedRemoteSha) {
+        const c = await deps.git.checkMerge({ projectDir: origin.projectDir, baseSha: triggers.conflict.baseSha,
+          from: pre.expectedRemoteSha, to: pre.startSha });
+        if (c?.ok && c.merged && !c.markers.length) return pushMerged(w, origin, triggers, pre.startSha, { once });
+      }
       if (triggers.conflict.why === 'behind' && deps.git.mergeBase) {
         const m = await deps.git.mergeBase({ projectDir: origin.projectDir, branch: origin.branch, base: triggers.conflict.base,
           remote, headSha: pre.startSha });
-        if (m?.ok && m.merged) return pushCleanMerge(w, origin, triggers, pre, m);
+        if (m?.ok && m.merged) {
+          const c = await deps.git.checkMerge({ projectDir: origin.projectDir, baseSha: m.baseSha, from: pre.startSha, to: m.to });
+          if (!c?.ok || !c.merged || c.markers.length) return needsPerson(w, c?.ok && c.merged ? 'conflict-markers' : 'base-not-merged');
+          return pushMerged(w, origin, triggers, m.to, { made: true });
+        }
         // Conflicts, or git could not merge here: the agent's merge-first run below.
       }
     }
@@ -427,24 +481,28 @@ export function createPrWatcher(deps = {}) {
       return cur;
     }
     notify('started', cur || reserved, once ? 'Conflict fix started.' : `Fix run ${reserved.fixRuns} of ${MAX_FIX_RUNS} started.`);
+    fixRun({ phase: 'started', watch: cur || reserved, runId, trigger: fixTrigger(pending), once });
     return cur;
   }
 
-  /** Merge-first when the base merges cleanly: the merge commit is already on the local branch, with no
-   *  agent and no fix run. The fix run's merge guards, then a plain push; a refused push needs a person. */
-  async function pushCleanMerge(w, origin, triggers, pre, m) {
+  /** Push a local head that holds the base and passed the merge guards, with no agent and no fix run:
+   *  the clean merge-first commit Worca just `made`, or a resolution already on the local branch. A
+   *  refused push needs a person. Resolve (`once`) then settles the watch as a finished fix run would,
+   *  and the returned watch carries `pushed` so Resolve reports it. */
+  async function pushMerged(w, origin, triggers, to, { made = false, once = false } = {}) {
     const where = { projectDir: origin.projectDir, branch: origin.branch, remote: remoteOf(w) };
     const { base } = triggers.conflict;
-    const c = await deps.git.checkMerge({ projectDir: origin.projectDir, baseSha: m.baseSha, from: pre.startSha, to: m.to });
-    if (!c?.ok || !c.merged || c.markers.length) return needsPerson(w, c?.ok && c.merged ? 'conflict-markers' : 'base-not-merged');
     const pushed = await deps.git.push(where);
     if (!pushed?.ok) return needsPerson(w, 'push-refused');
-    w = transition(w, { handled: [...w.handled, ...triggers.handledKeys] });
-    const short = String(m.to).slice(0, 7);
-    try { deps.audit?.(origin.pipelineId, `Watch PR merged \`${base}\` into \`${origin.branch}\` (${short}, no fix run) and pushed it to \`${where.remote}\`.`); }
+    const settle = !once ? {} : w.enabled ? { status: 'watching', reason: null } : { status: 'ended', reason: 'resolved' };
+    w = transition(w, { handled: [...w.handled, ...triggers.handledKeys], ...settle });
+    const short = String(to).slice(0, 7);
+    const what = made ? `merged \`${base}\` into \`${origin.branch}\` (${short}, no fix run) and pushed it`
+      : `pushed \`${origin.branch}\` (${short}), which already merges \`${base}\`, with no fix run,`;
+    try { deps.audit?.(origin.pipelineId, `Watch PR ${what} to \`${where.remote}\`.`); }
     catch { /* the audit line is best effort */ }
-    notify('published', w, `Merged ${base} in and pushed ${short}.`);
-    return w;
+    notify('published', w, made ? `Merged ${base} in and pushed ${short}.` : `Pushed ${short}, which already merges ${base}.`);
+    return { ...w, pushed: short };
   }
 
   function endWatch(w, state, patch = {}) {
@@ -506,14 +564,17 @@ export function createPrWatcher(deps = {}) {
       if (!s?.ok) return retry(w, 'publish', s || {});
       if (!s.headSha || s.headSha === p.startSha) return needsPerson(w, 'no-change', { activeRunId: null, activePipelineId: null, pending: null });
       if (s.remoteSha !== p.expectedRemoteSha) return needsPerson(w, 'remote-moved', { activeRunId: null, activePipelineId: null, pending: null });
+      // The guards and the summary cover all the push sends: from the PR head, not the run's start, so
+      // commits the local branch already had ahead of the PR are checked too.
+      const sent = p.expectedRemoteSha || p.startSha;
       if (p.conflict) {
-        const c = await deps.git.checkMerge({ projectDir: origin.projectDir, baseSha: p.conflict.baseSha, from: p.startSha, to: s.headSha });
+        const c = await deps.git.checkMerge({ projectDir: origin.projectDir, baseSha: p.conflict.baseSha, from: sent, to: s.headSha });
         if (!c?.ok) return retry(w, 'publish', { class: 'failed', error: c?.error });
         if (!c.merged || c.markers.length) return needsPerson(w, c.merged ? 'conflict-markers' : 'base-not-merged', { activeRunId: null, activePipelineId: null, pending: null });
       }
       const pushed = await deps.git.push(where);
       if (!pushed?.ok) return retry(w, 'publish', pushed || {});
-      const log = await deps.git.subjects?.({ projectDir: origin.projectDir, from: p.startSha, to: s.headSha });
+      const log = await deps.git.subjects?.({ projectDir: origin.projectDir, from: sent, to: s.headSha });
       p = { ...p, pushedSha: s.headSha, summary: fixSummary(s.headSha, log?.ok ? log.subjects : []) }; w = transition(w, { pending: p });
     }
     const body = replyBody({ summary: p.summary || fixSummary(p.pushedSha) });
@@ -594,6 +655,7 @@ export function createPrWatcher(deps = {}) {
     const triggers = collectTriggers(snap.pr, w.handled, { conflictOnly: true });
     if (!triggers.fire) return { ok: false, code: 'NO_CONFLICT', watch: w };
     const next = await prepareAndStart(w, origin, snap.pr, triggers, { once: true });
+    if (next?.pushed) return { ok: true, pushed: next.pushed, watch: next };
     return ACTIVE.has(next?.status) ? { ok: true, watch: next }
       : { ok: false, code: next?.status === 'needs-person' ? 'NEEDS_PERSON' : 'NOT_STARTED', watch: next };
   }

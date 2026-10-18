@@ -63,9 +63,16 @@ export async function checkRunBase(rowId, { members = null, by = null, maxAgeMs 
   // Sequential: members may share one repository (and its fetch).
   for (const m of baseMembersOfRow(row).filter((x) => !members || members.includes(x.projectKey))) {
     const c = await checkBaseMerge(m.projectDir, { base: m.br.source, feature: m.br.feature, remote: m.remote, maxAgeMs });
-    const rec = toRecord(c, by);
-    updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseCheck = rec; });
-    out.push({ projectKey: m.projectKey, name: m.projectName || null, branch: m.br.feature, baseCheck: rec, tree: c.tree || null });
+    const fresh = toRecord(c, by);
+    // This check runs outside the run lock: a record written after it started (Update branch, a settled
+    // resolution) describes a newer branch and stays. `at` is when a check started.
+    let rec = fresh;
+    updateBranchRecords(row.id, [m.projectKey], (br) => {
+      if (Date.parse(br.baseCheck?.at || '') > Date.parse(fresh.at || '')) rec = br.baseCheck;
+      else br.baseCheck = fresh;
+    });
+    out.push({ projectKey: m.projectKey, name: m.projectName || null, branch: m.br.feature, baseCheck: rec,
+      tree: rec === fresh ? c.tree || null : null });
   }
   return { row, members: out };
 }
