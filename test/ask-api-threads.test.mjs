@@ -600,6 +600,48 @@ test('show_files copies on the attachment route: an SVG gets the sandbox CSP; ?a
   ]);
 });
 
+test('Show in folder: GET /api/ask/reveal says whether a folder opens here; the POST refuses an upload, a gone original and another person (no launch here)', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const info = await (await fetch(`${base}/api/ask/reveal`)).json();
+  assert.equal(typeof info.available, 'boolean');
+  assert.equal(info.available ? typeof info.label : info.label, info.available ? 'string' : null);
+  const post = (t, a, headers = {}) => fetch(`${base}/api/ask/threads/${t}/attachments/${a}/reveal`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' });
+  await checkRows([
+    { name: 'an upload has no original: 409 NO_SOURCE', run: async () => {
+      const t = store.createThread();
+      const up = store.addAttachment(t.id, null, { name: 'a.md', text: 'a' });
+      const r = await post(t.id, up.id);
+      assert.equal(r.status, 409);
+      assert.equal((await r.json()).code, 'NO_SOURCE');
+    } },
+    { name: 'a copy whose original was deleted: 409 SOURCE_GONE, nothing launched', run: async () => {
+      const t = store.createThread();
+      const c = store.addAttachment(t.id, null, { name: 'gone.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'), sourcePath: join(tmpdir(), 'worca-no-such-dir-zz', 'gone.png') });
+      const r = await post(t.id, c.id);
+      assert.equal(r.status, 409);
+      assert.equal((await r.json()).code, 'SOURCE_GONE');
+    } },
+    { name: 'an unknown attachment or thread: 404; a malformed id: 400', run: async () => {
+      const t = store.createThread();
+      assert.equal((await post(t.id, 'att_deadbeef')).status, 404);
+      assert.equal((await post('ask_deadbeef', 'att_deadbeef')).status, 404);
+      assert.equal((await post(t.id, 'not-an-id')).status, 400);
+    } },
+    { name: 'shared sign-in: another person gets 404', run: async () => {
+      const prev = process.env.WORCA_IDENTITY_HEADER;
+      process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+      try {
+        const t = store.createThread({ createdBy: 'bob@example.com' });
+        const up = store.addAttachment(t.id, null, { name: 'a.md', text: 'a' });
+        assert.equal((await post(t.id, up.id, { 'x-test-user': 'ada@example.com' })).status, 404);
+        assert.equal((await post(t.id, up.id, { 'x-test-user': 'bob@example.com' })).status, 409, 'the owner reaches the route');
+      } finally {
+        if (prev === undefined) delete process.env.WORCA_IDENTITY_HEADER; else process.env.WORCA_IDENTITY_HEADER = prev;
+      }
+    } },
+  ]);
+});
+
 test('show_files copies (message_id null) are not uploads: the thread GET and the context header leave them out', async () => {
   const store = await import('../src/core/ask/store.mjs');
   const t = store.createThread();

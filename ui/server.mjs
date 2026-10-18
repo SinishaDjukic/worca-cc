@@ -110,6 +110,7 @@ import {
   findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
   addAttachment as askAddAttachment, listAttachments as askListAttachments,
   getAttachment as askGetAttachment, attachmentPath as askAttachmentPath, readAttachmentText as askReadAttachmentText,
+  attachmentSourcePath as askAttachmentSourcePath,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline,
   finishMessage as askFinishMessage,
@@ -198,7 +199,7 @@ import { createAskCommands, terminalEventPrompt, terminalNoticeText } from '../s
 import { openBranchWorktree, removeBranchWorktree, releaseBranchWorktree, enforceBranchWorktreeCap, sweepBranchWorktrees } from '../src/core/terminal/worktrees.mjs';
 import { pidAlive, killDescendants } from '../src/core/terminal/pty.mjs';
 import { createTerminalFanout } from '../src/core/terminal/fanout.mjs';
-import { detectBuiltins, builtinLaunch, copyCommandText, findOnPath } from '../src/core/actions/builtins.mjs';
+import { detectBuiltins, builtinLaunch, revealLaunch, copyCommandText, findOnPath } from '../src/core/actions/builtins.mjs';
 import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamples, launcherWarning, lineForPickedApp } from '../src/core/actions/launcher.mjs';
 import { assertNoRawCommand, normalizeStacks, memberAliases, SETUP_ACTION_ID, ActionConfigError } from '../src/core/actions/model.mjs';
 import { parsePortRange } from '../src/core/actions/ports.mjs';
@@ -12177,6 +12178,36 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
+});
+
+// Show in folder (docs/show-files.md): a chat files card opens the file manager on the file a show_files copy was made
+// from. It opens on THIS machine, so never on a hosted worca, never for a caller that may be an agent, and only where a
+// file manager was found. The path never leaves the server: the card holds a `source` flag, this route reads the row.
+const askRevealAvailable = (req) => !REMOTE_MODE && !agentMayBeCaller(req) && !!builtins().fileManager;
+app.get('/api/ask/reveal', (req, res) => {
+  res.json({ available: askRevealAvailable(req), label: askRevealAvailable(req) ? builtins().fileManager.label : null });
+});
+app.post('/api/ask/threads/:id/attachments/:attId/reveal', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  const attId = askIdParam(res, req.params.attId, 'attachment');
+  if (!attId) return;
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: 'Show in folder cannot be used from inside the container while agent isolation is on.', code: 'REVEAL_AGENT_BLOCKED' });
+  if (REMOTE_MODE) return res.status(403).json({ error: 'Folders open on the machine worca runs on, so Show in folder is off on a hosted worca.', code: 'REVEAL_REMOTE' });
+  if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+  if (!askGetAttachment(id, attId)) return res.status(404).json({ error: 'attachment not found' });
+  const source = askAttachmentSourcePath(id, attId);
+  if (!source) return res.status(409).json({ error: 'This file was not shown from a folder.', code: 'NO_SOURCE' });
+  let st = null;
+  try { st = fs.statSync(source); } catch { st = null; }
+  if (!st || !st.isFile()) return res.status(409).json({ error: 'The original file is gone: it was moved or deleted after it was shown.', code: 'SOURCE_GONE' });
+  const dir = path.dirname(source);
+  let l;
+  try { l = revealLaunch(source, dir, builtins()); }
+  catch (e) { return res.status(409).json({ error: e.message, code: e.code || 'NOT_AVAILABLE' }); }
+  const r = await launchAndWatch(l, { spawn });
+  if (!r.ok) return res.status(409).json({ error: `The file manager did not open: ${r.error}`, code: 'LAUNCH_FAILED' });
+  res.json({ ok: true });
 });
 
 // D8/§8.1: the chat model catalog. Fresh per request (the /api/config

@@ -84,6 +84,9 @@ function rowToAttachment(r) {
   return {
     id: r.id, threadId: r.thread_id, messageId: r.message_id ?? null, name: r.name, bytes: r.bytes,
     kind: r.kind ?? 'text', mime: r.mime ?? null, // pre-v27 rows carry neither column value: they are text
+    // v64: a show_files copy remembers where it came from. Only the flag leaves the store: the path itself is read by
+    // attachmentSourcePath for Show in folder and never reaches the browser.
+    hasSource: r.source_path != null,
     createdAt: r.created_at,
   };
 }
@@ -478,7 +481,7 @@ export function sweepStreamingMessages({ text = 'interrupted by restart' } = {})
  * redactAskText guard that runs over text attachment content structurally
  * cannot apply to them; the model reads them via its Read tool as-is.
  */
-export function addAttachment(threadId, messageId, { name, text, kind = 'text', mime = null, data = null } = {}) {
+export function addAttachment(threadId, messageId, { name, text, kind = 'text', mime = null, data = null, sourcePath = null } = {}) {
   getDb();
   if (!prepare('SELECT 1 FROM ask_threads WHERE id = ?').get(threadId)) {
     throw new Error(`addAttachment: unknown thread ${threadId}`);
@@ -497,8 +500,8 @@ export function addAttachment(threadId, messageId, { name, text, kind = 'text', 
     bytes = data.length;
     writeFileSync(join(dir, `${id}${extensionForAttachment(kind, mime)}`), data); // no encoding: raw bytes
   }
-  prepare('INSERT INTO ask_attachments (id, thread_id, message_id, name, bytes, kind, mime, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, threadId, messageId ?? null, safeName, bytes, kind, mime, now());
+  prepare('INSERT INTO ask_attachments (id, thread_id, message_id, name, bytes, kind, mime, source_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, threadId, messageId ?? null, safeName, bytes, kind, mime, typeof sourcePath === 'string' && sourcePath ? sourcePath : null, now());
   return getAttachment(threadId, id);
 }
 
@@ -545,6 +548,14 @@ export function attachmentPath(threadId, id) {
   if (!a || !ASK_ID_RE.test(a.id)) return null;
   const path = join(attachmentsDir(threadId), `${a.id}${extensionForAttachment(a.kind, a.mime)}`);
   return existsSync(path) ? path : null;
+}
+
+/** The real path a show_files copy was made from (v64), or null: an upload, or no such attachment in this thread.
+ *  Server-only: Show in folder opens it, and nothing else reads it. */
+export function attachmentSourcePath(threadId, id) {
+  getDb();
+  const r = prepare('SELECT source_path FROM ask_attachments WHERE thread_id = ? AND id = ?').get(threadId, id);
+  return r && typeof r.source_path === 'string' && r.source_path ? r.source_path : null;
 }
 
 /** Raw thread-scoped read for the download route: any kind, body as a Buffer. */

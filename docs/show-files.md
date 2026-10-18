@@ -1,8 +1,10 @@
 # Files in the chat
 
 Ask Worca can put files into its reply as a **files card**. Images show inline as tiles. Any other file is a row
-with its kind, size and **Download**. A click on a tile or a row opens the viewer: ←/→ steps through the card's
-files, an image zooms on click, and the viewer has **Full screen** and **Download**.
+with its kind and size. Every file has two icon buttons, the same as a run's artifacts: **Download**, and **Show in
+folder** (labelled with the app, for example *Show in Finder*). A tile shows them when you point at it. A click on a
+tile or a row opens the viewer: ←/→ steps through the card's files, an image zooms on click, and the viewer has
+**Full screen** and **Download**.
 
 ## When Ask shows files
 
@@ -72,6 +74,19 @@ offers **Download** only.
 
 When an SVG copy is opened in its own tab, it is served with `Content-Security-Policy: sandbox; default-src 'none'`.
 An HTML copy is stored as text and served as `text/plain` with `nosniff`.
+
+## Show in folder
+
+**Show in folder** opens the file manager on the folder the file was shown from, with the file selected (Finder and
+Explorer select it; a Linux file manager opens the folder). It opens the **original** file, not worca's copy: for a
+screenshot that is `$WORCA_ASK_OUT`, for a project file the project folder, for a run artifact the run's folder.
+
+- The original path stays on the server (`ask_attachments.source_path`). The card only knows that the file has one.
+- If the original was moved or deleted after Ask showed it, the button says so and opens nothing. The copy in the
+  chat still opens and downloads.
+- Files you uploaded, and attachments Ask showed by id, have no original folder, so they have no button.
+- The folder opens on the machine worca runs on. The button is never shown on a hosted worca, to a caller that may
+  be an agent, or where no file manager was found (a container, a Linux machine with no display).
 
 ## Limits and redaction
 

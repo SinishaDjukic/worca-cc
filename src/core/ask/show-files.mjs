@@ -166,7 +166,8 @@ const toPosix = (p) => p.split(sep).join('/');
  *  (and the mime, for an older upload row that stored none). */
 function itemOf(att, entry, buf, mime) {
   const size = entry.kind === 'image' ? imageSize(buf, mime) : null;
-  return { attId: att.id, name: att.name, kind: entry.kind, mime: att.mime || entry.label || mime, bytes: att.bytes, ...(size || {}) };
+  return { attId: att.id, name: att.name, kind: entry.kind, mime: att.mime || entry.label || mime, bytes: att.bytes, ...(size || {}),
+    ...(att.hasSource ? { source: true } : {}) };   // Show in folder: the path stays on the server (attachmentSourcePath)
 }
 
 async function realRoots(dirs) {
@@ -242,9 +243,9 @@ export async function showFiles(req, deps) {
     if (k.entry.store === 'text') {
       const text = decodePlainText(buf);
       if (text == null) return refuse(source, 'this file type cannot be shown');
-      att = deps.addAttachment({ name, kind: 'text', mime: k.entry.label, text: deps.redact(text) });
+      att = deps.addAttachment({ name, kind: 'text', mime: k.entry.label, text: deps.redact(text), sourcePath: real });
     } else {
-      att = deps.addAttachment({ name, kind: k.entry.store, mime: k.mime, data: buf });
+      att = deps.addAttachment({ name, kind: k.entry.store, mime: k.mime, data: buf, sourcePath: real });
     }
     cardBytes += att.bytes;
     threadBytes += att.bytes;

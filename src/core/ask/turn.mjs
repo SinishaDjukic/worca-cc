@@ -400,7 +400,8 @@ class AskTurn extends EventEmitter {
       const w = dim(it.width); const h = dim(it.height);
       // typeof first: RegExp#test(undefined) tests the string "undefined", which would pass.
       items.push({ attId: att.id, name: att.name, kind: typeof it.kind === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(it.kind) ? it.kind : 'file',
-        mime: att.mime || null, bytes: att.bytes, ...(w && h ? { width: w, height: h } : {}) });
+        mime: att.mime || null, bytes: att.bytes, ...(w && h ? { width: w, height: h } : {}),
+        ...(att.hasSource ? { source: true } : {}) });   // from the row: Show in folder opens the file this was copied from
     }
     if (!items.length) return;
     const caption = typeof r.caption === 'string' ? r.caption.slice(0, 300) : '';

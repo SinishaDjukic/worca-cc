@@ -30,7 +30,7 @@ function fixture({ withPinned = false, limits = L } = {}) {
       const id = `att_${String(stored.length).padStart(8, '0')}`;
       const body = b.data ?? Buffer.from(b.text);
       writeFileSync(join(attDir, id), body);
-      const a = { id, messageId: null, name: b.name, kind: b.kind, mime: b.mime, bytes: body.length, text: b.text };
+      const a = { id, messageId: null, name: b.name, kind: b.kind, mime: b.mime, bytes: body.length, text: b.text, sourcePath: b.sourcePath ?? null, hasSource: !!b.sourcePath };
       stored.push(a);
       return a;
     },
@@ -44,8 +44,9 @@ test('show_files: $WORCA_ASK_OUT screenshots snapshot as images with their size;
   writeFileSync(join(f.out, 'home.png'), PNG);
   const r = await showFiles({ files: [{ path: '$WORCA_ASK_OUT/home.png' }], rowFor: f.rowFor }, f.deps);
   assert.equal(r.ok, true);
-  assert.deepEqual(r.items, [{ attId: 'att_00000000', name: 'home.png', kind: 'image', mime: 'image/png', bytes: PNG.length, width: 640, height: 480 }]);
+  assert.deepEqual(r.items, [{ attId: 'att_00000000', name: 'home.png', kind: 'image', mime: 'image/png', bytes: PNG.length, width: 640, height: 480, source: true }]);
   assert.equal(JSON.stringify(r).includes(f.top), false, 'no absolute path leaks into the result');
+  assert.equal(f.stored[0].sourcePath, join(f.out, 'home.png'), 'the copy remembers its real original, server-side');
 });
 
 test('show_files refusals: outside every root, symlink escape, credential names and folders, unknown run, bad shape', async () => {
@@ -158,6 +159,7 @@ test("show_files attachmentIds: this chat's attachment is shown without a new co
   const r = await showFiles({ attachmentIds: [md.id, md.id, bin.id, 'att_99999999'], rowFor: f.rowFor }, f.deps);
   assert.deepEqual(r.items.map((i) => [i.attId, i.kind, i.mime]), [[md.id, 'markdown', 'text/markdown']], 'a row with no mime gets the table label');
   assert.equal(f.stored.length, 2, 'no snapshot was added');
+  assert.equal(r.items[0].source, undefined, 'an upload has no original folder to show');
   assert.deepEqual(r.refused.map((x) => x.reason), ['this file type cannot be shown', 'attachment not found in this chat']);
 });
 

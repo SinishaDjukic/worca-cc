@@ -8792,7 +8792,18 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .ask-filescard-file{display:flex;align-items:center;gap:10px;min-width:0}
 .ask-filescard-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0;border:0;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;text-decoration:underline;text-decoration-color:var(--line-2)}
 .ask-filescard-meta{flex:none;color:var(--ink-3);font-size:12px}
-.ask-filescard-dl{flex:none;margin-left:auto;font-size:12px}
+.ask-filescard-tile{position:relative;display:flex;min-width:0}
+.ask-filescard-tile .ask-filescard-thumb{flex:1 1 auto;min-width:0}
+/* Icon buttons in the run artifacts browser's style (.afb-dl): Show in folder, Download. */
+.ask-filescard-acts{flex:none;margin-left:auto;display:flex;align-items:center;gap:2px}
+.ask-filescard-ib{width:30px;height:30px;display:grid;place-items:center;padding:0;border:0;border-radius:9px;background:none;color:var(--ink-2);cursor:pointer}
+.ask-filescard-ib[hidden]{display:none}
+.ask-filescard-ib svg{width:16px;height:16px}
+.ask-filescard-ib:hover{background:var(--hover);color:var(--ink)}
+.ask-filescard-ib:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
+.ask-filescard-tile .ask-filescard-acts{position:absolute;top:6px;right:6px;margin:0;padding:2px;border-radius:11px;background:var(--surface);box-shadow:var(--shadow-card);opacity:0}
+.ask-filescard-tile:hover .ask-filescard-acts,.ask-filescard-tile:focus-within .ask-filescard-acts{opacity:1}
+@media (hover:none){.ask-filescard-tile .ask-filescard-acts{opacity:1}}
 .ask-filescard-skipped{margin-bottom:0;color:var(--ink-3);font-size:12px}
 @media (max-width:480px){.ask-filescard-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 

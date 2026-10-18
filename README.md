@@ -514,8 +514,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   them ([`docs/models.md`](docs/models.md#per-agent-models-for-one-run)).
 - **Files in the chat** — when Ask makes or finds a file you should see (a screenshot it took with
   `run_command`, a chart, a report, a run artifact), it puts it into the reply as a files card: images
-  inline, other files as rows, and a click opens a viewer with zoom, next/prev and Download. Files are
-  copied into the chat; credential files and anything outside the chat's folders are refused
+  inline, other files as rows, and a click opens a viewer with zoom, next/prev and Download. **Show in
+  folder** opens the folder the file came from. Files are copied into the chat; credential files and anything outside the chat's folders are refused
   ([`docs/show-files.md`](docs/show-files.md)).
 - **Memory** — say "remember …" or state a lasting preference, and Ask saves it to Worca's
   memory: global for how you work, per project for facts about one repository. Pipeline agents

@@ -1852,6 +1852,18 @@ test("show_files result: a files card from THIS thread's attachment rows (forged
   assert.ok(frames.some((f) => f.type === 'ask-card' && f.block.card.type === 'files'));
 });
 
+test('show_files result: an item gets `source` (Show in folder) from its row, never from the tool echo; no path in the card', async () => {
+  const s = seed();
+  const copy = addAttachment(s.thread.id, null, { name: 'home.png', kind: 'image', mime: 'image/png', data: PNG, sourcePath: '/w/out/home.png' });
+  const upload = addAttachment(s.thread.id, null, { name: 'up.png', kind: 'image', mime: 'image/png', data: PNG });
+  const result = JSON.stringify({ ok: true, items: [{ attId: copy.id, kind: 'image' }, { attId: upload.id, kind: 'image', source: true }] });
+  const { turn } = makeTurn(s, {}, { runClaudeImpl: filesRunner([result]) });
+  await turn.run();
+  const [card] = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
+  assert.deepEqual(card.card.items.map((i) => [i.name, i.source]), [['home.png', true], ['up.png', undefined]]);
+  assert.equal(JSON.stringify(card).includes('/w/out'), false);
+});
+
 test('show_files result: ok:false, only forged ids, or another thread\'s attachment mint no card', async () => {
   const s = seed();
   const other = seed();

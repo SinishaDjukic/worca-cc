@@ -30070,6 +30070,20 @@ chatDeps.openFiles = ({ threadId, items, index = 0 }) => {
     deps: { ...artifactViewerDeps(), hljsLoader: diffHljsLoader },
   });
 };
+// Show in folder on the files card: whether this worca can open a folder on this machine (asked once; null = no) and the
+// open itself. The server keeps the path; the card only names the attachment.
+let askRevealInfo = null;
+chatDeps.revealInfo = () => (askRevealInfo ??= fetch('/api/ask/reveal')
+  .then((r) => (r.ok ? r.json() : null), () => null)
+  .then((j) => (j && j.available && j.label ? { label: j.label } : null)));
+chatDeps.revealFile = async ({ threadId, attId, name }) => {
+  let r = null;
+  try { r = await fetch(`/api/ask/threads/${encodeURIComponent(threadId)}/attachments/${encodeURIComponent(attId)}/reveal`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); }
+  catch { r = null; }
+  if (r && r.ok) return;
+  const body = r ? await r.json().catch(() => null) : null;
+  notify({ tone: 'err', title: `Could not show ${name || 'the file'}`, detail: (body && body.error) || 'The server did not answer.' });
+};
 
 // One clickable artifact row (kind chip · name · byte size) for the Agents tab's per-node list. It opens the popup with
 // its node's rows as the ←/→ list.
