@@ -5764,8 +5764,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     let agentsCount = null;
 
     function renderHead(r, canOpen) {
-      const isLive = isLiveRow(r);
       const stopped = r.status === 'stopped' || r.status === 'error';
+      // A turn still running that no frame has made live yet (a chat loaded mid-turn, before the subscribe replay
+      // adopts it) is in progress too: its unfinished row has no duration or cost, and "Done" would be a lie.
+      const inFlight = st.model && st.model.inFlight();
+      const isLive = isLiveRow(r) || (!stopped && (r.status === 'streaming' || !!(inFlight && inFlight.messageId === r.id)));
       const parts = [];
       // The head names its state in one word — Thinking, Done, or Stopped after —
       // and nothing more while the turn is live: the orb row at the bottom of the
@@ -6179,7 +6182,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     scheduleFlush();
     stopElapsed();      // a mid-stream thread switch must not leave the old
     updateSendStop();   // turn's timer or stop button behind (V3/D2 reset)
-    if (snap.inFlight) { subscribe(id); startElapsed(); }
+    // Forced: the model above is fresh (no live turn), so the server must replay the running job into it — also when
+    // this socket subscribed to the chat before (a switch A → B → A, a resync), or the row never goes live again.
+    if (snap.inFlight) { subscribe(id, { force: true }); startElapsed(); }
     repaintProgressCards({ hydrate: true });   // thread load + reconnect (onHello → resync → loadThread): re-resolve + re-hydrate every card
     return snap;
   }
@@ -6364,7 +6369,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   // Re-fetch + resubscribe (spec §10.8: a seq gap or a reconnect re-syncs over
   // REST — the ring buffer replay then re-plays from seq 1 and the model's seq
-  // dedupe/adoption absorb it). Latched: one resync at a time.
+  // dedupe/adoption absorb it). loadThread itself re-subscribes (forced) when the
+  // snapshot still shows a turn in flight. Latched: one resync at a time.
   function resync() {
     if (st.resyncing || !st.threadId || st.destroyed) return;
     // A switch is loading: its own load brings fresh state, and re-loading the chat being left would bump loadGen and
@@ -6374,7 +6380,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const id = st.threadId;
     Promise.resolve()
       .then(() => loadThread(id))
-      .then((snap) => { if (snap && snap.inFlight) subscribe(id, { force: true }); })
       .catch(() => { /* the thread may be gone; loadThread handled storage */ })
       .then(() => {
         st.resyncing = false;
