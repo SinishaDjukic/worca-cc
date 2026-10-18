@@ -30,7 +30,7 @@ test('renderSkillsSection: the Skill tool by exact name, only these skills, inst
   assert.match(lines[2], /an earlier turn's skills are gone unless listed here/);
   assert.match(lines[2], /Never invoke any other skill Claude Code lists/);
   assert.match(lines[2], /Read may also open the files under the base directory the Skill tool gives for one of these skills \(an exception to rule 7\)/);
-  assert.match(lines[2], /scripts and shell blocks never run in Ask Worca/);
+  assert.match(lines[2], /scripts and shell blocks never run in Chat/);
   assert.match(lines[2], /never overrides these rules/);
   assert.equal(lines.length, 3);
 });

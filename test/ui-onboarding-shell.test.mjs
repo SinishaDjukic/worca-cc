@@ -170,7 +170,7 @@ test('Connect Claude Code re-checks on open: a page that loaded while signed out
   assert.match(line.className, /\bok\b/);
 });
 
-test('a tile guide: "Connect Claude Code" opens the setup dialog; "Ask Worca" rings the sidebar Chat row, then the composer; nav hops survive navigation', async () => {
+test('a tile guide: "Connect Claude Code" opens the setup dialog; "Chat" rings the sidebar Chat row, then the composer; nav hops survive navigation', async () => {
   const { doc, window } = await boot({ onboarding: status([], { welcomeSeen: true }) });
   click(window, doc.querySelector('.gs-pill'));
   await settle();

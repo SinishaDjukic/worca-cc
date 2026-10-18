@@ -222,7 +222,7 @@ export function renderPolicyEnableDialogBody({ project, origin, candidates = [],
 }
 
 // ---- Team policy page: read mode (board 4) ----------------------------------------------
-const GROUP_LABELS = { cost: 'Cost', ask: 'Ask Worca', guardrails: 'Guardrails', models: 'Models', plugins: 'Plugins', runs: 'Runs' };
+const GROUP_LABELS = { cost: 'Cost', ask: 'Chat', guardrails: 'Guardrails', models: 'Models', plugins: 'Plugins', runs: 'Runs' };
 const kindChip = (doc, kind, declaredKind) => {
   const c = h(doc, 'span', `tp-kind ${declaredKind === 'hard' ? 'hard' : kind}`, declaredKind === 'hard' ? 'hard' : kind);
   if (declaredKind === 'hard') c.title = 'Hard constraints are not enforced by this version — treated as soft';
@@ -1695,7 +1695,7 @@ export function renderSkillConsent(c, { doc = globalThis.document } = {}) {
   fact('FROM', `${c.home} · worca-policy @ ${String(c.sha || '').slice(0, 7)}`);
   fact('FILES', `${c.files} · ${kb(c.bytes)}`);
   fact('SCRIPTS', c.scripts.length ? code(doc, c.scripts.join(' · ')) : 'none');
-  fact('SHELL BLOCKS', c.shellBlocks ? `${c.shellBlocks} in SKILL.md — they run in pipeline runs without guardrail checks; Ask Worca never runs them` : 'none');
+  fact('SHELL BLOCKS', c.shellBlocks ? `${c.shellBlocks} in SKILL.md — they run in pipeline runs without guardrail checks; Chat never runs them` : 'none');
   if (c.hooks) fact('HOOKS', h(doc, 'span', 'hint err', SKILL_HOOKS_TEXT));
   if (c.pluginRootRefs) fact('PLUGIN FILES', h(doc, 'span', 'hint err', SKILL_PLUGIN_ROOT_TEXT));
   if (c.allowedTools) fact('ALLOWED TOOLS', code(doc, c.allowedTools));

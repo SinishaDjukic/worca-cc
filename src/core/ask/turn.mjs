@@ -1072,8 +1072,8 @@ class AskTurn extends EventEmitter {
 
   _limitNotice(reason, limitsNow) {
     const text = reason === 'max_budget'
-      ? `Stopped: reached the $${limitsNow.maxBudgetUsd} per-turn cap (Settings → Ask Worca)`
-      : `Stopped: reached the ${limitsNow.maxTurns}-turn limit (Settings → Ask Worca)`;
+      ? `Stopped: reached the $${limitsNow.maxBudgetUsd} per-turn cap (Settings → Chat)`
+      : `Stopped: reached the ${limitsNow.maxTurns}-turn limit (Settings → Chat)`;
     this.reducer.addBlock({ kind: 'notice', text });
     this._persistBlocks();
   }
@@ -1132,7 +1132,7 @@ class AskTurn extends EventEmitter {
     const d = this.deps;
     if (!d.codexLockdown()) return this._complete({ kind: 'error', message: CODEX_NO_LOCKDOWN_MESSAGE });
     if (limitsNow.maxBudgetUsd != null && !d.codexModelPriced(this.model)) {
-      return this._complete({ kind: 'error', message: `A per-turn cost cap is set, and ${this.model} has no known price on Codex, so worca cannot keep this turn under it. Pick a priced Codex model, or turn the cap off (Settings › Ask Worca).` });
+      return this._complete({ kind: 'error', message: `A per-turn cost cap is set, and ${this.model} has no known price on Codex, so worca cannot keep this turn under it. Pick a priced Codex model, or turn the cap off (Settings › Chat).` });
     }
     if (this.mock) return null;
     const refuse = (refusal) => {

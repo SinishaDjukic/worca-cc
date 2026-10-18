@@ -183,7 +183,7 @@ test('Escape closes and restores focus, and no later handler sees it; an outside
   ]);
 });
 
-test('the listbox: Runs, then "Projects, workflows, schedules", a divider, Ask Worca last; empty query; No matches', async () => {
+test('the listbox: Runs, then "Projects, workflows, schedules", a divider, Ask Chat last; empty query; No matches', async () => {
   await checkRows([
     { name: 'a query shows both groups and the Ask row last', run: () => {
       const { doc, key, type, options } = setup();
@@ -201,23 +201,23 @@ test('the listbox: Runs, then "Projects, workflows, schedules", a divider, Ask W
       assert.ok(opts[1].querySelector('.tsearch-dot.tone-run'));
       assert.equal(opts[2].querySelector('.tsearch-meta').textContent, 'Workspace · 2 projects');
       const last = opts[3];
-      assert.equal(last.querySelector('.tsearch-title').textContent, 'Ask Worca');
+      assert.equal(last.querySelector('.tsearch-title').textContent, 'Ask Chat');
       assert.equal(last.querySelector('.tsearch-meta').textContent, 'opens a chat');
-      assert.ok(last.previousElementSibling.classList.contains('tsearch-sep'), 'a divider before Ask Worca');
+      assert.ok(last.previousElementSibling.classList.contains('tsearch-sep'), 'a divider before Ask Chat');
       assert.equal(doc.querySelector('#tsearch-pop .tsearch-none'), null);
     } },
     { name: 'the empty query lists runs only (the second group is hidden)', run: () => {
       const { doc, key, options } = setup();
       key(null, 'k', { metaKey: true });
       assert.deepEqual([...doc.querySelectorAll('#tsearch-pop .tsearch-label')].map((n) => n.textContent), ['Runs']);
-      assert.deepEqual(options().map((o) => o.querySelector('.tsearch-title').textContent), ['Fix login', 'Login page', 'Ask Worca']);
+      assert.deepEqual(options().map((o) => o.querySelector('.tsearch-title').textContent), ['Fix login', 'Login page', 'Ask Chat']);
     } },
     { name: 'nothing typed and no runs yet: the Ask row alone, no "No matches", no divider', run: () => {
       const { doc, key, options } = setup({ sources: { projects: SOURCES.projects } });
       key(null, 'k', { metaKey: true });
       assert.equal(doc.querySelector('#tsearch-pop .tsearch-none'), null);
       assert.equal(doc.querySelector('#tsearch-pop .tsearch-sep'), null);
-      assert.deepEqual(options().map((o) => o.querySelector('.tsearch-title').textContent), ['Ask Worca']);
+      assert.deepEqual(options().map((o) => o.querySelector('.tsearch-title').textContent), ['Ask Chat']);
     } },
     { name: 'no match: one muted "No matches" line and the Ask row', run: () => {
       const { doc, key, type, options } = setup();
@@ -225,7 +225,7 @@ test('the listbox: Runs, then "Projects, workflows, schedules", a divider, Ask W
       type('zzz');
       assert.equal(doc.querySelector('#tsearch-pop .tsearch-none').textContent, 'No matches');
       assert.equal(doc.querySelectorAll('#tsearch-pop [role="group"]').length, 0);
-      assert.deepEqual(options().map((o) => o.querySelector('.tsearch-title').textContent), ['Ask Worca']);
+      assert.deepEqual(options().map((o) => o.querySelector('.tsearch-title').textContent), ['Ask Chat']);
     } },
   ]);
 });
@@ -247,7 +247,7 @@ test('keys: ↓/↑ move the active option (wrapping, never onto a label), Enter
       key(input, 'ArrowDown');
       assert.equal(active(), opts[0], 'wraps to the top');
       key(input, 'ArrowUp');
-      assert.equal(active(), opts[3], 'wraps to the bottom (Ask Worca)');
+      assert.equal(active(), opts[3], 'wraps to the bottom (Ask Chat)');
       assert.deepEqual(opts.map((o) => o.getAttribute('aria-selected')), ['false', 'false', 'false', 'true']);
       assert.equal(new Set(opts.map((o) => o.id)).size, 4);
       for (const o of opts) assert.match(o.id, /^tsearch-opt-\d+$/);
@@ -328,8 +328,8 @@ test('each row goes to its place; every activation closes the popover and clears
     } },
     { name: 'a series → #schedules/repeating', run: () => assert.deepEqual(pick('sweep', 'nightly sweep').navigate, ['#schedules/repeating']) },
     { name: 'a one-off → #schedules/once', run: () => assert.deepEqual(pick('once', 'nightly once').navigate, ['#schedules/once']) },
-    { name: 'Ask Worca with text → onAsk(the query, trimmed)', run: () => assert.deepEqual(pick('  why did it fail ', 'Ask Worca').ask, ['why did it fail']) },
-    { name: 'Ask Worca with nothing typed → onAsk("")', run: () => assert.deepEqual(pick('', 'Ask Worca').ask, ['']) },
+    { name: 'Ask Chat with text → onAsk(the query, trimmed)', run: () => assert.deepEqual(pick('  why did it fail ', 'Ask Chat').ask, ['why did it fail']) },
+    { name: 'Ask Chat with nothing typed → onAsk("")', run: () => assert.deepEqual(pick('', 'Ask Chat').ask, ['']) },
   ]);
 });
 
@@ -347,7 +347,7 @@ test('lazy sources: fetched once per open — never per keystroke — and the ro
   release();
   await ctx.settle();
   const titles = ctx.options().map((o) => o.querySelector('.tsearch-title').textContent);
-  assert.deepEqual(titles, ['nightly flow', 'Ask Worca'], 'repainted with what arrived');
+  assert.deepEqual(titles, ['nightly flow', 'Ask Chat'], 'repainted with what arrived');
   assert.equal(ctx.options()[0].querySelector('.tsearch-meta').textContent, 'Workflow · built-in');
   ctx.key(ctx.$('tsearch-input'), 'Escape');
   ctx.key(null, 'k', { metaKey: true });
@@ -363,7 +363,7 @@ test('a lazy read that fails (rejects or throws) leaves the rows already in memo
       ctx.type('login');
       await ctx.settle();
       assert.equal(ctx.search.isOpen(), true);
-      assert.deepEqual(ctx.options().map((o) => o.querySelector('.tsearch-title').textContent), ['Login page', 'Fix login', 'login team', 'Ask Worca']);
+      assert.deepEqual(ctx.options().map((o) => o.querySelector('.tsearch-title').textContent), ['Login page', 'Fix login', 'login team', 'Ask Chat']);
       ctx.key(ctx.$('tsearch-input'), 'Escape');
       ctx.key(null, 'k', { metaKey: true });
       await ctx.settle();
@@ -374,7 +374,7 @@ test('a lazy read that fails (rejects or throws) leaves the rows already in memo
       ctx.key(null, 'k', { metaKey: true });
       await ctx.settle();
       ctx.type('fix');
-      assert.deepEqual(ctx.options().map((o) => o.querySelector('.tsearch-title').textContent), ['Fix login', 'Ask Worca']);
+      assert.deepEqual(ctx.options().map((o) => o.querySelector('.tsearch-title').textContent), ['Fix login', 'Ask Chat']);
     } },
   ]);
 });

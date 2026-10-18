@@ -3,7 +3,7 @@
 A **skill** is a folder with a `SKILL.md` (instructions, a name and a description in its frontmatter) and,
 optionally, scripts and reference files. Worca's skills are registry members exactly like MCP servers: they
 sit in **sets** ([mcp-servers.md](mcp-servers.md)), sets are attached to projects, and every pipeline agent and
-Ask Worca turn gets the skills its project's sets hold — without anything being written into your repository
+Chat turn gets the skills its project's sets hold — without anything being written into your repository
 or your Claude Code config. Everything lives on the **Connectors** page (Advanced) and under
 `~/.worca-cc/skills/` ([storage.md](storage.md)).
 
@@ -40,7 +40,7 @@ hooks**). Nothing is saved until you press **Import** under this notice:
 
 with, when they apply, these lines:
 
-> Its inline shell blocks (!`cmd`) run in pipeline runs without guardrail checks; Ask Worca never runs them.
+> Its inline shell blocks (!`cmd`) run in pipeline runs without guardrail checks; Chat never runs them.
 >
 > This skill declares hooks — they run shell commands outside Worca's guardrails when the skill is used.
 
@@ -106,7 +106,7 @@ references break, and the catalog and the import preview flag them.
   switch a skill off for one run; skipped skills show their reason, and the run's Overview shows a **Skills from
   sets** block with the skills it got. Workspace scans and memory defragment runs get none. Delivered as copies under
   the run's own folder: an agent's edit never reaches the library or a plugin.
-- **Ask Worca:** General plus the sets of the projects in play, as for MCP servers. The `Skill` tool is on only
+- **Chat:** General plus the sets of the projects in play, as for MCP servers. The `Skill` tool is on only
   for a turn that mounts at least one skill, and **inline shell blocks never run in Ask** (every Ask turn runs with
   Claude Code's `disableSkillShellExecution`). The composer's **Sets · N** picker switches skills per chat.
 - **Project page › Sets** lists *Skills in runs on X* with each skill's status; a workspace's Overview shows the

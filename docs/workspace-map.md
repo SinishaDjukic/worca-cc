@@ -166,7 +166,7 @@ yet come in through **Add…** or the box under it — paste paths, one per line
 
 A workspace's members can change after it is created: **Add projects** and **Remove** on the
 workspace page's Projects card, `POST /api/workspaces/:id/members` with `{ "add": [paths] }` or
-`{ "remove": path }`, or Ask Worca's workspace card. The workspace keeps its id, so its runs,
+`{ "remove": path }`, or Chat's workspace card. The workspace keeps its id, so its runs,
 schedules, homes and map reviews stay attached; runs already started keep the members they
 started with.
 

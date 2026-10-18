@@ -3307,7 +3307,7 @@ async function main() {
   // runMock), which writes no pipeline artifact — a mock pipeline under dontAsk dies
   // at its first artifact read with no hint why. Refuse the PAIR, not the mode.
   if (flags.permissionMode === 'dontAsk' && /^(1|true|yes|on)$/i.test(String(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK ?? ''))) {
-    fail('--permission-mode dontAsk cannot be combined with --mock: the mock runner reserves it for the Ask Worca assistant.');
+    fail('--permission-mode dontAsk cannot be combined with --mock: the mock runner reserves it for the Chat assistant.');
   }
 
   // A defragment run needs no task text: synthesise the same brief the UI wrapper sends.

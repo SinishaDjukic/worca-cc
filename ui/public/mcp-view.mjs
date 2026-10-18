@@ -181,7 +181,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   function topbar() {
     const bar = h(doc, 'div', 'topbar');
     const title = h(doc, 'div');
-    title.append(h(doc, 'div', 'sub', 'MCP servers and skills worca’s agents and Ask Worca get, grouped in sets attached to projects'));
+    title.append(h(doc, 'div', 'sub', 'MCP servers and skills worca’s agents and Chat get, grouped in sets attached to projects'));
     const seg = h(doc, 'div', 'seg');
     seg.setAttribute('role', 'group');
     seg.setAttribute('aria-label', 'View');
@@ -198,7 +198,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   }
 
   function usedByText(s) {
-    if (s.group === 'general') return `Ask Worca · ${s.usedBy.length} project${s.usedBy.length === 1 ? '' : 's'}`;
+    if (s.group === 'general') return `Chat · ${s.usedBy.length} project${s.usedBy.length === 1 ? '' : 's'}`;
     if (s.greyed) return `no project here follows ${s.home}`;
     return s.usedBy.length ? s.usedBy.map((p) => p.name).join(', ') : 'no projects';
   }
@@ -374,7 +374,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       }
       used.appendChild(chip);
     }
-    if (set.group === 'general') used.appendChild(h(doc, 'span', 'chip mcp-chip', 'Ask Worca'));
+    if (set.group === 'general') used.appendChild(h(doc, 'span', 'chip mcp-chip', 'Chat'));
     if (!isTeam(set)) used.appendChild(button(doc, 'btn-ghost btn-mini', '+ Add project', { act: 'add-project' }));
     card.appendChild(used);
     const sh = h(doc, 'div', 'mcp-usedby');
@@ -1160,7 +1160,7 @@ export async function mountProjectMcp(sec, { key, name, api, doc = globalThis.do
   cb.setAttribute('aria-label', 'Include General in runs');
   cb.addEventListener('change', () => save({ ...a, includeGeneral: cb.checked }));
   sw.append(cb, h(doc, 'span', 'switch switch-sm'), h(doc, 'span', 'txt', 'Include General in runs'));
-  card.append(sw, h(doc, 'small', 'hint', 'Ask Worca always includes General; a workspace run includes it when any member does'));
+  card.append(sw, h(doc, 'small', 'hint', 'Chat always includes General; a workspace run includes it when any member does'));
   if (a.none) card.appendChild(h(doc, 'p', 'hint err', 'No MCP servers in runs on this project'));
   card.appendChild(h(doc, 'small', 'hint err mcp-proj-msg'));
   const committed = h(doc, 'div');

@@ -52,9 +52,9 @@ export function replayFixture(name, {
   // turn.mjs adds the limit notice BEFORE finish() (turn.mjs:211-217, defaults 40 / $2).
   const sub = reducer.snapshot().resultSubtype || '';
   if (/error_max_budget/.test(sub)) {
-    reducer.addBlock({ kind: 'notice', text: 'Stopped: reached the $2 per-turn cap (Settings → Ask Worca)' });
+    reducer.addBlock({ kind: 'notice', text: 'Stopped: reached the $2 per-turn cap (Settings → Chat)' });
   } else if (/error_max_turns/.test(sub)) {
-    reducer.addBlock({ kind: 'notice', text: 'Stopped: reached the 40-turn limit (Settings → Ask Worca)' });
+    reducer.addBlock({ kind: 'notice', text: 'Stopped: reached the 40-turn limit (Settings → Chat)' });
   }
   const summary = reducer.finish();
   const start = { type: 'ask-start', userMessageId, model, effort, startedAt: '2026-08-23T00:00:00.000Z' };

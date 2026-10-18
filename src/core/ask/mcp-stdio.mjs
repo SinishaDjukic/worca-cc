@@ -83,7 +83,7 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultModelDeps({ threadId }),
       ...defaultCloneDeps(),
       ...defaultWorkspaceDeps(),
-      // Actions (docs/actions.md "Ask Worca"): read the config, checkouts and running services; propose config.
+      // Actions (docs/actions.md "Chat"): read the config, checkouts and running services; propose config.
       ...defaultActionsDeps(),
       // Branch reads + fetch-only (#527): list_branches, list_projects.sync, get_run.baseMoved.
       ...defaultBranchDeps(),

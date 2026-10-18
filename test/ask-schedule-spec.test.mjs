@@ -1,5 +1,5 @@
 // test/ask-schedule-spec.test.mjs
-// The pure half of scheduled runs in Ask Worca (docs/scheduled-runs.md "Ask Worca"): the user's
+// The pure half of scheduled runs in Ask Worca (docs/scheduled-runs.md "Chat"): the user's
 // words → a schedule in their zone (resolveScheduleSpec), the schedule-change validator over
 // injected rows, the event / notice texts, the proposal's `schedule` key, and the context block's
 // timezone key, clock line and card lines.

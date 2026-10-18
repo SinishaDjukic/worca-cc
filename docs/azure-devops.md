@@ -35,7 +35,7 @@ at a time; agents never get it, in any guardrail set.
 - **"Outside Worca" pull requests and PR authors** in team metrics. They come from the GitHub
   Action's event files; Azure repositories show only the pull requests of recorded runs, without
   their git author.
-- **An Azure DevOps MCP server** as a stopgap for Ask Worca and agents. Not shipped: future work.
+- **An Azure DevOps MCP server** as a stopgap for Chat and agents. Not shipped: future work.
 
 ### "Create PR" with only an Azure token
 

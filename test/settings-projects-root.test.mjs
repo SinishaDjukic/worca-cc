@@ -343,7 +343,7 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
   });
 });
 
-test('REGRESSION (Ask Worca): an ask-only POST must not clear the root or the budget keys', async () => {
+test('REGRESSION (Chat): an ask-only POST must not clear the root or the budget keys', async () => {
   await withEnv(undefined, async () => {
     await postApi({ root: home });                         // set a custom root first
     await postApi({ totalCostLimitUsd: 5 });

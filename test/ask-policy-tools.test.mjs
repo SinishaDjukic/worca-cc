@@ -1,5 +1,5 @@
 // test/ask-policy-tools.test.mjs
-// The team-policy side of the Ask Worca tools (docs/team-policy.md "Ask Worca") over a fake
+// The team-policy side of the Ask Worca tools (docs/team-policy.md "Chat") over a fake
 // deps.policy bundle: list_projects' `policy` field, get_team_policy's shape (rows, the
 // workspaceRuns block, catalogs, plugins, deviations, the pinned default, the no-policy answer),
 // propose_policy_change's pin fill, get_run's policy block and a team-cap pause, and the policy

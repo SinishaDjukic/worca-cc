@@ -439,7 +439,7 @@ export function createProposalValidator({
       errors.push(`featureBranch and sourceBranch are both "${sourceBranch}": to commit onto it, set sameAsSource: true (and drop featureBranch); otherwise name another feature branch`);
     }
 
-    // ── schedule (docs/scheduled-runs.md "Ask Worca"): when | every, read in the user's zone ──
+    // ── schedule (docs/scheduled-runs.md "Chat"): when | every, read in the user's zone ──
     const spec = resolveScheduleSpec({ ...inp, projectKey: target.projectKey || '', workspaceId: target.workspaceId || '' }, { nowMs, timeZone, defaults: scheduleDefaults, afterRef });
     if (!spec.ok) errors.push(...spec.errors);
     if (spec.ok && spec.schedule && spec.schedule.kind === 'after' && spec.schedule.sourceFromPrevious && (sourceBranch || (sourceBranchByKey && Object.keys(sourceBranchByKey).length))) {

@@ -5,7 +5,7 @@
 // (the same split proposal.mjs makes for propose_run). Nothing here writes — applying a card is
 // ui/server.mjs's business, behind the user's click.
 //
-// Why a card at all (docs/team-metrics.md "Ask Worca"): enabling creates a branch on the team's
+// Why a card at all (docs/team-metrics.md "Chat"): enabling creates a branch on the team's
 // origin, attribution is a team decision made once, routing pushes marker branches to other
 // repositories. Outward-facing and hard to reverse — never a direct tool.
 import { ASK_LIMITS } from './limits.mjs';

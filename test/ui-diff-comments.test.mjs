@@ -604,7 +604,7 @@ test('comments whose anchor cannot render are never lost: past the 500k cap (det
   ]);
 });
 
-test('patchAvailable:false disables the + button but keeps Resolve, Delete and Ask Worca', async () => {
+test('patchAvailable:false disables the + button but keeps Resolve, Delete and Ask Chat', async () => {
   // The /diff arm still serves a patch, so rows render; only the comments
   // endpoint reports the artifact gone. canCreate() is driven solely by
   // patchAvailable, which is the whole point of the flag.
@@ -616,7 +616,7 @@ test('patchAvailable:false disables the + button but keeps Resolve, Delete and A
   const card = doc.querySelector('[data-comment-id="dc_00000001"]');
   assert.ok(card.querySelector('.hd-cmt-resolve'), 'resolve still works');
   assert.ok(card.querySelector('.hd-cmt-delete'), 'delete still works');
-  assert.ok(card.querySelector('.hd-cmt-ask'), 'Ask Worca still works');
+  assert.ok(card.querySelector('.hd-cmt-ask'), 'Ask Chat still works');
 });
 
 test('a diff-comments-changed frame for THIS run repaints in place; one for another run is ignored', async () => {
@@ -685,7 +685,7 @@ test('workspace runs POST the member project from the rendered section', async (
   ]);
 });
 
-test('Ask Worca on a card appends the exact reference (and the reply count) and sends nothing', async () => {
+test('Ask Chat on a card appends the exact reference (and the reply count) and sends nothing', async () => {
   // askPanel is a module-local `let` with no test seam, so this reads the mounted
   // panel's real textarea — the test/ui-ask-integration.test.mjs precedent — rather
   // than spying on appendToComposer, which nothing can reach. One boot: two plain
@@ -700,10 +700,10 @@ test('Ask Worca on a card appends the exact reference (and the reply count) and 
   const { window } = ctx;
   const doc = window.document;
   await checkRows([
-    { name: 'the card\'s Ask Worca button opens Chat with the exact reference and sends nothing', run: async () => {
+    { name: 'the card\'s Ask Chat button opens Chat with the exact reference and sends nothing', run: async () => {
       click(window, doc.querySelector('[data-comment-id="dc_00000001"] .hd-cmt-ask'));
       await settle(window, 6);
-      assert.equal(window.location.hash, '#chat', 'Ask Worca opens the Chat page');
+      assert.equal(window.location.hash, '#chat', 'Ask Chat opens the Chat page');
       const ta = doc.querySelector('.ask-input');
       assert.ok(ta, 'the Ask panel is mounted by the app boot');
       assert.equal(ta.value, '[diff comment dc_00000001 — src/a.js:2 (new), run fcec04e8] "please add a test"', 'the run rides along: Chat has no run of its own');
@@ -718,7 +718,7 @@ test('Ask Worca on a card appends the exact reference (and the reply count) and 
       assert.equal(ctx.calls.filter((c) => (c.opts.method || 'GET') === 'POST' && c.url.includes('/messages')).length, 0,
         'append never sends');
     } },
-    { name: 'Ask Worca on a thread with replies tells the chat how many, so the model reads them first', run: async () => {
+    { name: 'Ask Chat on a thread with replies tells the chat how many, so the model reads them first', run: async () => {
       await openDetail(ctx);
       await settle(window, 8);
       click(window, doc.querySelector('[data-comment-id="dc_00000005"] .hd-cmt-ask'));

@@ -154,7 +154,7 @@ test('legacy #guardrails (incl. #guardrails/<id> and a boot-time deep link) redi
   ]);
 });
 
-test('opening Runs or Ask Worca loads the settings payload', async () => {
+test('opening Runs or Chat loads the settings payload', async () => {
   for (const tab of ['runs', 'ask']) {
     const { window, calls } = await boot();
     await go(window, `settings/${tab}`);
