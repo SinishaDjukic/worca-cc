@@ -862,6 +862,23 @@ export async function branchTips(projectDir, branch, remote) {
   return { local: sha.get(refs[0]) || null, remote: remote ? sha.get(refs[1]) || null : null };
 }
 
+/**
+ * How a local tip stands against its remote-tracking tip (two shas from branchTips): 'same',
+ * 'ahead' (commits only local: Push changes), 'behind' (commits only on the remote, e.g. the PR's
+ * Update branch or a collaborator's push) or 'diverged' (both; a plain push is refused).
+ * null when a tip is missing or git cannot tell. No network.
+ */
+export async function tipsRelation(projectDir, local, remote) {
+  if (!projectDir || !local || !remote) return null;
+  if (local === remote) return 'same';
+  const r = await _run('git', ['rev-list', '--left-right', '--count', `${remote}...${local}`], { cwd: projectDir });
+  const m = r.ok && /^(\d+)\s+(\d+)\s*$/.exec(r.stdout || '');
+  if (!m) return null;
+  const behind = Number(m[1]) > 0;
+  const ahead = Number(m[2]) > 0;
+  return ahead && behind ? 'diverged' : ahead ? 'ahead' : behind ? 'behind' : 'same';
+}
+
 /** Recreate a local branch from its remote-tracking ref (checkout D7). */
 export async function restoreBranchFromRemote(projectDir, branch, remote) {
   const r = await _run('git', ['branch', '--', branch, `refs/remotes/${remote}/${branch}`], { cwd: projectDir });

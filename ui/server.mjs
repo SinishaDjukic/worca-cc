@@ -303,7 +303,7 @@ import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
-import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
+import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
   markPrReady, closePr, uncommittedPatch } from '../src/core/git-info.mjs';
@@ -8141,8 +8141,10 @@ function publishMembers(state) {
 }
 
 // One member's published state from refs only (no network): the recorded remote, else the one
-// branchPushedTo finds (a branch Ship it pushed). 'moved' = local commits since (Push changes).
-// -> 'none' (no branch here) | 'unpublished' | 'published' | 'moved'
+// branchPushedTo finds (a branch Ship it pushed). 'moved' = local commits not on the remote (Push
+// changes). A remote that is only ahead (the PR's Update branch, a collaborator's push) has nothing
+// to push: 'published'. 'diverged' = both sides have commits, so a push (never forced) is refused.
+// -> 'none' (no branch here) | 'unpublished' | 'published' | 'moved' | 'diverged'
 async function publishStatus(m) {
   if (!m.repoDir || !m.feature) return { remote: null, state: 'none' };
   const recorded = m.published?.remote || null;
@@ -8152,7 +8154,12 @@ async function publishStatus(m) {
     remote = (await branchPushedTo(m.repoDir, m.feature))?.remote || null;
     tips = await branchTips(m.repoDir, m.feature, remote);
   }
-  if (remote && tips?.remote) return { remote, state: tips.local && tips.local !== tips.remote ? 'moved' : 'published' };
+  if (remote && tips?.remote) {
+    const rel = await tipsRelation(m.repoDir, tips.local, tips.remote);
+    // null with two different tips: git could not tell, so keep reading it as local commits.
+    const moved = rel === 'ahead' || (rel === null && tips.local && tips.local !== tips.remote);
+    return { remote, state: moved ? 'moved' : rel === 'diverged' ? 'diverged' : 'published' };
+  }
   return { remote: null, state: tips?.local ? 'unpublished' : 'none' };
 }
 

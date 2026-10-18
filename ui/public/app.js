@@ -222,7 +222,7 @@ import {
   freshSyncState, ago, listRowModel, projectBarModel, wsRollupModel, ffRefusalCopy, syncStageLabel, fetchedAgo, isSyncableBranchName,
   runOutcomeModel, openSyncDialog, chooseSyncRefusal,
 } from './branch-sync.mjs';
-import { baseCheckModel, baseRowNote } from './base-check.mjs';
+import { baseCheckModel, baseRowNote, newerBaseCheck } from './base-check.mjs';
 import { describeRule, formatInstant } from '../../src/shared/schedule/recurrence.mjs';
 import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, kindShort, awayAnswerRows, awayAnswerCounts, checksFirst, awayAnswersSummary, decidedByText, awayAskCaption } from '../../src/shared/away-mode/labels.mjs';
 import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
@@ -22272,10 +22272,13 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   q('.shipit-branch').textContent = record.branch || '';
   q('.shipit-base').textContent = record.sourceBranch || '';
   // #620: the local conflict check before a PR exists (the forge pill takes over once one does). Re-run by
-  // loadShipItRemotes when the base pick appears or changes.
+  // loadShipItRemotes when the base pick appears or changes. The newer of the detail's and the row's check, as the
+  // History detail reads it; one that may be out of date is redone quietly (shipItBaseRecheck).
+  const shipBranch = () => (data && data.state && data.state.branch) || {};
+  const shipBaseRec = () => newerBaseCheck(shipBranch().baseCheck, record.baseCheck);
   const paintShipBase = () => {
     const el = q('.shipit-basecheck'); if (!el) return;
-    const rec = (data && data.state && data.state.branch && data.state.branch.baseCheck) || record.baseCheck || null;
+    const rec = shipBaseRec();
     const show = !!rec && rec.base === shipItChosenBase(modal, record) && (rec.status === 'conflicts' || rec.status === 'clean');
     el.hidden = !show;
     if (!show) return;
@@ -22287,6 +22290,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   };
   modal._paintShipBase = paintShipBase;
   paintShipBase();
+  shipItBaseRecheck(modal, record, data, [{ rec: shipBaseRec(), published: shipBranch().published }], paintShipBase);
   // Spec §5.10: omit the whole summary line when there is nothing to summarize.
   // (No `&& !record.branch` term: histPrEligible gates BOTH doors into this modal
   // and requires `branch`, so that clause could never be false.)
@@ -22496,17 +22500,39 @@ function chainItemFor(r) {
  *  missing one for the chosen remote (D8). */
 function prHostAvailable() { return !!(state.ghAvailable || state.adoAvailable); }
 
+/** Ship it's base lines describe the branch now: when a check it shows may be out of date (baseCheckStale), the
+ *  dialog redoes it quietly as the History detail does, stores it into the loaded detail and repaints its lines
+ *  (and the open detail's block, which reads the same record). entries: [{ rec, published }]. */
+function shipItBaseRecheck(modal, record, data, entries, repaint) {
+  if (!record || !record.id || !entries.some((e) => baseCheckStale(e.rec, e.published))) return;
+  const pid = modal.dataset.pipelineId;
+  baseAutoCheck(record, data).then((stored) => {
+    if (!stored) return;
+    if (modal.dataset.pipelineId === pid && !modal.classList.contains('hidden')) repaint();
+    if (hdShowsRun(record) && histDetailState.data === data) paintHdBase(histDetailState.screen, histDetailState.record, data);
+  });
+}
+
+function paintShipItRepoBase(row, rec) {
+  row.baseNote.hidden = !(rec && rec.status === 'conflicts');
+  if (row.baseNote.hidden) return;
+  const md = baseCheckModel(rec);
+  row.baseNote.className = `hint shipit-basecheck tone-${md.tone}`;
+  row.baseNote.textContent = `${md.label} with ${rec.base}${md.when ? ` (${md.when})` : ''}. Resolve them first, or open the PR anyway.`;
+}
+
 // --- Ship-it, workspace mode: one row per affected member repo --------------
 
 // One Ship-it row per member repo. `row` is the mutable record the batch drives:
 // { el, member, pick, done, failed, busy, statusEl, remotesBox, pushSel, baseSel, branchWrap,
-//   branchSel, baseLabel, hint, remotes, mergeable }. `failed`: the last round's POST failed.
+//   branchSel, baseLabel, baseNote, hint, remotes, mergeable }. `failed`: the last round's POST failed.
 function buildShipItRepoRow(member, summary, canShip) {
   const el = document.createElement('div');
   el.className = 'shipit-repo';
   el.dataset.memberKey = member.memberKey;
   const row = { el, member, pick: null, done: false, failed: false, busy: false, statusEl: null, remotesBox: null,
-    pushSel: null, baseSel: null, branchWrap: null, branchSel: null, baseLabel: null, hint: null, remotes: [], mergeable: null };
+    pushSel: null, baseSel: null, branchWrap: null, branchSel: null, baseLabel: null, baseNote: null, hint: null, remotes: [],
+    mergeable: null };
   const head = document.createElement('label');
   head.className = 'shipit-repo-head';
   if (canShip) {
@@ -22556,15 +22582,11 @@ function buildShipItRepoRow(member, summary, canShip) {
   row.branchWrap.appendChild(row.branchSel);
   line.append(b, arrow, row.baseLabel, row.branchWrap);
   el.appendChild(line);
-  // #620: this member's stored conflict check (the History row summary), while no PR exists.
-  const bc = member.baseCheck;
-  if (bc && bc.status === 'conflicts') {
-    const md = baseCheckModel(bc);
-    const note = document.createElement('small');
-    note.className = `hint shipit-basecheck tone-${md.tone}`;
-    note.textContent = `${md.label} with ${bc.base}${md.when ? ` (${md.when})` : ''}. Resolve them first, or open the PR anyway.`;
-    el.appendChild(note);
-  }
+  // #620: this member's conflict check, while no PR exists (painted by openShipItWsModal: paintShipItRepoBase).
+  row.baseNote = document.createElement('small');
+  row.baseNote.className = 'hint shipit-basecheck';
+  row.baseNote.hidden = true;
+  el.appendChild(row.baseNote);
   row.remotesBox = document.createElement('div');
   row.remotesBox.className = 'shipit-repo-remotes';
   row.remotesBox.hidden = true;
@@ -22732,6 +22754,13 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     list.appendChild(row.el);
     rows.push(row);
   }
+  // #620: each repo's base line reads the newer of the detail's and the row's check; a stale one is redone.
+  const branches = (data && data.state && data.state.branches) || {};
+  const repoBase = (r) => newerBaseCheck(branches[r.member.memberKey]?.baseCheck, r.member.baseCheck);
+  const paintRepoBases = () => { for (const r of rows) if (r.baseNote) paintShipItRepoBase(r, repoBase(r)); };
+  paintRepoBases();
+  shipItBaseRecheck(modal, record, data, rows.filter((r) => r.baseNote)
+    .map((r) => ({ rec: repoBase(r), published: branches[r.member.memberKey]?.published })), paintRepoBases);
   if (skipped.length) {
     const p = document.createElement('p');
     p.className = 'shipit-skipped hint';
@@ -22973,6 +23002,7 @@ function hdSyncPr(projectKey, id, row) {
   paintHdBase(histDetailState.screen, histDetailState.record, histDetailState.data);   // an open PR owns the pipeline Resolve
   paintHdAfter(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdGlance(histDetailState.screen, histDetailState.record, histDetailState.data);
+  paintHdPublish(histDetailState.screen, histDetailState.record, histDetailState.data);   // a new PR pushed the branch
 }
 
 // ── History glance ──────────────────────────────────────────────────────────
@@ -23332,7 +23362,8 @@ function hdWsRepoItem(m) {
 
 // --- Publish branch (#618): push a finished run's branch without opening a PR ----
 // GET /api/runs/:id/publish answers each repo's state from refs only: 'none' (no branch here),
-// 'unpublished', 'published' or 'moved' (local commits since: the action reads Push changes).
+// 'unpublished', 'published', 'moved' (local commits not on the remote: the action reads Push changes)
+// or 'diverged' (the remote has commits too: a push would be refused, so no action for it).
 const PUBLISH_FINISHED = new Set(['done', 'stopped', 'error']);
 let publishPaintGen = 0;
 
@@ -23355,7 +23386,13 @@ async function paintHdPublish(screen, record, data) {
     const res = await fetch(`/api/runs/${encodeURIComponent(record.id)}/publish?${new URLSearchParams(publishScope(record))}`);
     const d = await safeJson(res);
     if (!res.ok || !d || !Array.isArray(d.members)) return;
-    members = d.members.filter((m) => m && m.branch && m.state && m.state !== 'none');
+    // A branch with a pull request was pushed when the PR opened: never "Publish branch" for it. Ship it repaints
+    // this block once the PR is recorded (hdSyncPr), and this gate covers the forge deleting the merged branch
+    // and a fetch pruning its tracking ref. Push changes stays for local commits.
+    const ws = record.target === 'workspace';
+    const prOf = (m) => (ws ? histWsMembers(record).find((x) => x.memberKey === m.memberKey)?.pr : record.pr);
+    members = d.members.filter((m) => m && m.branch && m.state && m.state !== 'none'
+      && !(m.state === 'unpublished' && prLive(prOf(m))));
   } catch { return; }
   if (gen !== publishPaintGen || !members.length) return;
   const pub = members.filter((m) => m.remote && m.state !== 'unpublished');
@@ -23369,7 +23406,7 @@ async function paintHdPublish(screen, record, data) {
   if (!moved && !members.some((m) => m.state === 'unpublished')) return;
   btn.textContent = moved ? 'Push changes' : 'Publish branch';
   btn.hidden = false;
-  btn.onclick = () => openPublishModal(screen, record, data, members);   // property: repaints re-bind it
+  btn.onclick = () => openPublishModal(screen, record, data, members.filter((m) => m.state !== 'diverged'));   // property: repaints re-bind it
 }
 
 function openPublishModal(screen, record, data, members) {
@@ -24073,21 +24110,21 @@ function hdSetArchiveGate(btn, retained, checkout = null) {
 // Resolve in a pipeline / Resolve in a terminal. Idempotent (re-run by refreshHdFromRow); handlers are properties.
 const BASE_FINISHED = new Set(['done', 'stopped', 'error']);
 
-/** [{ key, name, rec, resolving, prOpen }] from the detail state; a row-level summary newer than the detail wins
- *  (no file list then). `prOpen`: the branch has an open PR, whose Overview row owns the pipeline Resolve. */
+/** [{ key, name, rec, published, resolving, prOpen }] from the detail state; a row-level summary newer than the
+ *  detail wins (no file list then). `published`: the branch's last recorded push. `prOpen`: the branch has an open
+ *  PR, whose Overview row owns the pipeline Resolve. */
 function hdBaseMembers(record, data) {
   const st = (data && data.state) || {};
-  const newer = (a, b) => (b && (!a || Date.parse(b.at || '') > Date.parse(a.at || '')) ? b : a);
   if (st.target === 'workspace') {
     const names = new Map((st.projects || []).map((p) => [p.projectKey, p.projectName]));
     const rows = new Map(((record && record.members) || []).map((m) => [m.memberKey, m]));
     return Object.entries(st.branches || {}).filter(([, br]) => br && br.feature && br.branchKept !== false && !br.branchDeleted)
-      .map(([key, br]) => ({ key, name: names.get(key) || key, rec: newer(br.baseCheck, rows.get(key) && rows.get(key).baseCheck),
-        resolving: !!br.baseResolve, prOpen: prStateOf(rows.get(key) && rows.get(key).pr) === 'OPEN' }));
+      .map(([key, br]) => ({ key, name: names.get(key) || key, rec: newerBaseCheck(br.baseCheck, rows.get(key) && rows.get(key).baseCheck),
+        published: br.published || null, resolving: !!br.baseResolve, prOpen: prStateOf(rows.get(key) && rows.get(key).pr) === 'OPEN' }));
   }
   const br = st.branch || {};
-  return br.feature ? [{ key: null, name: null, rec: newer(br.baseCheck, record && record.baseCheck), resolving: !!br.baseResolve,
-    prOpen: prStateOf(record && record.pr) === 'OPEN' }] : [];
+  return br.feature ? [{ key: null, name: null, rec: newerBaseCheck(br.baseCheck, record && record.baseCheck),
+    published: br.published || null, resolving: !!br.baseResolve, prOpen: prStateOf(record && record.pr) === 'OPEN' }] : [];
 }
 
 function paintHdBase(screen, record, data) {
@@ -24105,26 +24142,42 @@ function paintHdBase(screen, record, data) {
   if (members.length) hdBaseAuto(screen, record, data, members);
 }
 
-/** The check runs by itself once per open of the detail when a branch was never checked, or was checked
- *  over BASE_AUTO_MS ago. Quiet: no result line, a failed request leaves the stored line as it was. */
+/** The check runs by itself once per open of the detail (and on each open of Ship it) when a branch was never
+ *  checked, was checked over BASE_AUTO_MS ago, or was checked before its last recorded push. Quiet: no result
+ *  line, a failed request leaves the stored line as it was. */
 const BASE_AUTO_MS = 5 * 60_000;
 let hdBaseAutoFor = null;          // the run whose open may still auto-check (setupHdActions arms it)
 
-function hdBaseAuto(screen, record, data, members) {
-  if (hdBaseAutoFor !== record.id) return;
-  const stale = (rec) => !rec || !(Date.now() - Date.parse(rec.at || '') < BASE_AUTO_MS);
-  if (!members.some((m) => stale(m.rec))) return;
-  hdBaseAutoFor = null;
+/** A stored check that may not describe the branch now. A check made after the last push read the head as it is
+ *  (local commits not pushed included). An older one is out of date when it checked another head than the push
+ *  record names; a record without heads falls back to the times. */
+function baseCheckStale(rec, published) {
+  if (!rec || !(Date.now() - Date.parse(rec.at || '') < BASE_AUTO_MS)) return true;
+  if (!published || Date.parse(rec.at || '') > Date.parse(published.at || '')) return false;
+  return published.sha && rec.headSha ? published.sha !== rec.headSha : Date.parse(published.at || '') > Date.parse(rec.at || '');
+}
+
+/** POST base-check { auto } and store every member's answer into the loaded detail. Resolves true once stored. */
+function baseAutoCheck(record, data) {
   const ws = data && data.state && data.state.target === 'workspace';
-  fetch(`/api/runs/${encodeURIComponent(record.id)}/base-check?${runActionQuery(record.projectDir || null, record).toString()}`,
+  return fetch(`/api/runs/${encodeURIComponent(record.id)}/base-check?${runActionQuery(record.projectDir || null, record).toString()}`,
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto: true }) })
     .then(async (res) => {
       const d = res.ok ? await safeJson(res) : null;
-      if (!d || !Array.isArray(d.members)) return;
+      if (!d || !Array.isArray(d.members)) return false;
       for (const x of d.members) hdBaseStore(data, ws ? x.projectKey : null, x.baseCheck);
-      if (hdBaseMsgsFor === record.id) paintHdBase(screen, record, data);   // still this run's detail
+      return true;
     })
-    .catch(() => {});
+    .catch(() => false);
+}
+
+function hdBaseAuto(screen, record, data, members) {
+  if (hdBaseAutoFor !== record.id) return;
+  if (!members.some((m) => baseCheckStale(m.rec, m.published))) return;
+  hdBaseAutoFor = null;
+  baseAutoCheck(record, data).then((stored) => {
+    if (stored && hdBaseMsgsFor === record.id) paintHdBase(screen, record, data);   // still this run's detail
+  });
 }
 
 function hdBaseNeedsLine(m) {
@@ -24171,11 +24224,12 @@ function hdBaseItem(screen, record, data, m) {
 const hdBaseMsgs = new Map();
 let hdBaseMsgsFor = null;
 
-/** Write a fresh record into the loaded detail so a repaint shows it. */
+/** Write a fresh record into the loaded detail so a repaint shows it. Answers can land out of order (an automatic
+ *  check that started before an Update branch answers after it): a record older than the stored one is dropped. */
 function hdBaseStore(data, key, rec) {
   const st = data && data.state; if (!st || !rec) return;
-  if (st.target === 'workspace') { if (st.branches && st.branches[key]) st.branches[key].baseCheck = rec; }
-  else if (st.branch) st.branch.baseCheck = rec;
+  const br = st.target === 'workspace' ? st.branches && st.branches[key] : st.branch;
+  if (br) br.baseCheck = newerBaseCheck(rec, br.baseCheck);
 }
 
 /** The loaded detail learns of a resolution the server just marked, so Re-check shows without a reload. */
@@ -24669,10 +24723,10 @@ function refreshHdFromRow() {
   // History rows intentionally carry only base-check summaries. If one is newer than the loaded detail,
   // rehydrate the detail instead of replacing its authoritative conflicting-file list with that summary.
   const st = histDetailState.data.state || {};
-  const newerBaseCheck = (summary, full) => summary && (!full || Date.parse(summary.at || '') > Date.parse(full.at || ''));
+  const rowNewer = (summary, full) => !!summary && newerBaseCheck(full, summary) === summary;
   const baseChanged = st.target === 'workspace'
-    ? (row.members || []).some((m) => newerBaseCheck(m.baseCheck, st.branches?.[m.memberKey]?.baseCheck))
-    : newerBaseCheck(row.baseCheck, st.branch?.baseCheck);
+    ? (row.members || []).some((m) => rowNewer(m.baseCheck, st.branches?.[m.memberKey]?.baseCheck))
+    : rowNewer(row.baseCheck, st.branch?.baseCheck);
   if (baseChanged && reloadHistDetail()) return;
   histDetailState.record = row;
   const { screen, data } = histDetailState;
