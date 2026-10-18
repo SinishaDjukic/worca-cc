@@ -1,17 +1,19 @@
 // src/core/ask/refs.mjs — POST /api/ask/refs/resolve (Chat answer chips, ui/public/ask-ref-chips.mjs): one batch of
 // ref keys (src/shared/chip-refs.mjs) → a title and a status per ref. worca's own runs and chats are read fresh on
 // every call (the route passes those lookups in). GitHub and Azure DevOps answers are cached per key — OK_TTL_MS for
-// an answer, MISS_TTL_MS for none — with one lookup in flight per key, at most PROVIDER_CAP provider calls at once
-// per batch, and a lookup that fails (no credential, 404, offline, a timeout) answers { ok:false }: the chip keeps
-// its plain ref. Errors never reach the answer, so no provider text (or token) can either.
+// an answer, MISS_TTL_MS for none — with one lookup in flight per key (however long it takes), at most PROVIDER_CAP
+// provider calls at once across every batch, and a lookup that fails (no credential, 404, offline, a timeout) answers
+// { ok:false }: the chip keeps its plain ref. A batch answers within REFS_DEADLINE_MS: a ref still pending then is
+// { ok:false } for this batch, while its lookup goes on and fills the cache for the next one. Errors never reach the
+// answer, so no provider text (or token) can either.
 // Pure: the providers are injected (server.mjs wires git-info.mjs and pr/azure.mjs); no I/O here.
 import { parseRefKey } from '../../shared/chip-refs.mjs';
-import { mapWithCap } from '../fanout.mjs';
 
 export const OK_TTL_MS = 60_000;
 export const MISS_TTL_MS = 30_000;
 export const CACHE_MAX = 2000;
 export const PROVIDER_CAP = 4;
+export const REFS_DEADLINE_MS = 15_000;
 const MISS = Object.freeze({ ok: false });
 const ITEM_STATES = new Set(['open', 'draft', 'merged', 'closed']);
 const str = (s, max) => (typeof s === 'string' ? s.slice(0, max) : '');
@@ -40,6 +42,14 @@ const safely = (fn, id) => { try { return typeof fn === 'function' ? fn(id) : nu
  */
 export function createRefResolver({ github = null, azurePr = null, workItems = null, now = () => Date.now() } = {}) {
   const cache = new Map();   // key -> { at, ttl, promise } — insertion order is age (a refresh re-inserts)
+  const queue = [];          // provider calls waiting for one of the PROVIDER_CAP slots, oldest first
+  let busy = 0;
+  /** Run one provider call in a free slot (at once when one is free), else after the calls queued before it. */
+  async function capped(fn) {
+    if (busy < PROVIDER_CAP) busy++;
+    else await new Promise((r) => { queue.push(r); });   // a finishing call hands its slot straight on
+    try { return await fn(); } finally { const next = queue.shift(); if (next) next(); else busy--; }
+  }
 
   function cached(key) {
     const hit = cache.get(key);
@@ -48,7 +58,7 @@ export function createRefResolver({ github = null, azurePr = null, workItems = n
     return null;
   }
   function remember(key, promise) {
-    const entry = { at: now(), ttl: OK_TTL_MS, promise };   // in flight: shared until it settles, then timed from then
+    const entry = { at: now(), ttl: Infinity, promise };   // in flight: shared until it settles, then timed from then
     cache.set(key, entry);
     while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
     promise.then((r) => { entry.at = now(); entry.ttl = r && r.ok ? OK_TTL_MS : MISS_TTL_MS; });
@@ -70,16 +80,8 @@ export function createRefResolver({ github = null, azurePr = null, workItems = n
         return rs.map((x) => item(m instanceof Map ? m.get(x.number) : null, ['workitem']));
       }, r);
     }
-    const tasks = [...groups.values()].map((g) => {
-      let done;
-      const promise = new Promise((resolve) => { done = resolve; });
-      return { ...g, promise, done };
-    });
-    void mapWithCap(tasks, PROVIDER_CAP, async (t) => {
-      let out = null;
-      try { out = await t.make(t.refs); } catch { out = null; }
-      t.done(Array.isArray(out) ? out : t.refs.map(() => MISS));
-    });
+    const tasks = [...groups.values()].map((g) => ({ ...g, promise: capped(() => g.make(g.refs)).catch(() => null)
+      .then((out) => (Array.isArray(out) ? out : g.refs.map(() => MISS))) }));
     const out = {};
     for (const t of tasks) t.refs.forEach((r, i) => { out[r.key] = remember(r.key, t.promise.then((rs) => rs[i] || MISS)); });
     return out;
@@ -103,8 +105,13 @@ export function createRefResolver({ github = null, azurePr = null, workItems = n
       else out[key] = cached(key) || (todo.push(r), null);
     }
     Object.assign(out, lookup(todo));
-    const entries = await Promise.all(Object.entries(out).map(async ([k, v]) => [k, (await Promise.resolve(v).catch(() => MISS)) || MISS]));
-    return Object.fromEntries(entries);
+    let timer = null;
+    const late = new Promise((r) => { timer = setTimeout(r, REFS_DEADLINE_MS, MISS); });
+    if (timer && typeof timer.unref === 'function') timer.unref();
+    try {
+      const entries = await Promise.all(Object.entries(out).map(async ([k, v]) => [k, (await Promise.race([Promise.resolve(v).catch(() => MISS), late])) || MISS]));
+      return Object.fromEntries(entries);
+    } finally { clearTimeout(timer); }
   }
 
   return { resolve, clear: () => cache.clear(), get size() { return cache.size; } };

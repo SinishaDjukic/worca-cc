@@ -41,7 +41,7 @@ test('chip refs: links, text and keys (src/shared/chip-refs.mjs)', async () => {
     } },
     { name: 'parseRefKey: only what the browser mints; encoded org/project decoded and checked', run: () => {
       assert.deepEqual(parseRefKey('adopr:acme/My%20Shop#7'), { kind: 'adopr', key: 'adopr:acme/My%20Shop#7', org: 'acme', project: 'My Shop', number: 7 });
-      for (const k of ['gh:o/r#0', 'adopr:acme/a%2Fb#1', 'adopr:acme/a%0Ab#1', 'adopr:acme/a%7Fb#1', 'adowi:ac%20me#1', 'run:XYZ', 'chat:askm_1a2b3c4d', 'x:1', 42, `gh:o/${'r'.repeat(400)}#1`]) assert.equal(parseRefKey(k), null, String(k).slice(0, 40));
+      for (const k of ['gh:o/r#0', 'adopr:acme/a%2Fb#1', 'adopr:acme/a%0Ab#1', 'adopr:acme/a%7Fb#1', 'adowi:ac%20me#1', 'run:XYZ', 'chat:askm_1a2b3c4d', 'x:1', 'constructor:x', '__proto__:x', 'toString:x', 42,`gh:o/${'r'.repeat(400)}#1`]) assert.equal(parseRefKey(k), null, String(k).slice(0, 40));
     } },
   ]);
 });

@@ -1,9 +1,9 @@
 // test/ask-refs.test.mjs — src/core/ask/refs.mjs, the batch resolver behind POST /api/ask/refs/resolve: worca refs
 // read fresh, forge refs grouped (one call per repo / organization / PR), cached with two TTLs, one lookup in flight
-// per key, and every failure an { ok:false } — fake providers, a fake clock.
-import { test } from 'node:test';
+// per key, one provider cap for every batch, a deadline, and every failure an { ok:false } — fake providers, a fake clock.
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { createRefResolver, OK_TTL_MS, MISS_TTL_MS, CACHE_MAX } from '../src/core/ask/refs.mjs';
+import { createRefResolver, OK_TTL_MS, MISS_TTL_MS, CACHE_MAX, PROVIDER_CAP, REFS_DEADLINE_MS } from '../src/core/ask/refs.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 function rig(over = {}) {
@@ -54,6 +54,62 @@ test('createRefResolver: shapes, grouping, caching and failures', async () => {
       assert.equal(calls.length, 1, 'the second batch waits on the first one\'s lookup');
       for (const release of releases) release();
       assert.deepEqual([await a, await b].map((x) => x['gh:o/r#7'].state), ['open', 'open']);
+    } },
+    { name: 'a slow lookup in flight is never duplicated, however long it takes', run: async () => {
+      const releases = [];
+      const { resolver, calls, advance } = rig({ github: async (repo, n) => { calls.push(['gh', repo, n]); await new Promise((r) => { releases.push(r); }); return new Map([[7, { kind: 'pr', title: 'Fix', state: 'open' }]]); } });
+      const a = resolver.resolve(['gh:o/r#7']);
+      advance(OK_TTL_MS + MISS_TTL_MS);
+      const b = resolver.resolve(['gh:o/r#7']);
+      assert.equal(calls.length, 1, 'the pending entry outlives the TTL');
+      for (const release of releases) release();
+      assert.deepEqual([await a, await b].map((x) => x['gh:o/r#7'].state), ['open', 'open']);
+      advance(OK_TTL_MS - 1);
+      await resolver.resolve(['gh:o/r#7']);
+      assert.equal(calls.length, 1, 'the TTL counts from the answer');
+    } },
+    { name: 'PROVIDER_CAP is one ceiling for every batch at once, not a cap per batch', run: async () => {
+      const releases = [];
+      let running = 0, most = 0;
+      const { resolver, calls } = rig({ github: async (repo, n) => {
+        calls.push(['gh', repo, n]);
+        most = Math.max(most, ++running);
+        await new Promise((r) => { releases.push(r); });
+        running--;
+        return new Map([[1, { kind: 'issue', title: repo, state: 'open' }]]);
+      } });
+      const a = resolver.resolve(['gh:a/a#1', 'gh:b/b#1', 'gh:c/c#1']);
+      const b = resolver.resolve(['gh:d/d#1', 'gh:e/e#1', 'gh:f/f#1']);
+      await new Promise((r) => setImmediate(r));
+      assert.equal(calls.length, PROVIDER_CAP, 'two batches of three repos share the slots');
+      while (releases.length) { releases.shift()(); await new Promise((r) => setImmediate(r)); }
+      assert.equal(calls.length, 6, 'the queued repos run as slots free up');
+      assert.equal(most, PROVIDER_CAP);
+      const out = { ...(await a), ...(await b) };
+      assert.deepEqual(Object.values(out).map((x) => x.ok), [true, true, true, true, true, true]);
+    } },
+    { name: 'the deadline answers every still-pending ref { ok:false }; the lookup goes on and fills the cache', run: async () => {
+      let release;
+      const { resolver, calls } = rig({ github: async (repo, n) => { calls.push(['gh', repo, n]); await new Promise((r) => { release = r; }); return new Map([[7, { kind: 'pr', title: 'Late', state: 'open' }]]); } });
+      mock.timers.enable({ apis: ['setTimeout'] });
+      try {
+        const pending = resolver.resolve(['gh:o/r#7', 'run:1a2b3c4d'], { run: () => ({ id: '1a2b3c4d', title: 'Plan', status: 'done' }) });
+        mock.timers.tick(REFS_DEADLINE_MS - 1);
+        let settled = false;
+        void pending.then(() => { settled = true; });
+        await new Promise((r) => setImmediate(r));
+        assert.equal(settled, false, 'nothing answers before the deadline');
+        mock.timers.tick(1);
+        await new Promise((r) => setImmediate(r));
+        assert.equal(settled, true, 'the batch answers at the deadline');
+        const out = await pending;
+        assert.deepEqual(out['gh:o/r#7'], { ok: false });
+        assert.equal(out['run:1a2b3c4d'].title, 'Plan', 'refs that answered keep their answer');
+      } finally { mock.timers.reset(); }
+      release();
+      await new Promise((r) => setImmediate(r));
+      assert.deepEqual((await resolver.resolve(['gh:o/r#7']))['gh:o/r#7'], { ok: true, kind: 'pr', title: 'Late', state: 'open' }, 'the late answer was cached');
+      assert.equal(calls.length, 1);
     } },
     { name: 'a provider that throws, answers junk or is missing is a miss, never an error', run: async () => {
       const { resolver } = rig({ github: async () => { throw new Error('gh exploded GH_TOKEN=secret'); }, azurePr: async () => ({ kind: 'pr', title: 'x', state: 'weird' }), workItems: null });

@@ -276,7 +276,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   const renderer = createMarkdownRenderer({ doc, load: loadMarkdown, hljsLoader });
   // Answer chips (ask-ref-chips.mjs): the PRs, issues, work items, runs and chats an answer names. The run chips follow
   // the run store like the run cards; lookups go out once an answer is done (renderAnswerPiece).
-  const refChips = createRefChips({ doc, fetch, runStore, now, root: () => el.transcript || null });
+  const refChips = createRefChips({ doc, fetch, runStore, now, root: () => el.transcript || null, visible: () => st.open });
   const orbs = createDotOrbs({ doc, win });   // the live turn's orb (ensureThinking), the Workflows chat's dot sphere
 
   // ---- storage --------------------------------------------------------------
@@ -1600,6 +1600,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       composerCards().stale();   // the chat was hidden: a wizard may have saved a draft meanwhile
       scheduleFlush();
       repaintProgressCards({ hydrate: true });
+      refChips.show();                               // run chips skipped the store events while hidden
       scheduleMcpRefresh();                          // the page may have changed while Chat was hidden
       if (st.historyStale) loadHistory();            // the first show, or a refresh frame landed while hidden
       if (createVoice && voiceUsedBefore()) voice().preload();   // the mic is ready by the time it is clicked

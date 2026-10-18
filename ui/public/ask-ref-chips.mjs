@@ -45,15 +45,16 @@ export function workItemTone(state) {
 
 /**
  * @param {{doc: Document, fetch: Function, runStore?: object|null, now?: () => number, root?: () => Element|null,
- *   ttlMs?: number, rehydrateMs?: number}} opts  `root` holds every answer (the transcript); rehydrateMs 0 = no
- *   interval (tests call tick() by hand).
+ *   ttlMs?: number, rehydrateMs?: number, visible?: () => boolean}} opts  `root` holds every answer (the transcript);
+ *   rehydrateMs 0 = no interval (tests call tick() by hand); `visible` false = the Chat page is hidden: run store
+ *   events scan nothing until show().
  */
-export function createRefChips({ doc, fetch, runStore = null, now = () => Date.now(), root = () => null, ttlMs = CHIP_TTL_MS, rehydrateMs = CHIP_REHYDRATE_MS } = {}) {
+export function createRefChips({ doc, fetch, runStore = null, now = () => Date.now(), root = () => null, ttlMs = CHIP_TTL_MS, rehydrateMs = CHIP_REHYDRATE_MS, visible = () => true } = {}) {
   const cache = new Map();        // ref key -> { at, result } (result null: no answer — the chip keeps its plain ref)
   const inflight = new Set();     // keys a request is out for
   const want = new Set();         // keys the next send() asks for
   const info = new WeakMap();     // chip or candidate element -> { ref, fallback, parts }
-  let sendQueued = false, repaintQueued = false, timer = null, unsub = null, dead = false;
+  let sendQueued = false, repaintQueued = false, missed = false, timer = null, unsub = null, dead = false;
 
   const h = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   // Write a property only when it changes: the run store repaints on every frame of any run, and a rewritten
@@ -107,7 +108,7 @@ export function createRefChips({ doc, fetch, runStore = null, now = () => Date.n
       if (r) title = r.title || 'New chat';
     } else if (r) {
       title = r.title;
-      if (r.kind === 'workitem') { tone = workItemTone(r.state); text = r.state; } else [tone, text] = ITEM_PILL[r.state] || ['', ''];
+      if (r.kind === 'workitem') { tone = workItemTone(r.state); text = r.state; } else [tone, text] = Object.hasOwn(ITEM_PILL, r.state) ? ITEM_PILL[r.state] : ['', ''];
       if (ref.kind === 'gh') icon = r.kind === 'issue' ? 'issue' : r.state === 'merged' ? 'merged' : 'pr';
       else if (r.state === 'merged') icon = 'merged';
     }
@@ -163,11 +164,12 @@ export function createRefChips({ doc, fetch, runStore = null, now = () => Date.n
     : r.home && r.id ? `#history/${r.home}/${r.id}` : r.runId ? `#running/${r.runId}` : null);
 
   /** The link's own words when they say more than its URL or the ref (`[the login fix](…/pull/7)`): the chip's title
-   *  until the lookup answers, and after it when the lookup fails. `[#7](…/pull/7)` says nothing more. */
+   *  until the lookup answers, and after it when the lookup fails. `[#7](…/pull/7)` says nothing more, and neither
+   *  does an autolink's raw text: marked percent-encodes the href (`Caf%C3%A9`) but keeps the text (`Café`). */
   function customText(a, ref) {
     const t = (a.textContent || '').trim();
     const label = labelOf(ref);
-    if (!t || t === a.getAttribute('href') || t === ref.url || (label && label.endsWith(t))) return '';
+    if (!t || t === a.getAttribute('href') || t === ref.url || (label && label.endsWith(t)) || refFromHref(t)) return '';
     return t;
   }
 
@@ -284,12 +286,17 @@ export function createRefChips({ doc, fetch, runStore = null, now = () => Date.n
     if (any) send();
   }
 
+  function queueRunRepaint() {
+    repaintQueued = true;
+    Promise.resolve().then(() => { repaintQueued = false; if (!dead) repaint((ref) => ref.kind === 'run'); });
+  }
+
   function wire() {
     if (!unsub && runStore && typeof runStore.subscribe === 'function') {
       unsub = runStore.subscribe((runId, type) => {
         if (dead || type === 'log' || repaintQueued) return;
-        repaintQueued = true;
-        Promise.resolve().then(() => { repaintQueued = false; if (!dead) repaint((ref) => ref.kind === 'run'); });
+        if (!visible()) { missed = true; return; }   // the progress cards' st.open rule: show() catches up
+        queueRunRepaint();
       });
     }
     if (!timer && rehydrateMs > 0) {
@@ -301,6 +308,12 @@ export function createRefChips({ doc, fetch, runStore = null, now = () => Date.n
   return {
     decorate,
     tick,
+    /** The Chat page shows again: one run chip repaint for the run store events it skipped while hidden. */
+    show() {
+      if (dead || !missed || !visible()) return;
+      missed = false;
+      if (!repaintQueued) queueRunRepaint();
+    },
     destroy() {
       dead = true;
       if (timer) { clearInterval(timer); timer = null; }

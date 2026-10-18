@@ -114,7 +114,7 @@ export function refsInText(text) {
 export function parseRefKey(key) {
   if (typeof key !== 'string' || key.length > 300) return null;
   const kind = key.slice(0, key.indexOf(':'));
-  const re = KEY_RES[kind];
+  const re = Object.hasOwn(KEY_RES, kind) ? KEY_RES[kind] : null;   // `constructor:x` names no kind
   const m = re ? re.exec(key) : null;
   if (!m) return null;
   if (kind === 'gh') return { kind, key, owner: m[1], repo: m[2], number: Number(m[3]) };

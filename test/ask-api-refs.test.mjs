@@ -92,6 +92,9 @@ test('POST /api/ask/refs/resolve: runs by History id or live id; chats by id; co
     assert.deepEqual(body.refs[`chat:${chat.id}`], { ok: true, kind: 'chat', title: 'Release notes' });
     assert.deepEqual(body.refs[`chat:${composer.id}`], { ok: false }, 'a Workflows composer thread is no chat');
     assert.deepEqual(body.refs['chat:ask_00000000'], { ok: false });
+    const mixed = await resolve(['constructor:x', '__proto__:x', `chat:${chat.id}`]);
+    assert.equal(mixed.status, 200, 'a prototype-named kind never fails the batch');
+    assert.deepEqual(mixed.body, { refs: { [`chat:${chat.id}`]: { ok: true, kind: 'chat', title: 'Release notes' } } }, 'the good key still resolves');
   } finally { for (const e of [entry, young, unsaved]) mod.runs.delete(e.id); }
 });
 

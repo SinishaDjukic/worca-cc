@@ -11,7 +11,7 @@ const PR = 'https://github.com/SinishaDjukic/worca-cc/pull/777';
 const UUID = '0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0';
 const realLoad = async () => ({ marked: (await import('marked')).marked, createDOMPurify: (await import('dompurify')).default });
 
-async function world({ results = {}, store = null, fail = false } = {}) {
+async function world({ results = {}, store = null, fail = false, visible } = {}) {
   const { window } = new JSDOM('<!doctype html><body><div class="ask-transcript"></div></body>', { url: 'http://localhost:4317/' });
   const doc = window.document;
   const md = createMarkdownRenderer({ doc, load: realLoad, hljsLoader: { forLanguage: async () => null } });
@@ -24,7 +24,8 @@ async function world({ results = {}, store = null, fail = false } = {}) {
     return { ok: true, status: 200, json: async () => ({ refs: Object.fromEntries(asked.filter((k) => k in results).map((k) => [k, results[k]])) }) };
   };
   let t = 1_000_000;
-  const chips = createRefChips({ doc, fetch, runStore: store, now: () => t, root: () => doc.querySelector('.ask-transcript'), rehydrateMs: 0 });
+  const scans = { n: 0 };                  // every pass over the transcript starts with root()
+  const chips = createRefChips({ doc, fetch, runStore: store, now: () => t, root: () => { scans.n++; return doc.querySelector('.ask-transcript'); }, rehydrateMs: 0, visible });
   const host = doc.querySelector('.ask-transcript');
   const answer = (text, { live = false } = {}) => {
     const div = doc.createElement('div');
@@ -35,7 +36,7 @@ async function world({ results = {}, store = null, fail = false } = {}) {
     return div;
   };
   const settle = () => new Promise((r) => setTimeout(r, 0));
-  return { doc, calls, chips, answer, settle, advance: (ms) => { t += ms; } };
+  return { doc, calls, chips, answer, settle, scans, advance: (ms) => { t += ms; } };
 }
 
 test('ask-ref-chips: a rendered answer turns its refs into chips, never inside code', async () => {
@@ -54,6 +55,35 @@ test('ask-ref-chips: a rendered answer turns its refs into chips, never inside c
   assert.equal(div.querySelector('p code').textContent, 'owner/repo#5');
   assert.equal(div.querySelector('pre code').textContent, 'acme/api#6 5c40dcc6\n');
   assert.equal(div.querySelectorAll('pre .ask-ref-chip, code .ask-ref-chip, pre .ask-ref-cand').length, 0);
+});
+
+test('ask-ref-chips: a link the model wrote inside raw <code> stays code, never a chip', async () => {
+  const w = await world();
+  const div = w.answer('see <code><a href="https://github.com/o/r/pull/1">x</a></code> here');
+  assert.equal(div.querySelector('code a')?.getAttribute('href'), 'https://github.com/o/r/pull/1', 'DOMPurify keeps the raw link');
+  assert.equal(div.querySelectorAll('.ask-ref-chip').length, 0);
+});
+
+test('ask-ref-chips: an autolink whose href marked percent-encoded is no title; an encoded Azure repo label reads decoded', async () => {
+  const w = await world({ fail: true });
+  const div = w.answer('<https://dev.azure.com/acme/Café/_git/api/pullrequest/8> and <https://dev.azure.com/acme/Shop/_git/My%20Repo/pullrequest/7> and [https://www.github.com/o/r/pull/9/files](https://github.com/o/r/pull/9)');
+  await w.settle(); await w.settle();
+  const [cafe, repo, other] = div.querySelectorAll('a.ask-ref-chip');
+  assert.equal(other.querySelector('.ask-ref-title').hidden, true, 'words that are another spelling of a ref URL say nothing more');
+  assert.equal(cafe.getAttribute('href'), 'https://dev.azure.com/acme/Caf%C3%A9/_git/api/pullrequest/8', 'marked encodes the href, not the text');
+  assert.equal(cafe.querySelector('.ask-ref-title').hidden, true, 'the raw URL text says nothing more, even after a failed lookup');
+  assert.equal(cafe.querySelector('.ask-ref-title').textContent, '');
+  assert.equal(repo.querySelector('.ask-ref-label').textContent, 'My Repo!7');
+  assert.equal(repo.querySelector('.ask-ref-title').hidden, true);
+});
+
+test('ask-ref-chips: a prototype-named state paints no pill and never throws', async () => {
+  const w = await world({ results: { 'gh:o/r#7': { ok: true, kind: 'pr', title: 'Odd', state: 'constructor' }, 'gh:o/r#8': { ok: true, kind: 'pr', title: 'Odder', state: 'toString' } } });
+  const div = w.answer('o/r#7 and o/r#8');
+  await w.settle(); await w.settle();
+  const chips = [...div.querySelectorAll('a.ask-ref-chip')];
+  assert.deepEqual(chips.map((a) => a.querySelector('.ask-ref-title').textContent), ['Odd', 'Odder']);
+  assert.deepEqual(chips.map((a) => a.querySelector('.ask-ref-pill').hidden), [true, true]);
 });
 
 test('ask-ref-chips: one batched lookup after the answer is done; titles, pills and confirmed run ids fill in', async () => {
@@ -179,6 +209,34 @@ test('ask-ref-chips: run chips follow the run store; an unfinished REST run is r
   assert.equal(w.calls.length, 2, 'a run the store holds is never re-read');
   w.chips.destroy();
   assert.equal(listeners.size, 0);
+});
+
+test('ask-ref-chips: run store events scan nothing while the Chat page is hidden; the next show repaints once', async () => {
+  const listeners = new Set();
+  let live = null;
+  let open = true;
+  const store = { byPipeline: (pid) => (pid === '5c40dcc6' ? live : null), get: () => null, subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); } };
+  const w = await world({ store, visible: () => open, results: { 'run:5c40dcc6': { ok: true, kind: 'run', id: '5c40dcc6', runId: null, title: 'Chips plan', status: 'running', home: 'k-1234abcd' } } });
+  const div = w.answer('[plan](#history/k-1234abcd/5c40dcc6)');
+  await w.settle(); await w.settle();
+  const pill = () => div.querySelector('.ask-ref-pill');
+  assert.equal(pill().textContent, 'Running');
+  open = false;
+  const before = w.scans.n;
+  live = { source: 'live', status: 'done', title: 'Chips plan', active: [], terminal: true };
+  for (let i = 0; i < 3; i++) for (const fn of listeners) fn('run-uuid', 'state');
+  await w.settle();
+  assert.equal(w.scans.n, before, 'no transcript scan while hidden');
+  assert.equal(pill().textContent, 'Running');
+  w.chips.show();
+  open = true;
+  w.chips.show();
+  await w.settle();
+  assert.equal(w.scans.n, before + 1, 'one scan when the page shows again');
+  assert.equal(pill().textContent, 'Done');
+  w.chips.show();
+  await w.settle();
+  assert.equal(w.scans.n, before + 1, 'a show with no missed event scans nothing');
 });
 
 test('ask-ref-chips: a run store event while a bare id is being asked about never turns it into text', async () => {

@@ -365,6 +365,14 @@ test('ask-panel-render: a finished answer turns its refs into chips with one POS
   ctx.flush();
   await ctx.tick();
   assert.equal(posts.length, 2, 'a structural repaint inside the TTL asks nothing again');
+  ctx.panel.close();
+  live = { ...live, status: 'failed' };
+  for (const fn of listeners) fn('run-uuid', 'state');
+  await ctx.tick();
+  assert.equal(answer.querySelector('a.ask-ref-chip-run .ask-ref-pill').textContent, 'Done', 'a hidden Chat page repaints no chip');
+  ctx.panel.open();
+  await ctx.tick();
+  assert.equal(answer.querySelector('a.ask-ref-chip-run .ask-ref-pill').textContent, 'Failed', 'the next show catches up');
   ctx.panel.destroy();
   assert.equal(listeners.size, 0, 'destroy drops the run store subscription');
 });
