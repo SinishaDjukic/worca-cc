@@ -303,7 +303,7 @@ import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
-import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
+import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
   markPrReady, closePr, uncommittedPatch } from '../src/core/git-info.mjs';
@@ -2202,6 +2202,12 @@ function askSettlePrFixCards({ runId, pipelineId, outcome }) {
 // body (workspace):      { workspaceId, prompt?, ... } — mutually exclusive with
 //                        projectDir (§2.6). Single-project behavior is byte-identical.
 // ---------------------------------------------------------------------------
+// A project's stored default tags, for the key:value write rule's grandfathering; [] for a workspace or an unknown dir.
+function storedDefaultTags(rawDir) {
+  if (typeof rawDir !== 'string' || !rawDir) return [];
+  try { const dir = resolveProjectDir(rawDir); return dir ? readProjectDefaultTags(projectKey(dir)) : []; } catch { return []; }
+}
+
 /**
  * Enforced run tags (D9, D9a, D10, D13): pre-fill, then refuse a missing mandatory tag or an off-list value
  * with 422 { error, fields: { tags } }. Returns true when it answered. On pass, body.tags holds the filled
@@ -2401,16 +2407,19 @@ const startRunHandler = async (req, res) => {
     // Run tags (#718): normalised once, written back so a stored schedule keeps the clean list and
     // its firing re-validates it. Absent = no tags (legacy bodies unchanged). An explicit [] stays []:
     // "no tags", which also opts an `after` run out of inheriting its predecessor's tags.
+    // A person's tags must be key:value; the project's stored defaults (the form pre-fills them) may keep a
+    // bare key saved before that rule.
+    // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
+    // Their tags are stored data (a ticket's request, a predecessor's or parent's tags), so the key:value rule skips them too.
+    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
+      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
     let tags = [];
     if (body.tags !== undefined) {
-      const t = normaliseTags(body.tags);
+      const t = normaliseTags(body.tags, tagExempt ? {} : { strict: true, keep: storedDefaultTags(body.projectDir) });
       if (t.errors.length) return badRequest(res, `tags: ${t.errors[0]}`);
       tags = t.tags;
       body.tags = tags;
     }
-    // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
-    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
-      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
@@ -4751,10 +4760,12 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
       const remote = isSafeRemoteName(b.sync?.remote) ? b.sync.remote : effectiveSyncSettings(key).remote;
       const f = await fetchRemote(dir, { remote, maxAgeMs: INTERACTIVE_TTL_MS });
       if (!f.ok && (f.kind === 'no-remote' || f.kind === 'bad-remote')) return null;
-      const st = await syncStatus(dir, { base: b.source, remote });
+      // A source of `origin/dev` is measured as `dev` on origin (prBaseBranch).
+      const base = await prBaseBranch(dir, b.source, [remote]);
+      const st = await syncStatus(dir, { base, remote });
       if (!st.ok) return null;
       if (!st.hasLocal && !st.hasRemote) {
-        // Not a branch at all (a tag, or 'origin/dev', both accepted by isValidSourceRef):
+        // Not a branch at all (a tag, or another remote's 'upstream/dev', both accepted by isValidSourceRef):
         // nothing to measure. Only a source that resolves nowhere is "missing".
         if (await isValidSourceRef(dir, b.source)) return null;
         return { projectKey: key, base: b.source, remote, exists: false, onRemote: false, movedBy: null, stale: !f.ok };
@@ -4763,8 +4774,8 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
       // fetch, baseSha is a local tip that may already have been behind, and baseSha..remote would
       // count commits that landed BEFORE the run as "since this run started".
       const from = b.sync?.remoteSha || b.baseSha;
-      const movedBy = from && st.hasRemote ? await commitsBetween(dir, from, `refs/remotes/${remote}/${b.source}`) : null;
-      return { projectKey: key, base: b.source, remote, exists: true, onRemote: st.hasRemote, movedBy, stale: !f.ok };
+      const movedBy = from && st.hasRemote ? await commitsBetween(dir, from, `refs/remotes/${remote}/${base}`) : null;
+      return { projectKey: key, base, remote, exists: true, onRemote: st.hasRemote, movedBy, stale: !f.ok };
     });
     return rows.filter(Boolean);
   } catch { return []; /* never block a resume on a read error */ }
@@ -5997,7 +6008,7 @@ app.get('/api/projects/:key/tags/defaults', async (req, res) => {
 });
 app.put('/api/projects/:key/tags/defaults', async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;
-  const t = normaliseTags(req.body?.tags);
+  const t = normaliseTags(req.body?.tags, { strict: true, keep: readProjectDefaultTags(p.key) });
   if (!Array.isArray(req.body?.tags) || t.errors.length) return badRequest(res, t.errors[0] || 'tags must be a list of strings');
   res.json({ tags: writeProjectDefaultTags(p.key, t.tags) });
 });
@@ -7761,16 +7772,19 @@ app.get('/api/pr/remotes', async (req, res) => {
   const repoDir = target.repoDir;                     // null when store_meta is missing
   if (!repoDir) return badRequest(res, 'pipeline has no project directory');
   const { feature, source } = target;
+  const rl = await listRemotes(repoDir);
+  const remoteNames = rl.remotes.map((r) => r.name);
   // chainBaseBranchesOf answers [] for a workspace row, so a member's chain is its own source.
+  // A remote-tracking source (`origin/dev`) offers the branch it names on the remote (`dev`).
   const walked = chainBaseBranchesOf(resolved.state.id || resolved.id);
-  const chain = (walked.length ? walked : (source ? [source] : [])).filter((b) => b !== feature);
+  const chain = (await Promise.all((walked.length ? walked : (source ? [source] : []))
+    .map((b) => prBaseBranch(repoDir, b, remoteNames)))).filter((b) => b !== feature);
   const pipelineId = resolved.state.id || resolved.id;
   // L10: a slice's PR stacks on the previous slice's branch until that slice's PR merges. The route is async with
   // no try/catch (F29): a failed feature lookup keeps the chain-root default instead of rejecting.
   let stacked = null;
   try { stacked = stackedPrBase(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
   const defaultBase = stacked || chain[0] || null;
-  const rl = await listRemotes(repoDir);
   if (!rl.ok) {
     const issue = runSourceIssue(pipelineId, { memberKey: target.memberKey });
     return res.status(500).json({ error: `git remote failed: ${rl.error}`, chain, defaultBase, issue });
@@ -7783,7 +7797,8 @@ app.get('/api/pr/remotes', async (req, res) => {
   // Measure from the remote tip recorded at start only when it is the SAME ref we compare
   // against: a fork's base remote is `upstream` and a chained run's base is the chain root,
   // not this run's source; there, the recorded origin tip would count old commits.
-  const sameRef = runBranch.sync?.remote === baseRemote && runBranch.source === defaultBase;
+  const sameRef = runBranch.sync?.remote === baseRemote
+    && await prBaseBranch(repoDir, runBranch.source, remoteNames) === defaultBase;
   const baseSha = (sameRef && runBranch.sync?.remoteSha) || runBranch.baseSha || null;
   const bf = isSafeRemoteName(baseRemote) ? await fetchRemote(repoDir, { remote: baseRemote, maxAgeMs: INTERACTIVE_TTL_MS }) : null;
   const rb = await listRemoteBranches(repoDir, rl.remotes.map((r) => r.name));
@@ -7845,6 +7860,8 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const picked = await pickPrRemotes(chosen, repoDir);
   if (picked.error) return { ok: false, status: picked.status, error: picked.error };
   const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
+  // A remote-tracking source (`origin/dev`) names the branch `dev` on the remote.
+  base = await prBaseBranch(repoDir, base, remotes.map((r) => r.name));
   // Always target the chosen base repo explicitly (gh's default-repo guess prefers
   // a remote named upstream over origin); use the owner:branch head only when the
   // branch lives in a different repository than the PR (gh matches by head label).
