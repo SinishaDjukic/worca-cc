@@ -1,11 +1,12 @@
 // ui/public/shape/feature-view.mjs — Shaper s3: the one feature card for the Plans tab (Runs folded) and the group page
 // (Runs open, the open step mounted). The same parts as the Chat feature card, from featureCardModel: head, status line,
-// group bar, open step, step log, Runs, Ship as, and the controls (feature-actions.mjs). featureHeadline stays for the
+// group bar, open step, step log, Runs, the Ship card (s4), and the controls (feature-actions.mjs). featureHeadline stays for the
 // Plans row's summary line.
 import { featureCardModel, paintFeatureLog, paintFeatureMembers } from './feature-card.mjs';
 import { paintFeatureActions } from './feature-actions.mjs';
 import { renderRowIcon } from '../runs-list.mjs';
 import { paintChainBar } from '../run-progress-bar.mjs';
+import { renderShipCard } from './ship-card.mjs';
 
 const range = (xs) => (xs.length === 1 ? `slice ${xs[0]}` : `slices ${xs[0]}–${xs[xs.length - 1]}`);
 
@@ -32,37 +33,18 @@ function paintHead(doc, el, m) {
   paintChainBar(el.querySelector('.shape-feature-chain'), m.group);
 }
 
-/** The Ship as / Shipped block (D24); empty until every run is done. A failure comes back through deps.error. */
-function shipBlock(doc, h, f, deps) {
-  const frag = doc.createDocumentFragment();
-  const btn = (cls, text, act) => { const b = h('button', `btn ${cls}`, text); b.type = 'button'; b.dataset.act = act; return b; };
-  if (f.ship && f.ship.mode) {
-    const done = h('div', 'shape-feature-shipped', f.ship.mode === 'one' ? 'Shipped as one PR' : 'Shipped as stacked PRs');
-    if (f.ship.prUrl) { const a = h('a', null, ' · open it'); a.href = f.ship.prUrl; a.target = '_blank'; a.rel = 'noopener'; done.appendChild(a); }
-    frag.appendChild(done);
-  } else if (f.ship && f.ship.ready) {
-    const box = h('div', 'shape-feature-ship');
-    box.appendChild(h('div', 'shape-feature-ship-head', 'Ship as'));
-    for (const [mode, label] of [['stacked', 'Stacked PRs'], ['one', 'One PR']]) {
-      const b = btn(`shape-feature-ship-${mode}${f.ship.suggested === mode ? ' btn-primary' : ''}`,
-        f.ship.suggested === mode ? `${label} (suggested)` : label, `shape-feature-ship-${mode}`);
-      // F39: name the control before disabling it; the host repaints with deps.error on a failure.
-      b.addEventListener('click', async () => {
-        const focus = b.dataset.act;
-        b.disabled = true;
-        await Promise.resolve().then(() => deps.act('ship', { mode }, { focus })).catch(() => null);
-        if (b.isConnected) b.disabled = false;
-      });
-      box.appendChild(b);
-    }
-    if (f.ship.suggested) {
-      box.appendChild(h('div', 'shape-feature-ship-why', f.ship.suggested === 'one'
-        ? `This feature adds ${f.ship.linesAdded} lines: one PR is easier to review.`
-        : `This feature adds ${f.ship.linesAdded} lines: stacked PRs keep each review small.`));
-    }
-    frag.appendChild(box);
-  }
-  return frag;
+/** s4: the Ship card (ship-card.mjs) in place of the old Ship as block: the waiting line while runs go on, the ready
+ *  card without Not now, the applied card once shipped; nothing for a canceled or re-planned feature. A failure comes
+ *  back through deps.error (the foot shows it). */
+function shipBlock(doc, f, deps) {
+  const s = f.ship || {};
+  const phase = s.mode ? 'applied' : s.ready ? 'ready' : f.status === 'active' ? 'waiting' : null;
+  if (!phase) return doc.createDocumentFragment();
+  return renderShipCard(doc, { phase, title: f.title, runs: f.total, files: s.files, added: s.linesAdded, deleted: s.linesRemoved,
+    suggested: s.suggested, hint: s.hint || null, result: s.result || null }, {
+    // The host repaints with deps.error on a failure (the foot shows it), as before.
+    onShip: (mode, release) => Promise.resolve(deps.act('ship', { mode, ...(release ? { release } : {}) }, { focus: `ship-${mode}` })),
+  });
 }
 
 /**
@@ -95,7 +77,7 @@ export function renderFeature(doc, f, deps) {
   el.appendChild(runs);
   paintFeatureMembers(doc, ol, m.members, { open: (row) => deps.openRun(row) });
   if (f.slices.length > 1) el.appendChild(h('div', 'shape-feature-order', 'Merge in order: each run\'s branch starts from the one before.'));
-  el.appendChild(shipBlock(doc, h, f, deps));
+  el.appendChild(shipBlock(doc, f, deps));
   const foot = h('div', 'shape-feature-actions');
   el.appendChild(foot);
   paintFeatureActions(doc, foot, m.controls, deps);

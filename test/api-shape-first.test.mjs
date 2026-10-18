@@ -10,6 +10,9 @@ import { WebSocket } from 'ws';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
+import { shipKit, stubShip, withShip, ghCalls } from './helpers/ship-world.mjs';
+import { getDb } from '../src/core/db.mjs';
+import { createThread, linkRun as askLinkRun, listMessages } from '../src/core/ask/store.mjs';
 
 useTempHome(after);
 
@@ -323,4 +326,56 @@ test('Ask before each run from the card persists, and run 2\'s plan ask opens as
     assert.equal(card.feature.ask.kind, 'plan');
     assert.equal(stepChip(pq, { shaping: { feature: { id: f.id, index: card.feature.ask.index, total: 2 } } }), 'Plan · run 2');
   } finally { runs.delete('live-asf2'); }
+}));
+
+// ── Shaper s4: the Ship card (offerShipCard, POST /api/ask/threads/:id/cards/:cardId on a `ship` card) ───────────────
+const shipSlice = (n) => ({ id: `s${n}`, title: `Slice ${n}`, goal: `Goal ${n}`, inScope: [`do ${n}`], outOfScope: [], acceptance: [`ok ${n}`],
+  dependsOn: [], estimate: 'M' });
+let shipSeq = 0;
+const ship = shipKit({ nextId: () => `sc${String(++shipSeq).padStart(8, '0')}`,
+  outlineOf: (n) => ({ why: 'because', slices: Array.from({ length: n }, (_, i) => shipSlice(i + 1)) }) });
+after(ship.cleanup);
+
+test('Ship card: offered once; other verbs 400; ship-one ships once; a second ship is 409', () => withShip(async () => {
+  const { _testing: testing } = await import('../ui/server.mjs');
+  const seen = []; stubShip(seen);
+  const world = ship.shipWorld();
+  const thread = createThread();
+  askLinkRun(thread.id, { runId: world.pids[0], pipelineId: world.pids[0], cardId: 'card_00000001' });
+  await testing.offerShipCard(world.pids[2]);
+  await testing.offerShipCard(world.pids[2]);
+  const ships = listMessages(thread.id).flatMap((m) => m.blocks || []).filter((b) => b.card && b.card.type === 'ship');
+  assert.equal(ships.length, 1, 'offered once');
+  assert.deepEqual({ title: ships[0].card.title, runs: ships[0].card.runs, state: ships[0].state }, { title: 'Charts', runs: 3, state: 'proposed' });
+  const url = `/api/ask/threads/${thread.id}/cards/${ships[0].id}`;
+  assert.equal((await post(url, { verb: 'revert' })).status, 400);
+  assert.equal((await post(url, { state: 'applied' })).status, 400);
+  assert.equal(ghCalls(seen, 'create').length, 0, 'a refused verb ships nothing');
+  const r = await post(url, { verb: 'ship-one', release: { version: 'v1.12.0' } });
+  assert.equal(r.status, 200, await r.clone().text());
+  const block = (await r.json()).block;
+  assert.equal(block.state, 'applied');
+  assert.equal(block.card.result.mode, 'one');
+  const again = await post(url, { verb: 'ship-one' });
+  assert.equal(again.status, 409, 'a second ship');
+  assert.equal((await again.json()).error, 'card is applied');
+  assert.equal(ghCalls(seen, 'create').length, 1, 'shipped once');
+  assert.equal(getDb().prepare('SELECT release_version FROM shape_features WHERE id = ?').get(world.f.id).release_version, 'v1.12.0');
+  assert.equal((await post(`/api/shape/features/${world.f.id}/ship`, { mode: 'stacked' })).status, 409);
+}));
+
+test('Ship card: Not now declines it (no release allowed); it cannot ship any more', () => withShip(async () => {
+  const { _testing: testing } = await import('../ui/server.mjs');
+  const seen = []; stubShip(seen);
+  const world = ship.shipWorld();
+  const thread = createThread();
+  askLinkRun(thread.id, { runId: world.pids[0], pipelineId: world.pids[0], cardId: 'card_00000002' });
+  const msg = await testing.offerShipCard(world.pids[2]);
+  const url = `/api/ask/threads/${thread.id}/cards/${msg.blocks[0].id}`;
+  assert.equal((await post(url, { verb: 'not-now', release: { version: 'v1.0.0' } })).status, 400);
+  const r = await post(url, { verb: 'not-now' });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).block.state, 'declined');
+  assert.equal((await post(url, { verb: 'ship-stacked' })).status, 409);
+  assert.equal(seen.filter((a) => a[0] === 'gh' && a[1] === 'pr').length, 0);
 }));

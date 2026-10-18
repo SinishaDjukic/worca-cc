@@ -62,7 +62,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 60;
+export const SCHEMA_VERSION = 61;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -846,7 +846,12 @@ const INCREMENTAL_COLUMNS = {
                             started_by: 'TEXT',   // v36: who started the run (identity.mjs; NULL = before attribution)
                             // Shaper D28, no version of their own (-4-slices owns v57); reconcileSchema adds them
                             shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
-                            run_size: 'TEXT' },   // small|medium|large from the run's changed lines/files; NULL = unknown
+                            run_size: 'TEXT',     // small|medium|large from the run's changed lines/files; NULL = unknown
+                            release_version: 'TEXT',  // v61 (Shaper s4): the Ship it dialog's draft release tag; NULL = none
+                            release_target: 'TEXT',   // v61: the branch the tag points at (the PR's base)
+                            release_at: 'TEXT',       // v61: when the draft release was claimed (set once; never cleared)
+                            release_url: 'TEXT',      // v61: the draft release's URL
+                            release_error: 'TEXT' },  // v61: why creating it failed (not retried)
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -871,7 +876,13 @@ const INCREMENTAL_COLUMNS = {
                             composer: 'TEXT' },      // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
   shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
                             ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
-                            shipped_at: 'TEXT' },     // v58: when Ship as ran
+                            shipped_at: 'TEXT',       // v58: when Ship as ran
+                            ship_closed: 'INTEGER',   // v61 (Shaper s4): drafts the one PR closed; NULL = unknown
+                            release_version: 'TEXT',  // v61 (Shaper s4): the draft release's tag chosen at Ship; NULL = none
+                            release_target: 'TEXT',   // v61: the branch the tag points at (the feature's base)
+                            release_at: 'TEXT',       // v61: when the draft release was claimed (set once; never cleared)
+                            release_url: 'TEXT',      // v61: the draft release's URL
+                            release_error: 'TEXT' },  // v61: why creating it failed (not retried)
   shape_feature_slices:   { draft_pr_url: 'TEXT' },   // v58 (D24): the PR openSliceDraft opened as a draft
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
   workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
@@ -2236,6 +2247,7 @@ export function migrate(db) {
     // The shipped Promo video workflow: one-shot seed at its own rung, refresh on every bump
     // (the Presentation seed's two halves, above).
     if (current < 60) applySchemaV60(db);
+    // v61 (Shaper s4): release_* on shape_features and pipelines, ship_closed on shape_features — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < SCHEMA_VERSION) refreshPromoVideoSeed(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');

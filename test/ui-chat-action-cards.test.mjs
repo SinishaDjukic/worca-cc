@@ -207,7 +207,7 @@ test('registerChatActionCards registers the three types with P1\'s card registry
   _resetChatExtensions();
   registerChatActionCards();
   registerChatActionCards();                         // app.js runs again on every jsdom boot
-  for (const t of ['receipt', 'run-stop', 'pull-request']) assert.equal(typeof chatCardBuilder(t), 'function', t);
+  for (const t of ['receipt', 'run-stop', 'pull-request', 'ship']) assert.equal(typeof chatCardBuilder(t), 'function', t);
 });
 
 test('receipt: a Revert another tab already made says so in the note, no error, Revert stays off (mutation killer)', async () => {
@@ -281,6 +281,6 @@ test('refine cycle 3 mutation killers: a disabled Revert / Keep running / Not no
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const p2 = css.slice(css.indexOf('/* ===== Chat P2: Action cards ===== */'));
-  for (const rule of [':is(.ask-rcard,.ask-stopcard,.ask-prcard) .ask-card-not-now:disabled{opacity:.55;cursor:default;background:transparent;color:var(--ink-2);}',
+  for (const rule of [':is(.ask-rcard,.ask-stopcard,.ask-prcard,.ask-shipcard) .ask-card-not-now:disabled{opacity:.55;cursor:default;background:transparent;color:var(--ink-2);}',
     '.ask-rcard.is-reverted .ask-rcard-change .ask-mcard-after{color:var(--ink-2);font-weight:400;}']) assert.ok(p2.includes(rule), rule);
 });

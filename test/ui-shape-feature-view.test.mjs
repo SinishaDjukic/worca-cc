@@ -1,5 +1,5 @@
 // test/ui-shape-feature-view.test.mjs — Shaper s3: the one feature card (the Plans tab and the group page) over
-// featureCardModel: head, status line, open step, step log, Runs, Ship as and the controls; featureHeadline.
+// featureCardModel: head, status line, open step, step log, Runs, the Ship card and the controls; featureHeadline.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -134,24 +134,31 @@ test('scan: one renderer, no summary/full/page mode branch in feature-view.mjs o
   assert.doesNotMatch(app, /__shapeMode|renderFeatureSummary|featureWhere|mode: '(summary|full|page)'/);
 });
 
-test('Ship as appears only when all slices are done and not shipped; the default is marked', async () => {
+test('the Ship card: the waiting line until every run is done, no buttons; the ready card without Not now ships in one click', async () => {
+  const wait = mount(PAGE(), PLANS()).el;
+  assert.equal(wait.querySelector('[data-ship-card="waiting"]').textContent, 'Ship card comes when all 3 runs are done, here and in the chat.');
+  assert.equal(wait.querySelectorAll('button[data-act^="ship-"]').length, 0);
+  assert.equal(mount({ ...PAGE(), status: 'canceled' }, PLANS()).el.querySelector('[data-ship-card]'), null, 'canceled: nothing');
   const done = { ...PAGE(), status: 'done', done: 3, slices: PAGE().slices.map((s) => ({ ...s, state: 'done' })),
-    ship: { ready: true, mode: null, suggested: 'one', linesAdded: 840, prUrl: null } };
+    ship: { ready: true, mode: null, suggested: 'one', linesAdded: 840, linesRemoved: 120, files: 12, prUrl: null, hint: null, result: null } };
   const { el, d } = mount(done, PLANS());
-  const btns = [...el.querySelectorAll('.shape-feature-ship button')];
-  assert.deepEqual(btns.map((b) => b.dataset.act), ['shape-feature-ship-stacked', 'shape-feature-ship-one']);
-  assert.match(el.querySelector('.shape-feature-ship-one').textContent, /suggested/);
-  assert.match(el.querySelector('.shape-feature-ship-why').textContent, /840 lines: one PR is easier to review/);
-  btns[1].click(); await flush();
-  assert.deepEqual(d.acts.at(-1), { action: 'ship', body: { mode: 'one' }, opts: { focus: 'shape-feature-ship-one' } });
-  const shippedSlices = done.slices.map((s) => ({ ...s, pr: s.pr && { ...s.pr, draft: false } }));
-  const shipped = mount({ ...done, slices: shippedSlices, ship: { ...done.ship, mode: 'one', prUrl: 'https://github.com/o/r/pull/9' } }, PLANS()).el;
-  assert.match(shipped.querySelector('.shape-feature-shipped').textContent, /Shipped as one PR · open it/);
-  assert.equal(shipped.querySelector('.shape-feature-shipped a').getAttribute('href'), 'https://github.com/o/r/pull/9');
-  assert.equal(shipped.querySelector('.shape-feature-ship'), null);
+  const btns = [...el.querySelectorAll('[data-ship-card="ready"] button[data-act^="ship-"]')];
+  assert.deepEqual(btns.map((b) => b.textContent), ['Stacked PRs', 'Ship as one PR'], 'no Not now on the group page');
+  assert.ok(el.querySelector('[data-act="ship-one"]').classList.contains('ask-card-start'));
+  assert.equal(el.querySelector('.ask-shipcard-stats').textContent, '3 runs · 12 files · +840 \u2212120');
+  assert.match(el.querySelector('.ask-shipcard-why').textContent, /840 lines: one PR is easier to review/);
+  el.querySelector('[data-act="ship-one"]').click(); await flush();
+  assert.deepEqual(d.acts.at(-1), { action: 'ship', body: { mode: 'one' }, opts: { focus: 'ship-one' } });
+});
+
+test('the Ship card once shipped: Shipped as stacked PRs with View pull request on the last run\'s PR', () => {
+  const done = { ...PAGE(), status: 'done', done: 3, slices: PAGE().slices.map((s) => ({ ...s, state: 'done', pr: s.pr && { ...s.pr, draft: false } })) };
+  const shipped = mount({ ...done, ship: { ready: false, mode: 'stacked', prUrl: null, lastPrUrl: 'https://github.com/o/r/pull/2',
+    result: { mode: 'stacked', prUrl: 'https://github.com/o/r/pull/2', closed: 0, release: null } } }, PLANS()).el;
+  assert.match(shipped.querySelector('.ask-shipcard-done').textContent, /^Shipped as stacked PRs · View pull request$/);
+  assert.equal(shipped.querySelector('.ask-shipcard-pr').getAttribute('href'), 'https://github.com/o/r/pull/2');
+  assert.equal(shipped.querySelectorAll('button[data-act^="ship-"]').length, 0);
   assert.equal(shipped.querySelectorAll('.chat-rc-member-state')[1].textContent, 'PR #1 open');
-  const stacked = mount({ ...done, ship: { ...done.ship, mode: 'stacked' } }, PLANS()).el;
-  assert.equal(stacked.querySelector('.shape-feature-shipped').textContent, 'Shipped as stacked PRs');
 });
 
 test('a Ship as failure shows its error on a done feature', () => {
@@ -160,5 +167,5 @@ test('a Ship as failure shows its error on a done feature', () => {
   const { el } = mount(done, PLANS({ error: 'could not mark slice 2\'s PR ready' }));
   assert.equal(el.querySelector('.shape-feature-err').hidden, false);
   assert.equal(el.querySelector('.shape-feature-actions').hidden, false, 'no controls, but the error line shows');
-  assert.match(el.querySelector('.shape-feature-ship-why').textContent, /2000 lines: stacked PRs keep each review small/);
+  assert.match(el.querySelector('.ask-shipcard-why').textContent, /2000 lines: stacked PRs keep each review small/);
 });

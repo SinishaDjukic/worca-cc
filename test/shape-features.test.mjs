@@ -616,7 +616,8 @@ test('featureView ship: ready only once every slice is done; recordShip sets the
   const f = doneFeature(2);
   const v = featureView(f.id);
   assert.equal(v.status, 'done');
-  assert.deepEqual(v.ship, { ready: true, mode: null, prUrl: null, suggested: null, linesAdded: null });
+  assert.deepEqual(v.ship, { ready: true, mode: null, prUrl: null, lastPrUrl: null, suggested: null, linesAdded: null,
+    linesRemoved: null, files: null, release: null, result: null });
   assert.equal(recordShip(f.id, { mode: 'one', prUrl: 'https://github.com/o/r/pull/9' }), true);
   const shipped = featureView(f.id);
   assert.equal(shipped.ship.ready, false);
@@ -646,11 +647,37 @@ test('featureShipSuggestion: one PR under the line limit, stacked from it; a sli
   assert.equal(ONE_PR_MAX_LINES, 1500);
   const small = doneFeature(2);
   await seedResults(small.pids[0], { summary: { linesAdded: 840 } });
-  assert.deepEqual(await featureShipSuggestion(featureView(small.id)), { suggested: 'one', linesAdded: 840 });
+  assert.deepEqual(await featureShipSuggestion(featureView(small.id)), { suggested: 'one', linesAdded: 840, linesRemoved: 0, files: 0 });
   const big = doneFeature(2);
   await seedResults(big.pids[0], { summary: { linesAdded: 1200 } });
   await seedResults(big.pids[1], { summary: { linesAdded: 800 } });
-  assert.deepEqual(await featureShipSuggestion(featureView(big.id)), { suggested: 'stacked', linesAdded: 2000 });
+  assert.deepEqual(await featureShipSuggestion(featureView(big.id)), { suggested: 'stacked', linesAdded: 2000, linesRemoved: 0, files: 0 });
+});
+
+test('featureShipSuggestion (s4): lines removed and files (new + changed) summed across the runs', async () => {
+  const f = doneFeature(2);
+  await seedResults(f.pids[0], { summary: { linesAdded: 500, linesRemoved: 80, filesNew: 2, filesChanged: 5, filesDeleted: 1 } });
+  await seedResults(f.pids[1], { summary: { linesAdded: 340, linesRemoved: 40, filesChanged: 5 } });
+  assert.deepEqual(await featureShipSuggestion(featureView(f.id)), { suggested: 'one', linesAdded: 840, linesRemoved: 120, files: 12 });
+});
+
+test('recordShip with a release (s4): version and target stored; ship.release and ship.result in the view', () => {
+  const f = doneFeature(3);
+  f.pids.forEach((p, i) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_state = 'CLOSED' WHERE id = ?").run(`https://github.com/o/r/pull/${i + 1}`, p));
+  assert.equal(featureView(f.id).ship.lastPrUrl, 'https://github.com/o/r/pull/3');
+  // The one PR opens on the last slice's row, so that row no longer reads CLOSED: the count is the one recorded.
+  getDb().prepare("UPDATE pipelines SET pr_url = 'https://github.com/o/r/pull/9', pr_state = 'OPEN' WHERE id = ?").run(f.pids[2]);
+  assert.equal(recordShip(f.id, { mode: 'one', prUrl: 'https://github.com/o/r/pull/9', closed: 3, release: { version: 'v1.12.0', target: 'main' } }), true);
+  const row = getDb().prepare('SELECT release_version, release_target FROM shape_features WHERE id = ?').get(f.id);
+  assert.deepEqual({ ...row }, { release_version: 'v1.12.0', release_target: 'main' });
+  const v = featureView(f.id);
+  assert.deepEqual(v.ship.release, { version: 'v1.12.0', url: null, error: null });
+  assert.deepEqual(v.ship.result, { mode: 'one', prUrl: 'https://github.com/o/r/pull/9', closed: 3,
+    release: { version: 'v1.12.0', url: null, error: null } });
+  const s = doneFeature(2);
+  s.pids.forEach((p, i) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_state = 'OPEN' WHERE id = ?").run(`https://github.com/o/r/pull/${i + 20}`, p));
+  recordShip(s.id, { mode: 'stacked' });
+  assert.deepEqual(featureView(s.id).ship.result, { mode: 'stacked', prUrl: 'https://github.com/o/r/pull/21', closed: 0, release: null });
 });
 
 test('featureShipInput: per slice its summary (capped at 600) and its checklist markdown', async () => {

@@ -209,14 +209,28 @@ done, which slice comes next.
 items that apply (n/a left out, not reported counts against). Pressing it unfolds
 the run's Perspective checklists in place.
 
-**Ship as.** Each slice opens a draft pull request when it finishes; merge them in
-order, since each slice's branch starts from the one before. When every slice is
-done, the feature card asks how to ship: **Stacked PRs** marks each draft ready for
-review, **One PR** opens one pull request from the last slice's branch into the
-feature's base and closes the slices' drafts with a link to it. The card suggests
-one PR for a feature under about 1,500 added lines. Either way, one entry for the
-feature goes into the project's `CHANGELOG.md` under `## Unreleased`, committed on
-the last slice's branch, so it ships with the feature.
+**Ship card.** Each slice opens a draft pull request when it finishes; merge them in
+order, since each slice's branch starts from the one before. When the last run is
+done, a **Ship card** appears once in the chat that started the feature, and the
+same card shows on the group page and the Plans tab. It reads `3 runs · 12 files ·
++840 −120` with the reason for its suggestion, and ships in one click:
+**Stacked PRs** marks each draft ready for review, **Ship as one PR** opens one pull
+request from the last slice's branch into the feature's base and closes the slices'
+drafts with a link to it. The suggested mode is the highlighted button (one PR for a
+feature under about 1,500 added lines). In the chat, **Not now** puts the card away;
+the feature still ships from its page. Until every run is done, the group page says
+when the card will come. Either way, one entry for the feature goes into the
+project's `CHANGELOG.md` under `## Unreleased`, committed on the last slice's
+branch, so it ships with the feature.
+
+**Release.** The Ship card and a single run's **Ship it** dialog carry an optional
+release row. **+ Add a release** suggests the next version: the last tag plus a
+minor (`v1.11.0` → `v1.12.0`), else the version in `package.json`, else you type
+one. Worca records the choice and, once the ship pull request merges (the one PR, or
+the last slice's PR when stacked), creates a **draft** GitHub release for that tag
+with generated notes. It never publishes the release. The check runs at start-up and
+hourly, so the draft can take up to an hour to appear; a failure shows on the card
+and is not retried.
 
 **The Plans tab.** The Chat home lists shaped plans on a **Plans** tab, newest first,
 with their state. A sliced feature's row opens its card underneath. The tab shows

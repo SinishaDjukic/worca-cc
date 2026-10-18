@@ -8715,7 +8715,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 /* ===== Chat P2: Action cards ===== */
 /* Receipts (act, then undo), the stop warning and the pull-request offer (ui/public/chat/action-cards.mjs), on the Ask
    card chrome. Emphasis is a background wash, never an edge line. Text colours keep 4.5:1 in both themes. */
-.ask-rcard .ask-mcard-title,.ask-prcard .ask-mcard-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.ask-rcard .ask-mcard-title,.ask-prcard .ask-mcard-title,.ask-shipcard .ask-mcard-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .ask-rcard :is(.ask-mcard-before,.ask-mcard-target){color:var(--ink-2);}
 .ask-rcard-change{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-family:var(--mono);font-size:12px;min-width:0;}
 .ask-rcard-change .ask-mcard-before{overflow-wrap:anywhere;}
@@ -8726,7 +8726,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .ask-rcard.is-reverted .ask-rcard-change .ask-mcard-after{color:var(--ink-2);font-weight:400;}
 :is(.ask-rcard,.ask-prcard) .ask-mcard-arrow{color:var(--ink-2);}
 .ask-actcard-stub{color:var(--ink-2);overflow-wrap:anywhere;}
-:is(.ask-rcard,.ask-stopcard,.ask-prcard) .ask-card-not-now:disabled{opacity:.55;cursor:default;background:transparent;color:var(--ink-2);}
+:is(.ask-rcard,.ask-stopcard,.ask-prcard,.ask-shipcard) .ask-card-not-now:disabled{opacity:.55;cursor:default;background:transparent;color:var(--ink-2);}
 .ask-stopcard-ident{display:flex;flex-direction:column;gap:2px;min-width:0;}
 .ask-stopcard-title{font-weight:600;color:var(--ink);overflow-wrap:anywhere;}
 .ask-stopcard-branch,.ask-prcard-branch code{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);overflow-wrap:anywhere;}
@@ -8738,6 +8738,23 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .ask-prcard-links{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;}
 .ask-prcard-link{color:var(--blue-ink-strong);}
 .ask-prcard-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px;}
+/* Shaper s4: the Ship card (ui/public/shape/ship-card.mjs), in the chat and on the group page / Plans tab, and its
+   release row (ui/public/shape/release-row.mjs), also in the Ship it dialog. Tight radii, no pills. */
+.ask-shipcard-stats{font-size:12.5px;color:var(--ink);font-variant-numeric:tabular-nums;}
+.ask-shipcard-why,.ask-shipcard-closed{font-size:12px;color:var(--ink-2);}
+.ask-shipcard-done{font-weight:600;color:var(--green-ink);}
+.ask-shipcard-pr,.ask-shipcard-rel a{color:var(--blue-ink-strong);font-weight:400;}
+.ask-shipcard-rel{font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}
+.ask-shipcard-rel.is-failed{color:var(--red-ink);}
+.ask-shipcard-wait{font-size:12.5px;color:var(--ink-2);}
+.release-row{display:flex;flex-direction:column;gap:2px;font-size:12.5px;min-width:0;}
+.release-row-add,.release-row-edit{padding:0;border:0;background:none;color:var(--blue-ink-strong);font:inherit;cursor:pointer;}
+.release-row-add:focus-visible,.release-row-edit:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px;}
+.release-row-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 4px;color:var(--ink);}
+.release-row-input{width:9em;padding:2px 6px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font-family:var(--mono);font-size:12px;}
+.release-row-source{font-size:11.5px;color:var(--ink-2);}
+.release-row-err{font-size:11.5px;color:var(--red-ink);}
+.release-row-err:empty{display:none;}
 
 /* ===== Chat P3: run card ===== */
 /* The chat run card (ui/public/chat/run-card.mjs). It keeps the Ask progress card's look (.ask-rc-* above) and adds
@@ -9600,10 +9617,6 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .feature-page-gone,.feature-page-loading{color:var(--ink-3);}
 .feature-page .shape-feature{width:100%;box-sizing:border-box;font-size:14px;}
 .shape-feature-order{color:var(--ink-3);font-size:12px;}
-.shape-feature-ship{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
-.shape-feature-ship-head{font-weight:600;flex-basis:100%;}
-.shape-feature-ship-why{flex-basis:100%;color:var(--ink-2);font-size:12px;}
-.shape-feature-shipped{color:var(--green-ink);}
 /* D19: why a later slice's plan stopped. */
 .shape-plan-outline-change{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--amber-wash);border:1px solid var(--amber-line);}
 .shape-plan-outline-change-head{font-weight:600;color:var(--amber-ink);}

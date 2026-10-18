@@ -109,7 +109,7 @@ import {
   getAttachment as askGetAttachment, attachmentPath as askAttachmentPath,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline,
-  finishMessage as askFinishMessage,
+  finishMessage as askFinishMessage, newAskId,
 } from '../src/core/ask/store.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
@@ -296,7 +296,9 @@ import {
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, checkBaseMerge, mergeBaseInto, startConflictMerge, branchCheckouts,
   commitFileOnBranch,
 } from '../src/core/git-sync.mjs';
-import { shipFeature, SHIP_MODES } from '../src/core/shape/ship.mjs';
+import { shipFeature, SHIP_MODES, shipCardVerb } from '../src/core/shape/ship.mjs';
+import { releaseVersionHint, recordRunRelease, draftReleasesOnMerge } from '../src/core/draft-release.mjs';
+import { parseReleaseChoice } from '../src/shared/release-version.mjs';
 import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
@@ -3322,7 +3324,10 @@ function afterRunSettled(orch) {
   try {
     const st = orch.getState?.();
     if (orch.runShape?.slice && st?.status === 'done' && st.id) {
-      draft = openSliceDraft(st.id).catch((err) => console.error(`[worca-ui] slice draft PR failed: ${err?.message || err}`));
+      // s4: the draft first, then the Ship card (it needs the last slice's PR for "View pull request").
+      draft = openSliceDraft(st.id).catch((err) => console.error(`[worca-ui] slice draft PR failed: ${err?.message || err}`))
+        .then(() => offerShipCard(st.id))
+        .catch((err) => console.error(`[worca-ui] ship card failed: ${err?.message || err}`));
     }
     if (!ranMergeBack(st)) return draft;
     emitChanged('pipelines-changed', 'updated');
@@ -4288,7 +4293,12 @@ app.get('/api/shape/features/:id', async (req, res) => {
     const view = featureView(cur, { live: liveSliceOf });
     if (!view) return res.status(404).json({ error: 'unknown feature' });
     // P17: the Ship as default, once every slice is done (async: it reads each slice's results.json).
-    if (view.ship && view.ship.ready) Object.assign(view.ship, await featureShipSuggestion(view));
+    // s4: and the release row's version hint (the repo's last tag / package.json).
+    if (view.ship && view.ship.ready) {
+      Object.assign(view.ship, await featureShipSuggestion(view));
+      const sc = shipCtxOf(view);
+      view.ship.hint = sc.error ? null : await releaseVersionHint(sc.target.repoDir);
+    }
     res.json({ ...view, replanOf: cur !== req.params.id ? req.params.id : null });
   } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
 });
@@ -4402,66 +4412,125 @@ async function refreshSliceBody(prUrl, pid, repoDir) {
   return editPrBody({ projectDir: repoDir, prUrl, body: [fresh, ...lines.slice(end)].join('\n') });
 }
 const SHIPPING = new Set();     // feature ids with a Ship as in flight (ship_mode is written only at the end)
+// Shaper s4: one ship path for the group page route and the Ship card. → { status, body }. `release` = { version } |
+// null (validated by the caller).
+async function shipFeatureNow(id, mode, { actor = null, release = null } = {}) {
+  if (!SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be stacked or one' } };
+  if (SHIPPING.has(id)) return { status: 409, body: { error: 'this feature is already shipping' } };
+  const view = featureView(id, { live: liveSliceOf });
+  if (!view) return { status: 404, body: { error: 'unknown feature' } };
+  if (view.ship.mode) return { status: 409, body: { error: `this feature was already shipped as ${view.ship.mode === 'one' ? 'one PR' : 'stacked PRs'}` } };
+  if (!view.ship.ready) return { status: 409, body: { error: 'every slice must be done before the feature ships' } };
+  SHIPPING.add(id);
+  try {
+    // A slice whose draft never opened (a CLI-started run, or the auto draft failed at the time) gets its PR now,
+    // the same way; a failure stays visible as shipFeature's "slice K has no pull request yet".
+    let shown = view;
+    if (shown.slices.some((s) => s.pipelineId && !s.pr)) {
+      for (const s of shown.slices) if (s.pipelineId && !s.pr) await openSliceDraft(s.pipelineId);
+      shown = featureView(id, { live: liveSliceOf }) || view;
+    }
+    const input = await featureShipInput(shown);
+    const ctx = shipCtxOf(shown);
+    if (ctx.error) return { status: 409, body: { error: ctx.error } };
+    const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000 }, {
+      commitChangelog: (pid, update) => commitFileOnBranch(ctx.target.repoDir, {
+        branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }),
+      push: async () => {
+        const picked = await pickPrRemotes({}, ctx.target.repoDir);
+        if (picked.error) return { ok: false, error: picked.error };
+        const p = await pushBranch(ctx.target.repoDir, ctx.target.feature, picked.pushRemote);
+        return p.ok ? { ok: true } : { ok: false, error: p.stderr };
+      },
+      openOnePr: async ({ pipelineId, title, body }) => {
+        const r = await createRunPr({ id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
+          description: body, title, actor, preamble: false });
+        return r.ok ? { ok: true, url: r.pr.url, existed: !!r.pr.existed } : { ok: false, error: r.error };
+      },
+      adoptOnePr: async ({ url, body }) => {
+        const r = await markPrReady({ prUrl: url });
+        if (!r.ok) return r;
+        if (forgeOfPrUrl(url) !== 'azure') await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
+        return { ok: true };
+      },
+      markReady: (prUrl) => markPrReady({ prUrl }),
+      close: async (prUrl, comment, pid) => {
+        const r = await closePr({ prUrl, comment });
+        if (r.ok) { const pr = readPrState(pid); if (pr && pr.url === prUrl) persistPrState(pid, { ...pr, state: 'CLOSED' }); }
+        return r;
+      },
+      refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
+    });
+    if (!out.ok) return { status: out.status, body: { error: out.error } };
+    recordShip(id, { mode: out.mode, prUrl: out.prUrl, closed: out.closed, release: release ? { version: release.version, target: ctx.base } : null });
+    appendAuditById(ctx.state.id, `Feature shipped as ${out.mode === 'one' ? 'one PR' : 'stacked PRs'}${byActor(actor)}${out.prUrl ? `: ${out.prUrl}` : ''}`
+      + `${release ? ` · draft release ${release.version} after merge` : ''}`, { actor });
+    broadcastFeature(id);
+    syncShipCard(id);
+    return { status: 200, body: { ok: true, mode: out.mode, prUrl: out.prUrl, warnings: out.warnings } };
+  } finally { SHIPPING.delete(id); }
+}
 app.post('/api/shape/features/:id/ship', async (req, res) => {
   if (!requireShapeFirst(req, res)) return;
-  const id = String(req.params.id);
   try {
-    const mode = req.body && req.body.mode;
-    if (!SHIP_MODES.includes(mode)) return res.status(400).json({ error: 'mode must be stacked or one' });
-    if (SHIPPING.has(id)) return res.status(409).json({ error: 'this feature is already shipping' });
-    const view = featureView(id, { live: liveSliceOf });
-    if (!view) return res.status(404).json({ error: 'unknown feature' });
-    if (view.ship.mode) return res.status(409).json({ error: `this feature was already shipped as ${view.ship.mode === 'one' ? 'one PR' : 'stacked PRs'}` });
-    if (!view.ship.ready) return res.status(409).json({ error: 'every slice must be done before the feature ships' });
-    SHIPPING.add(id);
-    const actor = actorOf(req);
-    try {
-      // A slice whose draft never opened (a CLI-started run, or the auto draft failed at the time) gets its PR now,
-      // the same way; a failure stays visible as shipFeature's "slice K has no pull request yet".
-      let shown = view;
-      if (shown.slices.some((s) => s.pipelineId && !s.pr)) {
-        for (const s of shown.slices) if (s.pipelineId && !s.pr) await openSliceDraft(s.pipelineId);
-        shown = featureView(id, { live: liveSliceOf }) || view;
-      }
-      const input = await featureShipInput(shown);
-      const ctx = shipCtxOf(shown);
-      if (ctx.error) return res.status(409).json({ error: ctx.error });
-      const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000 }, {
-        commitChangelog: (pid, update) => commitFileOnBranch(ctx.target.repoDir, {
-          branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }),
-        push: async () => {
-          const picked = await pickPrRemotes({}, ctx.target.repoDir);
-          if (picked.error) return { ok: false, error: picked.error };
-          const p = await pushBranch(ctx.target.repoDir, ctx.target.feature, picked.pushRemote);
-          return p.ok ? { ok: true } : { ok: false, error: p.stderr };
-        },
-        openOnePr: async ({ pipelineId, title, body }) => {
-          const r = await createRunPr({ id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
-            description: body, title, actor, preamble: false });
-          return r.ok ? { ok: true, url: r.pr.url, existed: !!r.pr.existed } : { ok: false, error: r.error };
-        },
-        adoptOnePr: async ({ url, body }) => {
-          const r = await markPrReady({ prUrl: url });
-          if (!r.ok) return r;
-          if (forgeOfPrUrl(url) !== 'azure') await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
-          return { ok: true };
-        },
-        markReady: (prUrl) => markPrReady({ prUrl }),
-        close: async (prUrl, comment, pid) => {
-          const r = await closePr({ prUrl, comment });
-          if (r.ok) { const pr = readPrState(pid); if (pr && pr.url === prUrl) persistPrState(pid, { ...pr, state: 'CLOSED' }); }
-          return r;
-        },
-        refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
-      });
-      if (!out.ok) return res.status(out.status).json({ error: out.error });
-      recordShip(id, { mode: out.mode, prUrl: out.prUrl });
-      appendAuditById(ctx.state.id, `Feature shipped as ${out.mode === 'one' ? 'one PR' : 'stacked PRs'}${byActor(actor)}${out.prUrl ? `: ${out.prUrl}` : ''}`, { actor });
-      broadcastFeature(id);
-      res.json({ ok: true, mode: out.mode, prUrl: out.prUrl, warnings: out.warnings });
-    } finally { SHIPPING.delete(id); }
+    const rel = parseReleaseChoice(req.body && req.body.release);
+    if (rel.error) return badRequest(res, rel.error);
+    const r = await shipFeatureNow(String(req.params.id), req.body && req.body.mode, { actor: actorOf(req), release: rel.value });
+    res.status(r.status).json(r.body);
   } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
 });
+
+/** Shaper s4: the feature's Ship card in a thread ({ message, block }) or null. */
+function findShipCardIn(threadId, featureId) {
+  for (const m of askListMessages(threadId)) {
+    for (const b of m.blocks || []) {
+      // currentFeatureId: a card offered before a Re-plan the rest still names the feature that replaced it.
+      if (b && b.kind === 'card' && b.card && b.card.type === 'ship' && currentFeatureId(b.card.featureId) === featureId) return { message: m, block: b };
+    }
+  }
+  return null;
+}
+/** Shaper s4: when the last run settles done, the feature's thread gets its Ship card (once). Best effort. */
+async function offerShipCard(pipelineId) {
+  if (!shapeFirstEnabled()) return null;
+  const at = featureOfPipeline(pipelineId);
+  if (!at) return null;
+  const fid = currentFeatureId(at.featureId);
+  const view = featureView(fid, { live: liveSliceOf });
+  if (!view || !view.ship.ready) return null;
+  const th = featureThread(fid);
+  if (!th || !askGetThread(th.threadId) || findShipCardIn(th.threadId, fid)) return null;
+  const stats = await featureShipSuggestion(view);
+  const ctx = shipCtxOf(view);
+  const release = ctx.error ? null : await releaseVersionHint(ctx.target.repoDir);
+  const card = { type: 'ship', featureId: fid, title: view.title, runs: view.total, files: stats.files,
+    added: stats.linesAdded, deleted: stats.linesRemoved, suggested: stats.suggested, release };
+  const message = askAppendMessage(th.threadId, { role: 'assistant', text: '', status: 'done',
+    blocks: [{ kind: 'card', id: newAskId('card'), state: 'proposed', card }] });
+  broadcast({ type: 'ask-message', threadId: th.threadId, message });
+  return message;
+}
+/** Shaper s4: the draft release pass, at boot and on the hourly until-pr timer (it polls the forge itself). */
+function releasesPass() {
+  return draftReleasesOnMerge()
+    .then((out) => {
+      if (!out) return;
+      for (const c of [...out.created, ...out.failed]) {
+        if (c.table === 'shape_features') { broadcastFeature(c.id); syncShipCard(c.id); }
+      }
+      if (out.created.length || out.failed.length) emitChanged('pipelines-changed', 'updated');
+    })
+    .catch((err) => console.error(`[worca-ui] draft releases: ${err?.message || err}`));
+}
+/** Shaper s4: after a ship (or a draft release) the thread's Ship card shows what happened, whichever surface shipped. */
+function syncShipCard(featureId) {
+  try {
+    const view = featureView(featureId, { live: liveSliceOf });
+    const th = view && view.ship.result ? featureThread(featureId) : null;
+    const found = th ? findShipCardIn(th.threadId, featureId) : null;
+    if (found) flipCard(th.threadId, found.block.id, { state: 'applied', card: { result: view.ship.result } });
+  } catch (err) { console.error(`[worca-ui] ship card sync failed: ${err?.message || err}`); }
+}
 
 /** A plan row's state when its run is not live: the pipelines row first, then the link row (follow.mjs). */
 const PLAN_STATE = { done: 'done', stopped: 'stopped', error: 'stopped', interrupted: 'stopped', paused: 'paused', starting: 'running', running: 'running' };
@@ -7728,7 +7797,7 @@ app.get('/api/pr/remotes', async (req, res) => {
     return { ...r, prHost: r.forge ? p.label : null, prSupported: a.ok, ...(a.ok ? {} : { prReason: a.reason }) };
   }));
   res.json({ ok: true, remotes, defaults, remembered,
-    chain, defaultBase, branches, baseStatus, issue });
+    chain, defaultBase, branches, baseStatus, issue, release: await releaseVersionHint(repoDir) });   // s4: the release row's hint
 });
 
 /** D24: a finished slice opens a draft PR for early review (best effort: a failure is an audit line). */
@@ -7880,6 +7949,9 @@ app.post('/api/pr', async (req, res) => {
   }
   if (!(body.watch === undefined || body.watch === true || body.watch === false)) return badRequest(res, 'watch must be a boolean');
   const draft = body.draft === true;
+  // Shaper s4: the release row's choice, a draft release once the PR merges (draftReleasesOnMerge).
+  const relChoice = parseReleaseChoice(body.release);
+  if (relChoice.error) return badRequest(res, relChoice.error);
   // worca Chat P2 (R9): the chat's pull-request card this Ship it dialog was opened from — both or neither, checked
   // BEFORE anything is pushed; applied below only when the PR is really open (on failure it stays proposed).
   const hasAskThread = body.askThreadId !== undefined && body.askThreadId !== null;
@@ -7913,6 +7985,8 @@ app.post('/api/pr', async (req, res) => {
   const target = prTargetFor(state, body.memberKey);
   if (target.error) return badRequest(res, target.error);
   const { repoDir, feature, source, memberKey } = target;
+  // A workspace / member PR has no single repo to tag.
+  if (relChoice.value && (memberKey || body.memberKey)) return badRequest(res, 'a release is for a single-project run');
   if (askPrLink) {
     // The card rule reads the RESOLVED member (prTargetFor drops a memberKey a project run does not have), so a project
     // card already applied is never opened again by naming a member. Still before anything is pushed.
@@ -7939,6 +8013,10 @@ app.post('/api/pr', async (req, res) => {
     return res.status(out.status).json({ error: out.error, ...(out.kind ? { kind: out.kind } : {}), ...(out.forge ? { forge: out.forge } : {}) });
   }
   const { pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr } = out;
+  if (relChoice.value) {
+    try { recordRunRelease(id, { version: relChoice.value.version, target: base }); }
+    catch (err) { console.error(`[worca-ui] could not record the release: ${err?.message || err}`); }   // the PR stands
+  }
   // Remember the choice for this project (only once a PR was actually created).
   if (remotes.length) {
     try { await setPrRemotePrefs(repoDir, { pushRemote, baseRemote }); } catch { /* best-effort */ }
@@ -12046,7 +12124,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
           continue;
         }
         // worca Chat P2: a receipt, a stop warning or a pull-request offer in one line — the next turn sees a revert.
-        if (b.card && (b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request')) {
+        if (b.card && (b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: chatActionSummary(b.card) });
           continue;
         }
@@ -13072,6 +13150,25 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       } finally { askCardBusy.delete(cardId); }
       if (!block) return res.status(409).json({ error: 'card vanished' });
       return res.json({ block });
+    }
+    if (found.block.card && found.block.card.type === 'ship') {
+      // Shaper s4: the Ship card ships, or Not now; nothing else (the verb set is the card type's, not the request's).
+      const v = shipCardVerb(body);
+      if (!v.ok) return badRequest(res, v.error);
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (v.mode === null) {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' });
+      }
+      if (!shapeFirstEnabled()) return res.status(404).json({ error: 'not found' });   // requireShapeFirst's answer
+      askCardBusy.add(cardId);
+      try {
+        const r = await shipFeatureNow(currentFeatureId(found.block.card.featureId), v.mode, { actor: actorOf(req), release: v.release });
+        if (r.status !== 200) return res.status(r.status).json(r.body);
+      } finally { askCardBusy.delete(cardId); }
+      const again = askFindCard(id, cardId);     // syncShipCard flipped it to applied
+      return res.json({ block: again ? again.block : null });
     }
     if (found.block.card && found.block.card.type === 'pull-request') {
       // worca Chat P2 (R9): "Not now" only — the pull request is opened from the Ship it dialog, and POST /api/pr flips
@@ -15392,6 +15489,7 @@ export async function bootMaintenance({ log } = {}) {
     if (orphans) console.log(`[worca-ui] actions: stopped ${orphans} orphaned process(es) from a previous server`);
     const interrupted = markInterruptedSetups();
     const { released } = await releaseKeptCheckouts({ busy: busyActionRunIds(), stopServices: stopCheckoutServices });
+    void releasesPass();     // Shaper s4: a ship PR that merged while the server was down gets its draft release
     const { maxCheckouts } = actionsSettings();
     const { evicted } = maxCheckouts
       ? await enforceCheckoutCap({ max: maxCheckouts, busy: busyActionRunIds(), stopServices: stopCheckoutServices })
@@ -15686,6 +15784,7 @@ if (isMain) {
       releaseKeptCheckouts({ busy: busyActionRunIds(), stopServices: stopCheckoutServices })
         .then(({ released }) => { if (released.length) emitChanged('pipelines-changed', 'updated'); })
         .catch(() => {});
+      void releasesPass();
     }, 3_600_000);
     keptTimer.unref();
   });
@@ -15705,7 +15804,7 @@ export const _testing = {
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
-  openSliceDraft, afterRunSettled,
+  openSliceDraft, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
   networkWatchTick: () => networkWatch().tick(),
   setNetworkProbe(fn) { _networkProbe = fn; },
   setAutoRescan(on) { autoRescanOn = on !== false; },

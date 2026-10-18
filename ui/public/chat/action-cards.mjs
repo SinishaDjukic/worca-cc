@@ -7,6 +7,7 @@
 // The chrome is the Ask card's (.ask-card, .ask-mcard-*, .ask-card-start / -not-now / -err); style.css
 // "Chat P2: Action cards" adds the rest. Emphasis is a background wash, never an edge line.
 import { registerChatCard } from './extensions.mjs';
+import { buildShipChatCard } from '../shape/ship-card.mjs';
 
 export const RECEIPT_CHIPS = Object.freeze({
   setting: 'Setting', pause: 'Paused', resume: 'Resumed', 'away-now': 'Away mode', 'run-away': 'Away mode',
@@ -240,10 +241,11 @@ export function buildPullRequestCard(block, ctx) {
   return { el: root };
 }
 
-/** Register the three cards with the chat's card registry (CONTRACT §2) — app.js calls it before the chat mounts. A second
+/** Register the three cards (and the Shaper's Ship card) with the chat's card registry (CONTRACT §2) — app.js calls it before the chat mounts. A second
  *  call replaces the first (P1 registry rule): app.js is re-evaluated on every jsdom boot. */
 export function registerChatActionCards() {
   registerChatCard('receipt', (block, ctx) => buildReceiptCard(block, ctx));
   registerChatCard('run-stop', (block, ctx) => buildRunStopCard(block, ctx));
   registerChatCard('pull-request', (block, ctx) => buildPullRequestCard(block, ctx));
+  registerChatCard('ship', (block, ctx) => buildShipChatCard(block, ctx));   // Shaper s4 (ui/public/shape/ship-card.mjs)
 }

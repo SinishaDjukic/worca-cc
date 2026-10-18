@@ -19,7 +19,7 @@ export function receiptCard({ kind, label, target = {}, before = '', after = '',
   };
 }
 
-/** The [worca context] line of a receipt, a stop warning or a pull-request offer (ui/server.mjs resolveAskContext). */
+/** The [worca context] line of a receipt, a stop warning, a pull-request offer or a Ship card (ui/server.mjs resolveAskContext). */
 export function chatActionSummary(card) {
   const c = card && typeof card === 'object' ? card : {};
   const t = c.target && typeof c.target === 'object' ? c.target : {};
@@ -27,6 +27,7 @@ export function chatActionSummary(card) {
   if (c.type === 'receipt') return c.kind === 'direction' ? `Direction${where}: ${c.after}` : `${c.label}${where}: ${c.before} → ${c.after}`;
   if (c.type === 'run-stop') return `Stop ${c.title || c.pipelineId || 'run'}`;
   if (c.type === 'pull-request') return `Pull request for ${c.title || c.pipelineId || 'run'}${c.result && c.result.url ? `: ${c.result.url}` : ''}`;
+  if (c.type === 'ship') return `Ship ${c.title || c.featureId || 'feature'}${c.result && c.result.mode ? `: shipped as ${c.result.mode === 'one' ? 'one PR' : 'stacked PRs'}` : ''}`;
   return '';
 }
 

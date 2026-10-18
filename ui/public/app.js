@@ -253,6 +253,7 @@ import { shapeFirstOn, onShapeFirstChange } from './chat/shape-gate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
 import { renderFeature, refreshFeatureStatus } from './shape/feature-view.mjs';
+import { renderReleaseRow } from './shape/release-row.mjs';
 import { featureFocusOf, focusFeatureControl } from './shape/feature-actions.mjs';
 import { sliceLineCopy } from './shape/slice-line.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
@@ -21818,6 +21819,7 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
     const res = await fetch(`/api/pr/remotes?${qs}`);
     const data = await safeJson(res);
     if (gen !== shipItRemotesGen || isClosed()) return;              // stale: cancelled or re-opened since
+    if (modal._releaseRow && data && data.release) modal._releaseRow.setHint(data.release);   // Shaper s4
     // The run's GitHub issue source: merging the PR closes it (the server adds the Closes line).
     const issue = data && data.issue;
     if (issue && typeof issue.slug === 'string' && Number.isInteger(issue.number)) {
@@ -22015,6 +22017,11 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   resetShipItDesc(modal);
   q('.shipit-draft-input').checked = false;          // D1: draft is opt-in per ship, never remembered
   q('.shipit-watch-input').checked = false;
+  // Shaper s4: the release row, opt-in per ship and never remembered (like draft); its hint comes with the remotes.
+  const relSlot = q('.shipit-release');
+  const relRow = relSlot ? renderReleaseRow(document, null) : null;
+  if (relSlot) { relSlot.hidden = false; relSlot.replaceChildren(relRow.el); }
+  modal._releaseRow = relRow;
   const okBtn = q('.shipit-ok');
   okBtn.disabled = false; okBtn.textContent = 'Open pull request';
   modal.classList.remove('hidden');
@@ -22118,6 +22125,9 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     if (e.target.closest('.shipit-generate')) void generate();
   };
   const onOk = async () => {
+    // Shaper s4: first, so an invalid version returns with nothing to undo (the row shows why).
+    const rel = modal._releaseRow ? modal._releaseRow.check() : { ok: true, value: null };
+    if (!rel.ok) return;
     okBtn.disabled = true;
     okBtn.textContent = 'Opening…';
     setShipItRemotesDisabled(modal, true);
@@ -22136,6 +22146,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     // Draft only when ticked; unticked sends nothing (the server's default is not a draft).
     if (q('.shipit-draft-input').checked) payload.draft = true;
     if (q('.shipit-watch-input').checked) payload.watch = true;
+    if (rel.value) payload.release = rel.value;      // a collapsed row sends nothing
     try {
       const res = await fetch('/api/pr', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -22432,6 +22443,10 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   if (!modal || !modal.classList.contains('hidden')) return false;
   const q = (sel) => modal.querySelector(sel);
   q('.shipit-watch-input').checked = false;
+  // Shaper s4: a release is for a single-project run; a row left from an earlier single-run open is not posted.
+  const ws = q('.shipit-release');
+  if (ws) { ws.replaceChildren(); ws.hidden = true; }
+  modal._releaseRow = null;
   const list = q('#shipit-repos');
   const members = histWsMembers(record);
   const shippable = new Set(histWsShippable(record).map((m) => m.memberKey));

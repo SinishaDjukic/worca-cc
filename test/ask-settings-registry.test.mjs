@@ -195,6 +195,8 @@ test('receipt helpers: the card shape, its context line, the actor, the same-val
   assert.equal(chatActionSummary(card), 'Run (Fix login): Running → Paused');
   assert.equal(chatActionSummary({ type: 'run-stop', title: 'Fix login' }), 'Stop Fix login');
   assert.equal(chatActionSummary({ type: 'pull-request', title: 'Fix login', result: { url: 'https://x/pull/1' } }), 'Pull request for Fix login: https://x/pull/1');
+  assert.equal(chatActionSummary({ type: 'ship', title: 'Charts' }), 'Ship Charts');
+  assert.equal(chatActionSummary({ type: 'ship', title: 'Charts', result: { mode: 'one' } }), 'Ship Charts: shipped as one PR');
   assert.throws(() => receiptCard({ kind: 'nope' }), /unknown receipt kind/);
   assert.equal(askActorFor('ada@example.com'), 'ada@example.com via worca chat');
   assert.equal(askActorFor('local'), 'worca chat');
