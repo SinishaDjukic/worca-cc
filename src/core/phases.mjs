@@ -812,6 +812,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     mcpServerGrants: ctx.mcpServerGrants,
     // Whose approvals decide the checkout's committed `.mcp.json` servers on Claude (claude-runner.mjs).
     mcpjsonProjectDir: ctx.mcpjsonProjectDir,
+    // P1 (S31): a non-git run's spawn asks no git (approvals, Cursor's info/exclude). Absent on git runs.
+    ...(ctx.workMode && ctx.workMode !== 'git' ? { noGit: true } : {}),
     // §8.10: offline-mock write targets. [] on legacy runs and on every single-project
     // run, where the mock keeps writing at its cwd exactly as today. Ignored entirely
     // by the real runner (it is never a spawn flag).
@@ -881,6 +883,16 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
 
 export const _runOptsForTests = runOpts;
 
+/** P1 (S9): a Folder run's task-prompt note — the copy has no git, even where the role instructions say "run git".
+ *  '' unless ctx.workMode === 'folder' (P3 adds its 'none' note beside it). Exported for testing. */
+export function folderRunNote(ctx) {
+  if (ctx?.workMode !== 'folder') return '';
+  return `This run works on a copy of a plain folder, not a git repository. Never run git here (no \`git init\`, ` +
+    `\`git diff\`, \`git status\`, \`git add\` or \`git commit\`), even where your role instructions say so. ` +
+    `The changes so far are in \`${join(ctx.pipelineDir, 'changes.patch')}\` (a unified diff from the folder as it was ` +
+    `to your cwd) and \`${join(ctx.pipelineDir, 'changes.json')}\` (the file list).\n\n`;
+}
+
 /** A compact task header reused across roles. Exported for testing. */
 export function taskHeader(ctx, title) {
   // Who gets the raw request + attachments? The ENTRY node (step 0) always, PLUS any
@@ -934,6 +946,7 @@ export function taskHeader(ctx, title) {
     `# Task: ${title}\n\n` +
     locationLine +
     `Pipeline directory (shared artifacts): ${ctx.pipelineDir}\n\n` +
+    folderRunNote(ctx) +
     skillsHint +
     workspaceProjectsBlock(ctx.workspace, { relative: wsRun }) +
     requestBlock +
@@ -1115,6 +1128,11 @@ export function implementerBody({ mode = 'implement', planPath, reviewPath, task
  * @returns {string}
  */
 export function diffInstruction(ctx) {
+  if (ctx?.workMode === 'folder') {
+    return `Inspect the changes in \`${join(ctx.pipelineDir, 'changes.patch')}\` (the folder as it was when the run ` +
+      `started → your cwd; new and deleted files included) and \`${join(ctx.pipelineDir, 'changes.json')}\` (the list), ` +
+      'then read the changed files in your cwd. There is no git in this run.';
+  }
   const ref = String(ctx?.checkpointRef || '').trim();
   return ref
     ? `Inspect the diff with \`git diff ${ref}\` (the orchestrator's pre-implementation ` +

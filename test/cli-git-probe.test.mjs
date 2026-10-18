@@ -3,7 +3,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,19 +32,30 @@ test('CLI and git', async () => {
       assert.equal(lines[0], '--version');
       assert.ok(lines.some((l) => l.startsWith('rev-parse')), lines.join(' | '));
     } },
-    { name: 'WORCA_GIT=0: a headless run refuses (exit 2), resume refuses (exit 1)', run: async () => {
-      const proj = mkdtempSync(join(tmpdir(), 'worca-p0-runproj-'));   // never the checkout: a run past the guard cuts a branch there
-      const r = run(['--mock', '--project', proj, '--prompt', 'x'], off());
-      assert.equal(r.status, 2); assert.match(r.stderr, /^worca: git is not installed on this machine$/m);
-      const { id: paused } = await seedPipeline(proj, { status: 'paused' });   // a git run: refused before (P0) and after (P1 S3) the row read
-      const s = run(['resume', paused, '--mock'], off());
-      assert.equal(s.status, 1); assert.match(s.stderr, /worca: git is not installed on this machine/);
+    { name: 'WORCA_GIT=0: a headless run on a plain folder runs on a copy (exit 0, no .git); resume of a git run refuses (exit 1)', run: async () => {
+      const proj = mkdtempSync(join(tmpdir(), 'worca-p0-runproj-'));   // never the checkout
+      try {
+        const r = run(['--mock', '--yes', '--project', proj, '--prompt', 'x'], off());
+        assert.equal(r.status, 0, r.stderr); assert.equal(existsSync(join(proj, '.git')), false);
+        const { id: paused } = await seedPipeline(proj, { status: 'paused' });   // a git run: refused before (P0) and after (P1 S3) the row read
+        const s = run(['resume', paused, '--mock'], off());
+        assert.equal(s.status, 1); assert.match(s.stderr, /worca: git is not installed on this machine/);
+      } finally { rmSync(proj, { recursive: true, force: true }); }   // rmSync: Task 5's import line
     } },
     { name: 'WORCA_GIT=0: add --clone refuses before any folder exists', run: () => {
       const root = mkdtempSync(join(tmpdir(), 'worca-p0-root-'));
       const r = run(['add', '--clone', 'https://github.com/acme/api'], { ...off(), WORCA_PROJECTS_ROOT: root });
       assert.equal(r.status, 1); assert.match(r.stderr, /git is not installed on this machine \(git-missing\)/);
       assert.equal(existsSync(join(root, 'api')), false);
+    } },
+    { name: 'WORCA_GIT=0: resume of a Folder row passes the git guard (it stops later, at its missing resume point)', run: async () => {
+      const proj = mkdtempSync(join(tmpdir(), 'worca-p1-cliresume-'));
+      try {
+        const { id } = await seedPipeline(proj, { status: 'paused', branch: { workMode: 'folder', runRootMode: 'detached' } });
+        const s = run(['resume', id, '--mock'], off());
+        assert.equal(s.status, 1); assert.match(s.stderr, new RegExp(`pipeline ${id} has no resume point`));
+        assert.doesNotMatch(s.stderr, /git is not installed/);
+      } finally { rmSync(proj, { recursive: true, force: true }); }
     } },
   ]);
 });

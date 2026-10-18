@@ -12,7 +12,7 @@
 
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
-import { fstatSync } from 'node:fs';
+import { fstatSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
@@ -26,6 +26,7 @@ import {
   listProjects,
   removeProject,
   normalizeProjectPath,
+  getProjectByPath,
 } from '../core/projects.mjs';
 import { projectKey } from '../core/store.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
@@ -52,7 +53,8 @@ import {
 } from '../core/ui-instance.mjs';
 import { useEnvProxy, proxyNotice } from '../core/env-proxy.mjs';
 import { startEgressPolicy, egressNotice } from '../core/egress-policy.mjs';
-import { gitState, gitAvailable, GIT_MISSING } from '../core/git-available.mjs';
+import { gitState, GIT_MISSING } from '../core/git-available.mjs';
+import { workModeOfRow, workModeForStart, effectiveWorkMode } from '../core/project-kind.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -1362,6 +1364,23 @@ async function cmdFlags(argv) {
   return 0;
 }
 
+/** P1 (CONTRACT §2, U3, L4, A-m5, R6): a headless run's work mode, decided as the server decides it. A registered
+ *  project whose effective mode is Folder and whose folder is gone, or a folder over the copy limits, fails here.
+ *  `projectKey` only for a non-git mode (S52, S68). folder-copy.mjs (npm `diff`) loads lazily: a node_modules without
+ *  it must not break `--version` or preflightDeps' message. */
+async function cliWorkMode(projectDir) {
+  const gitOn = (await gitState()).available;
+  const row = getProjectByPath(projectDir);
+  const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => row, gitAvailable: gitOn });
+  if (row && !existsSync(projectDir) && effectiveWorkMode(row.vcs, gitOn) === 'folder') fail(`The folder is missing: ${projectDir}`);
+  if (workMode === 'folder') {
+    const { checkFolderSize } = await import('../core/folder-copy.mjs');
+    const big = await checkFolderSize(projectDir, { name: row?.name });
+    if (big) fail(big.error);
+  }
+  return { workMode, projectKey: workMode !== 'git' ? getProjectByPath(projectDir)?.key : undefined };
+}
+
 /** `worca resume <pipelineId>` — continue a paused pipeline from its resume point. */
 async function cmdResume(argv) {
   const id = (argv.find((a, i) => !a.startsWith('--') && !['--reason', '--engine', '--model', '--effort'].includes(argv[i - 1])) || '').trim();
@@ -1369,7 +1388,6 @@ async function cmdResume(argv) {
     process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes] [--engine <name>] [--model <id> [--effort <e>]] [--allow-unguarded-engine] [--ignore-cost-cap] [--past-team-cap [--reason "<why>"]]\n');
     return 1;
   }
-  if (!gitAvailable()) { process.stderr.write(`worca: ${GIT_MISSING.message}\n`); return 1; }   // replaced by P1a (resume reads state.workMode)
   const mock = argv.includes('--mock');
   const auto = argv.includes('--yes') || argv.includes('--non-interactive');
   const ignoreCap = argv.includes('--ignore-cost-cap');
@@ -1397,6 +1415,7 @@ async function cmdResume(argv) {
     process.stderr.write(`pipeline ${id} not found\n`);
     return 1;
   }
+  if (workModeOfRow(saved.row) === 'git' && !(await gitState()).available) { process.stderr.write(`worca: ${GIT_MISSING.message}\n`); return 1; }
   if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') {
     process.stderr.write(`pipeline ${id} is "${saved.row.status}", not resumable (paused/interrupted only)\n`);
     return 1;
@@ -1468,12 +1487,9 @@ async function cmdResume(argv) {
         }
       : undefined;
   } else {
-    for (const p of await listProjects()) {
-      if (projectKey(p.path) === saved.row.project_key) {
-        projectDir = p.path;
-        break;
-      }
-    }
+    const list = await listProjects();
+    for (const p of list) if (p.key === saved.row.project_key) { projectDir = p.path; break; }   // the stored key first (A-m7)
+    if (!projectDir) for (const p of list) if (projectKey(p.path) === saved.row.project_key) { projectDir = p.path; break; }
     if (!projectDir && projectKey(resolve(process.cwd())) === saved.row.project_key) {
       projectDir = process.cwd();
     }
@@ -1488,7 +1504,7 @@ async function cmdResume(argv) {
   {
     const { checkTeamTotalGate, checkTeamPipelineGate } = await import('../core/policy/gate.mjs');
     const target = workspace ? { workspaceId: workspace.id } : { projectDir };
-    const totalGate = await checkTeamTotalGate(target, { pastTeamCap, reason: policyReason, unattended: auto });
+    const totalGate = await checkTeamTotalGate(target, { pastTeamCap, reason: policyReason, unattended: auto, discover: workModeOfRow(saved.row) === 'git' ? 'if-missing' : false });
     if (totalGate.blocked) {
       process.stderr.write(`worca: ${totalGate.error}. ${totalGate.code === 'reason_required' ? 'Add --reason "<why>".' : `Continue: worca resume ${id} --past-team-cap [--reason "<why>"]`}\n`);
       return 1;
@@ -3332,9 +3348,11 @@ async function main() {
       fail('Provide a task with --prompt "<text>" or --file <markdown>. See --help.');
     }
   }
-  if (!gitAvailable()) fail(GIT_MISSING.message);   // replaced by P1a (workModeForStart): a Folder run needs no git
 
   const projectDir = resolve(flags.project);
+  // P1: decided once, here — also for a schedule made without --wait (it never calls buildOrch).
+  const cliMode = await cliWorkMode(projectDir);
+  if (cliMode.workMode === 'folder' && flags.sourceFromPrevious) fail("a Folder project run cannot start from the previous run's branch");
   // A NAMED --file must be readable BEFORE anything starts. The readers used to
   // swallow the failure and run the whole pipeline on an empty prompt with exit 0
   // — in real mode that spends tokens and cuts a worktree + feature branch for
@@ -3374,7 +3392,7 @@ async function main() {
   // window; under --yes nobody can click, so the harness warns instead and nothing is refused here.
   {
     const { checkTeamTotalGate } = await import('../core/policy/gate.mjs');
-    const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: flags.pastTeamCap, reason: flags.reason, unattended: flags.auto });
+    const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: flags.pastTeamCap, reason: flags.reason, unattended: flags.auto, discover: cliMode.workMode === 'git' ? 'if-missing' : false });
     if (gate.blocked) {
       process.stderr.write(`worca: ${gate.error}. `
         + (gate.code === 'reason_required' ? 'Add --reason "<why>" with --past-team-cap.\n' : 'Continue: add --past-team-cap [--reason "<why>"]; the team sees it in Team metrics.\n'));
@@ -3431,6 +3449,8 @@ async function main() {
   const runEngine = resolveRunEngine({ explicit: flags.engine || null, projectDir }).engine;
   const buildOrch = async () => (await import('../core/engine-select.mjs')).createOrchestratorFor({
     projectDir,
+    workMode: cliMode.workMode,
+    ...(cliMode.projectKey ? { projectKey: cliMode.projectKey } : {}),
     prompt: flags.prompt || undefined,
     promptFile: flags.file || undefined,
     title: flags.title || undefined,

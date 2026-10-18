@@ -13,14 +13,14 @@ import { seedBuiltinMarketplace, refreshAllMarketplaces } from '../src/core/mark
 import { seedPipeline } from './helpers/db-seed.mjs';
 
 const BODY = { error: 'git is not installed on this machine', code: 'GIT_MISSING' };
-let home, app, srv, base, prev, T, addProject;
+let home, app, srv, base, prev, T, addProject, runs;
 before(async () => {
   home = await mkdtemp(join(tmpdir(), 'worca-p0-routes-'));
   prev = {}; for (const k of ['HOME', 'USERPROFILE', 'WORCA_HOME']) prev[k] = process.env[k];
   process.env.HOME = home; process.env.USERPROFILE = home; process.env.WORCA_HOME = join(home, 'worca-home');
   (await import('../src/core/db.mjs'))._resetForTests();
   ({ addProject } = await import('../src/core/projects.mjs'));
-  const mod = await import('../ui/server.mjs'); app = mod.app; srv = mod.server; T = mod._testing;
+  const mod = await import('../ui/server.mjs'); app = mod.app; srv = mod.server; T = mod._testing; runs = mod.runs;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });
@@ -68,10 +68,15 @@ test('routes while git is missing', async (t) => {
         assert.equal(r.status, 409, `${m} ${p}`); assert.deepEqual(await r.json(), BODY, `${m} ${p}`);
       }
     } },
-    { name: 'POST /api/run, resume, the branch terminal, a new workspace', run: async () => {
+    { name: 'POST /api/run (a project runs on a copy), a workspace start, resume, the branch terminal, a new workspace', run: async () => {
       const dir = gitDir('p0-run');
       const r = await send('post', '/api/run', { projectDir: dir, prompt: 'x', mock: true });
-      assert.equal(r.status, 409); assert.deepEqual(await r.json(), BODY);
+      assert.equal(r.status, 200);                                            // P1: unregistered + git missing → a Folder run
+      const { runId } = await r.json();
+      assert.equal(runs.get(runId).orch.workMode, 'folder');
+      assert.equal((await send('post', '/api/stop', { runId })).status, 200); await runs.get(runId).launch;
+      const ws = await send('post', '/api/run', { workspaceId: 'wks-none-0000000b', prompt: 'x', mock: true });
+      assert.equal(ws.status, 409); assert.deepEqual(await ws.json(), BODY);
       const { id: paused } = await seedPipeline(dir, { status: 'paused' });   // a git run: refused before (P0) and after (P1 S3) the row read
       await assert.rejects(T.resumeRun(paused, { mock: true }), (e) => e.status === 409 && e.body.code === 'GIT_MISSING');
       const rows = await addProject({ name: 'p0term', path: dir });
@@ -135,4 +140,15 @@ test('a chained schedule ticket while git is missing', async (t) => {
       assert.deepEqual(out, { ok: false, error: 'git is not installed on this machine', transient: false });
     } },
   ]);
+});
+
+// test/git-missing-routes.test.mjs — new test (v3). Uses the file's T, withNoGit, seedPipeline, mkdtemp, rm, tmpdir, join.
+test('P1 (S3): with git missing a paused Folder run is not refused for git; its deleted copy answers 400', async (t) => {
+  withNoGit(t);
+  const dir = await mkdtemp(join(tmpdir(), 'worca-p1-folder-resume-'));
+  try {
+    const gone = join(dir, 'gone');
+    const { id } = await seedPipeline(dir, { status: 'paused', branch: { workMode: 'folder', runRootMode: 'detached', copyDir: gone }, resumePoint: { version: 2 } });
+    await assert.rejects(T.resumeRun(id, { mock: true }), (e) => e.status === 400 && e.body.error === `copy missing: ${gone}`);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

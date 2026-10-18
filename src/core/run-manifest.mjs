@@ -16,11 +16,12 @@
 
 import { mkdir, readFile, writeFile, rm, rename, readdir, stat, cp, lstat } from 'node:fs/promises';
 import { join, resolve, sep, basename, dirname } from 'node:path';
+import { existsSync } from 'node:fs';
 
 export const RUN_MANIFEST_FILE = 'run.json';
 
 /** Stable machine-readable reasons why a terminal run root must be retained. */
-export const RETAIN_REASONS = Object.freeze({ COMMIT_FAILED: 'commit_failed', CHECKOUT: 'checkout' });
+export const RETAIN_REASONS = Object.freeze({ COMMIT_FAILED: 'commit_failed', CHECKOUT: 'checkout', FOLDER_APPLY: 'folder-apply' });
 
 /** Entries worca-cc itself owns at a run root. Anything else there is a STRAY (§8.11).
  *  `.cursor`: a Cursor run's engine config at a workspace run root (engines/cursor.mjs, run-harness _registerEngineConfig). */
@@ -58,6 +59,13 @@ export async function writeRunManifest(runRoot, data) {
   } catch {
     return false;
   }
+}
+
+/** P1 (P1b S17, P5 S8): the retain members whose checkout (`worktreeDir`) or copy (`copyDir`) still exists. A retain
+ *  record is live only while one does; P3's work_copy_failed members (a `copyDir`) are honoured the same way. */
+export function liveRetainMembers(retain) {
+  const members = Array.isArray(retain?.members) ? retain.members : [];
+  return members.filter((m) => (m?.worktreeDir && existsSync(m.worktreeDir)) || (m?.copyDir && existsSync(m.copyDir)));
 }
 
 /**

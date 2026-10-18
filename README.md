@@ -9,7 +9,8 @@ Worca turns a task into **reviewed, merge-ready work**. It is a
 work, and a state machine runs the agents of a workflow in sequence — by
 default **Clarify → Plan → Refine → Implement → Review** — looping until the
 work clears quality gates, pausing to ask *you* the questions that matter, and
-keeping every run isolated in its own git worktree and branch. Pick **Auto**
+keeping every run isolated in its own git worktree and branch — or, for a plain
+folder, on a copy you apply back with **Apply to folder**. Pick **Auto**
 and Worca chooses the workflow for the task, draw your own in **Workflows** (or
 ask its chat to build it), or start the shipped **Presentation** workflow to turn a brief into
 a slide deck, or **Architecture (C4)** to keep a diagram of your code that
@@ -73,6 +74,10 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 (the clarify answers and any mid-run questions), and at Expert **Logs** and
 **Agents**. Diff, Artifacts and Actions start at Advanced (see
 [UI levels](docs/ui-levels.md)).
+A run in a Folder project works on a copy: in place of **Diff** and **Actions** it
+has **Changes** (every file it added, updated or deleted, at every level), and you
+land it with **Apply to folder** (files changed in the folder since the run started
+are skipped and listed in the dialog) or **Discard**.
 
 ![A finished run, "CSV export for contacts", on its Diff tab: 4 files changed (+36 −0) in a file tree beside the highlighted patch of src/routes/contacts.js, with the run's worca-cc/ branch, its time and cost, and a Create PR button](docs/screenshots/run-detail.png)
 
@@ -655,7 +660,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   sits beside them in `~/.worca-cc/memory/`.
 - **Keyed by repo identity** — the project key is the repo's folder name plus
   a hash of its root (the parent of the shared `.git`), so every git worktree
-  of a repo shares one history.
+  of a repo shares one history. A plain folder (a **Folder** project) is keyed
+  by its own path.
 - **Move it** — `WORCA_HOME=<dir>` (or Settings › General › **Worca root
   folder**, Advanced) puts everything under `<dir>/.worca-cc/`; only the
   global `settings.json` stays in your home folder.
@@ -701,15 +707,16 @@ Requirements:
 
 - **Node.js >= 22.13.0** — the store is the built-in `node:sqlite`; on an older
   Node the CLI says so and exits.
-- **git** — runs, pull requests, Check out, Sync and Clone from URL need it
+- **git** — pull requests, Check out, Sync and Clone from URL need it
   (on Windows, Git for Windows' `git.exe` on `PATH`). Without git — on macOS,
   without the Xcode Command Line Tools — worca still opens and never runs git:
-  it hides the branch, pull-request, Sync and Clone controls, a run start
-  answers `git is not installed on this machine`, and Workspaces, Marketplace,
-  Team metrics and Team policy stay but answer the same when an action needs
-  git; installing git brings everything back without a restart. `WORCA_GIT=0`
-  hides them on purpose, `WORCA_GIT=1` skips the check. The GitHub CLI (`gh`)
-  is optional: it opens pull requests and issues.
+  it hides the branch, pull-request, Sync and Clone controls, a project run
+  works on a copy of its folder (applied back with **Apply to folder**), a
+  workspace run start answers `git is not installed on this machine`, and
+  Workspaces, Marketplace, Team metrics and Team policy stay but answer the
+  same when an action needs git; installing git brings everything back without
+  a restart. `WORCA_GIT=0` hides them on purpose, `WORCA_GIT=1` skips the
+  check. The GitHub CLI (`gh`) is optional: it opens pull requests and issues.
 - **The [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI**
   (`claude`) on your `PATH` and signed in (`claude`, then `/login`; an
   `ANTHROPIC_API_KEY` works too) — for real runs only; mock mode starts no

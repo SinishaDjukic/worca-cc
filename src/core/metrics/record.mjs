@@ -451,7 +451,7 @@ async function recordImpl(harness, { status, error = null, now = new Date() }) {
   // the terminal `done` event must never wait on ls-remote/fetch.
   const sink = harness.isWorkspace
     ? await resolveWorkspaceSink(harness.workspace?.id, { discover: 'if-missing' })
-    : await resolveProjectSink(harness.projectDir, { discover: 'if-missing' });
+    : await resolveProjectSink(harness.projectDir, { discover: harness.workMode && harness.workMode !== 'git' ? false : 'if-missing' });
   if (!sink.ok) {
     if (sink.reason === 'delegate-invalid' || sink.reason === 'home-stale' || sink.code === 'CONFIG_UNKNOWN') {
       log(harness, 'warn', `team metrics: not recorded — ${sink.detail}`);

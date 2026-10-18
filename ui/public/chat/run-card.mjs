@@ -14,6 +14,8 @@ import { askRendererFor, askKindOf } from '../ask/registry.mjs';
 import { shapeFirstOn } from './shape-gate.mjs';
 import { checklistTallyText } from '../../../src/shared/shape/review-checklist.mjs';
 import { paintProgressBar } from '../run-progress-bar.mjs';
+import { changesCounts, folderDoneWords } from '../folder-changes.mjs';
+import { isGitRun } from '../run-kind.mjs';
 
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
@@ -102,6 +104,7 @@ export function resultWord(snap) {
     const step = failed ? nodeLabelOf(snap.stepper, failed) : '';
     return { key: 'failed', tone: 'red', glyph: 'stop', title: 'Failed', sub: step ? `Step: ${step} · see Logs for the error` : 'See Logs for the error' };
   }
+  if (snap.workMode === 'folder') { const c = changesCounts(snap.changes); const w = folderDoneWords(snap.changes && snap.changes.state, c ? c.total : null); return { key: 'folder', tone: 'green', glyph: 'check', title: w.lead, sub: w.sub }; }
   const pr = snap.pr && snap.pr.url ? String(snap.pr.state || '').toUpperCase() : '';
   if (pr === 'MERGED') return { key: 'merged', tone: 'violet', glyph: 'merged', title: 'Merged', sub: 'The pull request was merged' };
   if (pr === 'OPEN') return { key: 'review', tone: 'blue', glyph: 'review', title: 'In review', sub: 'The pull request is open' };
@@ -448,8 +451,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const r = s.results || null;
     const arts = Array.isArray(s.artifacts) ? s.artifacts : [];
     const prUrl = s.pr && isWebUrl(s.pr.url) ? s.pr.url : '';
-    const canCreate = word.key === 'ship' && !s.archived && !(s.pr && s.pr.url) && call(controls.prHost) !== false;
-    const sig = JSON.stringify([word, r, arts.map((a) => a.relPath), !!s.moreArtifacts, prUrl, canCreate, shapeFirstOn()]);
+    const canCreate = word.key === 'ship' && isGitRun(s) && !s.archived && !(s.pr && s.pr.url) && call(controls.prHost) !== false;
+    const total = (changesCounts(s.changes) || {}).total || 0; const canApply = word.key === 'folder' && !s.archived && !!s.changes && s.changes.state === 'pending' && total > 0 && typeof controls.openApply === 'function';
+    const sig = JSON.stringify([word, r, arts.map((a) => a.relPath), !!s.moreArtifacts, prUrl, canCreate, canApply, shapeFirstOn()]);
     if (sig === resultSig) return;
     resultSig = sig;
     resultSec.replaceChildren();
@@ -478,7 +482,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
         b.title = shown;
         b.appendChild(h('span', 'chat-rc-file-path', shown));
         if (!f.binary) b.append(h('span', 'chat-rc-add', `+${f.additions}`), h('span', 'chat-rc-del', `−${f.deletions}`));
-        b.addEventListener('click', () => call(ctx.openRunPanel, ref(), { tab: 'diff' }));
+        b.addEventListener('click', () => call(ctx.openRunPanel, ref(), { tab: word.key === 'folder' ? 'changes' : 'diff' }));
         const li = h('li');
         li.appendChild(b);
         ul.appendChild(li);
@@ -534,6 +538,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       }
       resultSec.appendChild(rfoot);
     }
+    if (canApply) { const f = h('div', 'chat-rc-res-foot'); const b = button('chat-rc-apply', 'Apply to folder'); let busy = false; b.addEventListener('click', () => { if (busy) return; busy = true; Promise.resolve(call(controls.openApply, ref(), b)).catch(() => {}).finally(() => { busy = false; call(refresh); }); }); f.appendChild(b); resultSec.appendChild(f); }
     resultSec.hidden = false;
   }
 
@@ -679,7 +684,7 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
         // it read THIS ending. A read taken before a resume (`interrupted` is terminal too) must never paint over the
         // new lineage's end: it would show Interrupted + Resume until the `done` re-read, and for good after a socket gap.
         if (snap.terminal && rest.terminal && rest.status === snap.status) return { ...rest, runId: snap.runId, branch: snap.branch || rest.branch };
-        return { ...snap, results: rest.results, artifacts: rest.artifacts, moreArtifacts: rest.moreArtifacts, pr: rest.pr, branch: snap.branch || rest.branch };
+        return { ...snap, results: rest.results, artifacts: rest.artifacts, moreArtifacts: rest.moreArtifacts, pr: rest.pr, branch: snap.branch || rest.branch, ...(rest.workMode ? { workMode: rest.workMode, changes: rest.changes } : {}) };
       }
       return snap;
     }

@@ -22,6 +22,7 @@ import {
 import { join, resolve, dirname, relative } from 'node:path';
 
 import { worcaHome } from './projects.mjs';
+import { vcsAtUpgrade } from './project-kind.mjs';
 import {
   projectKey, storeRoot, workspacesStoreRoot,
 } from './store.mjs';
@@ -167,7 +168,7 @@ function collectLegacy(home) {
     const key = projectKey(e.path);
     if (seenProjectKeys.has(key)) continue;
     seenProjectKeys.add(key);
-    plan.projects.push([key, e.name, e.path, ts]);
+    plan.projects.push([key, e.name, e.path, ts, vcsAtUpgrade(e.path)]);
   }
   if (Array.isArray(registry)) plan.consumed.push({ src: projectsFile, rel: 'projects.json' });
 
@@ -514,7 +515,7 @@ function relFromHome(home, file) { return relative(home, file); }
 
 function insertAll(db, plan) {
   const ins = {
-    project: db.prepare('INSERT OR IGNORE INTO projects (key,name,path,created_at) VALUES (?,?,?,?)'),
+    project: db.prepare('INSERT OR IGNORE INTO projects (key,name,path,created_at,vcs) VALUES (?,?,?,?,?)'),
     workspace: db.prepare('INSERT OR IGNORE INTO workspaces (id,name,description,created_at,updated_at) VALUES (?,?,?,?,?)'),
     wsProj: db.prepare('INSERT OR IGNORE INTO workspace_projects (workspace_id,project_key,ordinal) VALUES (?,?,?)'),
     workflow: db.prepare('INSERT OR IGNORE INTO workflows (id,name,version,steps,feedbacks,created_at,updated_at) VALUES (?,?,?,?,?,?,?)'),

@@ -19,6 +19,12 @@ project's working tree, so nothing is ever committed to your repo.
     pipelines/  <DD-MM-YY>-<slug>-<id>/              (one folder per run)
       prompt.md          the prompt text (or copied markdown brief)
       diff-patch.patch   the run's captured diff (written when the run completes)
+      folder-manifest.json
+                         a Folder run: path → sha1, size, mtime of the copy at run start
+      changes.json, changes.patch
+                         a Folder run's added / modified / deleted files, their state (pending /
+                         applied / discarded) and their diff (built without git)
+      skipped/           the run's version of files Apply to folder skipped
       skills/            the run's set skills (docs/skills.md): one generated plugin per set, passed
                          with --plugin-dir; rebuilt on resume, never inside a checkout
       extras/            any optional extra files you attached
@@ -59,7 +65,10 @@ project's working tree, so nothing is ever committed to your repo.
                                         mcp-<messageId>.json, mode 0600 (never a project folder)
   logs/ask-web.jsonl                    Ask Worca web access: one line per web_fetch/web_search
                                         call (redacted URL, status, bytes); rotated to .1 at 5 MB
-  runs/<pipelineId>/                    detached run roots: run.json, repos/<projectKey>/ worktrees
+  runs/<pipelineId>/                    detached run roots: run.json, repos/<projectKey>/ worktrees;
+                                        a Folder run's repos/<projectKey>/ is a copy of the folder,
+                                        kept (run.json retain "folder-apply") until Apply to folder,
+                                        Discard or Archive
   metrics/
     repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-metrics
     outbox/<owner~repo>/*.jsonl  .lock   pending run records (durability point) + cross-process lock
@@ -117,7 +126,9 @@ existence is indexed in the database).
 - **`<projectKey>`** = `<repo-basename-slug>-<sha1(canonicalRoot)[:8]>`,
   derived from the repository's identity (the parent of its shared `.git`).
   It is **stable across all git worktrees of the same repo**, so every
-  worktree shares one history.
+  worktree shares one history. A plain folder's key is its realpath's;
+  projects.vcs ('git' | 'none', schema v61) records the kind once, at add
+  time, and never changes it on its own.
 
 Because state is machine-wide and keyed by repo identity, the web UI has an
 **"All projects"** view (and `GET /api/history`) that lists runs across every

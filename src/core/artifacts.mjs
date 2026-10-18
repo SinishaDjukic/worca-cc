@@ -14,7 +14,8 @@ import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { realpathSync, existsSync, statSync, constants as fsConstants } from 'node:fs';
 import { hostname } from 'node:os';
-import { projectKey, projectStorePath, canonicalProjectRoot, workspaceStorePath } from './store.mjs';
+import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath } from './store.mjs';
+import { workModeOfRow } from './project-kind.mjs';
 import { listProjects } from './projects.mjs';
 import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
@@ -926,10 +927,10 @@ export function today() {
  * @param {string} [workspaceKey] when set, routes to the workspace store
  * @returns {{root:string, plans:string, reviews:string, pipelines:string}}
  */
-export function artifactPaths(projectDir, workspaceKey) {
+export function artifactPaths(projectDir, workspaceKey, { projectKey } = {}) {
   const root = workspaceKey
     ? workspaceStorePath(workspaceKey)
-    : projectStorePath(projectKey(projectDir));
+    : projectStorePath(projectKey ?? projectKeyOf(projectDir));
   return {
     root,
     plans: join(root, 'plans'),
@@ -945,12 +946,13 @@ export function artifactPaths(projectDir, workspaceKey) {
  * re-reading. `firstSeenAt` is preserved across re-runs because an existing row
  * short-circuits. `_root` is retained for signature stability (now unused).
  */
-async function ensureMeta(projectDir, _root) {
+async function ensureMeta(projectDir, _root, { projectKey, plain = false } = {}) {
   void _root;
-  const key = projectKey(projectDir);
+  const key = projectKey ?? projectKeyOf(projectDir);
   const existing = readStoreMeta(key);
   if (existing) return existing;                       // firstSeenAt preserved
-  const canonical = canonicalProjectRoot(projectDir);
+  // P1 (v8): a non-git run's folder is its own root — never an enclosing repo's (a parent git-inited after registration)
+  const canonical = plain ? (() => { const d = resolve(projectDir); try { return realpathSync(d); } catch { return d; } })() : canonicalProjectRoot(projectDir);
   let name = basename(canonical) || 'project';
   try {
     const projects = await listProjects();
@@ -1011,13 +1013,13 @@ async function ensureWorkspaceMeta(primaryProjectDir, workspaceKey, opts = {}) {
  * Single-project callers (no second arg) are byte-identical.
  */
 export async function ensureArtifactDirs(projectDir, workspaceKey, opts = {}) {
-  const p = artifactPaths(projectDir, workspaceKey);
+  const p = artifactPaths(projectDir, workspaceKey, { projectKey: opts.projectKey });
   await mkdir(p.plans, { recursive: true });
   await mkdir(p.reviews, { recursive: true });
   await mkdir(p.pipelines, { recursive: true });
   const meta = workspaceKey
     ? await ensureWorkspaceMeta(projectDir, workspaceKey, opts)
-    : await ensureMeta(projectDir, p.root);
+    : await ensureMeta(projectDir, p.root, { projectKey: opts.projectKey, plain: !!opts.workMode && opts.workMode !== 'git' });
   return { ...p, meta };
 }
 
@@ -1037,8 +1039,8 @@ export async function ensureArtifactDirs(projectDir, workspaceKey, opts = {}) {
  * @param {string} [workspaceKey] when set, routes to the workspace store
  * @returns {string}
  */
-export function planPath(projectDir, baseName, version = 1, datePrefix, workspaceKey) {
-  const { plans } = artifactPaths(projectDir, workspaceKey);
+export function planPath(projectDir, baseName, version = 1, datePrefix, workspaceKey, { projectKey } = {}) {
+  const { plans } = artifactPaths(projectDir, workspaceKey, { projectKey });
   const v = Number(version) > 1 ? `-v${Number(version)}` : '';
   const date = datePrefix || today();
   return join(plans, `${date}-${baseName}${v}.md`);
@@ -1053,8 +1055,8 @@ export function planPath(projectDir, baseName, version = 1, datePrefix, workspac
  * @param {string} [workspaceKey] when set, routes to the workspace store
  * @returns {string}
  */
-export function reviewPath(projectDir, baseName, datePrefix, kind = 'impl-review', workspaceKey) {
-  const { reviews } = artifactPaths(projectDir, workspaceKey);
+export function reviewPath(projectDir, baseName, datePrefix, kind = 'impl-review', workspaceKey, { projectKey } = {}) {
+  const { reviews } = artifactPaths(projectDir, workspaceKey, { projectKey });
   const date = datePrefix || today();
   return join(reviews, `${date}-${baseName}-${kind}.md`);
 }
@@ -1165,8 +1167,10 @@ export async function createPipeline(projectDir, opts = {}) {
     workspaceId: workspaceId || workspaceKey,
     workspaceName,
     projects,
+    projectKey: opts.projectKey,
+    workMode: opts.workMode,
   });
-  const key = projectKey(projectDir);
+  const key = opts.projectKey ?? projectKeyOf(projectDir);
   const projectName = (paths.meta && paths.meta.name) || basename(resolve(projectDir));
 
   // Resolve the prompt text. Precedence: inline `prompt` (legacy callers) >
@@ -1910,6 +1914,7 @@ function toPipelineRow(o) {
         // _setupRunRoot / resume() stamp. (Single-project rows need nothing — the pin
         // rides state.branch, already serialized verbatim below.)
         runRootMode: o.runRootMode ?? null,
+        ...(o.workMode && o.workMode !== 'git' ? { workMode: o.workMode } : {}),
       })
     : null;
   return {
@@ -2047,6 +2052,29 @@ export function retainedWorkFor(row) {
   }
   if (!members.length) return null;
   return { reason: members[0].code || 'unknown', members };
+}
+
+/**
+ * P1 (P1b S17): a pending Folder run's copy as a retain record — the boot sweep's DB fallback. Only while the row is a
+ * folder run, its changes are `pending` and the copy exists: a copy removed by hand self-clears.
+ */
+export function folderApplyRetainFor(row) {
+  if (!row || typeof row !== 'object' || workModeOfRow(row) !== 'folder') return null;
+  const members = [];
+  for (const [pk, br] of branchRecordsOf(row)) {
+    if (br?.changes?.state !== 'pending' || !br.copyDir || !existsSync(br.copyDir)) continue;
+    members.push({ projectKey: pk || null, copyDir: br.copyDir });
+  }
+  return members.length ? { reason: 'folder-apply', members } : null;
+}
+
+/** S9: the folder facts a list row carries — `{ workMode, changes?: { state, counts } }` for a non-git row, `{}` for git. */
+export function folderFacts(row) {
+  const workMode = workModeOfRow(row);
+  if (workMode === 'git') return {};
+  const br = typeof row?.branch === 'string' ? j(row.branch, null) : row?.branch;
+  const changes = br && typeof br === 'object' ? br.changes : null;
+  return { workMode, ...(changes ? { changes: { state: changes.state, counts: changes.counts } } : {}) };
 }
 
 const BASE_RANK = { conflicts: 4, error: 3, 'no-branch': 2, clean: 1, 'up-to-date': 0 };
@@ -2257,6 +2285,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     baseCheck: baseCheckSummaryFor(row),
     // Only a run on its source branch carries these two keys (history shape unchanged otherwise).
     ...(mergeBack ? { sameAsSource: true, mergeBack } : {}),
+    ...folderFacts(row),
     survived,
     added,
     removed,
@@ -2649,6 +2678,7 @@ function rowToState(row) {
     const wmeta = readStoreMeta(row.workspace_key);
     if (!state.projectDir) state.projectDir = Array.isArray(wmeta?.projectPaths) ? (wmeta.projectPaths[0] ?? null) : null;
   }
+  const wm = workModeOfRow(row); if (wm !== 'git') state.workMode = wm; const ch = state.branch?.changes; if (wm === 'folder' && ch) state.changes = { state: ch.state, counts: ch.counts };
   return state;
 }
 
@@ -2783,7 +2813,7 @@ export function runRootSweepLookups() {
     statusOf: (id) => rowById(id)?.status ?? null,
     retainOf: (id) => {
       const row = rowById(id);
-      return row ? (retainedWorkFor(row) || checkoutRecordsFor(row)) : null;
+      return row ? (retainedWorkFor(row) || checkoutRecordsFor(row) || folderApplyRetainFor(row)) : null;
     },
     membersOf: async (id) => {
       const row = rowById(id);
@@ -2871,7 +2901,12 @@ export function legacySweepLookups() {
  * @returns {Promise<{state:object|null, auditMarkdown:string}|null>}
  */
 export async function readPipeline(projectDir, id) {
-  return readPipelineByKey(projectKey(projectDir), id);
+  const key = projectKey(projectDir);
+  const hit = await readPipelineByKey(key, id);
+  if (hit) return hit;
+  const row = findPipelineRowById(id);
+  if (row && workModeOfRow(row) !== 'git' && row.project_key !== key) return readPipelineByKey(row.project_key, id);
+  return null;
 }
 
 /**

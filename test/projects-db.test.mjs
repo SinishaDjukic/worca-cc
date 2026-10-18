@@ -9,7 +9,10 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { addProject, removeProject, listProjects } from '../src/core/projects.mjs';
+import { addProject, removeProject, listProjects, insertProject, getProjectByPath, displayPath } from '../src/core/projects.mjs';
+import { mkdtempSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
+import { templateRepo } from './helpers/git-dir.mjs';
+import { withNoGit } from './helpers/git-off.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 
 const homes = [];
@@ -46,7 +49,8 @@ test('listProjects reads rows from the DB and recomputes exists on read', async 
   assert.equal(byName.ghost.exists, false, 'missing dir => exists false (recomputed)');
   // The returned shape is exactly {key, name, path, exists} — `key` is the registry
   // key (Ask Worca needs it); no other DB-only field leaks.
-  assert.deepEqual(Object.keys(byName.demo).sort(), ['exists', 'key', 'name', 'path']);
+  assert.deepEqual(Object.keys(byName.demo).sort(), ['exists', 'key', 'name', 'path', 'vcs']);
+  assert.equal(byName.demo.vcs, 'git', 'a row inserted without vcs (NULL) reads as git');
 });
 
 test('addProject inserts a row keyed by projectKey, returns the annotated list', async () => {
@@ -103,4 +107,54 @@ test('two projects with the SAME path collapse to one key (PK), latest name wins
   // Different name, same path -> same projectKey. The name check passes (different
   // name), so the INSERT would hit the PK. We expect a clean error, not a crash.
   await assert.rejects(() => addProject({ name: 'two', path: home }), /already (exists|registered)/i);
+});
+
+const made = [];
+after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }); });
+const mk = (prefix) => { const d = mkdtempSync(join(tmpdir(), prefix)); made.push(d); return d; };
+const repoOf = (tag, o) => { const d = templateRepo(tag, o); made.push(d); return d; };
+
+test('vcs is detected once at add time; getProjectByPath finds the stored row; an explicit vcs is validated', async () => {
+  const plain = mk('worca-projdb-plain-');
+  const repo = repoOf('projdb', { branch: 'main', user: true, files: { 'a.txt': 'a\n' } });
+  await addProject({ name: 'plain', path: plain });
+  await addProject({ name: 'repo', path: repo });
+  assert.deepEqual(Object.fromEntries((await listProjects()).map((p) => [p.name, p.vcs])), { plain: 'none', repo: 'git' });
+  assert.equal(getProjectByPath(plain).name, 'plain');
+  assert.equal(getProjectByPath(join(plain, '.')).vcs, 'none');
+  assert.equal(getProjectByPath(join(plain, 'nope')), null);
+  mkdirSync(join(plain, '.git'));                                  // never re-inferred
+  assert.equal(getProjectByPath(plain).vcs, 'none');
+  const gitted = mk('worca-projdb-gitted-'); mkdirSync(join(gitted, '.git'));   // P2: git init, then register
+  await addProject({ name: 'gitted', path: gitted });
+  assert.equal(getProjectByPath(gitted).vcs, 'git');
+  assert.equal(typeof displayPath(plain), 'string');
+  assert.throws(() => insertProject({ name: 'bad', path: mk('worca-projdb-bad-'), vcs: 'svn' }), /vcs must be "git" or "none"/);
+  const later = join(mk('worca-projdb-later-'), 'not-yet');      // registered before it exists
+  assert.equal((await addProject({ name: 'later', path: later })).find((p) => p.name === 'later').vcs, 'git', 'its first run creates and git-inits it, as today');
+});
+
+test('POSIX: getProjectByPath matches through a symlinked path', { skip: process.platform === 'win32' }, async () => {
+  const real = mk('worca-projdb-real-');
+  const link = join(mk('worca-projdb-link-'), 'l'); symlinkSync(real, link);
+  await addProject({ name: 'real', path: real });
+  assert.equal(getProjectByPath(link)?.name, 'real');
+});
+
+test('R8: a Folder inside a git work tree is refused — git on (rev-parse) and git missing (stat walk, S53)', async () => {
+  const outer = repoOf('projdb-outer', { branch: 'main', user: true, files: { 'o.txt': 'o\n' } });
+  const inner = join(outer, 'inner'); mkdirSync(inner);
+  await assert.rejects(addProject({ name: 'inner', path: inner }),
+    (e) => e.code === 'NESTED_IN_REPO' && e.message === 'Inside a git repository' && e.partOf === null && typeof e.repoRoot === 'string');
+  await addProject({ name: 'outer', path: outer });
+  await assert.rejects(addProject({ name: 'inner', path: inner }), (e) => e.code === 'NESTED_IN_REPO' && e.message === 'Part of outer' && e.partOf === 'outer');
+  const restore = withNoGit();                                                   // P0 helper (S24): WORCA_GIT=0 + a stored "missing" state
+  try {
+    await assert.rejects(addProject({ name: 'inner2', path: inner }),          // S53: the nearest ancestor with .git decides
+      (e) => e.code === 'NESTED_IN_REPO' && e.message === 'Part of outer' && e.partOf === 'outer');
+    const loose = join(mk('worca-projdb-fake-'), 'sub'); mkdirSync(join(loose, '..', '.git')); mkdirSync(loose);
+    await assert.rejects(addProject({ name: 'loose', path: loose }), (e) => e.code === 'NESTED_IN_REPO' && e.message === 'Inside a git repository');
+    const free = mk('worca-projdb-free-');
+    assert.equal((await addProject({ name: 'free', path: free })).find((p) => p.name === 'free').vcs, 'none');
+  } finally { restore(); }
 });

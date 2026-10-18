@@ -17,6 +17,7 @@ import { renderRowLine } from './run-progress-bar.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { hasTag } from '../../src/shared/run-tags.mjs';
 import { tagChip } from './tag-input.mjs';
+import { kindChip } from './run-kind.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -94,8 +95,8 @@ function askWord(ask) {
 }
 
 /** A finished run's word: exactly the glance headline (run-glance.mjs glanceCopy, done branch). */
-function doneWord({ pr = null, checks = null, files = null } = {}) {
-  return glanceCopy({ status: 'done', steps: [] }, { pr, checks, files }).lead;
+function doneWord({ pr = null, checks = null, files = null, changes = null } = {}) {
+  return glanceCopy({ status: 'done', steps: [] }, { pr, checks, files, changes }).lead;
 }
 
 /** A live run's row: { icon, word, detail }. Branch order mirrors app.js statusPill:
@@ -178,7 +179,7 @@ export function liveRow(it, now = Date.now()) {
     key: `live:${it.runId}`, href: `#running/${it.runId}`,
     runId: String(it.runId), pipelineId: String(it.pipelineId || ''), projectKey: '',
     title: String(it.title || '(untitled)'), status,
-    groupKey: String(it.groupKey || ''), groupName: String(it.groupName || ''), by: String(it.by || ''),
+    groupKey: String(it.groupKey || ''), groupName: String(it.groupName || ''), groupKind: String(it.groupKind || ''), by: String(it.by || ''),
     tags: Array.isArray(it.tags) ? it.tags.map(String) : [],
     unread: !!it.unread, needs: needsYou({ kind: 'live', status, ask: !!it.ask, unread: !!it.unread }),
     progress: it.progress || null,
@@ -224,7 +225,7 @@ export function histRow(p, now = Date.now()) {
     key: `hist:${key}/${p.id}`, href: `#history/${key}/${p.id}`,
     runId: '', pipelineId: String(p.id), projectKey: key,
     title: String(p.title || p.id || '(untitled)'), status,
-    groupKey: key, groupName: String(p.groupName || key || '(unknown project)'), by: String(p.by || ''),
+    groupKey: key, groupName: String(p.groupName || key || '(unknown project)'), groupKind: String(p.groupKind || ''), by: String(p.by || ''),
     tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
     archived: !!(p && p.archived),
     base: String(p.base || ''),                      // #620: "conflicts with dev" / "dev moved", else ''
@@ -380,10 +381,11 @@ export function buildRunsModel({
   for (const r of shown === 'needs' ? [] : placedRows) {
     let g = groups.get(r.groupKey);
     if (!g) {
-      g = { key: r.groupKey, name: r.groupName || '(unknown project)', rows: [], live: false, latest: -Infinity };
+      g = { key: r.groupKey, name: r.groupName || '(unknown project)', kind: r.groupKind || '', rows: [], live: false, latest: -Infinity };
       groups.set(r.groupKey, g);
     }
     g.rows.push(r);
+    if (!g.kind && r.groupKind) g.kind = r.groupKind;
     if (r.kind === 'live' || r.kind === 'chain') g.live = true;
     const t = Math.min(Number.isFinite(r.sortMs) ? r.sortMs : -Infinity, now);   // a future runAt counts as now
     if (t > g.latest) g.latest = t;
@@ -401,7 +403,7 @@ export function buildRunsModel({
   }
   const list = [...groups.values()]
     .sort((a, b) => (Number(b.live) - Number(a.live)) || (b.latest - a.latest) || a.name.localeCompare(b.name))
-    .map((g) => ({ key: g.key, name: g.name, count: g.rows.length, collapsed: !searching && collapsed.has(g.key), rows: g.rows }));
+    .map((g) => ({ key: g.key, name: g.name, kind: g.kind, count: g.rows.length, collapsed: !searching && collapsed.has(g.key), rows: g.rows }));
   return { needs, groups: list, total: placedRows.length, searching, filter: shown, groupBy: 'project' };
 }
 
@@ -574,7 +576,7 @@ export function renderRunsList(doc, model, { emptyText = 'No runs yet.', note = 
     head.dataset.groupKey = g.key;
     head.setAttribute('aria-expanded', g.collapsed ? 'false' : 'true');
     if (model.searching) head.setAttribute('aria-disabled', 'true');
-    head.append(chevron(doc), textEl(doc, 'span', 'runs-group-name', g.name), textEl(doc, 'span', 'runs-count', String(g.count)));
+    head.append(chevron(doc), textEl(doc, 'span', 'runs-group-name', g.name), ...(g.kind ? [kindChip(doc, g.kind)].filter(Boolean) : []), textEl(doc, 'span', 'runs-count', String(g.count)));
     const rows = doc.createElement('div');
     rows.className = 'runs-group-rows';
     rows.hidden = g.collapsed;

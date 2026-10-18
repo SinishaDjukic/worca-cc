@@ -1193,3 +1193,57 @@ test('chat run card progress bar (P9): compact bar + P5 text for a live graph sn
     } },
   ]);
 });
+
+test('chat run card, a folder run: Finished · N files changed and Apply to folder at every level; Applied once settled; never a pull request', async () => {
+  const CH = { state: 'pending', counts: { added: 9, modified: 4, deleted: 1 } };
+  const EX = { results: null, artifacts: [], moreArtifacts: false, pr: null };
+  const applied = []; const openers = [];
+  const { card, $, refreshed } = mk({ controls: { prHost: () => true, openApply: (ref, opener) => { applied.push(ref.pipelineId); openers.push(opener); return Promise.resolve({ applied: 13, skipped: [] }); } } });
+  card.update(done({ ...EX, changes: CH }, { workMode: 'folder', changes: CH }));
+  assert.equal($('.chat-rc-res-title').textContent, 'Finished');
+  assert.equal($('.chat-rc-res-sub').textContent, '14 files changed');
+  assert.equal($('.chat-rc-create-pr'), null);
+  const b = $('.chat-rc-apply');
+  assert.equal(b.textContent, 'Apply to folder');
+  assert.equal(b.closest('[data-min-level]'), null, 'Simple: a plain-folder person lands it from the chat');
+  b.click(); b.click();
+  assert.equal(b.disabled, false, 'never disabled: the dialog returns focus to it');
+  await settle();
+  assert.deepEqual(applied, ['abcd1234'], 'one dialog for a double click');
+  assert.equal(openers[0], b, 'the dialog returns focus to the card\'s button');
+  assert.equal(refreshed.length, 1, 'the card re-reads the run once the dialog settles');
+  card.update(done(EX, { workMode: 'folder', changes: { ...CH, state: 'applied' } }));
+  assert.equal($('.chat-rc-res-title').textContent, 'Applied');
+  assert.equal($('.chat-rc-apply'), null);
+  assert.deepEqual(resultWord(done(null, { workMode: 'folder', changes: { ...CH, state: 'discarded' } })),
+    { key: 'folder', tone: 'green', glyph: 'check', title: 'Discarded', sub: '14 files changed' });
+  assert.deepEqual(resultWord(done(null, { workMode: 'folder', changes: { state: 'discarded', counts: { added: 0, modified: 0, deleted: 0 } } })),
+    { key: 'folder', tone: 'green', glyph: 'check', title: 'Finished', sub: 'No files changed' }, 'a run that changed nothing was never discarded');
+  const snap = snapshotFromState(STATE({ status: 'done', workMode: 'folder' }), { now: 0, extras: { ...EX, changes: CH } });
+  assert.deepEqual([snap.workMode, snap.changes], ['folder', CH]);
+  assert.equal('workMode' in snapshotFromState(STATE(), { now: 0 }), false, 'a git run keeps its key set');
+  const { card: c2, $: $2, calls } = mk({ controls: { openApply: () => Promise.resolve(null) } });
+  c2.update(done({ ...EX, results: { filesChanged: 1, additions: 1, deletions: 0, checks: 0, topFiles: [{ path: 'index.csv', additions: 1, deletions: 0 }] }, changes: CH },
+    { workMode: 'folder', changes: CH }));
+  $2('.chat-rc-file').click();
+  assert.deepEqual(calls.at(-1)[2], { tab: 'changes' }, 'a folder run\'s file opens its Changes tab');
+});
+
+test('chat run card: Create pull request asks isGitRun (CONTRACT §2) — a run with no branch never offers one', () => {
+  const EX = { results: null, artifacts: [], moreArtifacts: false, pr: null };
+  const { card, $ } = mk({ controls: { prHost: () => true } });
+  card.update(done(EX));
+  assert.ok($('.chat-rc-create-pr'), 'a git run that is ready to ship offers it');
+  card.update(done(EX, { workMode: 'none' }));
+  assert.equal($('.chat-rc-create-pr'), null);
+});
+
+test('chat run card, a folder run: no Apply to folder when nothing changed or the run is archived', () => {
+  const EX = { results: null, artifacts: [], moreArtifacts: false, pr: null };
+  const { card, $ } = mk({ controls: { openApply: () => Promise.resolve(null) } });
+  card.update(done(EX, { workMode: 'folder', changes: { state: 'pending', counts: { added: 0 } } }));
+  assert.equal($('.chat-rc-apply'), null, 'nothing to apply');
+  card.update(done(EX, { workMode: 'folder', archived: true, changes: { state: 'pending', counts: { added: 2 } } }));
+  assert.equal($('.chat-rc-apply'), null, 'an archived run has no copy');
+  assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.chat-rc-create-pr,\.chat-rc-view-pr,\.chat-rc-apply\{/);
+});

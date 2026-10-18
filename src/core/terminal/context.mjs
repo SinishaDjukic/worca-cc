@@ -7,6 +7,7 @@ import { checkoutRecordsFor } from '../artifacts.mjs';
 import { actionBaseEnv } from '../actions/spawn.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
 import { RUN_ROOT_REMOVE as FINISHED } from '../worktree.mjs';   // done | stopped | error
+import { workModeOfRow } from '../project-kind.mjs';
 
 export const LIVE_WARNING = 'This pipeline is still running and changing these files. Changes you make here are committed with the run when it ends.';
 
@@ -14,8 +15,16 @@ export function terminalTargets(row, { isLive = () => false, exists = existsSync
   const live = !!isLive(row.id);
   const finished = FINISHED.has(row.status) && !live;
   const recs = finished ? (checkoutRecordsFor(row)?.members || []) : [];
+  const folder = workModeOfRow(row) === 'folder';
   const members = membersOfRow(row).map((m) => {
     const base = { projectKey: m.projectKey, projectName: m.projectName || m.projectKey, branch: m.br?.feature || null };
+    if (folder) {
+      // S9 / P1b S9: a Folder run's terminal opens in its copy while the copy exists and its changes wait (or the run is
+      // live), else in the real folder. Never needs-checkout; no LIVE_WARNING (it says the work is committed with the run).
+      const copy = m.br?.copyDir || null;
+      const useCopy = !!copy && exists(copy) && (m.br?.changes?.state === 'pending' || live);
+      return { ...base, state: 'worktree', cwd: useCopy ? copy : (m.br?.realDir || m.projectDir) };
+    }
     if (finished) {
       const rec = recs.find((r) => r.projectKey === m.projectKey);
       return rec ? { ...base, state: 'checkout', cwd: rec.worktreeDir, ...(rec.external ? { external: true } : {}) }

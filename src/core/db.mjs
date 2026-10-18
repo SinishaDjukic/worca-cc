@@ -21,6 +21,7 @@ import { mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { worcaHome } from './projects.mjs';
 import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
+import { vcsAtUpgrade } from './project-kind.mjs';
 import { backfillHumanHours } from './human-backfill.mjs';
 import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates.mjs';
 import { AGENT_TUNABLES } from '../shared/graph/validate.mjs';
@@ -62,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 60;
+export const SCHEMA_VERSION = 61;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -886,6 +887,7 @@ const INCREMENTAL_COLUMNS = {
                             source_from_previous: 'INTEGER NOT NULL DEFAULT 0',   // v34: run chains
                             created_by: 'TEXT', updated_by: 'TEXT',   // v39: who made / last changed it
                             resume_pipeline_id: 'TEXT' },   // v44: a one-off "resume this paused run" ticket (NULL = starts a new run)
+  projects:               { vcs: 'TEXT' },   // v61: 'git' | 'none' (CONTRACT §1); NULL reads as 'git'
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1783,6 +1785,22 @@ function applySchemaV52(db) {
   } catch { /* never fail the migration on the backfill */ }
 }
 
+/** v61 (Projects, any way — CONTRACT §1): projects.vcs ('git' | 'none') arrives through INCREMENTAL_COLUMNS
+ *  (the hoisted repair); this rung backfills it ONCE (U12): an existing folder without .git is 'none', a .git or
+ *  a path that is gone is 'git'. Stat only — never git — under the ladder's BEGIN IMMEDIATE. `vcs IS NULL` keeps
+ *  it idempotent and the kind is never re-inferred. Gated + fenced like V52: a minimal hand-seeded DB has no
+ *  projects table, and a backfill is never worth rolling the ladder back over. */
+function applySchemaV61(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+  if (!hasSqliteTable(db, 'projects')) return;
+  const cols = new Set(db.prepare('PRAGMA table_info(projects)').all().map((c) => c.name));
+  if (!['key', 'path', 'vcs'].every((c) => cols.has(c))) return;
+  try {
+    const set = db.prepare('UPDATE projects SET vcs = ? WHERE key = ? AND vcs IS NULL');
+    for (const r of db.prepare('SELECT key, path FROM projects WHERE vcs IS NULL').all()) set.run(vcsAtUpgrade(r.path), r.key);
+  } catch { /* never fail the migration on the backfill */ }
+}
+
 /** applySchemaV52's column guard (the presentationSeedable precedent). */
 function memberPrBackfillable(db) {
   if (!hasSqliteTable(db, 'pipelines') || !hasSqliteTable(db, 'pipeline_member_prs')) return false;
@@ -2237,6 +2255,7 @@ export function migrate(db) {
     // (the Presentation seed's two halves, above).
     if (current < 60) applySchemaV60(db);
     if (current < SCHEMA_VERSION) refreshPromoVideoSeed(db);
+    if (current < 61) applySchemaV61(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

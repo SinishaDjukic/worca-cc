@@ -37,6 +37,7 @@ import { branchExists, anyPrHost, findPrForBranch } from './git-info.mjs';
 import { retainedWorkPatchName } from './results.mjs';
 import { deleteCommentsForRun } from './diff-comments.mjs';
 import { byActor } from './identity.mjs';
+import { workModeOfRow } from './project-kind.mjs';
 
 /**
  * Final PR observation while the branches still exist (spec §6.8.3). A workspace run
@@ -130,7 +131,7 @@ function artifactAbsPath(relPath, pipelineDir, storeRootDir) {
  * single scalar `state.branch`. The state is reconstructed from the DB row by the
  * same reader history uses. Result warnings[] aggregates per-project failures.
  */
-export async function archivePipeline({ projectDir = null, key = null, workspaceKey = null, id } = {}) {
+export async function archivePipeline({ projectDir = null, key = null, workspaceKey = null, id, by = null } = {}) {
   if (!id || typeof id !== 'string') throw err('id is required', 'BAD_REQUEST');
 
   // Resolve the store key ONCE so the run dir and the shared plan/review files are
@@ -303,7 +304,19 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
   //    INDEX rows are deleted explicitly — their files were just unlinked, and
   //    the CASCADE that used to clear them no longer fires (no row DELETE).
   //    pipeline_steps and the other children stay: stats fallback sums need them.
+  // P1 (P1b S17, P5 S8): archiving a PENDING Folder run is Discard + archive — its copy went with the run root above,
+  // the folder is never touched. The audit lands after the tx: appendAuditById opens its own tx(), and a nested one
+  // throws (swallowed), so inside this tx it would silently never land.
+  let folderDiscarded = null;
   tx(() => {
+    if (workModeOfRow(row) === 'folder') {
+      const cur = parseJson(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(row.id)?.branch);
+      if (cur?.changes?.state === 'pending') {
+        getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?')
+          .run(JSON.stringify({ ...cur, changes: { ...cur.changes, state: 'discarded', discardedAt: new Date().toISOString() } }), row.id);
+        folderDiscarded = cur.realDir || state?.projectDir || '';
+      }
+    }
     getDb().prepare('DELETE FROM artifacts WHERE pipeline_id = ?').run(row.id);
     // The run dir (and with it diff-patch.patch) was just removed, so nothing could
     // re-anchor these comments and creation is refused from here on. They die with
@@ -314,6 +327,7 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
     getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
       .run(new Date().toISOString(), row.id);
   });
+  if (folderDiscarded !== null) appendAuditById(row.id, `Discarded the run's changes (archived)${byActor(by)}; \`${folderDiscarded}\` was not touched.`, { actor: by });
 
   return report;
 }

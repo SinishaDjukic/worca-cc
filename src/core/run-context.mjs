@@ -34,7 +34,7 @@
 // reporting success. Every reader takes an optional `onError` sink (see fsWarner).
 
 import { readFile, writeFile, readdir, stat, mkdir, rm, cp, symlink } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { realpathSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve, dirname, basename, isAbsolute, sep } from 'node:path';
 
@@ -403,6 +403,14 @@ function trackedSkillNames(worktreeDir, rel = join('.claude', 'skills')) {
   );
 }
 
+/** P1 (S31): the top-level entry names under the skills folder `rel` that a FOLDER ships, from its copy-time manifest
+ *  paths (`/`-separated) — a copy has no index to ask (trackedSkillNames' answer for a non-git member). Exported for testing. */
+export function shippedSkillNames(files = [], rel) {
+  const prefix = `${String(rel).split(sep).join('/').split('\\').join('/')}/`;
+  return new Set((files || []).filter((p) => typeof p === 'string' && p.startsWith(prefix))
+    .map((p) => p.slice(prefix.length).split('/')[0]).filter(Boolean));
+}
+
 /** Candidate skill entries of one `<dir>/.claude/skills`, sorted, ENOENT-tolerant. */
 async function skillCandidates(dir, onError) {
   return (await readdirMaybe(join(dir, '.claude', 'skills'), onError))
@@ -480,6 +488,8 @@ export async function assembleSkills({
       candidates.push({
         ...c, cls: 'member', prefix: `${slug(m.projectName || m.projectKey)}-`,
         origin: `${m.projectName || m.projectKey} (repos/${m.projectKey})`,
+        // P1: a non-git member's source is the user's REAL folder — never linked, or an agent edit would land there before Apply.
+        noLink: !!m.workMode && m.workMode !== 'git',
       });
     }
   }
@@ -540,7 +550,7 @@ export async function assembleSkills({
     // Symlink mode cannot carry a rename: the frontmatter rewrite would land in the
     // user's real source file. Renamed entries therefore stay copies.
     // `linkUserSkills`: the user's own skills (codex only) are linked whatever the mount setting (see assembleRunContext).
-    const asLink = (mount === 'symlink' || (linkUserSkills && cand.cls === 'user')) && !renamed;
+    const asLink = (mount === 'symlink' || (linkUserSkills && cand.cls === 'user')) && !renamed && !cand.noLink;
     try {
       const st = await stat(cand.source);                 // follows symlinks: a dangling one throws
       if (!st.isDirectory()) continue;                    // not a skill entry; silently ignored
@@ -816,7 +826,7 @@ export async function mergeMcpConfigs({
         warnings.push(localScopeWarning(m, homeDir, 'no `projects` object'));
         continue;
       }
-      const key = gitOut(m.projectDir, ['rev-parse', '--show-toplevel']) || resolve(m.projectDir);
+      const key = m.workMode && m.workMode !== 'git' ? resolve(m.projectDir) : (gitOut(m.projectDir, ['rev-parse', '--show-toplevel']) || resolve(m.projectDir));
       const entry = projects[key] ?? projects[resolve(m.projectDir)];
       if (!entry || typeof entry !== 'object') continue;              // no local config: normal
       if (entry.mcpServers === undefined) continue;                   // normal
@@ -940,6 +950,12 @@ function trackedInGit(file) {
   }
 }
 
+/** P1 (S31): whether `file` sits inside some git work tree, by a stat-only walk from its folder up (the `gitAbove`
+ *  shape of engines/cursor.mjs — run-context must not import an engine). Never spawns git. */
+function insideGitTree(file) {
+  for (let d = resolve(dirname(file)); ; d = dirname(d)) { if (existsSync(join(d, '.git'))) return true; if (dirname(d) === d) return false; }
+}
+
 /** The entry Claude Code keeps for `projectDir` in its `~/.claude.json` (`projects`, keyed by absolute path), or null. */
 function claudeJsonProject(doc, projectDir) {
   const projects = doc?.projects;
@@ -962,7 +978,7 @@ function claudeJsonProject(doc, projectDir) {
  * server is never approved. `managed` is the managed settings files (test seam). Exported for testing.
  * @returns {Promise<(rawName:string)=>'approved'|'disabled'|'unapproved'>}
  */
-export async function mcpjsonApproval(projectDir, homeDir, onError, { managed = managedSettingsFiles() } = {}) {
+export async function mcpjsonApproval(projectDir, homeDir, onError, { managed = managedSettingsFiles(), git = true } = {}) {
   const local = projectDir && join(projectDir, '.claude', 'settings.local.json');
   const layers = [
     homeDir && { file: join(homeDir, '.claude', 'settings.json'), approves: true },
@@ -978,7 +994,8 @@ export async function mcpjsonApproval(projectDir, homeDir, onError, { managed = 
     const read = await readSettingsObject(layer.file, onError);
     const doc = read && layer.pick ? layer.pick(read) : read;
     if (!doc) continue;
-    const approves = layer.approves ?? !trackedInGit(layer.file);
+    // P1 (S31): { git: false } (a non-git member) asks no git; with git missing P0's flip holds (untracked: approvals count).
+    const approves = layer.approves ?? !(git ? trackedInGit(layer.file) : (gitAvailable() && insideGitTree(layer.file)));
     if (approves) for (const n of Array.isArray(doc.enabledMcpjsonServers) ? doc.enabledMcpjsonServers : []) if (typeof n === 'string') enabled.add(n);
     for (const n of Array.isArray(doc.disabledMcpjsonServers) ? doc.disabledMcpjsonServers : []) if (typeof n === 'string') disabled.add(n);
     if (typeof doc.enableAllProjectMcpServers === 'boolean' && (approves || doc.enableAllProjectMcpServers === false)) all = doc.enableAllProjectMcpServers;
@@ -996,12 +1013,12 @@ export async function mcpjsonApproval(projectDir, homeDir, onError, { managed = 
  * CLI loads the committed file itself, and the runner names the unapproved servers in disabledMcpjsonServers at
  * every spawn (claude-runner.mjs), so here they only leave the grant list and are named. Mutates `mcp`.
  */
-async function attachCommittedMcp(mcp, { engine, homeDir, platform, onError, warnings, native = false }) {
+async function attachCommittedMcp(mcp, { engine, homeDir, platform, onError, warnings, native = false, noGitDirs = new Set() }) {
   const approvals = new Map();
   const unapproved = [];
   for (const c of mcp.committed) {
     if (Object.hasOwn(mcp.servers, c.name)) continue;
-    if (!approvals.has(c.projectDir)) approvals.set(c.projectDir, await mcpjsonApproval(c.projectDir, homeDir, onError));
+    if (!approvals.has(c.projectDir)) approvals.set(c.projectDir, await mcpjsonApproval(c.projectDir, homeDir, onError, { git: !noGitDirs.has(resolve(c.projectDir)) }));
     const verdict = approvals.get(c.projectDir)(c.rawName);
     if (verdict !== 'approved') {
       mcp.nativeOnly = mcp.nativeOnly.filter((n) => n !== c.name);
@@ -1082,16 +1099,22 @@ export function generateClaudeMd({
   const agentCarriers = [...members].sort(byProjectKey).filter((m) => agentsOf(m.projectKey).length);
 
   const meta = [];
+  // P1 (S9): a run whose every member works on a copy says so and never names git (P5 handles mixed workspaces).
+  const folder = members.length > 0 && members.every((m) => m.workMode === 'folder');
   meta.push(`# Worca CC run ${pipelineId}`, '');
   meta.push(
-    'You are working in a **worca-cc run root**. All code edits happen inside ' +
-    '`repos/<projectKey>`, one git checkout per project below; the run root holds run ' +
-    "metadata only. This file is generated per run from those projects' real " +
-    'directories — do not edit it.',
+    folder
+      ? 'You are working in a **worca-cc run root**. All edits happen inside `repos/<projectKey>`, a copy of the project\'s folder (not a git repository: never run git there); the run root holds run metadata only. This file is generated per run from the project\'s real directory — do not edit it.'
+      : 'You are working in a **worca-cc run root**. All code edits happen inside ' +
+        '`repos/<projectKey>`, one git checkout per project below; the run root holds run ' +
+        "metadata only. This file is generated per run from those projects' real " +
+        'directories — do not edit it.',
     '',
   );
   meta.push('## Run layout', '');
-  meta.push('- `repos/<projectKey>/` — one git worktree per project in this run. **All code edits happen here.**');
+  meta.push(folder
+    ? '- `repos/<projectKey>/` — a copy of the project\'s folder (no git). **All code edits happen here.**'
+    : '- `repos/<projectKey>/` — one git worktree per project in this run. **All code edits happen here.**');
   meta.push('- `CLAUDE.md` (this file) — the generated context for the run.');
   meta.push('- `mcp.json` — the merged MCP server config passed to this session.');
   meta.push('- `run.json` — the run manifest (members, mounts, byte budget, warnings).');
@@ -1321,7 +1344,7 @@ export async function assembleRunContext({
     skillsOut = await assembleSkills({
       target: skillMountDir, members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
       resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills, setSkills,
-      trackedNames: trackedSkillNames(primary.worktreeDir, skillsRel),
+      trackedNames: primary.workMode && primary.workMode !== 'git' ? shippedSkillNames(primary.shippedFiles, skillsRel) : trackedSkillNames(primary.worktreeDir, skillsRel),
     });
     if (skillsOut.records.length) injectedPaths[primary.projectKey] = skillsOut.records;
   } else if (primary) {
@@ -1351,7 +1374,9 @@ export async function assembleRunContext({
     nativeMembers: sorted,                 // §5.5.6: every worktree cwd, a missing real dir included
   });
   for (const w of mcp.warnings) warnings.push(w);
-  if (mcp.committed.length) await attachCommittedMcp(mcp, { engine: engine || 'claude', homeDir, platform, onError, warnings, native: !engine || engine === 'claude' });
+  // P1 (S31): the real dirs of non-git members — their committed servers are judged without git.
+  const noGitDirs = new Set(members.filter((m) => m?.workMode && m.workMode !== 'git' && m.projectDir).map((m) => resolve(m.projectDir)));
+  if (mcp.committed.length) await attachCommittedMcp(mcp, { engine: engine || 'claude', homeDir, platform, onError, warnings, native: !engine || engine === 'claude', noGitDirs });
   const merged = Object.keys(mcp.servers);
   // Secrets in these definitions reach the run's agents (mcp-secrets.mjs): with the
   // credential broker on they are left out by default, otherwise named.

@@ -8,11 +8,15 @@
 // persist inside a single db.mjs tx(). Each row is keyed by projectKey(path)
 // (store.mjs), so every worktree of a repo maps to one row.
 
-import { existsSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, statSync, realpathSync } from 'node:fs';
+import { join, resolve, dirname } from 'node:path';
 import { getWorcaRoot, defaultRoot } from './settings.mjs';
 import { getDb, prepare, tx } from './db.mjs';
-import { projectKey } from './store.mjs';
+import { projectKey, canonicalProjectRoot } from './store.mjs';
+import { gitAvailable, gitState } from './git-available.mjs';
+import { detectVcs, normalizeVcs, samePath } from './project-kind.mjs';
+
+export { detectVcs, displayPath } from './project-kind.mjs';
 
 /**
  * Absolute path to the .worca-cc data directory. Base resolution precedence:
@@ -76,12 +80,12 @@ function isDir(p) {
  * Read the raw registry rows from the DB, ordered by creation then name for a
  * stable list. Never throws (a fresh DB simply has no rows). The DB call is
  * synchronous (node:sqlite); we return the plain array.
- * @returns {Array<{key:string, name:string, path:string}>}
+ * @returns {Array<{key:string, name:string, path:string, vcs:string|null}>}
  */
 function readRows() {
   getDb(); // ensure the singleton is open + migrated before preparing
   return prepare(
-    'SELECT key, name, path FROM projects ORDER BY created_at, name'
+    'SELECT key, name, path, vcs FROM projects ORDER BY created_at, name'
   ).all();
 }
 
@@ -90,11 +94,12 @@ function readRows() {
  * path is an existing directory). The flag is computed, never persisted. `key` is
  * the registry key (store.mjs#projectKey at registration) — the id the Ask Worca
  * catalog and propose_run use, so callers never re-derive it from the path.
+ * `vcs` is the stored kind ('git' | 'none'; a NULL row reads as 'git'), never re-inferred.
  * Reads from the projects table; never throws.
- * @returns {Promise<Array<{key:string, name:string, path:string, exists:boolean}>>}
+ * @returns {Promise<Array<{key:string, name:string, path:string, exists:boolean, vcs:'git'|'none'}>>}
  */
 export async function listProjects() {
-  return readRows().map((e) => ({ key: e.key, name: e.name, path: e.path, exists: isDir(e.path) }));
+  return readRows().map((e) => ({ key: e.key, name: e.name, path: e.path, exists: isDir(e.path), vcs: normalizeVcs(e.vcs) }));
 }
 
 /**
@@ -110,12 +115,15 @@ export function countProjects() {
 }
 
 /**
- * Validate one {name, path} and insert it in its own tx(). Synchronous (node:sqlite).
- * @returns {{key:string, name:string, path:string}} the stored row
- * @throws {Error} on empty name/path, a path that exists but is not a directory,
+ * Validate one {name, path, vcs?} and insert it in its own tx(). Synchronous (node:sqlite): callers
+ * await gitState() first. `vcs` omitted → detectVcs(path) when the path exists, else 'git' (a path
+ * registered before it exists is created and git-inited by its first run).
+ * @returns {{key:string, name:string, path:string, vcs:'git'|'none'}} the stored row
+ * @throws {Error} on empty name/path, a path that exists but is not a directory, a vcs other than
+ *   'git' / 'none', a Folder inside a git work tree it is not the top of (code NESTED_IN_REPO),
  *   a duplicate name (case-insensitive), or a duplicate path/key.
  */
-function insertProject(input) {
+export function insertProject(input, { gitOn = gitAvailable() } = {}) {
   const name = (input && typeof input.name === 'string' ? input.name : '').trim();
   if (!name) throw new Error('project name is required');
   const path = normalizeProjectPath(input && input.path);
@@ -124,6 +132,17 @@ function insertProject(input) {
   // creates it), matching the orchestrator's mkdir-on-run behavior.
   if (existsSync(path) && !isDir(path)) throw new Error('path is not a directory');
 
+  const vcs = input?.vcs != null ? input.vcs : existsSync(path) ? detectVcs(path) : 'git';
+  if (vcs !== 'git' && vcs !== 'none') throw new Error('vcs must be "git" or "none"');
+  if (vcs === 'none') {
+    // Before the same-key check: a nested folder's projectKey is its parent's, so "already registered" would hide why.
+    const nested = nestedRepoOf(path, { gitOn });
+    if (nested) {
+      const err = new Error(nested.partOf ? `Part of ${nested.partOf}` : 'Inside a git repository');
+      err.code = 'NESTED_IN_REPO'; err.repoRoot = nested.repoRoot; err.partOf = nested.partOf;
+      throw err;
+    }
+  }
   const key = projectKey(path);
   const createdAt = new Date().toISOString();
   tx(() => {
@@ -131,13 +150,55 @@ function insertProject(input) {
     const clash = prepare('SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE').get(name);
     if (clash) throw new Error(`a project named "${name}" already exists`);
     // Same path -> same key -> PK collision; report it cleanly rather than crashing.
-    const samePath = prepare('SELECT 1 FROM projects WHERE key = ?').get(key);
-    if (samePath) throw new Error('this project path is already registered');
+    const sameKey = prepare('SELECT 1 FROM projects WHERE key = ?').get(key);
+    if (sameKey) throw new Error('this project path is already registered');
     prepare(
-      'INSERT INTO projects (key, name, path, created_at) VALUES (?, ?, ?, ?)'
-    ).run(key, name, path, createdAt);
+      'INSERT INTO projects (key, name, path, created_at, vcs) VALUES (?, ?, ?, ?, ?)'
+    ).run(key, name, path, createdAt, vcs);
   });
-  return { key, name, path };
+  return { key, name, path, vcs };
+}
+
+const real = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+
+/** The nearest ancestor of `dir` holding a `.git` entry (dir or file), stat only, up to the filesystem root (S53). */
+function nearestGitAncestor(dir) {
+  let p = dirname(dir);
+  for (;;) {
+    if (existsSync(join(p, '.git'))) return p;
+    const up = dirname(p);
+    if (up === p) return null;
+    p = up;
+  }
+}
+
+/**
+ * R8 / L5: a folder without its own .git inside a git work tree it is not the top of → { repoRoot, partOf }, else null.
+ * Git on: canonicalProjectRoot (rev-parse). Git missing: the nearest ancestor holding .git, a stat-only walk (S53).
+ * `gitOn` picks the method, not whether: canonicalProjectRoot answers a plain realpath while git is missing.
+ * `partOf` is the name of the registered project at repoRoot, else null.
+ */
+export function nestedRepoOf(path, { gitOn = gitAvailable() } = {}) {
+  if (!path || !isDir(path) || detectVcs(path) !== 'none') return null;
+  const me = real(path);
+  let root;
+  if (gitOn && gitAvailable()) {
+    root = canonicalProjectRoot(path);
+    if (samePath(root, me)) return null;
+  } else {
+    root = nearestGitAncestor(me);
+    if (!root) return null;
+  }
+  const row = readRows().find((e) => samePath(real(e.path), root));
+  return { repoRoot: root, partOf: row ? row.name : null };
+}
+
+/** The STORED registry row whose path is realpath-equal to `dir` (samePath, S7), or null. */
+export function getProjectByPath(dir) {
+  if (!dir || typeof dir !== 'string') return null;
+  const want = real(resolve(dir));
+  const e = readRows().find((r) => samePath(real(r.path), want));
+  return e ? { key: e.key, name: e.name, path: e.path, vcs: normalizeVcs(e.vcs) } : null;
 }
 
 /**
@@ -150,6 +211,7 @@ function insertProject(input) {
  *   a duplicate name (case-insensitive), or a duplicate path/key.
  */
 export async function addProject(input) {
+  await gitState();
   insertProject(input);
   return listProjects();
 }
@@ -163,9 +225,10 @@ export async function addProject(input) {
  * so a missing folder vanished since it was picked. Never throws for a bad row.
  * @param {Array<{name:string, path:string}>} items
  * @returns {Promise<{results: Array<{index:number, status:'added'|'skipped', name:string,
- *   path:string, key?:string, reason?:string}>, projects: Array<{key,name,path,exists}>}>}
+ *   path:string, key?:string, vcs?:'git'|'none', reason?:string}>, projects: Array<{key,name,path,exists,vcs}>}>}
  */
 export async function addProjects(items) {
+  await gitState();
   const list = Array.isArray(items) ? items : [];
   const results = list.map((item, index) => {
     const name = item && typeof item.name === 'string' ? item.name.trim() : '';
@@ -174,7 +237,7 @@ export async function addProjects(items) {
     try {
       if (path && !existsSync(path)) throw new Error('folder does not exist');
       const row = insertProject({ name, path: rawPath });
-      return { index, status: 'added', key: row.key, name: row.name, path: row.path };
+      return { index, status: 'added', key: row.key, name: row.name, path: row.path, vcs: row.vcs };
     } catch (err) {
       return { index, status: 'skipped', name, path: path || rawPath, reason: err && err.message ? err.message : String(err) };
     }

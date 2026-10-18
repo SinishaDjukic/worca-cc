@@ -9,6 +9,7 @@ import { mountStaticGraph } from './graph/view.mjs';
 import { FLOW_SCALE } from './graph/model.mjs';
 import { engineReportsCost } from '../../src/shared/engine-switch.mjs';
 import { runProgress } from '../../src/shared/run-progress.mjs';
+import { workModeOf } from './run-kind.mjs';
 
 export const PROGRESS_CARD_TYPE = 'progress';
 /** app.js isTerminalStatus's set, verbatim (app.js:4304-4306). */
@@ -78,6 +79,7 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     moreArtifacts: !!(x && x.moreArtifacts),
     pr: x && x.pr && typeof x.pr.url === 'string' && x.pr.url ? x.pr : null,
     archived: !!state.archivedAt,                    // archived: the run folder and its History row are gone
+    ...(workModeOf(state) !== 'git' ? { workMode: workModeOf(state), changes: x && x.changes && typeof x.changes === 'object' ? x.changes : null } : {}),
     ...(state && state.shaping ? { shaping: state.shaping } : {}),
   };
 }

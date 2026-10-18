@@ -183,7 +183,7 @@ const forgetOwned = (abs) => rmSync(ownedEntry(abs), { force: true });
  * The exclude line is `/<cwd's prefix in the work tree><rel>`, from `git rev-parse --show-prefix`: never computed from
  * absolute paths, which differ by realpath on macOS (/var → /private/var).
  */
-export function writeCursorProjectFiles(cwd, files) {
+export function writeCursorProjectFiles(cwd, files, { git: useGit = true } = {}) {
   const entries = Object.entries(files);
   let linked = false;
   try { linked = lstatSync(join(cwd, '.cursor')).isSymbolicLink(); } catch { /* absent */ }
@@ -194,9 +194,10 @@ export function writeCursorProjectFiles(cwd, files) {
   }
   if (!entries.length) return;
   if (linked) throw new Error(`${join(cwd, '.cursor')} is a symlink — worca will not write Cursor's config through it (it may point outside the checkout)`);
-  const inside = git(cwd, ['rev-parse', '--is-inside-work-tree']);
-  if (inside === null && gitAvailable() && gitAbove(cwd)) throw new Error(`git cannot read the repository around ${cwd} — worca will not write Cursor's config blind`);
-  const inTree = inside === 'true';
+  // P1 (S31): { git: false } (a non-git run's copy) — no rev-parse, no gitAbove refusal, no ls-files, no info/exclude.
+  const inside = useGit ? git(cwd, ['rev-parse', '--is-inside-work-tree']) : null;
+  if (useGit && inside === null && gitAvailable() && gitAbove(cwd)) throw new Error(`git cannot read the repository around ${cwd} — worca will not write Cursor's config blind`);
+  const inTree = useGit && inside === 'true';
   if (inTree) {
     const tracked = git(cwd, ['ls-files', '--', ...entries.map(([rel]) => `:(icase)${rel}`)]);
     if (tracked === null) throw new Error(`cannot tell whether the checkout tracks ${entries.map(([rel]) => rel).join(' or ')} — worca will not write Cursor's config blind`);
@@ -416,7 +417,7 @@ export const CURSOR_RESUME_NOT_FOUND_RE = /(?:chat|conversation|session)[^.\n]*n
 export async function runCursorProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, onEvent = () => {}, signal,
   bin = cursorDefaultBin(), resumeSessionId, sandbox, askLockdown, envScrub, envAllowlist, asAgent,
-  mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules,
+  mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, noGit = false,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   if (askLockdown) throw new Error(`${bin}: Cursor cannot be locked down for a chat (no switch for its shell or file tools) — Ask on Cursor is unavailable`);
@@ -444,7 +445,7 @@ export async function runCursorProcess({
     servers = doc && typeof doc.mcpServers === 'object' && doc.mcpServers && Object.keys(doc.mcpServers).length ? doc.mcpServers : null;
     if (servers) files['.cursor/mcp.json'] = `${JSON.stringify(cursorMcpDocument(servers), null, 2)}\n`;
   }
-  writeCursorProjectFiles(cwd, files);
+  writeCursorProjectFiles(cwd, files, { git: !noGit });
 
   const guardOn = hostGuardEnabled();
   const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : systemPrompt;

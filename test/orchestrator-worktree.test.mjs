@@ -97,6 +97,9 @@ test('legacy single-project run: worktree off main with derived worca-cc/ branch
       const state = orch.getState();
       assert.equal(state.target, undefined, 'no workspace discriminator on a single-project run');
       assert.equal(state.workspaceKey, undefined);
+      // P1 (Review Focus #4): a git run's state stays byte-identical — no Folder-run keys
+      assert.equal('workMode' in state, false, 'no workMode on a git run');
+      assert.equal('projectKey' in state, false, 'no stored projectKey on a git run');
       // Phase 1 (run-root plumbing): the per-member maps are initialized in the
       // constructor state literal so getState()'s snapshot shape is stable across modes
       // and targets — a single-project run now carries a ONE-entry map keyed by its own
@@ -107,6 +110,7 @@ test('legacy single-project run: worktree off main with derived worca-cc/ branch
       assert.deepEqual(Object.keys(state.branches), [onlyKey], 'one-entry per-member branches map');
       // The single-project branch object shape is unchanged.
       assert.ok(state.branch && typeof state.branch === 'object');
+      assert.equal('workMode' in state.branch, false, 'no workMode in a git run\'s branch record');
       assert.equal(state.branch.source, 'main');
       assert.match(state.branch.feature, /^worca-cc\//);
       // Pipeline routes to the PROJECT store, never workspaces/.
@@ -169,6 +173,7 @@ test('C1: on stop the worktree dir is removed but the branch is KEPT with partia
 });
 
 // ── C2: nested projectDir must NOT mutate the enclosing repo ──────────────────
+// (an UNREGISTERED nested dir: git mode, L4)
 test('C2: a projectDir nested in an enclosing repo gets its own repo, parent untouched', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'worca-cc-parent-'));
   created.push(parent);
@@ -192,6 +197,21 @@ test('C2: a projectDir nested in an enclosing repo gets its own repo, parent unt
   assert.ok(branchList(sub).includes(feature), `feature branch should live in sub's repo`);
   assert.ok(!branchList(parent).includes(feature), `parent repo must NOT have ${feature}`);
   assert.ok(!branchList(parent).some((b) => b.startsWith('worca-cc/')), 'parent repo must have no worca-cc/* branches');
+});
+
+test('C2 (Folder mode): the same nested dir on a copy gets no .git, the parent repo is left alone, the run root is used even under legacy', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'worca-cc-parent-')); created.push(parent);
+  const gp = (a) => spawnSync('git', a, { cwd: parent });
+  gp(['init', '-q', '-b', 'main']); gp(['config', 'user.email', 't@t']); gp(['config', 'user.name', 't']);
+  await writeFile(join(parent, 'root.txt'), 'root\n'); gp(['add', '-A']); gp(['commit', '-qm', 'init']);
+  const sub = join(parent, 'sub'); await mkdir(sub, { recursive: true }); await writeFile(join(sub, 'app.txt'), 'app\n');
+  const before = gp(['status', '--porcelain']).stdout.toString();
+  const orch = createOrchestrator({ projectDir: sub, prompt: 'x', auto: true, claude: { mock: true }, workMode: 'folder' });
+  assert.equal((await orch.run()).status, 'done');
+  assert.equal(existsSync(join(sub, '.git')), false);
+  assert.ok(!branchList(parent).some((b) => b.startsWith('worca-cc/')));
+  assert.equal(gp(['status', '--porcelain']).stdout.toString(), before, 'the parent work tree is unchanged');
+  assert.match(posix(orch.getState().branch.copyDir), /\/runs\/[0-9a-f]{8}\/repos\//);
 });
 
 test('source branch defaults to actual HEAD when not "main"', async () => {

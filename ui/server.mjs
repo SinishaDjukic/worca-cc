@@ -35,8 +35,10 @@ import {
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   resolveIndexedArtifactFileForRow, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
-  checkoutRecordsFor, retainedWorkFor, runEngineOfRow,
+  checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts,
 } from '../src/core/artifacts.mjs';
+import { FolderApplyError, folderMemberTarget, readFolderChanges, planFolderApply, applyFolderChanges, discardFolderChanges, releaseFolderCopy } from '../src/core/folder-apply.mjs';
+import { readChangesFile, readRegularText, checkFolderSize } from '../src/core/folder-copy.mjs';
 import { mimeForPath, viewerKindFor } from '../src/shared/artifact-kinds.mjs';
 import { attachmentDisposition } from '../src/core/download-filename.mjs';
 import { appendDirection, DIRECTION_MAX_CHARS, DIRECTIONS_KIND, DIRECTIONS_FILE, DIRECTIONS_CLOSED } from '../src/core/directions.mjs';
@@ -50,7 +52,8 @@ import {
   deleteDiffComment, unresolvedCounts, onDiffCommentsChanged, stampSentRunId,
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
-import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
+import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath } from '../src/core/projects.mjs';
+import { effectiveWorkMode, workModeOfRow, workModeForStart } from '../src/core/project-kind.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
 import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
 import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError } from '../src/core/flags.mjs';
@@ -1118,6 +1121,7 @@ function summarizeRuns() {
     workspaceId: r.workspaceId || null,
     projectNames: r.projectNames || null,
     tags: r.tags || [],
+    ...(r.orch?.workMode && r.orch.workMode !== 'git' ? { workMode: r.orch.workMode } : {}),   // P1b S1
   }));
 }
 
@@ -1140,6 +1144,7 @@ function announceRun(entry) {
     startedBy: entry.startedBy || null,
     lastAction: entry.lastAction || null,
     tags: entry.tags || [],
+    ...(entry.orch?.workMode && entry.orch.workMode !== 'git' ? { workMode: entry.orch.workMode } : {}),   // P1b S1
   });
 }
 
@@ -2170,10 +2175,15 @@ async function tagGate(res, body, { projectDir = null, workspaceId = null, start
   return false;
 }
 
+/** P1 (R6 / S9 / S69): the 413 body for a Folder member over the copy limits (or worca's own data folder), else null.
+ *  The name is the registered name, else the basename (S7). P5 calls it per Folder member (S23). */
+async function _folderSizeProblem(dir, { name } = {}) {
+  return checkFolderSize(dir, { name: name ?? getProjectByPath(dir)?.name });
+}
+
 const startRunHandler = async (req, res) => {
   // B2: a draining server starts nothing new (the scan arm and the scheduler come through here too).
   if (DRAIN.on) return res.status(503).json(DRAIN_REFUSAL);
-  if (!gitAvailable()) return gitMissing(res);   // replaced by P1a (workModeForStart decides Folder mode); P3's noProject passes there
   try {
     const body = req.body || {};
     // Scheduled runs: `internal` is set ONLY by fireTicket() (never from HTTP) — the
@@ -2458,6 +2468,7 @@ const startRunHandler = async (req, res) => {
     let orch, entry;
 
     if (hasWorkspace) {
+      if (!(await gitState()).available) return gitMissing(res);   // until P5 (Folder members)
       // ── Workspace target (§2.6) ────────────────────────────────────────────
       const workspaceId = body.workspaceId.trim();
       // A stale bookmark / crafted id reads as "not found", not "bad request".
@@ -2484,7 +2495,7 @@ const startRunHandler = async (req, res) => {
         if (!fs.existsSync(dir)) {
           return badRequest(res, 'workspace member path is missing');
         }
-        if (!isGitRepo(dir)) {
+        if (!isGitRepo(dir) || getProjectByPath(dir)?.vcs === 'none') {
           return badRequest(res, `workspace member is not a git repository: ${dir}`);
         }
         projects.push({ projectDir: dir, projectKey: projectKey(dir), projectName: path.basename(dir) });
@@ -2599,6 +2610,10 @@ const startRunHandler = async (req, res) => {
       const projectDir = resolveProjectDir(body.projectDir);
       if (!projectDir) return badRequest(res, 'projectDir is required');
 
+      // A-m5: a registered project whose effective mode is Folder and whose folder is gone is refused, never recreated
+      // empty (with git installed a Git project keeps today's mkdir + git init). The stored row (S7), read once.
+      const projectRow = getProjectByPath(projectDir); const gitOn = (await gitState()).available;
+      if (projectRow && !fs.existsSync(projectDir) && effectiveWorkMode(projectRow.vcs, gitOn) === 'folder') return badRequest(res, `The folder is missing: ${projectDir}`);
       if (!fs.existsSync(projectDir)) {
         try {
           await fsp.mkdir(projectDir, { recursive: true });
@@ -2607,11 +2622,22 @@ const startRunHandler = async (req, res) => {
         }
       }
 
+      // P1 (CONTRACT §2, U3, L4, S3): a registered Folder project — or any project while git is missing — runs on a
+      // copy; an unregistered dir keeps git mode while git is installed. Replaces P0's start guard for projects.
+      // gitOn and projectRow were read before the mkdir (A-m5): the stored row (S7), never projectKey(dir)
+      const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
+      if (workMode === 'folder') {
+        if (sched?.sourceFromPrevious) return badRequest(res, "a Folder project run cannot start from the previous run's branch");
+        const big = await _folderSizeProblem(projectDir);          // R6 / S9 / S69: before a row, a run root or a ticket
+        if (big) return res.status(413).json(big);
+      }
+      const runKey = projectRow && workMode !== 'git' ? projectRow.key : projectKey(projectDir);   // S52: the run's store key
+
       // M1: never hand an unvalidated sourceBranch to `git worktree add`. Reject a
       // leading-dash (option injection) or unknown ref here so the client gets a
       // clean 400 instead of a mid-run error event. featureBranch is sanitized
       // downstream by sanitizeBranchName, so it needs no ref check.
-      if (branch.source && !(await isValidSourceRef(projectDir, branch.source))) {
+      if (workMode === 'git' && branch.source && !(await isValidSourceRef(projectDir, branch.source))) {
         const r = isSafeBranchName(branch.source)
           ? await resolveSourceRef(projectDir, branch.source, { remote: effectiveSyncSettings(projectKey(projectDir)).remote })
           : { ok: false };
@@ -2646,7 +2672,7 @@ const startRunHandler = async (req, res) => {
 
       // Team total cap (design §7): soft — `pastTeamCap` acknowledges it once per window per home.
       {
-        const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null, by: startedBy });
+        const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null, by: startedBy, discover: workMode === 'git' ? 'if-missing' : false });
         if (gate.blocked) return res.status(gate.code === 'reason_required' ? 400 : 403).json({ error: gate.error, code: gate.code, policy: gate.policy, needsPolicyAck: gate.code === 'team_total' });
       }
       const humanInLoop = bodyHumanInLoop ?? ((await readRunConfig(projectDir)).humanInLoop !== false);
@@ -2668,7 +2694,8 @@ const startRunHandler = async (req, res) => {
         if (runEngine.engine) {
           const probe = await createOrchestratorFor({
             projectDir, prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
-            mcpOptOut: await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 }),
+            workMode, ...(projectRow && workMode !== 'git' ? { projectKey: projectRow.key } : {}),
+            mcpOptOut: await knownMcpOptOut(optOut.list, { kind: 'project', key: runKey, name: path.basename(projectDir), rank: 0 }),
             claude: { mock, ...runEngine },
           });
           const refusal = await probe.engineStartRefusal();
@@ -2676,11 +2703,11 @@ const startRunHandler = async (req, res) => {
         }
         return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
       }
-      const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 });
+      const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: runKey, name: path.basename(projectDir), rank: 0 });
 
       // Scans and defrag never sync: skip the default-branch lookup and settings reads entirely, so
       // the window between the one-defrag-per-scope check and runs.set does not widen.
-      const members1 = syncAllowed ? [{ projectDir, projectKey: projectKey(projectDir), projectName: path.basename(projectDir),
+      const members1 = syncAllowed && workMode === 'git' ? [{ projectDir, projectKey: projectKey(projectDir), projectName: path.basename(projectDir),
         source: branch.source || await resolveDefaultBranch(projectDir) }] : [];
       const sync = runSyncOpts(members1, { allowed: syncAllowed, before: syncBody.before, policy: syncBody.policy,
         scheduled: !!internal, onDiverged: syncBody.onDiverged });
@@ -2691,6 +2718,8 @@ const startRunHandler = async (req, res) => {
 
       orch = await createOrchestratorFor({
         projectDir,
+        workMode,
+        ...(projectRow && workMode !== 'git' ? { projectKey: projectRow.key } : {}),   // S52 / S68: git runs keep projectKey(dir)
         prompt: effectivePrompt,
         ...(effectiveSource ? { source: effectiveSource } : {}),
         title,
@@ -3048,9 +3077,9 @@ function resumeTargetOf(ticket) {
 
 /** The onboarded project dir for a pipelines.project_key, or null. */
 async function projectDirForKey(key) {
-  for (const p of await listProjects()) {
-    if (projectKey(p.path) === key) return p.path;
-  }
+  const list = await listProjects();
+  for (const p of list) if (p.key === key) return p.path;            // the stored key wins (S7)
+  for (const p of list) if (projectKey(p.path) === key) return p.path;
   return null;
 }
 
@@ -3280,6 +3309,7 @@ async function fireTicket(ticket) {
     if (ticket.sourceFromPrevious) {
       // Before the branch checks: isValidSourceRef answers false while git is missing, and "no longer exists" would be stored as a fact.
       if (!gitAvailable()) return { ok: false, error: GIT_MISSING.message, transient: false };
+      if (p.pipelineId && workModeOfRow(findPipelineRowById(p.pipelineId)) !== 'git') return { ok: false, error: "a Folder project run cannot start from the previous run's branch", transient: false };
       const prev = p.pipelineId ? previousBranchesOf(p.pipelineId) : null;
       // Backstop only: the gate already waits for a merge back (pipelineGate). A FORCED ticket skips the gate.
       if (prev && prev.pending) return { ok: false, error: 'the run before it is still merging its work back', transient: true };
@@ -4777,10 +4807,10 @@ async function resumeTargetDirs(saved) {
 async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false, auto = false, resumeCause = null } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
-  if (!gitAvailable()) throw new ResumeError(409, { error: GIT_MISSING.message, code: GIT_MISSING.code });   // replaced by P1a: only state.workMode === 'git'
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
   const saved = readPipelineForResume(pipelineId);
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
+  if (workModeOfRow(saved.row) === 'git' && !(await gitState()).available) throw new ResumeError(409, { error: GIT_MISSING.message, code: GIT_MISSING.code });
   // Resume with another model (a usage limit spent on one provider): every remaining step runs on it. It must be a
   // catalog model the run's harness — the one it resumes on — can run (src/shared/connections.mjs).
   const modelOpts = resumeModelOpts(model, effort, engineOpts.engine || saved.resumePoint?.claude?.engine || 'claude');
@@ -4840,6 +4870,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   if (branch?.worktreeDir && !fs.existsSync(branch.worktreeDir)) {
     throw new ResumeError(400, { error: `worktree missing: ${branch.worktreeDir}` });
   }
+  if (branch?.workMode === 'folder' && branch.copyDir && !fs.existsSync(branch.copyDir)) throw new ResumeError(400, { error: `copy missing: ${branch.copyDir}` });
 
   const { projectDir, workspace } = await resumeTargetDirs(saved);
 
@@ -4869,7 +4900,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   // per run. Both soft — `pastTeamCap` (with an optional / required reason) records the choice
   // and lets the resume through; the local gates above stay never-bypassable.
   const teamTarget = workspace ? { workspaceId: workspace.id } : { projectDir };
-  const totalGate = await checkTeamTotalGate(teamTarget, { pastTeamCap, reason: policyReason, by });
+  const totalGate = await checkTeamTotalGate(teamTarget, { pastTeamCap, reason: policyReason, by, discover: workModeOfRow(saved.row) === 'git' ? 'if-missing' : false });
   if (totalGate.blocked) {
     throw new ResumeError(totalGate.code === 'reason_required' ? 400 : 403, { error: totalGate.error, code: totalGate.code, policy: totalGate.policy, needsPolicyAck: totalGate.code === 'team_total' });
   }
@@ -6434,15 +6465,23 @@ app.delete('/api/runs/:id', async (req, res) => {
   if (liveActive) return res.status(409).json({ error: 'cannot delete a running pipeline' });
 
   try {
-    const report = await archivePipeline({
-      workspaceKey: workspaceId || null,
-      key: workspaceId ? null : (projectKey || null),
-      projectDir: (workspaceId || projectKey) ? null : projectDir,
-      id,
+    const archBy = actorOf(req);
+    // P1: under the run lock, so an Archive never removes a copy an Apply holding the same lock is reading.
+    const report = await withRunLock(id, async () => {
+      // A pending Folder run's terminal opens in its copy (S9); Archive removes the copy, as Discard does: close it first —
+      // but never for a row archivePipeline will refuse as active (v8: the terminals closed, then the answer was 409).
+      const fr = findPipelineRowById(id);
+      if (fr && !fr.archived_at && workModeOfRow(fr) === 'folder'
+        && !['running', 'starting', 'created', 'pausing'].includes(String(fr.status || '').toLowerCase())) await stopMemberServices(id);
+      return archivePipeline({
+        workspaceKey: workspaceId || null,
+        key: workspaceId ? null : (projectKey || null),
+        projectDir: (workspaceId || projectKey) ? null : projectDir,
+        id, by: archBy,
+      });
     });
     if (!report) return res.status(404).json({ error: 'pipeline not found' });
     if (report.archived) {
-      const archBy = actorOf(req);
       appendAuditById(report.id, `Run archived${byActor(archBy)}.`, { actor: archBy });
     }
     emitChanged('pipelines-changed', 'deleted');
@@ -6573,6 +6612,75 @@ app.post('/api/runs/:id/apply-retained', async (req, res) => {
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Folder runs (P1 Task 9): Changes, the apply plan, Apply to folder and Discard. The 8-hex pipeline id, no key; every
+// route resolves the member target first (S27). Not in P0's GIT_ONLY_ROUTES: none of them runs git.
+// ---------------------------------------------------------------------------
+const FOLDER_FINISHED = ['done', 'stopped', 'error'];
+function sendFolderError(res, e) {
+  if (e instanceof FolderApplyError) return res.status(e.status).json({ error: e.message, code: e.code, ...(e.state ? { state: e.state } : {}) });
+  return res.status(500).json({ error: e && e.message ? e.message : String(e) });
+}
+/** 1) the row (404 for an unknown or archived id), 2) its run dir, 3) the member target (S27), 4) for plan / apply /
+ *  discard: a run still finishing or not finished → 409 RUN_NOT_FINISHED. Answers itself and returns null on a refusal. */
+async function folderRouteTarget(req, res, { finished = false } = {}) {
+  const row = findPipelineRowById(req.params.id);
+  if (!row || row.archived_at) { res.status(404).json({ error: 'pipeline not found' }); return null; }
+  const pipelineDir = await runDirForRow(row);
+  const t = folderMemberTarget(readPipelineStateById(row.id), req.query.memberKey || null, pipelineDir);
+  if (finished && (isFinishingRun(row.id) || !FOLDER_FINISHED.includes(row.status))) {
+    res.status(409).json({ error: 'The run has not finished.', code: 'RUN_NOT_FINISHED' });
+    return null;
+  }
+  return { row, pipelineDir, t };
+}
+app.get('/api/runs/:id/changes', async (req, res) => {
+  try {
+    const g = await folderRouteTarget(req, res);
+    if (!g) return;
+    const c = await readFolderChanges(g.t);
+    if (!c) return res.status(404).json({ error: 'no changes' });
+    res.json(c);
+  } catch (e) { sendFolderError(res, e); }
+});
+app.get('/api/runs/:id/changes/patch', async (req, res) => {
+  try {
+    const g = await folderRouteTarget(req, res);
+    if (!g) return;
+    let text;
+    try { text = await readRegularText(g.t.files.patch); } catch { return res.status(404).json({ error: 'no changes' }); }
+    res.type('text/plain').send(text);
+  } catch (e) { sendFolderError(res, e); }
+});
+app.get('/api/runs/:id/apply-plan', async (req, res) => {
+  try {
+    const g = await folderRouteTarget(req, res, { finished: true });
+    if (!g) return;
+    const plan = await planFolderApply(g.t);
+    res.json({ target: plan.target, displayTarget: displayPath(g.t.realDir), add: plan.add, update: plan.update, delete: plan.delete, skipped: plan.skipped });
+  } catch (e) { sendFolderError(res, e); }
+});
+for (const verb of ['apply', 'discard']) {
+  app.post(`/api/runs/:id/${verb}`, async (req, res) => {
+    try {
+      const g = await folderRouteTarget(req, res, { finished: true });
+      if (!g) return;
+      const by = actorOf(req);
+      const out = await withRunLock(g.row.id, async () => {
+        const t = folderMemberTarget(readPipelineStateById(g.row.id), req.query.memberKey || null, g.pipelineDir);   // recomputed under the lock
+        await stopMemberServices(g.row.id);           // the run's terminals (S9 opens them in the copy) and its actions
+        const r = verb === 'apply'
+          ? await applyFolderChanges(t, { pipelineId: g.row.id, by })
+          : await discardFolderChanges(t, { pipelineId: g.row.id, by });
+        await releaseFolderCopy(g.row.id, g.pipelineDir);   // P5 swaps in releaseFolderMember for a workspace member
+        return r;
+      });
+      emitChanged('pipelines-changed', 'updated');
+      res.json(out);
+    } catch (e) { sendFolderError(res, e); }
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Actions (issue #529): check out a finished run, run its setup once, and start the project's
@@ -8598,9 +8706,11 @@ app.get('/api/branches', async (req, res) => {
   }
 });
 
+async function projectsForApi(list) { const { available } = await gitState(); return list.map((p) => ({ ...p, workMode: effectiveWorkMode(p.vcs, available), displayPath: displayPath(p.path) })); }
+
 app.get('/api/projects', async (_req, res) => {
   try {
-    res.json({ projects: await listProjects() });
+    res.json({ projects: await projectsForApi(await listProjects()) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -8619,8 +8729,9 @@ app.post('/api/projects', async (req, res) => {
     // Its team policy at once too (MCP registry spec §11.2): removing a project drops its policy cache, so a re-added or
     // re-cloned project's home must not read "no project here follows" (a greyed Team set) until the background discovery.
     discoverPolicy(normalizeProjectPath(body.path), { force: true }).catch(() => { /* offline: the background discovery retries */ });
-    res.json({ projects });
+    res.json({ projects: await projectsForApi(projects) });
   } catch (err) {
+    if (err?.code === 'NESTED_IN_REPO') return res.status(400).json({ error: err.message, code: err.code, partOf: err.partOf, repoRoot: err.repoRoot });
     // addProject only throws on validation (empty/duplicate/not-a-directory), so
     // a thrown error here is a client error -> 400. (A rare write-time I/O error
     // would also surface as 400; acceptable for this single-user local tool.)
@@ -8655,7 +8766,7 @@ app.post('/api/projects/bulk', async (req, res) => {
         }
       })();
     }
-    res.json({ projects, results });
+    res.json({ projects: await projectsForApi(projects), results });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -8728,7 +8839,7 @@ app.delete('/api/projects', async (req, res) => {
       catch (err) { console.error(`[worca-ui] schedule cleanup failed: ${err && err.message ? err.message : err}`); }
     }
     emitChanged('projects-changed', 'deleted');
-    res.json({ projects });
+    res.json({ projects: await projectsForApi(projects) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -11598,7 +11709,8 @@ async function askRunCardExtras(row) {
     artifacts = rows.map((a) => ({ kind: a.kind, relPath: a.relPath, bytes: a.bytes, nodeId: a.nodeId, cycle: a.cycle }));
     moreArtifacts = total > RUN_CARD_ARTIFACTS;
   } catch { /* the artifact index is best-effort here */ }
-  return { results, artifacts, moreArtifacts, pr: readPrState(row.id) };
+  const { changes } = folderFacts(row);                // S9: a folder row's { state, counts }; git rows carry none
+  return { results, artifacts, moreArtifacts, pr: readPrState(row.id), ...(changes ? { changes } : {}) };
 }
 
 // Ask Worca progress card hydration (plan D9): the run's detail state by pipeline id OR live run id, no store key.

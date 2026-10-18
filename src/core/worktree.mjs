@@ -24,7 +24,7 @@ import { clearStaleIndexLock } from './git-lock.mjs';
 // adds no dependency on the DB layer — worktree.mjs stays DB-free.
 import { runRootMode } from './settings.mjs';
 import {
-  readRunManifest, rmGuarded, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo,
+  readRunManifest, rmGuarded, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo, liveRetainMembers,
 } from './run-manifest.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
 
@@ -707,10 +707,8 @@ export async function sweepRunRoots({
     // still exists. This makes manual recovery/removal self-clearing instead of
     // leaking the run root forever. The DB callback is an independent fallback.
     const manifestRetain = manifest?.retain;
-    const manifestMembers = Array.isArray(manifestRetain?.members) ? manifestRetain.members : [];
-    let retained = manifestMembers.some((m) => m?.worktreeDir && existsSync(m.worktreeDir))
-      ? manifestRetain
-      : null;
+    // P1 (P1b S17): a Folder run's pending copy (`copyDir`) keeps its root the same way.
+    let retained = liveRetainMembers(manifestRetain).length ? manifestRetain : null;
     // Same three-state doctrine as statusOf/membersOf: "retention unknown" must
     // never collapse into "remove", so a lookup throw skips this root untouched
     // and is reported in `failed` + logged loudly (it must NOT abort the sweep —
@@ -791,7 +789,7 @@ export async function sweepRunRoots({
     }
     members = members ?? [];
     for (const m of members) {
-      if (!m?.projectDir || !m?.worktreeDir) continue;
+      if (!m?.projectDir || !m?.worktreeDir || m.workMode === 'folder') continue;   // a copy is no git worktree (P5 S-P5-a)
       await removeWorktree({ projectDir: m.projectDir, worktreeDir: m.worktreeDir, branch: null, force: true });
     }
     const res = await rmGuarded(dir, { worcaHome, pipelineId: basename(dir) });

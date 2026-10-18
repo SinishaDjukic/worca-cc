@@ -16,7 +16,9 @@ bottom](screenshots/architecture.png)
   agents of your workflow; guardrails, costs & budgets, and plugins wrap
   every run.
 - **Claude Code harness** — the engine spawns one headless `claude` process
-  per agent step, inside the run's own git worktree.
+  per agent step, inside the run's own git worktree — or, for a Folder project
+  (or any project on a machine without git), a copy of the folder that you
+  apply back with **Apply to folder**.
 - **Models** — each catalog entry can carry routing env, so the same pipeline
   talks to the Anthropic cloud, a gateway/proxy, an on-prem or dev-machine
   endpoint, or Bedrock/Vertex. See the README's Models section.

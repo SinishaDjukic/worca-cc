@@ -79,11 +79,11 @@ export async function committedMcpStatus(projectDir, { homeDir = homedir() } = {
  * runner names these in `disabledMcpjsonServers`, which Claude Code honors over any approval. Read at each spawn:
  * an agent may have edited the file since the run started. No file, or one Claude Code cannot parse either: none.
  */
-export async function unapprovedMcpjsonNames(cwd, projectDir = cwd, { homeDir = homedir() } = {}) {
+export async function unapprovedMcpjsonNames(cwd, projectDir = cwd, { homeDir = homedir(), git = true } = {}) {
   if (!cwd) return [];
   const { servers } = await readMcpFile(join(cwd, '.mcp.json'));
   if (!servers || !Object.keys(servers).length) return [];
-  const verdict = await mcpjsonApproval(projectDir || cwd, homeDir, () => {});
+  const verdict = await mcpjsonApproval(projectDir || cwd, homeDir, () => {}, { git });
   return Object.keys(servers).filter((n) => verdict(n) !== 'approved').sort();
 }
 
