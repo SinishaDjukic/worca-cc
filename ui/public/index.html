@@ -1297,7 +1297,22 @@
                       <label class="wiz-select-all"><input type="checkbox" id="wiz-select-all" /> Select all</label>
                     </div>
                     <div class="wiz-proj-list" id="wiz-projects"></div>
-                    <small class="hint" id="wiz-step1-hint">Onboard at least two projects to create a workspace.</small>
+                    <!-- Import: repositories that are not projects yet. Scan registers the ticked new rows first. -->
+                    <div class="wiz-import">
+                      <div class="wiz-import-bar">
+                        <button type="button" id="wiz-import-add" class="btn btn-ghost btn-mini">Add…</button>
+                        <span class="wiz-import-lead">repositories, a folder of repositories or a <code>.code-workspace</code> file</span>
+                        <label class="wiz-import-deep"><input type="checkbox" id="wiz-import-deep" /> Look two levels deep</label>
+                      </div>
+                      <textarea id="wiz-import-paste" class="textarea wiz-import-paste" rows="2" spellcheck="false"
+                        aria-label="Paths to add, one per line" placeholder="…or paste paths, one per line"></textarea>
+                      <div class="wiz-import-bar">
+                        <button type="button" id="wiz-import-paste-add" class="btn btn-ghost btn-mini">Add paths</button>
+                        <small class="hint" id="wiz-import-hint" role="status" aria-live="polite"></small>
+                      </div>
+                      <div class="wiz-proj-list wiz-import-list" id="wiz-import-list" role="group" aria-label="Found repositories" hidden></div>
+                    </div>
+                    <small class="hint" id="wiz-step1-hint">Pick at least two projects, or bring repositories in with Add… or the paste box above.</small>
                     <div class="wiz-size-note" id="wiz-size-note" role="status" aria-live="polite" hidden></div>
                   </div>
                 </div>
@@ -2026,6 +2041,41 @@
               <div class="add-project-actions" style="margin-top:14px">
                 <button type="button" id="schedDefaultsReset" class="btn btn-ghost btn-mini">Use defaults</button>
                 <button type="button" id="schedDefaultsSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+            </section>
+
+            <!-- Wait for the network (network-wait.mjs): a step that loses the network waits for its
+                 endpoint and retries by itself, up to the longest wait from the first failure. -->
+            <section class="card settings-card" id="network-wait-settings-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Wait for the network</h2>
+                  <button type="button" class="info-tip" aria-label="About waiting for the network">i<span class="tip-content hidden">
+                    When a step loses the network (internet down, provider unreachable), worca checks the endpoint that step uses and retries by itself once it answers. A run paused that way, or stopped by a restart while it waited, is resumed when the network is back — but only within the longest wait, counted from the first failure. Cost caps, usage limits, sign-in problems and your own pauses are never resumed.
+                  </span></button>
+                </div>
+              </div>
+              <label class="switch-row" id="networkWaitEnabledRow">
+                <input id="networkWaitEnabled" data-setting="networkWait.enabled" class="sw-input" type="checkbox" checked>
+                <span class="switch"></span><span class="txt">Wait for the network to come back</span>
+              </label>
+              <div class="field" style="margin-top:14px">
+                <label for="networkWaitMaxMin">Longest wait</label>
+                <div class="select-wrap">
+                  <select id="networkWaitMaxMin" data-setting="networkWait.maxWaitMin" class="select">
+                    <option value="30">30 minutes</option>
+                    <option value="60">1 hour</option>
+                    <option value="120">2 hours</option>
+                    <option value="240">4 hours</option>
+                    <option value="480">8 hours</option>
+                    <option value="720">12 hours</option>
+                    <option value="1440">24 hours</option>
+                  </select>
+                </div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="networkWaitReset" class="btn btn-ghost btn-mini">Use defaults</button>
+                <button type="button" id="networkWaitSave" class="btn btn-primary btn-mini">Save</button>
               </div>
             </section>
 

@@ -617,3 +617,43 @@ test('controller: a card\'s own Stop that lands while a read is in flight is rea
   assert.equal(built.el.dataset.runStatus, 'stopped');
   ctl.destroy();
 });
+
+test('controller: a fix card\'s outcome patch reaches the same card element (handle.blockChanged), with the pipeline id', async () => {
+  const store = fakeStore();
+  const { doc, ctx } = env();
+  const ctl = createRunCardController({ runStore: store, tickMs: 0 });
+  const FIX = { ...BLOCK, card: { ...BLOCK.card, pipelineId: null, fix: { prUrl: 'https://x/pull/7', triggerLabel: 'Failing checks' } } };
+  const built = ctl.build(FIX, ctx);
+  doc.body.appendChild(built.el);
+  assert.equal(typeof built.handle.blockChanged, 'function');
+  built.handle.blockChanged({ ...FIX, card: { ...FIX.card, pipelineId: 'abcd1234', fix: { ...FIX.card.fix, outcome: { kind: 'failed', reason: 'fix-failed' } } } });
+  assert.equal(built.el.querySelector('.chat-rc-fix-out').textContent, 'Not pushed: the fix run failed');
+  assert.ok(built.el.querySelector('.ask-rc-sub').textContent.includes('#abcd1234'), 'the pipeline id from the patch');
+  built.dispose(); ctl.destroy();
+});
+
+test('panel: a PR fix-run card on a system row renders as the chat run card; its outcome frame repaints the same element', async () => {
+  _resetChatExtensions();
+  const store = fakeStore();
+  registerChatRunCard({ runStore: store, tickMs: 0 });
+  const TID = 'ask_00000002';
+  const FIX = { kind: 'card', id: 'card_0000f001', state: 'tracked', card: { type: 'progress', pipelineId: null, runId: 'run-uuid-1', projectKey: 'proj-00000001',
+    workspaceId: null, title: 'Fix PR #7 feedback', label: 'proj', status: 'starting', fix: { prUrl: 'https://x/pull/7', triggerLabel: 'Failing checks' } } };
+  const row = (blocks) => ({ id: 'askm_0000f001', threadId: TID, seq: 2, role: 'system', text: 'PR watch started a fix run on https://x/pull/7: Failing checks', blocks, status: null, createdAt: 't' });
+  const snap = { thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
+    messages: [row([FIX])], attachments: [], runLinks: [{ runId: 'run-uuid-1', pipelineId: null, cardId: 'card_0000f001', status: 'starting', phase: null }], worktrees: [], inFlight: null };
+  const ctx = makePanel({ fetchHandler: (url) => ({ ok: true, status: 200, json: async () => (url.startsWith(`/api/ask/threads/${TID}`) ? snap : {}) }) });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  ctx.flush();
+  const card = ctx.doc.querySelector('.ask-msg-system .chat-rc');
+  assert.ok(card, 'the card renders on the system row');
+  assert.equal(card.querySelector('.ask-rc-kicker').textContent, 'PR fix run');
+  const settled = { ...FIX, card: { ...FIX.card, pipelineId: 'abcd1234', fix: { ...FIX.card.fix, outcome: { kind: 'pushed', sha: 'abc1234', stopped: null, fixRuns: 1 } } } };
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: row([settled]), unread: true });
+  ctx.flush();
+  const again = ctx.doc.querySelector('.ask-msg-system .chat-rc');
+  assert.equal(again, card, 'blockChanged kept the element');
+  assert.equal(again.querySelector('.chat-rc-fix-out').textContent, 'Pushed the fix (abc1234)');
+});

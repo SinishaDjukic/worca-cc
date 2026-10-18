@@ -1870,6 +1870,18 @@ export function readPipelineForResume(pipelineId) {
   return { row, resumePoint, steps: state?.steps || [], state };
 }
 
+/** Paused / interrupted runs whose resume point carries a network outage (the server's network watch). */
+export function listNetworkWaitRuns() {
+  const rows = getDb().prepare(`SELECT id, status, resume_point FROM pipelines
+    WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL
+      AND json_extract(resume_point, '$.network.since') IS NOT NULL`).all();
+  const out = [];
+  for (const r of rows) {
+    try { out.push({ id: r.id, status: r.status, resumePoint: JSON.parse(r.resume_point) }); } catch { /* a corrupt point is never resumed */ }
+  }
+  return out;
+}
+
 /**
  * Map a live state object to the named params of the pipelines UPSERT. JSON columns
  * are stringified here; the workspace superset collapses into workspace_meta.

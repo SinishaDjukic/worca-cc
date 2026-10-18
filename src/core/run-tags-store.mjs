@@ -42,9 +42,9 @@ export function insertRunTags(pipelineId, tags) {
   return clean;
 }
 
-/** A human edit. Throws { code: 'BAD_TAGS' } on invalid input. A no-op writes nothing. */
+/** A human edit. New tags must be key:value; one already on the run passes as stored. Throws { code: 'BAD_TAGS' }. A no-op writes nothing. */
 export function editRunTags(pipelineId, input, { actor = null, now = new Date() } = {}) {
-  const { tags, errors } = normaliseTags(input);
+  const { tags, errors } = normaliseTags(input, { strict: true, keep: readRunTags(pipelineId) });
   if (errors.length) throw Object.assign(new Error(errors.join('; ')), { code: 'BAD_TAGS' });
   let before = [];
   let changed = false;
