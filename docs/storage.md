@@ -13,6 +13,8 @@ project's working tree, so nothing is ever committed to your repo.
   settings.json                         { root } only — the bootstrap that locates the DB
   worca-cc.db  (+ -wal, -shm)           ALL structured state (SQLite, WAL mode)
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
+  store/no-project-00000000/            runs without a project: one store, the History group "No project";
+                                        a run's work/ moves into its pipeline folder as work/ when it ends
   store/<projectKey>/
     plans/      <DD-MM-YY>-<name>.md, -v2.md, ...   (plan markdown + refinements)
     reviews/    <DD-MM-YY>-<name>-impl-review.md     (review markdown)
@@ -68,7 +70,8 @@ project's working tree, so nothing is ever committed to your repo.
   runs/<pipelineId>/                    detached run roots: run.json, repos/<projectKey>/ worktrees;
                                         a Folder run's repos/<projectKey>/ is a copy of the folder,
                                         kept (run.json retain "folder-apply") until Apply to folder,
-                                        Discard or Archive
+                                        Discard or Archive; a run without a project works in
+                                        runs/<pipelineId>/work/ (its cwd, no git)
   metrics/
     repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-metrics
     outbox/<owner~repo>/*.jsonl  .lock   pending run records (durability point) + cross-process lock
@@ -128,7 +131,8 @@ existence is indexed in the database).
   It is **stable across all git worktrees of the same repo**, so every
   worktree shares one history. A plain folder's key is its realpath's;
   projects.vcs ('git' | 'none', schema v61) records the kind once, at add
-  time, and never changes it on its own.
+  time, and never changes it on its own. A run without a project uses the
+  reserved key `no-project-00000000`; no project row is ever made for it.
 
 Because state is machine-wide and keyed by repo identity, the web UI has an
 **"All projects"** view (and `GET /api/history`) that lists runs across every

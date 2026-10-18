@@ -28,7 +28,8 @@ import {
   normalizeProjectPath,
   getProjectByPath,
 } from '../core/projects.mjs';
-import { projectKey } from '../core/store.mjs';
+import { projectKey, isNoProjectKey, noProjectWorkDir, isNoProjectWorkDir } from '../core/store.mjs';
+import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal, formatResumeHints } from './render.mjs';
 // Ask forms (spec §8): the prompt FORMATTING lives in render.mjs too (a second import
@@ -1486,6 +1487,8 @@ async function cmdResume(argv) {
           projects: meta.projects || [],
         }
       : undefined;
+  } else if (isNoProjectKey(saved.row.project_key)) {
+    projectDir = noProjectWorkDir(saved.row.id);   // P3: the run's own work folder, never the registry or the cwd
   } else {
     const list = await listProjects();
     for (const p of list) if (p.key === saved.row.project_key) { projectDir = p.path; break; }   // the stored key first (A-m7)
@@ -3350,6 +3353,8 @@ async function main() {
   }
 
   const projectDir = resolve(flags.project);
+  // P3-D11: a run's work folder (named by --project, or the cwd) is never a project — refused before a row or git.
+  if (isNoProjectWorkDir(projectDir)) fail(NO_PROJECT_ERRORS.register);
   // P1: decided once, here — also for a schedule made without --wait (it never calls buildOrch).
   const cliMode = await cliWorkMode(projectDir);
   if (cliMode.workMode === 'folder' && flags.sourceFromPrevious) fail("a Folder project run cannot start from the previous run's branch");

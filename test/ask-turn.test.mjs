@@ -2005,3 +2005,23 @@ test('Ask: a build_workflow RESULT becomes a proposed workflow-build card stampe
   assert.equal(cards.length, 1);
   assert.deepEqual([cards[0].card.type, cards[0].card.sessionId, cards[0].card.projectKey, cards[0].card.thenRun], ['workflow-build', null, 'demo-00000001', true]);
 });
+
+test('P3: a noProject proposal in a pinned chat is validated without the pin and lands as a none card', async () => {
+  const s = seed();
+  let seen = null;
+  const { turn } = makeTurn(s, { pinnedScope: { projectKey: 'demo-00000001' } }, {
+    validateProposal: async (input) => {
+      seen = input;
+      return { ok: true, card: input.noProject === true && !input.projectKey
+        ? { target: 'none', projectKey: null, workspaceId: null }
+        : { target: 'project', projectKey: input.projectKey, workspaceId: null } };
+    },
+    runClaudeImpl: proposeRun({ brief: 'make a deck', noProject: true }),
+  });
+  await turn.run();
+  assert.equal('projectKey' in seen, false, 'the pin never fills a noProject proposal');
+  assert.equal(seen.noProject, true);
+  const block = getMessage(s.asst.id).blocks.find((b) => b.kind === 'card');
+  assert.equal(block.card.target, 'none');
+  assert.equal(block.card.projectKey, null);
+});

@@ -18,7 +18,8 @@ bottom](screenshots/architecture.png)
 - **Claude Code harness** — the engine spawns one headless `claude` process
   per agent step, inside the run's own git worktree — or, for a Folder project
   (or any project on a machine without git), a copy of the folder that you
-  apply back with **Apply to folder**.
+  apply back with **Apply to folder** — or, for a run with **No project**, the run's own
+  `work/` folder, whose files become its Artifacts.
 - **Models** — each catalog entry can carry routing env, so the same pipeline
   talks to the Anthropic cloud, a gateway/proxy, an on-prem or dev-machine
   endpoint, or Bedrock/Vertex. See the README's Models section.
@@ -72,7 +73,8 @@ one sub-agent per plan task (cap 8).
 `workspaceId` or `projectKey` (at most one; neither ⇒ the pinned scope). The chat's repo
 look checks out up to 8 members detached under a throwaway dir (`auto-look-*` in
 `<worcaHome>/tmp/ask`), and a boot sweep removes looks a crashed chat child left behind
-after one hour.
+after one hour. `propose_run` also takes `noProject: true` (a run in its own folder; no
+schedule, chain or slices yet).
 
 **Agents, scripts and graphs from Ask Worca.** Ask has the Workflows chat's composer tools minus the canvas:
 `draft_agent` and `draft_script` put a draft card in the chat (nothing is written until the user presses Save, or saves

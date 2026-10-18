@@ -10,7 +10,7 @@ work, and a state machine runs the agents of a workflow in sequence — by
 default **Clarify → Plan → Refine → Implement → Review** — looping until the
 work clears quality gates, pausing to ask *you* the questions that matter, and
 keeping every run isolated in its own git worktree and branch — or, for a plain
-folder, on a copy you apply back with **Apply to folder**. Pick **Auto**
+folder, on a copy you apply back with **Apply to folder**; with **No project**, in a folder of its own. Pick **Auto**
 and Worca chooses the workflow for the task, draw your own in **Workflows** (or
 ask its chat to build it), or start the shipped **Presentation** workflow to turn a brief into
 a slide deck, or **Architecture (C4)** to keep a diagram of your code that
@@ -78,6 +78,8 @@ A run in a Folder project works on a copy: in place of **Diff** and **Actions** 
 has **Changes** (every file it added, updated or deleted, at every level), and you
 land it with **Apply to folder** (files changed in the folder since the run started
 are skipped and listed in the dialog) or **Discard**.
+A run with **No project** works in its own folder: it opens on **Artifacts** at every
+level and has no **Diff**, **Changes** or **Actions**.
 
 ![A finished run, "CSV export for contacts", on its Diff tab: 4 files changed (+36 −0) in a file tree beside the highlighted patch of src/routes/contacts.js, with the run's worca-cc/ branch, its time and cost, and a Create PR button](docs/screenshots/run-detail.png)
 

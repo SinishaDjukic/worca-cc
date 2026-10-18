@@ -4,11 +4,23 @@
 // a downstream reader. No verdict.
 import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 export default async function ({ outputs, params, ctx, log }) {
   const explicit = typeof params.ref === 'string' && params.ref.trim() ? params.ref.trim() : '';
   const stat = params.stat === true;
   const repos = Array.isArray(ctx.repos) && ctx.repos.length ? ctx.repos : null;
+  // P3: a run without a project (or a Folder run) has no repository. git is never run there: from a work folder under a
+  // worcaHome that sits inside a repository it would diff THAT repository into the run's artifacts.
+  if (!repos && ctx.workMode && ctx.workMode !== 'git') {
+    const out = outputs.diff?.path;
+    if (!out) throw new Error('the diff output has no path');
+    // A Folder run has a diff all the same: P1 writes its copy's changes to <pipelineDir>/changes.patch.
+    writeFileSync(out, ctx.workMode === 'folder' && ctx.pipelineDir
+      ? `# Diff\n\nThis run works on a copy of the project's folder, with no git: its changes are in \`${join(ctx.pipelineDir, 'changes.patch')}\`.\n`
+      : '# Diff\n\nThis run has no repository, so there is no diff.\n', 'utf8');
+    return { summary: 'no repository' };
+  }
   // An explicit ref applies to every member; otherwise each member diffs from its own base —
   // ctx.checkpointRef is the primary's and means nothing in another member's repository.
   // A member with no base of its own diffs its working tree (no ref): falling back to the primary's

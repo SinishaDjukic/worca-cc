@@ -77,6 +77,7 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     results: x && x.results && typeof x.results === 'object' ? x.results : null,
     artifacts: x && Array.isArray(x.artifacts) ? x.artifacts : null,
     moreArtifacts: !!(x && x.moreArtifacts),
+    artifactsTotal: x && Number.isInteger(x.artifactsTotal) ? x.artifactsTotal : null,   // P3: the run card's Artifacts · <n>
     pr: x && x.pr && typeof x.pr.url === 'string' && x.pr.url ? x.pr : null,
     archived: !!state.archivedAt,                    // archived: the run folder and its History row are gone
     ...(workModeOf(state) !== 'git' ? { workMode: workModeOf(state), changes: x && x.changes && typeof x.changes === 'object' ? x.changes : null } : {}),

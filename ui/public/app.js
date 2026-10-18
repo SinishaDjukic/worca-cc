@@ -82,7 +82,7 @@ import { createLogDrawer } from './log-drawer.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
-import { workModeOf, isGitRun, isFolderRun, projectKind, kindChip, RUN_KIND_CHIP } from './run-kind.mjs';
+import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, chainProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
@@ -632,6 +632,9 @@ const el = {
   targetRadios: $$('input[name="target"]'),
   targetProjectPane: $('#target-project-pane'),
   targetWorkspacePane: $('#target-workspace-pane'),
+  targetNonePane: $('#target-none-pane'),
+  noProjectWorkDir: $('#noProjectWorkDir'),
+  needsRepoNote: $('#needsRepoNote'),
   workspaceSelect: $('#workspaceSelect'),
   wsMembers: $('#ws-members'),
   sourceBranchWrap: $('#sourceBranchWrap'),
@@ -3930,6 +3933,7 @@ async function loadWorkflowsInto(selectId) {
     // Memory defragment holds exactly one scope, and a workspace run has no single project to
     // resolve `project` against (the server 400s) — so it is disabled on a workspace target.
     if (wf.id === MEMORY_DEFRAG_WORKFLOW_ID && isWorkspace) { o.disabled = true; o.title = 'Memory defragment runs on one project'; }
+    o.dataset.needsRepo = wf.needsRepo ? '1' : '';
     sel.appendChild(o);
   });
   // Fall back to Default if the wanted id is gone (a deleted workflow). Memory defragment holds one
@@ -3937,6 +3941,7 @@ async function loadWorkflowsInto(selectId) {
   const known = list.some((wf) => wf.id === want);
   state.workflowId = !known || (isWorkspace && want === MEMORY_DEFRAG_WORKFLOW_ID) ? 'wf_default' : want;
   sel.value = state.workflowId;
+  paintNeedsRepoNote();
   await renderWorkflowConfig(state.workflowId);
 }
 
@@ -4083,7 +4088,7 @@ async function renderWorkflowConfig(workflowId) {
 // previously an edit was accepted, silently dropped by the save, and then
 // reverted by the re-render, which read as "the control doesn't work".
 function agentsEditable() {
-  return !!selectedProjectPath();
+  return state.runTarget !== 'none' && !!selectedProjectPath();
 }
 
 /** Disable (or re-enable) every control in the accordion. */
@@ -4112,7 +4117,7 @@ function setAgentsHeader(rows, workflowName) {
   if (el.agentsWorkflow) el.agentsWorkflow.textContent = workflowName || '';
   if (el.agentsSummary) {
     el.agentsSummary.textContent = !rows ? ''
-      : (editable ? agentsHeaderText(rows) : 'select a project to change these');
+      : (editable ? agentsHeaderText(rows) : state.runTarget === 'none' ? '' : 'select a project to change these');
     el.agentsSummary.classList.toggle('muted', !editable);
   }
   const anyModified = editable && !!rows && rows.some((r) => r.modified);
@@ -4134,7 +4139,7 @@ function paintHiddenSettings() {
   const note = document.getElementById('level-hidden-note');
   if (!note) return;
   const sourceIsPrompt = !!document.querySelector('#source-seg [data-src="prompt"].on');
-  keepVisible(document.getElementById('target-field'), state.runTarget === 'workspace');
+  keepVisible(document.querySelector('#target-seg [data-target="workspace"]'), state.runTarget === 'workspace');   // P3: the field shows at every level
   keepVisible(document.getElementById('source-field'), !sourceIsPrompt);
   keepVisible(document.getElementById('branch-fields'), !!(el.featureBranch && el.featureBranch.value.trim()));
   const items = [];
@@ -4459,6 +4464,7 @@ function renderFeedbackRows(rows) {
 if (el.workflowSelect) {
   el.workflowSelect.addEventListener('change', async () => {
     state.workflowId = el.workflowSelect.value || 'wf_default';
+    paintNeedsRepoNote();
     saveActiveWorkflow(state.workflowId);
     await renderWorkflowConfig(state.workflowId);
   });
@@ -6375,7 +6381,7 @@ function planBodyDeps(ctx) {
       if (file) openRunArtifactPopup({ pipelineId: r.pipelineId || null, runId: r.runId }, { relPath: file, kind: 'plan' });
     },
     // makeRun defaults a missing title to '(untitled)': never prefill that string.
-    openInNewRun: (text) => openNewPipeline({ target: 'project', projectDir: r.projectDir, workflowId: 'wf_auto',
+    openInNewRun: (text) => openNewPipeline({ ...(isNoProjectRun(r) ? { target: 'none' } : { target: 'project', projectDir: r.projectDir }), workflowId: 'wf_auto',
       promptMarkdown: text, title: r.title && r.title !== '(untitled)' ? r.title : '' }),
     savePlan: (overwrite) => fetch(runUrl('/plan/save'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ overwrite }) }).then(async (res) => ({ status: res.status, body: await safeJson(res) }))
@@ -7574,6 +7580,7 @@ function acknowledgeRun(runId) {
 }
 
 function selectedProjectPath() {
+  if (state.runTarget === 'none') return '';   // P3: a run without a project reads no project's config, policy or branches
   const v = el.projectSelect.value;
   return !v || v === '__add__' ? '' : v;
 }
@@ -7589,6 +7596,7 @@ function selectedProjectRow() {
 }
 // 'folder' when the run would work on a copy: a Folder project, or any project while git is missing (U3). P3 extends it.
 function formWorkMode() {
+  if (state.runTarget === 'none') return 'none';
   if (state.runTarget === 'workspace') return ''; const p = selectedProjectRow(); return p && (projectKind(p) === 'folder' || !gitOn()) ? 'folder' : '';
 }
 // Sets or deletes #run-form[data-work-mode] (style.css hides the Branches block and every git-only control) and returns the mode.
@@ -7603,10 +7611,14 @@ async function loadProjects(selectName) {
     const res = await fetch('/api/projects');
     const data = await safeJson(res);
     state.projects = data && Array.isArray(data.projects) ? data.projects : [];
+    state.projectsLoaded = !!data && Array.isArray(data.projects); state.runsRoot = (data && data.runsRoot) || ''; state.runsRootDisplay = (data && data.runsRootDisplay) || state.runsRoot;
   } catch {
     state.projects = [];
   }
+  paintNoProjectWorkDir();
   renderProjectOptions(selectName);
+  // P3-D7: the automatic No project default (no stored choice, no project at boot) gives way to the first project.
+  if (state.runTargetAuto && state.runTarget === 'none' && state.projects.length) setRunTarget('project', { persist: false });
   scheduleRunsPaint();
 }
 
@@ -8473,15 +8485,28 @@ const wsBasename = (p) => {
 
 // Toggle Project vs Workspace target. Persists the choice; in workspace mode
 // lazy-loads options and re-points the config panel at the built-in models.
-function setRunTarget(target) {
-  const t = target === 'workspace' ? 'workspace' : 'project';
+const RUN_TARGETS = ['none', 'project', 'workspace'];
+// The read-only Works in value: where a run without a project works (the canvas words, home-relative — S22).
+function paintNoProjectWorkDir() {
+  if (!el.noProjectWorkDir) return;
+  const root = state.runsRootDisplay || ''; const sep = root.includes('\\') ? '\\' : '/';
+  el.noProjectWorkDir.value = root ? `${root}${sep}<new run>${sep}work` : '';
+}
+function paintNeedsRepoNote() {
+  if (!el.needsRepoNote) return;
+  const o = el.workflowSelect && el.workflowSelect.selectedOptions[0];
+  el.needsRepoNote.hidden = !(state.runTarget === 'none' && o && o.dataset.needsRepo === '1');
+}
+function setRunTarget(target, { persist = true } = {}) {
+  const t = RUN_TARGETS.includes(target) ? target : 'project';
   state.runTarget = t;
+  state.runTargetAuto = !persist;   // P3-D7: an automatic choice (never the user's) may change when projects arrive
   paintFormWorkMode();
   showEngineRefusal(null); // the refusal and any consent were for the OLD target's context
   state.engineTouched = false;
-  localStorage.setItem(LAST_TARGET_KEY, t);
+  if (persist) localStorage.setItem(LAST_TARGET_KEY, t);
   // A workspace run has no project layer: its default engine is the user's (review I3).
-  void loadRunDefaults(t === 'workspace' ? '' : (state.projectDir || ''));
+  void loadRunDefaults(t === 'workspace' || t === 'none' ? '' : (state.projectDir || ''));
   schedulePolicyLine();                     // debounced: reads the target selects once they settle
 
   // Segmented buttons + hidden radios (source of truth read at submit).
@@ -8496,6 +8521,13 @@ function setRunTarget(target) {
   // Panes are mutually exclusive; only the visible pane's value is read at submit.
   if (el.targetProjectPane) el.targetProjectPane.classList.toggle('hidden', t !== 'project');
   if (el.targetWorkspacePane) el.targetWorkspacePane.classList.toggle('hidden', t !== 'workspace');
+  if (el.targetNonePane) el.targetNonePane.classList.toggle('hidden', t !== 'none');
+  paintNeedsRepoNote();
+  if (t === 'none') { paintNoProjectWorkDir(); setPendingSchedule(null); }
+  // U13: Memory defragment runs with No project on global memory only (CONTRACT §3).
+  const projectScopeBtn = el.memoryScopeSeg && el.memoryScopeSeg.querySelector('button[data-scope="project"]');
+  if (projectScopeBtn) projectScopeBtn.hidden = t === 'none';
+  if (t === 'none' && state.memoryScope === 'project') setMemoryScope('global');
 
   // Source-branch field: in workspace mode swap the single dropdown for one
   // per-project dropdown each defaulting to that project's current branch (HEAD).
@@ -13611,7 +13643,7 @@ el.form.addEventListener('submit', async (e) => {
 
   // Target branch (§5.4 mutual exclusivity): workspace mode sends {workspaceId}
   // and NO projectDir; project mode sends {projectDir} and NO workspaceId.
-  const target = state.runTarget === 'workspace' ? 'workspace' : 'project';
+  const target = state.runTarget === 'workspace' || state.runTarget === 'none' ? state.runTarget : 'project';
   let projectDir = '';
   let workspaceId = '';
   let workspaceName = '';
@@ -13623,7 +13655,7 @@ el.form.addEventListener('submit', async (e) => {
     workspaceName = (ws && ws.name) || '';
     workspaceProjectNames = ws && Array.isArray(ws.projectPaths)
       ? ws.projectPaths.map(projectName) : null;
-  } else {
+  } else if (target === 'project') {
     projectDir = selectedProjectPath();
     if (!projectDir) return fieldError(el.projectSelect, 'Select a project first (or add one).');
   }
@@ -13692,6 +13724,8 @@ el.form.addEventListener('submit', async (e) => {
     // body literal sets `sourceBranch: ... || undefined`, so the key still EXISTS
     // with value undefined; delete it so `'sourceBranch' in body` is false.)
     delete body.sourceBranch;
+  } else if (target === 'none') {
+    body.noProject = true;
   } else {
     body.projectDir = projectDir;
   }
@@ -13744,6 +13778,7 @@ el.form.addEventListener('submit', async (e) => {
     if (schedSync && (schedSync.onDiverged === 'origin' || schedSync.onDiverged === 'fail')) body.syncOnDiverged = schedSync.onDiverged;
   }
   if (!gitOn()) for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
+  if (target === 'none') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];   // schedule fields stay: the server's 400 shows in the card
   if (target === 'project' && el.form.dataset.workMode === 'folder') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
 
   // #555: withButton owns #start-btn from here, and reads undefined as success, so every exit
@@ -13841,7 +13876,8 @@ el.form.addEventListener('submit', async (e) => {
 
       // begin tracking the new run (creates a local model + switches to Running)
       beginRun(data.runId, projectDir, title,
-        target === 'workspace' ? { workspaceId, workspaceName, projectNames: workspaceProjectNames } : {});
+        target === 'workspace' ? { workspaceId, workspaceName, projectNames: workspaceProjectNames }
+          : target === 'none' ? { workMode: 'none', pipelineId: data.pipelineId } : {});   // P3: painted as No project before its first frame
       // Re-enable the form so more runs can be started concurrently — unless the
       // budget just went over, in which case idleDisabled keeps Start disabled.
       startSubmitInFlight = false;
@@ -13938,6 +13974,7 @@ function setPendingSchedule(pick) {
 }
 /** Schedules › Schedule a run (#new/schedule): pick the time first, then describe the task. */
 async function openScheduleForNew() {
+  if (state.runTarget === 'none') setRunTarget('project', { persist: false });   // P3 (L7): a run without a project cannot be scheduled; the stored choice stays
   const el0 = el.prompt;
   const titleEl = document.getElementById('title');
   const runTitle = titleEl && typeof titleEl.value === 'string' ? titleEl.value.trim() : '';
@@ -14100,6 +14137,8 @@ function beginRun(runId, projectDir, title, opts = {}) {
     workspaceId: opts.workspaceId || undefined,
     workspaceName: opts.workspaceName || undefined,
     projectNames: Array.isArray(opts.projectNames) && opts.projectNames.length ? opts.projectNames : undefined,
+    workMode: opts.workMode || undefined,        // P3: 'none' for a run without a project (undefined: the frames say)
+    pipelineId: opts.pipelineId || undefined,
   });
   hideViewer();
   updateNavCounts();
@@ -22856,7 +22895,7 @@ function paintHdGlance(screen, record, data) {
   const runName = (hdTitle && hdTitle.textContent) || record.title || '';
   screen.querySelector('.hd-bar .rd-bar-title').textContent = runName;
   const { day, clock } = splitDateStamp(st.startedAt || record.startedAt || record.mtime);
-  paintPageHead(glance, runName, [projectName(record.projectDir), [day, clock].filter(Boolean).join(' ')]);
+  paintPageHead(glance, runName, [mode === 'none' ? '' : projectName(record.projectDir), [day, clock].filter(Boolean).join(' ')]);
   paintRunKindChip(glance.querySelector('.rd-page-meta'), mode);
 
   paintGlanceStatus(glance, copy);
@@ -22918,8 +22957,9 @@ function paintHdAfter(screen, record, data = null) {
   // run is restored — hiding beats a late failure in the New-pipeline form.
   const archived = !!(data && data.state && data.state.archivedAt);
   const id = record && record.id ? record.id : null;
-  btn.hidden = !id || archived;
-  btn.onclick = (id && !archived) ? () => { location.hash = `#new/after/${id}`; } : null;   // never a handler over a null record
+  const noProject = isNoProjectRun({ ...(record || {}), state: data && data.state });
+  btn.hidden = !id || archived || noProject;
+  btn.onclick = (id && !archived && !noProject) ? () => { location.hash = `#new/after/${id}`; } : null;   // never a handler over a null record
   const status = (record && record.status) || (data && data.state && data.state.status) || '';
   const title = runAfterTitle(String(status).toLowerCase());
   btn.title = title;
@@ -24224,7 +24264,9 @@ function setupHdActions(screen, record, data) {
       // declares white-space:pre-line, so the blank line renders as a paragraph.
       const ok = await confirmModal({
         title: 'Archive this run?',
-        message: `${r.title || r.id}\n\nIt moves out of Runs. The local branch, worktree, and run artifacts (logs, results, diff) are removed. The remote branch and any open PR stay untouched.${chainNote}`,
+        message: isNoProjectRun(r)   // P3: no branch, worktree or PR; its files live only in the run folder Archive removes
+          ? `${r.title || r.id}\n\nIt moves out of Runs. The files it made and its run artifacts (logs, results) are removed.${chainNote}`
+          : `${r.title || r.id}\n\nIt moves out of Runs. The local branch, worktree, and run artifacts (logs, results, diff) are removed. The remote branch and any open PR stay untouched.${chainNote}`,
         confirmLabel: 'Archive',
         danger: true,
       });
@@ -24278,7 +24320,9 @@ function setupHdActions(screen, record, data) {
       const r = hdCurrentRecord(record);              // never the load-time object
       const ok = await confirmModal({
         title: 'Restore this run?',
-        message: `${r.title || r.id}\n\nIt moves back into Runs with its PR link, Q&A, review verdicts and audit timeline. The run artifacts (logs, results, diff), branch and worktree were reclaimed by the archive and are not rebuilt.`,
+        message: isNoProjectRun(r)   // P3-D18: no PR, branch or worktree, and the files it made went with the archive
+          ? `${r.title || r.id}\n\nIt moves back into Runs with its Q&A, review verdicts and audit timeline. The files it made and its run artifacts (logs, results) were removed by the archive and are not rebuilt.`
+          : `${r.title || r.id}\n\nIt moves back into Runs with its PR link, Q&A, review verdicts and audit timeline. The run artifacts (logs, results, diff), branch and worktree were reclaimed by the archive and are not rebuilt.`,
         confirmLabel: 'Restore',
       });
       if (!ok) return;
@@ -24789,7 +24833,9 @@ function initHdTabs(screen, record, data) {
   // itself). Map it on here rather than editing six table entries — the engine
   // reads `t.icon`.
   const ch = hdChangesOf(record, data); const ctx = ch && data && data.changes !== ch ? { ...data, changes: ch } : data;
-  initDetailTabs(screen, HD_TABS.map((t) => ({ ...t, icon: t.key === 'workflow' ? RD_WORKFLOW_ICON : HD_TAB_ICONS[t.key] })), ctx, {
+  const noProject = isNoProjectRun({ ...hdCurrentRecord(record), state: data && data.state });
+  initDetailTabs(screen, HD_TABS.map((t) => ({ ...t, icon: t.key === 'workflow' ? RD_WORKFLOW_ICON : HD_TAB_ICONS[t.key], ...(t.key === 'artifacts' && noProject ? { level: 'simple' } : {}) })), ctx, {
+    initial: () => (noProject ? 'artifacts' : null),
     tabsSel: '.hd-tabs', secsSel: '.hd-sections',
     tabClass: 'hd-tab', secClass: 'hd-sec', badgeClass: 'hd-tab-badge',
     idPrefix: 'hd',
@@ -26315,14 +26361,14 @@ function buildHdOverview(sec, record, data) {
     chip.textContent = String(checks.length);
     verdict.append(chip, document.createTextNode(
       ` ${checks.length} thing${checks.length === 1 ? '' : 's'} to check`));
-  } else {
+  } else if (!(st.status === 'done' && isNoProjectRun({ ...(record || {}), state: st }))) {   // P3: its files are the result, no results.json
     const { family, word } = histStatusMeta({ status: st.status });
     verdict.classList.add('none');
     chip.classList.add(`st-${family}`);
     chip.textContent = word;
     verdict.append(chip, document.createTextNode(' No review results captured — the run did not complete.'));
   }
-  wrap.appendChild(verdict);
+  if (verdict.childNodes.length) wrap.appendChild(verdict);
   // The open pull request(s) as GitHub sees them now, beside the review's verdict from the run.
   const prs = document.createElement('div');
   prs.className = 'hd-ov-prs';
@@ -26805,7 +26851,9 @@ const RD_TABS = [
 // screen build; live frames go through rdUpdateSections, never through a rebuild.
 // No `initial`: the engine opens the first tab the interface level shows (Overview).
 function initRdTabs(screen, r) {
-  initDetailTabs(screen, RD_TABS, rdCtx(r), {
+  const noProject = isNoProjectRun(r);
+  initDetailTabs(screen, noProject ? RD_TABS.map((t) => (t.key === 'artifacts' ? { ...t, level: 'simple' } : t)) : RD_TABS, rdCtx(r), {
+    initial: () => (noProject ? 'artifacts' : null),
     tabsSel: '.rd-tabs',
     secsSel: '.rd-sections',
     tabClass: 'rd-tab',
@@ -26847,6 +26895,7 @@ function buildRdWorkflow(sec, ctx) {
 // does a Q&A tab re-activation while the run is live (a new answer lands on disk).
 function rdDataUrl(r) {
   if (!r || !r.pipelineId) return '';
+  if (isNoProjectRun(r)) return '/api/history/' + NO_PROJECT_KEY + '/' + encodeURIComponent(r.pipelineId);
   if (r.workspaceId) return `/api/workspaces/${encodeURIComponent(r.workspaceId)}/runs/${encodeURIComponent(r.pipelineId)}`;
   if (!r.projectDir) return '';
   return `/api/runs/${encodeURIComponent(r.pipelineId)}?projectDir=${encodeURIComponent(r.projectDir)}`;
@@ -27193,7 +27242,7 @@ function ensureRdTabs(screen, r) {
   if (built && screen.dataset.tabsMode === mode) return;
   if (built) {
     const open = screen.querySelector('.rd-tab.active');
-    if (open && !screen.dataset.wantTab) screen.dataset.wantTab = open.dataset.sec;   // the existing hand-off below reopens it when the new set has it
+    if (open && !screen.dataset.wantTab && mode !== 'none') screen.dataset.wantTab = open.dataset.sec;   // P3: a run found to have no project opens on its Artifacts   // the existing hand-off below reopens it when the new set has it
     const secs = screen.querySelector('.rd-sections'); destroyActionsIn(secs); destroyGraphMounts(secs);
   }
   screen.dataset.tabsMode = mode;
@@ -27746,9 +27795,10 @@ function rdOvTask(r) {
   // A workspace run carries NO projectDir (the New form sends workspaceId
   // instead) — name it by its member list rather than letting projectName()
   // print "(no project)".
-  const project = r.projectDir
-    ? projectName(r.projectDir)
-    : (Array.isArray(r.projectNames) ? r.projectNames.join(' · ') : '');
+  const project = isNoProjectRun(r) ? 'No project'   // P3-D10: its work folder is not a project name
+    : r.projectDir
+      ? projectName(r.projectDir)
+      : (Array.isArray(r.projectNames) ? r.projectNames.join(' · ') : '');
   for (const text of [project, r.branchSource || '', subCount ? `${subCount} sub-agent${subCount === 1 ? '' : 's'}` : '']) {
     if (!text) continue;
     const c = document.createElement('span');
@@ -28046,6 +28096,7 @@ function repaintRunDetail(r) {
 // loaded. '' when neither resolves — the caller omits the link rather than
 // inventing a key.
 function historyKeyForRun(r) {
+  if (isNoProjectRun(r)) return NO_PROJECT_KEY;
   const rows = Array.isArray(state.historyAll) ? state.historyAll : [];
   if (r.pipelineId) {
     const byId = rows.find((p) => p && p.id === r.pipelineId && p.projectKey);
@@ -29837,6 +29888,7 @@ async function downloadRunArtifact(ctx, artifact) {
 // Chat P5 (CONTRACT §3): the Chat opens artifacts in this same popup. ask-panel reads chatDeps.openArtifact at call
 // time; chatDeps is P1's, declared at the top of this file beside askPanel, so it exists when this statement runs.
 chatDeps.openArtifact = (ref, artifact) => { openRunArtifactPopup(ref || {}, artifact); };
+chatDeps.downloadArtifact = (ref, artifact) => downloadRunArtifact(ref || {}, artifact);   // P3: the no-project run card's Download
 
 // One clickable artifact row (kind chip · name · byte size) for the Agents tab's per-node list. It opens the popup with
 // its node's rows as the ←/→ list.
@@ -30308,6 +30360,7 @@ const schedulesView = createSchedulesView({
         const ws = (state.workspaces || []).find((w) => w && w.id === item.workspaceId);
         return `Workspace · ${ws ? ws.name : item.workspaceId}`;
       }
+      if (item.projectKey === NO_PROJECT_KEY) return 'No project';   // P3: a run without a project's resume ticket (its folder is `work`)
       const proj = (state.projects || []).find((x) => x && x.path === item.projectDir);
       return `Project · ${proj ? proj.name : String(item.projectDir || '').split(/[\\/]/).filter(Boolean).pop() || 'project'}`;
     },
@@ -30370,7 +30423,8 @@ function histGroupName(p) {
 // A run's or ticket's project group (D15): its History row's key, else the workspace key,
 // else the registered project (whose key IS its History projectKey — projectHistoryRows),
 // else a History row from the same folder, else the folder itself (an unregistered dir).
-function runsGroupFor({ pipelineId = '', projectDir = '', workspaceId = '', projectKey = '' } = {}) {
+function runsGroupFor({ pipelineId = '', projectDir = '', workspaceId = '', projectKey = '', workMode = '' } = {}) {
+  if (workMode === 'none' || projectKey === NO_PROJECT_KEY) return { key: NO_PROJECT_KEY, name: 'No project' };
   const rows = Array.isArray(state.historyAll) ? state.historyAll : [];
   const byId = pipelineId ? rows.find((p) => p && p.id === pipelineId && p.projectKey) : null;
   if (byId) return { key: byId.projectKey, name: histGroupName(byId) };
@@ -30406,7 +30460,7 @@ function runsStepWord(r) {
 
 function runsLiveItem(r) {
   const pq = r.pendingQuestion;
-  const g = runsGroupFor({ pipelineId: r.pipelineId || '', projectDir: r.projectDir || '', workspaceId: r.kind === 'workspace-run' ? (r.workspaceId || '') : '' });
+  const g = runsGroupFor({ pipelineId: r.pipelineId || '', projectDir: r.projectDir || '', workspaceId: r.kind === 'workspace-run' ? (r.workspaceId || '') : '', workMode: workModeOf(r) });
   const terminal = RD_TERMINAL.includes(r.status);
   const rec = terminal && r.pipelineId ? rdHistoryRecord(r) : null;
   const failed = r.status === 'error' ? ledgerRows(r).filter((x) => x.status === 'error').pop() : null;
@@ -30421,7 +30475,7 @@ function runsLiveItem(r) {
     step: r.status === 'running' && pq == null ? (prog && prog.text ? prog.text : runsStepWord(r)) : '',
     progress: prog && !RD_TERMINAL.includes(r.status) ? { fraction: prog.fraction, tone: prog.tone } : null,
     failedStep: failed && failed.nodeId ? nodeLabel(r.stepper, failed.nodeId) : '',
-    startedAt: r.startedAt, groupKey: g.key, groupName: g.name, groupKind: projectKindForKey(g.key), by: runsPersonKey(r.startedBy),
+    startedAt: r.startedAt, groupKey: g.key, groupName: g.name, groupKind: isNoProjectRun(r) ? 'none' : projectKindForKey(g.key), by: runsPersonKey(r.startedBy),
     pr: terminal ? glancePrInput(rec) : null,
     checks: rec && typeof rec.checks === 'number' ? rec.checks : null,
     ...(folder ? { changes: terminal ? { state: (fch && fch.state) || 'pending' } : null } : {}),
@@ -30472,7 +30526,7 @@ function runsHistItem(p) {
   return {
     id: p.id, projectKey: p.projectKey, title: p.title, status: p.status, pauseReason: p.pauseReason,
     limitEngine: p.limitEngine || null, limitNote: limitRowNote(p),
-    startedAt: p.startedAt, mtime: p.mtime, groupName: histGroupName(p), groupKind: projectKindForKey(p.projectKey), by: runsPersonKey(p.startedBy),
+    startedAt: p.startedAt, mtime: p.mtime, groupName: histGroupName(p), groupKind: isNoProjectRun(p) ? 'none' : projectKindForKey(p.projectKey), by: runsPersonKey(p.startedBy),
     pr: glancePrInput(p),
     archived: !!p.archived,
     checks: typeof p.checks === 'number' ? p.checks : null,
@@ -33252,7 +33306,7 @@ function paintRdHeader(screen, r) {
   screen.querySelector('.rd-title').textContent = r.title || r.runId;
   screen.querySelector('.rd-bar-title').textContent = r.title || r.runId;
   paintPageHead(screen.querySelector('.rd-glance'), r.title || r.runId,
-    [projectName(r.projectDir), r.startedAt ? `started ${startedLabel(r.startedAt)}` : '']);
+    [isNoProjectRun(r) ? '' : projectName(r.projectDir), r.startedAt ? `started ${startedLabel(r.startedAt)}` : '']);
   paintAutoBadge(screen.querySelector('.rd-row1 .auto-badge'), r.stepper);
 
   // Status pill: statusPill's family + word (spec §4.3 pins it as the source).
@@ -33293,7 +33347,7 @@ function paintRdHeader(screen, r) {
     ? (RD_TERMINAL.includes(r.status) || isPaused(r) ? '' : (prog && prog.text ? prog.text : (nowRows(r).map((x) => x.label).join(' · ') || (preflightOpen(r) ? 'Preflight' : '') || step.name || '')))   // the P5 line; names what runs, never a count (graphs loop and branch)
     : (step && step.name ? `step ${step.n}/${step.m} · ${step.name}` : '');
   const segs = [
-    ['rd-project', projectName(r.projectDir), false],
+    ['rd-project', isNoProjectRun(r) ? '' : projectName(r.projectDir), false],   // P3-D10: its folder is not a project
     ['rd-clock', r.startedAt ? `started ${startedLabel(r.startedAt)}` : '', false],
     // `run-time` is load-bearing, not decorative: the existing 1 s interval finds
     // its tick targets with `querySelectorAll('.run-time')`. Without this class
@@ -33378,7 +33432,7 @@ function paintRdHeader(screen, r) {
   // id, in every state. A finished run is followed up, as on the saved run's bar (paintHdAfter).
   const afterBtn = screen.querySelector('.rd-after');
   if (afterBtn) {
-    afterBtn.hidden = !r.pipelineId || !isPipelineRun(r);
+    afterBtn.hidden = !r.pipelineId || !isPipelineRun(r) || isNoProjectRun(r);
     const afterTitle = runAfterTitle(r.status);
     afterBtn.title = afterTitle;
     afterBtn.setAttribute('aria-label', afterTitle);
@@ -33756,7 +33810,7 @@ const NAV = (view, text, also = []) => ({
 });
 const noProjectPicked = () => {
   const sel = document.getElementById('projectSelect');
-  const targetIsProject = !document.querySelector('#target-seg [data-target="workspace"].on');
+  const targetIsProject = !!document.querySelector('#target-seg [data-target="project"].on');
   return !!(sel && targetIsProject && !sel.hidden && !(sel.value || '').trim());
 };
 /** A hop's control is on the page and not hidden (attribute or a hidden ancestor). */
@@ -33840,7 +33894,8 @@ function gsRunHops(g, mock) {
   const formErr = () => (document.getElementById('form-msg')?.textContent || '').trim();
   return [
     NAV('new', 'Every run starts here.'),
-    { id: 'project', target: '#projectSelect', lift: ['.select-wrap'], met: () => !noProjectPicked(),
+    // P3: a run without a project has no project to pick (its select is hidden).
+    state.runTarget === 'none' ? null : { id: 'project', target: '#projectSelect', lift: ['.select-wrap'], met: () => !noProjectPicked(),
       text: 'Pick the project the run happens in.',
       already: 'The run happens in the project picked here — any registered folder.' },
     mock ? null : {
@@ -34011,7 +34066,7 @@ function gsHops(step, g) {
           text: 'Leave the editor. Runs start from New run.' },
         NAV('new', 'Now start a run with the workflow that fits your task. Every run starts here.'),
         // The pick is saved per project (PATCH /api/config), so a project has to be picked first.
-        { id: 'project', target: '#projectSelect', lift: ['.select-wrap'], met: () => !noProjectPicked(),
+        state.runTarget === 'none' ? null : { id: 'project', target: '#projectSelect', lift: ['.select-wrap'], met: () => !noProjectPicked(),
           text: 'Pick the project the run happens in — the workflow you choose is remembered for it.',
           already: 'The run happens in the project picked here; the workflow you choose next is remembered for it.' },
         // Only the user's own pick counts (a `change` on the picker, noted by the watcher): choosing
@@ -35195,7 +35250,7 @@ async function applyAskPrefill() {
   const p = newPipelinePrefill;
   if (!p) return;
   newPipelinePrefill = null;
-  setRunTarget(p.target === 'workspace' ? 'workspace' : 'project');
+  setRunTarget(p.target === 'workspace' ? 'workspace' : p.target === 'none' ? 'none' : 'project');
   // The card's engine pick (none: the defaults the project change loads decide). Touched, so they keep off it.
   if (p.engine) { state.engineTouched = true; setRunEngine(p.engine); }
   // pick the source from the prefill (a Markdown handoff, else the prompt) — the three-step reset of the segment handler
@@ -35218,6 +35273,9 @@ async function applyAskPrefill() {
       // bare `Event` is Node's under the test globals and jsdom rejects it
       el.workspaceSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
     }
+  } else if (p.target === 'none') {
+    // AWAITED for the same reason as below: setRunTarget('none') started an un-awaited onProjectChanged() whose loadConfig('') tail would reset the workflow picker.
+    await onProjectChanged();
   } else if (p.projectDir) {
     const idx = state.projects.findIndex((x) => x && x.path === p.projectDir);
     if (idx >= 0) el.projectSelect.selectedIndex = idx + 1; // +1 past the placeholder
@@ -35242,7 +35300,8 @@ async function applyAskPrefill() {
   }
   // BEFORE loadWorkflowsInto: that call renders the workflow config, which reveals the Memory
   // scope row — a `project` proposal must not land on the row's default `global` (B17).
-  setMemoryScope(p.memoryScope);
+  // No project has global memory only (U13): the Project scope button is hidden there.
+  setMemoryScope(p.target === 'none' ? 'global' : p.memoryScope);
   await loadWorkflowsInto(p.workflowId);
   await loadGuardrailsInto(p.guardrailsId);
   if (el.advancedConfig) el.advancedConfig.open = true;
@@ -35383,13 +35442,15 @@ function paintNewRunAwayHint() {
 // boot
 // ---------------------------------------------------------------------------
 syncSourceToggle();
-loadProjects();
+const bootProjects = loadProjects();
 void refreshAwayBodies().catch(() => {});   // the account menu's away row (and the New-run hint) need the user-level body
 connectWS();
 // Restore the New-Pipeline target (project | workspace). 'workspace' lazy-loads
 // the workspace options + re-points the config panel; 'project' is the default.
-const bootTarget = localStorage.getItem(LAST_TARGET_KEY) === 'workspace' ? 'workspace' : 'project';
-if (bootTarget === 'workspace') setRunTarget('workspace');
+const storedTarget = localStorage.getItem(LAST_TARGET_KEY);
+const bootTarget = storedTarget === 'workspace' || storedTarget === 'none' ? storedTarget : 'project';
+if (bootTarget !== 'project') setRunTarget(bootTarget);
+else if (!storedTarget) bootProjects.then(() => { if (state.projectsLoaded && !state.projects.length && !localStorage.getItem(LAST_TARGET_KEY)) setRunTarget('none', { persist: false }); });
 // worca Chat P2 (CONTRACT §2/§4): the chat's action cards, registered before the chat mounts, and the ONE Ship it opener
 // — the pull-request card's button (P1's card ctx calls chatDeps.openShipIt with the card's ask link), run cards and the
 // run panel (no link). chatDeps is P1's top-level const; openShipItFor is a hoisted function declaration.
@@ -35474,7 +35535,8 @@ function chatHomeHistory() {
   const done = new Set(['done', 'complete', 'completed']);
   const ms = (v) => (typeof v === 'number' ? v : (Date.parse(v || '') || 0));
   const sorted = src.filter(Boolean).sort((a, b) => ms(b.startedAt || b.mtime) - ms(a.startedAt || a.mtime));
-  const recent = sorted.find((p) => p.target !== 'workspace' && (p.projectName || p.projectKey));
+  // P3: a run without a project is never "the recent project" (its nightly Memory defragment promo would be refused, L7)
+  const recent = sorted.find((p) => p.target !== 'workspace' && !isNoProjectRun(p) && (p.projectName || p.projectKey));
   const doneRows = sorted.filter((p) => !p.archived && done.has(String(p.status || '').toLowerCase()));
   chatHomeHistMemo = {
     src,

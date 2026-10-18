@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
-import { createArtifactBrowser } from '../ui/public/artifacts/browser.mjs';
+import { createArtifactBrowser, artifactTree } from '../ui/public/artifacts/browser.mjs';
 
 const LABELS = { n_plan: 'Plan', n_impl: 'Implementer', n_rev: 'Review' };
 const A = (relPath, nodeId, cycle, extra = {}) => ({ kind: 'plan', relPath, nodeId, cycle, bytes: 1024, ...extra });
@@ -443,4 +443,17 @@ test('a focused row Download that the repaint moves into a new closed folder han
   row(s.host, 's2.png').parentElement.querySelector('.afb-dl').focus();
   s.b.update([...LIST(), ...five, A('shots/s5.png', 'n_impl', 1, { kind: 'deck-shot' })]);
   assert.equal(s.doc.activeElement, folderEl(s.host, 'n:n_impl/c1/k:deck-shot'));
+});
+
+test('the Files folder names each work file\'s sub-folder, so two index.html stay apart', () => {
+  const W = (relPath) => ({ kind: 'work', relPath, bytes: 1, nodeId: null, cycle: null });
+  const s = boot({ list: [W('work/site/index.html'), W('work/docs/index.html'), W('work/deck.html')] });
+  const f = folderEl(s.host, 'n:__work__');
+  if (f.getAttribute('aria-expanded') !== 'true') tap(f);
+  assert.deepEqual([...s.host.querySelectorAll('.afb-file')].map((r) => [r.querySelector('.afb-name').textContent, r.querySelector('.afb-where')?.textContent ?? null]),
+    [['index.html', 'site/'], ['index.html', 'docs/'], ['deck.html', null]]);
+});
+
+test('artifactTree: a run without a project lists its work files first, in a Files folder', () => {
+  assert.deepEqual(artifactTree([{ kind: 'plan', relPath: 'plan.md', nodeId: 'n_plan' }, { kind: 'work', relPath: 'work/deck.html' }], { nodeLabel: () => 'Plan' }).map((f) => f.label), ['Files', 'Plan']);
 });

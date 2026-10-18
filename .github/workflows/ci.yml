@@ -83,6 +83,7 @@ jobs:
               - 'test/folder-run.test.mjs'
               - 'test/folder-apply.test.mjs'
               - 'test/api-run-folder.test.mjs'
+              - 'test/api-run-no-project.test.mjs'
               - 'test/seed-traces.test.mjs'
               - 'test/auto-recipes-offline.test.mjs'
               - 'test/presentation-golden-run.test.mjs'

@@ -1,6 +1,7 @@
 // test/ask-panel-card.test.mjs — the Start-run card (spec §9, §10.5, D1-D3).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
@@ -84,7 +85,7 @@ function apiHandler(recorder = {}) {
     }
     if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' } }) };
     if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
-    if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
+    if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: recorder.workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
     if (url === '/api/guardrails') return { ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }, { id: 'strict', name: 'Strict' }] }) };
     if (url === '/api/workspaces') return { ok: true, status: 200, json: async () => ({ workspaces: [{ id: 'wks-team-00000001', name: 'team', projectPaths: ['/repos/proj', '/repos/lib'], projectKeys: ['proj-00000001', 'lib-00000002'] }] }) };
     if (url.startsWith('/api/branches')) {
@@ -2280,4 +2281,49 @@ test('run card, enforcement off: no pickers, Start enabled, chips pre-filled', a
   assert.deepEqual(rpChips(card), ['cc:4410']);
   assert.equal(card.querySelector('.tag-rule-pickers').childElementCount, 0);
   assert.equal(card.querySelector('[data-ask-card-start]').disabled, false);
+});
+
+const NONE_CARD = { ...PROJECT_CARD, target: 'none', projectKey: null, projectName: null, projectDir: null, featureBranch: null, sourceBranch: null };
+
+test('ask-panel-card: a No project card opens on No project; Start posts { noProject: true } and no project or branch keys', async () => {
+  const rec = {};
+  const ctx = await openWithCard(NONE_CARD, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  assert.deepEqual([...cardEl.querySelectorAll('[data-ask-card-seg]')].map((b) => b.textContent), ['No project', 'Project', 'Workspace']);
+  assert.equal(cardEl.querySelector('[data-ask-card-seg="none"]').getAttribute('aria-selected'), 'true');
+  assert.equal(cardEl.querySelector('.ask-card-project-select'), null);
+  assert.equal(cardEl.querySelector('[data-ask-card-schedule]').hidden, true);
+  cardEl.querySelector('[data-ask-card-start]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.deepEqual(rec.runBodies[0], { noProject: true, prompt: 'Fix the login bug', workflowId: 'wf_default', guardrailsId: 'normal',
+    title: 'Fix login', mock: false, askThreadId: TID, askCardId: CARD_ID });
+});
+
+test('ask-panel-card: switching a project card to No project drops the project; the needs-repo note never blocks', async () => {
+  const rec = { workflows: [{ id: 'wf_default', name: 'Default', needsRepo: true }, { id: 'wf_review', name: 'Review only' }] };
+  const ctx = await openWithCard(PROJECT_CARD, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  cardEl.querySelector('[data-ask-card-seg="none"]').click();
+  await ctx.tick();
+  assert.equal(cardEl.querySelector('.ask-card-needs-repo').textContent, 'Some steps expect a code repository.');
+  assert.ok(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').includes('.ask-card-needs-repo{margin:0;color:var(--ink-2);font-size:12px;line-height:1.45;}'),
+    'one quiet line, as New run\'s .hint (no browser-default paragraph margins)');
+  assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, false);
+  const wf = cardEl.querySelector('.ask-card-workflow'); wf.value = 'wf_review'; wf.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  assert.equal(cardEl.querySelector('.ask-card-needs-repo'), null);
+  cardEl.querySelector('[data-ask-card-start]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(rec.runBodies[0].noProject, true);
+  assert.equal('projectDir' in rec.runBodies[0], false);
+});
+
+test('ask-panel-card: Open in New run from a No project card hands over target none and no project', async () => {
+  const handed = [];
+  const ctx = await openWithCard(NONE_CARD, {}, { openNewPipeline: (p) => handed.push(p) });
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  cardEl.querySelector('[data-ask-card-open-np]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(handed.length, 1);
+  assert.equal(handed[0].target, 'none');
+  assert.equal('projectDir' in handed[0], false);
 });

@@ -1247,3 +1247,50 @@ test('chat run card, a folder run: no Apply to folder when nothing changed or th
   assert.equal($('.chat-rc-apply'), null, 'an archived run has no copy');
   assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.chat-rc-create-pr,\.chat-rc-view-pr,\.chat-rc-apply\{/);
 });
+
+test('progressIdent: a started No project proposal names the reserved key and No project before its first frame', () => {
+  assert.deepEqual(progressIdent({ id: 'card_00000001', runId: 'r-np', card: { target: 'none', projectKey: null, projectName: null, title: 'Q3 Hiring Deck' } }),
+    { cardId: 'card_00000001', pipelineId: null, runId: 'r-np', projectKey: 'no-project-00000000', workspaceId: null, title: 'Q3 Hiring Deck', label: 'No project' });
+});
+
+test('chat run card: a run without a project names No project and lists its files with sizes and Download', () => {
+  const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
+  const doc = dom.window.document;
+  const got = [];
+  const card = createChatRunCard({ doc, snapshot: { source: 'rest', status: 'done', terminal: true, pipelineId: 'a41c09d2', projectKey: 'no-project-00000000', workMode: 'none', title: 'Q3 Hiring Deck',
+    artifacts: [{ kind: 'work', relPath: 'work/deck.html', bytes: 86016 }, { kind: 'work', relPath: 'work/charts/headcount.svg', bytes: 12288 }], artifactsTotal: 2, results: null },
+  ctx: { downloadArtifact: (ref, a) => got.push([ref.pipelineId, a.relPath]) } });
+  doc.body.appendChild(card.el);
+  const where = card.el.querySelector('.chat-rc-where');
+  assert.equal(where.querySelector('.kind-chip.kind-none').textContent, 'No project');
+  assert.equal(where.textContent, 'No project · #a41c09d2');
+  const list = card.el.querySelector('.chat-rc-arts-list');
+  assert.equal(list.querySelector('.cap').textContent, 'Artifacts · 2');
+  assert.equal(list.getAttribute('aria-label'), 'Artifacts');
+  assert.equal(list.hasAttribute('data-min-level'), false);
+  assert.equal(card.el.querySelector('.chat-rc-create-pr'), null);
+});
+
+test('chat run card: a run without a project lists each file as a name, its size and a Download button', () => {
+  const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
+  const doc = dom.window.document;
+  const got = [];
+  const card = createChatRunCard({ doc, snapshot: { source: 'rest', status: 'done', terminal: true, pipelineId: 'a41c09d2', projectKey: 'no-project-00000000', workMode: 'none', title: 'Q3 Hiring Deck',
+    artifacts: [{ kind: 'work', relPath: 'work/deck.html', bytes: 86016 }, { kind: 'work', relPath: 'work/charts/headcount.svg', bytes: 12288 }], artifactsTotal: 2, results: null },
+  ctx: { downloadArtifact: (ref, a) => got.push([ref.pipelineId, a.relPath]) } });
+  const list = card.el.querySelector('.chat-rc-arts-list');
+  assert.deepEqual([...list.querySelectorAll('.chat-rc-art-name')].map((b) => b.textContent), ['deck.html', 'charts/headcount.svg']);
+  assert.deepEqual([...list.querySelectorAll('.chat-rc-art-size')].map((b) => b.textContent), ['84.0 KB', '12.0 KB']);
+  assert.equal(list.querySelectorAll('.chat-rc-art-row')[1].querySelector('.faint').textContent, 'charts/');
+  // The NoProjectRun board: one bordered list of rows, a file icon first on each.
+  assert.equal(list.querySelectorAll('.chat-rc-art-rows > .chat-rc-art-row').length, 2);
+  for (const row of list.querySelectorAll('.chat-rc-art-row')) assert.equal(row.firstElementChild.tagName.toLowerCase(), 'svg');
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  for (const rule of ['.chat-rc-arts-list .cap{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);}',
+    '.chat-rc-art-rows{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel);}',
+    '.chat-rc-art-row + .chat-rc-art-row{border-top:1px solid var(--line);}']) assert.ok(css.includes(rule), rule);
+  const dls = [...list.querySelectorAll('.chat-rc-art-dl')];
+  assert.deepEqual(dls.map((b) => b.getAttribute('aria-label')), ['Download deck.html', 'Download headcount.svg']);
+  dls[0].click();
+  assert.deepEqual(got, [['a41c09d2', 'work/deck.html']]);
+});

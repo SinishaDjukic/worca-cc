@@ -37,7 +37,9 @@ import {
   retainedWorkPatchName, sizeOfChange,
 } from './results.mjs';
 import { resolveTaskInput, retryWriteback } from './sources.mjs';
-import { projectKey, projectStorePath, workspaceStorePath } from './store.mjs';
+import { projectKey, projectStorePath, workspaceStorePath, noProjectWorkDir, isNoProjectWorkDir } from './store.mjs';
+import { NO_PROJECT_KEY, NO_PROJECT_NAME, NO_PROJECT_ERRORS, WORK_DIR_NAME, isNoProjectKey } from '../shared/no-project.mjs';
+import { harvestWork, ownWorkDir, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { appendDirection, readDirections, pendingDirections, DIRECTIONS_FILE, DIRECTIONS_KIND, DIRECTIONS_CLOSED } from './directions.mjs';
 import { worcaHome } from './projects.mjs';
 import { normalizeWorkMode, workModeOfRow, folderFiles, CHANGES_FILE, CHANGES_PATCH_FILE } from './project-kind.mjs';
@@ -59,7 +61,7 @@ import {
   scanStrayEntries, copyRunManifestTo, removeInjectedPaths, stripClaudeMdFence,
   RETAIN_REASONS,
 } from './run-manifest.mjs';
-import { assembleRunContext, renderContextAudit, renderSkillAudit, MCP_GRANT_MODE, discoverProjectSettings, skillsRelFor } from './run-context.mjs';
+import { assembleRunContext, renderContextAudit, renderSkillAudit, MCP_GRANT_MODE, discoverProjectSettings, skillsRelFor, realDirsBelow } from './run-context.mjs';
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
 import {
   detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction,
@@ -729,6 +731,19 @@ export class RunHarness extends EventEmitter {
   constructor(opts) {
     super();
     this.opts = opts || {};
+    // P3: a run without a project works only in its own <worcaHome>/runs/<id>/work — never process.cwd().
+    this._noProject = this.opts.resume?.row ? isNoProjectKey(this.opts.resume.row.project_key) : this.opts.workMode === 'none';   // a resume: the row decides, never the caller
+    if (this._noProject) {
+      const pid = this.opts.pipelineId || this.opts.resume?.row?.id || '';
+      if (!pid) throw new Error('a run without a project needs its pipeline id');
+      if (this.opts.workspace) throw new Error('a run without a project cannot be a workspace run');
+      if (this.opts.projectDir && !(isNoProjectWorkDir(this.opts.projectDir) && basename(dirname(resolve(this.opts.projectDir))) === pid)) throw new Error('a run without a project works only in its own work folder');
+      this.opts = { ...this.opts, projectDir: noProjectWorkDir(pid), workMode: 'none', projectKey: NO_PROJECT_KEY };
+    } else if (!this.opts.resume && !this.opts.workspace && isNoProjectWorkDir(this.opts.projectDir || process.cwd())) {
+      // P3-D11 backstop for every caller (CLI --project, the cwd, a script): a run's work folder is never a git or
+      // folder project — it would take the reserved key and `git init` inside another run's work/.
+      throw new Error(NO_PROJECT_ERRORS.register);
+    }
 
     // ── Workspace mode (opt-in; absent => single-project, every path unchanged) ──
     // A workspace run targets 2+ member projects (sorted by projectKey). The scalar
@@ -752,12 +767,14 @@ export class RunHarness extends EventEmitter {
           const dir = resolve(this.opts.projectDir || process.cwd());
           return [{ projectKey: this.opts.projectKey ?? (this.opts.resume?.row && workModeOfRow(this.opts.resume.row) !== 'git' ? this.opts.resume.row.project_key : undefined) ?? projectKey(dir), projectName: basename(dir), projectDir: dir }];
         })();
+    if (this._noProject) this.members[0].projectName = NO_PROJECT_NAME;
     this.memberByKey = new Map(this.members.map((m) => [m.projectKey, m]));
     // P1 (CONTRACT §2): 'git' (a worktree) | 'folder' (a copy, then Apply) | 'none' (P3). A resume or a stop reads the
     // RECORDED mode (state.branch / workspace_meta) — never its caller's; a fresh start takes opts.workMode (decided by
     // the server / CLI); absent → 'git', so every existing caller is unchanged. P5 widens the workspace arm.
     this.workMode = this.isWorkspace ? 'git'
       : (this.opts.resume?.row ? workModeOfRow(this.opts.resume.row) : normalizeWorkMode(this.opts.workMode));
+    if (this._noProject) this.workMode = 'none';
     this.workDirs = new Map();         // projectKey -> worktree checkout dir
     this.checkpointRefs = {};          // projectKey -> pre-run commit
     this.branchInfos = new Map();      // projectKey -> createWorktree() result
@@ -1029,7 +1046,7 @@ export class RunHarness extends EventEmitter {
       pipelineDir: null,
       totalCostUsd: 0,  // cumulative actual spend (sum of steps[].costUsd)
       totalActiveMs: 0, // cumulative active processing time (sum of steps[].activeMs)
-      branch: this.workMode === 'folder' ? { workMode: 'folder', runRootMode: 'detached' } : null,     // { source, feature, worktreeDir, reusedExisting } after _setupRunRoot
+      branch: this.workMode !== 'git' ? { workMode: this.workMode, runRootMode: 'detached' } : null,     // { source, feature, worktreeDir, reusedExisting } after _setupRunRoot
       // Per-member maps, initialized HERE (not lazily) so getState()'s snapshot
       // shape is stable across modes and targets. Without this a single-project
       // detached run throws TypeError on the first this.state.branches[key] = … .
@@ -1051,6 +1068,7 @@ export class RunHarness extends EventEmitter {
     };
     if (this.workMode !== 'git') this.state.workMode = this.workMode;
     if (this.opts.projectKey) this.state.projectKey = this.opts.projectKey;
+    if (this._noProject) this.state.projectName = NO_PROJECT_NAME;
 
     // Night mode (src/core/night/*): the run's own switches. `optIn` comes from the start
     // request (or the resume point); `override` is the run-view switch. Both live in the
@@ -1450,6 +1468,7 @@ export class RunHarness extends EventEmitter {
         startedBy: this.opts.startedBy || null,
         prWatchRunId: this.opts.prWatchRunId || null,
         tags: this.opts.tags || [],
+        ...(this.workMode === 'none' ? { id: this.opts.pipelineId } : {}),
         ...(this.isWorkspace ? {} : { projectKey: this.members[0].projectKey, ...(this.workMode !== 'git' ? { workMode: this.workMode } : {}) }),
         ...(this.isWorkspace ? {
           workspaceKey: this.workspaceKey,
@@ -2106,6 +2125,33 @@ export class RunHarness extends EventEmitter {
       return resumeManifest;
     }
 
+    if (this.workMode === 'none') {
+      // P3: a run without a project re-attaches its own work/ folder — always detached, no worktree, no checkpoint, no git.
+      if (this.runRootMode !== 'detached') {
+        this.runRootMode = 'detached'; this.state.runRootMode = 'detached';
+        this.runRoot = join(worcaHome(), 'runs', row.id);
+        resumeManifest = await readRunManifest(this.runRoot);
+        if (resumeManifest?.injectedPaths && typeof resumeManifest.injectedPaths === 'object') this.injectedPaths = resumeManifest.injectedPaths;
+      }
+      let work = join(this.runRoot, WORK_DIR_NAME);
+      if (!existsSync(work)) {
+        // A run paused before its setup made work/ (setupIncomplete: _setupDone is false) — the setup replay creates it.
+        if (strict && this._setupDone) throw new Error(`work folder missing: ${work} — cannot resume`);
+        if (!strict) this._log('worktree', 'warn', `work folder missing: ${work} — nothing to keep`);
+        work = null;
+      }
+      if (work && !(await ownWorkDir(work))) {
+        // P3-D19: work/ was the agents' cwd — one swapped for a link is never worked in, mounted into or harvested.
+        if (strict) throw new Error(`work folder is not the run's own: ${work} — cannot resume`);
+        this._log('worktree', 'warn', `work folder is not the run's own: ${work} — nothing to keep`);
+        work = null;
+      }
+      if (work) { this.workDirs.set(NO_PROJECT_KEY, work); this.workDir = work; }
+      this.checkpointRef = null;
+      this.runCwd = work;
+      return resumeManifest;
+    }
+
     // ── worktree re-attach (single-project; workspace below) ──
     let wt = this.state.branch?.worktreeDir;
     if (wt && !existsSync(wt)) {
@@ -2376,6 +2422,7 @@ export class RunHarness extends EventEmitter {
    */
   async _setupRunRoot({ replay = false } = {}) {
     if (this.workMode === 'folder') return this._setupFolderRunRoot({ replay });
+    if (this.workMode === 'none') return this._setupNoProjectRoot();
     this.state.branches = this.state.branches || {};      // belt-and-braces for resumed/legacy shapes
     // ONE flag per run. A resume passes no opts.branch: a replay reads it back from any persisted
     // member record (pending or final), so every member — and the resolvers below — agree.
@@ -2633,6 +2680,24 @@ export class RunHarness extends EventEmitter {
     this.state.branches = { ...(this.state.branches || {}), [key]: this.state.branch };
   }
 
+  /** P3: the 'none' arm of _setupRunRoot — the run works in <runRoot>/work; no git, no copy. */
+  async _setupNoProjectRoot() {
+    this.runRootMode = 'detached';
+    this.state.runRootMode = 'detached';
+    this.runRoot = join(worcaHome(), 'runs', this.pipeline.id);
+    const work = join(this.runRoot, WORK_DIR_NAME);
+    await mkdir(work, { recursive: true });
+    this.workDirs.set(NO_PROJECT_KEY, work);
+    this.workDir = work;
+    this.runCwd = work;
+    this.branchInfo = null;
+    this.state.branch = { workMode: 'none', runRootMode: 'detached' };
+    await writeRunManifest(this.runRoot, { pipelineId: this.pipeline.id, runRootMode: 'detached', isWorkspace: false, workMode: 'none', members: [] });
+    await appendAudit(this.pipeline.dir, `Working folder: \`${work}\` (no project).`).catch(() => {});
+    await this._persist();
+    this._emit('state', this.getState());
+  }
+
   /** The folder arm of _setupRunRoot: copy each folder member into <runRoot>/repos/<key>. */
   async _setupFolderRunRoot({ replay = false } = {}) {
     this._setupStage('Copying the folder');
@@ -2826,6 +2891,7 @@ export class RunHarness extends EventEmitter {
     this.policyRun = null;
     this._policyPersisted = false;
     this._policyWarned = new Set();
+    if (this.workMode === 'none') return;   // P3-D4: no project, no team policy
     let r;
     try {
       r = this.isWorkspace
@@ -3868,12 +3934,15 @@ export class RunHarness extends EventEmitter {
     const root = memoryRoot();
     // Pre-setup there is no run cwd, and the LIVE checkout must never take a rules copy.
     const cwd = this.runCwd || null;
-    if (!cwd || cwd === this.projectDir) throw new Error('no run cwd to mount into');
+    if (!cwd || (cwd === this.projectDir && this.workMode !== 'none')) throw new Error('no run cwd to mount into');
     if (!this.pipeline?.dir) throw new Error('no pipeline dir for the writable memory copy');
     // Two copies (memory-write-split design D1): the READ-ONLY rules copy inside the cwd, where Claude
     // Code loads it and refuses every write (`.claude` is a protected path); the WRITABLE copy — the
     // sync-back mount — under the pipeline dir, outside every checkout, reached by --add-dir.
     const rules = memoryRulesPath(cwd);
+    // P3-D19: a run without a project's work/ was the agents' cwd — never mount (the mount removes first) through a
+    // `.claude` an agent swapped for a link.
+    if (this.workMode === 'none' && !(await realDirsBelow(cwd, MEMORY_RULES_REL))) throw new Error(`${MEMORY_RULES_REL} in work/ is not the run's own folder`);
     const mount = memoryWorkPath(this.pipeline.dir);
     // §8.8 scope of the record: 'runRoot' when the cwd IS the run root, else the member whose
     // checkout is the cwd (the primary member on single and legacy-workspace runs).
@@ -3973,7 +4042,7 @@ export class RunHarness extends EventEmitter {
    */
   async _registerEngineConfig() {
     const cwd = this.runCwd || null;
-    if (!cwd || cwd === this.projectDir) return;
+    if (!cwd || (cwd === this.projectDir && this.workMode !== 'none')) return;   // P3: a no-project run's cwd IS its projectDir (work/)
     const onCursor = (this.claude.engine || 'claude') === 'cursor';
     const paths = onCursor ? [...CURSOR_PROJECT_FILES]
       : CURSOR_PROJECT_FILES.filter((p) => existsSync(join(cwd, p)) && cursorOwns(join(cwd, p)));
@@ -4750,6 +4819,29 @@ export class RunHarness extends EventEmitter {
     this.branchInfo = null;
     this.workDir = this.projectDir;
 
+    if (this.runRoot && this.workMode === 'none') {
+      const work = join(this.runRoot, WORK_DIR_NAME);
+      // P3-D19: rescue and remove only inside the run's own work/ — never through one an agent swapped for a link (the
+      // harvest below refuses that one and keeps the root)
+      if (await ownWorkDir(work)) {
+        // rescue FIRST (read-only), as the git and folder arms do: an agent's edit to a mounted skill is never lost
+        const rescued = await rescueModifiedMounts({
+          baseDir: work, entries: this.injectedPaths?.[NO_PROJECT_KEY] ?? [], pipelineDir, scope: NO_PROJECT_KEY, pipelineId: this.pipeline?.id, strict: true,
+        });
+        for (const w of rescued) await this._recordRunWarning(w);
+        await removeInjectedPaths(work, this._injectedFor(NO_PROJECT_KEY, work), { strict: true });
+      }
+      const h = await harvestWork({ workDir: work, pipelineDir });
+      if (h.ok) {
+        for (const f of h.files) this._artifact(WORK_ARTIFACT_KIND, join(pipelineDir, ...f.split('/')));
+        if (h.files.length) await appendAudit(pipelineDir, `Kept ${h.files.length} file${h.files.length === 1 ? '' : 's'} from work/ as artifacts.`).catch(() => {});
+        await updateRunManifest(this.runRoot, { workHarvested: { files: h.files.length, bytes: h.bytes, unindexed: h.unindexed, at } });
+      } else {
+        retainedMembers.push({ projectKey: NO_PROJECT_KEY, copyDir: work, workMode: 'none', reason: RETAIN_REASONS.WORK_COPY_FAILED, at });
+        this._log('worktree', 'warn', `work/ could not be copied (${h.error}); the run root is kept at ${this.runRoot}.`);
+      }
+      this.workDirs.delete(NO_PROJECT_KEY);
+    }
     if (this.runRoot) {
       // (6) run-root mounts (the workspace skill mount) — `.claude/` is whitelisted
       // by the §8.11 known set, so only this rescue can catch edits inside it.
@@ -4772,6 +4864,8 @@ export class RunHarness extends EventEmitter {
       if (retainedMembers.length && retainedMembers.some((r) => (r.reason ?? RETAIN_REASONS.COMMIT_FAILED) === RETAIN_REASONS.COMMIT_FAILED)) {
         this._log('worktree', 'warn',
           `Run root retained at ${this.runRoot} because ${retainedMembers.length} worktree commit(s) failed.`);
+      } else if (retainedMembers.length && retainedMembers.every((r) => r.reason === RETAIN_REASONS.WORK_COPY_FAILED)) {
+        // P3: a no-project run whose work/ could not be copied — logged at the harvest, the root stays
       } else if (retainedMembers.length) {
         this._log('worktree', 'info',
           `Run root retained at ${this.runRoot} until ${retainedMembers.length} Folder project(s) are applied or discarded.`);
@@ -6337,6 +6431,7 @@ export class RunHarness extends EventEmitter {
       // the ledger (memory.json) is the durable carrier and History reads it.
       if (this.memory) await this._syncMemory(null, { nodeId: 'final', executionId: null, label: 'the run end' }).catch(() => {});
       if (this.workMode === 'folder') return await this._buildFolderResults({ stage });
+      if (this.workMode === 'none') return;   // P3: no results.json — the files are the result
       if (stage) await this._stageWorkingTree({ ignoreAbort: true });
       const reviews = readPipelineExtras(this.pipeline.id).reviews || [];
       // Unified iteration over workDirs + checkpointRefs — the ref map is filled in
@@ -6707,7 +6802,9 @@ export class RunHarness extends EventEmitter {
   _deriveBaseName(promptText, title) {
     const fromTitle = title && title !== basename(this.pipeline?.dir || '') ? title : '';
     const source = fromTitle || firstLine(promptText) || 'feature';
-    return slugify(source).slice(0, 40) || 'feature';
+    const base = slugify(source).slice(0, 40) || 'feature';
+    // P3: every run without a project shares one store, so its plan and review names carry its own id
+    return this.workMode === 'none' && this.pipeline?.id ? `${base.slice(0, 31)}-${this.pipeline.id}` : base;
   }
 
   _checkAbort() {

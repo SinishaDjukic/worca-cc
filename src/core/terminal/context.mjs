@@ -2,12 +2,14 @@
 // starts with (issue #573). A running run: its live worktree (with a warning: the pipeline is still
 // changing it). A finished run: its Actions checkout, or "needs-checkout". A workspace run: one per member.
 import { existsSync } from 'node:fs';
+import { delimiter, dirname } from 'node:path';
 import { membersOfRow, checkoutPathFor } from '../checkout.mjs';
 import { checkoutRecordsFor } from '../artifacts.mjs';
 import { actionBaseEnv } from '../actions/spawn.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
 import { RUN_ROOT_REMOVE as FINISHED } from '../worktree.mjs';   // done | stopped | error
 import { workModeOfRow } from '../project-kind.mjs';
+import { isNoProjectKey, noProjectWorkDir } from '../store.mjs';
 
 export const LIVE_WARNING = 'This pipeline is still running and changing these files. Changes you make here are committed with the run when it ends.';
 
@@ -16,6 +18,7 @@ export function terminalTargets(row, { isLive = () => false, exists = existsSync
   const finished = FINISHED.has(row.status) && !live;
   const recs = finished ? (checkoutRecordsFor(row)?.members || []) : [];
   const folder = workModeOfRow(row) === 'folder';
+  const none = isNoProjectKey(row.project_key);
   const members = membersOfRow(row).map((m) => {
     const base = { projectKey: m.projectKey, projectName: m.projectName || m.projectKey, branch: m.br?.feature || null };
     if (folder) {
@@ -24,6 +27,14 @@ export function terminalTargets(row, { isLive = () => false, exists = existsSync
       const copy = m.br?.copyDir || null;
       const useCopy = !!copy && exists(copy) && (m.br?.changes?.state === 'pending' || live);
       return { ...base, state: 'worktree', cwd: useCopy ? copy : (m.br?.realDir || m.projectDir) };
+    }
+    if (none) {
+      // P3: a run without a project has no checkout, ever. Its terminal opens in its live work/ while the run root holds
+      // it (running or paused; no LIVE_WARNING — nothing is committed); once its files moved to Artifacts, no folder.
+      let work = null;
+      try { work = noProjectWorkDir(row.id); } catch { work = null; }
+      return !finished && work && exists(work) ? { ...base, state: 'worktree', cwd: work }
+        : { ...base, state: 'unavailable', cwd: null, reason: 'This run has no folder.' };
     }
     if (finished) {
       const rec = recs.find((r) => r.projectKey === m.projectKey);
@@ -59,6 +70,8 @@ export function terminalEnv({ base = process.env, sessionId, mode, runId = null,
   if (branch) env.WORCA_BRANCH = branch;
   if (projectKey) env.WORCA_PROJECT_KEY = projectKey;
   if (member) env.WORCA_MEMBER = member;
+  // P3-D20: a no-project run's terminal opens in its work/: its git never walks up into a repository that holds worcaHome.
+  if (isNoProjectKey(projectKey) && cwd) env.GIT_CEILING_DIRECTORIES = [dirname(cwd), env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(delimiter);
   for (const s of actionSnaps) {
     const who = workspace && s.member ? envPart(s.member) : null;
     for (const [name, port] of Object.entries(s.ports || {})) {

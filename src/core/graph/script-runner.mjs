@@ -10,7 +10,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mockEnabled, buildSpawnEnv } from '../claude-runner.mjs';
 import { scrubbedEnv } from '../plugin-shim.mjs';            // PATH/HOME + the Windows start-up baseline (P11); no cycle: plugin-shim imports no graph module
@@ -132,6 +132,7 @@ export function buildEnvelope(ctx) {
       repos,
       workspace: workspaceEnvelope(ctx.workspace),       // wsmap P2: BOTH run-root modes (repos: detached only)
       checkpointRef: ctx.checkpointRef ?? null,
+      ...(ctx.workMode && ctx.workMode !== 'git' ? { workMode: ctx.workMode } : {}),   // P1/P3: absent on git runs (additive)
       baseName: ctx.runCtx?.baseName ?? null,
       runId: ctx.pipelineId ?? null,
       platform: process.platform,
@@ -168,6 +169,8 @@ export function envForShell(envelope, baseEnv = process.env) {
   // P0: a script child never probes git; it gets this process's answer (server / CLI / Ask child), so the
   // built-in workspace-map scripts keep git ls-files and origins where git is installed (CONTRACT §0, S1).
   env.WORCA_GIT = gitAvailable() ? '1' : '0';
+  // P3: in a run without a project, a script's git never walks up from work/ into a repository that holds worcaHome.
+  if (c.workMode === 'none' && c.cwd) env.GIT_CEILING_DIRECTORIES = [dirname(c.cwd), env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(delimiter);
   // W12: set on a bench run, ABSENT on a pipeline run (a shell's `${WORCA_BENCH+set}`
   // must not see it) — and never inherited from a worca that is itself under test.
   if (c.bench) env.WORCA_BENCH = '1'; else delete env.WORCA_BENCH;

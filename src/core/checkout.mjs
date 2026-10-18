@@ -12,6 +12,7 @@ import { staleIndexLockNote } from './git-lock.mjs';
 import { readRunManifest, writeRunManifest, updateRunManifest, rmGuarded, RETAIN_REASONS } from './run-manifest.mjs';
 import { findPipelineRowById, retainedWorkFor, checkoutRecordsFor, readPrState, appendAuditById,
   readStoreMeta, runRootSweepLookups } from './artifacts.mjs';
+import { isNoProjectKey, NO_PROJECT_NAME } from '../shared/no-project.mjs';
 import { branchExists, branchPushedTo, restoreBranchFromRemote, prLifecycleState } from './git-info.mjs';
 import { actionsSettings } from './settings.mjs';
 import { busyRunIdsFromPidFile, actionsPidFile } from './actions/registry.mjs';
@@ -56,8 +57,9 @@ export function membersOfRow(row) {
     const projects = Array.isArray(wm.projects) ? wm.projects : [];
     return projects.map((p) => ({ projectKey: p.projectKey, projectName: p.projectName, projectDir: p.projectDir, br: branchOf(wm.branches[p.projectKey] || null) }));
   }
-  const dir = projectDirOfRow(row);
-  return [{ projectKey: row.project_key, projectName: dir ? basename(dir) : null, projectDir: dir, br: branchOf(parse(row.branch)) }];
+  const dir = isNoProjectKey(row.project_key) ? null : projectDirOfRow(row);   // P3: its store_meta path is <worcaHome>/runs, never a project
+  const projectName = isNoProjectKey(row.project_key) ? NO_PROJECT_NAME : dir ? basename(dir) : null;   // P3: never the store's `runs`
+  return [{ projectKey: row.project_key, projectName, projectDir: dir, br: branchOf(parse(row.branch)) }];
 }
 
 /** Where the checkout goes: the recorded worktreeDir, else derived from the recorded mode (D6). */

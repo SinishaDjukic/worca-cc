@@ -27,7 +27,8 @@ import { rmSync } from 'node:fs';
 
 import { getDb, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
-import { projectKey } from './store.mjs';
+import { projectKey, isNoProjectKey } from './store.mjs';
+import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
 import { addNotification, resolveNotifications } from './notifications.mjs';
 import { usageLimitSwitches, engineList } from '../shared/engine-switch.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
@@ -175,9 +176,12 @@ function rowToSchedule(r, { withRequest = false } = {}) {
   return s;
 }
 
-function targetCols({ projectDir = null, workspaceId = null }) {
+function targetCols({ projectDir = null, workspaceId = null }, { allowNoProject = false } = {}) {
+  const key = projectDir ? projectKey(projectDir) : null;
+  // P3 (L7): a run without a project cannot be scheduled or chained yet; its resume tickets can.
+  if (isNoProjectKey(key) && !allowNoProject) throw new Error(NO_PROJECT_ERRORS.schedule);
   return {
-    project_key: projectDir ? projectKey(projectDir) : null,
+    project_key: key,
     project_dir: projectDir || null,
     workspace_id: workspaceId || null,
   };
@@ -231,7 +235,7 @@ export function createTicket({
   if (resumePipelineId != null && (typeof resumePipelineId !== 'string' || !resumePipelineId.trim())) throw new Error('createTicket: resumePipelineId must be a non-empty string');
   if (resumePipelineId && chained) throw new Error('createTicket: a resume ticket cannot wait on another run');
   if (!chained && !Number.isFinite(runAtMs)) throw new Error('createTicket: runAtMs is required');
-  const tc = targetCols({ projectDir, workspaceId });
+  const tc = targetCols({ projectDir, workspaceId }, { allowNoProject: !!resumePipelineId });
   const ts = iso(now);
   getDb().prepare(`
     INSERT INTO scheduled_runs (id, schedule_id, title, project_key, project_dir, workspace_id, run_at, request,
@@ -706,6 +710,7 @@ export function resolveAfterRef(after, { projectDir = null, workspaceId = null, 
   if (ref.scheduleId) return { ok: false, error: 'after a repeating schedule is not supported — give the id of one of its runs' };
   const name = `‘${ref.title || id.slice(0, 8)}’`;
   const wantKey = projectDir ? projectKey(projectDir) : null;
+  if (isNoProjectKey(wantKey) || isNoProjectKey(ref.projectKey)) return { ok: false, error: NO_PROJECT_ERRORS.schedule };
   if (workspaceId) {
     if (!ref.workspaceId) return { ok: false, error: `${name} targets a project; this run targets a workspace` };
     if (ref.workspaceId !== workspaceId) return { ok: false, error: `${name} targets another workspace; this run targets ${workspaceId}` };

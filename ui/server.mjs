@@ -31,7 +31,7 @@ import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, foreignActiveWorkspaceRuns, readPipelineForResume, persistPrState, readPrState,
-  readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
+  readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify, newPipelineId,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   resolveIndexedArtifactFileForRow, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
@@ -254,7 +254,7 @@ import {
 } from '../src/core/guardrail-store.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
-  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow,
+  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow, graphNeedsRepo,
 } from '../src/core/workflows.mjs';
 import { mintAutoWorkflowId, sanitizeProposalAnswer } from '../src/core/auto/proposal.mjs';
 import {
@@ -342,6 +342,9 @@ import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, pr
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
+import { runProjectDir, noProjectWorkDir, isNoProjectWorkDir, isNoProjectKey, NO_PROJECT_KEY } from '../src/core/store.mjs';   // P3 — its own line: test/api-memory.test.mjs pins the one above
+import { WORK_ARTIFACT_KIND } from '../src/core/no-project-work.mjs';
+import { NO_PROJECT_NAME, NO_PROJECT_ERRORS } from '../src/shared/no-project.mjs';
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
 import {
   memoryRoot, GLOBAL_SCOPE, projectScope, scopeKey, isValidMemoryName, MEMORY_NAME_HELP, memoryScopeReport,
@@ -2125,6 +2128,7 @@ function askTrackRun(threadId, input, pin) {
   const projKey = isWs ? null : ((entry && entry.projectDir) ? projectKey(entry.projectDir) : (state.projectKey || null));
   const label = isWs
     ? (state.workspaceName || (Array.isArray(state.projects) ? state.projects.map((p) => p.projectName).filter(Boolean).join(' · ') : '') || '')
+    : isNoProjectKey(projKey) ? NO_PROJECT_NAME   // P3: every run without a project's folder is `work`
     : String((entry && entry.projectDir) || state.projectDir || '').split(/[\\/]/).filter(Boolean).pop() || (projKey || '');
   const title = (entry && entry.title) || state.title || pipelineId;
   const status = (entry && entry.status) || state.status || null;
@@ -2202,14 +2206,26 @@ const startRunHandler = async (req, res) => {
         : typeof stored.startedBy === 'string' && stored.startedBy ? stored.startedBy : null)
       : (req._startedBy || startedByOf(req));
 
-    // Mutual exclusion: exactly one of workspaceId / projectDir (§2.6).
+    // Mutual exclusion: exactly one of workspaceId / projectDir / noProject (§2.6, P3 CONTRACT §3).
+    if (body.noProject !== undefined && body.noProject !== null && typeof body.noProject !== 'boolean') {
+      return badRequest(res, NO_PROJECT_ERRORS.type);
+    }
+    const noProject = body.noProject === true;
     const hasWorkspace = typeof body.workspaceId === 'string' && body.workspaceId.trim();
     const hasProjectDir = typeof body.projectDir === 'string' && body.projectDir.trim();
+    if (noProject && (hasWorkspace || hasProjectDir)) return badRequest(res, NO_PROJECT_ERRORS.target);
     if (hasWorkspace && hasProjectDir) {
       return badRequest(res, 'provide workspaceId OR projectDir, not both');
     }
-    if (!hasWorkspace && !hasProjectDir) {
-      return badRequest(res, 'workspaceId or projectDir is required');
+    if (!noProject && !hasWorkspace && !hasProjectDir) {
+      return badRequest(res, NO_PROJECT_ERRORS.target);
+    }
+    // P3-D11: a run's own work folder is never a project (it would run in git mode under the reserved key).
+    if (hasProjectDir && isNoProjectWorkDir(body.projectDir)) return badRequest(res, NO_PROJECT_ERRORS.register);
+    // L7: a run without a project is never scheduled, chained or started from a previous run's branch (yet).
+    if (noProject && (body.scheduledFor != null || body.repeat != null || body.after != null
+      || (body.sourceFromPrevious != null && body.sourceFromPrevious !== false))) {
+      return badRequest(res, NO_PROJECT_ERRORS.schedule);
     }
 
     // Ask Worca card link (§8.1): both or neither; the thread must exist and
@@ -2242,7 +2258,7 @@ const startRunHandler = async (req, res) => {
     // The same name for both, without the flag: refuse now with the way out, instead of accepting the run
     // and failing it at setup ("they must differ") — or, on a repeating schedule, silently running on a
     // date-suffixed copy. Never inferred: chains, schedules and Ask carry the mode as data.
-    if (body.sameAsSource !== true && typeof body.featureBranch === 'string' && typeof body.sourceBranch === 'string'
+    if (!noProject && body.sameAsSource !== true && typeof body.featureBranch === 'string' && typeof body.sourceBranch === 'string'
       && body.featureBranch.trim() && body.featureBranch.trim() === body.sourceBranch.trim()) {
       return badRequest(res, `the new branch and the source branch are both "${body.sourceBranch.trim()}": to commit onto it, set sameAsSource (Run on the source branch); otherwise name another branch`);
     }
@@ -2312,7 +2328,12 @@ const startRunHandler = async (req, res) => {
     // Shape it first (spec D9/D12): `shape` and the shape workflows only while the gate is on.
     const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { enabled: shapeFirstEnabled(), internal: !!internal });
     if (!shapeReq.ok) return badRequest(res, shapeReq.error);
-    const { shape } = shapeReq;
+    const { shape: askedShape } = shapeReq;
+    // L7: a sliced Shape-it-first run chains tickets per slice, and a run without a project cannot be scheduled. So with
+    // no project a shaped run is never sliced: `slices: 'off'` unless 'auto' was asked for, which is refused (U13: the
+    // Shaper itself still runs with No project).
+    if (noProject && askedShape?.slices === 'auto') return badRequest(res, NO_PROJECT_ERRORS.slices);
+    const shape = noProject && askedShape ? { ...askedShape, slices: 'off' } : askedShape;
     const workflowId = shapeReq.workflowId || 'wf_default';
     // ONE gate for every run entry point, ONE status: unknown (today's text) and
     // archived (the upgrade explanation the UI shows verbatim) answer 400 through
@@ -2345,6 +2366,7 @@ const startRunHandler = async (req, res) => {
     const memoryScope = typeof body.memoryScope === 'string' && body.memoryScope.trim() ? body.memoryScope.trim() : null;
     const scopeReason = validateMemoryScope({ workflowId, memoryScope, isWorkspace: !!hasWorkspace });
     if (scopeReason) return badRequest(res, scopeReason);
+    if (noProject && memoryScope === 'project') return badRequest(res, NO_PROJECT_ERRORS.memory);   // U13 + CONTRACT §3: global memory only
     // Settings › Memory: a defragment run may name its model/effort PAIR at start — tier 1, above
     // the setting (memory-defrag-model.mjs). Defragment runs only: every other workflow picks its
     // models per node, and a body model there stays ignored exactly as before. The shape here; the
@@ -2467,7 +2489,49 @@ const startRunHandler = async (req, res) => {
 
     let orch, entry;
 
-    if (hasWorkspace) {
+    if (noProject) {
+      // ── No project (P3, CONTRACT §3): the run works in <worcaHome>/runs/<pipelineId>/work. No git guard, no
+      //    workModeForStart, no team total gate, no readRunConfig, no sync and no branch (S-N, P3-D4).
+      const pipelineId = newPipelineId();
+      const projectDir = noProjectWorkDir(pipelineId);
+      const fileProblem = await promptFileProblem(effectiveSource, projectDir);
+      if (fileProblem) return badRequest(res, fileProblem);
+      // Memory defragment on global memory (P3-D12): the start pair against the user-level catalog, and one live
+      // defragment per scope — the project arm's two gates (B20).
+      if (startPair && !internal) {
+        const foreign = runEngine.engine && runEngine.engine !== 'claude' ? null : foreignRunModel(body.model, 'claude', null);
+        if (foreign) return badRequest(res, foreign);
+        const checked = checkStartPair(body, await listModels(''));
+        if (checked.error) return badRequest(res, checked.error);
+        startPair = checked.pair;
+      }
+      if (memoryScope) {
+        const live = liveDefragRun(memoryScopeKey(memoryScope, projectDir));   // 'global': never projectKey()
+        if (live) return res.status(409).json({ error: 'a defragment run for this memory scope is already live', runId: live.id });
+      }
+      if (await tagGate(res, body, { projectDir: null, startedBy, exempt: tagExempt })) return;
+      if (Array.isArray(body.tags)) tags = body.tags;
+      const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: NO_PROJECT_KEY, name: NO_PROJECT_NAME, rank: 0 });
+      orch = await createOrchestratorFor({
+        projectDir, pipelineId, projectKey: NO_PROJECT_KEY, workMode: 'none',
+        prompt: effectivePrompt,
+        ...(effectiveSource ? { source: effectiveSource } : {}),
+        title, extras, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
+        ...(mcpOptOut.length ? { mcpOptOut } : {}),
+        startedBy,
+        humanInLoop: bodyHumanInLoop ?? true,
+        ...(memoryScope ? { memoryScope } : {}),
+        ...(runOverlay ? { overlay: runOverlay } : {}),
+        claude: { permissionMode: 'acceptEdits', ...(startPair ? { model: startPair.model, ...(startPair.effort ? { effort: startPair.effort } : {}) } : {}), mock, ...runEngine },
+        ...(nightMode ? { nightMode: true } : {}),
+        tags,
+        ...(shape ? { shape } : {}),
+      });
+      entry = {
+        id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
+        title, status: 'starting', startedAt: new Date().toISOString(), startedBy, tags, events: [], pendingQuestion: null,
+      };
+    } else if (hasWorkspace) {
       if (!(await gitState()).available) return gitMissing(res);   // until P5 (Folder members)
       // ── Workspace target (§2.6) ────────────────────────────────────────────
       const workspaceId = body.workspaceId.trim();
@@ -2844,7 +2908,7 @@ const startRunHandler = async (req, res) => {
     // A scan's launcher needs the card attribution the wizard cannot compute (the key is a hash).
     res.json(scanTarget
       ? { runId, workspaceId: entry.workspaceId, title: entry.title, projectDir: entry.projectDir, projectNames: entry.projectNames }
-      : { runId });
+      : noProject ? { runId, pipelineId: entry.pipelineId } : { runId });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3112,7 +3176,7 @@ async function validateResumeTarget(pipelineId) {
   const workspaceId = saved.row.target === 'workspace' ? (saved.row.workspace_key || null) : null;
   let projectDir = null;
   if (!workspaceId && saved.row.project_key) {
-    projectDir = await projectDirForKey(saved.row.project_key);
+    projectDir = await runProjectDir(saved.row, projectDirForKey);   // P3: a run without a project is its own work folder
   }
   return { ok: true, row: saved.row, resumePoint: saved.resumePoint, projectDir, workspaceId };
 }
@@ -4799,7 +4863,7 @@ async function resumeTargetDirs(saved) {
       workspace: { id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName, description: meta.workspaceDescription || '', projects },
     };
   }
-  const projectDir = await projectDirForKey(saved.row.project_key);
+  const projectDir = await runProjectDir(saved.row, projectDirForKey);   // P3: a run without a project is its own work folder
   if (!projectDir) throw new ResumeError(400, { error: 'project for this pipeline is not onboarded on this machine' });
   return { projectDir, workspace: undefined };
 }
@@ -5761,6 +5825,7 @@ app.post('/api/workspaces/metrics-scan', async (req, res) => {
   // Same checks as POST /api/workspaces/scan (:~2948): never discover (and write a config row for) a junk path.
   for (const p of normalized) {
     if (!fs.existsSync(p)) return badRequest(res, `member path is missing: ${p}`);
+    if (isNoProjectWorkDir(p)) return badRequest(res, NO_PROJECT_ERRORS.register);   // P3-D11, before git runs inside it
     if (!isGitRepo(p)) return badRequest(res, `member is not a git repository: ${p}`);
   }
   try { res.json(await scanMembers(normalized)); }
@@ -5916,6 +5981,10 @@ async function unsyncableBlock(dir, projectKey, base) {
 app.get('/api/sync', syncRoute(async (req, res) => {
   const dir = resolveProjectDir(req.query.projectDir);
   if (!dir) return badRequest(res, 'projectDir is required');
+  if (isNoProjectWorkDir(dir)) {                     // P3: never git in a run's work folder (no repository, so no base)
+    const s = effectiveSyncSettings(null);
+    return res.json({ sync: { base: null, remote: null, state: 'unknown', settings: { beforeRun: s.beforeRun, onDiverged: s.onDiverged } } });
+  }
   const p = await registeredProjectForDir(dir);
   const base = typeof req.query.base === 'string' && req.query.base ? req.query.base : null;
   if (base && !isSafeBranchName(base)) return res.json({ sync: await unsyncableBlock(dir, p ? p.key : null, base) });
@@ -7731,6 +7800,8 @@ function isPrStoreKey(key) {
 // { error } (the caller maps it: 400 for create/remotes, UNKNOWN for mergeable).
 function prTargetFor(state, memberKey) {
   if (state.target !== 'workspace') {
+    // P3: a run without a project has no repository (its projectDir is its own work folder)
+    if (state.projectKey === NO_PROJECT_KEY) return { repoDir: null, feature: null, source: null, memberKey: null, memberName: null };
     return { repoDir: state.projectDir || null, feature: state.branch?.feature || null,
       source: state.branch?.source || null, memberKey: null, memberName: null };
   }
@@ -8651,6 +8722,7 @@ app.post('/api/install', async (req, res) => {
 app.get('/api/branches', async (req, res) => {
   const projectDir = resolveProjectDir(req.query.projectDir);
   if (!projectDir) return badRequest(res, 'projectDir is required');
+  if (isNoProjectWorkDir(projectDir)) return res.json({ branches: [], current: null, runs: [] });   // P3: never git in a run's work folder
   try {
     const [branches, current] = await Promise.all([
       listLocalBranches(projectDir),
@@ -8710,7 +8782,8 @@ async function projectsForApi(list) { const { available } = await gitState(); re
 
 app.get('/api/projects', async (_req, res) => {
   try {
-    res.json({ projects: await projectsForApi(await listProjects()) });
+    const runsRoot = path.join(worcaHome(), 'runs');
+    res.json({ projects: await projectsForApi(await listProjects()), runsRoot, runsRootDisplay: displayPath(runsRoot) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -11108,8 +11181,11 @@ app.get('/api/workflows', async (req, res) => {
     // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, then the Shape it first built-in while
     // the shapeFirst gate is on, then the saved rows ]. The built-ins are never persisted rows (listWorkflows
     // filters their ids), so none appears twice.
+    // P3 (U13): each row says whether one of its agents expects a code repository (the No-project note).
+    const registry = loadAgentRegistry(AGENTS_DIR);
     res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW,
-      ...(shapeFirstEnabled() ? [GRAPH_SHAPE_WORKFLOW] : []), ...(await listWorkflows())] });
+      ...(shapeFirstEnabled() ? [GRAPH_SHAPE_WORKFLOW] : []), ...(await listWorkflows())]
+      .map((wf) => ({ ...wf, needsRepo: graphNeedsRepo(wf, registry) })) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -11702,15 +11778,29 @@ async function askRunCardExtras(row) {
   } catch { results = null; }            // no results.json, a reclaimed run folder, or junk JSON
   let artifacts = [];
   let moreArtifacts = false;
+  let artifactsTotal = null;
   try {
     // Count on the cheap index rows (no stat), then read (and stat) only the last page.
     const { total, offset } = lastArtifactsWindow(await listArtifacts(row.id), RUN_CARD_ARTIFACTS);
-    const rows = total ? await listRunArtifacts(row.id, { limit: RUN_CARD_ARTIFACTS, offset, browsableOnly: true }) : [];
-    artifacts = rows.map((a) => ({ kind: a.kind, relPath: a.relPath, bytes: a.bytes, nodeId: a.nodeId, cycle: a.cycle }));
-    moreArtifacts = total > RUN_CARD_ARTIFACTS;
+    const pick = (rows) => rows.map((a) => ({ kind: a.kind, relPath: a.relPath, bytes: a.bytes, nodeId: a.nodeId, cycle: a.cycle }));
+    if (isNoProjectKey(row.project_key)) {
+      // P3: a run without a project — its work/ files (the deliverables) first, then its newest other rows; the caption
+      // counts every browsable row (Artifacts · <n>).
+      const work = total ? await listRunArtifacts(row.id, { kind: WORK_ARTIFACT_KIND, limit: RUN_CARD_ARTIFACTS }) : [];
+      const others = work.length < RUN_CARD_ARTIFACTS && total > work.length
+        ? (await listRunArtifacts(row.id, { limit: RUN_CARD_ARTIFACTS, offset, browsableOnly: true })).filter((a) => a.kind !== WORK_ARTIFACT_KIND)
+        : [];
+      artifacts = pick([...work, ...others].slice(0, RUN_CARD_ARTIFACTS));
+      artifactsTotal = total;
+      moreArtifacts = total > artifacts.length;
+    } else {
+      const rows = total ? await listRunArtifacts(row.id, { limit: RUN_CARD_ARTIFACTS, offset, browsableOnly: true }) : [];
+      artifacts = pick(rows);
+      moreArtifacts = total > RUN_CARD_ARTIFACTS;
+    }
   } catch { /* the artifact index is best-effort here */ }
   const { changes } = folderFacts(row);                // S9: a folder row's { state, counts }; git rows carry none
-  return { results, artifacts, moreArtifacts, pr: readPrState(row.id), ...(changes ? { changes } : {}) };
+  return { results, artifacts, moreArtifacts, ...(artifactsTotal != null ? { artifactsTotal } : {}), pr: readPrState(row.id), ...(changes ? { changes } : {}) };
 }
 
 // Ask Worca progress card hydration (plan D9): the run's detail state by pipeline id OR live run id, no store key.
@@ -15856,7 +15946,7 @@ export const _testing = {
   askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,
   broadcast, askFilesRunDir,
-  validateResumeTarget, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
+  validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,

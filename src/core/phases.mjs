@@ -790,6 +790,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   // registry layer, so every other spawn is byte-identical.
   const fanEnv = fanOutSpawnEnv(ctx);
   const mcpEnv = ctx.mcpEnv && Object.keys(ctx.mcpEnv).length ? ctx.mcpEnv : null;
+  // P3: in a run without a project, an agent's own git never walks up from work/ into a repository that holds worcaHome.
+  const ceilEnv = ctx.workMode === 'none' && ctx.projectDir ? { GIT_CEILING_DIRECTORIES: dirname(ctx.projectDir) } : null;
   const excluded = bridgedModelInfo(c.model)?.excludeTools;
   return {
     cwd: ctx.projectDir,
@@ -844,7 +846,7 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // tasks off on the scan's two fan-out nodes (so the cap holds there), merged OVER the guardrail env
     // and UNDER modelEnv. undefined for every non-fan-out node ⇒ nothing merged ⇒ that spawn env is
     // byte-identical.
-    spawnEnv: fanEnv || mcpEnv ? { ...fanEnv, ...mcpEnv } : undefined,
+    spawnEnv: fanEnv || mcpEnv || ceilEnv ? { ...ceilEnv, ...fanEnv, ...mcpEnv } : undefined,
     // MCP registry (§5.5.3): every registry secret value is redacted from what the run records.
     redactValues: ctx.mcpRedact?.length ? ctx.mcpRedact : undefined,
     // Model bridge (model-bridge-design.md §5.3): a translated model has no
@@ -891,6 +893,15 @@ export function folderRunNote(ctx) {
     `\`git diff\`, \`git status\`, \`git add\` or \`git commit\`), even where your role instructions say so. ` +
     `The changes so far are in \`${join(ctx.pipelineDir, 'changes.patch')}\` (a unified diff from the folder as it was ` +
     `to your cwd) and \`${join(ctx.pipelineDir, 'changes.json')}\` (the file list).\n\n`;
+}
+
+/** P3: a no-project run's task-prompt note — its cwd is the run's own work folder, with no git at all.
+ *  '' unless ctx.workMode === 'none'. Exported for testing. */
+export function noProjectRunNote(ctx) {
+  if (ctx?.workMode !== 'none') return '';
+  return 'This run has no project and no git repository: your cwd is the run\'s own working folder. Never run git here ' +
+    '(no `git init`, `git diff`, `git status`, `git add` or `git commit`), even where your role instructions say so. ' +
+    'Every file you make in this folder is kept as this run\'s result.\n\n';
 }
 
 /** A compact task header reused across roles. Exported for testing. */
@@ -947,6 +958,7 @@ export function taskHeader(ctx, title) {
     locationLine +
     `Pipeline directory (shared artifacts): ${ctx.pipelineDir}\n\n` +
     folderRunNote(ctx) +
+    noProjectRunNote(ctx) +
     skillsHint +
     workspaceProjectsBlock(ctx.workspace, { relative: wsRun }) +
     requestBlock +
@@ -1132,6 +1144,10 @@ export function diffInstruction(ctx) {
     return `Inspect the changes in \`${join(ctx.pipelineDir, 'changes.patch')}\` (the folder as it was when the run ` +
       `started → your cwd; new and deleted files included) and \`${join(ctx.pipelineDir, 'changes.json')}\` (the list), ` +
       'then read the changed files in your cwd. There is no git in this run.';
+  }
+  if (ctx?.workMode === 'none') {
+    return 'There is no repository and no diff in this run: every file in your cwd was made by this run. ' +
+      'Review those files directly with Glob, Grep and Read.';
   }
   const ref = String(ctx?.checkpointRef || '').trim();
   return ref

@@ -17,6 +17,7 @@ any page. On a run or a project page it shows a live shell right away: it reatta
 | A running run | its live worktree. The pane warns that the pipeline is still changing those files. |
 | A finished run | its checkout (see [Actions](actions.md)). With none yet, Worca makes the checkout first. |
 | A workspace run | one terminal per member; the select next to the folder picks the member. |
+| A run with No project | its own `work/` folder while it runs or is paused; once it ends there is none (its files are its Artifacts). |
 | A project page | your own checkout of the project (the folder you registered), on whatever is checked out there. |
 | Any other page | no new terminal: the pane shows the most recent one that is still running. |
 

@@ -583,6 +583,9 @@ export async function runCopilotProcess({
     for (const n of mcpEnvRefNames(mcpServers)) if (typeof from[n] === 'string') refEnv[n] = from[n];
   }
   const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(refEnv).length ? { runEnv: refEnv } : {}) });
+  // P3-D20: the run env stays out of this child's env (its shell would read the registry secrets), but the git ceiling
+  // of a run without a project is no secret and must reach the agent's own git.
+  if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
   env.COPILOT_AUTO_UPDATE = 'false';
 
   // Scratch folder: the node agent (system prompt), the investigator, the MCP config and the usage file.

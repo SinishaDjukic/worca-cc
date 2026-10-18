@@ -1,6 +1,7 @@
 {
   "key": "promoExplorer",
   "metaVersion": 2,
+  "needsRepo": true,
   "mockRole": "generic-producer",
   "promptHints": "Write product.md (the product in its own words, the features worth showing and where each lives in the UI) and runbook.json (a sandboxed start with demo data, or {\"ui\": false}). Copy both under promo/ in the pipeline directory. Pipeline directory: {pipelineDir}",
   "inputs": [

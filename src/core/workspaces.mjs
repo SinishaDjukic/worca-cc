@@ -25,7 +25,8 @@ import { basename, isAbsolute, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { worcaHome, normalizeProjectPath } from './projects.mjs';
-import { canonicalProjectRoot, projectKey, workspaceStorePath } from './store.mjs';
+import { canonicalProjectRoot, projectKey, workspaceStorePath, isNoProjectWorkDir } from './store.mjs';
+import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
 import { gitAvailable, GIT_MISSING } from './git-available.mjs';
 import { slugify, retainedWorkFor, checkoutRecordsFor } from './artifacts.mjs';
 import { getDb, prepare, tx } from './db.mjs';
@@ -359,6 +360,8 @@ function normalizeMembers(projectPaths, rootOf = canonicalProjectRoot) {
   for (const raw of Array.isArray(projectPaths) ? projectPaths : []) {
     const norm = normalizeProjectPath(raw);
     if (!norm) continue;
+    // P3-D11: a run's work folder is never a member — refused before rootOf, which would run git inside it.
+    if (isNoProjectWorkDir(norm)) throw err(NO_PROJECT_ERRORS.register, 'BAD_REQUEST');
     const root = rootOf(norm);
     if (seenRoots.has(root)) continue;
     seenRoots.add(root);

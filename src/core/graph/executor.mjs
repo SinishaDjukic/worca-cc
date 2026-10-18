@@ -206,6 +206,7 @@ export function changesInstruction(ctx) {
   if (ctx?.workMode === 'folder') {
     return `in \`${join(ctx.pipelineDir, 'changes.patch')}\`, a unified diff of everything the run changed — there is no git in this run`;
   }
+  if (ctx?.workMode === 'none') return 'by reading the files in your cwd (there is no repository: every file there was made by this run)';
   const perMember = detachedWorkspace(ctx) ? workspaceDiffInstruction(ctx) : '';
   return perMember
     ? 'in EVERY member checkout — your cwd is the worca-cc run root, not a repository, so ' +

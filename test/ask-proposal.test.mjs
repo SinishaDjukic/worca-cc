@@ -367,3 +367,33 @@ test('Shape it first: shape / slices / schedule refusal / the gate, and the asse
     } },
   ]);
 });
+
+test('P3 noProject: a card with no project keeps the pinned key set; its refusals', async () => {
+  const card = ok(await validateProposal({ noProject: true, brief: 'A deck on Q3 hiring' }, { cardId: 'card_3f2a9c01' }));
+  assert.deepEqual(Object.keys(card).sort(), ['attachments', 'brief', 'featureBranch', 'guardrailsId', 'members', 'memoryScope', 'note', 'projectDir', 'projectKey', 'projectName',
+    'sourceBranch', 'sourceBranchByKey', 'target', 'title', 'workflowId', 'workflowName', 'workspaceId', 'workspaceName']);
+  assert.equal(card.target, 'none');
+  assert.deepEqual([card.projectKey, card.projectDir, card.featureBranch, card.sourceBranch], [null, null, null, null]);
+  assert.deepEqual([card.projectName, card.workspaceId, card.workspaceName, card.members, card.sourceBranchByKey], [null, null, null, null, null]);
+  assert.equal(card.workflowId, 'wf_default');
+  const ignored = ok(await validateProposal({ noProject: true, brief: 'x', sourceBranch: 'main', featureBranch: 'feat/x', sameAsSource: true }));
+  assert.deepEqual([ignored.sourceBranch, ignored.featureBranch, 'sameAsSource' in ignored], [null, null, false], 'branch fields are ignored, as POST /api/run does');
+  assert.deepEqual(errs(await validateProposal({ noProject: true, projectKey: 'demo-00000001', brief: 'x' })), ['provide one of projectKey, workspaceId or noProject']);
+  assert.deepEqual(errs(await validateProposal({ noProject: true, workspaceId: 'wks-team-0000abcd', brief: 'x' })), ['provide one of projectKey, workspaceId or noProject']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', workspaceId: 'wks-team-0000abcd', brief: 'x' })), [PROPOSAL_ERRORS.bothTargets], 'key + workspace keeps its text');
+  assert.deepEqual(errs(await validateProposal({ noProject: 'yes', brief: 'x' })), ['noProject must be true']);
+  assert.deepEqual(errs(await validateProposal({ noProject: false, brief: 'x' })), [PROPOSAL_ERRORS.noTarget], 'false is "not given"');
+  for (const extra of [{ when: 'tomorrow 02:00' }, { every: 'day 03:30' }, { after: 'abcd1234' }, { after: 'abcd1234', sourceFromPrevious: true }]) {
+    assert.ok(errs(await validateProposal({ noProject: true, brief: 'x', ...extra })).includes('a run without a project cannot be scheduled yet'), JSON.stringify(extra));
+  }
+  assert.ok(errs(await validateProposal({ noProject: true, brief: 'x', workflowId: 'wf_memory_defrag', memoryScope: 'project' })).includes('memoryScope needs a project'));
+  assert.equal(ok(await validateProposal({ noProject: true, brief: 'x', workflowId: 'wf_memory_defrag', memoryScope: 'global' })).memoryScope, 'global', 'U13: Memory defragment runs on global memory with no project');
+  const on = createProposalValidator({ ...deps, shapeFirst: () => true }).validateProposal;
+  const plain = ok(await on({ noProject: true, brief: 'x', shape: {} }));
+  assert.deepEqual([plain.target, plain.workflowId, plain.shape.slices], ['none', 'wf_shape', 'off'], 'U13: with no project a shaped run is never sliced');
+  assert.ok(errs(await on({ noProject: true, brief: 'x', shape: { slices: 'auto' } })).includes('a run without a project cannot be planned in slices yet'));
+  const shaped = ok(await on({ noProject: true, brief: 'x', shape: { slices: 'off' } }));
+  assert.deepEqual([shaped.target, shaped.workflowId, shaped.shape.slices], ['none', 'wf_shape', 'off']);
+  assert.equal(ok(await on({ noProject: true, brief: 'x', assess: { size: 'large', openDecisions: [] } })).nudge, undefined,
+    'no Shape-it-first nudge: its shaped run would be sliced');
+});

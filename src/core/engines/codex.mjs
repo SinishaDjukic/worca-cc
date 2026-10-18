@@ -806,6 +806,9 @@ export async function runCodexProcess({
   const normalizer = createCodexNormalizer({ model, priorUsage: thread ? loadUsage(usageDir, thread) : null, unpriced: !!endpoint,
     subagent: role ? { type: CODEX_INVESTIGATOR_ROLE, model: role.model } : null });
   const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(ownEnv).length ? { runEnv: ownEnv } : {}) });
+  // P3-D20: the run env stays out of this child's env (its shell would read the registry secrets), but the git ceiling
+  // of a run without a project is no secret and must reach the agent's own git.
+  if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
   // Guardrails: the deny rules codex can hold (codexRulePlan). Command rules live in a worca-managed CODEX_HOME.
   const plan = codexRulePlan(permissionRules);
   if (plan.prefixes.length) env.CODEX_HOME = guardedCodexHome(codexRulesFile(plan.prefixes));

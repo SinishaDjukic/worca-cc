@@ -269,7 +269,7 @@
         <section class="view hidden" data-view="new">
           <div class="topbar">
             <div>
-              <div class="sub">Pick a project, describe the task, and run &middot; agents come tuned &mdash; open one only to change it</div>
+              <div class="sub">Pick where it runs, describe the task, and run &middot; agents come tuned &mdash; open one only to change it</div>
             </div>
           </div>
 
@@ -279,13 +279,15 @@
                 <!-- Target switch and the thing it selects share one row: they are one
                      decision, and the switch is only meaningful next to its picker. -->
                 <div class="split-row">
-                  <div class="field field-compact" id="target-field" data-min-level="advanced">
+                  <div class="field field-compact" id="target-field">
                     <label>Target</label>
                     <div class="seg" id="target-seg">
+                      <button type="button" data-target="none" aria-pressed="false">No project</button>
                       <button type="button" data-target="project" class="on" aria-pressed="true">Project</button>
-                      <button type="button" data-target="workspace" aria-pressed="false">Workspace</button>
+                      <button type="button" data-target="workspace" data-min-level="advanced" aria-pressed="false">Workspace</button>
                     </div>
                     <!-- hidden radios kept as the source of truth read at submit -->
+                    <input type="radio" name="target" value="none" hidden />
                     <input type="radio" name="target" value="project" checked hidden />
                     <input type="radio" name="target" value="workspace" hidden />
                   </div>
@@ -337,6 +339,8 @@
                   <small class="hint">A run fans out across the member projects. <a href="#workspaces" data-nav="workspaces">Manage workspaces</a></small>
                 </div>
 
+                <div class="field field-compact target-pane hidden" id="target-none-pane"><label for="noProjectWorkDir">Works in</label><input id="noProjectWorkDir" class="input" type="text" readonly></div>
+
                   </div><!-- /.target-panes -->
                 </div><!-- /.split-row -->
 
@@ -368,6 +372,7 @@
                         <option value="wf_default">Default</option>
                       </select>
                     </div>
+                    <small class="hint" id="needsRepoNote" hidden>Some steps expect a code repository.</small>
                   </div>
 
                   <!-- Engine (harness bridge §10.4): who runs the pipeline's agent nodes. Claude is

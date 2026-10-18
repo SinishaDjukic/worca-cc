@@ -337,7 +337,8 @@ class AskTurn extends EventEmitter {
     // Mirrors the MCP child's own defaulting, so this authoritative re-validation
     // builds the same card the model was shown.
     const pin = this.pinnedScope;
-    const hasTarget = (typeof raw.projectKey === 'string' && raw.projectKey.trim())
+    const hasTarget = raw.noProject === true   // P3: a target of its own (P4a flips the no-pin default, S35)
+      || (typeof raw.projectKey === 'string' && raw.projectKey.trim())
       || (typeof raw.workspaceId === 'string' && raw.workspaceId.trim());
     const inp = pin && !hasTarget ? { ...raw, ...pin } : raw;
     try {

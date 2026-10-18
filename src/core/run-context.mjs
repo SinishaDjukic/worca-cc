@@ -33,13 +33,13 @@
 // `chmod` remove a member's entire MCP or memory contribution with the run still
 // reporting success. Every reader takes an optional `onError` sink (see fsWarner).
 
-import { readFile, writeFile, readdir, stat, mkdir, rm, cp, symlink } from 'node:fs/promises';
+import { readFile, writeFile, readdir, stat, lstat, mkdir, rm, cp, symlink } from 'node:fs/promises';
 import { realpathSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve, dirname, basename, isAbsolute, sep } from 'node:path';
 
 import { contextMaxBytesPerFile, contextMaxBytesTotal, skillMount, defaultRoot } from './settings.mjs';
-import { readRunManifest, updateRunManifest } from './run-manifest.mjs';
+import { readRunManifest, updateRunManifest, insideCheckout } from './run-manifest.mjs';
 import { isValidSkillName } from './skills.mjs';
 import { mergePermissionRules } from './guardrails.mjs';
 import { screenMcpSecrets, mcpSecretsMode } from './mcp-secrets.mjs';
@@ -47,6 +47,7 @@ import { brokerEnabled } from './broker-client.mjs';
 import { PROBLEM_REASONS, skipMessage } from './mcp/registry.mjs';
 import { managedSettingsFiles } from './skills-registry/host.mjs';
 import { gitAvailable } from './git-available.mjs';
+import { isNoProjectKey } from '../shared/no-project.mjs';
 
 /**
  * The `--allowedTools` grant shape this build emits for merged MCP servers.
@@ -445,6 +446,18 @@ export async function previewSetSkillNames({ dirs = [], homeDir = null, setSkill
   return out;
 }
 
+/** P3-D19: each existing folder of `rel` under `base` is a real folder — never a link an agent swapped in (a missing one is fine). */
+export async function realDirsBelow(base, rel) {
+  let cur = base;
+  for (const part of String(rel).split(/[\\/]/).filter(Boolean)) {
+    cur = join(cur, part);
+    let st;
+    try { st = await lstat(cur); } catch (err) { return err?.code === 'ENOENT'; }
+    if (st.isSymbolicLink() || !st.isDirectory()) return false;
+  }
+  return true;
+}
+
 /**
  * Mount every skill entry into ONE target `.claude/skills` dir (§5.6).
  *
@@ -484,6 +497,9 @@ export async function assembleSkills({
   /** @type {Array<{name:string, source:string, cls:'member'|'root'|'worca-cc', prefix:string, origin:string}>} */
   const candidates = [];
   for (const m of [...members].sort(byProjectKey)) {
+    // P3: a run without a project has no project skills — its projectDir is the run's own work/, where this very mount
+    // lands: reading it back on a resume made every mounted (and every agent-written) skill its own source, removed it.
+    if (m.workMode === 'none') continue;
     for (const c of await skillCandidates(m.projectDir, onError)) {
       candidates.push({
         ...c, cls: 'member', prefix: `${slug(m.projectName || m.projectKey)}-`,
@@ -1101,9 +1117,13 @@ export function generateClaudeMd({
   const meta = [];
   // P1 (S9): a run whose every member works on a copy says so and never names git (P5 handles mixed workspaces).
   const folder = members.length > 0 && members.every((m) => m.workMode === 'folder');
+  // P3: a run without a project has one member (the reserved key) and works in the run's own `work/` folder.
+  const none = members.length === 1 && members[0].workMode === 'none';
   meta.push(`# Worca CC run ${pipelineId}`, '');
   meta.push(
-    folder
+    none
+      ? 'You are working in a **worca-cc run root** with no project. Your working folder is `work/`: every file you make goes there, and worca keeps them as this run\'s files. The run root holds run metadata only. This file is generated per run — do not edit it.'
+      : folder
       ? 'You are working in a **worca-cc run root**. All edits happen inside `repos/<projectKey>`, a copy of the project\'s folder (not a git repository: never run git there); the run root holds run metadata only. This file is generated per run from the project\'s real directory — do not edit it.'
       : 'You are working in a **worca-cc run root**. All code edits happen inside ' +
         '`repos/<projectKey>`, one git checkout per project below; the run root holds run ' +
@@ -1112,7 +1132,9 @@ export function generateClaudeMd({
     '',
   );
   meta.push('## Run layout', '');
-  meta.push(folder
+  meta.push(none
+    ? '- `work/` — this run\'s working folder (no project, no git). **All files you make go here.**'
+    : folder
     ? '- `repos/<projectKey>/` — a copy of the project\'s folder (no git). **All code edits happen here.**'
     : '- `repos/<projectKey>/` — one git worktree per project in this run. **All code edits happen here.**');
   meta.push('- `CLAUDE.md` (this file) — the generated context for the run.');
@@ -1120,8 +1142,9 @@ export function generateClaudeMd({
   meta.push('- `run.json` — the run manifest (members, mounts, byte budget, warnings).');
   meta.push('');
   meta.push('## Projects in this run', '');
-  if (!members.length) meta.push('*(none)*', '');
-  for (const m of [...members].sort(byProjectKey)) {
+  if (none) meta.push('*(none — a run without a project)*', '');
+  else if (!members.length) meta.push('*(none)*', '');
+  for (const m of none ? [] : [...members].sort(byProjectKey)) {
     meta.push(`- \`repos/${m.projectKey}\` — **${m.projectName || m.projectKey}**`);
     meta.push(`  - real directory: \`${m.projectDir}\``);
     if (m.branch) meta.push(`  - branch: \`${m.branch}\``);
@@ -1170,7 +1193,9 @@ export function generateClaudeMd({
   const metaText = `${meta.join('\n')}\n`;
   const minimalMeta =
     `# Worca CC run ${pipelineId}\n\n` +
-    'All code edits happen inside `repos/<projectKey>`; the run root holds run metadata only.\n';
+    (none
+      ? 'All files you make go in `work/`; the run root holds run metadata only.\n'
+      : 'All code edits happen inside `repos/<projectKey>`; the run root holds run metadata only.\n');
 
   // ── memory block ────────────────────────────────────────────────────────
   const mem = [];
@@ -1178,7 +1203,8 @@ export function generateClaudeMd({
     mem.push(`## Root instructions (${projectsRoot})`, '');
     for (const s of rootSections) mem.push(`### ${s.rel}`, '', s.text.replace(/\s+$/, ''), '');
   }
-  for (const m of [...members].sort(byProjectKey)) {
+  // P3: a run without a project has no project memory to name (its work/ folder is the cwd; Claude loads it there).
+  for (const m of none ? [] : [...members].sort(byProjectKey)) {
     mem.push(`## Project: ${m.projectName || m.projectKey} — repos/${m.projectKey}`, '');
     const sections = memberSections.get(m.projectKey) || [];
     if (!sections.length) mem.push(NO_MEMORY_PLACEHOLDER, '');
@@ -1301,7 +1327,7 @@ export async function assembleRunContext({
   // (and every member under a home-as-projectsRoot, the default) never warns.
   if (rootUsable) {
     for (const m of sorted) {
-      if (!m.projectDir || isUnder(m.projectDir, projectsRoot)) continue;
+      if (!m.projectDir || isNoProjectKey(m.projectKey) || isUnder(m.projectDir, projectsRoot)) continue;   // P3: a run's own work/ is never a project
       warnings.push(
         `member \`${m.projectName || m.projectKey}\` at \`${m.projectDir}\` is not under the ` +
         `projects root \`${projectsRoot}\` — registration is deliberately unconstrained (§5.1), so ` +
@@ -1337,6 +1363,10 @@ export async function assembleRunContext({
       resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills, setSkills,
     });
     if (skillsOut.records.length) injectedPaths.runRoot = skillsOut.records;
+  } else if (primary?.worktreeDir && primary.workMode === 'none' && !(await realDirsBelow(primary.worktreeDir, skillsRel))) {
+    // P3-D19: a run without a project's work/ was the agents' cwd: a `.claude` (or `.agents`) swapped for a link is never
+    // mounted through (the mount removes each destination first).
+    warnings.push(`no skill mount: \`${skillsRel}\` in the run's work/ is not a real folder.`);
   } else if (primary?.worktreeDir) {
     // E4/P3b: the skills ancestor walk stops at a git repository root, so a run-root
     // mount would be invisible to a process whose cwd is the worktree.
@@ -1363,6 +1393,8 @@ export async function assembleRunContext({
     const keep = new Set(skillsOut.records.map((r) => r.path));
     for (const old of previousRecords[scope]) {
       if (old?.kind !== 'skill' || !old.path || keep.has(old.path)) continue;
+      // P3-D19: the previous records come from run.json, which an agent can rewrite — never remove past the checkout.
+      if (!(await insideCheckout(baseDir, join(baseDir, old.path), { strict: !isWorkspace && primary?.workMode === 'none' }))) continue;
       try { await rm(join(baseDir, old.path), { recursive: true, force: true }); } catch { /* best-effort */ }
       warnings.push(`stale skill mount \`${old.path}\` removed: its source \`${old.source}\` is gone.`);
     }

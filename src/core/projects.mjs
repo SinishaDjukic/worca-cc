@@ -12,9 +12,10 @@ import { existsSync, statSync, realpathSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { getWorcaRoot, defaultRoot } from './settings.mjs';
 import { getDb, prepare, tx } from './db.mjs';
-import { projectKey, canonicalProjectRoot } from './store.mjs';
+import { projectKey, canonicalProjectRoot, isNoProjectWorkDir } from './store.mjs';
 import { gitAvailable, gitState } from './git-available.mjs';
 import { detectVcs, normalizeVcs, samePath } from './project-kind.mjs';
+import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
 
 export { detectVcs, displayPath } from './project-kind.mjs';
 
@@ -128,6 +129,9 @@ export function insertProject(input, { gitOn = gitAvailable() } = {}) {
   if (!name) throw new Error('project name is required');
   const path = normalizeProjectPath(input && input.path);
   if (!path) throw new Error('project path is required');
+  // P3-D11: a run's work folder is never a project. Before the vcs / nested check: an existing work folder in a
+  // git-tracked worcaHome would otherwise answer "Inside a git repository".
+  if (isNoProjectWorkDir(path)) throw new Error(NO_PROJECT_ERRORS.register);
   // A path that exists must be a directory; a non-existent path is allowed (the run
   // creates it), matching the orchestrator's mkdir-on-run behavior.
   if (existsSync(path) && !isDir(path)) throw new Error('path is not a directory');

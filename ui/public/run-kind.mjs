@@ -2,6 +2,9 @@
 // project) and the one kind chip every surface shows. The server records the mode once (`state.workMode`, mirrored
 // into `state.branch.workMode`), so a run without it is an older git run. No DOM work at import.
 
+import { NO_PROJECT_KEY, isNoProjectKey } from '../../src/shared/no-project.mjs';
+export { NO_PROJECT_KEY };
+
 const MODES = new Set(['git', 'folder', 'none']);
 
 export function workModeOf(x) {
@@ -14,6 +17,7 @@ export function workModeOf(x) {
 
 export function isGitRun(x) { return workModeOf(x) === 'git'; }
 export function isFolderRun(x) { return workModeOf(x) === 'folder'; }
+export function isNoProjectRun(x) { return workModeOf(x) === 'none' || isNoProjectKey(x && x.projectKey); }
 
 export function projectKind(row) {
   const v = row && row.vcs;
@@ -23,7 +27,7 @@ export function projectKind(row) {
 }
 
 export const KIND_LABELS = Object.freeze({ git: 'Git', folder: 'Folder', none: 'No project', ws: 'Workspace' });
-export const RUN_KIND_CHIP = Object.freeze({ folder: 'folder' });
+export const RUN_KIND_CHIP = Object.freeze({ folder: 'folder', none: 'none' });
 
 export function kindChip(doc, kind) {
   if (typeof kind !== 'string' || !Object.hasOwn(KIND_LABELS, kind)) return null;

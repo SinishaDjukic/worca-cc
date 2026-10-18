@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { workModeOf, isGitRun, isFolderRun, projectKind, kindChip, KIND_LABELS, RUN_KIND_CHIP } from '../ui/public/run-kind.mjs';
+import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, projectKind, kindChip, KIND_LABELS, RUN_KIND_CHIP } from '../ui/public/run-kind.mjs';
 
 test('workModeOf: the run, its saved state or its branch record names the mode; anything else is a git run', () => {
   assert.equal(workModeOf({ workMode: 'folder' }), 'folder');
@@ -16,6 +16,7 @@ test('workModeOf: the run, its saved state or its branch record names the mode; 
   }
   assert.deepEqual([isGitRun({}), isGitRun({ workMode: 'folder' }), isGitRun({ workMode: 'none' })], [true, false, false]);
   assert.deepEqual([isFolderRun({ workMode: 'folder' }), isFolderRun({ workMode: 'none' }), isFolderRun({})], [true, false, false]);
+  assert.deepEqual([isNoProjectRun({ workMode: 'none' }), isNoProjectRun({ state: { workMode: 'none' } }), isNoProjectRun({ projectKey: 'no-project-00000000' }), isNoProjectRun({ workMode: 'folder' }), isNoProjectRun({}), isNoProjectRun(null)], [true, true, true, false, false, false]);
 });
 
 test('projectKind reads the registry row: vcs none is a Folder project, git a Git one, anything else nothing', () => {
@@ -27,7 +28,7 @@ test('projectKind reads the registry row: vcs none is a Folder project, git a Gi
 test('kindChip: one chip per kind with the canvas words; nothing for an unknown kind', () => {
   const doc = new JSDOM('<!doctype html><body></body>').window.document;
   assert.deepEqual(KIND_LABELS, { git: 'Git', folder: 'Folder', none: 'No project', ws: 'Workspace' });
-  assert.deepEqual(RUN_KIND_CHIP, { folder: 'folder' });
+  assert.deepEqual(RUN_KIND_CHIP, { folder: 'folder', none: 'none' });
   const c = kindChip(doc, 'folder');
   assert.equal(c.tagName, 'SPAN');
   assert.equal(c.className, 'kind-chip kind-folder');

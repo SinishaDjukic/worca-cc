@@ -29,6 +29,7 @@ import { checkRows } from './helpers/rows.mjs';
 import { seedWorkspacePipeline } from './helpers/db-seed.mjs';
 import { templateRepo } from './helpers/git-dir.mjs';
 import { writeStoreMeta, recordArtifact } from '../src/core/artifacts.mjs';
+import { noProjectWorkDir } from '../src/core/store.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 
 // ── Robust temp-repo teardown (fixes a full-suite-only ENOTEMPTY flake) ──────
@@ -223,6 +224,13 @@ test('POST /api/workspaces refusals: 400 for <2 paths / a non-git member, 409 fo
       const plain = await freshDir();
       const r = await post('/api/workspaces', { name: 'Not Git', projectPaths: [a, plain] });
       assert.equal(r.status, 400);
+    } },
+    { name: 'POST /api/workspaces with a run\'s work folder (P3-D11) -> 400, before any git runs in it', run: async () => {
+      const work = noProjectWorkDir('abcd1234');
+      await mkdir(work, { recursive: true });
+      const r = await post('/api/workspaces', { name: 'Work WS', projectPaths: [a, work] });
+      assert.equal(r.status, 400);
+      assert.equal((await r.json()).error, 'this folder belongs to a run without a project');
     } },
     { name: 'POST /api/workspaces duplicate name (case-insensitive) -> 409', run: async () => {
       assert.equal((await post('/api/workspaces', { name: 'DupName', projectPaths: [a, b] })).status, 201);
@@ -597,7 +605,7 @@ test('POST /api/run workspace target validation: both/neither/no prompt -> 400, 
     { name: 'POST /api/run with BOTH workspaceId and projectDir -> 400',
       body: { workspaceId: workspace.id, projectDir: a, prompt: 'x', mock: true }, status: 400, errorRe: /not both|workspaceId|projectDir/i },
     { name: 'POST /api/run with NEITHER workspaceId nor projectDir -> 400',
-      body: { prompt: 'x', mock: true }, status: 400, errorRe: /workspaceId or projectDir/i },
+      body: { prompt: 'x', mock: true }, status: 400, errorRe: /provide one of projectDir, workspaceId or noProject/ },
     { name: 'POST /api/run with a malformed workspaceId -> 404',
       body: { workspaceId: 'not-a-ws-id', prompt: 'x', mock: true }, status: 404 },
     { name: 'POST /api/run with an unknown (well-formed) workspaceId -> 404',

@@ -155,7 +155,8 @@ be skipped by forgetting it.
 | Workflow picker | S — lists Auto and Default only; the selected workflow always stays listed |
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
 | "Set in Advanced mode and still applied" note | S |
-| Target switch, task source (Markdown), source and feature branch; "Run on the source branch" toggle | A |
+| Target switch (No project · Project) | S — its Workspace button A |
+| Task source (Markdown), source and feature branch; "Run on the source branch" toggle | A |
 | "Not sure what to build yet? Try Shaper in Chat →" under the Markdown source (Shaper, gated) | A |
 | Engine dropdown beside the workflow (greyed-out engines the credential broker refuses) | A — stays visible at every level while a non-Claude engine is picked (rule 2) |
 | Advanced disclosure: guardrails, human in the loop, per-agent model and effort | A |
@@ -188,6 +189,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Answered for you": one group per ask (kind · time · model · cost of its review, or "review stopped" and its lower bound), the answers, Check; the heading's answer count and what the Away mode reviews cost | S |
 | Diff tab (live worktree while running, the final patch after) | A |
 | Folder run (a Folder project): Changes tab, the Folder chip, the "<n> files · on a copy" bar with Discard and Apply to folder, the Apply to folder dialog | S |
+| Run without a project (No project): the Artifacts tab, opened first; the No project chip | S |
 | Live log pane (run page › Logs), log search / copy / auto-scroll | A |
 | Step log drawer under the Workflow graph (a card or execution-row click; Open in Logs, resize, close) | A — follows the Logs tab |
 | Branch chip, progress n/m · step on the card, model · effort pill, graph zoom cluster | A |
@@ -208,6 +210,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | History: usage-limit notice | S |
 | "Files changed" list on the Overview | S — the stand-in for the Diff tab |
 | Folder run: Changes tab, the Folder chip, the Apply bar and dialog, Discard; the Git / Folder chip on a project's group in the Runs list | S |
+| Run without a project: the Artifacts tab, opened first; the No project group and its chip in the Runs list | S |
 | Overview: Perspective checklists, as on the run page (shaped runs) | S |
 | Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; ⋯ menu (Archive, Restore, Report); Artifacts tab; Archived toggle in the Runs header (with Restore) | A |
 | Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
@@ -329,6 +332,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: live run card, the feature strip of a sliced plan: progress, each slice's state and PR, Review plan / Answer / Open / Resume slice / Re-plan the rest / Cancel the rest / Open the re-plan, "Approve each slice's plan" | S |
 | Ask: run card result, the checklist tally ("Checklist: 3 met · 1 unmet · 1 n/a") on a finished shaped run | S |
 | Ask: the run card's agent model label, its artifact chips and "All artifacts", Create pull request / View pull request | A — as on the run page |
+| Ask: a run without a project's file list on its run card (Artifacts · n; each file's name, size and Download; "All artifacts") | S — its Artifacts tab is Simple too |
 | Ask: the run card's agent "cycle N" label | E — a loop badge |
 | Ask: a proposal's own schedule (the "Schedule" action and its time), schedule-change cards | S — the answer the user asked for |
 | Ask: a proposal's tracker task (id, title, link) in place of the brief; the "Auto" workflow option when Ask proposed it | S |

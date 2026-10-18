@@ -1196,7 +1196,7 @@ test('propose_run: shape and assess exist only while the injected gate is on wit
   const { PERSPECTIVE_KEYS } = await import('../src/shared/shape/perspectives.mjs');
   const schemaOf = (deps) => createAskTools({ ...fake, ...deps }).list().find((d) => d.name === 'propose_run').inputSchema;
   const today = schemaOf({});
-  assert.deepEqual(Object.keys(today.properties), ['projectKey', 'workspaceId', 'workflowId', 'brief', 'source', 'title', 'guardrailsId', 'tags', 'memoryScope',
+  assert.deepEqual(Object.keys(today.properties), ['projectKey', 'workspaceId', 'noProject', 'workflowId', 'brief', 'source', 'title', 'guardrailsId', 'tags', 'memoryScope',
     'engine', 'sourceBranch', 'featureBranch', 'sameAsSource', 'note', 'nodes', 'attachmentIds', 'sourceBranchByKey', 'commentIds',
     'when', 'every', 'until', 'count', 'overlap', 'maxFailures', 'after', 'afterPolicy', 'sourceFromPrevious'], 'no deps: today\'s schema');
   assert.deepEqual(today.required, ['brief']);
@@ -1241,4 +1241,40 @@ test('an Ask chat with a composer bundle lists the drafts and the graph proposal
   assert.deepEqual(names.slice(names.indexOf('get_task') + 1), ['build_workflow', 'draft_agent', 'draft_script', 'get_agent', 'get_workflow']);
   for (const n of ['get_canvas', 'edit_canvas']) assert.equal(names.includes(n), false, n);
   assert.ok(names.includes('propose_run') && names.includes('propose_workflow'), 'Ask keeps its own proposals');
+});
+
+test('P3: propose_run { noProject: true } never takes the pinned scope', async () => {
+  const t = createAskTools({ ...fake, pinnedScope: () => ({ projectKey: 'demo-00000001' }) });
+  const r = await t.call('propose_run', { noProject: true, brief: 'x' });
+  assert.equal('projectKey' in r.card.echoed, false, 'the pin is not filled');
+  assert.equal('workspaceId' in r.card.echoed, false);
+  assert.equal(r.card.echoed.noProject, true);
+  const tw = createAskTools({ ...fake, pinnedScope: () => ({ workspaceId: 'wks-team-0000abcd' }) });
+  assert.equal('workspaceId' in (await tw.call('propose_run', { noProject: true, brief: 'x' })).card.echoed, false);
+  const schema = t.list().find((d) => d.name === 'propose_run');
+  assert.equal(schema.inputSchema.properties.noProject.type, 'boolean');
+  assert.match(schema.description, /Exactly one of projectKey \/ workspaceId \/ noProject: true \(a run with no project works in its own empty folder: its files are the result; no git, branch or pull request; it cannot be scheduled or chained yet\); omitting all three targets /);   // P4 Task 4 rewrites the rest of the sentence
+});
+
+test('P3: propose_run { noProject: true } refuses known diff comments (they belong to a project); unknown ids stay tolerated', async () => {
+  const t = createAskTools({
+    ...fake,
+    validateProposal: async () => ({ ok: true, card: { target: 'none', projectKey: null, workspaceId: null } }),
+    comments: { get: (id) => (id === 'dc_1a2b3c4d' ? { id, storeKey: 'demo-00000001' } : null) },
+  });
+  assert.deepEqual(await t.call('propose_run', { noProject: true, brief: 'b', commentIds: ['dc_1a2b3c4d', 'dc_deadbeef'] }),
+    { ok: false, errors: ['a run without a project cannot address diff comments: dc_1a2b3c4d — propose it on the project those comments belong to'] });
+  assert.equal((await t.call('propose_run', { noProject: true, brief: 'b', commentIds: ['dc_deadbeef'] })).ok, true);
+});
+
+test('P3: get_run and list_runs name a run without a project target "none", with no project key to copy into propose_run', async () => {
+  const ROW_N = { ...ROW_P, id: 'dddddddd', project_key: 'no-project-00000000', title: 'Q3 deck', branch: JSON.stringify({ workMode: 'none', runRootMode: 'detached' }) };
+  const LITE_N = { ...LITE[1], id: 'dddddddd', title: 'Q3 deck', branch: null, sourceBranch: null, projectKey: 'no-project-00000000', projectName: 'No project', projectDir: '/h/runs/dddddddd/work' };
+  const t = createAskTools({ ...fake, findPipelineRowById: (id) => (id === 'dddddddd' ? ROW_N : fake.findPipelineRowById(id)), listAllPipelines: async () => [LITE_N, ...LITE] });
+  const g = await t.call('get_run', { id: 'dddddddd' });
+  assert.deepEqual([g.target, g.project, g.workspace, g.branch], ['none', null, null, null]);
+  const [l] = await t.call('list_runs', {});
+  assert.deepEqual(l, { id: 'dddddddd', title: 'Q3 deck', target: 'none', status: 'done', startedAt: ROW_P.started_at, updatedAt: '2026-08-20T10:00:00.000Z',
+    branch: null, sourceBranch: null, guardrailsId: 'normal', totalCostUsd: 1.25, startedBy: null });
+  assert.deepEqual((await t.call('list_runs', { projectKey: 'no-project-00000000' })).map((r) => r.id), ['dddddddd'], 'the store key still filters');
 });

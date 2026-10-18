@@ -130,5 +130,5 @@ test("worca's own folder is refused under Project too", async () => {
 
 test('New run CSS: a Folder target hides the Branches block and every git-only control in the form', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  assert.match(css, /#run-form\[data-work-mode="folder"\] :is\(#branch-fields,\[data-needs-git\]\)\{display:none!important;\}/);
+  assert.match(css, /#run-form:is\(\[data-work-mode="folder"\],\[data-work-mode="none"\]\) :is\(#branch-fields,\[data-needs-git\]\)\{display:none!important;\}/);
 });

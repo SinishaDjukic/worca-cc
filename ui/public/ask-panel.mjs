@@ -34,6 +34,7 @@ import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 import { flagOn } from './flags.mjs';
 import { gitOn } from './git-gate.mjs';
+import { NO_PROJECT_KEY, NO_PROJECT_NAME, NEEDS_REPO_NOTE } from '../../src/shared/no-project.mjs';
 import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
 import { shapeFirstOn } from './chat/shape-gate.mjs';
 import { INTENTS, splitIntentLead } from './chat/intent.mjs';
@@ -4483,7 +4484,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildCardForm(block) {
     const card = block.card || {};
     const rootEl = make('div', 'ask-card ask-rp');
-    const local = { target: card.target === 'workspace' ? 'workspace' : 'project', options: null, lane: null, pills: [], projectDir: () => '', workflowId: () => '' };
+    const local = { target: card.target === 'workspace' ? 'workspace' : card.target === 'none' ? 'none' : 'project', options: null, lane: null, pills: [], projectDir: () => '', workflowId: () => '' };
     const summary = make('span', 'ask-rp-summary');   // footer; renderLane paints it from the loaded lane
 
     // head
@@ -4528,7 +4529,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const seg = make('div', 'ask-card-seg');
     seg.setAttribute('role', 'tablist');
     const segBtns = {};
-    for (const [t, label] of [['project', 'Project'], ['workspace', 'Workspace']]) {
+    for (const [t, label] of [['none', 'No project'], ['project', 'Project'], ['workspace', 'Workspace']]) {
       const b = make('button', 'ask-card-seg-btn', label);
       b.type = 'button';
       b.setAttribute('role', 'tab');
@@ -4539,6 +4540,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         paintSeg();
         renderTarget();
         reloadLane();
+        if (!card.schedule) laterBtn.hidden = local.target === 'none';   // with a proposed time this button is Start now
       });
       segBtns[t] = b;
       seg.appendChild(b);
@@ -4574,7 +4576,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // any mode: a run must never start under a policy or on a branch the card did not show.
     const lvTag = (node, min, keep) => { node.dataset.minLevel = min; if (keep) node.dataset.levelKeep = '1'; return node; };
     lvTag(guardField, 'advanced', !!card.guardrailsId && card.guardrailsId !== 'permissive');
-    lvTag(seg, 'advanced', card.target === 'workspace');
+    lvTag(seg, 'advanced', card.target === 'workspace' || card.target === 'none');
     lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
     wfRow.append(wfField, engineField, guardField);
     targetSec.appendChild(wfRow);
@@ -4583,6 +4585,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
     workflowSel.addEventListener('change', () => {
       if (local.workflowUnavailable) { local.workflowUnavailable = false; err.textContent = ''; startBtn.disabled = false; }
+      paintNeedsRepo();
       reloadLane();
     });
 
@@ -4753,6 +4756,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       laterBtn.addEventListener('click', () => startCard(block, rootEl, local));
     } else {
       laterBtn.setAttribute('data-ask-card-schedule', '');
+      laterBtn.hidden = local.target === 'none';
       laterBtn.title = 'Start this run later';
       laterBtn.dataset.minLevel = 'advanced';
       laterBtn.addEventListener('click', async () => {
@@ -4835,7 +4839,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     function updateTargetSub() {
       const opts = local.options;
-      if (local.target === 'project') {
+      if (local.target === 'none') targetSub.textContent = NO_PROJECT_NAME;
+      else if (local.target === 'project') {
         const projSel = rootEl.querySelector('.ask-card-project-select');
         const srcSel = rootEl.querySelector('.ask-card-source');
         const name = projSel && projSel.selectedOptions[0] ? projSel.selectedOptions[0].textContent : (card.projectName || '');
@@ -4851,10 +4856,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     feature.addEventListener('input', updateTargetSub);
 
+    function paintNeedsRepo() {
+      targetHost.querySelector('.ask-card-needs-repo')?.remove();
+      const row = local.options && local.options.workflows.find((w) => w && w.id === workflowSel.value);
+      if (local.target === 'none' && row && row.needsRepo) targetHost.appendChild(make('p', 'ask-card-needs-repo', NEEDS_REPO_NOTE));
+    }
     function renderTarget() {
       targetHost.replaceChildren();
       const opts = local.options;
       const grid = make('div', 'ask-rp-grid');
+      if (local.target === 'none') {
+        if (local.shapeBranchHost) local.shapeBranchHost.replaceChildren();
+        paintNeedsRepo();
+        updateTargetSub();
+        return;
+      }
       if (local.target === 'project') {
         const projSel = rpSelect('ask-card-project-select', 'Project');
         const srcSel = rpSelect('ask-card-source', 'Source branch');
@@ -5073,6 +5089,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         ...(card.source.profile ? { profile: card.source.profile } : {}), ...(card.source.inputs ? { inputs: card.source.inputs } : {}),
       };
     }
+    if (local.target === 'none') { body.noProject = true; return body; }
     const feature = rootEl.querySelector('.ask-card-feature').value.trim();
     const same = rootEl.querySelector('.ask-card-same-source');
     if (same && same.checked) body.sameAsSource = true;   // the run auto-names its hidden branch
@@ -5221,7 +5238,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       guardrailsId: rootEl.querySelector('.ask-card-guardrails').value,
       prompt: rootEl.querySelector('.ask-card-brief').value,
       title: ((rootEl.querySelector('.ask-rp-title input') || {}).value || '').trim() || card.title || '',
-      featureBranch: rootEl.querySelector('.ask-card-feature').value.trim(),
+      featureBranch: local.target === 'none' ? '' : rootEl.querySelector('.ask-card-feature').value.trim(),
       // The picker has no way to re-derive this: a `project` proposal opened in New Pipeline would
       // otherwise start with the row's default `global` and restructure the wrong scope (B17).
       memoryScope: card.memoryScope || null,
@@ -5241,7 +5258,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (k && v) byKey[k] = v;
       }
       if (Object.keys(byKey).length) p.sourceBranchByKey = byKey;
-    } else {
+    } else if (local.target === 'project') {
       p.projectDir = rootEl.querySelector('.ask-card-project-select').value;
       const src = rootEl.querySelector('.ask-card-source');
       p.sourceBranch = src ? src.value : '';
@@ -5351,6 +5368,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     openRunPanel: (ref, opts) => chatDep('openRunPanel', ref, opts),
     mountFeature: (host, id) => chatDep('mountFeature', host, id),
     openArtifact: (ref, artifact) => chatDep('openArtifact', ref, artifact),
+    downloadArtifact: (ref, artifact) => chatDep('downloadArtifact', ref, artifact),
     openShipIt: (ref, link) => chatDep('openShipIt', ref, link),
     runLinkFor: (ref) => runLinkFor(ref || {}),
     appendToComposer: (text) => appendToComposer(text),
@@ -5555,8 +5573,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return { cardId: block.id, pipelineId: card.pipelineId || null, runId: card.runId || null, projectKey: card.projectKey || null,
         workspaceId: card.workspaceId || null, title: card.title || '', label: card.label || '' };
     }
-    return { cardId: block.id, pipelineId: null, runId: block.runId || null, projectKey: card.projectKey || null, workspaceId: card.workspaceId || null,
-      title: card.title || card.brief || 'run', label: card.workspaceName || card.projectName || '' };
+    const none = card.target === 'none';   // P3: a No project proposal — the reserved key and its name until the first frame
+    return { cardId: block.id, pipelineId: null, runId: block.runId || null, projectKey: none ? NO_PROJECT_KEY : (card.projectKey || null), workspaceId: card.workspaceId || null,
+      title: card.title || card.brief || 'run', label: none ? NO_PROJECT_NAME : (card.workspaceName || card.projectName || '') };
   }
   /** Fold the thread's run links into the identity: the first `state` reveals the pipeline id; a resume moves the runId. */
   function refreshProgressIdent(ident) {

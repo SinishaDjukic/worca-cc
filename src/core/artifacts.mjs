@@ -8,15 +8,18 @@
 // timeline and machine state live in the DB (pipeline_events + the pipelines row),
 // which is the authoritative store (no more pipeline.md / state.json on disk).
 
-import { mkdir, writeFile, readFile, copyFile, readdir, access, stat } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, copyFile, readdir, access, stat, lstat, realpath } from 'node:fs/promises';
 import { NON_BROWSABLE_KIND_LIST } from '../shared/artifact-kinds.mjs';
-import { join, basename, resolve, isAbsolute } from 'node:path';
+import { join, basename, resolve, isAbsolute, relative, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { realpathSync, existsSync, statSync, constants as fsConstants } from 'node:fs';
 import { hostname } from 'node:os';
-import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath } from './store.mjs';
+import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath, isNoProjectKey, noProjectWorkDir, NO_PROJECT_KEY } from './store.mjs';
+import { NO_PROJECT_NAME } from '../shared/no-project.mjs';
 import { workModeOfRow } from './project-kind.mjs';
-import { listProjects } from './projects.mjs';
+import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
+import { updateRunManifest } from './run-manifest.mjs';
+import { listProjects, worcaHome } from './projects.mjs';
 import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
@@ -949,6 +952,13 @@ export function artifactPaths(projectDir, workspaceKey, { projectKey } = {}) {
 async function ensureMeta(projectDir, _root, { projectKey, plain = false } = {}) {
   void _root;
   const key = projectKey ?? projectKeyOf(projectDir);
+  if (isNoProjectKey(key)) {                           // P3: never canonicalProjectRoot (no git) for the reserved key
+    const have = readStoreMeta(key);
+    if (have) return have;
+    const meta = { key, path: join(worcaHome(), 'runs'), name: NO_PROJECT_NAME, firstSeenAt: new Date().toISOString() };
+    try { writeStoreMeta(key, 'project', meta); } catch { /* never block a run */ }
+    return meta;
+  }
   const existing = readStoreMeta(key);
   if (existing) return existing;                       // firstSeenAt preserved
   // P1 (v8): a non-git run's folder is its own root — never an enclosing repo's (a parent git-inited after registration)
@@ -1066,6 +1076,11 @@ function shortId() {
   return randomBytes(4).toString('hex');
 }
 
+/** P3-D2: a fresh pipeline id (8 hex) no row holds yet, minted by the server before the harness exists. */
+export function newPipelineId() {
+  for (;;) { const id = shortId(); if (!findPipelineRowById(id)) return id; }
+}
+
 /**
  * Freeze a workspace description into a run: take a VERBATIM snapshot of the text so
  * later registry edits never retroactively alter a started run. No length cap — a scan's
@@ -1163,6 +1178,10 @@ export async function createPipeline(projectDir, opts = {}) {
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
+  if (opts.id != null) {   // P3-D2: a caller-minted id — both checks run before any dir or row exists
+    if (!/^[0-9a-f]{8}$/.test(String(opts.id))) throw new Error('createPipeline: id must be 8 hex characters');
+    if (findPipelineRowById(opts.id)) throw new Error(`createPipeline: pipeline id ${opts.id} is already taken`);
+  }
   const paths = await ensureArtifactDirs(projectDir, workspaceKey || undefined, {
     workspaceId: workspaceId || workspaceKey,
     workspaceName,
@@ -1195,7 +1214,7 @@ export async function createPipeline(projectDir, opts = {}) {
     firstMeaningfulLine(promptText) ||
     'orchestration';
 
-  const id = shortId();
+  const id = opts.id ?? shortId();
   const slug = slugify(resolvedTitle).slice(0, 48) || 'pipeline';
   const dirName = `${today()}-${slug}-${id}`;
   const dir = join(paths.pipelines, dirName);
@@ -2444,6 +2463,10 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
         target: 'workspace',
       };
       repoDir = primary;
+    } else if (isNoProjectKey(row.project_key)) {
+      // P3: a run without a project — its own work folder, no repo (no branchExists / diffShortstat)
+      tag = { projectKey: NO_PROJECT_KEY, projectName: NO_PROJECT_NAME, projectDir: noProjectWorkDir(row.id) };
+      repoDir = null;
     } else {
       const m = meta(row.project_key);
       tag = { projectKey: row.project_key, projectName: m?.name ?? row.project_key, projectDir: m?.path ?? null };
@@ -2661,6 +2684,7 @@ function rowToState(row) {
   }
   const meta = readStoreMeta(row.project_key);
   state.projectDir = meta?.path ?? null;
+  if (isNoProjectKey(row.project_key)) state.projectDir = noProjectWorkDir(row.id);   // P3: the run's own work folder
   // Workspace superset: spread workspace_meta back onto the top level + target.
   if (row.target === 'workspace') {
     const wm = j(row.workspace_meta, {}) || {};
@@ -2842,6 +2866,16 @@ export function runRootSweepLookups() {
       // disposition is decided, and it only names where the rescue copies go. A
       // readdir failure costs the durable copies, never a removal decision.
       try { return await runDirForRow(row); } catch { return null; }
+    },
+    // P3: a no-project run's unharvested work/ (a crash before its teardown) moves into its pipeline dir and is indexed
+    // as `work` artifacts before the sweep reclaims the root. A missing pipeline dir keeps the root (ok:false).
+    harvestWorkOf: async (id, runRoot, pipelineDir) => {
+      if (!pipelineDir) return { ok: false, moved: false, files: [], bytes: 0, unindexed: 0, error: 'no pipeline dir' };
+      const h = await harvestWork({ workDir: join(runRoot, 'work'), pipelineDir });
+      if (!h.ok) return h;
+      for (const rel of h.files) recordArtifact(id, WORK_ARTIFACT_KIND, rel);
+      await updateRunManifest(runRoot, { workHarvested: { files: h.files.length, bytes: h.bytes, unindexed: h.unindexed, at: new Date().toISOString() } });
+      return h;
     },
   };
 }
@@ -3062,7 +3096,8 @@ export async function resolveIndexedArtifactFileForRow(row, rel) {
   // Exact first, then the LONGEST suffix — with rows `plan.md` and `a/plan.md`
   // a request for `/x/a/plan.md` ends with BOTH `/plan.md` and `/a/plan.md`, and a
   // first-match `find` would serve whichever row the table happens to list first.
-  const hit = arts.find((a) => a.relPath === want)
+  // The raw request first: off Windows a work/ file name may itself hold a backslash (`work/a\b.md`).
+  const hit = arts.find((a) => a.relPath === String(rel)) || arts.find((a) => a.relPath === want)
     || arts.filter((a) => want.endsWith(`/${a.relPath}`))
       .sort((x, y) => y.relPath.length - x.relPath.length)[0];
   if (!hit) return null;
@@ -3078,11 +3113,25 @@ export async function resolveIndexedArtifactFileForRow(row, rel) {
     // actually holds the artifact.
     try {
       if (!(await stat(file)).isFile()) continue;
+      if (hit.kind === WORK_ARTIFACT_KIND && !(await workFileInside(base, file))) continue;
       await access(file, fsConstants.R_OK);
       return { rel: hit.relPath, file };
     } catch { /* try the next base */ }
   }
   return null;
+}
+
+/**
+ * P3-D13 at serve time: a no-project run's work/ was an agent's cwd and can still be one after the move (a process
+ * that outlived the run moved with it), so a `work` row is served only as a real file whose real path stays inside
+ * <base>/work — never a link (or a linked parent folder) planted after the index.
+ */
+async function workFileInside(base, file) {
+  try {
+    if (!(await lstat(file)).isFile()) return false;
+    const rel = relative(await realpath(join(base, 'work')), await realpath(file));
+    return !!rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+  } catch { return false; }
 }
 
 /** The keyed form (`/api/history/:key/:id`, workspace twin) over lookupPipelineRow. */

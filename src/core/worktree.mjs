@@ -25,8 +25,10 @@ import { clearStaleIndexLock } from './git-lock.mjs';
 import { runRootMode } from './settings.mjs';
 import {
   readRunManifest, rmGuarded, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo, liveRetainMembers,
+  removeInjectedPaths,
 } from './run-manifest.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { ownWorkDir } from './no-project-work.mjs';
 
 const WORKTREES_DIRNAME = join('.worca-cc', 'worktrees');
 const BRANCH_PREFIX = 'worca-cc/';
@@ -663,7 +665,7 @@ export const RUN_ROOT_REMOVE = new Set(['done', 'stopped', 'error']);
  *                    failed:string[], warnings:string[]}>}
  */
 export async function sweepRunRoots({
-  worcaHome, statusOf, membersOf, pipelineDirOf, retainOf, log,
+  worcaHome, statusOf, membersOf, pipelineDirOf, retainOf, harvestWorkOf, log,
 } = {}) {
   const out = { keep: [], removed: [], quarantined: [], failed: [], warnings: [] };
   const say = typeof log === 'function'
@@ -743,15 +745,42 @@ export async function sweepRunRoots({
       let pipelineDir = null;
       try { pipelineDir = pipelineDirOf ? await pipelineDirOf(id) : null; } catch { pipelineDir = null; }
       const injected = manifest?.injectedPaths || {};
+      // P3-D19: a no-project run's mounts are rescued and removed only inside its own work/, never through one an agent
+      // swapped for a link (the harvest refuses that one and keeps the root).
+      const ownWork = manifest?.workMode === 'none' ? await ownWorkDir(join(dir, 'work')) : true;
       for (const [scope, list] of Object.entries(injected)) {
+        if (manifest?.workMode === 'none' && scope !== 'runRoot' && !ownWork) continue;
         const baseDir = scope === 'runRoot'
           ? dir
+          : manifest?.workMode === 'none' ? join(dir, 'work')       // P3 (S71): a no-project run's mounts live in work/
           : (manifest?.members || []).find((m) => m?.projectKey === scope)?.worktreeDir || join(dir, 'repos', scope);
         const w = await rescueModifiedMounts({
-          baseDir, entries: list, pipelineDir, scope, pipelineId: id,
+          baseDir, entries: list, pipelineDir, scope, pipelineId: id, strict: manifest?.workMode === 'none',
         });
         out.warnings.push(...w);
         for (const line of w) say('warn', `${id}: ${line}`);
+        // P3: work/ outlives the root (it moves into the pipeline dir), so worca's mounts leave it first — rescued above.
+        if (manifest?.workMode === 'none' && scope !== 'runRoot') await removeInjectedPaths(baseDir, list, { strict: true });
+      }
+      // P3: a no-project run's work/ is its deliverable — moved into the pipeline dir before anything is reclaimed.
+      // A throw is a lookup failure (skip; only worca's own mounts, rescued above, have left work/); a failed copy keeps
+      // the root (its files stay in work/).
+      if (manifest?.workMode === 'none' && !manifest.workHarvested && typeof harvestWorkOf === 'function') {
+        let h;
+        try {
+          h = await harvestWorkOf(id, dir, pipelineDir);
+        } catch (err) {
+          const reason = `skip ${dir}: work/ harvest FAILED (${err?.message || err}) — leaving it untouched`;
+          out.failed.push(dir);
+          out.warnings.push(reason);
+          say('warn', reason);
+          continue;
+        }
+        if (!h?.ok) {
+          out.keep.push(dir);
+          say('info', `keep ${dir} (work/ not copied${h?.error ? `: ${h.error}` : ''})`);
+          continue;
+        }
       }
       const strays = await scanStrayEntries({ runRoot: dir, pipelineDir });
       out.warnings.push(...strays);

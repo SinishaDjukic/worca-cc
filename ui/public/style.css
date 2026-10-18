@@ -3749,7 +3749,9 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .fc-foot{display:flex;justify-content:flex-end;gap:8px;}
 /* end Folder runs */
 /* New run: a Folder target makes no branch (Projects, any way). */
-#run-form[data-work-mode="folder"] :is(#branch-fields,[data-needs-git]){display:none!important;}
+#run-form:is([data-work-mode="folder"],[data-work-mode="none"]) :is(#branch-fields,[data-needs-git]){display:none!important;}
+#run-form[data-work-mode="none"] #start-more{display:none!important;}
+#run-form[data-work-mode="none"] .btn-split > .btn-go:first-child{border-radius:999px;padding-right:28px;}
 
 /* Row 2 = status pip + meta line. The 12px top gap moved here from `.hd-meta`
    IN PLACE: leaving it on the child would stack under this row's own margin and
@@ -5789,6 +5791,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
   color:var(--ink-2);font-family:inherit;font-weight:600;font-size:11px;cursor:pointer;transition:.15s;}
 .ask-card-seg-btn.on{background:var(--ink);border-color:var(--ink);color:var(--panel);}
 .ask-card-target{display:flex;flex-direction:column;gap:10px;}
+/* P3: the No project target's one-line note (a workflow whose agents expect a code repository) — never blocking. */
+.ask-card-needs-repo{margin:0;color:var(--ink-2);font-size:12px;line-height:1.45;}
 /* Not inside a chat run card's question: its fields keep the Runs page's own metrics. :where() adds no weight. */
 .ask-card :is(select,input[type="text"],textarea):where(:not(.chat-rc-q *)){font-size:12.5px;padding:8px 11px;border-radius:10px;}
 .ask-card textarea.ask-card-brief{min-height:0;height:auto;max-height:160px;resize:none;line-height:1.5;}
@@ -7028,10 +7032,8 @@ a.ask-card-task-title:hover{text-decoration-color:currentColor;}
 body.view-runs .level-banner,body.view-projects .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 
-/* Simple hides the Target switch, which leaves .split-row's picker alone in the row: auto-placement
-   would drop it into the narrow first track, so the row becomes one full-width column. */
-:root[data-level="simple"] .split-row:not(:has(#target-field[data-level-keep])){grid-template-columns:minmax(0,1fr);}
-/* …and the Engine picker (Advanced and up), leaving the workflow the whole row. */
+/* Simple hides the Engine picker (Advanced and up), leaving the workflow the whole row. (P3: the Target switch shows
+   at every level, so .split-row keeps its two tracks — NewRun board.) */
 :root[data-level="simple"] .wf-engine-row:not(:has(#engine-row[data-level-keep])){grid-template-columns:minmax(0,1fr);}
 
 /* New pipeline: mock mode outside Advanced, and the hidden-but-active note. */
@@ -8904,6 +8906,20 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-rc-art:hover{color:var(--ink);border-color:var(--line-2);}
 .chat-rc-art.is-more{font-family:var(--sans);font-weight:600;}
 .chat-rc-art:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* P3: a run without a project lists its files on the chat run card (name · size · Download) — the NoProjectRun board's
+   bordered row list. The caption keeps --ink-2 (the board's --ink-3 is under 4.5:1 at this size). */
+.chat-rc-arts-list{display:flex;flex-direction:column;gap:8px;margin-top:12px;}
+.chat-rc-arts-list .cap{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);}
+.chat-rc-art-rows{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel);}
+.chat-rc-art-row{display:flex;align-items:center;gap:10px;min-height:32px;padding:8px 8px 8px 14px;}
+.chat-rc-art-row + .chat-rc-art-row{border-top:1px solid var(--line);}
+.chat-rc-art-row > svg{flex:none;color:var(--ink-3);}
+.chat-rc-art-name{flex:1;min-width:0;padding:0;border:0;background:none;color:var(--ink);font-family:var(--mono);font-size:12.5px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+.chat-rc-art-name .faint{color:var(--ink-2);}
+.chat-rc-art-size{flex:none;color:var(--ink-2);font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums;}
+.chat-rc-art-dl{flex:none;display:inline-grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid transparent;border-radius:50%;background:none;color:var(--ink-2);cursor:pointer;}
+.chat-rc-art-dl:hover{background:var(--hover);color:var(--ink);}
+:is(.chat-rc-art-name,.chat-rc-art-dl):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .chat-rc-res-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px;}
 .chat-rc-res-err{margin-right:auto;font-size:12px;color:color-mix(in srgb, var(--red-ink) 85%, var(--ink));}
 .chat-rc-res-err[hidden]{display:none;}

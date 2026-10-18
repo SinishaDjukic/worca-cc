@@ -17,6 +17,7 @@ export const GIT_ONLY_ASK_TOOLS = Object.freeze(['list_branches', 'open_worktree
 
 const MEMBER_HEADER_RE = /^# ([a-z0-9][a-z0-9-]*-[0-9a-f]{8})$/;   // workspace patches = member patches joined as `# <projectKey>\n<patch>`
 const DIFF_GIT = 'diff --git ';
+const NO_PROJECT_KEY = 'no-project-00000000';   // src/shared/no-project.mjs (this module imports nothing): a run with no project
 const FROM_RE = /^(?:rename|copy) from /;   // extended-header line naming the SOURCE file of a rename/copy
 
 // `\a \b \f \n \r \t \v` — every other escape (`\"`, `\\`) is the literal byte.
@@ -468,8 +469,10 @@ export function createAskTools(deps) {
       description: 'Follow a run in this chat: puts a live progress card (status, elapsed time, cost, active agents, the workflow) into your reply, kept current while the user watches. Works for running, paused and finished runs. id is the run\'s 8-hex id; the app\'s live run id also works. Call it once per run per reply, only from your own turn.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id (8 hex), or the app\'s live run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace') }, ['id']) },
     { name: 'propose_run',
-      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId; omitting both targets the scope the user pinned for this chat, when there is one. guardrailsId defaults to "normal"; "permissive" is not allowed. To run it LATER give `when` (once) or `every` (repeat) in the user\'s own words — the card then offers Schedule instead of Start; check the phrase with preview_schedule first when unsure. To run it when ANOTHER run ends give `after` (a run id) — `sourceFromPrevious: true` starts it on that run\'s branch. When the work IS a tracker task (an issue in an installed task source), give `source` INSTEAD of brief: the run fetches the task itself when it starts (find_tasks / get_task find it). workflowId "wf_auto" = Auto: the run picks its own workflow from the task when it starts. engine: who runs the agents — claude (Claude Code), or codex, copilot, cursor (all three in beta); omit it and the run starts on the default engine (the project\'s, else the user\'s, else the team\'s), which is what you want unless the user names an engine. nodes: per-agent model picks for this run only (rule 18) — a saved workflow\'s agent node ids (list_workflows steps[].nodeId) to { model, effort?, subagentModel?, reason }; the card shows each beside the project default and saves nothing. Returns {ok:true, card} or {ok:false, errors}; a card may carry warnings (the team policy\'s allowed models, a premium-tier pick) — relay them.',
-      inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'), workflowId: SCHEMA.s('workflow id (default wf_default; "wf_auto" = Auto)'),
+      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId / noProject: true (a run with no project works in its own empty folder: its files are the result; no git, branch or pull request; it cannot be scheduled or chained yet); omitting all three targets the scope the user pinned for this chat, when there is one. guardrailsId defaults to "normal"; "permissive" is not allowed. To run it LATER give `when` (once) or `every` (repeat) in the user\'s own words — the card then offers Schedule instead of Start; check the phrase with preview_schedule first when unsure. To run it when ANOTHER run ends give `after` (a run id) — `sourceFromPrevious: true` starts it on that run\'s branch. When the work IS a tracker task (an issue in an installed task source), give `source` INSTEAD of brief: the run fetches the task itself when it starts (find_tasks / get_task find it). workflowId "wf_auto" = Auto: the run picks its own workflow from the task when it starts. engine: who runs the agents — claude (Claude Code), or codex, copilot, cursor (all three in beta); omit it and the run starts on the default engine (the project\'s, else the user\'s, else the team\'s), which is what you want unless the user names an engine. nodes: per-agent model picks for this run only (rule 18) — a saved workflow\'s agent node ids (list_workflows steps[].nodeId) to { model, effort?, subagentModel?, reason }; the card shows each beside the project default and saves nothing. Returns {ok:true, card} or {ok:false, errors}; a card may carry warnings (the team policy\'s allowed models, a premium-tier pick) — relay them.',
+      inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'),
+        noProject: SCHEMA.b('true = a run with no project, in its own empty folder (never with projectKey / workspaceId)'),
+        workflowId: SCHEMA.s('workflow id (default wf_default; "wf_auto" = Auto)'),
         brief: SCHEMA.s(`the full task description for the run (≤ ${L.briefMaxChars} chars); omit when you give source`),
         source: { type: 'object', additionalProperties: false, required: ['plugin', 'sourceId', 'taskId'],
           description: 'a task in an installed task source (list_task_sources) — the run reads it at start',
@@ -966,12 +969,13 @@ export function createAskTools(deps) {
     const isWs = row.target === 'workspace' || !!row.workspace_key;
     const branch = parseJson(row.branch, null) || {};
     const wsMeta = isWs ? (parseJson(row.workspace_meta, null) || {}) : null;
-    const meta = isWs ? null : deps.readStoreMeta(row.project_key);
+    const none = !isWs && row.project_key === NO_PROJECT_KEY;   // P3: propose_run names it noProject: true, never this key
+    const meta = isWs || none ? null : deps.readStoreMeta(row.project_key);
     return {
       id: row.id,
       title: deps.redact(row.title ?? row.id),
-      target: isWs ? 'workspace' : 'project',
-      project: isWs ? null : { key: row.project_key, name: (meta && meta.name) || row.project_key },
+      target: isWs ? 'workspace' : none ? 'none' : 'project',
+      project: isWs || none ? null : { key: row.project_key, name: (meta && meta.name) || row.project_key },
       workspace: isWs ? { id: row.workspace_key, name: wsMeta.workspaceName ?? row.workspace_key,
         members: (Array.isArray(wsMeta.projects) ? wsMeta.projects : []).map((p) => p.projectName) } : null,
       status: row.status ?? null,
@@ -1775,11 +1779,12 @@ export function createAskTools(deps) {
         if (query && !String(e.title ?? '').toLowerCase().includes(query)) continue;
         if (startedBy && String(e.startedBy ?? '').toLowerCase() !== startedBy) continue;
         const isWs = e.target === 'workspace' || String(e.projectKey).startsWith('workspaces/');
+        const none = !isWs && e.projectKey === NO_PROJECT_KEY;   // P3: a run with no project (propose_run: noProject: true)
         out.push({
-          id: e.id, title: deps.redact(e.title ?? e.id), target: isWs ? 'workspace' : 'project',
+          id: e.id, title: deps.redact(e.title ?? e.id), target: isWs ? 'workspace' : none ? 'none' : 'project',
           ...(isWs
             ? { workspaceId: String(e.projectKey).slice('workspaces/'.length), workspaceName: e.workspaceName ?? null }
-            : { projectKey: e.projectKey, projectName: e.projectName ?? null }),
+            : none ? {} : { projectKey: e.projectKey, projectName: e.projectName ?? null }),
           status: e.status ?? null, startedAt: e.startedAt ?? null,
           updatedAt: e.mtime ? new Date(e.mtime).toISOString() : null,
           branch: (e.sameAsSource && e.mergeBack?.merged === true ? e.sourceBranch : e.branch) ?? null,
@@ -1878,7 +1883,8 @@ export function createAskTools(deps) {
       // parent turn applies the same default before its authoritative
       // re-validation, so the card the user sees matches what the model got.
       let inp = input;
-      if (!str(input.projectKey) && !str(input.workspaceId)) {
+      // P3: noProject: true is a target of its own — the pin never fills it.
+      if (input.noProject !== true && !str(input.projectKey) && !str(input.workspaceId)) {
         const pin = pinnedScope();
         if (pin) inp = { ...input, ...pin };
       }
@@ -1898,12 +1904,15 @@ export function createAskTools(deps) {
       const cited = Array.isArray(input.commentIds) ? input.commentIds : [];
       if (r && r.ok && cited.length && deps.comments && typeof deps.comments.get === 'function') {
         const want = r.card.workspaceId ? `workspaces/${r.card.workspaceId}` : r.card.projectKey;
-        const bad = want ? cited.filter((id) => {
+        const none = r.card.target === 'none';   // P3: a run without a project works in an empty folder — every comment is off target
+        const bad = want || none ? cited.filter((id) => {
           const c = typeof id === 'string' ? deps.comments.get(id) : null;
-          return !!c && c.storeKey !== want;
+          return !!c && (none || c.storeKey !== want);
         }) : [];
         if (bad.length) {
-          return { ok: false, errors: [`these diff comments are not from ${want}: ${bad.join(', ')} — cite comments from a run of the project this proposal targets`] };
+          return { ok: false, errors: [none
+            ? `a run without a project cannot address diff comments: ${bad.join(', ')} — propose it on the project those comments belong to`
+            : `these diff comments are not from ${want}: ${bad.join(', ')} — cite comments from a run of the project this proposal targets`] };
         }
       }
       return r;

@@ -11,6 +11,9 @@ import { createHash } from 'node:crypto';
 import { join, resolve, dirname, basename, isAbsolute } from 'node:path';
 import { worcaHome } from './projects.mjs';
 import { gitAvailable } from './git-available.mjs';
+import { NO_PROJECT_KEY, isNoProjectKey, WORK_DIR_NAME } from '../shared/no-project.mjs';
+
+export { NO_PROJECT_KEY, isNoProjectKey } from '../shared/no-project.mjs';
 
 const _keyCache = new Map();
 
@@ -71,8 +74,39 @@ export function canonicalProjectRoot(projectDir) {
  *  next to WORKSPACE_KEY_RE's role in workspaces.mjs. */
 export const PROJECT_KEY_RE = /^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/;
 
+const PIPELINE_ID_RE = /^[0-9a-f]{8}$/;
+
+/** P3: a run without a project works in <worcaHome>/runs/<pipelineId>/work. */
+export function noProjectWorkDir(pipelineId) {
+  if (!PIPELINE_ID_RE.test(String(pipelineId ?? ''))) throw new Error('noProjectWorkDir: pipeline id must be 8 hex characters');
+  return join(worcaHome(), 'runs', String(pipelineId), WORK_DIR_NAME);
+}
+
+/** P3: `dir` is exactly <worcaHome>/runs/<8hex>/work (resolved; realpath only as a fallback). Never git. */
+export function isNoProjectWorkDir(dir) {
+  if (!dir) return false;
+  const r = resolve(String(dir));
+  const fold = (s) => (process.platform === 'win32' ? s.toLowerCase() : s);   // NTFS: `WORK`, `ABCD1234` name the same folder
+  if (fold(basename(r)) !== WORK_DIR_NAME) return false;
+  const id = fold(basename(dirname(r)));
+  if (!/^[0-9a-f]{8}$/.test(id)) return false;
+  const runs = dirname(dirname(r));
+  if (basename(runs).toLowerCase() !== 'runs') return false;       // cheap string checks before worcaHome()
+  let home;
+  try { home = worcaHome(); } catch { return false; }               // node:test without WORCA_HOME: never a work folder
+  const same = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+  if (same(runs, resolve(home, 'runs'))) return true;
+  try { return same(realpathSync(runs), realpathSync(resolve(home, 'runs'))); } catch { return false; }   // macOS /var ↔ /private/var
+}
+
+/** P3: a pipelines row's project dir — its own work folder for the reserved key (lookup never called), else lookup(key). */
+export async function runProjectDir(row, lookup) {
+  return isNoProjectKey(row?.project_key) ? noProjectWorkDir(row.id) : lookup(row?.project_key);
+}
+
 /** Stable key for a project. Memoized by resolved input path. */
 export function projectKey(projectDir) {
+  if (isNoProjectWorkDir(projectDir)) return NO_PROJECT_KEY;   // P3 (S52 guard): never cached, before _keyCache
   const cacheKey = resolve(projectDir);
   const hit = _keyCache.get(cacheKey);
   if (hit) return hit;
