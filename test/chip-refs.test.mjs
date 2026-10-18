@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 import { refFromHref, refsInText, parseRefKey } from '../src/shared/chip-refs.mjs';
+import { ASK_SYSTEM_RULES } from '../src/core/ask/prompt.mjs';
 
 const PR = 'https://github.com/SinishaDjukic/worca-cc/pull/777';
 const UUID = '0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0';
@@ -38,6 +39,18 @@ test('chip refs: links, text and keys (src/shared/chip-refs.mjs)', async () => {
       assert.deepEqual(keys('see SinishaDjukic/worca-cc#777, run 5c40dcc6 and ask_1a2b3c4d.'),
         [['gh:SinishaDjukic/worca-cc#777', false], ['run:5c40dcc6', true], ['chat:ask_1a2b3c4d', false]]);
       assert.deepEqual(keys('sha 527edc25f69c, file abcd1234.json, x/abcd1234, #history/k/abcd1234, ask_1a2b3c4d5, PR #777, AB#123, a/b#0'), []);
+    } },
+    { name: 'the Chat prompt asks for the full forms, and each one it names is a chip while each bare one it forbids is not', run: () => {
+      const rule = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n5. '), ASK_SYSTEM_RULES.indexOf('\n6. '));
+      for (const p of ['owner/repo#N or its full URL, never a bare #N', '/_git/<repo>/pullrequest/<id>', '/_workitems/edit/<id>', 'never a bare !N or AB#N',
+        'a run as its 8-hex id or its #history/#running link', 'a chat as its ask_<8 hex> id', 'on every list item too']) assert.ok(rule.includes(p), p);
+      const kinds = (t) => refsInText(t).map((x) => x.ref.kind);
+      assert.deepEqual(kinds('acme/shop#7 run 5c40dcc6 ask_1a2b3c4d'), ['gh', 'run', 'chat']);
+      assert.deepEqual(kinds('#7 api!7 AB#7'), []);
+      assert.equal(refFromHref('https://dev.azure.com/acme/Shop/_git/api/pullrequest/7').kind, 'adopr');
+      assert.equal(refFromHref('https://dev.azure.com/acme/Shop/_workitems/edit/7').kind, 'adowi');
+      assert.equal(refFromHref('#history/proj-a/5c40dcc6').kind, 'run');
+      assert.equal(refFromHref(`#running/${UUID}`).kind, 'run');
     } },
     { name: 'parseRefKey: only what the browser mints; encoded org/project decoded and checked', run: () => {
       assert.deepEqual(parseRefKey('adopr:acme/My%20Shop#7'), { kind: 'adopr', key: 'adopr:acme/My%20Shop#7', org: 'acme', project: 'My Shop', number: 7 });
