@@ -24,9 +24,17 @@ const QUESTIONS = {
 
 const click = (ctx, el) => el.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
 
-function recorder(status = 200) {
+// The group page's feature (#feature/feat_1): its ask points at the shaping run (s3: one step card in three hosts).
+const FEATURE = (pq) => ({ id: 'feat_1', title: 'Charts', projectKey: 'p', status: 'active', approveEach: true, total: 2, done: 0,
+  halted: null, open: true, replacedBy: null, replan: null, originPipelineId: null, log: [],
+  ship: { ready: false, mode: null, prUrl: null, suggested: null, linesAdded: null },
+  slices: [{ index: 1, title: 'One', state: 'approval', runId: RUN_ID, pipelineId: null, pr: null }, { index: 2, title: 'Two', state: 'planned', runId: null, pipelineId: null, pr: null }],
+  ask: { index: 1, runId: RUN_ID, pipelineId: null, id: pq.id, kind: pq.kind } });
+
+function recorder(status = 200, currentPq = QUESTIONS) {
   const answers = [];
   const fetchHandler = (url, opts) => {
+    if (url.startsWith('/api/shape/features/feat_1')) return Promise.resolve({ ok: true, status: 200, json: async () => FEATURE(currentPq) });
     if (url === '/api/answer') {
       answers.push(JSON.parse(opts.body));
       return Promise.resolve({ ok: status === 200, status, json: async () => (status === 200 ? { ok: true } : { error: 'boom' }) });
@@ -37,7 +45,7 @@ function recorder(status = 200) {
 }
 
 async function openShaping({ gate = true, shaping = SHAPING, status = 200, pq = QUESTIONS } = {}) {
-  const rec = recorder(status);
+  const rec = recorder(status, pq);
   const ctx = await bootApp({ fetchHandler: rec.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
   ctx.dispatch({
@@ -144,17 +152,26 @@ const look = (panel) => ({
   buttons: [...panel.querySelectorAll('button')].map((b) => b.textContent),
 });
 
+async function groupPageHost(ctx) {
+  ctx.go('feature/feat_1');
+  await ctx.settle();
+  return ctx.window.document.querySelector('[data-view="feature"] .shape-feature-ask .qpanel');
+}
+
 for (const [name, pq, shaping, title, chip] of KINDS) {
-  test(`${name}: the run page panel and the paintAsk host show the same head, chip, body text and buttons`, async () => {
+  test(`${name}: the run page, the chat host and the group page show the same head, chip, body text and buttons`, async () => {
     const { ctx, panel } = await openShaping({ pq, shaping });
     await ctx.settle();
     const page = look(panel);
-    const other = paintAskHost(ctx);
+    const chat = paintAskHost(ctx);
     await ctx.settle();
+    const group = await groupPageHost(ctx);
     assert.equal(page.title, title);
     assert.equal(page.chip, chip);
-    assert.deepEqual(look(other.panel), page);
-    assert.equal(other.q.stepCard, true);
+    assert.deepEqual(look(chat.panel), page);
+    assert.equal(chat.q.stepCard, true);
+    assert.ok(group, 'the group page mounts the open step');
+    assert.deepEqual(look(group), page);
   });
 }
 

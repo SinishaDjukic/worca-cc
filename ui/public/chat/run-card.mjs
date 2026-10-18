@@ -12,11 +12,13 @@ import { mountRunGraph } from '../graph/run-hosts.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askRendererFor, askKindOf } from '../ask/registry.mjs';
 import { shapeFirstOn } from './shape-gate.mjs';
-import { checklistTallyText } from '../../../src/shared/shape/review-checklist.mjs';
+import { checklistScore } from '../../../src/shared/shape/review-checklist.mjs';
 import { paintProgressBar, paintChainBar } from '../run-progress-bar.mjs';
 import { renderRowIcon } from '../runs-list.mjs';
 import { featureCardModel, paintFeatureLog, paintFeatureMembers } from '../shape/feature-card.mjs';
 import { namedAnswer, forgetAnswer } from '../shape/step-receipt.mjs';
+import { renderChecklistGroups } from '../shape/checklist-view.mjs';
+import { paintFeatureActions } from '../shape/feature-actions.mjs';
 
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
@@ -239,7 +241,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const footErr = h('span', 'chat-rc-err');
   footErr.hidden = true;
   footErr.setAttribute('role', 'status');
-  foot.append(pauseBtn, stopBtn, footErr);
+  // Shaper s3: the feature's controls (feature-actions.mjs) replace Pause/Stop once the card is a feature card.
+  const fActions = h('div', 'chat-rc-factions');
+  fActions.hidden = true;
+  foot.append(pauseBtn, stopBtn, fActions, footErr);
   // ---- Shaper s2: the feature card's slots (feature-card.mjs fills them); hidden on every other run
   const fStatus = h('div', 'ask-rc-sub chat-rc-fstatus');
   fStatus.hidden = true;
@@ -271,7 +276,32 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     return isGraphManifest(stepper) ? { ...ref(), nodeLabel: (nodeId) => nodeLabelOf(stepper, nodeId) } : ref();
   };
 
-  open.addEventListener('click', (e) => { e.preventDefault(); call(ctx.openRunPanel, ref(), {}); });
+  /** s3: what the feature controls act on. The ref keeps the card's project fields; the ids are the current run's. */
+  const targetRef = (t) => ({ ...ref(), runId: t.runId || null, pipelineId: t.pipelineId || null });
+  function openPlan(c) {
+    const file = last && last.shaping && last.shaping.approved && last.shaping.approved.file;
+    if (file) return call(ctx.openArtifact, artifactRef(), { relPath: file, kind: 'plan' });
+    // `shaping` lives only in a live snapshot: otherwise app.js finds the run's plan (its Artifacts tab is advanced-only).
+    const planRef = { ...ref(), pipelineId: c.planPipelineId };
+    if (typeof ctx.openPlan === 'function') return ctx.openPlan(planRef);
+    return call(ctx.openRunPanel, planRef, { tab: 'artifacts' });
+  }
+  // Built once per card: paintFeatureActions keeps the handlers of its last rebuild. `act` reads `fm` when called.
+  const featureDeps = {
+    act: (action, body) => (fm && fm.controls && typeof controls.featureAct === 'function'
+      ? controls.featureAct(fm.controls.featureId, action, body || {}) : Promise.resolve({ ok: false })),
+    confirm: (o) => (typeof controls.confirm === 'function' ? controls.confirm(o) : Promise.resolve(true)),
+    pause: (t, btn) => call(controls.pause, targetRef(t), btn),
+    stop: (t) => call(controls.stop, targetRef(t), () => call(refresh)),
+    openPlan,
+  };
+
+  // D9: in the feature phase, Open run › opens the feature's current run.
+  open.addEventListener('click', (e) => {
+    e.preventDefault();
+    const t = fm && fm.controls && fm.controls.target;
+    call(ctx.openRunPanel, t ? targetRef(t) : ref(), {});
+  });
   expand.addEventListener('click', () => call(ctx.openRunPanel, ref(), { tab: 'workflow' }));
   pauseBtn.addEventListener('click', (e) => {
     // One press per action: the same button flips in place (Resume → Pause once the resumed lineage runs, Pause →
@@ -496,11 +526,28 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     rhead.append(glyph, text);
     if (r && r.filesChanged) rhead.appendChild(churnEl(r));
     resultSec.appendChild(rhead);
-    // Spec D7: a shaped run's checklist tally, from results.json via runCardResults.
+    // Spec D7 / s3: the shaped run's checklist score; pressing it unfolds the run page's Perspective checklists in place.
     const tally = r && r.checklist && r.checklist.total && shapeFirstOn() ? r.checklist : null;
     if (tally) {
-      resultSec.appendChild(h('div', `chat-rc-checklist${tally.unmet || tally.missing ? ' is-open' : ''}`,
-        checklistTallyText(tally)));
+      const row = h('div', `chat-rc-checklist${tally.unmet || tally.missing ? ' is-open' : ''}`);
+      const b = button('chat-rc-checklist-btn');
+      b.textContent = checklistScore(tally);
+      b.setAttribute('aria-expanded', 'false');
+      const groups = h('div', 'chat-rc-checklist-groups');
+      groups.hidden = true;
+      b.addEventListener('click', async () => {
+        if (!groups.hidden) { groups.hidden = true; b.setAttribute('aria-expanded', 'false'); return; }
+        if (!groups.firstChild) {
+          const reviews = await Promise.resolve(call(ctx.checklists, ref())).catch(() => null);
+          const cl = reviews ? renderChecklistGroups(doc, reviews) : null;
+          if (!cl) { call(ctx.openRunPanel, ref(), { tab: 'overview' }); return; }
+          groups.appendChild(cl);
+        }
+        groups.hidden = false;
+        b.setAttribute('aria-expanded', 'true');
+      });
+      row.append(b, groups);
+      resultSec.appendChild(row);
     }
     const top = r && Array.isArray(r.topFiles) ? r.topFiles : [];
     if (top.length) {
@@ -572,6 +619,17 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   }
 
   function paintFoot(s) {
+    // s3 (D8): a feature card's foot is the feature's controls; the planning run itself may be long done.
+    const fc = fm && fm.phase === 'feature' ? fm.controls : null;
+    pauseBtn.hidden = !!fc;
+    if (fc) {
+      stopBtn.hidden = true;
+      footErr.hidden = true;
+      paintFeatureActions(doc, fActions, fc, featureDeps);
+      foot.hidden = fActions.hidden;
+      return;
+    }
+    fActions.hidden = true;
     const status = s ? String(s.status || '') : '';
     const show = !!s && !RESULT_STATUS.has(status) && (CONTROL_STATUS.has(status) || !!s.pendingQuestion);
     foot.hidden = !show;
@@ -754,10 +812,12 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
     if (!card) return snap;
     const store = storeOf(entry);
     const snaps = {};
-    for (const s of (card.feature && card.feature.slices) || []) {
-      if (!s.pipelineId || s.pipelineId === pid) continue;
-      const m = store && typeof store.byPipeline === 'function' ? store.byPipeline(s.pipelineId) : null;
-      if (m) snaps[s.pipelineId] = m;
+    // s3 (D16): while re-planning, the Re-plan the rest run's snapshot too (its Split ask is the card's open step).
+    const rpPid = card.feature && card.feature.status === 'replanning' && card.feature.replan ? card.feature.replan.pipelineId : null;
+    for (const p of [...((card.feature && card.feature.slices) || []).map((s) => s.pipelineId), rpPid]) {
+      if (!p || p === pid) continue;
+      const m = store && typeof store.byPipeline === 'function' ? store.byPipeline(p) : null;
+      if (m) snaps[p] = m;
     }
     return { ...snap, shaper: { card, snaps } };
   }

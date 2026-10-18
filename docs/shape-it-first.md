@@ -143,7 +143,7 @@ repository so that GitHub retargets the next PR when one merges.
 **Plan once.** Slices 2 and later skip Clarify: they use the answers you gave for
 slice 1. Their planner still writes a plan for its own slice.
 
-**Approve each slice's plan** (on the outline card: **Ask me before each run**). Off by default: a later slice's plan stops for you
+**Ask before each run** (on the outline card: **Ask me before each run**). Off by default: a later slice's plan stops for you
 only when its shape check fails or the planner says the slice can't be built as
 outlined (it then tells you why on the plan card). Turn it on to review every
 slice's plan. Either way an audit line records what happened, and in Away mode a
@@ -167,33 +167,53 @@ approved, then `Feature · n/N`. Below the stats:
 
 A later run's **Answer** in Chat home opens the feature's thread. A slice is planned,
 starting, shaping, waiting for your answers, waiting for approval, running, paused,
-done, stopped, error, failed, missed or canceled. When a slice halts, the feature page
-says "Slice k stopped · slices k+1–N waiting" and offers:
+done, stopped, error, failed, missed or canceled.
 
-- **Review plan**, **Answer** or **Open**, which open that slice's run in Chat's panel;
-- **Resume slice k**, which resumes a paused slice and restarts a stopped one as a
-  new run, then re-chains the slices after it;
-- **Re-plan the rest**, which cancels the slices that have not started and plans the
-  remainder again from the last done slice's branch, with a new outline to approve;
-- **Cancel the rest**, which cancels the slices that have not started;
-- **Approve each slice's plan**, the switch above.
+**Feature controls.** The feature card carries the feature's controls, the same on
+every host. Beside the ⋯ button:
+
+- while a run of the feature is running: **Pause** and **Stop**, which act on that
+  run (Pause reads **Pausing…** until the pause lands);
+- once the feature halts (`Failed · Run 2 · Review`, `Paused · Run 2 · Build`):
+  **Resume**, which resumes a paused run and restarts a stopped one as a new run, then
+  re-chains the runs after it, and **Re-plan the rest**. The runs that wait read
+  `Waiting`;
+- while re-planning, ready to ship, shipped or canceled: no buttons.
+
+The ⋯ menu lists, in this order:
+
+- **Re-plan the rest**, which cancels the runs that have not started and plans the
+  remainder again from the last done run's branch. The re-plan's outline opens as
+  the Split step card in the same feature card, and the log says
+  `Re-planning runs 3–4`;
+- **Cancel the rest**, which cancels the runs that have not started;
+- **Ask before each run**, the switch above (checked when on);
+- **Open the plan**, the approved plan, or the planning run's Artifacts.
 
 Resume, Re-plan the rest and Cancel the rest act on an active feature. Re-plan the
-rest also needs every slice to be idle: stop a running one from its own card first.
+rest also needs every run to be idle: stop a running one first. A refused action
+shows the server's reason on the card.
 
-**The feature page.** Each feature has its own page (`#feature/…`): the slices in
-order with a bar part per slice, each slice's state and pull request, "merge first"
-on the earliest open pull request, the slice in flight with its stage and any
-question or plan approval it waits on, and the actions above. Chat's run card shows
-a one-line summary with **Open feature**, the Runs list shows a feature as one row
-("Slice 2 of 3 · Build", or "Needs you"), and a slice's run page says which feature
-it belongs to and, once done, which slice comes next.
+**One card, three hosts.** The same card shows in the Chat thread, on the Plans tab
+and on the feature's group page (`#feature/…`): head (icon, chip, title), status
+line, group bar, open step, step log, Runs, Ship as, and the controls. The Plans tab
+shows it with Runs folded and no step; the group page with Runs open and the open
+step card under the group bar. The step card itself is the same on the run page, in
+Chat and on the group page. A feature that was re-planned keeps its old link: it
+shows the newer feature with "Re-planned: the runs below replace the earlier
+outline". The Runs list shows a feature as one row ("Slice 2 of 3 · Build", or
+"Needs you"), and a slice's run page says which feature it belongs to and, once
+done, which slice comes next.
+
+**Checklist score.** A shaped run's result reads `Checklist 12/14`: met out of the
+items that apply (n/a left out, not reported counts against). Pressing it unfolds
+the run's Perspective checklists in place.
 
 **Ship as.** Each slice opens a draft pull request when it finishes; merge them in
 order, since each slice's branch starts from the one before. When every slice is
-done, the feature page asks how to ship: **Stacked PRs** marks each draft ready for
+done, the feature card asks how to ship: **Stacked PRs** marks each draft ready for
 review, **One PR** opens one pull request from the last slice's branch into the
-feature's base and closes the slices' drafts with a link to it. The page suggests
+feature's base and closes the slices' drafts with a link to it. The card suggests
 one PR for a feature under about 1,500 added lines. Either way, one entry for the
 feature goes into the project's `CHANGELOG.md` under `## Unreleased`, committed on
 the last slice's branch, so it ships with the feature.

@@ -696,3 +696,25 @@ test('GET /api/shape/pipelines/:pid/slice carries the feature thread', () => wit
     getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id IN (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ?)").run(fid);
   }
 }));
+
+test('re-plan from the card: the re-plan run\'s Split ask is the feature\'s ask, and the old URL still resolves', () => withGate(true, async () => {
+  const f = mk(3, 'stopped');
+  const r = await post(`/api/shape/features/${f.id}/replan`, {});
+  assert.equal(r.status, 200);
+  const { runId: ticketId } = await r.json();
+  const rp = pipe('running');
+  getDb().prepare('UPDATE scheduled_runs SET pipeline_id = ? WHERE id = ?').run(rp, ticketId);
+  const e = liveEntry(rp, { pending: { id: 'q-split', kind: 'plan', plan: { outline: { why: 'w', slices: [] } } } });
+  try {
+    const v = await view(f.id);
+    assert.equal(v.status, 'replanning');
+    assert.deepEqual(v.ask, { index: null, runId: e.id, pipelineId: rp, id: 'q-split', kind: 'outline' });
+    assert.match(v.log.at(-1).text, /^Re-planning runs? /);
+    const next = mk(2, 'running', { replaces: f.id });          // the re-plan's outline approved
+    const viaOld = await get(`/api/shape/features/${f.id}`);
+    assert.equal(viaOld.status, 200);
+    const body = await viaOld.json();
+    assert.equal(body.id, next.id);
+    assert.equal(body.replanOf, f.id);
+  } finally { dropEntry(e); }
+}));

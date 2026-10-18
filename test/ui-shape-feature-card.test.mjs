@@ -185,3 +185,36 @@ test('pre-upgrade feature: the REST snapshot (no shaping) renders the feature ca
     setShapeFirst(false);
   }
 });
+
+test('controls: the current run is the target; halted names Resume; waiting runs read Waiting', () => {
+  const v = VIEW([SL(1, 'done', { pipelineId: 'p1' }), SL(2, 'error', { pipelineId: 'p2' }), SL(3, 'planned'), SL(4, 'planned')],
+    { halted: { index: 2, state: 'error', waiting: [3, 4] }, open: true, approveEach: false, originPipelineId: 'p0' });
+  const m = featureCardModel({ own: snap('p0'), card: card(v),
+    snapOf: (pid) => (pid === 'p2' ? snap('p2', { status: 'failed', source: 'rest', terminal: true, stageProgress: { label: 'Review', text: 'Review' } }) : null) });
+  assert.equal(m.status, 'Failed · Run 2 · Review');
+  assert.deepEqual(m.controls, { featureId: v.id, active: true, halted: true, rest: true, approveEach: false, planPipelineId: 'p0',
+    target: { index: 2, runId: 'run-p2', pipelineId: 'p2', status: 'failed', asks: false } });   // snap() defaults runId to `run-${pid}`
+  assert.deepEqual(m.members.slice(3).map((r) => r.state), ['Waiting', 'Waiting']);
+});
+
+test('controls: a current run that asks (plan approval) is a target that asks, live or from the slice state alone', () => {
+  const v = VIEW([SL(1, 'done', { pipelineId: 'p1' }), SL(2, 'approval', { pipelineId: 'p2' }), SL(3, 'planned')], { open: true, originPipelineId: 'p0' });
+  const live = featureCardModel({ own: snap('p0'), card: card(v),
+    snapOf: (pid) => (pid === 'p2' ? snap('p2', { status: 'running', pendingQuestion: { id: 'q-plan', kind: 'plan' } }) : null) });
+  assert.equal(live.controls.target.status, 'running');
+  assert.equal(live.controls.target.asks, true);
+  const bare = featureCardModel({ own: snap('p0'), card: card(v) });
+  assert.deepEqual([bare.controls.target.status, bare.controls.target.asks], ['running', true]);
+});
+
+test('re-planning: the re-plan run\'s outline ask is the open step (live snapshot, else the server pointer)', () => {
+  const v = VIEW([SL(1, 'done', { pipelineId: 'p1' }), SL(2, 'canceled')],
+    { status: 'replanning', replan: { ticketId: 't9', pipelineId: 'rp1', runId: 'run-rp1' } });
+  const asking = snap('rp1', { runId: 'run-rp1', pendingQuestion: { id: 'q-split', kind: 'plan', plan: { outline: { slices: [] } } } });
+  const live = featureCardModel({ own: snap('p1'), card: card(v), snapOf: (pid) => (pid === 'rp1' ? asking : null) });
+  assert.equal(live.step.kind, 'outline');
+  assert.equal(live.step.pipelineId, 'rp1');
+  assert.equal(live.controls.rest, false);
+  const ptr = featureCardModel({ own: snap('p1'), card: card({ ...v, ask: { index: null, runId: 'run-rp1', pipelineId: 'rp1', id: 'q-split', kind: 'outline' } }) });
+  assert.equal(ptr.step.kind, 'outline');
+});

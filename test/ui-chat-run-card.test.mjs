@@ -38,11 +38,11 @@ const live = (over = {}, stateOver = {}, extras = null) => ({ ...snapshotFromSta
 const done = (extras, over = {}) => live({ terminal: true, active: [], ...over }, { status: 'done', active: [], steps: [step({ executionId: 'x:n_plan:1', nodeId: 'n_plan', ordinal: 1 }), step({ executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1 })] }, extras);
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
-function mk({ controls = {} } = {}) {
+function mk({ controls = {}, ctx: ctxOver = {} } = {}) {
   const dom = trackDom(new JSDOM('<!doctype html><html><body></body></html>'));
   const doc = dom.window.document;
   const calls = [];
-  const ctx = { openRunPanel: (...a) => calls.push(['panel', ...a]), openArtifact: (...a) => calls.push(['artifact', ...a]), announce: (t) => calls.push(['announce', t]), mountFeature: (host, id) => calls.push(['feature', host, id]) };
+  const ctx = { openRunPanel: (...a) => calls.push(['panel', ...a]), openArtifact: (...a) => calls.push(['artifact', ...a]), announce: (t) => calls.push(['announce', t]), mountFeature: (host, id) => calls.push(['feature', host, id]), ...ctxOver };
   const refreshed = [];
   const card = createChatRunCard({ doc, win: dom.window, snapshot: null, ctx, controls, ident: { ...IDENT }, refresh: () => refreshed.push(1) });
   doc.body.appendChild(card.el);
@@ -1282,7 +1282,7 @@ test('chat run card result region: the checklist tally of a shaped run (spec D7)
         const { card, $ } = mk();
         card.update(done(ex({ met: 1, unmet: 1, na: 0, missing: 0, total: 2 })));
         const el = $('.chat-rc-checklist');
-        assert.equal(el.textContent, 'Checklist: 1 met · 1 unmet · 0 n/a');
+        assert.equal(el.querySelector('.chat-rc-checklist-btn').textContent, 'Checklist 1/2');
         assert.ok(el.classList.contains('is-open'));
       } },
       { name: 'all met: not open', run: () => {
@@ -1295,8 +1295,28 @@ test('chat run card result region: the checklist tally of a shaped run (spec D7)
         setShapeFirst(true);
         const { card, $ } = mk();
         card.update(done(ex({ met: 1, unmet: 0, na: 0, missing: 1, total: 2 })));
-        assert.equal($('.chat-rc-checklist').textContent, 'Checklist: 1 met · 0 unmet · 0 n/a · 1 not reported');
+        assert.equal($('.chat-rc-checklist-btn').textContent, 'Checklist 1/2');
         assert.ok($('.chat-rc-checklist').classList.contains('is-open'));
+      } },
+      { name: 'pressing the line unfolds the checklist groups in place', run: async () => {
+        setShapeFirst(true);
+        const reviews = [{ kind: 'plan', cycle: 1, checklist: [{ perspective: 'qa', id: 'R-qa-1', text: 'x', status: 'met' }] }];
+        const { card, $, calls } = mk({ ctx: { checklists: async () => reviews } });
+        card.update(done(ex({ met: 1, unmet: 0, na: 0, missing: 0, total: 1 })));
+        $('.chat-rc-checklist-btn').click();
+        await settle();
+        assert.equal($('.chat-rc-checklist-btn').getAttribute('aria-expanded'), 'true');
+        assert.ok($('.chat-rc-checklist-groups .shape-checklists'));
+        assert.equal(calls.filter((c) => c[0] === 'panel').length, 0);
+      } },
+      { name: 'no reviews load: the line opens the run\'s Overview instead', run: async () => {
+        setShapeFirst(true);
+        const { card, $, calls } = mk({ ctx: { checklists: async () => null } });
+        card.update(done(ex({ met: 1, unmet: 0, na: 0, missing: 0, total: 1 })));
+        $('.chat-rc-checklist-btn').click();
+        await settle();
+        assert.equal($('.chat-rc-checklist-btn').getAttribute('aria-expanded'), 'false');
+        assert.deepEqual(calls.filter((c) => c[0] === 'panel').map((c) => c[2]), [{ tab: 'overview' }]);
       } },
       { name: 'gate off: no line', run: () => {
         setShapeFirst(false);
@@ -1348,4 +1368,69 @@ test('chat run card progress bar (P9): compact bar + P5 text for a live graph sn
       assert.equal(snapshotFromState(STATE({ stepper: null }), { now: 0 }).stageProgress, null);
     } },
   ]);
+});
+
+test('halted feature: Failed · Run 2 · Review, buttons Resume · Re-plan the rest, Resume posts the feature resume', async () => {
+  try {
+    setShapeFirst(true);
+    const seen = [];
+    const { card, $, el = card.el } = mk({ controls: { featureAct: async (id, action, body) => { seen.push([id, action, body]); return { ok: true }; } } });
+    const view = VIEW3([SL(1, 'done', { pipelineId: 'abcd1234' }), SL(2, 'error', { pipelineId: 'p2' }), SL(3, 'planned')],
+      { id: 'feat_1', halted: { index: 2, state: 'error', waiting: [3] }, open: true, originPipelineId: 'abcd1234' });
+    card.update(shaped({ pipelineId: 'abcd1234', feature: view, log: [] },
+      { p2: { source: 'rest', terminal: true, status: 'failed', pipelineId: 'p2', stageProgress: { label: 'Review', text: 'Review' } } }));
+    assert.equal($('.chat-rc-fstatus').textContent, 'Failed · Run 2 · Review');
+    assert.deepEqual([...el.querySelectorAll('.chat-rc-factions > button')].map((b) => b.textContent), ['Resume', 'Re-plan the rest', '⋯']);
+    assert.equal($('.chat-rc-pause').hidden, true);
+    assert.equal(el.querySelectorAll('.chat-rc-member-state')[3].textContent, 'Waiting');
+    $('[data-act="feature-resume"]').click();
+    await settle();
+    assert.deepEqual(seen, [['feat_1', 'resume', {}]]);
+  } finally { setShapeFirst(false); }
+});
+
+test('running feature: Pause and Stop act on run 2; ⋯ lists the four items; Ask before each run posts approve-each', async () => {
+  try {
+    setShapeFirst(true);
+    const seen = [];
+    const { card, $ } = mk({ ctx: { openPlan: (ref) => seen.push(['plan', ref.pipelineId]) }, controls: {
+      pause: async (ref) => { seen.push(['pause', ref.runId]); }, stop: (ref) => seen.push(['stop', ref.pipelineId]),
+      featureAct: async (id, action, body) => { seen.push([action, body]); return { ok: true }; } } });
+    const view = VIEW3([SL(1, 'done', { pipelineId: 'abcd1234' }), SL(2, 'running', { pipelineId: 'p2', runId: 'r2' }), SL(3, 'planned')],
+      { id: 'feat_1', open: true, approveEach: false, originPipelineId: 'abcd1234' });
+    card.update(shaped({ pipelineId: 'abcd1234', feature: view, log: [] },
+      { p2: { source: 'live', status: 'running', runId: 'r2', pipelineId: 'p2', stageProgress: { ...PLAN_PROG, stage: 'build', label: 'Build', text: 'Build' } } }));
+    $('[data-act="feature-pause"]').click();
+    $('[data-act="feature-stop"]').click();
+    await settle();
+    $('[data-act="feature-more"]').click();
+    const items = [...card.el.ownerDocument.querySelectorAll('.wfv-menu-item')];
+    assert.deepEqual(items.map((i) => i.textContent.trim()), ['Re-plan the rest', 'Cancel the rest', 'Ask before each run', 'Open the plan']);
+    items[2].click();
+    await settle();
+    assert.deepEqual(seen, [['pause', 'r2'], ['stop', 'p2'], ['approve-each', { on: true }]]);
+    // A REST snapshot carries no `shaping` (memory-only): Open the plan asks app.js for the run's plan (D7), not the
+    // Artifacts tab, which the simple UI level hides.
+    $('[data-act="feature-more"]').click();
+    [...card.el.ownerDocument.querySelectorAll('.wfv-menu-item')][3].click();
+    assert.deepEqual(seen.at(-1), ['plan', 'abcd1234']);
+  } finally { setShapeFirst(false); }
+});
+
+test('re-plan from the card: Re-planning runs 2–3 in the log, and the re-plan run\'s Split card opens in the same card', async () => {
+  try {
+    setShapeFirst(true);
+    // stepStub's render hook gets (panel, pq, opts), not the ref: wrap paintQuestion to see the ref it paints from.
+    const painted = [];
+    const stub = stepStub({ id: 'q-split', kind: 'plan', plan: { outline: { why: 'w', slices: [] } } }, renderOutlineBody);
+    const { card, $ } = mk({ controls: { ...stub, paintQuestion: (ref, host) => { painted.push(ref.pipelineId); return stub.paintQuestion(ref, host); } } });
+    const view = VIEW3([SL(1, 'done', { pipelineId: 'abcd1234' }), SL(2, 'canceled'), SL(3, 'canceled')],
+      { id: 'feat_1', status: 'replanning', replan: { ticketId: 't9', pipelineId: 'rp1', runId: 'run-rp1' } });
+    card.update(shaped({ pipelineId: 'abcd1234', feature: { ...view, log: [{ key: 'replan', run: null, text: 'Re-planning runs 2–3', detail: [] }] }, log: [] },
+      { rp1: { source: 'live', status: 'running', runId: 'run-rp1', pipelineId: 'rp1',
+        pendingQuestion: { id: 'q-split', kind: 'plan', plan: { outline: { why: 'w', slices: [] } } } } }));
+    assert.equal($('.chat-rc-log-row:last-child .chat-rc-log-text').textContent, 'Re-planning runs 2–3');
+    assert.ok(painted.includes('rp1'), 'the Split step paints from the re-plan run');
+    assert.deepEqual([...card.el.querySelectorAll('.chat-rc-factions > button')].map((b) => b.textContent), ['⋯']);
+  } finally { setShapeFirst(false); }
 });

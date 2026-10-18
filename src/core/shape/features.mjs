@@ -208,6 +208,11 @@ export function featureView(id, { live = () => null } = {}) {
   // The Re-plan the rest run (replanning/replanned): its ticket id is the run id it fires as (ui/server.mjs:2188).
   const rt = f.replan_ticket_id ? getTicket(f.replan_ticket_id) : null;
   const replan = rt ? { ticketId: rt.id, pipelineId: rt.pipelineId || null, runId: rt.pipelineId ? (live(rt.pipelineId)?.runId || null) : null } : null;
+  // s3 (D16): while re-planning, no slice asks; the Re-plan the rest run's Split ask is the card's open step.
+  if (!ask && f.status === 'replanning' && replan && replan.pipelineId) {
+    const l = live(replan.pipelineId);
+    if (l && l.ask) ask = { index: null, runId: l.runId || null, pipelineId: replan.pipelineId, id: l.ask.id, kind: l.ask.kind };
+  }
   return {
     id: f.id, title: f.title, projectKey: projectKey(f.project_dir),   // a History link needs it (F28)
     status, approveEach: f.approve_each !== 0, total: slices.length, done,

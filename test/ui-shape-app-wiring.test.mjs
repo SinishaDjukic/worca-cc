@@ -156,7 +156,7 @@ test('mountShapeFeature paints the host from GET /api/shape/features/:id', async
   assert.deepEqual(server.gets, ['feat-1']);
   assert.ok(h.querySelector('.shape-feature'), 'the view is drawn');
   assert.equal(h.dataset.painted, 'feat-1');
-  assert.equal(h.querySelector('.shape-feature-head').textContent, '1 of 3 slices done');
+  assert.equal(h.querySelector('.shape-feature-status').textContent, 'Waiting · Run 2');
 });
 
 test('no refetch loop (F41): five mounts with the fetch pending issue one GET; after a 500 none; a frame refetches', async () => {
@@ -225,11 +225,12 @@ test('two paints in flight end with the later response', async () => {
   ctx.dispatch({ type: 'shape-feature', id: 'feat-1' });
   await ctx.settle(2);
   assert.equal(pending.length, 2);
-  pending[1](res(200, FEATURE('feat-1', { done: 2 })));
+  const running = FEATURE('feat-1').slices.map((x) => (x.index === 2 ? { ...x, state: 'running' } : x));
+  pending[1](res(200, FEATURE('feat-1', { slices: running })));
   await ctx.settle(5);
-  pending[0](res(200, FEATURE('feat-1', { done: 1 })));
+  pending[0](res(200, FEATURE('feat-1')));
   await ctx.settle(5);
-  assert.equal(h.querySelector('.shape-feature-head').textContent, '2 of 3 slices done');
+  assert.equal(h.querySelector('.shape-feature-status').textContent, 'Running · Run 2 · Build');
 });
 
 test('successor (F47): a host mounted with A that is answered with B posts to B and repaints on B frames', async () => {
@@ -297,14 +298,14 @@ test('focus (F39): after a click on a control that blurs when disabled, the new 
   const h = host();
   seam.mount(h, 'feat-1');
   await ctx.settle(5);
-  const old = h.querySelector('[data-act="shape-feature-resume"]');
+  const old = h.querySelector('[data-act="feature-resume"]');
   const proto = Object.getPrototypeOf(old);
   const desc = Object.getOwnPropertyDescriptor(proto, 'disabled') || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(proto), 'disabled');
   Object.defineProperty(old, 'disabled', { configurable: true, get() { return desc.get.call(this); }, set(v) { desc.set.call(this, v); if (v) this.blur(); } });
   old.focus();
   click(ctx, old);
   await ctx.settle(8);
-  const again = h.querySelector('[data-act="shape-feature-resume"]');
+  const again = h.querySelector('[data-act="feature-resume"]');
   assert.notEqual(again, old, 'the view was rebuilt');
   assert.equal(ctx.window.document.activeElement, again);
 });
@@ -316,7 +317,7 @@ test('schedules-changed and shape-feature frames do not throw before the Chat ho
   await ctx.settle(3);
 });
 
-// ---- D16: the feature page (#feature/ID) and the Chat run card's summary ------------------------------------------
+// ---- D16 / s3: the group page (#feature/ID), the Plans tab card and the Chat feature card's controls ----------------
 
 const PAGE_FEATURE = (o = {}) => FEATURE('feat_1', { approveEach: false, slices: [
   { index: 1, title: 'Store tags', state: 'done', pipelineId: 'p1', runId: null, pr: null },
@@ -341,8 +342,8 @@ test('#feature/feat_1 fetches the feature and renders the page view', async () =
   const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
   const { page } = await openFeaturePage({ server });
   assert.deepEqual(server.gets, ['feat_1']);
-  assert.ok(page.querySelector('.shape-feature.is-page'));
-  assert.equal(page.querySelectorAll('.shape-feature-seg').length, 3);
+  assert.ok(page.querySelector('.shape-feature'));
+  assert.equal(page.querySelectorAll('.chat-rc-member').length, 4, 'Planning and the three runs');
 });
 
 test('#feature says it is loading until the feature arrives (no blank page on a slow server)', async () => {
@@ -354,7 +355,7 @@ test('#feature says it is loading until the feature arrives (no blank page on a 
   release(res(200, PAGE_FEATURE()));
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(page.querySelector('.feature-page-loading'), null, 'the page replaces the loading line');
-  assert.ok(page.querySelector('.shape-feature.is-page'));
+  assert.ok(page.querySelector('.shape-feature'));
 });
 
 test('#feature whose first load fails says so instead of loading forever', async () => {
@@ -386,36 +387,85 @@ test('the page\'s ask host survives a repaint; a state frame repaints the line w
   const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
   const { ctx, page } = await openFeaturePage({ server, runs: [{ runId: 'r2', pipelineId: 'p2', title: 'Run tags', projectDir: '/tmp/p',
     status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z', shaping: { perspectives: [], rounds: [], approved: null, savedTo: null }, pendingQuestion: PLAN_Q }] });
-  const qp = page.querySelector('.shape-feature-current .shape-feature-ask .qpanel');
-  assert.ok(qp, 'the ask host sits in the current slice block');
+  const qp = page.querySelector('.shape-feature .shape-feature-ask .qpanel');
+  assert.ok(qp, 'the ask host sits in the card');
   assert.ok(qp.childElementCount > 0 || qp.textContent.length > 0, 'the plan ask is drawn');
   ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
   await ctx.settle(6);
   assert.equal(server.gets.length, 2);
-  assert.equal(page.querySelector('.shape-feature-current .shape-feature-ask .qpanel'), qp, 'the same panel: a typed answer survives');
-  const head = page.querySelector('.shape-feature-head');
-  head.textContent = 'stale';
+  assert.equal(page.querySelector('.shape-feature .shape-feature-ask .qpanel'), qp, 'the same panel: a typed answer survives');
+  const status = page.querySelector('.shape-feature-status');
+  status.textContent = 'stale';
   ctx.dispatch({ type: 'state', runId: 'r2', status: 'running' });
   await ctx.settle(4);
-  assert.equal(page.querySelector('.shape-feature-head').textContent, 'Slice 2 of 3 › Plan › your approval',
+  assert.equal(page.querySelector('.shape-feature-status').textContent, 'Needs you · Run 2 · Plan',
     'the state frame rewrote the line (paintFeaturePageProgress)');
   assert.equal(server.gets.length, 2, 'a state frame does not refetch the feature');
 });
 
-test('the Chat run card mounts the summary and Open feature routes to the page; the Plans tab keeps the full card', async () => {
+test('the Plans tab mounts the card with Runs folded; #feature/feat_1 mounts the same card with Runs open', async () => {
   const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
-  const { ctx, seam, host } = await bootFeature({ server });
-  const card = host();
-  seam.mountCard(card, 'feat_1');
+  const { ctx, page } = await openFeaturePage({ server });
+  assert.equal(page.querySelector('.shape-feature details.shape-feature-runs').open, true);
+  const plans = ctx.window.document.createElement('div');
+  ctx.window.document.body.appendChild(plans);
+  ctx.window.__shapeFeature.mount(plans, 'feat_1');
   await ctx.settle(5);
-  assert.ok(card.querySelector('.shape-feature-sum'));
-  assert.equal(card.querySelector('.shape-feature-sum-line').textContent, 'Shaper · Slice 2 needs you');
-  click(ctx, card.querySelector('.shape-feature-sum-open'));
-  assert.equal(ctx.window.location.hash, '#feature/feat_1');
-  const plans = host();
-  seam.mount(plans, 'feat_1');
-  await ctx.settle(5);
-  assert.ok(plans.querySelector('.shape-feature') && !plans.querySelector('.shape-feature-sum') && !plans.querySelector('.is-page'));
+  assert.ok(plans.querySelector('.shape-feature'));
+  assert.equal(plans.querySelector('details.shape-feature-runs').open, false);
+  assert.equal(plans.querySelector('.shape-feature-ask'), null, 'no step card in the Plans tab');
+});
+
+test('group page: a ⋯ pick of Ask before each run posts approve-each {on:false}; after the frame the item reads unchecked', async () => {
+  const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE({ approveEach: true, originPipelineId: 'p1' }));
+  server.postHandler = (id, action) => { if (action === 'approve-each') server.features.set(id, { ...server.features.get(id), approveEach: false }); return res(200, { ok: true }); };
+  const { ctx, page } = await openFeaturePage({ server });
+  const doc = ctx.window.document;
+  const item = () => [...doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.trim() === 'Ask before each run');
+  click(ctx, page.querySelector('[data-act="feature-more"]'));
+  assert.equal(item().getAttribute('aria-checked'), 'true');
+  click(ctx, item());
+  await ctx.settle(8);
+  assert.deepEqual(server.posts, [{ id: 'feat_1', action: 'approve-each', body: { on: false } }]);
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(6);
+  click(ctx, page.querySelector('[data-act="feature-more"]'));
+  assert.equal(item().getAttribute('aria-checked'), 'false');
+});
+
+test('Open the plan opens the origin run\'s newest plan artifact in the popup (any UI level), else its Artifacts tab', async () => {
+  const open = async (rows) => {
+    const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE({ originPipelineId: 'p1' }));
+    const inner = server.fetchHandler;
+    server.fetchHandler = (url, opts) => (url === '/api/runs/p1/artifacts' ? res(200, { runId: 'p1', artifacts: rows, truncated: false }) : inner(url, opts));
+    const { ctx, page } = await openFeaturePage({ server });
+    click(ctx, page.querySelector('[data-act="feature-more"]'));
+    click(ctx, [...ctx.window.document.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.trim() === 'Open the plan'));
+    await ctx.settle(8);
+    return ctx;
+  };
+  const a = await open([{ kind: 'task', relPath: 'task.md' }, { kind: 'plan', relPath: 'plans/a.md' }, { kind: 'plan', relPath: 'plans/a-v2.md' }]);
+  assert.ok(a.calls.some((c) => c.url === `/api/runs/p1/artifact?rel=${encodeURIComponent('plans/a-v2.md')}`), 'the newest plan is read into the popup');
+  assert.doesNotMatch(a.window.location.hash, /artifacts/, 'no hidden Artifacts tab at the simple level');
+  const b = await open([{ kind: 'task', relPath: 'task.md' }]);
+  assert.match(b.window.location.hash, /\/artifacts$/, 'no plan indexed: the Artifacts tab, as before');
+});
+
+test('a halted Chat feature card\'s Resume posts the feature resume route once (the real chatRunControls.featureAct)', async () => {
+  const server = featureServer();
+  const { ctx } = await bootFeature({ server });
+  const { createChatRunCard } = await import('../ui/public/chat/run-card.mjs');
+  const doc = ctx.window.document;
+  const view = FEATURE('feat_1', { originPipelineId: 'p1', halted: { index: 2, state: 'stopped', waiting: [3] },
+    slices: [{ index: 1, title: 'First', state: 'done', pipelineId: 'p1', runId: null }, { index: 2, title: 'Second', state: 'stopped', pipelineId: 'p2', runId: null },
+      { index: 3, title: 'Third', state: 'planned', pipelineId: null, runId: null }], log: [], ask: null });
+  const card = createChatRunCard({ doc, win: ctx.window, ctx: {}, controls: ctx.window.__np.chatRunControls, ident: { cardId: 'c1', pipelineId: 'p1' },
+    snapshot: { source: 'rest', terminal: true, status: 'done', pipelineId: 'p1', shaper: { card: { pipelineId: 'p1', feature: view, log: [] }, snaps: {} } } });
+  doc.body.appendChild(card.el);
+  click(ctx, card.el.querySelector('[data-act="feature-resume"]'));
+  await ctx.settle(6);
+  assert.deepEqual(server.posts.map((p) => [p.id, p.action]), [['feat_1', 'resume']]);
+  card.destroy();
 });
 
 // ---- Shaper s2: the feature card's data and the feature thread (D12–D14) -------------------------------------------

@@ -5347,6 +5347,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     openRunPanel: (ref, opts) => chatDep('openRunPanel', ref, opts),
     shaperCard: (pipelineId, onChange) => chatDep('shaperCard', pipelineId, onChange),   // Shaper s2 (D12)
     openArtifact: (ref, artifact) => chatDep('openArtifact', ref, artifact),
+    checklists: (ref) => chatDep('checklists', ref),                                     // Shaper s3 (D18)
+    openPlan: (ref) => chatDep('openPlan', ref),                                         // Shaper s3 (D7)
     openShipIt: (ref, link) => chatDep('openShipIt', ref, link),
     runLinkFor: (ref) => runLinkFor(ref || {}),
     appendToComposer: (text) => appendToComposer(text),

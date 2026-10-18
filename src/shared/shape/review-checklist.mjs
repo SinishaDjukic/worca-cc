@@ -99,6 +99,12 @@ export function checklistTallyText(t, { prefix = 'Checklist: ' } = {}) {
     (n('missing') ? ` · ${n('missing')} not reported` : '');
 }
 
+/** "Checklist 12/14": met over the items that apply (n/a left out; a not-reported item counts against). */
+export function checklistScore(t) {
+  const n = (k) => Number(t?.[k]) || 0;
+  return `Checklist ${n('met')}/${n('met') + n('unmet') + n('missing')}`;
+}
+
 /** The newest review row (readPipelineExtras shape) that carries a checklist: {kind, cycle, checklist}, or null. */
 export function latestChecklist(reviews) {
   let best = null;

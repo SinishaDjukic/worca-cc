@@ -8853,6 +8853,10 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-rc-create-pr:focus-visible,.chat-rc-view-pr:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .chat-rc-foot{display:flex;align-items:center;gap:8px;margin-top:14px;}
 .chat-rc-foot[hidden]{display:none;}
+.chat-rc-factions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.chat-rc-factions[hidden]{display:none;}
+/* s3: the feature controls sit where the card's own Pause/Stop did, at their size. */
+.chat-rc-factions .btn{min-height:0;height:30px;padding:0 14px;font-size:12px;}
 .chat-rc-btn{height:30px;padding:0 14px;border:1.5px solid var(--line-2);border-radius:999px;background:var(--panel);color:var(--ink);font:inherit;font-weight:600;font-size:12px;cursor:pointer;}
 .chat-rc-btn:hover{background:var(--hover);}
 .chat-rc-btn:disabled{opacity:.5;cursor:default;}
@@ -9544,6 +9548,11 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 @media (prefers-reduced-motion:reduce){.shape-cl-toggle .chev{transition:none;}}
 .chat-rc-checklist{font-size:12px;color:var(--green-ink);margin:4px 0;}
 .chat-rc-checklist.is-open{color:var(--red-ink);}
+/* s3: the score is a text button; it unfolds the run page's Perspective checklists in place. */
+.chat-rc-checklist-btn{background:none;border:0;padding:0;color:inherit;font:inherit;cursor:pointer;text-decoration:underline;}
+.chat-rc-checklist-btn:focus-visible{outline:2px solid currentColor;outline-offset:2px;}
+.chat-rc-checklist-groups{margin-top:6px;color:var(--ink);}
+.chat-rc-checklist-groups[hidden]{display:none;}
 .outline-why{margin:0;color:var(--ink-2);}
 .outline-why[hidden]{display:none;}
 .outline-slices{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none;counter-reset:outline;}
@@ -9570,55 +9579,31 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .qpanel .step-head .ask-mcard-title{white-space:normal;min-width:0;flex:1 1 auto;overflow-wrap:anywhere;}
 .outline-row-more{margin-left:auto;}
 .shape-feature{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;}
-.shape-feature-title{font-weight:600;overflow-wrap:anywhere;}
-.shape-feature-head{color:var(--ink-2);}
-.shape-feature.is-halted .shape-feature-head{color:var(--amber-ink);}
-/* D33: the page's "you are here" line. :not(.is-halted) leaves a halted page to the existing amber rule above,
-   which this more specific rule would otherwise beat. .is-needs below has the same specificity as the ink rule
-   and comes later, so amber wins there. */
-.shape-feature.is-page:not(.is-halted) .shape-feature-head{color:var(--ink);}
-.shape-feature.is-page .shape-feature-head{font-weight:600;}
-.shape-feature.is-page .shape-feature-head.is-needs{color:var(--amber-ink);}
-.shape-feature-more{margin-left:auto;min-width:32px;}
+/* s3: the one feature card (Plans tab, group page): the Chat feature card's parts, from featureCardModel. */
+.shape-feature-head{display:flex;align-items:center;gap:8px;min-width:0;}
+.shape-feature-head .runs-ic{width:16px;height:16px;margin-top:0;}
+.shape-feature-chip{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-ctrl);font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;background:var(--violet-bg);color:var(--violet-ink);white-space:nowrap;}
+.shape-feature-chip:empty{display:none;}
+.shape-feature-title{font-weight:600;overflow-wrap:anywhere;min-width:0;}
+.shape-feature-status{color:var(--ink-2);}
+.shape-feature.is-halted .shape-feature-status{color:var(--amber-ink);}
 .shape-feature-replanned{color:var(--ink-3);font-size:12px;}
-.shape-feature-bar{height:6px;border-radius:999px;background:var(--line);overflow:hidden;}
-.shape-feature-fill{display:block;height:100%;background:var(--amber);}
-.shape-feature-slices{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;}
-.shape-feature-slice{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:6px 8px;border:1px solid var(--line);border-radius:var(--r-ctrl);}
-.shape-feature-slice-title{flex:1 1 140px;min-width:0;overflow-wrap:anywhere;}
-.shape-feature-slice-state{padding:1px 8px;border-radius:999px;background:var(--line);color:var(--ink-3);font-size:10.5px;font-weight:600;}
-.shape-feature-slice.is-done .shape-feature-slice-state{background:var(--green-bg);color:var(--green-ink);}
-.shape-feature-slice.is-stopped .shape-feature-slice-state,.shape-feature-slice.is-error .shape-feature-slice-state,.shape-feature-slice.is-failed .shape-feature-slice-state{background:var(--red-bg);color:var(--red-ink);}
-.shape-feature-slice.is-approval .shape-feature-slice-state,.shape-feature-slice.is-questions .shape-feature-slice-state,.shape-feature-slice.is-paused .shape-feature-slice-state{background:var(--amber-bg);color:var(--amber-ink);}
-.shape-feature-slice.is-missed .shape-feature-slice-state,.shape-feature-slice.is-canceled .shape-feature-slice-state{color:var(--ink-3);}
-.shape-feature-slice.is-missed .shape-feature-slice-title,.shape-feature-slice.is-canceled .shape-feature-slice-title{color:var(--ink-3);}
-.shape-feature-pr{color:var(--ink-2);font-size:12px;}
+.shape-feature-log,.shape-feature-runs .chat-rc-members{margin-top:0;}
+.shape-feature-runs > summary{width:fit-content;color:var(--ink-2);cursor:pointer;text-decoration:underline;}
+.shape-feature-runs > summary:focus-visible{outline:2px solid currentColor;outline-offset:2px;}
 .shape-feature-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
-.shape-feature-approve-each{display:flex;align-items:center;gap:6px;color:var(--ink-2);cursor:pointer;}
-.shape-feature-err{padding:6px 8px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);overflow-wrap:anywhere;}
+.shape-feature-actions[hidden]{display:none;}
+.shape-feature-err{flex-basis:100%;padding:6px 8px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);overflow-wrap:anywhere;}
 .shape-feature-err[hidden]{display:none;}
-/* D16: the feature page (#feature/ID), full width; one bar part per slice, tinted by its state. */
+/* D16: the group page (#feature/ID), full width. */
 .feature-page{padding:16px 20px;}
 .feature-page-gone,.feature-page-loading{color:var(--ink-3);}
-.shape-feature.is-page{width:100%;box-sizing:border-box;font-size:14px;}
-.shape-feature-segs{display:flex;gap:3px;height:8px;}
-.shape-feature-seg{flex:1 1 0;border-radius:999px;background:var(--line);}
-.shape-feature-seg[data-state="done"]{background:var(--green);}
-.shape-feature-seg[data-state="running"],.shape-feature-seg[data-state="shaping"],.shape-feature-seg[data-state="starting"]{background:var(--blue);}
-.shape-feature-seg[data-state="approval"],.shape-feature-seg[data-state="questions"],.shape-feature-seg[data-state="paused"]{background:var(--amber);}
-.shape-feature-seg[data-state="stopped"],.shape-feature-seg[data-state="error"],.shape-feature-seg[data-state="failed"]{background:var(--red);}
-.shape-feature-merge{padding:1px 8px;border-radius:999px;background:var(--blue-bg);color:var(--blue-ink);font-size:10.5px;font-weight:600;}
-.shape-feature-current{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-ctrl);}
-.shape-feature-current-title{font-weight:600;}
+.feature-page .shape-feature{width:100%;box-sizing:border-box;font-size:14px;}
 .shape-feature-order{color:var(--ink-3);font-size:12px;}
 .shape-feature-ship{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
 .shape-feature-ship-head{font-weight:600;flex-basis:100%;}
 .shape-feature-ship-why{flex-basis:100%;color:var(--ink-2);font-size:12px;}
 .shape-feature-shipped{color:var(--green-ink);}
-/* P13: the Chat run card's summary of the feature. */
-.shape-feature-sum{display:flex;flex-direction:column;gap:6px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;}
-.shape-feature-sum.is-needs .shape-feature-sum-line,.shape-feature-sum.is-halted .shape-feature-sum-line{color:var(--amber-ink);}
-.shape-feature-sum-open{align-self:flex-start;}
 /* D19: why a later slice's plan stopped. */
 .shape-plan-outline-change{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--amber-wash);border:1px solid var(--amber-line);}
 .shape-plan-outline-change-head{font-weight:600;color:var(--amber-ink);}

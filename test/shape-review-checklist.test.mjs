@@ -167,3 +167,11 @@ test('checklistMarkdown / findings / prompt block', async () => {
     } },
   ]);
 });
+
+import { checklistScore } from '../src/shared/shape/review-checklist.mjs';
+
+test('checklistScore: met over the items that apply (n/a left out, not reported counts against)', () => {
+  assert.equal(checklistScore({ met: 12, unmet: 1, na: 3, missing: 1, total: 17 }), 'Checklist 12/14');
+  assert.equal(checklistScore({ met: 2, unmet: 0, na: 0, missing: 0, total: 2 }), 'Checklist 2/2');
+  assert.equal(checklistScore(null), 'Checklist 0/0');
+});

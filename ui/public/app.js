@@ -252,7 +252,8 @@ import { registerDirectionAddon } from './chat/direction.mjs';
 import { shapeFirstOn, onShapeFirstChange } from './chat/shape-gate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
-import { renderFeature, renderFeatureSummary, featureWhere } from './shape/feature-view.mjs';
+import { renderFeature, refreshFeatureStatus } from './shape/feature-view.mjs';
+import { featureFocusOf, focusFeatureControl } from './shape/feature-actions.mjs';
 import { sliceLineCopy } from './shape/slice-line.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
@@ -385,9 +386,20 @@ function paintSliceLine(host, line) {
 }
 /** F33: Chat's own run panel (chatDeps.openRunPanel is openChatRunPanel once Chat is installed): it stays in Chat.
  *  The full ref: a run id alone can be a superseded paused copy, or one a restarted server no longer knows. */
-function openShapeRun(ref, projectKey) {
+function openShapeRun(ref, projectKey, opts = {}) {
   const r = { ...(ref.runId ? { runId: ref.runId } : {}), ...(ref.pipelineId ? { pipelineId: ref.pipelineId, projectKey } : {}) };
-  return r.runId || r.pipelineId ? chatDeps.openRunPanel(r) : null;
+  return r.runId || r.pipelineId ? chatDeps.openRunPanel(r, opts) : null;
+}
+/** s3 Open the plan (D7): the run's newest indexed plan in the artifact popup, which every UI level shows (the Artifacts
+ *  tab is advanced-only). A run with no plan indexed opens its Artifacts tab. */
+async function openRunPlan(ref, projectKey) {
+  const pid = ref && ref.pipelineId;
+  if (!pid) return openShapeRun(ref || {}, projectKey, { tab: 'artifacts' });
+  const r = await fetch(`/api/runs/${encodeURIComponent(pid)}/artifacts`).catch(() => null);
+  const body = r && r.ok ? await r.json().catch(() => null) : null;
+  const plan = (body && Array.isArray(body.artifacts) ? body.artifacts : []).filter((a) => a && a.kind === 'plan' && a.relPath).pop();
+  if (plan) return openRunArtifactPopup({ pipelineId: pid, ...(ref.runId ? { runId: ref.runId } : {}) }, plan);
+  return openShapeRun(ref, projectKey, { tab: 'artifacts' });
 }
 async function paintShapeFeature(host) {
   const id = SHAPE_FEATURE_HOSTS.get(host);
@@ -395,8 +407,9 @@ async function paintShapeFeature(host) {
   // Bumped on every path, the gate-off one too, so a fetch in flight never lands after the host was cleared.
   const seq = (host.__shapeSeq = (host.__shapeSeq || 0) + 1);       // the last paint wins (act + WS frames race)
   if (!shapeFirstOn()) { host.replaceChildren(); host.dataset.painted = ''; host.__shapeWant = null; return; }
+  const opts = host.__shapeOpts || {};
   // The page's first paint of this feature: say so while it loads, not a blank page (a busy server takes seconds).
-  if (host.__shapeMode === 'page' && host.dataset.painted !== id) {
+  if (opts.loading && host.dataset.painted !== id) {
     host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-loading', textContent: 'Loading feature…' }));
   }
   const r = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
@@ -405,7 +418,7 @@ async function paintShapeFeature(host) {
   if (!f) {
     // An unknown feature (404) empties the host. Any other failure keeps the last view and its error line.
     if (r && r.status === 404) {
-      host.replaceChildren(...(host.__shapeMode === 'page'
+      host.replaceChildren(...(opts.loading
         ? [Object.assign(document.createElement('p'), { className: 'feature-page-gone', textContent: 'This feature no longer exists.' })] : []));
       host.dataset.painted = ''; host.__shapeShown = null; host.__shapeShownView = null;
     } else if (host.querySelector('.feature-page-loading')) {
@@ -418,14 +431,18 @@ async function paintShapeFeature(host) {
   host.__shapeShown = f.id;
   // A rebuild drops the focus (rule: app-js-repaint-drops-focus): give it back to the same control. An action names
   // its control itself (F39: in Chromium the disabled button has already lost the focus); a WS repaint reads it.
-  const act = host.__shapeFocus
-    || (host.contains(document.activeElement) && document.activeElement.dataset ? document.activeElement.dataset.act : null);
+  const act = host.__shapeFocus || featureFocusOf(document, host);
   host.__shapeFocus = null;
-  const fullDeps = {
+  host.__shapeShownView = f;                                   // refreshFeatureStatus reads it on a run frame (D14)
+  // s3: one card on every host; the group page opens Runs and mounts the open step, the Plans tab does neither.
+  host.replaceChildren(renderFeature(document, f, {
     confirm: confirmModal,
     error: host.__shapeErr || null,
-    openSlice: (s) => openShapeRun(s, f.projectKey),
+    snapOf: (pid) => askRunStore.byPipeline(pid),
     openRun: (ref) => openShapeRun(ref, f.projectKey),
+    openPlan: (c) => openRunPlan({ pipelineId: c.planPipelineId }, f.projectKey),
+    pause: (t, btn) => chatRunControls.pause({ ...t, projectKey: f.projectKey }, btn),
+    stop: (t) => chatRunControls.stop({ ...t, projectKey: f.projectKey }, () => paintShapeFeature(host)),
     act: async (action, body, { focus = null } = {}) => {
       const res = await fetch(`/api/shape/features/${encodeURIComponent(f.id)}/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) }).catch(() => null);
       const out = res ? await res.json().catch(() => ({})) : {};
@@ -434,21 +451,20 @@ async function paintShapeFeature(host) {
       await paintShapeFeature(host);                         // carries the error (deps.error) across the rebuild
       return res && res.ok ? { ok: true } : { ok: false, error: host.__shapeErr };
     },
-  };
-  // P13: the Chat run card gets the summary; the feature page (D16) the full view with its page extras.
-  host.__shapeShownView = host.__shapeMode === 'page' ? f : null;
-  host.replaceChildren(host.__shapeMode === 'summary'
-    ? renderFeatureSummary(document, f, { openFeature: (fid) => { location.hash = `#feature/${encodeURIComponent(fid)}`; } })
-    : renderFeature(document, f, { ...fullDeps, ...(host.__shapeMode === 'page' ? featurePageDeps(host) : {}) }));
+    runsOpen: !!opts.runsOpen,
+    ...(opts.ask ? { mountAsk: (slot, step) => featureMountAsk(host, slot, step) } : {}),
+  }));
   host.dataset.painted = id;
-  if (act) { const again = host.querySelector(`[data-act="${act}"]`); if (again && !again.disabled) again.focus(); }
+  focusFeatureControl(host, act);
 }
 /** Mount (or re-point) a host. F41: the run card calls it on every repaint (once a second), so it fetches only when
  *  the host is pointed at a new id. A pending or failed fetch is not retried from here: `shape-feature`,
  *  `schedules-changed` and `hello` repaint every host. */
-function mountShapeFeature(host, id, { mode = 'full' } = {}) {
-  if (host.__shapeWant === id && host.__shapeMode === mode) return;
-  host.__shapeWant = id; host.__shapeMode = mode;
+function mountShapeFeature(host, id, opts = {}) {
+  const o = { ask: !!opts.ask, runsOpen: !!opts.runsOpen, loading: !!opts.loading };
+  const was = host.__shapeOpts;
+  if (host.__shapeWant === id && was && was.ask === o.ask && was.runsOpen === o.runsOpen && was.loading === o.loading) return;
+  host.__shapeWant = id; host.__shapeOpts = o;
   SHAPE_FEATURE_HOSTS.set(host, id);
   host.__shapeErr = null;
   paintShapeFeature(host);
@@ -460,36 +476,26 @@ function refreshShapeFeatures(id = null) {
     if (!id || fid === id || host.__shapeShown === id) paintShapeFeature(host);
   }
 }
-/** D16: the page's extras: the live slice's progress (for the "you are here" line), and its ask in a persistent host (P12). */
-const featureLiveRun = (s) => (s.runId ? runs.get(s.runId) : null) || (s.pipelineId ? latestPipelineRun(s.pipelineId) : null);
-function featureProgress(s) { const r = featureLiveRun(s); return r && isGraphRun(r) ? runDecorFor(r).stageProgress : null; }
-function featurePageDeps(host) {
-  return {
-    page: true,
-    progressOf: featureProgress,
-    mountAsk: (slot, s) => {
-      // One ask element per page host, moved into each rebuild's slot. chatPaintQuestion rebuilds only when the
-      // question changes and registers the panel in CHAT_QPANELS (postAnswer's busy sweep, 422 marks, clearQpanel).
-      if (!host.__featureAsk) {
-        host.__featureAsk = document.createElement('div');
-        host.__featureAsk.className = 'shape-feature-ask';
-        host.__featureAsk.appendChild(Object.assign(document.createElement('div'), { className: 'qpanel hidden' }));
-      }
-      slot.replaceWith(host.__featureAsk);
-      chatPaintQuestion({ runId: s.runId || null, pipelineId: s.pipelineId || null }, host.__featureAsk);
-    },
-  };
+/** The group page's open step: one ask element per host, moved into each rebuild's slot (P12). chatPaintQuestion
+ *  rebuilds only when the question changes and registers the panel in CHAT_QPANELS (postAnswer's busy sweep, 422 marks,
+ *  clearQpanel). */
+function featureMountAsk(host, slot, step) {
+  if (!host.__featureAsk) {
+    host.__featureAsk = document.createElement('div');
+    host.__featureAsk.className = 'shape-feature-ask';
+    host.__featureAsk.appendChild(Object.assign(document.createElement('div'), { className: 'qpanel hidden' }));
+  }
+  slot.replaceWith(host.__featureAsk);
+  chatPaintQuestion({ runId: step.runId || null, pipelineId: step.pipelineId || null }, host.__featureAsk);
 }
-/** D33: move the feature page's "you are here" line on a run frame, without a fetch. */
+/** D14: a run frame of one of the shown feature's runs moves the page's status line and group bar (no fetch). */
 function paintFeaturePageProgress(r) {
   if (currentShownView !== 'feature' || !r || !r.pipelineId) return;
   const page = document.querySelector('[data-view="feature"] .feature-page');
-  const box = page && page.querySelector('.shape-feature-current');
-  const head = page && page.querySelector('.shape-feature.is-page .shape-feature-head');
-  const f = page && page.__shapeShownView;                 // the last view JSON paintShapeFeature drew in page mode
-  const cur = f && box ? f.slices.find((s) => String(s.index) === box.dataset.slice) : null;
-  if (!cur || !head || (cur.pipelineId !== r.pipelineId && cur.runId !== r.runId)) return;
-  head.textContent = featureWhere(f, featureProgress(cur));
+  const f = page && page.__shapeShownView;                 // the last view JSON paintShapeFeature drew
+  const el = page && page.querySelector('.shape-feature');
+  const ours = f && (f.slices.some((s) => s.pipelineId === r.pipelineId) || (f.replan && f.replan.pipelineId === r.pipelineId));
+  if (ours && el) refreshFeatureStatus(el, f, (pid) => askRunStore.byPipeline(pid));
 }
 /** Shaper s2 (D12, D13): the Chat feature card's data per planning pipeline (GET /api/shape/pipelines/:pid/card). A card
  *  asks on every repaint (once a second), so this fetches once per pipeline until a refresh; each listener hears every
@@ -533,6 +539,13 @@ function refreshShaperCardsOf(pid) {
 }
 onShapeFirstChange(() => SHAPER_CARDS.clear());
 chatDeps.shaperCard = (pid, onChange) => shaperCardFor(pid, onChange);
+chatDeps.openPlan = (ref) => openRunPlan(ref, ref && ref.projectKey);
+/** Shaper s3 (D18): the run's review rows for the Chat card's checklist line (the run page's rdLoadData); null when this
+ *  tab holds no model of the run (the card then opens its Overview). */
+chatDeps.checklists = (ref) => {
+  const r = chatLiveRun(ref);
+  return r ? rdLoadData(r).then((d) => (d && Array.isArray(d.reviews) ? d.reviews : null)) : Promise.resolve(null);
+};
 
 /** Shaper s2 (D14): a feature run's ask opens the thread that started the feature, where its card shows the ask. */
 async function featureThreadFor(ref) {
@@ -544,8 +557,7 @@ async function featureThreadFor(ref) {
     return (info && typeof info.threadId === 'string' && info.threadId) || null;
   } catch { return null; }
 }
-chatDeps.mountFeature = (host, id) => mountShapeFeature(host, id, { mode: 'summary' });   // P13: the Chat run card (F33)
-if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, mountCard: (h, id) => chatDeps.mountFeature(h, id), refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host),
+if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host),
   shaperCard: shaperCardFor, threadForRun: featureThreadFor };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
@@ -28600,6 +28612,15 @@ const chatRunControls = {
   },
   paintQuestion: chatPaintQuestion,
   releaseQuestion: chatReleaseQuestion,
+  /** Shaper s3: a feature card's Resume / Re-plan the rest / Cancel the rest / Ask before each run. */
+  featureAct: async (featureId, action, body) => {
+    const res = await fetch(`/api/shape/features/${encodeURIComponent(featureId)}/${action}`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) }).catch(() => null);
+    const out = res ? await res.json().catch(() => ({})) : {};
+    // Every route broadcasts shape-feature, which refreshes the cached card (refreshShaperCards): no refetch here.
+    return res && res.ok ? { ok: true } : { ok: false, error: out.error || 'That did not work. Try again.' };
+  },
+  confirm: (o) => confirmModal(o),
   prHost: () => prHostAvailable(),
   openShipIt(ref, link) {
     // P2 Task 9: chatDeps.openShipIt = openShipItFor → Promise<{opened, url?, error?}>, settling when the dialog closes.
@@ -34310,7 +34331,7 @@ function showView(name, param = '') {
     const host = document.querySelector('[data-view="feature"] .feature-page');
     const id = decodeURIComponent(param);
     // A re-mount with the same id is a no-op: repaint, to catch up after the time away (the hidden page skips frames).
-    if (host.__shapeWant !== id || host.__shapeMode !== 'page') mountShapeFeature(host, id, { mode: 'page' });
+    if (host.__shapeWant !== id || !host.__shapeOpts || !host.__shapeOpts.ask) mountShapeFeature(host, id, { ask: true, runsOpen: true, loading: true });
     else if (prevView !== 'feature') paintShapeFeature(host);
   }
   if (name === 'workflows') void enterWorkflowsView(param, prevView);

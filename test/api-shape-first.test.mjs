@@ -294,3 +294,33 @@ test('GET /api/runs/:id returns state.shapeStats for a shaped run and no shapeSt
   assert.deepEqual((await get(shaped.id)).state.shapeStats, STATS);
   assert.equal('shapeStats' in (await get(plain.id)).state, false);
 });
+
+test('Ask before each run from the card persists, and run 2\'s plan ask opens as a "Plan · run 2" step card', () => withGate(true, async () => {
+  const { createSliceFeature, featureApprovesEach } = await import('../src/core/shape/features.mjs');
+  const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
+  const { getDb } = await import('../src/core/db.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
+  const { stepChip } = await import('../ui/public/shape/step-card.mjs');
+  // `runs` is the file's module-level binding, set in before() from the server module (there is no _testing.runs).
+  const dir = gitDir();
+  const p1 = 'asf00000001';
+  seedPipelineRow({ id: p1, projectKey: projectKey(dir), status: 'done', title: p1, branch: { source: 'main', feature: 'feat/a' } });   // outside any tx
+  const f = createSliceFeature({ pipelineId: p1, projectDir: dir, title: 'Charts', perspectives: ['product'], workflowId: 'wf_shape',
+    outline: { why: 'w', slices: [1, 2].map((i) => ({ id: `s${i}`, title: `Part ${i}`, goal: 'g', inScope: [], outOfScope: [], acceptance: [], dependsOn: [], estimate: 'M' })) }, base: { mock: true }, approveEach: false });
+  const r = await post(`/api/shape/features/${f.id}/approve-each`, { on: true });
+  assert.equal(r.status, 200);
+  assert.equal((await (await fetch(`${base}/api/shape/features/${f.id}`)).json()).approveEach, true);
+  assert.equal(featureApprovesEach(f.id), true);
+  // Run 2 raises its plan ask (orchestrator-slices.test.mjs:327 proves "Approve each on → always a plan ask").
+  const p2 = 'asf00000002';
+  seedPipelineRow({ id: p2, projectKey: projectKey(dir), status: 'running', title: p2, branch: { source: 'feat/a', feature: 'feat/b' } });
+  getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 2').run(p2, f.id);
+  const pq = { id: 'q-plan-2', kind: 'plan', plan: { round: 1 } };
+  runs.set('live-asf2', { id: 'live-asf2', kind: 'run', pipelineId: p2, status: 'running', events: [], pendingQuestion: pq, orch: { state: { shaping: {} } } });
+  try {
+    const card = await (await fetch(`${base}/api/shape/pipelines/${p1}/card`)).json();
+    assert.equal(card.feature.ask.index, 2);
+    assert.equal(card.feature.ask.kind, 'plan');
+    assert.equal(stepChip(pq, { shaping: { feature: { id: f.id, index: card.feature.ask.index, total: 2 } } }), 'Plan · run 2');
+  } finally { runs.delete('live-asf2'); }
+}));
