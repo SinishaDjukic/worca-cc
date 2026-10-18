@@ -51,6 +51,7 @@ const state = {
   historyArchivedError: '', // the last archived-feed load error, shown in the Runs list while it has no rows
   historyError: '',  // the last /api/history load error, shown in the Runs list while it has no rows
   runGroups: [],     // GET /api/run-groups: Shaper features and user groups for the Runs list (D10)
+  runGroupsLoaded: false, // set by loadRunGroups on every outcome: runGroups starts as [], so it cannot say "loaded"
   ghAvailable: false,// gh CLI availability, from the last /api/history load
   adoAvailable: false,// an Azure DevOps credential is configured (prHosts.azure), same source
 
@@ -73,6 +74,9 @@ const state = {
   // run so the pipeline records WHICH instance the task came from.
   activePluginProfile: null,
 };
+// The group page host (runs redesign slice 4, D16). Up here, next to `state`: the boot's synchronous showView runs
+// mountGroupPage on a #feature/… reload, and a `const` declared below that call would still be in its TDZ.
+const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, resolving: false, reentered: false };
 
 import { icon } from './icons.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
@@ -82,18 +86,20 @@ import { createAlerts, mountAlertsCard } from './alerts.mjs';
 import { createLogDrawer } from './log-drawer.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
-import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
-import { runProgress, chainProgress, progressWidth } from '../../src/shared/run-progress.mjs';
-import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
+import { trailColumns, nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
+import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RECENT_PAGE } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RECENT_PAGE, groupRow } from './runs-list.mjs';
+import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
+import { buildGroupPage, paintGroupPage, runReceipts } from './group-page.mjs';
+import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
 import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody } from './runs-selection.mjs';
 import { bulkConfirm } from '../../src/shared/run-bulk.mjs';
 import { openGroupPicker } from './group-picker.mjs';
 import { renderStatusDot } from './status-dot.mjs';
-import { RUN_STATES, groupModel } from '../../src/shared/run-model.mjs';
+import { RUN_STATES, groupModel, runModel } from '../../src/shared/run-model.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
 // History list card. They stay EXPORTED
@@ -260,7 +266,6 @@ import { shapeFirstOn, onShapeFirstChange } from './chat/shape-gate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
 import { renderFeature, renderFeatureSummary, featureWhere } from './shape/feature-view.mjs';
-import { sliceLineCopy } from './shape/slice-line.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
@@ -375,19 +380,6 @@ function sliceInfoFor(pipelineId, onLoad) {
     });
   return null;
 }
-/** D16, D22: the run page's slice line (live and History glances); a fixed host rebuilt in place. */
-function paintSliceLine(host, line) {
-  if (!host) return;
-  host.hidden = !line;
-  host.replaceChildren();
-  if (!line) return;
-  const a = document.createElement('a'); a.className = 'rd-slice-link'; a.href = line.href; a.textContent = line.text;
-  host.appendChild(a);
-  if (line.openFeature) {
-    const b = document.createElement('a'); b.className = 'btn rd-slice-open'; b.href = line.href; b.textContent = 'Open feature';
-    host.appendChild(b);
-  }
-}
 /** F33: Chat's own run panel (chatDeps.openRunPanel is openChatRunPanel once Chat is installed): it stays in Chat.
  *  The full ref: a run id alone can be a superseded paused copy, or one a restarted server no longer knows. */
 function openShapeRun(ref, projectKey) {
@@ -473,6 +465,8 @@ function featurePageDeps(host) {
     page: true,
     progressOf: featureProgress,
     mountAsk: (slot, s) => {
+      // The group page's Overview: the question lives in the page's status card (runs redesign slice 4, D14).
+      if (host.__askInCard) { slot.remove(); return; }
       // One ask element per page host, moved into each rebuild's slot. chatPaintQuestion rebuilds only when the
       // question changes and registers the panel in CHAT_QPANELS (postAnswer's busy sweep, 422 marks, clearQpanel).
       if (!host.__featureAsk) {
@@ -491,7 +485,8 @@ function paintFeaturePageProgress(r) {
   const page = document.querySelector('[data-view="feature"] .feature-page');
   const box = page && page.querySelector('.shape-feature-current');
   const head = page && page.querySelector('.shape-feature.is-page .shape-feature-head');
-  const f = page && page.__shapeShownView;                 // the last view JSON paintShapeFeature drew in page mode
+  const ov = page && page.querySelector('.gpage-overview');   // the host mountShapeFeature paints (the group page's Overview)
+  const f = ov && ov.__shapeShownView;                     // the last view JSON paintShapeFeature drew in page mode
   const cur = f && box ? f.slices.find((s) => String(s.index) === box.dataset.slice) : null;
   if (!cur || !head || (cur.pipelineId !== r.pipelineId && cur.runId !== r.runId)) return;
   head.textContent = featureWhere(f, featureProgress(cur));
@@ -1537,7 +1532,7 @@ function handleServerMessage(msg) {
     activityMenu?.schedulesChanged();   // an open Activity refetches its Scheduled tab; a closed one forgets it
     // Chat P4: a paused run in the panel offers "Resume at" off the same tickets.
     void loadRunGroups();   // a feature's tickets and members move with its schedules
-    if (currentView() === 'schedules' || inRunsView() || crpShowsRun()) void schedulesView.load().then(() => { if (inRunsView()) { paintRunsList(); rdRepaintOpenGlance(); } repaintLimitNotices(); });
+    if (currentView() === 'schedules' || inRunsView() || crpShowsRun() || currentShownView === 'group') void schedulesView.load().then(() => { if (inRunsView()) { paintRunsList(); rdRepaintOpenGlance(); } repaintLimitNotices(); paintGroupPageNow(); });
     // Last, so even a throw could not cost the Schedules page its refresh. chatHome is null until mountChatHome (F40).
     SLICE_INFO.clear();
     refreshShapeFeatures();
@@ -1803,6 +1798,8 @@ function handleServerMessage(msg) {
   // incremental append exists to avoid.
   // Chat P4: the Chat run panel shows a run screen too.
   if (inRunsView() || crpShowsRun()) renderRunningView({ skipDetail: msg.type === 'log' });
+  // The group page follows its members' frames (not log lines: each paint rebuilds the Runs table, dropping focus).
+  if (msg.type !== 'log' && (currentShownView === 'feature' || currentShownView === 'group')) scheduleGroupPagePaint();
   // A panel route still waiting for (or not finding) this run resolves on the run's first frame: a run start sends
   // no pipelines-changed, so no History paint would retry it.
   if (crp.waiting && crp.want && msg.runId && (msg.runId === crp.want.id || (runs.get(msg.runId) || {}).pipelineId === crp.want.id)) crpRetryPending();
@@ -21485,7 +21482,8 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
     if (location.hash !== want) { try { window.history.replaceState(null, '', want); } catch { /* ignore */ } }
   });
   screen.querySelector('.hd-title').textContent = record.title || parsed.id;
-  screen.querySelector('.hd-glance .rd-now-title').textContent = record.title || parsed.id;
+  // paintPageHead runs only once the details land: name the run now, so the title is never blank while loading.
+  screen.querySelector('.hd-glance .rd-page-title').textContent = record.title || parsed.id;
   paintHistStatusIcon(screen.querySelector('.hd-sic'), record);
 
   // Chat P4: the run panel is not the Runs page — no pane to open, no focus hand-off, no remembered run.
@@ -21584,8 +21582,10 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     if (m && !m.runId && m.pipelineId === parsed.id && m.projectKey === parsed.projectKey) forgetLastRun();
     const err = screen.querySelector('.hd-error');
     if (err) { err.hidden = false; err.textContent = `Could not load run: ${e.message}`; }
-    const sub = screen.querySelector('.hd-glance .rd-now-sub');
-    if (sub) sub.textContent = 'Could not load this run';
+    // The meta line's first text node, as paintPageHead writes it: textContent would delete the branch button.
+    const hg = screen.querySelector('.hd-glance');
+    const ht = hg && hg.querySelector('.rd-page-title');
+    paintPageHead(hg, ht ? ht.textContent : '', ['Could not load this run']);
     return;
   }
   if (!histDetailState || histDetailState.screen !== screen) return;   // navigated away mid-fetch
@@ -22199,50 +22199,6 @@ function rdRepaintOpenGlance(pipelineId = null) {
   paintRdGlance(runDetailState.screen, r);
 }
 
-/** P8: a server chain (schedulesView.chains()) as the run page's chain bar item, members overlaid with this tab's live
- *  runs. The Runs list draws its groups from the run model instead (runsGroupItem). */
-function rdChainItem(c) {
-  // D17: a chain that is a feature shows the feature title and its slices ("1 · Run tags"), and opens the feature page.
-  const feat = c.feature && shapeFirstOn() ? c.feature : null;
-  const featHref = feat ? `#feature/${encodeURIComponent(feat.id)}` : '';
-  const members = c.members.map((m, i) => {
-    const r = (m.pipelineId ? latestPipelineRun(m.pipelineId) : null) || (m.ticketId ? runs.get(m.ticketId) || null : null);
-    const state = r ? (r.status === 'done' ? 'done' : RD_TERMINAL.includes(r.status) ? 'failed' : 'current') : m.state;
-    const progress = r && state === 'current' && isGraphRun(r) ? runDecorFor(r).stageProgress : null;
-    const href = r ? `#running/${r.runId}`
-      : m.pipelineId && m.historyKey ? `#history/${m.historyKey}/${m.pipelineId}`
-      : m.ticketId ? '#schedules/once' : '#runs';
-    // The row glyph follows runStatusMeta's order: parked first, then a question.
-    const icon = !r || state !== 'current' ? '' : ['paused', 'pausing', 'interrupted'].includes(r.status) ? 'paused'
-      : r.pendingQuestion != null ? 'ask' : 'run';
-    // The amber "Needs you" text only; the Needs-you list membership comes from the model. Same cases as needsYou():
-    // an open question or a pause (`interrupted` is not one).
-    const needs = !!r && state === 'current' && (r.pendingQuestion != null || r.status === 'paused');
-    // D33: an open question, whether or not the run is also paused: the member's dot turns amber.
-    const asks = !!r && state === 'current' && r.pendingQuestion != null;
-    const slice = feat ? (feat.slices.find((s) => (m.ticketId && s.ticketId === m.ticketId) || (m.pipelineId && s.pipelineId === m.pipelineId)) || feat.slices[i]) : null;
-    return { ...m, pipelineId: m.pipelineId || (r && r.pipelineId) || null, state, progress, icon, needs, asks, runId: r ? r.runId : '',
-      title: slice ? `${slice.index} · ${slice.title}` : m.title,
-      // D17: a slice that has not started opens the feature page; a started one opens its run.
-      href: feat && !r && !m.pipelineId ? featHref : href };
-  });
-  const first = c.members[0] || {};
-  const g = runsGroupFor({ pipelineId: first.pipelineId || '', projectDir: first.projectDir || '', workspaceId: first.workspaceId || '', projectKey: first.projectKey || '' });
-  return { id: c.id, title: feat ? feat.title : c.title, members, groupKey: g.key, groupName: g.name,
-    ...(feat ? { feature: { id: feat.id }, href: featHref } : {}),
-    ...chainProgress(members, feat ? { noun: 'Slice' } : undefined) };
-}
-/** The open chain `r` belongs to, as an rdChainItem; null for a single run (P8: no overall bar). */
-function chainItemFor(r) {
-  if (!r || !(r.pipelineId || r.runId)) return null;
-  if (!schedulesView.isLoaded()) {
-    if (!chainsAsked) { chainsAsked = true; void withWorkspaces().then(() => schedulesView.load()).then(() => rdRepaintOpenGlance()).catch(() => {}); }
-    return null;
-  }
-  const c = schedulesView.chains().find((x) => x.members.some((m) => (r.pipelineId && m.pipelineId === r.pipelineId) || m.ticketId === r.runId));
-  return c ? rdChainItem(c) : null;
-}
-
 /** Some PR host is reachable (gh, or an Azure DevOps token); the Ship-it modal and the server name the
  *  missing one for the chosen remote (D8). */
 function prHostAvailable() { return !!(state.ghAvailable || state.adoAvailable); }
@@ -22742,9 +22698,6 @@ function paintHdGlance(screen, record, data) {
   const checks = results ? hdChecks(results) : [];
   const s = results && results.summary;
   const pr = glancePrInput(record);
-  // D16, D22: a finished slice's place in its feature (the line is a fixed host, rebuilt in place: no duplicates).
-  const info = record && record.id ? sliceInfoFor(record.id, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }) : null;
-  paintSliceLine(glance.querySelector('.rd-slice-line'), sliceLineCopy(info, { done: st.status === 'done' }));
   const copy = glanceCopy(run, {
     pill: { text: meta.word }, checks: results ? checks.length : null, lastLine: '',
     pr, files: s ? (s.filesNew || 0) + (s.filesChanged || 0) + (s.filesDeleted || 0) : null,
@@ -22758,7 +22711,9 @@ function paintHdGlance(screen, record, data) {
   const { day, clock } = splitDateStamp(st.startedAt || record.startedAt || record.mtime);
   paintPageHead(glance, runName, [projectName(record.projectDir), [day, clock].filter(Boolean).join(' ')]);
 
-  paintGlanceStatus(glance, copy);
+  // Runs redesign slice 4: the one status block and the Group row, as on the live page (no bar: the run is finished).
+  paintRunStatus(glance.querySelector('.rd-sheet .run-status'), runModel(hdModelRun(record, data), { memo: memoFor(record.id) }));
+  paintGroupLine(glance.querySelector('.rd-page-head .rd-group-line'), record.id || '', record.title || '', groupHomeOf(record.id || ''));
 
   // Time · Cost · Changes, as on the Running page in every state.
   const activeMs = typeof st.totalActiveMs === 'number' ? st.totalActiveMs : liveTotalMs(st.steps, 0);
@@ -22799,6 +22754,7 @@ function paintHdGlance(screen, record, data) {
   } else {
     paintPrCta(slot, { state: 'none' });
   }
+  paintHdActions(screen, record, data);            // last: `covered` reads the call-to-action just painted (D4)
 }
 
 // Detail-header PR control from the record's tri-state (undefined = enrichment
@@ -22892,73 +22848,116 @@ function hdRunEngine(record, data) {
   return (live && live.runEngine) || data?.state?.runEngine || 'claude';
 }
 
-function paintHdLive(screen, record, data) {
-  const pauseBtn = screen.querySelector('.hd-pause');
-  const stopBtn = screen.querySelector('.hd-stop');
-  if (!pauseBtn || !stopBtn) return;
+/** The pipeline's run in this tab that stands for the record (hdPipelineRun: its live run, else the newest one that
+ *  ended, which a History row still reading `running` or `paused` has not caught up with), else the saved row. */
+const hdModelRun = (record, data) => { const r = hdPipelineRun(record); return r ? rdModelRun(r) : histRun(record, data && data.state); };
+/** Runs redesign slice 4 (D4): the finished page's bar buttons, decided by the run model. */
+function paintHdActions(screen, record, data) {
+  const bar = screen.querySelector('.rd-bar-end');
+  const slot = bar && bar.querySelector('.rd-actions');
+  if (!slot) return;
+  const m = runModel(hdModelRun(record, data), { memo: memoFor(record.id) });
+  const resumeBtn = bar.querySelector('.hd-resume');
+  const split = bar.querySelector('.hd-resume-split');
+  const pause = bar.querySelector('.hd-pause');
+  const stop = bar.querySelector('.hd-stop');
   const live = hdLiveRun(record);
-  // No live run but a pipeline run in this tab: its newest run ended (resumed elsewhere, then
-  // finished), so the load-time pause is stale and the pipeline is over.
-  const over = !live && !!hdPipelineRun(record);
-  // The saved run's status: the History row when it has one — `pipelines-changed` refreshes it
-  // (refreshHdFromRow), so a stop or resume from another tab, the CLI or chat lands here — else
-  // the detail loaded with the page (a deep link's minimal record carries no status).
-  const savedStatus = String((record && record.status) || (data.state && data.state.status) || '').toLowerCase();
-  // An archived run is a read-only record: no resume, and the stop refuses it (stopPausedRun).
-  const archived = !!(data.state && data.state.archivedAt);
-  // A paused saved run no run in this tab stands for is stopped through its row (POST /api/stop
-  // {pipelineId}). An interrupted one never is: it stays resumable.
-  const pausedSaved = !live && !over && !archived && savedStatus === 'paused';
-  pauseBtn.hidden = !live || isPaused(live);
-  stopBtn.hidden = live ? live.status === 'interrupted' : !pausedSaved;
-  // pauseRun disables Pause and re-enables it only on failure, and frames keep landing before
-  // the run flips to `pausing` (C16): never re-enable mid-request. Only a new live run (a
-  // resume mints a fresh runId) re-arms it.
-  const runId = live ? live.runId : '';
-  if (pauseBtn.dataset.runId !== runId) { pauseBtn.dataset.runId = runId; pauseBtn.disabled = false; }
-  if (live && live.status === 'pausing') pauseBtn.disabled = true;
+  const resumable = !!resumeBtn && resumeBtn.dataset.resumable === '1';
+  syncActions(slot, m, {
+    own: {
+      // paintHdLive keeps its resumable rule (archived, over, st.resumable) and records it here.
+      ...(resumable ? { resume: resumeBtn } : {}),
+      // .hd-pause never carries dataset.action (only .rd-pause does), so pauseResumeOwn cannot be used here: it is
+      // the Pause of a running live run, and keeps its own handler (its "Could not pause" error, the C16 rule).
+      ...(live && String(live.status || '') === 'running' ? { pause } : {}),
+      stop,
+    },
+    pool: [resumeBtn, pause, stop],                       // the template's hidden states never linger
+    covered: prCovered(screen),
+    // The model offers Resume for any paused or interrupted row; the server refuses an archived or over one, and a
+    // live run still pausing cannot be resumed yet. Shown (one model), but disabled with the reason.
+    disable: resumable ? {} : { resume: live && String(live.status || '') === 'pausing' ? 'Pausing…' : 'This run cannot be resumed' },
+    onAction: (id, b) => runAction({ runId: live ? live.runId : null, pipelineId: record.id, title: record.title,
+      projectKey: record.projectKey || '', workspaceId: record.workspaceId || null }, id, b, m),
+  });
+  // .hd-resume starts hidden in the template; the split follows it (as .rd-resume-split follows .rd-pause).
+  if (split && resumeBtn) split.hidden = resumeBtn.hidden;
+}
+function paintHdLive(screen, record, data) {
+  // Three exits (the busy return, the not-resumable return, the end): the model has the last word after each.
+  try {
+    const pauseBtn = screen.querySelector('.hd-pause');
+    const stopBtn = screen.querySelector('.hd-stop');
+    if (!pauseBtn || !stopBtn) return;
+    const live = hdLiveRun(record);
+    // No live run but a pipeline run in this tab: its newest run ended (resumed elsewhere, then
+    // finished), so the load-time pause is stale and the pipeline is over.
+    const over = !live && !!hdPipelineRun(record);
+    // The saved run's status: the History row when it has one — `pipelines-changed` refreshes it
+    // (refreshHdFromRow), so a stop or resume from another tab, the CLI or chat lands here — else
+    // the detail loaded with the page (a deep link's minimal record carries no status).
+    const savedStatus = String((record && record.status) || (data.state && data.state.status) || '').toLowerCase();
+    // An archived run is a read-only record: no resume, and the stop refuses it (stopPausedRun).
+    const archived = !!(data.state && data.state.archivedAt);
+    // A paused saved run no run in this tab stands for is stopped through its row (POST /api/stop
+    // {pipelineId}). An interrupted one never is: it stays resumable.
+    const pausedSaved = !live && !over && !archived && savedStatus === 'paused';
+    // Which buttons show is the run model's (paintHdActions, runs redesign slice 4 D4). The model lists Stop for every
+    // parked row: where this page cannot stop it, Stop is disabled with the reason.
+    const stopWhy = live ? (live.status === 'interrupted' ? 'An interrupted run cannot be stopped' : '')
+      : pausedSaved ? '' : 'Only a paused run can be stopped here';
+    stopBtn.disabled = !!stopWhy;
+    stopBtn.title = stopWhy;
+    // pauseRun disables Pause and re-enables it only on failure, and frames keep landing before
+    // the run flips to `pausing` (C16): never re-enable mid-request. Only a new live run (a
+    // resume mints a fresh runId) re-arms it.
+    const runId = live ? live.runId : '';
+    if (pauseBtn.dataset.runId !== runId) { pauseBtn.dataset.runId = runId; pauseBtn.disabled = false; }
+    if (live && live.status === 'pausing') pauseBtn.disabled = true;
 
-  const split = screen.querySelector('.hd-resume-split');
-  const resumeBtn = screen.querySelector('.hd-resume');
-  if (!split || !resumeBtn || resumeBtn.dataset.resumeState === 'busy') return;
-  const st = data.state;
-  // An ARCHIVED run has no run dir to resume from (archive reclaimed it); a restored one
-  // keeps its resume_point but the detail read has already dropped st.resumable for the
-  // same reason — hide the split either way instead of failing deep in the engine.
-  const resumable = !archived && (live ? isPaused(live)
-    : !over && HD_RESUMABLE.has(savedStatus) && st.resumable !== false);
-  split.hidden = !resumable;
-  resumeBtn.hidden = !resumable;
-  paintHdLimitNotice(screen, record, data, live, resumable);
-  // The callback re-reads the CURRENT record and data (refreshHdFromRow replaces histDetailState.record), and a run
-  // that is not resumable never asks.
-  const ready = resumable ? readyFor(hdPauseOf(live, screen, data, record), () => {
-    if (histDetailState?.screen === screen) paintHdLive(screen, histDetailState.record, histDetailState.data);
-  }) : null;
-  paintHdResumeSwitch(screen, record, data, live, resumable, ready);
-  const resumeMore = screen.querySelector('.hd-resume-more');
-  const resumeMenu = screen.querySelector('.hd-resume-menu');
-  if (!resumable) {
-    if (resumeMenu) resumeMenu.hidden = true;
-    if (resumeMore) resumeMore.setAttribute('aria-expanded', 'false');
-    return;
+    const split = screen.querySelector('.hd-resume-split');
+    const resumeBtn = screen.querySelector('.hd-resume');
+    if (!split || !resumeBtn || resumeBtn.dataset.resumeState === 'busy') return;
+    const st = data.state;
+    // An ARCHIVED run has no run dir to resume from (archive reclaimed it); a restored one
+    // keeps its resume_point but the detail read has already dropped st.resumable for the
+    // same reason — hide the split either way instead of failing deep in the engine.
+    const resumable = !archived && (live ? isPaused(live)
+      : !over && HD_RESUMABLE.has(savedStatus) && st.resumable !== false);
+    resumeBtn.dataset.resumable = resumable ? '1' : '';   // paintHdActions owns the split's and the button's visibility
+    paintHdLimitNotice(screen, record, data, live, resumable);
+    // The callback re-reads the CURRENT record and data (refreshHdFromRow replaces histDetailState.record), and a run
+    // that is not resumable never asks.
+    const ready = resumable ? readyFor(hdPauseOf(live, screen, data, record), () => {
+      if (histDetailState?.screen === screen) paintHdLive(screen, histDetailState.record, histDetailState.data);
+    }) : null;
+    paintHdResumeSwitch(screen, record, data, live, resumable, ready);
+    const resumeMore = screen.querySelector('.hd-resume-more');
+    const resumeMenu = screen.querySelector('.hd-resume-menu');
+    if (!resumable) {
+      if (resumeMenu) resumeMenu.hidden = true;
+      if (resumeMore) resumeMore.setAttribute('aria-expanded', 'false');
+      return;
+    }
+    const gate = hdResumeReason(screen, live);
+    gateHdResume(resumeBtn, gate);
+    // Scheduled resume ("Resume at…" in the split's menu): every resumable pause; cap pauses
+    // KEEP the arrow but DISABLE the item (clarify: caps are live decisions).
+    paintResumeEngineItems(resumeMenu, hdRunEngine(record, data), hdPauseOf(live, screen, data, record));
+    const resumeAtItem = screen.querySelector('.hd-resume-at-item');
+    if (resumeAtItem) {
+      const refused = SCHEDULE_REFUSED_PAUSE.has(gate.reason);
+      resumeAtItem.disabled = refused;
+      resumeAtItem.title = refused
+        ? 'This run paused on a cost cap — continuing past it is a live decision and cannot be scheduled.'
+        : '';
+    }
+    const pause = hdPauseOf(live, screen, data, record);
+    paintLimitItem(screen.querySelector('.hd-resume-limit-item'),
+      pause.reason === 'usage_limit' ? hdLimitPauseOf(screen, data, record, pause) : null);
+  } finally {
+    paintHdActions(screen, record, data);
   }
-  const gate = hdResumeReason(screen, live);
-  gateHdResume(resumeBtn, gate);
-  // Scheduled resume ("Resume at…" in the split's menu): every resumable pause; cap pauses
-  // KEEP the arrow but DISABLE the item (clarify: caps are live decisions).
-  paintResumeEngineItems(resumeMenu, hdRunEngine(record, data), hdPauseOf(live, screen, data, record));
-  const resumeAtItem = screen.querySelector('.hd-resume-at-item');
-  if (resumeAtItem) {
-    const refused = SCHEDULE_REFUSED_PAUSE.has(gate.reason);
-    resumeAtItem.disabled = refused;
-    resumeAtItem.title = refused
-      ? 'This run paused on a cost cap — continuing past it is a live decision and cannot be scheduled.'
-      : '';
-  }
-  const pause = hdPauseOf(live, screen, data, record);
-  paintLimitItem(screen.querySelector('.hd-resume-limit-item'),
-    pause.reason === 'usage_limit' ? hdLimitPauseOf(screen, data, record, pause) : null);
 }
 
 /** The usage-limit pause the History detail's notice and menu item read: this run's id, the cause and the reset. */
@@ -27824,16 +27823,6 @@ function paintRdTerminal(screen, r) {
   if (!screen) return;
   const terminal = RD_TERMINAL.includes(r.status);
 
-  // C6: there is no `.rd-resume` — `.rd-pause` is the single toggling control.
-  const pause = screen.querySelector('.rd-pause');
-  const stop = screen.querySelector('.rd-stop');
-  // Only FORCE hidden; leaving them alone on the live path keeps paintRdHeader's
-  // pause/resume swap and its total-budget gating in charge.
-  if (terminal) {
-    if (pause) pause.hidden = true;
-    if (stop) stop.hidden = true;
-  }
-
   const pill = screen.querySelector('.rd-status');
   // ADD only, never toggle off: paintRdHeader sets `.parked` for
   // `terminal || isPaused(r) || pausing || interrupted`, and this function runs
@@ -27847,6 +27836,7 @@ function paintRdTerminal(screen, r) {
   screen.classList.toggle('rd-terminal', terminal);
 
   if (terminal) rdHandOffOpen();
+  paintRdActions(screen, r);                       // slice 4 (D4): the model decides which bar buttons show
 }
 
 // A finished run IS its saved run: once History has its finished row, the Running page
@@ -28510,6 +28500,7 @@ function askRunSnapshot(r) {
     auto: (r.stepper && r.stepper.auto) || null,
     branch: r.branchFeature || (r.branch && typeof r.branch === 'object' && typeof r.branch.feature === 'string' ? r.branch.feature : ''),
     results: null, artifacts: null, moreArtifacts: false, pr: null,
+    run: r,                                        // runs redesign slice 4 (D9): the raw run the one model reads
   };
 }
 // A pipeline's current run in this tab's runs Map. D23: a resumed pipeline can leave its superseded lineage in
@@ -28597,6 +28588,75 @@ function chatPaintQuestion(ref, host) {
   }
   return { id: pq.id || null, kind: askKindOf(pq), heading: askHeading(r, pq), step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '' };
 }
+// ---- Runs redesign slice 4: the one model's actions (D5, D6) and a run's group (D7), for the chat card and the pages.
+/** D7: the group a pipeline belongs to, as the list's group row, with its place in it. */
+function groupHomeOf(pipelineId, featureId = '') {
+  if (!pipelineId && !featureId) return null;
+  const it = runsGroupItems().find((g) => (featureId && g.id === featureId)
+    || (pipelineId && (g.members.some((m) => m.pipelineId === pipelineId) || (g.planning && g.planning.pipelineId === pipelineId))));
+  if (!it) return null;
+  const row = groupRow(it, { now: Date.now() });
+  const member = pipelineId ? row.members.find((m) => m.pipelineId === pipelineId) || null : null;
+  // A member first: only a separate planning run (D8) reads "planning".
+  const planning = !member && !!(pipelineId && row.planning && row.planning.pipelineId === pipelineId);
+  return { row, planning, member, position: member ? member.position : null, total: row.model.count.total };
+}
+const groupHref = (row) => (row.groupKind === 'feature' ? `#feature/${encodeURIComponent(row.groupId)}` : `#group/${encodeURIComponent(row.groupId)}`);
+/** D5: a thin ref (a group member, a card) completed from the run's History row. chatRunControls.stop stops a paused
+ *  run it holds no live copy of only when ref.status is 'paused'; resume's fallback needs the project dir and key. */
+function fullRef(ref) {
+  const h = ref.pipelineId ? (state.historyAll || []).find((p) => p && p.id === ref.pipelineId) || null : null;
+  if (!h) return ref;
+  const given = Object.fromEntries(Object.entries(ref).filter(([, v]) => v != null && v !== ''));
+  return { status: String(h.status || '').toLowerCase(), projectKey: h.projectKey || '', projectDir: h.projectDir || '',
+    branch: h.branchFeature || h.branch || '', workspaceId: h.workspaceId || null, ...given };
+}
+/** D5: one handler per model action id, for the card and both pages.
+ *  `ref` is { runId?, pipelineId?, ticketId?, title?, status?, projectKey?, workspaceId?, href? }. */
+function runAction(ref0, id, btn = null, m = null) {
+  const ref = fullRef(ref0 || {});
+  const r = chatLiveRun(ref);
+  const pid = (r && r.pipelineId) || ref.pipelineId || '';
+  switch (id) {
+    case 'pause': return chatRunControls.pause(ref, btn);
+    case 'resume': return chatRunControls.resume(ref, btn);
+    case 'stop': return chatRunControls.stop(ref);
+    case 'answer': return focusQuestionOf(btn, ref);
+    case 'report': return pid ? openReportModal(pid) : undefined;
+    case 'archive': return runBulkAction('archive', [rowTarget({ key: pid, title: ref.title || pid, model: m || { state: 'stopped' }, run: r, pipelineId: pid, runId: r ? r.runId : null })]);
+    case 'start-now': return ref.ticketId ? scheduleCall('POST', `/api/schedules/${encodeURIComponent(ref.ticketId)}/run-now`, 'Run started') : undefined;
+    case 'cancel': return ref.ticketId ? scheduleCall('DELETE', `/api/schedules/${encodeURIComponent(ref.ticketId)}`, 'Run cancelled') : undefined;
+    case 'ship': {
+      // openShipItFor needs projectKey or workspaceId, and answers { opened:false, error } without one. A live run
+      // object (makeRun) has no projectKey: a finished run's History row does.
+      const hist = (state.historyAll || []).find((h) => h && h.id === pid) || null;
+      const shipRef = { ...ref, pipelineId: pid, projectKey: ref.projectKey || (hist && hist.projectKey) || '',
+        workspaceId: ref.workspaceId || (r && r.workspaceId) || null };
+      return Promise.resolve(chatRunControls.openShipIt(shipRef)).then((res) => {
+        if (res && res.error) notify({ tone: 'err', title: 'Could not open Ship it', detail: res.error });
+      });
+    }
+    case 'open-pr': { const url = m && m.pr && m.pr.url; if (url) window.open(url, '_blank', 'noopener'); return undefined; }
+    default: return undefined;                    // retry, ask-changes: their buttons are disabled (D5, D24)
+  }
+}
+/** Answer: focus the first control of the nearest drawn question (card, run page or group page); with none drawn
+ *  there (a group card that is not the current member's), open the run's page. */
+function focusQuestionOf(btn, ref = {}) {
+  // `.rd` is the run template's root, so the Chat run panel's copy of the run page (not inside #run-detail) is found too.
+  const root = (btn && btn.closest('.chat-rc, .gpage, .rd')) || document;
+  const q = root.querySelector('.qpanel:not(.hidden) button:not([disabled]), .qpanel:not(.hidden) input, .qpanel:not(.hidden) textarea');
+  if (q) { if (typeof q.scrollIntoView === 'function') q.scrollIntoView({ block: 'nearest' }); q.focus(); return; }
+  if (ref.runId) location.hash = rdHash(ref.runId);
+  else if (ref.href) location.hash = ref.href;
+}
+async function scheduleCall(method, url, ok) {
+  try {
+    const res = await fetch(url, { method });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || `HTTP ${res.status}`); }
+    announce(ok);
+  } catch (e) { notify({ tone: 'err', title: 'That did not work', detail: e.message }); }
+}
 const chatRunControls = {
   pause(ref, btn = null) {
     const r = chatLiveRun(ref);
@@ -28647,6 +28707,24 @@ const chatRunControls = {
     // chatDeps is P1's top-level const (beside `let askPanel`), initialised long before any click.
     if (typeof chatDeps.openShipIt === 'function') return chatDeps.openShipIt(ref, link);
     return Promise.resolve({ opened: false });
+  },
+  groupOf(ref, snap) {
+    // Run-after chains live in schedulesView, which only the Runs and Schedules views load: load it once from here,
+    // so a chain's card finds its group off those views too. The card repaints on its next frame or poll.
+    if (!schedulesView.isLoaded() && !chatRunControls.__chainsAsked) {
+      chatRunControls.__chainsAsked = true;
+      void withWorkspaces().then(() => schedulesView.load()).catch(() => {});
+    }
+    const fid = snap && snap.shaping && snap.shaping.feature && snap.shaping.feature.id;
+    const home = groupHomeOf((ref && ref.pipelineId) || (snap && snap.pipelineId) || '', shapeFirstOn() ? (fid || '') : '');
+    return home ? home.row : null;
+  },
+  memoFor: (key) => (key ? memoFor(key) : null),
+  // A group card passes its group row: the group page's groupAction then decides (D6), so card and page agree.
+  // A card painted before the groups loaded passes no row: Stop / Archive still act on the run's group, as its page does.
+  act: (ref, id, btn, m, row = null) => {
+    const g = row || (id === 'stop' || id === 'archive' ? (groupHomeOf((ref && ref.pipelineId) || '') || {}).row || null : null);
+    return g ? groupAction(g, id, btn) : runAction(ref, id, btn, m);
   },
 };
 if (typeof window !== 'undefined' && window.__np) window.__np.chatRunControls = chatRunControls;
@@ -30171,8 +30249,9 @@ function runsLiveItem(r) {
     checks: rec && typeof rec.checks === 'number' ? rec.checks : null,
     files: rec && typeof rec.files === 'number' ? rec.files : null,
     tags: flagOn('runTags') ? (r.tags || []) : [],
-    // The run model reads the raw run (runs-list.mjs runModel); its monotonic progress memo is kept per run.
-    run: r, memo: memoFor(r.pipelineId || r.runId),
+    // The run model reads the raw run (runs-list.mjs runModel); its monotonic progress memo is kept per run. A finished
+    // run takes its History row's PR (rdModelRun), so it reads In review here as on the run page.
+    run: rdModelRun(r), memo: memoFor(r.pipelineId || r.runId),
     cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd ?? null) : null,   // D32: "Cost unknown" for an engine with none
   };
 }
@@ -30182,14 +30261,19 @@ function runsLiveItem(r) {
 const CHAIN_MEMBER_STATUS = { done: 'done', failed: 'error', current: 'running' };
 function memberRun(m) {
   const h = m.pipelineId ? (state.historyAll || []).find((p) => p.id === m.pipelineId) : null;
-  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: h.pr && typeof h.pr === 'object' ? h.pr : null };
-  if (m.status) return { status: m.status, pr: m.pr || null };
-  return { status: CHAIN_MEMBER_STATUS[m.state] || 'stopped', pr: m.prUrl ? { url: m.prUrl } : null };
+  // Runs redesign slice 4 (D24): a member's round / Watch PR facts pass through untouched; the run model words them.
+  const facts = { round: m.round || (h && h.round) || null, watch: m.watch || (h && h.watch) || null };
+  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: h.pr && typeof h.pr === 'object' ? h.pr : null, ...facts };
+  if (m.status) return { status: m.status, pr: m.pr || null, ...facts };
+  return { status: CHAIN_MEMBER_STATUS[m.state] || 'stopped', pr: m.prUrl ? { url: m.prUrl } : null, ...facts };
 }
 
 /** A group (a Run-after chain from schedulesView, or a feature / user group from /api/run-groups) as the list's group
  *  item: members carry their raw run from this tab's live map, else memberRun, else their ticket. */
-function runsGroupItem({ id, groupKind, title, members, cost = null }) {
+function runsGroupItem({ id, groupKind, title, members, cost = null, planning = null }) {
+  // /api/run-groups members carry no projectKey / historyKey (src/core/run-groups.mjs member()), so a finished member's
+  // href would fall back to the group page itself: the History row knows the project.
+  const histPk = (pid) => (pid ? (((state.historyAll || []).find((p) => p && p.id === pid)) || {}).projectKey || '' : '');
   const items = members.map((m, i) => {
     const r = m.pipelineId ? latestPipelineRun(m.pipelineId) : null;
     // An after-ticket has no start time: never pass its AFTER_RUN_AT sentinel (runModel does not read ticket.after).
@@ -30198,7 +30282,7 @@ function runsGroupItem({ id, groupKind, title, members, cost = null }) {
     const run = r || (m.pipelineId ? memberRun(m)
       : { ticket: { status: m.ticket ? m.ticket.status : 'scheduled', runAt: m.ticket && !m.ticket.after ? m.ticket.runAt : null,
         after: m.after ? { index: m.after } : null } });
-    const pk = m.historyKey || m.projectKey || '';
+    const pk = m.historyKey || m.projectKey || histPk(m.pipelineId);
     const href = r ? `#running/${r.runId}` : m.pipelineId && pk ? `#history/${pk}/${m.pipelineId}`
       : groupKind === 'feature' ? `#feature/${encodeURIComponent(id)}` : m.ticketId ? '#schedules/once' : '#runs';
     return { position: m.position || i + 1, title: m.title, adhoc: !!m.adhoc, href, pipelineId: m.pipelineId || (r && r.pipelineId) || null,
@@ -30208,6 +30292,16 @@ function runsGroupItem({ id, groupKind, title, members, cost = null }) {
       cost: r && typeof r.totalCostUsd === 'number' ? r.totalCostUsd
         : m.pipelineId ? ((state.historyAll || []).find((p) => p.id === m.pipelineId) || {}).totalCostUsd ?? null : null };
   });
+  // Slice 4 (D8): a feature's separate planning run, built the way a member is; its memo key is its pipeline id, the
+  // key the list uses for that run, so both read the same fill.
+  const planningItem = planning ? (() => {
+    const r = latestPipelineRun(planning.pipelineId);
+    const pk = planning.projectKey || histPk(planning.pipelineId);
+    return { title: 'Planning', pipelineId: planning.pipelineId, runId: r ? r.runId : '', kind: r ? 'live' : 'hist',
+      run: r || memberRun(planning), memo: memoFor(planning.pipelineId),
+      href: r ? `#running/${r.runId}` : pk ? `#history/${pk}/${planning.pipelineId}` : `#feature/${encodeURIComponent(id)}`,
+      cost: r && typeof r.totalCostUsd === 'number' ? r.totalCostUsd : null };
+  })() : null;
   const first = members[0] || {};
   const g = runsGroupFor({ pipelineId: first.pipelineId || '', projectDir: first.projectDir || '', workspaceId: first.workspaceId || '', projectKey: first.projectKey || '' });
   // groupProgress keeps the fill monotonic through `memo` (max of every fraction seen). Adding a member lowers the true
@@ -30217,12 +30311,12 @@ function runsGroupItem({ id, groupKind, title, members, cost = null }) {
   // D32: the server's group cost (a run group) or the members' row costs (a chain), live costs on top, held by a memo.
   const liveCost = Object.fromEntries(items.filter((x) => x.kind === 'live' && x.run && typeof x.run.totalCostUsd === 'number')
     .map((x) => [x.pipelineId, x.run.totalCostUsd]));
-  return { id, groupKind, title, members: items, groupKey: g.key, groupName: g.name, memo: memoFor(`group:${id}:${sig}`),
+  return { id, groupKind, title, members: items, planning: planningItem, groupKey: g.key, groupName: g.name, memo: memoFor(`group:${id}:${sig}`),
     cost, liveCost, costMemo: memoFor(`cost:${id}:${sig}`) };
 }
 function runsGroupItems() {
   const owned = new Set((state.runGroups || []).flatMap((g) => g.members.flatMap((m) => [m.pipelineId && `p:${m.pipelineId}`, m.ticketId && `t:${m.ticketId}`])).filter(Boolean));
-  const own = (state.runGroups || []).map((g) => runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members, cost: g.cost || null }));
+  const own = (state.runGroups || []).map((g) => runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members, cost: g.cost || null, planning: g.planning || null }));
   // A run group stands for any chain that shares a member with it (a feature's Run-after chain).
   const chains = schedulesView.chains()
     .filter((c) => !c.members.some((m) => owned.has(`p:${m.pipelineId}`) || owned.has(`t:${m.ticketId}`)))
@@ -30236,8 +30330,178 @@ async function loadRunGroups() {
     const r = await fetch('/api/run-groups');
     state.runGroups = r.ok ? ((await r.json()).groups || []) : (state.runGroups || []);
   } catch { state.runGroups = state.runGroups || []; }
+  state.runGroupsLoaded = true;                    // every outcome: the group page tells "loading" from "no such group"
   scheduleRunsPaint();
+  paintGroupPageNow();
+  repaintOpenRunGroupLine();                       // the Group row changes at once after Add to group
+  pokeAskRuns(null, 'run-groups');                 // Chat cards (a finished one gets no frame) become group cards now
 }
+// ── The group page (runs redesign slice 4, D13 to D17): #feature/ID[/tab] and #group/ID[/tab] ──
+async function mountGroupPage(host, { route, id, tab, reentered = false }) {
+  const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
+  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, resolving: false } : {}) });
+  if (fresh) {
+    host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-loading', textContent: 'Loading group…' }));
+    host.__gp = null;
+    // state.runGroups starts as [], so a separate flag says whether GET /api/run-groups has answered.
+    if (!state.runGroupsLoaded) void loadRunGroups();   // a deep link before the boot load: loadRunGroups repaints this page
+    // Run-after chains come from schedulesView, which loads only on the Runs and Schedules views. A #group/CHAIN deep
+    // link or reload loads it here.
+    if (route === 'group' && !schedulesView.isLoaded()) {
+      GROUP_PAGE.resolving = true;
+      void withWorkspaces().then(() => schedulesView.load()).catch(() => {}).finally(() => {
+        if (GROUP_PAGE.id === id && GROUP_PAGE.route === route) { GROUP_PAGE.resolving = false; paintGroupPageNow(); }
+      });
+    }
+    if (route === 'feature' && shapeFirstOn()) {
+      // F47: a replaced feature id carries on as the newest one; the route answers the current id, or 404. It needs
+      // the Shaper flag (requireShapeFirst), so with the flag off the id is used as it is.
+      GROUP_PAGE.resolving = true;
+      const res = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
+      if (GROUP_PAGE.id !== id || GROUP_PAGE.route !== route) return;
+      GROUP_PAGE.resolving = false;
+      if (res && res.status === 404) GROUP_PAGE.gone = true;
+      else if (res && res.ok) GROUP_PAGE.featureId = ((await res.json().catch(() => ({}))).id) || id;
+    }
+  }
+  paintGroupPageNow();
+}
+function paintGroupPageNow() {
+  const { host, route, id, tab } = GROUP_PAGE;
+  if (!host || !host.isConnected || host.closest('.view.hidden')) return;
+  const gid = GROUP_PAGE.featureId || id;
+  const it = !GROUP_PAGE.gone && state.runGroupsLoaded ? runsGroupItems().find((g) => g.id === gid) : null;
+  if (!it) {
+    // "Gone" only after every source has answered: a frame while the replaced-id lookup or the chains load is in
+    // flight must not flash "no longer exists".
+    if (GROUP_PAGE.gone || (state.runGroupsLoaded && !GROUP_PAGE.resolving)) {
+      // runChains lists a chain only while a member is current or waiting; its id is the root's key (p:… / t:…).
+      const chain = route === 'group' && /^[pt]:/.test(id);
+      host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-gone',
+        textContent: route === 'feature' ? 'This feature no longer exists.'
+          : chain ? 'This chain has finished. Its runs are in the Runs list.' : 'This group no longer exists.' }));
+      host.__gp = null;
+    }
+    return;                                        // not loaded yet: "Loading group…" stays; loadRunGroups repaints
+  }
+  const row = groupRow(it, { now: Date.now() });
+  if (!host.__gp) { host.__gp = buildGroupPage(document); host.replaceChildren(host.__gp); }
+  const base = `${route === 'feature' ? '#feature' : '#group'}/${encodeURIComponent(id)}`;
+  // The run page's Logs tab is Expert-only, so the group page offers its Logs (links to those tabs) at Expert too.
+  paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature' && shapeFirstOn(), logs: levelAtLeast('expert') }, {
+    onAction: (aid, b) => groupAction(row, aid, b),
+    onTab: (t) => { location.hash = t === 'runs' ? base : `${base}/${t}`; },
+    mountQuestion: (slot, mb) => paintGroupQuestion(slot, mb),
+    // Mount once per feature: paintGroupPageNow runs on every run frame, and a remount would refetch and rebuild the
+    // Shaper view each time.
+    mountOverview: (h) => {
+      h.__askInCard = true;
+      if (h.__shapeWant !== row.groupId || h.__shapeMode !== 'page') mountShapeFeature(h, row.groupId, { mode: 'page' });
+      else if (GROUP_PAGE.reentered) paintShapeFeature(h);   // the hidden page skipped frames while away
+      GROUP_PAGE.reentered = false;
+    },
+    mountDecisions: (h, r) => { void paintGroupDecisions(h, r); },
+    // A member with no run page yet (a waiting ticket) links its row's own href.
+    logsHref: (mb) => {
+      const page = mb.runId ? `#running/${mb.runId}` : mb.href || '#runs';
+      return mb.runId || page.startsWith('#history/') ? `${page}/details/logs` : page;
+    },
+  });
+}
+// Frames arrive in bursts: paint the group page once per microtask.
+let groupPagePaintQueued = false;
+function scheduleGroupPagePaint() {
+  if (groupPagePaintQueued) return;
+  groupPagePaintQueued = true;
+  queueMicrotask(() => { groupPagePaintQueued = false; paintGroupPageNow(); });
+}
+/** D12, Known bug 7: the group page's question, answered through the one question delegate. */
+function paintGroupQuestion(slot, mb) {
+  const r = mb && mb.runId ? runs.get(mb.runId) : null;
+  if (!r || !r.pendingQuestion) { chatReleaseQuestion(slot); slot.hidden = true; slot.__runId = ''; return; }
+  if (!slot.querySelector('.qpanel')) slot.appendChild(Object.assign(document.createElement('div'), { className: 'qpanel hidden' }));
+  if (!slot.__offQ) {
+    // chatLiveRun follows the pipeline's newest run (as chatPaintQuestion does), so an answer after a resume goes to
+    // the run that asks, not to the runId the slot was first painted for.
+    const cur = () => chatLiveRun({ runId: slot.__runId, pipelineId: slot.__pipelineId });
+    slot.__offQ = delegateQuestion(slot, {
+      question: () => { const c = cur(); return (c && c.pendingQuestion) || null; },
+      send: (payload) => { const c = cur(); if (c) void postAnswer(c, payload); },
+    });
+  }
+  slot.__runId = r.runId;
+  slot.__pipelineId = r.pipelineId || '';
+  slot.hidden = false;
+  chatPaintQuestion({ runId: r.runId, pipelineId: r.pipelineId }, slot);
+}
+/** D6: one handler for a group's actions, from the group page and from a group's chat card (chatRunControls.act). */
+function groupAction(row, id, btn) {
+  const all = [...(row.planning ? [row.planning] : []), ...row.members];
+  const cur = all.find((mb) => mb.model === row.model.current) || null;
+  const ref = cur ? { runId: cur.runId || null, pipelineId: cur.pipelineId || null, ticketId: cur.ticketId || null, title: cur.title,
+    status: (cur.run && cur.run.status) || '' } : {};
+  switch (id) {
+    case 'stop': case 'archive': return runBulkAction(id, [rowTarget(row)]);
+    case 'ship': {
+      if (row.groupKind === 'feature' && shapeFirstOn()) {
+        // The Shaper's "Ship as" lives on Overview. Already there: no hashchange would fire, so bring it into view.
+        const want = `${groupHref(row)}/overview`;
+        if (location.hash !== want) location.hash = want;
+        else { const o = document.querySelector('.gpage .gpage-overview'); if (o) o.scrollIntoView({ block: 'start' }); }
+        return undefined;
+      }
+      // A user group, a chain, or a feature with the Shaper flag off has no group ship flow: each run ships on its
+      // own, so Ship opens Ship it for the first ready member.
+      const next = row.members.find((mb) => mb.model && mb.model.state === 'ready') || null;
+      return next ? runAction({ runId: next.runId || null, pipelineId: next.pipelineId || null, title: next.title }, 'ship', btn, next.model) : undefined;
+    }
+    case 'open-pr': {
+      const url = (row.model.pr && row.model.pr.url) || (row.model.current && row.model.current.pr && row.model.current.pr.url);
+      if (url) window.open(url, '_blank', 'noopener');
+      return undefined;
+    }
+    default: return runAction(ref, id, btn, cur ? cur.model : null);
+  }
+}
+/** D15: the Decisions tab: per member, its plan / review receipts, then its away-mode decisions. */
+async function paintGroupDecisions(host, row) {
+  const all = [...(row.planning ? [row.planning] : []), ...row.members].filter((mb) => mb.pipelineId);
+  // The receipts come from the member's raw run (the live run object for a running member), with no fetch.
+  const receipts = all.map((mb) => runReceipts(mb.run));
+  // The members' states and receipt counts are in the signature: a member that moves on (answers, finishes, passes a
+  // review) may have new decisions, so the tab refetches then, and not on every frame.
+  const sig = all.map((mb, i) => `${mb.pipelineId}:${mb.model ? mb.model.state : ''}:${receipts[i].length}`).join(',');
+  if (host.dataset.sig === sig) return;
+  host.dataset.sig = sig;
+  const lists = await Promise.all(all.map((mb) => fetch(`/api/night-decisions?pipelineId=${encodeURIComponent(mb.pipelineId)}`)
+    .then((r) => (r.ok ? r.json() : { decisions: [] })).then((d) => d.decisions || []).catch(() => [])));
+  if (host.dataset.sig !== sig) return;
+  const secs = all.map((mb, i) => ({ mb, list: lists[i], got: receipts[i] })).filter((x) => x.list.length || x.got.length).map(({ mb, list, got }) => {
+    // paintAwayAnswers writes into .rd-night-count and .rd-night-asks inside its section (the run page's markup).
+    const sec = Object.assign(document.createElement('section'), { className: 'rd-night-sec gpage-decision' });
+    const h3 = Object.assign(document.createElement('h3'), { className: 'rd-night-h', textContent: mb.title || 'Run' });
+    h3.append(Object.assign(document.createElement('span'), { className: 'rd-night-count' }));
+    const ul = Object.assign(document.createElement('ul'), { className: 'gpage-receipts' });
+    ul.append(...got.map((t) => Object.assign(document.createElement('li'), { className: 'gpage-receipt', textContent: t })));
+    ul.hidden = !got.length;
+    sec.append(h3, ul, Object.assign(document.createElement('div'), { className: 'rd-night-asks' }));
+    if (list.length) paintAwayAnswers(sec, list, []);
+    sec.hidden = false;
+    return sec;
+  });
+  host.replaceChildren(...(secs.length ? secs : [Object.assign(document.createElement('p'), { className: 'gpage-empty', textContent: 'No decisions recorded for these runs.' })]));
+}
+
+/** A History row as the model's raw run (runsHistItem's `run`, the finished page). A deep link's stub record has no
+ *  status yet, so the loaded detail's state fills in. */
+const histRun = (p, st = null) => ({ status: String((p && p.status) || (st && st.status) || '').toLowerCase(),
+  pauseReason: (p && p.pauseReason) || '', pr: p && p.pr && typeof p.pr === 'object' ? p.pr : null,
+  // D24: passed through for the model; the saved state's branch carries a round marker on a frozen row.
+  round: (p && p.round) || null, branch: (st && st.branch) || null, watch: (p && p.watch) || null,
+  // The loaded saved state's ledger, as the chat card's REST snapshot carries it: the line names the stage there too
+  // ("Plan · failed"). A bare History row has none.
+  ...(st && st.stepper ? { stepper: st.stepper, steps: st.steps || [], active: [], endReached: !!st.endReached,
+    tokens: st.tokens || {}, progressFacts: st.progressFacts || null } : {}) });
 function runsHistItem(p) {
   return {
     id: p.id, projectKey: p.projectKey, title: p.title, status: p.status, pauseReason: p.pauseReason,
@@ -30249,7 +30513,7 @@ function runsHistItem(p) {
     files: typeof p.files === 'number' ? p.files : null,
     base: baseRowNote(p.baseCheck),
     tags: flagOn('runTags') ? (p.tags || []) : [],
-    run: { status: p.status, pauseReason: p.pauseReason, pr: p.pr && typeof p.pr === 'object' ? p.pr : null },
+    run: histRun(p),
     cost: engineReportsCost(p.runEngine) ? (p.totalCostUsd ?? null) : null,
   };
 }
@@ -31170,7 +31434,8 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   if (r) repaintRunDetail(r);
   else {                                                         // deep link before hello
     screen.querySelector('.rd-title').textContent = runId;
-    screen.querySelector('.rd-now-title').textContent = runId;
+    const pt = screen.querySelector('.rd-page-title');
+    if (pt && !pt.textContent) pt.textContent = runId;
   }
   if (r) loadNightDecisions(r);
 
@@ -31960,6 +32225,93 @@ function rdActiveMs(r) {
   return liveMs || (typeof r._savedActiveMs === 'number' ? r._savedActiveMs : 0);
 }
 
+/** Runs redesign slice 4: the raw run the run page's model reads. A live run object (makeRun) carries no `pr`: once
+ *  the run has ended, take the PR from its History row, so a finished run with an open PR reads In review (as the list
+ *  does), not Ready. */
+function rdModelRun(r) {
+  if (!r || !isTerminalStatus(r.status)) return r;
+  const h = rdHistoryRecord(r);
+  const pr = h && h.pr && typeof h.pr === 'object' && typeof h.pr.url === 'string' ? h.pr : null;
+  const watch = (h && h.watch) || r.watch || null;       // D24: the Watch PR fact, when the History row carries it
+  return pr || watch ? { ...r, ...(pr ? { pr } : {}), ...(watch ? { watch } : {}) } : r;
+}
+const rdModel = (r) => runModel(rdModelRun(r), { memo: memoFor(r.pipelineId || r.runId) });
+/** `r` is the live run from `runs` (never paintRdGlance's rdGlanceRun display copy), so the memo and the PR lookup
+ *  key on the real run. Returns the model, which paintRdGlance's is-link toggle reads. */
+function paintRdStatus(screen, r) {
+  const m = rdModel(r);
+  const block = screen.querySelector('.rd-sheet .run-status');
+  paintRunStatus(block, m);
+  // The run page's bar takes over the removed .rd-prog's focus stop ("Run progress"): the D30 one-line wait state
+  // shows only its stage words and gives it the focus ring.
+  const bar = block && block.querySelector('.run-status-bar');
+  if (bar && !bar.hasAttribute('tabindex')) { bar.tabIndex = 0; bar.setAttribute('aria-label', 'Run progress'); }
+  paintGroupLine(screen.querySelector('.rd-page-head .rd-group-line'), r.pipelineId || '', r.title || '', groupHomeOf(r.pipelineId || ''));
+  paintRdActions(screen, r, m);
+  return m;
+}
+/** The glance's PR call-to-action (paintPrCta into .rd-pr-slot) already offers the PR action when it shows Create pull
+ *  request / Push (ship) or View PR (open-pr): the bar makes no second button for it (Known bug 9). */
+function prCovered(screen) {
+  const slot = screen.querySelector('.rd-glance .rd-pr-slot');
+  const st = slot && !slot.hidden ? slot.dataset.state || 'none' : 'none';
+  return st === 'create' || st === 'push' ? { ship: slot } : st === 'view' || st === 'merged' ? { 'open-pr': slot } : {};
+}
+/** D4 on the run page: the model decides which bar buttons show. Called last by every painter that used to write
+ *  their `hidden` (paintRdStatus, and the ends of paintRdHeader, paintRdTerminal and paintRdPrCta). */
+function paintRdActions(screen, r, m = rdModel(r)) {
+  const bar = screen.querySelector('.rd-bar-end');
+  const slot = bar && bar.querySelector('.rd-actions');
+  if (!slot) return;
+  const pause = bar.querySelector('.rd-pause');           // the one Pause / Resume button inside .rd-resume-split
+  const stop = bar.querySelector('.rd-stop');
+  const split = bar.querySelector('.rd-resume-split');
+  const st = String(r.status || '');
+  syncActions(slot, m, {
+    // paintRdHeader has set .rd-pause's dataset.action and label (isPaused is only `paused`), so an interrupted,
+    // pausing or stopped-resumable run, whose button still reads "Pause", gets a made "Resume" instead.
+    own: { ...pauseResumeOwn(pause, st), stop },
+    pool: [pause, stop],                                  // a "Pause" left from a run that has ended is hidden
+    covered: prCovered(screen),
+    // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
+    disable: st === 'pausing' ? { resume: 'Pausing…' } : {},
+    onAction: (id, b) => runAction({ runId: r.runId, pipelineId: r.pipelineId, title: r.title, status: st, workspaceId: r.workspaceId || null }, id, b, m),
+  });
+  if (split) split.hidden = !!pause && pause.hidden;      // the split wrapper follows its button
+}
+/** D18: the Group row. Its own element, repainted through a signature (never appended into .rd-page-meta). */
+function paintGroupLine(el, pipelineId, title, home) {
+  if (!el) return;
+  const k = () => Object.assign(document.createElement('span'), { className: 'rd-group-k', textContent: 'Group' });
+  if (home) {
+    const sig = `in|${groupHref(home.row)}|${home.row.title}|${home.planning ? 'p' : home.position}|${home.total}`;
+    el.hidden = false;
+    if (el.dataset.sig === sig) return;
+    el.dataset.sig = sig;
+    const a = Object.assign(document.createElement('a'), { className: 'rd-group-link', href: groupHref(home.row), textContent: home.row.title });
+    el.replaceChildren(k(), ' Part of ', a, home.planning ? ' · planning' : ` · run ${home.position} of ${home.total}`);
+    return;
+  }
+  if (!pipelineId || !levelAtLeast('advanced')) { el.hidden = true; el.dataset.sig = ''; el.replaceChildren(); return; }
+  el.hidden = false;
+  if (el.dataset.sig === 'add') return;
+  el.dataset.sig = 'add';
+  const b = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-sm btn-quiet rd-group-add', textContent: 'Add to group…' });
+  b.addEventListener('click', () => openAddToGroup(b, { pipelineId, title }));
+  el.replaceChildren(k(), ' ', b);
+}
+/** The open run page's Group row (and status), repainted after the groups reload or the level changes. */
+function repaintOpenRunGroupLine() {
+  if (runDetailState && runDetailState.screen) {
+    const r = runs.get(runDetailState.runId);
+    if (r) paintRdStatus(runDetailState.screen, r);
+  }
+  const hd = histDetailState;
+  if (hd && hd.screen && hd.record) {
+    paintGroupLine(hd.screen.querySelector('.hd-glance .rd-page-head .rd-group-line'), hd.record.id || '', hd.record.title || '', groupHomeOf(hd.record.id || ''));
+  }
+}
+
 function paintRdGlance(screen, r) {
   const glance = screen.querySelector('.rd-glance');
   if (!glance) return;
@@ -31983,17 +32335,13 @@ function paintRdGlance(screen, r) {
   });
   screen.dataset.glance = copy.state;
 
-  paintGlanceStatus(screen.querySelector('.rd-glance'), copy);
-  // Run progress (P2/P4): stopped and error keep today's red glance with no bar.
-  paintProgressBar(screen.querySelector('.rd-glance .rd-prog'), prog && prog.tone !== 'red' ? prog : null);
-  // D16, D22: a slice names its feature (and, once done, the next slice) instead of the unnamed chain bar.
-  const info = live.pipelineId ? sliceInfoFor(live.pipelineId, () => rdRepaintOpenGlance()) : null;
-  paintSliceLine(screen.querySelector('.rd-glance .rd-slice-line'), sliceLineCopy(info, { done: live.status === 'done' }));
-  const chain = chainItemFor(live);
-  paintChainBar(screen.querySelector('.rd-glance .rd-prog-chain'), chain && (chain.feature || info) ? null : chain);
-  // Only while a question waits is the status header a control (see openRunDetail).
+  // Runs redesign slice 4 (D19): the one status block, the Group row and the model's actions. The run's own bar only:
+  // the Group row says where the run sits, so no chain bar and no slice line (Known bug 9).
+  const m = paintRdStatus(screen, live);
+  // Only while a question waits is the status header a control (see openRunDetail). A PR-driven Needs you has no
+  // question to jump to.
   const statusTop = screen.querySelector('.rd-now-top');
-  const asking = copy.state === 'ask';
+  const asking = m.state === 'needs-you' && !m.prNeeds;
   if (statusTop && statusTop.classList.contains('is-link') !== asking) {
     statusTop.classList.toggle('is-link', asking);
     if (asking) {
@@ -32103,38 +32451,6 @@ function rdActivityGroups(screen, values = {}) {
     if (rows.length) out.push(rdSheetGroup(title, rows));
   }
   return out;
-}
-
-// The status line under the run's name (both glances): a 28px glyph, the state word in
-// bold, then what it concerns; a single running step's elapsed time rides at the end
-// (`data-since`: _timerTick keeps it moving).
-function paintGlanceStatus(glance, copy) {
-  if (!glance) return;
-  const orbHost = glance.querySelector('.rd-orb');
-  const glyph = copy.icon || copy.state;
-  if (orbHost.dataset.state !== glyph) {
-    orbHost.dataset.state = glyph;
-    orbHost.replaceChildren(renderOrb(document, glyph, 28));
-  }
-  const title = glance.querySelector('.rd-now-title');
-  const sig = `${copy.lead}|${copy.rest || ''}|${copy.since || ''}`;
-  if (title.dataset.sig !== sig) {
-    title.dataset.sig = sig;
-    const lead = document.createElement('span');
-    lead.className = 'rd-now-state';
-    lead.textContent = copy.lead || copy.title;
-    title.replaceChildren(lead);
-    if (copy.rest) title.append(` · ${copy.rest}`);
-    if (copy.since) {
-      const t = new Date(copy.since).getTime();
-      const el = document.createElement('span');
-      el.className = 'rd-now-elapsed';
-      el.dataset.since = copy.since;
-      el.textContent = Number.isFinite(t) ? fmtDuration(Math.max(0, Date.now() - t)) : '';
-      title.append(' · ', el);
-    }
-  }
-  glance.querySelector('.rd-now-sub').textContent = copy.sub;
 }
 
 // The run's name as the glance's page title, with a short meta line under it.
@@ -32645,31 +32961,35 @@ function paintHdOvPrs(box, record) {
 // "Create pull request" hands over to History's ship-it modal (pendingShipIt), which owns
 // the remotes picker and the push.
 function paintRdPrCta(screen, r) {
-  const slot = screen.querySelector('.rd-pr-slot');
-  if (!slot) return;
-  const status = screen.querySelector('.rd-pr-status');
-  const key = r.status === 'done' ? historyKeyForRun(r) : '';
-  if (!key) { paintPrCta(slot, { state: 'none' }); paintRdPrStatus(status, null); return; }
-  const record = rdHistoryRecord(r);
-  if (glancePrInput(record) === 'PENDING') { paintPrCta(slot, { state: 'pending' }); paintRdPrStatus(status, null); return; }
-  const pr = record.pr && typeof record.pr === 'object' ? record.pr : null;
-  const prState = pr ? String(pr.state || '').toUpperCase() : '';
-  if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
-    paintPrCta(slot, { state: prState === 'MERGED' ? 'merged' : 'view', href: pr.url });
-    paintRdPrStatus(status, prState === 'OPEN' && record.target !== 'workspace' ? { id: r.pipelineId, projectKey: key } : null);
-    return;
-  }
-  paintRdPrStatus(status, null);
-  if (histPrEligible(record) && record.pr !== undefined) {
-    paintPrCta(slot, {
-      state: 'create', cls: 'rd-create-pr',
-      onClick: () => {
-        pendingShipIt = { id: r.pipelineId, projectKey: key };
-        location.hash = `history/${key}/${r.pipelineId}`;
-      },
-    });
-  } else {
-    paintPrCta(slot, { state: 'none' });
+  try {
+    const slot = screen.querySelector('.rd-pr-slot');
+    if (!slot) return;
+    const status = screen.querySelector('.rd-pr-status');
+    const key = r.status === 'done' ? historyKeyForRun(r) : '';
+    if (!key) { paintPrCta(slot, { state: 'none' }); paintRdPrStatus(status, null); return; }
+    const record = rdHistoryRecord(r);
+    if (glancePrInput(record) === 'PENDING') { paintPrCta(slot, { state: 'pending' }); paintRdPrStatus(status, null); return; }
+    const pr = record.pr && typeof record.pr === 'object' ? record.pr : null;
+    const prState = pr ? String(pr.state || '').toUpperCase() : '';
+    if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
+      paintPrCta(slot, { state: prState === 'MERGED' ? 'merged' : 'view', href: pr.url });
+      paintRdPrStatus(status, prState === 'OPEN' && record.target !== 'workspace' ? { id: r.pipelineId, projectKey: key } : null);
+      return;
+    }
+    paintRdPrStatus(status, null);
+    if (histPrEligible(record) && record.pr !== undefined) {
+      paintPrCta(slot, {
+        state: 'create', cls: 'rd-create-pr',
+        onClick: () => {
+          pendingShipIt = { id: r.pipelineId, projectKey: key };
+          location.hash = `history/${key}/${r.pipelineId}`;
+        },
+      });
+    } else {
+      paintPrCta(slot, { state: 'none' });
+    }
+  } finally {
+    paintRdActions(screen, r);                     // covered (prCovered) reads the call-to-action just painted
   }
 }
 
@@ -33192,12 +33512,12 @@ function paintRdHeader(screen, r) {
   const paused = isPaused(r);
   const pauseBtn = screen.querySelector('.rd-pause');
   const stopBtn = screen.querySelector('.rd-stop');
-  // Hidden iff the run is OVER. A paused/pausing run keeps both controls: it is parked,
-  // not finished. An interrupted one keeps no Stop: it is only ever resumed.
-  // D30: Pause goes while a shaped run waits on the person (a paused run keeps it: it is Resume there).
-  pauseBtn.hidden = terminal || (!!shaperWait(r, shapeFirstOn()) && !paused);
-  // An interrupted run is never stopped — it stays resumable (stop-paused.mjs refuses it).
-  stopBtn.hidden = terminal || r.status === 'interrupted';
+  // Which of them shows is the run model's (paintRdActions, runs redesign slice 4 D4): Pause only while running (a
+  // shaped run waiting on the person is Needs you, D30), Stop for every live or parked run. An interrupted one keeps
+  // Stop, disabled: it is only ever resumed (stop-paused.mjs refuses it).
+  const STOP_INTERRUPTED = 'An interrupted run cannot be stopped';
+  if (r.status === 'interrupted') { stopBtn.disabled = true; stopBtn.title = STOP_INTERRUPTED; }
+  else if (stopBtn.title === STOP_INTERRUPTED) { stopBtn.disabled = false; stopBtn.title = ''; }
   // D31: a shaped run's bar folds Away mode, Run after and the terminal into one ⋯ (CSS hides the three).
   const shapedBar = shapeFirstOn() && isShapingRun(r);
   screen.querySelector('.rd-bar')?.toggleAttribute('data-shaped', shapedBar);
@@ -33294,6 +33614,7 @@ function paintRdHeader(screen, r) {
     if (document.activeElement !== ns && !ns.disabled) ns.value = (r.night && r.night.override) || 'auto';
     paintRdAwayPill(screen, r);
   }
+  paintRdActions(screen, r);                       // last: the model decides which bar buttons show (D4)
 }
 
 // The sidebar no longer lists runs under Runs: the Runs page's own list (Needs you
@@ -34125,14 +34446,15 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature'];
+const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature', 'group'];
 // One Runs page, three route names: the bare list (#runs) and the two detail routes every
 // deep link already uses (#running/<id>…, #history/<projectKey>/<id>…). All three render
 // the `data-view="runs"` section and light the one Runs nav button.
 const RUNS_VIEWS = new Set(['runs', 'running', 'history']);
 // The Add-ons pages (sidebar group "Add-ons"): Settings tabs once, pages of their own now.
 const ADDON_VIEWS = ['marketplace', 'connectors', 'models', 'providers'];
-const viewSection = (name) => (RUNS_VIEWS.has(name) ? 'runs' : name);
+// The group page (runs redesign slice 4, D16) renders into the feature page's section for both of its routes.
+const viewSection = (name) => (RUNS_VIEWS.has(name) ? 'runs' : name === 'group' ? 'feature' : name);
 function inRunsView(v = currentView()) { return RUNS_VIEWS.has(v); }
 
 // ── Interface mode (docs/ui-levels.md) ──────────────────────────────────────
@@ -34277,8 +34599,10 @@ if (typeof window !== 'undefined') {
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
-  // D16: the feature page lives behind the Shaper flag and needs an id; otherwise Chat, as any unknown view.
-  if (name === 'feature' && (!shapeFirstOn() || !param)) return showView('chat', '');
+  // Runs redesign slice 4 (D16): #feature/ID is the group page whatever the Shaper flag (a feature group stays listed,
+  // and linked, after the flag goes off); only Overview and the replaced-id lookup need the flag. Both need an id.
+  if (name === 'feature' && !param) return showView(shapeFirstOn() ? 'chat' : 'runs', '');
+  if (name === 'group' && !param) return showView('runs', '');
   // A caller that still names a Settings tab that became a page ('settings' + 'providers…')
   // lands on that page: parseSettingsParam would read the unknown tab as General.
   if (name === 'settings') {
@@ -34435,7 +34759,8 @@ function showView(name, param = '') {
       // No refetch on in-page hops (list <-> run <-> saved run): a reload re-runs PR
       // enrichment and blanks resolved PR words mid-navigation (was the History rule).
       loadHistoryView();
-      void withWorkspaces().then(() => schedulesView.load()).then(() => { if (inRunsView()) paintRunsList(); repaintLimitNotices(); });
+      // The open run's Group row reads the chains too (a Run-after chain is a group, runs redesign slice 4 D18).
+      void withWorkspaces().then(() => schedulesView.load()).then(() => { if (inRunsView()) { paintRunsList(); repaintOpenRunGroupLine(); } repaintLimitNotices(); });
     }
     if (name === 'running') {
       routeRunDetail(param, { instant: entering });
@@ -34485,12 +34810,11 @@ function showView(name, param = '') {
     else routeProjectDetail(param);
   }
   if (name === 'chat') enterChatView(param, prevView);
-  if (name === 'feature') {
+  if (name === 'feature' || name === 'group') {
     const host = document.querySelector('[data-view="feature"] .feature-page');
-    const id = decodeURIComponent(param);
-    // A re-mount with the same id is a no-op: repaint, to catch up after the time away (the hidden page skips frames).
-    if (host.__shapeWant !== id || host.__shapeMode !== 'page') mountShapeFeature(host, id, { mode: 'page' });
-    else if (prevView !== 'feature') paintShapeFeature(host);
+    const [rawId, tab = 'runs'] = String(param).split('/');
+    // Coming back from another view: the hidden page skipped frames, so the Overview's Shaper view repaints (D14).
+    void mountGroupPage(host, { route: name, id: decodeURIComponent(rawId), tab, reentered: prevView !== 'feature' && prevView !== 'group' });
   }
   if (name === 'workflows') void enterWorkflowsView(param, prevView);
   if (name === 'settings') showSettingsTab(param);
@@ -34622,6 +34946,8 @@ void mcpApi('GET', '/api/flags').then((r) => {
 // is a hoisted function declaration.
 onLevelChange(() => { refreshNewPipelinePickers(); });     // Simple lists Auto + Default only
 onLevelChange(() => paintHiddenSettings());
+onLevelChange(() => repaintOpenRunGroupLine());               // the Group row's "Add to group…" is Advanced (D18)
+onLevelChange(() => scheduleGroupPagePaint());                // the group page's Logs tab is Expert
 onLevelChange(() => paintShelf());
 onLevelChange(() => reselectHiddenDetailTabs());
 onLevelChange(() => {                                       // node decorations are expert detail
@@ -35469,7 +35795,6 @@ pinpoint.addSurface(askPanel.root, {
 mountChatHome();
 askRunStore.subscribe((runId, type) => { if (type !== 'log') chatHome?.update(); });   // a log line changes no tile
 
-let chainsAsked = false;   // module-level, ABOVE the boot showView (TDZ: app-js-boot-route-before-async)
 
 // Boot: parse view + optional param so a reload on a deep link (#running/<id>)
 // restores the Running view instead of silently resetting to Chat (worca Chat U5: the app's home).

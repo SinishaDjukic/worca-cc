@@ -22,7 +22,7 @@ import { paintProgressBar, renderRowLine } from './run-progress-bar.mjs';
 import { renderStatusDot } from './status-dot.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
-import { runModel, groupModel, prState } from '../../src/shared/run-model.mjs';
+import { runModel, groupModel, finishedNeedsYou } from '../../src/shared/run-model.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -143,9 +143,10 @@ export function schedRowState(t) {
   return { icon: 'scheduled', word, detail: '' };
 }
 
-/** A PR object (History's `pr`, a run's `pr`) that raises a finished run to Needs you (prState, D31). A glance
- *  string ('MERGED') carries no verdict. */
-const prNeedsOf = (pr) => !!(pr && typeof pr === 'object' && (prState(pr) || {}).needsYou);
+/** A run (History row, a row's raw run, a member's run) that a finished run's PR or Watch PR raises to Needs you
+ *  (run-model.mjs finishedNeedsYou, D31 / D23). A glance string ('MERGED') carries no verdict. */
+const prNeedsOf = (x) => !!(x && typeof x === 'object')
+  && finishedNeedsYou({ pr: x.pr && typeof x.pr === 'object' ? x.pr : null, watch: x.watch || null });
 
 /** Needs you: a question or gate, a pause (cost caps included), a failed run nobody opened yet, and a finished run
  *  whose PR has failing checks or conflicts with no fix run on it (`prNeeds`, D31). */
@@ -165,7 +166,7 @@ export function needsYouItems({ live = [], history = [] } = {}) {
   const pids = new Set(live.map((r) => r && r.pipelineId).filter(Boolean));
   return {
     live: live.filter((r) => r && needsYou({ kind: 'live', status: r.status, ask: !!r.ask, unread: !!r.unread })),
-    history: history.filter((p) => p && !pids.has(p.id) && needsYou({ kind: 'hist', status: p.status, prNeeds: prNeedsOf(p.pr) })),
+    history: history.filter((p) => p && !pids.has(p.id) && needsYou({ kind: 'hist', status: p.status, prNeeds: prNeedsOf(p) })),
   };
 }
 
@@ -218,7 +219,7 @@ export function histRow(p, now = Date.now()) {
     tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
     archived: !!(p && p.archived),
     base: String(p.base || ''),                      // #620: "conflicts with dev" / "dev moved", else ''
-    unread: false, needs: needsYou({ kind: 'hist', status, prNeeds: prNeedsOf(p.run ? p.run.pr : p.pr) }),
+    unread: false, needs: needsYou({ kind: 'hist', status, prNeeds: prNeedsOf(p.run || p) }),
     cost: p.cost ?? null,
     activityMs: Number.isFinite(timeMs(p.mtime, now)) ? timeMs(p.mtime, now) : timeMs(p.startedAt, now),
   }, { at: p.startedAt || p.mtime }, now);
@@ -345,11 +346,17 @@ export function costTitle(r) {
 /** One group (chain, feature or user group) as a list row. Members keep their order; `count` is "2/3". */
 export function groupRow(g, { now = Date.now() } = {}) {
   const raw = (g.members || []).map((mb) => ({ ...(mb.run || {}), memo: mb.memo || null }));
-  const model = groupModel({ kind: g.groupKind === 'feature' ? 'feature' : 'chain', title: g.title, members: raw, pr: g.pr || null, memo: g.memo || null }, { now });
+  const planningRaw = g.planning ? { ...(g.planning.run || {}), memo: g.planning.memo || null } : null;
+  const model = groupModel({ kind: g.groupKind === 'feature' ? 'feature' : 'chain', title: g.title, members: raw,
+    planning: planningRaw, pr: g.pr || null, memo: g.memo || null }, { now });
   const members = (g.members || []).map((mb, i) => ({ ...mb, key: `member:${g.id}/${mb.pipelineId || mb.ticketId || i}`, model: model.members[i],
     needs: needsYou({ kind: mb.kind || 'hist', status: mb.run && mb.run.status, ask: !!(mb.run && mb.run.pendingQuestion != null),
-      prNeeds: prNeedsOf(mb.run && mb.run.pr) }) }));
-  const cur = members.find((mb) => mb.model === model.current) || members[0] || null;
+      prNeeds: prNeedsOf(mb.run) }) }));
+  const planning = g.planning ? { ...g.planning, key: `member:${g.id}/planning`, model: model.planning } : null;
+  // `cur` also matches Planning, so the row's runId / pipelineId / href point at the planning run while it is the
+  // current one (not at slice 1).
+  const cur = (planning && model.current === model.planning ? planning : null)
+    || members.find((mb) => mb.model === model.current) || members[0] || null;
   return {
     kind: 'chain', groupKind: g.groupKind || 'chain', key: `chain:${g.id}`, groupId: String(g.id),
     href: g.groupKind === 'feature' ? `#feature/${encodeURIComponent(g.id)}` : (cur && cur.href) || '#runs',
@@ -360,7 +367,9 @@ export function groupRow(g, { now = Date.now() } = {}) {
     needsIcon: NEEDS_ICON.find((ic) => members.some((mb) => mb.needs && NEEDS_ICON_OF[mb.model.state] === ic)) || '',
     model, count: model.count.text, members,
     costUsd: groupCostUsd(g, g.liveCost || {}, g.costMemo || null),
-    memberKeys: new Set(members.flatMap((mb) => [mb.pipelineId && `p:${mb.pipelineId}`, mb.ticketId && `t:${mb.ticketId}`, mb.runId && `r:${mb.runId}`]).filter(Boolean)),
+    // The planning run's keys too, so its own list row folds into the group.
+    memberKeys: new Set([...members, ...(planning ? [planning] : [])].flatMap((mb) => [mb.pipelineId && `p:${mb.pipelineId}`, mb.ticketId && `t:${mb.ticketId}`, mb.runId && `r:${mb.runId}`]).filter(Boolean)),
+    planning,
   };
 }
 
@@ -469,8 +478,8 @@ function textEl(doc, tag, cls, text) {
   return n;
 }
 
-
-function prChip(doc, pr) {
+/** The PR chip (spec §2.1a): icon + word, the title in the tooltip. Shared with run-status-card.mjs (slice 4, D1). */
+export function prChip(doc, pr) {
   const s = doc.createElement('span');
   s.className = `runs-pr is-${pr.id}`;
   s.title = pr.title;
@@ -507,6 +516,7 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   a.title = costTitle(r);                                 // §2.4: the PR chip keeps its own title
   for (const [k, v] of Object.entries({ rowKey: r.key, kind: r.kind, state: r.model.state, pipelineId: r.pipelineId, projectKey: r.projectKey })) if (v) a.dataset[k] = v;
   if (r.runId) a.dataset.runId = r.runId;   // this exact line: test/ui-guide-hops.test.mjs reads it as the guide hop's painter
+  a.dataset.line = r.model.line;      // slice 4 (D3): the canonical status line, compared across list, card and page
   if (r.memberKeys) a.dataset.memberKeys = [...r.memberKeys].join(' ');   // paintRunsSelection rebuilds the set from it
   const right = doc.createElement('span');
   right.className = 'runs-row-right';

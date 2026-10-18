@@ -32,3 +32,25 @@ export function auditRunsLayout(root, env, doc = root.ownerDocument) {
   }
   return out;
 }
+
+/** Spec §3.3a: on the group page, title, status card, tabs and the Runs table share left and right edges, and every
+ *  row's Open button ends at one x. `env.rect(el)` / `env.viewport` are injectable for jsdom; else the real layout. */
+export function auditGroupPageLayout(root, env, doc) {
+  const rect = (env && env.rect) || ((e) => e.getBoundingClientRect());
+  const out = [];
+  const blocks = ['.gpage-head', '.gpage-card', '.gpage-tabs', '.run-members.is-table'];
+  const found = blocks.map((s) => [s, root.querySelector(s)]).filter(([, e]) => e && !e.closest('[hidden]'));
+  const ref = found.length ? rect(found[0][1]) : null;
+  for (const [s, e] of found.slice(1)) {
+    const r = rect(e);
+    if (Math.abs(r.left - ref.left) > 1 || Math.abs(r.right - ref.right) > 1) {
+      out.push({ rule: 'edges', selector: s === '.run-members.is-table' ? '.run-members' : s, left: r.left, right: r.right, want: [ref.left, ref.right] });
+    }
+  }
+  const opens = [...root.querySelectorAll('.run-members.is-table .run-member-open')].filter((e) => !e.closest('[hidden]'));
+  const rights = opens.map((e) => rect(e).right);
+  if (rights.length > 1 && Math.max(...rights) - Math.min(...rights) > 1) out.push({ rule: 'open-column', rights });
+  const vw = (env && env.viewport && env.viewport.width) || (doc && doc.defaultView ? doc.defaultView.innerWidth : Infinity);
+  for (const [s, e] of found) { const r = rect(e); if (r.right > vw + 1) out.push({ rule: 'off-screen', selector: s, right: r.right }); }
+  return out;
+}

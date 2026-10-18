@@ -352,3 +352,34 @@ test('§2.4 cost: a row says its own cost, a group its total; live cost counts; 
   host.append(...renderRunsList(doc, buildRunsModel({ history: [histIt('h1', { cost: 1.23 })], now: NOW })));
   assert.equal(host.querySelector('a.runs-row').title, 'Cost $1.23');
 });
+
+test('groupRow counts a feature\'s planning run in the bar, never in the count; rows carry data-line', () => {
+  const NOW = Date.parse('2026-10-18T12:00:00Z');
+  const done = { status: 'done', endReached: true };
+  const g = { id: 'feat_1', groupKind: 'feature', title: 'Run tags',
+    planning: { pipelineId: 'p0', title: 'Planning', run: done, memo: {} },
+    members: [
+      { position: 1, title: 'Store tags', pipelineId: 'p1', kind: 'hist', run: done, memo: {} },
+      { position: 2, title: 'Run tags', pipelineId: 'p2', kind: 'hist', run: { ticket: { status: 'scheduled', runAt: null, after: { index: 1 } } }, memo: {} },
+    ] };
+  const row = groupRow(g, { now: NOW });
+  assert.equal(row.count, '1/2');
+  assert.equal(row.model.progress.total, 3, 'planning + 2 members in the bar');
+  assert.equal(row.planning.model.state, 'ready');
+  assert.ok(row.memberKeys.has('p:p0'), 'the planning run folds into the group row');
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  const host = doc.createElement('div');
+  // A group row is placed only through one of its listed members (buildRunsModel's groupOf), so list p1.
+  const history = [{ id: 'p1', projectKey: 'acme', title: 'Store tags', status: 'done', run: done, mtime: NOW - 60000 }];
+  host.append(...renderRunsList(doc, buildRunsModel({ live: [], history, scheduled: [], groups: [g], now: NOW })));
+  const a = host.querySelector('.runs-row[data-row-key="chain:feat_1"]');
+  assert.ok(a, 'the group row is listed');
+  assert.equal(a.dataset.line, row.model.line);
+});
+
+test('D23: a History row whose Watch PR stopped for a person lists under Needs you; a live fix round does not', () => {
+  const pr = { url: 'https://github.com/o/r/pull/781', number: 781, state: 'OPEN' };
+  const FAIL = { state: 'failing', total: 12, failed: 3, pending: 0 };
+  assert.equal(needsYouItems({ history: [{ id: 'h1', status: 'done', pr, watch: { status: 'needs-person', reason: 'cap', fixRuns: 3 } }] }).history.length, 1);
+  assert.equal(needsYouItems({ history: [{ id: 'h1', status: 'done', pr: { ...pr, checks: FAIL }, watch: { status: 'fixing' } }] }).history.length, 0);
+});

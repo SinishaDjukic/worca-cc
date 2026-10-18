@@ -112,7 +112,8 @@ async function bootWithRuns() {
 // ---------- open / close ----------
 
 test('#running/<id> opens the detail screen and paints its header', async () => {
-  const { window } = await bootWithRuns();
+  const ctx = await bootWithRuns();
+  const { window } = ctx;
   go(window, `running/${ID}`);
   await settle(window);
   const doc = window.document;
@@ -134,7 +135,13 @@ test('#running/<id> opens the detail screen and paints its header', async () => 
   assert.match(doc.querySelector('#run-detail .rd-meta').textContent, /proj/);
   // startedLabel passes a bare time string through unchanged (app.js:10912-10917).
   assert.match(doc.querySelector('#run-detail .rd-meta').textContent, /10:00:00/);
-  assert.equal(doc.querySelector('#run-detail .rd-pause').hidden, false, 'a live run offers Pause');
+  // A run with no step yet reads Starting in the one run model (runs redesign slice 4): Stop, and Pause once a step runs.
+  assert.equal(doc.querySelector('#run-detail .rd-pause').hidden, true, 'a starting run offers no Pause yet');
+  assert.equal(doc.querySelector('#run-detail .rd-stop').hidden, false);
+  ctx.recv({ type: 'state', runId: ID, status: 'running', steps: [{ executionId: 'x:n:1', nodeId: 'n', ordinal: 1, cycle: 1, kind: 'cycle',
+    status: 'start', startedAt: '2026-01-01T00:00:00Z' }], active: [{ nodeId: 'n', executionId: 'x:n:1' }] });
+  await settle(window);
+  assert.equal(doc.querySelector('#run-detail .rd-pause').hidden, false, 'a live run with a step offers Pause');
   assert.equal(doc.querySelector('#run-detail .rd-stop').hidden, false);
 });
 

@@ -6,6 +6,8 @@
 // Input: a run state as runProgress reads it (src/shared/run-progress.mjs header) plus `pauseReason`, `pr`
 // ({url, number, state, draft?, reviewDecision?}), `ticket` ({status, runAt, after:{index}}) for a run that has not
 // started, and `resumable`. Shared code: no imports from core/ or ui/.
+// Optional: `round` ({n, request, by}) or the raw marker `branch.roundOf` ({round, request, by}), a round of the same
+// run (spec §3.6); `watch` ({status, reason, fixRuns}), the run's Watch PR (§3.6a, statuses of src/core/pr-watch.mjs).
 import { runProgress, groupProgress, askWhat } from './run-progress.mjs';
 
 export const RUN_STATES = Object.freeze({
@@ -23,7 +25,7 @@ export const RUN_STATES = Object.freeze({
 
 export const ACTION_LABEL = Object.freeze({
   stop: 'Stop', pause: 'Pause', answer: 'Answer', resume: 'Resume', 'start-now': 'Start now', cancel: 'Cancel',
-  retry: 'Retry', report: 'Report', archive: 'Archive', ship: 'Ship it', 'open-pr': 'Open PR',
+  retry: 'Retry', report: 'Report', archive: 'Archive', ship: 'Ship it', 'open-pr': 'Open PR', 'ask-changes': 'Ask for changes',
 });
 
 const ACTIONS = Object.freeze({
@@ -150,6 +152,60 @@ function singleLine(state, run, prog, pr, opts) {
   }
 }
 
+// Watch PR (src/core/pr-watch.mjs): a fix round owns the PR's branch while starting, fixing or publishing (watchActive);
+// it stopped for a person at needs-person, its reason saying why (`cap`: MAX_FIX_RUNS fix runs, checks still failing).
+const WATCH_LIVE = new Set(['starting', 'fixing', 'publishing']);
+const WATCH_WHY = Object.freeze({
+  cap: 'checks still failing', 'fix-failed': 'the last fix run failed', 'fix-interrupted': 'the last fix run was interrupted',
+  'no-change': 'the last fix changed nothing', 'conflict-markers': 'conflicts remain', 'base-not-merged': 'conflicts remain',
+  'push-refused': 'the push was refused', 'remote-moved': 'the branch moved',
+});
+
+/** D22: the round of the same run, from `run.round` or the raw marker `run.branch.roundOf`. null for round 1 (the
+ *  run itself) and without one. */
+function roundOf(run) {
+  const x = run.round || (run.branch && typeof run.branch === 'object' ? run.branch.roundOf : null);
+  const n = x ? Number(x.n ?? x.round) : NaN;
+  return n >= 2 ? { n, request: String(x.request || ''), by: x.by || null } : null;
+}
+
+/** D23: the Watch PR fact. `{ live }` while a fix round runs, `{ stopped, line }` once it stopped for a person. */
+function watchOf(w) {
+  if (!w || typeof w !== 'object') return null;
+  const s = String(w.status || '');
+  if (WATCH_LIVE.has(s)) return { live: true, stopped: false, line: '' };
+  if (s !== 'needs-person') return null;
+  const n = Number(w.fixRuns) || 0;
+  return { live: false, stopped: true, line: join('Needs you', 'Watch stopped', `${plural(n, 'fix run')}, ${WATCH_WHY[w.reason] || 'needs a person'}`) };
+}
+/** The PR as prState reads it: a live fix round marks it `fixing`, which prState ranks above Conflicts / Checks failing. */
+const prOf = (r, watch) => prState(watch && watch.live && r.pr && typeof r.pr === 'object' ? { ...r.pr, fixing: true } : r.pr);
+
+/** A finished run that needs a person without a question: its PR fails checks or conflicts with no fix round on it
+ *  (D31), or its Watch PR stopped for a person (D23). runs-list.mjs prNeedsOf reads this for the Needs you section.
+ *  It does not read `status`: its callers (runs-list.mjs needsYou's `prNeeds && s === 'done'`) gate on a done run,
+ *  as runModel's own watchNeeds does. */
+export function finishedNeedsYou(run) {
+  const r = run || {};
+  const watch = watchOf(r.watch);
+  const pr = prOf(r, watch);
+  if (pr && (pr.id === 'merged' || pr.id === 'closed')) return false;
+  return !!(watch && watch.stopped) || !!(pr && pr.needsYou);
+}
+
+/** D22: a round names itself. Working reads "Running · Round 2 · STAGE" (or the request, for a Watch PR round), which
+ *  states the state ("Running" for Working); other live states and Failed lead with "Round 2"; a finished run keeps
+ *  its line. */
+function roundLine(state, round, base, prog, finished) {
+  if (!round) return { line: base, lineSaysState: false };
+  if (state === 'working') {
+    const what = round.by === 'watch' && round.request ? round.request : (prog && prog.mode === 'stages' && prog.label) || 'working';
+    return { line: join('Running', `Round ${round.n}`, what), lineSaysState: true };
+  }
+  if ((LIVE.has(state) && !finished) || state === 'failed') return { line: join(`Round ${round.n}`, base), lineSaysState: false };
+  return { line: base, lineSaysState: false };
+}
+
 /**
  * One run's model.
  * @param {object} run   see the header
@@ -157,15 +213,22 @@ function singleLine(state, run, prog, pr, opts) {
  */
 export function runModel(run, opts = {}) {
   const r = run || {};
-  const pr = prState(r.pr);
-  const state = stateOf(r, pr);
+  const watch = watchOf(r.watch);
+  const pr = prOf(r, watch);
+  // D23: a Watch PR that stopped for a person raises a finished run to Needs you; a merged or closed PR has ended it.
+  const watchNeeds = !!(watch && watch.stopped) && String(r.status || '') === 'done' && r.pendingQuestion == null
+    && !(pr && (pr.id === 'merged' || pr.id === 'closed'));
+  const state = watchNeeds ? 'needs-you' : stateOf(r, pr);
   const prog = r.status ? runProgress(r, opts.memo || null) : null;
   const meta = RUN_STATES[state];
   // A PR-driven Needs you has no question to answer; its line is the in-review line and its action Open PR (D31).
-  const prNeeds = state === 'needs-you' && !!(pr && pr.needsYou) && r.pendingQuestion == null;
-  const actions = prNeeds ? ['open-pr'] : state === 'stopped' && r.resumable === true ? ['resume', 'archive'] : ACTIONS[state];
-  const line = prNeeds ? singleLine('in-review', r, prog, pr, opts) : singleLine(state, r, prog, pr, opts);
-  return { state, ...meta, line, actions: [...actions], pr, prNeeds, progress: prog };
+  const prNeeds = state === 'needs-you' && r.pendingQuestion == null && (watchNeeds || !!(pr && pr.needsYou));
+  const actions = watchNeeds ? ['open-pr', 'ask-changes'] : prNeeds ? ['open-pr']
+    : state === 'stopped' && r.resumable === true ? ['resume', 'archive'] : ACTIONS[state];
+  const base = watchNeeds ? watch.line : prNeeds ? singleLine('in-review', r, prog, pr, opts) : singleLine(state, r, prog, pr, opts);
+  const round = roundOf(r);
+  const { line, lineSaysState } = roundLine(state, round, base, prog, prNeeds);
+  return { state, ...meta, line, lineSaysState, actions: [...actions], pr, prNeeds, round, progress: prog };
 }
 
 // A run raised to Needs you by its PR (D31) is still a finished run for count and bar.
@@ -201,7 +264,11 @@ export function groupModel(group, opts = {}) {
   const tail = () => {
     switch (state) {
       case 'starting': return `${where} · starting`;
-      case 'working': return `${where} · ${(current.progress && current.progress.label) || 'working'}`;
+      case 'working': {
+        const rd = current.round;
+        const what = rd && rd.by === 'watch' && rd.request ? rd.request : (current.progress && current.progress.label) || 'working';
+        return rd ? `${where} · round ${rd.n} · ${what}` : `${where} · ${what}`;
+      }
       case 'needs-you': return `${where} · needs you`;
       case 'paused': return `${where} · paused`;
       case 'failed': return `${where} · failed`;
@@ -215,8 +282,9 @@ export function groupModel(group, opts = {}) {
   const meta = RUN_STATES[state];
   const progress = groupProgress(members.map(asPart), { planning: planning ? asPart(planning) : null, memo: g.memo || null });
   // A group whose current member needs you only through its PR has no question to answer and nothing running there,
-  // so it offers that PR, not Answer / Stop; `prNeeds` marks a group whose every member is finished.
+  // so it offers that PR, not Answer / Stop; `prNeeds` marks a group whose every member is finished. A PR- or
+  // watch-driven current member offers its own actions (['open-pr'] or ['open-pr', 'ask-changes']).
   const prNeedsCurrent = !!(current && current.prNeeds);
-  return { kind: g.kind || 'chain', title: g.title || '', state, ...meta, line: tail(), actions: prNeedsCurrent ? ['open-pr'] : [...ACTIONS[state]],
+  return { kind: g.kind || 'chain', title: g.title || '', state, ...meta, line: tail(), actions: prNeedsCurrent ? [...current.actions] : [...ACTIONS[state]],
     prNeeds: prNeedsCurrent && all.every(doneLike), pr, count: { done, total, text: `${done}/${total}` }, progress, current, members, planning };
 }

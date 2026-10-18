@@ -204,8 +204,10 @@ test('run progress layout CSS', async () => {
     { name: 'the sheet head is a grid, not a squeezing flex row', run() {
       assert.match(rule('.rd-sheet-head'), /display:\s*grid/);
     } },
-    { name: 'the bars span the full head width', run() {
-      assert.match(rule('.rd-sheet-head > .run-prog'), /grid-column:\s*1\s*\/\s*-1/);
+    { name: 'the bars take the status block\'s width: a grid, never a squeezing flex row (slice 4, D19)', run() {
+      assert.match(rule('.run-status'), /display:\s*grid/);
+      assert.match(rule('.rd-sheet-head'), /grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+      assert.doesNotMatch(css, /(^|\})\.rd-now-top\{display:flex/m, 'the old orb row no longer lays the block out');
     } },
     { name: 'the hover detail opens above the bar', run() {
       const r = rule('.run-prog-detail');

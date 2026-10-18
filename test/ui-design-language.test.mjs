@@ -187,7 +187,7 @@ test('no coloured left-border accent cards (D16)', () => {
 });
 
 const KIND_CHIPS = ['.badge', '.flag-chip', '.issue-sev', '.artifact-kind', '.tp-kind', '.sk-kind', '.team-chip .kind',
-  '.hd-ov-file-kind', '.ask-mcard-kind', '.wf-log-live'];
+  '.hd-ov-file-kind', '.ask-mcard-kind', '.wf-log-live', '.kind-chip'];
 test('kind and state chips are one 11px sans chip with 2px corners (D13)', () => {
   const group = ALL.find((r) => r.sel.startsWith(':is(.badge,'));
   assert.ok(group, 'the grouped chip rule');

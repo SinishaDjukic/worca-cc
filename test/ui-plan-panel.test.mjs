@@ -96,10 +96,18 @@ test('shaped run waiting on its plan: card first, details folded, Pause hidden, 
   assert.ok(!menuLabels(ctx).includes('Terminal'), 'the Chat panel has no terminal');
 });
 
+// A step in flight: the one run model reads a running run with no step as Starting, which offers no Pause (slice 4).
+async function working(ctx) {
+  ctx.dispatch({ type: 'state', runId: RUN_ID, status: 'running', steps: [{ executionId: 'x:n_plan:1', nodeId: 'n_plan', ordinal: 1, cycle: 1,
+    kind: 'cycle', status: 'start', startedAt: '2026-01-01T00:00:00Z' }], active: [{ nodeId: 'n_plan', executionId: 'x:n_plan:1' }] });
+  await ctx.settle();
+}
+
 test('once answered the run page is back to today\'s order, nothing folded', async () => {
   const { ctx } = await openPlan();
   ctx.dispatch({ type: 'hello', flags: { shapeFirst: true }, runs: [runRow({ pendingQuestion: null })] });
   await ctx.settle();
+  await working(ctx);
   const g = glance(ctx);
   assert.equal(g.dataset.shaperWait, undefined);
   assert.equal(g.querySelector('.rd-wait-more').hidden, true);
@@ -116,7 +124,9 @@ for (const [name, opts] of [['an unshaped run (gate on)', { row: { shaping: unde
     const bar = doc(ctx).querySelector('#run-detail .rd-bar');
     assert.equal(bar.hasAttribute('data-shaped'), false);
     assert.equal(bar.querySelector('.rd-bar-more').hidden, true);
-    assert.equal(bar.querySelector('.rd-pause').hidden, false);
+    // The plan still waits: the one run model's Needs you actions (slice 4), Answer then Stop, and no Pause.
+    assert.deepEqual([...bar.querySelectorAll('[data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction), ['answer', 'stop']);
+    assert.equal(bar.querySelector('.rd-pause').hidden, true);
   });
 }
 
@@ -216,11 +226,11 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 test('D30, D33: while a shaped run waits, the status panel is one line — no "Waiting for you", no orb, no stats', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const pin = (rest) => assert.match(css, new RegExp(esc(`${W} ${rest}`)), rest);
-  pin('.rd-sheet-head > :is(.rd-now-top,.rd-prog-chain){display:none;}');      // orb, "Waiting for you", "needs you: …"
+  pin('.rd-sheet-head > .rd-now-top > :is(.run-status-head,.run-status-group){display:none;}');   // the dot, "needs you: …"
   pin('> .rd-sheet > :is(.rd-facts,.rd-nowlist,.rd-pr-box){display:none;}');   // Time · Cost · Changes, Now rows
-  pin('.rd-prog[data-mode="stages"] > .run-prog-track{display:none;}');         // the stage words stay
+  pin('.rd-now-top > .run-status-bar[data-mode="stages"] > .run-prog-track{display:none;}');   // the stage words stay
   pin('> .rd-sheet{flex-direction:row;');                                       // one row with Run details ›
-  pin('.rd-prog:focus-visible{');                                               // the hidden track carried the focus ring
+  pin('.rd-now-top > .run-status-bar:focus-visible{');                          // the hidden track carried the focus ring
   // the existing Results / Live view fold is still there
   assert.match(css, /\.rd-glance\[data-shaper-wait\]:not\(\[data-wait-open\]\) :is\(\.rd-result,\.rd-live,\.rd-live-row\)\{display:none;\}/);
 });

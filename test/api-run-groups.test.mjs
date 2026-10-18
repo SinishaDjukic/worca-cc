@@ -52,6 +52,7 @@ test('API: group routes answer 201 / 400 / 200 / 409 / 404 and GET lists the gro
   const got = (await get('/api/run-groups')).body.groups.find((x) => x.id === g.body.group.id);
   assert.deepEqual(got.members.map((m) => m.pipelineId), [a, b]);
   assert.equal(got.cost.usd, 2, 'the group total (D32)');
+  assert.equal(got.planning, null, 'a user group has no planning run (slice 4, D8)');
   assert.equal((await del(`/api/run-groups/members/${b}`)).status, 200);
   assert.equal((await del(`/api/run-groups/members/${b}`)).status, 404);
   assert.equal((await get('/api/run-groups')).body.groups.find((x) => x.id === g.body.group.id).members.length, 1);

@@ -25,12 +25,12 @@ function pipelineRows(ids) {
   return new Map(rows.map((r) => [r.id, r]));
 }
 
-/** Every group the Runs list folds rows into: { id, kind:'feature'|'user', title, projectKey, members:[{position,
+/** Every group the Runs list folds rows into: { id, kind:'feature'|'user', title, projectKey, planning, members:[{position,
  *  title, pipelineId, ticketId, status, pr, ticket, adhoc, after}] }. Features: every one not replaced by a re-plan,
  *  finished ones included. A group with no listable member is left out. */
 export function listRunGroups() {
   const db = getDb();
-  const feats = db.prepare("SELECT id, title FROM shape_features WHERE status != 'replanned' ORDER BY created_at").all();
+  const feats = db.prepare("SELECT id, title, origin_pipeline_id FROM shape_features WHERE status != 'replanned' ORDER BY created_at").all();
   const users = db.prepare('SELECT id, title, project_key FROM run_groups ORDER BY created_at').all();
   const fids = feats.map((f) => f.id);
   const slices = fids.length ? db.prepare(`SELECT s.feature_id, s.idx, s.title, s.ticket_id, COALESCE(s.pipeline_id, t.pipeline_id) AS pipeline_id
@@ -39,7 +39,8 @@ export function listRunGroups() {
   const gids = [...fids, ...users.map((u) => u.id)];
   const adhoc = gids.length ? db.prepare(`SELECT pipeline_id, group_id, position FROM run_group_members
     WHERE group_id IN (${qs(gids)}) ORDER BY group_id, position`).all(...gids) : [];
-  const rows = pipelineRows([...new Set([...slices.map((s) => s.pipeline_id), ...adhoc.map((a) => a.pipeline_id)].filter(Boolean))]);
+  const origins = feats.map((f) => f.origin_pipeline_id).filter(Boolean);
+  const rows = pipelineRows([...new Set([...slices.map((s) => s.pipeline_id), ...adhoc.map((a) => a.pipeline_id), ...origins].filter(Boolean))]);
   const member = (position, title, pipelineId, ticketId, isAdhoc) => {
     const p = pipelineId ? rows.get(pipelineId) : null;
     const tk = !pipelineId && ticketId ? getTicket(ticketId) : null;
@@ -55,9 +56,18 @@ export function listRunGroups() {
     const extra = adhoc.filter((a) => a.group_id === id && rows.has(a.pipeline_id));
     return [...base, ...extra.map((a, i) => member(base.length + i + 1, '', a.pipeline_id, null, true))];
   };
-  const out = feats.map((f) => ({ id: f.id, kind: 'feature', title: f.title, projectKey: null,
-    members: withAfter(withAdhoc(f.id, slices.filter((s) => s.feature_id === f.id).map((s) => member(s.idx, s.title, s.pipeline_id, s.ticket_id, false)))) }));
-  for (const u of users) out.push({ id: u.id, kind: 'user', title: u.title, projectKey: u.project_key || null, members: withAfter(withAdhoc(u.id, [])) });
+  // Spec §2.3, decision 4: a planning run counts in the group bar, listed as "Planning", never in the count. The
+  // origin run is normally slice 1 itself (createSliceFeature), already in the bar: only a separate one is named.
+  const planningOf = (f, sliceIds) => {
+    const p = f.origin_pipeline_id && !sliceIds.has(f.origin_pipeline_id) ? rows.get(f.origin_pipeline_id) : null;
+    return p ? { pipelineId: p.id, title: 'Planning', status: p.status } : null;
+  };
+  const out = feats.map((f) => {
+    const own = slices.filter((s) => s.feature_id === f.id);
+    return { id: f.id, kind: 'feature', title: f.title, projectKey: null, planning: planningOf(f, new Set(own.map((s) => s.pipeline_id).filter(Boolean))),
+      members: withAfter(withAdhoc(f.id, own.map((s) => member(s.idx, s.title, s.pipeline_id, s.ticket_id, false)))) };
+  });
+  for (const u of users) out.push({ id: u.id, kind: 'user', title: u.title, projectKey: u.project_key || null, planning: null, members: withAfter(withAdhoc(u.id, [])) });
   return out.filter((g) => g.members.length).map((g) => ({ ...g, cost: groupCost(g) }));
 }
 

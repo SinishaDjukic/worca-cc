@@ -53,17 +53,17 @@ test('controller: a card goes live from the run store, repaints on frames (never
   const ctl = createRunCardController({ controls: { prHost: () => true }, runStore: store, tickMs: 0 });
   const built = ctl.build(BLOCK, ctx);
   doc.body.appendChild(built.el);
-  assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Planner');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working');
   assert.deepEqual(fetches, [], 'a run in the live map is never fetched');
   assert.equal(typeof built.handle.relayout, 'function');
   assert.equal(built.handle.parts.graph, built.el.querySelector('.chat-rc-well'));
   store.snaps.set('run-uuid-1', liveSnap({ status: 'done', terminal: true, active: [] }, { status: 'done', active: [] }));
   store.poke('run-uuid-1', 'log');
   await settle();
-  assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Planner', 'a log line repaints nothing');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working', 'a log line repaints nothing');
   store.poke('run-uuid-1', 'done');
   await settle();
-  assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Done');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'ready');
   assert.deepEqual(fetches, ['/api/ask/runs/abcd1234'], 'the finished run\'s facts, once');
   assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Ready to ship', 'REST facts merged into the live snapshot');
   assert.equal(built.el.querySelector('.chat-rc-file-path').textContent, 'a.mjs');
@@ -86,7 +86,7 @@ test('controller: REST hydration for runs this tab gets no frames for — on bui
       doc.body.appendChild(built.el);
       await settle();
       assert.equal(fetches.length, 1);
-      assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Planner', 'painted from REST');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working', 'painted from REST');
       ctl.tick();
       assert.equal(fetches.length, 1, 'not yet due');
       t += PROGRESS_REHYDRATE_MS;
@@ -109,7 +109,7 @@ test('controller: REST hydration for runs this tab gets no frames for — on bui
       const built = ctl.build(BLOCK, ctx);
       doc.body.appendChild(built.el);
       await settle();
-      assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Starting');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'starting');
       assert.equal(built.el.querySelector('.ask-rc-title').textContent, 'Fix login', 'the identity title');
       ctl.destroy();
     } },
@@ -140,7 +140,7 @@ test('controller: a started run proposal learns its pipeline id from the store, 
       doc.body.appendChild(built.el);
       await settle();
       assert.deepEqual(fetches, ['/api/ask/runs/abcd1234']);
-      assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Done');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'ready');
       ctl.destroy();
     } },
     { name: 'a failed launch', run: async () => {
@@ -217,7 +217,7 @@ test('controller: a finished run paints from its persisted state once read — t
   const built = ctl.build(BLOCK, ctx);
   doc.body.appendChild(built.el);
   await settle();
-  assert.equal(built.el.querySelector('.ask-rc-prog').textContent, 'Finished');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'ready', 'the persisted state: a finished run');
   assert.equal(built.el.querySelectorAll('.chat-rc-graph .node.is-skipped').length, 0);
   built.dispose();
 });
@@ -265,7 +265,7 @@ test('controller: the 1 s tick repaints a live card from the store; a 200 for AN
       doc.body.appendChild(built.el);
       await settle();
       assert.equal(built.el.querySelector('.ask-rc-title').textContent, 'Fix login');
-      assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Starting');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'starting');
       ctl.destroy();
     } },
   ]);
@@ -367,7 +367,7 @@ test('controller: a REST read older than the store\'s finished run never repaint
   const built = ctl.build(BLOCK, ctx);
   doc.body.appendChild(built.el);
   await settle();
-  assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Done');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'ready');
   ctl.destroy();
 });
 

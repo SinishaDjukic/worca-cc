@@ -129,3 +129,17 @@ test('§2.4: a re-planned feature\'s total includes the earlier round', () => {
     outline: OUTLINE, perspectives: [], workflowId: 'wf_shape', replaces: f.id });
   assert.equal(listRunGroups().find((x) => x.id === next).cost.usd, 2.75, 'new planning run + the old round\'s two runs');
 });
+
+test('planning: null while slice 1 is the planning run; the origin run once slice 1 was restarted', () => {
+  const f = featureWithTwoDone();
+  let g = listRunGroups().find((x) => x.id === f.id);
+  assert.equal(g.planning, null, 'the origin run is slice 1: never counted twice');
+  assert.equal(g.members[0].pipelineId, f.s1);
+  // Slice 1 restarted: its row now points at a new run, the origin stays the earlier planning run.
+  seedPipelineRow({ id: 'p-slice1-restart', status: 'running' });
+  getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 1').run('p-slice1-restart', f.id);
+  g = listRunGroups().find((x) => x.id === f.id);
+  assert.deepEqual(g.planning, { pipelineId: f.s1, title: 'Planning', status: 'done' });
+  assert.ok(!g.members.some((m) => m.pipelineId === f.s1), 'planning is not counted as a member');
+  for (const u of listRunGroups().filter((x) => x.kind === 'user')) assert.equal(u.planning, null);
+});

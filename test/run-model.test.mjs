@@ -1,7 +1,7 @@
 // test/run-model.test.mjs — the one run model over every row of spec §2.1 (single and group), PR state and count.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runModel, groupModel, prState, RUN_STATES, ACTION_LABEL } from '../src/shared/run-model.mjs';
+import { runModel, groupModel, prState, RUN_STATES, ACTION_LABEL, finishedNeedsYou } from '../src/shared/run-model.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -183,4 +183,44 @@ test('a slice whose PR fails checks raises the group to Needs you but still coun
   assert.equal(g.line, 'Run 2 of 3 · needs you');
   assert.deepEqual(g.actions, ['open-pr'], 'no question to answer, nothing to stop');
   assert.equal(g.prNeeds, false, 'slice 3 still waits: the group is not finished');
+});
+
+test('D22 rounds: "Running · Round 2 · STAGE", the request for a Watch PR round; round 1 and finished runs unchanged', () => {
+  const r2 = runModel(R({ ...inBuild, round: { n: 2, request: 'add a tag filter', by: 'person' } }), OPTS);
+  assert.deepEqual([r2.state, r2.line, r2.lineSaysState, r2.actions], ['working', 'Running · Round 2 · Build', true, ['pause', 'stop']]);
+  // The raw marker the Shaper feature writes (branch.roundOf) reads the same.
+  const w = runModel(R({ ...inBuild, branch: { feature: 'feat/x', roundOf: { pipelineId: 'p1', round: 2, request: 'fix failing checks', by: 'watch' } } }), OPTS);
+  assert.equal(w.line, 'Running · Round 2 · fix failing checks');
+  assert.equal(runModel(R({ ...inBuild, round: { n: 1, request: 'x' } }), OPTS).line, 'Build · step: Implementation', 'round 1 is the run itself');
+  const ask = runModel(R({ steps: [row('n_clarify', 'start')], active: [live('n_clarify')], round: { n: 3 },
+    pendingQuestion: { kind: 'clarify', questions: [{}, {}] } }), OPTS);
+  assert.equal(ask.line, 'Round 3 · Plan · needs you: 2 questions');
+  assert.equal(runModel(R({ status: 'done', endReached: true, pr: PR, round: { n: 2 } }), OPTS).line, 'In review · PR #759');
+  const g = groupModel({ kind: 'feature', members: [{ status: 'done' }, R({ ...inBuild, round: { n: 2 } }), { ticket: { status: 'scheduled', after: { index: 2 } } }] }, OPTS);
+  assert.equal(g.line, 'Run 2 of 3 · round 2 · Build');
+  assert.equal(g.members.length, 3, 'a round adds no member');
+  assert.equal(g.count.text, '1/3');
+});
+
+test('D23 Watch PR: a live fix round reads Fixing and never Needs you; a stopped watch is Needs you with its own line and actions', () => {
+  const fixing = runModel({ status: 'done', pr: ghPr({ checks: FAIL }), watch: { status: 'fixing', reason: null, fixRuns: 1 } });
+  assert.deepEqual([fixing.state, fixing.symbol, fixing.pr.word, fixing.prNeeds, fixing.actions], ['in-review', null, 'Fixing', false, ['open-pr']]);
+  for (const status of ['starting', 'publishing']) assert.equal(runModel({ status: 'done', pr: ghPr({ checks: FAIL }), watch: { status } }).pr.word, 'Fixing');
+  const stopped = runModel({ status: 'done', pr: ghPr({ checks: FAIL }), watch: { status: 'needs-person', reason: 'cap', fixRuns: 3 } });
+  assert.deepEqual([stopped.state, stopped.symbol, stopped.prNeeds, stopped.line, stopped.actions],
+    ['needs-you', 'question', true, 'Needs you · Watch stopped · 3 fix runs, checks still failing', ['open-pr', 'ask-changes']]);
+  assert.equal(ACTION_LABEL['ask-changes'], 'Ask for changes');
+  assert.equal(runModel({ status: 'done', pr: ghPr(), watch: { status: 'needs-person', reason: 'fix-failed', fixRuns: 1 } }).line,
+    'Needs you · Watch stopped · 1 fix run, the last fix run failed');
+  assert.equal(runModel({ status: 'done', pr: ghPr({ state: 'MERGED' }), watch: { status: 'needs-person', reason: 'cap', fixRuns: 3 } }).state, 'merged');
+  assert.equal(runModel({ status: 'done', pr: ghPr(), watch: { status: 'watching' } }).state, 'in-review', 'a quiet watch changes nothing');
+  assert.equal(runModel(R({ ...inBuild, watch: { status: 'needs-person', reason: 'cap', fixRuns: 3 } }), OPTS).state, 'working', 'a live run is never raised');
+  // The list reads the same rule (its Needs you section and the sidebar count).
+  assert.equal(finishedNeedsYou({ status: 'done', pr: ghPr(), watch: { status: 'needs-person', reason: 'cap', fixRuns: 3 } }), true);
+  assert.equal(finishedNeedsYou({ status: 'done', pr: ghPr({ checks: FAIL }), watch: { status: 'fixing' } }), false);
+  assert.equal(finishedNeedsYou({ status: 'done', pr: ghPr({ checks: FAIL }) }), true);
+  // A group whose current member stopped its watch offers that member's actions and still counts it as done.
+  const g = groupModel({ kind: 'feature', members: [{ status: 'done', pr: ghPr({ state: 'MERGED' }) },
+    { status: 'done', pr: ghPr(), watch: { status: 'needs-person', reason: 'cap', fixRuns: 3 } }] });
+  assert.deepEqual([g.state, g.count.text, g.actions], ['needs-you', '2/2', ['open-pr', 'ask-changes']]);
 });

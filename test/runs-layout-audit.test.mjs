@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { auditRunsLayout } from '../tools/runs-layout-audit.mjs';
+import { auditRunsLayout, auditGroupPageLayout } from '../tools/runs-layout-audit.mjs';
 
 const html = `<div id="l">
   <div class="runs-item" data-state-word="Working"><a class="runs-row"><span class="runs-row-title">A</span><span class="runs-row-right" id="r1"></span><span class="runs-row-sub">Build</span><div class="runs-stage"><div class="run-prog-track" id="b1"></div><div class="run-prog-marks">Plan Build Review Ready</div></div></a></div>
@@ -23,4 +23,21 @@ test('fails on a right edge 6px off (Known bug 5), a menu off-screen (Known bug 
   doc.getElementById('s2').textContent = 'Merged · Fri';
   const bad = env({ r1: R(300, 334), b1: R(30, 340, 40, 44), r2: R(260, 340, 60, 80), m: R(250, 450, 10, 200) });
   assert.deepEqual(auditRunsLayout(doc.getElementById('l'), bad, doc).map((p) => p.rule).sort(), ['fact-twice', 'off-screen', 'right-edge']);
+});
+
+test('group page: title, card, tabs and table share edges; Open buttons line up', () => {
+  const doc = new JSDOM(`<!doctype html><body><div class="gpage"><header class="gpage-head"></header><section class="gpage-card"></section>
+    <nav class="gpage-tabs"></nav><div class="gpage-panel"><ol class="run-members is-table">
+    <li class="run-member"><a class="run-member-open">Open</a></li><li class="run-member"><a class="run-member-open">Open</a></li></ol></div></div></body>`).window.document;
+  const rects = new Map([['.gpage-head', R(20, 980, 0, 40)], ['.gpage-card', R(20, 980, 50, 200)], ['.gpage-tabs', R(20, 980, 210, 240)], ['.run-members', R(20, 980, 250, 330)]]);
+  const opens = [R(920, 980, 260, 288), R(920, 980, 300, 328)];
+  const openEls = [...doc.querySelectorAll('.run-member-open')];
+  const env = { rect: (e) => (e.classList.contains('run-member-open') ? opens[openEls.indexOf(e)] : rects.get([...rects.keys()].find((k) => e.matches(k)))),
+    viewport: { width: 1000, height: 800 } };
+  assert.deepEqual(auditGroupPageLayout(doc.querySelector('.gpage'), env, doc), []);
+  opens[1] = R(900, 960, 300, 328);
+  rects.set('.gpage-tabs', R(20, 990, 210, 240));
+  const problems = auditGroupPageLayout(doc.querySelector('.gpage'), env, doc);
+  assert.ok(problems.some((p) => p.rule === 'edges' && p.selector === '.gpage-tabs'));
+  assert.ok(problems.some((p) => p.rule === 'open-column'));
 });

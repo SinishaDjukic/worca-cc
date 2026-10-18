@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { auditButtons, BUTTON_SPEC } from './button-audit.mjs';
+import { auditGroupPageLayout } from './runs-layout-audit.mjs';
 
 const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium'];
@@ -162,8 +163,8 @@ check(runs.ownRow === 0, 'no separate row for slice 2\'s run');
 await auditButtonsBoth('the Runs list');
 const runsShot = await shot('runs');
 
-// ---- the feature page
-await cdp('Page.navigate', { url: `${base}/#feature/${f.id}` });
+// ---- the feature page: the Shaper view now lives on the group page's Overview tab (runs redesign slice 4, D14)
+await cdp('Page.navigate', { url: `${base}/#feature/${f.id}/overview` });
 await waitFor("!!document.querySelector('[data-view=\"feature\"] .shape-feature.is-page')", 'the feature page');
 const page = await ev(`(() => {
   const el = document.querySelector('[data-view="feature"] .shape-feature.is-page');
@@ -194,6 +195,22 @@ const pageShot = await shot('page');
 // A second ⋯ click closes the menu (toggleMenu); a document-level Escape would not reach the menu's own keydown.
 await ev("document.querySelector('[data-view=\"feature\"] .shape-feature-more').click(), !document.querySelector('.wfv-menu')");
 await auditButtonsBoth('the feature page');
+
+// ---- the group page (runs redesign slice 4, D21): title row, status card, tabs and Runs table share their edges,
+// and every row's Open ends at one x, at 375 and 1440 in light and dark.
+const LAYOUT_AUDIT = `(${auditGroupPageLayout})(document.querySelector('.gpage'), null, document)`;
+for (const width of [375, 1440]) {
+  await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
+  await cdp('Page.navigate', { url: `${base}/?w=${width}#feature/${f.id}` });
+  await waitFor("!!document.querySelector('[data-view=\"feature\"] .gpage .run-members.is-table')", `the group page at ${width}`);
+  for (const theme of ['light', 'dark']) {
+    await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
+    const bad = await ev(LAYOUT_AUDIT);
+    check(bad.length === 0, `the group page at ${width}px, ${theme}: one column, Open buttons aligned${bad.length ? ` — ${JSON.stringify(bad)}` : ''}`);
+  }
+  await auditButtonsBoth(`the group page at ${width}px`);
+}
+await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 check(errors.length === 0, `no page errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
 console.log(`screenshots:\n  ${runsShot}\n  ${pageShot}`);
 console.log(failed ? `${failed} check(s) FAILED` : 'all checks passed');

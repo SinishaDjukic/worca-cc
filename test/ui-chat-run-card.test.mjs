@@ -11,6 +11,8 @@ import { snapshotFromState } from '../ui/public/ask-run-card.mjs';
 import { createChatRunCard, resultWord, answerReceipt, autoChip, midTrunc, progressIdent, runRefOf } from '../ui/public/chat/run-card.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from '../ui/public/ask/registry.mjs';
 import { setShapeFirst } from './helpers/shape-gate.mjs';
+import { RUN_STATE_ROWS, NOW } from './helpers/run-states.mjs';
+import { runModel, groupModel } from '../src/shared/run-model.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
@@ -43,7 +45,8 @@ function mk({ controls = {} } = {}) {
   const card = createChatRunCard({ doc, win: dom.window, snapshot: null, ctx, controls, ident: { ...IDENT }, refresh: () => refreshed.push(1) });
   doc.body.appendChild(card.el);
   const $ = (sel) => card.el.querySelector(sel);
-  return { dom, doc, card, calls, refreshed, $, win: dom.window };
+  const $$ = (sel) => [...card.el.querySelectorAll(sel)];
+  return { dom, doc, card, calls, refreshed, $, $$, win: dom.window };
 }
 
 // The run page's clarify registrant, as far as the card uses it: collect() reads the panel's answer slots.
@@ -69,14 +72,17 @@ test('chat run card: head, sub-line, stats, agent chips with model + cycle, Auto
       const { card, $, calls } = mk();
       card.update(live());
       assert.ok(card.el.classList.contains('ask-card') && card.el.classList.contains('chat-rc'));
-      assert.equal($('.ask-rc-kicker').textContent, 'Pipeline run');
-      assert.equal($('.ask-rc-pill').className, 'ask-rc-pill st-green');
-      assert.equal($('.ask-rc-pill-text').textContent, 'Implementer');
+      // Runs redesign slice 4 (D10): dot · title · kind chip · Open; no kicker, no pill (one statement of status).
+      assert.equal($('.ask-rc-kicker'), null);
+      assert.equal($('.ask-rc-pill'), null);
+      assert.equal($('.ask-rc-head > .status-dot').dataset.state, 'working');
+      assert.equal($('.ask-rc-head > .kind-chip').textContent, 'Run');
+      assert.equal($('.chat-rc-status.run-status').dataset.state, 'working');
       assert.equal($('.ask-rc-title').textContent, 'Fix login');
       assert.equal($('.ask-rc-sub').textContent, 'proj · #abcd1234');
       assert.equal($('.ask-rc-time').textContent, '1m 5s');
       assert.equal($('.ask-rc-cost').textContent, '$0.42');
-      assert.equal($('.ask-rc-prog').textContent, 'Implementer', 'the P5 text replaces "n/m agents" for a graph run');
+      assert.equal($('.ask-rc-prog'), null, 'no Progress tile repeating the status line (Known bug 9)');
       assert.equal($('.chat-rc-agent .chat-rc-agent-name').textContent, 'Implementer');
       const well = $('.chat-rc-well');
       assert.equal(well.hidden, false);
@@ -90,7 +96,7 @@ test('chat run card: head, sub-line, stats, agent chips with model + cycle, Auto
       assert.deepEqual(calls[0][2], {});
       assert.deepEqual(calls[1][2], { tab: 'workflow' });
       assert.equal($('.chat-rc-expand').getAttribute('aria-label'), 'Expand');
-      assert.equal($('a.ask-rc-open').textContent, 'Open run ›');
+      assert.equal($('a.ask-rc-open').textContent, 'Open ›');
     } },
     { name: 'chips name the model and the cycle; the agent a question waits on turns amber', run: async () => {
       const { card, $ } = mk();
@@ -102,7 +108,8 @@ test('chat run card: head, sub-line, stats, agent chips with model + cycle, Auto
       assert.equal(chip.querySelector('.chat-rc-agent-cycle').textContent, 'cycle 2');
       assert.ok(chip.classList.contains('is-waiting'));
       assert.equal(chip.style.getPropertyValue('--c'), 'var(--amber)');
-      assert.equal($('.ask-rc-pill-text').textContent, 'Waiting for your answer');
+      assert.equal($('.chat-rc-status').dataset.state, 'needs-you');
+      assert.match($('.chat-rc-status .run-status-text').textContent, /needs you: 1 question$/i);
     } },
     { name: 'Auto: the sub-line chip names the adopted workflow; while deciding the well says so and draws no graph — and, like the run page, says when the run waits, is parked or never decided', run: async () => {
       const { card, $ } = mk();
@@ -172,7 +179,7 @@ test('chat run card controls: Pause / Resume / Stop through `controls`, disabled
       assert.equal($('.chat-rc-pause').textContent, 'Resume');
       assert.equal($('.chat-rc-pause').disabled, false);
     } },
-    { name: 'starting and pausing disable Pause; paused and interrupted offer Resume; interrupted hides Stop (R7)', run: async () => {
+    { name: 'starting and pausing disable Pause; paused and interrupted offer Resume; interrupted disables Stop (R7)', run: async () => {
       const resumed = [];
       const { card, $ } = mk({ controls: { resume: (ref, btn) => { resumed.push(btn); return Promise.resolve(); } } });
       card.update(live({ status: 'starting', active: [] }));
@@ -180,6 +187,9 @@ test('chat run card controls: Pause / Resume / Stop through `controls`, disabled
       card.update(live({ status: 'pausing' }));
       assert.equal($('.chat-rc-pause').textContent, 'Pausing…');
       assert.equal($('.chat-rc-pause').disabled, true);
+      const resumes = [...card.el.querySelectorAll('[data-model-action="resume"]')].filter((b) => !b.hidden);
+      assert.ok(resumes.length, 'the model lists resume while pausing');
+      assert.deepEqual(resumes.filter((b) => !b.disabled).map((b) => b.className), [], 'no enabled Resume while still pausing (D4)');
       card.update(live({ status: 'paused', active: [] }));
       assert.equal($('.chat-rc-pause').textContent, 'Resume');
       assert.equal($('.chat-rc-pause').disabled, false);
@@ -188,7 +198,9 @@ test('chat run card controls: Pause / Resume / Stop through `controls`, disabled
       assert.deepEqual(resumed, [$('.chat-rc-pause')]);
       card.update(live({ status: 'interrupted', active: [] }));
       assert.equal($('.chat-rc-pause').textContent, 'Resume');
-      assert.equal($('.chat-rc-stop').hidden, true, 'an interrupted run is never stoppable');
+      assert.equal($('.chat-rc-stop').hidden, false, 'the model lists Stop for a parked run');
+      assert.equal($('.chat-rc-stop').disabled, true, 'an interrupted run is never stoppable');
+      assert.equal($('.chat-rc-stop').title, 'An interrupted run cannot be stopped');
     } },
     { name: 'a run this tab holds no live model of (a REST snapshot) offers Stop only while paused: /api/stop {pipelineId} stops a paused row, never a run another process drives', run: async () => {
       const { card, $ } = mk();
@@ -196,14 +208,17 @@ test('chat run card controls: Pause / Resume / Stop through `controls`, disabled
       for (const status of ['starting', 'running', 'pausing']) {
         card.update(rest({ status }));
         assert.equal($('.chat-rc-foot').hidden, false, status);
-        assert.equal($('.chat-rc-stop').hidden, true, `${status}: nothing in this tab can stop it`);
+        assert.equal($('.chat-rc-stop').hidden, false, `${status}: the model lists Stop`);
+        assert.equal($('.chat-rc-stop').disabled, true, `${status}: nothing in this tab can stop it`);
+        assert.equal($('.chat-rc-stop').title, 'Open the run to stop it');
       }
       card.update(rest({ status: 'paused', active: [] }));
-      assert.equal($('.chat-rc-stop').hidden, false, 'a paused row stops by pipeline id');
+      assert.equal($('.chat-rc-stop').disabled, false, 'a paused row stops by pipeline id');
       card.update(live());
-      assert.equal($('.chat-rc-stop').hidden, false, 'the live model arrived (hello): Stop is back');
+      assert.equal($('.chat-rc-stop').disabled, false, 'the live model arrived (hello): Stop is back');
+      assert.equal($('.chat-rc-stop').title, 'Stop this pipeline');
     } },
-    { name: 'Stop calls controls.stop(ref, onStopped); onStopped asks the owner to refresh; a finished run has no footer', run: async () => {
+    { name: 'Stop calls controls.stop(ref, onStopped); onStopped asks the owner to refresh; a Ready run\'s Ship it is the result\'s Create pull request', run: async () => {
       let stopped = null;
       const { card, $, refreshed } = mk({ controls: { stop: (ref, onStopped) => { stopped = [ref.pipelineId, onStopped]; } } });
       card.update(live());
@@ -212,7 +227,8 @@ test('chat run card controls: Pause / Resume / Stop through `controls`, disabled
       stopped[1]();
       assert.equal(refreshed.length, 1);
       card.update(done(null));
-      assert.equal($('.chat-rc-foot').hidden, true);
+      assert.equal($('.chat-rc-foot').hidden, true, 'the footer holds nothing: Ship it is the result\'s button');
+      assert.equal($('.chat-rc-create-pr').dataset.modelAction, 'ship');
     } },
   ]);
 });
@@ -968,7 +984,9 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
         const line = $('.chat-rc-shaped');
         assert.equal(line.hidden, false);
         assert.equal(line.previousElementSibling, $('.ask-rc-sub'));
-        assert.equal(line.nextElementSibling, $('.ask-rc-stats'));
+        assert.equal(line.nextElementSibling, $('.chat-rc-members'), 'a group card\'s member rows sit between (slice 4)');
+        assert.equal($('.chat-rc-members').hidden, true, 'a single run has none');
+        assert.equal($('.chat-rc-members').nextElementSibling, $('.ask-rc-stats'));
         assert.equal($('.chat-rc-shaped-stages').textContent, 'Clarify ✓ · Plan ✓ · Refine ✓ while planning');
         assert.equal($('.chat-rc-shaped-plan').textContent, 'Plan: 2026-10-14-login.md');
         assert.equal($('.chat-rc-shaped-saved'), null, 'not saved: no Saved to');
@@ -1056,7 +1074,8 @@ test('chat run card: the feature strip mounts the feature card for snap.shaping.
         assert.equal($('.chat-rc-shaped').hidden, true);
         assert.equal($('.chat-rc-feature').hidden, false);
         assert.equal(calls.filter((c) => c[0] === 'feature').at(-1)[2], 'feat-2');
-        assert.equal($('.chat-rc-shaped').nextElementSibling, $('.ask-rc-stats'), 'the pin: shaped line → stats');
+        assert.equal($('.chat-rc-shaped').nextElementSibling, $('.chat-rc-members'), 'the pin: shaped line → (hidden) member rows → stats');
+        assert.equal($('.chat-rc-members').nextElementSibling, $('.ask-rc-stats'));
       } },
       { name: 'a later snapshot without the feature hides a shown strip', run: () => {
         setShapeFirst(true);
@@ -1161,27 +1180,26 @@ test('chat run card result region: the checklist tally of a shaped run (spec D7)
   }
 });
 
-test('chat run card progress bar (P9): compact bar + P5 text for a live graph snapshot; v1, stopped and red snapshots hide the bar', async () => {
+test('chat run card progress bar (P9, slice 4): the status block\'s bar from the one model; stopped and finished runs hide it', async () => {
   await checkRows([
-    { name: 'live snapshot with stageProgress shows the bar and the P5 text in the Progress tile', run: () => {
+    { name: 'a live snapshot shows the status block\'s bar, and no Progress tile', run: () => {
       const { card, $ } = mk();
-      const snap = live({ progress: { done: 1, total: 2 }, stageProgress: { mode: 'stages', text: 'Build · task 2 of 4', tone: 'blue', fraction: 0.4, stages: [], passes: 0 } });
-      card.update(snap);
-      assert.equal($('.chat-rc-prog').hidden, false);
-      assert.ok($('.chat-rc-prog').classList.contains('run-prog') && $('.chat-rc-prog').classList.contains('is-compact'));
-      assert.equal($('.ask-rc-prog').textContent, 'Build · task 2 of 4');
-      assert.equal($('.chat-rc-prog').dataset.tone, 'blue', 'the compact bar wears the snapshot tone');
+      card.update(live());
+      const bar = $('.chat-rc-status .run-status-bar');
+      assert.equal(bar.hidden, false);
+      assert.ok(bar.classList.contains('run-prog'));
+      assert.equal($('.ask-rc-prog'), null, 'the bar replaces the Progress tile');
+      assert.equal($('.chat-rc-prog'), null);
     } },
-    { name: 'a v1 snapshot without stageProgress hides the bar and keeps "n/m agents"', run: () => {
+    { name: 'a paused run keeps its bar', run: () => {
       const { card, $ } = mk();
-      card.update(live({ progress: { done: 2, total: 5 }, stageProgress: null }));
-      assert.equal($('.chat-rc-prog').hidden, true);
-      assert.equal($('.ask-rc-prog').textContent, '2/5 agents');
+      card.update(live({ status: 'paused', active: [] }));
+      assert.equal($('.chat-rc-status .run-status-bar').hidden, false);
     } },
-    { name: 'a stopped (red) snapshot hides the bar', run: () => {
+    { name: 'a stopped run hides the bar', run: () => {
       const { card, $ } = mk();
-      card.update(live({ status: 'stopped', progress: null, stageProgress: { mode: 'stages', text: 'Stopped', tone: 'red', fraction: 0.3, stages: [], passes: 0 } }));
-      assert.equal($('.chat-rc-prog').hidden, true);
+      card.update(live({ status: 'stopped' }));
+      assert.equal($('.chat-rc-status .run-status-bar').hidden, true);
     } },
     { name: 'a frozen done state that reached the end gives stageProgress.fraction 1, green, Finished', run: () => {
       const snap = snapshotFromState(STATE({ status: 'done', endReached: true, active: [], steps: [step({ executionId: 'x:n_plan:1', nodeId: 'n_plan', ordinal: 1 }), step({ executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1 })] }), { now: 0 });
@@ -1193,4 +1211,116 @@ test('chat run card progress bar (P9): compact bar + P5 text for a live graph sn
       assert.equal(snapshotFromState(STATE({ stepper: null }), { now: 0 }).stageProgress, null);
     } },
   ]);
+});
+
+test('slice 4: the card head, status block and footer come from the one model for every §2.1 state', async () => {
+  await checkRows(RUN_STATE_ROWS.map(({ state, run, symbol }) => ({ name: state, run: () => {
+    const { card, $, $$ } = mk({ controls: { memoFor: () => ({}), groupOf: () => null } });
+    card.update(live({ status: run.status || '', pendingQuestion: run.pendingQuestion || null, run }));
+    const m = runModel(run, { now: NOW, timeZone: 'UTC' });
+    assert.equal($('.chat-rc .run-status').dataset.state, state);
+    assert.equal($('.chat-rc .kind-chip').textContent, 'Run');
+    const dot = $('.chat-rc .ask-rc-head > .status-dot');
+    if (symbol) assert.equal(dot.getAttribute('aria-label'), m.word);
+    assert.deepEqual($$('.chat-rc [data-model-action]').filter((b) => !b.hidden && !b.closest('[hidden]')).map((b) => b.dataset.modelAction), m.actions);
+  } })));
+});
+
+test('slice 4: a feature card shows the kind chip, the group bar, the current run bar and member rows; no feature strip', () => {
+  const done = { status: 'done', endReached: true };
+  const asking = RUN_STATE_ROWS.find((r) => r.state === 'needs-you').run;
+  const model = groupModel({ kind: 'feature', title: 'Run tags', planning: done, members: [done, asking, { ticket: { status: 'scheduled', after: { index: 2 } } }] }, { now: NOW });
+  const row = { kind: 'chain', groupKind: 'feature', groupId: 'feat_1', title: 'Run tags', model, count: model.count.text,
+    planning: { title: 'Planning', href: '#running/r0', model: model.planning },
+    members: model.members.map((m, i) => ({ position: i + 1, title: `Slice ${i + 1}`, href: '#runs', model: m })) };
+  const { card, $, $$ } = mk({ controls: { memoFor: () => ({}), groupOf: () => row } });
+  card.update(live({ status: 'running', run: asking, shaping: { feature: { id: 'feat_1' } } }));
+  assert.equal($('.chat-rc .kind-chip').textContent, 'Feature · 3 runs');
+  assert.equal($('.chat-rc .ask-rc-title').textContent, 'Run tags');
+  assert.equal($('.chat-rc .run-status-group').hidden, false);
+  assert.equal($('.chat-rc .run-status-group .run-chain-label').textContent, '1 done');
+  assert.equal($$('.chat-rc .run-status-bar .run-prog-sec').length, 4);
+  assert.equal($$('.chat-rc .run-members .run-member').length, 4, 'Planning + 3');
+  assert.equal($('.chat-rc .chat-rc-feature').hidden, true);
+  assert.equal($('.chat-rc .ask-rc-open').getAttribute('href'), '#feature/feat_1');
+});
+
+test('slice 4: a group card acts on its current member, and its Open follows the group href', () => {
+  const asking = RUN_STATE_ROWS.find((r) => r.state === 'needs-you').run;
+  const model = groupModel({ kind: 'chain', members: [{ status: 'done' }, asking] }, { now: NOW });
+  // As groupRow builds it: the row's runId / pipelineId are the current member's (run 2 here).
+  const row = { kind: 'chain', groupKind: 'chain', groupId: 'g_1', title: 'Two runs', model, runId: 'run-other', pipelineId: 'p-other',
+    planning: null, members: model.members.map((m, i) => ({ position: i + 1, title: `Run ${i + 1}`, href: '#runs', model: m,
+      runId: i === 1 ? 'run-other' : '', pipelineId: i === 1 ? 'p-other' : `p-${i}`, run: i === 1 ? asking : { status: 'done' } })) };
+  const acts = [];
+  const { card, $, $$ } = mk({ controls: { memoFor: () => ({}), groupOf: () => row,
+    act: (ref, id, btn, m, r) => acts.push([ref.runId, id, r === row]) } });
+  card.update(live({ status: 'done', run: { status: 'done' } }));
+  assert.deepEqual($$('.chat-rc .chat-rc-actions > button').filter((b) => !b.hidden).map((b) => b.dataset.modelAction), ['answer', 'stop']);
+  assert.equal($('.chat-rc .chat-rc-pause').hidden, true, 'the card\'s own Pause is not used for a group');
+  $('.chat-rc [data-model-action="stop"]').click();
+  assert.deepEqual(acts, [['run-other', 'stop', true]], 'Stop targets the current member with the group row (groupAction), never the card\'s own run');
+  assert.equal($('.chat-rc .chat-rc-create-pr')?.dataset.modelAction, undefined,
+    'the card\'s own Create pull request never stands for the group\'s ship');
+  const ev = new card.el.ownerDocument.defaultView.MouseEvent('click', { bubbles: true, cancelable: true });
+  $('.chat-rc .ask-rc-open').dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, false, 'Open follows #group/g_1');
+});
+
+test('slice 4: a card painted before its group was known: its own Stop stops the group, never only its run', () => {
+  const asking = RUN_STATE_ROWS.find((r) => r.state === 'needs-you').run;
+  const model = groupModel({ kind: 'chain', members: [{ status: 'running' }, asking] }, { now: NOW });
+  const row = { kind: 'chain', groupKind: 'user', groupId: 'g_1', title: 'My group', model, planning: null, members: [] };
+  let known = null;
+  const acts = [], stops = [];
+  const { card, $ } = mk({ controls: { memoFor: () => ({}), groupOf: () => known,
+    act: (ref, id, btn, m, r) => acts.push([id, r]), stop: (ref) => stops.push(ref) } });
+  card.update(live({ status: 'running' }));
+  assert.equal($('.chat-rc .chat-rc-stop').hidden, false, 'painted as a single run');
+  known = row;                                       // the groups load; no frame repainted this card yet
+  $('.chat-rc .chat-rc-stop').click();
+  assert.deepEqual(acts, [['stop', row]], 'the group\'s Stop (groupAction)');
+  assert.deepEqual(stops, []);
+});
+
+test('slice 4: a stopped, resumable run shows a made Resume, never the Pause button', () => {
+  const { card, $ } = mk({ controls: { memoFor: () => ({}), groupOf: () => null } });
+  card.update(live({ status: 'stopped', run: { status: 'stopped', resumable: true } }));
+  assert.equal($('.chat-rc .chat-rc-pause').hidden, true);
+  assert.equal($('.chat-rc [data-model-action="resume"]').textContent, 'Resume');
+});
+
+test('slice 4: the snapshot\'s status wins over a stale raw run; one Resume, no made Pause', () => {
+  const { card, $$ } = mk({ controls: { memoFor: () => ({}), groupOf: () => null } });
+  // live(over) lays `status` over a snapshot whose `run` (from snapshotFromState) still reads running.
+  card.update(live({ status: 'paused' }));
+  const shown = $$('.chat-rc .chat-rc-actions > button').filter((b) => !b.hidden);
+  assert.deepEqual(shown.map((b) => b.dataset.modelAction), ['resume', 'stop']);
+  assert.ok(shown[0].classList.contains('chat-rc-pause'), 'the own Pause / Resume button, reading Resume, is the one shown');
+  assert.ok(shown[0].classList.contains('btn-primary'), 'Resume is the primary, as on the run page');
+});
+
+test('slice 4: before the first snapshot the card reads Starting with no actions', () => {
+  const { card, $, $$ } = mk({ controls: { memoFor: () => ({}), groupOf: () => null } });
+  card.update(null);
+  assert.equal($('.chat-rc .run-status').dataset.state, 'starting');
+  assert.deepEqual($$('.chat-rc [data-model-action]').filter((b) => !b.hidden), [], 'never an Archive that acts before the run is known');
+});
+
+test('slice 4: paused, then stopped and resumable: a made Resume, the old button stays hidden; Stop re-enables', () => {
+  const { card, $ } = mk({ controls: { memoFor: () => ({}), groupOf: () => null } });
+  card.update(live({ status: 'interrupted' }));
+  assert.equal($('.chat-rc [data-model-action="stop"]').disabled, true);
+  card.update(live({ status: 'paused' }));
+  assert.equal($('.chat-rc [data-model-action="stop"]').disabled, false, 'the interrupted reason went');
+  card.update(live({ status: 'stopped', run: { status: 'stopped', resumable: true } }));
+  assert.equal($('.chat-rc .chat-rc-pause').hidden, true, 'its paused-run action was cleared');
+  assert.equal($('.chat-rc .chat-rc-actions > button[data-model-action="resume"]:not(.chat-rc-pause)').textContent, 'Resume');
+});
+
+test('slice 4: a finished live run with an open PR on the snapshot reads In review, as the list does', () => {
+  const { card, $ } = mk({ controls: { memoFor: () => ({}), groupOf: () => null } });
+  card.update(live({ status: 'done', pr: { url: 'https://github.com/acme/app/pull/759', number: 759, state: 'OPEN' },
+    run: { status: 'done', endReached: true } }));
+  assert.equal($('.chat-rc .run-status').dataset.state, 'in-review');
 });
