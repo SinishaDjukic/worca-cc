@@ -164,3 +164,12 @@ test('approveLabel names the outcome; shaperWait only for Shaper steps with the 
   assert.equal(shaperWait({ pendingQuestion: { kind: 'plan' } }, true), null, 'unshaped');
   assert.equal(shaperWait(shaped(null), true), null, 'nothing pending');
 });
+
+test('buildPerspectiveChips: hidden keys are not offered — no chip, not in value(), not in "+ N more"', () => {
+  const open = buildPerspectiveChips(newDoc(), { picked: ['qa', 'fit'], hidden: ['fit'], collapsed: false });
+  assert.equal(open.el.querySelectorAll('.shape-chip').length, PERSPECTIVES.length - 1);
+  assert.equal(open.el.querySelector('[data-perspective="fit"]'), null);
+  assert.deepEqual(open.value(), ['product', 'qa']);
+  const shut = buildPerspectiveChips(newDoc(), { picked: ['architect', 'qa'], hidden: ['fit'] });
+  assert.equal(shut.el.querySelector('.shape-chip-more').textContent, `+ ${PERSPECTIVES.length - 1 - 3} more`);
+});

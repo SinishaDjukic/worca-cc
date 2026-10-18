@@ -384,6 +384,17 @@ test('role reviews: a role slice prompt carries its own brief and markers only, 
   assert.doesNotMatch(plain, /## Your role:|MOCK_PERSPECTIVE|MOCK_CHECKLIST/);
 });
 
+test('role reviews: only the Project fit slice carries the house brief', () => {
+  const brief = '# House brief\n\n## Components\n- ui/public/shape/check-row.mjs — rows\n';
+  const fit = buildAgentPrompt({ ...roleSliceCtx('fit', []), houseBrief: brief });
+  assert.match(fit, /^## Project fit: the house brief$/m);
+  assert.match(fit, /^# House brief$/m);
+  assert.match(fit, /^MOCK_PERSPECTIVE: fit$/m);
+  const ux = buildAgentPrompt({ ...roleSliceCtx('ux', []), houseBrief: brief });
+  assert.doesNotMatch(ux, /House brief/);
+  for (const key of ['planner', 'refiner', 'planReviewer']) assert.doesNotMatch(promptFor(key), /House brief/, key);
+});
+
 test('role reviews: the refiner renders the findings directive and MOCK_FINDINGS only when findings is bound', () => {
   const bound = promptFor('refiner', { only: ['plan', 'findings'] });
   assert.match(bound, /## Role reviews/);

@@ -2,6 +2,7 @@
 // the nudge (open decisions, both choices with estimates) on a nudged one. null when the card has neither.
 import { buildPerspectiveChips } from './chips.mjs';
 import { SHAPE_ATTENTION } from './plan-text.mjs';
+import { chipsHiddenFor } from '../../../src/shared/shape/perspectives.mjs';
 
 const usd = (n) => `$${Number(n || 0).toFixed(2)}`;
 /** One choice's estimate, planning and build apart (D28); the history-only medians, or "no estimate yet". A card stored
@@ -16,7 +17,7 @@ export function shapeCardExtras(doc, card) {
   const el = h('div', 'shape-card');
   const picked = card.shape ? card.shape.perspectives : card.nudge.perspectives;
   // UX picks wf_shape_ux at start; the server re-derives it (resolveShapeRequest), so every chip is free here.
-  const chips = buildPerspectiveChips(doc, { picked, collapsed: true });
+  const chips = buildPerspectiveChips(doc, { picked, hidden: chipsHiddenFor(picked), collapsed: true });
   if (card.nudge) {
     const n = card.nudge;
     if (n.openDecisions.length) {

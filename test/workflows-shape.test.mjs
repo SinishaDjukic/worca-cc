@@ -1,6 +1,6 @@
 // test/workflows-shape.test.mjs — the reserved Shape it first workflows (wf_shape, wf_shape_ux) and the
 // shaped-run helpers in src/core/shape/run.mjs.
-import { test, after } from 'node:test';
+import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import {
@@ -20,6 +20,15 @@ import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { loadScriptRegistry } from '../src/core/script-registry.mjs';
 import { validateGraph } from '../src/shared/graph/validate.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execSync } from 'node:child_process';
+import { gitDir } from './helpers/git-dir.mjs';
+import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { _testing } from '../src/core/graph/executor.mjs';
+import { runClaude } from '../src/core/claude-runner.mjs';
 import { RESERVED_WORKFLOW_IDS as COMPOSER_RESERVED } from '../ui/public/graph/composer.mjs';
 
 useTempHome(after);
@@ -240,4 +249,62 @@ test('validatePlanAnswer: revise takes an optional source; only check is carried
   assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'person' }).payload, { decision: 'revise', feedback: 'x' });
   assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'check' }).payload, { decision: 'revise', feedback: 'x', source: 'check' });
   assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'bot' }).errors, [{ path: 'source', code: 'invalid', message: 'source must be person or check' }]);
+});
+
+// ── Project fit (slice 3): the house brief reaches the fit reviewer only ──
+
+// settings.json resolves through HOME, not WORCA_HOME: sandbox it for the shaped runs below.
+let sandboxHome;
+const prevEnv = {};
+const ENV = ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK', 'WORCA_MOCK_ROLE_REVIEW'];
+before(async () => {
+  sandboxHome = await mkdtemp(join(tmpdir(), 'worca-wfshape-home-'));
+  for (const k of ENV) prevEnv[k] = process.env[k];
+  process.env.HOME = sandboxHome;
+  process.env.USERPROFILE = sandboxHome;
+  process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+  delete process.env.WORCA_MOCK_ROLE_REVIEW;
+});
+afterEach(() => { _testing.runClaude = null; });
+after(async () => {
+  for (const k of ENV) { if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k]; }
+  await rm(sandboxHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+});
+
+/** A mock wf_shape run on a project with one committed component (so it has a house brief); every prompt captured. */
+async function shapedRun(perspectives) {
+  const dir = gitDir('fit');
+  mkdirSync(join(dir, 'ui/public/shape'), { recursive: true });
+  writeFileSync(join(dir, 'ui/public/shape/check-row.mjs'), '// ui/public/shape/check-row.mjs — the shape check row: one row per check.\nexport const row = 1;\n');
+  execSync('git add -A && git -c user.email=t@t -c user.name=t commit -qm brief', { cwd: dir });
+  const prompts = [];
+  _testing.runClaude = (o) => { prompts.push(o.prompt); return runClaude(o); };
+  const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_shape', prompt: 'demo', claude: { mock: true }, shape: { perspectives } });
+  const execs = [];
+  orch.on('exec', (e) => execs.push(e));
+  orch.on('question', (q) => {
+    if (q.kind === 'plan') setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
+    else if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+  });
+  await orch.run();
+  return { prompts, execs };
+}
+const reviewerKeys = (prompts) => prompts.filter((p) => /^MOCK_ROLE: plan-review$/m.test(p))
+  .map((p) => /^MOCK_PERSPECTIVE: (\S+)$/m.exec(p)?.[1]).sort();
+const BRIEF_RE = /^# House brief$/m;
+
+test('Project fit unticked: no fit reviewer starts and no prompt carries the house brief', async () => {
+  const { prompts, execs } = await shapedRun(['product', 'qa']);
+  assert.deepEqual(reviewerKeys(prompts), ['product', 'qa']);
+  assert.equal(execs.some((e) => e.nodeId === 'n_roles' && e.kind === 'task' && e.title === 'Project fit'), false);
+  assert.equal(prompts.filter((p) => BRIEF_RE.test(p)).length, 0);
+});
+
+test('Project fit ticked: only the fit reviewer\'s prompt carries the house brief', async () => {
+  const { prompts } = await shapedRun(['product', 'qa', 'fit']);
+  assert.deepEqual(reviewerKeys(prompts), ['fit', 'product', 'qa']);
+  const withBrief = prompts.filter((p) => BRIEF_RE.test(p));
+  assert.equal(withBrief.length, 1);
+  assert.match(withBrief[0], /^MOCK_PERSPECTIVE: fit$/m);
+  assert.match(withBrief[0], /ui\/public\/shape\/check-row\.mjs — the shape check row/);
 });

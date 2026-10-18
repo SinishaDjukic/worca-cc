@@ -1,6 +1,6 @@
 // src/shared/shape/role-review.mjs — role reviews (spec §3): one planReviewer per picked perspective.
 // Pure and browser-safe: the orchestrator, the executor's prompt and (slice 4) the Plan step card import it.
-import { perspectiveByKey, normalizePerspectives } from './perspectives.mjs';
+import { perspectiveByKey, normalizePerspectives, FIT_KEY } from './perspectives.mjs';
 import { extractChecklist } from './checklist.mjs';
 
 export const ROLE_REVIEW_MAX_ROUNDS = 2;
@@ -40,6 +40,9 @@ export function roleBriefBlock(key, planMarkdown) {
     : 'Your role has no checklist: judge "Problem and goal" and "Out of scope".';
   return `## Your role: ${p.label}\n\n` +
     `You review this plan as **${p.label}** only. ${p.help} ${rule}\n\n` +
+    (p.rules
+      ? 'Judge the plan by these rules:\n\n' + p.rules.map((r, i) => `- \`R-${p.checklist}-${i + 1}\` ${r}`).join('\n') + '\n\n'
+      : '') +
     'Find what is wrong; do NOT rewrite the plan. You do not see the other roles\' reviews.\n\n' +
     (items.length
       ? 'Give a verdict on each of these plan items:\n\n' + items.map((i) => `- \`${i.id}\`: ${oneLine(i.text)}`).join('\n') + '\n\n'
@@ -47,6 +50,16 @@ export function roleBriefBlock(key, planMarkdown) {
     'In the review JSON, every issue carries `severity`, `title`, `section` (the plan section) and `fix` ' +
     '(one concrete change). Add `"checklist": [{ "id": "R-…", "status": "met" | "unmet" | "na", "evidence": "…" }]`, ' +
     'one entry per item above.\n\n';
+}
+
+/** The house brief for the Project fit reviewer ONLY (slice 3): '' for every other role, so no other prompt changes. */
+export function houseBriefBlock(key, brief) {
+  if (key !== FIT_KEY) return '';
+  const text = String(brief || '').trim();
+  return '## Project fit: the house brief\n\n' + (text
+    ? 'Judge every `R-fit` item against this brief. When the plan adds a part the brief already lists, name that ' +
+      'existing repo path in the finding\'s `title` and `fix`.\n\n' + text + '\n\n'
+    : 'This project has no house brief yet: judge the `R-fit` items against the codebase alone.\n\n');
 }
 
 /** One reviewer's raw verdict JSON → the stored role record. Ids are `role-round-n` (`ux-1-2`). Every expected

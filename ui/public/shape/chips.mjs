@@ -1,8 +1,10 @@
 // ui/public/shape/chips.mjs — perspective chips (spec D4): Product locked on; `fixed` keys cannot be toggled.
 import { PERSPECTIVES } from '../../../src/shared/shape/perspectives.mjs';
 
-export function buildPerspectiveChips(doc, { picked, fixed = [], collapsed = true, onChange = () => {} }) {
-  const on = new Set(['product', ...picked]);
+export function buildPerspectiveChips(doc, { picked, fixed = [], hidden = [], collapsed = true, onChange = () => {} }) {
+  // `hidden` keys are not offered: no chip, not in value(), not in "+ N more".
+  const offered = PERSPECTIVES.filter((p) => !hidden.includes(p.key));
+  const on = new Set(['product', ...picked.filter((k) => !hidden.includes(k))]);
   const el = doc.createElement('div');
   el.className = 'shape-chips';
   el.setAttribute('role', 'group');
@@ -11,10 +13,10 @@ export function buildPerspectiveChips(doc, { picked, fixed = [], collapsed = tru
   more.type = 'button';
   more.className = 'shape-chip-more';
   let collapsedNow = collapsed;
-  const value = () => PERSPECTIVES.map((p) => p.key).filter((k) => on.has(k));
+  const value = () => offered.map((p) => p.key).filter((k) => on.has(k));
   const paint = () => {
     el.replaceChildren();
-    const shown = PERSPECTIVES.filter((p) => !collapsedNow || on.has(p.key));
+    const shown = offered.filter((p) => !collapsedNow || on.has(p.key));
     for (const p of shown) {
       const b = doc.createElement('button');
       b.type = 'button';
@@ -29,7 +31,7 @@ export function buildPerspectiveChips(doc, { picked, fixed = [], collapsed = tru
       b.addEventListener('click', () => { if (on.has(p.key)) on.delete(p.key); else on.add(p.key); paint(); onChange(value()); });
       el.appendChild(b);
     }
-    const rest = PERSPECTIVES.length - shown.length;
+    const rest = offered.length - shown.length;
     if (collapsedNow && rest > 0) { more.textContent = `+ ${rest} more`; el.appendChild(more); }
   };
   more.addEventListener('click', () => { collapsedNow = false; paint(); });

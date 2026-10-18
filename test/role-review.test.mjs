@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { rolesForRound, roleBriefBlock, roleRecord, roleItems, refinerVerdict, applyAddressed, openBlocking, findingsMarkdown }
+import { rolesForRound, roleBriefBlock, houseBriefBlock, roleRecord, roleItems, refinerVerdict, applyAddressed, openBlocking, findingsMarkdown }
   from '../src/shared/shape/role-review.mjs';
 
 // A recorded Shaper plan (real data): the 18 Oct "Shaper as chat cards" plan v2, copied verbatim.
@@ -53,4 +53,21 @@ test('findingsMarkdown: one section per role, ids and unmet items listed', () =>
   assert.match(md, /^## UX$/m);
   assert.match(md, /\*\*ux-1-1\*\* \[major\]/);
   assert.match(md, /R-ux-1: unmet/);
+});
+
+const FIT_PLAN = readFileSync(new URL('./fixtures/fit-review/check-row-duplicate-plan.md', import.meta.url), 'utf8');
+
+test('roleBriefBlock(fit) names the five rules and lists the plan\'s R-fit items', () => {
+  const b = roleBriefBlock('fit', FIT_PLAN);
+  assert.match(b, /## Your role: Project fit/);
+  for (let i = 1; i <= 5; i++) assert.match(b, new RegExp(`\`R-fit-${i}\``));
+  assert.doesNotMatch(b, /`R-qa-|`R-arch-/);
+});
+
+test('houseBriefBlock: the brief for fit only, a plain line when there is none', () => {
+  const brief = '# House brief\n\n## Components\n- ui/public/shape/check-row.mjs — rows\n';
+  assert.match(houseBriefBlock('fit', brief), /## Project fit: the house brief[\s\S]*# House brief[\s\S]*check-row\.mjs/);
+  for (const k of ['product', 'ux', 'qa', 'architect', 'security']) assert.equal(houseBriefBlock(k, brief), '', k);
+  assert.match(houseBriefBlock('fit', ''), /no house brief yet/);
+  assert.doesNotMatch(houseBriefBlock('fit', ''), /# House brief/);
 });

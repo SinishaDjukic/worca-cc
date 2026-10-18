@@ -36,7 +36,8 @@ import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
 import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureApprovesEach, featureClarify } from './shape/features.mjs';
 import { checkSlices, applyOutlineEdits, normalizeOutline, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
-import { DEFAULT_PERSPECTIVES, perspectiveByKey } from '../shared/shape/perspectives.mjs';
+import { DEFAULT_PERSPECTIVES, perspectiveByKey, FIT_KEY } from '../shared/shape/perspectives.mjs';
+import { ensureHouseBrief } from './house-brief.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
 import { applyChecklist, checklistFindingsMarkdown } from '../shared/shape/review-checklist.mjs';
 import { rolesForRound, roleTaskId, roleItems, roleRecord, findingsMarkdown, refinerVerdict, applyAddressed } from '../shared/shape/role-review.mjs';
@@ -1250,6 +1251,14 @@ export class GraphOrchestrator extends RunHarness {
     return Array.isArray(this.runShape?.perspectives) ? [...this.runShape.perspectives] : [...DEFAULT_PERSPECTIVES];
   }
 
+  /** Slice 3: the primary project's house brief for the Project fit reviewer, rebuilt only when a source hash changed.
+   *  '' when there is none or the build fails: a broken source never stops a review. */
+  async _fitHouseBrief() {
+    const m = this.members?.[0];
+    if (!m?.projectKey || !m.projectDir) return '';
+    try { return (await ensureHouseBrief({ projectKey: m.projectKey, projectDir: m.projectDir })).brief || ''; } catch { return ''; }
+  }
+
   /** Update plan (S5): the next Planner/Refine prompt and shape check use the new list; the resume point keeps it. */
   _setShapePerspectives(perspectives) {
     this.runShape = { ...(this.runShape || {}), perspectives: [...perspectives] };
@@ -1643,6 +1652,7 @@ export class GraphOrchestrator extends RunHarness {
     if (ctx.role) {
       const plan = this._rolePlanBinding(args);
       ctx.rolePlanText = plan?.path ? await readFile(plan.path, 'utf8').catch(() => '') : '';
+      if (ctx.role === FIT_KEY) ctx.houseBrief = await this._fitHouseBrief();
     }
     await this._humanCursorInit(ctx);
     this._execStep(ctx, 'start');

@@ -52,7 +52,7 @@ import {
 import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
 import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
-import { roleBriefBlock, roleItems } from '../../shared/shape/role-review.mjs';
+import { roleBriefBlock, roleItems, houseBriefBlock } from '../../shared/shape/role-review.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
 import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
 import { runScriptExecution } from './script-runner.mjs';
@@ -548,6 +548,8 @@ export function buildAgentPrompt(ctx) {
   const title = meta.displayName || node?.key || node?.id || 'agent';
   // Spec §3: a role reviewer's prompt carries ITS role brief only (ctx.role is set per composite slice).
   const roleBrief = ctx.role ? roleBriefBlock(ctx.role, ctx.rolePlanText || '') : '';
+  // Slice 3: the house brief rides on the Project fit reviewer only (houseBriefBlock is '' for any other role).
+  const houseBrief = ctx.role ? houseBriefBlock(ctx.role, ctx.houseBrief) : '';
   // The siblings block is for implementer tasks sharing a tree; other reviewers are not shown (spec §3).
   const siblings = ctx.slice && !ctx.role ? siblingsBlock(ctx.slice.siblings) : '';
   const answersBlock = (ports.inputs || []).some((p) => p?.as === 'answers')
@@ -562,6 +564,7 @@ export function buildAgentPrompt(ctx) {
     (hints ? hints + '\n\n' : '') +
     perspectives +
     roleBrief +
+    houseBrief +
     sliceScope +
     slicing +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +

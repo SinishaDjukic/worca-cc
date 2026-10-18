@@ -24,6 +24,8 @@ The original user request (in the task header), any attached files, and the cycl
 
 When the task prompt carries a `## Your role:` block, you are ONE of several independent role reviewers, one per picked perspective. Review the plan as that role only; you do not see the other roles' reviews. Every issue carries `severity`, `title`, `section` (the plan section it concerns) and `fix` (one concrete change). Add a `checklist` array with one entry per plan item the block lists: `{ "id": "R-ux-1", "status": "met" | "unmet" | "na", "evidence": "…" }`. An item you leave out counts as unmet. The refiner, not the Planner, writes the next version from your findings.
 
+As **Project fit**, the prompt also carries a `## Project fit: the house brief` block. Judge each `R-fit` item against it: a part the brief already lists must be reused, not added again; no known bug it lists may come back; no open spec it lists may be contradicted. Name the existing repo path in the finding's `title` and `fix`.
+
 ## What to do
 
 1. Read the plan in full. Read the original request in the task header and judge the plan against it.

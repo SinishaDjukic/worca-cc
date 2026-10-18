@@ -5,7 +5,7 @@
 import { buildPerspectiveChips } from './chips.mjs';
 import { planStats, perspectiveChangeFeedback, fixAllFeedback, sectionOwners, planSummary, checkLine, unmetLine,
   approveLabel } from './plan-text.mjs';
-import { perspectiveByKey, PERSPECTIVES } from '../../../src/shared/shape/perspectives.mjs';
+import { perspectiveByKey, PERSPECTIVES, chipsHiddenFor } from '../../../src/shared/shape/perspectives.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
 
@@ -143,7 +143,7 @@ export function renderPlanBody(panel, pq, deps) {
     if (plan.revisable) {
       const update = btn('plan-update', 'Update plan'); update.disabled = true;
       const same = (v) => v.length === was.length && v.every((k) => was.includes(k));   // order-free
-      const chips = buildPerspectiveChips(doc, { picked: perspectives, fixed: ['ux'], collapsed: false,
+      const chips = buildPerspectiveChips(doc, { picked: perspectives, fixed: ['ux'], hidden: chipsHiddenFor(perspectives), collapsed: false,
         onChange: (v) => { update.disabled = same(v); } });
       afterSubmit = () => { update.disabled = same(chips.value()); };
       update.addEventListener('click', () => {
