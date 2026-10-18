@@ -4672,10 +4672,12 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
       const remote = isSafeRemoteName(b.sync?.remote) ? b.sync.remote : effectiveSyncSettings(key).remote;
       const f = await fetchRemote(dir, { remote, maxAgeMs: INTERACTIVE_TTL_MS });
       if (!f.ok && (f.kind === 'no-remote' || f.kind === 'bad-remote')) return null;
-      const st = await syncStatus(dir, { base: b.source, remote });
+      // A source of `origin/dev` is measured as `dev` on origin (prBaseBranch).
+      const base = await prBaseBranch(dir, b.source, [remote]);
+      const st = await syncStatus(dir, { base, remote });
       if (!st.ok) return null;
       if (!st.hasLocal && !st.hasRemote) {
-        // Not a branch at all (a tag, or 'origin/dev', both accepted by isValidSourceRef):
+        // Not a branch at all (a tag, or another remote's 'upstream/dev', both accepted by isValidSourceRef):
         // nothing to measure. Only a source that resolves nowhere is "missing".
         if (await isValidSourceRef(dir, b.source)) return null;
         return { projectKey: key, base: b.source, remote, exists: false, onRemote: false, movedBy: null, stale: !f.ok };
@@ -4684,8 +4686,8 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
       // fetch, baseSha is a local tip that may already have been behind, and baseSha..remote would
       // count commits that landed BEFORE the run as "since this run started".
       const from = b.sync?.remoteSha || b.baseSha;
-      const movedBy = from && st.hasRemote ? await commitsBetween(dir, from, `refs/remotes/${remote}/${b.source}`) : null;
-      return { projectKey: key, base: b.source, remote, exists: true, onRemote: st.hasRemote, movedBy, stale: !f.ok };
+      const movedBy = from && st.hasRemote ? await commitsBetween(dir, from, `refs/remotes/${remote}/${base}`) : null;
+      return { projectKey: key, base, remote, exists: true, onRemote: st.hasRemote, movedBy, stale: !f.ok };
     });
     return rows.filter(Boolean);
   } catch { return []; /* never block a resume on a read error */ }
