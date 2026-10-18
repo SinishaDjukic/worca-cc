@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <title>Worca CC</title>
+    <title>Worca</title>
     <link rel="stylesheet" href="/style.css" />
     <!-- Feature flags (docs/feature-flags.md): the server fills this with one rule per flag that is off. -->
     <style id="flag-gates"></style>
@@ -658,48 +658,31 @@
         <!-- ===== VIEW: RUNS — active, scheduled and finished runs: one list, one content pane ===== -->
         <section class="view hidden" data-view="runs">
           <div class="runs-shell" id="runs-shell" data-layout="split">
-            <div class="runs-list-pane" id="runs-list-pane">
+            <!-- tabindex="-1": a click on the pane's blank area keeps focus here, so ⌘A / Ctrl+A reaches its keydown listener. -->
+            <div class="runs-list-pane" id="runs-list-pane" tabindex="-1">
               <div class="runs-head">
-                <span class="runs-head-tools">
-                  <!-- "Group by" (runs-list.mjs RUNS_GROUPINGS): app.js keeps aria-checked and the menu. -->
-                  <span class="runs-group-wrap">
-                    <button type="button" class="btn btn-sm btn-quiet btn-icon runs-search-btn runs-group-btn" id="runs-group-btn" aria-label="Group runs"
-                            title="Group runs" aria-haspopup="menu" aria-expanded="false" aria-controls="runs-group-menu">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h11M4 18h7"></path></svg>
-                    </button>
-                    <div class="runs-group-menu" id="runs-group-menu" role="menu" aria-label="Group runs by" hidden>
-                      <button type="button" role="menuitemradio" data-group-by="project" aria-checked="true">Group by project</button>
-                      <button type="button" role="menuitemradio" data-group-by="date" aria-checked="false">Group by date</button>
-                    </div>
-                  </span>
-                  <!-- Archived runs (issue #575): the soft-deleted list, restore included. Advanced
-                       (docs/ui-levels.md). A header toggle, not a fifth chip: it swaps the list's
-                       source rather than narrowing it, and the chip row has no room at the pane's floor. -->
-                  <button type="button" class="btn btn-sm btn-quiet btn-icon runs-search-btn runs-archived-btn" id="runs-archived-btn" data-min-level="advanced"
-                          aria-label="Archived runs" title="Archived runs" aria-pressed="false">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5"></rect><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"></path><path d="M10 13h4"></path></svg>
-                  </button>
-                  <button type="button" class="btn btn-sm btn-quiet btn-icon runs-search-btn" id="runs-search-btn" aria-label="Search runs"
-                          aria-expanded="false" aria-controls="runs-search-row">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg>
-                  </button>
-                </span>
+                <h2 class="runs-head-title">Runs</h2>
+                <!-- The one View menu (runs-view-menu.mjs): Show, Group by, Started by, Select. -->
+                <button type="button" class="btn btn-sm btn-quiet runs-view-btn" id="runs-view-btn" aria-haspopup="menu" aria-expanded="false">
+                  View <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9.5l6 6 6-6"></path></svg>
+                </button>
+                <input type="checkbox" class="runs-check runs-all" id="runs-all" aria-label="Select all visible runs">
               </div>
-              <div class="runs-search-row" id="runs-search-row" hidden>
-                <input type="search" id="runs-search" class="runs-search" placeholder="Status, project or name"
-                       aria-label="Search runs by status, project or name" autocomplete="off" spellcheck="false">
+              <div class="runs-view-chip" id="runs-view-chip" hidden>
+                <span class="runs-view-chip-t"></span>
+                <button type="button" class="btn btn-sm btn-quiet btn-icon runs-view-reset" aria-label="Reset view" title="Reset view">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"></path></svg>
+                </button>
               </div>
-              <!-- Which runs the list shows (runs-list.mjs RUNS_FILTERS); app.js keeps aria-pressed. -->
-              <div class="seg runs-filter" id="runs-filter" role="group" aria-label="Show runs">
-                <button type="button" data-filter="all" aria-pressed="true" class="on">All</button>
-                <button type="button" data-filter="live" aria-pressed="false">Live</button>
-                <button type="button" data-filter="finished" aria-pressed="false">Finished</button>
-                <button type="button" data-filter="needs" aria-pressed="false">Needs you</button>
-              </div>
-              <div class="select-wrap runs-tag-wrap" data-flag="runTags"><select id="runs-tag" class="select runs-tag" aria-label="Filter by tag"><option value="">All tags</option></select></div>
-              <!-- "Started by" pills, shared deployments only: one scrolling row. Built by renderRunsPeople(). -->
-              <div class="hist-filter runs-people" id="historyFilter" role="group" aria-label="Filter runs by who started them" hidden></div>
               <div class="runs-list" id="runs-list" aria-label="Runs"></div>
+              <!-- The selection's actions (runs-selection.mjs): each shows how many runs it applies to. -->
+              <div class="runs-bulk" id="runs-bulk" role="toolbar" aria-label="Selected runs" hidden>
+                <span class="runs-bulk-n" id="runs-bulk-n">0 selected</span>
+                <button type="button" class="btn btn-sm" data-bulk="stop">Stop <span class="runs-bulk-c">0</span></button>
+                <button type="button" class="btn btn-sm" data-bulk="archive">Archive <span class="runs-bulk-c">0</span></button>
+                <button type="button" class="btn btn-sm btn-danger" data-bulk="delete" data-min-level="advanced">Delete <span class="runs-bulk-c">0</span></button>
+                <button type="button" class="btn btn-sm btn-quiet" data-bulk="cancel">Cancel</button>
+              </div>
             </div>
             <div class="runs-pane" id="runs-pane" data-kind="">
               <div class="runs-empty" id="runs-empty">

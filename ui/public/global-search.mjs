@@ -55,16 +55,20 @@ function runRows(live, history, now) {
   const hs = (Array.isArray(history) ? history : [])
     .filter((p) => p && p.id && !p.archived && !listed.has(String(p.id)))
     .map((p) => histRow(p, now));
-  return [...lv, ...hs].map((r) => ({
-    row: {
-      kind: 'run', id: r.key, title: r.title, meta: [r.groupName, r.word].filter(Boolean).join(' · '),
-      tone: r.needs ? 'need' : r.icon === 'run' || r.icon === 'start' ? 'run' : r.icon === 'fail' ? 'fail' : 'idle',
-      href: r.href,
-    },
-    hay: [r.title, r.groupName, r.word].join(' ').toLowerCase(),
-    tier: r.needs ? 0 : r.kind === 'live' && !ENDED_ICONS.has(r.icon) ? 1 : 2,
-    at: Number.isFinite(r.activityMs) ? r.activityMs : Number.isFinite(r.sortMs) ? r.sortMs : -Infinity,
-  }));
+  return [...lv, ...hs].map((r) => {
+    const tags = (r.tags || []).map(String);
+    return {
+      row: {
+        kind: 'run', id: r.key, title: r.title, meta: [r.groupName, r.word].filter(Boolean).join(' · '),
+        tone: r.needs ? 'need' : r.icon === 'run' || r.icon === 'start' ? 'run' : r.icon === 'fail' ? 'fail' : 'idle',
+        href: r.href,
+      },
+      tags,                                 // on the item, not the row: test/ui-global-search.test.mjs deepEquals rows
+      hay: [r.title, r.groupName, r.word, ...tags].join(' ').toLowerCase(),   // D26: ⌘K finds a run by its tags
+      tier: r.needs ? 0 : r.kind === 'live' && !ENDED_ICONS.has(r.icon) ? 1 : 2,
+      at: Number.isFinite(r.activityMs) ? r.activityMs : Number.isFinite(r.sortMs) ? r.sortMs : -Infinity,
+    };
+  });
 }
 
 function otherRows(src, tz) {
@@ -131,6 +135,14 @@ export function searchRows(sources = {}, query = '', { now = Date.now(), tz = lo
   const q = words.join(' ');
   const pick = (items, cmp, limit) => items
     .filter((it) => words.every((w) => it.hay.includes(w)))
+    // A run found only by a tag names that tag in its meta ("proj · Merged · client:acme").
+    .map((it) => {
+      if (it.row.kind !== 'run' || !it.tags || !it.tags.length) return it;
+      const base = `${it.row.title} ${it.row.meta}`.toLowerCase();
+      if (words.every((w) => base.includes(w))) return it;
+      const tag = it.tags.find((t) => words.some((w) => t.toLowerCase().includes(w)));
+      return tag ? { ...it, row: { ...it.row, meta: [it.row.meta, tag].filter(Boolean).join(' · ') } } : it;
+    })
     .map((it) => ({ ...it, rank: titleRank(it.row.title, q, words[0]) }))
     .sort(cmp).slice(0, limit).map((it) => it.row);
   return { runs: pick(runs, byRun, RUN_LIMIT), other: pick(otherRows(src, tz), byOther, OTHER_LIMIT) };

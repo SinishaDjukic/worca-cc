@@ -1519,19 +1519,6 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .retained-banner .wt-manual summary{cursor:pointer;font-weight:600;}
 .hist-empty{color:var(--ink-2);font-size:13px;padding:22px 4px;text-align:center;}
 
-/* ---------- Started-by filter pills (the Runs list's .runs-people row) ---------- */
-/* The base pill row; `.hist-filter.runs-people` (the Runs block) makes it one static
-   row that scrolls sideways. */
-.hist-filter{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;
-  gap:8px;margin:0 0 14px;padding:12px 0;background:var(--bg);}
-.hist-pill{display:inline-flex;align-items:center;gap:7px;background:var(--panel);
-  border:1.5px solid var(--line-2);border-radius:var(--r-xs);padding:7px 14px;font-weight:600;
-  font-size:12.5px;color:var(--ink-2);cursor:pointer;white-space:nowrap;
-  transition:border-color .12s,color .12s,background .12s;}
-.hist-pill:hover{border-color:var(--ink-3);color:var(--ink);}
-.hist-pill.active{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
-.hist-pill .pill-count{font-size:11px;font-weight:600;opacity:.7;}
-
 /* ---------- Saved-markdown viewer ---------- */
 .viewer{font-family:var(--mono);font-size:12.5px;line-height:1.7;background:var(--canvas-2);border:1px solid var(--line);
   border-radius:var(--r-card);padding:18px 20px;max-height:480px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:0;}
@@ -4470,93 +4457,72 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 .runs-shell{position:relative;height:100%;display:grid;grid-template-columns:clamp(260px,24%,320px) minmax(0,1fr);grid-template-rows:minmax(0,1fr);overflow:hidden;}
 .runs-list-pane{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-right:1px solid var(--line);}
+.runs-list-pane:focus{outline:none;}
 .runs-head{flex:none;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 14px 6px 20px;}
-.runs-search-btn.on{background:var(--hover);color:var(--ink);}   /* the open search / menu */
-.runs-head-tools{display:flex;align-items:center;gap:2px;}
-.runs-group-wrap{position:relative;display:flex;}
-.runs-group-btn[aria-expanded="true"]{background:var(--hover);color:var(--ink);}
-.runs-group-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5;min-width:180px;
-  display:flex;flex-direction:column;gap:2px;padding:6px;background:var(--panel);
-  border:1px solid var(--line-2);border-radius:var(--r-card);box-shadow:var(--shadow-menu);}
-.runs-group-menu[hidden]{display:none;}
-.runs-group-menu button{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border:0;border-radius:var(--r-sm);
-  background:transparent;color:var(--ink-2);font:600 13px var(--sans);text-align:left;cursor:pointer;}
-.runs-group-menu button:hover,.runs-group-menu button:focus-visible{background:var(--hover);color:var(--ink);outline:none;}
-.runs-group-menu button[aria-checked="true"]{color:var(--ink);}
-/* icon: check */
-.runs-group-menu button[aria-checked="true"]::after{content:"";width:12px;height:12px;margin-left:auto;background:currentColor;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/12px no-repeat;}
-.runs-search-row{flex:none;padding:0 12px 10px;}
-.runs-search-row[hidden]{display:none;}
-/* The filter chips: .seg chrome, tightened to fit the 270px list pane on one row. */
-.seg.runs-filter{display:flex;flex:none;margin:0 12px 12px;padding:3px;gap:2px;border-radius:var(--r-sm);}
-.seg.runs-filter button{flex:1 1 auto;padding:6px 8px;border-radius:var(--r-sm);font-size:12.5px;white-space:nowrap;}
-.seg.runs-filter button:not(.on):hover{color:var(--ink);}
-/* A bare input[type=search] matches none of the global field rules (text/number only), so it is
-   skinned here the way .pal-filter is; the UA placeholder grey is 2.6:1 on dark. */
-.runs-search{display:block;width:100%;box-sizing:border-box;-webkit-appearance:none;appearance:none;padding:8px 12px;border:1.5px solid transparent;border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font:500 13px var(--sans);}
-.runs-search::placeholder{color:var(--ink-2);}
-.runs-search::-webkit-search-decoration{-webkit-appearance:none;}
-.runs-search:focus{outline:none;background:var(--field-focus);border-color:var(--ink);}
-.runs-search:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-/* Started-by pills: one row that scrolls sideways instead of wrapping (D4). */
-.hist-filter.runs-people{position:static;flex:none;flex-wrap:nowrap;overflow-x:auto;gap:6px;margin:0;padding:0 12px 10px;background:none;scrollbar-width:thin;}
-.hist-filter.runs-people > *{flex:none;}
-.hist-filter.runs-people .hist-pill-label{white-space:nowrap;}
-.hist-filter.runs-people[hidden]{display:none;}
+/* .runs-head stays the first .runs-head rule: test/ui-topnav-shell.test.mjs reads justify-content:flex-end from it.
+   The title's margin-right:auto puts it on the left. */
+.runs-head-title{margin:0 auto 0 0;font-size:16px;font-weight:600;}
+.runs-view-chip{display:inline-flex;align-self:flex-start;gap:4px;align-items:center;margin:0 14px 8px 20px;font-size:12px;border:1px solid var(--line-2);border-radius:var(--r-xs);padding:0 0 0 6px;}
+.runs-view-chip[hidden]{display:none;}
+/* Runs list (runs redesign §3.1, §3.3a alignment): every row is the same 3-column grid, so the right column and the bars
+   end at one x (Known bug 5); members indent inside their cells, never by changing the grid. */
+.runs-item{display:grid;grid-template-columns:28px minmax(0,1fr) 56px;align-items:start;border-bottom:1px solid var(--line);}
+.runs-item.is-needs{background:color-mix(in srgb,var(--amber) 8%,transparent);}
+.runs-item:has(> a.runs-row.selected){background:var(--field);}
+.runs-pick{display:grid;place-items:center;height:36px;}
+.runs-pick .runs-check{display:none;margin:0;}
+/* Only the row itself flips its dot: hovering or focusing an expanded member must not flip its group's dot too. */
+.runs-item:has(> .runs-pick:hover, > a.runs-row:hover, > .runs-row-tail:hover, > .runs-pick:focus-within, > a.runs-row:focus) > .runs-pick .status-dot,
+.runs-list.is-selecting .runs-pick .status-dot{display:none;}
+.runs-item:has(> .runs-pick:hover, > a.runs-row:hover, > .runs-row-tail:hover, > .runs-pick:focus-within, > a.runs-row:focus) > .runs-pick .runs-check,
+.runs-list.is-selecting .runs-pick .runs-check{display:block;}
+.runs-row{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:8px;padding:8px 0;color:inherit;text-decoration:none;min-width:0;}
+.runs-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.runs-row-title{grid-column:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.runs-row-right{grid-column:2;display:inline-flex;gap:8px;align-items:center;justify-self:end;font-variant-numeric:tabular-nums;}
+.runs-row-sub{grid-column:1 / -1;color:var(--ink-2);font-size:12px;}
+.runs-row > .runs-stage,.runs-row > .runs-row-prog{grid-column:1 / -1;margin-top:6px;}
+.runs-row-tail{display:inline-flex;justify-content:flex-end;align-items:center;height:36px;}
+.runs-members{grid-column:1 / -1;list-style:none;margin:0;padding:0;border-top:1px solid var(--line);}
+.runs-members > .runs-item:last-child{border-bottom:0;}
+.runs-members .runs-pick,.runs-members .runs-row-title,.runs-members .runs-row-sub{padding-left:16px;}
+.runs-pr{display:inline-flex;gap:4px;align-items:center;font-size:12px;}
+.runs-pr.is-draft{color:var(--ink-2);}
+.runs-pr.is-ready{color:var(--green-ink);}
+.runs-pr.is-changes{color:var(--amber-ink);}
+.runs-pr.is-merged{color:var(--violet-ink);}
+.runs-pr.is-closed{color:var(--red-ink);}
+.runs-pr.is-conflicts,.runs-pr.is-failing{color:var(--red-ink);}
+.runs-pr.is-running,.runs-pr.is-fixing{color:var(--ink-2);}
+.runs-indep{font-size:11px;font-weight:500;padding:0 4px;border-radius:var(--r-xs);background:var(--canvas-2);color:var(--ink-2);}
+/* openMenu marks the chosen Show / Group by item only with aria-checked; the check mark moves here from the removed
+   .runs-group-menu rule (same 12px mask), so every openMenu radio item shows it. */
+.wfv-menu [role="menuitemradio"][aria-checked="true"]::after{content:"";width:12px;height:12px;margin-left:auto;background:currentColor;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/12px no-repeat;}
+.runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 0 6px;font-size:12px;font-weight:600;color:var(--ink-2);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
+button.runs-sec-head{cursor:pointer;}
+button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.runs-older{margin:8px 0;}
+.runs-bulk{position:sticky;bottom:0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px;background:var(--panel);border-top:1px solid var(--line);}
+.runs-bulk[hidden]{display:none;}
+.runs-bulk-n{margin-right:auto;font-weight:600;}
+.nav-count-sym{display:inline-flex;margin-right:2px;}
+.group-picker{position:fixed;z-index:60;width:320px;max-width:calc(100vw - 16px);max-height:60vh;overflow:auto;background:var(--panel);
+  border:1px solid var(--line-2);border-radius:var(--r-sm);padding:8px;box-shadow:var(--shadow-menu);}
+.gp-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;width:100%;padding:6px 4px;border:0;background:none;text-align:left;color:inherit;cursor:pointer;}
+.gp-row:hover{background:var(--hover);}
+.gp-row[hidden]{display:none;}
+@media (pointer: coarse){.runs-pick,.runs-row-tail{height:40px;}}
+@media (max-width: 480px){.runs-bulk-n{flex-basis:100%;}.group-picker{width:calc(100vw - 16px);}}
 .runs-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding-inline:8px;}
 .runs-list[aria-busy="true"]{cursor:progress;}
-.runs-needs{background:var(--field);border-radius:var(--r-card);padding:6px 4px;margin:0 4px 12px;}
-.runs-needs-head{display:flex;align-items:baseline;gap:8px;padding:4px 8px 6px;font:700 15px var(--sans);}
 .runs-count{font:600 11.5px var(--sans);color:var(--ink-2);}   /* --ink-3 is ~2.6:1: small text needs --ink-2 */
-.runs-group + .runs-group{margin-top:8px;}
-.runs-group-head{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;width:100%;padding:8px;border:0;border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:700 15px var(--sans);text-align:left;cursor:pointer;}
-.runs-group-head:hover{background:var(--hover);}
-.runs-group-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.runs-group-head[aria-disabled="true"]{cursor:default;}
-.runs-group-head .runs-count{margin-left:auto;}
-.runs-chev{flex:none;color:var(--ink-3);transition:transform .15s;}
-.runs-group-head[aria-expanded="false"] .runs-chev{transform:rotate(-90deg);}
-.runs-group-rows[hidden]{display:none;}
-.runs-row{display:flex;align-items:flex-start;gap:10px;padding:8px;border-radius:var(--r-ctrl);color:var(--ink);text-decoration:none;}
-.runs-row:hover{background:var(--hover);}
-.runs-row.selected{background:var(--field);}
-.runs-needs .runs-row.selected{background:var(--panel);}
-.runs-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.runs-ic{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:var(--r-sm);margin-top:1px;}
-.runs-ic-run,.runs-ic-start{background:var(--blue-bg);color:var(--blue-ink);}
-.runs-ic-run .runs-glyph{animation:wr-spin 1.15s linear infinite;transform-origin:50% 50%;}
-.runs-ic-ask,.runs-ic-paused{background:var(--amber-bg);color:var(--amber-ink);}
-.runs-ic-fail,.runs-ic-stop{background:var(--red-bg);color:var(--red-ink);}
-.runs-ic-done{background:var(--green-bg);color:var(--green-ink);}
-.runs-ic-scheduled{background:var(--slate-bg);color:var(--slate-ink);}
-.runs-row-body{min-width:0;display:flex;flex-direction:column;gap:2px;}
-.runs-row-title{font:500 13.5px/1.3 var(--sans);overflow-wrap:anywhere;}   /* wraps, as in the mockup */
-.runs-row-sub{font-size:12px;font-weight:300;color:var(--ink-2);}
-/* Run tags (#718): up to 3 chips under the title, then +N. The tag filter sits under the status chips. */
-.runs-row-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
-.runs-tag-wrap{flex:none;margin:0 12px 12px;}
-.runs-tag-wrap[hidden]{display:none;}
 /* P7: the Runs list's 3px line, live rows only. */
 .runs-row-prog{display:block;height:3px;margin-top:5px;border-radius:var(--r-xs);background:var(--field);overflow:hidden;}
 .runs-row-prog > i{display:block;height:100%;width:0;background:var(--blue);transition:width .6s ease;}
 .runs-row-prog[data-tone="amber"] > i{background:var(--amber);}
 .runs-row-prog[data-tone="green"] > i{background:var(--green);}
 .runs-row-prog[data-tone="red"] > i{background:var(--red);}
-.runs-chain{position:relative;}
-.runs-chain-toggle{position:absolute;top:8px;right:6px;border:0;background:none;color:var(--ink-3);padding:4px;cursor:pointer;}
-.runs-chain-toggle[aria-expanded="true"] .runs-chev{transform:rotate(180deg);}
-.runs-chain-members{list-style:none;margin:0 0 6px 30px;padding:0;font-size:12px;}
-.runs-chain-member{display:flex;gap:6px;align-items:baseline;padding:2px 0;color:var(--ink-2);}
-.runs-chain-member.is-done .runs-chain-glyph{color:var(--green-ink);}
-.runs-chain-member.is-current .runs-chain-glyph{color:var(--blue-ink);}
-/* D34: amber means "needs you" and nothing else; a paused slice with nothing to answer is grey. */
-.runs-chain-member.is-needs .runs-chain-glyph{color:var(--amber-ink);}
-.runs-chain-member.is-paused .runs-chain-glyph{color:var(--ink-3);}
-/* The slice that is working pulses (blue, as the running pills and the progress line; green is "done"). */
-.runs-chain-member.is-live .runs-chain-glyph{display:inline-block;animation:wr-pulse 1.6s ease-in-out infinite;}
-@media (prefers-reduced-motion: reduce){.runs-chain-member.is-live .runs-chain-glyph{animation:none;}}
-.runs-chain-member.is-failed .runs-chain-glyph{color:var(--red-ink);}
-.runs-chain-pr{margin-left:auto;color:var(--blue-ink);}
 .runs-note{margin:0;padding:18px 12px;color:var(--ink-2);font-size:13px;text-align:center;}
 .runs-note-err{color:var(--red-ink);}
 .runs-pane{position:relative;min-width:0;min-height:0;background:var(--bg);}
@@ -4596,8 +4562,7 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .hd-resume-switch:hover:not([disabled]){border-color:var(--ink-2);color:var(--ink);}
 .hd-resume-switch:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 @media (prefers-reduced-motion: reduce){
-  .runs-shell > *,.runs-chev{transition:none !important;}
-  .runs-ic-run .runs-glyph{animation:none;}
+  .runs-shell > *{transition:none !important;}
 }
 /* style.css has no base .mono rule (only ancestor-scoped ones) — scope one to the
    new subtree, exactly as :1608 does for .hd/#shipit-modal. */

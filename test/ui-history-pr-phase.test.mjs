@@ -1,7 +1,7 @@
 // test/ui-history-pr-phase.test.mjs
 // Phase-2 PR enrichment over the WS: a `history-pr` batch updates the matching
-// Runs row's word (the glance headline: "Finished" while pending -> "In review" /
-// "Merged" / "Ready to ship"), tagged by a request token so stale/racing batches are
+// Runs row's state (the run model: "Ready to ship" with no PR -> "In review" /
+// "Merged"), tagged by a request token so stale/racing batches are
 // dropped. Rows repaint through a coalesced microtask that REPLACES changed nodes, so
 // every assertion re-queries its row. Boots the REAL app.js under jsdom; WS frames are
 // delivered via wsBox.ws.dispatch('message', { data }) (harness per test/ui-question.test.mjs).
@@ -75,7 +75,8 @@ const rowSel = (id, key) => `#runs-list .runs-row[data-kind="hist"][data-pipelin
 function wordOf(ctx, id = 'p1', key = 'proj-0000abcd') {
   const row = ctx.window.document.querySelector(rowSel(id, key));
   assert.ok(row, `row ${key}/${id} is listed`);
-  return row.querySelector('.runs-row-sub').textContent.split(' · ')[0];
+  // The run model's state for the row (runs-list.mjs): a pending lookup and "no PR" both read Ready to ship.
+  return { 'in-review': 'In review', merged: 'Merged', ready: 'Ready to ship' }[row.dataset.state] || row.dataset.state;
 }
 const busy = (ctx) => ctx.window.document.getElementById('runs-list').getAttribute('aria-busy');
 
@@ -87,7 +88,7 @@ test('history-pr OPEN and MERGED batches turn the row word into In review / Merg
   const token = ctx.prTokens().at(-1);
   await checkRows([
     { name: 'history-pr OPEN batch turns the row word into "In review", without a refetch', run: async () => {
-      assert.equal(wordOf(ctx), 'Finished', 'pending: the headline while the PR lookup runs');
+      assert.equal(wordOf(ctx), 'Ready to ship', 'pending: the headline while the PR lookup runs');
 
       const gets = ctx.historyGets();
       assert.ok(token != null, 'client POSTed a load token');
@@ -121,7 +122,7 @@ test('id collision across projects: only the (id, projectKey)-matched row is pat
   await ctx.tick();
 
   assert.equal(wordOf(ctx, 'dup', 'k1'), 'In review', 'k1 row patched');
-  assert.equal(wordOf(ctx, 'dup', 'k2'), 'Finished', 'k2 row untouched (resolved to no PR by the final batch)');
+  assert.equal(wordOf(ctx, 'dup', 'k2'), 'Ready to ship', 'k2 row untouched (resolved to no PR by the final batch)');
 });
 
 test('stale/never-issued token batch is dropped (no DOM change)', async () => {
@@ -132,7 +133,7 @@ test('stale/never-issued token batch is dropped (no DOM change)', async () => {
   ctx.dispatchPr({ token: token + 999, items: [{ projectKey: 'proj-0000abcd', id: 'p1', pr: { state: 'OPEN', url: 'https://gh/x/pull/8', number: 8 } }] });
   await ctx.tick();
   // A stale item would read "In review"; a stale FINAL batch would finalize to "Ready to ship".
-  assert.equal(wordOf(ctx), 'Finished', 'still pending — the stale batch did not resolve it');
+  assert.equal(wordOf(ctx), 'Ready to ship', 'still pending — the stale batch did not resolve it');
   assert.equal(busy(ctx), 'true', 'nor clear the busy state');
   // settle the real load so no watchdog lingers
   ctx.dispatchPr({ token, items: [] });
@@ -153,7 +154,7 @@ test('race: a forced reload supersedes the prior load; the old token batch is dr
   // Deliver the OLD token LAST -> must be ignored.
   ctx.dispatchPr({ token: tA, items: [{ projectKey: 'proj-0000abcd', id: 'p1', pr: { state: 'OPEN', url: 'https://gh/x/pull/8', number: 8 } }] });
   await ctx.tick();
-  assert.equal(wordOf(ctx), 'Finished', 'stale (tA) batch dropped after tB superseded it');
+  assert.equal(wordOf(ctx), 'Ready to ship', 'stale (tA) batch dropped after tB superseded it');
 
   // The current token still patches.
   ctx.dispatchPr({ token: tB, items: [{ projectKey: 'proj-0000abcd', id: 'p1', pr: { state: 'OPEN', url: 'https://gh/x/pull/8', number: 8 } }] });
@@ -171,15 +172,15 @@ test('pending rows resolve progressively per entry, on the final done batch when
       ctx.showRuns();
       await ctx.tick();
       // Eligible (gh + survived + branch + source) but UNRESOLVED -> pending, NOT "Ready to ship".
-      assert.equal(wordOf(ctx, 'a', 'k'), 'Finished', 'A pending');
-      assert.equal(wordOf(ctx, 'b', 'k'), 'Finished', 'B pending');
+      assert.equal(wordOf(ctx, 'a', 'k'), 'Ready to ship', 'A pending');
+      assert.equal(wordOf(ctx, 'b', 'k'), 'Ready to ship', 'B pending');
 
       const token = ctx.prTokens().at(-1);
       // Non-final batch resolves only A (no PR) -> A reads "Ready to ship", B stays pending.
       ctx.dispatchPr({ token, done: false, items: [{ projectKey: 'k', id: 'a', pr: null }] });
       await ctx.tick();
       assert.equal(wordOf(ctx, 'a', 'k'), 'Ready to ship', 'A resolved after its result');
-      assert.equal(wordOf(ctx, 'b', 'k'), 'Finished', 'B still pending until its result');
+      assert.equal(wordOf(ctx, 'b', 'k'), 'Ready to ship', 'B still pending until its result');
       assert.equal(busy(ctx), 'true', 'a non-final batch keeps the list busy');
 
       // Final batch resolves B (OPEN) -> B reads "In review".
@@ -194,7 +195,7 @@ test('pending rows resolve progressively per entry, on the final done batch when
       });
       ctx.showRuns();
       await ctx.tick();
-      assert.equal(wordOf(ctx, 'a', 'k'), 'Finished', 'pending');
+      assert.equal(wordOf(ctx, 'a', 'k'), 'Ready to ship', 'pending');
       const token = ctx.prTokens().at(-1);
       ctx.dispatchPr({ token, done: true, items: [] });   // final batch, no item for 'a'
       await ctx.tick();
@@ -244,4 +245,20 @@ test('a reload keeps a merged row "Merged" (no "Finished" flash) until the next 
   await ctx.tick();
   assert.equal(wordOf(ctx), 'Merged', 're-resolved to Merged after the reload');
   assert.equal(busy(ctx), 'false');
+});
+
+test('a failing-checks PR batch counts the run on the Runs badge at once (no leaving #runs)', async () => {
+  const ctx = await boot({ fetchHandler: (url) => (url.endsWith('/api/history') ? skeleton([ROW()]) : null) });
+  ctx.showRuns();
+  await ctx.tick();
+  const doc = ctx.window.document;
+  const token = ctx.prTokens().at(-1);
+  assert.equal(doc.getElementById('nav-needs-count').hidden, true, 'nothing needs you before the verdict');
+  ctx.dispatchPr({ token, items: [{ projectKey: 'proj-0000abcd', id: 'p1',
+    pr: { state: 'OPEN', url: 'https://gh/x/pull/8', number: 8, checks: { state: 'failing', total: 12, failed: 3, pending: 0 } } }] });
+  await ctx.tick();
+  const nc = doc.getElementById('nav-needs-count');
+  assert.equal(nc.hidden, false, 'the badge shows');
+  assert.equal(nc.querySelector('.nav-count-n').textContent, '1');
+  assert.match(doc.querySelector('.nav button[data-nav="runs"]').getAttribute('aria-label'), /1 needs you/);
 });

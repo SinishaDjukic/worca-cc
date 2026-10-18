@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { createTopnavSearch } from '../ui/public/topnav-search.mjs';
+import { searchRows } from '../ui/public/global-search.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 // The search exactly as index.html ships it (the `.topnav-c` slot's content).
@@ -486,4 +487,12 @@ test('phones: the pill folds into a 32px search button; open, the input is a ful
   assert.match(block, /\n {2}\.tsearch\.is-open \.tsearch-open\{visibility:hidden;\}/, 'the covered search button is no Tab stop while the row is open');
   assert.match(block, /\n {2}\.tsearch\.is-open \.tsearch-close\{display:inline-flex;/);
   assert.match(block, /\n {2}\.tsearch-pop\{position:fixed;top:56px;left:8px;right:8px;width:auto;min-width:0;transform:none;/);
+});
+
+test('runs are found by tag: client:acme, client: and acme; the matching tag shows in the row meta', () => {
+  const live = [{ runId: 'r1', title: 'Fix invoices', status: 'done', groupName: 'proj', tags: ['client:acme'] },
+    { runId: 'r2', title: 'Other', status: 'done', groupName: 'proj', tags: ['client:globex'] }];
+  for (const q of ['client:acme', 'acme']) assert.deepEqual(searchRows({ live }, q).runs.map((r) => r.title), ['Fix invoices'], q);
+  assert.deepEqual(searchRows({ live }, 'client:').runs.map((r) => r.title).sort(), ['Fix invoices', 'Other']);
+  assert.match(searchRows({ live }, 'acme').runs[0].meta, /client:acme/);
 });

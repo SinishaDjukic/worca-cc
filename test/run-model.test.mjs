@@ -122,8 +122,65 @@ test('prState: five states, icon + word + colour, the number in the title only',
     [{ ...PR, state: 'MERGED' }, 'merged', 'Merged', 'merge', 'violet-ink'],
     [{ ...PR, state: 'CLOSED' }, 'closed', 'Closed', 'pull-request-closed', 'red-ink'],
   ].map(([pr, id, word, icon, tone]) => ({ name: id, run: () => {
-    assert.deepEqual(prState(pr), { id, word, icon, tone, number: 759, url: PR.url, title: 'PR #759 · open on GitHub' });
+    assert.deepEqual(prState(pr), { id, word, icon, tone, number: 759, url: PR.url, title: 'PR #759 · open on GitHub', needsYou: false });
     assert.ok(Object.hasOwn(ICONS, icon), `${icon} is in the icon set`);
   } })));
   assert.equal(prState(null), null);
+});
+
+test('waiting line: "starts after run N" for an after-ticket, the clock for a timed one (D29)', () => {
+  assert.equal(runModel({ ticket: { status: 'scheduled', runAt: null, after: { index: 1 } } }).line, 'Waiting · starts after run 1');
+  assert.equal(runModel({ ticket: { status: 'scheduled', runAt: null, after: null } }).line, 'Waiting');
+});
+
+const ghPr = (extra = {}) => ({ url: 'https://github.com/o/r/pull/781', number: 781, state: 'OPEN', ...extra });
+const FAIL = { state: 'failing', total: 12, failed: 3, pending: 0 };
+const RUN = { state: 'pending', total: 12, failed: 0, pending: 4 };
+
+test('PR chip: one word per state (§2.1a)', () => {
+  const word = (pr) => prState(pr).word;
+  assert.equal(word(ghPr({ state: 'MERGED', checks: FAIL })), 'Merged');
+  assert.equal(word(ghPr({ state: 'CLOSED', mergeable: 'CONFLICTING' })), 'Closed');
+  assert.equal(word(ghPr({ mergeable: 'CONFLICTING', checks: FAIL })), 'Conflicts');
+  assert.equal(word(ghPr({ checks: FAIL, reviewDecision: 'CHANGES_REQUESTED' })), 'Checks failing');
+  assert.equal(word(ghPr({ reviewDecision: 'CHANGES_REQUESTED', checks: RUN })), 'Changes requested');
+  assert.equal(word(ghPr({ checks: RUN, draft: true })), 'Checks running');
+  assert.equal(word(ghPr({ fixing: true, draft: true })), 'Fixing');
+  assert.equal(word(ghPr({ draft: true })), 'Draft');
+  assert.equal(word(ghPr({ checks: { state: 'passing', total: 12, failed: 0, pending: 0 } })), 'Ready');
+});
+
+test('PR chip: a live fix run turns Conflicts / Checks failing into Fixing; tones and tooltips', () => {
+  assert.equal(prState(ghPr({ checks: FAIL, fixing: true })).id, 'fixing');
+  assert.equal(prState(ghPr({ mergeable: 'CONFLICTING', fixing: true })).id, 'fixing');
+  assert.equal(prState(ghPr({ checks: FAIL })).tone, 'red-ink');
+  assert.equal(prState(ghPr({ mergeable: 'CONFLICTING' })).tone, 'red-ink');
+  assert.equal(prState(ghPr({ checks: RUN })).tone, 'ink-2');
+  assert.equal(prState(ghPr({ fixing: true })).tone, 'ink-2');
+  assert.equal(prState(ghPr({ checks: FAIL })).title, '3 of 12 checks failed · PR #781');
+  assert.equal(prState(ghPr({ checks: RUN })).title, '4 of 12 checks running · PR #781');
+  assert.equal(prState(ghPr({ mergeable: 'CONFLICTING' })).title, 'Conflicts with the base branch · PR #781');
+});
+
+test('Checks failing or Conflicts make a finished run Needs you ("?"), unless a fix run is live', () => {
+  for (const pr of [ghPr({ checks: FAIL }), ghPr({ mergeable: 'CONFLICTING' })]) {
+    const m = runModel({ status: 'done', pr });
+    assert.deepEqual([m.state, m.symbol, m.prNeeds, m.actions, m.line], ['needs-you', 'question', true, ['open-pr'], 'In review · PR #781']);
+  }
+  const fixing = runModel({ status: 'done', pr: ghPr({ checks: FAIL, fixing: true }) });
+  assert.deepEqual([fixing.state, fixing.prNeeds, fixing.pr.word], ['in-review', false, 'Fixing']);
+  assert.equal(runModel({ status: 'done', pr: ghPr({ checks: RUN }) }).state, 'in-review');
+  assert.equal(runModel({ status: 'running', steps: [{ nodeId: 'n' }], pr: ghPr({ checks: FAIL }) }).state, 'working', 'a live run is not raised');
+});
+
+test('a slice whose PR fails checks raises the group to Needs you but still counts as done (D31)', () => {
+  const g = groupModel({ kind: 'feature', members: [
+    { status: 'done', pr: ghPr({ state: 'MERGED' }) },
+    { status: 'done', pr: ghPr({ checks: FAIL }) },
+    { ticket: { status: 'scheduled', runAt: null, after: { index: 2 } } }] });
+  assert.equal(g.count.text, '2/3');
+  assert.equal(g.state, 'needs-you');
+  assert.equal(g.line, 'Run 2 of 3 · needs you');
+  assert.deepEqual(g.actions, ['open-pr'], 'no question to answer, nothing to stop');
+  assert.equal(g.prNeeds, false, 'slice 3 still waits: the group is not finished');
 });

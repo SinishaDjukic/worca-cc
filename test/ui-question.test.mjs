@@ -30,10 +30,10 @@ function clarifyEvent() {
 
 const click = (ctx, el) => el.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
 
-// The run's copy in Needs you (null when nothing waits on you), and a row's word:
-// the subline's head, before " · <step or time>".
+// The run's row when it sits in Needs you (null when nothing waits on you), and a row's line head, before
+// " · <time>". In Needs you a waiting row reads its stage, or "Needs you" before it has one (runs redesign §3.1).
 const needsRow = (ctx, runId) =>
-  ctx.window.document.querySelector(`#runs-list .runs-needs .runs-row[data-run-id="${runId}"]`);
+  ctx.window.document.querySelector(`#runs-list .runs-sec[data-section="needs"] .runs-row[data-run-id="${runId}"]`);
 const rowWord = (row) => row.querySelector('.runs-row-sub').textContent.split(' · ')[0];
 
 // A fetch stub that records /api/answer bodies.
@@ -79,7 +79,7 @@ test('clarify question renders on the run page with lettered options (empty slot
       assert.ok(needsRow(ctx, RUN_ID), 'the run is in Needs you');
       assert.equal(card.querySelector('.qpanel'), null, 'no question panel on the list row');
       assert.equal(needsRow(ctx, RUN_ID).querySelector('.qpanel'), null, 'nor on its Needs-you copy');
-      assert.equal(rowWord(card), 'Question', 'the row names the wait');
+      assert.equal(rowWord(card), 'Needs you', 'the row names the wait');
     } },
     { name: 'each option carries a letter key (A, B, ...) so it can be referenced by name', run: async () => {
       // The letter rides data-key (the stylesheet draws it as the option's key square);
@@ -144,7 +144,7 @@ test('selecting an option marks it + submit posts {runId,id,payload:{answers}} w
   ctx.dispatch({ type: 'state', runId: RUN_ID, status: 'running' });
   await ctx.settle();
   assert.equal(needsRow(ctx, RUN_ID), null, 'out of Needs you on resume');
-  assert.equal(rowWord(runCard(ctx, RUN_ID)), 'Running', 'the row reads running again');
+  assert.equal(runCard(ctx, RUN_ID).closest('.runs-sec').dataset.section, 'running', 'the row is back under Running');
   ctx.go(`running/${RUN_ID}`);
   await ctx.settle();
   assert.equal(ctx.window.document.querySelector('#run-detail .rd-questions').hidden, true, 'question host hidden on resume');
@@ -188,7 +188,7 @@ test('A2: a hello-seeded pendingQuestion renders the panel when the run page ope
   ctx.showRunning();
   await ctx.settle();
   assert.ok(needsRow(ctx, RUN_ID), 'the seeded question puts the run in Needs you');
-  assert.equal(rowWord(runCard(ctx, RUN_ID)), 'Question', 'the row names the seeded question');
+  assert.equal(rowWord(runCard(ctx, RUN_ID)), 'Needs you', 'the row names the seeded question');
 });
 
 test('gate question renders issues + two decision buttons; approve posts {decision:"another"}', async () => {
@@ -236,7 +236,7 @@ test('multi-tab: a question-resolved event clears the run page WITHOUT this tab 
   await ctx.settle();
   assert.ok(runCard(ctx, RUN_ID), 'the run is still listed');
   assert.equal(needsRow(ctx, RUN_ID), null, 'it leaves Needs you');
-  assert.equal(rowWord(runCard(ctx, RUN_ID)), 'Running', 'and its row no longer names a question');
+  assert.equal(runCard(ctx, RUN_ID).dataset.state === 'needs-you', false, 'and its row no longer names a question');
 });
 
 test('a question-resolved for a STALE id leaves a newer pending question untouched', async () => {
@@ -250,13 +250,13 @@ test('a question-resolved for a STALE id leaves a newer pending question untouch
   ctx.showRunning();
   await ctx.settle();
   assert.ok(needsRow(ctx, RUN_ID), 'the run stays in Needs you');
-  assert.equal(rowWord(runCard(ctx, RUN_ID)), 'Question', 'and its row still names the question');
+  assert.equal(rowWord(runCard(ctx, RUN_ID)), 'Needs you', 'and its row still names the question');
 });
 
-test('the row names the wait ("Question" with the ask icon, "Workflow review" for a workflow ask), sits in Needs you, and opens the run page without posting', async () => {
+test('the row names the wait ("Needs you" with the ? symbol, for a clarify and a workflow ask), sits in Needs you, and opens the run page without posting', async () => {
   // Each row boots its own app (a clarify ask, then a workflow ask).
   await checkRows([
-    { name: 'a pending question puts the run in Needs you reading "Question", and its row opens the run page', run: async () => {
+    { name: 'a pending question puts the run in Needs you reading "Needs you", and its row opens the run page', run: async () => {
       const ctx = await boot();
       helloRun(ctx, { runId: RUN_ID });
       ctx.dispatch({ type: 'question', runId: RUN_ID, ...clarifyEvent() });
@@ -265,12 +265,11 @@ test('the row names the wait ("Question" with the ask icon, "Workflow review" fo
 
       const card = runCard(ctx, RUN_ID);
       assert.ok(card, 'the run is listed in its project group');
-      assert.equal(card.dataset.icon, 'ask', 'a question gives the row the ask icon');
-      assert.equal(rowWord(card), 'Question', 'clarify row word');
+      assert.equal(card.dataset.state, 'needs-you', 'a question gives the row the Needs you state (the ? symbol)');
+      assert.equal(rowWord(card), 'Needs you', 'clarify row line');
       assert.equal(card.querySelector('.qpanel'), null, 'the panel is not mounted on the row');
       const needs = needsRow(ctx, RUN_ID);
-      assert.ok(needs, 'and repeated in Needs you');
-      assert.equal(rowWord(needs), 'Question');
+      assert.ok(needs, 'and listed in Needs you');
 
       click(ctx, needs);
       assert.equal(ctx.window.location.hash, `#running/${RUN_ID}`, 'the row opens the run page');
@@ -279,13 +278,13 @@ test('the row names the wait ("Question" with the ask icon, "Workflow review" fo
       assert.match(runPanel(ctx).querySelector('.qcount').textContent, /2 questions/, 'the page counts them');
       assert.equal(ctx.calls.filter((c) => c.url.includes('/api/answer')).length, 0, 'navigating never POSTs an answer');
     } },
-    { name: 'the row reads "Workflow review" for a workflow question and leaves Needs you with no question', run: async () => {
+    { name: 'a workflow question puts the row in Needs you; with no question it is not there', run: async () => {
       const ctx = await boot();
       helloRun(ctx, { runId: RUN_ID });
       ctx.showRunning();
       await ctx.settle();
       assert.equal(needsRow(ctx, RUN_ID), null, 'not in Needs you while nothing waits');
-      assert.equal(rowWord(runCard(ctx, RUN_ID)), 'Running', 'a plain running row');
+      assert.equal(runCard(ctx, RUN_ID).closest('.runs-sec').dataset.section, 'running', 'a plain running row');
 
       ctx.dispatch({
         type: 'question', runId: RUN_ID, id: 'wf-1', kind: 'workflow',
@@ -294,8 +293,8 @@ test('the row names the wait ("Question" with the ask icon, "Workflow review" fo
       await ctx.settle();
       const card = runCard(ctx, RUN_ID);
       assert.ok(needsRow(ctx, RUN_ID), 'the workflow ask puts it in Needs you');
-      assert.equal(rowWord(card), 'Workflow review');
-      assert.equal(card.dataset.icon, 'ask');
+      assert.equal(rowWord(card), 'Needs you');
+      assert.equal(card.dataset.state, 'needs-you');
     } },
   ]);
 });

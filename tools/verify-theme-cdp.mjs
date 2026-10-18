@@ -345,7 +345,7 @@ const WALKER = (rootSel, withStyles = false) => `(() => {
 // A selector with no element on the current screen is skipped (nodeId 0). `.field-clear` has a hover RULE but no
 // live element (it lives only in a mockup) — kept
 // so a future element is sampled. `.topnav-new` is New run in the top bar (a primary .btn: its hover is a tint).
-const HOVER_SELECTORS = ['.btn', '.btn-quiet', '.btn-danger', '.btn-primary', '.runs-row', '.runs-group-head', '.wiz-proj', '.sp-row', '.grv-source-row',
+const HOVER_SELECTORS = ['.btn', '.btn-quiet', '.btn-danger', '.btn-primary', '.runs-row', '.runs-sec-head', '.wiz-proj', '.sp-row', '.grv-source-row',
   '.gr-rm', '.field-clear', '.agent-row-head', '.topnav-new', '.nav button', '.acct', '.mi', '.hd-tree-file', '.ap',
   '.act-srow', '.act-stop'];
 async function hoverSamples() {

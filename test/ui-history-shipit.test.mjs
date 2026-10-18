@@ -533,10 +533,10 @@ test('a successful ship updates the list row, and PR-enrichment hooks repaint th
       const OTHER = row({ id: 'aaaa1111', title: 'Another run' });
       const ctx = await bootShip({ rows: [row(), OTHER], arms: prArm(PR_OK) });
       const { window } = ctx;
-      const rowSel = `#runs-list .runs-row[data-slot="group"][data-pipeline-id="${ROW.id}"]`;
+      const rowSel = `#runs-list .runs-row[data-pipeline-id="${ROW.id}"]`;
       const word = () => window.document.querySelector(`${rowSel} .runs-row-sub`).textContent;
       const modal = await openModal(ctx);
-      assert.match(word(), /^Finished\b/, 'no PR yet: the row reads Finished');
+      assert.match(word(), /^Ready to ship\b/, 'no PR yet: the row reads Ready to ship');
       click(window, modal.querySelector('.shipit-ok'));
       await settle(window, 6);
 
@@ -550,7 +550,8 @@ test('a successful ship updates the list row, and PR-enrichment hooks repaint th
       assert.equal(listFetches(), before, 'hopping between saved runs does not refetch /api/history');
 
       assert.ok(window.document.querySelector(rowSel), 'the list row is still there');
-      assert.match(word(), /^In review\b/, 'the row reads the OPEN PR');
+      assert.equal(window.document.querySelector(rowSel).dataset.state, 'in-review', 'the row reads the OPEN PR');
+      assert.ok(window.document.querySelector(`${rowSel} .runs-pr`), 'its PR chip is on the right');
       // Re-entering the run must NOT offer Create PR again: that was the stale-button ->
       // double-POST loop (patchHistoryPr in the ship path + the `if (!record.pr)` gate).
       assert.equal(hdPr(window).hidden, true, 'the Create-PR button was swapped out');
@@ -636,7 +637,7 @@ test('Create PR eligibility: never for workspace runs (detail or list, histPrEli
       go(ctx.window, 'runs');                                  // nothing remembered: the bare list
       await settle(ctx.window);
       const listRow = ctx.window.document.querySelector(
-        `#runs-list .runs-row[data-slot="group"][data-project-key="${WKS_KEY}"][data-pipeline-id="${ROW.id}"]`);
+        `#runs-list .runs-row[data-project-key="${WKS_KEY}"][data-pipeline-id="${ROW.id}"]`);
       assert.ok(listRow, 'the workspace row is listed');
       click(ctx.window, listRow);                              // navigate the way the row does
       await settle(ctx.window, 5);

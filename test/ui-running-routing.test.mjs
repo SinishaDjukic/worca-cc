@@ -162,8 +162,8 @@ test('slide layout: Back returns to #runs, the closing detail stays mounted + in
       // inRunsView()), so visit it before reading the row the focus comes home to.
       go(window, 'runs');
       await settle(window);
-      const row = window.document.querySelector(`#runs-list .runs-row[data-slot="group"][data-run-id="${ID}"]`);
-      assert.ok(row, 'the run has a row in its project group');
+      const row = window.document.querySelector(`#runs-list .runs-row[data-run-id="${ID}"]`);
+      assert.ok(row, 'the run has a row in the list');
       assert.equal(row.tagName, 'A', 'rows are links, focusable without a tabindex');
 
       go(window, `running/${ID}`);
@@ -179,7 +179,6 @@ test('slide layout: Back returns to #runs, the closing detail stays mounted + in
       assert.ok(active && active.classList.contains('runs-row'), 'focus returned to a row, not <body>');
       assert.equal(active.dataset.runId, ID,
         'and to the row the detail was opened from (re-queried by data-run-id)');
-      assert.equal(active.dataset.slot, 'group', 'the group copy, where the run lives');
       assert.equal(window.document.querySelector('#runs-list-pane').hasAttribute('inert'), false);
     } },
     { name: 'slide layout: the closing detail stays mounted + inert until the pane\'s guarded transitionend', run: async () => {

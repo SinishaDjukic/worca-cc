@@ -43,6 +43,10 @@ const PR_STATES = Object.freeze({
   draft: { word: 'Draft', icon: 'pull-request-draft', tone: 'ink-2' },
   ready: { word: 'Ready', icon: 'pull-request', tone: 'green-ink' },
   changes: { word: 'Changes requested', icon: 'pull-request', tone: 'amber-ink' },
+  conflicts: { word: 'Conflicts', icon: 'pull-request', tone: 'red-ink' },
+  failing: { word: 'Checks failing', icon: 'pull-request', tone: 'red-ink' },
+  running: { word: 'Checks running', icon: 'pull-request', tone: 'ink-2' },
+  fixing: { word: 'Fixing', icon: 'pull-request', tone: 'ink-2' },
   merged: { word: 'Merged', icon: 'merge', tone: 'violet-ink' },
   closed: { word: 'Closed', icon: 'pull-request-closed', tone: 'red-ink' },
 });
@@ -58,16 +62,29 @@ const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 const join = (...parts) => cap(parts.filter(Boolean).join(' · '));
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
-/** The PR state as icon + word (spec §2.1a). null without a PR. */
+/** The PR state as icon + one word (spec §2.1a). null without a PR. `pr` may carry the refresh's verdict (D31):
+ *  `draft`, `reviewDecision`, `mergeable` (MERGEABLE | CONFLICTING | UNKNOWN), `checks` (rollupChecks: {state, total,
+ *  failed, pending}) and `fixing` (a Watch PR fix run is live). `needsYou`: Conflicts or Checks failing, no fix run. */
 export function prState(pr) {
   if (!pr || (!pr.url && pr.number == null)) return null;
   const s = String(pr.state || '').toUpperCase();
-  const id = s === 'MERGED' ? 'merged' : s === 'CLOSED' ? 'closed' : pr.draft ? 'draft'
-    : String(pr.reviewDecision || '').toUpperCase() === 'CHANGES_REQUESTED' ? 'changes' : 'ready';
+  const checks = pr.checks && typeof pr.checks === 'object' ? pr.checks : null;
+  const conflicts = String(pr.mergeable || '').toUpperCase() === 'CONFLICTING';
+  const failing = !!checks && checks.state === 'failing';
+  const id = s === 'MERGED' ? 'merged' : s === 'CLOSED' ? 'closed'
+    : (conflicts || failing) && pr.fixing ? 'fixing'
+    : conflicts ? 'conflicts' : failing ? 'failing'
+    : String(pr.reviewDecision || '').toUpperCase() === 'CHANGES_REQUESTED' ? 'changes'
+    : checks && checks.state === 'pending' ? 'running'
+    : pr.fixing ? 'fixing' : pr.draft ? 'draft' : 'ready';
   const number = pr.number ?? null;
   const url = pr.url || null;
-  const title = number == null ? 'Pull request' : /github\.com\//.test(url || '') ? `PR #${number} · open on GitHub` : `PR #${number}`;
-  return { id, ...PR_STATES[id], number, url, title };
+  const ref = number == null ? 'Pull request' : `PR #${number}`;
+  const title = id === 'failing' ? `${checks.failed} of ${checks.total} checks failed · ${ref}`
+    : id === 'running' ? `${checks.pending} of ${checks.total} checks running · ${ref}`
+    : id === 'conflicts' ? `Conflicts with the base branch · ${ref}`
+    : number == null ? 'Pull request' : /github\.com\//.test(url || '') ? `PR #${number} · open on GitHub` : `PR #${number}`;
+  return { id, ...PR_STATES[id], number, url, title, needsYou: id === 'conflicts' || id === 'failing' };
 }
 
 function stateOf(run, pr) {
@@ -77,7 +94,8 @@ function stateOf(run, pr) {
   if (s === 'created' || s === 'starting') return 'starting';
   if (PARKED.has(s)) return 'paused';
   if (s === 'error') return 'failed';
-  if (s === 'done') return pr && pr.id === 'merged' ? 'merged' : pr && pr.id !== 'closed' ? 'in-review' : 'ready';
+  if (s === 'done') return pr && pr.id === 'merged' ? 'merged' : pr && pr.needsYou ? 'needs-you'
+    : pr && pr.id !== 'closed' ? 'in-review' : 'ready';
   if (s === 'running') {
     const rows = (run.steps || []).filter((r) => r && r.nodeId != null);
     return !rows.length && !(run.active || []).length ? 'starting' : 'working';
@@ -121,7 +139,8 @@ function singleLine(state, run, prog, pr, opts) {
     }
     case 'waiting': {
       const at = run.ticket && run.ticket.runAt ? clock(run.ticket.runAt, opts) : '';
-      return join('Waiting', at ? `starts ${at}` : '');
+      const after = run.ticket && run.ticket.after && run.ticket.after.index;
+      return join('Waiting', at ? `starts ${at}` : after ? `starts after run ${after}` : '');
     }
     case 'failed': { const step = failedStep(run, where); return join(where, step ? `failed: ${step}` : 'failed'); }
     case 'stopped': return where ? `Stopped at ${where}` : 'Stopped';
@@ -142,12 +161,17 @@ export function runModel(run, opts = {}) {
   const state = stateOf(r, pr);
   const prog = r.status ? runProgress(r, opts.memo || null) : null;
   const meta = RUN_STATES[state];
-  const actions = state === 'stopped' && r.resumable === true ? ['resume', 'archive'] : ACTIONS[state];
-  return { state, ...meta, line: singleLine(state, r, prog, pr, opts), actions: [...actions], pr, progress: prog };
+  // A PR-driven Needs you has no question to answer; its line is the in-review line and its action Open PR (D31).
+  const prNeeds = state === 'needs-you' && !!(pr && pr.needsYou) && r.pendingQuestion == null;
+  const actions = prNeeds ? ['open-pr'] : state === 'stopped' && r.resumable === true ? ['resume', 'archive'] : ACTIONS[state];
+  const line = prNeeds ? singleLine('in-review', r, prog, pr, opts) : singleLine(state, r, prog, pr, opts);
+  return { state, ...meta, line, actions: [...actions], pr, prNeeds, progress: prog };
 }
 
+// A run raised to Needs you by its PR (D31) is still a finished run for count and bar.
+const doneLike = (m) => FINISHED.has(m.state) || !!m.prNeeds;
 /** A member as groupProgress reads it. */
-const asPart = (m) => ({ state: FINISHED.has(m.state) ? 'done' : m.state === 'failed' ? 'failed'
+const asPart = (m) => ({ state: doneLike(m) ? 'done' : m.state === 'failed' ? 'failed'
   : LIVE.has(m.state) ? 'current' : 'waiting', progress: m.progress });
 
 /**
@@ -162,16 +186,16 @@ export function groupModel(group, opts = {}) {
   const planning = g.planning ? runModel(g.planning, { ...opts, memo: g.planning.memo || null }) : null;
   const all = planning ? [planning, ...members] : members;
   const total = members.length;
-  const done = members.filter((m) => FINISHED.has(m.state)).length;
+  const done = members.filter(doneLike).length;
   const pr = prState(g.pr);
   const failed = all.find((m) => m.state === 'failed');
   const current = failed || all.find((m) => LIVE.has(m.state)) || all.find((m) => m.state === 'waiting')
-    || (all.every((m) => FINISHED.has(m.state)) ? null : all.find((m) => m.state === 'stopped')) || null;
+    || (all.every(doneLike) ? null : all.find((m) => m.state === 'stopped')) || null;
   let state;
   if (current) state = current.state;
   else if (pr) state = pr.id === 'merged' ? 'merged' : pr.id === 'closed' ? 'ready' : 'in-review';
   else if (members.length && members.every((m) => m.state === 'merged')) state = 'merged';
-  else state = members.some((m) => m.pr && ['ready', 'draft', 'changes'].includes(m.pr.id)) ? 'in-review' : 'ready';
+  else state = members.some((m) => m.pr && ['ready', 'draft', 'changes', 'conflicts', 'failing', 'running', 'fixing'].includes(m.pr.id)) ? 'in-review' : 'ready';
   const idx = current ? members.indexOf(current) : -1;
   const where = current === planning && planning ? 'Planning' : `Run ${idx + 1} of ${total}`;
   const tail = () => {
@@ -190,6 +214,9 @@ export function groupModel(group, opts = {}) {
   };
   const meta = RUN_STATES[state];
   const progress = groupProgress(members.map(asPart), { planning: planning ? asPart(planning) : null, memo: g.memo || null });
-  return { kind: g.kind || 'chain', title: g.title || '', state, ...meta, line: tail(), actions: [...ACTIONS[state]],
-    pr, count: { done, total, text: `${done}/${total}` }, progress, current, members, planning };
+  // A group whose current member needs you only through its PR has no question to answer and nothing running there,
+  // so it offers that PR, not Answer / Stop; `prNeeds` marks a group whose every member is finished.
+  const prNeedsCurrent = !!(current && current.prNeeds);
+  return { kind: g.kind || 'chain', title: g.title || '', state, ...meta, line: tail(), actions: prNeedsCurrent ? ['open-pr'] : [...ACTIONS[state]],
+    prNeeds: prNeedsCurrent && all.every(doneLike), pr, count: { done, total, text: `${done}/${total}` }, progress, current, members, planning };
 }

@@ -24,7 +24,7 @@ import { readRunLedger } from './metrics/ledger.mjs';
 import { readPolicyState } from './policy/state.mjs';
 import { memoryTotals } from './memory-sync.mjs';
 import { actorLabel } from './identity.mjs';
-import { attachWatchPipeline } from './pr-watch.mjs';
+import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
 import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
@@ -1531,9 +1531,10 @@ export function persistPrState(pipelineId, pr) {
   try {
     tx(() => {
       getDb().prepare(
-        `UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ?, pr_checked_at = ?
-         WHERE id = ?`,
-      ).run(pr.url, pr.number ?? null, pr.state ?? 'OPEN', new Date().toISOString(), pipelineId);
+        `UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ?, pr_checked_at = ?,
+           pr_verdict = COALESCE(?, pr_verdict) WHERE id = ?`,
+      ).run(pr.url, pr.number ?? null, pr.state ?? 'OPEN', new Date().toISOString(),
+        pr.verdict ? JSON.stringify(pr.verdict) : null, pipelineId);   // the verdict is written when the lookup read one, kept otherwise
     });
   } catch { /* best-effort */ }
 }
@@ -1544,13 +1545,20 @@ export function persistPrState(pipelineId, pr) {
  * the base repo, not the cwd's default) is resolved by URL instead of by branch.
  * The resolved `state` (rowToState) deliberately omits pr_* — use this instead.
  * @param {string} pipelineId
- * @returns {{ url:string, number:(number|null), state:string }|null}
+ * The stored CI verdict (pr_verdict: draft / reviewDecision / mergeable / checks) is spread onto the PR, and `fixing`
+ * says a Watch PR fix run is live on it right now (runs redesign §2.1a, D31).
+ * @returns {{ url:string, number:(number|null), state:string, draft?, reviewDecision?, mergeable?, checks?, fixing? }|null}
  */
 export function readPrState(pipelineId) {
   if (!pipelineId) return null;
   try {
-    const row = getDb().prepare('SELECT pr_url, pr_number, pr_state FROM pipelines WHERE id = ?').get(pipelineId);
-    return row && row.pr_url ? { url: row.pr_url, number: row.pr_number ?? null, state: row.pr_state ?? 'OPEN' } : null;
+    const row = getDb().prepare('SELECT pr_url, pr_number, pr_state, pr_verdict FROM pipelines WHERE id = ?').get(pipelineId);
+    if (!row || !row.pr_url) return null;
+    let v = null;
+    try { v = row.pr_verdict ? JSON.parse(row.pr_verdict) : null; } catch { v = null; }
+    // `fixing` only when true, so every caller's existing deepEqual on a PR with no verdict and no fix run holds.
+    return { url: row.pr_url, number: row.pr_number ?? null, state: row.pr_state ?? 'OPEN', ...(v || {}),
+      ...(watchActive(getWatch(row.pr_url)) ? { fixing: true } : {}) };
   } catch { return null; }
 }
 
@@ -2283,9 +2291,17 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   } else if (opts.withPr && repoDir && feature) {
     // Single-project runs AND legacy workspace rows (empty workspace_meta.projects):
     // the unchanged primary-only lookup, pr_url first — never overwritten with null.
-    entry.pr = (await anyPrHost())
-      ? await findPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null })
+    // The fresh lookup wins over the stored row (a PR merged since the last refresh, or a newer PR for the branch);
+    // stored fields (the CI verdict) are used only for the same URL. Persisting is the enrich path's job.
+    const found = (await anyPrHost())
+      ? await findPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null, withVerdict: true })
       : null;
+    if (found) {
+      const { verdict, ...fresh } = found;
+      const stored = readPrState(row.id);
+      entry.pr = { ...(stored && stored.url === fresh.url ? stored : {}), ...fresh, ...(verdict || {}),
+        ...(watchActive(getWatch(fresh.url)) ? { fixing: true } : {}) };
+    } else entry.pr = null;
   }
   return entry;
 }
@@ -2375,7 +2391,7 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            ${RUN_ENGINE_SQL} AS run_engine
     FROM pipelines
-    WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'}
+    WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
     LIMIT ?
   `).all(Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : -1); // -1 = unlimited (SQLite)
@@ -2500,9 +2516,10 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
         return { projectKey: r.projectKey, id: r.id, pr, members };
       }
       const prUrl = readPrState(r.id)?.url || null;
-      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl })) || null;
+      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true })) || null;
       if (pr) persistPrState(r.id, pr);   // positive observations only (null never clears)
-      return { projectKey: r.projectKey, id: r.id, pr };
+      // The stored shape (verdict spread, `fixing`), as readPrState gives the CLI and Ask.
+      return { projectKey: r.projectKey, id: r.id, pr: pr ? readPrState(r.id) : null };
     }));
     await onBatch(items, i + batchSize >= targets.length); // (items, isFinal)
   }

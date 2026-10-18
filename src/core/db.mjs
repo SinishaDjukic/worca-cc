@@ -62,7 +62,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 60;
+export const SCHEMA_VERSION = 61;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -846,7 +846,9 @@ const INCREMENTAL_COLUMNS = {
                             started_by: 'TEXT',   // v36: who started the run (identity.mjs; NULL = before attribution)
                             // Shaper D28, no version of their own (-4-slices owns v57); reconcileSchema adds them
                             shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
-                            run_size: 'TEXT' },   // small|medium|large from the run's changed lines/files; NULL = unknown
+                            run_size: 'TEXT',     // small|medium|large from the run's changed lines/files; NULL = unknown
+                            deleted_at: 'TEXT',   // v61: Delete (runs redesign §3.2) keeps an anonymised row for Statistics
+                            pr_verdict: 'TEXT' }, // v61: the PR chip's CI verdict (JSON), runs redesign §2.1a
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -1066,6 +1068,29 @@ CREATE TABLE IF NOT EXISTS run_tag_events (
 CREATE INDEX IF NOT EXISTS idx_run_tag_events_pipeline ON run_tag_events (pipeline_id, id);
 `;
 
+// v61 (runs redesign §3.3): user-created groups and ad-hoc membership — the one new named state the clarify answer
+// allows. group_id names a run_groups.id (grp_…) OR a shape_features.id (feat_…), so it has no FK; src/core/run-groups.mjs
+// checks it. pipeline_id is the primary key: a run is in one group at a time.
+const RUN_GROUPS_DDL = `
+CREATE TABLE IF NOT EXISTS run_groups (
+  id          TEXT PRIMARY KEY,
+  title       TEXT NOT NULL,
+  project_key TEXT,
+  created_by  TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS run_group_members (
+  pipeline_id TEXT PRIMARY KEY,
+  group_id    TEXT NOT NULL,
+  position    INTEGER NOT NULL,
+  added_by    TEXT,
+  added_at    TEXT NOT NULL,
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_run_group_members_group ON run_group_members (group_id, position);
+`;
+
 const SHAPE_SLICES_DDL = `
 CREATE TABLE IF NOT EXISTS shape_features (
   id TEXT PRIMARY KEY,
@@ -1139,6 +1164,8 @@ const INCREMENTAL_TABLES = {
   shape_plans: SHAPE_SLICES_DDL,
   run_tags:       RUN_TAGS_DDL,
   run_tag_events: RUN_TAGS_DDL,
+  run_groups:        RUN_GROUPS_DDL,
+  run_group_members: RUN_GROUPS_DDL,
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -2236,6 +2263,7 @@ export function migrate(db) {
     // The shipped Promo video workflow: one-shot seed at its own rung, refresh on every bump
     // (the Presentation seed's two halves, above).
     if (current < 60) applySchemaV60(db);
+    if (current < 61) db.exec(RUN_GROUPS_DDL);   // run groups (§3.3); pipelines.deleted_at comes from INCREMENTAL_COLUMNS
     if (current < SCHEMA_VERSION) refreshPromoVideoSeed(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');

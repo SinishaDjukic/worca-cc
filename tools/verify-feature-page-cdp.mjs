@@ -139,17 +139,18 @@ await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, devi
 
 // ---- the Runs list
 await cdp('Page.navigate', { url: `${base}/#runs` });
-await waitFor("document.querySelectorAll('#runs-list .runs-chain').length === 1", 'the feature row');
+await waitFor("document.querySelectorAll('#runs-list .runs-item[data-level=\"top\"][data-row-key^=\"chain:\"]').length === 1", 'the feature row');
 const runs = await ev(`(() => {
   const host = document.getElementById('runs-list');
-  const row = host.querySelector('.runs-chain');
+  const row = host.querySelector('.runs-item[data-level="top"][data-row-key^="chain:"]');
+  const link = row.querySelector(':scope > a.runs-row');
   return {
-    chains: host.querySelectorAll('.runs-chain').length,
-    title: row.querySelector('.runs-row').textContent,
-    href: row.querySelector('.runs-row').getAttribute('href'),
-    open: !row.querySelector('.runs-chain-members').hidden,
-    members: [...row.querySelectorAll('.runs-chain-member:not(.runs-chain-open-feature) .runs-chain-link')].map((a) => a.textContent),
-    ownRow: [...host.querySelectorAll('.runs-row')].filter((r) => !r.closest('.runs-chain') && /2\\/3/.test(r.textContent)).length,
+    chains: host.querySelectorAll('.runs-item[data-level="top"][data-row-key^="chain:"]').length,
+    title: link.textContent,
+    href: link.getAttribute('href'),
+    open: row.querySelector(':scope > .runs-row-tail .runs-expand').getAttribute('aria-expanded') === 'true',
+    members: [...row.querySelectorAll(':scope > .runs-members > .runs-item > a.runs-row > .runs-row-title')].map((a) => a.textContent),
+    ownRow: [...host.querySelectorAll('.runs-item[data-level="top"]')].filter((r) => !r.dataset.rowKey.startsWith('chain:') && /2\\/3/.test(r.textContent)).length,
   };
 })()`);
 check(runs.chains === 1, 'one feature row');

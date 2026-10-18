@@ -21,7 +21,7 @@ const settle = async (window, n = 3) => { for (let i = 0; i < n; i += 1) await n
 
 function helloRunning(ctx, extra = {}) { helloRun(ctx, { runId: RUN_ID, ...extra }); }
 const cardOf = (ctx) => runCard(ctx, RUN_ID);
-const inNeeds = (ctx) => ctx.window.document.querySelector(`#runs-list .runs-needs .runs-row[data-run-id="${RUN_ID}"]`);
+const inNeeds = (ctx) => ctx.window.document.querySelector(`#runs-list .runs-sec[data-section="needs"] .runs-row[data-run-id="${RUN_ID}"]`);
 const rowWord = (row) => row.querySelector('.runs-row-sub').textContent.split(' · ')[0];
 // The run page's header badge (the list row has none).
 const rdBadge = (ctx) => ctx.window.document.querySelector('#run-detail .rd-row1 .auto-badge');
@@ -50,7 +50,9 @@ test('a deciding Auto run paints the orb placeholder, not an empty graph; the la
   assert.equal(host.querySelector('.auto-deciding-label').textContent, 'Waiting for your decision');
   ctx.showRunning(); await settle(ctx.window);
   assert.ok(inNeeds(ctx), 'the waiting proposal puts the run in Needs you');
-  assert.equal(rowWord(cardOf(ctx)), 'Workflow review', 'the row points at the proposal');
+  // In Needs you a single row reads its stage (runs redesign §3.1, "say each thing once"); its dot says Needs you.
+  assert.equal(rowWord(cardOf(ctx)), 'Plan', 'the row points at the stage that waits');
+  assert.equal(cardOf(ctx).dataset.state, 'needs-you');
 });
 
 test('the real manifest replaces the placeholder with the graph (the orb is stopped, the host class dropped)', async () => {
