@@ -159,8 +159,9 @@ test('an after-chained run without tags inherits its predecessor\'s; tags: [] op
     const r = await post('/api/run', { projectDir: repo, prompt: 'next', mock: true, after: { kind: 'pipeline', id: a.pipelineId }, ...extra });
     assert.equal(r.status, 202);
     const made = await r.json();
-    const now = await post(`/api/schedules/${made.runId}/run-now`);
-    assert.equal(now.status, 200, JSON.stringify(await now.clone().json()));
+    // The predecessor is done, so the next tick fires this run. Drive it here rather than through run-now: a tick the
+    // previous run's merge-back queued (afterRunSettled) may already have claimed it, and run-now then answers 409.
+    await schedulerTick({ now: Date.now() + 2000 });
     return untilSettled(made.runId);
   };
   assert.deepEqual(readRunTags((await chain({})).pipelineId), ['client:acme']);
