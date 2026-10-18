@@ -14,6 +14,7 @@ import { askRendererFor, askKindOf } from '../ask/registry.mjs';
 import { shapeFirstOn } from './shape-gate.mjs';
 import { checklistTallyText } from '../../../src/shared/shape/review-checklist.mjs';
 import { paintProgressBar } from '../run-progress-bar.mjs';
+import { namedAnswer, forgetAnswer } from '../shape/step-receipt.mjs';
 
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
@@ -26,9 +27,9 @@ export const RESULT_STATUS = new Set(['done', 'stopped', 'error', 'failed', 'abo
 const DONE_STATUS = new Set(['done', 'complete', 'completed']);
 const NODE_COLORS = new Set(['violet', 'blue', 'green', 'red', 'peach', 'amber']);
 const KEYED = new Set(['agent', 'script']);
-/** The run page's answer buttons (app.js #run-detail delegate), minus the workflow arm, which binds its own. */
-const Q_BUTTONS = '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort';
-const DECISIONS = { 'gate-continue': 'continue', 'gate-another': 'another', 'recovery-retry': 'retry', 'recovery-pause': 'pause', 'recovery-abort': 'abort' };
+/** The run page's answer button (app.js #run-detail delegate), minus the workflow arm, which binds its own. Step cards
+ *  (gate, recovery, plan, Shaper's Clarify) bind their own buttons too (shaper-cards D4). */
+const Q_BUTTONS = '.qpanel .btn-go';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 /** 24-unit stroked glyphs (module literals only — never run data). */
 const ICONS = {
@@ -117,11 +118,15 @@ export function resultWord(snap) {
     sub: checks ? `${checks} thing${checks === 1 ? '' : 's'} to check` : 'Clean — no blocking issues flagged' };
 }
 
-/** The receipt line a question collapses into once it is resolved (mockup §5c/§5d), from what this card sent. */
+/** The receipt line a question collapses into once it is resolved (mockup §5c/§5d): the named decision this tab sent
+ *  (`sent.named`, or step-receipt.mjs's note for `painted`'s run and id, shaper-cards D5), else what this card sent,
+ *  else "Answered" (answered elsewhere, D6). */
 export function answerReceipt(sent, painted) {
+  const note = painted && painted.id ? namedAnswer(painted.runId, painted.id) : null;
+  const named = (sent && sent.named) || (note && note.text);
+  if (named) return named;
   const step = (painted && (painted.step || painted.heading)) || '';
   const tail = (t) => (step ? `${t} · ${step}` : t);
-  if (sent && sent.kind === 'gate') return sent.payload && sent.payload.decision === 'another' ? 'One more fix round · Cycle gate' : 'Continued · Cycle gate';
   if (sent && sent.payload && Array.isArray(sent.payload.answers)) {
     const n = sent.payload.answers.length;
     const k = sent.payload.answers.filter((a) => a && typeof a.choice === 'string' && a.choice.trim()).length;
@@ -270,13 +275,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (!b || !qBody.contains(b) || b.disabled || b.closest('.qpanel-workflow')) return;
     const pq = last && last.pendingQuestion;
     if (!pq || !painted) return;
-    const cls = Object.keys(DECISIONS).find((c) => b.classList.contains(c));
-    let payload = null;
-    if (cls) payload = { decision: DECISIONS[cls] };
-    else {
-      const renderer = askRendererFor(askKindOf(pq)) || askRendererFor('clarify');
-      payload = renderer ? renderer.collect(b.closest('.qpanel')) : null;
-    }
+    const renderer = askRendererFor(askKindOf(pq)) || askRendererFor('clarify');
+    const payload = renderer ? renderer.collect(b.closest('.qpanel')) : null;
     if (payload == null) return;             // the renderer refused and marked its own fields
     qErr.hidden = true;
     const attempt = { id: painted.id, kind: painted.kind, payload };
@@ -405,9 +405,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const q = pq ? call(controls.paintQuestion, ref(), qBody) : null;
     if (q) {
       if (!painted || painted.id !== (q.id || null)) { qErr.hidden = true; sent = null; shownFor = null; }
-      painted = { id: q.id || null, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '' };
+      painted = { id: q.id || null, runId: ref().runId, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '', stepCard: !!q.stepCard };
       qHead.textContent = painted.heading;
-      qHead.hidden = !painted.heading;
+      qHead.hidden = !painted.heading || painted.stepCard;   // a step card's own head says it once (shaper-cards D16)
       qBody.hidden = false;
       receipt.hidden = true;
       qSec.hidden = false;
@@ -419,7 +419,12 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     qErr.hidden = true;
     if (painted) {
       const was = painted;
-      const mine = sent && sent.id === was.id ? sent : null;
+      // A step card posts through its own submit, never `sent`: the named note is what this tab sent (shaper-cards D5).
+      // Read once, then forgotten: a later ask with the same id (a resume, another cycle) must not reuse it.
+      const named = namedAnswer(was.runId, was.id);
+      forgetAnswer(was.runId, was.id);
+      const own = sent && sent.id === was.id ? sent : null;
+      const mine = named ? { ...(own || { id: was.id, kind: was.kind, payload: { answers: named.answers } }), named: named.text } : own;
       painted = null;
       sent = null;
       // A question that went away because the run is pausing or paused, was interrupted, stopped or failed was not

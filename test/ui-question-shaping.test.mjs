@@ -1,7 +1,8 @@
-// test/ui-question-shaping.test.mjs — Shape it first (spec §3.3, D3): a shaping run's Clarify ask on the run page
-// reads as the step before the plan ("A few questions before the plan"), its submit says "Answer and draft", and a
-// "Skip, draft with defaults" button answers every question with its recommended option. A non-shaping run, or the
-// gate off, keeps the panel and its heading unchanged.
+// test/ui-question-shaping.test.mjs — Shape it first (spec §3.3, D3; shaper-cards D2–D4, D16): a shaping run's Clarify
+// ask on the run page is a step card ("A few questions before the plan", chip Clarify) with Answer and Use defaults
+// (every question's recommended option). A non-shaping run, or the gate off, keeps the Clarify panel and its heading.
+// Every step kind draws the same card on the run page and in the paintAsk host (the chat card's and the feature page's
+// path), and the paintAsk host — which has no click delegate, like the feature page — still posts.
 //
 // The run arrives in the FIRST hello, so it is built through makeRun: a page loaded while a shaping run waits at
 // Clarify must still know it is shaping.
@@ -35,7 +36,7 @@ function recorder(status = 200) {
   return { answers, fetchHandler };
 }
 
-async function openShaping({ gate = true, shaping = SHAPING, status = 200 } = {}) {
+async function openShaping({ gate = true, shaping = SHAPING, status = 200, pq = QUESTIONS } = {}) {
   const rec = recorder(status);
   const ctx = await bootApp({ fetchHandler: rec.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
@@ -43,7 +44,7 @@ async function openShaping({ gate = true, shaping = SHAPING, status = 200 } = {}
     type: 'hello',
     flags: { shapeFirst: !!gate },
     runs: [{ runId: RUN_ID, title: 'Shape demo', projectDir: '/tmp/p', status: 'running', kind: 'run',
-      startedAt: '2026-01-01T00:00:00Z', ...(shaping ? { shaping } : {}), pendingQuestion: QUESTIONS }],
+      startedAt: '2026-01-01T00:00:00Z', ...(shaping ? { shaping } : {}), pendingQuestion: pq }],
   });
   ctx.go(`running/${RUN_ID}`);
   await ctx.settle();
@@ -52,17 +53,28 @@ async function openShaping({ gate = true, shaping = SHAPING, status = 200 } = {}
   return { ctx, panel, head, ...rec };
 }
 
-test('a shaping run\'s Clarify shows Answer and draft, Skip, draft with defaults, and the shaping heading', async () => {
+test('a shaping run\'s Clarify is a step card: Answer, Use defaults, the head says it once', async () => {
   const { panel, head } = await openShaping();
   assert.ok(panel, 'the run page panel is mounted');
-  assert.match(panel.querySelector('.qpanel-foot .btn-go').textContent, /Answer and draft/);
-  const skip = panel.querySelector('.qpanel-foot .clarify-defaults');
-  assert.ok(skip, 'Skip, draft with defaults is offered');
-  assert.equal(skip.textContent, 'Skip, draft with defaults');
-  assert.equal(head.textContent, 'A few questions before the plan');
+  assert.equal(panel.querySelector('.qpanel-foot .btn-go').textContent, 'Answer');
+  const defaults = panel.querySelector('.qpanel-foot .clarify-defaults');
+  assert.ok(defaults, 'Use defaults is offered');
+  assert.equal(defaults.textContent, 'Use defaults');
+  assert.equal(panel.querySelector('.ask-mcard-title').textContent, 'A few questions before the plan');
+  assert.equal(panel.querySelector('.ask-mcard-kind').textContent, 'Clarify');
+  assert.equal(head.textContent, '', 'the run page heading stays empty for a step card');
 });
 
-test('Skip posts /api/answer with every question\'s recommended (or first) option', async () => {
+test('Answer posts the picked answers once', async () => {
+  const { ctx, panel, answers } = await openShaping();
+  click(ctx, panel.querySelectorAll('.qblock')[1].querySelector('.qopt'));
+  click(ctx, panel.querySelector('.qpanel-foot .btn-go'));
+  await ctx.settle();
+  assert.equal(answers.length, 1);
+  assert.deepEqual(answers[0].payload.answers.map((a) => a.choice), ['', 'Settings']);
+});
+
+test('Use defaults posts /api/answer with every question\'s recommended (or first) option', async () => {
   const { ctx, panel, answers } = await openShaping();
   click(ctx, panel.querySelector('.clarify-defaults'));
   await ctx.settle();
@@ -77,25 +89,80 @@ test('Skip posts /api/answer with every question\'s recommended (or first) optio
   });
 });
 
-test('Skip with /api/answer answering 500 shows the send-failed line', async () => {
+test('Use defaults with /api/answer answering 500 says why it was not sent', async () => {
   const { ctx, panel } = await openShaping({ status: 500 });
-  const err = panel.querySelector('.clarify-defaults-err');
+  const err = panel.querySelector('.plan-err');
   assert.ok(err, 'the alert line is mounted');
   assert.equal(err.hidden, true);
   click(ctx, panel.querySelector('.clarify-defaults'));
   await ctx.settle(5);
   assert.equal(err.hidden, false);
-  assert.match(err.textContent, /Could not send your answer/);
+  assert.equal(err.textContent, 'Not sent: boom');
 });
 
 for (const [name, opts] of [['a non-shaping run', { shaping: null }], ['the gate off', { gate: false }]]) {
   test(`${name} keeps the Clarify panel and its heading unchanged`, async () => {
     const { panel, head } = await openShaping(opts);
     assert.ok(panel, 'the run page panel is mounted');
-    assert.equal(panel.querySelector('.clarify-defaults'), null, 'no Skip button');
+    assert.equal(panel.querySelector('.clarify-defaults'), null, 'no Use defaults button');
+    assert.equal(panel.querySelector('.ask-mcard-head'), null, 'not a step card');
     assert.match(panel.querySelector('.qpanel-foot .btn-go').textContent, /Submit/);
     assert.equal(panel.querySelectorAll('.qblock').length, 2);
     assert.notEqual(head.textContent, 'A few questions before the plan');
     assert.match(head.textContent, /2 questions/);
   });
 }
+
+// ---- every step kind: the run page and the paintAsk host draw the same card (shaper-cards D2/D16)
+const slice = (id) => ({ id, title: `Run ${id}`, goal: `Goal ${id}`, inScope: [], outOfScope: [], acceptance: ['works'], dependsOn: [], estimate: 'medium' });
+const PLAN = { id: 'q-plan', kind: 'plan', plan: { round: 1, revisable: true, file: 'plans/p.md', perspectives: [],
+  check: { ok: false, passed: 1, total: 2, items: [{ id: 'a', label: 'A', pass: true }, { id: 'b', label: 'B', pass: false, detail: 'b' }] } } };
+const KINDS = [
+  ['Clarify', QUESTIONS, SHAPING, 'A few questions before the plan', 'Clarify'],
+  ['Plan', PLAN, SHAPING, 'Your turn: approve the plan', 'Plan'],
+  ['Split', { id: 'q-split', kind: 'plan', plan: { round: 1, revisable: true, outline: { why: 'big', slices: [slice('s1'), slice('s2'), slice('s3')] } } },
+    SHAPING, 'Your turn: approve the runs', 'Runs'],
+  ['run-k Plan', { ...PLAN, id: 'q-plan-2' }, { ...SHAPING, feature: { id: 'f1', index: 2, total: 3 } }, 'Your turn: approve the plan', 'Plan · run 2'],
+  ['Gate', { id: 'q-gate', kind: 'gate', issues: [{ severity: 'major', title: 'Flaky', detail: 'd' }] }, SHAPING, 'A decision is needed', 'Gate'],
+  ['Recovery', { id: 'q-rec', kind: 'recovery', recovery: { cls: 'auth', message: 'token expired', options: [{ id: 'retry' }, { id: 'pause' }] } },
+    SHAPING, 'A step failed', 'Recovery'],
+];
+
+function paintAskHost(ctx) {
+  const doc = ctx.window.document;
+  const host = doc.createElement('div');
+  host.className = 'shape-feature-ask';                    // the feature page's host: no click delegate
+  host.innerHTML = '<div class="qpanel hidden"></div>';
+  doc.body.appendChild(host);
+  const q = ctx.window.__shapeFeature.paintAsk({ runId: RUN_ID, pipelineId: null }, host);
+  return { q, panel: host.querySelector('.qpanel') };
+}
+const look = (panel) => ({
+  title: panel.querySelector('.ask-mcard-title')?.textContent,
+  chip: panel.querySelector('.ask-mcard-kind')?.textContent,
+  text: panel.textContent,
+  buttons: [...panel.querySelectorAll('button')].map((b) => b.textContent),
+});
+
+for (const [name, pq, shaping, title, chip] of KINDS) {
+  test(`${name}: the run page panel and the paintAsk host show the same head, chip, body text and buttons`, async () => {
+    const { ctx, panel } = await openShaping({ pq, shaping });
+    await ctx.settle();
+    const page = look(panel);
+    const other = paintAskHost(ctx);
+    await ctx.settle();
+    assert.equal(page.title, title);
+    assert.equal(page.chip, chip);
+    assert.deepEqual(look(other.panel), page);
+    assert.equal(other.q.stepCard, true);
+  });
+}
+
+test('a gate button in the paintAsk host (no delegate, the feature page) posts /api/answer {decision:"another"} exactly once', async () => {
+  const { ctx, answers } = await openShaping({ pq: KINDS[4][1] });
+  const { panel } = paintAskHost(ctx);
+  click(ctx, panel.querySelector('.gate-another'));
+  await ctx.settle();
+  assert.equal(answers.length, 1);
+  assert.deepEqual(answers[0].payload, { decision: 'another' });
+});

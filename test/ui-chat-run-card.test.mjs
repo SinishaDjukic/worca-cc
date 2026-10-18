@@ -11,6 +11,10 @@ import { snapshotFromState } from '../ui/public/ask-run-card.mjs';
 import { createChatRunCard, resultWord, answerReceipt, autoChip, midTrunc, progressIdent, runRefOf } from '../ui/public/chat/run-card.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from '../ui/public/ask/registry.mjs';
 import { setShapeFirst } from './helpers/shape-gate.mjs';
+import { renderGateCard, renderRecoveryCard, stepChip, stepTitle } from '../ui/public/shape/step-card.mjs';
+import { renderPlanBody } from '../ui/public/shape/plan-body.mjs';
+import { renderOutlineBody } from '../ui/public/shape/outline-body.mjs';
+import { noteAnswer, namedAnswer, forgetAnswer } from '../ui/public/shape/step-receipt.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
@@ -62,6 +66,28 @@ function questionStub(q, html, answers = null) {
     releaseQuestion(host) { log.released += 1; const p = host.querySelector('.qpanel'); p.innerHTML = ''; delete p.dataset.qid; },
   };
 }
+
+/** A controls.paintQuestion that mounts the REAL step card (shaper-cards D4/D5): its own buttons post through a submit
+ *  that notes the named receipt and resolves true, as app.js stepPost → postAnswer does. */
+function stepStub(pq, render, extra = {}) {
+  const log = { painted: 0, released: 0, posts: [] };
+  return { log,
+    paintQuestion(ref, host) {
+      log.painted += 1;
+      const panel = host.querySelector('.qpanel');
+      if (panel.dataset.qid !== pq.id) {
+        panel.replaceChildren();
+        render(panel, pq, { doc: host.ownerDocument, run: {}, title: stepTitle(pq, 'Implementer'), chip: stepChip(pq, {}), tagLevel() {},
+          confirm: async () => true, openFull() {}, fetchPlan: async () => null, markdown: { ensure: async () => false, render: () => ({ kind: 'plain' }) },
+          ...extra, submit: async (payload) => { log.posts.push(payload); noteAnswer(ref.runId, pq, payload); return true; } });
+        panel.classList.remove('hidden'); panel.dataset.qid = pq.id;
+      }
+      return { id: pq.id, kind: askKindOf(pq), heading: stepTitle(pq, 'Implementer'), step: 'Implementer', stepCard: true };
+    },
+    releaseQuestion(host) { log.released += 1; const p = host.querySelector('.qpanel'); p.replaceChildren(); delete p.dataset.qid; },
+  };
+}
+const outlineSlice = (id) => ({ id, title: `Run ${id}`, goal: `Goal ${id}`, inScope: [], outOfScope: [], acceptance: ['works'], dependsOn: [], estimate: 'medium' });
 
 test('chat run card: head, sub-line, stats, agent chips with model + cycle, Auto, the Workflows well, Open run and Expand', async () => {
   await checkRows([
@@ -265,17 +291,38 @@ test('chat run card question: the run page body mounts through controls.paintQue
       assert.equal($('.chat-rc-receipt').hidden, false);
       assert.equal($('.chat-rc-receipt summary').textContent, 'Answered · Planner');
     } },
-    { name: 'a cycle gate posts {decision} and the receipt names the choice', run: async () => {
-      const q = questionStub({ id: 'g-1', kind: 'gate', heading: 'Implementer needs a decision', step: 'Implementer' },
-        '<div class="qpanel-foot gate-actions"><button class="btn gate-continue">No</button><button class="btn btn-primary gate-another">Yes</button></div>');
+    { name: 'the real gate card posts {decision} itself and the receipt names it: Another cycle approved; the step head says it once', run: async () => {
+      const pq = { id: 'rc-gate-1', kind: 'gate', nodeId: 'n_impl', issues: [] };
+      const q = stepStub(pq, renderGateCard);
       const answers = [];
       const { card, $ } = mk({ controls: { ...q, answer: (ref, id, payload) => { answers.push([id, payload]); return Promise.resolve(true); } } });
-      card.update(live({ pendingQuestion: { id: 'g-1', kind: 'gate', issues: [] } }));
-      $('.gate-another').click();
+      card.update(live({ pendingQuestion: pq }));
+      assert.equal($('.chat-rc-q-head').hidden, true, 'stepCard: true hides the card\'s own heading');
+      assert.equal($('.chat-rc-q .ask-mcard-title').textContent, 'Implementer needs a decision');
+      $('.chat-rc-q .gate-another').click();
       await settle();
-      assert.deepEqual(answers, [['g-1', { decision: 'another' }]]);
+      assert.deepEqual(q.log.posts, [{ decision: 'another' }]);
+      assert.deepEqual(answers, [], 'the card\'s delegate never double-posts a step card');
       card.update(live());
-      assert.equal($('.chat-rc-receipt summary').textContent, 'One more fix round · Cycle gate');
+      assert.equal($('.chat-rc-receipt summary').textContent, 'Another cycle approved');
+      forgetAnswer('run-uuid-1', pq.id);
+    } },
+    { name: 'approving the real plan and Split cards leaves "Plan approved" and "Split into 3 runs"; none reads "Answered"', run: async () => {
+      const plan = { id: 'rc-plan-1', kind: 'plan', nodeId: 'n_plan', plan: { round: 1, revisable: true, file: 'plans/p.md', check: null, perspectives: [] } };
+      const split = { id: 'rc-split-1', kind: 'plan', nodeId: 'n_plan', plan: { round: 1, revisable: true,
+        outline: { why: 'big', slices: [outlineSlice('s1'), outlineSlice('s2'), outlineSlice('s3')] } } };
+      for (const [pq, render, want] of [[plan, renderPlanBody, 'Plan approved'], [split, renderOutlineBody, 'Split into 3 runs']]) {
+        const q = stepStub(pq, render);
+        const { card, $ } = mk({ controls: { ...q, answer: async () => true } });
+        card.update(live({ pendingQuestion: pq }));
+        $(pq === plan ? '.chat-rc-q .plan-approve' : '.chat-rc-q .outline-approve').click();
+        await settle();
+        assert.equal(q.log.posts.length, 1);
+        card.update(live());
+        assert.equal($('.chat-rc-receipt summary').textContent, want);
+        assert.doesNotMatch($('.chat-rc-receipt summary').textContent, /Answered/);
+        forgetAnswer('run-uuid-1', pq.id);
+      }
     } },
     { name: 'the workflow body owns its buttons; a REST snapshot never mounts a question; a run that ends while asking leaves no receipt', run: async () => {
       const q = questionStub({ id: 'w-1', kind: 'workflow', heading: 'Review the workflow', step: '' }, '<button class="btn-go">Accept</button>');
@@ -402,7 +449,14 @@ test('chat run card helpers: progressIdent, runRefOf, autoChip, resultWord, answ
       assert.equal(resultWord(null), null);
       assert.equal(resultWord({ status: 'running' }), null);
       assert.equal(resultWord({ status: 'interrupted' }), null, 'resumable: no result region');
-      assert.equal(answerReceipt({ kind: 'gate', payload: { decision: 'continue' } }, { step: 'Review' }), 'Continued · Cycle gate');
+      noteAnswer('run-a', { id: 'rc-named-1', kind: 'gate', issues: [] }, { decision: 'continue' });
+      assert.equal(answerReceipt(null, { id: 'rc-named-1', runId: 'run-a', step: 'Review' }), 'Continued with what you have', 'the named note wins');
+      assert.equal(answerReceipt({ kind: 'gate', payload: { decision: 'continue' } }, { id: 'rc-named-1', runId: 'run-a', step: 'Review' }), 'Continued with what you have');
+      assert.equal(answerReceipt(null, { id: 'rc-named-1', runId: 'run-b', step: 'Review' }), 'Answered · Review', 'another run\'s note never names this one');
+      forgetAnswer('run-a', 'rc-named-1');
+      assert.equal(namedAnswer('run-a', 'rc-named-1'), null);
+      assert.equal(answerReceipt({ kind: 'gate', payload: { decision: 'continue' } }, { id: 'rc-named-1', runId: 'run-a', step: 'Review' }), 'Answer sent · Review', 'no gate arm left');
+      assert.equal(answerReceipt({ named: 'Paused', payload: {} }, { id: 'rc-named-1', runId: 'run-a' }), 'Paused', 'a name read off the note before it was forgotten');
       assert.equal(answerReceipt({ kind: 'clarify', payload: { answers: [{ choice: 'a' }, { choice: '' }] } }, { step: 'Plan' }), '1 of 2 answered · Plan');
       assert.equal(answerReceipt({ kind: 'clarify', payload: { answers: [{ choice: '' }] } }, { step: 'Plan' }), 'Sent without answers · Plan');
       assert.equal(answerReceipt({ kind: 'form', payload: { values: {} } }, { heading: 'Review mockups' }), 'Answer sent · Review mockups');
@@ -628,14 +682,14 @@ function cascaded(el, props, pseudo = '') {
   });
   return best ? best.value : null;
 }
-/** The markup app.js's renderers paint for each kind (renderClarifyBody, askFormHost, renderGateBody, renderRecoveryBody,
+/** The markup app.js's renderers paint for each kind (renderClarifyBody, askFormHost, the gate and recovery step cards,
  *  the workflow body), as far as the question's styles reach — the form's group box (widgets-layout.mjs groupWidget),
  *  the workflow's "Round N revised" echo and its proposal warnings (renderWorkflowBody, auto-proposal.mjs) included. */
 const ASK_HTML = {
   clarify: '<div class="qpanel-head"><b>Questions</b></div><div class="qblock"><div class="qtext"><span class="qn">1</span>Which port?</div><div class="qopts"><button type="button" class="qopt" data-key="A"><span class="qopt-txt">8080</span></button></div><input class="qfree" type="text"></div><div class="qpanel-foot"><span class="qanswered">0 of 1 answered</span><button type="button" class="btn-go">Submit</button></div>',
   form: '<div class="qpanel-head"><b>A form</b></div><div class="qbody"><div class="af-form"><div class="af-grp"><h3 class="af-grp-title">Scope</h3><div class="af-fld"><label class="af-label">Name</label><input type="text" class="af-inp"></div></div></div><div class="qpanel-foot"><span class="qanswered">0 of 1 answered</span><button type="button" class="btn-go">Submit</button></div></div>',
-  gate: '<div class="qpanel-head"><b>Cycle gate</b></div><div class="gate-intro">This cycle reached its limit.</div><ul class="issues"><li class="issue sev-major"><div class="issue-head"><span class="issue-sev">major</span><span class="issue-title">Login leaks</span></div><div class="issue-loc">srv.mjs:12</div></li></ul><div class="qpanel-foot gate-actions"><button type="button" class="btn gate-continue">Don\'t approve another cycle and continue</button><button type="button" class="btn btn-primary gate-another">I approve another cycle</button></div>',
-  recovery: '<div class="qpanel-head"><b>Step failed</b></div><div class="gate-intro">This step could not reach the model.</div><div class="issue-detail">429 rate limited</div><div class="qpanel-foot gate-actions"><button type="button" class="btn recovery-pause">Pause run</button><button type="button" class="btn btn-primary recovery-retry">Retry</button></div>',
+  gate: '<div class="qpanel-head"><b>Cycle gate</b></div><div class="gate-intro">This cycle reached its limit.</div><ul class="issues"><li class="issue sev-major"><div class="issue-head"><span class="issue-sev">major</span><span class="issue-title">Login leaks</span></div><div class="issue-loc">srv.mjs:12</div></li></ul><div class="qpanel-foot gate-actions"><button type="button" class="btn gate-continue">Continue with what you have</button><button type="button" class="btn btn-primary gate-another">Approve another cycle</button></div>',
+  recovery: '<div class="qpanel-head"><b>Step failed</b></div><div class="gate-intro">This step could not reach the model.</div><div class="issue-detail">429 rate limited</div><div class="qpanel-foot gate-actions"><button type="button" class="btn recovery-pause">Pause</button><button type="button" class="btn btn-primary recovery-retry">Retry</button></div>',
   workflow: '<div class="qpanel-head"><b>Workflow</b></div><div class="qbody"><div class="ask-wfcard-body"><div class="qnote"><b>Round 1 revised: </b>“skip the docs step”</div><div class="ask-wfcard-warnings"><div class="ask-wfcard-warn">This project\'s saved settings for that workflow are not applied to Auto runs.</div></div></div></div><textarea class="qfree qfree-area" hidden></textarea><div class="qpanel-foot"><button type="button" class="qcancel wf-cancel">Cancel run</button><button type="button" class="btn-go wf-accept">Accept &amp; run</button></div>',
 };
 const ASK_KINDS = Object.keys(ASK_HTML);
@@ -755,14 +809,15 @@ test('chat run card CSS: the question heading is the Runs page heading (amber di
 });
 
 test('chat run card: a receipt with nothing to expand is no tab stop and does not toggle; one with answers is a disclosure', async () => {
-  const gate = questionStub({ id: 'g-1', kind: 'gate', heading: 'Review needs a decision', step: 'Review' }, '<button class="btn gate-another">I approve another cycle</button>');
-  const g = mk({ controls: { ...gate, answer: async () => true } });
-  g.card.update(live({ pendingQuestion: { id: 'g-1', kind: 'gate', nodeId: 'n_impl', issues: [] } }));
+  const gpq = { id: 'rc-gate-2', kind: 'gate', nodeId: 'n_impl', issues: [] };
+  const g = mk({ controls: { ...stepStub(gpq, renderGateCard), answer: async () => true } });
+  g.card.update(live({ pendingQuestion: gpq }));
   g.$('.chat-rc-q .gate-another').click();
   await settle();
   g.card.update(live({ pendingQuestion: null }));
   const sum = g.$('.chat-rc-receipt summary');
-  assert.equal(sum.textContent, 'One more fix round · Cycle gate');
+  assert.equal(sum.textContent, 'Another cycle approved');
+  forgetAnswer('run-uuid-1', gpq.id);
   assert.equal(sum.tabIndex, -1);
   sum.click();
   assert.equal(g.$('.chat-rc-receipt').open, false);
@@ -837,6 +892,16 @@ test('chat run card CSS: an answer label wider than the whole row wraps inside i
   // sat at x -26..304 in a 20..340 card and read "n't approve …". flex-wrap already moves WHOLE buttons to the next row.
   assert.doesNotMatch(p3, /\.chat-rc-q \.qpanel-foot > button\{[^}]*white-space:nowrap/);
   assert.ok(p3.includes('.chat-rc-q .qpanel-foot > button{max-width:100%;white-space:normal;text-wrap:balance;}'));
+});
+
+test('step card CSS: inside a question panel the head title wraps (375 px) and never overflows the card', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const rule = (sel) => { const m = css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`)); return m ? m[1] : ''; };
+  assert.match(rule('.qpanel .step-head .ask-mcard-title'), /white-space:normal/);
+  assert.match(rule('.qpanel .step-head .ask-mcard-title'), /min-width:0/);
+  assert.match(rule('.qpanel .step-head'), /flex-wrap:wrap/);
+  assert.match(rule('.qpanel .step-head'), /height:auto/);
+  assert.match(rule('.outline-row-more'), /margin-left:auto/);
 });
 
 test('chat run card CSS: the result counts and error, a hovered file row or Stop, the "K of N answered" lead, the agent model label and the Auto well\'s words reach 4.5:1 in both themes', () => {
@@ -946,14 +1011,32 @@ test('chat run card controls: a triple-click\'s third press never undoes the fir
 });
 
 test('chat run card: an answer whose 200 lands before the question goes away keeps its receipt when the run then pauses (a recovery "Pause")', async () => {
-  const q = questionStub({ id: 'r-1', kind: 'recovery', heading: 'Implementer failed', step: 'Implementer' }, '<button class="btn recovery-pause">Pause</button>');
+  const pq = { id: 'rc-rec-1', kind: 'recovery', nodeId: 'n_impl', recovery: { cls: 'auth', options: [{ id: 'retry' }, { id: 'pause' }] } };
+  const q = stepStub(pq, renderRecoveryCard);
   const { card, $ } = mk({ controls: { ...q, answer: async () => true } });
-  card.update(live({ pendingQuestion: { id: 'r-1', kind: 'recovery', nodeId: 'n_impl' } }));
+  card.update(live({ pendingQuestion: pq }));
   $('.chat-rc-q .recovery-pause').click();
   await settle();                                          // the 200 landed while the question still showed
+  assert.deepEqual(q.log.posts, [{ decision: 'pause' }]);
   card.update(live({ status: 'pausing', pendingQuestion: null }));
   assert.equal($('.chat-rc-receipt').hidden, false, 'the card names what it sent');
-  assert.equal($('.chat-rc-receipt summary').textContent, 'Answer sent · Implementer');
+  assert.equal($('.chat-rc-receipt summary').textContent, 'Paused');
+  // Resumed: the new harness asks `rc-rec-1` again and the network probe answers it by itself. The first answer's name
+  // is not this one's.
+  card.update(live({ pendingQuestion: pq }));
+  card.update(live({ pendingQuestion: null }));
+  assert.equal($('.chat-rc-receipt summary').textContent, 'Answered · Implementer');
+  assert.deepEqual(q.log.posts, [{ decision: 'pause' }]);
+});
+
+test('chat run card: a note this tab left on another run\'s question with the same id never names this run\'s answer', async () => {
+  const pq = { id: 'gate-review-1', kind: 'gate', nodeId: 'n_impl', issues: [] };
+  noteAnswer('run-other', pq, { decision: 'another' });
+  const { card, $ } = mk({ controls: { ...stepStub(pq, renderGateCard), answer: async () => true } });
+  card.update(live({ pendingQuestion: pq }));
+  card.update(live({ pendingQuestion: null }));                // answered from another device
+  assert.equal($('.chat-rc-receipt summary').textContent, 'Answered · Implementer');
+  forgetAnswer('run-other', pq.id);
 });
 
 test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · Refine ✓ while planning", the plan file, Saved to + Open; hidden with the gate off or nothing approved', async () => {

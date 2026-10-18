@@ -256,6 +256,8 @@ import { renderFeature, renderFeatureSummary, featureWhere } from './shape/featu
 import { sliceLineCopy } from './shape/slice-line.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
+import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard } from './shape/step-card.mjs';
+import { noteAnswer, forgetAnswer } from './shape/step-receipt.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
 import { toggleMenu } from './workflows/menu.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
@@ -490,7 +492,7 @@ function paintFeaturePageProgress(r) {
   head.textContent = featureWhere(f, featureProgress(cur));
 }
 chatDeps.mountFeature = (host, id) => mountShapeFeature(host, id, { mode: 'summary' });   // P13: the Chat run card (F33)
-if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, mountCard: (h, id) => chatDeps.mountFeature(h, id), refresh: refreshShapeFeatures };   // test seam
+if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, mountCard: (h, id) => chatDeps.mountFeature(h, id), refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host) };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -3680,7 +3682,6 @@ if (typeof window !== 'undefined') {
     paintHdHeaderMeta,
     buildHdOverview,
     paintRdHeader,
-    renderGateBody,
     runStatusMeta,
     histStatusMeta,
     histPrEligible,
@@ -5545,6 +5546,9 @@ function appendLog({ source, level, text }) {
 // pending question; the frame hook repaints the run page and the Runs row.
 // ---------------------------------------------------------------------------
 function onQuestion(r, msg) {
+  // A NEW ask (not the replay of the one still pending) can reuse an earlier ask's id after a resume
+  // (`recovery-network-1`): drop this tab's old note so its receipt never names the new one.
+  if (msg && msg.id && (!r.pendingQuestion || r.pendingQuestion.id !== msg.id)) forgetAnswer(r.runId, msg.id);
   r.pendingQuestion = msg;
   r._decorSeq = (r._decorSeq || 0) + 1;   // isLive(r) reads pendingQuestion
   // A new question supersedes any half-finished answer attempt.
@@ -5842,121 +5846,6 @@ function renderClarifyBody(r, panel, pq) {
   submit.appendChild(playIcon());
   submit.appendChild(document.createTextNode('Submit'));
   foot.appendChild(submit);
-  panel.appendChild(foot);
-}
-
-function renderGateBody(r, panel, pq) {
-  const issues = Array.isArray(pq.issues) ? pq.issues : [];
-
-  const intro = document.createElement('div');
-  intro.className = 'gate-intro';
-  intro.textContent = `This cycle reached its limit${gateWireCopy(r, pq.wireId)}${issues.length ? ' with open issues' : ''}. Approve another cycle to keep iterating, or continue with what you have.`;
-  tagLevel(intro, 'advanced');
-  // Simple mode reads the same decision without the vocabulary (docs/ui-levels.md: a blocking
-  // prompt is never hidden, only simplified). Twin elements, so a mode change needs no re-render.
-  const plain = document.createElement('div');
-  plain.className = 'gate-intro';
-  plain.dataset.maxLevel = 'simple';
-  plain.textContent = issues.length
-    ? 'The agents reviewed their own work and still see problems. Let them try once more, or carry on with what they have?'
-    : 'The agents have used the attempts they are allowed. Let them try once more, or carry on with what they have?';
-  panel.append(intro, plain);
-
-  if (issues.length) {
-    const list = document.createElement('ul');
-    list.className = 'issues';
-    issues.forEach((iss) => {
-      const sev = String((iss && iss.severity) || 'suggestion').toLowerCase();
-      const li = document.createElement('li');
-      li.className = `issue sev-${sev}`;
-
-      const ihead = document.createElement('div');
-      ihead.className = 'issue-head';
-      const sevEl = document.createElement('span');
-      sevEl.className = 'issue-sev';
-      sevEl.textContent = sev;
-      const titleEl = document.createElement('span');
-      titleEl.className = 'issue-title';
-      titleEl.textContent = (iss && iss.title) || '(untitled issue)';
-      ihead.append(sevEl, titleEl);
-      li.appendChild(ihead);
-
-      if (iss && iss.detail) {
-        const det = document.createElement('div');
-        det.className = 'issue-detail';
-        det.textContent = iss.detail;
-        li.appendChild(det);
-      }
-      if (iss && iss.location) {
-        const loc = document.createElement('div');
-        loc.className = 'issue-loc';
-        loc.textContent = iss.location;
-        li.appendChild(loc);
-      }
-      list.appendChild(li);
-    });
-    panel.appendChild(list);
-  }
-
-  const foot = document.createElement('div');
-  foot.className = 'qpanel-foot gate-actions';
-  const cont = document.createElement('button');
-  cont.type = 'button';
-  cont.className = 'btn gate-continue';
-  cont.textContent = "Don't approve another cycle and continue";
-  const another = document.createElement('button');
-  another.type = 'button';
-  another.className = 'btn btn-primary gate-another';
-  another.textContent = 'I approve another cycle';
-  foot.append(cont, another);
-  panel.appendChild(foot);
-}
-
-// Recovery prompt: a node hit a recoverable error (auth / rate-limit / quota /
-// network). Show the cause and let the user fix it then Retry, or park the run
-// with Pause run — nothing here ends a run, only Stop does.
-function renderRecoveryBody(r, panel, pq) {
-  const rec = pq.recovery || {};
-  const intro = document.createElement('div');
-  intro.className = 'gate-intro';
-  const hint = rec.cls === 'auth'
-    ? 'Re-authenticate (e.g. run `claude setup-token` or `/login`), then Retry.'
-    : 'Fix the problem (wait out a limit, restore connectivity, top up credit), then Retry.';
-  intro.textContent = `This step could not reach the model. ${hint} Or pause the run and come back later — only Stop ends it.`;
-  panel.appendChild(intro);
-
-  if (rec.message) {
-    const msg = document.createElement('div');
-    msg.className = 'issue-detail';
-    msg.textContent = rec.message;
-    panel.appendChild(msg);
-  }
-
-  if (rec.network && typeof rec.network === 'object') {
-    const note = document.createElement('div');
-    note.className = 'gate-intro recovery-network';
-    const until = new Date(rec.network.until).toTimeString().slice(0, 5);
-    note.textContent = `Waiting for network… ${rec.network.host} is unreachable. worca picks Retry by itself when it answers again (until ${until}). You can still Retry now or Pause.`;
-    panel.appendChild(note);
-  }
-
-  const foot = document.createElement('div');
-  foot.className = 'qpanel-foot gate-actions';
-  // The give-up option comes from the failure policy's row (options ride the
-  // prompt): 'pause' parks the run, 'abort' ends it. Older payloads carry none.
-  const giveUp = (Array.isArray(rec.options) && rec.options.find((o) => o && o.id !== 'retry')) || { id: 'pause' };
-  const pause = document.createElement('button');
-  pause.type = 'button';
-  pause.className = giveUp.id === 'abort' ? 'btn recovery-abort' : 'btn recovery-pause';
-  pause.textContent = giveUp.id === 'abort' ? 'Abort run' : 'Pause run';
-  pause.title = giveUp.id === 'abort'
-    ? 'End the run here with this error. The worktree is torn down.'
-    : 'Park the run here with this error as the reason. Nothing is discarded — Resume retries the step later.';
-  const retry = document.createElement('button');
-  retry.type = 'button';
-  retry.className = 'btn btn-primary recovery-retry';
-  retry.textContent = 'Retry';
-  foot.append(pause, retry);
   panel.appendChild(foot);
 }
 
@@ -6305,7 +6194,10 @@ registerAskRenderer('clarify', {
   // title: unchanged. The visible "A few questions before the plan" heading is askHeading's.
   render: (panel, pq, ctx) => {
     renderClarifyBody(ctx.run, panel, pq);
-    if (shapeFirstOn() && isShapingRun(ctx.run)) decorateShapingQuestions(panel, pq, ctx);
+    if (isStepCard(pq, ctx.run, shapeFirstOn())) {
+      decorateShapingQuestions(panel, pq, { ...ctx, ...stepDeps(ctx, pq),
+        collect: () => askRendererFor('clarify').collect(panel), submit: (p) => stepPost(ctx.run, p) });
+    }
   },
   // `panel` is null only for a caller that has no panel node; r._answers is the
   // no-panel fallback renderClarifyBody keeps writing.
@@ -6316,13 +6208,15 @@ registerAskRenderer('clarify', {
     })),
   }),
 });
+// Gate and recovery are step cards for every run (shaper-cards D3): their buttons post through stepPost themselves.
 registerAskRenderer('gate', {
   title: () => 'Cycle gate',
-  render: (panel, pq, ctx) => renderGateBody(ctx.run, panel, pq),
+  render: (panel, pq, ctx) => renderGateCard(panel, pq, { ...stepDeps(ctx, pq),
+    wireCopy: gateWireCopy(ctx.run, pq.wireId), tagLevel, submit: (p) => stepPost(ctx.run, p) }),
 });
 registerAskRenderer('recovery', {
   title: (pq) => `${(((pq.recovery || {}).cls) || 'recoverable').replace('_', ' ')} error — action needed`,
-  render: (panel, pq, ctx) => renderRecoveryBody(ctx.run, panel, pq),
+  render: (panel, pq, ctx) => renderRecoveryCard(panel, pq, { ...stepDeps(ctx, pq), submit: (p) => stepPost(ctx.run, p) }),
 });
 registerAskRenderer('workflow', {
   title: (pq) => `Auto proposes a workflow · round ${(pq.workflow && pq.workflow.round) || 1}`,
@@ -6340,11 +6234,23 @@ registerAskRenderer('plan', {
   setErrors: (panel, errors) => { if (panel && panel.__plan) panel.__plan.setErrors(errors); },
 });
 
+/** A step card's submit: true on 200, else the server's reason (a string) or false (shaper-cards D13). */
+function stepPost(r, payload, opts = {}) {
+  let why = '';
+  return postAnswer(r, payload, { ...opts, onFail: (m) => { why = m; } }).then((ok) => (ok ? true : (why || false)));
+}
+/** What every step card gets on top of the host ctx: the document, the run, its title and kind chip. */
+function stepDeps(ctx, pq) {
+  const r = ctx.run;
+  const who = pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '';
+  return { doc: ctx.doc || document, run: r, title: stepTitle(pq, who), chip: stepChip(pq, r) };
+}
+
 /** The outline body's deps: the plan body's posting rule (the gate read at post time, S4) and its confirm dialog. */
 function outlineBodyDeps(ctx) {
   const r = ctx.run;
-  return { doc: ctx.doc, run: r, extras: shapeFirstOn(), confirm: confirmModal,
-    submit: (payload) => postAnswer(r, payload, { plan: shapeFirstOn() }) };
+  return { ...stepDeps(ctx, r.pendingQuestion), extras: shapeFirstOn(), confirm: confirmModal,
+    submit: (payload) => stepPost(r, payload, { plan: shapeFirstOn() }) };
 }
 
 function planBodyDeps(ctx) {
@@ -6352,14 +6258,14 @@ function planBodyDeps(ctx) {
   const extras = shapeFirstOn();
   const runUrl = (tail) => `/api/runs/${encodeURIComponent(r.runId)}${tail}`;
   return {
-    doc: document, run: r, extras,
+    ...stepDeps(ctx, r.pendingQuestion), extras,
     fetchPlan: (round) => (extras
       ? fetch(runUrl(`/plan${round ? `?round=${encodeURIComponent(round)}` : ''}`)).then((res) => (res.ok ? res.json() : null)).catch(() => null)
       : Promise.resolve(null)),
     markdown: { ensure: bindMarkdownReady, render: (t) => hdMarkdown.render(t) },
     // The route is chosen when the answer is POSTED: the panel is rebuilt only when the question id changes, and a hello
     // can turn the gate off in between. The gated route would then answer 404 and strand the run (D12).
-    submit: (payload) => postAnswer(r, payload, { plan: shapeFirstOn() }),
+    submit: (payload) => stepPost(r, payload, { plan: shapeFirstOn() }),
     openFull: () => {
       // openRunArtifactPopup rejects only a falsy artifact; {relPath:''} would open an empty viewer.
       const file = r.pendingQuestion && r.pendingQuestion.plan ? r.pendingQuestion.plan.file : '';
@@ -6393,17 +6299,20 @@ function submitAnswer(r, panel = null) {
 // The panel is cleared only when the next phase/state event confirms resume.
 // Returns TRUE only when the POST came back 200 — the workflow panel's Revise
 // echo is recorded off that, so a failed send never claims a round the server
-// never saw. Every other caller ignores the return.
-async function postAnswer(r, payload, { plan = false } = {}) {
-  if (!r || !r.pendingQuestion) return false;
+// never saw. `onFail(reason)` hears why a non-422 failure did not land (a step
+// card says it, shaper-cards D13).
+async function postAnswer(r, payload, { plan = false, onFail = null } = {}) {
+  if (!r || !r.pendingQuestion) { if (onFail) onFail('this run is not waiting for an answer'); return false; }
   // Re-entrancy guard: an answer is already in flight for this run. Without
   // this a synthetic/double click (or a re-triggered handler) could fire a
   // second POST before maybeResume clears _answering.
   if (r._answering) return false;
   // Never post for a dead run.
-  if (r._finished || isTerminalStatus(r.status)) return false;
+  if (r._finished || isTerminalStatus(r.status)) { if (onFail) onFail('this run is over'); return false; }
   const id = r.pendingQuestion.id;
   const runId = r.runId;
+  // The named receipt (shaper-cards D5), BEFORE the POST: the server broadcasts question-resolved before its 200.
+  noteAnswer(runId, r.pendingQuestion, payload, { shaping: shapeFirstOn() && isShapingRun(r) });
 
   setPanelBusy(r, true);
   r._answering = true;
@@ -6422,6 +6331,7 @@ async function postAnswer(r, payload, { plan = false } = {}) {
     // question stays open, the panel keeps every typed value, and the renderer
     // marks the offending fields. pendingQuestion is deliberately untouched.
     if (res.status === 422) {
+      forgetAnswer(runId, id);
       const body = await safeJson(res);
       const errors = Array.isArray(body.errors) ? body.errors : [];
       r._answering = false;
@@ -6434,17 +6344,21 @@ async function postAnswer(r, payload, { plan = false } = {}) {
     }
     if (!res.ok) {
       const err = await safeJson(res);
+      forgetAnswer(runId, id);
       r._answering = false;
       setPanelBusy(r, false);
       onLog(r, { source: 'ui', level: 'error', text: `answer failed: ${err.error || res.status}`, ts: Date.now() });
+      if (onFail) onFail((err && err.error) || `the server answered ${res.status}`);
       return false;
     }
     // 200: keep pendingQuestion; wait for the next phase/state to confirm resume.
     return true;
   } catch (e) {
+    forgetAnswer(runId, id);
     r._answering = false;
     setPanelBusy(r, false);
     onLog(r, { source: 'ui', level: 'error', text: `answer error: ${e.message}`, ts: Date.now() });
+    if (onFail) onFail('the server could not be reached');
     return false;
   }
 }
@@ -21151,7 +21065,7 @@ function historyCommentsUrl(id, record, suffix = '') {
 // "workspaces/" prefix (historyDiffUrl strips it to build its URL).
 const hdStoreKey = (record) => (record && record.projectKey) || '';
 
-// Build a <ul class="issues"> from merged check/finding rows (mirrors renderGateBody).
+// Build a <ul class="issues"> from merged check/finding rows (mirrors the gate card's issue list, shape/step-card.mjs).
 function issueList(rows) {
   const ul = document.createElement('ul'); ul.className = 'issues';
   rows.forEach((c) => {
@@ -28581,7 +28495,8 @@ function chatPaintQuestion(ref, host) {
     set.add(panel);
     if (r._answering) setPanelBusy(r, true);   // an answer already in flight (paintRdQuestions' rule)
   }
-  return { id: pq.id || null, kind: askKindOf(pq), heading: askHeading(r, pq), step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '' };
+  return { id: pq.id || null, kind: askKindOf(pq), heading: askHeading(r, pq),
+    step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, shapeFirstOn()) };
 }
 const chatRunControls = {
   pause(ref, btn = null) {
@@ -32581,23 +32496,13 @@ function paintRdResult(screen, r, { glance = 'run', trailCount = 0 } = {}) {
 // The heading over a waiting question on the glance: what is asked, by which step. It
 // replaces the panel's own header row (title + count badge).
 function askHeading(r, pq) {
-  // Shape it first: a shaping run's Clarify reads as the step before the plan (spec §3.3).
-  if (askKindOf(pq) === 'clarify' && shapeFirstOn() && isShapingRun(r)) return 'A few questions before the plan';
   const who = pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '';
+  // A step card says its title once, in its own head (shaper-cards D16): one wording, the gate on and off.
+  if (isStepCard(pq, r, shapeFirstOn())) return stepTitle(pq, who);
   const n = Array.isArray(pq.questions) ? pq.questions.length : (Array.isArray(pq.issues) ? pq.issues.length : 1);
   switch (pq.kind) {
-    case 'plan': {                                 // spec §3.4; D30: the gate on says whose turn it is
-      const p = pq.plan || {};
-      if (shapeFirstOn()) return p.outline ? 'Your turn: approve the slices' : 'Your turn: approve the plan';
-      const c = p.check;
-      if (p.outline) return `Slices ready for your approval · v${p.round || 1}${c && Number.isFinite(c.total) ? ` · Outline ${c.passed}/${c.total}` : ''}`;
-      const score = c && Number.isFinite(c.total) ? ` · Shape ${c.passed}/${c.total}` : '';
-      return `Plan ready for your approval · v${p.round || 1}${score}`;
-    }
     case 'workflow': return 'Review the workflow';
     case 'form': return pq.title ? String(pq.title) : (who ? `${who} needs your input` : 'Your input is needed');
-    case 'gate': return who ? `${who} needs a decision` : 'A decision is needed';
-    case 'recovery': return who ? `${who} failed` : 'A step failed';
     default:
       if (!who) return n > 1 ? `${n} questions` : 'A question';
       return n > 1 ? `${n} questions from ${who}` : `A question from ${who}`;
@@ -32661,7 +32566,8 @@ function paintRdQuestions(screen, r) {
   // visible flash on top of the wr-rise entry. The card path already un-hides first.
   host.hidden = pq == null;                    // drives the wr-rise entry
   const head = host.querySelector('.rd-ask-head');
-  if (head) head.textContent = pq ? askHeading(r, pq) : '';
+  // A step card carries its own head (title + chip): the run page's heading stays empty for it (shaper-cards D16).
+  if (head) head.textContent = pq && !isStepCard(pq, r, shapeFirstOn()) ? askHeading(r, pq) : '';
   if (panel && panel.dataset.qid !== key) {
     renderQpanel(r, host);                     // host contains the .qpanel node
     // Stamp '' rather than deleting: `clearQpanel` already removed the attribute,
@@ -32830,16 +32736,11 @@ function onRdDelegatedClick(e) {
   const past = e.target.closest && e.target.closest('.cb-past-team-cap');
   if (past) { confirmPastTeamCap(r.runId, past); return; }             // team-policy board 9
   if (e.target.closest && e.target.closest('.cb-policy-open')) { location.hash = 'team-policy'; return; }
-  const qbtn = e.target.closest && e.target.closest(
-    '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
+  // Step cards (gate, recovery, plan, Shaper's Clarify) bind their own buttons (shaper-cards D4).
+  const qbtn = e.target.closest && e.target.closest('.qpanel .btn-go');
   if (!qbtn) return;
   if (qbtn.closest('.qpanel-workflow')) return;            // same guard, early-return shape
-  if (qbtn.classList.contains('gate-continue')) postAnswer(r, { decision: 'continue' });
-  else if (qbtn.classList.contains('gate-another')) postAnswer(r, { decision: 'another' });
-  else if (qbtn.classList.contains('recovery-retry')) postAnswer(r, { decision: 'retry' });
-  else if (qbtn.classList.contains('recovery-pause')) postAnswer(r, { decision: 'pause' });
-  else if (qbtn.classList.contains('recovery-abort')) postAnswer(r, { decision: 'abort' });
-  else submitAnswer(r, qbtn.closest('.qpanel'));
+  submitAnswer(r, qbtn.closest('.qpanel'));
 }
 el.runDetail?.addEventListener('click', onRdDelegatedClick);
 

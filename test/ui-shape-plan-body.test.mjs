@@ -1,6 +1,6 @@
-// test/ui-shape-plan-body.test.mjs — the `plan` ask's body (spec §3.4, D10, D30–D32): the decision card (summary,
-// folded check line with Fix all, perspectives line with chips and Update plan, Full plan inline with versions and
-// grounding marks, ⋯ with Save and Open in New run), and the gate-off held body that keeps approve / revise / stop.
+// test/ui-shape-plan-body.test.mjs — the `plan` ask's step card (spec §3.4, D10, D30–D32; shaper-cards D1, D8, D9, D13):
+// one layout with the gate on and off — head, summary, folded check line, perspectives line with chips and Update plan,
+// Full plan inline with versions and grounding marks, ⋯ with Fix all, Save, Open in New run and Stop.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -49,7 +49,7 @@ function setup({ pq = ask(), extras = true, run = {}, submit, savePlan, confirm,
   panel.className = 'qpanel';
   const calls = { submit: [], save: [], confirm: [], fetch: [], openFull: 0, openNew: [] };
   const deps = {
-    doc, run, extras,
+    doc, run, extras, title: 'Your turn: approve the plan', chip: 'Plan',
     fetchPlan: fetchPlan || (async (round) => { calls.fetch.push(round); return { name: 'feature-v2.md', text: round ? `## Decisions\nround ${round}` : PLAN_MD }; }),
     markdown: mdStub(),
     submit: submit ? (p) => { calls.submit.push(p); return submit(p, panel); } : async (p) => { calls.submit.push(p); return true; },
@@ -83,24 +83,26 @@ test('one primary "Approve and build", the same with unmet checks, plus the reas
   assert.equal(bad.$('.plan-approve').textContent, 'Approve and build');
   assert.equal(bad.$('.plan-unmet').textContent, '1 check unmet: paths');
   assert.equal(bad.$('.plan-actions').nextElementSibling, bad.$('.plan-unmet'));
-  assert.equal(setup({ pq: ask({ outline: { slices: [] } }) }).$('.plan-approve').textContent, 'Approve the slices');
 });
 
-test('the card: summary, footer of four, no Stop, no Run anyway', async () => {
-  const { $, $$ } = setup({ run: { title: 'Plan demo' } });
+test('the card: head, summary, footer of four, Stop only in ⋯, no Run anyway', async () => {
+  const { $, $$, panel } = setup({ run: { title: 'Plan demo' } });
   await flush();
+  assert.equal(panel.firstElementChild, $('.ask-mcard-head'));
+  assert.equal($('.ask-mcard-title').textContent, 'Your turn: approve the plan');
+  assert.equal($('.ask-mcard-kind').textContent, 'Plan');
   assert.equal($('.plan-sub').textContent, 'Plan demo · v2');
   assert.equal($('.plan-summary').hidden, false);
   assert.equal($('.plan-summary').textContent, 'Why.');
-  assert.deepEqual($$('.plan-actions > button').map((b) => b.textContent), ['Approve and build', 'Ask for changes', 'Full plan', '⋯']);
+  assert.deepEqual($$('.plan-actions > button').map((b) => b.textContent), ['Ask for changes', 'Full plan', 'Approve and build', '⋯']);
   assert.equal($('.plan-stop'), null);
   assert.equal($('.plan-open-full'), null);
-  assert.doesNotMatch($('.plan-body').textContent, /Run anyway/);
+  assert.doesNotMatch($('.plan-body').textContent, /Run anyway|Run this plan/);
 });
 
 test('D19: plan.outlineChange shows the planner\'s note as text; without it there is no note', () => {
   const withNote = setup({ pq: ask({ outlineChange: 'Slice 1 did not add the <b>tags</b> table.' }) });
-  assert.equal(withNote.$('.shape-plan-outline-change-head').textContent, 'The planner says this slice can\'t be built as outlined:');
+  assert.equal(withNote.$('.shape-plan-outline-change-head').textContent, 'The planner says this run can\'t be built as outlined:');
   assert.equal(withNote.$('.shape-plan-outline-change-text').textContent, 'Slice 1 did not add the <b>tags</b> table.');
   assert.equal(withNote.$('.shape-plan-outline-change-text b'), null, 'text, never markup');
   assert.equal(setup().$('.shape-plan-outline-change'), null);
@@ -114,7 +116,7 @@ test('the meta line shows the file and Shape p/t, then sections and words once t
   assert.match(loaded.$('.plan-meta').textContent, /^feature-v2\.md · 2 sections · \d+ words · Shape 2\/3$/);
 });
 
-test('checks are folded on one line; rows are neutral with ✓ / ✕; one Fix all posts every failure', () => {
+test('checks are folded on one line; rows are neutral with ✓ / ✕; Fix all in ⋯ posts every failure', () => {
   const { $, $$, calls } = setup();
   const line = $('.plan-check-line');
   assert.equal(line.querySelector('.plan-fold-text').textContent, 'Shape 2/3 · 1 to fix');
@@ -124,11 +126,11 @@ test('checks are folded on one line; rows are neutral with ✓ / ✕; one Fix al
   assert.equal($('.plan-checks').hidden, false);
   assert.deepEqual($$('.plan-check-row').map((r) => r.querySelector('.plan-check-mark').textContent), ['✓', '✕']);
   assert.equal($$('.plan-check-bad').length + $$('.plan-fix').length, 0);
-  assert.equal($$('.plan-fix-all').length, 1);
-  $('.plan-fix-all').click();
+  assert.equal($$('.plan-fix-all').length, 0, 'no Fix all button in the body');
+  menu($).pick('Fix all');
   assert.deepEqual(calls.submit, [{ decision: 'revise', feedback: fixAllFeedback(CHECK.items) }]);
   assert.equal($('.plan-check-detail').textContent, '1 path not found');
-  assert.equal(setup({ pq: ask({ check: { ...CHECK, ok: true, items: [CHECK.items[0]] } }) }).$('.plan-fix-all'), null, 'nothing fixable');
+  assert.ok(!menu(setup({ pq: ask({ check: { ...CHECK, ok: true, items: [CHECK.items[0]] } }) }).$).labels.includes('Fix all'), 'nothing fixable');
 });
 
 test('a chip toggle enables Update plan, which posts perspectives and the change feedback; UX is locked', () => {
@@ -149,7 +151,7 @@ test('a chip toggle enables Update plan, which posts perspectives and the change
 
 test('after a failed submit and setPanelBusy re-enabling, locked chips and an unchanged Update plan stay disabled', async () => {
   const { panel, $, calls } = setup({ submit: () => Promise.reject(new Error('net')) });
-  $('.plan-fix-all').click();
+  menu($).pick('Fix all');
   idle(panel);
   await flush();
   assert.equal(calls.submit.length, 1);
@@ -177,6 +179,19 @@ test('failure feedback: false shows SEND_FAILED; a 422 setErrors message is kept
   t.$('.plan-approve').click();
   await flush();
   assert.equal(t.$('.plan-err').hidden, true);
+});
+
+test('a submit resolving the server\'s reason keeps the typed feedback and says "Not sent: …"', async () => {
+  for (const extras of [true, false]) {
+    const { $ } = setup({ extras, submit: async () => 'this question is no longer pending' });
+    $('.plan-ask-changes').click();
+    $('.plan-feedback').value = 'more tests';
+    $('.plan-revise').click();
+    await flush();
+    assert.equal($('.plan-err').hidden, false);
+    assert.equal($('.plan-err').textContent, 'Not sent: this question is no longer pending');
+    assert.equal($('.plan-feedback').value, 'more tests');
+  }
 });
 
 test('a second click while a post is in flight is ignored', async () => {
@@ -213,12 +228,13 @@ test('perspectives read as a line; edit opens the chips and Update plan in place
   assert.ok($('.plan-perspectives .plan-update'));
 });
 
-test('⋯ holds Save to plans/ and Open in New run; Simple level drops Open in New run; a workspace run has no ⋯', async () => {
+test('⋯ holds Fix all, Save to plans/, Open in New run and Stop; Simple level drops Open in New run; a workspace run and the gate off keep Fix all and Stop', async () => {
   const { $ } = setup();
-  assert.deepEqual(menu($).labels, ['Save to plans/', 'Open in New run']);
+  assert.deepEqual(menu($).labels, ['Fix all', 'Save to plans/', 'Open in New run', 'Stop']);
   doc.documentElement.dataset.level = 'simple';
-  try { assert.deepEqual(menu(setup().$).labels, ['Save to plans/']); } finally { delete doc.documentElement.dataset.level; }
-  assert.equal(setup({ run: { workspaceId: 'w1' } }).$('.plan-more'), null);
+  try { assert.deepEqual(menu(setup().$).labels, ['Fix all', 'Save to plans/', 'Stop']); } finally { delete doc.documentElement.dataset.level; }
+  assert.deepEqual(menu(setup({ run: { workspaceId: 'w1' } }).$).labels, ['Fix all', 'Stop']);
+  assert.deepEqual(menu(setup({ extras: false }).$).labels, ['Fix all', 'Stop']);
 });
 
 test('Full plan expands the plan inline (tags, grounding marks, versions); no popup', async () => {
@@ -234,23 +250,28 @@ test('Full plan expands the plan inline (tags, grounding marks, versions); no po
   assert.deepEqual($$('.plan-md h2').map((h2) => [...h2.querySelectorAll('.plan-tag')].map((t) => t.textContent)).slice(0, 2), [['Product'], ['Architect']]);
 });
 
-test('Stop confirms, then posts stop; a declined confirm posts nothing', async () => {
-  const yes = setup({ extras: false });
-  yes.$('.plan-stop').click();
-  await flush();
-  assert.equal(yes.calls.confirm[0].danger, true);
-  assert.deepEqual(yes.calls.submit, [{ decision: 'stop' }]);
-  const no = setup({ extras: false, confirm: async () => false });
-  no.$('.plan-stop').click();
-  await flush();
-  assert.equal(no.calls.confirm.length, 1);
-  assert.equal(no.calls.submit.length, 0);
+test('Stop in ⋯ confirms, then posts stop; a declined confirm posts nothing', async () => {
+  for (const extras of [true, false]) {
+    const yes = setup({ extras });
+    menu(yes.$).pick('Stop');
+    await flush();
+    assert.equal(yes.calls.confirm[0].danger, true);
+    assert.deepEqual(yes.calls.submit, [{ decision: 'stop' }]);
+    const no = setup({ extras, confirm: async () => false });
+    menu(no.$).pick('Stop');
+    await flush();
+    assert.equal(no.calls.confirm.length, 1);
+    assert.equal(no.calls.submit.length, 0);
+  }
 });
 
-test('Open full plan calls openFull', () => {
+test('gate off: Full plan opens the artifact popup and fetches no plan text', async () => {
   const { $, calls } = setup({ extras: false });
-  $('.plan-open-full').click();
+  await flush();
+  $('.plan-full').click();
   assert.equal(calls.openFull, 1);
+  assert.equal(calls.fetch.length, 0);
+  assert.equal($('.plan-full-view'), null);
 });
 
 test('Save: a 409 exists asks to replace, then re-posts with overwrite; a 200 shows Saved to …', async () => {
@@ -277,24 +298,26 @@ test('Save: a 409 exists asks to replace, then re-posts with overwrite; a 200 sh
   assert.ok(!failed.$('.plan-err').classList.contains('ok'));
 });
 
-test('extras off: no chips, Fix, Save, Open in New run or plan text; approve, revise and stop still work', async () => {
-  const { $, calls } = setup({ extras: false, run: { shaping: { rounds: [{ round: 1, passed: 1, total: 3 }] } } });
+test('gate on and gate off draw the same head and foot; the gate off drops only the gated controls', async () => {
+  const on = setup();
+  const off = setup({ extras: false, run: { shaping: { rounds: [{ round: 1, passed: 1, total: 3 }] } } });
   await flush();
-  for (const s of ['.shape-chips', '.plan-update', '.plan-fix', '.plan-save', '.plan-open-new', '.plan-md', '.plan-expand', '.plan-versions',
-    '.plan-more', '.plan-full', '.plan-unmet']) assert.equal($(s), null, s);
-  assert.equal(calls.fetch.length, 0);
-  assert.equal($('.plan-perspectives-ro').textContent, 'Architect');
-  assert.equal($('.plan-approve').textContent, 'Run this plan');
-  assert.ok($('.plan-check-bad'), 'the legacy check look is unchanged');
-  $('.plan-approve').click();
+  const shape = ({ $, $$ }) => [$('.ask-mcard-title').textContent, $('.ask-mcard-kind').textContent,
+    ...$$('.plan-actions > button').map((b) => b.textContent)];
+  assert.deepEqual(shape(off), shape(on));
+  assert.deepEqual(shape(off), ['Your turn: approve the plan', 'Plan', 'Ask for changes', 'Full plan', 'Approve and build', '⋯']);
+  for (const s of ['.shape-chips', '.plan-update', '.plan-persp-edit', '.plan-md', '.plan-versions', '.plan-summary', '.plan-check-bad'])
+    assert.equal(off.$(s), null, s);
+  assert.equal(off.calls.fetch.length, 0);
+  assert.equal(off.$('.plan-persp-names').textContent, 'Product · Architect');
+  assert.equal(off.$('.plan-check-line .plan-fold-text').textContent, 'Shape 2/3 · 1 to fix');
+  assert.equal(off.$('.plan-unmet').textContent, '1 check unmet: paths');
+  off.$('.plan-approve').click();
   await flush();
-  $('.plan-feedback').value = 'more tests';
-  $('.plan-revise').click();
+  off.$('.plan-feedback').value = 'more tests';
+  off.$('.plan-revise').click();
   await flush();
-  $('.plan-stop').click();
-  await flush();
-  assert.deepEqual(calls.submit, [{ decision: 'approve' }, { decision: 'revise', feedback: 'more tests' }, { decision: 'stop' }]);
-  assert.ok($('.plan-open-full'));
+  assert.deepEqual(off.calls.submit, [{ decision: 'approve' }, { decision: 'revise', feedback: 'more tests' }]);
 });
 
 test('a plan that is not revisable has no typed revise and no chips', () => {
@@ -304,6 +327,7 @@ test('a plan that is not revisable has no typed revise and no chips', () => {
   assert.equal($('.plan-update'), null);
   assert.equal($('.plan-fix'), null);
   for (const s of ['.plan-ask-changes', '.plan-fix-all', '.plan-persp-edit']) assert.equal($(s), null, s);
+  assert.deepEqual(menu($).labels, ['Save to plans/', 'Open in New run', 'Stop'], 'no Fix all on the last round');
   assert.ok($('.plan-approve'));
 });
 
@@ -366,7 +390,14 @@ test('Open in New run from the ⋯ menu sends the plan text', async () => {
   assert.deepEqual(calls.openNew, [PLAN_MD]);
 });
 
-test('no button in the body uses .btn-go', () => {
-  const { $$ } = setup();
+test('no button in the body uses .btn-go, and no click reaches a host delegate', async () => {
+  const { $$, $, panel } = setup();
   assert.equal($$('.btn-go').length, 0);
+  const host = doc.createElement('div');
+  host.appendChild(panel);
+  let seen = 0;
+  host.addEventListener('click', () => { seen += 1; });
+  $('.plan-approve').click();
+  await flush();
+  assert.equal(seen, 0);
 });

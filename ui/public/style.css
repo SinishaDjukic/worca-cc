@@ -8782,6 +8782,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-rc-qbody[hidden]{display:none;}
 .chat-rc-q .qpanel{margin-top:0;padding:16px;}
 .chat-rc-q .qpanel-head{display:none;}
+.shape-feature-ask .qpanel:has(.step-head) .qpanel-head{display:none;}   /* the feature page: a step card's head is its one title */
 /* A ~390px card: one column, as the run side panel's (.crp .rd-questions below) — no head gap above the body, the
    question over its answers, the decision over its issues, a severity chip over its text, and answer buttons that wrap
    as whole buttons onto the next row ("Accept & run", "Cancel run"); a label wider than the whole row ("Don't approve
@@ -9550,6 +9551,10 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .outline-under{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;font-size:12px;}
 .outline-under .outline-approve-each{font-size:12px;}
 .outline-under .outline-edit{font-size:12px;}
+/* Shaper step cards (shaper-cards spec §2.2): the metrics card head, inside a question panel. */
+.qpanel .step-head{height:auto;min-height:24px;flex-wrap:wrap;margin-bottom:8px;}
+.qpanel .step-head .ask-mcard-title{white-space:normal;min-width:0;flex:1 1 auto;overflow-wrap:anywhere;}
+.outline-row-more{margin-left:auto;}
 .chat-rc-feature{margin:8px 0;}
 .chat-rc-feature[hidden]{display:none;}
 .shape-feature{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;}

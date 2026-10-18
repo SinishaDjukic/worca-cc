@@ -155,7 +155,7 @@ test('fixAllFeedback: one failure equals fixFeedback; several are listed', () =>
 
 test('approveLabel names the outcome; shaperWait only for Shaper steps with the gate on', () => {
   assert.equal(approveLabel({}), 'Approve and build');
-  assert.equal(approveLabel({ outline: { slices: [] } }), 'Approve the slices');
+  assert.equal(approveLabel({ outline: { slices: [] } }), 'Approve and build', 'the outline label lives in outline-body');
   const shaped = (pq) => ({ shaping: { rounds: [] }, pendingQuestion: pq });
   assert.equal(shaperWait(shaped({ kind: 'plan' }), true), 'plan');
   assert.equal(shaperWait(shaped({ kind: 'questions', questions: [] }), true), 'clarify');

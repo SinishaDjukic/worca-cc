@@ -29,10 +29,11 @@ with me** tile, the nudge on a run card, the **Plans** tab, the `shape` field on
 `/api/shape/…` route (404).
 
 A run that is already held at a plan or outline question is never stranded by the
-switch. The plan card and the outline card still show the plan and the buttons that
-answer it (**Run this plan**, **Send changes**, **Stop**, and on the outline **Plan
-slice 1** and **Don't slice**). Only the extras need the switch on: perspective
-chips, **Fix**, **Save to plans/**, **Merge with next**, **Remove**.
+switch. The plan card and the outline card are the same cards with the same buttons
+(**Approve and build**, **Ask for changes**, **Full plan**, and on the outline
+**Approve N runs**; **Fix all**, **Don't split** and **Stop** in ⋯). Only the extras
+that read the plan text need the switch on: the summary, the inline plan, perspective
+chips, **Save to plans/** and **Open in New run**.
 
 ## Three ways in
 
@@ -47,8 +48,8 @@ chips, **Fix**, **Save to plans/**, **Merge with next**, **Remove**.
 A shaping run starts with Clarify. It asks at most 3 questions, each with lettered
 options and a recommended pick.
 
-- **Answer and draft** sends your answers; Worca drafts the plan.
-- **Skip, draft with defaults** gives every question its recommended option, or the
+- **Answer** sends your answers; Worca drafts the plan.
+- **Use defaults** gives every question its recommended option, or the
   first when none is marked, and drafts the plan at once.
 
 ## The plan card
@@ -73,14 +74,14 @@ choose **Update plan** to have the plan rewritten for the new set.
 | Every perspective ends with a checklist | each perspective has 1–8 checklist items; this check cannot be waived |
 | Decisions are grounded in the repo | the plan cites at least 3 real paths |
 
-A failing check shows what is wrong. **Fix** sends the failure back to the Planner as
+A failing check shows what is wrong. **Fix all** (in ⋯) sends the failures back to the Planner as
 a revision request.
 
-**Decide.** **Run this plan** approves it. While a waivable check fails the button
-reads **Run anyway**, and approving that way records the waiver. **Send changes**
-sends your note back for a new version. **Save to plans/** writes the plan into the
-project's `plans/` folder. **Open in New run** (Advanced) carries the plan to the New
-run page. **Stop** ends the run.
+**Decide.** **Approve and build** approves it and starts the build; while a waivable
+check fails, approving records the waiver. **Ask for changes** opens a box, and
+**Send changes** sends your note back for a new version. In ⋯, **Save to plans/**
+writes the plan into the project's `plans/` folder, **Open in New run** (Advanced)
+carries the plan to the New run page, and **Stop** ends the run.
 
 **Versions.** Every revision is kept as its own version of the plan; the card shows
 the newest and the earlier ones stay readable.
@@ -121,13 +122,15 @@ check runs on it:
 
 None of the checks blocks approval. On the card:
 
-- **Plan slice 1** approves the outline and plans the first slice.
-- **Merge with next** and **Remove** (Advanced) edit the outline on the card. They
-  are applied when you approve; an edit that leaves one slice plans the whole task.
-- **Don't slice** plans the whole task as one run, as if slicing had not been offered.
-- **Send changes** asks the Planner to rewrite the outline, and **Fix** does so for a
-  failing check. The outline is revised at most 3 times.
-- **Stop** ends the run.
+- **Approve N runs** approves the outline and plans the first run.
+- **Merge with next** and **Remove**, in each run's ⋯, edit the outline on the card.
+  They are applied when you approve; an edit that leaves one run reads **Plan it as
+  one** and plans the whole task. **Undo edits** puts the outline back.
+- **Don't split (plan it as one)**, in ⋯, plans the whole task as one run, as if
+  slicing had not been offered.
+- **Send changes** asks the Planner to rewrite the outline, and **Fix all** (in ⋯)
+  does so for the failing checks. The outline is revised at most 3 times.
+- **Stop**, in ⋯, ends the run.
 
 **One run, branch and PR per slice.** Approving the outline creates the feature and
 one scheduled run for each later slice. Each slice runs the same shaped workflow on
@@ -140,7 +143,7 @@ repository so that GitHub retargets the next PR when one merges.
 **Plan once.** Slices 2 and later skip Clarify: they use the answers you gave for
 slice 1. Their planner still writes a plan for its own slice.
 
-**Approve each slice's plan.** Off by default: a later slice's plan stops for you
+**Approve each slice's plan** (on the outline card: **Ask me before each run**). Off by default: a later slice's plan stops for you
 only when its shape check fails or the planner says the slice can't be built as
 outlined (it then tells you why on the plan card). Turn it on to review every
 slice's plan. Either way an audit line records what happened, and in Away mode a

@@ -1,15 +1,18 @@
-// ui/public/shape/plan-body.mjs — the `plan` ask (spec §3.4, D10, D30–D32): Chat's live run card and the run page.
-// Gate on (deps.extras): one decision card — summary, a folded check line, a perspectives line, Approve and build /
-// Ask for changes / Full plan / ⋯. Gate off: the held body keeps approve / revise / stop, so a held run is never
-// stranded (D12, S4).
+// ui/public/shape/plan-body.mjs — the `plan` ask (spec §3.4, D10, D30–D32; shaper-cards D1): Chat's live run card, the
+// run page and the feature page. ONE step card with the gate on and off: head, summary, a folded check line, a
+// perspectives line, Ask for changes / Full plan / Approve and build / ⋯ (Fix all, Save to plans/, Open in New run, Stop).
+// The gate off (deps.extras false) only drops the controls whose routes are gated: the plan text (summary, inline Full
+// plan → the artifact popup), perspectives edit, Save and Open in New run.
 import { buildPerspectiveChips } from './chips.mjs';
-import { planStats, perspectiveChangeFeedback, fixAllFeedback, sectionOwners, planSummary, checkLine, unmetLine,
+import { planStats, perspectiveChangeFeedback, fixAllFeedback, sectionOwners, planSummary, unmetLine,
   approveLabel } from './plan-text.mjs';
 import { perspectiveByKey, PERSPECTIVES } from '../../../src/shared/shape/perspectives.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
+import { fold, buildCheckFold } from './check-row.mjs';
+import { SEND_FAILED, stepHead, stepSender } from './step-card.mjs';
 
-export const SEND_FAILED = 'Could not send your answer. Try again.';
+export { SEND_FAILED };
 
 const labelOf = (k) => (perspectiveByKey(k) || {}).label || k;
 
@@ -21,43 +24,24 @@ export function renderPlanBody(panel, pq, deps) {
   const perspectives = Array.isArray(plan.perspectives) ? plan.perspectives : [];
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const btn = (cls, text) => { const b = h('button', `btn ${cls}`, text); b.type = 'button'; return b; };
-  const body = h('div', deps.extras ? 'plan-body plan-card' : 'plan-body');
+  const body = h('div', 'plan-body plan-card');
   const err = h('div', 'plan-err'); err.hidden = true; err.setAttribute('role', 'alert');
-  let busy = false;
   let afterSubmit = () => {};                     // re-derives controls setPanelBusy re-enabled (F32)
-  const send = (payload) => {
-    if (busy) return;
-    busy = true; err.hidden = true;
-    // submit is postAnswer: true on 200 only. A 422 has already painted its field errors through setErrors (the
-    // alert is showing). Any other failure (404, 409, 500, network) is only in the run log (F33): say so here.
-    Promise.resolve(deps.submit(payload))
-      .then((ok) => { if (ok === false && err.hidden) setErrors([{ message: SEND_FAILED }]); },
-        () => { if (err.hidden) setErrors([{ message: SEND_FAILED }]); })
-      .finally(() => { busy = false; afterSubmit(); });
-  };
+  const send = stepSender(deps, err, { after: () => afterSubmit() });
   const score = check && Number.isFinite(check.total) ? ` · Shape ${check.passed}/${check.total}` : '';
   const fileName = plan.file ? String(plan.file).split(/[\\/]/).pop() : 'Plan';
   let planText = '';
   let meta = null;
   let summary = null;
 
-  // A control that shows/hides `region` (folded by default).
-  const fold = (b, region, onOpen) => {
-    b.setAttribute('aria-expanded', 'false');
-    b.addEventListener('click', () => {
-      region.hidden = !region.hidden;
-      b.setAttribute('aria-expanded', String(!region.hidden));
-      if (!region.hidden && onOpen) onOpen();
-    });
-    return b;
-  };
   const typedRow = () => {
     const typed = h('textarea', 'plan-feedback');
     typed.rows = 2;
     typed.placeholder = 'Ask for changes in your own words…';
     typed.setAttribute('aria-label', 'Changes to the plan');
     const sendBtn = btn('plan-revise', 'Send changes');
-    sendBtn.addEventListener('click', () => {
+    sendBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
       const text = typed.value.trim();
       if (!text) { setErrors([{ path: 'feedback', message: 'Write what should change first' }]); return; }
       send({ decision: 'revise', feedback: text });
@@ -66,97 +50,48 @@ export function renderPlanBody(panel, pq, deps) {
     return { row, typed };
   };
 
-  if (deps.extras) renderCard(); else renderHeld();
-  panel.appendChild(body);
+  panel.appendChild(stepHead(doc, deps.title, deps.chip));
+  const title = deps.run && deps.run.title && deps.run.title !== '(untitled)' ? String(deps.run.title) : '';
+  body.appendChild(h('div', 'plan-sub', `${title ? `${title} · ` : ''}v${plan.round || 1}`));
+  // the summary comes from the plan text, which only the gated route serves
+  if (deps.extras) { summary = h('p', 'plan-summary'); summary.hidden = true; body.appendChild(summary); }
 
-  // ---- gate off: today's held body (D12) — the label never says "anyway" (D32)
-  function renderHeld() {
-    meta = h('div', 'plan-meta', `${fileName}${score}`);
-    body.appendChild(meta);
-    if (perspectives.length) body.appendChild(h('div', 'plan-perspectives-ro', perspectives.map(labelOf).join(' · ')));
-    if (items.length) {
-      const row = h('div', 'plan-check');
-      for (const it of items) {
-        if (it.pass) { row.appendChild(h('span', 'plan-check-ok', `✓ ${it.label}`)); continue; }
-        const bad = h('div', 'plan-check-bad');
-        bad.append(h('span', 'plan-check-label', it.label), h('span', 'plan-check-detail', it.detail || ''));
-        row.appendChild(bad);
-      }
-      body.appendChild(row);
-    }
-    if (plan.revisable) body.appendChild(typedRow().row);
-    const foot = h('div', 'qpanel-foot plan-actions');
-    const approve = btn('btn-primary plan-approve', 'Run this plan');
-    approve.addEventListener('click', () => send({ decision: 'approve' }));
-    const full = btn('plan-open-full', 'Open full plan');
-    full.addEventListener('click', () => deps.openFull());
-    const stop = btn('plan-stop', 'Stop');
-    stop.addEventListener('click', async () => {
-      const ok = await deps.confirm({ title: 'Stop this run', message: 'The plan stays in the run\'s artifacts.', confirmLabel: 'Stop', danger: true });
-      if (ok) send({ decision: 'stop' });
-    });
-    foot.append(approve, full, stop);
-    body.append(err, foot);
+  // D19: a later run's planner said the run can't be built as outlined: that is why this plan stopped
+  if (plan.outlineChange) {
+    const note = h('div', 'shape-plan-outline-change');
+    note.append(h('div', 'shape-plan-outline-change-head', 'The planner says this run can\'t be built as outlined:'),
+      h('p', 'shape-plan-outline-change-text', String(plan.outlineChange)));
+    body.appendChild(note);
   }
 
-  // ---- gate on: the decision card (D30)
-  function renderCard() {
-    const title = deps.run && deps.run.title && deps.run.title !== '(untitled)' ? String(deps.run.title) : '';
-    body.appendChild(h('div', 'plan-sub', `${title ? `${title} · ` : ''}v${plan.round || 1}`));
-    summary = h('p', 'plan-summary'); summary.hidden = true;
-    body.appendChild(summary);
+  // one check line, folded; neutral rows with ✓ / ✕ (D7); Fix all lives in ⋯ (D8)
+  if (items.length) { const f = buildCheckFold(doc, check, 'Shape'); body.append(f.line, f.rows); }
 
-    // D19: a later slice's planner said the slice can't be built as outlined: that is why this plan stopped
-    if (plan.outlineChange) {
-      const note = h('div', 'shape-plan-outline-change');
-      note.append(h('div', 'shape-plan-outline-change-head', 'The planner says this slice can\'t be built as outlined:'),
-        h('p', 'shape-plan-outline-change-text', String(plan.outlineChange)));
-      body.appendChild(note);
-    }
+  // perspectives as a line; "edit" opens today's chips + Update plan in place (D31) — the gate on only
+  const was = PERSPECTIVES.map((p) => p.key).filter((k) => k === 'product' || perspectives.includes(k));
+  const pline = h('div', 'plan-persp-line');
+  pline.appendChild(h('span', 'plan-persp-names', was.map(labelOf).join(' · ')));
+  body.appendChild(pline);
+  if (deps.extras && plan.revisable) {
+    const update = btn('plan-update', 'Update plan'); update.disabled = true;
+    const same = (v) => v.length === was.length && v.every((k) => was.includes(k));   // order-free
+    const chips = buildPerspectiveChips(doc, { picked: perspectives, fixed: ['ux'], collapsed: false,
+      onChange: (v) => { update.disabled = same(v); } });
+    afterSubmit = () => { update.disabled = same(chips.value()); };
+    update.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const after = chips.value();
+      send({ decision: 'revise', feedback: perspectiveChangeFeedback(perspectives, after), perspectives: after });
+    });
+    const row = h('div', 'plan-perspectives'); row.hidden = true; row.append(chips.el, update);
+    pline.append(' — ', fold(btn('plan-persp-edit', 'edit'), row));
+    body.appendChild(row);
+  }
 
-    // one check line, folded; neutral rows with ✓ / ✕; one Fix all (D32)
-    if (items.length) {
-      const rows = h('div', 'plan-checks'); rows.hidden = true;
-      for (const it of items) {
-        const row = h('div', `plan-check-row${it.pass ? ' ok' : ''}`);
-        const mark = h('span', 'plan-check-mark', it.pass ? '✓' : '✕'); mark.setAttribute('aria-label', it.pass ? 'met' : 'unmet');
-        row.append(mark, h('span', 'plan-check-label', it.label));
-        if (!it.pass && it.detail) row.appendChild(h('span', 'plan-check-detail', it.detail));
-        rows.appendChild(row);
-      }
-      if (plan.revisable && items.some((it) => !it.pass)) {
-        const fixAll = btn('plan-fix-all', 'Fix all');
-        fixAll.addEventListener('click', () => send({ decision: 'revise', feedback: fixAllFeedback(items) }));
-        rows.appendChild(fixAll);
-      }
-      const line = btn('plan-fold plan-check-line', null);
-      const chev = h('span', 'plan-chev', '›'); chev.setAttribute('aria-hidden', 'true');
-      line.append(h('span', 'plan-fold-text', checkLine(check)), chev);
-      body.append(fold(line, rows), rows);
-    }
-
-    // perspectives as a line; "edit" opens today's chips + Update plan in place (D31)
-    const was = PERSPECTIVES.map((p) => p.key).filter((k) => k === 'product' || perspectives.includes(k));
-    const pline = h('div', 'plan-persp-line');
-    pline.appendChild(h('span', 'plan-persp-names', was.map(labelOf).join(' · ')));
-    body.appendChild(pline);
-    if (plan.revisable) {
-      const update = btn('plan-update', 'Update plan'); update.disabled = true;
-      const same = (v) => v.length === was.length && v.every((k) => was.includes(k));   // order-free
-      const chips = buildPerspectiveChips(doc, { picked: perspectives, fixed: ['ux'], collapsed: false,
-        onChange: (v) => { update.disabled = same(v); } });
-      afterSubmit = () => { update.disabled = same(chips.value()); };
-      update.addEventListener('click', () => {
-        const after = chips.value();
-        send({ decision: 'revise', feedback: perspectiveChangeFeedback(perspectives, after), perspectives: after });
-      });
-      const row = h('div', 'plan-perspectives'); row.hidden = true; row.append(chips.el, update);
-      pline.append(' — ', fold(btn('plan-persp-edit', 'edit'), row));
-      body.appendChild(row);
-    }
-
-    // Full plan: inline, with tags, grounding marks and the earlier versions (clarify answers)
-    const fullView = h('div', 'plan-full-view'); fullView.hidden = true;
+  // Full plan, the gate on: inline, with tags, grounding marks and the earlier versions (clarify answers)
+  let fullView = null;
+  if (deps.extras) {
+    fullView = h('div', 'plan-full-view'); fullView.hidden = true;
     meta = h('div', 'plan-meta', `${fileName}${score}`);
     const md = h('div', 'plan-md');
     fullView.append(meta, md);
@@ -177,31 +112,51 @@ export function renderPlanBody(panel, pq, deps) {
     }
     body.appendChild(fullView);
     paintPlan(md, null);
+  }
 
-    // Ask for changes: closed by default, then Send changes (D30)
-    const typed = plan.revisable ? typedRow() : null;
-    if (typed) { typed.row.hidden = true; body.appendChild(typed.row); }
+  // Ask for changes: closed by default, then Send changes (D30)
+  const typed = plan.revisable ? typedRow() : null;
+  if (typed) { typed.row.hidden = true; body.appendChild(typed.row); }
 
-    const foot = h('div', 'qpanel-foot plan-actions');
-    const approve = btn('btn-primary plan-approve', approveLabel(plan));
-    approve.addEventListener('click', () => send({ decision: 'approve' }));
-    foot.appendChild(approve);
-    if (typed) foot.appendChild(fold(btn('plan-ask-changes', 'Ask for changes'), typed.row, () => typed.typed.focus()));
-    const full = fold(btn('plan-full', 'Full plan'), fullView);
-    full.addEventListener('click', () => { full.textContent = fullView.hidden ? 'Full plan' : 'Hide plan'; });
-    foot.appendChild(full);
-    if (!(deps.run && deps.run.workspaceId)) {
-      const more = btn('btn-ghost plan-more', '⋯');
-      more.setAttribute('aria-label', 'More for this plan');
-      more.setAttribute('aria-haspopup', 'menu');
-      more.addEventListener('click', () => toggleMenu({ doc, anchor: more, align: 'end', label: 'More for this plan', items: [
-        { label: 'Save to plans/', onSelect: () => savePlan(false) },
-        ...(levelAtLeast('advanced', doc) ? [{ label: 'Open in New run', onSelect: openInNewRun }] : []),
-      ] }));
-      foot.appendChild(more);
+  const foot = h('div', 'qpanel-foot plan-actions');
+  if (typed) foot.appendChild(fold(btn('plan-ask-changes', 'Ask for changes'), typed.row, () => typed.typed.focus()));
+  foot.appendChild(fullButton());
+  const approve = btn('btn-primary plan-approve', approveLabel(plan));
+  approve.addEventListener('click', (e) => { e.stopPropagation(); send({ decision: 'approve' }); });
+  foot.appendChild(approve);
+  foot.appendChild(moreButton());
+  body.append(err, foot);
+  if (check && check.ok === false && unmetLine(check)) body.appendChild(h('div', 'plan-unmet', unmetLine(check)));
+  panel.appendChild(body);
+
+  /** Gate on: the inline fold (Full plan / Hide plan). Gate off: the artifact popup. Same label either way. */
+  function fullButton() {
+    if (!deps.extras) {
+      const b = btn('plan-full', 'Full plan');
+      b.addEventListener('click', (e) => { e.stopPropagation(); deps.openFull(); });
+      return b;
     }
-    body.append(err, foot);
-    if (check && check.ok === false && unmetLine(check)) body.appendChild(h('div', 'plan-unmet', unmetLine(check)));
+    const b = fold(btn('plan-full', 'Full plan'), fullView);
+    b.addEventListener('click', () => { b.textContent = fullView.hidden ? 'Full plan' : 'Hide plan'; });
+    return b;
+  }
+
+  function moreButton() {
+    const more = btn('btn-ghost plan-more', '⋯');
+    more.setAttribute('aria-label', 'More for this plan');
+    more.setAttribute('aria-haspopup', 'menu');
+    const ws = !!(deps.run && deps.run.workspaceId);
+    more.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu({ doc, anchor: more, align: 'end', label: 'More for this plan', items: [
+      ...(plan.revisable && items.some((it) => !it.pass) ? [{ label: 'Fix all', onSelect: () => send({ decision: 'revise', feedback: fixAllFeedback(items) }) }] : []),
+      ...(deps.extras && !ws ? [{ label: 'Save to plans/', onSelect: () => savePlan(false) }] : []),
+      ...(deps.extras && !ws && levelAtLeast('advanced', doc) ? [{ label: 'Open in New run', onSelect: openInNewRun }] : []),
+      { label: 'Stop', onSelect: stopRun },
+    ] }); });
+    return more;
+  }
+
+  async function stopRun() {
+    if (await deps.confirm({ title: 'Stop this run', message: 'The plan stays in the run\'s artifacts.', confirmLabel: 'Stop', danger: true })) send({ decision: 'stop' });
   }
 
   async function openInNewRun() {

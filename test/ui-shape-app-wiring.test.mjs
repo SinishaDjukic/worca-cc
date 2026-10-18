@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootApp, runPanel } from './helpers/run-page-boot.mjs';
+import { namedAnswer } from '../ui/public/shape/step-receipt.mjs';
 
 const GATE = { flags: { shapeFirst: true } };
 const click = (ctx, el) => el.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
@@ -17,22 +18,26 @@ const res = (status, body) => Promise.resolve({ ok: status >= 200 && status < 30
 const RUN_ID = 'run-outline';
 const slice = (id, o = {}) => ({ id, title: `Slice ${id}`, goal: `Make ${id} possible for people`, inScope: ['a'], outOfScope: ['b'],
   acceptance: ['GET /api/x returns 200'], dependsOn: [], estimate: 'medium', ...o });
-const OUTLINE = { why: 'The change is large.', slices: [slice('s1'), slice('s2', { dependsOn: ['s1'], estimate: 'large' })] };
+const OUTLINE = { why: 'The change is large.', slices: [slice('s1'), slice('s2', { dependsOn: ['s1'], estimate: 'large' }), slice('s3', { dependsOn: ['s2'] })] };
 const OUTLINE_Q = { id: 'plan-outline-n_plan-1', kind: 'plan',
   plan: { port: 'plan', round: 1, revisable: true, nodeId: 'n_plan', outline: OUTLINE,
     check: { ok: true, passed: 5, total: 5, items: [], grounding: [] } } };
 
-function recorder() {
+function recorder(answer = () => res(200, { ok: true })) {
   const posts = [];
   const fetchHandler = (url, opts) => {
-    if (url === `/api/runs/${RUN_ID}/answer` || url === '/api/answer') { posts.push({ url, body: JSON.parse(opts.body) }); return res(200, { ok: true }); }
+    if (url === `/api/runs/${RUN_ID}/answer` || url === '/api/answer') {
+      const body = JSON.parse(opts.body);
+      posts.push({ url, body, named: namedAnswer(RUN_ID, body.id) });           // what this tab had noted when the POST left
+      return answer();
+    }
     return null;
   };
   return { posts, fetchHandler };
 }
 
-async function openOutline({ gate = true } = {}) {
-  const r = recorder();
+async function openOutline({ gate = true, answer } = {}) {
+  const r = recorder(answer);
   const ctx = await bootApp({ fetchHandler: r.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
   ctx.dispatch({ type: 'hello', flags: { shapeFirst: !!gate }, runs: [{ runId: RUN_ID, title: 'Outline demo', projectDir: '/tmp/p', status: 'running', kind: 'run',
@@ -42,27 +47,60 @@ async function openOutline({ gate = true } = {}) {
   return { ctx, panel: runPanel(ctx), ...r };
 }
 
-test('a pending outline ask renders the outline body, with the outline heading', async () => {
+test('a pending outline ask renders the outline body; its head names the decision (the run page heading stays empty)', async () => {
   const { ctx, panel } = await openOutline();
   assert.ok(panel.querySelector('.outline-body'), 'the outline body is drawn');
   assert.equal(panel.querySelector('.plan-approve'), null, 'not the plan body');
-  assert.equal(ctx.window.document.querySelector('#run-detail .rd-ask-head').textContent,
-    'Your turn: approve the slices', 'D30: the heading names the decision');
+  assert.equal(panel.querySelector('.ask-mcard-title').textContent, 'Your turn: approve the runs', 'D30: the head names the decision');
+  assert.equal(panel.querySelector('.ask-mcard-kind').textContent, 'Runs');
+  assert.equal(ctx.window.document.querySelector('#run-detail .rd-ask-head').textContent, '');
 });
 
-test('gate on: Plan slice 1 posts the gated answer route', async () => {
+test('gate on: Approve 3 runs posts the gated answer route, with the named receipt noted before the POST', async () => {
   const { ctx, panel, posts } = await openOutline();
+  assert.equal(panel.querySelector('.outline-approve').textContent, 'Approve 3 runs');
   click(ctx, panel.querySelector('.outline-approve'));
   await ctx.settle();
   assert.equal(posts.length, 1);
   assert.equal(posts[0].url, `/api/runs/${RUN_ID}/answer`);
   assert.equal(posts[0].body.decision, 'approve');
-  assert.equal(posts[0].body.approveEach, false, 'D19: Approve each slice\'s plan is off unless ticked');
+  assert.equal(posts[0].body.approveEach, false, 'D19: Ask me before each run is off unless ticked');
+  assert.equal(posts[0].named && posts[0].named.text, 'Split into 3 runs', 'noted before the POST (D5)');
 });
 
-test('gate off: Plan slice 1 posts /api/answer, and no merge/remove is offered', async () => {
+test('a replay of the pending ask keeps the named note; a NEW ask reusing its id (a resume) drops it', async () => {
+  const { ctx, panel } = await openOutline();
+  click(ctx, panel.querySelector('.outline-approve'));
+  await ctx.settle();
+  assert.equal(namedAnswer(RUN_ID, OUTLINE_Q.id).text, 'Split into 3 runs');
+  ctx.dispatch({ type: 'question', runId: RUN_ID, ...OUTLINE_Q });            // the subscribe replay of the same ask
+  await ctx.settle();
+  assert.equal(namedAnswer(RUN_ID, OUTLINE_Q.id).text, 'Split into 3 runs');
+  ctx.dispatch({ type: 'question-resolved', runId: RUN_ID, id: OUTLINE_Q.id });
+  ctx.dispatch({ type: 'question', runId: RUN_ID, ...OUTLINE_Q });            // asked again after a resume
+  await ctx.settle();
+  assert.equal(namedAnswer(RUN_ID, OUTLINE_Q.id), null);
+});
+
+test('a 409 with { error } keeps the typed feedback, says "Not sent: …" and forgets the named receipt', async () => {
+  const { ctx, panel, posts } = await openOutline({ answer: () => res(409, { error: 'this question is no longer pending' }) });
+  click(ctx, panel.querySelector('.plan-ask-changes'));
+  panel.querySelector('.plan-feedback').value = 'fewer runs';
+  click(ctx, panel.querySelector('.plan-revise'));
+  await ctx.settle(5);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].named && posts[0].named.text, 'Changes asked · Runs');
+  assert.equal(panel.querySelector('.plan-feedback').value, 'fewer runs');
+  assert.equal(panel.querySelector('.plan-err').hidden, false);
+  assert.equal(panel.querySelector('.plan-err').textContent, 'Not sent: this question is no longer pending');
+  assert.equal(namedAnswer(RUN_ID, OUTLINE_Q.id), null);
+});
+
+test('gate off: Approve 3 runs posts /api/answer, and the same card is drawn', async () => {
   const { ctx, panel, posts } = await openOutline({ gate: false });
   assert.equal(panel.querySelector('.outline-merge'), null);
+  assert.equal(panel.querySelector('.outline-approve').textContent, 'Approve 3 runs');
+  assert.equal(panel.querySelectorAll('.outline-row-more').length, 3);
   click(ctx, panel.querySelector('.outline-approve'));
   await ctx.settle();
   assert.equal(posts.length, 1);
