@@ -12,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick, dragOut } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs). That
 // also clears the poll of a guide a failed assertion left mid-tour, so it cannot cascade.
@@ -180,6 +181,11 @@ test('a tile guide: "Connect Claude Code" opens the setup dialog; "Ask Worca" ri
   assert.match(doc.getElementById('claude-setup-status').textContent, /not on the PATH/);
   click(window, doc.getElementById('claude-setup-close'));
   assert.equal(setup.classList.contains('hidden'), true);
+  click(window, doc.querySelector('.gs-tile[data-step="claude"]'));       // open it again
+  dragOut(window, doc.getElementById('claude-setup-status'), setup);
+  assert.equal(setup.classList.contains('hidden'), false, 'a selection dragged out of the status does not close it');
+  backdropClick(window, setup);
+  assert.equal(setup.classList.contains('hidden'), true, 'read-only: a backdrop click closes it');
 
   click(window, doc.querySelector('.gs-tile[data-step="ask"]'));
   await settle();

@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick, pressEscape, discardPrompt, keepEditing, discardChanges } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -392,54 +393,61 @@ test('leaving the view or browser Back closes an open wizard', async () => {
   ]);
 });
 
-test('dirty-guard: Escape/backdrop on a dirty editor asks to discard (cancel keeps it, confirm closes); a pristine editor closes without asking', async () => {
+test('the guardrails wizard: never on a backdrop click; Escape on a dirty editor asks (Keep editing keeps it, Discard closes); a pristine editor, the header Close and Step 2\'s Cancel leave at once', async () => {
+  const dirtyWizard = async () => {
+    const { window } = await boot();
+    await openGuardrails(window, 'gr_org');
+    const modal = window.document.querySelector('#plugin-modal');
+    click(window, modal.querySelector('.grv-editor .gr-scrub'));       // make it dirty
+    await tick();
+    return { window, doc: window.document, modal };
+  };
   await checkRows([
-    { name: 'dirty-guard: Escape on a dirty editor asks to discard; confirming closes', run: async () => {
-      const { window } = await boot();
-      await openGuardrails(window, 'gr_org');
-      const modal = window.document.querySelector('#plugin-modal');
-      const editor = modal.querySelector('.grv-editor');
-      click(window, editor.querySelector('.gr-scrub')); // make it dirty
-      await tick();
-      window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
-      await tick();
-      const confirm = window.document.querySelector('#confirm-modal');
-      assert.ok(!confirm.classList.contains('hidden'), 'discard confirm shown');
-      click(window, window.document.querySelector('#confirm-ok'));
+    { name: 'Escape on a dirty editor asks with its own sentence; Discard closes the wizard', run: async () => {
+      const { window, doc, modal } = await dirtyWizard();
+      pressEscape(window);
+      const q = discardPrompt(doc);
+      assert.ok(q, 'the question is shown');
+      assert.equal(q.querySelector('.confirm-message').textContent, 'This guardrail set has unsaved changes.');
+      discardChanges(doc);
       await tick(); await tick();
-      assert.ok(modal.classList.contains('hidden'), 'wizard closed after confirming discard');
+      assert.ok(modal.classList.contains('hidden'), 'wizard closed after Discard');
     } },
-    { name: 'dirty-guard: canceling the discard confirm keeps the wizard open', run: async () => {
-      const { window } = await boot();
-      await openGuardrails(window, 'gr_org');
-      const modal = window.document.querySelector('#plugin-modal');
-      click(window, modal.querySelector('.grv-editor .gr-scrub')); // dirty
-      await tick();
-      window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
-      await tick();
-      const confirm = window.document.querySelector('#confirm-modal');
-      assert.ok(!confirm.classList.contains('hidden'), 'discard confirm shown');
-      click(window, window.document.querySelector('#confirm-cancel'));
+    { name: 'Keep editing keeps the wizard open', run: async () => {
+      const { window, doc, modal } = await dirtyWizard();
+      pressEscape(window);
+      keepEditing(doc);
       await tick(); await tick();
-      assert.ok(!modal.classList.contains('hidden'), 'stays open when discard is canceled');
+      assert.ok(!modal.classList.contains('hidden'));
     } },
-    { name: 'dirty-guard: backdrop click on a dirty editor asks to discard', run: async () => {
-      const { window } = await boot();
-      await openGuardrails(window, 'gr_org');
-      const modal = window.document.querySelector('#plugin-modal');
-      click(window, modal.querySelector('.grv-editor .gr-scrub')); // dirty
+    { name: 'a backdrop click on a dirty editor neither closes it nor asks', run: async () => {
+      const { window, doc, modal } = await dirtyWizard();
+      backdropClick(window, modal);
       await tick();
-      click(window, modal); // target === the overlay itself = backdrop
-      await tick();
-      assert.ok(!window.document.querySelector('#confirm-modal').classList.contains('hidden'), 'discard confirm shown on backdrop');
+      assert.ok(!modal.classList.contains('hidden'));
+      assert.equal(discardPrompt(doc), null);
     } },
-    { name: 'clean close: Escape on a pristine editor closes with no confirm', run: async () => {
-      const { window } = await boot();
-      await openGuardrails(window, 'gr_org');
-      const modal = window.document.querySelector('#plugin-modal');
-      window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+    { name: 'the header Close leaves a dirty editor at once — Close never asks', run: async () => {
+      const { window, doc, modal } = await dirtyWizard();
+      click(window, doc.querySelector('#plugin-modal-close'));
       await tick(); await tick();
-      assert.ok(window.document.querySelector('#confirm-modal').classList.contains('hidden'), 'no confirm for a clean editor');
+      assert.ok(modal.classList.contains('hidden'));
+      assert.equal(discardPrompt(doc), null);
+    } },
+    { name: 'Step 2 has a Cancel next to Save; it leaves at once', run: async () => {
+      const { window, doc, modal } = await dirtyWizard();
+      click(window, modal.querySelector('.grv-editor .grv-cancel'));
+      await tick(); await tick();
+      assert.ok(modal.classList.contains('hidden'));
+      assert.equal(discardPrompt(doc), null);
+    } },
+    { name: 'clean close: Escape on a pristine editor closes with no question', run: async () => {
+      const { window } = await boot();
+      await openGuardrails(window, 'gr_org');
+      const modal = window.document.querySelector('#plugin-modal');
+      pressEscape(window);
+      await tick(); await tick();
+      assert.equal(discardPrompt(window.document), null);
       assert.ok(modal.classList.contains('hidden'), 'closed directly');
     } },
   ]);

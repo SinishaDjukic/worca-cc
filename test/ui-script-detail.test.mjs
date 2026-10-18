@@ -430,6 +430,24 @@ test('leaving a dirty page asks first, one macrotask later; Cancel stays; Escape
   d.cleanup();
 });
 
+test('a pop-up over the script page owns Escape (the bench\'s run-artifact picker in #plugin-modal): the page stays', async () => {
+  const d = mountCtl();
+  await d.ctl.route('diffGate');
+  await flush();
+  const root = q(d.host, '.script-detail');
+  const pop = doc.createElement('div');
+  pop.className = 'viewer-modal';                          // what modal-guard's dialogOpen() sees
+  doc.body.appendChild(pop);
+  try {
+    root.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await flush();
+    assert.deepEqual(d.nav, [], 'the pop-up answers that Escape, not the page');
+  } finally {
+    pop.remove();
+    d.cleanup();
+  }
+});
+
 test('a built-in opens read-only with a live bench and the path row; the runtime pill is inert', async () => {
   const c = mountCtl();
   await c.ctl.route('gitDiff');
