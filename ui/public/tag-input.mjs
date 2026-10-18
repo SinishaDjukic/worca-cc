@@ -32,10 +32,10 @@ export function suggestionsFor(text, vocab, limit = 8) {
 let seq = 0;
 /**
  * @param {Document} doc
- * @param {{ value?: string[], suggest?: () => Promise<object>, placeholder?: string }} [o]
+ * @param {{ value?: string[], suggest?: () => Promise<object>, placeholder?: string, strict?: boolean }} [o] strict (default): a run's tags are written key:value; a filter passes false.
  * @returns {{ el: HTMLElement, get: () => string[], set: (tags: string[], o?: { dirty?: boolean }) => void, onChange: (fn: Function) => void, dirty: () => boolean }}
  */
-export function createTagInput(doc, { value = [], suggest = null, placeholder = 'client:acme, team:web…' } = {}) {
+export function createTagInput(doc, { value = [], suggest = null, placeholder = 'client:acme, team:web…', strict = true } = {}) {
   const el = doc.createElement('div'); el.className = 'tag-input';
   const chips = doc.createElement('span'); chips.className = 'tag-input-chips';
   const input = doc.createElement('input'); input.className = 'input tag-input-text'; input.placeholder = placeholder;
@@ -60,18 +60,18 @@ export function createTagInput(doc, { value = [], suggest = null, placeholder = 
   const commit = () => {
     const raw = input.value.trim();
     if (!raw) return false;
-    const r = parseTag(raw);
-    if (r.error) { input.setAttribute('aria-invalid', 'true'); hint.textContent = r.error; return true; }
+    const r = parseTag(raw, { strict });
+    if (r.error) { input.setAttribute('aria-invalid', 'true'); hint.textContent = r.error; return false; }
     const next = normaliseTags([...tags, formatTag(r.tag)]);
-    if (next.errors.length) { hint.textContent = `At most ${MAX_TAGS} tags per run`; return true; }
+    if (next.errors.length) { hint.textContent = `At most ${MAX_TAGS} tags per run`; return false; }
     tags = next.tags; edited = true; input.value = ''; input.removeAttribute('aria-invalid'); hint.textContent = '';
     paint(); emit(); return true;
   };
   input.addEventListener('keydown', (e) => {
-    // Enter always stays in the field (it must not submit the form); Tab commits only valid text,
-    // so an invalid entry never traps keyboard focus.
+    // Enter always stays in the field (it must not submit the form). Tab commits valid text; on invalid text it
+    // shows the message and leaves the text in place, but never traps keyboard focus.
     if (e.key === 'Enter') { if (input.value.trim()) commit(); e.preventDefault(); }
-    else if (e.key === 'Tab' && input.value.trim() && !parseTag(input.value.trim()).error) { commit(); e.preventDefault(); }
+    else if (e.key === 'Tab' && input.value.trim()) { if (commit()) e.preventDefault(); }
     else if (e.key === 'Backspace' && !input.value && tags.length) { tags = tags.slice(0, -1); edited = true; paint(); emit(); }
   });
   input.addEventListener('input', () => { input.removeAttribute('aria-invalid'); hint.textContent = ''; refreshList(); });
