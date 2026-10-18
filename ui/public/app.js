@@ -104,7 +104,7 @@ import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, s
 import { createAskPanel } from './ask-panel.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
-import { registerChatActionCards } from './chat/action-cards.mjs';
+import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
@@ -1509,6 +1509,7 @@ function handleServerMessage(msg) {
   if (msg.type === 'pr-watch-changed') {
     // Exact identity: the run's store key, its id and (a workspace's) member.
     refreshRdPrStatus(msg.projectKey, msg.pipelineId, msg.memberKey || '');
+    refreshChatPrWatch(msg);                       // the chat's pull-request cards show the same watch, read-only
     return;
   }
 

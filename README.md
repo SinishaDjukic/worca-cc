@@ -453,7 +453,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   answer its questions; once it ends, the card shows the result, the top changed files, its
   artifacts and **Create pull request**. While the chat follows a live run, the composer's **→**
   chip (named after the run) sends it a direction instead of a message. The chat still posts when
-  the run waits for an answer, pauses, fails or finishes.
+  the run waits for an answer, pauses, fails or finishes. A pull request opened from a chat card keeps reporting
+  there: the card shows its Watch PR status, and each fix run that Watch PR or Resolve starts on it appears in the
+  chat as a live run card, with what started it and how it ended.
 - **Per-agent models for one run** — on a run card for a saved workflow, Ask Worca can pick a
   model and effort for each agent step from the catalog (judgement steps on the top price tier,
   mechanical ones on the cheapest capable model, Anthropic first, then OpenAI; a premium-tier
