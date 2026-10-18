@@ -693,6 +693,52 @@ test('Resolve after a capped watch: runs once more, then the cap still holds', a
   assert.deepEqual([w.status, w.reason, io.calls.push], ['needs-person', 'cap', ['M1']]);
 });
 
+test('Resolve when the local branch already holds the merge (a stopped fix run committed it): pushed, no fix run', async () => {
+  for (const enabled of [true, false]) {
+    getDb().exec('DELETE FROM pr_watch_runs; DELETE FROM pr_watches');
+    const origin = seedOrigin();
+    setWatch({ prUrl: URL, pipelineId: origin, enabled });
+    // An earlier fix run was stopped; its teardown committed the merge locally, unpushed, and a no-change
+    // run left the watch waiting for a person.
+    updateWatch(URL, { status: 'needs-person', reason: 'no-change' });
+    const { io, deps, watcher } = harness({ pr: conflicted() });
+    const audits = [];
+    deps.audit = (pid, text) => audits.push(text);
+    Object.assign(io.repo, { headSha: 'L1', ahead: 1 });
+    const r = await watcher.resolveOnce(getWatch(URL));
+    assert.deepEqual([r.ok, r.pushed], [true, 'L1']);
+    assert.equal(io.calls.start.length, 0, 'no agent run');
+    assert.deepEqual(io.calls.checkMerge, { projectDir: '/repo', baseSha: 'B1', from: 'R1', to: 'L1' });
+    assert.deepEqual(io.calls.push, ['L1']);
+    const w = getWatch(URL);
+    assert.deepEqual([w.status, w.reason, w.fixRuns, w.handled],
+      enabled ? ['watching', null, 0, ['conflict:R1@B1']] : ['ended', 'resolved', 0, ['conflict:R1@B1']]);
+    assert.match(audits[0], /pushed `feat\/x` \(L1\), which already merges `main`, with no fix run, to `origin`/);
+  }
+});
+
+test('Local commits ahead of the PR without the base, or with markers: the fix run merges; its guards cover the local commits', async () => {
+  for (const merge of [{ ok: true, merged: false, markers: [] }, { ok: true, merged: true, markers: ['f.txt:3'] }]) {
+    getDb().exec('DELETE FROM pr_watch_runs; DELETE FROM pr_watches');
+    const origin = seedOrigin();
+    setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+    const { io, watcher } = harness({ pr: conflicted() });
+    Object.assign(io.repo, { headSha: 'L1', ahead: 1 });
+    io.merge = merge;
+    await watcher.tick();
+    assert.equal(io.calls.start.length, 1, 'the agent resolves');
+    assert.deepEqual(io.calls.push, []);
+    const w = getWatch(URL);
+    assert.deepEqual([w.pending.startSha, w.pending.expectedRemoteSha], ['L1', 'R1']);
+    io.merge = null;
+    finishRun(io, w, 'M1'); io.repo.ahead = 2;
+    await watcher.tick(); await watcher.tick();
+    assert.deepEqual(io.calls.checkMerge, { projectDir: '/repo', baseSha: 'B1', from: 'R1', to: 'M1' });
+    assert.deepEqual(io.calls.subjects, ['R1', 'M1']);
+    assert.deepEqual(io.calls.push, ['M1']);
+  }
+});
+
 // --- What a fix run is for and how it ended: the Ask chat's fix-run card (onFixRun) ---
 
 test('fixTrigger names what a fix run is for, from its reserved pending', () => {
