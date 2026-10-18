@@ -19,3 +19,19 @@ Pull requests (add each number when it opens):
 - Shape it first: Chat features
 - Shape it first: review checklists
 - Shape it first: plan in slices
+
+## Watch PR fix runs in the chat
+
+**The chat that opened a pull request sees its fix runs.**
+
+A pull-request card in Ask Worca now shows the PR's Watch PR status, live. When Watch PR (or Resolve) starts a fix run
+on that PR, the chat gets a live run card for it by itself — what started it (conflicts, failing checks, review
+comments) and, at the end, whether the fix was pushed — even when the chat was closed.
+
+Chips: Ask Worca · Watch PR · fix runs
+
+Read it: [UI levels › History](../ui-levels.md#history)
+
+Pull requests (add each number when it opens):
+
+- Watch PR fix runs in the chat

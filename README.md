@@ -350,9 +350,10 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 ### Workspaces
 
 - **Multi-project workspaces** — group 2–40 related repos under **Workspaces** (Advanced
-  level): **Create workspace**, pick the projects, **Scan interconnections**; the workspace
-  is saved when that scan ends. **Add projects** / **Remove** on its Overview tab re-scan
-  the new set.
+  level): **Create workspace**, pick the projects — or bring repos straight in with **Add…** or a
+  pasted list (a repo, a folder of repos, a VS Code `.code-workspace` file; a ticked repo that is
+  not a project yet becomes one) — **Scan interconnections**; the workspace is saved when that scan ends.
+  **Add projects** / **Remove** on its Overview tab re-scan the new set.
 - **A map built from code, with evidence** — the scan is itself a pipeline run that never
   changes a member. Code detectors find REST, gRPC and GraphQL APIs, message queues, build
   dependencies, shared databases and service calls and do the matching; agents fill what
@@ -452,7 +453,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   answer its questions; once it ends, the card shows the result, the top changed files, its
   artifacts and **Create pull request**. While the chat follows a live run, the composer's **→**
   chip (named after the run) sends it a direction instead of a message. The chat still posts when
-  the run waits for an answer, pauses, fails or finishes.
+  the run waits for an answer, pauses, fails or finishes. A pull request opened from a chat card keeps reporting
+  there: the card shows its Watch PR status, and each fix run that Watch PR or Resolve starts on it appears in the
+  chat as a live run card, with what started it and how it ended.
 - **Per-agent models for one run** — on a run card for a saved workflow, Ask Worca can pick a
   model and effort for each agent step from the catalog (judgement steps on the top price tier,
   mechanical ones on the cheapest capable model, Anthropic first, then OpenAI; a premium-tier

@@ -110,6 +110,7 @@ import {
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline,
   finishMessage as askFinishMessage,
+  newAskId as askNewId, findPullRequestCards as askFindPullRequestCards, findFixRunCards as askFindFixRunCards,
 } from '../src/core/ask/store.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
@@ -216,6 +217,7 @@ import { syncPluginSlots } from '../src/core/plugin-broker-slots.mjs';
 import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import { realRoots, checkInside, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
+import { importCandidates, parsePathList, IMPORT_MAX_INPUTS } from '../src/core/workspace-import.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, foreignRunModel, assertSlotModels, stepSlotDefaults,
@@ -1992,12 +1994,14 @@ function fallbackRunTitle(effectivePrompt, source) {
 // and ask-run-status frames. Used by POST /api/run at launch AND by resumeRun
 // (a resumed pipeline is a NEW orchestrator; the paused lineage's follower
 // detached on done{paused}, so the link must be re-followed — review of PR #376).
-function attachAskFollower(orch, { threadId, runId, cardId }) {
+function attachAskFollower(orch, { threadId, runId, cardId, quiet = false }) {
   const follower = attachRunFollower(orch, {
     threadId,
     runId,
     cardId,
-    post: ({ text, href }) => {
+    // Quiet (a PR fix-run card, askPostPrFixCards): the link and the ask-run-status frames, never a notice — the card
+    // shows the run, and the watcher's outcome lands on it.
+    post: quiet ? () => {} : ({ text, href }) => {
       try {
         const m = askAppendMessage(threadId, {
           role: 'system', text, blocks: [{ kind: 'notice', text, href }],
@@ -2115,6 +2119,81 @@ function askTrackRun(threadId, input, pin) {
     attachAskFollower(entry.orch, { threadId, runId: entry.id, cardId: null });
   }
   return { ok: true, card: { type: 'progress', pipelineId, runId: liveRunId, projectKey: projKey, workspaceId, title, label, status } };
+}
+
+/** A run link that belongs to a PR fix-run card (askPostPrFixCards) follows its run quietly: no Run resumed / finished
+ *  rows — the card shows the run, and its outcome. */
+function askLinkIsPrFix(link) {
+  if (!link || !link.cardId) return false;
+  try { return !!askFindCard(link.threadId, link.cardId)?.block?.card?.fix; } catch { return false; }
+}
+
+/**
+ * PR watch → Ask (pr-watch.mjs onFixRun), with no model turn: `started` posts ONE fix-run card (track_run's progress
+ * card plus `fix`) into every chat holding an applied pull-request card for the PR; `ended` writes the outcome onto
+ * those cards. Best effort: a chat write never reaches back into the watch. → [{ threadId, cardId }] touched
+ */
+function askPrFixRun(event) {
+  if (!event || typeof event.runId !== 'string' || !event.runId || !event.watch || typeof event.watch.prUrl !== 'string') return [];
+  if (event.phase === 'started') return askPostPrFixCards(event);
+  if (event.phase === 'ended') return askSettlePrFixCards(event);
+  return [];
+}
+
+function askPostPrFixCards({ watch, runId, trigger, once }) {
+  const posted = [];
+  const seen = new Set(askFindFixRunCards(runId).map((c) => c.threadId));   // one card per fix run per chat
+  const entry = runs.get(runId) || null;                                    // startRunHandler set it before answering 200
+  let origin = null;
+  if (!entry || !entry.projectDir) { try { origin = prWatchOrigin(watch); } catch { origin = null; } }
+  const dir = (entry && entry.projectDir) || (origin && origin.projectDir) || '';
+  const why = trigger && typeof trigger === 'object' && typeof trigger.label === 'string' ? trigger : { kinds: [], label: 'Pull request feedback' };
+  for (const link of askFindPullRequestCards(watch.prUrl)) {
+    if (seen.has(link.threadId)) continue;
+    seen.add(link.threadId);
+    try {
+      const cardId = askNewId('card');
+      const status = (entry && entry.status) || 'starting';
+      const card = {
+        type: 'progress', pipelineId: null, runId,
+        projectKey: dir ? projectKey(dir) : ((origin && origin.projectKey) || null), workspaceId: null,
+        title: (entry && entry.title) || 'PR fix run',
+        label: String(dir).split(/[\\/]/).filter(Boolean).pop() || '',
+        status,
+        fix: { prUrl: watch.prUrl, memberKey: link.memberKey, originPipelineId: link.pipelineId,
+          trigger: Array.isArray(why.kinds) ? why.kinds : [], triggerLabel: why.label, once: once === true },
+      };
+      const text = `PR watch started a fix run on ${watch.prUrl}: ${why.label}`;
+      const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'card', id: cardId, state: 'tracked', card }] });
+      try { askLinkRun(link.threadId, { runId, cardId, status }); } catch { /* a link for this run exists already: the card finds it by run id */ }
+      if (entry && entry.orch && !SETTLED_RUN.has(String(entry.status || '')) && !askFollowerAttached(link.threadId, runId)) {
+        attachAskFollower(entry.orch, { threadId: link.threadId, runId, cardId, quiet: true });
+      }
+      broadcast({ type: 'ask-message', threadId: link.threadId, message: m, unread: true });
+      posted.push({ threadId: link.threadId, cardId });
+    } catch (err) {
+      console.error(`[worca-ui] PR fix-run card for ${watch.prUrl} failed: ${err && err.message ? err.message : err}`);
+    }
+  }
+  return posted;
+}
+
+function askSettlePrFixCards({ runId, pipelineId, outcome }) {
+  const settled = [];
+  const out = outcome && typeof outcome === 'object' ? outcome : { kind: 'failed', reason: 'unknown' };
+  for (const { threadId, block } of askFindFixRunCards(runId)) {
+    if (block.card.fix.outcome) continue;                                 // written once
+    try {
+      askUpdateCardBlock(threadId, block.id, { card: { pipelineId: block.card.pipelineId || pipelineId || null, fix: { ...block.card.fix, outcome: out } } });
+      // A system row is never held by a turn's reducer: the whole message goes out, as flipCard sends an out-of-turn flip.
+      const found = askFindCard(threadId, block.id);
+      if (found) broadcast({ type: 'ask-message', threadId, message: found.message, unread: true });
+      settled.push({ threadId, cardId: block.id });
+    } catch (err) {
+      console.error(`[worca-ui] PR fix-run outcome for ${runId} failed: ${err && err.message ? err.message : err}`);
+    }
+  }
+  return settled;
 }
 
 // ---------------------------------------------------------------------------
@@ -4921,10 +5000,14 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   for (const link of askFindRunLinksByPipeline(pipelineId)) {
     try {
       if (!askUpdateRunLink(link.threadId, link.runId, { runId, status: 'running' })) continue;
-      const text = `Run resumed — "${saved.row.title || 'run'}"`;
-      const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'notice', text, href: `#running/${runId}` }] });
-      broadcast({ type: 'ask-message', threadId: link.threadId, message: m });
-      attachAskFollower(orch, { threadId: link.threadId, runId, cardId: link.cardId });
+      // A PR fix-run card follows quietly (askPostPrFixCards): it shows the resumed run itself — no "Run resumed" row.
+      const quiet = askLinkIsPrFix(link);
+      if (!quiet) {
+        const text = `Run resumed — "${saved.row.title || 'run'}"`;
+        const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'notice', text, href: `#running/${runId}` }] });
+        broadcast({ type: 'ask-message', threadId: link.threadId, message: m });
+      }
+      attachAskFollower(orch, { threadId: link.threadId, runId, cardId: link.cardId, quiet });
     } catch (err) {
       console.error(`[worca-ui] ask follower re-attach failed: ${err && err.message ? err.message : err}`);
     }
@@ -6724,7 +6807,7 @@ function prWatchFrame(pipelineId, memberKey) {
   const projectKey = !row ? null : (row.target === 'workspace' || row.workspace_key) ? `workspaces/${row.workspace_key}` : row.project_key;
   return { type: 'pr-watch-changed', projectKey, pipelineId: row?.id || pipelineId, memberKey: memberKey || null };
 }
-const prWatcher = createPrWatcher({
+const prWatcherDeps = {
   originOf: prWatchOrigin,
   host: { snapshot: prWatchSnapshot, jobLog: prWatchJobLog, rerun: prWatchRerun, reply: prWatchReply, comment: prWatchComment },
   git: {
@@ -6758,10 +6841,13 @@ const prWatcher = createPrWatcher({
     if (readPrState(pipelineId)?.url !== pr.url) throw new Error('the fix run did not record its pull request');
   },
   notify: (event) => chatNotifier.notifyPrWatch(event),
+  // Ask: the chats that opened this PR get each fix run's card, then its outcome (askPrFixRun).
+  onFixRun: (event) => { askPrFixRun(event); },
   audit: (pipelineId, text) => appendAuditById(pipelineId, text, { actor: 'pr-watch' }),
   onChange: (w) => broadcast(prWatchFrame(w.pipelineId, w.memberKey)),
   log: (m) => console.warn(`[worca-ui] ${m}`),
-});
+};
+const prWatcher = createPrWatcher(prWatcherDeps);
 /** Nudge the loop after a toggle; a no-op unless it started (listen) and WORCA_PR_WATCH is on. */
 const kickPrWatch = () => { void prWatcher.runner.kick(); };
 
@@ -9353,6 +9439,35 @@ async function scanRequest(req, res, { id, name, projectPaths, rescan, models })
     pendingScans.delete(hash);
   }
 }
+
+// POST /api/workspaces/import-candidates {paths?: string[], text?: string, depth?: 1|2}
+//   -> 200 {candidates, workspaceName, truncated}
+// The creation wizard's Add… and paste box: what each path is (a repository, a folder of
+// repositories, a VS Code .code-workspace file) as review rows — registered (the existing project),
+// new (the wizard registers it through POST /api/projects/bulk before it scans) or problem (with
+// the reason). Reads folders and runs `git rev-parse` only: it never writes (src/core/workspace-
+// import.mjs). On a hosted Worca it reads only inside Worca's own folders (fs-scope.mjs).
+app.post('/api/workspaces/import-candidates', async (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  if (body.paths !== undefined && !Array.isArray(body.paths)) return badRequest(res, 'paths must be an array of paths');
+  if (body.text !== undefined && typeof body.text !== 'string') return badRequest(res, 'text must be a string');
+  try {
+    // Picked and pasted paths, duplicates removed BEFORE the count: the same 60 paths picked and
+    // pasted are 60 inputs. parsePathList stops just past the limit, so a huge paste stays cheap.
+    const inputs = [...new Set([
+      ...(body.paths || []).filter((p) => typeof p === 'string' && p.trim()).map((p) => p.trim()),
+      ...parsePathList(body.text || '', IMPORT_MAX_INPUTS),
+    ])];
+    if (!inputs.length) return badRequest(res, 'give at least one path (paths or text)');
+    if (inputs.length > IMPORT_MAX_INPUTS) return badRequest(res, `at most ${IMPORT_MAX_INPUTS} paths per import`);
+    // On a hosted Worca the import reads only inside Worca's own folders, like the folder browser.
+    const roots = fsLimitedHere(req) ? await fsAllowedRoots() : null;
+    const outsideProblem = roots ? async (p) => ((await checkInside(p, roots)).inside ? null : outsideAllowedMessage(p)) : null;
+    res.json(await importCandidates(inputs, { depth: body.depth === 2 ? 2 : 1, projects: await listProjects(), outsideProblem }));
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
 
 // POST /api/workspaces/scan (first scan): validated exactly as the save will be (D4).
 app.post('/api/workspaces/scan', async (req, res) => {
@@ -15693,6 +15808,7 @@ export const _testing = {
   validateResumeTarget, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
+  prWatcherDeps, askPrFixRun, askLinkIsPrFix,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
   openSliceDraft, afterRunSettled,
   networkWatchTick: () => networkWatch().tick(),
