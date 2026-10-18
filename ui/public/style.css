@@ -35,6 +35,7 @@
   --ink-3:light-dark(#9A9AA1,#9E9E98);
   --on-ink:light-dark(#FFFFFF,#161614);
   --on-status:light-dark(#FFFFFF,#161614);
+  --on-signal:light-dark(#19191B,#19191B);   /* the '?' / '!' glyph on the flat --amber / --red: 7.3:1 / 5.5:1 */
   --line:light-dark(#ECECEA,#30302D);
   --line-2:light-dark(#E3E3E0,#494944);
   /* Hover grammar. Outlined things (buttons, pills, tabs, cards) strengthen their
@@ -4689,15 +4690,19 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
    for it, while the header and the panel keep their 544px measure and do not move. */
 .rd-glance:has(> .rd-questions:not([hidden])){max-width:1216px;}
 .rd-glance:has(> .rd-questions:not([hidden])) > :is(.rd-now,.rd-sheet,.rd-night-sec){width:100%;max-width:544px;align-self:center;}
-/* Run progress (spec 2026-10-14 P2/P4/P7/P8/P11). Fill colours are the status families (runStatusMeta). */
+/* Run progress (runs redesign §2.3): four neutral sections; the run's state is told by the status dot, not the fill. */
 .run-prog{position:relative;margin-top:10px;outline:none;}
 .run-prog[hidden]{display:none;}
-.run-prog-track,.run-chain-track{position:relative;height:6px;border-radius:var(--r-sm);background:var(--field);overflow:hidden;}
-.run-prog-fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:inherit;background:var(--blue);transition:width .6s ease;}
-.run-prog[data-tone="amber"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="amber"] .run-prog-fill{background:var(--amber);}
-.run-prog[data-tone="green"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="green"] .run-prog-fill{background:var(--green);}
-.run-prog[data-tone="red"] > .run-prog-track .run-prog-fill,.run-chain-part[data-tone="red"] .run-prog-fill{background:var(--red);}
-.run-prog-tick{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--surface);}
+/* Four sections, steps of one ink darker by stage; hard stops; neutral. */
+.run-prog-track{position:relative;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px;height:6px;}
+.run-prog[data-mode="nodes"] > .run-prog-track{display:block;border-radius:var(--r-xs);background:var(--line-2);overflow:hidden;}
+.run-prog-sec{position:relative;border-radius:var(--r-xs);background:var(--line-2);overflow:hidden;}
+.run-prog-sec[data-stage="plan"]{--sec-ink:color-mix(in srgb,var(--ink) 40%,var(--line-2));}
+.run-prog-sec[data-stage="build"]{--sec-ink:color-mix(in srgb,var(--ink) 60%,var(--line-2));}
+.run-prog-sec[data-stage="review"]{--sec-ink:color-mix(in srgb,var(--ink) 80%,var(--line-2));}
+.run-prog-sec[data-stage="ready"]{--sec-ink:color-mix(in srgb,var(--ink) 100%,var(--line-2));}
+.run-prog-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--sec-ink,var(--ink-2));transition:width .6s ease;}
+.run-prog[data-pulse="on"] .run-prog-sec.is-current > .run-prog-fill::after{content:"";position:absolute;top:0;right:0;bottom:0;width:2px;background:var(--surface);animation:wr-pulse 1.6s ease-in-out infinite;}
 .run-prog-marks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-top:5px;font-size:11px;color:var(--ink-3);}
 .run-prog-mark[data-state="done"]{color:var(--ink-2);}
 .run-prog-mark[data-state="current"]{color:var(--ink);font-weight:600;}
@@ -4712,11 +4717,26 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .run-prog.is-compact{margin-top:10px;}
 .run-prog.is-compact .run-prog-marks{display:none;}
 .ask-rc-prog{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-/* P8: the chain's overall bar — equal parts, finished green, the current one filling. */
+/* The group's continuous bar (runs redesign §2.3). */
 .run-chain-label{font-size:11px;color:var(--ink-3);margin-bottom:4px;}
-.run-chain-track{display:flex;gap:3px;background:none;}
-.run-chain-part{position:relative;flex:1 1 0;height:6px;border-radius:var(--r-sm);background:var(--field);overflow:hidden;}
-@media (prefers-reduced-motion: reduce){.run-prog-fill,.runs-row-prog > i{transition:none;}}
+.run-chain-track{position:relative;height:6px;border-radius:var(--r-xs);background:var(--line-2);overflow:hidden;}
+.run-chain-track > .run-prog-fill{background:var(--ink-2);}
+@media (prefers-reduced-motion: reduce){.run-prog-fill,.runs-row-prog > i{transition:none;}.run-prog[data-pulse="on"] .run-prog-sec.is-current > .run-prog-fill::after{animation:none;}}
+/* The one status dot (runs redesign §2.1; ui/public/status-dot.mjs). The colour is currentColor; the symbol is 12px. */
+.status-dot{display:inline-block;flex:none;vertical-align:middle;width:8px;height:8px;border-radius:50%;background:currentColor;}
+.status-dot.is-peach{color:var(--peach);}
+.status-dot.is-amber{color:var(--amber);}
+.status-dot.is-red{color:var(--red);}
+.status-dot.is-green{color:var(--green);}
+.status-dot.is-violet{color:var(--violet);}
+.status-dot.is-grey{color:var(--slate);}
+.status-dot.is-dark-grey{color:var(--ink-2);}
+.status-dot.is-grey-ring{color:var(--slate);background:none;box-shadow:inset 0 0 0 2px currentColor;}
+.status-dot.has-sym{width:12px;height:12px;background:none;}
+.status-dot.has-sym > svg{display:block;}
+.status-sym > g{stroke:var(--on-signal);}
+.status-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
+@media (prefers-reduced-motion: reduce){.status-dot.is-pulse{animation:none;}}
 .rd-now{display:flex;flex-direction:column;gap:18px;}
 /* The run's name is the page's subject: the largest type on it. */
 .rd-page-head{min-width:0;}

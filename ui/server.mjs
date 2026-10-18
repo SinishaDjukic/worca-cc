@@ -279,7 +279,7 @@ import { webEventPrompt, webNoticeText, chatWebHosts } from '../src/core/ask/web
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
-import { drainTimeoutMs, autoResumeEnabled, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
+import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import {
   saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
@@ -9901,19 +9901,21 @@ function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
 }
 
 /**
- * B3 (opt-in, WORCA_AUTO_RESUME=1): after boot maintenance, resume the runs a drain paused and
- * the runs this start found dead under a previous process (`interruptedIds`), each as the person
- * who last started or resumed it. Resumes go through resumeRun's whole guard chain (budget gates
+ * B3: after boot maintenance, resume the runs a drain paused (by default; WORCA_AUTO_RESUME=0 turns
+ * it off) and, with WORCA_AUTO_RESUME=1, also the runs this start found dead under a previous process
+ * (`interruptedIds`), each as the person who last started or resumed it. Resumes go through resumeRun's whole guard chain (budget gates
  * included); a refusal is logged and leaves the run waiting for a person.
  */
 async function autoResumeOnBoot({ interruptedIds = [], env = process.env, mock = isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) } = {}) {
-  if (!autoResumeEnabled(env)) return { enabled: false, resumed: [], failed: [] };
+  const mode = autoResumeMode(env);
+  if (mode === 'off') return { enabled: false, resumed: [], failed: [] };
   const rows = getDb().prepare(`SELECT id, status, started_by, archived_at, resume_point FROM pipelines
     WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL ORDER BY started_at ASC`).all()
     .map((r) => { let rp = null; try { rp = r.resume_point ? JSON.parse(r.resume_point) : null; } catch { /* unreadable point */ } return { ...r, resumePoint: rp }; });
   const picks = autoResumeCandidates(rows, {
     interruptedNow: new Set(interruptedIds),
     hasResumeTicket: (id) => resumeTicketsFor(id).length > 0,
+    includeInterrupted: mode === 'all',
   });
   const resumed = [];
   const failed = [];
@@ -15567,7 +15569,7 @@ if (isMain) {
   }
 
   bootMaintenance().then((summary) => {
-    // B3: with WORCA_AUTO_RESUME=1, continue what the last stop paused (or a crash interrupted).
+    // B3: continue what the last stop paused (and, with WORCA_AUTO_RESUME=1, what a crash interrupted).
     autoResumeOnBoot({ interruptedIds: summary?.reconciledIds || [] })
       .catch((err) => console.error(`[worca-ui] auto-resume failed: ${err && err.message ? err.message : err}`));
   }, (err) => {

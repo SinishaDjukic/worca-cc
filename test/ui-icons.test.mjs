@@ -19,6 +19,12 @@ test('the set has the replacements for the removed glyphs', () => {
     'arrow-down', 'copy', 'refresh']) assert.ok(Object.hasOwn(ICONS, name), name);
 });
 
+test('the set has the run-state symbols and the PR state icons (runs redesign §2.1, §2.1a)', () => {
+  for (const name of ['question', 'alert', 'pull-request', 'pull-request-draft', 'pull-request-closed', 'merge']) {
+    assert.ok(Object.hasOwn(ICONS, name), name);
+  }
+});
+
 test('an unknown or inherited name renders an empty box, as homeIcon did', () => {
   for (const name of ['nope', 'constructor']) assert.doesNotMatch(iconSvg(name), /<path/, name);
 });

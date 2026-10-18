@@ -96,6 +96,7 @@ const PAIRS = [
   ['--blue-ink-strong', '--blue-bg', 4.5], ['--violet-ink', '--violet-bg', 4.5],   // the PR state colours (.rd-pr-fill.pr-view / .pr-merged, .hd-pr-link)
   ['--amber-ink-strong', '--field', 4.5], ['--red-ink-strong', '--field', 4.5],   // the account menu's spend card tones on its --field panel
   ['--side-ink', '--side-bg', 4.5], ['--side-sel-ink', '--side-sel-bg', 4.5],   // the sidebar rows and group labels (.nav button, .nav-sect) and the open page
+  ['--on-signal', '--amber', 4.5], ['--on-signal', '--red', 4.5],   // the status dot's '?' / '!' glyph (ui/public/status-dot.mjs)
 ];
 const DARK_ONLY = [   // light fails these today (spec §7.4 baseline); dark must not
   ['--ink-3', '--panel', 4.5], ['--ink-3', '--bg', 4.5], ['--ink-3', '--field', 4.5], ['--ink-3', '--field-focus', 4.5], ['--ink-3', '--surface', 4.5], ['--ink-3', '--canvas-2', 4.5], ['--ink-3', '--amber-wash', 4.5],

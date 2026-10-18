@@ -971,6 +971,9 @@ export function createAskTools(deps) {
         members: (Array.isArray(wsMeta.projects) ? wsMeta.projects : []).map((p) => p.projectName) } : null,
       status: row.status ?? null,
       phase: row.phase ?? null,
+      // The one run model's status line (src/shared/run-model.mjs): the same words as the app and the CLI (§5a.7).
+      // Conditional spread (the file's idiom): fakes without the dep keep today's exact shape.
+      ...(typeof deps.runStatusLine === 'function' ? { statusLine: deps.runStatusLine(row) } : {}),
       startedAt: row.started_at ?? null,
       updatedAt: row.updated_at ?? null,
       // A run on its source branch that merged back: its work is ON the source, its own branch is gone.

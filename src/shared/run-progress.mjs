@@ -15,6 +15,8 @@ export const STAGE_LABEL = Object.freeze({ plan: 'Plan', build: 'Build', review:
 export const REVIEW_STEP = 0.25;
 /** …capped below the quarter's end until the review passes. */
 export const REVIEW_CAP = 0.8;
+/** A begun stage shows this share of its quarter before anything in it finishes (spec §2.3). */
+export const START_SHARE = 0.1;
 
 const ORDER = Object.freeze([...PROGRESS_STAGES, 'ready']);
 const BOOKENDS = new Set(BOOKEND_EXECUTION_IDS);
@@ -26,6 +28,7 @@ const clamp01 = (n) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
 const msOf = (v) => (typeof v === 'number' ? v : typeof v === 'string' ? Date.parse(v) : NaN);
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const labelOf = (n) => String(n.label || n.key || n.id);
+const sameWord = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
 
 /** "1st", "2nd", "3rd", "11th". */
 export function ordinal(n) {
@@ -113,7 +116,7 @@ function taskCounts(rows, buildIds, facts) {
  * @param {object} st    the run state (see the header)
  * @param {{fraction?:number, stage?:number}|null} memo  the caller's monotonic memory, MUTATED (P3)
  * @returns {{ mode:'stages'|'nodes', stage:'plan'|'build'|'review'|'ready'|null, label:string,
- *   fraction:number, text:string, tone:'blue'|'amber'|'green'|'red',
+ *   fraction:number, text:string, step:string, what:string, fill:number[], tone:'blue'|'amber'|'green'|'red',
  *   stages:Array<{id:string,label:string,state:'done'|'current'|'waiting'|'skipped',agents:Array<{label:string,state:'done'|'current'|'waiting'}>}>,
  *   passes:number, tasks:{done:number,total:number}|null }}
  */
@@ -162,8 +165,9 @@ export function runProgress(st, memo = null) {
   //    so it reads "Plan · …" with the stage marks, never the markless P6 bar. ──
   if (!nodes.length && state.stepper && state.stepper.auto && state.stepper.auto.status === 'deciding') {
     const { fraction } = remember(0, 0);
+    const what = waitWhat() || 'choosing the workflow';
     return { mode: 'stages', stage: 'plan', label: STAGE_LABEL.plan, fraction,
-      text: `${STAGE_LABEL.plan} · ${waitWhat() || 'choosing the workflow'}`, tone,
+      text: `${STAGE_LABEL.plan} · ${what}`, step: '', what, fill: [0, 0, 0, 0], tone,
       stages: [...PROGRESS_STAGES, 'ready'].map((s) => ({ id: s, label: STAGE_LABEL[s], state: s === 'plan' ? 'current' : 'waiting', agents: [] })),
       passes: 0, tasks: null };
   }
@@ -185,7 +189,8 @@ export function runProgress(st, memo = null) {
     else if (now.length > 1) text = `${now.length} steps`;
     else if (now.length === 1) text = now[0];
     else text = rows.length ? '' : 'Starting';
-    return { mode: 'nodes', stage: null, label: '', fraction, text, tone, stages: [], passes: 0, tasks: null };
+    return { mode: 'nodes', stage: null, label: '', fraction, text, step: now.length === 1 ? now[0] : '', what: text,
+      fill: [fraction], tone, stages: [], passes: 0, tasks: null };
   }
 
   // ── stages (P1/P2) ──
@@ -251,7 +256,7 @@ export function runProgress(st, memo = null) {
   PROGRESS_STAGES.forEach((s, i) => {
     if (ready || PROGRESS_STAGES.slice(i + 1).some((x) => inStage[x].length && begun(x))) { c[s] = 1; return; }
     if (!inStage[s].length) { c[s] = PROGRESS_STAGES.slice(0, i).every((x) => c[x] === 1) ? 1 : 0; return; }
-    c[s] = begun(s) ? clamp01(within[s]()) : 0;
+    c[s] = begun(s) ? Math.max(START_SHARE, clamp01(within[s]())) : 0;
   });
   const reached = PROGRESS_STAGES.reduce((acc, s, i) => (begun(s) ? i : acc), -1);
   const rawIdx = ready ? 3 : reached >= 0 ? reached : PROGRESS_STAGES.indexOf(present[0]);
@@ -277,8 +282,16 @@ export function runProgress(st, memo = null) {
     if (now.length === 1) return now[0];
     return !rows.length && !active.size ? 'starting' : '';
   };
-  const what = waitWhat() || workingWhat();
+  const oneStep = now.length === 1 && !(stage === 'review' && passes)
+    && !(stage === 'build' && expandsFromBuild && tasks.total) ? now[0] : '';
+  const step = oneStep && !sameWord(oneStep, label) ? oneStep : '';
+  const raw = waitWhat() || workingWhat();
+  const what = sameWord(raw, label) ? '' : raw;
   const text = what ? `${label} · ${what}` : label;
+  // The four sections' own fills (Plan, Build, Review, Ready), from the monotonic fraction. Exact because an earlier
+  // stage is forced to 1 once a later present stage begins, so stages fill in order. A skipped stage (wf_pr_fix has
+  // no Plan agent) draws full, as its quarter counts today.
+  const fill = [0, 1, 2, 3].map((i) => clamp01(fraction * 4 - i));
 
   const stages = [
     ...PROGRESS_STAGES.map((s, i) => ({
@@ -288,8 +301,23 @@ export function runProgress(st, memo = null) {
     })),
     { id: 'ready', label: STAGE_LABEL.ready, state: stage === 'ready' ? 'done' : 'waiting', agents: [] },
   ];
-  return { mode: 'stages', stage, label, fraction, text, tone, stages, passes,
+  return { mode: 'stages', stage, label, fraction, text, step, what, fill, tone, stages, passes,
     tasks: expandsFromBuild ? tasks : null };
+}
+
+/**
+ * The group's continuous bar (spec §2.3): (finished members + the current member's own fill) ÷ members.
+ * `members` in order, each `{ state: 'done'|'current'|'waiting'|'failed', progress?: {fraction} }`;
+ * `planning` (a Shaper feature's planning run) counts as one more member. `memo` keeps the maximum (P3).
+ */
+export function groupProgress(members, { planning = null, memo = null } = {}) {
+  const list = [...(planning ? [planning] : []), ...(Array.isArray(members) ? members : [])].filter(Boolean);
+  const finished = list.filter((m) => m.state === 'done').length;
+  const cur = list.find((m) => m.state === 'current');
+  const fill = cur && cur.progress ? clamp01(cur.progress.fraction) : 0;
+  let fraction = list.length ? clamp01((finished + fill) / list.length) : 0;
+  if (memo) fraction = memo.fraction = Math.max(Number(memo.fraction) || 0, fraction);
+  return { total: list.length, finished, fraction };
 }
 
 /**

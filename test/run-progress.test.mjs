@@ -4,13 +4,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   runProgress, chainProgress, ordinal, progressWidth, progressTone, askWhat,
-  PROGRESS_STAGES, STAGE_LABEL, REVIEW_STEP, REVIEW_CAP,
+  PROGRESS_STAGES, STAGE_LABEL, REVIEW_STEP, REVIEW_CAP, START_SHARE, groupProgress,
 } from '../src/shared/run-progress.mjs';
 import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
-import { GRAPH_DEFAULT_WORKFLOW, GRAPH_PR_FIX_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_WORKSPACE_SCAN_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
+import {
+  GRAPH_DEFAULT_WORKFLOW, GRAPH_PR_FIX_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_WORKSPACE_SCAN_WORKFLOW,
+  GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW,
+} from '../src/core/graph/builtin-workflows.mjs';
 import { GRAPH_ARCHITECTURE_WORKFLOW } from '../src/core/graph/architecture-workflow.mjs';
 import { GRAPH_PRESENTATION_WORKFLOW } from '../src/core/graph/presentation-workflow.mjs';
+import { GRAPH_PROMO_VIDEO_WORKFLOW } from '../src/core/graph/promo-video-workflow.mjs';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -71,7 +75,7 @@ test('stages map: the wf_default shape moves Plan → Build → Review → Ready
       const p = runProgress(S({ steps: [row('n_clarify'), row('n_plan'), row('n_refine'), row('n_impl', 1, { status: 'start' })], active: [live('n_impl')] }));
       assert.equal(p.stage, 'build');
       assert.equal(p.text, 'Build · Implementation');
-      near(p.fraction, 0.25);
+      near(p.fraction, 0.25 + START_SHARE / 4);
     } },
     { name: 'reviewer active at cycle 1 → Review · 1st pass', run: () => {
       const p = runProgress(S({ steps: [row('n_plan'), row('n_impl'), row('n_rev', 1, { status: 'start' })], active: [live('n_rev')] }));
@@ -125,6 +129,54 @@ test('shipped workflows built from the real sidecars: staged ones get stages, th
     { name: 'wf_workspace_scan', run: () => assert.equal(modeOf(GRAPH_WORKSPACE_SCAN_WORKFLOW), 'nodes') },
     { name: 'wf_presentation', run: () => assert.equal(modeOf(GRAPH_PRESENTATION_WORKFLOW), 'nodes') },
   ]);
+});
+
+// Known bugs 1 and 2 over every shipped workflow's real step list.
+const SHIPPED = () => [GRAPH_DEFAULT_WORKFLOW, GRAPH_PR_FIX_WORKFLOW, GRAPH_ARCHITECTURE_WORKFLOW, GRAPH_SHAPE_WORKFLOW,
+  GRAPH_SHAPE_UX_WORKFLOW, ...SEED_TEMPLATES, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_WORKSPACE_SCAN_WORKFLOW,
+  GRAPH_PRESENTATION_WORKFLOW, GRAPH_PROMO_VIDEO_WORKFLOW];
+
+test('every shipped workflow: each staged step reports its own stage, and no step repeats its stage (Known bugs 1, 2)', async () => {
+  const registry = loadAgentRegistry(undefined, { userAgentsDir: null });
+  const rows = [];
+  for (const tpl of SHIPPED()) {
+    const stepper = buildGraphManifest(tpl, registry);
+    const order = stepper.graph.nodes.filter((n) => n.kind === 'agent' || n.kind === 'script');
+    order.forEach((n, i) => rows.push({ name: `${tpl.id} ${n.key}`, run: () => {
+      const done = order.slice(0, i).map((d) => row(d.id));
+      const p = runProgress({ stepper, status: 'running', steps: [...done, row(n.id, 1, { status: 'start' })],
+        active: [live(n.id)], tokens: {}, progressFacts: { tasks: {}, reviews: {} } });
+      if (n.progressStage) assert.equal(p.stage, n.progressStage, `${n.label} is a ${n.progressStage} step`);
+      const [head, ...tail] = p.text.split(' · ');
+      assert.notEqual(tail.join(' · ').toLowerCase(), head.toLowerCase(), `"${p.text}" repeats its stage`);
+    } }));
+  }
+  await checkRows(rows);
+});
+
+test('the real planner (displayName "Plan") reads "Plan", its step is empty', () => {
+  const registry = loadAgentRegistry(undefined, { userAgentsDir: null });
+  const stepper = buildGraphManifest(GRAPH_DEFAULT_WORKFLOW, registry);
+  const p = runProgress({ stepper, status: 'running', steps: [row('n_clarify'), row('n_plan', 1, { status: 'start' })],
+    active: [live('n_plan')], tokens: {}, progressFacts: { tasks: {}, reviews: {} } });
+  assert.equal(p.text, 'Plan');
+  assert.equal(p.step, '');
+  assert.equal(p.what, '');
+});
+
+test('start share: a begun stage with nothing finished fills START_SHARE of its quarter', () => {
+  const p = runProgress(S({ steps: [row('n_clarify', 1, { status: 'start' })], active: [live('n_clarify')] }));
+  near(p.fraction, START_SHARE / 4);
+  assert.deepEqual(p.fill.map((f) => Number(f.toFixed(4))), [START_SHARE, 0, 0, 0]);
+});
+
+test('groupProgress: (finished + current fill) ÷ members, Planning counted', () => {
+  const cur = { state: 'current', progress: { fraction: 0.5 } };
+  near(groupProgress([{ state: 'done' }, cur, { state: 'waiting' }]).fraction, 1.5 / 3);
+  near(groupProgress([{ state: 'done' }, cur, { state: 'waiting' }], { planning: { state: 'done' } }).fraction, 2.5 / 4);
+  const memo = {};
+  groupProgress([cur], { memo });
+  near(groupProgress([{ state: 'current', progress: { fraction: 0.2 } }], { memo }).fraction, 0.5, 'never backwards');
 });
 
 test('absent stages count as passed once every stage before them is whole', async () => {
@@ -203,10 +255,10 @@ test('build by tasks: a decomposition feeding a build agent moves the fill on ta
       }));
       assert.equal(p.tasks.done, 1);
     } },
-    { name: 'decomposer active with no tasks yet → "Build · Decompose" at .25', run: () => {
+    { name: 'decomposer active with no tasks yet → "Build · Decompose" at .25 + START_SHARE / 4', run: () => {
       const p = runProgress(TS({ steps: [row('n_decomp', 1, { status: 'start' })], active: [live('n_decomp')] }));
       assert.equal(p.text, 'Build · Decompose');
-      near(p.fraction, 0.25);
+      near(p.fraction, 0.25 + START_SHARE / 4);
     } },
   ]);
 });

@@ -1514,20 +1514,17 @@ async function openChainRun(ctx) {
   return ctx.window.document.querySelector('#run-detail');
 }
 
-test('a run in a chain of three paints the overall bar: 3 parts, the first green, "Run 2 of 3 · Build"', async () => {
+test('a run in a chain of three paints the continuous group bar and "Run 2 of 3 · Build"', async () => {
   const ctx = await bootRunning();
   ctx.box.chains = CHAIN_OF_THREE();
   const screen = await openChainRun(ctx);
   const chain = screen.querySelector('.rd-glance .rd-prog-chain');
   assert.equal(chain.hidden, false);
   assert.equal(chain.querySelector('.run-chain-label').textContent, 'Run 2 of 3 · Build');
-  const parts = [...chain.querySelectorAll('.run-chain-part')];
-  assert.equal(parts.length, 3);
-  assert.equal(parts[0].dataset.state, 'done');
-  assert.equal(parts[0].dataset.tone, 'green');
-  assert.equal(parts[0].firstElementChild.style.width, '100%');
-  assert.equal(parts[1].dataset.state, 'current');
-  assert.equal(parts[2].dataset.state, 'waiting');
+  const fills = chain.querySelectorAll('.run-chain-track > .run-prog-fill');
+  assert.equal(fills.length, 1);
+  assert.ok(Number.parseFloat(fills[0].style.width) > 0, 'the finished first run fills part of the bar');
+  assert.equal(chain.querySelectorAll('.run-chain-part').length, 0);
 });
 
 test('D16: a live slice shows "Part of FEATURE · slice 2 of 3 →" linking to the feature page, and no chain bar', async () => {

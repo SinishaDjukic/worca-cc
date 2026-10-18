@@ -367,6 +367,7 @@ const fake = {
   },
   findPipelineRowById: (id) => [ROW_P, ROW_W, ROW_A, ROW_B, ROW_S].find((r) => r.id === id) ?? null,
   totalsFor: (row) => ({ cost: row.total_cost_usd > 0 ? row.total_cost_usd : (row.id === '8c3d12ab' ? 0.33 : null), active: null }),
+  runStatusLine: () => 'Ready to ship',
   readStoreMeta: (key) => (key === 'demo-00000001' ? { name: 'Demo' } : null),
   readDiffPatch: async (row) => diffs.get(row.id) ?? null,
   hasDiffPatch: async (row) => diffs.has(row.id),
@@ -456,7 +457,7 @@ test('list_runs: scan limit, filters, newest-first, shape per target, limit clam
 test('get_run: scoped and key-less lookups, project and workspace shapes, archived flag', async () => {
   const p = await tools.call('get_run', { id: '4e1f2a9b', projectKey: 'demo-00000001' });
   assert.deepEqual(p, { id: '4e1f2a9b', title: 'Fix login', target: 'project', project: { key: 'demo-00000001', name: 'Demo' }, workspace: null,
-    status: 'done', phase: 'done', startedAt: ROW_P.started_at, updatedAt: ROW_P.updated_at, branch: 'worca-cc/fix-login-4e1f2a9b', sourceBranch: 'main',
+    status: 'done', phase: 'done', statusLine: 'Ready to ship', startedAt: ROW_P.started_at, updatedAt: ROW_P.updated_at, branch: 'worca-cc/fix-login-4e1f2a9b', sourceBranch: 'main',
     guardrailsId: 'normal', prompt: 'Fix the login bug', totalCostUsd: 1.25, hasDiff: true, archived: false, startedBy: null });
   assert.deepEqual(await tools.call('get_run', { id: '4e1f2a9b' }), p, 'key-less lookup finds the same row');
   const w = await tools.call('get_run', { id: '8c3d12ab', workspaceId: 'wks-team-0000abcd' });
