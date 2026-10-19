@@ -44,6 +44,9 @@ async function api(method, url, body) {
 }
 
 const usd = (n) => `$${(Number(n) || 0).toFixed(2)}`;
+const isWorking = (f) => !!f.busy || f.status === 'looking' || f.status === 'thinking';
+// Worca is working, or the feature is archived: nothing on the page may be changed.
+const isLocked = (f) => isWorking(f) || f.status === 'archived';
 
 export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const route = deps.route || ((p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; });
@@ -53,6 +56,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let draft = null;          // { roundTurnId, picks: {id: option}, texts: {id: text} } — the open card's unsent answers
   let editing = null;        // the section open in its editor
   let targets = { projects: [], workspaces: [] };
+  let showArchived = false;
+  let paintedKey = null;     // what the host currently shows: 'list' | 'new' | 'feature/<n>'
+  // Unsaved input of the feature page, kept across repaints (read from the DOM before a rebuild, put back after).
+  let ui = freshUi();
+  let ctxEls = null;
+  function freshUi() { return { editVals: null, crit: '', orientOpen: false, ctx: { open: false, loaded: false, loading: false, body: '', look: false } }; }
 
   if (subEl) subEl.textContent = 'Turn an idea into a clear, testable feature spec before anything is built';
   const say = (text, kind = '') => { if (msgEl) { msgEl.textContent = text || ''; msgEl.className = `form-msg${kind ? ` ${kind}` : ''}`; } };
@@ -75,28 +84,59 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     param = String(p || '');
     const m = /^feature\/(?:FEAT-)?(\d+)$/.exec(param);
     const next = m ? Number(m[1]) : null;
-    if (next !== seqShown) { draft = null; editing = null; }
+    if (next !== seqShown) { draft = null; editing = null; ui = freshUi(); }
     seqShown = next;
     say('');
     await paint();
   }
-  async function changed(seq) { if (seqShown == null || Number(seq) === seqShown) await paint(); }
+  // A live frame never touches the new-feature form; on the list only the list repaints.
+  async function changed(seq) {
+    if (param === 'new') return;
+    if (seqShown == null || Number(seq) === seqShown) await paint();
+  }
 
   async function paint() {
     const mine = ++paintNo;
+    const key = param === 'new' ? 'new' : seqShown != null ? `feature/${seqShown}` : 'list';
     try {
       await loadTargets();
-      if (param === 'new') { if (mine === paintNo) paintNew(); return; }
+      if (key === 'new') { if (mine === paintNo) { paintNew(); paintedKey = key; } return; }
       if (seqShown != null) {
         const data = await api('GET', `/api/requirements/${seqShown}`);
-        if (mine === paintNo) paintFeature(data.feature);
+        if (mine === paintNo) { paintFeature(data.feature); paintedKey = key; }
         return;
       }
-      const data = await api('GET', '/api/requirements');
-      if (mine === paintNo) paintList(data.features || []);
+      const data = await api('GET', `/api/requirements${showArchived ? '?archived=1' : ''}`);
+      if (mine === paintNo) { paintList(data.features || []); paintedKey = key; }
     } catch (err) {
-      if (mine === paintNo) { host.replaceChildren(); fail(err); }
+      if (mine !== paintNo) return;
+      // Only a 404, or a first load, blanks the host; any other failure keeps what is on screen.
+      if ((err && err.status === 404) || paintedKey !== key) { host.replaceChildren(); paintedKey = null; }
+      fail(err);
     }
+  }
+
+  // Read the unsaved input from the current feature page into `ui`, and which field has focus.
+  function capture(f) {
+    if (!host.querySelector(`[data-req-feature="${f.seq}"]`)) return null;
+    const q = (k) => host.querySelector(`[data-ui="${k}"]`);
+    const active = document.activeElement;
+    const focus = active && host.contains(active) ? active.getAttribute('data-ui') : null;
+    const ea = q('edit-a');
+    if (ea) {
+      const eb = q('edit-b');
+      ui.editVals = { key: ea.closest('[data-section]')?.getAttribute('data-section'), a: ea.value, b: eb ? eb.value : '' };
+    }
+    const crit = q('new-criterion');
+    if (crit) ui.crit = crit.value;
+    const ctx = host.querySelector('.req-context');
+    if (ctx) {
+      ui.ctx.open = ctx.open;
+      if (ui.ctx.loaded) { ui.ctx.body = q('ctx-body').value; ui.ctx.look = q('ctx-look').checked; }
+    }
+    const orient = host.querySelector('.req-orient');
+    if (orient) ui.orientOpen = orient.open;
+    return focus;
   }
 
   function paintList(features) {
@@ -107,7 +147,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       groups.get(k).items.push(f);
     }
     host.replaceChildren(
-      h('div', { class: 'req-actions' }, h('button', { type: 'button', class: 'btn-go', onclick: () => route('new') }, 'New feature')),
+      h('div', { class: 'req-actions' },
+        h('button', { type: 'button', class: 'btn-go', onclick: () => route('new') }, 'New feature'),
+        h('button', { type: 'button', class: 'btn req-archived-toggle', 'aria-pressed': showArchived ? 'true' : 'false',
+          onclick: () => { showArchived = !showArchived; void paint(); } }, 'Show archived')),
       features.length ? null : h('p', { class: 'hint', text: 'No features yet. Describe one in a few sentences and Worca interviews you about it.' }),
       ...[...groups.values()].map((g) => h('section', { class: 'req-group' },
         h('h3', { text: g.label }),
@@ -186,30 +229,33 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
 
   function conversation(f) {
-    const working = f.busy || f.status === 'looking' || f.status === 'thinking';
+    const working = isWorking(f);
+    const open = !isLocked(f);
     return h('div', { class: 'req-left' },
       working ? h('p', { class: 'hint', text: f.status === 'looking' ? 'Worca is looking at the code…' : 'Worca is thinking…' }) : null,
-      !working && f.lastError ? h('div', { class: 'req-error form-msg err' }, f.lastError, ' ',
+      f.status === 'archived' ? h('p', { class: 'hint', text: 'This feature is archived. Restore it to continue.' }) : null,
+      open && f.lastError ? h('div', { class: 'req-error form-msg err' }, f.lastError, ' ',
         h('button', { type: 'button', class: 'btn btn-mini req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again')) : null,
-      !working && f.pending ? questionCard(f, f.pending) : null,
-      !working && f.status === 'done' ? h('p', { class: 'hint', text: 'The interview is done. Edit the spec on the right; every change is kept.' }) : null);
+      open && f.pending ? questionCard(f, f.pending) : null,
+      open && f.status === 'done' ? h('p', { class: 'hint', text: 'The interview is done. Edit the spec on the right; every change is kept.' }) : null);
   }
 
   function sectionBlock(f, key, title) {
     const s = f.spec;
     const edited = !!s.edited?.[key];
-    const working = f.busy || f.status === 'looking' || f.status === 'thinking' || f.status === 'archived';
+    const working = isLocked(f);
     let body;
     if (editing === key) {
       const isGoal = key === 'goal';
-      const a = isGoal ? h('input', { type: 'text', value: s.goal.text, 'aria-label': 'Goal' }) : h('textarea', { rows: '5', 'aria-label': title }, (s[key] || []).join('\n'));
-      const b = isGoal ? h('input', { type: 'text', value: s.goal.measure, placeholder: 'Success measure', 'aria-label': 'Success measure' }) : null;
+      const a = isGoal ? h('input', { type: 'text', value: s.goal.text, 'aria-label': 'Goal', 'data-ui': 'edit-a' }) : h('textarea', { rows: '5', 'aria-label': title, 'data-ui': 'edit-a' }, (s[key] || []).join('\n'));
+      const b = isGoal ? h('input', { type: 'text', value: s.goal.measure, placeholder: 'Success measure', 'aria-label': 'Success measure', 'data-ui': 'edit-b' }) : null;
+      if (ui.editVals && ui.editVals.key === key) { a.value = ui.editVals.a; if (b) b.value = ui.editVals.b; }
       body = h('div', { class: 'req-edit' }, a, b,
         h('div', { class: 'req-actions' },
-          h('button', { type: 'button', class: 'btn', onclick: () => { editing = null; void paint(); } }, 'Cancel'),
+          h('button', { type: 'button', class: 'btn', onclick: () => { editing = null; ui.editVals = null; void paint(); } }, 'Cancel'),
           h('button', { type: 'button', class: 'btn-go', onclick: () => act(async () => {
             await api('PUT', `/api/requirements/${f.seq}/spec/${key}`, { value: isGoal ? { text: a.value, measure: b.value } : a.value });
-            editing = null; await paint();
+            editing = null; ui.editVals = null; await paint();
           }) }, 'Save')));
     } else if (key === 'goal') {
       body = s.goal.text ? h('div', {}, h('p', { text: s.goal.text }), s.goal.measure ? h('p', { class: 'hint', text: `Success measure: ${s.goal.measure}` }) : null) : h('p', { class: 'hint', text: 'Not yet.' });
@@ -220,15 +266,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return h('section', { class: 'req-sect', 'data-section': key },
       h('div', { class: 'req-sect-head' }, h('h3', { text: title }),
         edited ? h('span', { class: 'req-edited', text: 'edited by you' }) : null,
-        h('button', { type: 'button', class: 'btn-ghost btn-mini req-sect-edit', disabled: working, onclick: () => { editing = key; void paint(); } }, 'Edit'),
-        edited ? h('button', { type: 'button', class: 'btn-ghost btn-mini req-sect-edit', disabled: working,
+        h('button', { type: 'button', class: 'btn-ghost btn-mini req-sect-edit', disabled: working, 'aria-label': `Edit ${title}`, onclick: () => { editing = key; void paint(); } }, 'Edit'),
+        edited ? h('button', { type: 'button', class: 'btn-ghost btn-mini req-sect-edit', disabled: working, 'aria-label': `Let Worca rewrite ${title}`,
           onclick: () => act(async () => { await api('DELETE', `/api/requirements/${f.seq}/spec/${key}/edited`); await paint(); }) }, 'Let Worca rewrite this') : null),
       body);
   }
 
   function criteriaBlock(f) {
-    const working = f.busy || f.status === 'looking' || f.status === 'thinking' || f.status === 'archived';
-    const input = h('input', { type: 'text', placeholder: 'Add a criterion: what a tester can check', 'aria-label': 'New acceptance criterion' });
+    const working = isLocked(f);
+    const input = h('input', { type: 'text', placeholder: 'Add a criterion: what a tester can check', 'aria-label': 'New acceptance criterion', 'data-ui': 'new-criterion' });
+    input.value = ui.crit;
     return h('section', { class: 'req-sect', 'data-section': 'criteria' },
       h('div', { class: 'req-sect-head' }, h('h3', { text: 'Acceptance criteria' })),
       ...f.spec.criteria.map((c) => h('div', { class: 'req-item', 'data-criterion': c.id },
@@ -237,11 +284,15 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           onclick: () => act(async () => { await api('DELETE', `/api/requirements/${f.seq}/criteria/${c.id}`); await paint(); }) }, 'Remove'))),
       h('div', { class: 'req-item' }, input,
         h('button', { type: 'button', class: 'btn btn-mini req-sect-edit', disabled: working,
-          onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/criteria`, { text: input.value }); await paint(); }) }, 'Add')));
+          onclick: () => act(async () => {
+            await api('POST', `/api/requirements/${f.seq}/criteria`, { text: input.value });
+            input.value = ''; ui.crit = '';
+            await paint();
+          }) }, 'Add')));
   }
 
   function assumptionsBlock(f) {
-    const working = f.busy || f.status === 'looking' || f.status === 'thinking' || f.status === 'archived';
+    const working = isLocked(f);
     const set = (a, status) => act(async () => { await api('POST', `/api/requirements/${f.seq}/assumptions/${a.id}`, { status }); await paint(); });
     return h('section', { class: 'req-sect', 'data-section': 'assumptions' },
       h('div', { class: 'req-sect-head' }, h('h3', { text: 'Assumptions' })),
@@ -249,15 +300,17 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       ...f.spec.assumptions.map((a) => h('div', { class: 'req-item', 'data-assumption': a.id },
         h('code', { text: a.id }), h('span', { class: 'req-item-text', text: a.text }),
         h('span', { class: `badge ${a.status === 'confirmed' ? 'green' : a.status === 'rejected' ? 'red' : 'amber'}`, text: a.status }),
-        h('button', { type: 'button', class: 'btn btn-mini req-confirm req-sect-edit', disabled: working, 'aria-pressed': a.status === 'confirmed' ? 'true' : 'false',
+        h('button', { type: 'button', class: 'btn btn-mini req-confirm req-sect-edit', disabled: working, 'aria-label': `Confirm ${a.id}`, 'data-ui': `confirm-${a.id}`, 'aria-pressed': a.status === 'confirmed' ? 'true' : 'false',
           onclick: () => set(a, a.status === 'confirmed' ? 'open' : 'confirmed') }, 'Confirm'),
-        h('button', { type: 'button', class: 'btn btn-mini req-reject req-sect-edit', disabled: working, 'aria-pressed': a.status === 'rejected' ? 'true' : 'false',
+        h('button', { type: 'button', class: 'btn btn-mini req-reject req-sect-edit', disabled: working, 'aria-label': `Reject ${a.id}`, 'data-ui': `reject-${a.id}`, 'aria-pressed': a.status === 'rejected' ? 'true' : 'false',
           onclick: () => set(a, a.status === 'rejected' ? 'open' : 'rejected') }, 'Reject'))));
   }
 
   function contextPanel(f) {
-    const area = h('textarea', { rows: '4', 'aria-label': 'Shared context', placeholder: 'Actors, terms and standing rules every feature here should know' });
-    const look = h('input', { type: 'checkbox', id: 'req-ctx-look' });
+    const area = h('textarea', { rows: '4', 'aria-label': 'Shared context', 'data-ui': 'ctx-body', placeholder: 'Actors, terms and standing rules every feature here should know' });
+    const look = h('input', { type: 'checkbox', id: 'req-ctx-look', 'data-ui': 'ctx-look' });
+    ctxEls = { area, look };
+    if (ui.ctx.loaded) { area.value = ui.ctx.body; look.checked = ui.ctx.look; }
     const panel = h('details', { class: 'req-context' },
       h('summary', { text: f.scopeType === 'workspace' ? 'Workspace context' : 'Project context' }),
       area, h('label', { for: 'req-ctx-look' }, look, ' Let Worca look at the code when a feature starts'),
@@ -266,12 +319,18 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         say('Context saved.', 'ok');
       }) }, 'Save context')));
     panel.addEventListener('toggle', () => {
-      if (!panel.open) return;
+      if (!panel.open || ui.ctx.loaded || ui.ctx.loading) return;
+      ui.ctx.loading = true;
       void act(async () => {
-        const c = await api('GET', `/api/requirements/context/${f.scopeType}/${encodeURIComponent(f.scopeKey)}`);
-        area.value = c.body; look.checked = c.lookAtCode;
+        try {
+          const c = await api('GET', `/api/requirements/context/${f.scopeType}/${encodeURIComponent(f.scopeKey)}`);
+          ui.ctx.body = c.body; ui.ctx.look = !!c.lookAtCode; ui.ctx.loaded = true;
+          // the page may have been rebuilt while loading: write into the panel that is on screen now
+          if (ctxEls) { ctxEls.area.value = c.body; ctxEls.look.checked = !!c.lookAtCode; }
+        } finally { ui.ctx.loading = false; }
       });
     });
+    if (ui.ctx.open) panel.open = true;
     return panel;
   }
 
@@ -282,11 +341,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         : o.skipped === 'no-repo' ? 'There is no repository to look at yet.'
           : o.skipped === 'failed' ? 'Worca could not look at the code this time; the interview runs without it.'
             : o.summary || 'Nothing relevant found.';
-    return h('details', { class: 'req-orient' },
+    return h('details', { class: 'req-orient', open: ui.orientOpen }, // `open: false` is skipped by h()
       h('summary', { text: 'What Worca found in the code' }),
       h('p', { text }),
       o && o.files && o.files.length ? h('ul', { class: 'hint', 'data-min-level': 'advanced' }, ...o.files.map((p) => h('li', { text: p }))) : null,
-      h('button', { type: 'button', class: 'btn btn-mini req-sect-edit', disabled: f.busy || f.status === 'archived',
+      h('button', { type: 'button', class: 'btn btn-mini req-sect-edit', disabled: isLocked(f),
         onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/look`, {}); await paint(); }) }, 'Look again'));
   }
 
@@ -303,12 +362,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       }
     });
     const copy = () => act(async () => {
-      const text = await (await fetch(`/api/requirements/${f.seq}/markdown`)).text();
-      await navigator.clipboard.writeText(text);
+      const res = await fetch(`/api/requirements/${f.seq}/markdown`);
+      if (!res.ok) throw new Error(`Could not copy the Markdown (HTTP ${res.status}).`);
+      await navigator.clipboard.writeText(await res.text());
       say('Copied as Markdown.', 'ok');
     });
+    const focus = capture(f);
     host.replaceChildren(
-      h('div', { class: 'req-head' }, h('h2', { text: `${f.id} · ${f.title}` }), badge(f.status)),
+      h('div', { class: 'req-head', 'data-req-feature': f.seq }, h('h2', { text: `${f.id} · ${f.title}` }), badge(f.status)),
       h('div', { class: 'req-meta' },
         h('span', { text: targetLabel(f) }),
         h('span', { text: `Round ${Math.min(f.rounds, MAX_ROUNDS)} of ${MAX_ROUNDS}` }),
@@ -332,6 +393,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           criteriaBlock(f), assumptionsBlock(f),
           sectionBlock(f, ...SECTIONS[6]))),
     );
+    if (ui.editVals && ui.editVals.key !== editing) ui.editVals = null;
+    if (focus) {
+      const el = host.querySelector(`[data-ui="${focus}"]`);
+      if (el && !el.disabled) el.focus();
+    }
   }
 
   return { show, changed, destroy: () => { paintNo += 1; host.replaceChildren(); } };
