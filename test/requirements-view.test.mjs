@@ -320,3 +320,29 @@ test('per-item accessible names on section and assumption buttons', async () => 
   assert.equal(host.querySelector('.req-confirm').getAttribute('aria-label'), 'Confirm A-1');
   assert.equal(host.querySelector('.req-reject').getAttribute('aria-label'), 'Reject A-1');
 });
+
+test('context: a failed load keeps Save context disabled and sends no PUT', async () => {
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/context/project/shop-1': { __status: 500, body: { error: 'ctx down' } } });
+  const { host, msgEl, view } = make();
+  await view.show('feature/4');
+  const d = host.querySelector('.req-context');
+  d.open = true; d.dispatchEvent(new window.Event('toggle'));
+  await tick(); await tick();
+  assert.match(msgEl.textContent, /ctx down/);
+  assert.equal(btn(host, 'Save context').disabled, true);
+  btn(host, 'Save context').click();
+  await tick();
+  assert.equal(calls.some((c) => c.method === 'PUT'), false);
+});
+
+test('Save: declining the overwrite confirm sends no second POST', async () => {
+  const calls = fakeApi({ ...BASE, 'POST /api/requirements/4/save': { __status: 409, body: { error: 'exists', path: 'specs/a.md' } } });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const orig = window.confirm;
+  window.confirm = () => false;
+  btn(host, 'Save to specs/').click();
+  await tick(); await tick();
+  window.confirm = orig;
+  assert.equal(calls.filter((c) => c.url.endsWith('/save')).length, 1);
+});

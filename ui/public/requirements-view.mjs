@@ -309,15 +309,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function contextPanel(f) {
     const area = h('textarea', { rows: '4', 'aria-label': 'Shared context', 'data-ui': 'ctx-body', placeholder: 'Actors, terms and standing rules every feature here should know' });
     const look = h('input', { type: 'checkbox', id: 'req-ctx-look', 'data-ui': 'ctx-look' });
-    ctxEls = { area, look };
+    const saveBtn = h('button', { type: 'button', class: 'btn', disabled: !ui.ctx.loaded, onclick: () => act(async () => {
+        await api('PUT', `/api/requirements/context/${f.scopeType}/${encodeURIComponent(f.scopeKey)}`, { body: area.value, lookAtCode: look.checked });
+        say('Context saved.', 'ok');
+      }) }, 'Save context');
+    ctxEls = { area, look, saveBtn };
     if (ui.ctx.loaded) { area.value = ui.ctx.body; look.checked = ui.ctx.look; }
     const panel = h('details', { class: 'req-context' },
       h('summary', { text: f.scopeType === 'workspace' ? 'Workspace context' : 'Project context' }),
       area, h('label', { for: 'req-ctx-look' }, look, ' Let Worca look at the code when a feature starts'),
-      h('div', { class: 'req-actions' }, h('button', { type: 'button', class: 'btn', onclick: () => act(async () => {
-        await api('PUT', `/api/requirements/context/${f.scopeType}/${encodeURIComponent(f.scopeKey)}`, { body: area.value, lookAtCode: look.checked });
-        say('Context saved.', 'ok');
-      }) }, 'Save context')));
+      h('div', { class: 'req-actions' }, saveBtn));
     panel.addEventListener('toggle', () => {
       if (!panel.open || ui.ctx.loaded || ui.ctx.loading) return;
       ui.ctx.loading = true;
@@ -326,7 +327,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           const c = await api('GET', `/api/requirements/context/${f.scopeType}/${encodeURIComponent(f.scopeKey)}`);
           ui.ctx.body = c.body; ui.ctx.look = !!c.lookAtCode; ui.ctx.loaded = true;
           // the page may have been rebuilt while loading: write into the panel that is on screen now
-          if (ctxEls) { ctxEls.area.value = c.body; ctxEls.look.checked = !!c.lookAtCode; }
+          if (ctxEls) { ctxEls.saveBtn.disabled = false; ctxEls.area.value = c.body; ctxEls.look.checked = !!c.lookAtCode; }
         } finally { ui.ctx.loading = false; }
       });
     });
