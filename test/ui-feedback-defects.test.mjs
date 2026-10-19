@@ -210,7 +210,7 @@ test('#555 D3: Sync all (500) and Push now (502) refusals are error toasts (Retr
       } });
       await go('team-metrics');
       const section = window.document.querySelector('section[data-view="team-metrics"]');
-      const b = Object.assign(window.document.createElement('button'), { type: 'button', className: 'btn-ghost btn-mini tm-push-now', textContent: 'Push now' });
+      const b = Object.assign(window.document.createElement('button'), { type: 'button', className: 'btn btn-sm tm-push-now', textContent: 'Push now' });
       section.append(b);
       b.click();
       await waitFor(() => lastToast(window.document));

@@ -690,6 +690,8 @@ export function runChains({ isLive = null } = {}) {
     walk(root);
     if (order.length < 2) continue;
     const members = order.map(member);
+    // D29: the 1-based position of the member this one runs after (null for the root), for "starts after run N".
+    order.forEach((n, i) => { const j = n.parent ? order.findIndex((x) => x.key === n.parent) : -1; members[i].after = j >= 0 ? j + 1 : null; });
     if (!members.some((m) => m.state === 'current' || m.state === 'waiting')) continue;
     out.push({ id: root.key, title: members[0].title, members });
   }

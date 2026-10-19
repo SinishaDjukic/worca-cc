@@ -102,7 +102,7 @@ export function helloRun(ctx, { runId, title = 'Demo run', ...extra } = {}) {
 
 // The run's row in its project group (a Needs-you run is repeated above it).
 export const runCard = (ctx, runId) =>
-  ctx.window.document.querySelector(`#runs-list .runs-row[data-slot="group"][data-run-id="${runId}"]`);
+  ctx.window.document.querySelector(`#runs-list .runs-row[data-run-id="${runId}"]`);
 
 // The run page's panel host, and its .qpanel (null until the page is open).
 export const runPanel = (ctx) => ctx.window.document.querySelector('#run-detail .rd-questions .qpanel');

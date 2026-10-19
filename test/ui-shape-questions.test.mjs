@@ -18,7 +18,7 @@ const PQ = { id: 'q1', kind: 'questions', questions: [
 function clarifyPanel() {
   const panel = doc.createElement('div');
   panel.className = 'qpanel';
-  panel.innerHTML = '<div class="qpanel-body"></div><div class="qpanel-foot"><button class="btn btn-go" type="button"><span class="icon"></span>Submit</button></div>';
+  panel.innerHTML = '<div class="qpanel-body"></div><div class="qpanel-foot"><button class="btn btn-primary" type="button"><span class="icon"></span>Submit</button></div>';
   return panel;
 }
 
@@ -29,17 +29,17 @@ function decorate(submit) {
   return { panel, calls, $: (s) => panel.querySelector(s) };
 }
 
-test('the submit reads "Answer and draft", keeps its icon, and Skip sits before it without .btn-go', () => {
+test('the submit reads "Answer and draft", keeps its icon, and Skip sits before it without .btn-primary', () => {
   const { $, panel } = decorate(async () => true);
-  const go = $('.btn-go');
+  const go = $('.btn-primary');
   assert.equal(go.textContent, 'Answer and draft');
   assert.ok(go.querySelector('.icon'));
   const skip = $('.clarify-defaults');
   assert.equal(skip.textContent, 'Skip, draft with defaults');
   assert.equal(skip.type, 'button');
-  assert.ok(!skip.classList.contains('btn-go'));
+  assert.ok(!skip.classList.contains('btn-primary'));
   assert.equal(skip.nextElementSibling, go);
-  assert.equal(panel.querySelectorAll('.btn-go').length, 1);
+  assert.equal(panel.querySelectorAll('.btn-primary').length, 1);
 });
 
 test('Skip posts defaultAnswers(pq); success shows no error', async () => {

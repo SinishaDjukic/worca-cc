@@ -232,9 +232,9 @@ after a stop (the image's tini reports the server's 143 as 0): Railway keeps a d
 container exited non-zero after a stop marked as running, so a stop would never finish. Keep the
 image's entrypoint; a custom start command for the `worca` service must start with
 `tini -s -e 143 --`. The runs come back
-**paused** ("worca was restarting") and you resume them afterwards, or set `WORCA_AUTO_RESUME=1`
-on the `worca` service to have the new container resume them by itself, as the person who last
-started or resumed each one. A run still busy after the drain timeout comes back `interrupted`,
+**paused** ("worca was restarting") and the new container resumes them by itself, as the person who
+last started or resumed each one. Set `WORCA_AUTO_RESUME=0` on the `worca` service to resume them by
+hand instead, or `WORCA_AUTO_RESUME=1` to also resume runs a crash interrupted. A run still busy after the drain timeout comes back `interrupted`,
 as every run did before. Projects, runs, settings and the database are on `/data` and survive;
 schema migrations run on boot.
 

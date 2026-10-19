@@ -39,8 +39,8 @@ export function caseListFor(data) {
   };
 }
 
-const miniBtn = (doc, cls, label, kind = 'btn-ghost') => {
-  const b = h(doc, 'button', `btn ${kind} btn-mini ${cls}`, label);
+const miniBtn = (doc, cls, label, kind = 'btn') => {
+  const b = h(doc, 'button', `btn ${kind} btn-sm ${cls}`, label);
   b.type = 'button';
   return b;
 };
@@ -298,7 +298,7 @@ function outputPane(doc, port, out, { highlight, renderMarkdown, outputHref }) {
   pane.hidden = true;
   const body = h(doc, 'div', 'bench-out-body');
   if (out.type === 'md') {
-    const raw = h(doc, 'button', 'btn btn-ghost btn-mini bench-raw', 'Raw');
+    const raw = h(doc, 'button', 'btn btn-sm bench-raw', 'Raw');
     raw.type = 'button';
     pane.appendChild(raw);
     let showing = 'md';

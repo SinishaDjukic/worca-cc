@@ -87,7 +87,7 @@ test('the Chat row dot rides the rail corner; the logo links show a focus ring',
 });
 
 test('the composer buttons keep their size, the run panel slot hides, cards measure the transcript, the empty lead row takes no room, the rail dot', () => {
-  assert.equal(ruleBody('.chat-page .ask-composer-row > :is(.ask-icon-btn,.ask-meter,.ask-model-btn,.ask-voice)'), 'flex:none;', 'Send never shrinks out of the box (v2)');
+  assert.equal(ruleBody('.chat-page .ask-composer-row > :is(.btn,.ask-meter,.ask-model-btn,.ask-voice):not(.ask-scope-btn)'), 'flex:none;', 'Send never shrinks out of the box (v2); the scope button is a .btn too and must stay shrinkable');
   assert.equal(ruleBody('.chat-panel[hidden]'), 'display:none;', '.chat-panel{display:flex} would beat [hidden]: an empty bordered slot');
   assert.equal(ruleBody('.chat-convo .ask-transcript'), 'container-type:inline-size;isolation:isolate;padding-bottom:calc(var(--chat-dock-h,120px) + 8px);', '100cqi = the transcript width; the floating dock\'s height is its bottom clearance');
   assert.match(ruleBody('.chat-convo .ask-msg > :is(.ask-card,.ask-card-stub)'), /^width:min\(var\(--chat-card-max\),100cqi\);/);
@@ -95,18 +95,18 @@ test('the composer buttons keep their size, the run panel slot hides, cards meas
   assert.equal(ruleBody('.sidebar.collapsed .nav-count.nav-dot'), 'top:6px;right:8px;');
 });
 
-test('the mockup look (2026-10-10): the composer is frosted glass the transcript scrolls under, the run card a white card with a soft shadow, History toggles like the menu', () => {
-  assert.equal(ruleBody('.chat-page .ask-composer-box'), 'border-color:var(--glass-line);border-radius:22px;background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);box-shadow:var(--shadow-glass);');
-  assert.equal(ruleBody('.chat-hero-slot .ask-composer-box'), 'border-radius:24px;');
+test('the mockup look (2026-10-10, corners and shadows per the runs redesign): the composer is frosted glass the transcript scrolls under, the run card a white bordered card with no resting shadow, History toggles like the menu', () => {
+  assert.equal(ruleBody('.chat-page .ask-composer-box'), 'border-color:var(--glass-line);border-radius:var(--r-sm);background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);');
+  assert.equal(ruleBody('.chat-hero-slot .ask-composer-box'), 'border-radius:var(--r-sm);');
   assert.equal(ruleBody('.chat-page .ask-composer-box:has(.guide-target)'), '-webkit-backdrop-filter:none;backdrop-filter:none;', 'a Getting started ring escapes the blur\'s stacking context');
   assert.equal(ruleBody('.chat-dock > .ask-composer'), 'pointer-events:none;');
   assert.equal(ruleBody('.chat-dock > .ask-jump,.chat-dock > .ask-composer > *'), 'pointer-events:auto;', 'only the composer\'s own parts take the pointer');
   assert.match(ruleBody('.chat-dock::before'), /^content:"";position:absolute;left:0;right:0;bottom:0;height:56px;/);
-  assert.equal(ruleBody('.ask-card.chat-rc'), 'gap:0;border-radius:16px;box-shadow:var(--shadow-card);');
-  assert.match(ruleBody(':root'), /--shadow-card:0 1px 2px light-dark\(/);
-  assert.match(ruleBody(':root'), /--shadow-glass:0 2px 6px light-dark\(/);
-  assert.equal(ruleBody('.chat-head-btn.chat-history-toggle'), 'width:32px;height:32px;border-radius:8px;', 'the menu toggle\'s square (.side-toggle)');
-  assert.equal(ruleBody('.chat-history-toggle:hover,.chat-history-toggle[aria-pressed="true"]'), 'background:var(--field);color:var(--ink);', 'open: the wash marks the state');
+  assert.equal(ruleBody('.ask-card.chat-rc'), 'gap:0;border-radius:var(--r-sm);');
+  assert.doesNotMatch(css, /--shadow-card\b/, 'the resting card shadow token is gone');
+  assert.doesNotMatch(css, /--shadow-glass\b/, 'and so is the composer\'s');
+  assert.equal(ruleBody('.chat-head-btn.chat-history-toggle'), 'width:32px;height:32px;border-radius:var(--r-sm);', 'the menu toggle\'s square (.side-toggle)');
+  assert.equal(ruleBody('.chat-history-toggle[aria-pressed="true"]'), 'background:var(--field);color:var(--ink);', 'open: the wash marks the state');
   assert.doesNotMatch(bare, /chat-history-toggle-(line|fill)/, 'the panel glyph\'s open/closed parts are gone');
 });
 
@@ -120,10 +120,9 @@ test('History: a 264px push column that turns into an overlay with a scrim below
   assert.equal(ruleBody('.ask-threads-list'), 'display:flex;flex-direction:column;gap:1px;');
 });
 
-test('New chat is a labelled ghost button (.ask-icon-btn widened): in the head, and leading the History column at the rows\' inset and radius', () => {
-  assert.equal(ruleBody('.ask-icon-btn.chat-new-btn'), 'width:auto;gap:6px;padding:0 10px 0 8px;font:500 12.5px/1 var(--sans);white-space:nowrap;');
-  assert.equal(ruleBody('.chat-history-new.chat-new-btn'), 'flex:none;justify-content:flex-start;height:34px;margin:6px 6px 0;padding:0 10px;border-radius:10px;');
-  assert.ok(css.indexOf('\n.chat-history-new.chat-new-btn{') > css.indexOf('\n.ask-icon-btn.chat-new-btn{'), 'the column\'s padding wins: same weight, later');
+test('New chat is a labelled small quiet button (.btn.btn-sm): in the head, and leading the History column at the rows\' inset', () => {
+  assert.equal(ruleBody('.ask-icon-btn.chat-new-btn'), null, 'no skin of its own');
+  assert.equal(ruleBody('.chat-history-new.chat-new-btn'), 'flex:none;justify-content:flex-start;margin:6px 6px 0;', 'layout only: .btn .btn-sm sizes it');
 });
 
 test('the History list scrolls, the open chat\'s row is marked, the trash waits for hover', () => {

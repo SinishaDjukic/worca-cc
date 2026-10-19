@@ -110,7 +110,7 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     }
     const actions = h(doc, 'div', 'pl-actions');
     for (const [cls, label] of [['pl-settings', 'Settings'], ['pl-doctor', 'Doctor'], ['pl-update', 'Update'], ['pl-remove', 'Remove']]) {
-      const b = h(doc, 'button', `btn-ghost ${cls}`, label);
+      const b = h(doc, 'button', `btn ${cls}`, label);
       b.type = 'button';
       b.dataset.name = p.name;
       if (cls === 'pl-doctor') b.dataset.minLevel = 'expert';   // diagnostics (docs/ui-levels.md)
@@ -151,7 +151,7 @@ export function renderOrphanList(orphans, { doc = globalThis.document } = {}) {
     row.dataset.name = o.name;
     row.appendChild(h(doc, 'b', 'pl-name', o.name));
     row.appendChild(h(doc, 'small', 'hint', 'uninstalled — config/secrets remain'));
-    const btn = h(doc, 'button', 'btn-ghost pl-purge-orphan', 'Purge');
+    const btn = h(doc, 'button', 'btn pl-purge-orphan', 'Purge');
     btn.type = 'button';
     btn.dataset.name = o.name;
     row.appendChild(btn);
@@ -295,7 +295,7 @@ export function renderUpdatePreview(preview, { doc = globalThis.document } = {})
     for (const [cls, text] of flags) box.appendChild(h(doc, 'div', cls, text));
     root.appendChild(box);
   }
-  const btn = h(doc, 'button', 'btn btn-primary btn-mini pl-confirm-update', 'Apply update');
+  const btn = h(doc, 'button', 'btn btn-primary btn-sm pl-confirm-update', 'Apply update');
   btn.type = 'button';
   root.appendChild(btn);
   return root;
@@ -320,11 +320,11 @@ function profileBar(doc, src) {
   if (src.profile) sel.value = src.profile;
   if (!(src.profiles || []).length) sel.disabled = true;
   bar.appendChild(sel);
-  const add = h(doc, 'button', 'btn btn-ghost btn-mini pl-profile-add', 'Add');
+  const add = h(doc, 'button', 'btn btn-sm pl-profile-add', 'Add');
   add.type = 'button';
   add.dataset.sourceId = src.id || '';
   bar.appendChild(add);
-  const del = h(doc, 'button', 'btn btn-ghost btn-mini pl-profile-del', 'Remove');
+  const del = h(doc, 'button', 'btn btn-sm pl-profile-del', 'Remove');
   del.type = 'button';
   del.dataset.sourceId = src.id || '';
   if (!src.profile) del.disabled = true;
@@ -529,7 +529,7 @@ export function renderAvailableList(marketplaces, { doc = globalThis.document } 
       if (p.installed) {
         head.appendChild(h(doc, 'span', 'badge green pl-installed', 'Installed'));
       } else if (m.lastSync) {
-        const b = h(doc, 'button', 'btn btn-primary btn-mini pl-install-avail', 'Install…');
+        const b = h(doc, 'button', 'btn btn-primary btn-sm pl-install-avail', 'Install…');
         b.type = 'button';
         b.dataset.name = p.name;
         b.dataset.marketplace = m.id;
@@ -559,7 +559,7 @@ export function renderMarketplaceList(marketplaces, { doc = globalThis.document,
     if (m.builtin) head.appendChild(h(doc, 'span', 'badge waiting pl-mkt-builtin', 'built-in'));
     const actions = h(doc, 'div', 'pl-mkt-actions');
     for (const [cls, icon, label] of [
-      ['btn-ghost pl-mkt-refresh', 'refresh', 'Refresh'],
+      ['btn pl-mkt-refresh', 'refresh', 'Refresh'],
       ['pl-remove pl-mkt-remove', 'bin', 'Remove'],
     ]) {
       const b = iconBtn(doc, cls, icon, label);

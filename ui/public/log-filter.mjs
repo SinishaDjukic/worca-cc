@@ -23,7 +23,8 @@
 // - search: case-insensitive substring of rec.text. Text only — the source column
 //   is already a dropdown, so matching it here would make that filter ambiguous.
 
-const SUB_SEP = ' ▸ ';
+// The server's sub-agent separator ('planner ▸ research auth', src/core/agent-log): data to split on, not an icon.
+const SUB_SEP = ` ${String.fromCodePoint(0x25b8)} `;
 
 /** Compile a filter into a predicate. Per-axis normalization (notably the
  *  search term's toLowerCase) happens ONCE here instead of once per record —

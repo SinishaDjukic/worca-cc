@@ -284,7 +284,7 @@ import { webEventPrompt, webNoticeText, chatWebHosts } from '../src/core/ask/web
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
-import { drainTimeoutMs, autoResumeEnabled, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
+import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import {
   saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
@@ -315,7 +315,12 @@ import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID } fro
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
-import { archivePipeline, restorePipeline, discardRetainedWorktrees, applyRetainedWork } from '../src/core/pipeline-delete.mjs';
+import { archivePipeline, restorePipeline, purgePipeline, discardRetainedWorktrees, applyRetainedWork } from '../src/core/pipeline-delete.mjs';
+import { runBulk } from '../src/core/run-bulk.mjs';
+import { BULK_ACTIONS } from '../src/shared/run-bulk.mjs';
+import { listRunGroups, createRunGroup, addToGroup, removeFromGroup, groupMembers, RunGroupError } from '../src/core/run-groups.mjs';
+import { runModel } from '../src/shared/run-model.mjs';
+import { runModelFor } from '../src/core/run-status.mjs';
 import {
   listWorkspaces, readWorkspace, checkNewWorkspace, scanMemberProblems,
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
@@ -6550,6 +6555,98 @@ app.get('/api/history/:key/:id/artifact-raw/*', async (req, res) => {
 // disappears from History and every list/count read. The remote branch is never
 // touched. Refused (409) while the run is live in this process.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------- Runs list: groups and bulk actions (runs redesign §3.2, §3.3)
+function bulkResolve(t) {
+  const entry = t.runId ? runs.get(t.runId) : t.pipelineId ? liveRunEntry(t.pipelineId) : null;
+  const pid = t.pipelineId || entry?.pipelineId || null;
+  if (entry && !SETTLED_RUN.has(entry.status)) {
+    // steps: a running entry reads as working, not starting; both are stoppable, so the verdict is the same.
+    const m = runModel({ status: entry.status, pendingQuestion: entry.pendingQuestion ?? null, steps: [{ nodeId: 'x' }] });
+    return { id: pid || entry.id, runId: entry.id, pipelineId: pid, title: entry.title || pid || entry.id, state: m.state, status: entry.status };
+  }
+  if (pid) {
+    const row = getDb().prepare('SELECT title, status, project_key, workspace_key FROM pipelines WHERE id = ? AND deleted_at IS NULL').get(pid);
+    if (!row) return null;
+    const m = runModelFor(pid);
+    // runModelFor reads readPrState, so a done run whose PR needs you arrives with prNeeds (D31) and the table treats it as finished.
+    return { id: pid, pipelineId: pid, runId: entry?.id || null, title: row.title || pid, state: m ? m.state : 'stopped', status: row.status,
+      prNeeds: !!(m && m.prNeeds), key: row.project_key, workspaceKey: row.workspace_key };
+  }
+  const tk = t.ticketId ? getTicket(t.ticketId) : null;
+  if (!tk) return null;
+  // A fired ticket is its pipeline now; resolve it as one (a member ref sent before the fire still lands right).
+  if (tk.pipelineId) return bulkResolve({ pipelineId: tk.pipelineId });
+  // The model's own ticket table: scheduled / missed → waiting, firing → starting, canceled / skipped → stopped, failed → failed.
+  return { id: tk.id, ticketId: tk.id, title: tk.title || 'Scheduled run', state: runModel({ ticket: { status: tk.status, runAt: null } }).state, status: tk.status };
+}
+const rowScope = (t) => ({ key: t.workspaceKey ? null : t.key, workspaceKey: t.workspaceKey || null, id: t.pipelineId });
+
+app.post('/api/runs/bulk', async (req, res) => {
+  try {
+    const { action, targets = [], groups = [] } = req.body || {};
+    if (!BULK_ACTIONS.includes(action)) return badRequest(res, 'action must be stop, archive, delete or restore');
+    if (!Array.isArray(targets) || !Array.isArray(groups) || targets.length + groups.length > 500) return badRequest(res, 'targets and groups must be arrays (500 at most)');
+    const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
+    if (![...targets, ...groups].every((x) => isObj(x) && (x.members == null || (Array.isArray(x.members) && x.members.every(isObj)))))
+      return badRequest(res, 'every target, group and member must be an object');
+    const by = actorOf(req);
+    const AUDIT = { archive: 'Run archived', restore: 'Run restored', delete: 'Run deleted' };
+    // archive / restore / purge return null for an unknown run (→ skipped) and a flag for a no-op
+    // ({alreadyArchived}, {alreadyActive}, {alreadyDeleted}), which writes no audit line.
+    const audited = (fn) => async (t) => {
+      const r = await fn(rowScope(t));
+      if (!r) throw new Error('run not found');
+      if (!r.alreadyArchived && !r.alreadyActive && !r.alreadyDeleted) appendAuditById(t.pipelineId, `${AUDIT[action]}${byActor(by)}.`, { actor: by });
+      return r;
+    };
+    const out = await runBulk({ action, targets, groups }, {
+      resolve: bulkResolve,
+      expandGroup: (g) => groupMembers(g.id),
+      stop: (t) => {
+        const entry = t.runId ? runs.get(t.runId) : null;
+        if (entry && !SETTLED_RUN.has(entry.status)) return stopRun(t.runId, by);
+        if (!t.pipelineId) throw new Error('it is starting — try again in a moment');   // a firing ticket
+        return stopPausedPipeline(t.pipelineId, by);
+      },
+      archive: audited(archivePipeline),
+      restore: audited(restorePipeline),
+      delete: audited(purgePipeline),
+      cancel: (t) => !!cancelTicket(t.ticketId, { by }),
+      afterGroupStop: (g) => { cancelRest(g.id, { by }); broadcastFeature(g.id); },   // a non-active feature returns {status:409}: nothing to do
+    });
+    emitChanged('pipelines-changed', `bulk-${action}`);
+    if (out.cancelled.length || action === 'stop') emitChanged('schedules-changed', 'bulk');
+    emitChanged('run-groups-changed', 'bulk');
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ error: String(err.message || err) });
+  }
+});
+
+const groupError = (res, err) => (err instanceof RunGroupError ? res.status(err.status).json({ error: err.message, code: err.code }) : res.status(500).json({ error: String(err.message || err) }));
+app.get('/api/run-groups', (req, res) => { try { res.json({ groups: listRunGroups() }); } catch (err) { groupError(res, err); } });
+app.post('/api/run-groups', (req, res) => {
+  try {
+    const g = createRunGroup({ title: req.body?.title, pipelineId: String(req.body?.pipelineId || ''), by: actorOf(req) });
+    emitChanged('run-groups-changed', 'created');
+    res.status(201).json({ group: g });
+  } catch (err) { groupError(res, err); }
+});
+app.post('/api/run-groups/:id/members', (req, res) => {
+  try {
+    const r = addToGroup({ groupId: req.params.id, pipelineId: String(req.body?.pipelineId || ''), by: actorOf(req) });
+    emitChanged('run-groups-changed', 'added');
+    res.json({ ok: true, ...r });
+  } catch (err) { groupError(res, err); }
+});
+app.delete('/api/run-groups/members/:pipelineId', (req, res) => {
+  try {
+    const r = removeFromGroup({ pipelineId: req.params.pipelineId });
+    emitChanged('run-groups-changed', 'removed');
+    res.json({ ok: true, ...r });
+  } catch (err) { groupError(res, err); }
+});
+
 app.delete('/api/runs/:id', async (req, res) => {
   const id = req.params.id;
   const workspaceId = typeof req.query.workspaceId === 'string' ? req.query.workspaceId.trim() : '';
@@ -6899,7 +6996,10 @@ function prWatchOrigin(w) {
 function prWatchFrame(pipelineId, memberKey) {
   const row = findPipelineRowById(pipelineId);
   const projectKey = !row ? null : (row.target === 'workspace' || row.workspace_key) ? `workspaces/${row.workspace_key}` : row.project_key;
-  return { type: 'pr-watch-changed', projectKey, pipelineId: row?.id || pipelineId, memberKey: memberKey || null };
+  const prUrl = row ? readPrState(row.id)?.url : null;
+  // `fixing` (D31) only when true, so test/pr-watch-api.test.mjs's deepEquals (no live fix run) hold unchanged.
+  return { type: 'pr-watch-changed', projectKey, pipelineId: row?.id || pipelineId, memberKey: memberKey || null,
+    ...(prUrl && !memberKey && watchActive(getWatch(prUrl)) ? { fixing: true } : {}) };
 }
 const prWatcherDeps = {
   originOf: prWatchOrigin,
@@ -10123,19 +10223,21 @@ function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
 }
 
 /**
- * B3 (opt-in, WORCA_AUTO_RESUME=1): after boot maintenance, resume the runs a drain paused and
- * the runs this start found dead under a previous process (`interruptedIds`), each as the person
- * who last started or resumed it. Resumes go through resumeRun's whole guard chain (budget gates
+ * B3: after boot maintenance, resume the runs a drain paused (by default; WORCA_AUTO_RESUME=0 turns
+ * it off) and, with WORCA_AUTO_RESUME=1, also the runs this start found dead under a previous process
+ * (`interruptedIds`), each as the person who last started or resumed it. Resumes go through resumeRun's whole guard chain (budget gates
  * included); a refusal is logged and leaves the run waiting for a person.
  */
 async function autoResumeOnBoot({ interruptedIds = [], env = process.env, mock = isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) } = {}) {
-  if (!autoResumeEnabled(env)) return { enabled: false, resumed: [], failed: [] };
+  const mode = autoResumeMode(env);
+  if (mode === 'off') return { enabled: false, resumed: [], failed: [] };
   const rows = getDb().prepare(`SELECT id, status, started_by, archived_at, resume_point FROM pipelines
     WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL ORDER BY started_at ASC`).all()
     .map((r) => { let rp = null; try { rp = r.resume_point ? JSON.parse(r.resume_point) : null; } catch { /* unreadable point */ } return { ...r, resumePoint: rp }; });
   const picks = autoResumeCandidates(rows, {
     interruptedNow: new Set(interruptedIds),
     hasResumeTicket: (id) => resumeTicketsFor(id).length > 0,
+    includeInterrupted: mode === 'all',
   });
   const resumed = [];
   const failed = [];
@@ -15973,7 +16075,7 @@ if (isMain) {
   }
 
   bootMaintenance().then((summary) => {
-    // B3: with WORCA_AUTO_RESUME=1, continue what the last stop paused (or a crash interrupted).
+    // B3: continue what the last stop paused (and, with WORCA_AUTO_RESUME=1, what a crash interrupted).
     autoResumeOnBoot({ interruptedIds: summary?.reconciledIds || [] })
       .catch((err) => console.error(`[worca-ui] auto-resume failed: ${err && err.message ? err.message : err}`));
   }, (err) => {

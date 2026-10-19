@@ -5,6 +5,7 @@
 // state — so test/ui-getting-started.test.mjs drives it in jsdom without booting
 // app.js. Completion is never decided here: `status.steps` is the server's word
 // (GET /api/onboarding, src/core/onboarding.mjs), this module only paints it.
+import { icon } from './icons.mjs';
 
 /** Shelf order = the arc: prerequisite → first object → see the loop → talk to
  *  it → know the workflows → real work → scale. Labels are outcomes, never settings. */
@@ -208,7 +209,7 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
     const mark = doc.createElement('span');
     mark.className = 'gs-mark';
     mark.setAttribute('aria-hidden', 'true');
-    mark.textContent = '✓';
+    mark.append(icon(doc, 'check', 12));
     const vig = doc.createElement('span');
     vig.className = 'gs-vig';
     vig.appendChild(vignette(doc, s.vig, { animate: animate && !isDone, delay }));

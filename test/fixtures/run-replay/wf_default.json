@@ -1,0 +1,3072 @@
+{
+ "workflowId": "wf_default",
+ "stepper": {
+  "version": 2,
+  "template": {
+   "id": "wf_default",
+   "name": "Default"
+  },
+  "graph": {
+   "nodes": [
+    {
+     "id": "n_task",
+     "kind": "task",
+     "key": null,
+     "x": 40,
+     "y": 200,
+     "label": "Task",
+     "uiPhase": "task",
+     "config": {},
+     "ports": {
+      "inputs": [],
+      "outputs": [
+       {
+        "id": "task",
+        "type": "md",
+        "when": "always"
+       }
+      ],
+      "await": false
+     }
+    },
+    {
+     "id": "n_clarify",
+     "kind": "agent",
+     "key": "clarify",
+     "x": 320,
+     "y": 200,
+     "label": "Clarify",
+     "uiPhase": "clarify",
+     "config": {},
+     "ports": {
+      "inputs": [
+       {
+        "id": "task",
+        "type": "md",
+        "required": true,
+        "loop": false,
+        "expands": false
+       }
+      ],
+      "outputs": [
+       {
+        "id": "answers",
+        "type": "json",
+        "when": "always"
+       }
+      ],
+      "await": true
+     },
+     "color": "red",
+     "icon": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M9.4 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2.1-2.6 3.6\" stroke-linecap=\"round\" fill=\"none\"/><circle cx=\"12\" cy=\"17\" r=\"0.7\" fill=\"currentColor\" stroke=\"none\"/>",
+     "model": "",
+     "effort": "",
+     "askQuestions": true,
+     "awaitAll": false,
+     "fanOut": true,
+     "subagentModel": "",
+     "subagentEffort": "",
+     "progressStage": "plan"
+    },
+    {
+     "id": "n_plan",
+     "kind": "agent",
+     "key": "planner",
+     "x": 600,
+     "y": 200,
+     "label": "Plan",
+     "uiPhase": "plan",
+     "config": {},
+     "ports": {
+      "inputs": [
+       {
+        "id": "task",
+        "type": "md",
+        "required": true,
+        "loop": false,
+        "expands": false
+       },
+       {
+        "id": "answers",
+        "type": "json",
+        "required": false,
+        "loop": false,
+        "expands": false
+       },
+       {
+        "id": "revise",
+        "type": "md",
+        "required": false,
+        "loop": true,
+        "expands": false
+       }
+      ],
+      "outputs": [
+       {
+        "id": "plan",
+        "type": "md",
+        "when": "always"
+       }
+      ],
+      "await": true
+     },
+     "color": "violet",
+     "icon": "<path d=\"M8 6h11M8 12h11M8 18h8\" stroke-linecap=\"round\"/><circle cx=\"4\" cy=\"6\" r=\"1.1\"/><circle cx=\"4\" cy=\"12\" r=\"1.1\"/><circle cx=\"4\" cy=\"18\" r=\"1.1\"/>",
+     "model": "",
+     "effort": "",
+     "askQuestions": false,
+     "awaitAll": false,
+     "fanOut": true,
+     "subagentModel": "",
+     "subagentEffort": "",
+     "progressStage": "plan"
+    },
+    {
+     "id": "n_refine",
+     "kind": "agent",
+     "key": "refiner",
+     "x": 880,
+     "y": 200,
+     "label": "Refine Plan",
+     "uiPhase": "refine",
+     "config": {},
+     "ports": {
+      "inputs": [
+       {
+        "id": "plan",
+        "type": "md",
+        "required": true,
+        "loop": false,
+        "expands": false
+       },
+       {
+        "id": "revise",
+        "type": "md",
+        "required": false,
+        "loop": true,
+        "expands": false
+       }
+      ],
+      "outputs": [
+       {
+        "id": "plan",
+        "type": "md",
+        "when": "clean"
+       },
+       {
+        "id": "revise",
+        "type": "md",
+        "when": "blocking"
+       }
+      ],
+      "await": true
+     },
+     "color": "green",
+     "icon": "<path d=\"M12 3v3M12 18v3M4.5 7.5l2 1M17.5 15.5l2 1M4.5 16.5l2-1M17.5 8.5l2-1\" stroke-linecap=\"round\"/><path d=\"M12 8.2l1.2 2.6L16 12l-2.8 1.2L12 15.8l-1.2-2.6L8 12l2.8-1.2L12 8.2Z\" stroke-linejoin=\"round\"/>",
+     "model": "",
+     "effort": "",
+     "askQuestions": false,
+     "awaitAll": false,
+     "fanOut": true,
+     "subagentModel": "",
+     "subagentEffort": "",
+     "progressStage": "plan"
+    },
+    {
+     "id": "n_impl",
+     "kind": "agent",
+     "key": "implementer",
+     "x": 1160,
+     "y": 200,
+     "label": "Implementation",
+     "uiPhase": "implement",
+     "config": {},
+     "ports": {
+      "inputs": [
+       {
+        "id": "fix",
+        "type": "md",
+        "required": false,
+        "loop": true,
+        "expands": false
+       },
+       {
+        "id": "task",
+        "type": "json",
+        "required": false,
+        "loop": false,
+        "expands": true
+       },
+       {
+        "id": "plan",
+        "type": "md",
+        "required": true,
+        "loop": false,
+        "expands": false
+       }
+      ],
+      "outputs": [
+       {
+        "id": "done",
+        "type": "void",
+        "when": "always"
+       }
+      ],
+      "await": true
+     },
+     "color": "peach",
+     "icon": "<path d=\"M9 8l-4 4 4 4M15 8l4 4-4 4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+     "model": "",
+     "effort": "",
+     "askQuestions": false,
+     "awaitAll": false,
+     "fanOut": true,
+     "subagentModel": "",
+     "subagentEffort": "",
+     "progressStage": "build"
+    },
+    {
+     "id": "n_review",
+     "kind": "agent",
+     "key": "reviewer",
+     "x": 1440,
+     "y": 200,
+     "label": "Review Implementation",
+     "uiPhase": "review",
+     "config": {},
+     "ports": {
+      "inputs": [
+       {
+        "id": "plan",
+        "type": "md",
+        "required": true,
+        "loop": false,
+        "expands": false
+       },
+       {
+        "id": "done",
+        "type": "void",
+        "required": false,
+        "loop": false,
+        "expands": false
+       }
+      ],
+      "outputs": [
+       {
+        "id": "review",
+        "type": "md",
+        "when": "blocking"
+       },
+       {
+        "id": "pass",
+        "type": "void",
+        "when": "clean"
+       }
+      ],
+      "await": true
+     },
+     "color": "blue",
+     "icon": "<path d=\"M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z\" stroke-linejoin=\"round\"/><path d=\"M9 12l2 2 4-4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+     "model": "",
+     "effort": "",
+     "askQuestions": false,
+     "awaitAll": false,
+     "fanOut": true,
+     "subagentModel": "",
+     "subagentEffort": "",
+     "progressStage": "review"
+    },
+    {
+     "id": "n_end",
+     "kind": "end",
+     "key": null,
+     "x": 1720,
+     "y": 200,
+     "label": "End",
+     "uiPhase": "end",
+     "config": {},
+     "ports": {
+      "inputs": [
+       {
+        "id": "result",
+        "type": "any",
+        "required": true,
+        "loop": false,
+        "expands": false
+       }
+      ],
+      "outputs": [],
+      "await": false
+     }
+    }
+   ],
+   "wires": [
+    {
+     "id": "w1",
+     "from": {
+      "node": "n_task",
+      "port": "task"
+     },
+     "to": {
+      "node": "n_clarify",
+      "port": "task"
+     },
+     "loop": false
+    },
+    {
+     "id": "w2",
+     "from": {
+      "node": "n_task",
+      "port": "task"
+     },
+     "to": {
+      "node": "n_plan",
+      "port": "task"
+     },
+     "loop": false
+    },
+    {
+     "id": "w3",
+     "from": {
+      "node": "n_clarify",
+      "port": "answers"
+     },
+     "to": {
+      "node": "n_plan",
+      "port": "answers"
+     },
+     "loop": false
+    },
+    {
+     "id": "w4",
+     "from": {
+      "node": "n_plan",
+      "port": "plan"
+     },
+     "to": {
+      "node": "n_refine",
+      "port": "plan"
+     },
+     "loop": false
+    },
+    {
+     "id": "w5",
+     "from": {
+      "node": "n_refine",
+      "port": "revise"
+     },
+     "to": {
+      "node": "n_refine",
+      "port": "revise"
+     },
+     "loop": true,
+     "maxCycles": 3
+    },
+    {
+     "id": "w6",
+     "from": {
+      "node": "n_refine",
+      "port": "plan"
+     },
+     "to": {
+      "node": "n_impl",
+      "port": "plan"
+     },
+     "loop": false
+    },
+    {
+     "id": "w7",
+     "from": {
+      "node": "n_refine",
+      "port": "plan"
+     },
+     "to": {
+      "node": "n_review",
+      "port": "plan"
+     },
+     "loop": false
+    },
+    {
+     "id": "w8",
+     "from": {
+      "node": "n_impl",
+      "port": "done"
+     },
+     "to": {
+      "node": "n_review",
+      "port": "done"
+     },
+     "loop": false
+    },
+    {
+     "id": "w9",
+     "from": {
+      "node": "n_review",
+      "port": "review"
+     },
+     "to": {
+      "node": "n_impl",
+      "port": "fix"
+     },
+     "loop": true,
+     "maxCycles": 3
+    },
+    {
+     "id": "w10",
+     "from": {
+      "node": "n_review",
+      "port": "pass"
+     },
+     "to": {
+      "node": "n_end",
+      "port": "result"
+     },
+     "loop": false
+    }
+   ]
+  },
+  "bookends": {
+   "preflight": true,
+   "done": true
+  },
+  "steps": [
+   {
+    "kind": "preflight",
+    "nodes": [
+     {
+      "id": "preflight",
+      "label": "Preflight",
+      "sub": "checks"
+     }
+    ]
+   },
+   {
+    "kind": "agents",
+    "nodes": [
+     {
+      "id": "n_task",
+      "key": null,
+      "uiPhase": "task",
+      "label": "Task",
+      "color": "",
+      "sub": "",
+      "cycles": false,
+      "model": "",
+      "effort": ""
+     }
+    ]
+   },
+   {
+    "kind": "agents",
+    "nodes": [
+     {
+      "id": "n_clarify",
+      "key": "clarify",
+      "uiPhase": "clarify",
+      "label": "Clarify",
+      "color": "red",
+      "sub": "Turns hidden decisions into questions before planning. Multiple-choice, so later steps never guess.",
+      "cycles": false,
+      "model": "",
+      "effort": ""
+     }
+    ]
+   },
+   {
+    "kind": "agents",
+    "nodes": [
+     {
+      "id": "n_plan",
+      "key": "planner",
+      "uiPhase": "plan",
+      "label": "Plan",
+      "color": "violet",
+      "sub": "Explores the codebase and writes the implementation plan. Architecture, task breakdown, concrete code snippets; can ask clarifying questions first.",
+      "cycles": false,
+      "model": "",
+      "effort": ""
+     }
+    ]
+   },
+   {
+    "kind": "agents",
+    "nodes": [
+     {
+      "id": "n_refine",
+      "key": "refiner",
+      "uiPhase": "refine",
+      "label": "Refine Plan",
+      "color": "green",
+      "sub": "Rewrites the latest plan into a tighter version. Fixes structure, correctness, and code snippets until no blocking issues remain.",
+      "cycles": true,
+      "model": "",
+      "effort": ""
+     }
+    ]
+   },
+   {
+    "kind": "agents",
+    "nodes": [
+     {
+      "id": "n_impl",
+      "key": "implementer",
+      "uiPhase": "implement",
+      "label": "Implementation",
+      "color": "peach",
+      "sub": "Writes the code from the approved plan, strict TDD. In fix mode, addresses only the issues a review flagged.",
+      "cycles": true,
+      "model": "",
+      "effort": ""
+     }
+    ]
+   },
+   {
+    "kind": "agents",
+    "nodes": [
+     {
+      "id": "n_review",
+      "key": "reviewer",
+      "uiPhase": "review",
+      "label": "Review Implementation",
+      "color": "blue",
+      "sub": "Reviews the implementation diff against the plan. Honest verdict; blocking findings loop back to the implementer.",
+      "cycles": false,
+      "model": "",
+      "effort": ""
+     }
+    ]
+   },
+   {
+    "kind": "agents",
+    "nodes": [
+     {
+      "id": "n_end",
+      "key": null,
+      "uiPhase": "end",
+      "label": "End",
+      "color": "",
+      "sub": "",
+      "cycles": false,
+      "model": "",
+      "effort": ""
+     }
+    ]
+   },
+   {
+    "kind": "done",
+    "nodes": [
+     {
+      "id": "done",
+      "label": "Done",
+      "sub": "complete"
+     }
+    ]
+   }
+  ],
+  "feedbacks": [
+   {
+    "id": "w5",
+    "from": "n_refine",
+    "to": "n_refine",
+    "maxCycles": 3
+   },
+   {
+    "id": "w9",
+    "from": "n_review",
+    "to": "n_impl",
+    "maxCycles": 3
+   }
+  ]
+ },
+ "frames": [
+  {
+   "status": "running",
+   "steps": [],
+   "active": [],
+   "endReached": false,
+   "tokens": {},
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {}
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "start",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    }
+   ],
+   "active": [],
+   "endReached": false,
+   "tokens": {},
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {}
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    }
+   ],
+   "active": [],
+   "endReached": false,
+   "tokens": {},
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {}
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "start",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_task",
+     "executionId": "x:n_task:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {},
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {}
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_task",
+     "executionId": "x:n_task:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {},
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {}
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "start",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_clarify",
+     "executionId": "x:n_clarify:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {}
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "start",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_clarify",
+     "executionId": "x:n_clarify:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {}
+   },
+   "pendingQuestion": {
+    "kind": "clarify",
+    "questions": [
+     {
+      "id": "invalid-input",
+      "question": "How should the feature handle invalid input — fail fast, coerce, or ignore?",
+      "options": [
+       "Fail fast with a clear error",
+       "Coerce to a safe default",
+       "Ignore and continue",
+       "Reject at the boundary"
+      ],
+      "allowFreeText": true,
+      "confidence": [
+       70,
+       15,
+       5,
+       10
+      ],
+      "recommended": "Fail fast with a clear error"
+     },
+     {
+      "id": "delete-behavior",
+      "question": "Should delete be a hard delete or a soft delete?",
+      "options": [
+       "Hard delete",
+       "Soft delete"
+      ],
+      "allowFreeText": true
+     }
+    ]
+   }
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "start",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_clarify",
+     "executionId": "x:n_clarify:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {}
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_clarify",
+     "executionId": "x:n_clarify:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {}
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "start",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_plan",
+     "executionId": "x:n_plan:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {}
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_plan",
+     "executionId": "x:n_plan:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {}
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "start",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_refine",
+     "executionId": "x:n_refine:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {}
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_refine",
+     "executionId": "x:n_refine:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 1,
+      "blocking": 1
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "start",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_refine",
+     "executionId": "x:n_refine:2"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 1,
+      "blocking": 1
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_refine",
+     "executionId": "x:n_refine:2"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 2,
+      "blocking": 0
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    },
+    {
+     "executionId": "x:n_impl:1",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "start",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.264Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_impl",
+     "executionId": "x:n_impl:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    },
+    "n_refine.plan": {
+     "seq": 5,
+     "firedAt": 1792321265264
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 2,
+      "blocking": 0
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    },
+    {
+     "executionId": "x:n_impl:1",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.264Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_impl",
+     "executionId": "x:n_impl:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    },
+    "n_refine.plan": {
+     "seq": 5,
+     "firedAt": 1792321265264
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 2,
+      "blocking": 0
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    },
+    {
+     "executionId": "x:n_impl:1",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.264Z"
+    },
+    {
+     "executionId": "x:n_review:1",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "start",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.309Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_review",
+     "executionId": "x:n_review:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    },
+    "n_refine.plan": {
+     "seq": 5,
+     "firedAt": 1792321265264
+    },
+    "n_impl.done": {
+     "seq": 6,
+     "firedAt": 1792321265308
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 2,
+      "blocking": 0
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    },
+    {
+     "executionId": "x:n_impl:1",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.264Z"
+    },
+    {
+     "executionId": "x:n_review:1",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.309Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_review",
+     "executionId": "x:n_review:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    },
+    "n_refine.plan": {
+     "seq": 5,
+     "firedAt": 1792321265264
+    },
+    "n_impl.done": {
+     "seq": 6,
+     "firedAt": 1792321265308
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 2,
+      "blocking": 0
+     },
+     "n_review": {
+      "pass": 1,
+      "blocking": 1
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    },
+    {
+     "executionId": "x:n_impl:1",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.264Z"
+    },
+    {
+     "executionId": "x:n_review:1",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.309Z"
+    },
+    {
+     "executionId": "x:n_impl:2",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "start",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.339Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_impl",
+     "executionId": "x:n_impl:2"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    },
+    "n_refine.plan": {
+     "seq": 5,
+     "firedAt": 1792321265264
+    },
+    "n_impl.done": {
+     "seq": 6,
+     "firedAt": 1792321265308
+    },
+    "n_review.review": {
+     "seq": 7,
+     "firedAt": 1792321265339
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 2,
+      "blocking": 0
+     },
+     "n_review": {
+      "pass": 1,
+      "blocking": 1
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    },
+    {
+     "executionId": "x:n_impl:1",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.264Z"
+    },
+    {
+     "executionId": "x:n_review:1",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.309Z"
+    },
+    {
+     "executionId": "x:n_impl:2",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.339Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_impl",
+     "executionId": "x:n_impl:2"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    },
+    "n_refine.plan": {
+     "seq": 5,
+     "firedAt": 1792321265264
+    },
+    "n_impl.done": {
+     "seq": 6,
+     "firedAt": 1792321265308
+    },
+    "n_review.review": {
+     "seq": 7,
+     "firedAt": 1792321265339
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 2,
+      "blocking": 0
+     },
+     "n_review": {
+      "pass": 1,
+      "blocking": 1
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    },
+    {
+     "executionId": "x:n_impl:1",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.264Z"
+    },
+    {
+     "executionId": "x:n_review:1",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.309Z"
+    },
+    {
+     "executionId": "x:n_impl:2",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.339Z"
+    },
+    {
+     "executionId": "x:n_review:2",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "start",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.382Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_review",
+     "executionId": "x:n_review:2"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    },
+    "n_refine.plan": {
+     "seq": 5,
+     "firedAt": 1792321265264
+    },
+    "n_impl.done": {
+     "seq": 8,
+     "firedAt": 1792321265382
+    },
+    "n_review.review": {
+     "seq": 7,
+     "firedAt": 1792321265339
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 2,
+      "blocking": 0
+     },
+     "n_review": {
+      "pass": 1,
+      "blocking": 1
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    },
+    {
+     "executionId": "x:n_impl:1",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.264Z"
+    },
+    {
+     "executionId": "x:n_review:1",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.309Z"
+    },
+    {
+     "executionId": "x:n_impl:2",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.339Z"
+    },
+    {
+     "executionId": "x:n_review:2",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.382Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_review",
+     "executionId": "x:n_review:2"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    },
+    "n_refine.plan": {
+     "seq": 5,
+     "firedAt": 1792321265264
+    },
+    "n_impl.done": {
+     "seq": 8,
+     "firedAt": 1792321265382
+    },
+    "n_review.review": {
+     "seq": 7,
+     "firedAt": 1792321265339
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 2,
+      "blocking": 0
+     },
+     "n_review": {
+      "pass": 2,
+      "blocking": 0
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    },
+    {
+     "executionId": "x:n_impl:1",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.264Z"
+    },
+    {
+     "executionId": "x:n_review:1",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.309Z"
+    },
+    {
+     "executionId": "x:n_impl:2",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.339Z"
+    },
+    {
+     "executionId": "x:n_review:2",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.382Z"
+    },
+    {
+     "executionId": "x:n_end:1",
+     "nodeId": "n_end",
+     "kind": "cycle",
+     "status": "start",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.412Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_end",
+     "executionId": "x:n_end:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    },
+    "n_refine.plan": {
+     "seq": 5,
+     "firedAt": 1792321265264
+    },
+    "n_impl.done": {
+     "seq": 8,
+     "firedAt": 1792321265382
+    },
+    "n_review.review": {
+     "seq": 7,
+     "firedAt": 1792321265339
+    },
+    "n_review.pass": {
+     "seq": 9,
+     "firedAt": 1792321265411
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 2,
+      "blocking": 0
+     },
+     "n_review": {
+      "pass": 2,
+      "blocking": 0
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "running",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    },
+    {
+     "executionId": "x:n_impl:1",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.264Z"
+    },
+    {
+     "executionId": "x:n_review:1",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.309Z"
+    },
+    {
+     "executionId": "x:n_impl:2",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.339Z"
+    },
+    {
+     "executionId": "x:n_review:2",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.382Z"
+    },
+    {
+     "executionId": "x:n_end:1",
+     "nodeId": "n_end",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.412Z"
+    }
+   ],
+   "active": [
+    {
+     "nodeId": "n_end",
+     "executionId": "x:n_end:1"
+    }
+   ],
+   "endReached": false,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    },
+    "n_refine.plan": {
+     "seq": 5,
+     "firedAt": 1792321265264
+    },
+    "n_impl.done": {
+     "seq": 8,
+     "firedAt": 1792321265382
+    },
+    "n_review.review": {
+     "seq": 7,
+     "firedAt": 1792321265339
+    },
+    "n_review.pass": {
+     "seq": 9,
+     "firedAt": 1792321265411
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 2,
+      "blocking": 0
+     },
+     "n_review": {
+      "pass": 2,
+      "blocking": 0
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "done",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    },
+    {
+     "executionId": "x:n_impl:1",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.264Z"
+    },
+    {
+     "executionId": "x:n_review:1",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.309Z"
+    },
+    {
+     "executionId": "x:n_impl:2",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.339Z"
+    },
+    {
+     "executionId": "x:n_review:2",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.382Z"
+    },
+    {
+     "executionId": "x:n_end:1",
+     "nodeId": "n_end",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.412Z"
+    }
+   ],
+   "active": [],
+   "endReached": true,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    },
+    "n_refine.plan": {
+     "seq": 5,
+     "firedAt": 1792321265264
+    },
+    "n_impl.done": {
+     "seq": 8,
+     "firedAt": 1792321265382
+    },
+    "n_review.review": {
+     "seq": 7,
+     "firedAt": 1792321265339
+    },
+    "n_review.pass": {
+     "seq": 9,
+     "firedAt": 1792321265411
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 2,
+      "blocking": 0
+     },
+     "n_review": {
+      "pass": 2,
+      "blocking": 0
+     }
+    }
+   },
+   "pendingQuestion": null
+  },
+  {
+   "status": "done",
+   "steps": [
+    {
+     "executionId": "x:preflight:1",
+     "nodeId": "preflight",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:04.291Z"
+    },
+    {
+     "executionId": "x:n_task:1",
+     "nodeId": "n_task",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.105Z"
+    },
+    {
+     "executionId": "x:n_clarify:1",
+     "nodeId": "n_clarify",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.127Z"
+    },
+    {
+     "executionId": "x:n_plan:1",
+     "nodeId": "n_plan",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.162Z"
+    },
+    {
+     "executionId": "x:n_refine:1",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.196Z"
+    },
+    {
+     "executionId": "x:n_refine:2",
+     "nodeId": "n_refine",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.231Z"
+    },
+    {
+     "executionId": "x:n_impl:1",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.264Z"
+    },
+    {
+     "executionId": "x:n_review:1",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.309Z"
+    },
+    {
+     "executionId": "x:n_impl:2",
+     "nodeId": "n_impl",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.339Z"
+    },
+    {
+     "executionId": "x:n_review:2",
+     "nodeId": "n_review",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 2,
+     "cycle": 2,
+     "startedAt": "2026-10-18T11:01:05.382Z"
+    },
+    {
+     "executionId": "x:n_end:1",
+     "nodeId": "n_end",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.412Z"
+    },
+    {
+     "executionId": "x:done:1",
+     "nodeId": "done",
+     "kind": "cycle",
+     "status": "done",
+     "ordinal": 1,
+     "cycle": 1,
+     "startedAt": "2026-10-18T11:01:05.413Z"
+    }
+   ],
+   "active": [],
+   "endReached": true,
+   "tokens": {
+    "n_task.task": {
+     "seq": 1,
+     "firedAt": 1792321265106
+    },
+    "n_clarify.answers": {
+     "seq": 2,
+     "firedAt": 1792321265161
+    },
+    "n_plan.plan": {
+     "seq": 3,
+     "firedAt": 1792321265196
+    },
+    "n_refine.revise": {
+     "seq": 4,
+     "firedAt": 1792321265230
+    },
+    "n_refine.plan": {
+     "seq": 5,
+     "firedAt": 1792321265264
+    },
+    "n_impl.done": {
+     "seq": 8,
+     "firedAt": 1792321265382
+    },
+    "n_review.review": {
+     "seq": 7,
+     "firedAt": 1792321265339
+    },
+    "n_review.pass": {
+     "seq": 9,
+     "firedAt": 1792321265411
+    }
+   },
+   "progressFacts": {
+    "tasks": {},
+    "reviews": {
+     "n_refine": {
+      "pass": 2,
+      "blocking": 0
+     },
+     "n_review": {
+      "pass": 2,
+      "blocking": 0
+     }
+    }
+   },
+   "pendingQuestion": null
+  }
+ ]
+}

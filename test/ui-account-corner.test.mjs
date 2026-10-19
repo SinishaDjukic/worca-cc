@@ -159,7 +159,7 @@ test('the account menu: its order and roles (spend card · Signed in as · Inter
       assert.deepEqual([...menu.querySelectorAll('.msect')].map((s) => [s.getAttribute('role'), [...s.children].map((b) => b.id)]),
         [['group', ['acct-lvl', 'acct-settings']], ['group', ['acct-away']], ['group', ['acct-theme-k', 'acct-theme']]], 'each run of rows is its own section; Appearance leads its icons');
       assert.deepEqual([...menu.querySelectorAll('[role^="menuitem"]')].map((b) => b.id || b.dataset.themeMode || b.className),
-        ['mc-btn', 'mi mc-free', 'acct-lvl', 'acct-settings', 'acct-away', 'system', 'light', 'dark'], 'Details, the free row, the three rows, then the three icons');
+        ['btn btn-sm mc-btn', 'mi mc-free', 'acct-lvl', 'acct-settings', 'acct-away', 'system', 'light', 'dark'], 'Details, the free row, the three rows, then the three icons');
       assert.deepEqual([...$('acct-theme').querySelectorAll('button')].map((b) => [b.getAttribute('role'), b.getAttribute('aria-label'), b.textContent.trim()]),
         [['menuitemradio', 'System', ''], ['menuitemradio', 'Light', ''], ['menuitemradio', 'Dark', '']], 'icons only: the name is the aria-label');
       assert.deepEqual([$('acct-lvl').getAttribute('aria-haspopup'), $('acct-lvl').getAttribute('aria-controls'), $('acct-lvl').getAttribute('aria-expanded')],
@@ -333,15 +333,15 @@ test('the mockup rows: Interface mode and Settings lead with their own icon; App
   assert.equal(label.hasAttribute('role'), false, 'the arrows never stop on it');
 });
 
-test('stylesheet: the account menu is the mockup\'s padded sheet: inset hairlines, a grey spend panel, a pill button and a one-row Appearance', () => {
+test('stylesheet: the account menu is the mockup\'s padded sheet: inset hairlines, a grey spend panel, the one button and a one-row Appearance', () => {
   const rule = (sel) => { const m = css.match(new RegExp(`(?:^|[\\s,}])${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`)); return m ? m[1] : null; };
   assert.match(rule('.nav-fly.acct-menu') || '', /padding:6px;/, 'padding round the content');
   assert.doesNotMatch(css, /\.acct-menu > :not\(\[hidden\]\) ~ :not\(\[hidden\]\)\{[^}]*border-top/, 'no full-width border between sections');
   assert.match(rule('.acct-menu > :not([hidden]) ~ :not([hidden])') || '', /margin-top:9px;/, '4px, the 1px hairline, 4px');
   assert.match(rule('.acct-menu > :not([hidden]) ~ :not([hidden])::before') || '', /top:-5px;left:6px;right:6px;height:1px;background:var\(--line\);/, 'the hairline stops short of the edges');
-  assert.match(rule('.mcard') || '', /border-radius:10px;background:var\(--field\);/, 'the cards are inset grey panels');
+  assert.match(rule('.mcard') || '', /border-radius:var\(--r-sm\);background:var\(--field\);/, 'the cards are inset grey panels');
   assert.match(rule('.mc-title') || '', /font:600 /, 'a semibold title');
-  assert.match(rule('.mc-btn') || '', /border-radius:999px;/, 'Details is a pill');
+  assert.equal(rule('.mc-btn'), 'flex:none;', 'Details keeps layout only: its skin is .btn .btn-sm in markup');
   assert.match(rule('.mc-rows dd') || '', /font:600 [^;]*var\(--sans\);/, 'semibold sans figures');
   assert.doesNotMatch(rule('.mc-rows dd') || '', /--mono/);
   assert.equal(rule('.mc-rows dd.pos'), null, 'Saved is ink, as the mockup shows');

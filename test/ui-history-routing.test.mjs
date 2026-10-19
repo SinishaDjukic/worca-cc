@@ -300,7 +300,7 @@ test('deep-link boot opens the detail directly and upgrades the stub record when
       assert.ok(window.document.querySelector('#hist-shell').classList.contains('detail-open'));
       assert.ok(calls.some((c) => c.url.includes(`/api/history/${KEY}/${ROW.id}`)));
       assert.ok(calls.some((c) => c.url === '/api/history'), 'the list loads behind the detail');
-      assert.ok(window.document.querySelector(`#runs-list .runs-row[data-slot="group"][data-pipeline-id="${ROW.id}"]`),
+      assert.ok(window.document.querySelector(`#runs-list .runs-row[data-pipeline-id="${ROW.id}"]`),
         'and its row is in the list beside the pane');
     } },
     { name: 'deep-link boot with BOTH endpoints live still upgrades the record from the stub', run: async () => {

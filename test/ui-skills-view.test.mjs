@@ -94,19 +94,19 @@ test('routes and labels: #connectors/skills, the title "Connectors", three segme
       assert.equal(host.querySelector('.topbar .sub').textContent, 'MCP servers and skills worca’s agents and Ask Worca get, grouped in sets attached to projects');
       const seg = [...host.querySelectorAll('.topbar .seg button')];
       assert.deepEqual(seg.map((b) => [b.textContent, b.getAttribute('aria-pressed')]), [['Sets', 'false'], ['Servers', 'false'], ['Skills', 'true']]);
-      assert.equal(host.querySelector('.topbar .btn-go').textContent, 'Import skill');
-      assert.equal(host.querySelector('.topbar .btn-go').dataset.act, 'import-skill');
+      assert.equal(host.querySelector('.topbar .btn-primary').textContent, 'Import skill');
+      assert.equal(host.querySelector('.topbar .btn-primary').dataset.act, 'import-skill');
       assert.ok(calls.some(([m, p]) => m === 'GET' && p === '/api/skills'));
     } },
     { name: 'the segments navigate: Servers, Skills, back to the last set', run: async () => {
       const { host, ctl, nav } = mount({ setViews: { billing: { set: { id: 'billing', name: 'Billing', group: 'set', greyed: false, home: null, usedBy: [] }, members: [] } } });
       await ctl.show('sets/billing');
-      assert.equal(host.querySelector('.topbar .btn-go').textContent, 'New set');
+      assert.equal(host.querySelector('.topbar .btn-primary').textContent, 'New set');
       click(host.querySelector('[data-mcp-view="skills"]'));
       await ctl.show('skills');
       click(host.querySelector('[data-mcp-view="servers"]'));
       await ctl.show('servers');
-      assert.equal(host.querySelector('.topbar .btn-go').textContent, 'Add MCP server');
+      assert.equal(host.querySelector('.topbar .btn-primary').textContent, 'Add MCP server');
       click(host.querySelector('[data-mcp-view="sets"]'));
       assert.deepEqual(nav, [MCP_SKILLS_ROUTE, 'connectors/servers', 'connectors/sets/billing']);
     } },

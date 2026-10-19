@@ -25,7 +25,7 @@ const HISTORY = [
 const histResp = (pipelines, ghAvailable = false) =>
   Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, ghAvailable }) });
 
-async function boot({ fetchHandler } = {}) {
+async function boot({ fetchHandler, local = { 'worca-cc.runs.view': JSON.stringify({ show: 'all', groupBy: 'project', person: '' }) } } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -46,6 +46,9 @@ async function boot({ fetchHandler } = {}) {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
   }
   globalThis.window = window; globalThis.document = window.document;
+  // Group by Project (the View menu, runs-view-menu.mjs): read once when app.js loads.
+  window.localStorage.clear();
+  for (const [k, v] of Object.entries(local)) window.localStorage.setItem(k, v);
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   function showRuns() { window.location.hash = 'runs'; window.dispatchEvent(new window.Event('hashchange')); }
@@ -69,18 +72,17 @@ test('the Runs list groups finished runs per project (name + count, server order
   const doc = window.document;
   await checkRows([
     { name: 'the Runs list groups finished runs in one section per project (name + count); no project pills', run: async () => {
-      // The project pills are gone (D4); the pill row holds only Started-by pills, and only when shared.
-      assert.equal(doc.querySelectorAll('#historyFilter .hist-pill').length, 0, 'no project pills');
-      assert.equal(doc.getElementById('historyFilter').hidden, true, 'the pill row is hidden on a single-user deployment');
+      // No pill row at all: "Started by" lives in the View menu (runs redesign D6).
+      assert.equal(doc.getElementById('historyFilter'), null, 'no pill row');
 
-      const groups = [...doc.querySelectorAll('#runs-list .runs-group')];
+      const groups = [...doc.querySelectorAll('#runs-list .runs-sec[data-section^="project:"]')];
       assert.equal(groups.length, 2, 'one section per project');
-      const name = (g) => g.querySelector('.runs-group-head .runs-group-name').textContent;
-      const count = (g) => g.querySelector('.runs-group-head .runs-count').textContent;
-      assert.equal(groups[0].dataset.groupKey, 'alpha-00000001');
+      const name = (g) => g.querySelector('.runs-sec-head .runs-sec-title').textContent;
+      const count = (g) => g.querySelector('.runs-sec-head .runs-count').textContent;
+      assert.equal(groups[0].dataset.section, 'project:alpha-00000001');
       assert.equal(name(groups[0]), 'Alpha', 'Alpha first (most recent activity)');
       assert.equal(count(groups[0]), '2');
-      assert.equal(groups[1].dataset.groupKey, 'beta-00000002');
+      assert.equal(groups[1].dataset.section, 'project:beta-00000002');
       assert.equal(name(groups[1]), 'Beta');
       assert.equal(count(groups[1]), '1');
       assert.deepEqual([...groups[0].querySelectorAll('.runs-row-title')].map((n) => n.textContent), ['Alpha two', 'Alpha one'],
@@ -98,8 +100,8 @@ test('the Runs list groups finished runs per project (name + count, server order
       recv({ type: 'pipelines-changed' });
       await new Promise((r) => setTimeout(r, 0));
       assert.equal(hits, before + 1, 'the frame refetches exactly once');
-      assert.deepEqual([...doc.querySelectorAll('#runs-list .runs-group')].map((g) => g.dataset.groupKey),
-        ['alpha-00000001', 'beta-00000002']);
+      assert.deepEqual([...doc.querySelectorAll('#runs-list .runs-sec')].map((g) => g.dataset.section),
+        ['project:alpha-00000001', 'project:beta-00000002']);
       assert.equal(doc.querySelectorAll('#runs-list .runs-row[data-kind="hist"]').length, 3);
     } },
   ]);

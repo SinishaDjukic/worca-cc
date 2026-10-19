@@ -1,9 +1,9 @@
-// ui/public/run-progress-bar.mjs — the run progress bar (spec 2026-10-14 P2/P4/P8/P11).
+// ui/public/run-progress-bar.mjs — the run progress bar (spec 2026-10-14 P2/P4/P8/P11). The stage bar is four
+// sections (runs redesign §2.3); every bar is neutral.
 // Idempotent painters over a host element: the skeleton is built once per mode, so the
-// fill element survives every repaint and its width transitions (P2 "glides").
+// fill elements survive every repaint and their widths transition (P2 "glides").
 import { STAGE_LABEL, progressWidth } from '../../src/shared/run-progress.mjs';
 
-const TICKS = [0.25, 0.5, 0.75];
 const MARKS = ['plan', 'build', 'review', 'ready'];
 const STATE_WORD = { done: 'done', current: 'now', waiting: 'waiting', skipped: 'not in this workflow' };
 
@@ -14,8 +14,8 @@ function el(doc, tag, cls, text) {
   return n;
 }
 
-/** The bar for one run. `prog` is runProgress's result, or null to hide it. */
-export function paintProgressBar(host, prog) {
+/** The bar for one run. `prog` is runProgress's result, or null to hide it. `pulse`: the working fill's edge pulses. */
+export function paintProgressBar(host, prog, { pulse = false } = {}) {
   if (!host) return;
   host.hidden = !prog;
   if (!prog) return;
@@ -25,13 +25,15 @@ export function paintProgressBar(host, prog) {
     host.dataset.mode = prog.mode;
     const track = el(doc, 'div', 'run-prog-track');
     track.setAttribute('aria-hidden', 'true');
-    track.appendChild(el(doc, 'div', 'run-prog-fill'));
     if (staged) {
-      for (const t of TICKS) {
-        const k = el(doc, 'span', 'run-prog-tick');
-        k.style.left = progressWidth(t);
-        track.appendChild(k);
+      for (const id of MARKS) {
+        const sec = el(doc, 'div', 'run-prog-sec');
+        sec.dataset.stage = id;
+        sec.appendChild(el(doc, 'div', 'run-prog-fill'));
+        track.appendChild(sec);
       }
+    } else {
+      track.appendChild(el(doc, 'div', 'run-prog-fill'));
     }
     const kids = [track];
     if (staged) {
@@ -52,8 +54,16 @@ export function paintProgressBar(host, prog) {
     host.replaceChildren(...kids);
   }
   host.dataset.tone = prog.tone;
-  host.querySelector('.run-prog-fill').style.width = progressWidth(prog.fraction);
-  if (!staged) return;
+  host.dataset.pulse = pulse ? 'on' : 'off';
+  if (!staged) {
+    host.querySelector('.run-prog-fill').style.width = progressWidth(prog.fraction);
+    return;
+  }
+  const fill = Array.isArray(prog.fill) ? prog.fill : MARKS.map((_, i) => Math.min(1, Math.max(0, prog.fraction * 4 - i)));
+  host.querySelectorAll('.run-prog-sec').forEach((sec, i) => {
+    sec.firstElementChild.style.width = progressWidth(fill[i] || 0);
+    sec.classList.toggle('is-current', sec.dataset.stage === prog.stage);
+  });
   for (const m of host.querySelectorAll('.run-prog-mark')) {
     const s = prog.stages.find((x) => x.id === m.dataset.stage);
     m.dataset.state = s ? s.state : 'waiting';
@@ -84,30 +94,20 @@ function paintDetail(detail, prog) {
   detail.replaceChildren(list);
 }
 
-/** P8: the chain's overall bar, one equal part per run. `chain` is a runsChainItem (or null / a single run: hidden). */
+/** The group's continuous bar (spec §2.3). `chain` has `{ total, fraction, text }` (chainProgress / groupProgress). */
 export function paintChainBar(host, chain) {
   if (!host) return;
   host.hidden = !chain || !(chain.total >= 2);
   if (host.hidden) return;
   const doc = host.ownerDocument;
-  if (Number(host.dataset.parts) !== chain.total) {
-    host.dataset.parts = String(chain.total);
+  if (!host.querySelector('.run-chain-track')) {
     const track = el(doc, 'div', 'run-chain-track');
     track.setAttribute('aria-hidden', 'true');
-    for (let i = 0; i < chain.total; i++) {
-      const part = el(doc, 'div', 'run-chain-part');
-      part.appendChild(el(doc, 'div', 'run-prog-fill'));
-      track.appendChild(part);
-    }
+    track.appendChild(el(doc, 'div', 'run-prog-fill'));
     host.replaceChildren(el(doc, 'div', 'run-chain-label'), track);
   }
   host.querySelector('.run-chain-label').textContent = chain.text;
-  host.querySelectorAll('.run-chain-part').forEach((part, i) => {
-    const p = chain.parts[i] || { state: 'waiting', fraction: 0, tone: 'blue' };
-    part.dataset.state = p.state;
-    part.dataset.tone = p.tone;
-    part.firstElementChild.style.width = progressWidth(p.fraction);
-  });
+  host.querySelector('.run-chain-track > .run-prog-fill').style.width = progressWidth(chain.fraction);
 }
 
 /**

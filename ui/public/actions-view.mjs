@@ -25,7 +25,7 @@ export function appendWithPageLinks(doc, el, text, extra = []) {
 /** The project's own Actions tab, where its setup and actions are edited. */
 export const projectActionsHref = (key) => `#projects/${encodeURIComponent(key)}/actions`;
 // `tip`: what the button does, on hover (every command on the Actions surfaces says it).
-const btn = (doc, label, cls, onClick, tip) => { const b = h(doc, 'button', `btn ${cls || 'btn-ghost'} btn-mini`, label); b.type = 'button'; if (tip) b.title = tip; if (onClick) b.addEventListener('click', onClick); return b; };
+const btn = (doc, label, cls, onClick, tip) => { const b = h(doc, 'button', `btn ${cls || 'btn'} btn btn-sm`, label); b.type = 'button'; if (tip) b.title = tip; if (onClick) b.addEventListener('click', onClick); return b; };
 /** Hover text of a built-in: what it opens, and where. */
 const builtinTip = (key, label, where = 'the checkout') => (key === 'editor' ? `Open ${where} in ${label}`
   : key === 'terminal' ? `Open ${label} in ${where}` : key === 'fileManager' ? `Show ${where} in ${label}` : label);
@@ -126,7 +126,7 @@ function stopButton(doc, label, onClick) {
   return b;
 }
 function copyIconButton(doc, label, onClick) {
-  const b = h(doc, 'button', 'act-copy');
+  const b = h(doc, 'button', 'btn btn-sm btn-quiet btn-icon act-copy');
   b.type = 'button';
   b.setAttribute('aria-label', label);
   b.title = label;
@@ -178,9 +178,9 @@ function memberCard(model, m, { doc, handlers, logs, queued }) {
   const copyBtn = () => (m.copyCommand ? btn(doc, 'Copy command', null, () => handlers.onCopy?.(m.copyCommand),
     'Copy the git commands that put this branch in your own clone') : null);
   const discardBtn = () => (m.checkout?.external
-    ? btn(doc, 'Unlink', 'btn-ghost act-discard', () => handlers.onUnlink?.(m.projectKey),
+    ? btn(doc, 'Unlink', 'btn act-discard', () => handlers.onUnlink?.(m.projectKey),
       'Stop using your folder for this run. Running services stop; the folder and its changes stay as they are.')
-    : btn(doc, 'Discard', 'btn-ghost act-discard', () => handlers.onDiscard?.([m.projectKey]),
+    : btn(doc, 'Discard', 'btn act-discard', () => handlers.onDiscard?.([m.projectKey]),
       'Delete the checkout folder. Running services stop, and uncommitted changes are saved as a patch first.'));
   // The note under the row names the apps a click opens and where they are changed (Settings › Runs › Actions).
   // An app that is not there is simply not mentioned: no nagging on every run (the Settings card says it).

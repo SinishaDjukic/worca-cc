@@ -71,10 +71,10 @@ export function askCardsIn(frame) {
 }
 /** A resume starts a new runId, so one pause tag per run is enough. */
 export function pauseTag(runId) { return questionTag(runId, 'pause'); }
-/** `title` with its `(N) ` prefix set to n, or removed at 0. */
+/** `title` with its "(N) ? " prefix set to n, or removed at 0 (runs redesign: the '?' is the Needs you symbol). */
 export function titleWithCount(title, n) {
-  const base = String(title == null ? '' : title).replace(/^\(\d+\) /, '');
-  return n > 0 ? `(${n}) ${base}` : base;
+  const base = String(title == null ? '' : title).replace(/^\(\d+\) (\? )?/, '');
+  return n > 0 ? `(${n}) ? ${base}` : base;
 }
 export function badgeCount({ waitingRuns = 0, unreadProblems = 0 } = {}) {
   const c = (x) => (Number.isFinite(x) && x > 0 ? Math.floor(x) : 0);
@@ -187,7 +187,9 @@ export function createAlerts({ Notification: N = null, doc, nav = {}, storage = 
   const shown = () => (settings().badge ? badgeCount(counts) : 0);
   function applyBadge() {
     const n = shown();
-    const title = titleWithCount(doc.title, n);
+    // D25: the title counts the runs that need you (the sidebar's number); unread schedule problems only dot the favicon.
+    const runsN = settings().badge && Number.isFinite(counts.waitingRuns) && counts.waitingRuns > 0 ? Math.floor(counts.waitingRuns) : 0;
+    const title = titleWithCount(doc.title, runsN);
     if (title !== doc.title) doc.title = title;
     const link = doc.querySelector('link[rel~="icon"]');
     if (link) {

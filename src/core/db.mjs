@@ -62,7 +62,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 63;
+export const SCHEMA_VERSION = 64;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -847,7 +847,9 @@ const INCREMENTAL_COLUMNS = {
                             // Shaper D28, no version of their own (-4-slices owns v57); reconcileSchema adds them
                             shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
                             run_size: 'TEXT',     // small|medium|large from the run's changed lines/files; NULL = unknown
-                            run_setup: 'TEXT' },  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start or a scan
+                            run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start or a scan
+                            deleted_at: 'TEXT',   // v64: Delete (runs redesign §3.2) keeps an anonymised row for Statistics
+                            pr_verdict: 'TEXT' }, // v64: the PR chip's CI verdict (JSON), runs redesign §2.1a
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -1085,6 +1087,29 @@ CREATE TABLE IF NOT EXISTS run_presets (
 CREATE UNIQUE INDEX IF NOT EXISTS run_presets_owner_name ON run_presets (COALESCE(created_by, ''), name COLLATE NOCASE);
 `;
 
+// v64 (runs redesign §3.3): user-created groups and ad-hoc membership — the one new named state the clarify answer
+// allows. group_id names a run_groups.id (grp_…) OR a shape_features.id (feat_…), so it has no FK; src/core/run-groups.mjs
+// checks it. pipeline_id is the primary key: a run is in one group at a time.
+const RUN_GROUPS_DDL = `
+CREATE TABLE IF NOT EXISTS run_groups (
+  id          TEXT PRIMARY KEY,
+  title       TEXT NOT NULL,
+  project_key TEXT,
+  created_by  TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS run_group_members (
+  pipeline_id TEXT PRIMARY KEY,
+  group_id    TEXT NOT NULL,
+  position    INTEGER NOT NULL,
+  added_by    TEXT,
+  added_at    TEXT NOT NULL,
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_run_group_members_group ON run_group_members (group_id, position);
+`;
+
 const SHAPE_SLICES_DDL = `
 CREATE TABLE IF NOT EXISTS shape_features (
   id TEXT PRIMARY KEY,
@@ -1159,6 +1184,8 @@ const INCREMENTAL_TABLES = {
   run_tags:       RUN_TAGS_DDL,
   run_tag_events: RUN_TAGS_DDL,
   run_presets:    RUN_PRESETS_DDL,
+  run_groups:        RUN_GROUPS_DDL,
+  run_group_members: RUN_GROUPS_DDL,
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -2260,6 +2287,7 @@ export function migrate(db) {
     if (current < SCHEMA_VERSION) refreshPromoVideoSeed(db);
     // v62 (#712 slice 2): pipelines.run_setup — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     // v63 (#712 slice 3): schedules.preset_id, scheduled_runs.preset_id — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 64) db.exec(RUN_GROUPS_DDL);   // v64 run groups (runs redesign §3.3); pipelines.deleted_at / pr_verdict come from INCREMENTAL_COLUMNS
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

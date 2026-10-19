@@ -63,7 +63,7 @@ export function renderBrokenCard(doc, broken, { onReset } = {}) {
     row.append(msg);
     if (b.reset) {
       const btn = doc.createElement('button');
-      btn.type = 'button'; btn.className = 'btn-ghost btn-mini'; btn.textContent = 'Reset to project default';
+      btn.type = 'button'; btn.className = 'btn btn-sm'; btn.textContent = 'Reset to project default';
       btn.addEventListener('click', () => onReset && onReset(b));
       row.append(btn);
     } else {

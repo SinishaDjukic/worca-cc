@@ -727,6 +727,7 @@ test('runChains: lists each open chain in pre-order with member states, links on
       assert.equal(chains[0].members[0].prUrl, 'https://github.com/acme/app/pull/7');
       assert.equal(chains[0].members[1].prUrl, null);
       assert.equal(chains[0].members[2].ticketId, t3.id);
+      assert.deepEqual(chains[0].members.map((m) => m.after), [null, 1, 2], 'D29: each member names the position it runs after');
     } },
     { name: 'a javascript: pr_url yields prUrl null', run: () => {
       clearTables();
@@ -766,6 +767,7 @@ test('runChains: lists each open chain in pre-order with member states, links on
       assert.equal(chains.length, 1);
       assert.deepEqual(chains[0].members.slice(0, 3).map((m) => m.pipelineId), ['p0000041', 'p0000042', 'p0000043']);
       assert.equal(chains[0].members.length, 4);
+      assert.deepEqual(chains[0].members.map((m) => m.after), [null, 1, 1, 1], 'forked children all run after the root');
     } },
     { name: 'a hand-made cycle has no root and is not listed', run: () => {
       clearTables();

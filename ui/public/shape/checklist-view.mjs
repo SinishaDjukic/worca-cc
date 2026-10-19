@@ -1,6 +1,7 @@
 // "Perspective checklists" on the run page's and History's Overview (spec D7, D23): the latest review cycle as one
 // summary line, its unmet / unproven items open, its met and n/a items folded behind a button, and earlier cycles
 // behind one more. Pure DOM over the saved review rows (readPipelineExtras), no globals.
+import { icon } from '../icons.mjs';
 import { checklistTally, checklistTallyText } from '../../../src/shared/shape/review-checklist.mjs';
 
 const STATUS_LABEL = Object.freeze({ met: 'Met', unmet: 'Unmet', na: 'N/A', missing: 'Not reported' });
@@ -38,7 +39,8 @@ export function renderChecklistGroups(doc, reviews) {
     btn.type = 'button';
     btn.setAttribute('aria-expanded', 'false');
     btn.setAttribute('aria-controls', id);
-    const chev = el('span', 'chev', '▾');
+    const chev = el('span', 'chev');
+    chev.append(icon(doc, 'chevron-down', 12));
     chev.setAttribute('aria-hidden', 'true');
     btn.append(el('span', 'shape-cl-toggle-label', label), chev);
     btn.addEventListener('click', () => {

@@ -171,6 +171,8 @@ question or plan approval it waits on, and the actions above. Chat's run card sh
 a one-line summary with **Open feature**, the Runs list shows a feature as one row
 ("Slice 2 of 3 · Build", or "Needs you"), and a slice's run page says which feature
 it belongs to and, once done, which slice comes next.
+The feature page is now the group page (`#feature/…`): its Runs, Overview, Decisions and Logs tabs, with this Shaper
+view under Overview.
 
 **Ship as.** Each slice opens a draft pull request when it finishes; merge them in
 order, since each slice's branch starts from the one before. When every slice is

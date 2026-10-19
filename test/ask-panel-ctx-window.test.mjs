@@ -110,7 +110,7 @@ test('composer ring: arc = fill / window with the hover text, amber at 75% and r
       const ctx = makePanel({ fetchHandler: apiHandler() });
       const m = await sendAndFinish(ctx, { usage: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, ctx: 68400 }, totals: T({ ctx: 68400 }) });
       assert.equal(m.title, '68.4k ctx');
-      assert.equal(m.className, 'ask-ctx-ring');
+      assert.equal(m.className, 'btn btn-sm btn-quiet btn-icon ask-ctx-ring');
       assert.equal(arc(m), '0 100');
       ctx.panel.destroy();
     } },

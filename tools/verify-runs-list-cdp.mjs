@@ -1,0 +1,173 @@
+#!/usr/bin/env node
+// tools/verify-runs-list-cdp.mjs — headless-Chrome proof of the Runs list layout (runs redesign §3.3a, Known bugs 5, 8, 9;
+// D27). At 375px and 1440px, in light and dark, it runs the pure layout audit (tools/runs-layout-audit.mjs) over the
+// list, then again with the View menu open, with a row's ⋯ menu open and with the Add to group picker open, and the
+// one-button-style audit (tools/button-audit.mjs). It prints every problem and exits 1 on any. NOT part of `npm test`:
+// it needs Chrome (test/verify-runs-list-cdp.test.mjs keeps its coverage from shrinking).
+// Run: node tools/verify-runs-list-cdp.mjs   (or: npm run verify:runs-list)
+import { spawn, execFileSync } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { auditButtons, BUTTON_SPEC } from './button-audit.mjs';
+import { auditRunsLayout } from './runs-layout-audit.mjs';
+
+const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium'];
+const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p)) || CHROME_PATHS[0];
+const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0
+  ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
+if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
+const PORT = Number(process.env.CDP_PORT || 9337);
+const T0 = Date.now();
+const log = (m) => process.stderr.write(`[${((Date.now() - T0) / 1000).toFixed(1)}s] ${m}\n`);
+
+let chrome = null; let srv = null; let home = null; let proj = null; let profile = null; let failed = 0;
+async function shutdown(code) {
+  try { if (chrome) chrome.kill('SIGKILL'); } catch {}
+  try { if (srv) await new Promise((r) => srv.close(r)); } catch {}
+  for (const d of [home, proj, profile]) { try { if (d) await rm(d, { recursive: true, force: true }); } catch {} }
+  process.exit(code);
+}
+for (const sig of ['SIGINT', 'SIGTERM', 'uncaughtException', 'unhandledRejection']) {
+  process.on(sig, (e) => { if (e && e.stack) console.error(e.stack); shutdown(1); });
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const check = (ok, what, detail = '') => { if (ok) log(`ok   ${what}`); else { failed += 1; log(`FAIL ${what}${detail ? ` — ${detail}` : ''}`); } };
+
+// ---- a sandboxed HOME (settings live there) and WORCA_HOME (the DB), mock engine, then the server in process.
+home = await mkdtemp(path.join(tmpdir(), 'worca-rl-home-'));
+process.env.HOME = home; process.env.USERPROFILE = home;
+process.env.WORCA_HOME = path.join(home, '.worca-cc');
+process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+process.env.WORCA_MOCK = '1';
+proj = await mkdtemp(path.join(tmpdir(), 'worca-rl-proj-'));
+for (const a of [['init', '-q', '-b', 'main'], ['config', 'user.email', 'proof@worca.local'], ['config', 'user.name', 'proof']]) execFileSync('git', a, { cwd: proj });
+await writeFile(path.join(proj, 'README.md'), '# runs list proof\n');
+execFileSync('git', ['add', '-A'], { cwd: proj });
+execFileSync('git', ['commit', '-qm', 'init'], { cwd: proj });
+const { server } = await import(new URL('../ui/server.mjs', import.meta.url).href);
+const { getDb } = await import(new URL('../src/core/db.mjs', import.meta.url).href);
+const { projectKey } = await import(new URL('../src/core/store.mjs', import.meta.url).href);
+const { writeStoreMeta } = await import(new URL('../src/core/artifacts.mjs', import.meta.url).href);
+const { createSliceFeature } = await import(new URL('../src/core/shape/features.mjs', import.meta.url).href);
+const { createTicket } = await import(new URL('../src/core/scheduler.mjs', import.meta.url).href);
+const { createRunGroup, addToGroup } = await import(new URL('../src/core/run-groups.mjs', import.meta.url).href);
+srv = server;
+await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+const base = `http://127.0.0.1:${srv.address().port}`;
+{ const r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ uiLevel: 'expert' }) });
+  if (!r.ok) throw new Error(`could not pin the interface mode: HTTP ${r.status}`); }
+
+// ---- the runs: a 3-slice feature (slice 1 parked at its plan, 2 and 3 waiting), a paused run, a done run with a merged PR,
+// a scheduled ticket and a user group of 2.
+const key = projectKey(proj);
+writeStoreMeta(key, 'project', { key, name: 'Proof', path: proj });
+const now = new Date().toISOString();
+const pipeline = (id, status, title, extra = {}) => getDb().prepare(`INSERT INTO pipelines (id, project_key, target, title, status, phase,
+  cycle, started_at, updated_at, total_cost_usd, total_active_ms, branch, resume_point) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+  .run(id, key, 'project', title, status, status, 0, now, now, extra.cost || 0, 0, JSON.stringify({ source: 'main', feature: `feat/${id}` }),
+    extra.pauseReason ? JSON.stringify({ pauseReason: extra.pauseReason }) : null);
+const sl = (n, title) => ({ id: `s${n}`, title, goal: `Goal ${n}`, inScope: [], outOfScope: [], acceptance: [`ok ${n}`], dependsOn: [], estimate: 'M' });
+pipeline('rl000001', 'paused', 'Run tags and cost allocation · 1/3: Store tags', { pauseReason: 'usage_limit', cost: 1.5 });
+createSliceFeature({ pipelineId: 'rl000001', projectDir: proj, title: 'Run tags and cost allocation',
+  outline: { why: 'proof', slices: ['Store tags', 'Run tags', 'Cost report'].map((t, i) => sl(i + 1, t)) }, perspectives: ['product'], workflowId: 'wf_shape' });
+pipeline('rl000002', 'paused', 'A paused run with a long title that has to be cut at the right column', { pauseReason: 'cost_pipeline' });
+pipeline('rl000003', 'done', 'Merged work', { cost: 2.25 });
+getDb().prepare("UPDATE pipelines SET pr_url = 'https://github.com/o/r/pull/3', pr_number = 3, pr_state = 'MERGED' WHERE id = 'rl000003'").run();
+createTicket({ projectDir: proj, title: 'Nightly docs refresh', request: { prompt: 'docs', projectDir: proj }, runAtMs: Date.now() + 3 * 3600_000 });
+pipeline('rl000004', 'done', 'Billing: invoices');
+pipeline('rl000005', 'stopped', 'Billing: refunds');
+const grp = createRunGroup({ title: 'Billing', pipelineId: 'rl000004' });
+addToGroup({ groupId: grp.id, pipelineId: 'rl000005' });
+pipeline('rl000006', 'done', 'A loose run to add to a group');
+log(`server ${base}`);
+
+// ---- chrome + cdp
+profile = await mkdtemp(path.join(tmpdir(), 'worca-rl-profile-'));
+chrome = spawn(CHROME, ['--headless=new', ...SANDBOX, `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
+  '--window-size=1280,900', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check', '--use-mock-keychain', 'about:blank'],
+{ stdio: ['ignore', 'pipe', 'pipe'] });
+let wsUrl = null;
+const deadline = Date.now() + 60_000;
+while (!wsUrl && Date.now() < deadline) {
+  try {
+    const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
+    const page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl);
+    if (page) wsUrl = page.webSocketDebuggerUrl; else await sleep(200);
+  } catch { await sleep(250); }
+}
+if (!wsUrl) { console.error('no devtools target after 60s'); await shutdown(1); }
+const ws = new WebSocket(wsUrl);
+await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+let msgId = 0; const pending = new Map(); const errors = [];
+ws.onmessage = (e) => {
+  const m = JSON.parse(e.data);
+  if (m.id != null) { const p = pending.get(m.id); pending.delete(m.id); if (p) (m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result)); return; }
+  if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
+};
+function cdp(method, params = {}, ms = 15000) {
+  const id = ++msgId;
+  return new Promise((res, rej) => {
+    const to = setTimeout(() => { pending.delete(id); rej(new Error(`CDP TIMEOUT ${method}`)); }, ms);
+    pending.set(id, { res: (v) => { clearTimeout(to); res(v); }, rej: (er) => { clearTimeout(to); rej(er); } });
+    ws.send(JSON.stringify({ id, method, params }));
+  });
+}
+async function ev(expr) {
+  const r = await cdp('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
+  if (r.exceptionDetails) throw new Error(`EVAL: ${r.exceptionDetails.exception?.description || r.exceptionDetails.text}\n${expr}`);
+  return r.result.value;
+}
+async function waitFor(expr, what, ms = 15000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (await ev(expr)) return true; await sleep(150); }
+  throw new Error(`timed out waiting for ${what}`);
+}
+const AUDIT = `(${auditRunsLayout})(document.getElementById('runs-list'), null, document)`;
+async function audit(where) {
+  const problems = await ev(AUDIT);
+  check(problems.length === 0, `${where}: 0 layout problems`, JSON.stringify(problems.slice(0, 8)));
+}
+const BUTTON_AUDIT = `(${auditButtons})(document.body, ${JSON.stringify(BUTTON_SPEC)}, null)`;
+const closeMenus = () => ev("document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));document.querySelector('.group-picker')?.remove();0");
+
+await cdp('Page.enable'); await cdp('Runtime.enable');
+for (const width of [375, 1440]) {
+  for (const theme of ['light', 'dark']) {
+    const at = `${width}px ${theme}`;
+    await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
+    await cdp('Page.navigate', { url: `${base}/?w=${width}&t=${theme}#runs` });
+    await waitFor("document.querySelectorAll('#runs-list .runs-item').length >= 5", `the list at ${at}`);
+    await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
+    await sleep(400);
+    await audit(`the list, ${at}`);
+    // The View menu.
+    await ev("document.getElementById('runs-view-btn').click();0");
+    await waitFor("!!document.querySelector('.wfv-menu')", `the View menu at ${at}`);
+    await audit(`the View menu, ${at}`);
+    await closeMenus();
+    // A row's ⋯ menu, then Add to group… from the loose run's ⋯.
+    await ev("document.querySelector('#runs-list .runs-item[data-level=\"top\"] > .runs-row-tail .runs-more').click();0");
+    await waitFor("!!document.querySelector('.wfv-menu')", `a row ⋯ menu at ${at}`);
+    await audit(`a row ⋯ menu, ${at}`);
+    await closeMenus();
+    await ev(`(() => { const a = document.querySelector('#runs-list a.runs-row[data-pipeline-id="rl000006"]');
+      a.closest('.runs-item').querySelector(':scope > .runs-row-tail .runs-more').click(); })();0`);
+    await waitFor("!!document.querySelector('.wfv-menu')", `the loose run's ⋯ menu at ${at}`);
+    await ev("[...document.querySelectorAll('.wfv-menu [role=\"menuitem\"]')].find((n) => n.textContent.includes('Add to group')).click();0");
+    await waitFor("!!document.querySelector('.group-picker')", `the group picker at ${at}`);
+    await audit(`the Add to group picker, ${at}`);
+    if (width === 375) {
+      const gap = await ev("innerWidth - Math.round(document.querySelector('.group-picker').getBoundingClientRect().width)");
+      check(gap === 16, `${at}: the Add to group picker is the full width minus 16px`, `innerWidth - width = ${gap}`);
+    }
+    await closeMenus();
+    const bad = await ev(BUTTON_AUDIT);
+    check(bad.length === 0, `${at}: every button is .btn in 3 sizes x 4 variants`, JSON.stringify(bad.slice(0, 8)));
+  }
+}
+check(errors.length === 0, 'no page exceptions', errors.slice(0, 4).join(' | '));
+log(failed ? `${failed} check(s) failed` : 'all checks passed');
+await shutdown(failed ? 1 : 0);

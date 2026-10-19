@@ -182,7 +182,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       : (missed ? `was due ${when(t.runAt)}` : `${when(t.runAt)}${countdown(t.runAt) ? ` · in ${countdown(t.runAt)}` : ''}`);
     const acts = h('div', { class: 'sched-acts' });
     if (!firing) {
-      const runNow = h('button', { type: 'button', class: 'btn btn-mini', text: resumeTarget ? 'Resume now' : 'Run now' });
+      const runNow = h('button', { type: 'button', class: 'btn btn-sm', text: resumeTarget ? 'Resume now' : 'Run now' });
       runNow.addEventListener('click', () => act(async () => {
         const out = await api('POST', `/api/schedules/${t.id}/run-now`);
         if (out.status === 'failed') throw new Error(out.failReason || 'The run could not be started.');
@@ -190,7 +190,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       }, 'Run started'));
       acts.append(runNow);
       if (!t.scheduleId) {
-        const move = h('button', { type: 'button', class: 'btn btn-mini', text: chained ? 'Change…' : (missed ? 'Reschedule' : 'Change time') });
+        const move = h('button', { type: 'button', class: 'btn btn-sm', text: chained ? 'Change…' : (missed ? 'Reschedule' : 'Change time') });
         move.addEventListener('click', async () => {
           const res = await openScheduleSheet({
             mode: 'ticket', runTitle: t.title || '', defaults: model.defaults,
@@ -199,7 +199,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
           });
           if (res) act(() => api('PATCH', `/api/schedules/${t.id}`, res), 'Schedule changed');
         });
-        const cancel = h('button', { type: 'button', class: 'btn btn-danger btn-mini', text: missed ? 'Dismiss' : 'Cancel' });
+        const cancel = h('button', { type: 'button', class: 'btn btn-danger btn-sm', text: missed ? 'Dismiss' : 'Cancel' });
         cancel.addEventListener('click', async () => {
           if (!missed) {
             // The same sentence, cap and guard as app.js's afterDependentsNote (the Archive note) — not
@@ -224,7 +224,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       }
     }
     if (!t.scheduleId && !missed) {
-      const next = h('button', { type: 'button', class: 'btn btn-mini', text: 'Schedule next…', title: 'Schedule a run that starts after this one' });
+      const next = h('button', { type: 'button', class: 'btn btn-sm', text: 'Schedule next…', title: 'Schedule a run that starts after this one' });
       next.addEventListener('click', () => { location.hash = `#new/after/t:${t.id}`; });
       acts.append(next);
     }
@@ -257,22 +257,22 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
 
     const acts = h('div', { class: 'sched-acts' });
     if (!ended) {
-      const runNow = h('button', { type: 'button', class: 'btn btn-mini', text: 'Run now', title: 'Start one extra run now — the schedule itself does not shift' });
+      const runNow = h('button', { type: 'button', class: 'btn btn-sm', text: 'Run now', title: 'Start one extra run now — the schedule itself does not shift' });
       runNow.addEventListener('click', () => act(async () => {
         const out = await api('POST', `/api/schedules/${s.id}/run-now`);
         if (out.status === 'failed') throw new Error(out.failReason || 'The run could not be started.');
         if (out.status === 'fired' && deps.openRun) deps.openRun({ runId: out.runId });
       }, 'Run started'));
-      const skip = h('button', { type: 'button', class: 'btn btn-mini', text: 'Skip next', hidden: paused });
+      const skip = h('button', { type: 'button', class: 'btn btn-sm', text: 'Skip next', hidden: paused });
       skip.addEventListener('click', () => act(() => api('POST', `/api/schedules/${s.id}/skip-next`), 'Next run skipped'));
-      const edit = h('button', { type: 'button', class: 'btn btn-mini', text: 'Edit' });
+      const edit = h('button', { type: 'button', class: 'btn btn-sm', text: 'Edit' });
       edit.addEventListener('click', async () => {
         const res = await openScheduleSheet({ mode: 'series', runTitle: s.title || '', defaults: model.defaults, initial: { rule: s.rule, overlap: s.overlap, maxFailures: s.maxFailures, ifMissed: s.ifMissed, graceMin: s.graceMin } });
         if (res) act(() => api('PATCH', `/api/schedules/${s.id}`, { rule: res.repeat.rule, overlap: res.repeat.overlap, maxFailures: res.repeat.maxFailures, ifMissed: res.ifMissed, graceMin: res.graceMin }), 'Schedule changed');
       });
       acts.append(runNow, skip, edit);
     }
-    const del = h('button', { type: 'button', class: 'btn btn-danger btn-mini', text: 'Delete' });
+    const del = h('button', { type: 'button', class: 'btn btn-danger btn-sm', text: 'Delete' });
     del.addEventListener('click', async () => {
       if (!(await deps.confirmModal({ title: 'Delete schedule', message: `Delete “${s.title || 'this schedule'}”?\nIt stops repeating. Runs it already started stay in Runs.`, confirmLabel: 'Delete schedule' }))) return;
       act(() => api('DELETE', `/api/schedules/${s.id}`), 'Schedule deleted');
@@ -353,17 +353,17 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     const series = n.scheduleId ? model.schedules.find((s) => s.id === n.scheduleId) : null;
     const acts = h('div', { class: 'sched-feed-acts' });
     if (!n.resolvedAt && n.kind === 'missed' && ticket && ticket.status === 'missed') {
-      const b = h('button', { type: 'button', class: 'btn btn-mini', text: 'Run now' });
+      const b = h('button', { type: 'button', class: 'btn btn-sm', text: 'Run now' });
       b.addEventListener('click', () => act(() => api('POST', `/api/schedules/${ticket.id}/run-now`), 'Run started'));
       acts.append(b);
     }
     if (!n.resolvedAt && n.kind === 'paused' && series && series.status === 'paused') {
-      const b = h('button', { type: 'button', class: 'btn btn-mini', text: 'Resume schedule' });
+      const b = h('button', { type: 'button', class: 'btn btn-sm', text: 'Resume schedule' });
       b.addEventListener('click', () => act(() => api('POST', `/api/schedules/${series.id}/resume`), 'Resumed'));
       acts.append(b);
     }
     if (n.pipelineId && deps.openRun) {
-      const b = h('button', { type: 'button', class: 'btn btn-mini sched-feed-open', text: 'Open run' });
+      const b = h('button', { type: 'button', class: 'btn btn-sm sched-feed-open', text: 'Open run' });
       b.addEventListener('click', () => deps.openRun({ pipelineId: n.pipelineId, projectDir: n.projectDir }));
       acts.append(b);
     }
@@ -394,7 +394,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       b.addEventListener('click', () => { model.filter = key; paintFeed(); });
       seg.append(b);
     }
-    const markAll = h('button', { type: 'button', class: 'btn btn-mini', text: 'Mark all read', disabled: unread === 0 });
+    const markAll = h('button', { type: 'button', class: 'btn btn-sm', text: 'Mark all read', disabled: unread === 0 });
     markAll.addEventListener('click', async () => { try { await api('POST', '/api/notifications/read-all', {}); } catch (err) { say(err.message, 'err'); } await loadFeed(); });
     const body = rows.length
       ? rows.map(feedItem)

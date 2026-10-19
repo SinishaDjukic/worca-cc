@@ -179,9 +179,12 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Run page Overview: Perspective checklists (Shaper, gated): the latest review cycle as one summary line, unmet items open with their evidence, met items behind "Show N met items", earlier cycles behind "Earlier cycles" | S |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
 | Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
+| Runs list: the View menu (Show with counts, Group by, Started by on a shared deployment, Select) and its chip; the row and member checkboxes, Select all, Space / ⌘A / Esc; the action bar's Stop and Archive (Undo); the row ⋯ menu's Stop, Archive, Open PR and Open feature | S |
+| Runs list: Delete (the action bar and the row ⋯ menu); Add to group… and Remove from group (the row ⋯ menu) | A |
+| Run page: "Add to group…" on the Group row of a run in no group, the same as in the list's row menu | A |
 | Resume menu: Resume at HH:MM (when the limit resets) | A |
 | Run page glance: the run's name as the page title, the status line (state, then the step), time · cost (with its Away mode share) · changes, the Live view switch and its fogged graph of the running step(s), parallel steps (Now), one row per tab, a waiting question below its own heading, the result actions | S |
-| Run progress: the bar under the status line (Plan · Build · Review · Ready, blue / amber / green), its text ("Build · task 2 of 4") in place of "Step: …", the chain's overall bar ("Run 2 of 3"), the Runs list's thin line and chain row with its expander | S |
+| Run progress: the bar under the status line (Plan · Build · Review · Ready, blue / amber / green), its text ("Build · task 2 of 4") in place of "Step: …", the chain's overall bar ("Run 2 of 3"), the Runs list's group bar and group row with its ⌄ | S |
 | Run progress hover breakdown: stages with their agents and states, review pass count | A |
 | Workflow graph with status colours, gate pip, End result; Workflow, Overview and Q&A tabs | S |
 | Run header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the Overview cost card's Away mode share | S |
@@ -207,7 +210,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | History: usage-limit notice | S |
 | "Files changed" list on the Overview | S — the stand-in for the Diff tab |
 | Overview: Perspective checklists, as on the run page (shaped runs) | S |
-| Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; ⋯ menu (Archive, Restore, Report); Artifacts tab; Archived toggle in the Runs header (with Restore) | A |
+| Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; ⋯ menu (Archive, Restore, Report); Artifacts tab | A |
 | Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
 | Ship It modal: Open as draft checkbox, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |

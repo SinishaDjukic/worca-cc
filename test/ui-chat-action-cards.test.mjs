@@ -109,7 +109,7 @@ test('run-stop: the warning itself (R7) — title, run, branch, copy, Keep runni
       const stop = el.querySelector('[data-chat-stop-confirm]');
       assert.equal(keep.textContent, 'Keep running');
       assert.equal(stop.textContent, 'Stop pipeline');
-      assert.ok(stop.classList.contains('is-danger'), 'the Ask cards\' red button (4.5:1 in both themes)');
+      assert.ok(stop.classList.contains('btn-danger'), 'the danger button: red text on the light red fill');
       click(stop);
       assert.equal(stop.textContent, 'Stopping…'); assert.equal(keep.disabled, true);
       await tick();
@@ -263,8 +263,10 @@ test('refine cycle 2: the action-card rules that keep every text at 4.5:1 in lig
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const p2 = css.slice(css.indexOf('/* ===== Chat P2: Action cards ===== */'));
   assert.ok(!/is-reverted[^{]*\{[^}]*opacity/.test(p2), 'reverted text is never faded with opacity');
-  for (const rule of ['.ask-actcard-stub{color:var(--ink-2);overflow-wrap:anywhere;}', ':is(.ask-rcard,.ask-prcard) .ask-mcard-arrow{color:var(--ink-2);}',
-    '.ask-stopcard .ask-card-start.is-danger:hover{box-shadow:var(--shadow-hover);}']) assert.ok(p2.includes(rule), rule);
+  for (const rule of ['.ask-actcard-stub{color:var(--ink-2);overflow-wrap:anywhere;}', ':is(.ask-rcard,.ask-prcard) .ask-mcard-arrow{color:var(--ink-2);}']) assert.ok(p2.includes(rule), rule);
+  assert.ok(!p2.includes('.ask-card-start'), 'the stop button is .btn-danger: no skin of its own');
+  const stop = buildRunStopCard(STOP, ctxOf().ctx).el.querySelector('[data-chat-stop-confirm]');
+  assert.deepEqual([...stop.classList], ['btn', 'btn-sm', 'btn-danger'], 'red text on the light red fill, a small card-footer button');
 });
 
 test('refine cycle 3 mutation killers: every Revert outcome is spoken once by name — Away now as "Away mode", "Already reverted" too', async () => {
@@ -282,8 +284,12 @@ test('refine cycle 3 mutation killers: a disabled Revert / Keep running / Not no
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const p2 = css.slice(css.indexOf('/* ===== Chat P2: Action cards ===== */'));
-  for (const rule of [':is(.ask-rcard,.ask-stopcard,.ask-prcard) .ask-card-not-now:disabled{opacity:.55;cursor:default;background:transparent;color:var(--ink-2);}',
-    '.ask-rcard.is-reverted .ask-rcard-change .ask-mcard-after{color:var(--ink-2);font-weight:400;}']) assert.ok(p2.includes(rule), rule);
+  assert.ok(p2.includes('.ask-rcard.is-reverted .ask-rcard-change .ask-mcard-after{color:var(--ink-2);font-weight:400;}'));
+  // Revert / Keep running / Not now are .btn-quiet: its hover skips a disabled button, so the --ink-2 text stays.
+  assert.ok(css.includes('.btn-quiet{background:transparent;border-color:transparent;color:var(--ink-2);}'));
+  assert.ok(css.includes('.btn-quiet:hover:not(:disabled){'));
+  const keep = buildRunStopCard(STOP, ctxOf().ctx).el.querySelector('[data-chat-stop-keep]');
+  assert.ok(keep.classList.contains('btn-quiet') && keep.classList.contains('ask-card-not-now'));
 });
 
 test('pull-request: an applied card shows each PR\'s watch as one read-only line, re-read on pr-watch-changed; hidden when not watched', async () => {

@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { checkRows } from './helpers/rows.mjs';
-import { paintProgressBar } from '../ui/public/run-progress-bar.mjs';
+import { paintRunStatus } from '../ui/public/run-status-card.mjs';
 
 import {
   UI_LEVELS, LEVEL_INFO, normalizeLevel, levelShows, levelAtLeast, currentLevel, tagLevel, keepVisible,
@@ -138,18 +138,17 @@ test('level helpers: ordered/cumulative with unknown -> expert, levelAtLeast rea
 
 test('run progress bars are Simple (no data-min-level); only the hover breakdown is Advanced', () => {
   const doc = new JSDOM(html).window.document;
-  const tpl = [...doc.querySelectorAll('template')].find((t) => t.content.querySelector('.rd-prog'));
-  assert.ok(tpl, 'the run page template carries the progress hosts');
-  const prog = { mode: 'stages', fraction: 0.4, tone: 'blue', stages: [], passes: 0, text: 'Build' };
-  for (const sel of ['.rd-prog', '.rd-prog-chain']) {
-    const host = tpl.content.querySelector(sel);
-    assert.ok(host, `${sel} is in the shell`);
-    assert.equal(host.hasAttribute('data-min-level'), false, `${sel} carries no data-min-level`);
-  }
-  const host = tpl.content.querySelector('.rd-prog');
-  paintProgressBar(host, prog);
-  assert.equal(host.hasAttribute('data-min-level'), false, 'painting does not gate the bar');
-  assert.equal(host.querySelector('.run-prog-detail').dataset.minLevel, 'advanced', 'the hover breakdown is Advanced');
+  // Runs redesign slice 4 (D19): the run page's bar lives in the shared status block (run-status-card.mjs).
+  const tpl = [...doc.querySelectorAll('template')].find((t) => t.content.querySelector('.rd-now-top.run-status'));
+  assert.ok(tpl, 'the run page template carries the status block host');
+  const host = tpl.content.querySelector('.rd-now-top.run-status');
+  assert.equal(host.hasAttribute('data-min-level'), false, 'the status block carries no data-min-level');
+  const prog = { mode: 'stages', fraction: 0.4, tone: 'blue', stages: [], passes: 0, text: 'Build', label: 'Build' };
+  paintRunStatus(host, { state: 'working', word: 'Working', line: 'Build', dot: 'peach', pulse: true, symbol: null, actions: [], progress: prog });
+  const bar = host.querySelector('.run-status-bar');
+  assert.equal(bar.hidden, false);
+  for (const el of [host, bar, host.querySelector('.run-status-group')]) assert.equal(el.hasAttribute('data-min-level'), false, 'painting does not gate the bar');
+  assert.equal(bar.querySelector('.run-prog-detail').dataset.minLevel, 'advanced', 'the hover breakdown is Advanced');
 });
 
 // ── the CSS gate ──────────────────────────────────────────────────────────────

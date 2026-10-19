@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <title>Worca CC</title>
+    <title>Worca</title>
     <link rel="stylesheet" href="/style.css" />
     <!-- Feature flags (docs/feature-flags.md): the server fills this with one rule per flag that is off. -->
     <style id="flag-gates"></style>
@@ -23,7 +23,7 @@
           <a class="logo-mark" href="#chat/new" aria-label="worca — Chat" title="Chat"></a>
           <!-- The server's mock mode (WS hello serverMock, app.js#applyServerMock): every run is a mock. -->
           <span class="badge amber side-mock-pill" id="side-mock-pill" title="Server started with WORCA_MOCK=1 — all runs are mock." hidden>MOCK</span>
-          <button type="button" class="side-close" id="side-close" aria-label="Close menu" title="Close menu">
+          <button type="button" class="btn btn-quiet btn-icon side-close" id="side-close" aria-label="Close menu" title="Close menu">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
           </button>
         </div>
@@ -195,7 +195,7 @@
                  <aside id="side-rail"> as a slide-in drawer, so every count, the live-run list,
                  Running actions and the account corner come along. app.js#setMobileNavOpen owns
                  aria-expanded, the scrim and the inert page behind (this bar included). -->
-            <button type="button" class="mbar-menu" id="mbar-menu" aria-controls="side-rail" aria-expanded="false" aria-label="Menu" title="Menu">
+            <button type="button" class="btn btn-quiet btn-icon mbar-menu" id="mbar-menu" aria-controls="side-rail" aria-expanded="false" aria-label="Menu" title="Menu">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
               <span class="nav-rollup" id="mbar-rollup" hidden title="A pipeline needs your input"></span>
             </button>
@@ -204,7 +204,7 @@
                  panel icon: a rounded frame with an inset bar, a thin line while the menu is open
                  and a filled block while it is a rail — style.css swaps them off aria-expanded,
                  which app.js#applySidebarCollapsed keeps (with the label). -->
-            <button type="button" class="side-toggle" id="side-toggle"
+            <button type="button" class="btn btn-quiet btn-icon side-toggle" id="side-toggle"
                     aria-expanded="true" aria-controls="side-rail"
                     title="Collapse menu" aria-label="Collapse menu">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="4.5"></rect><path class="side-toggle-line" d="M7.25 9v6"></path><rect class="side-toggle-fill" x="6" y="8.25" width="4" height="7.5" rx="1.5" fill="currentColor" stroke="none"></rect></svg>
@@ -217,7 +217,7 @@
                  Phones fold the pill into #tsearch-open, which shows the input as a full-width row
                  with #tsearch-close. The script writes the chip (⌘K on a Mac, Ctrl K elsewhere). -->
             <div class="tsearch">
-              <button type="button" class="tsearch-open" id="tsearch-open" data-min-level="simple" aria-label="Search" title="Search">
+              <button type="button" class="btn btn-quiet btn-icon tsearch-open" id="tsearch-open" data-min-level="simple" aria-label="Search" title="Search">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
               </button>
               <div class="tsearch-field">
@@ -226,7 +226,7 @@
                        aria-label="Search or ask" aria-autocomplete="list" aria-expanded="false" aria-controls="tsearch-pop"
                        aria-keyshortcuts="Meta+K Control+K" autocomplete="off" spellcheck="false">
                 <kbd class="tsearch-kbd" aria-hidden="true"></kbd>
-                <button type="button" class="tsearch-close" id="tsearch-close" data-min-level="simple" aria-label="Close search" title="Close search">
+                <button type="button" class="btn btn-quiet btn-icon tsearch-close" id="tsearch-close" data-min-level="simple" aria-label="Close search" title="Close search">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
                 </button>
               </div>
@@ -237,7 +237,7 @@
             <!-- Activity (activity-menu.mjs): what needs you, what is running and what is scheduled,
                  a list with no actions. One badge: the amber Needs-you count (the Runs badge's own
                  number), else the running count. The dialog hangs under the button (side-flyout.mjs). -->
-            <button type="button" class="topnav-act" id="topnav-activity" data-min-level="simple" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-pop" aria-label="Activity">
+            <button type="button" class="btn btn-quiet topnav-act" id="topnav-activity" data-min-level="simple" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-pop" aria-label="Activity">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
               <span class="topnav-act-label">Activity</span>
               <span class="topnav-badge" id="topnav-activity-n" hidden></span>
@@ -246,7 +246,7 @@
             <!-- New run: the way to the #new page, at every interface mode and every width (the
                  sidebar has no row for it). app.js routes it like a nav row; it is never lit as
                  the open page (no data-nav). -->
-            <button type="button" class="topnav-new" id="topnav-new" data-min-level="simple" aria-label="New run">
+            <button type="button" class="btn btn-primary topnav-new" id="topnav-new" data-min-level="simple" aria-label="New run">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4.5v15a1 1 0 0 0 1.5.9l12-7.5a1 1 0 0 0 0-1.8l-12-7.5A1 1 0 0 0 6 4.5Z"></path></svg>
               <span class="topnav-new-label">New run</span>
             </button>
@@ -259,7 +259,7 @@
         <div id="level-banner" class="level-banner" role="status" hidden>
           <span class="lv-pill" id="level-banner-pill"></span>
           <span class="level-banner-text" id="level-banner-text"></span>
-          <button type="button" class="btn btn-ghost btn-mini" id="level-banner-switch" data-mode-set=""></button>
+          <button type="button" class="btn btn-sm" id="level-banner-switch" data-mode-set=""></button>
         </div>
 
         <!-- ===== VIEW: CHAT (worca Chat): ask-panel.mjs builds div.chat-page into this section ===== -->
@@ -281,8 +281,8 @@
                   <label for="presetSelect">Preset</label>
                   <select id="presetSelect"><option value="">No preset</option></select>
                   <span id="preset-chip" class="chip" hidden></span>
-                  <button type="button" id="preset-save" class="btn-ghost btn-mini">Save current setup…</button>
-                  <button type="button" id="preset-update" class="btn-ghost btn-mini" hidden>Update preset</button>
+                  <button type="button" id="preset-save" class="btn btn-sm">Save current setup…</button>
+                  <button type="button" id="preset-update" class="btn btn-sm" hidden>Update preset</button>
                   <div id="preset-broken"></div>
                 </div>
                 <!-- Target switch and the thing it selects share one row: they are one
@@ -320,12 +320,12 @@
                     <input id="newProjectName" type="text" placeholder="Project name" spellcheck="false" />
                     <div class="path-row">
                       <input id="newProjectPath" type="text" placeholder="/absolute/path/to/project" spellcheck="false" />
-                      <button type="button" id="newProjectBrowse" class="btn btn-ghost btn-mini" title="Pick the project folder">Browse&hellip;</button>
-                      <button type="button" id="newProjectBrowseMany" class="btn btn-ghost btn-mini" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
+                      <button type="button" id="newProjectBrowse" class="btn btn-sm" title="Pick the project folder">Browse&hellip;</button>
+                      <button type="button" id="newProjectBrowseMany" class="btn btn-sm" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
                     </div>
                     <div class="add-project-actions">
-                      <button type="button" id="addProjectCancel" class="btn btn-ghost btn-mini">Cancel</button>
-                      <button type="button" id="addProjectSave" class="btn btn-primary btn-mini">Save</button>
+                      <button type="button" id="addProjectCancel" class="btn btn-sm">Cancel</button>
+                      <button type="button" id="addProjectSave" class="btn btn-primary btn-sm">Save</button>
                     </div>
                     <small class="hint" id="addProjectMsg"></small>
                   </div>
@@ -433,7 +433,7 @@
                   <div id="markdown-pane" class="source-pane hidden">
                     <textarea id="promptMarkdown" name="promptMarkdown" class="textarea" rows="6" style="margin-top:11px" placeholder="Paste a markdown spec, or load a .md file below&hellip;"></textarea>
                     <div class="file" style="margin-top:11px">
-                      <button type="button" class="pick" data-pick="md">Load .md file</button>
+                      <button type="button" class="btn btn-sm pick" data-pick="md">Load .md file</button>
                       <span id="mdFileName" class="state hint"></span>
                       <input id="mdFile" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden />
                     </div>
@@ -456,7 +456,7 @@
                 <div class="field field-compact">
                   <label>Extra files <span class="opt">(optional)</span></label>
                   <div class="file">
-                    <button type="button" class="pick" data-pick="extras">Choose files</button>
+                    <button type="button" class="btn btn-sm pick" data-pick="extras">Choose files</button>
                     <span class="state" id="extrasNote">Leave empty and the run gets no extra files.</span>
                     <input id="extras" type="file" multiple hidden />
                   </div>
@@ -532,8 +532,8 @@
                       <span class="agents-wf" id="agentsWorkflow"></span>
                       <span class="agents-summary" id="agentsSummary">all defaults</span>
                       <span class="agents-actions">
-                        <button type="button" id="agentsPromote" class="btn-ghost btn-mini" data-min-level="expert" hidden>Save as workflow defaults</button>
-                        <button type="button" id="agentsReset" class="btn-ghost btn-mini" hidden>Reset</button>
+                        <button type="button" id="agentsPromote" class="btn btn-sm" data-min-level="expert" hidden>Save as workflow defaults</button>
+                        <button type="button" id="agentsReset" class="btn btn-sm" hidden>Reset</button>
                       </span>
                     </div>
                     <div id="agents-rows"></div>
@@ -630,12 +630,12 @@
                   <!-- Split button: Start run stays the primary action; the caret opens the
                        other way to start — Schedule… (once, later, or on a repeat). -->
                   <div class="btn-split" id="start-split">
-                    <button type="submit" id="start-btn" class="btn-go">
+                    <button type="submit" id="start-btn" class="btn btn-lg btn-primary">
                       <svg id="start-btn-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4Z"></path></svg>
                       <svg id="start-btn-clock" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7.5V12l3 2"></path></svg>
                       <span id="start-btn-label">Start run</span>
                     </button>
-                    <button type="button" id="start-more" class="btn-split-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" aria-controls="start-menu" title="More ways to start" aria-label="More ways to start">
+                    <button type="button" id="start-more" class="btn btn-lg btn-primary btn-icon btn-split-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" aria-controls="start-menu" title="More ways to start" aria-label="More ways to start">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
                     </button>
                     <div class="btn-split-menu" id="start-menu" role="menu" hidden>
@@ -667,48 +667,31 @@
         <!-- ===== VIEW: RUNS — active, scheduled and finished runs: one list, one content pane ===== -->
         <section class="view hidden" data-view="runs">
           <div class="runs-shell" id="runs-shell" data-layout="split">
-            <div class="runs-list-pane" id="runs-list-pane">
+            <!-- tabindex="-1": a click on the pane's blank area keeps focus here, so ⌘A / Ctrl+A reaches its keydown listener. -->
+            <div class="runs-list-pane" id="runs-list-pane" tabindex="-1">
               <div class="runs-head">
-                <span class="runs-head-tools">
-                  <!-- "Group by" (runs-list.mjs RUNS_GROUPINGS): app.js keeps aria-checked and the menu. -->
-                  <span class="runs-group-wrap">
-                    <button type="button" class="runs-search-btn runs-group-btn" id="runs-group-btn" aria-label="Group runs"
-                            title="Group runs" aria-haspopup="menu" aria-expanded="false" aria-controls="runs-group-menu">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h11M4 18h7"></path></svg>
-                    </button>
-                    <div class="runs-group-menu" id="runs-group-menu" role="menu" aria-label="Group runs by" hidden>
-                      <button type="button" role="menuitemradio" data-group-by="project" aria-checked="true">Group by project</button>
-                      <button type="button" role="menuitemradio" data-group-by="date" aria-checked="false">Group by date</button>
-                    </div>
-                  </span>
-                  <!-- Archived runs (issue #575): the soft-deleted list, restore included. Advanced
-                       (docs/ui-levels.md). A header toggle, not a fifth chip: it swaps the list's
-                       source rather than narrowing it, and the chip row has no room at the pane's floor. -->
-                  <button type="button" class="runs-search-btn runs-archived-btn" id="runs-archived-btn" data-min-level="advanced"
-                          aria-label="Archived runs" title="Archived runs" aria-pressed="false">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5"></rect><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"></path><path d="M10 13h4"></path></svg>
-                  </button>
-                  <button type="button" class="runs-search-btn" id="runs-search-btn" aria-label="Search runs"
-                          aria-expanded="false" aria-controls="runs-search-row">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg>
-                  </button>
-                </span>
+                <h2 class="runs-head-title">Runs</h2>
+                <!-- The one View menu (runs-view-menu.mjs): Show, Group by, Started by, Select. -->
+                <button type="button" class="btn btn-sm btn-quiet runs-view-btn" id="runs-view-btn" aria-haspopup="menu" aria-expanded="false">
+                  View <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9.5l6 6 6-6"></path></svg>
+                </button>
+                <input type="checkbox" class="runs-check runs-all" id="runs-all" aria-label="Select all visible runs">
               </div>
-              <div class="runs-search-row" id="runs-search-row" hidden>
-                <input type="search" id="runs-search" class="runs-search" placeholder="Status, project or name"
-                       aria-label="Search runs by status, project or name" autocomplete="off" spellcheck="false">
+              <div class="runs-view-chip" id="runs-view-chip" hidden>
+                <span class="runs-view-chip-t"></span>
+                <button type="button" class="btn btn-sm btn-quiet btn-icon runs-view-reset" aria-label="Reset view" title="Reset view">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"></path></svg>
+                </button>
               </div>
-              <!-- Which runs the list shows (runs-list.mjs RUNS_FILTERS); app.js keeps aria-pressed. -->
-              <div class="seg runs-filter" id="runs-filter" role="group" aria-label="Show runs">
-                <button type="button" data-filter="all" aria-pressed="true" class="on">All</button>
-                <button type="button" data-filter="live" aria-pressed="false">Live</button>
-                <button type="button" data-filter="finished" aria-pressed="false">Finished</button>
-                <button type="button" data-filter="needs" aria-pressed="false">Needs you</button>
-              </div>
-              <div class="select-wrap runs-tag-wrap" data-flag="runTags"><select id="runs-tag" class="select runs-tag" aria-label="Filter by tag"><option value="">All tags</option></select></div>
-              <!-- "Started by" pills, shared deployments only: one scrolling row. Built by renderRunsPeople(). -->
-              <div class="hist-filter runs-people" id="historyFilter" role="group" aria-label="Filter runs by who started them" hidden></div>
               <div class="runs-list" id="runs-list" aria-label="Runs"></div>
+              <!-- The selection's actions (runs-selection.mjs): each shows how many runs it applies to. -->
+              <div class="runs-bulk" id="runs-bulk" role="toolbar" aria-label="Selected runs" hidden>
+                <span class="runs-bulk-n" id="runs-bulk-n">0 selected</span>
+                <button type="button" class="btn btn-sm" data-bulk="stop">Stop <span class="runs-bulk-c">0</span></button>
+                <button type="button" class="btn btn-sm" data-bulk="archive">Archive <span class="runs-bulk-c">0</span></button>
+                <button type="button" class="btn btn-sm btn-danger" data-bulk="delete" data-min-level="advanced">Delete <span class="runs-bulk-c">0</span></button>
+                <button type="button" class="btn btn-sm btn-quiet" data-bulk="cancel">Cancel</button>
+              </div>
             </div>
             <div class="runs-pane" id="runs-pane" data-kind="">
               <div class="runs-empty" id="runs-empty">
@@ -726,7 +709,7 @@
 
           <!-- The live-log bar (filters + auto-scroll switch), cloned by the run page's Logs tab and by History. -->
           <template id="log-bar-tpl">
-            <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" data-min-level="expert" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" data-min-level="expert" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" data-min-level="expert" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" data-min-level="expert" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec" hidden title="Showing one execution — click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true">×</span></button><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
+            <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" data-min-level="expert" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" data-min-level="expert" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" data-min-level="expert" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" data-min-level="expert" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec btn btn-sm" hidden title="Showing one execution — click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy btn btn-sm btn-quiet" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
           </template>
 
           <!-- clone target for the live run in the pane (#running/<runId>) -->
@@ -736,11 +719,11 @@
                  The route picks the mode: #running/<id> vs #running/<id>/details[/<tab>]. -->
             <div class="rd" data-mode="glance">
               <div class="rd-bar">
-                <button type="button" class="rd-back btn-ghost" aria-label="Back to the runs list">
+                <button type="button" class="rd-back btn" aria-label="Back to the runs list">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                   Runs
                 </button>
-                <button type="button" class="rd-to-run btn-ghost" hidden aria-label="Back to the run">
+                <button type="button" class="rd-to-run btn" hidden aria-label="Back to the run">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                   <span class="rd-to-run-label">Run</span>
                 </button>
@@ -754,7 +737,7 @@
                   <!-- Chain a run after this one (the list card's old schedule-after button): "Schedule a run
                        after this" while it goes, "Start a follow-up run" once it ends (paintRdHeader). The
                        saved run's bar carries the same button (.hd-after). -->
-                  <button type="button" class="rd-after" data-min-level="advanced" title="Schedule a run after this" aria-label="Schedule a run after this" hidden>
+                  <button type="button" class="btn rd-after" data-min-level="advanced" title="Schedule a run after this" aria-label="Schedule a run after this" hidden>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h12"></path><path d="M13 6l6 6-6 6"></path></svg>
                     <span class="rd-btn-label">Run after</span>
                   </button>
@@ -763,13 +746,15 @@
                   <!-- Split Resume: the caret (Advanced, paused only) opens the engine choice ("Resume on
                        <saved engine>", and "Resume on <other engine>" after a usage limit the engine hit,
                        app.js#paintResumeEngineItems) and "Resume at…", like #start-split. -->
+                  <!-- The one model's other actions (slice 4, D4): made here next to the Resume split and Stop. -->
+                  <span class="rd-actions"></span>
                   <div class="btn-split mini rd-resume-split">
-                    <button type="button" class="rd-pause" data-action="pause" hidden>
+                    <button type="button" class="btn rd-pause" data-action="pause" hidden>
                       <svg class="ico-pause" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
                       <svg class="ico-play" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg>
                       <span class="rd-btn-label">Pause</span>
                     </button>
-                    <button type="button" class="btn-split-more rd-resume-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" title="More ways to resume" aria-label="More ways to resume" hidden>
+                    <button type="button" class="btn btn-icon btn-split-more rd-resume-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" title="More ways to resume" aria-label="More ways to resume" hidden>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
                     </button>
                     <div class="btn-split-menu rd-resume-menu" role="menu" hidden>
@@ -780,16 +765,16 @@
                       <button type="button" role="menuitem" class="rd-resume-at"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
-                  <button type="button" class="rd-stop" hidden>
+                  <button type="button" class="btn btn-danger rd-stop" hidden>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
                     <span class="rd-btn-label">Stop</span>
                   </button>
                   <!-- Opens the terminal pane in this page's folder (docs/terminal.md); app.js wires every .term-opener. -->
-                  <button type="button" class="term-opener btn-ghost" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
+                  <button type="button" class="term-opener btn" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7.5 9.5l3 2.5-3 2.5"></path><path d="M13 15h3.5"></path></svg>
                   </button>
                   <!-- Shaper (D31): a shaped run's Away mode, Run after and terminal in one menu (paintRdHeader). -->
-                  <button type="button" class="rd-bar-more btn-ghost" aria-haspopup="menu" aria-expanded="false" title="More for this run" aria-label="More for this run" hidden>
+                  <button type="button" class="btn btn-quiet btn-icon rd-bar-more" aria-haspopup="menu" aria-expanded="false" title="More for this run" aria-label="More for this run" hidden>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
                   </button>
                 </span>
@@ -804,23 +789,18 @@
                        The meta line's text is its first node (paintPageHead); the feature branch chip
                        copies the name, like the Details header's (paintPageBranch). -->
                   <header class="rd-page-head">
-                    <h1 class="rd-page-title" tabindex="-1"></h1>
-                    <p class="rd-page-meta"><button type="button" class="rd-page-branch" hidden data-min-level="advanced" aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
+                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1><span class="kind-chip">Run</span></div>
+                    <p class="rd-page-meta"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
+                    <!-- The Group row (runs redesign slice 4, D18): its own element, repainted through a signature. -->
+                    <p class="rd-group-line" hidden></p>
                   </header>
                 </div>
                 <div class="rd-sheet">
                   <!-- The card's head: the status line top left, the Live view switch top right. -->
                   <div class="rd-sheet-head">
-                    <div class="rd-now-top">
-                      <span class="rd-orb"></span>
-                      <div class="rd-now-text">
-                        <h2 class="rd-now-title"></h2>
-                        <p class="rd-now-sub"></p>
-                      </div>
-                    </div>
-                    <div class="rd-slice-line" hidden></div>
-                    <div class="run-prog run-prog-chain rd-prog-chain" hidden></div>
-                    <div class="run-prog rd-prog" tabindex="0" aria-label="Run progress" hidden></div>
+                    <!-- The shared status block (run-status-card.mjs, slice 4 D19): dot or symbol, status line, the run's
+                         bar. It keeps the rd-now-top class: the click-to-question handler and the guide tour find it. -->
+                    <div class="rd-now-top run-status"></div>
                     <!-- Live view: the running step(s), centred in a fogged graph beside the card
                          (below it when the page is narrow). Only while the run is not over. -->
                     <div class="switch-row rd-live-row" hidden>
@@ -836,10 +816,10 @@
                   <div class="rd-facts"></div>
                   <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
                        check, and a jump to the first one to check (paintAwayAnswers). -->
-                  <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-ghost btn-mini rd-away-jump">See the answers</button></div>
+                  <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
                   <div class="rd-nowlist"></div>
                   <!-- D30: while a shaped run waits on the person, Results / How it ran / the graph fold here (paintShaperWait). -->
-                  <button type="button" class="rd-wait-more btn-ghost" aria-expanded="false" hidden>Run details <span aria-hidden="true">›</span></button>
+                  <button type="button" class="btn btn-sm btn-quiet rd-wait-more" aria-expanded="false" hidden>Run details <span aria-hidden="true">›</span></button>
                   <div class="rd-result" hidden></div>
                   <!-- The pull request button: one node for the screen's life, outside the result
                        (rebuilt), so its loading placeholder can morph into it (paintPrCta). -->
@@ -880,7 +860,7 @@
                   <div class="rd-meta mono"></div>
                   <div class="rd-row3">
                     <span class="rd-base mono" hidden data-min-level="advanced"></span>
-                    <button type="button" class="rd-branch-copy mono" hidden data-min-level="advanced" title="Copy branch name" aria-label="Copy branch name">
+                    <button type="button" class="btn btn-sm btn-quiet mono rd-branch-copy" hidden data-min-level="advanced" title="Copy branch name" aria-label="Copy branch name">
                       <span class="rd-branch-name"></span>
                       <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
                       <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -889,7 +869,7 @@
                          off copyBranchToClipboard's own 1200ms `.copied` window. -->
                     <span class="rd-copied">Copied</span>
                     <!-- Sync before run (#527): shown only when the run has a Sync row; opens its log. -->
-                    <button type="button" class="rd-sync" hidden data-min-level="advanced" title="Show the Sync log"></button>
+                    <button type="button" class="btn rd-sync" hidden data-min-level="advanced" title="Show the Sync log"></button>
                     <span class="rd-spacer"></span>
                   </div>
                 </header>
@@ -909,11 +889,11 @@
               <!-- Two modes on one screen, as on the Running page: the glance (#history/<key>/<id>)
                    and Details (#history/<key>/<id>/details[/<tab>]). The bar is shared. -->
               <div class="hd-bar">
-                <button type="button" class="hd-back btn-ghost" aria-label="Back to the runs list">
+                <button type="button" class="hd-back btn" aria-label="Back to the runs list">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                   Runs
                 </button>
-                <button type="button" class="hd-to-run btn-ghost" hidden aria-label="Back to the run">
+                <button type="button" class="hd-to-run btn" hidden aria-label="Back to the run">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                   Run
                 </button>
@@ -922,10 +902,10 @@
                      rules): Run after, the Resume split, Pause, Stop. History's own class names, so
                      setupHdActions, paintHdAfter, paintHdLive and resumePipeline's busy label reach them. -->
                 <span class="rd-bar-end">
-                  <button type="button" class="hd-save-preset btn-ghost" data-flag="runPresets" title="Save this run's setup as a run preset" aria-label="Save setup as preset" hidden>
+                  <button type="button" class="btn hd-save-preset" data-flag="runPresets" title="Save this run's setup as a run preset" aria-label="Save setup as preset" hidden>
                     <span class="hd-btn-label">Save setup as preset</span>
                   </button>
-                  <button type="button" class="hd-after" data-min-level="advanced" title="Schedule a run after this" aria-label="Schedule a run after this" hidden>
+                  <button type="button" class="btn hd-after" data-min-level="advanced" title="Schedule a run after this" aria-label="Schedule a run after this" hidden>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h12"></path><path d="M13 6l6 6-6 6"></path></svg>
                     <span class="hd-btn-label">Run after</span>
                   </button>
@@ -933,12 +913,13 @@
                        node, so the inline SVG survives and the error path can restore the word.
                        Split Resume: paused + interrupted runs, or the pipeline's live run once it
                        pauses (paintHdLive); the caret opens the schedule-resume menu, gated at Advanced. -->
+                  <span class="rd-actions"></span>
                   <div class="btn-split mini hd-resume-split" hidden>
-                    <button type="button" class="hd-resume" hidden>
+                    <button type="button" class="btn hd-resume" hidden>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg>
                       <span class="hd-btn-label">Resume</span>
                     </button>
-                    <button type="button" class="btn-split-more hd-resume-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" title="More ways to resume" aria-label="More ways to resume">
+                    <button type="button" class="btn btn-icon btn-split-more hd-resume-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" title="More ways to resume" aria-label="More ways to resume">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
                     </button>
                     <div class="btn-split-menu hd-resume-menu" role="menu" hidden>
@@ -950,16 +931,16 @@
                     </div>
                   </div>
                   <!-- Pause and Stop act on the pipeline's live run, while this tab knows one (paintHdLive). -->
-                  <button type="button" class="hd-pause" hidden>
+                  <button type="button" class="btn hd-pause" hidden>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
                     <span class="hd-btn-label">Pause</span>
                   </button>
-                  <button type="button" class="hd-stop" hidden>
+                  <button type="button" class="btn btn-danger hd-stop" hidden>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
                     <span class="hd-btn-label">Stop</span>
                   </button>
                   <!-- Opens the terminal pane in this page's folder (docs/terminal.md); app.js wires every .term-opener. -->
-                  <button type="button" class="term-opener btn-ghost" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
+                  <button type="button" class="term-opener btn" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7.5 9.5l3 2.5-3 2.5"></path><path d="M13 15h3.5"></path></svg>
                   </button>
                 </span>
@@ -968,19 +949,17 @@
                    failure, an archive failure); writers resolve it with screen.querySelector. -->
               <div class="hd-error" hidden></div>
               <section class="rd-glance hd-glance" aria-label="Run status">
-                <div class="rd-slice-line" hidden></div>
                 <div class="rd-now">
                   <header class="rd-page-head">
-                    <h1 class="rd-page-title" tabindex="-1"></h1>
-                    <p class="rd-page-meta"><button type="button" class="rd-page-branch" hidden data-min-level="advanced" aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
+                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1><span class="kind-chip">Run</span></div>
+                    <p class="rd-page-meta"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
+                    <!-- The Group row (runs redesign slice 4, D18): its own element, repainted through a signature. -->
+                    <p class="rd-group-line" hidden></p>
                   </header>
                 </div>
                 <div class="rd-sheet">
                   <div class="rd-sheet-head">
-                    <div class="rd-now-top">
-                      <span class="rd-orb"></span>
-                      <div class="rd-now-text"><h2 class="rd-now-title"></h2><p class="rd-now-sub"></p></div>
-                    </div>
+                    <div class="rd-now-top run-status"></div>
                   </div>
                   <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
                   <div class="hd-banners">
@@ -991,7 +970,7 @@
                   <div class="rd-facts"></div>
                   <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
                        check, and a jump to the first one to check (paintAwayAnswers). -->
-                  <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-ghost btn-mini rd-away-jump">See the answers</button></div>
+                  <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
                   <div class="rd-nowlist"></div>
                   <div class="rd-result hd-result"></div>
                   <!-- The pull request button, mirrored from the Details header: one node, outside
@@ -1011,12 +990,12 @@
                   <h1 class="hd-title"></h1>
                   <span class="auto-badge" hidden></span>
                   <span class="hist-merge" hidden data-min-level="expert"></span>
-                  <button type="button" class="hd-pr" hidden data-min-level="advanced">Create PR</button>
+                  <button type="button" class="btn btn-primary hd-pr" hidden data-min-level="advanced">Create PR</button>
                   <!-- Publish branch (#618): push a finished run's branch without a PR. Painted by paintHdPublish. -->
-                  <button type="button" class="hd-publish btn-ghost" hidden data-min-level="advanced">Publish branch</button>
+                  <button type="button" class="hd-publish btn" hidden data-min-level="advanced">Publish branch</button>
                   <span class="act-pill-slot"></span>
                   <a class="hd-pr-link" hidden data-min-level="advanced" target="_blank" rel="noopener"></a>
-                  <button type="button" class="hd-push" hidden data-min-level="advanced"></button>
+                  <button type="button" class="btn btn-primary hd-push" hidden data-min-level="advanced"></button>
                 </div>
                 <!-- "Published to <remote>/<branch>" (#618): its own line, so a long branch never squeezes the title. -->
                 <p class="hd-published hint mono" hidden data-min-level="advanced"></p>
@@ -1041,7 +1020,7 @@
                 </div>
                 <div class="hd-row3">
                   <span class="hd-base mono" data-min-level="advanced"></span>
-                  <button type="button" class="hd-branch-copy mono" hidden data-min-level="advanced" title="Copy branch name" aria-label="Copy branch name">
+                  <button type="button" class="btn btn-sm btn-quiet mono hd-branch-copy" hidden data-min-level="advanced" title="Copy branch name" aria-label="Copy branch name">
                     <span class="hd-branch-name"></span>
                     <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
                     <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -1064,7 +1043,7 @@
                        only for a deletable entry, and hides the trigger when neither is
                        offered rather than opening onto an empty menu. -->
                   <span class="hd-more-wrap" data-min-level="advanced">
-                    <button type="button" class="hd-more" hidden aria-haspopup="menu" aria-expanded="false" title="More actions" aria-label="More actions">
+                    <button type="button" class="btn btn-quiet btn-icon hd-more" hidden aria-haspopup="menu" aria-expanded="false" title="More actions" aria-label="More actions">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
                     </button>
                     <div class="hd-menu" role="menu" hidden>
@@ -1104,7 +1083,7 @@
             <div>
               <div class="sub" id="schedules-sub">Runs that start later — once, or on a repeat</div>
             </div>
-            <a class="btn-go" href="#new/schedule" id="schedules-new" style="padding:11px 20px;text-decoration:none">
+            <a class="btn btn-primary" href="#new/schedule" id="schedules-new" style="text-decoration:none">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
               Schedule a run
             </a>
@@ -1222,7 +1201,7 @@
                 <div>
                   <div class="sub">Named sets of 2+ projects with an AI-generated interconnection description. Open one for its projects, description and team setup.</div>
                 </div>
-                <button type="button" id="ws-create-btn" class="btn btn-primary btn-mini">
+                <button type="button" id="ws-create-btn" class="btn btn-primary btn-sm">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
                   Create workspace
                 </button>
@@ -1240,7 +1219,7 @@
             <div class="pd wd">
               <header class="pd-header">
                 <div class="pd-row1">
-                  <button type="button" class="pd-back btn-ghost" aria-label="Back to workspaces">
+                  <button type="button" class="pd-back btn" aria-label="Back to workspaces">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                     Back
                   </button>
@@ -1252,12 +1231,12 @@
                 <div class="wd-row2">
                 <div class="pd-meta"><small class="ws-projects"></small></div>
                 <div class="pd-actions">
-                  <button type="button" class="ws-rescan btn-ghost" title="Re-scan the project set and regenerate the description">
+                  <button type="button" class="ws-rescan btn" title="Re-scan the project set and regenerate the description">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7"></path><path d="M20 4v5h-5"></path></svg>
                     Re-scan
                   </button>
                   <span class="pd-spacer"></span>
-                  <button type="button" class="pd-remove ws-delete">
+                  <button type="button" class="btn btn-danger pd-remove ws-delete">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"></path></svg>
                     <span class="pd-btn-label">Delete</span>
                   </button>
@@ -1281,7 +1260,7 @@
             <div>
               <div class="sub">Pick 2+ projects and scan how they connect</div>
             </div>
-            <button type="button" id="wiz-close" class="btn-ghost" style="padding:11px 20px">Cancel</button>
+            <button type="button" id="wiz-close" class="btn">Cancel</button>
           </div>
 
           <section class="card" style="max-width:1100px">
@@ -1303,14 +1282,14 @@
                     <!-- Import: repositories that are not projects yet. Scan registers the ticked new rows first. -->
                     <div class="wiz-import">
                       <div class="wiz-import-bar">
-                        <button type="button" id="wiz-import-add" class="btn btn-ghost btn-mini">Add…</button>
+                        <button type="button" id="wiz-import-add" class="btn btn-sm">Add…</button>
                         <span class="wiz-import-lead">repositories, a folder of repositories or a <code>.code-workspace</code> file</span>
                         <label class="wiz-import-deep"><input type="checkbox" id="wiz-import-deep" /> Look two levels deep</label>
                       </div>
                       <textarea id="wiz-import-paste" class="textarea wiz-import-paste" rows="2" spellcheck="false"
                         aria-label="Paths to add, one per line" placeholder="…or paste paths, one per line"></textarea>
                       <div class="wiz-import-bar">
-                        <button type="button" id="wiz-import-paste-add" class="btn btn-ghost btn-mini">Add paths</button>
+                        <button type="button" id="wiz-import-paste-add" class="btn btn-sm">Add paths</button>
                         <small class="hint" id="wiz-import-hint" role="status" aria-live="polite"></small>
                       </div>
                       <div class="wiz-proj-list wiz-import-list" id="wiz-import-list" role="group" aria-label="Found repositories" hidden></div>
@@ -1338,7 +1317,7 @@
                 </aside>
               </div>
               <div class="actions" style="justify-content:flex-end">
-                <button type="button" id="wiz-start-scan" class="btn-go" disabled>
+                <button type="button" id="wiz-start-scan" class="btn btn-primary" disabled>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
                   Scan interconnections
                 </button>
@@ -1362,7 +1341,7 @@
                 <div>
                   <div class="sub">Registered projects. Open one for its details and memory; add a folder or remove one from the list — files on disk and run history are never touched.</div>
                 </div>
-                <div class="topbar-actions"><button type="button" id="project-add-btn" class="btn btn-primary btn-mini">
+                <div class="topbar-actions"><button type="button" id="project-add-btn" class="btn btn-primary btn-sm">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
                   Add project
                 </button>
@@ -1380,29 +1359,29 @@
             <div class="pd">
               <header class="pd-header">
                 <div class="pd-row1">
-                  <button type="button" class="pd-back btn-ghost" aria-label="Back to projects">
+                  <button type="button" class="pd-back btn" aria-label="Back to projects">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                     Back
                   </button>
                   <h1 class="pd-title"></h1>
                   <!-- Opens the terminal pane in this page's folder (docs/terminal.md); app.js wires every .term-opener. -->
-                  <button type="button" class="term-opener btn-ghost" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
+                  <button type="button" class="term-opener btn" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7.5 9.5l3 2.5-3 2.5"></path><path d="M13 15h3.5"></path></svg>
                   </button>
                 </div>
-                <div class="pd-meta mono"><span class="pd-path"></span><button type="button" class="pd-path-copy" aria-label="Copy path" title="Copy path"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2"></rect><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"></path></svg></button></div>
+                <div class="pd-meta mono"><span class="pd-path"></span><button type="button" class="btn btn-sm btn-quiet btn-icon pd-path-copy" aria-label="Copy path" title="Copy path"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2"></rect><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"></path></svg></button></div>
                 <div class="pd-actions">
-                  <button type="button" class="pd-new btn-ghost">
+                  <button type="button" class="pd-new btn">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
                     New run
                   </button>
-                  <button type="button" class="pd-history btn-ghost">
+                  <button type="button" class="pd-history btn">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                     Show in Runs
                   </button>
                   <span class="pd-spacer"></span>
                   <!-- The label lives in its own span so a busy state can swap the word and keep the icon. -->
-                  <button type="button" class="pd-remove">
+                  <button type="button" class="btn btn-danger pd-remove">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"></path></svg>
                     <span class="pd-btn-label">Remove</span>
                   </button>
@@ -1432,11 +1411,11 @@
               </div>
               <div class="wfv-float wfv-tl" data-canvas-keys="off">
                 <div class="wfv-bar">
-                  <button type="button" class="wfv-icon-btn" id="wfv-back" aria-label="Back" title="Back">
+                  <button type="button" class="btn btn-quiet btn-icon" id="wfv-back" aria-label="Back" title="Back">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>
                   </button>
                   <span class="wfv-sep" aria-hidden="true"></span>
-                  <button type="button" class="wfv-btn wfv-menu-btn" id="wfv-wf-menu" aria-haspopup="menu" aria-expanded="false">
+                  <button type="button" class="btn btn-quiet wfv-menu-btn" id="wfv-wf-menu" aria-haspopup="menu" aria-expanded="false">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
                     <span>Workflows</span>
                     <svg class="wfv-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
@@ -1449,27 +1428,27 @@
               </div>
               <div class="wfv-float wfv-tr" data-canvas-keys="off">
                 <div class="wfv-bar">
-                  <button type="button" class="wfv-icon-btn" id="wfv-lib-toggle" aria-label="Library" title="Library" aria-pressed="true" aria-controls="wfv-library">
+                  <button type="button" class="btn btn-quiet btn-icon" id="wfv-lib-toggle" aria-label="Library" title="Library" aria-pressed="true" aria-controls="wfv-library">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
                   </button>
-                  <span class="wfv-savewrap" id="wfv-savewrap"><button type="button" class="wfv-btn wfv-btn-primary" id="wfv-save">Save</button></span>
+                  <span class="wfv-savewrap" id="wfv-savewrap"><button type="button" class="btn btn-primary" id="wfv-save">Save</button></span>
                 </div>
               </div>
               <div class="wfv-float wfv-dock" id="wfv-dock" data-canvas-keys="off">
-                <button type="button" class="wfv-plus" id="wfv-add" aria-label="Add" title="Add" aria-haspopup="menu" aria-expanded="false">
+                <button type="button" class="btn btn-primary btn-icon wfv-plus" id="wfv-add" aria-label="Add" title="Add" aria-haspopup="menu" aria-expanded="false">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
                 </button>
                 <div class="wfc" id="wfc" data-canvas-keys="off"></div>
               </div>
               <div class="wfv-float wfv-br" id="wfv-br" data-canvas-keys="off">
                 <div class="wfv-bar">
-                  <button type="button" class="wfv-btn" id="wfv-autolayout">
+                  <button type="button" class="btn btn-quiet" id="wfv-autolayout">
                     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" transform="rotate(45 10 14.5)" d="M9.4 7.1h1.2a1.3 1.3 0 0 1 1.3 1.3v12.2a1.3 1.3 0 0 1-1.3 1.3h-1.2a1.3 1.3 0 0 1-1.3-1.3V8.4a1.3 1.3 0 0 1 1.3-1.3zM9.1 8.4v2.4h1.8V8.4z"></path><path d="M9 2.9Q9.79 5.71 12.6 6.5Q9.79 7.29 9 10.1Q8.21 7.29 5.4 6.5Q8.21 5.71 9 2.9ZM17.6 2.6Q18.26 4.94 20.6 5.6Q18.26 6.26 17.6 8.6Q16.94 6.26 14.6 5.6Q16.94 4.94 17.6 2.6ZM18.2 11.4Q18.68 13.12 20.4 13.6Q18.68 14.08 18.2 15.8Q17.72 14.08 16 13.6Q17.72 13.12 18.2 11.4Z"></path></svg>
                     <span>Auto-layout</span>
                   </button>
                 </div>
                 <div class="wfv-bar">
-                  <button type="button" class="wfv-btn wfv-zoom" id="wfv-zoom" aria-haspopup="menu" aria-expanded="false" aria-label="Zoom">
+                  <button type="button" class="btn btn-quiet wfv-zoom" id="wfv-zoom" aria-haspopup="menu" aria-expanded="false" aria-label="Zoom">
                     <span id="wfv-zoom-label">100%</span>
                     <svg class="wfv-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"></path></svg>
                   </button>
@@ -1482,7 +1461,7 @@
               <div class="wfv-sheet-card">
                 <div class="wfv-sheet-head">
                   <h2 class="wfv-sheet-title" id="wfv-sheet-title"></h2>
-                  <button type="button" class="wfv-icon-btn" id="wfv-sheet-close" aria-label="Close" title="Close">
+                  <button type="button" class="btn btn-quiet btn-icon" id="wfv-sheet-close" aria-label="Close" title="Close">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
                   </button>
                 </div>
@@ -1510,9 +1489,9 @@
                             </div>
                           </div>
                           <div class="agent-actions">
-                            <button type="button" class="agent-edit btn btn-ghost btn-mini" title="Edit this agent">Edit</button>
-                            <button type="button" class="agent-duplicate btn btn-ghost btn-mini" title="Duplicate as a user agent">Duplicate</button>
-                            <button type="button" class="agent-delete btn btn-danger btn-mini" title="Delete this agent">Delete</button>
+                            <button type="button" class="agent-edit btn btn-sm" title="Edit this agent">Edit</button>
+                            <button type="button" class="agent-duplicate btn btn-sm" title="Duplicate as a user agent">Duplicate</button>
+                            <button type="button" class="agent-delete btn btn-danger btn-sm" title="Delete this agent">Delete</button>
                           </div>
                           <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                         </div>
@@ -1523,8 +1502,8 @@
                             <div class="agent-form"></div>
                             <p class="agent-edit-msg form-msg" aria-live="polite"></p>
                             <div class="actions" style="justify-content:flex-end">
-                              <button type="button" class="agent-edit-cancel btn btn-ghost btn-mini">Cancel</button>
-                              <button type="button" class="agent-edit-save btn btn-primary btn-mini">Save</button>
+                              <button type="button" class="agent-edit-cancel btn btn-sm">Cancel</button>
+                              <button type="button" class="agent-edit-save btn btn-primary btn-sm">Save</button>
                             </div>
                           </div>
                         </div>
@@ -1555,8 +1534,8 @@
                       </div>
                       <small class="hint" id="agw-step1-hint">Name + purpose are required (or paste your own markdown).</small>
                       <div class="actions" style="justify-content:flex-end">
-                        <button type="button" id="agw-close" class="btn btn-ghost btn-mini">Cancel</button>
-                        <button type="button" id="agw-start" class="btn-go" disabled>
+                        <button type="button" id="agw-close" class="btn btn-sm">Cancel</button>
+                        <button type="button" id="agw-start" class="btn btn-primary" disabled>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
                           Generate agent
                         </button>
@@ -1570,7 +1549,7 @@
                         <div class="status-label" id="agw-status">Starting&hellip;</div>
                       </div>
                       <div class="actions" style="justify-content:flex-end">
-                        <button type="button" id="agw-abort" class="btn btn-ghost btn-mini">Abort</button>
+                        <button type="button" id="agw-abort" class="btn btn-sm">Abort</button>
                       </div>
                     </div>
 
@@ -1579,8 +1558,8 @@
                       <div class="agent-form"></div>
                       <p id="agw-msg" class="form-msg" aria-live="polite"></p>
                       <div class="actions" style="justify-content:space-between">
-                        <button type="button" id="agw-regen" class="btn btn-ghost btn-mini">Regenerate</button>
-                        <button type="button" id="agw-save" class="btn-go">
+                        <button type="button" id="agw-regen" class="btn btn-sm">Regenerate</button>
+                        <button type="button" id="agw-save" class="btn btn-primary">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                           Save agent
                         </button>
@@ -1668,7 +1647,7 @@
                 <input id="alertsBadge" class="sw-input" type="checkbox">
                 <span class="switch"></span><span class="txt">Badge when something is waiting</span>
               </label>
-              <button type="button" id="alertsTest" class="btn-ghost btn-mini alerts-test" disabled>Send test notification</button>
+              <button type="button" id="alertsTest" class="btn btn-sm alerts-test" disabled>Send test notification</button>
             </section>
 
             <!-- Credential broker (docs/credential-broker.md): shown only when worca runs with one. -->
@@ -1709,7 +1688,7 @@
                   <strong id="modeSettingsName">Expert</strong>
                   <span id="modeSettingsDesc"></span>
                 </div>
-                <button type="button" class="btn btn-ghost btn-mini" id="modeSettingsChange" data-mode-open="button" aria-haspopup="dialog">Change&hellip;</button>
+                <button type="button" class="btn btn-sm" id="modeSettingsChange" data-mode-open="button" aria-haspopup="dialog">Change&hellip;</button>
               </div>
             </section>
 
@@ -1737,12 +1716,12 @@
                 </div>
                 <div class="path-row">
                   <input id="settingsProjectsRoot" data-setting="projectsRoot" class="input" type="text" placeholder="" spellcheck="false" autocomplete="off" />
-                  <button type="button" id="settingsProjectsRootBrowse" class="btn btn-ghost btn-mini" title="Pick the projects root folder">Browse&hellip;</button>
+                  <button type="button" id="settingsProjectsRootBrowse" class="btn btn-sm" title="Pick the projects root folder">Browse&hellip;</button>
                 </div>
               </div>
               <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="settingsReset" class="btn btn-ghost btn-mini">Reset to default</button>
-                <button type="button" id="settingsSave" class="btn btn-primary btn-mini">Save</button>
+                <button type="button" id="settingsReset" class="btn btn-sm">Reset to default</button>
+                <button type="button" id="settingsSave" class="btn btn-primary btn-sm">Save</button>
               </div>
               <small class="hint" id="settingsMsg"></small>
             </section>
@@ -1770,8 +1749,8 @@
               </div>
               <small class="hint" id="debugSpawnEnvNote"></small>
               <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="debugSpawnReset" class="btn btn-ghost btn-mini">Reset to default</button>
-                <button type="button" id="debugSpawnSave" class="btn btn-primary btn-mini">Save</button>
+                <button type="button" id="debugSpawnReset" class="btn btn-sm">Reset to default</button>
+                <button type="button" id="debugSpawnSave" class="btn btn-primary btn-sm">Save</button>
               </div>
             </section>
 
@@ -1784,7 +1763,7 @@
               </div>
               <div class="gs-settings-row">
                 <p class="gs-settings-text">The Getting started checklist walks through the first nine things to do with Worca. Hidden it, or want the guided tour back?</p>
-                <button type="button" id="gsShowAgain" class="btn btn-ghost btn-mini">Show again</button>
+                <button type="button" id="gsShowAgain" class="btn btn-sm">Show again</button>
               </div>
               <small class="hint" id="gsSettingsMsg"></small>
             </section>
@@ -1839,7 +1818,7 @@
               <p class="hint">On: a run cannot start without its mandatory tags (pre-filled where they can be). Off: tags are optional. A tag with values accepts only those values.</p>
               <div id="tagDimsEditor" data-setting="tagDimensions"></div>
               <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" class="btn btn-primary btn-mini" id="tagDimsSave">Save</button>
+                <button type="button" class="btn btn-primary btn-sm" id="tagDimsSave">Save</button>
               </div>
             </section>
           </section><!-- /pane tags -->
@@ -1919,8 +1898,8 @@
                 </div>
               </div>
               <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="budgetReset" class="btn btn-ghost btn-mini">Clear limits</button>
-                <button type="button" id="budgetSave" class="btn btn-primary btn-mini">Save</button>
+                <button type="button" id="budgetReset" class="btn btn-sm">Clear limits</button>
+                <button type="button" id="budgetSave" class="btn btn-primary btn-sm">Save</button>
               </div>
               <small class="hint" id="budgetMsg"></small>
             </section>
@@ -1939,8 +1918,8 @@
               <div class="away-status" id="awayStatus" role="group" aria-label="Away mode status"></div>
               <div id="night-mode-host"></div>
               <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="nightModeReset" class="btn btn-ghost btn-mini">Use defaults</button>
-                <button type="button" id="nightModeSave" class="btn btn-primary btn-mini">Save</button>
+                <button type="button" id="nightModeReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="nightModeSave" class="btn btn-primary btn-sm">Save</button>
               </div>
             </section>
 
@@ -1994,8 +1973,8 @@
                 </div>
               </div>
               <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="syncDefaultsReset" class="btn btn-ghost btn-mini">Use defaults</button>
-                <button type="button" id="syncDefaultsSave" class="btn btn-primary btn-mini">Save</button>
+                <button type="button" id="syncDefaultsReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="syncDefaultsSave" class="btn btn-primary btn-sm">Save</button>
               </div>
             </section>
 
@@ -2042,8 +2021,8 @@
                 <input id="schedMaxFailures" data-setting="schedule.maxFailures" class="input" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="3" autocomplete="off" />
               </div>
               <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="schedDefaultsReset" class="btn btn-ghost btn-mini">Use defaults</button>
-                <button type="button" id="schedDefaultsSave" class="btn btn-primary btn-mini">Save</button>
+                <button type="button" id="schedDefaultsReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="schedDefaultsSave" class="btn btn-primary btn-sm">Save</button>
               </div>
             </section>
 
@@ -2077,8 +2056,8 @@
                 </div>
               </div>
               <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="networkWaitReset" class="btn btn-ghost btn-mini">Use defaults</button>
-                <button type="button" id="networkWaitSave" class="btn btn-primary btn-mini">Save</button>
+                <button type="button" id="networkWaitReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="networkWaitSave" class="btn btn-primary btn-sm">Save</button>
               </div>
             </section>
 
@@ -2104,7 +2083,7 @@
                 <div class="act-launcher-row">
                   <input id="act-editor" data-setting="actions.editor" class="input mono" placeholder="Detected automatically" aria-describedby="act-editor-note" autocomplete="off" spellcheck="false">
                   <div class="select-wrap act-choose-wrap" data-dirty-ignore><select id="act-editor-choose" class="select" aria-label="Pick an installed editor, or browse for one"><option value="">Pick an app</option></select></div>
-                  <button type="button" class="btn btn-ghost btn-mini act-try" id="act-editor-try">Try</button>
+                  <button type="button" class="btn btn-sm act-try" id="act-editor-try">Try</button>
                 </div>
                 <small class="hint act-hint" id="act-editor-note"></small></div>
               <div class="field act-launcher" data-launcher="terminal">
@@ -2115,12 +2094,12 @@
                 <div class="act-launcher-row">
                   <input id="act-terminal" data-setting="actions.terminal" class="input mono" placeholder="Detected automatically" aria-describedby="act-terminal-note" autocomplete="off" spellcheck="false">
                   <div class="select-wrap act-choose-wrap" data-dirty-ignore><select id="act-terminal-choose" class="select" aria-label="Pick an installed terminal, or browse for one"><option value="">Pick an app</option></select></div>
-                  <button type="button" class="btn btn-ghost btn-mini act-try" id="act-terminal-try">Try</button>
+                  <button type="button" class="btn btn-sm act-try" id="act-terminal-try">Try</button>
                 </div>
                 <small class="hint act-hint" id="act-terminal-note"></small></div>
               <div class="field"><label for="act-max">Keep at most</label><input id="act-max" data-setting="actions.maxCheckouts" class="input" type="number" min="1" max="100" placeholder="No limit"> checkouts (oldest removed first)</div>
-              <div class="add-project-actions"><button type="button" class="btn btn-ghost btn-mini" id="act-reset">Reset</button>
-                <button type="button" class="btn btn-primary btn-mini" id="act-save">Save</button></div>
+              <div class="add-project-actions"><button type="button" class="btn btn-sm" id="act-reset">Reset</button>
+                <button type="button" class="btn btn-primary btn-sm" id="act-save">Save</button></div>
             </section>
 
             <section class="card settings-card" id="ws-scan-models-card" data-min-level="advanced">
@@ -2156,8 +2135,8 @@
               </div>
               <small class="hint" id="wsScanModelsNote"></small>
               <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="wsScanModelsReset" class="btn btn-ghost btn-mini">Use default</button>
-                <button type="button" id="wsScanModelsSave" class="btn btn-primary btn-mini">Save</button>
+                <button type="button" id="wsScanModelsReset" class="btn btn-sm">Use default</button>
+                <button type="button" id="wsScanModelsSave" class="btn btn-primary btn-sm">Save</button>
               </div>
             </section>
 
@@ -2170,7 +2149,7 @@
               </div>
               <div id="chat-settings-host"></div>
               <div class="add-project-actions" style="margin-top:14px">
-                <button id="chatSettingsSave" class="btn btn-primary btn-mini" type="button">Save</button>
+                <button id="chatSettingsSave" class="btn btn-primary btn-sm" type="button">Save</button>
               </div>
             </section>
           </section>
@@ -2182,7 +2161,7 @@
               <div>
                 <div class="sub">Try features before they are finished. A switch applies at once, in every open tab, for everyone using this Worca.</div>
               </div>
-              <button type="button" class="btn btn-ghost btn-mini" id="flags-reset">Reset all</button>
+              <button type="button" class="btn btn-sm" id="flags-reset">Reset all</button>
             </div>
             <section class="card settings-card" id="flags-settings-card" data-min-level="simple">
               <p class="flags-warn" role="note">Experimental features may change, break or disappear in any release.</p>
@@ -2208,7 +2187,7 @@
               <div class="card-head"><div class="label-row"><h2>Engine &amp; models</h2></div></div>
               <div id="ask-engine-root"></div>
               <!-- One Save per card, bottom right; the line beside it counts the unsaved changes (or says Saved.). -->
-              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="askEngineMsg"></small><button type="button" id="askEngineSave" class="btn btn-primary btn-mini">Save</button></div>
+              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="askEngineMsg"></small><button type="button" id="askEngineSave" class="btn btn-primary btn-sm">Save</button></div>
             </section>
             <!-- Ask Worca (ask-worca-design §6.9): per-turn guards for the
                  assistant chat. Read fresh on every turn (D12); a stored null
@@ -2256,8 +2235,8 @@
                    mcp-view.mjs; the Edit General set link opens the Connectors page under the level banner. -->
               <div class="field" id="ask-mcp-host"></div>
               <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="askLimitsReset" class="btn btn-ghost btn-mini">Use defaults</button>
-                <button type="button" id="askLimitsSave" class="btn btn-primary btn-mini">Save</button>
+                <button type="button" id="askLimitsReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="askLimitsSave" class="btn btn-primary btn-sm">Save</button>
               </div>
               <!-- Chat history: the counts paint with the view; the button opens a
                    danger confirm quoting FRESH counts, then DELETE /api/ask/threads. -->
@@ -2268,7 +2247,7 @@
                     Every saved Ask Worca chat: transcripts, attachments and the git worktrees checked out for them. Runs started from a chat are not affected.
                   </span></button>
                 </div>
-                <button type="button" id="askHistoryDelete" class="ask-history-delete" disabled>Delete all chat history</button>
+                <button type="button" id="askHistoryDelete" class="btn btn-danger ask-history-delete" disabled>Delete all chat history</button>
                 <small class="hint" id="askHistoryCounts"></small>
                 <small class="hint" id="askHistoryMsg"></small>
               </div>
@@ -2282,7 +2261,7 @@
               <div>
                 <div class="sub">Named guardrail policies — built-ins plus your own sets, selected per pipeline run</div>
               </div>
-              <button type="button" id="guardrail-create-btn" class="btn-go" data-min-level="expert" style="padding:11px 20px">
+              <button type="button" id="guardrail-create-btn" class="btn btn-primary" data-min-level="expert">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
                 Create guardrails
               </button>
@@ -2314,7 +2293,7 @@
               <div>
                 <div class="sub">Task sources, agents, skills and workflow packs from your plugin marketplaces</div>
               </div>
-              <button type="button" id="plugin-add-btn" class="btn-go" data-min-level="expert" style="padding:11px 20px">
+              <button type="button" id="plugin-add-btn" class="btn btn-primary" data-min-level="expert">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
                 Add marketplace
               </button>
@@ -2323,7 +2302,7 @@
             <div class="card hidden" id="marketplace-add-row" data-min-level="expert" style="padding:16px 20px;margin-bottom:14px">
               <div class="path-row">
                 <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo · /path/to/a/plugin-folder" spellcheck="false" />
-                <button type="button" id="marketplace-add" class="btn btn-primary btn-mini">Add</button>
+                <button type="button" id="marketplace-add" class="btn btn-primary btn-sm">Add</button>
               </div>
             </div>
             <!-- Team policy (design board 10): what a policy home expects on this machine. -->
@@ -2348,10 +2327,10 @@
               <div>
                 <div class="sub">The global model catalog — available in every project; entries can override built-ins, route through a provider, or carry per-model routing env. The cards on top pick the models Worca's own titles, Auto classifier and PR descriptions use. Sign-ins and endpoints live on the Providers page.</div>
               </div>
-              <div style="display:flex;gap:8px;flex:0 0 auto">
-                <button type="button" id="model-share-btn" class="btn-ghost" style="padding:11px 20px;white-space:nowrap">Share as plugin…</button>
-                <button type="button" id="model-import-btn" class="btn-ghost" style="padding:11px 20px;white-space:nowrap">Import models…</button>
-                <button type="button" id="model-create-btn" class="btn-go" style="padding:11px 20px;white-space:nowrap">
+              <div class="mv-head-actions">
+                <button type="button" id="model-share-btn" class="btn" style="white-space:nowrap">Share as plugin…</button>
+                <button type="button" id="model-import-btn" class="btn" style="white-space:nowrap">Import models…</button>
+                <button type="button" id="model-create-btn" class="btn btn-primary" style="white-space:nowrap">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
                   Add model
                 </button>
@@ -2361,7 +2340,7 @@
               <div class="card-head"><div class="label-row"><h2>Engines</h2></div></div>
               <div id="engine-settings-root"></div>
               <!-- One Save per card, bottom right; the line beside it counts the unsaved changes (or says Saved.). -->
-              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="engineSettingsMsg"></small><button type="button" id="engineSettingsSave" class="btn btn-primary btn-mini">Save</button></div>
+              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="engineSettingsMsg"></small><button type="button" id="engineSettingsSave" class="btn btn-primary btn-sm">Save</button></div>
             </section>
             <p id="models-msg" class="form-msg" aria-live="polite"></p>
             <div class="run-list" id="models-list"></div>
@@ -2409,7 +2388,7 @@
             <!-- The button sits ON the field's line: below the hint it read as unrelated to the URL. -->
             <span class="mimp-base-row">
               <input id="mimp-base" class="input" type="text" placeholder="http://127.0.0.1:11434/v1" />
-              <button type="button" id="mimp-list" class="btn-ghost">List models</button>
+              <button type="button" id="mimp-list" class="btn">List models</button>
             </span>
             <small class="hint">llama.cpp, Ollama, LM Studio, vLLM or a gateway — on this machine or your network.</small>
           </label>
@@ -2419,8 +2398,8 @@
         <input id="mimp-filter" class="input mimp-filter hidden" type="search" placeholder="Filter by model, id or vendor…" aria-label="Filter the listed models" />
         <div id="mimp-body"></div>
         <div class="mv-editor-btns mimp-btns">
-          <button type="button" id="mimp-go" class="btn-go" disabled>Import selected</button>
-          <button type="button" id="mimp-cancel" class="btn-ghost">Cancel</button>
+          <button type="button" id="mimp-go" class="btn btn-primary" disabled>Import selected</button>
+          <button type="button" id="mimp-cancel" class="btn">Cancel</button>
         </div>
       </div>
     </div>
@@ -2431,8 +2410,8 @@
         <div class="card-head">
           <h2 id="viewer-title">Saved pipeline</h2>
           <span class="viewer-actions">
-            <button type="button" id="viewer-full" class="btn btn-mini" aria-pressed="false" hidden>Full screen</button>
-            <button type="button" id="viewer-close" class="btn btn-mini">Close</button>
+            <button type="button" id="viewer-full" class="btn btn-sm" aria-pressed="false" hidden>Full screen</button>
+            <button type="button" id="viewer-close" class="btn btn-sm">Close</button>
           </span>
         </div>
         <pre id="viewer" class="viewer"></pre>
@@ -2446,11 +2425,11 @@
       <div class="card">
         <div class="card-head">
           <h2 id="folderBrowserTitle">Select a folder</h2>
-          <button type="button" id="folderBrowserClose" class="btn btn-mini">Close</button>
+          <button type="button" id="folderBrowserClose" class="btn btn-sm">Close</button>
         </div>
         <div class="folder-toolbar">
-          <button type="button" id="folderUp" class="btn btn-ghost btn-mini" title="Parent folder">&#8593; Up</button>
-          <button type="button" id="folderHome" class="btn btn-ghost btn-mini" title="Home folder">Home</button>
+          <button type="button" id="folderUp" class="btn btn-sm" title="Parent folder">&#8593; Up</button>
+          <button type="button" id="folderHome" class="btn btn-sm" title="Home folder">Home</button>
           <code id="folderCurrent" class="folder-current"></code>
         </div>
         <!-- Hosted with the terminal and actions off: the listing stays inside Worca's own folders. -->
@@ -2458,8 +2437,8 @@
         <ul id="folderList" class="folder-list"></ul>
         <div class="add-project-actions">
           <small id="folderPickCount" class="hint folder-pick-count hidden" aria-live="polite"></small>
-          <button type="button" id="folderSelect" class="btn btn-primary btn-mini">Select this folder</button>
-          <button type="button" id="folderSelectMany" class="btn btn-primary btn-mini hidden" disabled>Add selected</button>
+          <button type="button" id="folderSelect" class="btn btn-primary btn-sm">Select this folder</button>
+          <button type="button" id="folderSelectMany" class="btn btn-primary btn-sm hidden" disabled>Add selected</button>
         </div>
         <small class="hint" id="folderMsg"></small>
       </div>
@@ -2479,7 +2458,7 @@
         <small class="hint" id="mode-msg" aria-live="polite"></small>
         <div class="mode-foot">
           <span class="hint">Applies at once. Runs and saved settings are not affected.</span>
-          <button type="button" id="mode-done" class="btn btn-primary btn-mini">Done</button>
+          <button type="button" id="mode-done" class="btn btn-primary btn-sm">Done</button>
         </div>
       </div>
     </div>
@@ -2498,8 +2477,8 @@
           <span id="confirm-checkbox-label"></span>
         </label>
         <div class="confirm-actions">
-          <button type="button" id="confirm-cancel" class="btn btn-ghost btn-mini">Cancel</button>
-          <button type="button" id="confirm-ok" class="btn btn-primary btn-mini">Confirm</button>
+          <button type="button" id="confirm-cancel" class="btn btn-sm">Cancel</button>
+          <button type="button" id="confirm-ok" class="btn btn-primary btn-sm">Confirm</button>
         </div>
       </div>
     </div>
@@ -2521,8 +2500,8 @@
           <div class="card-head">
             <h2 id="report-title">Report this run</h2>
             <div class="report-head-actions">
-              <button type="button" id="report-create-issue" class="btn btn-primary btn-mini">Create GitHub issue</button>
-              <button type="button" id="report-close" class="btn btn-mini">Close</button>
+              <button type="button" id="report-create-issue" class="btn btn-primary btn-sm">Create GitHub issue</button>
+              <button type="button" id="report-close" class="btn btn-sm">Close</button>
             </div>
           </div>
           <!-- Both outcomes of the button above them, so neither needs a scroll to read. -->
@@ -2543,15 +2522,15 @@
           <pre id="report-preview" class="viewer"></pre>
         </div>
         <div class="confirm-actions">
-          <button type="button" id="report-copy" class="btn btn-ghost btn-mini">Copy JSON</button>
-          <button type="button" id="report-download" class="btn btn-ghost btn-mini">Download JSON</button>
+          <button type="button" id="report-copy" class="btn btn-sm">Copy JSON</button>
+          <button type="button" id="report-download" class="btn btn-sm">Download JSON</button>
           <!-- The FALLBACK, hidden until the server says it could not file the issue
                itself. An <a>, not a button: a real anchor gives the browser a genuine
                user-gesture new tab. app.js strips the href while a rebuild is in
                flight, so the link can never fire with a payload that disagrees with
                the preview. Its prefilled body can only ASK for the JSON to be pasted
                — a URL dies at ~8 KB and half of all runs serialize larger. -->
-          <a id="report-issue" class="btn btn-ghost btn-mini" target="_blank" rel="noopener noreferrer" hidden>Open a prefilled issue</a>
+          <a id="report-issue" class="btn btn-sm" target="_blank" rel="noopener noreferrer" hidden>Open a prefilled issue</a>
         </div>
       </div>
     </div>
@@ -2589,7 +2568,7 @@
           <span class="export-label" id="export-folder-label">Folder</span>
           <div class="export-folder-row">
             <input type="text" id="export-folder" class="input" placeholder="/path/to/repo" />
-            <button type="button" id="export-browse" class="btn btn-ghost btn-mini">Browse…</button>
+            <button type="button" id="export-browse" class="btn btn-sm">Browse…</button>
           </div>
         </div>
         <div id="export-plugin-field" class="export-field hidden">
@@ -2622,19 +2601,19 @@
              Replaces the form (not a second dialog) once an export succeeded. -->
         <div id="export-done" class="export-done hidden" role="status" aria-live="polite">
           <div class="export-done-head">
-            <span class="export-done-check" aria-hidden="true">✓</span>
+            <span class="export-done-check" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span>
             <b id="export-done-title"></b>
           </div>
           <dl id="export-done-lines" class="export-done-lines"></dl>
           <p id="export-done-next" class="export-done-next"></p>
         </div>
         <div class="confirm-actions">
-          <button type="button" id="export-cancel" class="btn btn-ghost btn-mini">Cancel</button>
+          <button type="button" id="export-cancel" class="btn btn-sm">Cancel</button>
           <!-- Preview = dry run (optional). Export runs the dry run itself and writes
                unless it hits a conflict, which it then shows for per-file resolution. -->
-          <button type="button" id="export-plan-btn" class="btn btn-ghost btn-mini">Preview</button>
-          <button type="button" id="export-apply-btn" class="btn btn-primary btn-mini">Export</button>
-          <button type="button" id="export-done-close" class="btn btn-primary btn-mini hidden">Done</button>
+          <button type="button" id="export-plan-btn" class="btn btn-sm">Preview</button>
+          <button type="button" id="export-apply-btn" class="btn btn-primary btn-sm">Export</button>
+          <button type="button" id="export-done-close" class="btn btn-primary btn-sm hidden">Done</button>
         </div>
       </div>
     </div>
@@ -2710,8 +2689,8 @@
               <button type="button" class="md-tab shipit-desc-tab" role="tab" data-mode="text" aria-selected="true">Write</button>
               <button type="button" class="md-tab shipit-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
             </div>
-            <button type="button" class="shipit-generate-stop btn btn-ghost btn-mini" hidden>Stop</button>
-            <button type="button" class="shipit-generate btn btn-ghost btn-mini">Generate with AI</button>
+            <button type="button" class="shipit-generate-stop btn btn-sm" hidden>Stop</button>
+            <button type="button" class="shipit-generate btn btn-sm">Generate with AI</button>
           </div>
           <!-- The editor and its preview share one box so the Generate-with-AI veil can
                lie over whichever is showing: a shimmer sweep that also swallows clicks
@@ -2735,8 +2714,8 @@
         <div class="shipit-try" hidden data-min-level="advanced" aria-label="Try it first"></div>
         <p class="shipit-slice-note" hidden></p>
         <div class="shipit-actions" data-card-actions>
-          <button type="button" class="shipit-cancel btn-ghost">Cancel</button>
-          <button type="button" class="shipit-ok">Open pull request</button>
+          <button type="button" class="shipit-cancel btn">Cancel</button>
+          <button type="button" class="btn btn-primary shipit-ok">Open pull request</button>
         </div>
       </div>
     </div>
@@ -2750,8 +2729,8 @@
         <p class="publish-sub hint">Pushes the branch so it can be pulled and tested.<br>No pull request is opened.</p>
         <div class="publish-repos"></div>
         <div class="publish-actions" data-card-actions>
-          <button type="button" class="publish-cancel btn btn-mini">Cancel</button>
-          <button type="button" class="publish-ok btn btn-primary btn-mini">Publish</button>
+          <button type="button" class="publish-cancel btn btn-sm">Cancel</button>
+          <button type="button" class="publish-ok btn btn-primary btn-sm">Publish</button>
         </div>
       </div>
     </div>
@@ -2803,7 +2782,7 @@
             <span class="ob-door-arrow" aria-hidden="true">›</span>
           </button>
         </div>
-        <button type="button" class="ob-skip">Skip</button>
+        <button type="button" class="btn btn-quiet ob-skip">Skip</button>
       </div>
     </div>
 
@@ -2814,7 +2793,7 @@
       <div class="card ob-claude">
         <div class="card-head">
           <h2 id="claude-setup-title">Connect Claude Code</h2>
-          <button type="button" id="claude-setup-close" class="btn btn-mini">Close</button>
+          <button type="button" id="claude-setup-close" class="btn btn-sm">Close</button>
         </div>
         <p class="ob-claude-lead">Worca drives the <strong>Claude Code</strong> CLI. Real runs need it on your <code>PATH</code>; mock runs need nothing.</p>
         <pre class="ob-claude-cmd"><code>npm install -g @anthropic-ai/claude-code</code></pre>
@@ -2824,12 +2803,12 @@
         <p class="ob-claude-note">Signing in to the Claude desktop app does not carry over — the CLI keeps its own sign-in.</p>
         <div class="ob-claude-status" id="claude-setup-status" aria-live="polite"></div>
         <div class="stop-actions">
-          <button type="button" id="claude-setup-check" class="btn btn-primary btn-mini">Check again</button>
+          <button type="button" id="claude-setup-check" class="btn btn-primary btn-sm">Check again</button>
         </div>
       </div>
     </div>
 
-    <div id="stop-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="stop-title">
+    <div id="stop-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="stop-title">
       <div class="card stop-card">
         <h2 id="stop-title" class="stop-title">Stop this pipeline?</h2>
         <p class="stop-body">A stopped run can't be resumed. Its work so far stays on its branch.</p>
@@ -2838,8 +2817,8 @@
           <div class="stop-ident-branch" hidden></div>
         </div>
         <div class="stop-actions" data-card-actions>
-          <button type="button" class="stop-cancel">Keep running</button>
-          <button type="button" class="stop-confirm">Stop pipeline</button>
+          <button type="button" class="btn stop-cancel">Keep running</button>
+          <button type="button" class="btn btn-danger stop-confirm">Stop pipeline</button>
         </div>
       </div>
     </div>
@@ -2849,7 +2828,7 @@
       <div class="card">
         <div class="card-head">
           <h2 id="proj-add-title">Add project</h2>
-          <button type="button" id="proj-add-cancel" class="btn btn-mini">Close</button>
+          <button type="button" id="proj-add-cancel" class="btn btn-sm">Close</button>
         </div>
         <!-- Two ways in: a folder already on this machine, or a repository cloned into the
              projects folder by the server (POST /api/projects/clone). Clone is the default
@@ -2867,8 +2846,8 @@
             <label for="proj-add-path">Folder</label>
             <div class="path-row">
               <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" />
-              <button type="button" id="proj-add-browse" class="btn btn-ghost btn-mini" title="Pick the project folder">Choose folder&hellip;</button>
-              <button type="button" id="proj-add-browse-many" class="btn btn-ghost btn-mini" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
+              <button type="button" id="proj-add-browse" class="btn btn-sm" title="Pick the project folder">Choose folder&hellip;</button>
+              <button type="button" id="proj-add-browse-many" class="btn btn-sm" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
             </div>
           </div>
         </div>
@@ -2888,7 +2867,7 @@
         </div>
         <small class="hint" id="proj-add-msg" aria-live="polite"></small>
         <div class="confirm-actions">
-          <button type="button" id="proj-add-save" class="btn btn-primary btn-mini">Add project</button>
+          <button type="button" id="proj-add-save" class="btn btn-primary btn-sm">Add project</button>
         </div>
       </div>
     </div>
@@ -2901,13 +2880,13 @@
       <div class="card">
         <div class="card-head">
           <h2 id="proj-bulk-title">Add projects</h2>
-          <button type="button" id="proj-bulk-close" class="btn btn-mini">Close</button>
+          <button type="button" id="proj-bulk-close" class="btn btn-sm">Close</button>
         </div>
         <p class="hint">Untick a folder to leave it out. Names default to the folder name.</p>
         <ul id="proj-bulk-list" class="proj-bulk-list"></ul>
         <small class="hint" id="proj-bulk-msg" aria-live="polite"></small>
         <div class="confirm-actions" data-card-actions>
-          <button type="button" id="proj-bulk-save" class="btn btn-primary btn-mini">Add projects</button>
+          <button type="button" id="proj-bulk-save" class="btn btn-primary btn-sm">Add projects</button>
         </div>
       </div>
     </div>
@@ -2917,7 +2896,7 @@
       <div class="card">
         <div class="card-head">
           <h2 id="plugin-modal-title">Plugin</h2>
-          <button type="button" id="plugin-modal-close" class="btn btn-mini">Close</button>
+          <button type="button" id="plugin-modal-close" class="btn btn-sm">Close</button>
         </div>
         <div id="plugin-modal-body"></div>
         <div class="confirm-actions" id="plugin-modal-actions"></div>

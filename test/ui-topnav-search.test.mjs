@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { createTopnavSearch } from '../ui/public/topnav-search.mjs';
+import { searchRows } from '../ui/public/global-search.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 // The search exactly as index.html ships it (the `.topnav-c` slot's content).
@@ -436,10 +437,11 @@ test('the look: a 34px pill, the open ring from the search tokens, a listbox as 
   assert.match(css, /--search-ring:light-dark\(rgba\(221,107,77,\.24\),rgba\(240,154,124,\.26\)\);/);
   const field = ruleBody('.tsearch-field');
   assert.match(field, /height:34px;/);
-  assert.match(field, /border-radius:999px;/);
+  assert.match(field, /border-radius:var\(--r-sm\);/);
   assert.match(field, /box-shadow:0 0 0 1px var\(--line\);/);
   assert.match(ruleBody('.tsearch.is-open .tsearch-field'), /box-shadow:0 0 0 1px var\(--search-line\),0 0 0 4px var\(--search-ring\);/);
-  assert.equal(ruleBody('.tsearch-open,.tsearch-close'), 'display:none;', 'desktop: no phone buttons');
+  // Both buttons are .btn, whose later display:inline-flex would beat a one-class hide rule: two classes win.
+  assert.equal(ruleBody('.tsearch .tsearch-open,.tsearch .tsearch-close'), 'display:none;', 'desktop: no phone buttons');
   assert.equal(ruleBody('.tsearch-kbd:empty'), 'display:none;', 'no empty chip before the script names the chord');
   const pop = ruleBody('.tsearch-pop');
   assert.match(pop, /position:absolute;z-index:30;top:calc\(100% \+ 8px\);/);
@@ -452,7 +454,7 @@ test('the look: a 34px pill, the open ring from the search tokens, a listbox as 
   assert.equal(ruleBody('.tsearch-dot.tone-need'), 'background:var(--amber);');
   assert.equal(ruleBody('.tsearch-dot.tone-run'), 'background:var(--blue);');
   assert.equal(ruleBody('.tsearch-dot.tone-fail'), 'background:var(--red);');
-  const top = css.indexOf('.topnav-new:focus-visible{');
+  const top = css.indexOf('.topnav-new svg{');
   assert.ok(top > 0 && css.indexOf('\n.tsearch{') > top && css.indexOf('\n.tsearch{') < css.indexOf('\n.topbar{'), 'the block sits after the top bar rules');
 });
 
@@ -479,10 +481,18 @@ test('phones: the pill folds into a 32px search button; open, the input is a ful
   assert.ok(start > 0, 'inside the "Responsive nav tiers" phone block');
   const block = css.slice(start, css.indexOf('\n}\n', start));
   assert.match(block, /\n {2}\.tsearch-field\{display:none;\}/);
-  assert.match(block, /\n {2}\.tsearch-open\{display:flex;[^}]*width:32px;height:32px;/);
+  assert.match(block, /\n {2}\.tsearch \.tsearch-open\{display:inline-flex;\}/, 'a 32px square: .btn .btn-icon in markup');
   assert.match(block, /\n {2}\.tsearch\.is-open::before\{content:"";position:fixed;top:0;left:0;right:0;z-index:30;height:48px;background:var\(--panel\);\}/);
   assert.match(block, /\n {2}\.tsearch\.is-open \.tsearch-field\{display:flex;position:fixed;top:7px;left:8px;right:8px;z-index:31;\}/);
   assert.match(block, /\n {2}\.tsearch\.is-open \.tsearch-open\{visibility:hidden;\}/, 'the covered search button is no Tab stop while the row is open');
-  assert.match(block, /\n {2}\.tsearch\.is-open \.tsearch-close\{display:flex;/);
+  assert.match(block, /\n {2}\.tsearch\.is-open \.tsearch-close\{display:inline-flex;/);
   assert.match(block, /\n {2}\.tsearch-pop\{position:fixed;top:56px;left:8px;right:8px;width:auto;min-width:0;transform:none;/);
+});
+
+test('runs are found by tag: client:acme, client: and acme; the matching tag shows in the row meta', () => {
+  const live = [{ runId: 'r1', title: 'Fix invoices', status: 'done', groupName: 'proj', tags: ['client:acme'] },
+    { runId: 'r2', title: 'Other', status: 'done', groupName: 'proj', tags: ['client:globex'] }];
+  for (const q of ['client:acme', 'acme']) assert.deepEqual(searchRows({ live }, q).runs.map((r) => r.title), ['Fix invoices'], q);
+  assert.deepEqual(searchRows({ live }, 'client:').runs.map((r) => r.title).sort(), ['Fix invoices', 'Other']);
+  assert.match(searchRows({ live }, 'acme').runs[0].meta, /client:acme/);
 });

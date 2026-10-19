@@ -39,8 +39,8 @@ export function renderSaveDialog({ name = '', domain = '', domains = [], title =
 
   form.appendChild(h(doc, 'p', 'sd-msg'));
   const actions = h(doc, 'div', 'sd-actions');
-  const cancel = h(doc, 'button', 'btn-ghost sd-cancel', 'Cancel'); cancel.type = 'button';
-  const confirm = h(doc, 'button', 'btn-go sd-confirm', 'Save'); confirm.type = 'button';
+  const cancel = h(doc, 'button', 'btn sd-cancel', 'Cancel'); cancel.type = 'button';
+  const confirm = h(doc, 'button', 'btn btn-primary sd-confirm', 'Save'); confirm.type = 'button';
   actions.append(cancel, confirm);
   form.appendChild(actions);
   dlg.appendChild(form);

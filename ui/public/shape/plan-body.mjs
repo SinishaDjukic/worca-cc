@@ -2,6 +2,7 @@
 // Gate on (deps.extras): one decision card — summary, a folded check line, a perspectives line, Approve and build /
 // Ask for changes / Full plan / ⋯. Gate off: the held body keeps approve / revise / stop, so a held run is never
 // stranded (D12, S4).
+import { icon } from '../icons.mjs';
 import { buildPerspectiveChips } from './chips.mjs';
 import { planStats, perspectiveChangeFeedback, fixAllFeedback, sectionOwners, planSummary, checkLine, unmetLine,
   approveLabel } from './plan-text.mjs';
@@ -20,7 +21,7 @@ export function renderPlanBody(panel, pq, deps) {
   const items = check && Array.isArray(check.items) ? check.items : [];
   const perspectives = Array.isArray(plan.perspectives) ? plan.perspectives : [];
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-  const btn = (cls, text) => { const b = h('button', `btn ${cls}`, text); b.type = 'button'; return b; };
+  const btn = (cls, text) => { const b = h('button', `btn btn-sm ${cls}`, text); b.type = 'button'; return b; };
   const body = h('div', deps.extras ? 'plan-body plan-card' : 'plan-body');
   const err = h('div', 'plan-err'); err.hidden = true; err.setAttribute('role', 'alert');
   let busy = false;
@@ -119,7 +120,7 @@ export function renderPlanBody(panel, pq, deps) {
       const rows = h('div', 'plan-checks'); rows.hidden = true;
       for (const it of items) {
         const row = h('div', `plan-check-row${it.pass ? ' ok' : ''}`);
-        const mark = h('span', 'plan-check-mark', it.pass ? '✓' : '✕'); mark.setAttribute('aria-label', it.pass ? 'met' : 'unmet');
+        const mark = h('span', 'plan-check-mark'); mark.append(icon(doc, it.pass ? 'check' : 'x', 12)); mark.setAttribute('aria-label', it.pass ? 'met' : 'unmet');
         row.append(mark, h('span', 'plan-check-label', it.label));
         if (!it.pass && it.detail) row.appendChild(h('span', 'plan-check-detail', it.detail));
         rows.appendChild(row);
@@ -191,7 +192,8 @@ export function renderPlanBody(panel, pq, deps) {
     full.addEventListener('click', () => { full.textContent = fullView.hidden ? 'Full plan' : 'Hide plan'; });
     foot.appendChild(full);
     if (!(deps.run && deps.run.workspaceId)) {
-      const more = btn('btn-ghost plan-more', '⋯');
+      const more = btn('btn-quiet btn-icon plan-more');
+      more.append(icon(doc, 'more', 16));
       more.setAttribute('aria-label', 'More for this plan');
       more.setAttribute('aria-haspopup', 'menu');
       more.addEventListener('click', () => toggleMenu({ doc, anchor: more, align: 'end', label: 'More for this plan', items: [

@@ -44,7 +44,7 @@ export function renderPresetsList(doc, presets, { names = {}, now = Date.now(), 
     const acts = h(doc, 'div', 'pl-actions');
     for (const [label, act, fn] of [['Use', 'use', onUse], ['Rename', 'rename', onRename], ['Duplicate', 'duplicate', onDuplicate],
       ['Edit scope', 'scope', onEditScope], ['Delete', 'delete', onDelete]]) {
-      const b = h(doc, 'button', act === 'use' ? 'btn btn-primary btn-mini' : 'btn-ghost btn-mini', label);
+      const b = h(doc, 'button', act === 'use' ? 'btn btn-primary btn-sm' : 'btn btn-sm', label);
       b.type = 'button';
       b.dataset.act = act;
       b.addEventListener('click', () => fn && fn(p));

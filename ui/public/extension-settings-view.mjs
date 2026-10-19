@@ -28,7 +28,7 @@ export function renderExtensionPairings(data, { doc = document } = {}) {
     main.append(make('div', 'xp-name', `${e.name} · ${browserLabel(e.browser)}`));
     const used = day(e.lastUsedAt);
     main.append(make('div', 'xp-meta', `Paired ${day(e.createdAt) || '—'} · ${used ? `last used ${used}` : 'not used yet'} · id ${shortOrigin(e.origin)}`));
-    const btn = make('button', 'btn-ghost xp-revoke', 'Revoke');
+    const btn = make('button', 'btn xp-revoke', 'Revoke');
     btn.type = 'button';
     btn.dataset.revoke = e.id;
     btn.dataset.name = e.name;
@@ -82,7 +82,7 @@ export function renderExtensionInstall(data, { doc = document, browser = 'chrome
     } else {
       const row = make('div', 'xi-path-row');
       row.append(make('code', 'xi-path', b.path));
-      const copy = make('button', 'btn-ghost xi-copy', 'Copy path');
+      const copy = make('button', 'btn xi-copy', 'Copy path');
       copy.type = 'button';
       copy.dataset.copyPath = b.path;
       row.append(copy);

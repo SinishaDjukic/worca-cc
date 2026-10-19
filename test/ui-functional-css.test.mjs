@@ -150,8 +150,19 @@ test('the tag input placeholder is readable on the grey field (ink-2)', () => {
 // The run header is a 2-column grid (title | Live view). The slice line ("Part of <feature> · slice 1 of 2 →", D22)
 // must take its own full row like the progress bar: while the run waits on the person the Live view switch is hidden,
 // and an auto-placed slice line took the title's row and squeezed "Waiting for you" into a narrow column.
-test('the slice line spans the run header grid on its own row', () => {
-  const r = flat.find((x) => sels(x).includes('.rd-sheet-head > .rd-slice-line'));
-  assert.ok(r, 'a .rd-sheet-head > .rd-slice-line rule exists');
-  assert.equal(r.style.getPropertyValue('grid-column').replace(/\s+/g, ''), '1/-1');
+test('the Group row (which replaced the slice line, runs redesign slice 4) is a row of its own that [hidden] really hides', () => {
+  const row = flat.find((x) => sels(x).includes('.rd-group-line'));
+  assert.ok(row, 'a .rd-group-line rule exists');
+  assert.equal(row.style.getPropertyValue('display'), 'flex');
+  const hid = flat.find((x) => sels(x).includes('.rd-group-line[hidden]'));
+  assert.ok(hid, 'a .rd-group-line[hidden] rule exists');
+  assert.equal(hid.style.getPropertyValue('display'), 'none');
+});
+
+// The chat card's footer buttons sit in .chat-rc-actions (runs redesign slice 4); without a gap of its own they touch.
+test('the chat card footer actions are a wrapping row with a gap between the buttons', () => {
+  const r = flat.find((x) => sels(x).includes('.chat-rc-actions'));
+  assert.ok(r, 'a .chat-rc-actions rule exists');
+  assert.equal(r.style.getPropertyValue('display'), 'flex');
+  assert.equal(r.style.getPropertyValue('gap'), '8px');
 });

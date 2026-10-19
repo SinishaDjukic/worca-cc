@@ -4,7 +4,7 @@
 //    it changed, before → after, and Revert (R6).
 //  - run-stop: the stop warning itself (R7) — "Keep running" or the red "Stop pipeline".
 //  - pull-request: a finished run's pull request offer (R9) — its button opens the Ship it dialog with the card's link.
-// The chrome is the Ask card's (.ask-card, .ask-mcard-*, .ask-card-start / -not-now / -err); style.css
+// The chrome is the Ask card's (.ask-card, .ask-mcard-*, .ask-card-not-now / -err); style.css
 // "Chat P2: Action cards" adds the rest. Emphasis is a background wash, never an edge line.
 import { registerChatCard } from './extensions.mjs';
 import { prWatchLine } from './pr-watch-words.mjs';
@@ -87,7 +87,7 @@ export function buildReceiptCard(block, ctx) {
   root.appendChild(err);
   if (!reverted && card.revertible === true) {
     const actions = make(doc, 'div', 'ask-mcard-actions');
-    const revert = makeButton(doc, 'ask-card-not-now ask-rcard-revert', 'Revert', 'data-chat-revert');
+    const revert = makeButton(doc, 'btn btn-sm btn-quiet ask-card-not-now ask-rcard-revert', 'Revert', 'data-chat-revert');
     revert.setAttribute('aria-label', `Revert ${name}`);
     if (result.code === 'CHANGED_SINCE') revert.disabled = true;
     revert.addEventListener('click', async () => {
@@ -144,8 +144,8 @@ export function buildRunStopCard(block, ctx) {
   if (block.state === 'proposed') {
     const actions = make(doc, 'div', 'ask-mcard-actions');
     // Like #stop-modal: the way out keeps a paused run paused.
-    const keep = makeButton(doc, 'ask-card-not-now', card.status === 'paused' ? 'Keep paused' : 'Keep running', 'data-chat-stop-keep');
-    const stop = makeButton(doc, 'ask-card-start is-danger', 'Stop pipeline', 'data-chat-stop-confirm');   // the Ask cards' red button
+    const keep = makeButton(doc, 'btn btn-sm btn-quiet ask-card-not-now', card.status === 'paused' ? 'Keep paused' : 'Keep running', 'data-chat-stop-keep');
+    const stop = makeButton(doc, 'btn btn-sm btn-danger', 'Stop pipeline', 'data-chat-stop-confirm');
     const busy = (on, label = 'Stop pipeline') => { keep.disabled = on; stop.disabled = on; stop.textContent = label; };
     keep.addEventListener('click', async () => {
       busy(true); err.textContent = '';
@@ -266,8 +266,8 @@ export function buildPullRequestCard(block, ctx) {
   root.appendChild(err);
   if (block.state === 'proposed') {
     const actions = make(doc, 'div', 'ask-mcard-actions');
-    const later = makeButton(doc, 'ask-card-not-now', 'Not now', 'data-chat-pr-decline');
-    const create = makeButton(doc, 'ask-card-start', 'Create pull request', 'data-chat-pr-create');
+    const later = makeButton(doc, 'btn btn-sm btn-quiet ask-card-not-now', 'Not now', 'data-chat-pr-decline');
+    const create = makeButton(doc, 'btn btn-sm btn-primary', 'Create pull request', 'data-chat-pr-create');
     const lock = (on) => { later.disabled = on; create.disabled = on; };
     later.addEventListener('click', async () => {
       lock(true); err.textContent = '';

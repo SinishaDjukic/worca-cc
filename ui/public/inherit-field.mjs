@@ -33,7 +33,7 @@ function efforts(doc, select, spec, modelId, keep) {
 export function renderInheritField(doc, spec) {
   const wrap = node(doc, 'div', 'field inherit-field'); wrap.dataset.setting = spec.id; wrap.dataset.kind = spec.kind;
   const row = node(doc, 'div', 'label-row'); const label = node(doc, 'label', null, spec.label); const badge = node(doc, 'span', 'inherit-badge', 'Project');
-  const clear = node(doc, 'button', 'btn btn-ghost btn-mini inherit-clear', spec.level === 'project' ? 'Clear' : 'Use default'); clear.type = 'button'; row.append(label, badge, clear); wrap.append(row);
+  const clear = node(doc, 'button', 'btn btn-sm inherit-clear', spec.level === 'project' ? 'Clear' : 'Use default'); clear.type = 'button'; row.append(label, badge, clear); wrap.append(row);
   if (spec.hint) wrap.append(node(doc, 'small', 'hint', spec.hint));
   const inherited = spec.inherited || { value: undefined, source: 'default' }; const format = spec.format || ((value) => value == null ? null : String(value));
   // A model field's Effort has its own select: the Model's inherited choice names the model alone ("Opus 5.5 (default)").

@@ -75,7 +75,7 @@ export function renderChatSettings({ prefs, channels } = {}, { doc = globalThis.
     badge.dataset.channelKey = key;
     if (c.detail) badge.title = c.detail;
     row.appendChild(badge);
-    const test = h(doc, 'button', 'btn-ghost btn-mini chat-test', 'Test');
+    const test = h(doc, 'button', 'btn btn-sm chat-test', 'Test');
     test.type = 'button';
     test.dataset.plugin = c.plugin;
     test.dataset.channelId = c.channelId;

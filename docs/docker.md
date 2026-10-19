@@ -275,9 +275,9 @@ grace period longer than the drain (`compose.yml` sets `stop_grace_period: 30s`;
 container (or, behind a hosted platform, with `WORCA_HEARTBEAT_TOKEN` as a Bearer token), so a
 platform can drain first and then stop quickly.
 
-Set `WORCA_AUTO_RESUME=1` to have the next start resume those runs by itself, and runs it finds
-interrupted by a crash, each as the person who last started or resumed it. Runs paused by a person,
-by a cost cap or by a usage limit always wait for a person. It is off by default.
+The next start resumes those runs by itself, each as the person who last started or resumed it.
+Set `WORCA_AUTO_RESUME=0` to turn that off, or `WORCA_AUTO_RESUME=1` to also resume runs it finds
+interrupted by a crash. Runs paused by a person, by a cost cap or by a usage limit always wait for a person.
 
 **Single-volume hosts** (Railway and other platforms that give a service one volume,
 mounted root-owned): set `WORCA_DATA_DIR=/data`, mount the volume there and start

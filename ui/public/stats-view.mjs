@@ -313,7 +313,7 @@ export function renderCostPauseBanner(rec, { doc = globalThis.document, fmt = DE
   const el = h(doc, 'div', `cost-banner ${kind}`);
   const text = h(doc, 'div', 'cb-text');
   const actions = h(doc, 'div', 'cb-actions');
-  const settingsBtn = h(doc, 'button', 'btn btn-mini cb-settings', 'Open Settings');
+  const settingsBtn = h(doc, 'button', 'btn btn-sm cb-settings', 'Open Settings');
   settingsBtn.type = 'button';
 
   if (kind === 'cb-pipeline') {
@@ -325,7 +325,7 @@ export function renderCostPauseBanner(rec, { doc = globalThis.document, fmt = DE
     text.appendChild(doc.createTextNode(
       ' limit. Raise or clear the limit in Settings, or continue without a cap.'));
     el.appendChild(text);
-    const override = h(doc, 'button', 'btn btn-primary btn-mini cb-override',
+    const override = h(doc, 'button', 'btn btn-primary btn-sm cb-override',
       'Continue without cap (this pipeline)');
     override.type = 'button';
     override.dataset.pipelineId = rec.pipelineId || '';

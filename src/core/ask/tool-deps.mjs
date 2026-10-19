@@ -18,6 +18,7 @@ import { htmlToText } from './html-text.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 import { askProgress } from '../ask-projection.mjs';
 import { getDb } from '../db.mjs';
+import { runStatusLine } from '../run-status.mjs';
 import { readNightDecisions } from '../night/store.mjs';
 import { shapeFirstEnabled } from '../shape/gate.mjs';
 import { PERSPECTIVE_KEYS } from '../../shared/shape/perspectives.mjs';
@@ -101,6 +102,7 @@ export function defaultToolDeps({ threadId, viewer = null }) {
     lookupPipelineRow,
     findPipelineRowById,
     totalsFor,
+    runStatusLine: (row) => runStatusLine(row.id),
     readStoreMeta,
     readDiffPatch,
     hasDiffPatch,

@@ -127,7 +127,7 @@ test('withButton: busy -> done -> idle, failure skips done, a throw becomes {ok:
 
 test('(v4) withButton re-attaches the ORIGINAL children: a cached label node stays live', async (t) => {
   const { document: doc } = fresh();
-  doc.body.insertAdjacentHTML('beforeend', '<button id="go" class="btn-go"><svg id="play"></svg><span id="lbl">Start run</span></button>');
+  doc.body.insertAdjacentHTML('beforeend', '<button id="go" class="btn btn-primary"><svg id="play"></svg><span id="lbl">Start run</span></button>');
   const btn = doc.getElementById('go');
   const label = doc.getElementById('lbl');                 // what app.js caches as el.startBtnLabel
   mock.timers.enable({ apis: ['setTimeout'] });

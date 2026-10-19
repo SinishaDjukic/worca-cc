@@ -80,10 +80,15 @@ const FEATURE = (id = 'feat-1', o = {}) => ({ id, title: 'Big change', status: '
     { index: 3, title: 'Third', state: 'planned', pipelineId: null, runId: null },
   ], ...o });
 
-/** A server stub: features by id, per-id GET handlers, recorded GETs/POSTs. */
+const groupMember = (position, pipelineId, status = 'done') => ({ position, title: `Slice ${position}`, pipelineId, ticketId: null, status, pr: null,
+  ticket: null, adhoc: false, after: null });
+/** A server stub: features by id, per-id GET handlers, recorded GETs/POSTs. It lists `feat_1` as a feature group
+ *  (GET /api/run-groups), so #feature/feat_1 renders the group page (runs redesign slice 4, D16). */
 function featureServer() {
-  const s = { features: new Map(), gets: [], posts: [], getHandler: null, postHandler: null };
+  const s = { features: new Map(), gets: [], posts: [], getHandler: null, postHandler: null,
+    groups: [{ id: 'feat_1', kind: 'feature', title: 'Big change', projectKey: null, planning: null, members: [groupMember(1, 'p1')], cost: { usd: 0, byPipeline: {} } }] };
   s.fetchHandler = (url, opts) => {
+    if (url.startsWith('/api/run-groups')) return res(200, { groups: s.groups });
     const m = /^\/api\/shape\/features\/([^/]+)(?:\/([a-z-]+))?$/.exec(url);
     if (!m) return null;
     const id = decodeURIComponent(m[1]);
@@ -293,7 +298,7 @@ async function openFeaturePage({ server = featureServer(), runs = [] } = {}) {
   ctx.wsBox.ws.dispatch('open', {});
   ctx.dispatch({ type: 'hello', ...GATE, runs });
   await ctx.settle();
-  ctx.go('feature/feat_1');
+  ctx.go('feature/feat_1/overview');                // the group page's Overview hosts the Shaper view (slice 4, D14)
   await ctx.settle(6);
   const page = ctx.window.document.querySelector('[data-view="feature"] .feature-page');
   return { ctx, server, page };
@@ -302,21 +307,25 @@ async function openFeaturePage({ server = featureServer(), runs = [] } = {}) {
 test('#feature/feat_1 fetches the feature and renders the page view', async () => {
   const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
   const { page } = await openFeaturePage({ server });
-  assert.deepEqual(server.gets, ['feat_1']);
-  assert.ok(page.querySelector('.shape-feature.is-page'));
+  assert.deepEqual(server.gets, ['feat_1', 'feat_1'], 'the replaced-id lookup (F47), then the Shaper view');
+  assert.ok(page.querySelector('.gpage .gpage-overview .shape-feature.is-page'));
   assert.equal(page.querySelectorAll('.shape-feature-seg').length, 3);
 });
 
 test('#feature says it is loading until the feature arrives (no blank page on a slow server)', async () => {
   const server = featureServer();
-  let release = null;
-  server.getHandler = () => new Promise((r) => { release = r; });
+  const held = [];
+  server.getHandler = () => new Promise((r) => { held.push(r); });
   const { page } = await openFeaturePage({ server });
-  assert.equal(page.querySelector('.feature-page-loading').textContent, 'Loading feature…');
-  release(res(200, PAGE_FEATURE()));
-  await new Promise((r) => setTimeout(r, 20));
+  // The group page while the replaced-id lookup is out, or (the group is listed) its Overview while the view loads.
+  assert.match(page.querySelector('.feature-page-loading').textContent, /^Loading (group|feature)…$/);
+  // Every held GET: the replaced-id lookup first, then the Shaper view the Overview mounts once the page is drawn.
+  for (let i = 0; i < 5 && (held.length || page.querySelector('.feature-page-loading')); i++) {
+    for (const r of held.splice(0)) r(res(200, PAGE_FEATURE()));
+    await new Promise((r) => setTimeout(r, 20));
+  }
   assert.equal(page.querySelector('.feature-page-loading'), null, 'the page replaces the loading line');
-  assert.ok(page.querySelector('.shape-feature.is-page'));
+  assert.ok(page.querySelector('.gpage-overview .shape-feature.is-page'));
 });
 
 test('#feature whose first load fails says so instead of loading forever', async () => {
@@ -332,7 +341,7 @@ test('#feature for an unknown id says the feature no longer exists', async () =>
   assert.equal(page.querySelector('.feature-page-gone').textContent, 'This feature no longer exists.');
 });
 
-test('#feature with the gate off falls back to Chat', async () => {
+test('#feature with the gate off still renders the group page, without Overview (slice 4, D16)', async () => {
   const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
   const ctx = await bootApp({ fetchHandler: server.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
@@ -340,28 +349,34 @@ test('#feature with the gate off falls back to Chat', async () => {
   await ctx.settle();
   ctx.go('feature/feat_1');
   await ctx.settle(4);
-  assert.deepEqual(server.gets, []);
-  assert.ok(ctx.window.document.querySelector('[data-view="feature"]').classList.contains('hidden'));
+  assert.deepEqual(server.gets, [], 'no Shaper read with the flag off');
+  const view = ctx.window.document.querySelector('[data-view="feature"]');
+  assert.equal(view.classList.contains('hidden'), false);
+  assert.ok(view.querySelector('.gpage'));
+  assert.equal(view.querySelector('.gpage .rd-tab[data-tab="overview"]').hidden, true);
 });
 
 test('the page\'s ask host survives a repaint; a state frame repaints the line without a fetch', async () => {
   const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
+  server.groups[0].members = [groupMember(1, 'p1'), groupMember(2, 'p2', 'running'), groupMember(3, null, null)];
   const { ctx, page } = await openFeaturePage({ server, runs: [{ runId: 'r2', pipelineId: 'p2', title: 'Run tags', projectDir: '/tmp/p',
     status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z', shaping: { perspectives: [], rounds: [], approved: null, savedTo: null }, pendingQuestion: PLAN_Q }] });
-  const qp = page.querySelector('.shape-feature-current .shape-feature-ask .qpanel');
-  assert.ok(qp, 'the ask host sits in the current slice block');
+  // Runs redesign slice 4 (D14): the question lives in the group page's status card, so Overview draws no ask slot.
+  const qp = page.querySelector('.gpage-card .gpage-question .qpanel');
+  assert.ok(qp, 'the ask host sits in the status card');
   assert.ok(qp.childElementCount > 0 || qp.textContent.length > 0, 'the plan ask is drawn');
+  assert.equal(page.querySelector('.shape-feature-current .shape-feature-ask'), null, 'Overview draws the question nowhere else');
   ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
   await ctx.settle(6);
-  assert.equal(server.gets.length, 2);
-  assert.equal(page.querySelector('.shape-feature-current .shape-feature-ask .qpanel'), qp, 'the same panel: a typed answer survives');
+  assert.equal(server.gets.length, 3, 'the replaced-id lookup, the first view, the repaint');
+  assert.equal(page.querySelector('.gpage-card .gpage-question .qpanel'), qp, 'the same panel: a typed answer survives');
   const head = page.querySelector('.shape-feature-head');
   head.textContent = 'stale';
   ctx.dispatch({ type: 'state', runId: 'r2', status: 'running' });
   await ctx.settle(4);
   assert.equal(page.querySelector('.shape-feature-head').textContent, 'Slice 2 of 3 › Plan › your approval',
     'the state frame rewrote the line (paintFeaturePageProgress)');
-  assert.equal(server.gets.length, 2, 'a state frame does not refetch the feature');
+  assert.equal(server.gets.length, 3, 'a state frame does not refetch the feature');
 });
 
 test('the Chat run card mounts the summary and Open feature routes to the page; the Plans tab keeps the full card', async () => {

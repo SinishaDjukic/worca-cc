@@ -25,7 +25,7 @@ function withRef(doc, text, name) {
   parts.forEach((part, i) => { if (i) frag.append(ref(doc, name)); if (part) frag.append(part); });
   return frag;
 }
-function btn(doc, cls, text) { const b = h(doc, 'button', `btn-ghost btn-mini ${cls}`, text); b.type = 'button'; return b; }
+function btn(doc, cls, text) { const b = h(doc, 'button', `btn btn-sm ${cls}`, text); b.type = 'button'; return b; }
 
 /** Classify a project status (from /api/team-metrics/scopes → projects[]) into a cell variant. */
 export function projectTmState(s) {
