@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { emptySpec, MAX_QUESTIONS } from '../src/core/requirements/spec.mjs';
 import {
   applyRound, RoundError, buildRoundPrompt, buildOrientationPrompt, ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, normalizeOrientation, mockRoundReply, pendingRound, latestAnswers,
+  removedCriteria,
 } from '../src/core/requirements/round.mjs';
 
 const base = () => ({
@@ -167,4 +168,21 @@ test('final fold-in of open questions dedupes against existing assumptions', () 
   const r = applyRound(prev, { spec: { openQuestions: ['Who pays shipping?'] } }, { criteriaSeq: 2, assumptionSeq: 3, final: true });
   assert.equal(r.spec.assumptions.length, 3);
   assert.equal(r.assumptionSeq, 3);
+});
+
+test('a criterion the product owner removed never comes back under a new id', () => {
+  assert.match(ROUND_SYSTEM_PROMPT, /Never re-add a criterion the product owner removed/);
+  const r = applyRound(base(), { spec: {}, criteria: [
+    { id: null, text: 'CUSTOMERS GET AN EMAIL' },           // removed earlier, any case
+    { id: 'R-po-7', text: 'Customers get an email' },       // its old id is gone: it would be new
+    { id: null, text: 'Support sees the reason' },
+  ] }, { criteriaSeq: 7, assumptionSeq: 2, removedCriteria: ['Customers get an email'] });
+  assert.deepEqual(r.spec.criteria.map((c) => c.text), ['A customer can cancel while unpaid', 'Edited by PO', 'Support sees the reason']);
+  // the thread shows what was removed, as data
+  const turns = [{ id: 1, kind: 'edit', payload: { criterion: 'R-po-7', action: 'removed', text: 'Customers <b>get</b> an email' } }];
+  const p = buildRoundPrompt({ feature: { id: 'FEAT-1', title: 't', description: 'd', spec: base() }, turns });
+  assert.match(p, /The product owner removed criterion R-po-7: Customers &lt;b>get&lt;\/b> an email/);
+  // removedCriteria() reads them off the thread (old turns without text are skipped)
+  assert.deepEqual(removedCriteria([...turns, { id: 2, kind: 'edit', payload: { criterion: 'R-po-1', action: 'removed' } },
+    { id: 3, kind: 'edit', payload: { criterion: 'R-po-2', action: 'added' } }]), ['Customers <b>get</b> an email']);
 });

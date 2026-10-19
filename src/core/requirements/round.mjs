@@ -28,6 +28,7 @@ export const ROUND_SYSTEM_PROMPT = [
   '- Turn every gap you cannot close into an assumption the product owner can confirm or reject.',
   '- Acceptance criteria are observable, testable statements of behaviour. Keep the ids of existing criteria and assumptions; give new ones the id null.',
   '- Never remove a criterion or an assumption, and never change a section listed in <edited_by_product_owner>.',
+  '- Never re-add a criterion the product owner removed, under any id or wording.',
   '- Set "done" to true when nothing important is left to ask; "questions" is then empty.',
   '',
   'Reply with ONLY this JSON object: no prose, no code fence.',
@@ -67,6 +68,13 @@ export function pendingRound(turns) {
   return null;
 }
 
+/** The texts of the criteria the product owner removed, read off the thread's edit turns (turns written
+ *  before the text was recorded carry none and are skipped). */
+export function removedCriteria(turns) {
+  return turns.filter((t) => t.kind === 'edit' && t.payload.action === 'removed' && typeof t.payload.text === 'string' && t.payload.text)
+    .map((t) => t.payload.text);
+}
+
 function threadText(turns) {
   const lines = [];
   let n = 0;
@@ -92,7 +100,11 @@ function threadText(turns) {
         const parts = t.payload.header.map((h) => what[h]).filter(Boolean);
         if (parts.length) lines.push(`The product owner changed ${parts.join(' and ')}.`);
       }
-      if (t.payload.criterion) lines.push(`The product owner ${asData(t.payload.action)} criterion ${asData(t.payload.criterion)}.`);
+      if (t.payload.criterion) {
+        lines.push(t.payload.action === 'removed' && t.payload.text
+          ? `The product owner removed criterion ${asData(t.payload.criterion)}: ${asData(t.payload.text)}`
+          : `The product owner ${asData(t.payload.action)} criterion ${asData(t.payload.criterion)}.`);
+      }
     } else if (t.kind === 'assumption') {
       lines.push(`The product owner marked assumption ${asData(t.payload.id)} as ${asData(t.payload.status)}.`);
     } else if (t.kind === 'finish') {
@@ -157,9 +169,10 @@ function normalizeQuestions(list) {
 
 /**
  * Apply one model reply to the spec. Never trusts the model with ids, deletions or the product owner's
- * edits (design D3, D6).
+ * edits (design D3, D6): a new criterion whose text matches one the product owner removed
+ * (`removedCriteria`, case-insensitive) is dropped.
  */
-export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, final = false } = {}) {
+export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, final = false, removedCriteria = [] } = {}) {
   if (!raw || typeof raw !== 'object' || !raw.spec || typeof raw.spec !== 'object' || Array.isArray(raw.spec)) {
     throw new RoundError('the reply has no "spec" object');
   }
@@ -175,7 +188,7 @@ export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, fina
 
   let cSeq = nextIdNumber(criteriaSeq, spec.criteria, 'R-po-') - 1;
   const crit = new Map(spec.criteria.map((c) => [c.id, c]));
-  const critSeen = new Set(spec.criteria.map((c) => c.text.toLowerCase()));
+  const critSeen = new Set([...spec.criteria.map((c) => c.text), ...removedCriteria.map((t) => clip(t))].map((t) => t.toLowerCase()));
   let added = 0;
   for (const it of Array.isArray(raw.criteria) ? raw.criteria : []) {
     const text = clip(it && it.text);

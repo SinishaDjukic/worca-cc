@@ -11,6 +11,7 @@ import {
   startOrientation, submitAnswers, finishInterview, retry, settled, isBusy, recoverInterrupted, requirementsModel,
 } from '../src/core/requirements/interview.mjs';
 import { requirementsWindowedSpendUsd } from '../src/core/cost-budget.mjs';
+import { removeCriterion } from '../src/core/requirements/edits.mjs';
 
 useTempHome(after);
 beforeEach(() => {
@@ -459,4 +460,19 @@ test('a call cut by its own timer reads as a clear message and keeps the spend',
   const last = listTurns(f.seq).at(-1);
   assert.match(last.payload.message, /Worca got no reply within 180 seconds\. Try again\./);
   near(last.costUsd, 0.1);
+});
+
+test('a round never brings back a criterion the product owner removed', async () => {
+  off();
+  const f = newFeature();
+  const d = deps(fakeRunner([ROUND1]));
+  await startOrientation(f.seq, {}, d);
+  await settled(f.seq);
+  removeCriterion(f.seq, 'R-po-1');
+  const round = listTurns(f.seq).find((t) => t.kind === 'round');
+  const r = fakeRunner([{ ...ROUND2, criteria: [{ id: null, text: 'a customer can cancel an unpaid order' }, { id: null, text: 'Support is told' }] }]);
+  await submitAnswers(f.seq, { roundTurnId: round.id, useRecommended: true }, {}, deps(r));
+  await settled(f.seq);
+  assert.match(r.calls[0].prompt, /removed criterion R-po-1: A customer can cancel an unpaid order/);
+  assert.deepEqual(getFeature(f.seq).spec.criteria.map((c) => c.text), ['Support is told']);
 });

@@ -20,7 +20,7 @@ import {
 } from './store.mjs';
 import {
   ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, buildRoundPrompt, buildOrientationPrompt, applyRound,
-  normalizeOrientation, mockRoundReply, RoundError,
+  normalizeOrientation, mockRoundReply, RoundError, removedCriteria,
 } from './round.mjs';
 
 const ROUND_TIMEOUT_MS = 180_000;
@@ -183,7 +183,8 @@ async function runRound(seq, d, by, { final = false } = {}) {
   notify(d, seq);
   const f = requireFeature(seq);
   const isFinal = final || f.rounds + 1 >= MAX_ROUNDS;
-  const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal };
+  const turns = listTurns(seq);
+  const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal, removedCriteria: removedCriteria(turns) };
   let applied = null;
   let model = null;
   let cost = 0;
@@ -192,7 +193,7 @@ async function runRound(seq, d, by, { final = false } = {}) {
     applied = applyRound(f.spec, mockRoundReply(f, isFinal), seqs);
   } else {
     const ctx = getContext(f.scopeType, f.scopeKey);
-    const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns: listTurns(seq), final: isFinal, round: f.rounds + 1 });
+    const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1 });
     model = await requirementsModel(d.listModels);
     const cwd = scratchDir();
     const fail = (code, msg) => failTurn(seq, { code, message: msg, job: 'round', costUsd: cost, model }, by, 'your_turn');

@@ -128,3 +128,12 @@ test('assumptions: rejected is settable; releasing a never-edited section is har
   assert.deepEqual(Object.keys(g.spec.edited), []);
   assert.deepEqual(listTurns(f.seq).at(-1).payload, { section: 'rules', released: true });
 });
+
+test('a removed criterion keeps its text on the edit turn, and the next round prompt names it', () => {
+  const f = make();
+  removeCriterion(f.seq, 'R-po-3');
+  const t = listTurns(f.seq).at(-1);
+  assert.deepEqual(t.payload, { criterion: 'R-po-3', action: 'removed', text: 'c3' });
+  const text = buildRoundPrompt({ feature: getFeature(f.seq), turns: listTurns(f.seq) });
+  assert.match(text, /The product owner removed criterion R-po-3: c3/);
+});

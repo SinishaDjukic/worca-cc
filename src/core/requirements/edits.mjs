@@ -94,9 +94,11 @@ export function editCriterion(seq, id, text, { by = null } = {}) {
 
 export function removeCriterion(seq, id, { by = null } = {}) {
   const f = editable(seq);
-  if (!f.spec.criteria.some((c) => c.id === id)) throw new RequirementsError('NOT_FOUND', `no criterion ${String(id).slice(0, 20)}`);
+  const gone = f.spec.criteria.find((c) => c.id === id);
+  if (!gone) throw new RequirementsError('NOT_FOUND', `no criterion ${String(id).slice(0, 20)}`);
   return tx(() => {
-    appendTurn(seq, { kind: 'edit', payload: { criterion: id, action: 'removed' } }, { by });
+    // The text rides on the turn: the next rounds see what was removed and Worca never re-adds it (D6).
+    appendTurn(seq, { kind: 'edit', payload: { criterion: id, action: 'removed', text: gone.text } }, { by });
     return updateFeature(seq, { spec: { ...f.spec, criteria: f.spec.criteria.filter((c) => c.id !== id) } }, { by });
   });
 }
