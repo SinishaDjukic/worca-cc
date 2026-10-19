@@ -92,7 +92,7 @@ test('ask-panel-render: user bubble + attachment pills, plain-fallback answer, a
     { name: 'ask-panel-render: activity head — one dot-separated line, the meter beside it; stopped keeps its label', run: async () => {
       const snap = snapBody([
         asstRow('askm_00000001', 1),
-        asstRow('askm_00000002', 2, { status: 'stopped', reason: 'max_turns', durationMs: 72000, blocks: [{ kind: 'notice', text: 'Stopped: reached the 40-turn limit (Settings → Ask Worca)' }] }),
+        asstRow('askm_00000002', 2, { status: 'stopped', reason: 'max_turns', durationMs: 72000, blocks: [{ kind: 'notice', text: 'Stopped: reached the 40-turn limit (Settings → Chat)' }] }),
       ]);
       const ctx = makePanel({ fetchHandler: handlerFor(snap) });
       await openThread(ctx);

@@ -1,5 +1,5 @@
 // test/ask-metrics-deps.test.mjs
-// The REAL team-metrics bundle behind the Ask tools (docs/team-metrics.md "Ask Worca") over real
+// The REAL team-metrics bundle behind the Ask tools (docs/team-metrics.md "Chat") over real
 // git: status / read / isLocalRun / flush, the bound validator over the real readers, and
 // applyMetricsChange for the two kinds that need no origin (record, workspace_home) plus a real
 // route_members over file remotes.

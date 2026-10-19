@@ -1128,7 +1128,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'root', 'projectsRoot', 'chat',
   'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'humanRateUsdPerHour',
   'askMaxTurns', 'askMaxBudgetUsd',
-  'askWeb',                                  // Ask Worca web access { enabled, allowedDomains, search }
+  'askWeb',                                  // Chat web access { enabled, allowedDomains, search }
   'debugSpawnEnabled',
   'resumeAfterUsageLimit',
   'titleModel', 'hideBuiltinModels',
@@ -1146,7 +1146,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
-  'askEngine', 'askModels',                  // Ask Worca's engine for new chats and its model per engine (user-only, D17)
+  'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
   'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
 ]);

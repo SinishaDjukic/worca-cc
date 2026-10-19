@@ -97,9 +97,9 @@ fires. Edit the preset, and the next run uses the new setup. The prompt, title, 
 schedule stay the schedule's own. For an *Any project* preset, the schedule also keeps its own
 source branch.
 
-A field you changed in the form before scheduling (or a choice an Ask Worca card made) stays as
+A field you changed in the form before scheduling (or a choice an Chat card made) stays as
 you set it: only the fields you left as the preset had them follow later edits to the preset.
-A schedule made from an Ask Worca card never starts on *Permissive* guardrails: if the preset
+A schedule made from an Chat card never starts on *Permissive* guardrails: if the preset
 resolves to Permissive when it fires, the run ends *failed* and says so.
 
 The Schedules page names the preset in each row (`preset Quick fix`), and **Details** has a
@@ -135,17 +135,17 @@ presets and the ones pinned to the project (the current directory, or `--project
 `worca run` works against a local Worca server. A server that asks you to sign in answers with
 its sign-in hint.
 
-## Ask Worca
+## Chat
 
-Ask Worca can propose a run from one of your presets. Its `list_presets` tool lists the presets
+Chat can propose a run from one of your presets. Its `list_presets` tool lists the presets
 that fit the chat's pinned project or workspace (and the *Any project* ones), and `propose_run`
 takes a `presetId`. The card then shows *From preset Quick fix* and the preset's workflow,
-guardrails, engine and agent models. Anything Ask Worca names itself wins over the preset.
+guardrails, engine and agent models. Anything Chat names itself wins over the preset.
 **Start** sends the preset's other picks too (human in the loop, Away mark, opt-outs, loop
 budgets) and the server checks the preset again. Switching the card to another workflow drops the
 preset's agent picks, and the card says so.
 
-A preset on the Permissive guardrail set (or with none) is not proposed as is: Ask Worca must name
+A preset on the Permissive guardrail set (or with none) is not proposed as is: Chat must name
 a stricter guardrail set. A preset's tags reach the card only while Run tags are on, because the
 card sends tags only through its tag row.
 

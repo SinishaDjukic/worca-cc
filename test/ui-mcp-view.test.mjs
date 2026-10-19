@@ -99,7 +99,7 @@ test('set list: General first, user sets, Team sets; the warning dot; Used by li
   const rows = [...host.querySelectorAll('.mcp-setrow')];
   assert.deepEqual(rows.map((r) => r.dataset.set), SETS.map((s) => s.id));
   assert.deepEqual(rows.map((r) => !!r.querySelector('.mcp-dot')), [false, true, false, false, false]);
-  assert.match(rows[0].textContent, /Built in.*2 servers · Ask Worca · 1 project/);
+  assert.match(rows[0].textContent, /Built in.*2 servers · Chat · 1 project/);
   assert.match(rows[1].textContent, /2 servers · billing/);
   assert.match(rows[4].textContent, /no project here follows old\/home/);
   assert.ok(rows[4].classList.contains('greyed'));

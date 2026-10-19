@@ -507,7 +507,7 @@ test('R-C terminations: user stop (stopped/user, null cost, partial text), the 3
       assert.equal(done.status, 'stopped');
       assert.equal(done.reason, 'max_turns');
       const notice = getMessage(s.asst.id).blocks.find((b) => b.kind === 'notice');
-      assert.equal(notice.text, 'Stopped: reached the 7-turn limit (Settings → Ask Worca)');
+      assert.equal(notice.text, 'Stopped: reached the 7-turn limit (Settings → Chat)');
     } },
   ]);
 });
@@ -723,7 +723,7 @@ test('title: the first turn titles with the hardened option set; a mid-generatio
         runClaudeImpl: async (opts) => { push(opts.onEvent, RESULT()); return { text: 'x', exitCode: 0 }; },
       });
       await turn.run();
-      assert.equal(getThread(s.thread.id).title, null, 'nothing is stamped while haiku runs — the header stays "Ask Worca"');
+      assert.equal(getThread(s.thread.id).title, null, 'nothing is stamped while haiku runs — the header stays "New chat"');
       setThreadTitle(s.thread.id, 'User Named It');       // PATCH landed while haiku ran
       release();
       await turn.titlePromise;

@@ -213,7 +213,7 @@
           </div>
           <div class="topnav-c">
             <!-- Search or ask (topnav-search.mjs over global-search.mjs): ⌘K / Ctrl K focuses the
-                 input and opens the listbox under it; its last row hands what was typed to Ask Worca.
+                 input and opens the listbox under it; its last row hands what was typed to Chat.
                  Phones fold the pill into #tsearch-open, which shows the input as a full-width row
                  with #tsearch-close. The script writes the chip (⌘K on a Mac, Ctrl K elsewhere). -->
             <div class="tsearch">
@@ -1155,7 +1155,7 @@
               <button type="button" data-stats-view="tag" aria-pressed="false" hidden>By tag</button>
             </div>
             <div class="select-wrap" id="stats-group-wrap"><select id="stats-group" class="select" aria-label="Group by"><option value="">No grouping</option><option value="person">Group by person</option></select></div>
-            <small class="hint" id="stats-filter-note" hidden>Filtered: Ask Worca chat spend is not included.</small>
+            <small class="hint" id="stats-filter-note" hidden>Filtered: Chat spend is not included.</small>
           </div>
           <div id="stats-body"><small class="hint">Loading…</small></div>
           <div id="stats-tip" class="chart-tip" hidden></div>
@@ -1618,7 +1618,7 @@
             <button type="button" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
             <!-- Experimental (docs/feature-flags.md) shows at every level: flags are not levels. -->
             <button type="button" data-tab="experimental" data-min-level="simple" aria-pressed="false">Experimental</button>
-            <button type="button" data-tab="ask" data-min-level="advanced" aria-pressed="false">Ask Worca</button>
+            <button type="button" data-tab="ask" data-min-level="advanced" aria-pressed="false">Chat</button>
             <button type="button" data-tab="guardrails" data-min-level="advanced" aria-pressed="false">Guardrails</button>
             <button type="button" data-tab="memory" data-min-level="advanced" aria-pressed="false">Memory</button>
           </div>
@@ -2219,8 +2219,8 @@
               <div class="card-head">
                 <div class="label-row">
                   <h2>Limits &amp; access</h2>
-                  <button type="button" class="info-tip" aria-label="About Ask Worca limits">i<span class="tip-content hidden">
-                    Per-turn guards for the Ask Worca assistant chat. A chat turn stops when it reaches the turn limit or the per-turn cost cap; both are read fresh on every turn.
+                  <button type="button" class="info-tip" aria-label="About Chat limits">i<span class="tip-content hidden">
+                    Per-turn guards for the Chat assistant. A chat turn stops when it reaches the turn limit or the per-turn cost cap; both are read fresh on every turn.
                   </span></button>
                 </div>
               </div>
@@ -2265,7 +2265,7 @@
                 <div class="label-row">
                   <label for="askHistoryDelete">Chat history</label>
                   <button type="button" class="info-tip" aria-label="About Chat history">i<span class="tip-content hidden">
-                    Every saved Ask Worca chat: transcripts, attachments and the git worktrees checked out for them. Runs started from a chat are not affected.
+                    Every saved chat: transcripts, attachments and the git worktrees checked out for them. Runs started from a chat are not affected.
                   </span></button>
                 </div>
                 <button type="button" id="askHistoryDelete" class="ask-history-delete" disabled>Delete all chat history</button>

@@ -58,7 +58,7 @@ const MEMORY_WRITE_TOOLS = new Set(['mcp__worca__remember', 'mcp__worca__forget'
 // `scripts-changed` broadcast the REST routes emit — a script the chat saved shows up in an
 // open Scripts tab. There is no delete tool, and test_script writes nothing outside the bench.
 const SCRIPT_WRITE_TOOLS = new Set(['mcp__worca__save_script']);
-// The direct schedule writes (docs/scheduled-runs.md "Ask Worca"): reversible, never a run start.
+// The direct schedule writes (docs/scheduled-runs.md "Chat"): reversible, never a run start.
 const SCHEDULE_WRITE_TOOLS = new Set(['mcp__worca__pause_schedule', 'mcp__worca__resume_schedule',
   'mcp__worca__skip_next_run', 'mcp__worca__mark_schedule_activity_read']);
 // worca Chat P2 (act, then undo): the tools whose RESULT the PARENT acts on — it applies what the child validated (or,

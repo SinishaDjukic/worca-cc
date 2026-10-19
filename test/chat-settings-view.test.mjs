@@ -13,7 +13,7 @@ const CHANNELS = [
   { plugin: 'teams-chat', channelId: 'main', displayName: 'Teams', platform: 'teams', state: 'unconfigured', detail: 'missing config: appId' },
 ];
 
-test('chat settings render and round-trip, including the Ask Worca script toggle', async () => {
+test('chat settings render and round-trip, including the Chat script toggle', async () => {
   await checkRows([
     { name: 'chat settings: render from prefs + channels, collect round-trips edits, empty list hint', run: async () => {
       await checkRows([
@@ -56,7 +56,7 @@ test('chat settings render and round-trip, including the Ask Worca script toggle
         } },
       ]);
     } },
-    { name: 'the Ask Worca script toggle: default on, explicit off honored, round-trips, no prose', run: () => {
+    { name: 'the Chat script toggle: default on, explicit off honored, round-trips, no prose', run: () => {
       const on = renderScriptToolsToggle({ prefs: {} }, { doc });
       assert.equal(on.querySelector('input#askScriptTools').checked, true, 'an absent pref is ON (W20)');
       assert.equal(on.textContent.trim(), 'Create and run scripts');
@@ -70,7 +70,7 @@ test('chat settings render and round-trip, including the Ask Worca script toggle
       assert.deepEqual(collectScriptToolsToggle(off), { scriptTools: true });
       assert.deepEqual(collectScriptToolsToggle(doc.createElement('div')), { scriptTools: true }, 'a host with no control means ON');
     } },
-    { name: 'the Ask Worca suggestions toggle: default on, explicit off honored, round-trips', run: () => {
+    { name: 'the Chat suggestions toggle: default on, explicit off honored, round-trips', run: () => {
       const on = renderSuggestionsToggle({ prefs: {} }, { doc });
       assert.equal(on.querySelector('input#askSuggestions').checked, true, 'an absent pref is ON');
       assert.equal(on.textContent.trim(), 'Suggest a next prompt after each reply');

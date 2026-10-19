@@ -74,7 +74,7 @@ export async function wsCollect(t, srv, query, done, timeoutMs = 600000) {
 }
 
 /** Ask-turn taps (the chat's own claude, not the title helper or a nested classifier). */
-export const isAskTurnTap = (tp) => tp.args.includes('--disable-slash-commands') && /You are Ask Worca/.test(tp.site);
+export const isAskTurnTap = (tp) => tp.args.includes('--disable-slash-commands') && /You are worca's Chat assistant/.test(tp.site);
 export const flagOf = (tp, f) => { const i = tp.args.indexOf(f); return i >= 0 ? tp.args[i + 1] : null; };
 export const GPT_RE = /\bgpt-[0-9][\w.-]*/g;
 

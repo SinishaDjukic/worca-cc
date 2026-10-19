@@ -938,7 +938,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         text,
         model: st.picker.model,
         effort: st.picker.effort,
-        // The browser's zone rides along: "tomorrow 02:00" is read in it (docs/scheduled-runs.md "Ask Worca").
+        // The browser's zone rides along: "tomorrow 02:00" is read in it (docs/scheduled-runs.md "Chat").
         context: { ...scopedContext(getPageContext() || {}), timeZone: browserTimeZone() },
         // MCP registry §9.4: every message carries the picker's choices, so each turn runs what the picker shows —
         // a refused first message (429/403/400, network) or a PATCH still in flight would leave the stored ones behind.
@@ -1432,7 +1432,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.input.className = 'ask-input';
     el.input.rows = 1;
     el.input.placeholder = INPUT_PLACEHOLDER;
-    el.input.setAttribute('aria-label', 'Message Ask Worca');   // fixed: the placeholder may hold a suggestion
+    el.input.setAttribute('aria-label', 'Message Chat');   // fixed: the placeholder may hold a suggestion
     el.input.addEventListener('keydown', onComposerKeydown);
     el.input.addEventListener('input', onComposerInput);
     el.input.addEventListener('paste', onComposerPaste);
@@ -3269,7 +3269,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (c.fanOut || fanForced(lane, r)) fan++;
     }
     const picked = laneProposedCount(lane);
-    return `${lane.rows.length} agents · ${[...counts].map(([k, v]) => `${k} ×${v}`).join(' · ')}${fan ? ` · ${fan} fan-out` : ''}${picked ? ` · ${picked} picked by Ask Worca` : ''}`;
+    return `${lane.rows.length} agents · ${[...counts].map(([k, v]) => `${k} ×${v}`).join(' · ')}${fan ? ` · ${fan} fan-out` : ''}${picked ? ` · ${picked} picked by Chat` : ''}`;
   }
   function laneSet(lane, row, patch) {
     const next = { ...(lane.edits[row.nodeId] || {}), ...patch };
@@ -3455,7 +3455,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const overText = `${over} override${over === 1 ? '' : 's'} of the workflow defaults`;
     sub.textContent = edited
       ? `you changed ${edited} agent${edited > 1 ? 's' : ''} · ${overText}`
-      : picked ? `Ask Worca picked ${picked} agent${picked > 1 ? 's' : ''} for this run · ${overText}`
+      : picked ? `Chat picked ${picked} agent${picked > 1 ? 's' : ''} for this run · ${overText}`
         : `proposed by Worca · ${overText}`;
     reset.hidden = !edited;
     reset.addEventListener('click', () => { lane.edits = cloneEdits(lane.proposal); if (lane.dropped) lane.dropped.clear(); renderLane(laneSec, lane, lc); });
@@ -3492,8 +3492,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // Ask Worca's pick: its reason (and the model's facts) on hover and to assistive tech, the project's own setting
         // beside it (a workspace card shows the workflow default: agent settings are per project). `role="note"`: a
         // generic span may not carry aria-label (ARIA 1.2), so a screen reader would skip the reason.
-        const mark = make('span', 'ask-rp-prop', 'Ask Worca');
-        mark.title = ['Proposed by Ask Worca for this run', pick.reason, pick.facts].filter(Boolean).join(' — ');
+        const mark = make('span', 'ask-rp-prop', 'Chat');
+        mark.title = ['Proposed by Chat for this run', pick.reason, pick.facts].filter(Boolean).join(' — ');
         mark.tabIndex = 0;
         mark.setAttribute('role', 'note');
         mark.setAttribute('aria-label', mark.title);
@@ -3613,7 +3613,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return make('div', 'ask-card-stub', `Not now — ${card.title || card.brief || 'run proposal'}`);
   }
 
-  // ---- scheduled proposals (docs/scheduled-runs.md "Ask Worca") ----
+  // ---- scheduled proposals (docs/scheduled-runs.md "Chat") ----
   const CLOCK_ICO = 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7.5V12l3 2';
   const localWhen = (iso) => { const ms = Date.parse(iso || ''); return Number.isFinite(ms) ? formatInstant(ms, browserTimeZone()) : 'later'; };
   /** The POST /api/run fields of a proposal's schedule (schedule-spec.mjs scheduleRequestFields). */
@@ -3827,10 +3827,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { el: rootEl, handle, dispose: () => handle.destroy(), animate: proposed && !!prev && prev.state === 'building' };
   }
 
-  // ---- Metrics card (docs/team-metrics.md "Ask Worca"): a proposed team-metrics configuration change --------------
+  // ---- Metrics card (docs/team-metrics.md "Chat"): a proposed team-metrics configuration change --------------
   const MC_KIND_LABEL = { enable: 'Enable team metrics', record: 'Include my runs', workspace_home: 'Metrics home', route_members: 'Route members' };
   const MC_APPLY_LABEL = { enable: 'Enable', record: 'Apply', workspace_home: 'Set home', route_members: 'Route members' };
-  // A team-policy card (docs/team-policy.md "Ask Worca") is the same component: other words, plus the
+  // A team-policy card (docs/team-policy.md "Chat") is the same component: other words, plus the
   // before → after list of an edit.
   const PC_KIND_LABEL = { enable: 'Set up team policy', edit: 'Edit team policy', workspace_home: 'Policy home', route_members: 'Route members' };
   const pcApplyLabel = (card) => (card.kind === 'enable' ? (card.mode === 'follow' ? 'Follow' : 'Set up') : card.kind === 'edit' ? 'Publish'
@@ -3977,7 +3977,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { el: rootEl };
   }
 
-  // ---- Schedule card (docs/scheduled-runs.md "Ask Worca"): a proposed change to an existing schedule ------------
+  // ---- Schedule card (docs/scheduled-runs.md "Chat"): a proposed change to an existing schedule ------------
   const SC_ACTION_LABEL = { run_now: 'Run now', move: 'Change time', edit: 'Edit schedule', cancel: 'Cancel run', delete: 'Delete schedule' };
   const SC_APPLY_LABEL = { run_now: 'Run now', move: 'Move', edit: 'Apply', cancel: 'Cancel run', delete: 'Delete' };
   function buildScheduleCard(block) {
@@ -4042,7 +4042,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { el: rootEl };
   }
 
-  // ---- Model card (docs/models.md "Ask Worca"): a proposed catalog or provider change ------------------------------
+  // ---- Model card (docs/models.md "Chat"): a proposed catalog or provider change ------------------------------
   const MOD_KIND_LABEL = { add_model: 'Add model', edit_model: 'Edit model', remove_model: 'Remove model', provider: 'Provider', import_copilot: 'From Copilot' };
   const MOD_APPLY_LABEL = { add_model: 'Add', edit_model: 'Apply', remove_model: 'Remove', provider: 'Apply', import_copilot: 'Import' };
   function buildModelCard(block) {
@@ -4125,7 +4125,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const head = make('div', 'ask-mcard-head');
     const title = block.state === 'failed' ? 'Web access not granted'
       : block.state === 'applied' ? (result && result.scope === 'always' ? 'Always allowed' : 'Allowed for this chat')
-        : 'Ask Worca wants to read a new site';
+        : 'Chat wants to read a new site';
     head.appendChild(make('span', 'ask-mcard-title', title));
     head.appendChild(make('span', 'ask-mcard-kind', 'Web'));
     rootEl.appendChild(head);
@@ -4152,7 +4152,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const decline = btn('ask-card-not-now', 'Deny', 'data-ask-web-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
       const always = btn('ask-card-not-now', 'Always allow', 'data-ask-web-always');
-      always.title = `Adds ${host} to Settings → Ask Worca → Web access`;
+      always.title = `Adds ${host} to Settings → Chat → Web access`;
       always.addEventListener('click', () => postCard(block, rootEl, { state: 'applied', scope: 'always' }, always));
       const chat = btn('ask-card-start', 'Allow for this chat', 'data-ask-web-chat');
       chat.addEventListener('click', () => postCard(block, rootEl, { state: 'applied', scope: 'chat' }, chat));
@@ -4296,7 +4296,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- Actions card (propose_actions_change): a project's setup + actions, or a workspace's stacks ----------------
-  // Every command the card would store is shown word for word (docs/actions.md "Ask Worca"): applying stores config,
+  // Every command the card would store is shown word for word (docs/actions.md "Chat"): applying stores config,
   // and a person's Start is what later runs it. Every value is text.
   const ACT_KIND_LABEL = { project: 'Project actions', stacks: 'Workspace stacks' };
   const ACT_OP_LABEL = { add: 'Add', change: 'Change', remove: 'Remove' };
@@ -4988,7 +4988,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (unseen) {
           laneSec.dataset.levelKeep = '1';
           const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${p.subagentModel}` : ''}`);
-          laneSec.appendChild(make('div', 'ask-rp-lane-msg', `Start runs Ask Worca's picks as proposed (checked again at Start): ${list.join(', ')}`));
+          laneSec.appendChild(make('div', 'ask-rp-lane-msg', `Start runs Chat's picks as proposed (checked again at Start): ${list.join(', ')}`));
         } else if (!lane) delete laneSec.dataset.levelKeep;
       });
     }
@@ -5200,7 +5200,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       try { const b = await res.json(); if (b && b.error) msg = b.error; } catch { /* keep */ }
       // One turn per thread: the route refuses every card verb that starts one while a
       // reply streams. Say what to do instead of echoing the wire's `turn in flight`.
-      if (res.status === 409 && msg === 'turn in flight') msg = 'Ask Worca is still replying — try again once the answer lands.';
+      if (res.status === 409 && msg === 'turn in flight') msg = 'Chat is still replying — try again once the answer lands.';
       if (err) err.textContent = msg;
       release();
       return null;
@@ -5213,7 +5213,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // A failed event turn ALSO posts a system notice row (the server's failedEventTurn):
     // for save/decline the flip has already rebuilt this element, so the row is the only
     // message that survives. This line is what the run verb — which never flips — shows.
-    if (out && out.turn && out.turn.error && err) err.textContent = `Ask Worca could not reply: ${out.turn.error}`;
+    if (out && out.turn && out.turn.error && err) err.textContent = `Chat could not reply: ${out.turn.error}`;
     return out;
   }
   function dismissCard(block, rootEl) { return postCard(block, rootEl, { state: 'dismissed' }); }

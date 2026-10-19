@@ -1,5 +1,5 @@
 // test/ask-metrics-tools.test.mjs
-// The four team-metrics tools (docs/team-metrics.md "Ask Worca") and list_projects' metrics field,
+// The four team-metrics tools (docs/team-metrics.md "Chat") and list_projects' metrics field,
 // over a fake deps.metrics bundle: shapes, the pinned-scope default, paging, the coded-error mapping,
 // and the graceful "unavailable" without the bundle.
 import { test } from 'node:test';

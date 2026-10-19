@@ -5940,7 +5940,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-pop-effort-none{font-size:11px;color:var(--ink-3);}
 @media (prefers-reduced-motion: reduce){.ask-card.ask-wfcard{animation:none;}}
 
-/* ---------- metrics card chrome (ui/public/ask-panel.mjs buildMetricsCard; docs/team-metrics.md "Ask Worca") ---------- */
+/* ---------- metrics card chrome (ui/public/ask-panel.mjs buildMetricsCard; docs/team-metrics.md "Chat") ---------- */
 .ask-card.ask-mcard{gap:0;padding:16px 18px;border-width:1px;}
 .ask-mcard>*{min-width:0;}
 .ask-mcard-head{display:flex;align-items:center;gap:8px;height:24px;}
@@ -5962,7 +5962,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-mcard-results li.is-skipped{color:var(--ink-3);}
 .ask-mcard-actions{display:flex;align-items:center;gap:8px;margin-top:14px;}
 .ask-mcard.is-applied .ask-mcard-head{opacity:.9;}
-/* Team policy card (docs/team-policy.md "Ask Worca"): an edit's before → after list. */
+/* Team policy card (docs/team-policy.md "Chat"): an edit's before → after list. */
 .ask-mcard-changes{list-style:none;margin:4px 0 0;padding:8px 10px;border-radius:8px;background:var(--field);display:flex;flex-direction:column;gap:4px;font-size:12.5px;}
 .ask-mcard-changes li{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px;min-width:0;}
 .ask-mcard-change-label{color:var(--ink-2);}
@@ -5976,13 +5976,13 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-awcard-after mark{background:var(--amber-wash);color:inherit;border-radius:3px;padding:0 2px}
 .ask-awcard-changes{margin:4px 0 0;padding-left:18px}
 .ask-awcard-saved{margin-top:8px;font-size:12.5px}
-/* actions card (buildActionsCard; docs/actions.md "Ask Worca"): each command block shown whole, word for word */
+/* actions card (buildActionsCard; docs/actions.md "Chat"): each command block shown whole, word for word */
 .ask-acard-change{flex-direction:column;align-items:stretch;}
 .ask-acard-change .ask-mcard-change-val{display:flex;flex-direction:column;align-items:stretch;gap:4px;}
 .ask-acard-cmd{display:block;white-space:pre-wrap;overflow-wrap:anywhere;font-weight:400;}
 .ask-acard-cmd.ask-mcard-before{text-decoration:none;opacity:.7;}
 .ask-acard-tag{font-family:var(--sans);font-size:11px;color:var(--ink-3);}
-/* schedule card (buildScheduleCard; docs/scheduled-runs.md "Ask Worca"): the metrics card's chrome + a before/after grid */
+/* schedule card (buildScheduleCard; docs/scheduled-runs.md "Chat"): the metrics card's chrome + a before/after grid */
 .ask-scard-kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;margin-top:4px;font-size:12.5px;}
 .ask-scard-k{color:var(--ink-3);}
 .ask-scard-v{color:var(--ink);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
@@ -5991,7 +5991,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 /* endpoint import sheet (bridge-view.mjs renderEndpointSheet): the server's own warnings, and a window it would not name */
 .mvi-warn{display:block;color:var(--amber-ink);}
 .mvi-ctx-unknown{color:var(--ink-3);font-size:11.5px;}
-/* model card (buildModelCard; docs/models.md "Ask Worca"): the policy card's change list + what will still block the model */
+/* model card (buildModelCard; docs/models.md "Chat"): the policy card's change list + what will still block the model */
 .ask-modcard-warn,.ask-wscard-warn{color:var(--amber-ink);}
 .ask-modcard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}
 

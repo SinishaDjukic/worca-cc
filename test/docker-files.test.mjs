@@ -33,7 +33,7 @@ test('Dockerfile and .dockerignore: non-root, pinned CLI, tini, healthcheck, tar
       assert.match(d, /^ENTRYPOINT \["tini", "-s", "-e", "143", "--", "worca-entrypoint"\]$/m, 'a stop (exit 143) is a clean container exit');
       assert.match(d, /^HEALTHCHECK/m);
       assert.match(d, /WORCA_NO_NATIVE_DIALOG=1/);
-      assert.match(d, /WORCA_CONTAINER=1/, 'Ask Worca knows it runs in the image (src/core/deployment.mjs)');
+      assert.match(d, /WORCA_CONTAINER=1/, 'Chat knows it runs in the image (src/core/deployment.mjs)');
       assert.match(d, /CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1/);
       assert.match(d, /dev\.worca\.claude-code\.version/, 'the pin is a label');
       assert.match(d, /chmod 0777 \/worca \/projects \/home\/worca \/home\/worca\/\.claude/, 'volume mount points are writable for any uid (Linux Engine WORCA_UID)');

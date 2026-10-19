@@ -13,7 +13,7 @@ export const GETTING_STARTED_STEPS = Object.freeze([
   { id: 'claude',      label: 'Connect Claude Code',             vig: 'claude' },
   { id: 'project',     label: 'Add your first project',          vig: 'project' },
   { id: 'run',         label: 'Watch a run end to end',          vig: 'run' },
-  { id: 'ask',         label: 'Ask Worca about a run',           vig: 'ask' },
+  { id: 'ask',         label: 'Ask about a run in Chat',         vig: 'ask' },
   { id: 'realRun',     label: 'Run a real pipeline',             vig: 'realRun' },
   { id: 'workflows',   label: 'Explore the built-in workflows',  vig: 'workflow' },
   { id: 'workspace',   label: 'Group projects into a workspace', vig: 'workspace',   level: 'advanced' },

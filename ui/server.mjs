@@ -3383,7 +3383,7 @@ async function fireTicket(ticket) {
     // An Ask card can never propose Permissive (D9 / R-sec-2), so an unattended run from one never starts on it,
     // whatever the preset says now. (A missing guardrailsId starts as Permissive.)
     if (ticket.askCardId && (!body.guardrailsId || body.guardrailsId === 'permissive')) {
-      return { ok: false, error: `it was scheduled from Ask Worca and the run preset "${name}" now resolves to Permissive guardrails; pick a stricter set in the preset or schedule it again`, transient: false };
+      return { ok: false, error: `it was scheduled from Chat and the run preset "${name}" now resolves to Permissive guardrails; pick a stricter set in the preset or schedule it again`, transient: false };
     }
   }
   if (body.source && body.source.type === 'plugin') {
@@ -6726,7 +6726,7 @@ const ACTION_ENTRY_CAP = 50;                        // finished action entries k
 const actionsPidFileNow = () => actionsPidFile(worcaHome());
 const actions = new ActionRegistry({ portRange: () => parsePortRange(actionsSettings()) });
 Object.defineProperty(actions, 'pidFile', { get: actionsPidFileNow });
-Object.defineProperty(actions, 'stateFile', { get: () => actionsStateFile(worcaHome()) });   // Ask Worca reads it (readActionsState)
+Object.defineProperty(actions, 'stateFile', { get: () => actionsStateFile(worcaHome()) });   // Chat reads it (readActionsState)
 const stackStates = new Map();                     // `${runId}:${stackId}` -> state reported by runStack (D26)
 const stackTokens = new Map();                     // `${runId}:${stackId}` -> token of the live start; deleted by Stop
 const setupJobs = new Map();                       // `${runId}:${member}` -> Promise<boolean> (D25)
@@ -7019,7 +7019,7 @@ const askCommands = createAskCommands({
   // their own chat; app.js routes ask-* frames to the Ask panel.
   onUpdate: (threadId, command) => broadcast({ type: 'ask-command', threadId, command }),
   onOpen: (threadId, target) => {
-    if (target.runId) appendAuditById(target.runId, `Terminal opened by Ask Worca in ${target.projectName || target.projectKey}.`, { actor: `ask:${threadId}` });
+    if (target.runId) appendAuditById(target.runId, `Terminal opened by Chat in ${target.projectName || target.projectKey}.`, { actor: `ask:${threadId}` });
   },
   onFinish: (threadId, block) => { startTerminalEventTurn(threadId, block).catch((e) => console.warn(`[worca-ui] ask: terminal event for ${threadId}: ${e?.message || e}`)); },
 });
@@ -9740,7 +9740,7 @@ const settingsState = () => ({
   humanRateUsdPerHour: humanRateUsdPerHour(),
   askMaxTurns: askMaxTurns(),
   askMaxBudgetUsd: askMaxBudgetUsd(),
-  askWeb: askWeb(),                                       // Ask Worca web access (off by default)
+  askWeb: askWeb(),                                       // Chat web access (off by default)
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
   debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
   resumeAfterUsageLimit: resumeAfterUsageLimit(),
@@ -9762,8 +9762,8 @@ const settingsState = () => ({
   runEngine: runEngineSetting() ?? null,
   stepModels: stepModelsSetting(),
   utilityModels: utilityModelsSetting(),
-  askEngine: askEngineSetting() ?? null,                  // Ask Worca: the engine new chats start on (D17)
-  askModels: askModelsSetting(),                          // Ask Worca: the model per engine (D17)
+  askEngine: askEngineSetting() ?? null,                  // Chat: the engine new chats start on (D17)
+  askModels: askModelsSetting(),                          // Chat: the model per engine (D17)
   nightMode: nightModeSettings(),                         // night mode: the user layer (only the fields set)
   nightModeEffective: resolveNightConfig({ user: nightModeSettings() }).config,   // no project: the global view
   nightModeToggle: nightModeToggle(),                     // auto | on | off (live switch)
@@ -11708,7 +11708,7 @@ async function drainAskDeferred(threadId) {
     try { r = await next(); } catch (e) { r = { ok: false, error: e && e.message ? e.message : String(e) }; }
     if (r && r.ok) return;                                        // its settleJob continues the chain
     if (r && r.skipped) continue;                                 // #574: the model already saw that end
-    postAskSystemNotice(threadId, `Ask Worca could not reply to an event: ${(r && r.error) || 'unknown error'}`);
+    postAskSystemNotice(threadId, `Chat could not reply to an event: ${(r && r.error) || 'unknown error'}`);
   }
 }
 
@@ -12588,7 +12588,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   // D5 backstop, before anything is stored: an engine Ask does not run on (Cursor). The catalog filter
   // (ask/models.mjs) already makes such a model unknown to validateModelEffort.
   const modelEngine = model ? askTurnEngine(id, thread, model) : null;
-  if (model && !modelEngine && engineOfModel(model)) return { ok: false, status: 400, error: `Ask on ${engineLabel(engineOfModel(model))} is unavailable` };
+  if (model && !modelEngine && engineOfModel(model)) return { ok: false, status: 400, error: `Chat on ${engineLabel(engineOfModel(model))} is unavailable` };
   const budget = budgetStatus();                                                    // P3: the event path needs the same gate the route head applies
   if (budget.blocked) return { ok: false, status: 403, error: 'total cost limit reached', budget };
   if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
@@ -13307,7 +13307,7 @@ async function saveBuildCard(threadId, block, { acceptScripts = null } = {}) {
  * keeps `turn.error` for API clients.
  */
 function failedEventTurn(threadId, turn) {
-  postAskSystemNotice(threadId, `Ask Worca could not reply to an event: ${turn.error || 'unknown error'}`);
+  postAskSystemNotice(threadId, `Chat could not reply to an event: ${turn.error || 'unknown error'}`);
   return turn;
 }
 
@@ -13521,7 +13521,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block });
     }
     if (found.block.card && found.block.card.type === 'schedule') {
-      // Schedule card (docs/scheduled-runs.md "Ask Worca"): proposed → applied | failed | declined. The change —
+      // Schedule card (docs/scheduled-runs.md "Chat"): proposed → applied | failed | declined. The change —
       // start now, move, edit, cancel, delete — happens HERE, behind the click, through the same scheduleVerb
       // the Schedules page uses; never in the model's tool.
       if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
@@ -13546,7 +13546,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block, turn });
     }
     if (found.block.card && found.block.card.type === 'model') {
-      // Model card (docs/models.md "Ask Worca"): proposed → applied | failed | declined. The catalog / provider
+      // Model card (docs/models.md "Chat"): proposed → applied | failed | declined. The catalog / provider
       // write happens HERE, behind the click, through the same setters the Models view uses — each re-validates.
       if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
       if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
@@ -13590,7 +13590,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
         try {
           const host = found.block.card.change?.host;
           const now = askWebAccessFor(id, askGetThread(id)?.context || {});
-          if (!now.enabled) throw new Error('web access is off for this chat — switch it on in Settings → Ask Worca → Web access');
+          if (!now.enabled) throw new Error('web access is off for this chat — switch it on in Settings → Chat → Web access');
           if (Array.isArray(now.teamCap) && !askHostAllowed(host, now.teamCap)) throw new Error(`${host} is outside the team policy's web allowlist`);
           if (body.scope === 'always') { await addAskWebHost(host); emitChanged('settings-changed'); }
           result = { ok: true, scope: body.scope };
@@ -13645,7 +13645,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block, turn });
     }
     if (found.block.card && found.block.card.type === 'actions') {
-      // Actions card (docs/actions.md "Ask Worca"): proposed → applied | failed | declined. The config write happens
+      // Actions card (docs/actions.md "Chat"): proposed → applied | failed | declined. The config write happens
       // HERE, behind the click, through the same core setters as PUT /api/projects/:key/actions and
       // /api/workspaces/:id/actions — each re-validates — and behind the same D4 guard: an isolated agent must
       // not plant a command a person's later click would run. Applying stores config; it starts nothing.
@@ -13706,7 +13706,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block });
     }
     if (found.block.card && ['metrics', 'policy', 'away'].includes(found.block.card.type)) {
-      // Metrics / policy card (docs/team-metrics.md, docs/team-policy.md "Ask Worca"): proposed → applied | failed |
+      // Metrics / policy card (docs/team-metrics.md, docs/team-policy.md "Chat"): proposed → applied | failed |
       // declined. The change is the outward-facing part — a branch on origin, a commit to the team's policy, a
       // marker on another repo, this machine's switch, the workspace's home — so it happens HERE, behind the
       // click, never in the model's tool.

@@ -38,7 +38,7 @@ anything.
    `#models` opens at Simple. The page shows a banner naming its level
    and offering the switch. Never disable a control or refuse a route because of
    the mode.
-4. **An answer is never hidden.** A card Ask Worca emits (run, workflow or
+4. **An answer is never hidden.** A card Chat emits (run, workflow or
    metrics proposal) is the assistant's reply. Hiding it would leave the chat
    text pointing at nothing. Trim the card's *fields*, not the card.
 5. **Guides ask before they need a higher mode.** A Getting started step with a
@@ -243,7 +243,7 @@ resets its run allowance. Worca replies to review threads without resolving them
 With the watch off, or waiting for a person, Resolve on a conflicted PR merges the
 base branch in once.
 
-A pull request opened from an Ask Worca card shows the same watch on that card, as one read-only line per pull
+A pull request opened from a Chat card shows the same watch on that card, as one read-only line per pull
 request (Watching, Fixing, Resolving conflicts, Merging `dev` in, Pushing the fix, or Stopped with the reason). The
 line is hidden while the pull request is not watched. Every fix run on it, whether Watch PR started it or Resolve
 did, appears in that chat by itself as a live run card. The card says what started the run (merge conflicts,
@@ -294,7 +294,7 @@ inside the view.
 | General: Appearance, Alerts, Interface mode, Getting started, About | S |
 | Runs tab: Budget & cost limits (incl. Resume runs automatically when a usage limit resets) | S |
 | Experimental tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
-| General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Ask Worca tab (limits, tools, web access, chat history) | A |
+| General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
 | Runs tab: Wait for the network | A |
 | Guardrails tab (list, details); Memory tab (files) | A |
@@ -316,7 +316,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Providers page: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |
 | The Copilot notice modal; a card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
 
-### Statistics, Team metrics, Team policy, Ask Worca, Getting started
+### Statistics, Team metrics, Team policy, Chat, Getting started
 
 | Element | Level |
 |---|---|
@@ -350,7 +350,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: the context ring and its popover's window fill and topics | S |
 | Ask: model picker, scope, cost meter, tool rows, branches, guardrails, "Open in New run" | A |
 | Ask: the chevron on a reply's activity line (`Done · 7.4s · …`) | A when it opens tool rows, E when it opens only sub-agents; the line itself shows at every level |
-| Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E — a run card carrying Ask Worca's per-agent picks shows its lane at every mode (the picks apply at Start) |
+| Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E — a run card carrying Chat's per-agent picks shows its lane at every mode (the picks apply at Start) |
 | Chat home: heading, composer, the New run / Build workflow / Track a run / Write a script / Clone a repo tiles, More (Step away), the tabs (Needs you, Running, Recent chats, Plans while Shaper is on, Workflows) and their run tiles, the Workflows and Away mode promos | S |
 | Chat home: the Plans tab (Shaper, gated): shaped plans newest first with their state, and each sliced feature's card | S |
 | Chat home: the Schedule a run and Explain a diff tiles; More › New workspace, Remember something, Find tasks; the Schedules promo | A — with the page or surface that owns each feature |

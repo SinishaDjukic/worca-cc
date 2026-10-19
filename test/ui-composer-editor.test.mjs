@@ -539,7 +539,7 @@ test('MAJ-19: Backspace aimed at the save dialog or confirm modal never edits th
     { name: 'MAJ-19: the modal guard is not over-broad — closed overlays leave the keyboard live', run: async () => {
       const s = await open();
       appConfirmModal(s, { open: false });                 // .hidden CLASS = closed
-      const sheet = s.doc.createElement('section');        // Ask Worca sheet: hidden ATTRIBUTE
+      const sheet = s.doc.createElement('section');        // Chat sheet: hidden ATTRIBUTE
       sheet.setAttribute('role', 'dialog'); sheet.hidden = true;
       s.doc.body.appendChild(sheet);
       s.c.openSaveDialog();
@@ -552,7 +552,7 @@ test('MAJ-19: Backspace aimed at the save dialog or confirm modal never edits th
       // The Ask Worca sheet is role="dialog" WITHOUT aria-modal and stays open while
       // the canvas is used (ask-panel.mjs:202-207, :522) — it never owns the keyboard.
       const ask = s.doc.createElement('section');
-      ask.className = 'ask-sheet'; ask.setAttribute('role', 'dialog'); ask.setAttribute('aria-label', 'Ask Worca');
+      ask.className = 'ask-sheet'; ask.setAttribute('role', 'dialog'); ask.setAttribute('aria-label', 'Chat');
       ask.hidden = false;
       s.doc.body.appendChild(ask);
       s.c.select({ kind: 'node', id: 'n_task' });

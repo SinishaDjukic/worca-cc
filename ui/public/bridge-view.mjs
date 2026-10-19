@@ -230,10 +230,10 @@ function renderSpeechRow(doc, sp) {
   row.dataset.provider = 'speech';
   const main = h(doc, 'div', 'mv-pv-main');
   const spHead = h(doc, 'div', 'mv-head');
-  spHead.appendChild(h(doc, 'b', 'mv-name', 'Speech (Ask Worca voice)'));
+  spHead.appendChild(h(doc, 'b', 'mv-name', 'Speech (Chat voice)'));
   main.appendChild(spHead);
   main.appendChild(h(doc, 'small', 'hint',
-    'Voice mode for Ask Worca. Built in: Whisper and Kokoro run inside your browser — the first use downloads the speech models once (up to about 500 MB), and audio never leaves this computer. Or point Worca at speech servers you run (whisper.cpp, Kokoro-FastAPI, …) through their OpenAI-compatible audio API.'));
+    'Voice mode for Chat. Built in: Whisper and Kokoro run inside your browser — the first use downloads the speech models once (up to about 500 MB), and audio never leaves this computer. Or point Worca at speech servers you run (whisper.cpp, Kokoro-FastAPI, …) through their OpenAI-compatible audio API.'));
   if (sp.cacheBytes) {
     // The built-in engines' downloads (~/.worca-cc/speech-cache); the next mic use fetches them again.
     const cache = h(doc, 'div', 'mv-pv-btns mv-sp-cache');

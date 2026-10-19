@@ -24,7 +24,7 @@ equally long period for Custom.
   `client:acme` tag matches exactly; a bare `client` matches any client value.
 - **Person**: only runs started by that person.
 
-Every tile, chart and grouped row follows the filters. Ask Worca chat spend is not tied to a run,
+Every tile, chart and grouped row follows the filters. Chat spend is not tied to a run,
 so any active filter leaves it out, and the Spent tile drops its budget meter (the limit covers
 the whole account, not the filtered slice).
 
@@ -34,11 +34,11 @@ While the `runTags` feature flag is on, three chips replace the Group by select:
 
 - **Overview** (default): the tiles and charts.
 - **By person**: the person table on its own (one row per starter, `(unknown person)` for runs with
-  no named starter, an `Ask Worca` row, a `Total` footer equal to the Spent tile), with Export CSV.
+  no named starter, a `Chat` row, a `Total` footer equal to the Spent tile), with Export CSV.
 - **By tag**: one table per tag key. Configured tag dimensions (team policy `runs.tagDimensions` or
   Settings › Tags) come first, read by label ("Cost centre"), even when no run in
   the range carries them. Every other key follows when a run in the range carries it, by spend.
-  Each table lists the values by spend, then **Untagged**, then **Ask Worca** (absent while a
+  Each table lists the values by spend, then **Untagged**, then **Chat** (absent while a
   filter is active), and a **Total** footer equal to the Spent tile. Share is an integer percent;
   the column always adds up to 100% (— at $0). More than 8 values show the top 7 and an
   **Other (n)** row that expands in place. A plain tag such as `spike` reads `spike` and Untagged.

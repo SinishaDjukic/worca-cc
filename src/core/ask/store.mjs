@@ -401,7 +401,7 @@ export function findFixRunCards(runId) {
 }
 
 // scheduledFor: a run card the user scheduled (state 'scheduled'); scheduleId + sentence: one that became a
-// repeating schedule (docs/scheduled-runs.md "Ask Worca").
+// repeating schedule (docs/scheduled-runs.md "Chat").
 const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId', 'scheduledFor', 'scheduleId', 'sentence', 'after'];
 
 /** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') and a

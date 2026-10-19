@@ -134,7 +134,7 @@ test('consent dialog: plugin @ sha7, the home, files, scripts, shell blocks, all
   const facts = Object.fromEntries([...el.querySelectorAll('dl.tp-facts dt')].map((dt) => [dt.textContent, dt.nextElementSibling.textContent]));
   assert.deepEqual(facts, {
     NAME: 'deploy-checklist', FROM: 'acme/platform · worca-policy @ 8c1d2e0', FILES: '5 · 6.8 kB',
-    SCRIPTS: 'scripts/preflight.sh · scripts/rollback.py', 'SHELL BLOCKS': '1 in SKILL.md — they run in pipeline runs without guardrail checks; Ask Worca never runs them',
+    SCRIPTS: 'scripts/preflight.sh · scripts/rollback.py', 'SHELL BLOCKS': '1 in SKILL.md — they run in pipeline runs without guardrail checks; Chat never runs them',
     'ALLOWED TOOLS': 'Bash(kubectl get:*) Read',
     CONSENT: 'this plugin skill; later content changes come through the plugin\'s update review',
     UPDATES: 'updates to required skills apply without another review when you trust this home', JOINS: 'Team · acme/platform set',

@@ -183,6 +183,6 @@ test('a ticket from an Ask card never fires on Permissive, whatever the preset r
     askThreadId: 'th_test', askCardId: 'card_test', presetId: preset.id });
   const now = await runNow(t.id);
   assert.equal(now.status, 'failed');
-  assert.match(now.failReason, /scheduled from Ask Worca and the run preset "Loose" now resolves to Permissive guardrails/);
+  assert.match(now.failReason, /scheduled from Chat and the run preset "Loose" now resolves to Permissive guardrails/);
   assert.equal(now.pipelineId ?? null, null, 'no run was started');
 });

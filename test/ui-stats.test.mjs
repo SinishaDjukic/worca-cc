@@ -221,8 +221,8 @@ test('narrow widths: the range control wraps and a grouped table scrolls inside 
 const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 const VOCAB = [{ key: 'client', count: 2, plain: false, valued: true }];
 const TAG_GROUPS = [
-  { key: 'cc', configured: true, rows: [{ kind: 'none', key: null, label: '(no cc)', spentUsd: 3, runs: 3 }, { kind: 'ask', key: null, label: 'Ask Worca', spentUsd: 0.5, runs: 0 }] },
-  { key: 'client', configured: false, rows: [{ kind: 'value', key: 'acme', label: 'acme', spentUsd: 2, runs: 2 }, { kind: 'none', key: null, label: '(no client)', spentUsd: 1, runs: 1 }, { kind: 'ask', key: null, label: 'Ask Worca', spentUsd: 0.5, runs: 0 }] },
+  { key: 'cc', configured: true, rows: [{ kind: 'none', key: null, label: '(no cc)', spentUsd: 3, runs: 3 }, { kind: 'ask', key: null, label: 'Chat', spentUsd: 0.5, runs: 0 }] },
+  { key: 'client', configured: false, rows: [{ kind: 'value', key: 'acme', label: 'acme', spentUsd: 2, runs: 2 }, { kind: 'none', key: null, label: '(no client)', spentUsd: 1, runs: 1 }, { kind: 'ask', key: null, label: 'Chat', spentUsd: 0.5, runs: 0 }] },
 ];
 function tagHandler(dims, { keys = VOCAB, tagGroups = TAG_GROUPS } = {}) {
   return (u) => {

@@ -251,12 +251,12 @@ test('a pause notification clicks through to the run and closes when the run is 
 });
 
 test('ask cards: a proposed card notifies once with a title by card type; leaving "proposed" closes it; a re-proposed card notifies again', () => {
-  assert.equal(askCardTitle({}), 'Worca: Ask Worca proposal to review');
-  assert.equal(askCardTitle({ workflowId: 'wf_x' }), 'Worca: Ask Worca: run to approve');
-  assert.equal(askCardTitle({ type: 'web' }), 'Worca: Ask Worca: web access to approve');
-  assert.equal(askCardTitle({ type: 'workflow' }), 'Worca: Ask Worca: workflow to review');
-  assert.equal(askCardTitle({ type: 'schedule' }), 'Worca: Ask Worca: schedule to approve');
-  assert.equal(askCardTitle({ type: 'model' }), 'Worca: Ask Worca proposal to review');
+  assert.equal(askCardTitle({}), 'Worca: Chat proposal to review');
+  assert.equal(askCardTitle({ workflowId: 'wf_x' }), 'Worca: Chat: run to approve');
+  assert.equal(askCardTitle({ type: 'web' }), 'Worca: Chat: web access to approve');
+  assert.equal(askCardTitle({ type: 'workflow' }), 'Worca: Chat: workflow to review');
+  assert.equal(askCardTitle({ type: 'schedule' }), 'Worca: Chat: schedule to approve');
+  assert.equal(askCardTitle({ type: 'model' }), 'Worca: Chat proposal to review');
   const a = setup();
   const card = (state, extra = {}) => ({ type: 'ask-card', threadId: 't1', block: { kind: 'card', id: 'c1', state, card: { type: 'web', host: 'secret.example', ...extra } } });
   a.alerts.onAskFrame({ type: 'ask-card', threadId: 't1', block: { kind: 'card', id: 'c1', state: 'building', card: { type: 'workflow' } } });
@@ -264,7 +264,7 @@ test('ask cards: a proposed card notifies once with a title by card type; leavin
   a.alerts.onAskFrame(card('proposed'));
   a.alerts.onAskFrame(card('proposed'));
   assert.equal(a.N.shown.length, 1);
-  assert.equal(a.N.shown[0].title, 'Worca: Ask Worca: web access to approve');
+  assert.equal(a.N.shown[0].title, 'Worca: Chat: web access to approve');
   assert.equal(a.N.shown[0].body, 'Open the chat to review it.', 'never the card content');
   assert.equal(a.N.shown[0].tag, 'worca:ask:t1:c1');
   a.alerts.onAskFrame({ type: 'ask-message', threadId: 't1', message: { id: 'm1', blocks: [{ kind: 'text' }, { kind: 'card', id: 'c1', state: 'applied', card: { type: 'web' } }] } });

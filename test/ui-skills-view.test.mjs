@@ -91,7 +91,7 @@ test('routes and labels: #connectors/skills, the title "Connectors", three segme
       const { host, ctl, calls } = mount();
       await ctl.show('skills');
       assert.equal(host.querySelector('.topbar h1'), null, 'the top bar names the page');
-      assert.equal(host.querySelector('.topbar .sub').textContent, 'MCP servers and skills worca’s agents and Ask Worca get, grouped in sets attached to projects');
+      assert.equal(host.querySelector('.topbar .sub').textContent, 'MCP servers and skills worca’s agents and Chat get, grouped in sets attached to projects');
       const seg = [...host.querySelectorAll('.topbar .seg button')];
       assert.deepEqual(seg.map((b) => [b.textContent, b.getAttribute('aria-pressed')]), [['Sets', 'false'], ['Servers', 'false'], ['Skills', 'true']]);
       assert.equal(host.querySelector('.topbar .btn-go').textContent, 'Import skill');
@@ -377,7 +377,7 @@ test('Check for updates → what changed → Update applies the stage; nothing n
   assert.equal(b.querySelector('small.hint').textContent, '2 files · 3.0 kB · 1 script · 2 shell blocks');
   assert.equal(b.querySelector('.sk-consent b').textContent, 'Worca copies these files into its library. Agents may read them and run the scripts where their guardrails allow.');
   assert.deepEqual([...b.querySelectorAll('.sk-consent-note')].map((p) => p.textContent),
-    ['Its inline shell blocks (!`cmd`) run in pipeline runs without guardrail checks; Ask Worca never runs them.'], 'the same honest lines as Import');
+    ['Its inline shell blocks (!`cmd`) run in pipeline runs without guardrail checks; Chat never runs them.'], 'the same honest lines as Import');
   await action(m.modal, 'Update')();
   await settle();
   assert.deepEqual(m.writes(), [['POST', `${P}/preview`, undefined], ['POST', P, { stage: 'abcdefabcdefabcd' }]]);
@@ -527,7 +527,7 @@ test('the set list counts skills beside servers (nothing when a set has none)', 
   const { host, ctl } = mount({ setViews: SET_VIEWS });
   await ctl.show('sets/billing');
   assert.deepEqual([...host.querySelectorAll('.mcp-setrow small')].map((s) => s.textContent), [
-    '1 server · 1 skill · Ask Worca · 1 project', '0 servers · 2 skills · billing', '2 servers · no projects', '0 servers · 1 skill · billing']);
+    '1 server · 1 skill · Chat · 1 project', '0 servers · 2 skills · billing', '2 servers · no projects', '0 servers · 1 skill · billing']);
 });
 
 test('a user set: the prefix hint, skill cards (qualified name, source, counts, Windows badge, state line); the switch and Remove write /api/sets', async () => {

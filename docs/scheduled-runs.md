@@ -229,9 +229,9 @@ the caller's zone — and so is a time in the past.
   mode while anything is scheduled, missed, repeating or unread, and a schedule Ask
   Worca proposed shows on its card in every mode.
 
-## Ask Worca
+## Chat
 
-Ask Worca can schedule on your behalf and manage what is scheduled. The rule it follows:
+Chat can schedule on your behalf and manage what is scheduled. The rule it follows:
 **anything that starts, moves, edits, cancels or deletes a run is a card you confirm**;
 the small reversible changes it makes directly, and only when you ask.
 
@@ -248,11 +248,11 @@ the small reversible changes it makes directly, and only when you ask.
 | `propose_run` + `source` | A run whose task is a tracker task — a reference the run fetches when it starts | card |
 
 **Tracker tasks.** "Schedule a fix for Jira bug PROJ-123 with auto, tonight at 2" becomes one card:
-Ask Worca finds the issue (`list_task_sources` → `find_tasks` / `get_task`) and proposes a run
+Chat finds the issue (`list_task_sources` → `find_tasks` / `get_task`) and proposes a run
 with `source {plugin, sourceId, taskId, profile?, inputs?}` instead of a brief, `workflowId
 "wf_auto"` and `when`. The card shows the task (id, title, link) where the brief would be, and
 starting or scheduling it sends POST /api/run what New run's source pane sends (plus, on a saved
-workflow, the per-agent picks Ask Worca proposed for this run as its `overlay`) — so the run reads
+workflow, the per-agent picks Chat proposed for this run as its `overlay`) — so the run reads
 the issue as it is when it starts, and can write its result back.
 - The parent looks the task up once (`src/core/ask/source-spec.mjs checkTask`): a missing task
   refuses the card; a network, rate-limit or timeout failure keeps it with a warning (the run
@@ -275,7 +275,7 @@ the issue as it is when it starts, and can write its result back.
   server re-validates the tool input against the live rows before a card appears — a
   change the rows no longer allow becomes a notice, never a card. Applying a schedule
   card runs the same code as the matching button on the Schedules page
-  (`scheduleVerb` in `ui/server.mjs`), then Ask Worca gets a
+  (`scheduleVerb` in `ui/server.mjs`), then Chat gets a
   `[worca event] schedule card <id> applied | declined | failed` turn and confirms.
 - **Where a run came from.** `get_run` carries `startedBy { scheduledFor, scheduleId }`
   for a run a schedule started. A scheduled or repeating card is listed in the context

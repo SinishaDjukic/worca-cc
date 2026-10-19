@@ -221,7 +221,7 @@ test('a grey count paints --ink-2 after the cascade, in the column and on the ra
   assert.equal(cascadedColor(doc.getElementById('nav-needs-count')), 'var(--amber-ink-strong)', 'the pill keeps its own amber ink');
 });
 
-test('Ask Worca names the sidebar\'s Running actions as rows, not the old card', () => {
+test('Chat names the sidebar\'s Running actions as rows, not the old card', () => {
   for (const f of ['src/core/ask/tools.mjs', 'src/core/ask/prompt.mjs']) {
     const src = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
     assert.doesNotMatch(src, /Running actions card/, f);

@@ -330,7 +330,7 @@ function bindMarkdownReady() {
 // The renderer as the injectable seam a pure module takes (source-pane.mjs).
 const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' });
 
-let askPanel = null;           // Ask Worca panel — assigned by the boot mount; every seam uses askPanel?.
+let askPanel = null;           // Chat panel — assigned by the boot mount; every seam uses askPanel?.
 // Pinpoint (#669): one selection controller for the page. Created at load, so its window key handler runs ahead of
 // the artifact viewer's (added when a popup opens).
 const pinpoint = createPinpoint({ doc: document, win: window, fetch: (u, o) => fetch(u, o) });
@@ -931,7 +931,7 @@ const alerts = createAlerts({
   storage: { getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) },
   win: window,
   onOpen: (target) => {
-    if (target.askThread) { openChat({ threadId: target.askThread }); return; }   // Ask Worca is the Chat page: open that chat
+    if (target.askThread) { openChat({ threadId: target.askThread }); return; }   // chats live on the Chat page: open that chat
     location.hash = target.schedule ? 'schedules' : rdHash(target.runId);
   },
 });
@@ -1506,7 +1506,7 @@ function handleServerMessage(msg) {
     // here is REQUIRED, not a nicety — the budget tick only refetches while
     // pipelines are live, so chat-only spend would otherwise stay stale.
     if (msg.type === 'ask-done' || msg.type === 'ask-error') {
-      scheduleOnboardingRefresh();   // the first thread ticks "Ask Worca about a run"
+      scheduleOnboardingRefresh();   // the first thread ticks "Ask about a run in Chat"
       refreshBudget();
       if (currentView() === 'stats') loadStatsView();
     }
@@ -14701,7 +14701,7 @@ function promptExtensionPair(r) {
         title: 'Connect a browser extension?',
         message: [`${r.name} (${browserLabel(r.browser)}) wants to use this Worca.\nExtension id: ${r.origin}\n\nCode: `,
           { strong: formatPairCode(r.code) },
-          '\n\nApprove only if the Worca sidebar in your browser shows the same code. The extension will be able to chat with Ask Worca, explain selected text on web pages and list your projects and workspaces.'],
+          '\n\nApprove only if the Worca sidebar in your browser shows the same code. The extension will be able to use Chat, explain selected text on web pages and list your projects and workspaces.'],
         confirmLabel: 'Approve',
       });
       const gen = modalGen;   // the Promise executor ran synchronously, so modalGen now counts THIS prompt
@@ -15556,7 +15556,7 @@ async function loadAskHistory() {
 }
 // One bullet per non-zero count; the in-progress line only when a turn is live.
 function askHistoryConfirmMessage(c) {
-  const lines = ['This permanently deletes all Ask Worca chat history:'];
+  const lines = ['This permanently deletes all chat history:'];
   if (c.threads) lines.push(`• ${askHistoryCount(c.threads, 'chat thread')} and ${c.threads === 1 ? 'its transcript' : 'their transcripts'}`);
   if (c.worktrees) {
     lines.push(`• ${askHistoryCount(c.worktrees, 'git worktree')} checked out for ${c.threads === 1 ? 'that chat' : 'those chats'} (removed from ${c.worktrees === 1 ? 'its source repo' : 'their source repos'})`);
@@ -25506,7 +25506,7 @@ function hdCommentCard(doc, comment, ctx, { detached = false, reply = false, las
     }
     actions.append(
       act('hd-cmt-resolve', comment.resolved ? 'Reopen' : 'Resolve', () => { void ctx.setResolved(comment, !comment.resolved, card); }),
-      act('hd-cmt-ask', 'Ask Worca', () => ctx.toAsk(comment)),
+      act('hd-cmt-ask', 'Ask in Chat', () => ctx.toAsk(comment)),
       act('hd-cmt-delete', 'Delete', () => { void ctx.remove(comment); }),
       act('hd-cmt-reply', 'Reply', () => ctx.openReply(comment, threadEl), 'reply'),
     );
@@ -34545,7 +34545,7 @@ const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'adv
 const VIEW_TITLES = Object.freeze({
   chat: 'Chat', stats: 'Statistics', workflows: 'Workflows', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'team-metrics': 'Team metrics', 'team-policy': 'Team policy',
-  guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca', tags: 'Tags',
+  guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules',
 });

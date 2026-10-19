@@ -813,7 +813,7 @@ test('script tools: save_script pokes on success only; labels, the key stamped a
   ]);
 });
 
-// Scheduled runs (docs/scheduled-runs.md "Ask Worca"): the four direct writes repaint the page; a
+// Scheduled runs (docs/scheduled-runs.md "Chat"): the four direct writes repaint the page; a
 // propose_schedule_change RESULT hands its INPUT to the parent for the authoritative re-validation.
 test('schedule tools: a successful direct write pokes onScheduleMutation (errors and reads do not); propose_schedule_change reaches onScheduleProposal', () => {
   const pokes = [];

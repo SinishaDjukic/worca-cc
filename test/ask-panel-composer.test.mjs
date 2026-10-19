@@ -534,7 +534,7 @@ test('ask-panel-composer: queue — a repaint keeps the cards it already shows (
 
 test('ask-panel-composer: queue — the input keeps a fixed accessible name while a suggestion fills the placeholder', async () => {
   const { input } = await streamingPanel();
-  assert.equal(input.getAttribute('aria-label'), 'Message Ask Worca');
+  assert.equal(input.getAttribute('aria-label'), 'Message Chat');
 });
 
 test('ask-panel-composer: queue — an item drained while the reply already finished before the POST answered still drains the next', async () => {

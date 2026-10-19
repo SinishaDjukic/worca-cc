@@ -1,5 +1,5 @@
 // test/ask-model-tools.test.mjs
-// Ask Worca's model + provider tools (docs/models.md "Ask Worca"): the propose_model_change
+// Ask Worca's model + provider tools (docs/models.md "Chat"): the propose_model_change
 // validator over injected readers (credentials only as ${VAR}, read-only sources, warnings that say
 // what will still stop a model), the edit merge the apply replays, the conditional tool family and
 // its dispatch, the apply over injected setters, and the settings setters' dry run against a

@@ -227,7 +227,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   edit, create, duplicate, delete, the script test bench); their editors open in
   a sheet inside the view. The old `#composer`, `#agents`, `#scripts` and
   `#agent-create` addresses land in the view.
-- **The composer chat** — the pill beside **+** grows into a chat on Ask Worca's
+- **The composer chat** — the pill beside **+** grows into a chat on Chat's
   engine that only works on the open canvas: it adds, removes and rewires
   agent and script cards and sets model, effort, max cycles and await-all (each
   change lands at once with an inline **Undo**), builds whole workflows
@@ -236,7 +236,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   cases, which it can test) that you **Save** from their card. It never runs
   anything: save the workflow, then start a run from **New run**. **New chat**
   starts over.
-- **From Ask Worca too** — the main chat drafts agents and scripts and proposes whole workflows (scripts, gates and
+- **From Chat too** — the main chat drafts agents and scripts and proposes whole workflows (scripts, gates and
   new agents included) with the same cards, without a canvas: **Save** a draft or open it in its editor, and **Save as
   workflow**, **Open in Workflows** (a new unsaved workflow on the canvas) or **Decline** a proposed graph.
 - **Saved pipelines** — the Library's **Workflows** tab lists them with domain
@@ -263,7 +263,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 - **From a brief to a slide deck** — the built-in **Presentation** workflow
   turns a request into a deck: pick it in New pipeline's **Workflow** picker
-  (Advanced; Simple lists only Auto and Default), have Ask Worca propose one,
+  (Advanced; Simple lists only Auto and Default), have Chat propose one,
   or run `worca --workflow wf_presentation --prompt "…"`. Deck Clarify asks
   what shapes the talk (live or read alone, audience, duration, the ask,
   sources, brand); Narrative Spine writes one hallway sentence, a 3–5 section
@@ -350,14 +350,14 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 ### MCP servers & credential broker
 
 - **Worca's own MCP registry** — servers installed for Worca only, never written into your
-  Claude Code config, that pipeline agents and Ask Worca can call. The **Connectors**
+  Claude Code config, that pipeline agents and Chat can call. The **Connectors**
   page (Advanced) has three views: **Servers**, the catalog (servers shipped by plugins, added by hand
   with **Add MCP server** as `stdio`, `http` or `sse`, or required by a team policy), and
   **Sets**, where each server gets its values and secrets, so one server can sit in two sets
   with different credentials, and **Skills**, the skill catalog ([Skills](docs/skills.md)): skills that
   plugins ship or that you import, added to sets like servers. The built-in marketplace ships MCP servers as plugins (see
   [Plugins & chat](#plugins--chat)).
-- **Sets per project, choices per run** — Ask Worca always uses the built-in **General** set;
+- **Sets per project, choices per run** — Chat always uses the built-in **General** set;
   a project picks its sets on its **Sets** tab (**Include General in runs** is on by default),
   New pipeline › Advanced › **Sets** switches servers and skills off for one run, and the Ask
   composer's **Sets · N** button picks them per chat. **Test** starts a server exactly as a run
@@ -417,7 +417,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   level; the sidebar's **Running actions** rows show at every level while a
   service runs, each with **Stop** (on the collapsed rail, one tile opens them).
 - **People start commands, agents don't** — every start goes by action id from
-  stored config; Ask Worca can read and propose actions but never runs one; a
+  stored config; Chat can read and propose actions but never runs one; a
   hosted Worca runs nothing unless `WORCA_ACTIONS_REMOTE=1`. See
   [`docs/actions.md`](docs/actions.md).
 - **A terminal for runs and projects** — a pane on every page (Ctrl+`) with a shell in the run's or the project's folder, run by the Worca server; each command is recorded with output, exit code, duration and who ran it. A hosted Worca runs none unless WORCA_TERMINAL_REMOTE=1. See [docs/terminal.md](docs/terminal.md).
@@ -468,7 +468,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   [Discord](plugins/discord-chat/README.md),
   [Teams](plugins/teams-chat/README.md).
 
-### Ask Worca
+### Chat
 
 - **A chat that is the home page** — **Chat** (the first sidebar row, and the worca logo), or the
   last row of the top bar's search (⌘K / Ctrl K), opens a chat that
@@ -476,12 +476,12 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   and agents, schedules, team metrics and policy, models, Actions, and tasks from installed
   trackers. It reads code in read-only, detached worktrees with an allowlisted `git` (`log`,
   `diff`, `blame`, `grep`…), takes attached text files, images and PDFs, and has no file-editing
-  tools of its own (in agent mode, below, it changes files only through commands you ask for). Settings › **Ask Worca** (Advanced) sets the turn limit, a per-turn cost cap, whether it may
+  tools of its own (in agent mode, below, it changes files only through commands you ask for). Settings › **Chat** (Advanced) sets the turn limit, a per-turn cost cap, whether it may
   change and test-run your scripts, and opt-in web access with an allowed-domain list; chat spend counts toward the total
   budget, and a team policy can preset the limits or narrow web access, never widen it.
 - **Changes are cards you confirm** — work becomes a **run card** (project, workflow, guardrails,
   branches and brief, all editable) that starts nothing until you click **Start run**, or
-  **Schedule…** to run it later ([`docs/scheduled-runs.md`](docs/scheduled-runs.md#ask-worca)).
+  **Schedule…** to run it later ([`docs/scheduled-runs.md`](docs/scheduled-runs.md#chat)).
   Ask for "auto", or for work no saved workflow fits, and it drafts a **workflow card** you tune
   and **Save as workflow** — or, when the work needs a script, a gate or a new agent, a graph card with **draft
   cards** for the new agents and scripts. Model and provider, workspace, Actions, team-metrics, team-policy and
@@ -494,7 +494,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   the run waits for an answer, pauses, fails or finishes. A pull request opened from a chat card keeps reporting
   there: the card shows its Watch PR status, and each fix run that Watch PR or Resolve starts on it appears in the
   chat as a live run card, with what started it and how it ended.
-- **Agent mode with a shared terminal** — Ask Worca can run commands (tests,
+- **Agent mode with a shared terminal** — Chat can run commands (tests,
   builds, linters, git) in a run's or a project's folder, in up to 3 terminals
   per chat that appear as tabs in the terminal pane, where you can type too.
   Each command shows in the chat as a card with **Stop** and **Output**; it
@@ -505,7 +505,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **Pinpoint** — select text in a chat answer, a markdown artifact or the Diff
   tab to **Explain** it, ask for **Alternatives**, leave a note or comment, or
   send it to the chat; diff comments can become a fix run.
-- **Per-agent models for one run** — on a run card for a saved workflow, Ask Worca can pick a
+- **Per-agent models for one run** — on a run card for a saved workflow, Chat can pick a
   model and effort for each agent step from the catalog (judgement steps on the top price tier,
   mechanical ones on the cheapest capable model, Anthropic first, then OpenAI; a premium-tier
   model such as Fable 5.1 only when you name it). Each pick sits
@@ -530,11 +530,11 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ![The Chat page with its chat list: a finished "Paginate the search endpoint" run card for nimbus-crm with elapsed time, cost, its workflow graph and the result — Ready to ship, +29 −2 across 4 files, the top changed files listed — then a follow-up answer about the docs repository](docs/screenshots/ask-worca.png)
 
-![Ask Worca agent mode: the chat "Run the CRM tests" with a Command card for npm test in nimbus-crm · main, exit 0, its 13-line output open showing one passing test, and the answer below it, beside the Terminal pane on the right with the chat's tab and the same bash session's npm test output](docs/screenshots/ask-terminal.png)
+![Chat agent mode: the chat "Run the CRM tests" with a Command card for npm test in nimbus-crm · main, exit 0, its 13-line output open showing one passing test, and the answer below it, beside the Terminal pane on the right with the chat's tab and the same bash session's npm test output](docs/screenshots/ask-terminal.png)
 
 ### Browser extension
 
-- **Ask Worca next to the page you are reading** — a sidebar for Chrome, Edge and Firefox chats with
+- **Chat next to the page you are reading** — a sidebar for Chrome, Edge and Firefox chats with
   your local Worca. Each message carries the page's URL, title and your selection, the page text if
   you switch it on, and any passage you quote. Pinpoint works on web pages too: select text, then
   Explain it, Discuss it or send it to the chat. You approve the pairing in Worca with a matching
@@ -593,7 +593,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   run ends `done` (`--after-any` also accepts a failed or stopped one), and on
   its feature branch with `--source-from-previous` — refactor → tests → docs,
   each on the branch the previous one left.
-- **Ask Worca schedules too** — "run the dependency upgrade every weekday at
+- **Chat schedules too** — "run the dependency upgrade every weekday at
   2am" becomes a run card whose main button is *Schedule*. It lists, pauses,
   resumes and skips schedules on request; moving, editing, cancelling or
   deleting one is a card you confirm.
@@ -607,7 +607,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   billing.
 - **Statistics** (Advanced) — pick Today, This week, This month, Last month, All time or a Custom
   range for Spent, Saved
-  (estimated human hours × your developer rate, minus spend), Pipeline spend, Ask Worca, Time
+  (estimated human hours × your developer rate, minus spend), Pipeline spend, Chat, Time
   worked, Pipelines finished and PRs merged, plus *Spend per* and *Runs per* charts by hour, day
   or month (runs split into finished, stopped and failed). With a total limit, a ring around your
   avatar in the sidebar fills toward it (amber from 80%, red once new runs are blocked); the account
@@ -617,12 +617,12 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **Hard limits** — set in Settings › Runs › Budget & cost limits, or with `worca config`. A
   per-pipeline cost limit pauses a runaway run before its next step; *Continue without cap (this
   pipeline)* or `worca resume <id> --ignore-cost-cap` lifts it for that run. A total cost limit
-  counts pipeline and Ask Worca spend over a weekly (from Monday) or monthly (from the 1st)
+  counts pipeline and Chat spend over a weekly (from Monday) or monthly (from the 1st)
   window; once reached it pauses running pipelines at their next step and blocks new runs,
   resumes and Ask turns until the window resets or you raise the limit. Team caps live in
   [Team policy](docs/team-policy.md).
 
-![Statistics on a range with several days of data — Spent, Saved, Pipeline spend, Ask Worca, Time worked, Pipelines finished and PRs merged tiles above the Spend per day and Runs per day charts, with the Everyone and grouping filters](docs/screenshots/stats.png)
+![Statistics on a range with several days of data — Spent, Saved, Pipeline spend, Chat, Time worked, Pipelines finished and PRs merged tiles above the Spend per day and Runs per day charts, with the Everyone and grouping filters](docs/screenshots/stats.png)
 
 ### Team metrics
 
@@ -664,10 +664,10 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   expectation: for a cap the tighter of team and local applies, and an off-list model, a missing
   plugin or guardrails below the minimum tier warn and are recorded. Going past a team cap takes
   a confirmation (with a reason when the policy requires one) and is recorded to team metrics;
-  unattended (`--yes`) runs warn instead of pausing. Only Ask Worca's web fields bind: a policy
+  unattended (`--yes`) runs warn instead of pausing. Only Chat's web fields bind: a policy
   can switch web access off or narrow its hosts, never widen them.
 - **What a policy can set** — per-pipeline and per-period total cost caps (pause or warn on
-  breach), an advisory pooled budget, Ask Worca turn and cost limits, a default guardrail set and
+  breach), an advisory pooled budget, Chat turn and cost limits, a default guardrail set and
   a minimum tier, allowed models and step defaults, marketplaces, required plugins and MCP
   servers, blocked plugins, a default workflow, human-in-the-loop, a minimum Worca version, Away
   mode defaults, and separate values for workspace runs. It can also ship its own guardrail sets
@@ -691,7 +691,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   **Engine & models** card or in a project's settings. Each needs its own CLI
   installed and signed in. The beta engines hold guardrail rules only in part,
   so Normal and Strict need **Allow unguarded**
-  (`--allow-unguarded-engine`); Copilot and Cursor report no cost; Ask Worca
+  (`--allow-unguarded-engine`); Copilot and Cursor report no cost; Chat
   runs on Claude Code or Codex. A model's connection decides which engines can
   run it. See [`docs/models.md`](docs/models.md#codex).
 - **Bring your own models** — *Add model* on the **Models** page registers any
@@ -703,7 +703,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   plugin's *Model secrets*.
 - **No first-party account needed** — the *Title generation*, *Auto workflow model*
   and *PR description model* cards on the Models page put Worca's own helper calls
-  on a model you pick (left empty, an Ask Worca chat titles itself with its own
+  on a model you pick (left empty, a chat titles itself with its own
   model, a `worca --model` run with that model, and other runs with the built-in
   Haiku); endpoint-routed models carry Claude Code's internal
   haiku/sonnet/opus/fable tier keys so nothing falls back to the Anthropic API; and
@@ -768,7 +768,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   drops the pill and **Settings › General › Getting started** brings it back. See
   [`docs/getting-started.md`](docs/getting-started.md).
 - **Three interface modes** — **Simple** shows the core loop: New pipeline, Runs, Projects,
-  Workflows (agents and scripts included), budget limits and Ask Worca. **Advanced** adds
+  Workflows (agents and scripts included), budget limits and Chat. **Advanced** adds
   Schedules, Statistics and Workspaces, plus branches, guardrails, per-agent models, the diff, pull
   requests, plugins, memory and the live log. **Expert** shows everything: Team metrics, Team
   policy, Models, diagnostics and every per-node tunable. Modes are cumulative, so raising one never removes
@@ -993,12 +993,12 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Guardrails](docs/guardrails.md) — per-run policy sets (Permissive, Normal, Strict), enforcement, honest limitations
 - [Workspace map](docs/workspace-map.md) — how a workspace scan maps relations, reviewing them, measuring a scan
 - [Actions](docs/actions.md) — check out a finished run and run the project's commands from Worca
-- [Terminal](docs/terminal.md) — the terminal pane, and Ask Worca's agent mode with a shared terminal
+- [Terminal](docs/terminal.md) — the terminal pane, and Chat's agent mode with a shared terminal
 - [Models](docs/models.md) — the catalog, providers (GitHub Copilot, OpenAI-compatible), the built-in bridge, and the Codex, Copilot CLI and Cursor engines
 - [MCP servers](docs/mcp-servers.md) — Worca's own MCP registry: catalog, sets, copies, secrets, Test
 - [Skills](docs/skills.md) — skills in sets: the library, imports, `/<set>:<skill>` names, Team required skills
 - [Credential broker](docs/credential-broker.md) — model keys stay out of Worca's container: each `claude` it starts gets a short-lived token, and the broker adds the real key on the way to the provider
-- [Voice mode](docs/speech.md) — hands-free Ask Worca: Whisper and Kokoro in the browser, or your own speech servers
+- [Voice mode](docs/speech.md) — hands-free Chat: Whisper and Kokoro in the browser, or your own speech servers
 - [Voice languages](docs/speech-languages.md) — which languages work today, and the plan for more
 - [Azure DevOps](docs/azure-devops.md) — Ship-it, clone, sync, merge tracking and the Boards source on `dev.azure.com`: the token, its scopes, and what does not work yet
 - [Statistics](docs/statistics.md) — spend and outcomes by range, person and tag, CSV export and the API

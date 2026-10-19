@@ -1,5 +1,5 @@
 // test/ask-model-card.test.mjs
-// The model card end to end over WORCA_MOCK (docs/models.md "Ask Worca"): "add a local llama model"
+// The model card end to end over WORCA_MOCK (docs/models.md "Chat"): "add a local llama model"
 // proposes a keyless llama.cpp entry the parent re-validates against the real catalog; declining
 // changes nothing; applying writes it to settings.json through the same setter the Models view
 // uses and the event turn answers; a removal card takes it out again. Sandboxes HOME
