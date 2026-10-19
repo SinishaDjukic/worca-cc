@@ -75,6 +75,7 @@
     "verify:ask-forms": "node --disable-warning=ExperimentalWarning tools/verify-ask-forms-cdp.mjs",
     "verify:workspace-map": "node --disable-warning=ExperimentalWarning tools/verify-workspace-map-cdp.mjs",
     "verify:flags": "node --disable-warning=ExperimentalWarning tools/verify-flags-cdp.mjs",
+    "verify:requirements": "node --disable-warning=ExperimentalWarning tools/verify-requirements-cdp.mjs",
     "test": "node tools/test.mjs",
     "test:fast": "node tools/test.mjs --tier fast",
     "test:slow": "node tools/test.mjs --tier slow",
