@@ -9480,11 +9480,11 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 @media (max-width:600px){
   .run-members.is-table{grid-template-columns:20px 12px minmax(0,1fr) max-content;}
   .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"num dot title open" ". . line line" ". . pr cost";}
-  .run-member-num{grid-area:num}
+  .run-members.is-table .run-member-num{grid-area:num}
   .run-members.is-table .run-member > .status-dot{grid-area:dot}
-  .run-member-title{grid-area:title}
-  .run-member-line{grid-area:line}
-  .run-member-pr{grid-area:pr}
-  .run-member-cost{grid-area:cost}
-  .run-member-open{grid-area:open}
+  .run-members.is-table .run-member-title{grid-area:title}
+  .run-members.is-table .run-member-line{grid-area:line}
+  .run-members.is-table .run-member-pr{grid-area:pr}
+  .run-members.is-table .run-member-cost{grid-area:cost}
+  .run-members.is-table .run-member-open{grid-area:open}
 }

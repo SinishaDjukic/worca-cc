@@ -925,6 +925,15 @@ test('step card CSS: inside a question panel the head title wraps (375 px) and n
   assert.match(rule('.outline-row-more'), /margin-left:auto/);
 });
 
+test('member rows CSS: the narrow grid areas are the page table\'s only, so the chat card\'s plain rows keep their columns (375 px)', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  // Chrome, 375 px: an unscoped `.run-member-title{grid-area:title}` put the chat card's title and line in one implicit
+  // cell, drawn over each other at the right edge (the plain list has no grid-template-areas).
+  const rules = [...css.matchAll(/([^{}]+)\{grid-area:[a-z]+\}/g)].map((m) => m[1].trim()).filter((s) => /\.run-member/.test(s));
+  assert.ok(rules.length >= 7, `the narrow table's area rules (${rules.length})`);
+  for (const sel of rules) assert.ok(sel.startsWith('.run-members.is-table '), sel);
+});
+
 test('chat run card CSS: the result counts and error, a hovered file row or Stop, the "K of N answered" lead, the agent model label and the Auto well\'s words reach 4.5:1 in both themes', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const p3 = css.slice(css.indexOf('/* ===== Chat P3: run card ===== */'));
