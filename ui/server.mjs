@@ -339,7 +339,7 @@ import { currentPass } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
-  rechainWaiting, replanRest, setApproveEach, stackedPrBase, recordShapePlan, listShapePlans, chainFeature,
+  rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput,
   liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf } from '../src/core/shape/features.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
@@ -415,7 +415,7 @@ import {
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
   resolveAfterRef, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
-  chainBaseBranchesOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
+  chainBaseBranchesOf, stackedPrBaseOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
 } from '../src/core/scheduler.mjs';
 import {
   onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
@@ -8108,8 +8108,8 @@ function runSourceIssue(pipelineId, { baseRemote = null, memberKey = null } = {}
 // none. Same pipeline resolution as POST /api/pr (the repo dir comes from the
 // pipeline's store_meta, never from the query). gh is not required here.
 // The base-branch choices ride along: `chain` is the run chain's base branches,
-// root first (a run outside a chain: just its source), `defaultBase` its root, and
-// `branches` each remote's branches from the remote-tracking refs, without HEAD and
+// root first (a run outside a chain: just its source), `defaultBase` its root, or the direct source while the
+// previous run's PR is not merged (stackedPrBaseOf), and `branches` each remote's branches from the remote-tracking refs, without HEAD and
 // the run's own feature branch. The base remote is fetched first (45 s TTL, 8 s bound,
 // negative-cached) so `baseStatus` can warn when the base moved since the run started
 // (warn only, #527). A git remote failure still carries the chain so the dialog can offer it.
@@ -8138,10 +8138,11 @@ app.get('/api/pr/remotes', async (req, res) => {
   const chain = (await Promise.all((walked.length ? walked : (source ? [source] : []))
     .map((b) => prBaseBranch(repoDir, b, remoteNames)))).filter((b) => b !== feature);
   const pipelineId = resolved.state.id || resolved.id;
-  // L10: a slice's PR stacks on the previous slice's branch until that slice's PR merges. The route is async with
-  // no try/catch (F29): a failed feature lookup keeps the chain-root default instead of rejecting.
+  // A run started from the previous run's branch (any chain, a Shaper slice is one) stacks its PR on that branch
+  // until the previous run's PR merges. The route is async with no try/catch (F29): a failed lookup keeps the
+  // chain-root default instead of rejecting.
   let stacked = null;
-  try { stacked = stackedPrBase(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
+  try { stacked = stackedPrBaseOf(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
   const defaultBase = stacked || chain[0] || null;
   if (!rl.ok) {
     const issue = runSourceIssue(pipelineId, { memberKey: target.memberKey });
@@ -8188,11 +8189,11 @@ async function openSliceDraft(pipelineId) {
   const target = prTargetFor(state);
   if (target.error || !target.repoDir) return null;
   // The PR dialog's default base (GET /api/pr/remotes): the chain without the feature branch itself, stacked on the
-  // previous slice's branch until that slice's PR merges.
+  // previous run's branch until that run's PR merges.
   const walked = chainBaseBranchesOf(pipelineId);
   const chain = (walked.length ? walked : (target.source ? [target.source] : [])).filter((b) => b !== target.feature);
   let base = null;
-  try { base = stackedPrBase(pipelineId, chain) || chain[0] || null; } catch { base = chain[0] || null; }
+  try { base = stackedPrBaseOf(pipelineId, chain) || chain[0] || null; } catch { base = chain[0] || null; }
   if (!base) return null;
   let out = await createRunPr({ id: pipelineId, state, target, base, draft: true });
   // A forge that refuses drafts (GitHub's free plan for private repositories): open it ready instead.

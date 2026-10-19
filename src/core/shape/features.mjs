@@ -3,7 +3,7 @@
 // every route that reaches it is gated (ui/server.mjs).
 import { randomUUID } from 'node:crypto';
 import { getDb, tx } from '../db.mjs';                  // node:sqlite: tx(fn), never db.transaction (F23)
-import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf } from '../scheduler.mjs';
+import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf, stackedPrBaseOf } from '../scheduler.mjs';
 import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } from '../artifacts.mjs';
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
@@ -603,14 +603,9 @@ export function replanRest(id, { live = () => null, by = null, now = Date.now() 
   return { ticketId };
 }
 
-/** L10: a slice k ≥ 2's PR base while the previous slice's PR is open: its direct source. null = keep the default. */
+/** L10: a slice's PR base — the generic stacked base (scheduler.mjs stackedPrBaseOf); a slice is one chained run. */
 export function stackedPrBase(pipelineId, chain) {
-  if (!Array.isArray(chain) || chain.length < 2) return null;
-  const at = featureOfPipeline(pipelineId);
-  if (!at || at.idx < 2) return null;
-  const prev = sliceRows(at.featureId)[at.idx - 2];
-  const pr = prev?.pipelineId ? readPrState(prev.pipelineId) : null;
-  return pr && pr.state === 'MERGED' ? null : chain[chain.length - 1];
+  return stackedPrBaseOf(pipelineId, chain);
 }
 
 /** L12: a shaped run started from a Chat card (Plans tab). */

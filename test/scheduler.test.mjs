@@ -15,7 +15,7 @@ import {
   dependentsOfWorkflow, dueTickets, runDueTickets, recordOutcome, recoverScheduler, purgeScheduler,
   scheduleCounts, summarizeRequest, RETRY_BACKOFF_MIN, AFTER_RUN_AT,
   afterRefOf, predecessorState, previousBranchesOf, dependentsOfRun, resolveAfterRef,
-  chainBaseBranchesOf, markTicketFired, cancelResumeTicketsFor, runChains,
+  chainBaseBranchesOf, stackedPrBaseOf, markTicketFired, cancelResumeTicketsFor, runChains,
 } from '../src/core/scheduler.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { listNotifications, unreadCount } from '../src/core/notifications.mjs';
@@ -696,6 +696,68 @@ test('chainBaseBranchesOf: walks a from-its-branch chain root first, stops at a 
       // A run without a recorded source has nothing to offer.
       chainRun('c0000035', null, 'nb9');
       assert.deepEqual(chainBaseBranchesOf('c0000035'), []);
+    } },
+  ]);
+});
+
+// ── stackedPrBaseOf: the PR dialog's default base for a run started from the previous run's branch ──
+const prOf = (id, state) =>
+  getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_state = ? WHERE id = ?').run(`https://github.com/o/r/pull/${id}`, state, id);
+
+test('stackedPrBaseOf: a from-its-branch run stacks on its source until the previous run\'s PR merges; no previous run or a workspace row never stacks', async () => {
+  await checkRows([
+    { name: 'a plain chain stacks while the previous run has no PR, an open PR or a closed PR, and falls back once it merged', run: () => {
+      clearTables();
+      chainRun('s0000001', 'dev', 'nb1');
+      chainRun('s0000002', 'nb1', 'nb2');
+      chainFire('s0000002', { kind: 'pipeline', id: 's0000001' });
+      const chain = chainBaseBranchesOf('s0000002');
+      assert.deepEqual(chain, ['dev', 'nb1']);
+      assert.equal(stackedPrBaseOf('s0000002', chain), 'nb1', 'no PR yet');
+      prOf('s0000001', 'OPEN');
+      assert.equal(stackedPrBaseOf('s0000002', chain), 'nb1', 'open');
+      prOf('s0000001', 'CLOSED');
+      assert.equal(stackedPrBaseOf('s0000002', chain), 'nb1', 'closed is not merged');
+      prOf('s0000001', 'MERGED');
+      assert.equal(stackedPrBaseOf('s0000002', chain), null, 'merged: the chain root again');
+    } },
+    { name: 'the previous run is the direct one, also when chained on the ticket that became it', run: () => {
+      clearTables();
+      chainRun('s0000011', 'dev', 'nb1');
+      chainRun('s0000012', 'nb1', 'nb2');
+      chainRun('s0000013', 'nb2', 'nb3');
+      const t2 = chainFire('s0000012', { kind: 'pipeline', id: 's0000011' });
+      chainFire('s0000013', { kind: 'ticket', id: t2.id });
+      const chain = chainBaseBranchesOf('s0000013');
+      assert.deepEqual(chain, ['dev', 'nb1', 'nb2']);
+      prOf('s0000011', 'OPEN');
+      prOf('s0000012', 'MERGED');
+      assert.equal(stackedPrBaseOf('s0000013', chain), null, 'only the direct previous run\'s PR counts');
+      prOf('s0000011', 'MERGED');
+      prOf('s0000012', 'OPEN');
+      assert.equal(stackedPrBaseOf('s0000013', chain), 'nb2');
+    } },
+    { name: 'no previous run: a lone run, a run not started from its branch, an unknown run, no chain', run: () => {
+      clearTables();
+      chainRun('s0000021', 'dev', 'nb1');
+      assert.equal(stackedPrBaseOf('s0000021', chainBaseBranchesOf('s0000021')), null, 'a chain of 1');
+      chainRun('s0000022', 'nb1', 'nb2');
+      chainFire('s0000022', { kind: 'pipeline', id: 's0000021' }, false);
+      assert.deepEqual(chainBaseBranchesOf('s0000022'), ['nb1']);
+      assert.equal(stackedPrBaseOf('s0000022', ['dev', 'nb1']), null, 'not "from its branch": no previous run even with a chain of 2');
+      assert.equal(stackedPrBaseOf('nope', ['dev', 'nb1']), null);
+      assert.equal(stackedPrBaseOf('s0000022', null), null);
+    } },
+    { name: 'a workspace row never stacks: a member keeps its own source', run: () => {
+      clearTables();
+      chainRun('s0000031', 'dev', 'nb1');
+      seedPipelineRow({ id: 's0000032', title: 's0000032', status: 'done', target: 'workspace', workspaceKey: 'wks-00000001',
+        startedAt: new Date(T0).toISOString(), branch: { source: 'nb1', feature: 'nb2' } });
+      chainFire('s0000032', { kind: 'pipeline', id: 's0000031' });
+      prOf('s0000031', 'OPEN');
+      assert.deepEqual(chainBaseBranchesOf('s0000032'), [], 'a workspace row has no chain');
+      assert.equal(stackedPrBaseOf('s0000032', []), null);
+      assert.equal(stackedPrBaseOf('s0000032', ['dev', 'nb1']), null, 'not even with a chain of 2');
     } },
   ]);
 });
