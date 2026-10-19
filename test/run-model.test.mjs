@@ -1,7 +1,7 @@
 // test/run-model.test.mjs — the one run model over every row of spec §2.1 (single and group), PR state and count.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runModel, groupModel, prState, RUN_STATES, ACTION_LABEL, finishedNeedsYou } from '../src/shared/run-model.mjs';
+import { runModel, groupModel, prState, RUN_STATES, ACTION_LABEL, finishedNeedsYou, memberPrState } from '../src/shared/run-model.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -243,4 +243,49 @@ test('one wording per state: no status line has a colon form; a paused-after-res
     assert.ok(!line.includes(': '), `colon form: ${line}`);
   }
   assert.equal(runModel(R({ stepper: noStage, status: 'interrupted', steps: [row('n_x', 'start')] }), OPTS).line, 'Paused · interrupted');
+});
+
+test('prState: dev’s isDraft reads Draft; a draft that conflicts or fails checks shows that instead (#784)', () => {
+  assert.equal(prState(ghPr({ isDraft: true, mergeable: 'UNKNOWN' })).word, 'Draft');
+  assert.equal(prState(ghPr({ isDraft: false, mergeable: 'MERGEABLE' })).word, 'Ready');
+  assert.equal(prState(ghPr({ isDraft: true, mergeable: 'CONFLICTING' })).word, 'Conflicts', 'the bundle’s order: what is wrong first');
+  assert.equal(prState(ghPr({ isDraft: true, checks: FAIL })).word, 'Checks failing');
+  assert.equal(prState(ghPr({ state: 'closed', isDraft: true, mergeable: 'CONFLICTING' })).word, 'Closed', 'how it ended outranks how it stood');
+});
+
+test('prState: a closed Azure DevOps PR reads Abandoned, colour and id stay closed (#784)', () => {
+  const az = { state: 'CLOSED', url: 'https://dev.azure.com/acme/My%20Project/_git/api/pullrequest/5', number: 5, isDraft: false, mergeable: 'UNKNOWN' };
+  assert.deepEqual(prState(az), { id: 'closed', word: 'Abandoned', icon: 'pull-request-closed', tone: 'red-ink',
+    number: 5, url: az.url, title: 'PR #5', needsYou: false });
+  assert.equal(prState({ ...az, url: 'https://acme.visualstudio.com/My%20Project/_git/api/pullrequest/5' }).word, 'Abandoned');
+  assert.equal(prState({ ...az, state: 'MERGED' }).word, 'Merged', 'only a closed Azure PR is abandoned');
+  assert.equal(prState({ ...PR, state: 'CLOSED' }).word, 'Closed', 'GitHub keeps Closed');
+});
+
+test('memberPrState: a workspace run’s most urgent member PR and their count (#784’s workspace glyph, as words)', () => {
+  const pr = (n, more = {}) => ghPr({ number: n, url: `https://github.com/o/r/pull/${n}`, ...more });
+  assert.equal(memberPrState([]), null);
+  assert.equal(memberPrState(undefined), null, 'the lookups have not answered');
+  assert.equal(memberPrState([null, { state: 'OPEN' }]), null, 'a member PR with no url or number is not counted');
+  assert.equal(memberPrState([pr(1)]).word, 'Ready', 'one member PR: no count');
+  const three = memberPrState([pr(1), pr(2, { mergeable: 'CONFLICTING' }), pr(3, { isDraft: true })]);
+  assert.deepEqual([three.id, three.word, three.needsYou], ['conflicts', 'Conflicts · 3 PRs', true]);
+  assert.equal(three.title, '3 pull requests · Conflicts with the base branch · PR #2');
+  assert.equal(memberPrState([pr(1, { state: 'MERGED' }), pr(2)]).word, 'Ready · 2 PRs', 'open before merged');
+  assert.equal(memberPrState([pr(1, { state: 'MERGED' }), pr(2, { isDraft: true })]).word, 'Draft · 2 PRs', 'a draft before a merged PR');
+  assert.equal(memberPrState([pr(1, { state: 'CLOSED' }), pr(2, { state: 'MERGED' })]).word, 'Merged · 2 PRs', 'merged before closed');
+  // runModel: member PRs win over the run's own rollup pr; a conflicting member raises the run to Needs you (D31).
+  const m = runModel({ status: 'done', endReached: true, pr: pr(1), memberPrs: [pr(1), pr(2, { mergeable: 'CONFLICTING' })] }, OPTS);
+  assert.deepEqual([m.state, m.pr.word], ['needs-you', 'Conflicts · 2 PRs']);
+  assert.equal(runModel({ status: 'done', endReached: true, pr: pr(1), memberPrs: [] }, OPTS).pr.word, 'Ready', 'no member PRs: the run’s own');
+  assert.equal(finishedNeedsYou({ pr: pr(1), memberPrs: [pr(1), pr(2, { mergeable: 'CONFLICTING' })] }), true, 'Needs you reads the same rollup');
+  // A live Watch PR fix round on the run's own PR marks that member fixing, as prOf does for a single run.
+  const fixing = runModel({ status: 'done', endReached: true, pr: pr(2), watch: { status: 'fixing', reason: null, fixRuns: 1 },
+    memberPrs: [pr(1), pr(2, { mergeable: 'CONFLICTING' })] }, OPTS);
+  assert.deepEqual([fixing.state, fixing.pr.word], ['in-review', 'Fixing · 2 PRs']);
+  // A member PR the server marked fixing (its own Watch PR, artifacts.mjs withFixing) needs no run-level watch.
+  const marked = [pr(1), pr(2, { mergeable: 'CONFLICTING', fixing: true }), pr(3)];
+  assert.deepEqual([runModel({ status: 'done', endReached: true, pr: pr(1), memberPrs: marked }, OPTS).state, memberPrState(marked).word],
+    ['in-review', 'Fixing · 3 PRs']);
+  assert.equal(finishedNeedsYou({ pr: pr(1), memberPrs: marked }), false, 'a fix round on it: not Needs you');
 });

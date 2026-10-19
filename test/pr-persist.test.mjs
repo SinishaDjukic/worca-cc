@@ -155,7 +155,7 @@ test('enrichPipelinesPr stores the CI verdict read through the real findPrForBra
   gitInfo.setRunner((cmd, args) => {
     if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args[2] === URL9) {
-      const body = args[4] === 'number,state,url' ? { number: 909, state: 'OPEN', url: URL9 }
+      const body = args[4] === 'number,state,url,isDraft,mergeable' ? { number: 909, state: 'OPEN', url: URL9, isDraft: false, mergeable: 'MERGEABLE' }
         : { state: 'OPEN', isDraft: false, reviewDecision: null, mergeable: 'MERGEABLE',
           statusCheckRollup: [...Array(3)].map(() => check('FAILURE')).concat([...Array(9)].map(() => check('SUCCESS'))) };
       return Promise.resolve({ ok: true, stdout: JSON.stringify(body), stderr: '', code: 0 });

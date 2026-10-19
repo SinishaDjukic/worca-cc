@@ -95,7 +95,7 @@ import { trailColumns, nowRows, glanceCopy, nodeLabel, preflightOpen, dotState }
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RECENT_PAGE, groupRow } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts } from './group-page.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
@@ -22050,8 +22050,10 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     paintHdAfter(screen, rec, data);
     void paintHdSavePreset(screen, data);
     // histCanShip carries both old belts plus the workspace rule:
-    //  - `!rec.pr` (single runs) — the stale-button -> double-POST race is fixed at the
-    //    source (the ship path calls patchHistoryPr); this is the backstop.
+    //  - no open or merged PR (single runs) — the stale-button -> double-POST race is fixed at the
+    //    source (the ship path calls patchHistoryPr, and a shipped record is OPEN); this is the
+    //    backstop. A CLOSED PR does not block, as in paintHdPr: the history-pr rows carry closed
+    //    PRs (the Runs list draws them), and the Create button offered for one must still open the dialog.
     //  - `histPrEligible(rec)` — MANDATORY. Without it the modal opens for a run whose
     //    own detail button paintHdPr just deliberately hid (gh gone, branch deleted
     //    between paint and click), and confirming fires a POST /api/pr that fails.
@@ -22341,7 +22343,7 @@ async function openShipItFor(ref = {}, link = null) {
     data = await safeJson(res);
     if (!res.ok || !data || !data.state) throw new Error((data && data.error) || `HTTP ${res.status}`);
   } catch (e) { return { opened: false, error: `Could not load this run: ${e.message}` }; }
-  if (!histCanShip(record)) return { opened: false, error: record.pr ? 'This run already has a pull request.' : 'No pull request can be opened for this run.' };
+  if (!histCanShip(record)) return { opened: false, error: prLive(record.pr) ? 'This run already has a pull request.' : 'No pull request can be opened for this run.' };
   const askLink = link && link.askThreadId && link.askCardId ? { askThreadId: link.askThreadId, askCardId: link.askCardId } : null;
   return new Promise((resolve) => {
     const shown = openShipItModal(record, data, { link: askLink, onClose: (out) => resolve(out) });
@@ -23053,7 +23055,8 @@ function histPrEligible(p) {
 function histCanShip(p) {
   if (!p) return false;
   if (p.target === 'workspace' && hasWsMembers(p)) return !wsPrPending(p) && histPrEligible(p);
-  return !p.pr && histPrEligible(p);
+  const live = p.pr && typeof p.pr === 'object' ? String(p.pr.state || '').toUpperCase() : '';
+  return live !== 'OPEN' && live !== 'MERGED' && histPrEligible(p);
 }
 
 // Run on the source branch (branch.sameAsSource): no PR. Once the work was merged back, the one shipping
@@ -31056,6 +31059,7 @@ async function paintGroupDecisions(host, row) {
  *  status yet, so the loaded detail's state fills in. */
 const histRun = (p, st = null) => ({ status: String((p && p.status) || (st && st.status) || '').toLowerCase(),
   pauseReason: (p && p.pauseReason) || '', pr: p && p.pr && typeof p.pr === 'object' ? p.pr : null,
+  ...(memberPrsOf(p).length ? { memberPrs: memberPrsOf(p) } : {}),
   // D24: passed through for the model; the saved state's branch carries a round marker on a frozen row.
   round: (p && p.round) || null, branch: (st && st.branch) || null, watch: (p && p.watch) || null,
   // The loaded saved state's ledger, as the chat card's REST snapshot carries it: the line names the stage there too
@@ -31088,7 +31092,7 @@ function runsSchedItem(t) {
 // and the focus fallbacks below match on it).
 // A group line's fraction is patched in place (paintRunsProgress); its presence is structural (the model's state).
 const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, r.model.line, r.model.pulse ? 1 : 0, r.count || '',
-  r.model.pr ? [r.model.pr.id, r.model.pr.title] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
+  r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
   r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
   r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null])] : 0];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
@@ -32840,7 +32844,9 @@ function rdModelRun(r) {
   const h = rdHistoryRecord(r);
   const pr = h && h.pr && typeof h.pr === 'object' && typeof h.pr.url === 'string' ? h.pr : null;
   const watch = (h && h.watch) || r.watch || null;       // D24: the Watch PR fact, when the History row carries it
-  return pr || watch ? { ...r, ...(pr ? { pr } : {}), ...(watch ? { watch } : {}) } : r;
+  const memberPrs = memberPrsOf(h);                      // #784: a workspace run's member PRs roll into the chip
+  return pr || watch || memberPrs.length
+    ? { ...r, ...(pr ? { pr } : {}), ...(watch ? { watch } : {}), ...(memberPrs.length ? { memberPrs } : {}) } : r;
 }
 const rdModel = (r) => runModel(rdModelRun(r), { memo: memoFor(r.pipelineId || r.runId) });
 /** `r` is the live run from `runs` (never paintRdGlance's rdGlanceRun display copy), so the memo and the PR lookup

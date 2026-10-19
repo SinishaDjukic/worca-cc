@@ -143,10 +143,19 @@ export function schedRowState(t) {
   return { icon: 'scheduled', word, detail: '' };
 }
 
+/** A workspace run's member PRs (#784): a run's `memberPrs`, else a History row's members[].pr (the history-pr
+ *  batch fills them through app.js applyWsMemberPrs). Objects only; [] for any other run. */
+export function memberPrsOf(x) {
+  if (x && Array.isArray(x.memberPrs)) return x.memberPrs;
+  const ms = x && Array.isArray(x.members) ? x.members : [];
+  return ms.map((m) => m && m.pr).filter((p) => p && typeof p === 'object');
+}
+
 /** A run (History row, a row's raw run, a member's run) that a finished run's PR or Watch PR raises to Needs you
- *  (run-model.mjs finishedNeedsYou, D31 / D23). A glance string ('MERGED') carries no verdict. */
+ *  (run-model.mjs finishedNeedsYou, D31 / D23); a workspace run's member PRs count too (#784). A glance string
+ *  ('MERGED') carries no verdict. */
 const prNeedsOf = (x) => !!(x && typeof x === 'object')
-  && finishedNeedsYou({ pr: x.pr && typeof x.pr === 'object' ? x.pr : null, watch: x.watch || null });
+  && finishedNeedsYou({ pr: x.pr && typeof x.pr === 'object' ? x.pr : null, watch: x.watch || null, memberPrs: memberPrsOf(x) });
 
 /** Needs you: a question or gate, a pause (cost caps included), a failed run nobody opened yet, and a finished run
  *  whose PR has failing checks or conflicts with no fix run on it (`prNeeds`, D31). */

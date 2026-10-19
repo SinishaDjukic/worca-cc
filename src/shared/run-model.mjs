@@ -4,12 +4,14 @@
 // The list, the chat card, the run and group pages (ui/), the CLI (src/cli/runs.mjs) and Ask Worca
 // (src/core/ask/tools.mjs via src/core/run-status.mjs) all call it, so the words are the same everywhere (§5a.7).
 // Input: a run state as runProgress reads it (src/shared/run-progress.mjs header) plus `pauseReason`, `pr`
-// ({url, number, state, draft?, reviewDecision?}), `ticket` ({status, runAt, after:{index}}) for a run that has not
+// ({url, number, state, draft? | isDraft?, mergeable?, reviewDecision?}), `ticket` ({status, runAt, after:{index}}) for a run that has not
 // started, and `resumable`. Shared code: no imports from core/ or ui/.
 // Optional: `round` ({n, request, by}) or the raw marker `branch.roundOf` ({round, request, by}), a round of the same
 // run (spec §3.6); `watch` ({status, reason, fixRuns}), the run's Watch PR (§3.6a, statuses of src/core/pr-watch.mjs).
+// `memberPrs` ([pr]), a workspace run's member PRs (#784): the PR chip rolls them up (memberPrState).
 import { runProgress, groupProgress, askWhat } from './run-progress.mjs';
 import { liveRoleRows } from './shape/role-review.mjs';
+import { parseAzurePrUrl } from './azure-remote.mjs';
 
 export const RUN_STATES = Object.freeze({
   starting: Object.freeze({ word: 'Starting', dot: 'peach', pulse: true, symbol: null }),
@@ -79,7 +81,7 @@ export function prState(pr) {
     : conflicts ? 'conflicts' : failing ? 'failing'
     : String(pr.reviewDecision || '').toUpperCase() === 'CHANGES_REQUESTED' ? 'changes'
     : checks && checks.state === 'pending' ? 'running'
-    : pr.fixing ? 'fixing' : pr.draft ? 'draft' : 'ready';
+    : pr.fixing ? 'fixing' : pr.draft || pr.isDraft ? 'draft' : 'ready';
   const number = pr.number ?? null;
   const url = pr.url || null;
   const ref = number == null ? 'Pull request' : `PR #${number}`;
@@ -87,7 +89,22 @@ export function prState(pr) {
     : id === 'running' ? `${checks.pending} of ${checks.total} checks running · ${ref}`
     : id === 'conflicts' ? `Conflicts with the base branch · ${ref}`
     : number == null ? 'Pull request' : /github\.com\//.test(url || '') ? `PR #${number} · open on GitHub` : `PR #${number}`;
-  return { id, ...PR_STATES[id], number, url, title, needsYou: id === 'conflicts' || id === 'failing' };
+  // #784: Azure DevOps calls a closed-without-merging PR abandoned; the id, icon and colour stay `closed`.
+  const word = id === 'closed' && parseAzurePrUrl(url) ? 'Abandoned' : PR_STATES[id].word;
+  return { id, ...PR_STATES[id], word, number, url, title, needsYou: id === 'conflicts' || id === 'failing' };
+}
+
+// #784's order for a workspace run's member PRs (what needs a person first), on the chip's ids.
+const PR_URGENCY = ['conflicts', 'failing', 'changes', 'running', 'fixing', 'ready', 'draft', 'merged', 'closed'];
+
+/** A workspace run's member PRs as one chip (#784): the most urgent member's state; with two or more PRs the word
+ *  and the title carry the count ("Conflicts · 3 PRs"). null when no member names a PR. */
+export function memberPrState(prs) {
+  const states = (Array.isArray(prs) ? prs : []).map(prState).filter(Boolean);
+  if (!states.length) return null;
+  const top = PR_URGENCY.map((id) => states.find((s) => s.id === id)).find(Boolean);
+  if (states.length === 1) return top;
+  return { ...top, word: `${top.word} · ${plural(states.length, 'PR')}`, title: `${states.length} pull requests · ${top.title}` };
 }
 
 function stateOf(run, pr) {
@@ -178,8 +195,14 @@ function watchOf(w) {
   const n = Number(w.fixRuns) || 0;
   return { live: false, stopped: true, line: join('Needs you', 'Watch stopped', `${plural(n, 'fix run')}, ${WATCH_WHY[w.reason] || 'needs a person'}`) };
 }
-/** The PR as prState reads it: a live fix round marks it `fixing`, which prState ranks above Conflicts / Checks failing. */
-const prOf = (r, watch) => prState(watch && watch.live && r.pr && typeof r.pr === 'object' ? { ...r.pr, fixing: true } : r.pr);
+/** The PR as prState reads it: a workspace run's member PRs first (#784), else its own PR. A live fix round marks the
+ *  run's own PR `fixing` (among the members, the one with the same url), which prState ranks above Conflicts / Checks failing. */
+const prOf = (r, watch) => {
+  const own = watch && watch.live && r.pr && typeof r.pr === 'object' ? r.pr : null;
+  const members = own && Array.isArray(r.memberPrs)
+    ? r.memberPrs.map((p) => (p && p.url && p.url === own.url ? { ...p, fixing: true } : p)) : r.memberPrs;
+  return memberPrState(members) || prState(own ? { ...own, fixing: true } : r.pr);
+};
 
 /** A finished run that needs a person without a question: its PR fails checks or conflicts with no fix round on it
  *  (D31), or its Watch PR stopped for a person (D23). runs-list.mjs prNeedsOf reads this for the Needs you section.

@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { runModel, groupModel } from '../src/shared/run-model.mjs';
-import { buildRunsModel, renderRunsList } from '../ui/public/runs-list.mjs';
+import { buildRunsModel, renderRunsList, memberPrsOf } from '../ui/public/runs-list.mjs';
 import { createChatRunCard } from '../ui/public/chat/run-card.mjs';
 import { paintRunStatus, syncActions, statusText } from '../ui/public/run-status-card.mjs';
 import { buildGroupPage, paintGroupPage } from '../ui/public/group-page.mjs';
@@ -231,8 +231,8 @@ test('§5.3 boot: stale buttons never linger — done hides Pause; pausing disab
   ]);
 });
 
-async function finishedPage({ row, detail, ghAvailable = false } = {}) {
-  const arms = (url) => (url.endsWith('/api/history') ? hd.ok({ pipelines: [row], ghAvailable }) : null);
+async function finishedPage({ row, detail, ghAvailable = false, more = () => null } = {}) {
+  const arms = (url) => (url.endsWith('/api/history') ? hd.ok({ pipelines: [row], ghAvailable }) : more(url));
   const ctx = await hd.bootDetail({ rows: [row], detail, arms });
   ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [] }) });
   await hd.settle(ctx.window, 4);
@@ -272,6 +272,22 @@ test('§5.3 boot: the finished page owns its Resume for a resumable paused row, 
       assert.equal(block.dataset.state, 'failed');
       assert.notEqual(block.dataset.line, 'Failed', 'the stage is known from the saved state');
       assert.equal(block.dataset.line, card.line, 'page and card: the same status line');
+    } },
+    { name: 'workspace, a conflicting member PR: the page reads the same rollup as its Runs row (#784)', run: async () => {
+      const gh = (n, more = {}) => ({ state: 'OPEN', url: `https://github.com/o/r/pull/${n}`, number: n, isDraft: false, mergeable: 'UNKNOWN', ...more });
+      const row = { ...hd.ROW, status: 'done', target: 'workspace', pr: gh(11),
+        members: [gh(11), gh(12, { mergeable: 'CONFLICTING' }), gh(13, { isDraft: true })].map((pr, i) => ({ memberKey: `m${i}`, name: `p${i}`, projectDir: `/tmp/p${i}`, branch: `f${i}`, sourceBranch: 'main',
+          survived: true, affected: true, added: 1, removed: 0, pr })) };
+      // A workspace record loads from /api/workspaces/…/runs/:id (app.js historyDetailUrl).
+      const { doc } = await finishedPage({ row, detail: hd.DETAIL, more: (url) => (url.endsWith(`/runs/${row.id}`) ? hd.ok(hd.DETAIL) : null) });
+      const block = doc.querySelector('#hist-detail .hd-glance .rd-sheet .run-status');
+      const host = doc.createElement('div');
+      const run = { status: 'done', pr: row.pr, memberPrs: memberPrsOf(row) };   // as app.js histRun builds the row's run
+      host.append(...renderRunsList(doc, buildRunsModel({ history: [{ ...row, run, memo: {}, mtime: NOW - 60000 }], now: NOW })));
+      const a = host.querySelector(`a.runs-row[data-pipeline-id="${row.id}"]`);
+      assert.equal(a.querySelector('.runs-pr-word').textContent, 'Conflicts · 3 PRs');
+      assert.deepEqual([block.dataset.state, block.dataset.line], [a.dataset.state, a.dataset.line], 'page and row: one model');
+      assert.equal(block.dataset.state, 'needs-you');
     } },
     { name: 'done, the glance offers Create pull request', run: async () => {
       const { doc, end } = await finishedPage({ row: { ...hd.ROW, status: 'done', pr: null }, detail: hd.DETAIL, ghAvailable: true });

@@ -95,10 +95,11 @@ test('Azure PR provider', async () => {
       const rows = [['active', 'succeeded', 'OPEN', 'MERGEABLE'], ['completed', 'succeeded', 'MERGED', 'MERGEABLE'],
         ['abandoned', 'notSet', 'CLOSED', 'UNKNOWN'], ['active', 'conflicts', 'OPEN', 'CONFLICTING'], ['active', 'queued', 'OPEN', 'UNKNOWN']];
       for (const [status, mergeStatus, state, mergeable] of rows) {
-        const f = fakeFetch([{ match: /\/_apis\/git\/pullrequests\/9\?/, reply: res(200, { pullRequestId: 9, status, mergeStatus }) }]);
+        const isDraft = status === 'active' && mergeStatus === 'queued';
+        const f = fakeFetch([{ match: /\/_apis\/git\/pullrequests\/9\?/, reply: res(200, { pullRequestId: 9, status, mergeStatus, isDraft }) }]);
         az._testing.setFetch(f);
         const v = await az.viewPr({ prUrl: 'https://dev.azure.com/acme/My%20Project/_git/api/pullrequest/9', env: ENV });
-        assert.deepEqual({ state: v.state, mergeable: v.mergeable }, { state, mergeable }, `${status}/${mergeStatus}`);
+        assert.deepEqual({ state: v.state, mergeable: v.mergeable, isDraft: v.isDraft }, { state, mergeable, isDraft }, `${status}/${mergeStatus}`);
         assert.equal(f.calls[0].url, 'https://dev.azure.com/acme/My%20Project/_apis/git/pullrequests/9?api-version=7.1');
       }
     } },
@@ -108,6 +109,25 @@ test('Azure PR provider', async () => {
       assert.equal((await az.findPrForBranch({ head: 'feat/x', baseRepo: REPO, env: ENV })).number, 3);
       az._testing.setFetch(fakeFetch([{ match: /./, reply: res(200, { value: [{ pullRequestId: 2, status: 'abandoned' }] }) }]));
       assert.equal(await az.findPrForBranch({ head: 'feat/x', baseRepo: REPO, env: ENV }), null);
+    } },
+    { name: 'findPrForBranch: isDraft from the payload, in the gh lookup\'s shape', run: async () => {
+      az._testing.setFetch(fakeFetch([{ match: /./, reply: res(200, { value: [{ pullRequestId: 5, status: 'active', isDraft: true, mergeStatus: 'conflicts' }] }) }]));
+      assert.deepEqual(await az.findPrForBranch({ head: 'feat/x', baseRepo: REPO, env: ENV }),
+        { state: 'OPEN', url: 'https://dev.azure.com/acme/My%20Project/_git/api/pullrequest/5', number: 5, isDraft: true, mergeable: 'CONFLICTING' });
+      az._testing.setFetch(fakeFetch([{ match: /./, reply: res(200, { value: [{ pullRequestId: 6, status: 'active' }] }) }]));
+      assert.equal((await az.findPrForBranch({ head: 'feat/x', baseRepo: REPO, env: ENV })).isDraft, false, 'no flag: not a draft');
+    } },
+    { name: 'findPrForBranch includeClosed: an abandoned PR only as the last resort', run: async () => {
+      const reply = (value) => az._testing.setFetch(fakeFetch([{ match: /./, reply: res(200, { value }) }]));
+      const opts = { head: 'feat/x', baseRepo: REPO, env: ENV, includeClosed: true };
+      reply([{ pullRequestId: 4, status: 'abandoned' }, { pullRequestId: 2, status: 'abandoned' }]);
+      const closed = await az.findPrForBranch(opts);
+      assert.deepEqual([closed.state, closed.number], ['CLOSED', 4], 'the newest abandoned PR');
+      assert.equal(await az.findPrForBranch({ ...opts, includeClosed: false }), null, 'off by default');
+      reply([{ pullRequestId: 4, status: 'abandoned' }, { pullRequestId: 1, status: 'completed' }]);
+      assert.equal((await az.findPrForBranch(opts)).state, 'MERGED', 'a completed PR beats a newer abandoned one');
+      reply([{ pullRequestId: 4, status: 'abandoned' }, { pullRequestId: 1, status: 'completed' }, { pullRequestId: 3, status: 'active' }]);
+      assert.equal((await az.findPrForBranch(opts)).number, 3, 'an active PR first');
     } },
     { name: 'listPullRequests: pages by $skip until a short page (complete); filters by minTime locally', run: async () => {
       const page = (n, from) => Array.from({ length: n }, (_, i) => ({ pullRequestId: from + i, status: 'active', creationDate: '2026-09-10T00:00:00Z' }));

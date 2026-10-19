@@ -1595,6 +1595,10 @@ export function persistMemberPrState(pipelineId, memberKey, pr) {
 }
 
 /** A workspace run's member PRs as { [memberKey]: { url, number, state } } ({} on none/any failure). */
+/** A workspace member's PR with `fixing` when a Watch PR fix run is live on it right now (D31), as readPrState
+ *  marks a single run's. Never persisted. */
+const withFixing = (pr) => (pr && watchActive(getWatch(pr.url)) ? { ...pr, fixing: true } : pr);
+
 export function readMemberPrStates(pipelineId) {
   if (!pipelineId) return {};
   try {
@@ -2154,7 +2158,7 @@ async function workspaceMemberFacts(row, results, opts = {}) {
     }
     if (opts.withPr) {
       out.pr = gh && m.projectDir && m.feature
-        ? await findPrForBranch({ projectDir: m.projectDir, head: m.feature, prUrl: known[m.memberKey]?.url || null })
+        ? withFixing(await findPrForBranch({ projectDir: m.projectDir, head: m.feature, prUrl: known[m.memberKey]?.url || null }))
         : null;
     }
     return out;
@@ -2484,13 +2488,16 @@ export function countPipelines() {
 
 /**
  * Re-walk the skeleton and resolve live PR state per branch, pushed to `onBatch`
- * in parallel batches. v1 sends ONLY `pr` (state OPEN/MERGED or null) —
- * findPrForBranch already distinguishes merged-vs-open. We do NOT compute live
- * mergeability (no prMergeable call). `onBatch(items, isFinal)` is awaited so a
- * caller can broadcast incrementally; the FINAL call always carries isFinal=true
- * (even with no PR host / no targets) so a client spinner provably clears. A workspace
- * item (a row WITH member facts) also carries `members: [{ memberKey, pr }]`; its
- * `pr` is the rollup of those.
+ * in parallel batches. Each item sends ONLY `pr`: findPrForBranch's
+ * { state, url, number, isDraft, mergeable } (state OPEN/MERGED, or CLOSED when no
+ * open or merged PR exists — the Runs list draws a dropped PR too) or null. Draft and
+ * mergeability come from the same lookup (gh or Azure REST): no prMergeable call per PR.
+ * A single run's OPEN PR also carries the stored CI verdict (`draft`, `reviewDecision`, `checks`) and `fixing` (D31).
+ * `onBatch(items, isFinal)` is awaited so a caller can broadcast incrementally; the
+ * FINAL call always carries isFinal=true (even with no PR host / no targets) so a client
+ * spinner provably clears. A workspace item (a row WITH member facts) also carries
+ * `members: [{ memberKey, pr }]`, each `pr` in the same shape; its `pr` is the rollup
+ * of the open and merged ones.
  */
 export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
   if (!(await anyPrHost())) { await onBatch([], true); return; } // no PR host: one empty final batch
@@ -2508,19 +2515,26 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
         const known = readMemberPrStates(r.id);
         const members = await Promise.all(r.members.map(async (m) => {
           const pr = m.projectDir && m.branch
-            ? (await findPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null })) || null
+            ? (await findPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null, includeClosed: true })) || null
             : null;
-          if (pr) persistMemberPrState(r.id, m.memberKey, pr);
-          return { memberKey: m.memberKey, pr };
+          if (pr && pr.state !== 'CLOSED') persistMemberPrState(r.id, m.memberKey, pr);   // a closed PR is shown, never recorded
+          return { memberKey: m.memberKey, pr: withFixing(pr) };
         }));
         const pr = rollupMemberPrs(Object.fromEntries(members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
         return { projectKey: r.projectKey, id: r.id, pr, members };
       }
       const prUrl = readPrState(r.id)?.url || null;
-      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true })) || null;
-      if (pr) persistPrState(r.id, pr);   // positive observations only (null never clears)
-      // The stored shape (verdict spread, `fixing`), as readPrState gives the CLI and Ask.
-      return { projectKey: r.projectKey, id: r.id, pr: pr ? readPrState(r.id) : null };
+      const found = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true, includeClosed: true })) || null;
+      // Positive observations only (null never clears). A closed PR is shown, never
+      // recorded: pr_url keeps naming the open or merged PR the other readers act on.
+      if (found && found.state !== 'CLOSED') persistPrState(r.id, found);
+      if (!found) return { projectKey: r.projectKey, id: r.id, pr: null };
+      // The live PR (isDraft / mergeable) plus the stored verdict and `fixing`, as rowToHistoryEntry builds it.
+      const { verdict, ...fresh } = found;
+      const stored = fresh.state === 'CLOSED' ? null : readPrState(r.id);
+      const pr = { ...(stored && stored.url === fresh.url ? stored : {}), ...fresh, ...(verdict || {}),
+        ...(watchActive(getWatch(fresh.url)) ? { fixing: true } : {}) };
+      return { projectKey: r.projectKey, id: r.id, pr };
     }));
     await onBatch(items, i + batchSize >= targets.length); // (items, isFinal)
   }

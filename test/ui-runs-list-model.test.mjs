@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
 import {
   rowTime, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
   buildRunsModel, isRowSelected, renderRunsList, dateBucket, DATE_BUCKETS, listLine, groupRow, groupCostUsd, costTitle,
@@ -397,4 +398,63 @@ test('renderRunsList: loading, offline-empty and the retry note (§5a.2)', () =>
   const needs = buildRunsModel({ history: [{ id: 'p1', projectKey: 'k', title: 'A', status: 'done', run: { status: 'done' } }], show: 'needs', now: NOW });
   assert.deepEqual(text(renderRunsList(doc, needs, { loading: true, offline: true })), ['runs-note|Nothing needs you.'],
     'a Show-filtered empty view with rows elsewhere keeps its own note');
+});
+
+const GH = (n, more = {}) => ({ state: 'OPEN', url: `https://github.com/o/r/pull/${n}`, number: n, isDraft: false, mergeable: 'UNKNOWN', ...more });
+const AZ = { state: 'CLOSED', url: 'https://dev.azure.com/acme/P/_git/api/pullrequest/5', number: 5, isDraft: false, mergeable: 'UNKNOWN' };
+
+test('renderRunsList: #784’s PR states are the chip’s words — one PR indicator per row', () => {
+  const cases = {
+    draft: [GH(1, { isDraft: true }), 'is-draft', 'Draft'],
+    open: [GH(2), 'is-ready', 'Ready'],
+    conflict: [GH(3, { mergeable: 'CONFLICTING' }), 'is-conflicts', 'Conflicts'],
+    draftConflict: [GH(4, { isDraft: true, mergeable: 'CONFLICTING' }), 'is-conflicts', 'Conflicts'],
+    merged: [GH(5, { state: 'MERGED' }), 'is-merged', 'Merged'],
+    closed: [GH(6, { state: 'CLOSED' }), 'is-closed', 'Closed'],
+    abandoned: [AZ, 'is-closed', 'Abandoned'],
+  };
+  const history = [...Object.entries(cases).map(([id, [pr]]) => histIt(`h-${id}`, { run: { status: 'done', pr } })),
+    histIt('h-none', { pr: 'NONE', run: { status: 'done', pr: null } })];
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, buildRunsModel({ history, now: NOW })));
+  for (const [id, [, cls, word]] of Object.entries(cases)) {
+    const row = host.querySelector(`a.runs-row[data-pipeline-id="h-${id}"]`);
+    const chips = row.querySelectorAll('.runs-pr');
+    assert.equal(chips.length, 1, `${id}: exactly one PR indicator`);
+    assert.ok(chips[0].classList.contains(cls), `${id}: ${cls}`);
+    assert.equal(chips[0].querySelector('.runs-pr-word').textContent, word);
+  }
+  assert.equal(host.querySelector('a.runs-row[data-pipeline-id="h-none"] .runs-pr'), null, 'no PR: no chip');
+});
+
+test('renderRunsList: a workspace run’s chip names its most urgent member PR and their count', () => {
+  const ws = (memberPrs) => ({ status: 'done', pr: GH(1), memberPrs });
+  const history = [histIt('ws3', { run: ws([GH(1), GH(2, { state: 'MERGED' }), GH(3, { mergeable: 'CONFLICTING' })]) }),
+    histIt('ws1', { run: ws([GH(1)]) })];
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, buildRunsModel({ history, now: NOW })));
+  const chip = (id) => host.querySelector(`a.runs-row[data-pipeline-id="${id}"] .runs-pr`);
+  assert.equal(chip('ws3').querySelector('.runs-pr-word').textContent, 'Conflicts · 3 PRs');
+  assert.ok(chip('ws3').classList.contains('is-conflicts'), 'the most urgent state colours the chip');
+  assert.match(chip('ws3').title, /^3 pull requests · Conflicts with the base branch/);
+  assert.equal(chip('ws1').querySelector('.runs-pr-word').textContent, 'Ready', 'one member PR: no count');
+});
+
+test('Needs you: a workspace run with a conflicting member PR is listed and counted once (D11)', () => {
+  const conflicting = [GH(1), GH(2, { mergeable: 'CONFLICTING' })];
+  const m = buildRunsModel({ history: [histIt('wsc', { run: { status: 'done', pr: GH(1), memberPrs: conflicting } })], now: NOW });
+  const row = rowsOf(m).find((r) => r.pipelineId === 'wsc');
+  assert.deepEqual([row.model.state, row.needs], ['needs-you', true], 'the row state and the section agree');
+  // The badge reads raw History rows (state.historyAll): members[].pr, not memberPrs.
+  const raw = { id: 'wsc', status: 'done', pr: GH(1), members: conflicting.map((pr, i) => ({ memberKey: `m${i}`, pr })) };
+  assert.equal(countNeedsYou({ live: [], history: [raw] }), 1);
+  assert.equal(countNeedsYou({ live: [], history: [{ ...raw, members: [{ memberKey: 'm0', pr: GH(1) }] }] }), 0, 'nothing wrong: not counted');
+});
+
+test('style.css: the chip colours #784’s states from tokens; the glyph rules are gone', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const colours = { 'is-draft': '--ink-2', 'is-ready': '--green-ink', 'is-merged': '--violet-ink', 'is-closed': '--red-ink' };
+  for (const [cls, token] of Object.entries(colours)) assert.ok(css.includes(`.runs-pr.${cls}{color:var(${token});}`), cls);
+  assert.match(css, /\.runs-pr\.is-conflicts,\.runs-pr\.is-failing\{color:var\(--red-ink\);\}/);
+  for (const gone of ['.runs-pr-open{', '.runs-pr-cut{', '.runs-pr-count{', '.runs-pr{flex:none']) assert.equal(css.includes(gone), false, gone);
 });

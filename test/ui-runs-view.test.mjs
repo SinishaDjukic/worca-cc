@@ -153,6 +153,22 @@ test('a live run groups with its registered project even before History loads (G
   assert.equal(rowEl(doc, '[data-run-id="r1"]').closest('.runs-sec').dataset.section, `project:${KEY}`);
 });
 
+test('a finished run still listed live ends its row with its History row’s PR chip', async () => {
+  const { window, doc, recv } = await boot();
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'aaaa0001' }), live('r2')] });
+  recv({ type: 'done', runId: 'r1', status: 'done' });     // a run that ends live lingers until opened
+  go(window, 'runs'); await settle(window);
+  const chip = (id) => doc.querySelector(`#runs-list a.runs-row[data-run-id="${id}"] .runs-pr`);
+  assert.ok(doc.querySelector('#runs-list .runs-row[data-run-id="r1"]'), 'the finished run is listed live');
+  assert.ok(chip('r1'), 'the live row stands for its History row (MERGED), so it shows the PR');
+  assert.equal(chip('r1').className, 'runs-pr is-merged');
+  assert.equal(chip('r1').querySelector('.runs-pr-word').textContent, 'Merged');
+  assert.equal(chip('r2'), null, 'a running run has no PR yet');
+  click(window, chip('r1').querySelector('svg'));
+  // Read before the route settles: a finished run then moves on to its saved page.
+  assert.equal(window.location.hash, '#running/r1', 'the chip is not a control: a click on it is the row’s');
+});
+
 test('a finished run opens its saved page in the same pane and closes the live one', async () => {
   const { window, doc, recv } = await boot();
   recv({ type: 'hello', runs: [live('r1')] });

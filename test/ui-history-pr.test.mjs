@@ -130,8 +130,8 @@ const chipOf = (row) => row.querySelector('.runs-pr-word')?.textContent || '';
 test('PR states: OPEN is In review (links to the saved run), MERGED is Merged (even with the branch gone), CLOSED never Merged/In review', async () => {
   const OPEN = { ...DONE, id: 'po', pr: { state: 'OPEN', url: 'https://gh/x/pull/8', number: 8 } };
   const MERGED = { ...DONE, id: 'pm', pr: { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9 } };
-  // Defense in depth: even if a stray CLOSED pr object reaches the client, the row must
-  // not claim the work landed. (In practice the server now sends pr:null here.)
+  // A closed PR (the history-pr enrichment sends one when the branch has no open or merged
+  // PR, for the row's PR glyph): the row must not claim the work landed.
   const CLOSED = { ...DONE, id: 'pc', pr: { state: 'CLOSED', url: 'https://gh/x/pull/1', number: 1 } };
   // The cited case: PR merged, the lookup is by remote head name, not local branch.
   const MERGED_GONE = {

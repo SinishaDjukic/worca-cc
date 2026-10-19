@@ -617,17 +617,24 @@ export async function ghPrChecks({ projectDir, prUrl }) {
   } catch { return null; }
 }
 
+// The PR fields findPrForBranch reads. `isDraft` and `mergeable` ride the same call, so the
+// Runs list's PR glyph (draft, conflicts) costs no extra gh call per PR.
+const PR_FIELDS = 'number,state,url,isDraft,mergeable';
+
 const normalizePr = (pr) => ({
   state: String(pr?.state || '').toUpperCase(),
   url: String(pr?.url || ''),
   number: Number(pr?.number) || null,
+  isDraft: pr?.isDraft === true,
+  mergeable: normalizeMergeable(pr?.mergeable),
 });
 
 /**
  * Look up an existing PR for `head`, so the History UI can hide the Create-PR
- * button when a PR is already open or merged. Returns { state, url, number } with
- * state ∈ { OPEN, MERGED }, or null when there is no open/merged PR / on any gh
- * failure. Never throws.
+ * button when a PR is already open or merged. Returns { state, url, number,
+ * isDraft, mergeable } with state ∈ { OPEN, MERGED }, or null when there is no
+ * open/merged PR / on any gh failure. Never throws. `mergeable` is normalized
+ * like prMergeable's (MERGEABLE | CONFLICTING | UNKNOWN).
  *
  * With a persisted `prUrl` (spec: later lookups use pr_url) the PR is read
  * directly via `gh pr view <url>` — repo-agnostic, so a cross-repo PR is found
@@ -638,7 +645,10 @@ const normalizePr = (pr) => ({
  * CLOSED (unmerged) — a newer PR may exist for the branch. The list keeps the
  * BARE branch: `gh pr list --head owner:branch` matches nothing. It scans the
  * matches and selects by priority OPEN > MERGED, so a newer closed PR never
- * masks an older merged one; a closed-but-not-merged PR is ignored.
+ * masks an older merged one; a closed-but-not-merged PR is ignored, unless
+ * `includeClosed` asks for it as the last resort (the closed PR behind the URL,
+ * else the branch's newest closed one): the Runs list draws a PR dropped
+ * without merging, where every other caller reads "no PR" and offers Create.
  */
 /** The OPEN PR's verdict by one extra `gh pr view` (merged PRs need none). Null on any failure: the chip keeps today's words. */
 async function ghPrVerdict(projectDir, url) {
@@ -646,35 +656,37 @@ async function ghPrVerdict(projectDir, url) {
   if (!v.ok) return null;
   try { return prVerdictOf(JSON.parse(v.stdout || 'null')); } catch { return null; }
 }
-async function ghFindPrForBranch({ projectDir, head, prUrl = null, withVerdict = false }) {
+async function ghFindPrForBranch({ projectDir, head, prUrl = null, withVerdict = false, includeClosed = false }) {
   const done = async (pr) => (withVerdict && pr && pr.state === 'OPEN' ? { ...pr, verdict: await ghPrVerdict(projectDir, pr.url) } : pr);
+  let closedAtUrl = null;
   if (prUrl) {
-    const v = await _run('gh', ['pr', 'view', prUrl, '--json', 'number,state,url'], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(prUrl) })).env });
+    const v = await _run('gh', ['pr', 'view', prUrl, '--json', PR_FIELDS], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(prUrl) })).env });
     if (v.ok) {
       let obj = null;
       try { obj = JSON.parse(v.stdout || 'null'); } catch { obj = null; }
       if (obj && typeof obj === 'object' && !Array.isArray(obj) && obj.url) {
         const pr = normalizePr(obj);
         if (pr.state === 'OPEN' || pr.state === 'MERGED') return done(pr);
-        // CLOSED: fall through to the branch search below.
+        // CLOSED: fall through to the branch search below; includeClosed's last resort.
+        if (pr.state === 'CLOSED') closedAtUrl = pr;
       }
     }
   }
   const r = await _run(
     'gh',
-    ['pr', 'list', '--head', head, '--state', 'all', '--json', 'number,state,url', '--limit', '30'],
+    ['pr', 'list', '--head', head, '--state', 'all', '--json', PR_FIELDS, '--limit', '30'],
     { cwd: projectDir, env: (await githubEnv('read', { repo: null })).env },
   );
-  if (!r.ok) return null;
-  let arr;
-  try { arr = JSON.parse(r.stdout || '[]'); } catch { return null; }
-  if (!Array.isArray(arr) || arr.length === 0) return null;
-  // Keep only the states the UI acts on; closed/declined PRs are deliberately dropped.
-  const norm = arr.map(normalizePr).filter((pr) => pr.state === 'OPEN' || pr.state === 'MERGED');
-  if (norm.length === 0) return null;
-  // Requirement is binary: hide the button if any OPEN or MERGED PR exists. After
-  // the filter, norm[0] is necessarily a MERGED entry when there is no OPEN one.
-  return done(norm.find((p) => p.state === 'OPEN') || norm[0]);
+  let norm = [];
+  try {
+    const arr = r.ok ? JSON.parse(r.stdout || '[]') : [];
+    if (Array.isArray(arr)) norm = arr.map(normalizePr);
+  } catch { /* unparseable output: no PR */ }
+  // Requirement is binary: hide the button if any OPEN or MERGED PR exists.
+  const live = norm.find((p) => p.state === 'OPEN') || norm.find((p) => p.state === 'MERGED');
+  if (live) return done(live);
+  if (!includeClosed) return null;
+  return closedAtUrl || norm.find((p) => p.state === 'CLOSED') || null;
 }
 
 /** A PR's current body via its (repo-agnostic) URL. { ok, body } | { ok:false, error }. Never throws. */
@@ -847,20 +859,27 @@ export async function prMergeable(opts = {}) {
   return ghPrMergeable(opts);
 }
 
-/** { state: OPEN|MERGED, url, number } | null for `head`, by forge (see ghFindPrForBranch). Never throws.
- *  `withVerdict` (GitHub only): an OPEN PR also carries `verdict` (prVerdictOf), for the Runs list's PR chip (D31). */
-export async function findPrForBranch({ projectDir, head, prUrl = null, withVerdict = false } = {}) {
+/**
+ * { state: OPEN|MERGED, url, number, isDraft, mergeable } | null for `head`, by forge (see ghFindPrForBranch). Never throws.
+ * `includeClosed` adds a CLOSED (Azure: abandoned) PR as the last resort.
+ * `withVerdict` (GitHub only): an OPEN PR also carries `verdict` (prVerdictOf), for the Runs list's PR chip (D31).
+ */
+export async function findPrForBranch({ projectDir, head, prUrl = null, withVerdict = false, includeClosed = false } = {}) {
   if (!projectDir || !head) return null;
-  const strip = (pr) => (pr ? { state: pr.state, url: pr.url, number: pr.number } : null);
+  const strip = (pr) => (pr ? { state: pr.state, url: pr.url, number: pr.number, isDraft: pr.isDraft === true, mergeable: pr.mergeable || 'UNKNOWN' } : null);
   if (forgeOfPrUrl(prUrl) === 'azure') {
     const pr = await azurePr.viewPr({ prUrl });
     if (pr && (pr.state === 'OPEN' || pr.state === 'MERGED')) return strip(pr);
-    return strip(await azurePr.findPrForBranch({ head, baseRepo: parseAzurePrUrl(prUrl) }));   // CLOSED: search the branch
+    // CLOSED: search the branch; the closed PR behind the URL stays the last resort.
+    const found = await azurePr.findPrForBranch({ head, baseRepo: parseAzurePrUrl(prUrl), includeClosed });
+    if (found && found.state !== 'CLOSED') return strip(found);
+    if (!includeClosed) return null;
+    return strip(pr?.state === 'CLOSED' ? pr : found);
   }
   const az = prUrl ? null : await azureBaseRemote(projectDir);
-  if (az) return strip(await azurePr.findPrForBranch({ head, baseRepo: az }));
+  if (az) return strip(await azurePr.findPrForBranch({ head, baseRepo: az, includeClosed }));
   if (!(await ghUsable())) return null;
-  return ghFindPrForBranch({ projectDir, head, prUrl, withVerdict });
+  return ghFindPrForBranch({ projectDir, head, prUrl, withVerdict, includeClosed });
 }
 
 /** OPEN | MERGED | CLOSED | null for a persisted PR URL, by its forge (see ghPrLifecycleState). */

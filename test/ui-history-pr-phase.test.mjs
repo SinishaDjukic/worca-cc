@@ -110,6 +110,69 @@ test('history-pr OPEN and MERGED batches turn the row word into In review / Merg
   ]);
 });
 
+test('history-pr batches repaint the row’s PR chip in place, even when the word stays "In review"', async () => {
+  const ctx = await boot({ fetchHandler: (url) => (url.endsWith('/api/history') ? skeleton([ROW()]) : null) });
+  ctx.showRuns();
+  await ctx.tick();
+  const token = ctx.prTokens().at(-1);
+  // Re-queried on every call: a repaint replaces the row.
+  const chip = () => {
+    const c = ctx.window.document.querySelector(`${rowSel('p1', 'proj-0000abcd')} .runs-pr`);
+    return c ? [c.className, c.querySelector('.runs-pr-word').textContent] : null;
+  };
+  const send = async (pr) => {
+    ctx.dispatchPr({ token, items: [{ projectKey: 'proj-0000abcd', id: 'p1', pr }] });
+    await ctx.tick();
+  };
+  const OPEN = { state: 'OPEN', url: 'https://gh/x/pull/8', number: 8 };
+  assert.equal(chip(), null, 'the lookup has not answered: nothing drawn');
+  await send({ ...OPEN, isDraft: true, mergeable: 'UNKNOWN' });
+  assert.deepEqual(chip(), ['runs-pr is-draft', 'Draft']);
+  assert.equal(wordOf(ctx), 'In review');
+  // Same row word from here on: only the chip's word tells the repaint something changed.
+  await send({ ...OPEN, isDraft: false, mergeable: 'UNKNOWN' });
+  assert.deepEqual(chip(), ['runs-pr is-ready', 'Ready']);
+  await send({ ...OPEN, isDraft: false, mergeable: 'CONFLICTING' });
+  assert.deepEqual(chip(), ['runs-pr is-conflicts', 'Conflicts']);
+  assert.equal(wordOf(ctx), 'needs-you', 'a conflicting PR raises the run to Needs you (D31)');
+  await send({ ...OPEN, state: 'CLOSED', isDraft: false, mergeable: 'UNKNOWN' });
+  assert.deepEqual(chip(), ['runs-pr is-closed', 'Closed']);
+  assert.equal(wordOf(ctx), 'Ready to ship');
+  await send({ ...OPEN, state: 'MERGED', isDraft: false, mergeable: 'UNKNOWN' });
+  assert.deepEqual(chip(), ['runs-pr is-merged', 'Merged']);
+  await send(null);
+  assert.equal(chip(), null, 'no PR: the chip goes');
+});
+
+test('a workspace run’s history-pr batch draws its most urgent member PR and their count', async () => {
+  const member = (memberKey) => ({ memberKey, name: memberKey, projectDir: `/x/${memberKey}`, branch: 'worca-cc/feat-1',
+    sourceBranch: 'main', survived: true, affected: true });
+  const ws = ROW({ target: 'workspace', members: [member('api'), member('web'), member('doc')] });
+  const ctx = await boot({ fetchHandler: (url) => (url.endsWith('/api/history') ? skeleton([ws]) : null) });
+  ctx.showRuns();
+  await ctx.tick();
+  const token = ctx.prTokens().at(-1);
+  const chip = () => {
+    const c = ctx.window.document.querySelector(`${rowSel('p1', 'proj-0000abcd')} .runs-pr`);
+    return c ? [c.className, c.querySelector('.runs-pr-word').textContent] : null;
+  };
+  const pr = (n, more = {}) => ({ state: 'OPEN', url: `https://gh/x/pull/${n}`, number: n, isDraft: false, mergeable: 'UNKNOWN', ...more });
+  const send = async (members) => {
+    ctx.dispatchPr({ token, items: [{ projectKey: 'proj-0000abcd', id: 'p1', pr: pr(1), members }] });
+    await ctx.tick();
+  };
+  await send([{ memberKey: 'api', pr: pr(1) }, { memberKey: 'web', pr: pr(2, { state: 'MERGED' }) }, { memberKey: 'doc', pr: null }]);
+  assert.deepEqual(chip(), ['runs-pr is-ready', 'Ready · 2 PRs']);
+  await send([{ memberKey: 'api', pr: pr(1) }, { memberKey: 'web', pr: pr(2, { state: 'MERGED' }) }, { memberKey: 'doc', pr: pr(3) }]);
+  assert.deepEqual(chip(), ['runs-pr is-ready', 'Ready · 3 PRs'], 'the count alone repaints the row');
+  // The rollup (`pr`) stays the same open PR: only the members' states repaint the row.
+  await send([{ memberKey: 'api', pr: pr(1) }, { memberKey: 'web', pr: pr(2, { mergeable: 'CONFLICTING' }) }, { memberKey: 'doc', pr: pr(3, { isDraft: true }) }]);
+  assert.deepEqual(chip(), ['runs-pr is-conflicts', 'Conflicts · 3 PRs']);
+  assert.equal(wordOf(ctx), 'needs-you', 'a conflicting member PR raises the run to Needs you (D11)');
+  await send([{ memberKey: 'api', pr: pr(1) }, { memberKey: 'web', pr: null }, { memberKey: 'doc', pr: null }]);
+  assert.deepEqual(chip(), ['runs-pr is-ready', 'Ready'], 'one member PR: no count');
+});
+
 test('id collision across projects: only the (id, projectKey)-matched row is patched', async () => {
   const ctx = await boot({
     fetchHandler: (url) => (url.endsWith('/api/history')

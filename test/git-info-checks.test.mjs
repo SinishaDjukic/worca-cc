@@ -148,7 +148,7 @@ test('findPrForBranch: the verdict is opt-in (withVerdict), read only for an OPE
   gitInfo.setRunner(async (cmd, args) => {
     calls.push([cmd, ...args]);
     if (cmd === 'gh' && args[0] === '--version') return ok('gh 2.x');
-    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args[4] === 'number,state,url') return ok(JSON.stringify({ number: 781, state, url: URL }));
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args[4] === 'number,state,url,isDraft,mergeable') return ok(JSON.stringify({ number: 781, state, url: URL }));
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args[4] === 'isDraft,reviewDecision,mergeable,statusCheckRollup') {
       return ok(JSON.stringify({ isDraft: false, reviewDecision: null, mergeable: 'MERGEABLE',
         statusCheckRollup: [run('COMPLETED', 'FAILURE'), run('COMPLETED', 'FAILURE'), run('COMPLETED', 'FAILURE'), run('COMPLETED', 'SUCCESS')] }));
@@ -159,7 +159,7 @@ test('findPrForBranch: the verdict is opt-in (withVerdict), read only for an OPE
   const withV = await findPrForBranch({ projectDir: '/p', head: 'feat/x', prUrl: URL, withVerdict: true });
   assert.equal(withV.verdict.checks.failed, 3);
   calls.length = 0;
-  assert.deepEqual(await findPrForBranch({ projectDir: '/p', head: 'feat/x', prUrl: URL }), { state: 'OPEN', url: URL, number: 781 });
+  assert.deepEqual(await findPrForBranch({ projectDir: '/p', head: 'feat/x', prUrl: URL }), { state: 'OPEN', url: URL, number: 781, isDraft: false, mergeable: 'UNKNOWN' });
   assert.equal(views(), 1, 'no verdict call without withVerdict');
   calls.length = 0;
   state = 'MERGED';

@@ -1142,6 +1142,37 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   assert.equal(window.location.hash, `#history/${KEY}/p1`, 'it hands over to the ship-it flow');
 });
 
+test('a finished run whose branch has only a closed pull request: Create pull request opens Ship it', async () => {
+  // The history-pr rows carry a CLOSED PR (the Runs list draws its glyph). It must not
+  // block the hand-over: only an open or merged PR does, as on the saved run's header.
+  const row = { ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main',
+    pr: { state: 'CLOSED', url: 'https://github.com/o/r/pull/7', number: 7 } };
+  const ctx = await boot({
+    fetchHandler: (url) => {
+      if (url.endsWith('/api/history/pr')) return ok({ ok: true });
+      if (url.endsWith('/api/history')) return ok({ pipelines: [row], ghAvailable: true });
+      if (url.endsWith('/api/budget')) return ok(okBudget());
+      if (url.includes(`/api/history/${KEY}/p1`)) return ok({ state: { status: 'done', steps: [] }, results: null });
+      if (url.includes('/api/runs/p1?projectDir=')) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
+      return null;
+    },
+  });
+  frame(ctx, { type: 'hello', runs: [] });
+  await settle(ctx.window, 6);
+  const { window } = ctx;
+  const rd = await openGlance(ctx);
+  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  await settle(window, 10);
+  const pr = rd.querySelector('.rd-pr-slot .rd-create-pr');
+  assert.ok(pr, 'a closed PR still offers Create pull request');
+  click(window, pr);
+  assert.equal(window.location.hash, `#history/${KEY}/p1`);
+  window.dispatchEvent(new window.Event('hashchange'));
+  await settle(window, 10);
+  assert.equal(window.document.getElementById('shipit-modal').classList.contains('hidden'), false,
+    'the Ship it dialog opens on arrival');
+});
+
 test('a finished run with an open or merged pull request links to it, behind its glyph', async () => {
   await checkRows([['OPEN', 'external', 'pr-view'], ['MERGED', 'merged', 'pr-merged']].map(([state, icon, cls]) => ({
     name: `a finished run with an ${state.toLowerCase()} pull request links to it, behind its glyph`,
