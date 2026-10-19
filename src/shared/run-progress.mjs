@@ -267,6 +267,13 @@ export function runProgress(st, memo = null) {
 
   // ── P5: "<Stage> · <what is happening>" ──
   const now = staged.filter((n) => active.has(n.id)).map(labelOf);
+  // Spec §4a: role reviews are part of Plan — "Plan · role reviews[, round N]" while the role node runs.
+  const roleFact = facts && facts.roleReview && typeof facts.roleReview === 'object' ? facts.roleReview : null;
+  const roleWhat = () => {
+    if (!roleFact || !active.has(roleFact.nodeId)) return '';
+    const round = Number(roleFact.round) || 1;
+    return round > 1 ? `role reviews, round ${round}` : 'role reviews';
+  };
   const workingWhat = () => {
     if (stage === 'ready') return '';
     if (status === 'done') return 'finished';
@@ -278,11 +285,14 @@ export function runProgress(st, memo = null) {
         : `${ordinal(passes)} pass`;
     }
     if (stage === 'build' && expandsFromBuild && tasks.total) return `task ${Math.min(tasks.done + 1, tasks.total)} of ${tasks.total}`;
+    const rw = roleWhat();
+    if (rw) return rw;
     if (now.length > 1) return `${now.length} steps`;
     if (now.length === 1) return now[0];
     return !rows.length && !active.size ? 'starting' : '';
   };
-  const oneStep = now.length === 1 && !(stage === 'review' && passes)
+  const rw = roleWhat();
+  const oneStep = now.length === 1 && !rw && !(stage === 'review' && passes)
     && !(stage === 'build' && expandsFromBuild && tasks.total) ? now[0] : '';
   const step = oneStep && !sameWord(oneStep, label) ? oneStep : '';
   const raw = waitWhat() || workingWhat();

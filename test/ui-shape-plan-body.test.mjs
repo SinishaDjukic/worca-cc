@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
 import { renderPlanBody, SEND_FAILED } from '../ui/public/shape/plan-body.mjs';
 import { fixAllFeedback, perspectiveChangeFeedback } from '../ui/public/shape/plan-text.mjs';
 
@@ -413,4 +414,80 @@ test('one primary, no .btn-go: Approve and build, and no click reaches a host de
   $('.plan-approve').click();
   await flush();
   assert.equal(seen, 0);
+});
+
+const RECORDED = JSON.parse(readFileSync(new URL('./fixtures/role-review/recorded-run.json', import.meta.url), 'utf8'));
+const recordedAsk = (rr = RECORDED.plan.roleReviews) => ({ ...RECORDED, plan: { ...RECORDED.plan, roleReviews: rr } });
+
+test('recorded shaped run: one row per role, Show unfolds that role\'s findings, each fact once', async () => {
+  const { panel, $, $$ } = setup({ pq: recordedAsk() });
+  await flush();
+  assert.equal($('.plan-role-line .plan-fold-text').textContent, 'Reviewed by 5 roles · 1 open');
+  const rows = $$('.plan-roles .plan-check-row');
+  assert.deepEqual(rows.map((r) => r.querySelector('.plan-check-label').textContent), ['Product · no findings',
+    'Architect · 1 major fixed', 'QA · 1 critical, 1 suggestion fixed', 'UX · 1 minor fixed', 'Project fit · 1 major open']);
+  // A met row's mark is the check icon (icons.mjs, D14); an open issue's is `!`.
+  assert.deepEqual(rows.map((r) => { const m = r.querySelector('.plan-check-mark'); return m.querySelector('svg') ? 'check' : m.textContent; }), ['check', 'check', 'check', 'check', '!']);
+  assert.equal($$('.plan-roles .plan-check-show').length, 4);
+  const show = rows[4].querySelector('.plan-check-show');
+  show.click();
+  assert.equal(show.textContent, 'Hide');
+  assert.equal(show.getAttribute('aria-expanded'), 'true');
+  const open = $$('.plan-findings').filter((l) => !l.hidden);
+  assert.equal(open.length, 1);
+  const li = open[0].querySelectorAll('.plan-finding');
+  assert.equal(li.length, 1);
+  assert.ok(li[0].querySelector('.plan-sev').classList.contains('plan-sev-major'));
+  assert.deepEqual([...li[0].children].map((c) => c.textContent),
+    ['major', 'Code layout', 'Render role rows through buildCheckRows in check-row.mjs', 'open']);
+  const status = (i) => [...rows[i].nextElementSibling.querySelectorAll('.plan-finding-status')].map((s) => s.textContent);
+  assert.deepEqual(status(1), ['fixed in v2']);
+  assert.deepEqual(status(2), ['fixed in v2', 'fixed in v3']);
+  const text = panel.textContent;
+  const shown = RECORDED.plan.roleReviews.rounds.flatMap((r) => r.roles.flatMap((x) => x.findings)).filter((f) => f.id !== 'fit-1-1');
+  for (const f of new Map(shown.map((x) => [x.id, x])).values()) assert.equal(text.split(f.fix).length - 1, 1, f.id);
+  assert.equal(text.includes('Reuse ui/public/shape/check-row.mjs'), false, 'a superseded finding is not shown');
+});
+
+test('one open major: Approve with 1 open issue; none: Approve and build; approve names itself', () => {
+  const a = setup({ pq: recordedAsk() });
+  assert.equal(a.$('.plan-approve').textContent, 'Approve with 1 open issue');
+  const seen = [];
+  a.panel.addEventListener('plan-answer', (e) => seen.push(e.detail));
+  a.$('.plan-approve').click();
+  assert.deepEqual(seen, [{ decision: 'approve' }]);
+  const clean = structuredClone(RECORDED.plan.roleReviews);
+  for (const f of clean.rounds.at(-1).roles.flatMap((r) => r.findings)) { f.status = 'fixed'; f.fixedIn = 3; }
+  const c = setup({ pq: recordedAsk(clean) });
+  assert.equal(c.$('.plan-approve').textContent, 'Approve and build');
+  assert.equal(c.$('.plan-role-line .plan-fold-text').textContent, 'Reviewed by 5 roles');
+  assert.equal(c.$$('.btn-primary').length, 1);
+});
+
+test('a plan ask without role reviews has no role line', () => {
+  assert.equal(setup().$$('.plan-role-line').length, 0);
+});
+
+test('plan-body draws no check row itself and has no local fold (one check-row component)', () => {
+  const src = readFileSync(new URL('../ui/public/shape/plan-body.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /plan-check-row/);
+  assert.doesNotMatch(src, /function fold\(|const fold = \(/);
+  assert.match(src, /import \{ fold, buildCheckFold \} from '\.\/check-row\.mjs';/);
+});
+
+test('slice 4 CSS: 2px/4px radii only, light-dark colour tokens only, 1px dividers, the finding line wraps', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /plan-(sev|finding|check-show)/.test(m[1]));
+  assert.ok(rules.length >= 7);
+  for (const [, sel, body] of rules) {
+    for (const r of body.matchAll(/border-radius\s*:\s*([^;]+)/g)) assert.match(r[1].trim(), /^var\(--r-(xs|sm)\)$/, sel.trim());
+    assert.doesNotMatch(body, /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i, sel.trim());
+    for (const b of body.matchAll(/border-top\s*:\s*([^;]+)/g)) assert.match(b[1].trim(), /^1px solid var\(--line\)$/, sel.trim());
+    for (const v of body.matchAll(/(?:color|background)\s*:\s*var\((--[\w-]+)\)/g)) {
+      assert.match(css, new RegExp(`${v[1]}:\\s*light-dark\\(`), `${v[1]} has a dark value`);
+    }
+  }
+  assert.match(css, /\.plan-sev\{[^}]*border-radius:var\(--r-xs\)/);
+  assert.match(css, /\.plan-finding\{[^}]*flex-wrap:wrap/);
+  assert.match(css, /\.plan-finding-fix\{[^}]*overflow-wrap:anywhere/);
 });

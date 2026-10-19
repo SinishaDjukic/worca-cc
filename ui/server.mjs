@@ -334,6 +334,7 @@ import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { shapeFirstEnabled, requireShapeFirst } from '../src/core/shape/gate.mjs';
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
+import { currentPass } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
@@ -355,6 +356,7 @@ import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, pr
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
+import { ensureHouseBrief, writeHouseBriefPins } from '../src/core/house-brief.mjs';
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
 import {
   memoryRoot, GLOBAL_SCOPE, projectScope, scopeKey, isValidMemoryName, MEMORY_NAME_HELP, memoryScopeReport,
@@ -1193,6 +1195,9 @@ function wireRun(entry) {
       const event = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }) };
 
       if (name === 'question') {
+        // Slice 4: the Plan step card's role rows read the current pass of role reviews off the plan ask (D1).
+        const rr = event.kind === 'plan' && event.plan && !event.plan.outline ? currentPass(orch.state?.roleReviews) : null;
+        if (rr) event.plan = { ...event.plan, roleReviews: rr };
         entry.pendingQuestion = event;
       }
       if (name === 'night-decision') {
@@ -6237,6 +6242,31 @@ app.put('/api/projects/:key/tags/defaults', async (req, res) => {
   const t = normaliseTags(req.body?.tags, { strict: true, keep: readProjectDefaultTags(p.key) });
   if (!Array.isArray(req.body?.tags) || t.errors.length) return badRequest(res, t.errors[0] || 'tags must be a list of strings');
   res.json({ tags: writeProjectDefaultTags(p.key, t.tags) });
+});
+
+// House brief (Settings → Project): GET rebuilds only when a source hash or the pins changed; PUT replaces the
+// pinned lines; POST refresh rebuilds now. A project with no sources answers an empty brief, not an error.
+// A missing project directory is handled inside collectHouseBriefSources (existsSync), so p.path is passed as is.
+const houseBriefOf = (p, force = false) => ensureHouseBrief({ projectKey: p.key, projectDir: p.path, force });
+app.get('/api/projects/:key/house-brief', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    res.json(await houseBriefOf(p));
+  } catch (err) { res.status(500).json({ error: err?.message || 'house brief could not be built' }); }
+});
+app.put('/api/projects/:key/house-brief/pinned', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    try { writeHouseBriefPins(p.key, req.body?.pinned); }
+    catch (err) { if (err?.code === 'EPINS') return badRequest(res, err.message); throw err; }
+    res.json(await houseBriefOf(p));
+  } catch (err) { res.status(500).json({ error: err?.message || 'house brief could not be built' }); }
+});
+app.post('/api/projects/:key/house-brief/refresh', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    res.json(await houseBriefOf(p, true));
+  } catch (err) { res.status(500).json({ error: err?.message || 'house brief could not be built' }); }
 });
 
 // Run tags (#718): replace a run's tags (any status; the UI offers it on finished runs), logging who

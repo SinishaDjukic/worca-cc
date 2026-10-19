@@ -215,6 +215,7 @@ import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
+import { mountHouseBrief } from './house-brief-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton, renderPooledBudgetTile, renderTagFilterSelect } from './team-metrics-view.mjs';
 // Team policy (team-policy design §11): the Projects cell, the enable dialog, the page (read +
@@ -12915,6 +12916,8 @@ function buildPdSettings(sec, key) {
   if (!p) return;
   const host = document.createElement('div'); host.className = 'pd-settings'; sec.appendChild(host);
   mountProjectSettings(host, { projectKey: p.key, projectDir: p.path, onTest: testModelRow });
+  const brief = document.createElement('div'); brief.className = 'pd-house-brief'; sec.appendChild(brief);
+  mountHouseBrief(brief, { projectKey: p.key });
   sec.appendChild(buildPdNightCard(p));
 }
 

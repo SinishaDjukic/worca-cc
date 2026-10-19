@@ -52,6 +52,7 @@ import {
 import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
 import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
+import { roleBriefBlock, roleItems, houseBriefBlock } from '../../shared/shape/role-review.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
 import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
 import { runScriptExecution } from './script-runner.mjs';
@@ -479,7 +480,7 @@ function decompositionContractBlock(expandsPort, runCtx) {
 /** The MOCK marker set for this execution, per the resolution chain. Only markers
  *  `runMock` reads are emitted (MOCK_ROLE, MOCK_CYCLE, MOCK_BASE, MOCK_OUT, MOCK_JSON,
  *  MOCK_IN, MOCK_PRIOR, MOCK_TASKS_DIR). */
-function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount }) {
+function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount, perspective, planText }) {
   const markers = { MOCK_ROLE: role, MOCK_CYCLE: ordinal, MOCK_BASE: runCtx.baseName };
   if (role === MOCK_ROLE_CLARIFY) {
     markers.MOCK_OUT = outputs[answersPortOf(ports)?.id]?.path;
@@ -496,6 +497,11 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
     .map((p) => bindings[p.id]?.path)
     .find(Boolean);
   if (primaryIn) markers.MOCK_IN = primaryIn;
+  // Role reviews (spec §3): the reviewer's role and its plan items; the refiner's merged findings. Empty values are
+  // skipped by mockMarkers, so every other prompt is unchanged.
+  markers.MOCK_PERSPECTIVE = perspective || '';
+  markers.MOCK_CHECKLIST = perspective ? roleItems(perspective, planText || '').map((i) => i.id).join(',') : '';
+  markers.MOCK_FINDINGS = bindings.findings?.path || '';
   return markers;
 }
 
@@ -540,7 +546,12 @@ export function buildAgentPrompt(ctx) {
   // list, never by ctx.shape, so every unshaped and shaped-without-items prompt stays byte-identical.
   const checklist = reviewChecklistBlock(ctx.checklistItems);
   const title = meta.displayName || node?.key || node?.id || 'agent';
-  const siblings = ctx.slice ? siblingsBlock(ctx.slice.siblings) : '';
+  // Spec §3: a role reviewer's prompt carries ITS role brief only (ctx.role is set per composite slice).
+  const roleBrief = ctx.role ? roleBriefBlock(ctx.role, ctx.rolePlanText || '') : '';
+  // Slice 3: the house brief rides on the Project fit reviewer only (houseBriefBlock is '' for any other role).
+  const houseBrief = ctx.role ? houseBriefBlock(ctx.role, ctx.houseBrief) : '';
+  // The siblings block is for implementer tasks sharing a tree; other reviewers are not shown (spec §3).
+  const siblings = ctx.slice && !ctx.role ? siblingsBlock(ctx.slice.siblings) : '';
   const answersBlock = (ports.inputs || []).some((p) => p?.as === 'answers')
     ? '## Clarifications already answered\n\n' + renderAnswers(ctx.priorAnswers || []) + '\n'
     : '';
@@ -552,6 +563,8 @@ export function buildAgentPrompt(ctx) {
     baseInstruction(meta.runnerType, meta) + '\n\n' +
     (hints ? hints + '\n\n' : '') +
     perspectives +
+    roleBrief +
+    houseBrief +
     sliceScope +
     slicing +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
@@ -567,6 +580,7 @@ export function buildAgentPrompt(ctx) {
       ordinal, runCtx, outputs, verdict, bindings, ports,
       expandsPort,
       priorCount: (ctx.priorAnswers || []).length,
+      perspective: ctx.role || null, planText: ctx.rolePlanText,
     }))
   );
 }

@@ -5,6 +5,7 @@
 import { applyOutlineEdits } from '../../../src/shared/shape/slices.mjs';
 import { askKindOf } from '../ask/registry.mjs';
 import { clarifyText, planApprovedText, splitText, gateText, NOT_SPLIT_TEXT } from '../../../src/shared/shape/feature-log.mjs';
+import { planApprovedLine } from '../log-line.mjs';
 
 const NAMED = new Map();          // `${runId}|${questionId}` → { text, answers }
 const NAMED_MAX = 200;
@@ -30,8 +31,10 @@ export function stepReceipt(pq, payload, { shaping = false } = {}) {
       return 'Changes asked · Runs';
     }
     if (d === 'approve') {
-      const k = (Number(plan.round) || 1) - 1;
-      return planApprovedText(k);
+      // Role reviews (RR): the receipt names the roles and any open issue accepted, as the chat card's own line does.
+      const rr = plan.roleReviews;
+      if (rr && Array.isArray(rr.rounds) && rr.rounds.length) return planApprovedLine(rr);
+      return planApprovedText((Number(plan.round) || 1) - 1);
     }
     if (d === 'stop') return 'Stopped at the plan';
     return Array.isArray(p.perspectives) ? 'Changes asked · perspectives' : 'Changes asked · Plan';

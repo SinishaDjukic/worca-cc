@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import {
   PERSPECTIVES, SECTIONS, sectionsFor, missingSections, splitSections, blankFences, ownersOf,
   normalizePerspectives, perspectivesBlock, PERSPECTIVE_KEYS,
+  FIT_KEY, FIT_RULES, perspectiveByKey, withProjectFit, chipsHiddenFor,
 } from '../src/shared/shape/perspectives.mjs';
+import { checkShape } from '../src/shared/shape/shape.mjs';
+import { wellShapedPlan } from './helpers/shape-plan.mjs';
 
 test('every perspective has at least one section, and every section key is known', () => {
   const keys = new Set(SECTIONS.map((s) => s.key));
@@ -48,8 +51,50 @@ test('ownersOf: Product owns Problem; Testing is QA only when picked', () => {
   assert.deepEqual(ownersOf('testing', ['qa']), ['qa']);
 });
 
-test('the seven perspectives keep their labels', () => {
-  assert.deepEqual(PERSPECTIVES.map((p) => p.label), ['Product', 'Architect', 'QA', 'UX', 'Security', 'DevOps and infrastructure', 'Release']);
+test('the eight perspectives keep their labels', () => {
+  assert.deepEqual(PERSPECTIVES.map((p) => p.label), ['Product', 'Architect', 'QA', 'UX', 'Security', 'DevOps and infrastructure', 'Release', 'Project fit']);
+});
+
+test('fit: the Fit section and the five R-fit rules', () => {
+  const fit = perspectiveByKey(FIT_KEY);
+  assert.equal(FIT_KEY, 'fit');
+  assert.equal(fit.label, 'Project fit');
+  assert.equal(fit.checklist, 'fit');
+  assert.deepEqual(fit.sections, ['fit']);
+  assert.equal(fit.rules, FIT_RULES);
+  assert.equal(FIT_RULES.length, 5);
+  assert.match(FIT_RULES[0], /^No second component where one exists/);
+  assert.match(FIT_RULES[1], /^No new engine state unless an open spec names it/);
+  assert.match(FIT_RULES[2], /^Wording matches the existing surfaces/);
+  assert.match(FIT_RULES[3], /^No known bug/);
+  assert.match(FIT_RULES[4], /^No conflict with an open spec/);
+  assert.deepEqual(sectionsFor(['architect', 'fit']).map((s) => s.title),
+    ['Problem and goal', 'Decisions', 'Code layout', 'Fit', 'Testing', 'Out of scope', 'Open questions']);
+  const block = perspectivesBlock(['product', 'fit']);
+  for (let i = 0; i < 5; i++) assert.ok(block.includes(`\`R-fit-${i + 1}\` ${FIT_RULES[i]}`), `R-fit-${i + 1}`);
+  assert.match(block, /^\d+\. Fit \(Project fit\)$/m);
+  assert.match(block, /"Fit" has two lists, "Reused" and "New"/);
+  assert.doesNotMatch(perspectivesBlock(['product', 'qa']), /R-fit|"Fit"/);
+});
+
+test('the shape check requires the Fit section when fit is picked, and only then', () => {
+  const md = wellShapedPlan();
+  assert.deepEqual(missingSections(md, ['product', 'architect', 'qa']), []);
+  assert.deepEqual(missingSections(md, ['product', 'architect', 'qa', 'fit']), ['Fit']);
+  const sections = (perspectives) => checkShape(md, { perspectives, size: 'medium' }).items.find((i) => i.id === 'sections');
+  assert.equal(sections(['product', 'architect', 'qa']).pass, true);
+  const picked = sections(['product', 'architect', 'qa', 'fit']);
+  assert.equal(picked.pass, false);
+  assert.match(picked.detail, /Missing: Fit/);
+});
+
+test('withProjectFit: on with a brief, dropped without one; chipsHiddenFor follows the pick', () => {
+  assert.deepEqual(withProjectFit(['product', 'architect', 'qa'], true), ['product', 'architect', 'qa', 'fit']);
+  assert.deepEqual(withProjectFit(['product', 'qa', 'fit'], false), ['product', 'qa']);
+  assert.deepEqual(withProjectFit(['product', 'ux'], false), ['product', 'ux']);
+  assert.deepEqual(chipsHiddenFor(['product', 'fit']), []);
+  assert.deepEqual(chipsHiddenFor(['product']), ['fit']);
+  assert.deepEqual(chipsHiddenFor(undefined), ['fit']);
 });
 
 test('normalizePerspectives: PERSPECTIVES order, Product first, duplicates collapsed', () => {

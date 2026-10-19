@@ -98,6 +98,10 @@ export function fixAllFeedback(items) {
  *  asked before any plan). The Split card's label is outline-body's approveRunsLabel. */
 export const approveLabel = () => 'Approve and build';
 
+/** Slice 4: a plan ask's primary names the open critical/major findings it accepts; else approveLabel's own words. */
+export const planApproveLabel = (plan, open = 0) =>
+  (open > 0 && !(plan && plan.outline) ? `Approve with ${open} open issue${open === 1 ? '' : 's'}` : approveLabel(plan));
+
 /** A shaped run waiting on Shaper's own step (Clarify or the plan): the run page's waiting layout. Null otherwise. */
 export function shaperWait(r, gateOn) {
   if (!gateOn || !isShapingRun(r) || !r.pendingQuestion) return null;

@@ -7,12 +7,24 @@ export const SECTIONS = Object.freeze([
   Object.freeze({ key: 'decisions', title: 'Decisions' }),
   Object.freeze({ key: 'screens', title: 'Screens and states' }),
   Object.freeze({ key: 'layout', title: 'Code layout' }),
+  Object.freeze({ key: 'fit', title: 'Fit' }),                           // Project fit: reused vs new, each with a reason
   Object.freeze({ key: 'threats', title: 'Threats' }),
   Object.freeze({ key: 'infra', title: 'Infrastructure and CI/CD' }),
   Object.freeze({ key: 'testing', title: 'Testing', always: true }),      // QA writes it in full; else a short default
   Object.freeze({ key: 'rollout', title: 'Rollout and rollback' }),
   Object.freeze({ key: 'outOfScope', title: 'Out of scope', always: true }),
   Object.freeze({ key: 'openQuestions', title: 'Open questions', always: true }),
+]);
+
+/** The Project fit perspective (slice 3): its reviewer is the only agent that reads the house brief. */
+export const FIT_KEY = 'fit';
+/** R-fit-1..5, in this order: the Planner writes exactly these items, the fit reviewer judges them. */
+export const FIT_RULES = Object.freeze([
+  'No second component where one exists: every part the plan adds reuses the component the house brief lists for it.',
+  'No new engine state unless an open spec names it.',
+  'Wording matches the existing surfaces (labels, statuses, button text).',
+  'No known bug from the house brief is repeated.',
+  'No conflict with an open spec in plans/.',
 ]);
 
 const perspective = (p) => Object.freeze({ ...p, sections: Object.freeze([...p.sections]), effect: Object.freeze({ stages: [], signals: [], ...p.effect }) });
@@ -26,6 +38,7 @@ export const PERSPECTIVES = Object.freeze([
   perspective({ key: 'security', label: 'Security', icon: 'S', help: 'Trust boundaries, inputs, secrets, permissions, abuse cases.', checklist: 'sec', checklistHint: 'threats handled', sections: ['threats'], effect: { signals: ['risky'] } }),
   perspective({ key: 'devops', label: 'DevOps and infrastructure', icon: 'D', help: 'Environments, CI/CD changes, infrastructure as code, monitoring and alerts. Adds no stage.', checklist: 'ops', checklistHint: 'CI and infra changes', sections: ['infra'], effect: {} }),
   perspective({ key: 'release', label: 'Release', icon: 'R', help: 'Migration, feature flag, rollout, rollback.', checklist: 'rel', checklistHint: 'flag wired, rollback works', sections: ['rollout'], effect: {} }),
+  perspective({ key: FIT_KEY, label: 'Project fit', icon: 'F', help: 'What the plan reuses and what it adds, each with a reason, checked against the house brief.', checklist: 'fit', checklistHint: 'fits the house brief', sections: ['fit'], rules: FIT_RULES, effect: {} }),
 ]);
 
 export const PERSPECTIVE_KEYS = Object.freeze(PERSPECTIVES.map((p) => p.key));
@@ -92,6 +105,16 @@ export function ownersOf(key, perspectives) {
 /** Picked when a shaped run names none (spec D4 fallback: Architect and QA; Product is always on). */
 export const DEFAULT_PERSPECTIVES = Object.freeze(['product', 'architect', 'qa']);
 
+/** The proposal's perspectives (slice 3): Project fit ticked when the project has a house brief, dropped without one
+ *  (no chip, no error). Keys stay in PERSPECTIVES order. */
+export function withProjectFit(perspectives, hasBrief) {
+  const keys = new Set((Array.isArray(perspectives) ? perspectives : []).filter((k) => k !== FIT_KEY));
+  return PERSPECTIVE_KEYS.filter((k) => (k === FIT_KEY ? hasBrief === true : keys.has(k)));
+}
+
+/** The chips a card does not offer: Project fit only where the proposal or the run already has it. */
+export const chipsHiddenFor = (picked) => ((Array.isArray(picked) && picked.includes(FIT_KEY)) ? [] : [FIT_KEY]);
+
 const SECTION_TITLE = new Map(SECTIONS.map((s) => [s.key, s.title]));
 
 /**
@@ -126,7 +149,11 @@ export function perspectivesBlock(perspectives, { refiner = false } = {}) {
   });
   const lists = picked.map(perspectiveByKey).filter((p) => p.checklist).map((p) =>
     `- ${p.label}: \`R-${p.checklist}-1\`, \`R-${p.checklist}-2\`, … (${p.checklistHint}), at the end of ` +
-    p.sections.map((k) => `"${SECTION_TITLE.get(k)}"`).join(' or '));
+    p.sections.map((k) => `"${SECTION_TITLE.get(k)}"`).join(' or ') +
+    (p.rules
+      ? `. Write exactly these ${p.rules.length} items, in this order:\n` +
+        p.rules.map((r, i) => `  - \`R-${p.checklist}-${i + 1}\` ${r}`).join('\n')
+      : ''));
   const hasDecisions = sectionsFor(picked).some((s) => s.key === 'decisions');
   return '## Perspectives\n\n' +
     `This plan is written for these perspectives: ${picked.map(label).join(', ')}. A deterministic shape check ` +
@@ -146,6 +173,9 @@ export function perspectivesBlock(perspectives, { refiner = false } = {}) {
     (hasDecisions
       ? '- "Decisions" is a Markdown table with a "Decision" column, one row per decision, each stating one choice ' +
         '(never "TBD", "maybe" or "consider"); each row cites a backticked repo path or says (new).\n'
+      : '') +
+    (picked.includes(FIT_KEY)
+      ? '- "Fit" has two lists, "Reused" and "New": each item names a backticked repo path and one reason.\n'
       : '') +
     '- Cite repo paths in backticks (`src/…`, `ui/…`, `test/…`, `docs/…`, optionally with `:line`); write (new) on ' +
     'the same line for a path that does not exist yet.\n' +

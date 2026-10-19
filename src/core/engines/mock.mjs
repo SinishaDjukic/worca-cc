@@ -533,7 +533,7 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
       text = await mockReviewer(m, cycle, onEvent);
       break;
     case 'plan-review':
-      text = await mockPlanReview(m, cycle, onEvent);
+      text = await mockPlanReview(m, cycle, onEvent, prompt);
       break;
     case 'workspace-scan':
       text = await mockWorkspaceSurvey(m, onEvent);
@@ -993,6 +993,11 @@ async function mockRefiner(m, cycle, onEvent) {
             },
           ],
         };
+  // Role reviews (spec §3): the refiner fed the merged findings says which ids it fixed — here, every one listed.
+  if (m.MOCK_FINDINGS) {
+    const findings = await readFile(m.MOCK_FINDINGS, 'utf8').catch(() => '');
+    review.addressed = [...findings.matchAll(/\*\*([a-z]+-\d+-\d+)\*\*/g)].map((x) => x[1]);
+  }
 
   if (jsonPath) {
     await ensureDir(jsonPath);
@@ -1152,7 +1157,67 @@ async function mockReviewer(m, cycle, onEvent) {
   return JSON.stringify(review);
 }
 
-async function mockPlanReview(m, cycle, onEvent) {
+const COMPONENT_PATH_RE = /([\w./-]+\.(?:mjs|js|jsx|tsx|vue|svelte))\b/;
+const stemOf = (p) => p.split('/').pop().replace(/\.(?:mjs|js|jsx|tsx|vue|svelte)$/, '');
+
+/** Mock Project fit (slice 3): the brief's `## Components` paths, then every plan line marked `(new)` that cites a
+ *  non-test file whose name carries an existing component's stem. One entry per existing component.
+ *  → [{ existing, added }] */
+export function fitDuplicates(planText, briefText) {
+  const comps = [];
+  let inComponents = false;
+  for (const line of String(briefText || '').split('\n')) {
+    if (/^##\s/.test(line)) { inComponents = line.trim() === '## Components'; continue; }
+    const m = inComponents && /^- /.test(line) ? COMPONENT_PATH_RE.exec(line.slice(2)) : null;
+    if (m && m.index === 0) comps.push(m[1]);
+  }
+  const out = [];
+  for (const line of String(planText || '').split('\n')) {
+    if (!line.includes('(new)')) continue;
+    for (const [, added] of line.matchAll(/`([\w./-]+\.(?:mjs|js|jsx|tsx|vue|svelte))`/g)) {
+      if (/^test\/|\.test\./.test(added)) continue;
+      const hit = comps.find((c) => c !== added && stemOf(added).includes(stemOf(c)));
+      if (hit && !out.some((d) => d.existing === hit)) out.push({ existing: hit, added });
+    }
+  }
+  return out;
+}
+
+/** Role mode (spec §3): `WORCA_MOCK_ROLE_REVIEW='{"ux":{"1":"critical"}}'` picks a role's severity per round;
+ *  'none' = no issue. Default: one minor finding (non-blocking), so mock shape runs do one round unless a test asks. */
+function roleSeverity(role, cycle) {
+  let table = {};
+  try { table = JSON.parse(process.env.WORCA_MOCK_ROLE_REVIEW || '{}') || {}; } catch { table = {}; }
+  return table?.[role]?.[String(cycle)] || 'minor';
+}
+
+async function mockPlanReview(m, cycle, onEvent, prompt = '') {
+  const role = m.MOCK_PERSPECTIVE || null;
+  if (role) {
+    const severity = roleSeverity(role, cycle);
+    const blocking = severity === 'critical' || severity === 'major';
+    const ids = String(m.MOCK_CHECKLIST || '').split(',').map((s) => s.trim()).filter(Boolean);
+    // Project fit (slice 3): a plan that adds a second copy of a component the house brief lists.
+    const dups = role === 'fit' && m.MOCK_IN ? fitDuplicates(await readFile(m.MOCK_IN, 'utf8').catch(() => ''), prompt) : [];
+    const review = dups.length
+      ? {
+        summary: `[mock] ${role} review, round ${cycle}`,
+        issues: dups.map((d) => ({ severity: 'major', title: `Second component: ${d.added} repeats ${d.existing}`, section: 'Fit',
+          fix: `Reuse ${d.existing} and drop ${d.added}.`, detail: 'mock' })),
+        checklist: ids.map((id) => (id === 'R-fit-1'
+          ? { id, status: 'unmet', evidence: `${dups[0].existing} already exists` }
+          : { id, status: 'met', evidence: 'mock' })),
+      }
+      : {
+        summary: `[mock] ${role} review, round ${cycle}`,
+        issues: severity === 'none' ? [] : [{ severity, title: `${role}: mock finding`, section: 'Testing', fix: 'Add the missing case.', detail: 'mock' }],
+        checklist: ids.map((id) => ({ id, status: blocking ? 'unmet' : 'met', evidence: 'mock' })),
+      };
+    await emitLog(onEvent, `[mock] ${role} role review (round ${cycle})`);
+    if (m.MOCK_JSON) { await ensureDir(m.MOCK_JSON); await writeFile(m.MOCK_JSON, JSON.stringify(review, null, 2) + '\n', 'utf8'); }
+    if (m.MOCK_OUT) { await ensureDir(m.MOCK_OUT); await writeFile(m.MOCK_OUT, `# ${role} findings (mock)\n`, 'utf8'); }
+    return JSON.stringify(review);
+  }
   const mdPath = m.MOCK_OUT;
   const jsonPath = m.MOCK_JSON;
   await emitLog(onEvent, `[mock] plan reviewer reviewing the plan (cycle ${cycle})`);

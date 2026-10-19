@@ -8,6 +8,7 @@
 // Pure DOM over an injected `doc`.
 import { progressRoute, projectLabel, snapshotFromState, PROGRESS_CARD_TYPE } from '../ask-run-card.mjs';
 import { registerChatCard } from './extensions.mjs';
+import { planApprovedLine } from '../log-line.mjs';
 import { mountRunGraph } from '../graph/run-hosts.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askKindOf } from '../ask/registry.mjs';
@@ -137,6 +138,7 @@ export function answerReceipt(sent, painted) {
   if (named) return named;
   const step = (painted && (painted.step || painted.heading)) || '';
   const tail = (t) => (step ? `${t} · ${step}` : t);
+  if (sent && painted && painted.planAsk && sent.payload && sent.payload.decision === 'approve') return planApprovedLine(painted.roleReviews);
   if (sent && sent.payload && Array.isArray(sent.payload.answers)) {
     const n = sent.payload.answers.length;
     const k = sent.payload.answers.filter((a) => a && typeof a.choice === 'string' && a.choice.trim()).length;
@@ -280,6 +282,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   let fm = null;              // the feature card model of the last paint (null: a plain run, or Shape it first off)
   let roundRef = null;        // D25: set by update(): the live round's run ref, or null
   let changesView = null;     // Shaper's Ask for changes field ({ el, focus }) while it shows
+  let planSent = null;   // slice 4: the plan card's last approve attempt, named by its `plan-answer` event (D12)
   const ref = () => runRefOf(id, last);
   /** D11: the run whose ask is the open step — the asking member's snapshot, else this card's run. */
   const stepSnap = (s) => (fm && fm.step && fm.step.snap) || s;
@@ -369,6 +372,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const row = typeof controls.groupOf === 'function' ? controls.groupOf(ref(), last) || null : null;
     if (row) call(controls.act, ref(), 'stop', stopBtn, lastM, row);
     else call(controls.stop, ref(), () => call(refresh));
+  });
+  qBody.addEventListener('plan-answer', (e) => {
+    if (!painted) return;
+    planSent = e.detail && e.detail.decision === 'approve' ? { id: painted.id, kind: painted.kind, payload: e.detail } : null;
   });
   delegateQuestion(qBody, {
     // D11: a pointer-only step (fm.step.snap null: the tab has no live snapshot of that member) still answers: its
@@ -503,7 +510,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       // A group card that is not the current member's own card draws no question (its Answer opens the member's
       // page). Release the panel without a receipt: nobody answered it.
       call(controls.releaseQuestion, qBody);
-      painted = null; sent = null; shownFor = null;
+      painted = null; sent = null; planSent = null; shownFor = null;
       qBody.hidden = true; qHead.hidden = true; qErr.hidden = true; receipt.hidden = true; qSec.hidden = true;
       return;
     }
@@ -519,8 +526,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (pq) { qBody.hidden = false; qSec.hidden = false; }
     const q = pq ? call(controls.paintQuestion, stepRef(), qBody) : null;
     if (q) {
-      if (!painted || painted.id !== (q.id || null)) { qErr.hidden = true; sent = null; shownFor = null; }
-      painted = { id: q.id || null, runId: stepRef().runId, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '', stepCard: !!q.stepCard };
+      if (!painted || painted.id !== (q.id || null)) { qErr.hidden = true; sent = null; shownFor = null; planSent = null; }
+      const planAsk = askKindOf(pq) === 'plan' && !!pq.plan && !pq.plan.outline;
+      painted = { id: q.id || null, runId: stepRef().runId, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '',
+        stepCard: !!q.stepCard, planAsk, roleReviews: planAsk ? pq.plan.roleReviews || null : null };
       qHead.textContent = painted.heading;
       qHead.hidden = !painted.heading || painted.stepCard;   // a step card's own head says it once (shaper-cards D16)
       qBody.hidden = false;
@@ -538,10 +547,11 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       // Read once, then forgotten: a later ask with the same id (a resume, another cycle) must not reuse it.
       const named = namedAnswer(was.runId, was.id);
       forgetAnswer(was.runId, was.id);
-      const own = sent && sent.id === was.id ? sent : null;
+      const own = sent && sent.id === was.id ? sent : planSent && planSent.id === was.id ? planSent : null;
       const mine = named ? { ...(own || { id: was.id, kind: was.kind, payload: { answers: named.answers } }), named: named.text } : own;
       painted = null;
       sent = null;
+      planSent = null;
       // A question that went away because the run is pausing or paused, was interrupted, stopped or failed was not
       // answered: the "Answered" fallback shows only while the run is still going (answered elsewhere: the run page,
       // the panel) — ANSWERING_STATUS, never `pausing` (a pause resolves the question after its `pausing` frame).

@@ -263,3 +263,14 @@ test('an already-normalized shape assembles with its tunables intact (the classi
   assert.deepEqual(tunables, { n_planner: { model: 'claude-opus-5-5', effort: 'high' }, n_implementer: { fanOut: true } });
   assert.deepEqual(template.nodes.find((n) => n.id === 'n_planner').config, { model: 'claude-opus-5-5', effort: 'high' });
 });
+
+test('role reviews (spec §3): a roleReview planReviewer node resolves the role port set; a plain one keeps its sidecar ports', () => {
+  const ids = (list) => list.map((p) => p.id);
+  const plain = PORTS({ id: 'n_rev', kind: 'agent', key: 'planReviewer', config: {} });
+  assert.deepEqual([ids(plain.inputs), ids(plain.outputs)], [['plan', 'await'], ['review', 'pass']]);
+  const role = PORTS({ id: 'n_roles', kind: 'agent', key: 'planReviewer', config: { roleReview: true } });
+  assert.deepEqual([ids(role.inputs), ids(role.outputs)], [['plan', 'revise', 'await'], ['findings', 'plan']]);
+  assert.equal(role.inputs[1].loop, true);
+  assert.deepEqual(role.verdict, plain.verdict, 'the sidecar verdict is kept');
+  assert.equal(role.mockRole, 'plan-review');
+});

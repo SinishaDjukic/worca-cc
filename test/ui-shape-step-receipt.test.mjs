@@ -86,3 +86,13 @@ test('the 201st note evicts the first', () => {
   assert.equal(namedAnswer('run-a', 'n200').text, 'Continued with what you have');
   for (let i = 0; i < 201; i++) forgetAnswer('run-a', `n${i}`);
 });
+
+test('D16: a plan approve with role-review rounds names the roles and the open issue accepted; without rounds it stays planApprovedText', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { planApprovedLine } = await import('../ui/public/log-line.mjs');
+  const rr = JSON.parse(readFileSync(new URL('./fixtures/role-review/recorded-run.json', import.meta.url), 'utf8')).plan.roleReviews;
+  const got = stepReceipt(PLAN({ round: 2, roleReviews: rr }), { decision: 'approve' });
+  assert.equal(got, planApprovedLine(rr));
+  assert.match(got, /^Plan approved · \d+ roles? reviewed/);
+  assert.equal(stepReceipt(PLAN({ round: 2, roleReviews: { rounds: [] } }), { decision: 'approve' }), 'Plan approved · after 1 round of changes');
+});

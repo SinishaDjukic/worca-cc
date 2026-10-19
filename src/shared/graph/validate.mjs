@@ -1,5 +1,5 @@
 // src/shared/graph/validate.mjs
-// THE authority on v2 graph legality (base spec §2, V1-V23; V22 (script config)
+// THE authority on v2 graph legality (base spec §2, V1-V24; V22 (script config)
 // reuses the number the retired single-wire rule freed). Server save (422), plugin import, the composer's
 // live report, the run-time check and the seed drift guard all come through
 // here, so it is pure, never throws on a malformed template, and every lookup
@@ -19,7 +19,7 @@ const AWAIT_PORT_ID = 'await';
  *  on a flow card. Unknown keys are PRESERVED and ignored, never stripped. */
 const KNOWN_CONFIG = {
   agent: new Set(['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel', 'subagentEffort',
-    'approve', 'maxQuestions', 'promptHints']),
+    'approve', 'maxQuestions', 'promptHints', 'roleReview']),
   script: new Set(['params', 'ports', 'timeoutMs', 'awaitAll', 'mock', 'paramsPort']),
   task: new Set(['planStoreSeed']),
   and: new Set(['arity']),
@@ -27,7 +27,7 @@ const KNOWN_CONFIG = {
   combine: new Set(['arity']),
   end: new Set(),
 };
-const KNOWN_WIRE_CONFIG = new Set(['maxCycles']);
+const KNOWN_WIRE_CONFIG = new Set(['maxCycles', 'onExhausted']);
 
 /** The per-node AGENT tunables (the defaults/overrides vocabulary) — the single
  *  source for every writer that splits tunables from topology keys
@@ -587,6 +587,19 @@ export const RULES = [
       if (promptHints !== undefined && typeof promptHints !== 'string') {
         add(`node '${n.id}' config.promptHints must be a string`, { nodeId: n.id });
       }
+    }
+  } },
+
+  // Role reviews (spec §3): what a spent loop wire does. 'gate' (the default) asks the person; 'clean' sends the
+  // source's clean output on with the open issues. Loop wires only, like maxCycles (V13).
+  { code: 'V24', level: 'E', check({ wires, loopWireIds }, add) {
+    for (const w of wires) {
+      const mode = w?.config?.onExhausted;
+      if (mode === undefined) continue;
+      if (mode !== 'clean' && mode !== 'gate') {
+        add(`wire '${w.id}' onExhausted must be 'clean' or 'gate' (got ${JSON.stringify(mode)})`, { wireId: w.id });
+      }
+      if (!loopWireIds.has(w.id)) add(`wire '${w.id}' carries onExhausted but is not a loop wire`, { wireId: w.id });
     }
   } },
 ];

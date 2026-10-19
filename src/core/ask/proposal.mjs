@@ -40,7 +40,8 @@ import { resolveShapeRequest, isShapeWorkflowId } from '../shape/run.mjs';
 import { shapeFirstEnabled } from '../shape/gate.mjs';
 import { nudgeFor } from '../shape/nudge.mjs';
 import { estimateChoices } from '../shape/estimate.mjs';
-import { DEFAULT_PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
+import { DEFAULT_PERSPECTIVES, withProjectFit } from '../../shared/shape/perspectives.mjs';
+import { ensureHouseBrief } from '../house-brief.mjs';
 import { presetProposalInput, PRESET_PROPOSAL_ERRORS } from './proposal-preset.mjs';
 import { readPreset as readPresetRow } from '../run-presets-store.mjs';
 import { flagEnabled } from '../flags.mjs';
@@ -180,6 +181,9 @@ export function createProposalValidator({
   // validator built on fake readers never reads run history; the module singleton below binds the real one.
   shapeFirst = shapeFirstEnabled,
   estimate = null,
+  // Project fit (slice 3): ({projectKey, projectDir}) → true when the project has a house brief. False by default, so a
+  // validator built on fake readers never scans a repo; the module singleton below binds the real one.
+  hasHouseBrief = async () => false,
   // Per-agent picks (`nodes`, docs/models.md "Per-agent models for one run"): the catalog, the run's engine when the
   // proposal names none (the same cascade POST /api/run and the card's /api/run-defaults use), Claude Code's sign-in,
   // the team policy (cache only) and the entries' own cost. Read ONLY for a proposal that carries `nodes`.
@@ -315,6 +319,12 @@ export function createProposalValidator({
       target = { target: 'workspace', projectKey: null, projectName: null, projectDir: null,
         workspaceId: ws.id, workspaceName: ws.name, members };
     }
+    // Project fit is on by default only with a house brief; a failed check is "no brief", never an error.
+    let briefMemo = null;
+    const briefOn = () => (briefMemo ??= (async () => {
+      if (target.target !== 'project') return false;
+      try { return (await hasHouseBrief({ projectKey: target.projectKey, projectDir: target.projectDir })) === true; } catch { return false; }
+    })());
 
     // ── Shape it first (spec D9): the card proposes wf_shape (wf_shape_ux with UX); the gate refuses it when off ──
     let shape = null;
@@ -337,7 +347,7 @@ export function createProposalValidator({
       }
       const r = resolveShapeRequest({ shape: shapeIn, workflowId: inp.workflowId }, { enabled: shapeFirst() });
       if (!r.ok) errors.push(r.error);
-      else { shape = r.shape; shapedWorkflowId = r.workflowId; }
+      else { shape = { ...r.shape, perspectives: withProjectFit(r.shape.perspectives, await briefOn()) }; shapedWorkflowId = r.workflowId; }
     }
 
     // ── workflow ───────────────────────────────────────────────────────────
@@ -496,7 +506,7 @@ export function createProposalValidator({
       if (typeof estimate === 'function') {
         try { estimates = (await estimate({ asIs: wf, shaped: shapedWf })) || estimates; } catch { /* no history here (MCP child): no numbers */ }
       }
-      nudge = { ...nudgeBase, estimates, asIsAuto: wf?.id === AUTO_WORKFLOW_ID };
+      nudge = { ...nudgeBase, perspectives: withProjectFit(nudgeBase.perspectives, await briefOn()), estimates, asIsAuto: wf?.id === AUTO_WORKFLOW_ID };
     }
 
     if (errors.length) return fail();
@@ -548,4 +558,5 @@ export const validateProposal = createProposalValidator({
   estimate: (wfs) => estimateChoices(wfs),
   readPreset: async (id, opts) => readPresetRow(id, opts),
   presetsOn: () => flagEnabled('runPresets'),
+  hasHouseBrief: async ({ projectKey, projectDir }) => (await ensureHouseBrief({ projectKey, projectDir })).words > 0,
 }).validateProposal;
