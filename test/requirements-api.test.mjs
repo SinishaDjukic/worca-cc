@@ -81,12 +81,41 @@ test('the whole flow in mock mode, with frames', async () => {
   } finally { ws.close(); }
 });
 
-test('flag off: every route answers 404', async () => {
+// The route table is the one list both the registration and this test use, so a new route cannot be
+// added without the flag-off check covering it.
+const fill = (path) => path.replace(':scopeType/:scopeKey', `project/${projKey}`).replace(':seq', '1')
+  .replace('/criteria/:id', '/criteria/R-po-1').replace('/assumptions/:id', '/assumptions/A-1').replace(':section', 'actors');
+
+test('the route table is exactly what gets registered', async () => {
+  const { REQUIREMENTS_ROUTES, registerRequirementsRoutes } = await import('../src/core/requirements/routes.mjs');
+  const seen = [];
+  const fake = {};
+  for (const m of ['get', 'post', 'put', 'patch', 'delete']) fake[m] = (path) => { seen.push(`${m.toUpperCase()} ${path}`); };
+  registerRequirementsRoutes(fake, { broadcast: () => {} });
+  assert.deepEqual(seen, REQUIREMENTS_ROUTES.map((r) => `${r.method} ${r.path}`));
+  assert.ok(REQUIREMENTS_ROUTES.length >= 19);
+  for (const r of REQUIREMENTS_ROUTES) assert.doesNotMatch(fill(r.path), /:/, `every param is substituted: ${r.path}`);
+});
+
+test("flag off: every route in the table answers the flag gate's 404", async () => {
+  const { REQUIREMENTS_ROUTES } = await import('../src/core/requirements/routes.mjs');
   delete process.env.WORCA_FLAGS;
   try {
-    for (const [m, p] of [['GET', '/api/requirements'], ['POST', '/api/requirements'], ['GET', '/api/requirements/1'],
-      ['POST', '/api/requirements/1/answers'], ['GET', `/api/requirements/context/project/${projKey}`]]) {
-      assert.equal((await call(m, p, m === 'GET' ? undefined : {})).status, 404, `${m} ${p}`);
+    for (const { method, path } of REQUIREMENTS_ROUTES) {
+      const r = await call(method, fill(path), method === 'GET' ? undefined : {});
+      assert.equal(r.status, 404, `${method} ${path}`);
+      assert.deepEqual(r.json, { error: 'not found' }, `${method} ${path}: the flag gate, not a route-level 404`);
     }
   } finally { process.env.WORCA_FLAGS = 'requirements'; }
+});
+
+test('flag off: a change sends no requirements-changed frame; flag on: it does', async () => {
+  const { requirementsChangeNotifier } = await import('../src/core/requirements/routes.mjs');
+  const sent = [];
+  const onChange = requirementsChangeNotifier((frame) => sent.push(frame));
+  delete process.env.WORCA_FLAGS;
+  try { onChange(7); } finally { process.env.WORCA_FLAGS = 'requirements'; }
+  assert.deepEqual(sent, []);
+  onChange('7');
+  assert.deepEqual(sent, [{ type: 'requirements-changed', seq: 7 }]);
 });
