@@ -60,7 +60,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 56;
+export const SCHEMA_VERSION = 57;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1033,6 +1033,62 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
 );
 `;
 
+// Requirements (plans/requirements-design.md §3): product-owner feature specs (FEAT-<seq>), their append-only
+// interview thread, the shared context per project/workspace, and the spend counted toward the limit (D9).
+// IF NOT EXISTS only and listed in INCREMENTAL_TABLES: reconcile-safe against another branch's v57.
+const REQUIREMENTS_DDL = `
+CREATE TABLE IF NOT EXISTS req_features (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  epic_seq INTEGER,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  status TEXT NOT NULL,
+  spec_json TEXT NOT NULL,
+  orientation_json TEXT,
+  criteria_seq INTEGER NOT NULL DEFAULT 0,
+  assumption_seq INTEGER NOT NULL DEFAULT 0,
+  rounds INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  saved_path TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_by TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_features_scope ON req_features(scope_type, scope_key);
+CREATE TABLE IF NOT EXISTS req_turns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_seq INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  model TEXT,
+  cost_usd REAL,
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_turns_feature ON req_turns(feature_seq, id);
+CREATE TABLE IF NOT EXISTS req_contexts (
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  look_at_code INTEGER NOT NULL DEFAULT 1,
+  updated_by TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (scope_type, scope_key)
+);
+CREATE TABLE IF NOT EXISTS req_cost_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_seq INTEGER NOT NULL,
+  turn_id INTEGER,
+  amount_usd REAL NOT NULL,
+  model TEXT,
+  ts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_cost_ledger_ts ON req_cost_ledger(ts);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1061,6 +1117,10 @@ const INCREMENTAL_TABLES = {
   terminal_blocks:    TERMINAL_DDL,
   terminal_audit:     TERMINAL_DDL,
   terminal_worktrees: TERMINAL_DDL,
+  req_features:      REQUIREMENTS_DDL,
+  req_turns:         REQUIREMENTS_DDL,
+  req_contexts:      REQUIREMENTS_DDL,
+  req_cost_ledger:   REQUIREMENTS_DDL,
 };
 
 /**
@@ -2137,6 +2197,7 @@ export function migrate(db) {
     if (current < 55) applySchemaV55(db);
     if (current < SCHEMA_VERSION) refreshArchitectureSeed(db);
     if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
+    if (current < 57) db.exec(REQUIREMENTS_DDL);     // requirements: features, thread, contexts, spend — reconcile-safe
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
