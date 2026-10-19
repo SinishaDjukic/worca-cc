@@ -1,11 +1,19 @@
 #!/usr/bin/env node
-// tools/verify-requirements-cdp.mjs — headless-Chrome proof of the Requirements page (plans/requirements-design.md §6): with the flag on, create a feature in mock mode, answer the first round, see the spec fill; with it off, no nav row. NOT part of `npm test`. Run: npm run verify:requirements
+// tools/verify-requirements-cdp.mjs — headless-Chrome proof of the Requirements page (plans/requirements-design.md §6).
+// Checks: with the `requirements` flag off there is no nav row; flipping it on shows the row without a reload;
+// the new-feature form renders; creating a feature in mock mode shows round 1's question card; answering it
+// (Skip, use recommended) fills the spec with R-po-1 and marks the interview done; no page errors.
+// NOT part of `npm test`.
+// Run: npm run verify:requirements   (set CHROME_BIN to a Chrome/Chromium binary if it is not auto-found,
+// e.g. CHROME_BIN="C:/Program Files/Google/Chrome/Application/chrome.exe" on Windows)
 //
 // -- CI COVERAGE -------------------------------------------------------------
-// .github/workflows/ci.yml job `cdp` runs this on every push and pull request.
-// What stays CDP-only: two real tabs on one server, real CSS (the #flag-gates
-// sheet against computed display), and the no-page-error gate. The DOM shapes
-// are pinned in test/ui-flags.test.mjs.
+// .github/workflows/ci.yml job `cdp` runs this in the "ask-forms + workspace-map + flags + requirements"
+// group on every push and pull request.
+// What stays CDP-only: the real end-to-end flow in a real browser (app boot and `hello` frame, the flag
+// flipped through window.__np.flags, real CSS deciding the nav row's computed display, the hash route, the
+// live server in mock mode) and the no-page-error gate. The view's DOM shapes and behaviour are pinned in
+// the jsdom tests test/requirements-view.test.mjs and test/requirements-app.test.mjs.
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
