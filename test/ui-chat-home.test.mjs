@@ -271,7 +271,7 @@ test('switches from deps.flags: script tools off hides Write a script', async ()
   const s = setup({ flags: { scripts: false, tasks: false } });
   await settle(s.window);
   assert.equal(s.doc.querySelector('.chat-home-act[data-intent="script"]').hidden, true);
-  assert.equal(s.doc.querySelector('.chat-home-act[data-intent="clone"]').hidden, false);
+  assert.equal(s.doc.querySelector('.chat-home-act[data-action="project"]').hidden, false);
 });
 
 test('update() with no data re-reads the runs, coalesced; armFlip arms only on the home', async () => {

@@ -385,7 +385,9 @@ network has no route out, so nothing but the proxy reaches the internet.
 - Desktop features act on the server: the folder picker becomes a text field
   (`WORCA_NO_NATIVE_DIALOG=1`).
 - The in-app folder browser, adding a project by path and installing agents into a folder stay inside
-  Worca's own folders (the Worca home and the projects root, hidden folders below them excluded); any
+  Worca's own folders (the Worca home and the projects root, hidden folders below them excluded; while no
+  projects root is set, your home folder too — the Worca home inside it then stays hidden, except worca's projects
+  folder `~/.worca-cc/projects`); any
   other path is refused with `403 FS_OUTSIDE_ALLOWED`, symlinks and `..` included. A projects root of `/`
   or a one-segment folder such as `/home` is ignored (logged), so point `WORCA_PROJECTS_ROOT` at a deeper
   folder. Starting the server with

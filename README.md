@@ -447,14 +447,15 @@ level and has no **Diff**, **Changes** or **Actions**.
   itself. Settings › **Ask Worca** (Advanced) sets the turn limit, a per-turn cost cap, whether it may
   change and test-run your scripts, and opt-in web access with an allowed-domain list; chat spend counts toward the total
   budget, and a team policy can preset the limits or narrow web access, never widen it.
-- **One scope per chat** — the composer's scope pill sets **No project**, a project or a workspace, at every interface level. Changes act only there. When a No-project message is clearly about one of your projects, Ask asks with a card — **Switch to <name>** or **Continue without project** — and the same message continues after you choose; it never switches on its own.
+- **One scope per chat** — the composer's scope pill sets **No project**, a project or a workspace, at every interface level. Changes act only there. When a No-project message is clearly about one of your projects, Ask asks with a card — **Switch to <name>** or **Continue without project** — and the same message continues after you choose; it never switches on its own. A project you create or add from a chat card, the chat home's **Add project** tile or the scope menu's **Add
+  project…** becomes that chat's scope.
 - **Changes are cards you confirm** — work becomes a **run card** (project, workflow, guardrails,
   branches and brief, all editable) that starts nothing until you click **Start run**, or
   **Schedule…** to run it later ([`docs/scheduled-runs.md`](docs/scheduled-runs.md#ask-worca)).
   Ask for "auto", or for work no saved workflow fits, and it drafts a **workflow card** you tune
   and **Save as workflow** — or, when the work needs a script, a gate or a new agent, a graph card with **draft
   cards** for the new agents and scripts. Model and provider, workspace, Actions, team-metrics, team-policy and
-  Away mode changes, cloning a repo and reading a new website are cards too: nothing changes
+  Away mode changes, creating, adding or cloning a project and reading a new website are cards too: nothing changes
   until you apply one. A started run becomes a live card — status, elapsed, cost, its agents and
   its workflow graph, with **Open run** — where you **Pause**, **Resume** or **Stop** the run and
   answer its questions; once it ends, the card shows the result, the top changed files, its
@@ -668,6 +669,11 @@ level and has no **Diff**, **Changes** or **Actions**.
 - **Move it** — `WORCA_HOME=<dir>` (or Settings › General › **Worca root
   folder**, Advanced) puts everything under `<dir>/.worca-cc/`; only the
   global `settings.json` stays in your home folder.
+- **Projects folder** — **New** (just a name) and **Clone from URL** put
+  projects in `~/.worca-cc/projects/` (it follows `WORCA_HOME` and Settings ›
+  **Worca root folder**);
+  `WORCA_PROJECTS_ROOT` or Settings › **Projects root folder** moves it.
+  Existing projects stay where they are.
 - **One list for every project** — **Runs** in the sidebar shows live,
   scheduled and finished runs from every project on the machine (see
   [Pipeline](#pipeline)). See [`docs/storage.md`](docs/storage.md).
@@ -710,7 +716,7 @@ Requirements:
 
 - **Node.js >= 22.13.0** — the store is the built-in `node:sqlite`; on an older
   Node the CLI says so and exits.
-- **git** — pull requests, Check out, Sync and Clone from URL need it
+- **git** — pull requests, Check out, Sync, Clone from URL and **Use git** need it
   (on Windows, Git for Windows' `git.exe` on `PATH`). Without git — on macOS,
   without the Xcode Command Line Tools — worca still opens and never runs git:
   it hides the branch, pull-request, Sync and Clone controls, a project run
@@ -772,7 +778,8 @@ the `tools/railway/worca-railway.mjs` tool and this repository's
 worca ui            # start it (worca --ui does the same)
 ```
 
-Open the printed URL (default `http://localhost:4317`), add a project, and
+Open the printed URL (default `http://localhost:4317`), add a project
+(**Projects › Add project**: **New** by name, any **Folder**, or **Clone from URL**), and
 click **New pipeline**: describe the task, pick a workflow and press
 **Start run** — turn on **Mock mode** beside it to try a run offline, with no
 Claude calls and no cost. At the Advanced [UI level](docs/ui-levels.md) the

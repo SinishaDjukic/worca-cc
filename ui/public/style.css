@@ -2518,7 +2518,7 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 .proj-fchip .n{font-weight:600;font-variant-numeric:tabular-nums;}
 .proj-fdot{width:7px;height:7px;border-radius:50%;}
 .proj-fdot.blue{background:var(--blue);} .proj-fdot.amber{background:var(--amber);} .proj-fdot.peach{background:var(--peach);}
-.proj-fdot.green{background:var(--green);} .proj-fdot.grey{background:var(--ink-3);}
+.proj-fdot.green{background:var(--green);} .proj-fdot.grey{background:var(--ink-3);} .proj-fdot.teal{background:var(--teal-ink);}
 #projects-list .proj-head-tools{margin-left:auto;display:flex;align-items:center;gap:10px;}
 #projects-list .proj-head-tools .sync-checked{margin-left:0;}
 #projects-sync-all{height:32px;padding:0 15px;font-size:13px;}
@@ -2536,7 +2536,10 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 #projects-list .pl-name{font-weight:600;font-size:14px;letter-spacing:-.01em;color:var(--ink);overflow-wrap:anywhere;}
 #projects-list .proj-path{margin-top:2px;word-break:normal;overflow-wrap:anywhere;}
 #projects-list .pl-sync{grid-area:sync;min-width:0;container:ps / inline-size;}
-#projects-list .pl-sync:not(:has(> .proj-sync:not([hidden]))){display:none;}
+#projects-list .pl-sync:not(:has(> .proj-sync:not([hidden]), > .proj-nogit)){display:none;}
+.proj-nogit{display:flex;align-items:center;gap:10px;min-height:58px;padding:9px 12px 9px 14px;border:1px solid var(--line-2);border-radius:12px;background:var(--panel);color:var(--ink-3);}
+.proj-nogit-txt{font-family:var(--mono);font-size:13px;color:var(--ink-2);}
+#projects-list .proj-zero{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px;}
 #projects-list .pl-team{grid-area:team;min-width:0;}
 #projects-list .proj-open{grid-area:chev;border-radius:999px;border-color:var(--line-2);}
 #projects-list .pl-row[role="button"]:hover .proj-open{border-color:var(--hover-outline);color:var(--ink);}
@@ -3669,6 +3672,9 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-header,.pd-header{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
   box-shadow:var(--shadow);margin:20px 32px 0;padding:20px 24px 18px;}
 .hd-row1,.pd-row1{display:flex;align-items:center;gap:14px;}
+.pd-row1:has(> .pd-kind:not(:empty)) > .pd-title{flex:0 1 auto;}
+.pd-row1 > .pd-kind{flex:none;display:inline-flex;}
+.pd-row1 > .pd-kind:empty{display:none;}
 .hd-title,.pd-title{margin:0;min-width:0;flex:1;font:700 22px/1.25 var(--sans);letter-spacing:-.02em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .hd-body,.pd-body{padding:0 32px 40px;}
@@ -4110,8 +4116,22 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .md-tab{height:22px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--ink-2);
   font:500 11.5px var(--sans);cursor:pointer;}
 .md-tab[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--knob-shadow);}
-/* Add project: Folder / Clone from URL. */
+/* Add project: New / Folder / Clone from URL. */
 .proj-add-tabs{margin:0 0 12px;}
+/* Add project: the Folder detect row (kind chip · No git · file count) and New's read-only Location. */
+.proj-add-detect{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;}
+.pad-chip{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 9px;border-radius:999px;background:var(--field);color:var(--ink-2);font-size:12px;font-weight:600;}
+.pad-chip.warn{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.pad-files{font-family:var(--mono);font-size:12px;color:var(--ink-2);}
+#proj-add-location{font-family:var(--mono);font-size:12.5px;}
+#proj-add-path{font-family:var(--mono);}
+/* The AddNew board's Location box: a folder icon inside the read-only field. */
+.proj-add-loc{position:relative;}
+.proj-add-loc > svg{position:absolute;left:15px;top:50%;margin-top:-7.5px;color:var(--ink-3);pointer-events:none;}
+.proj-add-loc > #proj-add-location{padding-left:40px;}
+/* The AddFolder board: the path takes the whole row, Choose folder… / Several folders… wrap under it. */
+#proj-add-folder-pane .path-row{flex-wrap:wrap;}
+#proj-add-folder-pane .path-row > input{flex:1 1 100%;}
 .md-tab:disabled{cursor:default;opacity:.55;}
 .hd-cmt-input{width:100%;min-height:72px;padding:12px 14px;border:0;background:transparent;color:var(--ink);
   font:400 13px/1.5 var(--sans);resize:vertical;}

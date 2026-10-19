@@ -64,7 +64,7 @@ export function projectsFile() {
 export function normalizeProjectPath(input) {
   if (!input || typeof input !== 'string' || !input.trim()) return null;
   let p = input.trim();
-  if (p.startsWith('~')) p = join(process.env.HOME || process.env.USERPROFILE || '', p.slice(1));
+  if (p.startsWith('~')) p = join(defaultRoot(), p.slice(1));   // HOME, USERPROFILE, else the OS home (an env-scrubbed child)
   return resolve(p);
 }
 

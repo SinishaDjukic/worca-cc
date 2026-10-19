@@ -13,7 +13,7 @@
 //            failed clone removes its folder
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { githubEnv } from './github-credentials.mjs';
 import { gitEnvFor } from './host-credentials.mjs';
@@ -153,6 +153,8 @@ export async function cloneProject(req, { projectsRoot, env = process.env, listP
   if (existing.some((p) => p && typeof p.name === 'string' && p.name.toLowerCase() === plan.name.toLowerCase())) {
     throw new CloneError('exists', `a project named "${plan.name}" already exists; pick another folder name`);
   }
+  if (!gitAvailable()) throw new CloneError('git-missing', GIT_MISSING.message);   // as runClone, before the root is made
+  await mkdir(resolve(projectsRoot), { recursive: true });   // U6: the projects root is made on first use
   await run(plan);
   try {
     const projects = await addProject({ name: plan.name, path: plan.dir });

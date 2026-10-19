@@ -163,7 +163,7 @@ test('add: Add project opens the dialog, Choose folder… picks a folder, prefil
     fetchHandler: (u, opts) => {
       if (u.includes('/api/fs/pick-folder') && (opts.method || 'GET') === 'GET') return Promise.resolve({ ok: true, status: 200, json: async () => ({ available: true }) });
       if (u.includes('/api/fs/pick-folder')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ status: 'picked', path: '/Users/me/dev/cool-app' }) });
-      if (u.includes('/api/projects') && opts.method === 'POST') {
+      if (u.endsWith('/api/projects') && opts.method === 'POST') {
         posts.push(JSON.parse(opts.body));
         const next = [...PROJECTS, { name: 'cool-app', path: '/Users/me/dev/cool-app', exists: true }];
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: next }) });
@@ -176,6 +176,8 @@ test('add: Add project opens the dialog, Choose folder… picks a folder, prefil
   click(window, doc.querySelector('#project-add-btn'));
   await tick(); await tick();
   assert.equal(doc.querySelector('#project-add-modal').classList.contains('hidden'), false, 'add modal should open');
+  assert.equal(doc.querySelector('#proj-add-tab-new').getAttribute('aria-selected'), 'true', 'the dialog opens on New');
+  click(window, doc.querySelector('#proj-add-tab-folder'));
   assert.equal(doc.querySelector('#proj-add-path').value, '', 'no folder until one is chosen');
   click(window, doc.querySelector('#proj-add-browse'));
   await tick(); await tick();
@@ -628,4 +630,28 @@ test('rows carry compact team chips (status only, no controls); the project page
   await tick(); await tick();
   assert.equal(patches.length, 1);
   assert.deepEqual(patches[0], { record: false });
+});
+
+test('zero projects: one empty card says so; its Add project opens the dialog', async () => {
+  const { window } = await boot({ fetchHandler: (u, o) => (u.endsWith('/api/projects') && (o.method || 'GET') === 'GET'
+    ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [] }) }) : null) });
+  await goProjects(window);
+  const doc = window.document;
+  assert.equal(doc.querySelector('#projects-list .proj-zero-txt').textContent, 'No projects yet');
+  assert.equal(doc.querySelector('#projects-list .proj-zero-add').textContent, 'Add project');
+  click(window, doc.querySelector('#projects-list .proj-zero-add')); await tick(); await tick();
+  assert.equal(doc.querySelector('#project-add-modal').classList.contains('hidden'), false);
+});
+test('the project page names its kind: Folder (no BRANCH card) or Git', async () => {
+  const projects = [{ ...PROJECTS[0], vcs: 'git' }, { name: 'notes', path: '/Users/me/notes', exists: true, key: 'notes-00000003', vcs: 'none' }];
+  const { window } = await boot({ fetchHandler: (u, o) => (u.includes('/api/projects') && (o.method || 'GET') === 'GET'
+    ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects }) }) : null) });
+  await goHash(window, 'projects/notes-00000003');
+  const doc = window.document;
+  assert.equal(doc.querySelector('#proj-detail .pd-kind .kind-chip').textContent, 'Folder');
+  assert.equal(doc.querySelector('#proj-detail .pd-title').textContent.trim(), 'notes', 'the title stays the name');
+  assert.equal(doc.querySelector('#proj-detail .pd-ov-card-branch'), null);
+  await goHash(window, 'projects/alpha-00000001');
+  assert.equal(doc.querySelector('#proj-detail .pd-kind .kind-chip').textContent, 'Git');
+  assert.ok(doc.querySelector('#proj-detail .pd-ov-card-branch'));
 });

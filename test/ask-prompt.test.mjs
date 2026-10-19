@@ -293,6 +293,7 @@ test('context header: the spec layout, exactly — plus the [pinned by the user]
       assert.ok(!buildContextHeader({ ...CTX, pinned: true, noProject: true }).includes('[No project]'), 'a resolved project line wins');
     } },
     { name: 'P4: a scope-switch card names its summary on the cards: line', run: async () => { assert.ok(buildContextHeader({ view: 'chat', noProject: true, cards: [{ id: 'card_0000ab01', type: 'scope-switch', state: 'answered', summary: 'Havn Android / Havn IOS' }], now: CTX.now }).includes('\ncards: scope-switch card_0000ab01 answered "Havn Android / Havn IOS"\n')); } },
+    { name: 'P2: a project card names its summary on the cards: line', run: async () => { assert.ok(buildContextHeader({ view: 'chat', noProject: true, cards: [{ id: 'card_0000ab09', type: 'project', state: 'applied', summary: 'Create site' }], now: CTX.now }).includes('\ncards: project card_0000ab09 applied "Create site"\n')); } },
   ]);
 });
 
@@ -487,7 +488,7 @@ test('system rules: rule 1 advertises every model tool (compare against the mcp-
       // Every conditional family on but web (renderWebSection names those): the list
       // test/ask-mcp-stdio.test.mjs pins name for name on the real child.
       const served = createAskTools({ limits: ASK_LIMITS, redact: (s) => s, scripts: { enabled: true },
-        models: {}, clones: {}, workspaceChanges: {}, actions: {}, chatActions: {}, composer: {}, scopeSwitch: {} }).list().map((t) => t.name);
+        models: {}, clones: {}, projectChanges: {}, workspaceChanges: {}, actions: {}, chatActions: {}, composer: {}, scopeSwitch: {} }).list().map((t) => t.name);
       const rule1 = ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('1. '));
       const listed = rule1.slice(rule1.indexOf('(') + 1, rule1.indexOf(')')).split(', ');
       const elsewhere = ['propose_run', 'propose_workflow', 'save_script', 'test_script'];

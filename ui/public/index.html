@@ -1367,6 +1367,7 @@
                     Back
                   </button>
                   <h1 class="pd-title"></h1>
+                  <span class="pd-kind"></span>
                   <!-- Opens the terminal pane in this page's folder (docs/terminal.md); app.js wires every .term-opener. -->
                   <button type="button" class="term-opener btn-ghost" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7.5 9.5l3 2.5-3 2.5"></path><path d="M13 15h3.5"></path></svg>
@@ -1712,8 +1713,9 @@
                 <div class="label-row">
                   <label for="settingsProjectsRoot">Projects root folder</label>
                   <button type="button" class="info-tip" aria-label="About Projects root folder">i<span class="tip-content hidden">
-                    The top-level folder under which your projects live. Its CLAUDE.md, .claude/skills, and
-                    .mcp.json are made available to every pipeline agent. Leave empty to use your home folder.
+                    The top-level folder under which your projects live. New and Clone from URL create projects
+                    here. Its CLAUDE.md, .claude/skills, and .mcp.json are made available to every pipeline agent.
+                    Leave empty to use worca's projects folder.
                   </span></button>
                 </div>
                 <div class="path-row">
@@ -2824,27 +2826,40 @@
           <h2 id="proj-add-title">Add project</h2>
           <button type="button" id="proj-add-cancel" class="btn btn-mini">Close</button>
         </div>
-        <!-- Two ways in: a folder already on this machine, or a repository cloned into the
-             projects folder by the server (POST /api/projects/clone). Clone is the default
-             where no folder picker exists (a container or hosted worca). -->
+        <!-- Three ways in: New (a name), Folder, Clone from URL. New makes <projects root>/<name>
+             (POST /api/projects/create, a dry run on every keystroke fills Location); Folder registers a
+             folder already on this machine (GET /api/projects/probe fills the detect row); Clone from URL
+             clones into the projects folder on the server (POST /api/projects/clone). Opens on New. -->
         <div class="md-tabs proj-add-tabs" id="proj-add-tabs" role="tablist" aria-label="How to add the project">
-          <button type="button" class="md-tab" role="tab" id="proj-add-tab-folder" data-mode="folder" aria-selected="true" aria-controls="proj-add-folder-pane">Folder</button>
+          <button type="button" class="md-tab" role="tab" id="proj-add-tab-new" data-mode="new" aria-selected="true" aria-controls="proj-add-new-pane">New</button>
+          <button type="button" class="md-tab" role="tab" id="proj-add-tab-folder" data-mode="folder" aria-selected="false" aria-controls="proj-add-folder-pane">Folder</button>
           <button type="button" class="md-tab" role="tab" id="proj-add-tab-clone" data-needs-git data-mode="clone" aria-selected="false" aria-controls="proj-add-clone-pane">Clone from URL</button>
         </div>
-        <div id="proj-add-folder-pane" role="tabpanel" aria-labelledby="proj-add-tab-folder">
+        <div class="field" id="proj-add-name-field">
+          <label for="proj-add-name">Name</label>
+          <input id="proj-add-name" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="Project name" />
+        </div>
+        <div id="proj-add-new-pane" role="tabpanel" aria-labelledby="proj-add-tab-new">
           <div class="field">
-            <label for="proj-add-name">Name</label>
-            <input id="proj-add-name" class="input" type="text" spellcheck="false" placeholder="Project name" />
-          </div>
-          <div class="field">
-            <label for="proj-add-path">Folder</label>
-            <div class="path-row">
-              <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" />
-              <button type="button" id="proj-add-browse" class="btn btn-ghost btn-mini" title="Pick the project folder">Choose folder&hellip;</button>
-              <button type="button" id="proj-add-browse-many" class="btn btn-ghost btn-mini" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
+            <label for="proj-add-location">Location</label>
+            <div class="proj-add-loc">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+              <input id="proj-add-location" class="input mono" type="text" readonly spellcheck="false" />
             </div>
           </div>
         </div>
+        <div id="proj-add-folder-pane" role="tabpanel" aria-labelledby="proj-add-tab-folder" hidden>
+          <div class="field">
+            <label for="proj-add-path">Folder</label>
+            <div class="path-row">
+              <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" aria-describedby="proj-add-detect" />
+              <button type="button" id="proj-add-browse" class="btn btn-ghost btn-mini" title="Pick the project folder">Choose folder&hellip;</button>
+              <button type="button" id="proj-add-browse-many" class="btn btn-ghost btn-mini" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
+            </div>
+            <div class="proj-add-detect" id="proj-add-detect" role="status" aria-live="polite" hidden></div>
+          </div>
+        </div>
+        <label class="switch-row proj-add-git" id="proj-add-git-row" data-needs-git hidden><input id="proj-add-git" class="sw-input" type="checkbox" role="switch"><span class="switch switch-sm"></span><span class="txt">Use git</span></label>
         <div id="proj-add-clone-pane" role="tabpanel" aria-labelledby="proj-add-tab-clone" hidden>
           <div class="field">
             <label for="proj-clone-url">Repository URL</label>

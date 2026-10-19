@@ -33,6 +33,7 @@ import {
 import { readRunManifest, rescueModifiedMounts, removeInjectedPaths } from '../src/core/run-manifest.mjs';
 import { skipMessage } from '../src/core/mcp/registry.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { NO_PROJECT_KEY } from '../src/shared/no-project.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -120,6 +121,7 @@ async function assemble(over = {}) {
     ...(over.registry ? { registry: over.registry } : {}),
     ...(over.engine ? { engine: over.engine } : {}),
     ...(over.agentIsolated ? { agentIsolated: true } : {}),
+    ...(over.projectsRootIsDefault ? { projectsRootIsDefault: true } : {}),
   });
 }
 
@@ -351,6 +353,24 @@ test('§8.20: a nonexistent projectsRoot contributes nothing and warns exactly O
   const hits = rc.warnings.filter((w) => w.includes(missing));
   assert.equal(hits.length, 1, `exactly one warning, not one per read: ${JSON.stringify(rc.warnings)}`);
   assert.match(hits[0], /projects root/i);
+});
+
+test('the default projects root (nothing configured) never warns — missing, or members elsewhere — and is still read when it exists', async () => {
+  const missing = join(await tmp('worca-cc-rc-defroot-'), 'projects');
+  const rc = await assemble({ runRoot: await mkRunRoot(), projectsRoot: missing, projectsRootIsDefault: true,
+    members: [{ projectKey: 'a-1', projectName: 'A', projectDir: await tmp(), worktreeDir: join(await tmp(), 'wa') }] });
+  assert.deepEqual(rc.warnings.filter((w) => /projects root/.test(w)), []);
+  const present = await writeTree(await tmp('worca-cc-rc-defroot2-'), { 'CLAUDE.md': 'DEFAULT ROOT MEMORY\n' });
+  const rc2 = await assemble({ runRoot: await mkRunRoot(), projectsRoot: present, projectsRootIsDefault: true,
+    members: [{ projectKey: 'b-2', projectName: 'B', projectDir: await tmp(), worktreeDir: join(await tmp(), 'wb') }] });
+  assert.deepEqual(rc2.warnings.filter((w) => /projects root/.test(w)), [], 'a member elsewhere is not "outside" the default');
+  assert.match(await readFile(rc2.claudeMdPath, 'utf8'), /DEFAULT ROOT MEMORY/, 'the root layer still loads (L10)');
+});
+
+test('P3: a run\'s own work/ (the no-project member) is never "not under" an explicit projects root', async () => {
+  const rc = await assemble({ runRoot: await mkRunRoot(), projectsRoot: await tmp('worca-cc-rc-np-root-'),
+    members: [{ projectKey: NO_PROJECT_KEY, projectName: 'No project', projectDir: await tmp(), worktreeDir: join(await tmp(), 'wn') }] });
+  assert.deepEqual(rc.warnings.filter((w) => /not under the projects root/.test(w)), []);
 });
 
 // ── §5.4 caps ───────────────────────────────────────────────────────────────

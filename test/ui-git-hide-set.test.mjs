@@ -64,11 +64,11 @@ test('hide set: JS-built surfaces and requests', async () => {
       for (const s of ['.pl-sync', '.proj-filters', '.sync-checked', '#projects-sync-all', '.proj-cols-sync']) assert.ok(gated(doc.querySelector(s)), s);
       assert.ok(!gated(doc.querySelector('.pl-team')));
     } },
-    { name: 'Add project without git and without a folder picker opens on Folder', run: async () => {
+    { name: 'Add project without git and without a folder picker opens on New', run: async () => {
       const { window, doc } = await bootApp({ git: false });
       window.location.hash = 'projects'; await tick(); await tick();
       doc.querySelector('#project-add-btn').dispatchEvent(new window.Event('click', { bubbles: true })); for (let i = 0; i < 4; i++) await tick();
-      assert.equal([...doc.querySelectorAll('#proj-add-tabs .md-tab')].find((t) => t.getAttribute('aria-selected') === 'true')?.dataset.mode, 'folder');
+      assert.equal([...doc.querySelectorAll('#proj-add-tabs .md-tab')].find((t) => t.getAttribute('aria-selected') === 'true')?.dataset.mode, 'new');
     } },
     { name: 'New run without git: picking a project asks for no branch list', run: async () => {
       const { window, doc, calls } = await bootApp({ git: false });
@@ -100,12 +100,12 @@ test('hide set: JS-built surfaces and requests', async () => {
       on.ws._msg({ type: 'git', git: { available: false, version: null } }); await tick();
       assert.equal(active(on.doc), 'overview');
     } },
-    { name: 'chat tiles Clone a repo / Explain a diff carry the gate', run: () => {
+    { name: 'chat tile Explain a diff carries the gate; Add project does not', run: () => {
       const { document: d } = trackDom(new JSDOM('<!doctype html><html><body></body></html>')).window;
       const qa = homeActions.createQuickActions({ doc: d, deps: { setIntent: () => {} } });
-      assert.deepEqual(homeActions.ACTION_NEEDS_GIT, ['clone', 'diff']);
+      assert.deepEqual(homeActions.ACTION_NEEDS_GIT, ['diff']);
       const tagged = [...qa.el.querySelectorAll('[data-needs-git]')].map((b) => b.textContent);
-      assert.deepEqual(tagged.sort(), ['Clone a repo', 'Explain a diff']);
+      assert.deepEqual(tagged.sort(), ['Explain a diff']);
     } },
     { name: 'chat PR card buttons, Shape Ship as box and merge-order line carry the gate', run: () => {
       const { window: w } = trackDom(new JSDOM('<!doctype html><html><body></body></html>'));

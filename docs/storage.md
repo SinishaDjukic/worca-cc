@@ -108,6 +108,7 @@ project's working tree, so nothing is ever committed to your repo.
   plugins/                              installed plugin checkouts
   agents/                               installed agent registry checkouts
   workflows/                            saved workflow templates
+  projects/                             New and Clone from URL projects (the default projects root; yours — worca never deletes it)
   projects.json                         registered project index
   workspaces.json                       workspace index
   chat-context.json                     chat context cache
@@ -133,6 +134,8 @@ existence is indexed in the database).
   projects.vcs ('git' | 'none', schema v61) records the kind once, at add
   time, and never changes it on its own. A run without a project uses the
   reserved key `no-project-00000000`; no project row is ever made for it.
+- **projects root** = `WORCA_PROJECTS_ROOT` if set, else Settings › Projects root folder, else
+  `<worcaHome>/projects` (created on the first New or Clone).
 
 Because state is machine-wide and keyed by repo identity, the web UI has an
 **"All projects"** view (and `GET /api/history`) that lists runs across every

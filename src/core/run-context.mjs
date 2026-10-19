@@ -1244,6 +1244,8 @@ export function generateClaudeMd({
  * @param {Array<{projectKey:string, projectName:string, projectDir:string, worktreeDir:string}>} a.members
  *        `projectDir` is the REAL dir (E6: only it carries uncommitted context).
  * @param {string} a.projectsRoot                §5.1 root context layer
+ * @param {boolean} [a.projectsRootIsDefault]   nothing configured (<worcaHome>/projects, U6): a missing root and
+ *        members elsewhere never warn; an existing default root is still read (L10)
  * @param {boolean} a.isWorkspace
  * @param {Map<string,object>|object} a.requiredSkillResolutions
  *        From validateSkills() — MAY BE EMPTY, which is every shipped workflow
@@ -1262,7 +1264,7 @@ export function generateClaudeMd({
  * @returns {Promise<object>} the run-context record (also persisted into run.json)
  */
 export async function assembleRunContext({
-  runRoot, members = [], projectsRoot, isWorkspace = false,
+  runRoot, members = [], projectsRoot, projectsRootIsDefault = false, isWorkspace = false,
   requiredSkillResolutions, graphInstructions, homeDir, honorByKey = null,
   platform = process.platform, agentIsolated = false, registry = null, settingsScope = null, engine = 'claude',
   setSkills = [],
@@ -1285,7 +1287,7 @@ export async function assembleRunContext({
   // §8.20: a nonexistent projectsRoot (reachable through the unvalidated env tier,
   // §5.1) contributes nothing and warns ONCE — not once per read.
   const rootUsable = !!projectsRoot && (await isDir(projectsRoot, onError));
-  if (projectsRoot && !rootUsable) {
+  if (projectsRoot && !rootUsable && !projectsRootIsDefault) {
     warnings.push(
       `projects root \`${projectsRoot}\` does not exist or could not be read — the root ` +
       'context layer (memory, skills, MCP) contributes nothing to this run.',
@@ -1324,8 +1326,10 @@ export async function assembleRunContext({
   // reported as contributing nothing (above), and NO member can be under a path that
   // does not exist — one line per member would repeat that single fact N times.
   // `isUnder` counts equality as inside, so a member sitting exactly AT projectsRoot
-  // (and every member under a home-as-projectsRoot, the default) never warns.
-  if (rootUsable) {
+  // never warns. The DEFAULT root (<worcaHome>/projects, nothing configured) never warns
+  // either: the harness passes `projectsRootIsDefault`, since the default is only where
+  // New / Clone put projects, not a promise about where every member lives.
+  if (rootUsable && !projectsRootIsDefault) {
     for (const m of sorted) {
       if (!m.projectDir || isNoProjectKey(m.projectKey) || isUnder(m.projectDir, projectsRoot)) continue;   // P3: a run's own work/ is never a project
       warnings.push(

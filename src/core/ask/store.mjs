@@ -376,7 +376,7 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
         || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away'
         || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request'
         || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'
-        || b.card.type === 'scope-switch'));
+        || b.card.type === 'scope-switch' || b.card.type === 'project'));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });
     prepare('UPDATE ask_messages SET blocks = ? WHERE id = ?').run(JSON.stringify(blocks), found.message.id);

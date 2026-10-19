@@ -7,6 +7,7 @@ import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, mkdir, rm, symlink, realpath } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
@@ -217,4 +218,74 @@ test('remote mode: registered projects, broad roots and hidden folders do not wi
       refused(await remote('POST', '/api/install', { projectDir: join(projects, '.secret') }));
     } },
   ]);
+});
+
+test('remote mode, no projects root configured: the OS home stays browsable and addable (S50: today\'s rule); outside it is refused', async () => {
+  const prevRoot = process.env.WORCA_PROJECTS_ROOT;
+  const elsewhere = await realpath(await mkdtemp(join(tmpdir(), 'worca-cc-fsremote-else-')));   // outside HOME (= base)
+  const mine = join(base, 'mine');
+  const def = join(homeDir, '.worca-cc', 'projects');
+  delete process.env.WORCA_PROJECTS_ROOT;                 // the default root, <worcaHome>/projects (U6)
+  try {
+    await mkdir(mine, { recursive: true });
+    const blank = await dirs('');
+    assert.equal(blank.status, 200, JSON.stringify(blank.body));
+    assert.equal(blank.body.path, base, 'a blank browse opens at home');
+    assert.equal((await dirs(mine)).status, 200, 'a folder under home lists');
+    refused(await dirs(elsewhere));
+    assert.equal((await remote('GET', `/api/projects/probe?path=${encodeURIComponent(mine)}`)).status, 200, 'the probe follows the same roots');
+    refused(await remote('GET', `/api/projects/probe?path=${encodeURIComponent(elsewhere)}`));
+    refused(await remote('GET', `/api/projects/probe?path=${encodeURIComponent(join(homeDir, '.worca-cc', 'store'))}`));   // the Worca home stays hidden
+    await mkdir(def, { recursive: true });
+    refused(await dirs(join(homeDir, '.worca-cc')));             // the Worca home stays a hidden folder of home (today's rule)
+    assert.equal((await dirs('')).body.path, base, 'the default projects root is never a start');
+    await mkdir(join(def, 'site'), { recursive: true });
+    assert.equal((await dirs(def)).status, 200, 'the default projects root (in the Worca home, a hidden folder of home) is browsable');
+    const inDefault = await remote('POST', '/api/projects', { name: 'site-in-default', path: join(def, 'site') });
+    assert.equal(inDefault.status, 200, JSON.stringify(inDefault.body));
+    const add = await remote('POST', '/api/projects', { name: 'mine', path: mine });
+    assert.equal(add.status, 200, JSON.stringify(add.body));
+    if (linked) {                                                // a link in place of the projects folder is not a root
+      const store = join(homeDir, '.worca-cc', 'store', 'x');
+      await mkdir(store, { recursive: true });
+      await rm(def, { recursive: true, force: true });
+      await symlink(join(homeDir, '.worca-cc', 'store'), def, 'dir');
+      refused(await dirs(store));
+      refused(await remote('POST', '/api/install', { projectDir: store }));
+    }
+  } finally {
+    if (prevRoot === undefined) delete process.env.WORCA_PROJECTS_ROOT; else process.env.WORCA_PROJECTS_ROOT = prevRoot;
+    await rm(elsewhere, { recursive: true, force: true });
+    await rm(def, { recursive: true, force: true });
+  }
+});
+
+test('remote mode: the Add project probe stays inside Worca\'s folders; New creates under the projects root', async () => {
+  refused(await remote('GET', `/api/projects/probe?path=${encodeURIComponent(join(outside, 'secret'))}`));
+  const inside = await remote('GET', `/api/projects/probe?path=${encodeURIComponent(join(projects, 'app'))}`);
+  assert.equal(inside.status, 200, JSON.stringify(inside.body));
+  assert.equal(inside.body.vcs, 'git');
+  const made = await remote('POST', '/api/projects/create', { name: 'hosted-new' });
+  assert.equal(made.status, 201, JSON.stringify(made.body));
+  assert.equal(made.body.project.path, join(projects, 'hosted-new'));
+});
+
+test('remote mode: a project card adding a folder outside Worca\'s folders fails FS_OUTSIDE_ALLOWED at apply and touches nothing', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const t = store.createThread();
+  const dir = join(outside, 'secret');
+  store.appendMessage(t.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_0000aa01', state: 'proposed',
+    card: { type: 'project', kind: 'add', summary: 'Add secret', name: 'secret', path: dir, vcs: 'git', change: { kind: 'add', name: 'secret', path: dir, useGit: true } } }] });
+  const r = await remote('POST', `/api/ask/threads/${t.id}/cards/card_0000aa01`, { state: 'applied' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.block.state, 'failed');
+  assert.equal(r.body.block.card.result.code, 'FS_OUTSIDE_ALLOWED');
+  assert.equal(existsSync(join(dir, '.git')), false, 'no git init outside');
+  // The failed card starts an event turn whose spawn reads WORCA_MOCK: let it end before after() restores the env
+  // (else, under load, it spawns the real claude binary).
+  const turnId = r.body.turn && r.body.turn.assistantMessageId;
+  for (const t0 = Date.now(); turnId && store.getMessage(turnId)?.status === 'streaming';) {
+    if (Date.now() - t0 > 10000) throw new Error('the event turn did not end');
+    await new Promise((res) => setTimeout(res, 25));
+  }
 });

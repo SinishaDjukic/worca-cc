@@ -2371,3 +2371,53 @@ test('P4 (SEAMS S12): a Folder project, or no git, has no branch rows on the run
     } },
   ]);
 });
+
+test('project card (ChatCreate board): Name / Folder / Kind rows; Create / Decline post the verbs; created, failed and declined read as such', async () => {
+  const rec = { cardPosts: [] };
+  const base = apiHandler(rec);
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+    const m = /^\/api\/ask\/threads\/[^/]+\/cards\/(card_[0-9a-f]{8})$/.exec(url);
+    if (m && (opts.method || '').toUpperCase() === 'POST' && m[1] !== CARD_ID) { rec.cardPosts.push([m[1], JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({}) }; }
+    return base(url, opts);
+  } });
+  const card = { type: 'project', kind: 'create', summary: 'Create landing-page', name: 'landing-page', path: '/Users/me/.worca-cc/projects/landing-page',
+    displayPath: '~/.worca-cc/projects/landing-page', vcs: 'none', note: '<b>why</b>', change: { kind: 'create', name: 'landing-page', useGit: false } };
+  const push = (id, state, extra = {}, seq = 3) => { ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id, state, card, ...extra }, threadId: TID, messageId: MID, seq }); ctx.flush(); };
+  push('card_00000020', 'proposed');
+  const el = ctx.doc.querySelector('[data-ask-projectcard="proposed"]');
+  assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Proposed project');
+  assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'New');
+  assert.equal(el.querySelector('.ask-mcard-summary').textContent, 'Create landing-page');
+  assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Name', 'Folder', 'Kind']);
+  assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-val')].map((x) => x.textContent), ['landing-page', '~/.worca-cc/projects/landing-page', 'Folder']);
+  assert.equal(el.querySelectorAll('.ask-mcard-change-val')[1].title, '/Users/me/.worca-cc/projects/landing-page');
+  assert.ok(el.querySelector('.ask-mcard-change-val .kind-chip.kind-folder'));
+  assert.equal(el.querySelector('.ask-mcard-note').textContent, '<b>why</b>'); assert.equal(el.querySelector('.ask-mcard-note b'), null);
+  assert.equal(el.querySelector('[data-ask-project-apply]').textContent, 'Create');
+  el.querySelector('[data-ask-project-apply]').click(); await ctx.tick(); await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), ['card_00000020', { state: 'applied' }]);
+  const result = { ok: true, project: { key: 'landing-page-0000abcd', name: 'landing-page', path: '/Users/me/.worca-cc/projects/landing-page',
+    displayPath: '~/.worca-cc/projects/landing-page', vcs: 'none' }, scope: { pinned: true, projectKey: 'landing-page-0000abcd' } };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000020', state: 'applied', card: { ...card, result } }, threadId: TID, messageId: MID, seq: 4 }); ctx.flush();
+  const done = ctx.doc.querySelector('[data-ask-projectcard="applied"]');
+  assert.equal(done.querySelector('.ask-mcard-title').textContent, 'Project created');
+  assert.equal(done.querySelector('.ask-mcard-summary').textContent, 'Create landing-page', 'the board: the summary stays, after a check');
+  assert.ok(done.querySelector('.ask-mcard-summary svg'), 'the applied check (WF_ICO.check)');
+  assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'Registered as landing-page at ~/.worca-cc/projects/landing-page');
+  assert.equal(done.querySelector('[data-ask-project-apply]'), null);
+  const addCard = { type: 'project', kind: 'add', summary: 'Add docs', name: 'docs', path: '/x/docs', displayPath: '/x/docs', vcs: 'git', change: { kind: 'add', name: 'docs', path: '/x/docs', useGit: true } };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000021', state: 'proposed', card: addCard }, threadId: TID, messageId: MID, seq: 5 }); ctx.flush();
+  const addEl = ctx.doc.querySelector('[data-ask-projectcard="proposed"]');
+  assert.equal(addEl.querySelector('.ask-mcard-kind').textContent, 'Folder');
+  assert.equal(addEl.querySelector('[data-ask-project-apply]').textContent, 'Add');
+  assert.equal(addEl.querySelector('.ask-mcard-change-val .kind-chip').textContent, 'Git');
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000021', state: 'failed', error: 'Part of mono', card: addCard }, threadId: TID, messageId: MID, seq: 6 }); ctx.flush();
+  const failed = ctx.doc.querySelector('[data-ask-projectcard="failed"]');
+  assert.equal(failed.querySelector('.ask-mcard-title').textContent, 'Add failed');
+  assert.equal(failed.querySelector('.ask-mcard-failed').textContent, 'Could not add: Part of mono');
+  push('card_00000022', 'proposed', {}, 7);
+  ctx.doc.querySelector('[data-ask-projectcard="proposed"] [data-ask-project-decline]').click(); await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), ['card_00000022', { state: 'declined' }]);
+  push('card_00000022', 'declined', {}, 8);
+  assert.ok([...ctx.doc.querySelectorAll('.ask-card-stub')].some((x) => x.textContent === 'Declined — Create landing-page'));
+});

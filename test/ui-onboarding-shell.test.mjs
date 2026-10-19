@@ -377,3 +377,19 @@ test('a switch the server refuses when a tour starts: the dialog says why, once 
   assert.equal(doc.querySelector('.toast[data-key="ui-level-save"]'), null, 'and no toast says it a second time');
   assert.equal(doc.querySelector('.guide-layer'), null, 'no tour starts');
 });
+
+test('the project tour: the dialog opens on New (canvas AddNew), the guide rings Name then Create project — never the hidden folder field', async () => {
+  const { doc, window } = await boot();
+  click(window, doc.querySelector('#welcome-modal [data-door="project"]')); await settle();
+  click(window, doc.querySelector('.nav button[data-nav="projects"]')); await settle();
+  assert.equal(doc.querySelector('.guide-layer').dataset.target, '#project-add-btn');
+  click(window, doc.querySelector('#project-add-btn')); await settle();
+  assert.equal(await until(() => doc.querySelector('.guide-layer')?.dataset.target === '#proj-add-name'), true);
+  assert.match(doc.querySelector('.guide-text').textContent, /worca creates a folder with this name/);
+  const name = doc.querySelector('#proj-add-name');
+  name.value = 'site'; name.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(await until(() => doc.querySelector('.guide-layer')?.dataset.target === '#proj-add-save'), true);
+  assert.equal(doc.querySelector('.guide-text').textContent, 'Create it. The dialog closes and the project joins the list.');
+  assert.doesNotMatch(readFileSync(appPath, 'utf8'), /Files on disk are never touched/);
+  assert.doesNotMatch(readFileSync(appPath, 'utf8'), /give the dialog that opens its folder/);
+});

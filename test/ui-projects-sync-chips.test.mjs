@@ -31,7 +31,7 @@ const blk = (base, over = {}) => ({ base, remote: 'origin', state: 'up-to-date',
   checkedOutHere: true, fetchedAt: NOW, stale: false, settings: { beforeRun: true, onDiverged: 'ask' }, ...over });
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 
-async function boot({ chips = () => ({ projects: { k1: blk('dev', { state: 'behind', behind: 3 }), k2: blk('main') } }),
+async function boot({ projects = PROJECTS, chips = () => ({ projects: { k1: blk('dev', { state: 'behind', behind: 3 }), k2: blk('main') } }),
   all = () => ({ projects: { k1: blk('dev'), k2: blk('main') } }), post = () => ({ sync: blk('dev') }) } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4321/' }));
   const { window } = dom;
@@ -51,7 +51,7 @@ async function boot({ chips = () => ({ projects: { k1: blk('dev', { state: 'behi
     if (u.includes('/api/sync/projects')) return ok(chips());
     if (u.includes('/api/sync/all')) return ok(all(opts.body ? JSON.parse(opts.body) : {}));
     if (/\/api\/projects\/[^/]+\/sync/.test(u) && method === 'POST') return ok(post());
-    if (u.includes('/api/projects')) return ok({ projects: PROJECTS });
+    if (u.includes('/api/projects')) return ok({ projects });
     if (u.includes('/api/workspaces')) return ok({ workspaces: WORKSPACES });
     return ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [], branches: [], workspaces: [], agents: [], channels: [] });
   };
@@ -393,4 +393,29 @@ test('a background refresh that could not fetch turns the row offline with no Sy
   } finally {
     t.mock.timers.reset();
   }
+});
+
+test('Folder rows: a Folder chip, a No git box where the branch bar goes, a Folder N filter; Local only never counts them', async (t) => {
+  const projects = [{ ...PROJECTS[0], vcs: 'git' }, { ...PROJECTS[1], vcs: 'git' }, { name: 'notes', path: '/Users/me/notes', displayPath: '~/notes', exists: true, key: 'k3', vcs: 'none' }];
+  const ctx = await boot({ projects, chips: () => ({ projects: { k1: blk('dev', { state: 'behind', behind: 3 }), k2: blk('main'), k3: { base: null, remote: null, state: 'unknown' } } }) });
+  const timers = useAppTimers(t);
+  try {
+    await go(ctx.window, timers, 'projects');
+    await waitFor(timers, () => settled(ctx.doc.querySelector('.proj-sync[data-key="k1"]')));
+    const row = (k) => ctx.doc.querySelector(`.pl-item[data-key="${k}"]`);
+    assert.equal(row('k1').querySelector('.pl-name .kind-chip').textContent, 'Git');
+    assert.equal(row('k3').querySelector('.pl-name .kind-chip').textContent, 'Folder');
+    assert.equal(row('k3').dataset.vcs, 'none');
+    assert.equal(row('k3').querySelector('.proj-path').textContent, '~/notes', 'the S22 display path');
+    assert.equal(row('k3').querySelector('.proj-path').title, '/Users/me/notes');
+    assert.equal(row('k1').querySelector('.proj-path').textContent, '/p/alpha', 'no displayPath: the path as today');
+    assert.equal(row('k3').querySelector('.proj-sync'), null, 'no branch / origin bar');
+    assert.equal(row('k3').querySelector('.pl-sync .proj-nogit').textContent, 'No git');
+    assert.ok(row('k3').querySelector('.pl-sync').hasAttribute('data-needs-git'), 'gated with the column (P0)');
+    assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'),
+      /#projects-list \.pl-sync:not\(:has\(> \.proj-sync:not\(\[hidden\]\), > \.proj-nogit\)\)\{display:none;\}/, 'the No git box keeps its column (jsdom has no cascade)');
+    assert.deepEqual([...ctx.doc.querySelectorAll('.proj-filters .proj-fchip')].map((c) => c.textContent), ['All 3', 'Behind 1', 'Up to date 1', 'Folder 1']);
+    click(ctx.window, ctx.doc.querySelector('.proj-fchip[data-filter="folder"]'));
+    assert.deepEqual([...ctx.doc.querySelectorAll('#projects-list .pl-item')].filter((n) => !n.hidden).map((n) => n.dataset.key), ['k3']);
+  } finally { t.mock.timers.reset(); }
 });

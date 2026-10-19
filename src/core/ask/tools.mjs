@@ -833,6 +833,11 @@ export function createAskTools(deps) {
           name: SCHEMA.s('folder and project name (default: the repository name)'),
           note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }, ['url']) },
     ] : []),
+    ...(deps.projectChanges ? [
+      { name: 'propose_project_change',
+        description: 'Propose adding a project for the user to confirm — it never creates or registers anything itself; the user sees a card and applies or declines it. kind "create": a new, empty folder named after the project in worca\'s projects folder. kind "add": a folder that already exists on this machine (path). useGit: true only when the user asks for git (worca runs git init once; a folder that already has git is a Git project either way). Applying it also switches this chat to the new project. Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
+        inputSchema: SCHEMA.obj({ kind: SCHEMA.s('create | add'), name: SCHEMA.s('the project name (create: also the new folder name; add: default the folder name)'), path: SCHEMA.s('add: the existing folder, absolute or ~'), useGit: SCHEMA.b('true only when the user asks for git: worca runs git init once'), note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }, ['kind']) },
+    ] : []),
     ...(deps.workspaceChanges ? [
       { name: 'propose_workspace_change',
         description: 'Propose a workspace change for the user to confirm — it never changes anything itself; the user sees a card and applies or declines it. kind: "create" (name + projectKeys: two or more registered projects from list_projects), "add_members" (workspaceId + projectKeys to add), "remove_member" (workspaceId + projectKey of one member; at least two stay), "rename" (workspaceId + name). workspaceId defaults to the pinned workspace (not for create). The workspace keeps its id; runs already started keep their members. Returns {ok:true, card} (card.warnings: a live run, a new member off the metrics / policy home, a removed home, schedules naming members; card.followUps: what to offer once applied) or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
@@ -2617,6 +2622,10 @@ export function createAskTools(deps) {
     async propose_clone_project(input) {
       if (!deps.clones) throw new AskToolError('propose_clone_project: cloning is unavailable');
       return deps.clones.validateChange(input);
+    },
+    async propose_project_change(input) {
+      if (!deps.projectChanges) throw new AskToolError('propose_project_change: adding projects is unavailable');
+      return deps.projectChanges.validateChange(input);
     },
     async propose_web_access(input) {
       const w = webOf('propose_web_access');

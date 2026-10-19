@@ -38,6 +38,7 @@ import { validateAwayChange } from './away-deps.mjs';
 import { validatePolicyChange } from './policy-deps.mjs';
 import { validateModelChange } from './model-deps.mjs';
 import { validateCloneProposal } from './clone-deps.mjs';
+import { validateProjectProposal } from './project-deps.mjs';
 import { validateWorkspaceChange } from './workspace-deps.mjs';
 import { validateActionsChange } from './actions-deps.mjs';
 import { actionsProposalInput } from './actions-proposal.mjs';
@@ -232,6 +233,7 @@ class AskTurn extends EventEmitter {
       validateScheduleChange: deps.validateScheduleChange ?? validateScheduleChange,
       validateModelChange: deps.validateModelChange ?? validateModelChange,
       validateCloneProposal: deps.validateCloneProposal ?? validateCloneProposal,
+      validateProjectProposal: deps.validateProjectProposal ?? validateProjectProposal,
       validateWorkspaceChange: deps.validateWorkspaceChange ?? validateWorkspaceChange,
       validateActionsChange: deps.validateActionsChange ?? validateActionsChange,
       // The web card's authoritative check runs against THIS turn's resolved access (allowlist + team cap).
@@ -638,6 +640,30 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /**
+   * propose_project_change RESULT: the clone card's split — the child validated for the model, the parent
+   * re-validates the same INPUT (dry runs against the live registry and disk) and mints the card. A child
+   * {ok:false} already reached the model as text: no card, no notice.
+   */
+  async _onProjectProposal(input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    try {
+      const r = await d.validateProjectProposal(input && typeof input === 'object' ? input : {});
+      if (r && r.ok) this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
+      else {
+        const errors = (r && Array.isArray(r.errors) && r.errors.length) ? r.errors : ['invalid proposal'];
+        this.reducer.addBlock({ kind: 'notice', text: `Project change rejected: ${errors.join('; ')}` });
+      }
+    } catch (err) {
+      this.reducer.addBlock({ kind: 'notice', text: `Project change rejected: ${err?.message || err}` });
+    }
+    this._persistBlocks();
+  }
+
   /** propose_web_access RESULT: the clone card's split — a child {ok:false} already reached the model as text. */
   async _onWebProposal(input, text, isError) {
     if (isError || !this.web) return;
@@ -851,6 +877,7 @@ class AskTurn extends EventEmitter {
       onScheduleProposal: ({ input, text, isError }) => this._onScheduleProposal(input, text, isError),
       onModelProposal: ({ input, text, isError }) => this._onModelProposal(input, text, isError),
       onCloneProposal: ({ input, text, isError }) => this._onCloneProposal(input, text, isError),
+      onProjectProposal: ({ input, text, isError }) => this._onProjectProposal(input, text, isError),
       onWorkspaceProposal: ({ input, text, isError }) => this._onWorkspaceProposal(input, text, isError),
       onActionsProposal: ({ input, text, isError }) => this._onActionsProposal(input, text, isError),
       onWebProposal: ({ input, text, isError }) => this._onWebProposal(input, text, isError),

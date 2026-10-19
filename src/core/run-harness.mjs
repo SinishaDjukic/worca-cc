@@ -48,7 +48,7 @@ import {
   writeChangesFiles, readChangesFile, sizeLabel, folderCopyRoot,
 } from './folder-copy.mjs';
 import {
-  runRootMode, getProjectsRoot,
+  runRootMode, getProjectsRoot, projectsRootSource,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   memoryCaps,
 } from './settings.mjs';
@@ -3491,7 +3491,7 @@ export class RunHarness extends EventEmitter {
         workMode: this._memberWorkMode(m.projectKey),
         ...(shippedFiles.has(m.projectKey) ? { shippedFiles: shippedFiles.get(m.projectKey) } : {}),
       })),
-      projectsRoot: getProjectsRoot(),
+      projectsRoot: getProjectsRoot(), projectsRootIsDefault: projectsRootSource() === 'default',
       isWorkspace: this.isWorkspace,
       requiredSkillResolutions: resolvedSkills,           // possibly empty — a valid, common input
       graphInstructions: this.toolInstructions,

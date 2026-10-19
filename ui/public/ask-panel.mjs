@@ -4324,6 +4324,69 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { el: rootEl };
   }
 
+  /** The project card (propose_project_change, ChatCreate board): proposed → applied | failed, or declined. New makes a
+   *  folder by name, Folder adds one that exists. Every value is text; paths are shown as sent, never parsed (S22). */
+  function buildProjectCard(block) {
+    const card = block.card || {};
+    const add = card.kind === 'add';
+    const summary = card.summary || (add ? 'add a project' : 'create a project');
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    const rootEl = make('div', `ask-card ask-mcard ask-projectcard is-${block.state}`);
+    rootEl.setAttribute('data-ask-projectcard', block.state);
+    const head = make('div', 'ask-mcard-head');
+    const title = block.state === 'applied' ? (add ? 'Project added' : 'Project created')
+      : block.state === 'failed' ? (add ? 'Add failed' : 'Create failed') : 'Proposed project';
+    head.appendChild(make('span', 'ask-mcard-title', title));
+    head.appendChild(make('span', 'ask-mcard-kind', add ? 'Folder' : 'New'));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    const sum = make('div', 'ask-mcard-summary');
+    if (block.state === 'applied') sum.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
+    sum.appendChild(make('span', null, summary));
+    body.appendChild(sum);
+    if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    const ul = make('ul', 'ask-mcard-changes');
+    const row = (label, fill) => {
+      const li = make('li');
+      li.appendChild(make('span', 'ask-mcard-change-label', label));
+      const val = make('span', 'ask-mcard-change-val');
+      fill(val);
+      li.appendChild(val);
+      ul.appendChild(li);
+    };
+    row('Name', (val) => val.appendChild(make('span', 'ask-mcard-after', String(card.name || ''))));
+    row('Folder', (val) => {
+      if (card.path) val.title = String(card.path);
+      val.appendChild(make('span', 'ask-mcard-after', String(card.displayPath || card.path || '')));
+    });
+    row('Kind', (val) => { const chip = kindChip(doc, card.vcs === 'git' ? 'git' : 'folder'); if (chip) val.appendChild(chip); });
+    body.appendChild(ul);
+    const result = card.result || null;
+    if (block.state === 'failed') {
+      body.appendChild(make('div', 'ask-mcard-failed', `Could not ${add ? 'add' : 'create'}: ${block.error || (result && result.error) || 'unknown error'}`));
+    } else if (block.state === 'applied' && result && result.project) {
+      const p = result.project;
+      body.appendChild(make('div', 'ask-mcard-detail', `Registered as ${p.name || card.name} at ${p.displayPath || p.path}`));
+    }
+    rootEl.appendChild(body);
+    rootEl.appendChild(make('div', 'ask-card-err'));
+    if (block.state === 'proposed') {
+      const actions = make('div', 'ask-mcard-actions');
+      const btn = (cls, text, attr, icon) => {
+        const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, '');
+        if (icon) b.prepend(svgIcon(icon, 12, 2.2));
+        return b;
+      };
+      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-project-decline');
+      decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
+      const apply = btn('ask-card-start', add ? 'Add' : 'Create', 'data-ask-project-apply', WF_ICO.save);
+      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
+      rootEl.appendChild(actions);
+    }
+    return { el: rootEl };
+  }
+
   // ---- Workspace card (propose_workspace_change): create, add / remove members, rename ------------------------------
   const WS_KIND_LABEL = { create: 'Create', add_members: 'Add members', remove_member: 'Remove member', rename: 'Rename' };
   const WS_APPLY_LABEL = { create: 'Create', add_members: 'Add', remove_member: 'Remove', rename: 'Rename' };
@@ -5528,7 +5591,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (card.type === PROGRESS_CARD_TYPE) return true;
     if (card.type && chatCardBuilder(card.type)) return false;      // an extension type is never a run card, whatever its state
     if (ASK_COMPOSER_CARD_TYPES.includes(card.type)) return false;   // Ask's draft / graph cards are never run cards
-    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away') return false;
+    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   function buildCard(block) {
@@ -5564,6 +5627,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isSchedule = !!(block.card && block.card.type === 'schedule');
     const isModel = !!(block.card && block.card.type === 'model');
     const isClone = !!(block.card && block.card.type === 'clone');
+    const isProject = !!(block.card && block.card.type === 'project');
     const isWorkspace = !!(block.card && block.card.type === 'workspace');
     const isWeb = !!(block.card && block.card.type === 'web');
     const isActions = !!(block.card && block.card.type === 'actions');
@@ -5577,13 +5641,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
     // what they show changes, not only their state.
     const view = isComposer ? composerCards().view(block) : '';
-    if (cached && !nudgeStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isWeb || isWorkspace || isActions || isAway || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && !nudgeStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
       : isSchedule ? buildScheduleCard(block)
       : isModel ? buildModelCard(block)
       : isClone ? buildCloneCard(block)
+      : isProject ? buildProjectCard(block)
       : isWeb ? buildWebCard(block)
       : isWorkspace ? buildWorkspaceCard(block)
       : isActions ? buildActionsCard(block)

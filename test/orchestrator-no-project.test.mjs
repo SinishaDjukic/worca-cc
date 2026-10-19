@@ -116,7 +116,7 @@ test('the default workflow with no project: done, 0 git spawns, work/ kept as ar
   assert.ok((await listRunArtifacts(pipelineId)).some((a) => a.kind === 'work' && a.relPath === 'work/src/feature.mjs'));
   const manifest = JSON.parse(readFileSync(join(orch.pipeline.dir, 'run.json'), 'utf8'));
   assert.deepEqual([manifest.workMode, manifest.members, manifest.workHarvested.files, manifest.retain], ['none', [], 2, null]);
-  assert.equal((manifest.warnings || []).some((w) => /not under the projects root/.test(w)), false, 'a run\'s own work/ is never a project');
+  assert.equal((manifest.warnings || []).some((w) => /projects root/.test(w)), false, 'the default projects root never warns, and a run\'s own work/ is never a project');
   assert.equal(existsSync(join(worcaHome(), 'runs', pipelineId)), false, 'the run root is gone');
   assert.doesNotMatch(readFileSync(join(orch.pipeline.dir, 'live-log.ndjson'), 'utf8'), /memory not mounted/);
   assert.equal(countProjects(), projects);

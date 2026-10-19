@@ -60,7 +60,7 @@ import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, Fla
 import { createKeepAwake, countWorking } from '../src/core/keep-awake.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
-  rawProjectsRoot, defaultProjectsRoot, runRootMode, getProjectsRoot,
+  rawProjectsRoot, defaultProjectsRoot, runRootMode, getProjectsRoot, projectsRootSource,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
   humanRateUsdPerHour, setHumanRateUsdPerHour, assertHumanRateInput,
@@ -218,8 +218,9 @@ import { checkBrokerAtBoot } from '../src/core/broker-boot.mjs';
 import { modelSlot, missingCredentials, describeMissing, workflowNeedsModel } from '../src/core/broker-routing.mjs';
 import { syncPluginSlots } from '../src/core/plugin-broker-slots.mjs';
 import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
+import { createProject, addProjectFolder, probeFolder, ProjectAddError, PROJECT_ADD_STATUS } from '../src/core/project-create.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
-import { realRoots, checkInside, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
+import { realRoots, realOrNull, checkInside, insideRoots, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, foreignRunModel, assertSlotModels, stepSlotDefaults,
@@ -275,6 +276,8 @@ import { scheduleEventPrompt, scheduleNoticeText } from '../src/core/ask/schedul
 import { applyModelChange } from '../src/core/ask/model-deps.mjs';
 import { modelEventPrompt, modelNoticeText } from '../src/core/ask/model-proposal.mjs';
 import { cloneEventPrompt, cloneNoticeText } from '../src/core/ask/clone-proposal.mjs';
+import { projectEventPrompt, projectNoticeText } from '../src/core/ask/project-proposal.mjs';
+import { applyProjectChange } from '../src/core/ask/project-deps.mjs';
 import { workspaceEventPrompt, workspaceNoticeText } from '../src/core/ask/workspace-proposal.mjs';
 import { applyWorkspaceChange } from '../src/core/ask/workspace-deps.mjs';
 import { actionsEventPrompt, actionsNoticeText } from '../src/core/ask/actions-proposal.mjs';
@@ -8798,6 +8801,15 @@ app.get('/api/projects', async (_req, res) => {
 app.post('/api/projects', async (req, res) => {
   const body = req.body || {};
   if (!(await requireFsAllowed(req, res, [normalizeProjectPath(body.path)]))) return;
+  if (body.useGit === true) {                  // Use git: git init once on a no-git folder, then register (Task 3)
+    try {
+      await pinUiLevel();
+      const out = await addProjectFolder({ name: body.name, path: body.path, useGit: true });
+      afterProjectRegistered(out.project);
+      const projects = await projectsForApi(out.projects);
+      return res.json({ projects, project: projects.find((p) => p.key === out.project.key) || null });
+    } catch (err) { return projectAddFail(res, err); }
+  }
   try {
     await pinUiLevel();                        // before the first project ends "fresh install"
     const projects = await addProject({ name: body.name, path: body.path });
@@ -8849,6 +8861,49 @@ app.post('/api/projects/bulk', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
+});
+
+function projectAddFail(res, err, extra = {}) {
+  const code = err instanceof ProjectAddError ? err.code : 'FAILED';
+  const body = { error: err && err.message ? err.message : String(err), code, ...extra };
+  if (code === 'NESTED_IN_REPO') Object.assign(body, { partOf: err.partOf ?? null, repoRoot: err.repoRoot ?? null });
+  return res.status(PROJECT_ADD_STATUS[code] || 500).json(body);
+}
+
+/** After New / Use git registered a project: the list broadcast, then discovery for a Git project only. */
+function afterProjectRegistered(project) {
+  emitChanged('projects-changed', 'created');
+  if (!project || project.vcs !== 'git') return;   // a Folder project has no origin to discover
+  discoverProject(project.path, { force: true })
+    .then(() => emitChanged('team-metrics-changed', 'discovered'))
+    .catch(() => { /* offline or no origin: discovery retries hourly */ });
+  discoverPolicy(project.path, { force: true }).catch(() => { /* offline: the background discovery retries */ });
+}
+
+// POST /api/projects/create — New: a project by name under the projects root (U6). No requireFsAllowed: the only
+// path is <projects root>/<one checked folder name>.
+app.post('/api/projects/create', async (req, res) => {
+  const body = req.body || {};
+  const root = getProjectsRoot();
+  const where = { root, rootDisplay: displayPath(root) };
+  try {
+    if (body.dryRun === true) {
+      const d = await createProject({ name: body.name, useGit: body.useGit === true, dryRun: true });
+      return res.json({ ok: true, ...where, path: d.path, name: d.name, displayPath: d.displayPath });
+    }
+    await pinUiLevel();                        // before the first project ends "fresh install"
+    const out = await createProject({ name: body.name, useGit: body.useGit === true });
+    afterProjectRegistered(out.project);
+    const projects = await projectsForApi(out.projects);
+    return res.status(201).json({ project: projects.find((p) => p.key === out.project.key) || null, projects, ...where });
+  } catch (err) { return projectAddFail(res, err, where); }
+});
+
+// GET /api/projects/probe?path= — what the Add project dialog's Folder pane shows for a path.
+app.get('/api/projects/probe', async (req, res) => {
+  const raw = typeof req.query.path === 'string' ? req.query.path : '';
+  if (!(await requireFsAllowed(req, res, [normalizeProjectPath(raw)]))) return;
+  try { return res.json(await probeFolder(raw)); } catch (err) { return projectAddFail(res, err); }
 });
 
 // POST /api/projects/clone {url, branch?, name?} -> 202 {jobId}: clone a repository into the
@@ -9106,15 +9161,26 @@ registerMemoryRoutes('/api/memory/projects/:key', { family: 'projects' });
 // WORCA_ACTIONS_REMOTE=1 already grant more than a listing, so either lifts the limit.
 const fsLimitedHere = (req = null) => REMOTE_MODE && !terminalEnabledHere(req) && !actionsEnabledHere(req);
 const FS_BROAD_WARNED = new Set();
-/** Worca's own folders as real paths: the projects root and the Worca home. A broad one is skipped (logged once). */
+/** Worca's own folders as real paths: the projects root and the Worca home. While no projects root is configured
+ *  (the default <worcaHome>/projects, U6) the roots are TODAY's — the OS home (it WAS the default root; S50 keeps the
+ *  hosted Folder-add limit at today's rule) with the Worca home folded into it when it lies there, so the Worca home's
+ *  runs/, store/ and settings stay a hidden folder — plus the default projects folder itself once it exists (New and
+ *  Clone fill it; fs-scope insideRoots accepts any containing root, so its projects are not "hidden"). A broad one is
+ *  skipped (logged once). */
 async function fsAllowedRoots() {
   let home = null;
   try { home = worcaHome(); } catch { /* no resolvable home (node:test without WORCA_HOME) */ }
-  return realRoots([getProjectsRoot(), home], { onSkip: (c, r) => {
+  const onSkip = (c, r) => {
     if (FS_BROAD_WARNED.has(r)) return;
     FS_BROAD_WARNED.add(r);
     console.warn(`[worca-ui] folder browser: ${r} (from ${c}) is too broad to browse on a hosted Worca; skipped. Set WORCA_PROJECTS_ROOT to a deeper folder.`);
-  } });
+  };
+  if (projectsRootSource() !== 'default') return realRoots([getProjectsRoot(), home], { onSkip });
+  const today = await realRoots([defaultRoot(), home], { onSkip });
+  // The folder itself only: a link at <worcaHome>/projects (to store/, or ~/.ssh) must not make its target a root.
+  const own = home ? await realOrNull(home) : null;
+  const extra = (await realRoots([getProjectsRoot()], { onSkip })).filter((r) => own && r === path.join(own, 'projects') && !insideRoots(r, today));
+  return [...today, ...extra];
 }
 /** True when every path may be used here; otherwise answers 403 FS_OUTSIDE_ALLOWED and returns false. */
 async function requireFsAllowed(req, res, paths) {
@@ -9129,7 +9195,7 @@ async function requireFsAllowed(req, res, paths) {
   return true;
 }
 // GET answers whether "Choose folder…" can open a native dialog for the viewer, without opening
-// one: the Add project dialog opens on Clone from URL when not. Never on a hosted worca (the dialog
+// one (the Add project dialog no longer asks: it opens on New either way, P2). Never on a hosted worca (the dialog
 // would open on the server, not on the viewer's screen).
 app.get('/api/fs/pick-folder', (req, res) => {
   res.json({ available: !REMOTE_MODE && nativeDialogAvailable() });
@@ -9720,7 +9786,7 @@ app.get('/api/workspaces/:id/runs/:runId/artifact-raw/*', async (req, res) => {
 //                         and the next Save would promote that env override into
 //                         settings.json. Runs still resolve via getProjectsRoot().
 //   projectsRootDefault : what applies when projectsRoot is blank — the env tier
-//                         when exported, else defaultRoot(). The UI placeholder.
+//                         when exported, else <worcaHome>/projects. The UI placeholder.
 //                         Additive; `default` keeps its `root` meaning.
 //   app                 : { version, repoUrl, releaseUrl } — static identity for
 //                         the About card (APP_INFO, from package.json). GET-only:
@@ -12298,7 +12364,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // Workflows chat (D13): a composer card names its type, state and name — never the run-card shape.
         const cc = composerHeaderCard(b);
         if (cc) { cards.push(cc); continue; }
-        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch')) {
+        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
@@ -13204,9 +13270,9 @@ async function startMetricsEventTurn(threadId, block) {
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
   // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
-  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' ? card.type : 'metrics';
-  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, metrics: metricsEventPrompt }[kind];
-  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, metrics: metricsNoticeText }[kind];
+  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' ? card.type : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, metrics: metricsNoticeText }[kind];
   const text = eventPrompt({ cardId: block.id, state, card, result });
   const notice = noticeText({ state, card, result });
   const mv = await askEventPick(threadId, thread);
@@ -13598,6 +13664,43 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       if (block.state === 'failed') return res.json({ block, turn: await startMetricsEventTurn(id, block) });
       followCloneCard(id, cardId, job);
       return res.json({ block });
+    }
+    if (found.block.card && found.block.card.type === 'project') {
+      // Project card: proposed → applied | failed | declined. The folder / registry write happens HERE, behind the click
+      // (Task 3's core); applied switches the chat to the new project through startScopeEventTurn (S40).
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        return res.json({ block, turn: await startMetricsEventTurn(id, block) });
+      }
+      askCardBusy.add(cardId);
+      let block; let result;
+      try {
+        try {
+          const card = found.block.card; const ch = card.change || {};
+          if (ch.kind === 'add' && fsLimitedHere(req)) {
+            const p = normalizeProjectPath(ch.path);
+            if (!p || !(await checkInside(p, await fsAllowedRoots())).inside) {
+              throw Object.assign(new Error(outsideAllowedMessage(p || String(ch.path))), { code: FS_OUTSIDE_ALLOWED });
+            }
+          }
+          await pinUiLevel();
+          const { project } = await applyProjectChange(card);
+          result = { ok: true, project: { key: project.key, name: project.name, path: project.path, displayPath: displayPath(project.path), vcs: project.vcs },
+            scope: { pinned: true, projectKey: project.key } };
+          try { afterProjectRegistered(project); } catch { /* a broadcast never fails the card */ }
+        } catch (err) { result = { ok: false, code: (err && err.code) || 'FAILED', error: err && err.message ? err.message : String(err) }; }
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      if (block.state !== 'applied') return res.json({ block, turn: await startMetricsEventTurn(id, block) });
+      const turn = await startScopeEventTurn(id, { scope: result.scope,
+        text: projectEventPrompt({ cardId, state: 'applied', card: block.card, result }),
+        notice: projectNoticeText({ state: 'applied', card: block.card, result }) });
+      return res.json({ block, turn });
     }
     if (found.block.card && ['metrics', 'policy', 'away'].includes(found.block.card.type)) {
       // Metrics / policy card (docs/team-metrics.md, docs/team-policy.md "Ask Worca"): proposed → applied | failed |

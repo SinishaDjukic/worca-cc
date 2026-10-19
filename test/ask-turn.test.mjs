@@ -371,6 +371,34 @@ test('card proposals (metrics, workspace, away, web): the parent re-validates th
       assert.ok(final.blocks.some((b) => b.kind === 'notice' && b.text === 'Workspace change rejected: a workspace over this exact project set already exists'));
       assert.ok(frames.some((f) => f.type === 'ask-card' && f.block.card.type === 'workspace'));
     } },
+    { name: 'propose_project_change: the parent re-validates the INPUT and mints the card; a refusal is a notice; a child refusal never reaches it', run: async () => {
+      const s = seed(); const seen = [];
+      const runner = (frames) => async (opts) => {
+        for (const [id, name, input, text] of frames) {
+          push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id, name, input }] } });
+          push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
+        }
+        await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+        push(opts.onEvent, RESULT());
+        return { text: '', exitCode: 0 };
+      };
+      const card = { type: 'project', kind: 'create', summary: 'Create site', name: 'site', path: '/p/site', vcs: 'none', change: { kind: 'create', name: 'site', useGit: false } };
+      const { turn, frames } = makeTurn(s, {}, {
+        validateProjectProposal: async (input) => { seen.push(input); return input.name === 'site' ? { ok: true, card } : { ok: false, errors: ['a project named "taken" already exists'] }; },
+        runClaudeImpl: runner([
+          ['toolu_1', 'mcp__worca__propose_project_change', { kind: 'create', name: 'site' }, '{"ok":true,"card":{}}'],
+          ['toolu_2', 'mcp__worca__propose_project_change', { kind: 'create', name: 'taken' }, '{"ok":true,"card":{}}'],
+          ['toolu_3', 'mcp__worca__propose_project_change', { kind: 'create', name: '../x' }, '{"ok":false,"errors":["x"]}'],
+        ]),
+      });
+      await turn.run();
+      assert.deepEqual(seen, [{ kind: 'create', name: 'site' }, { kind: 'create', name: 'taken' }]);
+      const final = getMessage(s.asst.id);
+      const cards = final.blocks.filter((b) => b.kind === 'card');
+      assert.equal(cards.length, 1); assert.deepEqual(cards[0].card, card); assert.equal(cards[0].state, 'proposed');
+      assert.ok(final.blocks.some((b) => b.kind === 'notice' && b.text === 'Project change rejected: a project named "taken" already exists'));
+      assert.ok(frames.some((f) => f.type === 'ask-card' && f.block.card.type === 'project'));
+    } },
     { name: 'web card: the parent re-validates against the turn\'s access — a host inside the team cap mints a card, one outside becomes a notice', run: async () => {
       const s = seed();
       const { turn } = makeTurn(s, { web: { enabled: true, allowedDomains: ['a.team.com'], search: null, teamCap: ['*.team.com'] } }, {

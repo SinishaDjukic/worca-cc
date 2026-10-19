@@ -236,6 +236,7 @@ import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, decorateFlagChips, flagOn } from './flags.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
+import { PROBE_DEBOUNCE_MS, defaultAddMode, detectModel } from './project-add.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor } from './tag-input.mjs';
 import { normaliseTags, formatTag } from '../../src/shared/run-tags.mjs';
 import { splitByDimensions, tagGroupOptions, dimensionLabel, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
@@ -734,6 +735,12 @@ const el = {
   projAddTabs: $('#proj-add-tabs'),
   projAddFolderPane: $('#proj-add-folder-pane'),
   projAddClonePane: $('#proj-add-clone-pane'),
+  projAddNameField: $('#proj-add-name-field'),
+  projAddNewPane: $('#proj-add-new-pane'),
+  projAddLocation: $('#proj-add-location'),
+  projAddDetect: $('#proj-add-detect'),
+  projAddGitRow: $('#proj-add-git-row'),
+  projAddGit: $('#proj-add-git'),
   projCloneUrl: $('#proj-clone-url'),
   projCloneBranch: $('#proj-clone-branch'),
   projCloneName: $('#proj-clone-name'),
@@ -1595,7 +1602,7 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     tmCache.at = 0;
-    if (currentView() === 'projects') void refreshProjectsPage();
+    if (currentView() === 'projects') void refreshProjectsPage(); else void loadProjects(selectedProjectRow()?.name || '', { quiet: true });
     return;
   }
   if (msg.type === 'workspaces-changed') {
@@ -7615,24 +7622,30 @@ function paintFormWorkMode() {
   return mode;
 }
 
-async function loadProjects(selectName) {
+async function loadProjects(selectName, { quiet = false } = {}) {
   try {
     const res = await fetch('/api/projects');
     const data = await safeJson(res);
+    if (quiet && !(data && Array.isArray(data.projects))) return;   // a failed background refresh keeps what New run shows
     state.projects = data && Array.isArray(data.projects) ? data.projects : [];
     state.projectsLoaded = !!data && Array.isArray(data.projects); state.runsRoot = (data && data.runsRoot) || ''; state.runsRootDisplay = (data && data.runsRootDisplay) || state.runsRoot;
   } catch {
+    if (quiet) return;
     state.projects = [];
   }
   paintNoProjectWorkDir();
-  renderProjectOptions(selectName);
+  renderProjectOptions(selectName, { quiet });
   // P3-D7: the automatic No project default (no stored choice, no project at boot) gives way to the first project.
   if (state.runTargetAuto && state.runTarget === 'none' && state.projects.length) setRunTarget('project', { persist: false });
   scheduleRunsPaint();
 }
 
-function renderProjectOptions(selectName) {
-  const want = selectName || localStorage.getItem(LAST_PROJECT_KEY) || '';
+function renderProjectOptions(selectName, { quiet = false } = {}) {
+  const before = quiet ? selectedProjectPath() : null;   // quiet: a background refresh keeps New run's state
+  const keepAdd = quiet && el.projectSelect.value === '__add__';   // the inline "+ Add project…" form is open
+  // quiet: the option selected NOW wins (a pick made while the refresh's GET was in flight is the user's latest).
+  const cur = quiet ? el.projectSelect.options[el.projectSelect.selectedIndex] : null;
+  const want = (cur && cur.dataset.name) || selectName || localStorage.getItem(LAST_PROJECT_KEY) || '';
   el.projectSelect.innerHTML = '';
 
   const placeholder = document.createElement('option');
@@ -7656,9 +7669,12 @@ function renderProjectOptions(selectName) {
 
   // Restore by index (not value) so duplicate paths can't pick the wrong name.
   const idx = state.projects.findIndex((p) => p.name === want);
-  if (idx >= 0) el.projectSelect.selectedIndex = idx + 1; // +1 past the placeholder
+  if (keepAdd) add.selected = true;
+  else if (idx >= 0) el.projectSelect.selectedIndex = idx + 1; // +1 past the placeholder
   else placeholder.selected = true;
 
+  // quiet: only New run's own project choice reloads its state (Workspace / No project hide the select)
+  if (quiet && (state.runTarget !== 'project' || selectedProjectPath() === before)) return;
   onProjectChanged();
 }
 
@@ -7882,9 +7898,11 @@ const OUTCOME_ICONS = {
   branch: '<circle cx="6" cy="5.5" r="2"/><circle cx="6" cy="18.5" r="2"/><circle cx="18" cy="7.5" r="2"/><path d="M6 7.5v9M18 9.5c0 4-3 5.6-7.5 6.3"/>',
   chevDown: '<path d="M6 9l6 6 6-6"/>',
   chevUp: '<path d="M6 15l6-6 6 6"/>',
+  warn: '<path d="M12 3l10 18H2z"/><path d="M12 10v4M12 17.5h.01"/>',
   // The Projects sync bar only (projectBarModel): listRowModel never names these.
   noRemote: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
   spin: '<path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/>',
+  folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
 };
 /** Paint one "What the run gets" cell from a runOutcomeModel. Text only ever via textContent. */
 function paintOutcomeCell(host, m, { onRetry = null, busy = false } = {}) {
@@ -9842,7 +9860,7 @@ function openWsAddMembers(id) {
     body.appendChild(row);
   }
   // The header's Close is the way out; the one action adds the picks, or — with nothing to pick —
-  // leads to the Projects page and opens its Add project dialog (a folder or a clone).
+  // leads to the Projects page and opens its Add project dialog (New, a folder or a clone).
   const actions = candidates.length ? [['Add', 'btn btn-primary btn-mini', async () => {
     if (!chosen.size) return;
     const r = await postWsMembers(id, { add: [...chosen] });
@@ -11526,18 +11544,6 @@ async function pickFolder(purpose = 'project', { multiple = false } = {}) {
   }
 }
 
-// Whether a native folder picker can open for this viewer, asked without opening one; never throws
-// (no answer counts as no picker).
-async function folderPickerAvailable() {
-  try {
-    const res = await fetch('/api/fs/pick-folder');
-    const data = await safeJson(res);
-    return res.ok && !!data && data.available === true;
-  } catch {
-    return false;
-  }
-}
-
 // Every folder a 'picked' reply names: `paths` from a multi-select dialog, else the one `path`.
 function pickedPaths(data) {
   if (data && Array.isArray(data.paths) && data.paths.length) return data.paths.filter((p) => typeof p === 'string' && p);
@@ -11598,12 +11604,15 @@ function buildProjectRow(p) {
 
   const row = document.createElement('div');
   row.className = 'pl-row';
+  const kind = projectKind(p);   // 'git' | 'folder' | '' (P1b): the chip, the No git box, the Folder filter
+  if (p.vcs) item.dataset.vcs = p.vcs;
 
   const main = document.createElement('div');
   main.className = 'pl-main';
   const name = document.createElement('div');
   name.className = 'pl-name';
   name.textContent = p.name;
+  if (kind) name.append(' ', kindChip(document, kind));
   if (!p.exists) {
     const miss = document.createElement('span');
     miss.className = 'proj-missing';
@@ -11612,7 +11621,7 @@ function buildProjectRow(p) {
   }
   const path = document.createElement('div');
   path.className = 'proj-path';
-  appendBreakable(path, p.path);   // a narrow column breaks it after a /, not mid-name
+  appendBreakable(path, p.displayPath || p.path);   // a narrow column breaks it after a /, not mid-name
   path.title = p.path;
   main.append(name, path);
   row.appendChild(main);
@@ -11622,7 +11631,13 @@ function buildProjectRow(p) {
   const sync = document.createElement('div');
   sync.className = 'pl-sync';
   sync.dataset.needsGit = '';
-  if (p.key) {
+  if (kind === 'folder') {
+    // A plain folder has no branch or origin: the bar's column says so (Projects board).
+    const nogit = document.createElement('div');
+    nogit.className = 'proj-nogit';
+    nogit.append(wsIcon('folder', 15), Object.assign(document.createElement('span'), { className: 'proj-nogit-txt', textContent: 'No git' }));
+    sync.appendChild(nogit);
+  } else if (p.key) {
     const syncSlot = document.createElement('div');
     syncSlot.className = 'proj-sync';
     syncSlot.dataset.key = p.key;
@@ -11893,6 +11908,7 @@ function paintProjSyncBar(slot) {
 const PROJ_FILTERS = [
   ['behind', 'Behind', 'blue'], ['diverged', 'Diverged', 'amber'], ['dirty', 'Uncommitted', 'peach'],
   ['ok', 'Up to date', 'green'], ['offline', 'Offline', 'grey'], ['local', 'Local only', 'grey'],
+  ['folder', 'Folder', 'teal'],
 ];
 let projFilter = 'all';
 function paintProjFilters() {
@@ -11900,6 +11916,7 @@ function paintProjFilters() {
   if (!card) return;
   const items = [...card.querySelectorAll('.pl-item')];
   const groups = items.map((it) => {
+    if (it.dataset.vcs === 'none') return 'folder';
     const b = it.dataset.key ? state.syncChips[it.dataset.key] : undefined;
     return b === undefined ? null : projectBarModel(b).group;
   });
@@ -12083,7 +12100,12 @@ function renderProjectsList() {
   if (!host) return;
   host.innerHTML = '';
   if (!state.projects.length) {
-    host.appendChild(histEmpty('No projects yet — click “Add project” to register one.'));
+    const zero = document.createElement('section');
+    zero.className = 'card saved-card proj-zero';
+    const add = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-primary btn-mini proj-zero-add', textContent: 'Add project' });
+    add.addEventListener('click', () => { void addProjectFlow(); });
+    zero.append(Object.assign(document.createElement('span'), { className: 'proj-zero-txt', textContent: 'No projects yet' }), add);
+    host.appendChild(zero);
     return;
   }
   const card = document.createElement('section');
@@ -12103,7 +12125,7 @@ function renderProjectsList() {
   const filters = document.createElement('div');
   filters.className = 'proj-filters';
   filters.setAttribute('role', 'group');
-  filters.setAttribute('aria-label', 'Filter by sync state');
+  filters.setAttribute('aria-label', 'Filter projects');
   filters.hidden = true;
   filters.dataset.needsGit = '';
   const tools = document.createElement('div');
@@ -12264,6 +12286,8 @@ function paintProjHeader(screen, p) {
     miss.textContent = 'missing';
     title.append(' ', miss);
   }
+  const kc = kindChip(document, projectKind(p));
+  screen.querySelector('.pd-kind')?.replaceChildren(...(kc ? [kc] : []));
   const path = screen.querySelector('.pd-path');
   path.textContent = p.path;
   path.title = p.path;
@@ -12484,7 +12508,7 @@ function buildPdOverview(sec, key) {
 
   // BRANCH replaces PATH (the header carries the path): the same row model as the Projects list,
   // painted by paintSyncChips from /api/sync/projects.
-  grid.appendChild(pdBranchCard('branch', 'BRANCH'));
+  if (projectKind(p) !== 'folder') grid.appendChild(pdBranchCard('branch', 'BRANCH'));
 
   const rows = projectHistoryRows(key);
   const fam = { done: 0, paused: 0, stopped: 0, error: 0 };
@@ -12948,10 +12972,18 @@ function setProjAddMsg(text, kind) {
   el.projAddMsg.className = 'hint' + (kind ? ' ' + kind : '');
 }
 
-function openProjectAddModal(path, { mode = 'folder' } = {}) {
+function openProjectAddModal(path, { mode = 'folder', onAdded = null } = {}) {
   void refreshGit().then((on) => { if (!on && projAddMode === 'clone' && !cloneFollow) setProjAddMode('folder'); });
   el.projAddPath.value = path || '';
   el.projAddName.value = path ? basenameOf(path) : '';
+  el.projAddGit.checked = false;
+  el.projAddDetect.replaceChildren();
+  el.projAddDetect.hidden = true;
+  el.projAddLocation.value = '';
+  el.projAddLocation.title = '';
+  projAddProbed = null;
+  // A clone still running from an earlier open is not this open's: its project is never reported to onAdded.
+  projAddOnAdded = typeof onAdded === 'function' && !cloneFollow ? onAdded : null;
   if (el.projCloneUrl) {
     el.projCloneUrl.value = '';
     el.projCloneBranch.value = '';
@@ -12961,25 +12993,129 @@ function openProjectAddModal(path, { mode = 'folder' } = {}) {
   el.projectAddModal.classList.remove('hidden');
   setProjAddMode(mode);
   // A clone still in flight from an earlier open keeps its progress line.
-  if (cloneFollow) { setProjAddMode('clone'); setProjAddMsg(`Cloning ${cloneFollow.url} …`); lockCloneForm(true); return; }
+  if (cloneFollow) { setProjAddMode('clone'); cancelProjAddCheck(); setProjAddMsg(`Cloning ${cloneFollow.url} …`); lockCloneForm(true); return; }
   if (mode === 'folder') {
     el.projAddName.focus();
     el.projAddName.select();
   }
 }
 
-// ---- Add project: the Folder / Clone from URL tabs ------------------------------
-let projAddMode = 'folder';
+// ---- Add project: the New / Folder / Clone from URL tabs --------------------------
+let projAddMode = 'new';
+let projAddOnAdded = null;   // onAdded(project) of this open of the dialog; closing drops it
+let projAddRefused = false;  // the live check refused: Create project / Add project stay disabled
+let projAddSeq = 0;          // the live check's sequence: a stale answer is dropped
+let projAddTimer = null;
+let projAddProbed = null;    // the folder path the probe last answered for: Folder's Add waits for it
 
 function setProjAddMode(mode) {
-  projAddMode = mode === 'clone' && el.projAddClonePane && gitOn() ? 'clone' : 'folder';
+  const prev = projAddMode;
+  projAddMode = mode === 'clone' && el.projAddClonePane && gitOn() ? 'clone' : mode === 'folder' ? 'folder' : 'new';
+  if (projAddMode !== prev) el.projAddGit.checked = false;   // Use git is off on every segment until asked there (U11)
   if (!el.projAddTabs) return;
   for (const t of el.projAddTabs.querySelectorAll('.md-tab')) t.setAttribute('aria-selected', String(t.dataset.mode === projAddMode));
-  el.projAddFolderPane.hidden = projAddMode !== 'folder';
-  el.projAddClonePane.hidden = projAddMode !== 'clone';
-  el.projAddSave.textContent = projAddMode === 'clone' ? 'Clone and add' : 'Add project';
-  setProjAddMsg(projAddMode === 'clone' ? 'Worca clones the repository into its projects folder with the deployment\'s credential for its host (GitHub or Azure DevOps).' : '');
-  if (projAddMode === 'clone') el.projCloneUrl.focus();
+  const isNew = projAddMode === 'new';
+  const isFolder = projAddMode === 'folder';
+  const isClone = projAddMode === 'clone';
+  el.projAddNameField.hidden = isClone;
+  el.projAddNewPane.hidden = !isNew;
+  el.projAddFolderPane.hidden = !isFolder;
+  el.projAddClonePane.hidden = !isClone;
+  el.projAddGitRow.hidden = !isNew;          // Folder shows it from the detect row
+  el.projAddSave.textContent = isNew ? 'Create project' : isClone ? 'Clone and add' : 'Add project';
+  setProjAddMsg('');
+  setProjAddRefused(false);
+  projAddProbed = null;                      // the refusal is cleared: Folder's Add waits for the re-check again
+  if (isClone) el.projCloneUrl.focus(); else el.projAddName.focus();
+  if (isNew || (isFolder && el.projAddPath.value.trim())) scheduleProjAddCheck(0);
+}
+
+function setProjAddRefused(on) {
+  projAddRefused = !!on;
+  el.projAddSave.disabled = projAddRefused;
+  // The detect row names the refusal only on Folder: it keeps its chips while another segment shows.
+  const byDetect = projAddMode === 'folder' && !el.projAddDetect.hidden;
+  if (projAddRefused) el.projAddSave.setAttribute('aria-describedby', byDetect ? 'proj-add-detect' : 'proj-add-msg');
+  else el.projAddSave.removeAttribute('aria-describedby');
+  if (projAddRefused && projAddMode === 'folder') el.projAddPath.setAttribute('aria-invalid', 'true');
+  else el.projAddPath.removeAttribute('aria-invalid');
+}
+
+/** Use git rides the request only while its row shows and git is here. */
+function projAddGitOn() {
+  return !el.projAddGitRow.hidden && gitOn() && el.projAddGit.checked;
+}
+
+function scheduleProjAddCheck(ms = PROBE_DEBOUNCE_MS) {
+  clearTimeout(projAddTimer);
+  const seq = ++projAddSeq;
+  projAddTimer = setTimeout(() => { projAddTimer = null; void runProjAddCheck(seq); }, ms);
+}
+
+/** Drop the pending live check and any answer still in flight: a save, a close or a clone's own line wins. */
+function cancelProjAddCheck() {
+  clearTimeout(projAddTimer);
+  projAddTimer = null;
+  projAddSeq += 1;
+}
+
+// The live check inside the dialog: New asks for a dry run (Location, the name rule); Folder probes the path.
+async function runProjAddCheck(seq) {
+  const mode = projAddMode;
+  const stale = () => seq !== projAddSeq || mode !== projAddMode;
+  if (mode === 'new') {
+    const name = el.projAddName.value.trim();
+    let res; let data;
+    try {
+      res = await fetch('/api/projects/create', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, ...(projAddGitOn() ? { useGit: true } : {}), dryRun: true }),
+      });
+      data = (await safeJson(res)) || {};
+    } catch { return; }
+    if (stale()) return;
+    el.projAddLocation.value = data.displayPath || data.path || data.rootDisplay || data.root || '';
+    el.projAddLocation.title = data.path || data.root || '';
+    if (name && !res.ok) { setProjAddMsg(data.error || `HTTP ${res.status}`, 'err'); setProjAddRefused(true); }
+    else { setProjAddMsg(''); setProjAddRefused(false); }
+    return;
+  }
+  if (mode !== 'folder') return;
+  const path = el.projAddPath.value.trim();
+  if (!path) { projAddProbed = null; paintProjAddDetect(null); setProjAddMsg(''); return; }   // the refusal is cleared: Add waits again
+  let res; let data;
+  try {
+    res = await fetch(`/api/projects/probe?path=${encodeURIComponent(path)}`);
+    data = (await safeJson(res)) || {};
+  } catch { return; }
+  if (stale()) return;
+  projAddProbed = path;
+  if (!res.ok) {
+    paintProjAddDetect(null);
+    setProjAddMsg(data.error || `HTTP ${res.status}`, 'err');
+    setProjAddRefused(true);
+    return;
+  }
+  setProjAddMsg('');
+  paintProjAddDetect(data);
+}
+
+// The Folder pane's detect row (canvas AddFolder): kind chip · No git · file count, or the refusal chip.
+function paintProjAddDetect(p) {
+  const m = detectModel(p, { git: gitOn() });
+  const nodes = m.chips.map((c) => {
+    if (c.kind) return kindChip(document, c.kind);
+    const n = document.createElement('span');
+    n.className = c.tone === 'files' ? 'pad-files' : c.tone === 'warn' ? 'pad-chip warn' : 'pad-chip';
+    n.textContent = c.text;
+    if (c.tone === 'warn') n.prepend(wsIcon('warn', 13));   // the AddFolder board's triangle (static markup)
+    return n;
+  }).filter(Boolean);
+  el.projAddDetect.replaceChildren(...nodes);
+  el.projAddDetect.hidden = !nodes.length;
+  setProjAddRefused(m.refused);
+  el.projAddGitRow.hidden = !m.useGit;
+  if (!m.useGit) el.projAddGit.checked = false;
 }
 
 /** The folder name worca will use for a clone URL (planClone's rule), or '' when the URL does not name one repository.
@@ -13051,12 +13187,14 @@ function onCloneJob(job) {
   lockCloneForm(false);
   const open = el.projectAddModal && !el.projectAddModal.classList.contains('hidden');
   if (job.state === 'error') {
-    if (open) { setProjAddMode('clone'); setProjAddMsg(job.error || 'The clone failed.', 'err'); }
+    if (open) { setProjAddMode('clone'); cancelProjAddCheck(); setProjAddMsg(job.error || 'The clone failed.', 'err'); }
     else setProjectsMsg(`Clone failed: ${job.error || 'unknown error'}`, 'err');
     return;
   }
   const name = (job.project && job.project.name) || job.name || '';
+  const onAdded = open ? projAddOnAdded : null;   // closeProjectAddModal() drops it
   if (open) closeProjectAddModal();
+  if (onAdded && job.project && job.project.key) try { onAdded(job.project); } catch { /* the caller's */ }
   void (async () => {
     try {
       const res = await fetch('/api/projects');
@@ -13071,39 +13209,81 @@ function onCloneJob(job) {
 
 function closeProjectAddModal() {
   el.projectAddModal.classList.add('hidden');
+  projAddOnAdded = null;
+  cancelProjAddCheck();
 }
 
-// The dialog first (#649): its Folder tab's Choose folder… opens the native picker, and Clone from URL
-// needs no folder at all. No folder picker here (a container or hosted worca): the repository is the way in.
-async function addProjectFlow() {
+// The dialog first (#649), on New (canvas AddNew): a project by name needs no folder picker and no git. Its Folder
+// tab's Choose folder… opens the native picker; Clone from URL (git only) opens only when asked for.
+async function addProjectFlow({ mode = null, onAdded = null } = {}) {
   setProjectsMsg('');
-  const [picker] = await Promise.all([folderPickerAvailable(), refreshGit()]);
-  openProjectAddModal('', { mode: picker || !gitOn() ? 'folder' : 'clone' });
+  await refreshGit().catch(() => gitOn());
+  openProjectAddModal('', { mode: defaultAddMode({ asked: mode, git: gitOn() }), onAdded });
+}
+
+// After a New or a Folder add: take the callback first (closeProjectAddModal() drops it), repaint, then report.
+function afterProjectAdded(projects, project) {
+  const cb = projAddOnAdded; projAddOnAdded = null;
+  state.projects = Array.isArray(projects) ? projects : state.projects;
+  closeProjectAddModal();
+  renderProjectsList();
+  renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || ''); // keep New-pipeline dropdown in sync
+  if (cb && project) try { cb(project); } catch { /* the caller's */ }
+}
+
+async function saveProjectNew() {
+  const name = el.projAddName.value.trim();
+  if (!name) return setProjAddMsg('Name is required.', 'err');
+  const useGit = projAddGitOn();
+  el.projAddSave.disabled = true;
+  try {
+    const res = await fetch('/api/projects/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, ...(useGit ? { useGit: true } : {}) }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { setProjAddMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    afterProjectAdded(data.projects, data.project || null);
+  } catch (e) {
+    setProjAddMsg(e.message, 'err');
+  } finally {
+    el.projAddSave.disabled = projAddRefused;
+  }
 }
 
 async function saveProjectAdd() {
   if (projAddMode === 'clone') return saveProjectClone();
+  if (projAddRefused) return;
+  cancelProjAddCheck();                        // a dry run or probe answering after the click would repaint the dialog
+  if (projAddMode === 'new') return saveProjectNew();
+  // Folder: Add waits for this path's probe (Not found / Part of … block it, an Enter or a quick click too).
+  if (el.projAddPath.value.trim() && projAddProbed !== el.projAddPath.value.trim()) {
+    const seq = projAddSeq;
+    el.projAddSave.disabled = true;            // one wait: a second Enter or click never restarts the probe
+    await runProjAddCheck(seq);
+    if (seq !== projAddSeq || projAddRefused) return;
+    el.projAddSave.disabled = false;           // a probe that failed to answer painted nothing
+  }
   const name = el.projAddName.value.trim();
   const path = el.projAddPath.value.trim();
   if (!name) return setProjAddMsg('Name is required.', 'err');
   if (!path) return setProjAddMsg('Folder is required.', 'err');
+  const useGit = projAddGitOn();
   el.projAddSave.disabled = true;
   try {
     const res = await fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, path }),
+      body: JSON.stringify({ name, path, ...(useGit ? { useGit: true } : {}) }),
     });
     const data = await safeJson(res);
     if (!res.ok) { setProjAddMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
-    state.projects = Array.isArray(data.projects) ? data.projects : state.projects;
-    closeProjectAddModal();
-    renderProjectsList();
-    renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || ''); // keep New-pipeline dropdown in sync
+    afterProjectAdded(data.projects, data.project || (data.projects || []).find((p) => p.name === name) || null);
   } catch (e) {
     setProjAddMsg(e.message, 'err');
   } finally {
-    el.projAddSave.disabled = false;
+    el.projAddSave.disabled = projAddRefused;
   }
 }
 
@@ -13354,15 +13534,25 @@ if (el.projDetail) {
     if (err) notify({ tone: 'err', title: 'Could not change “Include my runs”', detail: err, key: `tm-record-${cb.dataset.key}` });
   });
 }
-if (el.projectAddBtn) el.projectAddBtn.addEventListener('click', addProjectFlow);
+if (el.projectAddBtn) el.projectAddBtn.addEventListener('click', () => { void addProjectFlow(); });
 if (el.projAddSave) {
   el.projAddSave.addEventListener('click', saveProjectAdd);
   el.projAddCancel.addEventListener('click', closeProjectAddModal);
   const fillProjAdd = (p) => {
+    if (projAddMode !== 'folder') setProjAddMode('folder');   // a picked or browsed folder is the Folder segment
     el.projAddPath.value = p;
     if (!el.projAddName.value.trim()) el.projAddName.value = basenameOf(p);
     setProjAddMsg('');
+    scheduleProjAddCheck(0);
   };
+  el.projAddName.addEventListener('input', () => { if (projAddMode === 'new') scheduleProjAddCheck(); });
+  el.projAddName.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!projAddRefused && !el.projAddSave.disabled) void saveProjectAdd(); }
+  });
+  el.projAddPath.addEventListener('input', () => { if (projAddMode === 'folder') scheduleProjAddCheck(); });
+  el.projAddGit.addEventListener('change', () => { if (projAddMode === 'new') scheduleProjAddCheck(0); });
+  // git found or lost while New or the Folder pane (with a path) shows: re-check, so the No git chip and Use git follow (S61).
+  onGitFlip(() => { if (!el.projectAddModal.classList.contains('hidden') && (projAddMode === 'new' || (projAddMode === 'folder' && el.projAddPath.value.trim()))) scheduleProjAddCheck(0); });
   const browseProjAddInWorca = () => openFolderBrowser(el.projAddPath.value.trim(), fillProjAdd, {
     multiple: true, onSelectMany: (paths) => projectsViewPicks(paths, { fill: fillProjAdd }),
   });
@@ -13410,6 +13600,7 @@ if (typeof window !== 'undefined') {
     loadProjectsView, renderProjectsList, buildProjectRow, deleteProject,
     confirmModal, addProjectFlow, openProjectAddModal, saveProjectAdd,
     openProjectBulkModal, saveProjectBulk, closeProjectBulkModal, openFolderBrowser,
+    openAddProject: () => chatDeps.openAddProject(),
   };
 }
 
@@ -14172,7 +14363,7 @@ function setFormMsg(text, kind) {
 // One contract for both fields: value = the RAW setting (blank when unset),
 // placeholder = what applies while it IS blank. `projectsRootDefault` is that
 // fallback for the projects root — the WORCA_PROJECTS_ROOT override when it is
-// exported, else the home folder — so a blank field really means "use the
+// exported, else worca's projects folder (<worcaHome>/projects) — so a blank field really means "use the
 // default", and Save round-trips a blank as a blank instead of persisting a path
 // the user never typed.
 function paintSettings(data) {
@@ -33938,22 +34129,40 @@ function gsRunHops(g, mock) {
       : 'This is your run’s page. The line at the top of its card says what it is doing: the state, then the step, and whether it waits for you.'),
   ];
 }
-/** Register a folder, through the Add project dialog: the prelude of every tour that needs a project. */
+/** Add a project, through the Add project dialog: the prelude of every tour that needs a project. */
 function gsAddProjectHops(g, navText, addText) {
   const val = (id) => (document.getElementById(id)?.value || '').trim();
   // Opening the dialog is skipped while it is up and re-lights if it is closed; once the
-  // project is added the dialog hops are all met for good.
-  return [
+  // project is added the dialog hops are all met for good. The dialog hops follow its segment
+  // (New · Folder · Clone from URL): the 500 ms guide poll re-derives them, so a switch moves the ring.
+  const head = [
     NAV('projects', navText),
     { id: 'add', target: '#project-add-btn', skipWhenMet: true, met: () => !!g.added || gsDialogUp('project-add-modal'), text: addText },
-    { id: 'path', mode: 'pointer', target: '#proj-add-path', met: () => !!g.added || !!val('proj-add-path'), skipWhenMet: !!g.added,
-      text: 'Paste the folder’s path, or Choose folder… to pick it. Files on disk are never touched.',
-      already: 'The folder’s path goes here. Files on disk are never touched.' },
+  ];
+  const save = (text) => ({ id: 'save', mode: 'pointer', target: '#proj-add-save', click: 'added', met: () => !!g.added && !gsDialogUp('project-add-modal'), text });
+  if (projAddMode === 'clone') {
+    return [...head,
+      { id: 'url', mode: 'pointer', target: '#proj-clone-url', met: () => !!g.added || !!val('proj-clone-url'), skipWhenMet: !!g.added,
+        text: 'Paste the repository’s https:// URL.', already: 'The repository’s URL goes here.' },
+      save('Clone it. The project joins the list when the clone ends.'),
+    ];
+  }
+  if (projAddMode === 'folder') {
+    return [...head,
+      { id: 'path', mode: 'pointer', target: '#proj-add-path', met: () => !!g.added || !!val('proj-add-path'), skipWhenMet: !!g.added,
+        text: 'Paste the folder’s path, or Choose folder… to pick it.',
+        already: 'The folder’s path goes here.' },
+      { id: 'name', mode: 'pointer', target: '#proj-add-name', met: () => !!g.added || !!val('proj-add-name'), skipWhenMet: !!g.added,
+        text: 'Name it — this is how it appears in lists and pickers.',
+        already: 'Its name — how it appears in lists and pickers.' },
+      save('Add it. The dialog closes and the project joins the list.'),
+    ];
+  }
+  return [...head,
     { id: 'name', mode: 'pointer', target: '#proj-add-name', met: () => !!g.added || !!val('proj-add-name'), skipWhenMet: !!g.added,
-      text: 'Name it — this is how it appears in lists and pickers.',
-      already: 'Its name — how it appears in lists and pickers.' },
-    { id: 'save', mode: 'pointer', target: '#proj-add-save', click: 'added', met: () => !!g.added && !gsDialogUp('project-add-modal'),
-      text: 'Add it. The dialog closes and the project joins the list.' },
+      text: 'Name it. worca creates a folder with this name in its projects folder.',
+      already: 'Its name: worca creates a folder with this name.' },
+    save('Create it. The dialog closes and the project joins the list.'),
   ];
 }
 /** A guide never fails on a control the interface mode hides (docs/ui-levels.md): when every
@@ -34019,14 +34228,14 @@ function gsHops(step, g) {
   switch (step) {
     case 'project':
       return [
-        ...gsAddProjectHops(g, 'Projects live here: every run happens inside one of these folders.', 'Register a folder: the Add project dialog opens — give it the project’s folder. Files on disk are never touched.'),
+        ...gsAddProjectHops(g, 'Projects live here: every run happens inside one of these folders.', 'Add one: the Add project dialog opens.'),
         { id: 'row', info: true, nextLabel: 'Done', target: '#projects-list .pl-item',
-          text: 'Your project. Runs happen inside this folder; open the row for its settings, memory and history.' },
+          text: 'Your project. Open the row for its settings, memory and history.' },
       ];
     case 'run':
-      return [...needProject('A run needs a project first.', 'Add one here: give the dialog that opens its folder.'), ...gsRunHops(g, true)];
+      return [...needProject('A run needs a project first.', 'Add one here: the Add project dialog opens.'), ...gsRunHops(g, true)];
     case 'realRun':
-      return [...needProject('A run needs a project first.', 'Add one here: give the dialog that opens its folder.'), ...gsRunHops(g, false)];
+      return [...needProject('A run needs a project first.', 'Add one here: the Add project dialog opens.'), ...gsRunHops(g, false)];
     case 'ask': {
       // worca Chat: Ask Worca is the Chat page — its sidebar row first (a nav hop: the user's own click routes, so the
       // composer is never ringed on a page where it is not on screen), then the composer.
@@ -34095,7 +34304,7 @@ function gsHops(step, g) {
     case 'workspace': {
       const checked = () => document.querySelectorAll('#wiz-projects input:checked').length;
       return [
-        ...(projects < 2 ? gsAddProjectHops(g, 'A workspace needs at least two projects.', 'Add another one here: give the dialog that opens its folder.') : []),
+        ...(projects < 2 ? gsAddProjectHops(g, 'A workspace needs at least two projects.', 'Add another one here: the Add project dialog opens.') : []),
         NAV('workspaces', 'Workspaces live here.', ['workspace-create']),   // the wizard is part of the way
         { id: 'create', target: '#ws-create-btn', skipWhenMet: true, met: () => onView('workspace-create'),
           text: 'A workspace runs one task across several projects at once. Create one.' },
@@ -34113,7 +34322,7 @@ function gsHops(step, g) {
       // chip): first the row, then the tab pill, then the block — or, for a project with no origin
       // remote, the block that explains why, so the tour never lights nothing. The plan is re-derived
       // after every hop, so each readiness check looks at what is on screen now.
-      const pre = needProject('Team metrics is enabled per project.', 'Add one here first: give the dialog that opens its folder.');
+      const pre = needProject('Team metrics is enabled per project.', 'Add one here first: the Add project dialog opens.');
       const nav = NAV('projects', 'Team metrics is switched on per project, from its page here.');
       const pageOpen = () => !!projDetail;
       const teamTab = () => document.getElementById('pd-tab-team');
@@ -34154,7 +34363,7 @@ function gsHops(step, g) {
       // set. A project pointed at another home stays on its page, and the closing stop is the block
       // that now says so. `g.enabled` (the submit's click) carries the walk past the page hops,
       // because the routing leaves the page — and the checks that read it — behind.
-      const pre = needProject('A team policy is set per project.', 'Add one here first: give the dialog that opens its folder.');
+      const pre = needProject('A team policy is set per project.', 'Add one here first: the Add project dialog opens.');
       const nav = NAV('projects', 'A team policy is switched on per project, from its page here.', ['team-policy']);   // the new home's page is where it ends
       const pageOpen = () => !!projDetail;
       const teamTab = () => document.getElementById('pd-tab-team');
@@ -35465,8 +35674,13 @@ else if (!storedTarget) bootProjects.then(() => { if (state.projectsLoaded && !s
 // run panel (no link). chatDeps is P1's top-level const; openShipItFor is a hoisted function declaration.
 registerChatActionCards();
 chatDeps.openShipIt = openShipItFor;
-// Projects, any way P4: the scope menu's "Add project…" (P2 points it at the dialog's New tab).
-chatDeps.openAddProject = () => { void addProjectFlow(); };
+// Projects, any way P4: the scope menu's "Add project…" — P2: the dialog opens on New, and the project it adds becomes
+// the chat's scope (scopeChatTo, after a New, a Folder add or a clone done from that dialog).
+chatDeps.openAddProject = () => { void addProjectFlow({ mode: 'new', onAdded: scopeChatTo }); };
+/** Pin the chat to a project the Add project dialog just added (P4b panel API; a no-op without a key). */
+function scopeChatTo(project) {
+  if (project && project.key) askPanel?.setScope?.({ pinned: true, projectKey: project.key, label: project.name });
+}
 registerScopeSwitchCard();
 
 // worca Chat P6 (CONTRACT §2/§8): the composer's intent chip — a composer add-on, registered before the chat mounts.
@@ -35513,6 +35727,7 @@ function mountChatHome() {
       level: () => currentLevel(),
       plans: chatHomePlans,
       mountFeature: mountShapeFeature,
+      addProject: () => { void addProjectFlow({ mode: 'new', onAdded: scopeChatTo }); },
     },
   });
 }

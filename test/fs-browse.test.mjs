@@ -78,6 +78,14 @@ test('empty input opens the projects root when it exists, else the OS home', asy
         const out = await listFolders('');
         assert.equal(out.path, root);
       })) },
+    { name: 'empty input lists home even when the default projects folder exists (only a configured root is a start)', run: () => withHome(root, async () => {
+      const prev = process.env.WORCA_HOME;
+      process.env.WORCA_HOME = root;
+      const def = join(root, '.worca-cc', 'projects');
+      await mkdir(def, { recursive: true });
+      try { assert.equal((await listFolders('')).path, root); }
+      finally { if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev; await rm(join(root, '.worca-cc'), { recursive: true, force: true }); }
+    }) },
   ]);
 });
 

@@ -1,9 +1,9 @@
-// ui/public/chat/home-actions.mjs — the Chat home's quick actions (worca Chat P6): eight intent tiles and More, in the
-// mockup's order. A tile only ARMS the composer (deps.setIntent: the intent chip and its placeholder); nothing is sent
-// until the user sends. Track a run / Explain a diff also open a run picker (Live / Finished) whose pick prefills a
+// ui/public/chat/home-actions.mjs — the Chat home's quick actions (worca Chat P6): seven intent tiles, Add project and
+// More, in the mockup's order. An intent tile only ARMS the composer (deps.setIntent: the intent chip and its
+// placeholder); nothing is sent until the user sends. Add project opens the Add project dialog (deps.addProject). Track a run / Explain a diff also open a run picker (Live / Finished) whose pick prefills a
 // mention of that run. Every action is a real Ask Worca capability (src/core/ask/tools.mjs):
 //   run propose_run · shape propose_run (Shaper) · workflow propose_workflow · schedule preview_schedule + propose_run · track list_runs + track_run
-//   diff get_run + get_run_diff · script draft_script (+ save_script / test_script) · clone propose_clone_project · away set_away_now
+//   diff get_run + get_run_diff · script draft_script (+ save_script / test_script) · project the Add project dialog (New · Folder · Clone from URL; chat: propose_project_change / propose_clone_project) · away set_away_now
 //   metrics get_team_metrics · model list_models + propose_model_change · workspace propose_workspace_change
 //   remember remember · tasks list_task_sources + find_tasks
 import { toggleMenu } from '../workflows/menu.mjs';
@@ -11,18 +11,21 @@ import { levelShows } from '../ui-level.mjs';
 import { INTENTS } from './intent.mjs';
 import { homeIcon } from './home-icons.mjs';
 
-export const TILE_INTENTS = Object.freeze(['run', 'shape', 'workflow', 'schedule', 'track', 'diff', 'script', 'clone']);
+export const TILE_INTENTS = Object.freeze(['run', 'shape', 'workflow', 'schedule', 'track', 'diff', 'script']);
+/** Tiles that do something other than arm an intent: Add project opens the dialog on New (deps.addProject). */
+export const TILE_ACTIONS = Object.freeze(['project']);
+export const PROJECT_TILE = Object.freeze({ label: 'Add project', icon: 'project' });
 export const MORE_INTENTS = Object.freeze(['away', 'metrics', 'model', 'workspace', 'remember', 'tasks']);
 /** The interface mode each action belongs to: the level of the page or surface that owns the feature
  *  (app.js VIEW_MIN_LEVEL / SETTINGS_TAB_MIN_LEVEL, docs/ui-levels.md). */
 export const ACTION_LEVEL = Object.freeze({
-  run: 'simple', shape: 'simple', workflow: 'simple', schedule: 'advanced', track: 'simple', diff: 'advanced', script: 'simple', clone: 'simple',
+  run: 'simple', shape: 'simple', workflow: 'simple', schedule: 'advanced', track: 'simple', diff: 'advanced', script: 'simple', project: 'simple',
   away: 'simple', metrics: 'expert', model: 'expert', workspace: 'advanced', remember: 'advanced', tasks: 'advanced', more: 'simple',
 });
 /** Actions a server-side switch can take away: action → key of the flags the home loads (deps.flags). */
 export const ACTION_FLAG = Object.freeze({ script: 'scripts', tasks: 'tasks', shape: 'shapeFirst' });
 /** Actions that need git: their tiles carry data-needs-git, hidden while git is missing (git-gate.mjs). */
-export const ACTION_NEEDS_GIT = Object.freeze(['clone', 'diff']);
+export const ACTION_NEEDS_GIT = Object.freeze(['diff']);
 /** Before the flags load: script tools on (the setting's default), task sources unknown = none, Shape it first off
  *  until a hello turns it on. */
 export const DEFAULT_FLAGS = Object.freeze({ scripts: true, tasks: false, shapeFirst: false });
@@ -96,6 +99,13 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
     } else {
       b.addEventListener('click', () => arm(id));
     }
+    tiles.set(id, b);
+    el.appendChild(b);
+  }
+  for (const id of TILE_ACTIONS) {
+    const b = tile(id, PROJECT_TILE.label, PROJECT_TILE.icon);
+    b.dataset.action = id;
+    b.addEventListener('click', () => { if (deps.addProject) deps.addProject(); });
     tiles.set(id, b);
     el.appendChild(b);
   }
