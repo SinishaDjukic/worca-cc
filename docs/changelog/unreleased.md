@@ -20,6 +20,14 @@ Pull requests (add each number when it opens):
 - Shape it first: review checklists
 - Shape it first: plan in slices
 
+## Run presets (beta)
+
+Save a New run setup as a named preset, pick it later, type a prompt and start: the run gets the preset's choices for that run only, and the project's settings never change. Read it: [Run presets](../run-presets.md)
+
+- Every new run keeps its setup, and a finished run's page has **Save setup as preset** to turn it into a preset.
+- The Chat home shows your presets as one-click chips under **Start from a preset**.
+- Schedules follow their preset, `worca run --preset NAME --prompt "…"` starts one from the terminal, and Ask Worca proposes runs from your presets. Run presets are now in beta and on by default.
+
 ## Watch PR fix runs in the chat
 
 **The chat that opened a pull request sees its fix runs.**

@@ -51,7 +51,7 @@ test('listWorkflows reads rows newest-first by created_at and parses steps/feedb
   ins.run('wf_a', 'A', 1, JSON.stringify([[{ id: 's0_0', key: 'planner' }]]), '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
   ins.run('wf_b', 'B', 1, JSON.stringify([[{ id: 's0_0', key: 'planner' }]]), '[]', '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z');
   const list = await listWorkflows();
-  // wf_presentation (schema V30), wf_architecture_c4 (V55), wf_promo_video (V57) and wf_diagram_plan (V61) are
+  // wf_presentation (schema V30), wf_architecture_c4 (V55), wf_promo_video (V57) and wf_diagram_plan (V64) are
   // shipped seeds on every store — filter them out to pin the user-row ordering this test is about.
   const user = list.filter((w) => !['wf_presentation', 'wf_architecture_c4', 'wf_promo_video', 'wf_diagram_plan'].includes(w.id));
   assert.deepEqual(user.map((w) => w.id), ['wf_b', 'wf_a'], 'newest created_at first');
