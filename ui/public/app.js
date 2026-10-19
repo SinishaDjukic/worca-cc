@@ -110,6 +110,7 @@ import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards
 import { createTerminalPane } from './terminal-pane.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
+import { guardModal, dialogOpen } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
 import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, GETTING_STARTED_STEPS } from './getting-started.mjs';
 import { createGuideSpot } from './guide-spot.mjs';
@@ -6180,15 +6181,14 @@ function openWorkflowPopup(w, wf, handle, opener) {
   const pan = view.createNav({});
   fit();
 
-  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); shut(); } };
   function shut() {
-    document.removeEventListener('keydown', onKey, true);
     pan.destroy(); view.destroy(); ov.remove();
     if (opener && opener.isConnected) opener.focus();
   }
-  document.addEventListener('keydown', onKey, true);
   close.addEventListener('click', shut);
-  ov.addEventListener('click', (e) => { if (e.target === ov) shut(); });
+  // Read-only: a backdrop click or Escape closes it (modal-guard). A drag that pans the graph and ends on
+  // the overlay is not an outside click.
+  guardModal(ov, { kind: 'viewer', close: shut }).opened();
   close.focus();
 }
 
@@ -8359,6 +8359,7 @@ async function openFolderBrowser(seedPath, onSelect, { multiple = false, onSelec
   if (el.folderBrowserTitle) el.folderBrowserTitle.textContent = folderManySink ? 'Select folders' : 'Select a folder';
   syncFolderPicks();
   el.folderBrowser.classList.remove('hidden');
+  folderGuard.opened();
   // A stale or mistyped seed path from the text field 400s; fall back to home.
   // Only the SEED gets this retry — navigation failures keep the current
   // listing (loadFolders shows the error) instead of yanking the user home.
@@ -8479,16 +8480,10 @@ el.folderSelectMany.addEventListener('click', () => {
   closeFolderBrowser();
   if (sink && paths.length) sink(paths);
 });
-el.folderBrowserClose.addEventListener('click', closeFolderBrowser);
-// Backdrop click (the overlay itself, not the inner card) and Escape close it,
-// matching the viewer modal's behavior.
-el.folderBrowser.addEventListener('click', (e) => {
-  if (e.target === el.folderBrowser) closeFolderBrowser();
-});
-// The folder browser owns this Escape: later listeners (the wizard's) skip it.
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !el.folderBrowser.classList.contains('hidden')) { e.preventDefault(); closeFolderBrowser(); }
-});
+// A picker, often over another dialog: a backdrop click never closes it. Escape closes it, asking first
+// only when folders are ticked (multi mode); its Cancel closes at once.
+const folderGuard = guardModal(el.folderBrowser, { kind: 'form', close: () => closeFolderBrowser(), isDirty: () => folderPicks.size > 0 });
+el.folderBrowserClose.addEventListener('click', () => folderGuard.cancel());
 
 // NOTE: New Pipeline has no inline project-delete. Removing a project is rare
 // and destructive, so it lives in the Projects view (deleteProject, with the
@@ -9841,9 +9836,9 @@ function openWsAddMembers(id) {
     row.append(box, name, path);
     body.appendChild(row);
   }
-  // The header's Close is the way out; the one action adds the picks, or — with nothing to pick —
+  // Cancel (or the header's Close) is the way out; the one action adds the picks, or — with nothing to pick —
   // leads to the Projects page and opens its Add project dialog (a folder or a clone).
-  const actions = candidates.length ? [['Add', 'btn btn-primary btn-mini', async () => {
+  const actions = candidates.length ? [['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()], ['Add', 'btn btn-primary btn-mini', async () => {
     if (!chosen.size) return;
     const r = await postWsMembers(id, { add: [...chosen] });
     if (r.ok) { closePluginModal(); return; }
@@ -10550,18 +10545,20 @@ if (el.wizImportPaste) el.wizImportPaste.addEventListener('keydown', (e) => {
   void addWizardPastedPaths();
 });
 
-// A11y: Escape in the wizard view triggers #wiz-close (which navigates away; the showView
-// leave-guard resets the wizard). A layer above the wizard owns its own Escape: an Escape another
-// handler already took (the folder browser hides itself first, then calls preventDefault), the Ask
-// dock, the terminal, and any open dialog or guide (the mobile-nav handler's selector).
+// A11y: Escape in the wizard view triggers #wiz-close (which navigates away; the showView leave-guard
+// resets the wizard). A layer above the wizard owns its own Escape: an Escape another handler already took,
+// the Ask dock, the terminal, a guarded pop-up (modal-guard: the folder browser, the Claude setup dialog) and
+// any other open dialog or guide (the mobile-nav handler's selector). Capture phase like the detail arms: it
+// reads whether a pop-up is up BEFORE modal-guard closes it.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || e.defaultPrevented) return;
   if (currentView() !== 'workspace-create') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (dialogOpen(document)) return;                                    // a pop-up owns Escape
   if (document.querySelector('.viewer-modal:not(.hidden), .guide-layer')) return; // a dialog or the guide owns Escape
   if (el.wizClose) el.wizClose.click();
-});
+}, true);
 
 // Test hook: expose the wizard helpers + workspace renderers for jsdom tests.
 if (typeof window !== 'undefined') {
@@ -13008,12 +13005,20 @@ function buildPdMemory(sec, key) {
 // (opt-in). `done` always clears every opt-in again — the modal is shared, and
 // neither the tint nor a leftover field may leak into the next, harmless call.
 let modalGen = 0;
+// One guard for the shared #confirm-modal: a plain confirm is a decision (a backdrop click or Escape is the
+// safe No); promptModal's fields make it a form (never on the backdrop; Escape asks once typed in).
+const confirmGuard = el.confirmModal ? guardModal(el.confirmModal) : null;
+// The call the shell is showing. A new call replaces its content, so the one still waiting is settled
+// first as the safe No: it was never answered, and its OK must not stay live on #confirm-ok for the next
+// confirm's OK to run (a double-click on a delete stacks two calls).
+let shellDone = null;
 function modalShell({
   title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel',
   checkbox = null, danger = false, fields = null, messageTone = null,
 } = {}) {
   return new Promise((resolve) => {
     modalGen += 1;   // the extension pair prompt checks this to detect a confirm opened over it (see promptExtensionPair)
+    shellDone?.(false);
     el.confirmTitle.textContent = title;
     el.confirmTitle.classList.toggle('danger', !!danger);
     // message: a string, or parts [text | { strong: text }] so the variable bits (a branch, a command)
@@ -13083,9 +13088,14 @@ function modalShell({
     el.confirmCheckbox.checked = false;
     el.confirmCheckboxLabel.textContent = checkbox ? checkbox.label : '';
     el.confirmModal.classList.remove('hidden');
+    confirmGuard?.opened({ kind: fields ? 'form' : 'decision', close: () => done(false) });
     (inputs[0] || el.confirmOk).focus();
 
+    let settled = false;
     const done = (val) => {
+      if (settled) return;   // a newer call may own the shell by now: never tear its content down
+      settled = true;
+      if (shellDone === done) shellDone = null;
       const checked = el.confirmCheckbox.checked;
       const values = {};
       for (const i of inputs) values[i.dataset.fieldId] = i.value.trim();
@@ -13099,24 +13109,22 @@ function modalShell({
       el.confirmCheckboxWrap.classList.add('hidden');
       el.confirmOk.removeEventListener('click', onOk);
       el.confirmCancel.removeEventListener('click', onCancel);
-      el.confirmModal.removeEventListener('click', onBackdrop);
       document.removeEventListener('keydown', onKey);
       if (fields) resolve(val ? values : null);
       else resolve(checkbox ? { ok: val, checked } : val);
     };
     const onOk = () => { if (!el.confirmOk.disabled) done(true); };
     const onCancel = () => done(false);
-    const onBackdrop = (e) => { if (e.target === el.confirmModal) done(false); };
     const onKey = (e) => {
-      if (e.key === 'Escape') done(false);
-      // Enter submits a filled-in prompt, the way the native one did
-      else if (e.key === 'Enter' && fields && !el.confirmOk.disabled) { e.preventDefault(); done(true); }
+      // Escape is modal-guard's. Enter submits a filled-in prompt, the way the native one did — but never
+      // while the "Discard changes?" question is up over it, wherever the focus is.
+      if (e.key === 'Enter' && fields && !el.confirmOk.disabled && !document.querySelector('dialog.discard-modal[open]')) { e.preventDefault(); done(true); }
     };
 
     el.confirmOk.addEventListener('click', onOk);
     el.confirmCancel.addEventListener('click', onCancel);
-    el.confirmModal.addEventListener('click', onBackdrop);
     document.addEventListener('keydown', onKey);
+    shellDone = done;
   });
 }
 
@@ -13198,6 +13206,21 @@ function setProjAddMsg(text, kind) {
   el.projAddMsg.className = 'hint' + (kind ? ' ' + kind : '');
 }
 
+// A request this dialog sent is out (Add, or the clone's start): until it answers, its Cancel is
+// disabled and Escape does nothing (modal-guard `busy` — the Stop dialog's rule).
+let projAddBusy = false;
+// The "Cloning in the background" note a Hide raised; the clone's own result closes it.
+let cloneHideToast = null;
+
+// A form: a backdrop click never closes it. Escape asks first once something was typed or picked here —
+// except over a running clone: its fields are locked and its work goes on, so Hide loses nothing.
+const projAddGuard = el.projectAddModal ? guardModal(el.projectAddModal, {
+  kind: 'form',
+  close: () => dismissProjectAdd(),
+  busy: () => projAddBusy,
+  isDirty: () => !(cloneFollow && projAddMode === 'clone') && projAddGuard.changed(),
+}) : null;
+
 function openProjectAddModal(path, { mode = 'folder' } = {}) {
   el.projAddPath.value = path || '';
   el.projAddName.value = path ? basenameOf(path) : '';
@@ -13208,9 +13231,21 @@ function openProjectAddModal(path, { mode = 'folder' } = {}) {
     el.projCloneName.placeholder = 'the repository name';
   }
   el.projectAddModal.classList.remove('hidden');
+  projAddGuard?.opened();                    // what the open filled in (a picked folder) is the starting point
+  // A clone started here earlier still runs in the background. With a folder to add, open on Folder (the
+  // Folder tab works during a clone); with none, the Clone tab shows the progress.
+  if (cloneFollow) {
+    setProjAddMode(path ? 'folder' : 'clone');
+    if (path) {
+      setProjAddMsg(`Still cloning ${cloneFollow.url} — a notification says when it is done.`);
+      el.projAddName.focus();
+      el.projAddName.select();
+    }
+    return;
+  }
   setProjAddMode(mode);
-  // A clone still in flight from an earlier open keeps its progress line.
-  if (cloneFollow) { setProjAddMode('clone'); setProjAddMsg(`Cloning ${cloneFollow.url} …`); lockCloneForm(true); return; }
+  // Informational hint only when there is no path (manual-entry fallback);
+  // neutral default .hint styling (no .hint.warn class exists).
   if (mode === 'folder') {
     el.projAddName.focus();
     el.projAddName.select();
@@ -13227,8 +13262,10 @@ function setProjAddMode(mode) {
   el.projAddFolderPane.hidden = projAddMode !== 'folder';
   el.projAddClonePane.hidden = projAddMode !== 'clone';
   el.projAddSave.textContent = projAddMode === 'clone' ? 'Clone and add' : 'Add project';
-  setProjAddMsg(projAddMode === 'clone' ? 'Worca clones the repository into its projects folder with the deployment\'s credential for its host (GitHub or Azure DevOps).' : '');
-  if (projAddMode === 'clone') el.projCloneUrl.focus();
+  if (projAddMode === 'clone' && cloneFollow) setProjAddMsg(`Cloning ${cloneFollow.url} …`);
+  else setProjAddMsg(projAddMode === 'clone' ? 'Worca clones the repository into its projects folder with the deployment\'s credential for its host (GitHub or Azure DevOps).' : '');
+  syncProjAddControls();
+  if (projAddMode === 'clone' && !cloneFollow) el.projCloneUrl.focus();
 }
 
 /** The folder name worca will use for a clone URL (planClone's rule), or '' when the URL does not name one repository.
@@ -13251,9 +13288,18 @@ function repoNameFromUrl(url) {
 let cloneFollow = null;
 let clonePoll = null;
 
-function lockCloneForm(locked) {
-  for (const n of [el.projCloneUrl, el.projCloneBranch, el.projCloneName, el.projAddSave]) if (n) n.disabled = locked;
-  if (el.projAddTabs) for (const t of el.projAddTabs.querySelectorAll('.md-tab')) t.disabled = locked;
+// What is usable, from three facts: a request out (everything waits for its answer), a clone running
+// (the Clone tab's fields and its button stay locked — the Folder tab works) and the tab shown. The way
+// out reads Hide over a running clone: the clone goes on and its result arrives as a notification.
+function syncProjAddControls() {
+  const cloning = !!cloneFollow;
+  for (const n of [el.projCloneUrl, el.projCloneBranch, el.projCloneName]) if (n) n.disabled = projAddBusy || cloning;
+  if (el.projAddTabs) for (const t of el.projAddTabs.querySelectorAll('.md-tab')) t.disabled = projAddBusy;
+  if (el.projAddSave) el.projAddSave.disabled = projAddBusy || (projAddMode === 'clone' && cloning);
+  if (el.projAddCancel) {
+    el.projAddCancel.textContent = projAddMode === 'clone' && cloning ? 'Hide' : 'Cancel';
+    el.projAddCancel.disabled = projAddBusy;
+  }
 }
 
 async function saveProjectClone() {
@@ -13264,20 +13310,23 @@ async function saveProjectClone() {
   const name = el.projCloneName.value.trim();
   if (branch) body.branch = branch;
   if (name) body.name = name;
-  lockCloneForm(true);
+  projAddBusy = true;
+  syncProjAddControls();
   setProjAddMsg(`Cloning ${url} …`);
   try {
     const res = await fetch('/api/projects/clone', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     const data = await safeJson(res);
-    if (!res.ok || !data.jobId) { lockCloneForm(false); setProjAddMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    if (!res.ok || !data.jobId) { setProjAddMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     cloneFollow = { id: data.jobId, url };
     if (data.job && data.job.state !== 'running') { onCloneJob(data.job); return; }
     clonePoll = setInterval(pollCloneJob, 2000);
   } catch (e) {
-    lockCloneForm(false);
     setProjAddMsg(e.message, 'err');
+  } finally {
+    projAddBusy = false;
+    syncProjAddControls();
   }
 }
 
@@ -13297,15 +13346,18 @@ function onCloneJob(job) {
   clearInterval(clonePoll);
   clonePoll = null;
   cloneFollow = null;
-  lockCloneForm(false);
-  const open = el.projectAddModal && !el.projectAddModal.classList.contains('hidden');
+  if (cloneHideToast) { cloneHideToast.close(); cloneHideToast = null; }
+  // Showing that clone = open on the Clone tab. Open on Folder means another project is being added
+  // there: leave it alone and report by toast, as when the dialog is hidden.
+  const showing = el.projectAddModal && !el.projectAddModal.classList.contains('hidden') && projAddMode === 'clone';
+  syncProjAddControls();
   if (job.state === 'error') {
-    if (open) { setProjAddMode('clone'); setProjAddMsg(job.error || 'The clone failed.', 'err'); }
+    if (showing) setProjAddMsg(job.error || 'The clone failed.', 'err');
     else setProjectsMsg(`Clone failed: ${job.error || 'unknown error'}`, 'err');
     return;
   }
   const name = (job.project && job.project.name) || job.name || '';
-  if (open) closeProjectAddModal();
+  if (showing) closeProjectAddModal();
   void (async () => {
     try {
       const res = await fetch('/api/projects');
@@ -13322,6 +13374,16 @@ function closeProjectAddModal() {
   el.projectAddModal.classList.add('hidden');
 }
 
+// Cancel, Hide or Escape. A clone started here goes on in the background — say so once, so closing the
+// dialog never reads as the clone stopping. Its result closes this note (onCloneJob).
+function dismissProjectAdd() {
+  if (cloneFollow && !cloneHideToast) {
+    cloneHideToast = notify({ tone: 'info', title: 'Cloning in the background',
+      detail: `${cloneFollow.url} — a notification says when it is done.`, timeout: 0 });
+  }
+  closeProjectAddModal();
+}
+
 // The dialog first (#649): its Folder tab's Choose folder… opens the native picker, and Clone from URL
 // needs no folder at all. No folder picker here (a container or hosted worca): the repository is the way in.
 async function addProjectFlow() {
@@ -13335,7 +13397,8 @@ async function saveProjectAdd() {
   const path = el.projAddPath.value.trim();
   if (!name) return setProjAddMsg('Name is required.', 'err');
   if (!path) return setProjAddMsg('Folder is required.', 'err');
-  el.projAddSave.disabled = true;
+  projAddBusy = true;
+  syncProjAddControls();
   try {
     const res = await fetch('/api/projects', {
       method: 'POST',
@@ -13351,7 +13414,8 @@ async function saveProjectAdd() {
   } catch (e) {
     setProjAddMsg(e.message, 'err');
   } finally {
-    el.projAddSave.disabled = false;
+    projAddBusy = false;
+    syncProjAddControls();
   }
 }
 
@@ -13373,6 +13437,14 @@ function projBulkAlert(title, detail = '') {
   cardAlert(projBulkCard(), { title, detail });
 }
 
+// A form: a backdrop click never closes it; Escape asks once a row was unticked or renamed. While the
+// POST is out, Cancel and Escape wait for its answer.
+const projBulkGuard = el.projectBulkModal ? guardModal(el.projectBulkModal, {
+  kind: 'form',
+  close: () => closeProjectBulkModal(),
+  busy: () => !!(projBulk && projBulk.saving),
+}) : null;
+
 function openProjectBulkModal(paths, { onDone = null } = {}) {
   const known = new Map((state.projects || []).map((p) => [p.path, p.name]));
   const rows = [];
@@ -13392,6 +13464,7 @@ function openProjectBulkModal(paths, { onDone = null } = {}) {
   cardAlert(projBulkCard(), null);
   renderProjectBulkRows();
   el.projectBulkModal.classList.remove('hidden');
+  projBulkGuard?.opened();
   const first = el.projBulkList.querySelector('.pb-name:not(:disabled)');
   if (first) first.focus();
 }
@@ -13405,6 +13478,7 @@ function syncProjBulkSave() {
   const n = projBulkPending().length;
   el.projBulkSave.disabled = n === 0 || !!(projBulk && projBulk.saving);
   el.projBulkSave.textContent = n === 1 ? 'Add 1 project' : `Add ${n} projects`;
+  if (el.projBulkClose) el.projBulkClose.disabled = !!(projBulk && projBulk.saving);
 }
 
 function renderProjectBulkRows() {
@@ -13605,7 +13679,7 @@ if (el.projDetail) {
 if (el.projectAddBtn) el.projectAddBtn.addEventListener('click', addProjectFlow);
 if (el.projAddSave) {
   el.projAddSave.addEventListener('click', saveProjectAdd);
-  el.projAddCancel.addEventListener('click', closeProjectAddModal);
+  el.projAddCancel.addEventListener('click', () => projAddGuard.cancel());   // Cancel / Hide: at once, never asks
   const fillProjAdd = (p) => {
     el.projAddPath.value = p;
     if (!el.projAddName.value.trim()) el.projAddName.value = basenameOf(p);
@@ -13638,25 +13712,17 @@ if (el.projAddSave) {
     });
     el.projCloneUrl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void saveProjectAdd(); } });
   }
-  el.projectAddModal.addEventListener('click', (e) => { if (e.target === el.projectAddModal) closeProjectAddModal(); });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && el.projectAddModal && !el.projectAddModal.classList.contains('hidden')) closeProjectAddModal();
-  });
 }
 if (el.projectBulkModal) {
   el.projBulkSave.addEventListener('click', () => { void saveProjectBulk(); });
-  el.projBulkClose.addEventListener('click', closeProjectBulkModal);
-  el.projectBulkModal.addEventListener('click', (e) => { if (e.target === el.projectBulkModal) closeProjectBulkModal(); });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !el.projectBulkModal.classList.contains('hidden')) closeProjectBulkModal();
-  });
+  el.projBulkClose.addEventListener('click', () => projBulkGuard.cancel());
 }
 
 // Test hook (mirrors window.__agents at app.js:4219).
 if (typeof window !== 'undefined') {
   window.__projects = {
     loadProjectsView, renderProjectsList, buildProjectRow, deleteProject,
-    confirmModal, addProjectFlow, openProjectAddModal, saveProjectAdd,
+    confirmModal, promptModal, addProjectFlow, openProjectAddModal, saveProjectAdd,
     openProjectBulkModal, saveProjectBulk, closeProjectBulkModal, openFolderBrowser,
   };
 }
@@ -15667,11 +15733,30 @@ function setPluginsMsg(text, kind, extra) {
   reportStatus(el.pluginsMsg, 'form-msg', text, kind, extra);
 }
 
-// Tiny modal shell around #plugin-modal: swap in a body element + action buttons.
-// `pluginModalAfterClose`: the open step's own Cancel, run once when the header Close dismisses it (set through
-// mcpTab's `afterClose`); every open starts without one.
+// The "user dismissed #plugin-modal" callbacks (header Close, Escape): a picker or a confirm built on the
+// shell settles through them. Cleared whenever the shell closes — they belong to its content.
+const pluginDismissHooks = new Set();
+function onPluginModalDismiss(fn) { pluginDismissHooks.add(fn); return () => pluginDismissHooks.delete(fn); }
+// `pluginModalAfterClose`: the open step's own Cancel, run once when the header Close or Escape dismisses it (set
+// through mcpTab's `afterClose`); every open starts without one.
 let pluginModalAfterClose = null;
-function pluginModal(title, bodyEl, actions = []) {
+// Header Close and Escape: the guardrails wizard leaves at once (Close never asks); anything else runs its
+// dismiss hooks, then hides, then runs the open step's Cancel.
+function dismissPluginModal() {
+  if (grvState.wizard) { grvExitWizard(); return; }
+  const after = pluginModalAfterClose;
+  pluginModalAfterClose = null;
+  for (const fn of [...pluginDismissHooks]) fn();
+  closePluginModal();
+  if (after) void after();
+}
+// Every body is a form here: a backdrop click never closes it (as before); Escape closes an untouched body
+// and asks over a changed one. A body with nothing to type is never dirty, so Escape simply closes it.
+const pluginGuard = el.pluginModal ? guardModal(el.pluginModal, { kind: 'form', close: () => dismissPluginModal() }) : null;
+
+// Tiny modal shell around #plugin-modal: swap in a body element + action buttons. `guard` overrides the
+// pop-up rules for this body (the wizard's own dirty test and sentence).
+function pluginModal(title, bodyEl, actions = [], guard = {}) {
   pluginModalAfterClose = null;
   el.pluginModalTitle.textContent = title;
   el.pluginModalBody.replaceChildren(bodyEl);
@@ -15682,8 +15767,9 @@ function pluginModal(title, bodyEl, actions = []) {
     return b;
   }));
   el.pluginModal.classList.remove('hidden');
+  pluginGuard?.opened(guard);
 }
-function closePluginModal() { el.pluginModal.classList.add('hidden'); }
+function closePluginModal() { el.pluginModal.classList.add('hidden'); pluginDismissHooks.clear(); }
 
 // Team metrics "Enable" dialog. Reuses the generic slot modal above; the body re-renders
 // when the "Where to record" radio changes.
@@ -15749,10 +15835,12 @@ async function openTmEnableDialog(projectKeyStr, { mode = 'here', change = false
     await Promise.all([paintProjectTmCells(true), onDone ? onDone(j) : null]);
     return done(true);
   };
+  // The submit is not a withButton(), so the shell's default busy() cannot see it: while the POST is out,
+  // Escape and the header Close wait for its answer (it lands in this dialog).
   pluginModal('Set up team metrics', holder, [
     ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
     [view.mode === 'delegate' ? 'Create marker and enable' : 'Create branch and enable', 'btn btn-primary btn-mini tm-enable-submit', submit],
-  ]);
+  ], { busy: () => submitting });
   // Re-label the primary action when the mode flips (pluginModal renders actions once).
   holder.addEventListener('change', () => {
     const b = document.querySelector('#plugin-modal .tm-enable-submit');
@@ -16263,18 +16351,15 @@ if (el.pluginAddBtn) el.pluginAddBtn.addEventListener('click', () => {
   if (!el.marketplaceAddRow.classList.contains('hidden')) el.marketplaceUrl.focus();
 });
 if (el.marketplaceAdd) el.marketplaceAdd.addEventListener('click', addMarketplaceFromInput);
-if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', () => {
-  if (grvState.wizard) return grvCloseWizard();
-  const after = pluginModalAfterClose;
-  pluginModalAfterClose = null;
-  closePluginModal();
-  if (after) void after();
-});
+if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', () => pluginGuard?.cancel());
 
 // ---- Guardrails view (named sets: list + two-step wizard popup) ----
 // All view state lives here; loadGuardrailsView rebuilds the list, and the wizard
 // (Step 1 start-picker -> Step 2 editor) renders into the #plugin-modal body.
 const grvState = { sets: [], editing: null, saved: null, wizard: null };
+// The wizard's dirty test (Step 1 has no editor: never dirty) and sentence, for the pop-up rules.
+const grvWizardDirty = () => { const root = el.pluginModalBody.querySelector('.grv-editor'); return !!root && grvDirty(root); };
+const GRV_GUARD = { isDirty: grvWizardDirty, discardMessage: 'This guardrail set has unsaved changes.' };
 const grvClone = (o) => JSON.parse(JSON.stringify(o));
 const emptyGuardrails = () => ({ honorProjectSettings: true, envScrub: false, envAllowlist: [], protectedPaths: [], deny: [] });
 
@@ -16304,7 +16389,7 @@ function openGuardrailWizard(mode, set) {
     grvState.editing = { id: null, name: '', origin: null };
     grvState.saved = { name: '', settings: emptyGuardrails() };
     const sources = grvState.sets.map((s) => ({ id: s.id, name: s.name, origin: s.origin }));
-    pluginModal('Create guardrails', renderStartStep(sources, { selectedId: '' }), []);
+    pluginModal('Create guardrails', renderStartStep(sources, { selectedId: '' }), [], GRV_GUARD);
     (el.pluginModalBody.querySelector('.grv-source:checked') || el.pluginModalBody.querySelector('.grv-next'))?.focus();
   } else {
     grvState.wizard = { mode, step: 2, sourceId: '' };
@@ -16312,7 +16397,7 @@ function openGuardrailWizard(mode, set) {
     grvState.saved = { name: set.name, settings: grvClone(set.settings) };
     pluginModal(mode === 'view' ? 'View guardrail set' : 'Edit guardrail set',
       renderGuardrailEditor({ ...grvState.editing, settings: grvClone(set.settings) },
-        { mode, dirty: false, msg: '', msgErr: false }), []);
+        { mode, dirty: false, msg: '', msgErr: false }), [], GRV_GUARD);
     el.pluginModalBody.querySelector(mode === 'view' ? '.grv-save' : '.grv-name-input')?.focus();
   }
 }
@@ -16325,21 +16410,6 @@ function grvExitWizard() {
   closePluginModal();
   if (location.hash.slice(1).startsWith('settings/guardrails/')) location.hash = 'settings/guardrails';
   else loadGuardrailsView();
-}
-
-// Close with a dirty-guard: confirm discard only when the Step-2 editor has unsaved
-// changes; Step 1 (no editor) always closes freely.
-async function grvCloseWizard() {
-  const root = el.pluginModalBody.querySelector('.grv-editor');
-  if (root && grvDirty(root)) {
-    const ok = await confirmModal({
-      title: 'Discard changes?',
-      message: 'This guardrail set has unsaved changes. Discard them?',
-      confirmLabel: 'Discard',
-    });
-    if (!ok) return;
-  }
-  grvExitWizard();
 }
 
 function grvDirty(rootEl) {
@@ -17224,17 +17294,8 @@ function mountScriptsView(param = '', { draft = null } = {}) {
       modal: {
         open: pluginModal,
         close: closePluginModal,
-        // #plugin-modal has a header Close button and no Escape/backdrop handler of
-        // its own; a picker must settle on both (the import-workflow confirm's rule).
-        onClose: (fn) => {
-          const onKey = (e) => { if (e.key === 'Escape') fn(); };
-          if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', fn);
-          document.addEventListener('keydown', onKey);
-          return () => {
-            if (el.pluginModalClose) el.pluginModalClose.removeEventListener('click', fn);
-            document.removeEventListener('keydown', onKey);
-          };
-        },
+        // A picker must settle when the shell itself is dismissed (header Close, Escape): its dismiss hooks.
+        onClose: (fn) => onPluginModalDismiss(fn),
       },
       ws: { send: (obj) => { const sock = state.ws; if (sock && state.wsReady) { try { sock.send(JSON.stringify(obj)); } catch { /* ignore */ } } } },
       doc: document,
@@ -17355,7 +17416,12 @@ function revealModelsPanel() {
 // ── Model editor dialog (configurable-models-design.md §4.10) ───────────────
 // The editor is a task: it opens over the catalog, owns Escape and the backdrop, and guards unsaved
 // work on the way out. `mvState.editing` / `openCreate` / `prefill` still say WHAT it edits.
-const mvEditor = { dirty: false, lastFocus: null };
+const mvEditor = { lastFocus: null };
+// A form: a backdrop click never closes it; Escape asks once something changed (an env row added or removed
+// counts). Cancel closes at once — never asks; a successful Save closes it too.
+const modelEditorGuard = el.modelEditorModal ? guardModal(el.modelEditorModal, {
+  kind: 'form', close: () => closeModelEditorDialog(), discardMessage: 'This model has unsaved changes.',
+}) : null;
 
 /** The open editor, wherever it lives (the dialog today; the page while it is closing). */
 function modelEditorEl() {
@@ -17371,9 +17437,9 @@ function openModelEditorDialog() {
   const title = editor.querySelector('.mv-editor-title');
   if (title) title.id = 'mv-editor-heading';
   el.modelEditorHost.replaceChildren(editor);
-  mvEditor.dirty = false;
   mvEditor.lastFocus = document.activeElement;
   el.modelEditorModal.classList.remove('hidden');
+  modelEditorGuard?.opened();
   // A fresh create starts empty enough to type into; an edit keeps the caret out of the way.
   setTimeout(() => {
     const first = editor.querySelector(mvState.editing ? '.mv-editor-btns .btn-go' : 'input:not([type="checkbox"]):not([disabled]), select, textarea');
@@ -17381,18 +17447,10 @@ function openModelEditorDialog() {
   }, 0);
 }
 
-async function closeModelEditorDialog({ force = false } = {}) {
+function closeModelEditorDialog() {
   if (!el.modelEditorModal || el.modelEditorModal.classList.contains('hidden')) return;
-  if (!force && mvEditor.dirty) {
-    const ok = await confirmModal({
-      title: 'Discard changes?', message: 'This model has unsaved changes.',
-      confirmLabel: 'Discard', cancelLabel: 'Keep editing', danger: true,
-    });
-    if (!ok) return;
-  }
   el.modelEditorModal.classList.add('hidden');
   el.modelEditorHost?.replaceChildren();
-  mvEditor.dirty = false;
   mvState.editing = null; mvState.openCreate = false; mvState.prefill = null;
   try { mvEditor.lastFocus?.focus(); } catch { /* the opener may be gone */ }
 }
@@ -17924,7 +17982,10 @@ async function refreshCopilotQuotaFlow(btn) {
 // ONE dialog, two sources: GitHub Copilot's catalog, and any OpenAI-compatible server you run.
 // It belongs to the CATALOG, not to a provider — what it produces is catalog rows, and a flow
 // whose result lands on another tab reads as "nothing happened". The Providers tab links into it.
-const mimp = { source: 'copilot', baseUrl: '', payload: null, lastFocus: null };
+const mimp = { source: 'copilot', baseUrl: '', payload: null, lastFocus: null, importing: false };
+// A form: a backdrop click never closes it; Escape asks once a model is ticked or a URL typed since the last
+// list. While "Import selected" is out, Cancel and Escape wait for its answer.
+const importGuard = el.modelImportModal ? guardModal(el.modelImportModal, { kind: 'form', close: () => closeImportDialog(), busy: () => mimp.importing }) : null;
 
 function setImportMsg(text, kind) {
   if (!el.mimpMsg) return;
@@ -17972,6 +18033,7 @@ function openImportDialog({ source, baseUrl, goToModels } = {}) {
   if (el.mimpGo) el.mimpGo.disabled = true;
   setImportMsg('');
   el.modelImportModal?.classList.remove('hidden');
+  importGuard?.opened();
   setTimeout(() => (mimp.source === 'openai' ? el.mimpBase : el.mimpList)?.focus(), 0);
   // Copilot has one catalog, so it loads at once; an endpoint is listed only when the caller NAMED
   // one (the Providers shortcut). The provider's stored URL is offered as a default, not queried —
@@ -18035,6 +18097,7 @@ async function listImportModels() {
       el.mimpFilter.value = '';
     }
     applyImportFilter();
+    importGuard?.markClean();   // a fresh list is the new starting point
     if (el.mimpGo) el.mimpGo.disabled = !rows;
     setImportMsg(rows ? '' : 'Nothing here can be imported.', rows ? '' : 'err');
     if (endpoint && Array.isArray(data.models) && !data.models.length) setImportMsg('This endpoint lists no models.', 'err');
@@ -18053,6 +18116,8 @@ async function importModelsFlow() {
   if (!ids.length) return setImportMsg('Pick at least one model.', 'err');
   const endpoint = sheet.dataset.source === 'endpoint';
   if (el.mimpGo) el.mimpGo.disabled = true;
+  mimp.importing = true;
+  if (el.mimpCancel) el.mimpCancel.disabled = true;
   setImportMsg('Importing…');
   try {
     const res = endpoint
@@ -18077,6 +18142,8 @@ async function importModelsFlow() {
     setImportMsg(e.message, 'err');
   } finally {
     if (el.mimpGo) el.mimpGo.disabled = false;
+    mimp.importing = false;
+    if (el.mimpCancel) el.mimpCancel.disabled = false;
   }
 }
 
@@ -18197,7 +18264,7 @@ async function saveModelEditorFlow() {
   if (r.skipped) return;
   if (!r.ok) { cardAlert(rootEl, { title: editing ? 'Not saved' : 'Not added', detail: r.error }); return; }
   // Saved work is no longer unsaved work: the dialog closes without asking.
-  await closeModelEditorDialog({ force: true });
+  closeModelEditorDialog();
   setModelsMsg(editing ? 'Model saved.' : 'Model added.', 'ok');
   await refreshModelsEverywhere();
 }
@@ -18373,7 +18440,7 @@ function onModelsClick(ev) {
       mvState.openShare = false;
       renderModelsViewBody();
     } else if (t.classList.contains('mv-cancel')) {
-      closeModelEditorDialog();
+      modelEditorGuard?.cancel();
     } else if (t.classList.contains('mv-env-add')) {
       const wrap = modelEditorEl()?.querySelector('.mv-env');
       if (wrap) wrap.appendChild(makeEnvRow());
@@ -18428,16 +18495,6 @@ for (const host of [el.modelsList, el.modelEditorModal]) {
   host.addEventListener('change', onModelsConnChange);
   host.addEventListener('change', onModelsEngineChange);
 }
-// Unsaved work is guarded on the way out (§4.10), so every edit inside the dialog is remembered.
-if (el.modelEditorModal) {
-  el.modelEditorModal.addEventListener('input', () => { mvEditor.dirty = true; });
-  el.modelEditorModal.addEventListener('change', () => { mvEditor.dirty = true; });
-  el.modelEditorModal.addEventListener('mousedown', (ev) => { if (ev.target === el.modelEditorModal) closeModelEditorDialog(); });
-  document.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Escape' || el.modelEditorModal.classList.contains('hidden')) return;
-    if (!el.confirmModal || el.confirmModal.classList.contains('hidden')) { ev.stopPropagation(); closeModelEditorDialog(); }
-  }, true);
-}
 
 // ── Import dialog wiring ────────────────────────────────────────────────────
 if (el.modelImportModal) {
@@ -18456,7 +18513,7 @@ if (el.modelImportModal) {
   el.mimpBase?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
   el.mimpFilter?.addEventListener('input', () => applyImportFilter());
   el.mimpGo?.addEventListener('click', () => importModelsFlow());
-  el.mimpCancel?.addEventListener('click', () => closeImportDialog());
+  el.mimpCancel?.addEventListener('click', () => importGuard?.cancel());
   // The select-all box lives inside the sheet the dialog hosts.
   el.modelImportModal.addEventListener('change', (ev) => {
     const t = ev.target;
@@ -18466,11 +18523,6 @@ if (el.modelImportModal) {
       if (sheet) for (const c of sheet.querySelectorAll('tbody tr:not(.is-filtered) .mvi-cb')) { if (!c.disabled) c.checked = t.checked; }
     } else if (t && t.closest && t.closest('.mvi-or-filters')) applyImportFilter();   // Free / Tools / window
   });
-  // Backdrop click and Escape close it, like every other overlay in this file.
-  el.modelImportModal.addEventListener('mousedown', (ev) => { if (ev.target === el.modelImportModal) closeImportDialog(); });
-  document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && !el.modelImportModal.classList.contains('hidden')) { ev.stopPropagation(); closeImportDialog(); }
-  }, true);
 }
 
 if (el.modelCreateBtn) {
@@ -18757,19 +18809,6 @@ if (el.pluginModalBody) {
   });
 }
 
-// Dismiss the wizard via Esc / backdrop click, routed through grvCloseWizard (dirty-guard).
-// Gated on grvState.wizard so other #plugin-modal consumers (plugin install/settings/doctor/409)
-// are untouched. Esc yields when the confirm dialog is on top so it doesn't close both at once.
-if (el.pluginModal) {
-  el.pluginModal.addEventListener('click', (e) => {
-    if (grvState.wizard && e.target === el.pluginModal) grvCloseWizard();
-  });
-  document.addEventListener('keydown', (e) => {
-    if (grvState.wizard && e.key === 'Escape'
-      && (!el.confirmModal || el.confirmModal.classList.contains('hidden'))) grvCloseWizard();
-  });
-}
-
 if (el.guardrailCreateBtn) el.guardrailCreateBtn.addEventListener('click', () => openGuardrailWizard('create'));
 
 if (typeof window !== 'undefined') {
@@ -19043,8 +19082,8 @@ document.addEventListener('click', (e) => {
 
 // Teardown handle for the OPEN stop modal (null when closed). closeRunDetail calls
 // through it: the modal is a TOP-LEVEL overlay, not a child of the detail screen,
-// so emptying #run-detail would otherwise leave a full-screen overlay (and a live
-// document keydown listener) over the LIST — after which the double-open guard
+// so emptying #run-detail would otherwise leave a full-screen overlay (still the
+// pop-up on top, owning Escape) over the LIST — after which the double-open guard
 // below makes Stop permanently dead. Exact analogue of shipItClose.
 let stopModalClose = null;
 function closeStopModal() { if (stopModalClose) stopModalClose(); }
@@ -19096,15 +19135,14 @@ function openStopModal(target) {
     if (stopModalClose === done) stopModalClose = null;  // never clobber a newer handle
     ok.removeEventListener('click', onOk);
     cancel.removeEventListener('click', onCancel);
-    modal.removeEventListener('click', onBackdrop);
-    document.removeEventListener('keydown', onKey);
   };
   stopModalClose = done;
-  // All three user-driven dismissals bail while the stop is under way — the
-  // button is also disabled, but Escape and the backdrop have no disabled state.
-  const onCancel = () => { if (!inFlight) done(); };
-  const onBackdrop = (e) => { if (!inFlight && e.target === modal) done(); };
-  const onKey = (e) => { if (!inFlight && e.key === 'Escape') done(); };
+  // A decision: a backdrop click or Escape is the safe "Keep running/paused" — and, like Cancel, does
+  // nothing while the stop is under way (modal-guard `busy`: the button is also disabled, but Escape
+  // and the backdrop have no disabled state).
+  const guard = guardModal(modal, { kind: 'decision', close: done, busy: () => inFlight });
+  guard.opened();
+  const onCancel = () => guard.cancel();
   const onOk = async () => {
     inFlight = true;
     ok.disabled = true;
@@ -19122,8 +19160,6 @@ function openStopModal(target) {
   };
   ok.addEventListener('click', onOk);
   cancel.addEventListener('click', onCancel);
-  modal.addEventListener('click', onBackdrop);
-  document.addEventListener('keydown', onKey);
 }
 
 // The ONE source of the filter bar's markup is #log-bar-tpl; the run page's Logs tab and History
@@ -19384,10 +19420,11 @@ async function openPolicyEnableDialog(projectKeyStr, { mode = 'here', change = f
     if (j?.action === 'created' && view.mode === 'here') location.hash = `team-policy/project:${s.key}`;
     return done(true);
   };
+  // As with team metrics: Escape and the header Close wait for the POST's answer (not a withButton()).
   pluginModal('Set up team policy', holder, [
     ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
     [view.mode === 'follow' ? 'Create marker and follow' : 'Create branch and enable', 'btn btn-primary btn-mini tp-enable-submit', submit],
-  ]);
+  ], { busy: () => submitting });
 }
 
 // Workspace cards (board 6): the policy home line per card + the home sheet + routing.
@@ -22091,13 +22128,13 @@ function paintHistStatusIcon(host, p) {
 // Teardown handle for the OPEN ship-it modal (null when closed). closeHistDetail
 // calls through it: the modal is a top-level overlay, not a child of the detail
 // screen, so emptying #hist-detail would otherwise leave a full-screen overlay
-// (and a live document keydown listener) over the LIST — after which the
+// (still the pop-up on top, owning Escape) over the LIST — after which the
 // double-open guard below makes Create PR permanently dead.
 let shipItClose = null;
 function closeShipItModal() { if (shipItClose) shipItClose(); }
 
-// Per-open generation for the remotes fetch. Cancel is never disabled, so a
-// response can land after the modal was closed and re-opened for a NEWER
+// Per-open generation for the remotes fetch. Cancel stays live while the remotes
+// load, so a response can land after the modal was closed and re-opened for a NEWER
 // generation; it must not repopulate selects it does not own. Same guard as
 // populateBranchSelect's `_branchGen` (:5204-5205).
 let shipItRemotesGen = 0;
@@ -22400,23 +22437,23 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   q('.shipit-draft-input').checked = false;          // D1: draft is opt-in per ship, never remembered
   q('.shipit-watch-input').checked = false;
   const okBtn = q('.shipit-ok');
+  const cancelBtn = q('.shipit-cancel');
   okBtn.disabled = false; okBtn.textContent = 'Open pull request';
+  cancelBtn.disabled = false;                       // a previous open may have parked it mid-POST
   modal.classList.remove('hidden');
   okBtn.focus();
   // The double-open guard above already returned for a second open, so the
   // generation only advances for a real one.
   const gen = ++shipItRemotesGen;
 
-  // `closed` is load-bearing, not defensive noise. Cancel is NOT disabled while the
-  // POST is in flight, so this sequence is reachable: confirm -> cancel mid-flight
-  // -> `.hd-pr` is still visible (record.pr is not set yet) -> click it -> the
-  // `!hidden` guard above passes -> a SECOND generation of listeners attaches. When
-  // the first fetch finally settles, a non-idempotent `done()` would hide the
-  // freshly-opened modal, null out the NEW generation's `shipItClose` handle (so
-  // closeHistDetail can no longer tear it down) and leave its document keydown
-  // listener attached — after which every further open stacks another `onOk`, i.e.
-  // one click = N POSTs. That is exactly the double-POST these guards prevent.
+  // `closed` is load-bearing, not defensive noise. Cancel and Escape wait for the PR POST's answer (the
+  // Stop dialog's rule), but closeShipItModal — leaving the detail screen, a detail->detail hop — can still
+  // tear the modal down while it is in flight, and a new open then attaches a SECOND generation of
+  // listeners. When the first fetch settles, a non-idempotent `done()` would hide the fresh modal, null out
+  // the NEW generation's `shipItClose` handle and leave its listeners attached — after which every further
+  // open stacks another `onOk`, i.e. one click = N POSTs.
   let closed = false;
+  let posting = false;                              // the PR POST is out
   // The in-flight Generate with AI request (null when idle). Stop and done() abort
   // it; its handler acts only while it is still THIS open's current request.
   let genCtl = null;
@@ -22428,27 +22465,20 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     modal.classList.add('hidden');
     if (shipItClose === done) shipItClose = null;    // never clobber a newer generation's handle
     okBtn.removeEventListener('click', onOk);
-    q('.shipit-cancel').removeEventListener('click', onCancel);
-    modal.removeEventListener('click', onBackdrop);
-    document.removeEventListener('keydown', onKey);
+    cancelBtn.removeEventListener('click', onCancel);
     descBox.removeEventListener('click', onDescClick);
     // worca Chat P2: the opener waits for this close (openShipItFor).
     if (typeof onClose === 'function') { try { onClose(shipped || { opened: false }); } catch { /* a caller's bug never keeps the dialog open */ } }
   };
   shipItClose = done;
-  const onCancel = () => done();
-  const onBackdrop = (e) => { if (e.target === modal) done(); };
-  // Escape while the "replace the description?" confirm is up belongs to that
-  // confirm (its own listener closes it) — it must not take this modal down too.
-  const onKey = (e) => {
-    if (e.key !== 'Escape') return;
-    const cm = document.getElementById('confirm-modal');
-    if (cm && !cm.classList.contains('hidden')) return;
-    done();
-  };
   const descBox = q('.shipit-desc');
   const descInput = q('.shipit-desc-input');
   const descErr = q('.shipit-desc-err');
+  // A form: a backdrop click never closes it; Escape asks once the description or a pick changed (what the
+  // remotes fetch fills in afterwards is not a change). Cancel closes at once.
+  const guard = guardModal(modal, { kind: 'form', close: done, busy: () => posting });
+  guard.opened();
+  const onCancel = () => guard.cancel();
   const stopGenerate = () => {
     if (!genCtl) return;
     const ctl = genCtl;
@@ -22503,6 +22533,8 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   };
   const onOk = async () => {
     okBtn.disabled = true;
+    posting = true;
+    cancelBtn.disabled = true;
     okBtn.textContent = 'Opening…';
     setShipItRemotesDisabled(modal, true);
     cardAlert(card, null);
@@ -22530,6 +22562,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
       const pr = { state: 'OPEN', url: dd.url || '#', number: null };
       record.pr = pr;
       shipped = { opened: true, ...(dd.url ? { url: dd.url } : {}) };
+      posting = false;
       done();
       // Keep the model row in step — list<->detail hops deliberately do NOT reload, so
       // without this a later reopen would offer "Create PR" again for a run that already
@@ -22554,22 +22587,24 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
         }
       }
     } catch (e2) {
-      // The user cancelled (or navigated) while this POST was in flight and a new
+      posting = false;
+      // The user navigated away while this POST was in flight and a new
       // generation may already own the modal — do not re-enable its button or
       // stamp a stale error onto it.
       if (closed) return;
       okBtn.disabled = false;
+      cancelBtn.disabled = false;
       okBtn.textContent = 'Open pull request';
       if (!q('.shipit-remotes').hidden || !q('.shipit-base-wrap').hidden) setShipItRemotesDisabled(modal, false);
       cardAlert(card, { title: 'Not shipped', detail: e2.message });
     }
   };
   okBtn.addEventListener('click', onOk);
-  q('.shipit-cancel').addEventListener('click', onCancel);
-  modal.addEventListener('click', onBackdrop);
-  document.addEventListener('keydown', onKey);
+  cancelBtn.addEventListener('click', onCancel);
   descBox.addEventListener('click', onDescClick);
-  loadShipItRemotes(modal, record, gen, () => closed);
+  // The remote and base-branch picks this fetch fills in are the starting point, not a change. Not once
+  // the user typed or pressed something meanwhile: re-baselining then would hide that edit.
+  loadShipItRemotes(modal, record, gen, () => closed).then(() => { if (!closed && !guard.touched) guard.markClean(); });
   paintShipItTry(modal, record, gen, () => closed);
   return true;
 }
@@ -22899,14 +22934,15 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     if (shipItClose === done) shipItClose = null;
     okBtn.removeEventListener('click', onOk);
     q('.shipit-cancel').removeEventListener('click', onCancel);
-    modal.removeEventListener('click', onBackdrop);
-    document.removeEventListener('keydown', onKey);
     if (typeof onClose === 'function') { try { onClose(shipped || { opened: false }); } catch { /* never keeps the dialog open */ } }
   };
   shipItClose = done;
-  const onCancel = () => done();
-  const onBackdrop = (e) => { if (e.target === modal) done(); };
-  const onKey = (e) => { if (e.key === 'Escape') done(); };
+  // A form, like the single-repo dialog: a backdrop click never closes it; Escape asks once a pick or a
+  // base branch changed (what the remotes fetch fills in is not a change). Cancel closes at once — and
+  // mid-batch it stops before the next repo, as before.
+  const guard = guardModal(modal, { kind: 'form', close: done });
+  guard.opened();
+  const onCancel = () => guard.cancel();
 
   // Sequential per repo. A failure never rolls back an opened PR; the failed rows stay
   // ticked, so the next click retries exactly those. Cancel stops before the next repo.
@@ -22962,11 +22998,10 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     if (note) msgs.push(note);
     cardAlert(card, { title: 'Not shipped', detail: msgs.join(' ') });
     paintOk();
+    guard.markClean();                                 // the rows left are the retry, not unsaved edits
   };
   okBtn.addEventListener('click', onOk);
   q('.shipit-cancel').addEventListener('click', onCancel);
-  modal.addEventListener('click', onBackdrop);
-  document.addEventListener('keydown', onKey);
   for (const r of rows) if (r.pick) loadShipItRowRemotes(record, r, gen, () => closed);
   return true;
 }
@@ -23635,12 +23670,13 @@ function openPublishModal(screen, record, data, members) {
     closed = true;
     modal.classList.add('hidden');
     okBtn.removeEventListener('click', onOk);
-    q('.publish-cancel').removeEventListener('click', done);
-    modal.removeEventListener('click', onBackdrop);
-    document.removeEventListener('keydown', onKey);
+    q('.publish-cancel').removeEventListener('click', onCancel);
   };
-  const onBackdrop = (e) => { if (e.target === modal) done(); };
-  const onKey = (e) => { if (e.key === 'Escape') done(); };
+  // A form: a backdrop click never closes it; Escape asks once a pick or a remote changed. Cancel closes at
+  // once (mid-batch it stops before the next branch).
+  const guard = guardModal(modal, { kind: 'form', close: done });
+  guard.opened();
+  const onCancel = () => guard.cancel();
 
   // Sequential per repo, like the workspace Ship-it batch: failed rows stay ticked for a retry.
   const onOk = async () => {
@@ -23674,11 +23710,10 @@ function openPublishModal(screen, record, data, members) {
     if (!failed) { done(); return; }
     cardAlert(card, { title: 'Not published', detail: `${failed} of ${batch.length} branch${batch.length === 1 ? '' : 'es'} could not be pushed. Fix the cause and retry.` });
     okLabel();
+    guard.markClean();                                    // the rows left are the retry, not unsaved edits
   };
   okBtn.addEventListener('click', onOk);
-  q('.publish-cancel').addEventListener('click', done);
-  modal.addEventListener('click', onBackdrop);
-  document.addEventListener('keydown', onKey);
+  q('.publish-cancel').addEventListener('click', onCancel);
 
   for (const r of rows) {
     const qs = new URLSearchParams({ id: record.id, ...publishScope(record), ...(r.m.memberKey ? { memberKey: r.m.memberKey } : {}) });
@@ -28353,34 +28388,24 @@ function rdHandOffOpen() {
 }
 
 // Escape on the History detail screen navigates back to the list — but never
-// while an overlay modal is open (those own Escape). Capture-phase so the guard
-// reads each modal's PRE-close state; the viewer's own handler and confirmModal's
-// per-invocation handler run in bubble phase after.
+// while an overlay modal is open (those own Escape).
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
-  // #527: a sync dialog (details / refusal card) owns Escape; the detail screen stays.
-  if (document.querySelector('.viewer-modal.sync-modal')) return;
+  // Any pop-up on screen owns Escape — modal-guard.mjs hands it to the one on top — and the detail screen
+  // stays. Capture phase, so this reads the state BEFORE the guard closes that pop-up.
+  if (dialogOpen(document)) return;
   if (currentView() !== 'history') return;
   if (!el.histShell || !el.histShell.classList.contains('detail-open')) return;
   // The search box owns its Escape (clears and closes the search).
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search-row')) return;
   if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
-  if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
-  if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
-  if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
-  if (el.reportModal && !el.reportModal.classList.contains('hidden')) return;
   // An open diff-comment composer owns Escape: it cancels the draft (the textarea's
   // own keydown does that) instead of sending the whole detail screen back to the
   // list. Same shape as the modal guards above — this listener is CAPTURE phase, so
   // a guard here is the only way to opt a subtree out.
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('.hd-cmt-composer')) return;
-  const ship = document.getElementById('shipit-modal');
-  if (ship && !ship.classList.contains('hidden')) return;
-  // Symmetry with the Running arm below: whichever overlay is up owns Escape.
-  const stopUp = document.getElementById('stop-modal');
-  if (stopUp && !stopUp.classList.contains('hidden')) return;
   // The header's ⋯ menu owns Escape while it is open: dismiss it and stay on the
   // screen. Handled HERE rather than in its own listener because this one is capture
   // phase — a separate listener would fire after the navigation had already run.
@@ -28400,21 +28425,12 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
-  // #527: a sync dialog (details / refusal card) owns Escape; the detail screen stays.
-  if (document.querySelector('.viewer-modal.sync-modal')) return;
+  if (dialogOpen(document)) return;                                    // a pop-up owns Escape (modal-guard.mjs)
   if (currentView() !== 'running') return;
   if (!el.runShell || !el.runShell.classList.contains('detail-open')) return;
   // The search box owns its Escape (clears and closes the search).
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search-row')) return;
   if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
-  if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
-  if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
-  if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
-  // This arm does NOT inherit the History arm's guards — every modal that can be up
-  // over the Running detail screen has to be listed here too.
-  if (el.reportModal && !el.reportModal.classList.contains('hidden')) return;
-  const stop = document.getElementById('stop-modal');
-  if (stop && !stop.classList.contains('hidden')) return;
   // The header cost's breakdown owns Escape while it is open (same reason as History's ⋯ menu).
   if (closeCostPop({ focusTrigger: true })) return;
   // Details steps back to the run's glance; the glance steps back to the list, in the
@@ -28431,14 +28447,9 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
-  // #527: a sync dialog (details / refusal card) owns Escape; the detail screen stays.
-  if (document.querySelector('.viewer-modal.sync-modal')) return;
+  if (dialogOpen(document)) return;                                    // a pop-up owns Escape (modal-guard.mjs)
   if (currentView() !== 'projects') return;
   if (!el.projShell || !el.projShell.classList.contains('detail-open')) return;
-  if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
-  if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
-  if (el.projectAddModal && !el.projectAddModal.classList.contains('hidden')) return;
-  if (el.projectBulkModal && !el.projectBulkModal.classList.contains('hidden')) return;
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('.mem-editor')) return;
   void leaveProjDetail();
 }, true);
@@ -28457,15 +28468,14 @@ document.addEventListener('keydown', (e) => {
 //     the mousedown on the link itself causes, so a `change` binding would navigate
 //     with the previous href and silently drop the text the user just typed.
 //
-// This section sits AFTER the two capture-phase route guards above on purpose. Both
-// they and the Escape closer below listen on `document`, and an Escape dispatched AT
-// `document` runs them in REGISTRATION order regardless of the capture flag. Register
-// this earlier and one Escape would both close the modal and send the detail screen
-// back to its list.
+// One Escape never both closes this modal and sends the detail screen back to its list:
+// the capture-phase route guards above stand down while a pop-up is up (dialogOpen), and
+// capture listeners on `document` run before its bubble listeners — modal-guard's Escape
+// among them — even for an event dispatched AT `document` (DOM spec; jsdom 29 does the same).
 
 const reportState = {
   pipelineId: '', payload: null, issue: null, token: 0, debounce: 0,
-  include: { paths: false, prompt: false },
+  include: { paths: false, prompt: false }, filing: false,
 };
 
 function reportError(message) {
@@ -28530,11 +28540,13 @@ function openReportModal(pipelineId) {
   reportState.pipelineId = pipelineId;
   reportState.include = { paths: false, prompt: false };
   el.reportExpectation.value = '';
+  el.reportClose.textContent = 'Cancel';
   // The browser fallback is offered only once the server has told us gh cannot do it.
   el.reportIssue.hidden = true;
   el.reportReason.replaceChildren(...renderReasonOptions({ doc: document }));
   el.reportOptins.replaceChildren(renderOptIns({ doc: document, include: reportState.include }));
   el.reportModal.classList.remove('hidden');
+  reportGuard.opened();
   el.reportReason.focus();
   refreshReport();
 }
@@ -28549,6 +28561,10 @@ function closeReportModal() {
   reportState.payload = null;
 }
 
+// A form: a backdrop click never closes it; Escape asks once the reason, the text or an opt-in changed.
+// While "Create GitHub issue" is out, Cancel and Escape wait for its answer.
+const reportGuard = guardModal(el.reportModal, { kind: 'form', close: () => closeReportModal(), busy: () => reportState.filing });
+
 /** Best-effort clipboard write; returns whether it landed. Mirrors copyLogToClipboard. */
 async function reportCopyText() {
   const text = el.reportPreview.textContent;
@@ -28560,8 +28576,7 @@ async function reportCopyText() {
   }
 }
 
-el.reportClose.addEventListener('click', closeReportModal);
-el.reportModal.addEventListener('click', (e) => { if (e.target === el.reportModal) closeReportModal(); });
+el.reportClose.addEventListener('click', () => reportGuard.cancel());
 el.reportReason.addEventListener('change', refreshReport);
 el.reportExpectation.addEventListener('input', () => {
   clearTimeout(reportState.debounce);
@@ -28581,12 +28596,6 @@ el.reportOptins.addEventListener('change', (e) => {
   if (!key || !(key in reportState.include)) return;
   reportState.include[key] = !!e.target.checked;
   refreshReport();
-});
-
-// Bubble-phase, like #viewer-card: the two capture-phase route guards bail while
-// this modal is open, then this closes it.
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !el.reportModal.classList.contains('hidden')) closeReportModal();
 });
 
 el.reportCopy.addEventListener('click', async (e) => {
@@ -28631,6 +28640,9 @@ function showFiledIssue(url) {
   a.textContent = url.replace(/^https?:\/\/(?:www\.)?github\.com\//, '');
   el.reportFiled.append(document.createTextNode('Issue filed: '), a);
   el.reportFiled.hidden = false;
+  // Filed: nothing here is unsaved any more — the way out says Close and asks nothing.
+  el.reportClose.textContent = 'Close';
+  reportGuard.markClean();
 }
 
 el.reportCreate.addEventListener('click', async (e) => {
@@ -28652,6 +28664,8 @@ el.reportCreate.addEventListener('click', async (e) => {
   clearTimeout(btn._copyTimer);
   btn.disabled = true;
   btn.textContent = 'Filing…';
+  reportState.filing = true;
+  el.reportClose.disabled = true;
   reportError('');
   try {
     const res = await fetch(`/api/pipelines/${encodeURIComponent(reportState.pipelineId)}/report-issue`, {
@@ -28682,6 +28696,8 @@ el.reportCreate.addEventListener('click', async (e) => {
     clearTimeout(btn._copyTimer);
     btn.disabled = false;
     btn.textContent = label;
+    reportState.filing = false;
+    el.reportClose.disabled = false;
   }
 });
 
@@ -28713,6 +28729,7 @@ function showViewer(title, text) {
   el.viewer.classList.remove('holds-artifact');
   el.viewer.textContent = text;
   el.viewerCard.classList.remove('hidden');
+  viewerGuard.opened();
   el.viewerCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -28747,15 +28764,9 @@ function hideViewer() {
   // the modal is next opened with different content. Same for an <embed> PDF.
   el.viewer.replaceChildren();
 }
+// Read-only: a backdrop click (press and release on the overlay) or Escape closes it.
+const viewerGuard = guardModal(el.viewerCard, { kind: 'viewer', close: () => hideViewer() });
 el.viewerClose.addEventListener('click', hideViewer);
-// Close the modal on backdrop click (overlay itself, not its inner card)...
-el.viewerCard.addEventListener('click', (e) => {
-  if (e.target === el.viewerCard) hideViewer();
-});
-// ...and on Escape, when it's open.
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !el.viewerCard.classList.contains('hidden')) hideViewer();
-});
 
 // Delegated: an artifact log line (`.log-artifact`) opens in the viewer. The run
 // context rides on the enclosing log pane's `_artifactCtx` (set by the live card
@@ -31557,7 +31568,7 @@ function closeRunDetail({ instant = false } = {}) {
   if (!shell.classList.contains('detail-open')) { runDetailState = { runId: '', screen: null }; return; }
   // Tear the stop modal down: it is a TOP-LEVEL overlay, not a child of the detail
   // screen, so emptying #run-detail would otherwise strand a full-screen overlay
-  // (and its live document keydown listener) over the list — after which
+  // (still the pop-up on top, owning Escape) over the list — after which
   // openStopModal's double-open guard makes Stop permanently dead. Below the
   // detail-open guard: with no detail open there is no modal of its to close.
   closeStopModal();
@@ -33908,6 +33919,7 @@ function openClaudeSetup() {
   if (!modal) return;
   paintClaudeSetupStatus();
   modal.classList.remove('hidden');
+  claudeSetupGuard?.opened();
   document.getElementById('claude-setup-check')?.focus?.();
   // The page's status may predate a sign-in (or a transient signed-out probe):
   // ask again on open instead of repeating it.
@@ -33920,14 +33932,11 @@ async function recheckClaudeSetup() {
   paintClaudeSetupStatus();
 }
 function closeClaudeSetup() { document.getElementById('claude-setup-modal')?.classList.add('hidden'); }
+// Read-only status: a backdrop click or Escape closes it.
+const claudeSetupEl = document.getElementById('claude-setup-modal');
+const claudeSetupGuard = claudeSetupEl ? guardModal(claudeSetupEl, { kind: 'viewer', close: () => closeClaudeSetup() }) : null;
 document.getElementById('claude-setup-close')?.addEventListener('click', closeClaudeSetup);
-document.getElementById('claude-setup-modal')?.addEventListener('click', (e) => { if (e.target === e.currentTarget) closeClaudeSetup(); });
 document.getElementById('claude-setup-check')?.addEventListener('click', recheckClaudeSetup);
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  const m = document.getElementById('claude-setup-modal');
-  if (m && !m.classList.contains('hidden')) closeClaudeSetup();
-});
 
 // ── Guides ──────────────────────────────────────────────────────────────────
 // Each hop is derived from REAL UI state at the moment it is needed (which view
@@ -34662,8 +34671,8 @@ function showView(name, param = '') {
   } else {
     runsUi.skipRestore = false;
   }
-  // #report-modal is a top-level `position:fixed;inset:0` overlay with a live document
-  // keydown listener — the same class as #stop-modal below. Leaving the view with one
+  // #report-modal is a top-level `position:fixed;inset:0` overlay that owns Escape while
+  // it is up — the same class as #stop-modal below. Leaving the view with one
   // up would float a dialog for a run the user has navigated away from over the next
   // view, and its pending debounce could still POST /report for that run.
   // Unconditional and first: closeReportModal is a no-op when nothing is open.
@@ -34716,7 +34725,7 @@ function showView(name, param = '') {
   // closeStopModal() is called HERE and not from closeRunDetail, whose teardown
   // sits below a `detail-open` early return. A route change away from the live run is
   // the moment to drop it — #stop-modal is a top-level `position:fixed;inset:0` overlay
-  // with a live document keydown listener, so leaving with one up would float it over
+  // that owns Escape while it is up, so leaving with one up would float it over
   // the next view. Same class of guard as the guardrail wizard and info-tip above.
   if (currentShownView === 'running' && name !== 'running') {
     closeStopModal();
@@ -34944,9 +34953,9 @@ function mcpTab() {
       navigate: (hash) => { if (location.hash.slice(1) !== hash) location.hash = hash; },
       confirm: confirmModal,
       // `shows(node)`: is this node still in the open dialog? A flow whose answer lands after the dialog's own Close, a
-      // tab switch or another dialog opens nothing (skill-import.mjs). `afterClose(fn)`: the dialog's own Close runs fn
-      // once, as the open step's Cancel (an Import preview's or an Update's staged copy is discarded).
-      modal: { open: pluginModal, close: closePluginModal,
+      // tab switch or another dialog opens nothing (skill-import.mjs). `afterClose(fn)`: the dialog's own Close (or
+      // Escape) runs fn once, as the open step's Cancel (an Import preview's or an Update's staged copy is discarded).
+      modal: { open: pluginModal, close: closePluginModal, onClose: onPluginModalDismiss,
         shows: (node) => !el.pluginModal.classList.contains('hidden') && el.pluginModalBody.contains(node),
         afterClose: (fn) => { pluginModalAfterClose = fn; } },
       notify: (o) => notify(o),
@@ -36294,7 +36303,15 @@ async function exportApply(id, opts) { return exportCall(id, opts); }
 // first — one Export… per row instead of one button per format.
 // `planned`: a Preview (dry run) for the CURRENT inputs is on screen. Export runs
 // its own dry run when there is none, so the primary button is never dead.
-const exportModalState = { item: null, format: 'json', destination: 'global', conflicts: [], planned: false };
+const exportModalState = { item: null, format: 'json', destination: 'global', conflicts: [], planned: false, busy: false };
+// Set by bindExportModal. A form: a backdrop click never closes it; Escape asks once a choice changed; while
+// a Preview or an Export is out, Cancel and Escape wait for its answer.
+let exportGuard = null;
+function exportSetBusy(on) {
+  exportModalState.busy = on;
+  const cancel = document.getElementById('export-cancel');
+  if (cancel) cancel.disabled = on;
+}
 
 function openExportModal(item) {
   const modal = document.getElementById('export-modal');
@@ -36304,6 +36321,7 @@ function openExportModal(item) {
   exportModalState.destination = 'global';
   exportModalState.conflicts = [];
   exportModalState.planned = false;
+  exportSetBusy(false);
   document.getElementById('export-slug').value = '';
   document.getElementById('export-folder').value = '';
   document.getElementById('export-plugin-name').value = '';
@@ -36316,6 +36334,7 @@ function openExportModal(item) {
   exportSyncFormat();
   exportSyncSlugPreview();
   modal.classList.remove('hidden');
+  exportGuard?.opened();
 }
 function closeExportModal() {
   const modal = document.getElementById('export-modal');
@@ -36351,6 +36370,7 @@ function exportShowDone(r) {
   if (typeof r.next === 'string') next.textContent = r.next; else if (r.next) next.appendChild(r.next);
   next.classList.toggle('hidden', !r.next);
   exportSetDone(true);
+  exportGuard?.markClean();   // exported: nothing left unsaved, Escape just closes
 }
 /** "Then run <code>x</code>": a text + code fragment for the next-step line. */
 function exportNextStep(before, code, after = '') {
@@ -36370,8 +36390,8 @@ function exportSyncFormat() {
   const { format, destination } = exportModalState;
   const json = format === 'json', skill = format === 'skill', plugin = format === 'plugin';
   const show = (id, on) => document.getElementById(id).classList.toggle('hidden', !on);
-  for (const b of document.querySelectorAll('#export-format .seg-btn')) b.classList.toggle('on', b.dataset.format === format);
-  for (const b of document.querySelectorAll('#export-dest .seg-btn')) b.classList.toggle('on', b.dataset.dest === destination);
+  for (const b of document.querySelectorAll('#export-format .seg-btn')) { const on = b.dataset.format === format; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
+  for (const b of document.querySelectorAll('#export-dest .seg-btn')) { const on = b.dataset.dest === destination; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
   show('export-dest-field', skill);
   show('export-folder-field', (skill && destination === 'project') || plugin);
   document.getElementById('export-folder-label').textContent = plugin ? 'Plugin folder' : 'Folder';
@@ -36521,6 +36541,7 @@ function exportInvalidatePlan() {
 function bindExportModal() {
   const modal = document.getElementById('export-modal');
   if (!modal) return;
+  exportGuard = guardModal(modal, { kind: 'form', close: () => closeExportModal(), busy: () => exportModalState.busy });
   for (const b of document.querySelectorAll('#export-format .seg-btn')) {
     b.addEventListener('click', () => { exportModalState.format = b.dataset.format; exportInvalidatePlan(); exportSyncFormat(); });
   }
@@ -36545,16 +36566,17 @@ function bindExportModal() {
     if (data && data.status === 'busy') { exportSay('A folder dialog is already open — finish or cancel it first.'); return; }
     openFolderBrowser(folder.value.trim(), set);
   });
-  document.getElementById('export-cancel').addEventListener('click', closeExportModal);
-  document.getElementById('export-done-close').addEventListener('click', closeExportModal);
+  document.getElementById('export-cancel').addEventListener('click', () => exportGuard.cancel());
+  document.getElementById('export-done-close').addEventListener('click', () => exportGuard.cancel());
   // Preview: the optional dry run — shows what Export would write, writes nothing.
   document.getElementById('export-plan-btn').addEventListener('click', async () => {
+    exportSetBusy(true);
     exportSay('Previewing…');
     try {
       const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
       exportRenderPlan(plan);
       exportSay(plan.conflicts.length ? 'Resolve each conflict below, then Export.' : 'Preview only — nothing is written until you click Export.');
-    } catch (err) { exportSay(`Preview failed: ${err.message}`, true); }
+    } catch (err) { exportSay(`Preview failed: ${err.message}`, true); } finally { exportSetBusy(false); }
   });
   // Export: writes. Without a preview for the current inputs it runs the dry run
   // itself first; a conflict (only the skill format can raise one) stops it and is
@@ -36575,6 +36597,7 @@ function bindExportModal() {
       });
       return;
     }
+    exportSetBusy(true);
     exportSay('Exporting…');
     try {
       if (!exportModalState.planned) {
@@ -36630,10 +36653,10 @@ function bindExportModal() {
     } catch (err) {
       exportInvalidatePlan();
       exportSay(`Export failed: ${err.message}`, true);
+    } finally {
+      exportSetBusy(false);
     }
   });
-  // Backdrop click (the overlay itself, not the inner card) closes the modal.
-  modal.addEventListener('click', (e) => { if (e.target === modal) closeExportModal(); });
 }
 bindExportModal();
 
@@ -36663,20 +36686,17 @@ function gvConfirmScriptImport(list) {
         body.append(head, pre);
       }
     }
-    // Every way out settles the promise ONCE: the two buttons, the modal's own Close, Escape.
+    // Every way out settles the promise ONCE: the two buttons, and the shell's own dismissal (Close, Escape).
     let settled = false;
-    const onClose = () => done(false);
-    const onKey = (e) => { if (e.key === 'Escape') done(false); };
+    let unhook = null;
     function done(ok) {
       if (settled) return;
       settled = true;
-      if (el.pluginModalClose) el.pluginModalClose.removeEventListener('click', onClose);
-      document.removeEventListener('keydown', onKey);
+      if (unhook) unhook();
       closePluginModal();
       resolve(ok);
     }
-    if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', onClose);
-    document.addEventListener('keydown', onKey);
+    unhook = onPluginModalDismiss(() => done(false));
     pluginModal('Import this workflow?', body, [['Cancel', 'btn btn-ghost', () => done(false)], ['Import', 'btn btn-primary', () => done(true)]]);
   });
 }

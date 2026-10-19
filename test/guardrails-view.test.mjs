@@ -62,6 +62,16 @@ test('guardrail editor modes: create, edit and read-only view', async () => {
   ]);
 });
 
+test('the editor\'s action row: an editable set has Cancel before Discard; a read-only view has no Cancel', () => {
+  const edit = renderGuardrailEditor(USER_SET, { doc, mode: 'edit' });
+  assert.deepEqual([...edit.querySelectorAll('.grv-editor-actions button')].map((b) => b.className.split(' ').pop()),
+    ['grv-cancel', 'grv-discard', 'grv-save']);
+  assert.equal(edit.querySelector('.grv-cancel').textContent, 'Cancel');
+  assert.equal(edit.querySelector('.grv-cancel').disabled, false, 'Cancel is always live');
+  const view = renderGuardrailEditor(BUILTIN, { doc, mode: 'view' });
+  assert.equal(view.querySelector('.grv-cancel'), null);
+});
+
 test('collectGuardrailEditor round-trips the rendered editor', () => {
   const el = renderGuardrailEditor(USER_SET, { doc });
   assert.deepEqual(collectGuardrailEditor(el), { name: 'Org Policy', settings: USER_SET.settings });

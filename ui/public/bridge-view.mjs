@@ -640,9 +640,11 @@ export function renderEndpointSheet(payload, { doc = globalThis.document } = {})
     : `${p.baseUrl || ''} — these run through the translation layer (no thinking blocks, no web tools) and are priced free: a model on your own machine bills nothing. Worca pins the prompt limit only when the server reports the window it really serves.`));
   for (const w of Array.isArray(p.warnings) ? p.warnings : []) root.appendChild(h(doc, 'small', 'hint mvi-warn', w));
   // A hosted catalog lists hundreds of models: beside the dialog's text filter, narrow by what a
-  // pipeline decides on. The controls only mark the view — endpointRowMatches reads them.
+  // pipeline decides on. The controls only mark the view — endpointRowMatches reads them — so, like
+  // that text filter, they are no change the dialog could lose (data-dirty-ignore).
   if (hosted && list.length) {
     const bar = h(doc, 'div', 'chip-select mvi-or-filters');
+    bar.dataset.dirtyIgnore = '';
     const chip = (cls, text) => {
       const l = h(doc, 'label', 'mvi-chip');
       const cb = h(doc, 'input', cls); cb.type = 'checkbox';

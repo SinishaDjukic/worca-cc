@@ -331,6 +331,14 @@ export function cardAlert(card, opts) {
 const CONTROLS = 'input, select, textarea';
 const valueOf = (n) => (n.type === 'checkbox' || n.type === 'radio' ? n.checked : n.value);
 
+/** The dirty baseline of `root`: each control's value (a checkbox or radio: checked), skipping
+ *  [data-dirty-ignore] subtrees, buttons and file inputs. trackDirty and modal-guard.mjs share it. */
+export function controlSnapshot(root) {
+  return JSON.stringify([...root.querySelectorAll(CONTROLS)]
+    .filter((n) => !n.closest('[data-dirty-ignore]') && n.type !== 'button' && n.type !== 'file')
+    .map(valueOf));
+}
+
 /**
  * Save stays disabled until a control in `card` differs from the last clean snapshot; an
  * "Unsaved changes" marker shows beside the buttons while it does. Controls inside
@@ -347,9 +355,7 @@ export function trackDirty(card, { saveBtn = null, marker = 'Unsaved changes' } 
     const row = saveBtn?.closest(ACTION_ROW) || saveBtn?.parentElement;
     if (row) row.prepend(mark); else card.append(mark);
   }
-  const snap = () => JSON.stringify([...card.querySelectorAll(CONTROLS)]
-    .filter((n) => !n.closest('[data-dirty-ignore]') && n.type !== 'button' && n.type !== 'file')
-    .map(valueOf));
+  const snap = () => controlSnapshot(card);
   let base = snap();
   const api = {
     isDirty: () => snap() !== base,

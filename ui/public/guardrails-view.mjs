@@ -208,6 +208,11 @@ export function renderGuardrailEditor(set, { doc = globalThis.document, mode = '
   root.appendChild(msgEl);
   const actions = h(doc, 'div', 'actions grv-editor-actions');
   if (!readOnly) {
+    // The way out next to the primary action: leaves the wizard at once, edits and all (app.js
+    // `.grv-cancel` → grvExitWizard). Discard only reverts the editor in place.
+    const cancel = h(doc, 'button', 'btn btn-ghost btn-mini grv-cancel', 'Cancel');
+    cancel.type = 'button';
+    actions.appendChild(cancel);
     const discard = h(doc, 'button', 'btn btn-ghost btn-mini grv-discard', 'Discard');
     discard.type = 'button';
     discard.disabled = !dirty;
