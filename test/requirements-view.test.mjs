@@ -2,6 +2,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
 
 const { window } = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost:4317/#requirements' });
 for (const k of ['document', 'location', 'Event', 'HTMLElement', 'window']) Object.defineProperty(globalThis, k, { value: k === 'window' ? window : window[k], configurable: true, writable: true });
@@ -347,7 +348,6 @@ test('Save: declining the overwrite confirm sends no second POST', async () => {
   assert.equal(calls.filter((c) => c.url.endsWith('/save')).length, 1);
 });
 
-import { readFileSync } from 'node:fs';
 test('index.html: a Simple-level, flag-gated nav row and a page section', () => {
   const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
   assert.match(html, /<button type="button" data-nav="requirements" data-min-level="simple" data-flag="requirements" data-flag-chip>/);

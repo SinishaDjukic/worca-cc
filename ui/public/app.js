@@ -229,7 +229,7 @@ import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/a
 import { createSchedulesView } from './schedules-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
-import { applyFlags, decorateFlagChips, flagOn } from './flags.mjs';
+import { applyFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { createFlagsView } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
@@ -29281,6 +29281,8 @@ const requirementsView = createRequirementsView({
   msgEl: $('#requirements-msg'),
   deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; } },
 });
+// Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
+onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });
 
 /** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
 function withWorkspaces() {
