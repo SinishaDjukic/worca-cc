@@ -3,7 +3,7 @@
 // Codex has no permission engine, so these are a Codex chat's ONLY view of the disk. The reader itself is
 // file-reader.mjs; this module adds the chat's roots under the Worca home (plus, for a turn with set skills, that
 // message's skill mount). Present in the MCP child only for a
-// Codex chat (WORCA_ASK_ENGINE=codex); a Claude chat keeps its native Read/Grep/Glob.
+// Codex or Copilot chat (WORCA_ASK_ENGINE=codex|copilot); a Claude chat keeps its native Read/Grep/Glob.
 import { join, isAbsolute, resolve, dirname, basename } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { createAskFileReader } from './file-reader.mjs';
@@ -24,8 +24,10 @@ export function askFileRoots({ home = worcaHome(), threadId, skillRoot = null } 
   return roots;
 }
 
-/** The MCP child's file bundle: present only for a Codex chat (the parent sets WORCA_ASK_ENGINE=codex in the child's env). */
+/** The engines whose chats read through worca's file tools: their own file tools are off (the lockdown). */
+const FILE_TOOL_ENGINES = ['codex', 'copilot'];
+/** The MCP child's file bundle: present only for a Codex or Copilot chat (the parent sets WORCA_ASK_ENGINE in the child's env). */
 export function defaultFileDeps({ threadId = null, env = process.env, signal = null } = {}) {
-  if (!env || env.WORCA_ASK_ENGINE !== 'codex') return {};
-  return { engine: 'codex', files: createAskFileReader({ roots: askFileRoots({ threadId, skillRoot: env.WORCA_ASK_SKILL_ROOT || null }), signal }) };
+  if (!env || !FILE_TOOL_ENGINES.includes(env.WORCA_ASK_ENGINE)) return {};
+  return { engine: env.WORCA_ASK_ENGINE, files: createAskFileReader({ roots: askFileRoots({ threadId, skillRoot: env.WORCA_ASK_SKILL_ROOT || null }), signal }) };
 }

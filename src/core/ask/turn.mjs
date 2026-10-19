@@ -51,6 +51,7 @@ import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { composerCardFrom } from './composer-payload.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
 import { codexPreflight, codexAskSupport, codexModelPriced, codexResumeNotFound, CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
+import { copilotPreflight, copilotAskSupport, copilotResumeNotFound, COPILOT_ASK_LOCKDOWN } from '../engines/copilot.mjs';
 import { hasCodexEndpoint } from '../engines/codex-endpoint.mjs';
 import { codexMemoryLine } from './prompt.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
@@ -80,7 +81,11 @@ export const CODEX_NO_LOCKDOWN_MESSAGE = "Chat on Codex is unavailable: this cod
 export const CODEX_MCP_NOTE = 'Your MCP servers are available in Claude chats';
 export const CODEX_SHELL_TRIPPED_MESSAGE = 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.';
 /** D13 fail-closed beyond the shell: a Codex chat may call worca's own tools (mcp__…) only. */
-export const codexToolTrippedMessage = (what) => `Codex used ${what}, which a chat must not have — worca stopped the turn.`;
+export const codexToolTrippedMessage = (what, engine = 'codex') => `${engineLabel(engine)} used ${what}, which a chat must not have — worca stopped the turn.`;
+// Ask Worca on Copilot: the same lockdown watch as Codex (engines/copilot.mjs askLockdown).
+export const COPILOT_NOT_READY_CODE = 'copilot-not-ready';
+export const COPILOT_SETUP_DOCS_URL = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#github-copilot-cli';
+export const COPILOT_SHELL_TRIPPED_MESSAGE = 'Copilot tried to run a shell command although it was given none — worca stopped the turn.';
 const askSlotOf = (engine) => { try { return resolveSetting(`models.${engine}.ask`).value; } catch { return undefined; } };
 
 // MCP registry §10 (Ask column): what a registry copy's `system/init` status reads as (connected/pending: nothing).
@@ -138,16 +143,19 @@ class AskTurn extends EventEmitter {
     if (engine && !ASK_ENGINES.includes(engine)) throw new Error(`Chat on ${engineLabel(engine)} is unavailable`);
     this.threadId = threadId;
     // The chat's engine (D12) — fixed by the server from the chat's model; a Claude turn never reads the fields below.
-    this.engine = engine === 'codex' ? 'codex' : 'claude';
+    this.engine = ASK_ENGINES.includes(engine) ? engine : 'claude';
+    // Codex and Copilot run locked down (no shell, no file tools of their own): worca's read_file/grep/glob, the
+    // stream watchdog, no registry copies, memory read by hand. Their readiness gates differ (_codexGate, _copilotGate).
+    this.lockedDown = this.engine !== 'claude';
     this.images = Array.isArray(images) ? images.filter((p) => typeof p === 'string' && p) : [];   // D16: this turn's images (-i)
-    this.mcpCodexNote = this.engine === 'codex' && mcpCodexNote === true;
+    this.mcpCodexNote = this.lockedDown && mcpCodexNote === true;
     this._cap = null;                 // Task 10: the watchdog's verdict ('max_turns' | 'max_budget' | 'shell')
     this._toolCalls = 0;
     this._spentUsd = 0;
     // Skills registry §4.4: resolveAskSkills()'s result for this turn; null, a blocked layer or no plugin ⇒ no mount and a
     // byte-identical spawn. Set to null again when the mount fails or the CLI refuses --plugin-dir. A Codex chat mounts
     // the same way but reads the skills through read_file (#635), so Claude Code's --plugin-dir block does not apply.
-    this.skills = skills && (this.engine === 'codex' || !skills.blocked) && Array.isArray(skills.plugins) && skills.plugins.length ? skills : null;
+    this.skills = skills && (this.lockedDown || !skills.blocked) && Array.isArray(skills.plugins) && skills.plugins.length ? skills : null;
     this.skillMount = null;           // materializeSkillMount()'s answer: { base, pluginDirs, plugins, failed }
     this.skillNames = [];             // the qualified names the mount holds — the prompt section, the note, the allow rules
     this._promptWithoutSkills = null; // the route's system prompt, restored when the safety net drops the layer
@@ -205,6 +213,9 @@ class AskTurn extends EventEmitter {
       codexAskSupport: deps.codexAskSupport ?? ((o) => codexAskSupport(o)),
       codexLockdown: deps.codexLockdown ?? (() => CODEX_ASK_LOCKDOWN),
       codexModelPriced: deps.codexModelPriced ?? codexModelPriced,
+      copilotPreflight: deps.copilotPreflight ?? ((o) => copilotPreflight(o)),
+      copilotAskSupport: deps.copilotAskSupport ?? ((o) => copilotAskSupport(o)),
+      copilotLockdown: deps.copilotLockdown ?? (() => COPILOT_ASK_LOCKDOWN),
       askSlot: deps.askSlot ?? askSlotOf,
       memoryMount: deps.memoryMount ?? refreshAskMemoryMount,
       // Skills registry §4.4: the per-turn set-skill mount (P3) and its removal.
@@ -814,7 +825,7 @@ class AskTurn extends EventEmitter {
       setTimeout: d.setTimeout,
       clearTimeout: d.clearTimeout,
       attachmentNames: this.attachmentNames,
-      ...(this.engine === 'codex' ? { emitWholeMessages: true } : {}),
+      ...(this.lockedDown ? { emitWholeMessages: true } : {}),
       // MCP registry §5.5.3: the persisted text is redacted whole with this turn's registry values (the runner redacts
       // per event, and a value split across stream deltas is only whole here). Without secrets: the default redactor.
       ...(this._mcpRedact ? { redact: this._mcpRedact } : {}),
@@ -911,7 +922,7 @@ class AskTurn extends EventEmitter {
       if (!kept.length || !Array.isArray(mount.pluginDirs)) throw new Error('no skill was written');   // P3 writes no empty plugin
       this.skillMount = mount;
       // A Codex chat has no plugin namespace (#635): its names come from the whole resolved list, as the picker's do.
-      const codexNames = this.engine === 'codex' ? codexSkillNames(this.skills.mounted) : null;
+      const codexNames = this.lockedDown ? codexSkillNames(this.skills.mounted) : null;
       const nameOf = (m) => (codexNames ? codexNames.get(m.qualifiedName) : m.qualifiedName);
       this.skillNames = kept.map(nameOf);
       const lost = this.skills.mounted.filter((m) => !kept.includes(m)).map(nameOf);
@@ -1152,8 +1163,8 @@ class AskTurn extends EventEmitter {
 
   /** The error a fail-closed trip ends the turn with, or null for a cap (a stop, not an error). */
   _trippedMessage() {
-    if (this._cap === 'shell') return CODEX_SHELL_TRIPPED_MESSAGE;
-    if (this._cap === 'tool') return codexToolTrippedMessage(this._capWhat);
+    if (this._cap === 'shell') return this.engine === 'copilot' ? COPILOT_SHELL_TRIPPED_MESSAGE : CODEX_SHELL_TRIPPED_MESSAGE;
+    if (this._cap === 'tool') return codexToolTrippedMessage(this._capWhat, this.engine);
     return null;
   }
 
@@ -1186,6 +1197,31 @@ class AskTurn extends EventEmitter {
     return null;
   }
 
+  /** A Copilot turn starts only with its lockdown, no per-turn cost cap (copilot reports no dollar cost, so worca could
+   *  not keep the turn under one), a copilot that has every lockdown flag, and a copilot binary that runs. Copilot has
+   *  no sign-in status command: a signed-out CLI fails the turn itself (auth class). Returns the completed result when
+   *  it refuses, else null. The mock never asks the real binary. */
+  async _copilotGate(limitsNow) {
+    const d = this.deps;
+    if (!d.copilotLockdown()) return this._complete({ kind: 'error', message: 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.' });
+    if (limitsNow.maxBudgetUsd != null) {
+      return this._complete({ kind: 'error', message: 'A per-turn cost cap is set, and Copilot reports no cost, so worca cannot keep this turn under it. Turn the cap off (Settings › Chat), or use a Claude or Codex chat.' });
+    }
+    if (this.mock) return null;
+    const refuse = (refusal) => {
+      this.reducer.addBlock({ kind: 'notice', text: `Copilot isn't ready: ${refusal}`, href: COPILOT_SETUP_DOCS_URL, hrefLabel: 'Copilot setup', copilotSetup: true });
+      return this._complete({ kind: 'error', message: refusal, code: COPILOT_NOT_READY_CODE });
+    };
+    let support = null;
+    try { support = await d.copilotAskSupport(); } catch (err) { support = { refusal: err?.message || String(err) }; }
+    if (support && support.refusal) return refuse(support.refusal);
+    if (this.relay) return null;
+    let pf = null;
+    try { pf = await d.copilotPreflight(); } catch (err) { pf = { warning: err?.message || String(err) }; }
+    if (pf && pf.refusal) return refuse(pf.refusal);
+    return null;
+  }
+
   async run() {
     if (this.status !== 'created') return { status: this.status };
     this.status = 'running';
@@ -1214,9 +1250,9 @@ class AskTurn extends EventEmitter {
       // D13 title runs CONCURRENTLY with the turn from here — the haiku call
       // cwd's into scratchDir, so not a line earlier. Idempotent: the call after
       // _attempts below is the backstop for a mkdir/write failure, so "fires
-      // after ANY terminal status of the first turn" stays true. A Codex chat's
-      // title is a codex spawn too, so it waits for the gate below.
-      if (this.engine !== 'codex') this._kickoffTitle();
+      // after ANY terminal status of the first turn" stays true. A Codex or Copilot chat's
+      // title is a spawn of that engine too, so it waits for the gate below.
+      if (!this.lockedDown) this._kickoffTitle();
       // Native-rules revision: refresh the chat's memory mount for this turn's scope set and hand
       // it to the spawn as --add-dir. A store failure never breaks a turn — the turn carries no
       // memory and says so on the server log (the rules are additive; the chat is unaffected).
@@ -1234,7 +1270,7 @@ class AskTurn extends EventEmitter {
         : dirname(d.worcaHome());
       mcpConfigPath = join(scratchDir, `mcp-${this.assistantMessageId}.json`);
       // A Codex turn's set skills (#635): this message's mount folder only, read through read_file for this turn only.
-      const skillRoot = this.engine === 'codex' && this.skills && this.skillMount ? this._skillBase : null;
+      const skillRoot = this.lockedDown && this.skills && this.skillMount ? this._skillBase : null;
       this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(skillRoot ? { skillRoot } : {}) }) : null;
       // Agent mode never rides the relay: relay mode is agent isolation, where the terminal refuses agent callers.
       this.commands = !this.relay && this.agentMode && d.commandBridge ? d.commandBridge({ threadId: this.threadId }) : null;
@@ -1246,7 +1282,7 @@ class AskTurn extends EventEmitter {
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.engine === 'codex' ? { engine: 'codex' } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.lockedDown ? { engine: this.engine } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group: the
         // scratch dir is setgid worca-share (2770), so 0640 reaches the agent users and nobody
@@ -1260,9 +1296,9 @@ class AskTurn extends EventEmitter {
       timer = d.setTimeout(() => { this.timedOut = true; try { this.abort.abort(); } catch { /* ignore */ } }, d.limits.turnTimeoutMs);
       // D12: read fresh every turn. The pinned project's team policy may start the limits off (team-policy §5).
       const limitsNow = d.askLimits({ projectKey: this.pinnedScope?.projectKey || null });
-      if (this.engine === 'codex') {
-        out = await this._codexGate(limitsNow);
-        // A refused turn never starts codex — not even for the title, which falls back to the prompt's own words.
+      if (this.lockedDown) {
+        out = this.engine === 'codex' ? await this._codexGate(limitsNow) : await this._copilotGate(limitsNow);
+        // A refused turn never starts the engine — not even for the title, which falls back to the prompt's own words.
         if (out) this._titleOffline = true;
         else this._kickoffTitle();
       }
@@ -1309,7 +1345,7 @@ class AskTurn extends EventEmitter {
         turn: {
           prompt: isRetry ? this.restoredPrompt : this.prompt,
           // A Codex chat reads its memory rules itself (no --add-dir rules loading, D13); Claude's prompt is unchanged.
-          systemPrompt: this.engine === 'codex' ? this.systemPrompt + codexMemoryLine(this.memoryDir) : this.systemPrompt,
+          systemPrompt: this.lockedDown ? this.systemPrompt + codexMemoryLine(this.memoryDir) : this.systemPrompt,
           model: this.model,
           effort: this.effort,
           modelEnv: this.engine === 'claude' ? d.resolveModelEnv(this.model) : undefined,   // routing env is Claude's (§4.3)
@@ -1325,7 +1361,7 @@ class AskTurn extends EventEmitter {
               try { d.store.updateThread(this.threadId, { sessionId: e.sessionId }); } catch { /* deleted thread */ }
             }
             this.reducer.push(e);
-            if (this.engine === 'codex') this._watch(e, limitsNow);   // D13/D14: Claude's caps are the CLI's own
+            if (this.lockedDown) this._watch(e, limitsNow);   // D13/D14: Claude's caps are the CLI's own
             // §10: the turn's own init only (the normalizer sets mcpServers on a main-stream init only), and only with
             // a list — an init without one says nothing (never "absent"). After the push, so a failing note can never
             // cost the reducer its init.
@@ -1341,7 +1377,7 @@ class AskTurn extends EventEmitter {
         web: this.web,
         relayed: !!this.relay,
         registry: this.mcp,   // MCP registry §9.2: EVERY attempt, the resume-fallback retry included
-        ...(this.engine === 'codex' ? { engine: 'codex' } : {}),
+        ...(this.lockedDown ? { engine: this.engine } : {}),
         commands: this.commands,
         ...(this.composer ? { composer: true } : {}),   // the Workflows chat: no Task built-in (spawn.mjs)
         // Skills registry §4.4: every attempt too, until the sideload safety net drops the layer.
@@ -1401,7 +1437,8 @@ class AskTurn extends EventEmitter {
         // never produced an init or said "No conversation found".
         if (!isRetry && this.resumeSessionId
           && (!s.sawInit || s.errors.some((m) => /No conversation found/.test(m))
-            || (this.engine === 'codex' && codexResumeNotFound(err)))) {   // §4.6: codex's own "no rollout found"
+            || (this.engine === 'codex' && codexResumeNotFound(err))     // §4.6: codex's own "no rollout found"
+            || (this.engine === 'copilot' && copilotResumeNotFound(err)))) {
           continue;
         }
         // (4) Everything else is a turn failure.
@@ -1438,7 +1475,7 @@ class AskTurn extends EventEmitter {
         // custom endpoint titles itself there, not on a first-party Haiku.
         runModel: this.model,
         // §4.6: a Codex chat titles itself on Codex, read-only (D11), with the Ask slot's model or the chat's own.
-        ...(this.engine === 'codex' ? { engine: 'codex', model: d.askSlot('codex')?.model || this.model } : {}),
+        ...(this.lockedDown ? { engine: this.engine, model: d.askSlot(this.engine)?.model || this.model } : {}),
         onError: ({ model, error }) => console.warn(
           `[worca-ask] thread ${this.threadId}: title generation failed (${model ? `model ${model}` : 'the CLI default model'}): ${error?.message || error} — keeping the fallback title`),
       })))
@@ -1481,7 +1518,7 @@ class AskTurn extends EventEmitter {
       .then(() => d.generateSuggestion({ userText: this.firstText, replyText: this._replyText }, {
         cwd: this.scratchDir || join(d.worcaHome(), 'tmp', 'ask'),
         model,
-        ...(this.engine === 'codex' ? { engine: 'codex' } : {}),
+        ...(this.lockedDown ? { engine: this.engine } : {}),
         tools: [], strictMcpConfig: true, settingSources: ['project'],
         disableSlashCommands: true, envScrub: true, envAllowlist: [],
         permissionMode: 'dontAsk',

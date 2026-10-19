@@ -1604,6 +1604,10 @@ function sanitizeGlobalModel(raw) {
     for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a cursor model takes no routing env`); delete env[k]; }
     if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a cursor model runs through cursor-agent's own sign-in`); upstream = undefined; }
   }
+  if (engine === 'copilot') {
+    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a copilot model takes no routing env`); delete env[k]; }
+    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a copilot model runs through the Copilot CLI's own sign-in`); upstream = undefined; }
+  }
   if (upstream) {
     // The bridge owns the routing keys (model-env.mjs BRIDGE_ROUTING_KEYS); a
     // hand-edited file carrying both is degraded, not rejected: the bridge wins.
@@ -1717,6 +1721,12 @@ function assertCursorFields(engine, env, upstream) {
   if (Object.keys(env || {}).length) throw new Error('a cursor model takes no env');
   if (upstream) throw new Error('a cursor model takes no upstream — cursor-agent connects with its own sign-in');
 }
+/** A Copilot model takes no routing env and no upstream: the Copilot CLI connects with its own sign-in. */
+function assertCopilotFields(engine, env, upstream) {
+  if (engine !== 'copilot') return;
+  if (Object.keys(env || {}).length) throw new Error('a copilot model takes no env');
+  if (upstream) throw new Error('a copilot model takes no upstream — the Copilot CLI connects with its own sign-in');
+}
 /** A Codex model takes no routing env, and only an OpenAI-compatible Responses endpoint as its upstream (codexUpstreamProblem). */
 function assertCodexFields(engine, env, upstream) {
   if (engine !== 'codex') return;
@@ -1738,7 +1748,9 @@ function assertIdForEngine(id, engine, conn = {}) {
   if (engine === 'claude' && CODEX_PRICES[id.toLowerCase()]) throw new Error(`"${id}" is the id of Codex's built-in ${id} (ChatGPT sign-in) — ${handleHint(id, conn)}`);
   // Cursor's own ids may look like Claude's (sonnet-4.5): the catalog row decides the owner. Only a built-in id is taken
   // (a Claude built-in has a list price; settings.mjs cannot import config.mjs's PREDEFINED_MODELS).
-  if (engine === 'cursor' && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id`);
+  if ((engine === 'cursor' || engine === 'copilot') && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id${engine === 'copilot' ? ` — Copilot's own models are copilot/<id>, such as "copilot/${id}"` : ''}`);
+  // copilot/<id> names a Copilot built-in (model-env.mjs COPILOT_MODEL_PREFIX): only a Copilot row may take one.
+  if (engine !== 'copilot' && id.toLowerCase().startsWith('copilot/')) throw new Error(`"${id}" names a Copilot model — a copilot/ id is for the Copilot engine`);
 }
 
 /** @throws {Error} on a reserved key or a non-string value. `allowNull` admits
@@ -1819,6 +1831,7 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream, 
   const vupstream = assertModelUpstream(upstream);
   assertCodexFields(vengine, venv, vupstream);
   assertCursorFields(vengine, venv, vupstream);
+  assertCopilotFields(vengine, venv, vupstream);
   assertUpstreamEnvCompatible(venv, vupstream);
   const settings = readSettings();
   const models = rawModels(settings);
@@ -1881,6 +1894,7 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
   assertUpstreamEnvCompatible(nextEnv, nextUpstream);
   assertCodexFields(curEngine, nextEnv, nextUpstream);
   assertCursorFields(curEngine, nextEnv, nextUpstream);
+  assertCopilotFields(curEngine, nextEnv, nextUpstream);
 
   if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream, curEngine));
   settings.models = models.slice();

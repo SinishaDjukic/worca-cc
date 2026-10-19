@@ -243,12 +243,12 @@ test('the signed-out note says the plain card fails and that the re-proposal rep
   assert.match(PROPOSAL_ERRORS.signedOutPlain, /tell the user the new card replaces this one/);
 });
 
-test('an engine that runs no catalog model (Copilot): ONE "omit nodes" error, never a per-node "pick a model this run\'s engine runs"', async () => {
+test('Copilot runs catalog models: a Claude pick on a Copilot run gets the per-node error', async () => {
   for (const [over, named] of [[{}, { engine: 'copilot' }], [{ resolveEngine: () => 'copilot' }, {}]]) {
-    const { validateProposal, calls } = validator(over);
+    const { validateProposal } = validator(over);
     assert.deepEqual(errs(await validateProposal({ ...base, ...named, nodes: { n_plan: { model: 'claude-opus-5-5' }, n_impl: { model: 'claude-haiku-4-5', effort: 'high' } } })),
-      ['nodes: the Copilot engine runs its own models — omit nodes for a run on it']);
-    assert.deepEqual([calls.auth, calls.models.length], [0, 0], 'nothing is read for it');
+      ['node "n_plan": claude-opus-5-5 runs on Claude, not on Copilot — pick a model this run\'s engine runs',
+        'node "n_impl": claude-haiku-4-5 runs on Claude, not on Copilot — pick a model this run\'s engine runs']);
   }
   // Codex runs catalog models: a Claude pick keeps its own per-node error there.
   const { validateProposal } = validator();

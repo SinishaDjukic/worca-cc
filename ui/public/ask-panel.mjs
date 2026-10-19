@@ -26,7 +26,7 @@ import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, pickerGroups } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
@@ -2161,7 +2161,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // (effortFromStore ⊇ pickerFromStore — a stored model always carries its effort.)
     // A thread's pick claims both slots.
     // D12/D17: a new chat starts on the user's Ask engine; a stored pick of the OTHER engine does not override it.
-    const askEngine = st.catalog && st.catalog.askEngine === 'codex' ? 'codex' : 'claude';
+    const askEngine = st.catalog && ASK_CHAT_ENGINES.includes(st.catalog.askEngine) ? st.catalog.askEngine : 'claude';
     const storeFits = st.pickerFromStore && (st.pickerExplicit || !catalogEntry(st.picker.model) || engineOfEntry(catalogEntry(st.picker.model)) === askEngine);
     if (st.pickerFromStore && !storeFits && !st.pickerFromThread) {
       // The stored pick is the other engine's: this chat claims neither its model nor its effort (the Ask slot's pair
@@ -2256,10 +2256,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    * Primary-list grouping key. Claude ids group by family; a PLUGIN model groups by
    * its plugin, so a plugin shipping ten ids contributes one primary row and the rest
    * land under "More models" — instead of each foreign id becoming its own "family"
-   * (the old `|| m.id` fallback) and flooding the list. Anything else shares one
-   * 'other' bucket.
+   * (the old `|| m.id` fallback) and flooding the list. A Copilot built-in (copilot/<id>) groups by its model family
+   * (claude-sonnet, gpt, gemini, …), so the newest of each is up front. Anything else shares one 'other' bucket.
    */
   function familyKey(m) {
+    if ((m.engine || 'claude') === 'copilot' && m.id.startsWith('copilot/')) {
+      return `copilot:${(m.id.slice('copilot/'.length).match(/^[a-z]+(?:-[a-z]+)*/) || ['other'])[0]}`;
+    }
     const fam = (m.id.match(/^claude-(opus|fable|sonnet|haiku)-/) || [])[1];
     if (fam) return `claude:${fam}`;
     if (m.custom === 'plugin' && m.plugin) return `plugin:${m.plugin}`;
@@ -2376,7 +2379,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         back.appendChild(make('span', null, '‹ Models'));
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
-        for (const g of pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })) appendByConnection(splitCatalog(g.models).rest, g.engine);
+        // Each engine's more models under its name, as in the main pane, when more than one engine has some.
+        const more = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })
+          .map((g) => ({ ...g, rest: splitCatalog(g.models).rest })).filter((g) => g.rest.length);
+        for (const g of more) {
+          if (more.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
+          appendByConnection(g.rest, g.engine);
+        }
       } else {
         // D12: a new chat shows each engine under its name; inside a chat only the chat's engine is offered.
         const sections = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() });
@@ -3094,7 +3103,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (b.href) {
       n.appendChild(doc.createTextNode(' '));
       const a = make('a', 'ask-notice-link', b.hrefLabel || 'open');
-      if (b.codexSetup) { a.target = '_blank'; a.rel = 'noopener'; }   // §4.6: the Codex setup docs
+      if (b.codexSetup || b.copilotSetup) { a.target = '_blank'; a.rel = 'noopener'; }   // §4.6: the Codex / Copilot setup docs
       a.setAttribute('href', b.href);
       n.appendChild(a);
     }
@@ -6076,7 +6085,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
             // A classified notice (errorClass on the block) IS the explanation —
             // it renders the human line and, at expert, the raw detail in its
             // own expander. The raw line here is only for the unclassified case.
-            const classified = (cur.blocks || []).some((b) => b && b.kind === 'notice' && (b.errorClass || b.codexSetup));
+            const classified = (cur.blocks || []).some((b) => b && b.kind === 'notice' && (b.errorClass || b.codexSetup || b.copilotSetup));
             if (!classified) {
               const explained = (cur.blocks || []).some((b) => b && b.kind === 'notice');
               if (cur.errorMessage) wrap.appendChild(make('div', 'ask-error-line', cur.errorMessage));
