@@ -277,6 +277,8 @@ import { webEventPrompt, webNoticeText, chatWebHosts } from '../src/core/ask/web
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
+import { registerRequirementsRoutes } from '../src/core/requirements/routes.mjs';
+import { recoverInterrupted as recoverRequirements } from '../src/core/requirements/interview.mjs';
 import { drainTimeoutMs, autoResumeEnabled, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import {
@@ -8290,6 +8292,9 @@ app.get('/api/memory/health', async (_req, res) => {
 registerMemoryRoutes('/api/memory/global', { family: 'global' });
 registerMemoryRoutes('/api/memory/projects/:key', { family: 'projects' });
 
+// Requirements (plans/requirements-design.md): product-owner feature specs, behind the `requirements` flag.
+registerRequirementsRoutes(app, { broadcast });
+
 // ---------------------------------------------------------------------------
 // Filesystem browsing for the add-project folder selector. Hybrid picker:
 // POST /api/fs/pick-folder opens the native OS dialog (the server runs on the
@@ -14714,6 +14719,14 @@ export async function bootMaintenance({ log } = {}) {
     if (swept.length) console.log(`[worca-ui] retired ${swept.length} run(s) paused on the v1 engine`);
   } catch (err) {
     console.error(`[worca-ui] v1-run sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // Requirements: a round cut short by this restart goes back to the product owner (design §4).
+  try {
+    const n = recoverRequirements();
+    if (n) console.log(`[worca-ui] requirements: ${n} interrupted round(s) handed back`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   try {

@@ -25,6 +25,7 @@ remote flags.
 |---|---|---|
 | `flagsDemo` | experimental, default off | A note in Settings › Experimental that proves the system end to end. |
 | `keepAwake` | experimental, default off | Stops the OS sleeping on its idle timer while a run has agents working; the display may still turn off. A run waiting on a question, paused or ended does not count, and nothing is held on a container or hosted worca. The UI server holds one child tied to its pid: `caffeinate -i -w <pid>` on macOS, `systemd-inhibit --what=idle` wrapping `tail --pid <pid>` on Linux, a PowerShell child holding `SetThreadExecutionState(ES_CONTINUOUS \| ES_SYSTEM_REQUIRED)` on Windows. A missing tool logs one warning and never affects a run. |
+| `requirements` | experimental, default off | The Requirements page: a product owner turns an idea into a testable feature spec through a short interview, before any run starts ([docs](requirements.md)). |
 
 ## Add a flag
 
