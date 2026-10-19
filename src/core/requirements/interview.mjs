@@ -16,7 +16,7 @@ import { worcaHome, listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, MAX_ROUNDS, LIMITS, clip } from './spec.mjs';
 import {
-  requireFeature, updateFeature, appendTurn, listTurns, getContext, addFeatureCost, listFeatures,
+  requireFeature, getFeature, updateFeature, appendTurn, listTurns, getContext, addFeatureCost, listFeatures,
 } from './store.mjs';
 import {
   ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, buildRoundPrompt, buildOrientationPrompt, applyRound,
@@ -51,15 +51,24 @@ function startJob(seq, d, fn, by) {
   const p = (async () => {
     try { await fn(); }
     catch (err) {
-      appendTurn(seq, { kind: 'error', payload: { code: err?.code || 'FAILED', message: message(err) } }, { by });
-      try { updateFeature(seq, { status: 'your_turn' }, { by }); } catch { /* deleted meanwhile */ }
+      try { appendTurn(seq, { kind: 'error', payload: { code: err?.code || 'FAILED', message: message(err) } }, { by }); }
+      catch (e) { console.error('requirements: could not record the error turn:', message(e)); }
+      try { setStatus(seq, restingStatus(seq), by); }
+      catch (e) { console.error('requirements: could not set the resting status:', message(e)); }
     } finally {
       jobs.delete(seq);
-      d.onChange(seq);
+      try { d.onChange(seq); }
+      catch (e) { console.error('requirements: onChange failed:', message(e)); }
     }
   })();
   jobs.set(seq, p);
   return p;
+}
+
+/** Writes a status, but never over an archive that happened while the job ran. */
+function setStatus(seq, status, by, extra = {}) {
+  const now = getFeature(seq);
+  updateFeature(seq, { ...extra, status: now && now.status === 'archived' ? 'archived' : status }, { by });
 }
 
 function assertBudget(d) {
@@ -77,7 +86,8 @@ function charge(seq, turnId, costUsd, model) {
 
 async function callModel(d, { cwd, systemPrompt, prompt, model, tools, maxTurns = null, timeoutMs }) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
   let costUsd = 0;
   try {
     const res = await d.runClaudeImpl({
@@ -89,20 +99,28 @@ async function callModel(d, { cwd, systemPrompt, prompt, model, tools, maxTurns 
         if (e.type !== 'result' || e.costUsd == null) return;
         const c = resolveModelCost(model, Number(e.costUsd), e.usage ?? null);
         if (Number.isFinite(c)) costUsd += c;
+        else if (Number.isFinite(Number(e.costUsd))) costUsd += Number(e.costUsd);
       }),
     });
     return { text: res?.text || '', costUsd };
+  } catch (err) {
+    // Money may already be spent when a call fails: the error carries it so the caller books it.
+    const out = timedOut
+      ? Object.assign(new Error(`Worca got no reply within ${Math.round(timeoutMs / 1000)} seconds. Try again.`), { code: 'TIMEOUT' })
+      : (err instanceof Error ? err : new Error(String(err)));
+    out.costUsd = costUsd;
+    throw out;
   } finally { clearTimeout(timer); }
 }
 
-async function openLookFor(f, d) {
+async function openLookFor(f, d, signal) {
   const base = scratchDir();
   if (f.scopeType === 'project') {
     const p = (await d.listProjects()).find((x) => x.key === f.scopeKey);
-    return p && p.exists ? d.openLook(p.path, base) : null;
+    return p && p.exists ? d.openLook(p.path, base, { signal }) : null;
   }
   const ws = await d.workspaceTarget(f.scopeKey);
-  return ws && ws.members.length ? d.openWorkspaceLook(ws.members, base) : null;
+  return ws && ws.members.length ? d.openWorkspaceLook(ws.members, base, { signal }) : null;
 }
 
 /** D7: a short product-language summary of what exists, or why there is none. Never throws. */
@@ -111,10 +129,13 @@ async function orient(f, d) {
   if (!ctx.lookAtCode) return { summary: '', files: [], skipped: 'off' };
   if (mockEnabled({})) return { summary: `[mock] What exists around "${f.title}": orders, each with a status.`, files: [], skipped: null };
   let look = null;
+  let model = null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REPO_LOOK_TIMEOUT_MS);
   try {
-    look = await openLookFor(f, d);
+    look = await openLookFor(f, d, ctrl.signal);
     if (!look) return { summary: '', files: [], skipped: 'no-repo' };
-    const model = await requirementsModel(d.listModels);
+    model = await requirementsModel(d.listModels);
     const { text, costUsd } = await callModel(d, {
       cwd: look.cwd, systemPrompt: ORIENTATION_SYSTEM_PROMPT,
       prompt: buildOrientationPrompt({ feature: f, context: ctx.body, members: look.members || null }),
@@ -122,17 +143,18 @@ async function orient(f, d) {
     });
     return { ...normalizeOrientation(safeParseJson(text)), skipped: null, model: model || null, costUsd };
   } catch (err) {
-    return { summary: '', files: [], skipped: 'failed', error: message(err) };
+    return { summary: '', files: [], skipped: 'failed', error: message(err), model, costUsd: Number(err?.costUsd) || 0 };
   } finally {
+    clearTimeout(timer);
     if (look) await look.close();
   }
 }
 
 async function runOrientation(seq, d, by) {
-  updateFeature(seq, { status: 'looking' }, { by });
+  setStatus(seq, 'looking', by);
   d.onChange(seq);
-  assertBudget(d);
   const f = requireFeature(seq);
+  if (getContext(f.scopeType, f.scopeKey).lookAtCode && !mockEnabled({})) assertBudget(d);   // only when a call will follow
   const o = await orient(f, d);
   const turnId = appendTurn(seq, { kind: 'orientation', payload: { summary: o.summary, files: o.files, skipped: o.skipped, error: o.error || null },
     model: o.model || null, costUsd: o.costUsd || null }, { by });
@@ -141,9 +163,8 @@ async function runOrientation(seq, d, by) {
 }
 
 async function runRound(seq, d, by, { final = false } = {}) {
-  updateFeature(seq, { status: 'thinking' }, { by });
+  setStatus(seq, 'thinking', by);
   d.onChange(seq);
-  assertBudget(d);
   const f = requireFeature(seq);
   const isFinal = final || f.rounds + 1 >= MAX_ROUNDS;
   const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal };
@@ -158,27 +179,37 @@ async function runRound(seq, d, by, { final = false } = {}) {
     const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns: listTurns(seq), final: isFinal, round: f.rounds + 1 });
     model = await requirementsModel(d.listModels);
     const cwd = scratchDir();
-    for (let attempt = 1; attempt <= 2 && !applied; attempt += 1) {
-      const r = await callModel(d, { cwd, systemPrompt: ROUND_SYSTEM_PROMPT, prompt, model, tools: [], timeoutMs: ROUND_TIMEOUT_MS });
-      cost += r.costUsd;
-      try { applied = applyRound(f.spec, safeParseJson(r.text), seqs); }
-      catch (err) { if (!(err instanceof RoundError)) throw err; lastErr = err; }
+    try {
+      for (let attempt = 1; attempt <= 2 && !applied; attempt += 1) {
+        assertBudget(d);   // before every call; an earlier attempt is already counted in `cost`
+        const r = await callModel(d, { cwd, systemPrompt: ROUND_SYSTEM_PROMPT, prompt, model, tools: [], timeoutMs: ROUND_TIMEOUT_MS });
+        cost += r.costUsd;
+        try { applied = applyRound(f.spec, safeParseJson(r.text), seqs); }
+        catch (err) { if (!(err instanceof RoundError)) throw err; lastErr = err; }
+      }
+    } catch (err) {
+      // Everything spent so far (earlier attempts + the call that threw) is booked on the error turn.
+      cost += Number(err?.costUsd) || 0;
+      const turnId = appendTurn(seq, { kind: 'error', payload: { code: err?.code || 'FAILED', message: message(err) },
+        model: model || null, costUsd: cost || null }, { by });
+      charge(seq, turnId, cost, model);
+      setStatus(seq, restingStatus(seq), by);
+      return;
     }
   }
   if (!applied) {
     const turnId = appendTurn(seq, { kind: 'error', payload: { code: 'BAD_REPLY', message: `Worca's reply could not be read (${lastErr.message}). Try again.` },
       model: model || null, costUsd: cost || null }, { by });
     charge(seq, turnId, cost, model);
-    updateFeature(seq, { status: 'your_turn' }, { by });
+    setStatus(seq, 'your_turn', by);
     return;
   }
   const turnId = appendTurn(seq, { kind: 'round', payload: { questions: applied.questions, note: applied.note, done: applied.done, final: isFinal },
     model: model || null, costUsd: cost || null }, { by });
   charge(seq, turnId, cost, model);
-  updateFeature(seq, {
-    spec: applied.spec, criteriaSeq: applied.criteriaSeq, assumptionSeq: applied.assumptionSeq,
-    rounds: f.rounds + 1, status: applied.done ? 'done' : 'your_turn',
-  }, { by });
+  setStatus(seq, applied.done ? 'done' : 'your_turn', by, {
+    spec: applied.spec, criteriaSeq: applied.criteriaSeq, assumptionSeq: applied.assumptionSeq, rounds: f.rounds + 1,
+  });
 }
 
 function guard(seq) {
@@ -195,7 +226,7 @@ export function startOrientation(seq, { by = null, thenRound = true } = {}, deps
   return startJob(seq, d, async () => {
     await runOrientation(seq, d, by);
     if (thenRound) await runRound(seq, d, by);
-    else updateFeature(seq, { status: restingStatus(seq) }, { by });
+    else setStatus(seq, restingStatus(seq), by);
   }, by);
 }
 
@@ -226,7 +257,8 @@ export function submitAnswers(seq, input = {}, { by = null } = {}, deps = {}) {
 
 export function finishInterview(seq, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
-  guard(seq);
+  const f = guard(seq);
+  if (f.status === 'done') throw new RequirementsError('CONFLICT', 'the interview is already finished');
   appendTurn(seq, { kind: 'finish', payload: {} }, { by });
   return startJob(seq, d, () => runRound(seq, d, by, { final: true }), by);
 }
@@ -236,6 +268,7 @@ export function finishInterview(seq, { by = null } = {}, deps = {}) {
 export function retry(seq, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const f = guard(seq);
+  if (listTurns(seq).at(-1)?.kind !== 'error') throw new RequirementsError('CONFLICT', 'nothing to retry');
   const lastReal = listTurns(seq).filter((t) => t.kind !== 'error').at(-1);
   if (!f.orientation) return startOrientation(seq, { by }, deps);
   return startJob(seq, d, () => runRound(seq, d, by, { final: lastReal?.kind === 'finish' }), by);
