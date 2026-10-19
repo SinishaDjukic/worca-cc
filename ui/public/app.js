@@ -38,6 +38,8 @@ const state = {
   engine: 'claude', // New pipeline: who runs the agent nodes, per run, never remembered
   runDefaults: null,
   engineTouched: false,
+  presets: [],    // GET /api/presets (run presets, #712), while the runPresets flag is on
+  preset: null,   // the applied preset: { id, name, scope, setup, modified, applying, broken[] } — preset mode
   guardrailSets: [], // GET /api/guardrails cache for the picker + hint
   agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
@@ -231,7 +233,10 @@ import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdow
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
-import { applyFlags, decorateFlagChips, flagOn } from './flags.mjs';
+import { applyFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
+import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
+import { renderPresetsList } from './run-presets-view.mjs';
+import { setupFromBody } from '../../src/shared/run-presets.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor } from './tag-input.mjs';
 import { normaliseTags, formatTag } from '../../src/shared/run-tags.mjs';
 import { splitByDimensions, tagGroupOptions, dimensionLabel, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
@@ -548,6 +553,11 @@ const el = {
   sourceBranch: $('#sourceBranch'),
   featureBranch: $('#featureBranch'),
   sameAsSource: $('#sameAsSource'),
+  presetSelect: $('#presetSelect'),
+  presetChip: $('#preset-chip'),
+  presetSave: $('#preset-save'),
+  presetUpdate: $('#preset-update'),
+  presetBroken: $('#preset-broken'),
   sameAsSourceHint: $('#sameAsSourceHint'),
   sourceRadios: $$('input[name="source"]'),
   promptPane: $('#prompt-pane'),
@@ -1278,7 +1288,8 @@ function applyBudgetToNewView() {
   if (!note || !start) return;
   const blocked = !!(b && b.blocked);
   const tagReason = runTagGate();
-  start.disabled = blocked || startSubmitInFlight || !!tagReason;
+  const presetReason = presetBlockReason();   // a preset with a broken reference (#712)
+  start.disabled = blocked || startSubmitInFlight || !!tagReason || !!presetReason;
   note.hidden = !blocked;
   if (blocked) {
     const w = b.resetPeriod === 'weekly' ? 'week' : 'month';
@@ -1288,7 +1299,7 @@ function applyBudgetToNewView() {
     note.textContent = msg;
     start.title = msg;
   } else {
-    start.title = tagReason || '';
+    start.title = presetReason || tagReason || '';
   }
 }
 
@@ -3998,9 +4009,18 @@ async function loadGuardrailsInto(selectId) {
   // Fall back to the Permissive default if the wanted id is gone (deleted set) —
   // and SAY so via the form's message line: a vanished selection must never
   // silently revert while the user believes it is still selected.
-  state.guardrailsId = list.some((g) => g.id === want) ? want : 'permissive';
-  if (want !== 'permissive' && state.guardrailsId === 'permissive') {
-    setFormMsg(`Guardrail set "${want}" no longer exists — this run will use Permissive (no restrictions).`, 'err');
+  if (state.preset && !list.some((g) => g.id === want)) {
+    // Preset mode (#712): no silent fallback to Permissive — the gone set stays selected, and the broken card names it.
+    state.guardrailsId = want;
+    const o = option(want, '');
+    o.textContent = `(missing) ${want}`;
+    o.disabled = true;
+    sel.appendChild(o);
+  } else {
+    state.guardrailsId = list.some((g) => g.id === want) ? want : 'permissive';
+    if (want !== 'permissive' && state.guardrailsId === 'permissive') {
+      setFormMsg(`Guardrail set "${want}" no longer exists — this run will use Permissive (no restrictions).`, 'err');
+    }
   }
   sel.value = state.guardrailsId;
   updateGuardrailsHint();
@@ -4031,10 +4051,11 @@ async function renderWorkflowConfig(workflowId) {
     if (el.humanInLoop) {
       if (state.runTarget === 'workspace') {
         // D-W1: a workspace has no stored switch — the value lives for this form only and rides the run body.
-        el.humanInLoop.checked = state.wsHumanInLoop !== false;
+        // An applied preset's value wins: it is what the run body sends.
+        el.humanInLoop.checked = presetHumanInLoop() ?? state.wsHumanInLoop !== false;
         el.humanInLoop.disabled = false;
       } else {
-        el.humanInLoop.checked = state.config.humanInLoop !== false;   // readRunConfig echoes only `false`
+        el.humanInLoop.checked = presetHumanInLoop() ?? state.config.humanInLoop !== false;   // readRunConfig echoes only `false`
         el.humanInLoop.disabled = !agentsEditable();
       }
     }
@@ -4060,7 +4081,9 @@ async function renderWorkflowConfig(workflowId) {
     setAgentsHeader(null, '');
     return;
   }
-  const runConfig = (state.config.workflows && state.config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
+  // Preset mode (#712): the preset's picks merge over the project's config per node and per wire.
+  const cfg = state.preset ? configWithPreset(state.config, workflowId, state.preset.setup) : state.config;
+  const runConfig = (cfg.workflows && cfg.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
   // wf_default stores its overrides per ROLE (the legacy `steps` blob the CLI and
   // every older install write); saved workflows store them per node id.
   const rows = buildNodeConfigRows(wf, registry, runConfig,
@@ -4072,6 +4095,12 @@ async function renderWorkflowConfig(workflowId) {
   if (el.wfFeedbackConfig) el.wfFeedbackConfig.dataset.graph = wf.version === 2 ? '1' : '';
   setAgentsHeader(rows, wf.name || workflowId);
   setAgentRowsEnabled(agentsEditable());
+  if (state.preset && el.wfFeedbackConfig && el.wfFeedbackConfig.dataset.graph !== '1') {
+    for (const i of el.wfFeedbackConfig.querySelectorAll('input[data-fb-id]')) {
+      i.disabled = true;
+      i.title = 'Loop budgets of this workflow cannot be held in a preset';
+    }
+  }
   if (currentView() === 'new') schedulePolicyLine();   // the picked models changed with the workflow (board 8)
 }
 
@@ -4113,7 +4142,9 @@ function setAgentsHeader(rows, workflowName) {
       : (editable ? agentsHeaderText(rows) : 'select a project to change these');
     el.agentsSummary.classList.toggle('muted', !editable);
   }
-  const anyModified = editable && !!rows && rows.some((r) => r.modified);
+  // Preset mode (#712): the rows show the preset's picks for this run; Reset and Save as workflow defaults would
+  // write the project's or the workflow's config, so neither is offered.
+  const anyModified = editable && !state.preset && !!rows && rows.some((r) => r.modified);
   if (el.agentsReset) el.agentsReset.hidden = !anyModified;
   if (el.agentsPromote) {
     // A graph BUILT-IN is frozen and never persisted, so it has no row to carry defaults
@@ -4139,8 +4170,11 @@ function paintHiddenSettings() {
   if (!levelAtLeast('advanced')) {
     const gr = (state.guardrailSets || []).find((g) => g.id === state.guardrailsId);
     if (state.guardrailsId && state.guardrailsId !== 'permissive') items.push(`${(gr && gr.name) || state.guardrailsId} guardrails`);
-    const n = Object.values(agentRowsById || {}).filter((r) => r && r.modified).length;
-    if (n) items.push(n === 1 ? '1 agent override' : `${n} agent overrides`);
+    if (state.preset) items.push(...presetHiddenItems(state.preset.setup));   // the preset's picks, counted once (#712)
+    else {
+      const n = Object.values(agentRowsById || {}).filter((r) => r && r.modified).length;
+      if (n) items.push(n === 1 ? '1 agent override' : `${n} agent overrides`);
+    }
     const hitlRow = document.getElementById('hitl-row');
     if (el.humanInLoop && hitlRow && !hitlRow.hidden && !el.humanInLoop.checked) items.push('Human in the loop off');
   }
@@ -4644,6 +4678,7 @@ if (el.engineSelect) {
   el.engineSelect.addEventListener('change', () => {
     state.engineTouched = true;
     setRunEngine(el.engineSelect.value);
+    notePresetChange();
   });
 }
 
@@ -4655,6 +4690,7 @@ if (el.guardrailsSelect) {
     showEngineRefusal(null); // the refusal and any consent were for the OLD guardrail set
     updateGuardrailsHint();
     schedulePolicyLine();
+    notePresetChange();
   });
 }
 
@@ -4707,8 +4743,25 @@ function liveRowValues(row, body) {
 // Default workflow and the per-NODE writer for a saved one. `next` carries only
 // what the user just changed; everything else rides along at what the row's
 // controls currently show.
+// Preset mode (#712): a change edits the applied preset's setup for THIS run; the project config is untouched.
+function holdInPreset(edit) {
+  if (!state.preset) return false;
+  edit(state.preset.setup);
+  if (!state.preset.applying) {
+    state.preset.modified = true;
+    paintPresetChip();
+    schedulePresetCheck();
+  }
+  return true;
+}
+
 async function saveAgentRow(row, next, body) {
   if (!row) return;
+  if (holdInPreset((s) => {
+    const patch = pruneNodeSelection(row, { ...liveRowValues(row, body), ...next });
+    s.overlay = s.overlay || {};
+    s.overlay.nodes = { ...(s.overlay.nodes || {}), [row.nodeId]: presetNodePick(patch, row.def) };
+  })) { renderWorkflowConfig(state.workflowId); return; }
   // Defence in depth: the controls are disabled without a project, but if one
   // is ever reached anyway, say so rather than letting the save no-op and the
   // re-render quietly undo the edit. Same wording as the submit guard.
@@ -4752,6 +4805,7 @@ async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions,
 // Persist one feedback loop's cycle count (CONV-2): PATCH /api/config
 // { projectDir, workflowId, feedbacks:{ [fbId]:{maxCycles} } }.
 async function saveFeedback(workflowId, fbId, maxCycles) {
+  if (state.preset) return;   // a v1 workflow's loop budgets cannot be held in a preset (its inputs are disabled)
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
@@ -4775,6 +4829,7 @@ async function saveFeedback(workflowId, fbId, maxCycles) {
 // { projectDir, workflowId, wires:{ [wireId]:{maxCycles} } }. The v1 twin above
 // posts `feedbacks:{…}` and stays until the v1 engine dies in P8.
 async function saveWire(workflowId, wireId, maxCycles) {
+  if (holdInPreset((s) => { s.overlay = s.overlay || {}; s.overlay.wires = { ...(s.overlay.wires || {}), [wireId]: { maxCycles } }; })) return;
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
@@ -4792,6 +4847,7 @@ async function saveWire(workflowId, wireId, maxCycles) {
 
 // Persist the active workflow selection (CONV-2): PATCH /api/config { projectDir, activeWorkflowId }.
 async function saveActiveWorkflow(workflowId) {
+  if (holdInPreset((s) => { s.workflowId = workflowId; delete s.overlay; })) return;   // node ids belong to the old workflow
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
@@ -4812,6 +4868,7 @@ async function saveActiveWorkflow(workflowId) {
 // A workspace target keeps it for this form only — checked FIRST, because selectedProjectPath()
 // reads the hidden project select and would PATCH an unrelated project.
 async function saveHumanInLoop(on) {
+  if (holdInPreset((s) => { s.humanInLoop = !!on; })) return;
   if (state.runTarget === 'workspace') { state.wsHumanInLoop = !!on; return; }   // D-W1: no PATCH
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
@@ -7590,6 +7647,7 @@ async function loadProjects(selectName) {
     state.projects = [];
   }
   renderProjectOptions(selectName);
+  if (state.presets.length) paintPresetMenu();   // pinned presets' group labels name the projects
 }
 
 function renderProjectOptions(selectName) {
@@ -8185,7 +8243,7 @@ el.projectSelect.addEventListener('change', () => {
     return;
   }
   hideAddProject();
-  onProjectChanged();
+  void reapplyPresetAfter(onProjectChanged());
 });
 
 function openAddProject() {
@@ -8452,8 +8510,10 @@ const wsBasename = (p) => {
 // ---- Target selector (New Pipeline) ----------------------------------------
 
 // Toggle Project vs Workspace target. Persists the choice; in workspace mode
-// lazy-loads options and re-points the config panel at the built-in models.
+// lazy-loads options and re-points the config panel at the built-in models. Returns the config load,
+// whose tail repaints the workflow/guardrail pickers — a caller that sets them next must await it.
 function setRunTarget(target) {
+  let cfgLoad;
   const t = target === 'workspace' ? 'workspace' : 'project';
   state.runTarget = t;
   showEngineRefusal(null); // the refusal and any consent were for the OLD target's context
@@ -8485,7 +8545,7 @@ function setRunTarget(target) {
     // vanishing entirely made the row jump.
     showWorkspaceBranchPlaceholder();
     // Config panel: no projectDir → built-in models/efforts; workflow picker still works.
-    loadConfig('');
+    cfgLoad = loadConfig('');
     ensureWorkspaceOptions();
     // The binding scope just changed from a project to a workspace; the project
     // mode branch below re-resolves via onProjectChanged().
@@ -8498,10 +8558,11 @@ function setRunTarget(target) {
     if (el.sourceBranch) el.sourceBranch.disabled = false;
     if (el.wsSourceBranches) { el.wsSourceBranches.classList.add('hidden'); el.wsSourceBranches.innerHTML = ''; }
     // Restore the project-driven branch list + config for the selected project.
-    onProjectChanged();
+    cfgLoad = onProjectChanged();
   }
   syncPreviousBranchEverywhere();
   paintBranches();
+  return cfgLoad;
 }
 
 // Workspace mode with nothing to pick per member yet: keep the field occupied by
@@ -8678,7 +8739,7 @@ async function ensureWorkspaceOptions({ keepMembers = false } = {}) {
 
 if (el.targetSeg) {
   $$('#target-seg button[data-target]').forEach((btn) => {
-    btn.addEventListener('click', () => setRunTarget(btn.dataset.target));
+    btn.addEventListener('click', () => void reapplyPresetAfter(setRunTarget(btn.dataset.target)));
   });
 }
 if (el.workspaceSelect) {
@@ -8688,7 +8749,8 @@ if (el.workspaceSelect) {
     // D-W1: Human in the loop is per run on a workspace — a new workspace starts it on again. This
     // listener does not re-run renderWorkflowConfig, so repaint the switch here.
     state.wsHumanInLoop = true;
-    if (state.runTarget === 'workspace' && state.workflowId === AUTO_WORKFLOW_ID && el.humanInLoop) el.humanInLoop.checked = true;
+    if (state.runTarget === 'workspace' && state.workflowId === AUTO_WORKFLOW_ID && el.humanInLoop) el.humanInLoop.checked = presetHumanInLoop() ?? true;
+    if (state.preset && !state.preset.applying) schedulePresetCheck();   // the check answers for this target
     renderWorkspaceMembers();
     renderWorkspaceSourceBranches();
     schedulePolicyLine();                   // team policy notes for the new target (design board 8)
@@ -13826,43 +13888,15 @@ if (typeof window !== 'undefined') {
 // ---------------------------------------------------------------------------
 // Start a run
 // ---------------------------------------------------------------------------
-el.form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  // Enter in any field submits the form directly, bypassing the disabled Start
-  // button — so the in-flight window has to be closed here too, not only via
-  // start.disabled, or a second Enter starts the same run twice.
-  if (startSubmitInFlight) return;
-  setFormMsg('', '');
-  clearFieldErrors(el.form); cardAlert(newFormCard(), null);
-
-  // Target branch (§5.4 mutual exclusivity): workspace mode sends {workspaceId}
-  // and NO projectDir; project mode sends {projectDir} and NO workspaceId.
+// The New run body the form's choices make, before the task (prompt, source, schedule, extras): the submit
+// handler starts it, and Save current setup… keeps its choices as a run preset (#712). The target is not
+// checked here — the submit handler refuses a missing project or workspace first.
+function buildRunBody() {
   const target = state.runTarget === 'workspace' ? 'workspace' : 'project';
-  let projectDir = '';
-  let workspaceId = '';
-  let workspaceName = '';
-  let workspaceProjectNames = null;
-  if (target === 'workspace') {
-    workspaceId = (el.workspaceSelect && el.workspaceSelect.value) || '';
-    if (!workspaceId) return fieldError(el.workspaceSelect, 'Select a workspace first (or create one).');
-    const ws = state.workspaces.find((w) => w && w.id === workspaceId);
-    workspaceName = (ws && ws.name) || '';
-    workspaceProjectNames = ws && Array.isArray(ws.projectPaths)
-      ? ws.projectPaths.map(projectName) : null;
-  } else {
-    projectDir = selectedProjectPath();
-    if (!projectDir) return fieldError(el.projectSelect, 'Select a project first (or add one).');
-  }
-
-  const source = (el.sourceRadios.find((r) => r.checked) || {}).value || 'prompt';
-  const promptText = el.prompt.value.trim();
-  const mdText = el.promptMarkdown.value.trim();
+  const workspaceId = target === 'workspace' ? ((el.workspaceSelect && el.workspaceSelect.value) || '') : '';
+  const projectDir = target === 'workspace' ? '' : selectedProjectPath();
   const title = el.title.value.trim();
-
-  // Memory defragment (agent memory §7.3): one scope, a synthesised brief, and the `normal`
-  // guardrails the API wrappers use unless the user deliberately picked another set.
   const isDefragRun = state.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
-
   autoSameAsSource();   // Enter-to-submit, or a click before the feature input's `change`, must not skip the switch
   const body = {
     title: title || undefined,
@@ -13927,6 +13961,51 @@ el.form.addEventListener('submit', async (e) => {
     delete body.sourceBranchByKey; body.sourceFromPrevious = true;
   }
 
+  // #527: Auto-sync only when the person touched the switch for this run (untouched, each
+  // member follows its own sync.beforeRun). Before the schedule merge, so the sheet's choice wins.
+  if (state.sync.autoSync !== null && syncApplies() && levelAtLeast('advanced')) body.syncBeforeStart = state.sync.autoSync;
+  return body;
+}
+
+el.form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  // Enter in any field submits the form directly, bypassing the disabled Start
+  // button — so the in-flight window has to be closed here too, not only via
+  // start.disabled, or a second Enter starts the same run twice.
+  if (startSubmitInFlight) return;
+  setFormMsg('', '');
+  clearFieldErrors(el.form); cardAlert(newFormCard(), null);
+
+  // Target branch (§5.4 mutual exclusivity): workspace mode sends {workspaceId}
+  // and NO projectDir; project mode sends {projectDir} and NO workspaceId.
+  const target = state.runTarget === 'workspace' ? 'workspace' : 'project';
+  let projectDir = '';
+  let workspaceId = '';
+  let workspaceName = '';
+  let workspaceProjectNames = null;
+  if (target === 'workspace') {
+    workspaceId = (el.workspaceSelect && el.workspaceSelect.value) || '';
+    if (!workspaceId) return fieldError(el.workspaceSelect, 'Select a workspace first (or create one).');
+    const ws = state.workspaces.find((w) => w && w.id === workspaceId);
+    workspaceName = (ws && ws.name) || '';
+    workspaceProjectNames = ws && Array.isArray(ws.projectPaths)
+      ? ws.projectPaths.map(projectName) : null;
+  } else {
+    projectDir = selectedProjectPath();
+    if (!projectDir) return fieldError(el.projectSelect, 'Select a project first (or add one).');
+  }
+
+  const source = (el.sourceRadios.find((r) => r.checked) || {}).value || 'prompt';
+  const promptText = el.prompt.value.trim();
+  const mdText = el.promptMarkdown.value.trim();
+  const title = el.title.value.trim();
+
+  // Memory defragment (agent memory §7.3): one scope, a synthesised brief, and the `normal`
+  // guardrails the API wrappers use unless the user deliberately picked another set.
+  const isDefragRun = state.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
+
+  const body = buildRunBody();
+
   const psrc = state.activePluginSource;
   if (isDefragRun) {
     // A defragment run needs no task text: synthesise the same brief and title the API wrapper
@@ -13957,10 +14036,8 @@ el.form.addEventListener('submit', async (e) => {
   // A time picked earlier (Schedule… in the split menu, Schedules › Schedule a run, Change…)
   // rides the same POST /api/run body — `scheduledFor` (once) or `repeat` (recurring).
   const scheduling = !!pendingSchedule;
-  // #527: Auto-sync only when the person touched the switch for this run (untouched, each
-  // member follows its own sync.beforeRun). Before the schedule merge, so the sheet's choice wins.
+  // #527: a base that cannot start from origin blocks the start (the switch itself is in buildRunBody).
   if (state.sync.blocked && levelAtLeast('advanced')) return cardAlert(newFormCard(), { title: 'Run not started', detail: `${state.sync.blocked} can’t start from origin yet. Push its commits, or use Local copy.` });
-  if (state.sync.autoSync !== null && syncApplies() && levelAtLeast('advanced')) body.syncBeforeStart = state.sync.autoSync;
   if (scheduling) {
     const { sync: schedSync, ...schedRest } = pendingSchedule;
     Object.assign(body, schedRest);
@@ -13968,6 +14045,14 @@ el.form.addEventListener('submit', async (e) => {
     if (body.after && 'branchGone' in body.after) { const { branchGone: _bg, ...a } = body.after; body.after = a; }
     if (schedSync && typeof schedSync.beforeRun === 'boolean') body.syncBeforeStart = schedSync.beforeRun;
     if (schedSync && (schedSync.onDiverged === 'origin' || schedSync.onDiverged === 'fail')) body.syncOnDiverged = schedSync.onDiverged;
+  }
+  // Run presets (#712): the run-only lane. Agent picks and loop budgets ride the per-run overlay and
+  // human-in-the-loop its body key, so the project config never changes; every other key came from the form.
+  if (state.preset) {
+    const s = state.preset.setup;
+    body.presetId = state.preset.id;
+    if (s.overlay && state.workflowId !== AUTO_WORKFLOW_ID) body.overlay = structuredClone(s.overlay);
+    if (typeof s.humanInLoop === 'boolean') body.humanInLoop = s.humanInLoop;
   }
 
   // #555: withButton owns #start-btn from here, and reads undefined as success, so every exit
@@ -14037,6 +14122,14 @@ el.form.addEventListener('submit', async (e) => {
         showEngineRefusal(data);
         return notStarted(data.overridable ? 'Tick Allow unguarded to run anyway, or pick Claude.' : (data.error || 'The engine cannot run this.'));
       }
+      // A preset whose references are gone (#712): the broken card names each one, Start waits for them.
+      if (res.status === 409 && data && data.code === 'preset-broken' && state.preset) {
+        startSubmitInFlight = false;
+        state.preset.broken = Array.isArray(data.broken) ? data.broken : [];
+        paintPresetBroken();
+        applyBudgetToNewView();
+        return notStarted(data.error);
+      }
       // Enforced tags (D13): the server's reason goes under the tag field, not into a card alert.
       if (res.status === 422 && data?.fields?.tags) {
         startSubmitInFlight = false;
@@ -14055,6 +14148,7 @@ el.form.addEventListener('submit', async (e) => {
         resetSyncChoice();
         showEngineRefusal(null);
         clearTask(submittedTask);
+        applyPresetSwitches();   // clearTask unchecks Run on the source branch (#688); a preset keeps its own
         // Keep the warn tone when the server attached a budget warning. showView('schedules')
         // already shows the ticket, so the toast needs no Open action.
         notify({ tone: data.budgetWarning ? 'warn' : 'ok', title: 'Scheduled', detail: data.budgetWarning || title || '' });
@@ -14071,6 +14165,7 @@ el.form.addEventListener('submit', async (e) => {
       resetSyncChoice();
       showEngineRefusal(null);
       clearTask(submittedTask);
+      applyPresetSwitches();
       // D6: the user is on the run's page now, so the result is a toast, not a #form-msg line.
       notify({ tone: 'ok', title: 'Run started', detail: title || '', key: `run-${data.runId}`,
         action: { label: 'Open run', run: () => { location.hash = rdHash(data.runId); } } });
@@ -14089,7 +14184,7 @@ el.form.addEventListener('submit', async (e) => {
       return notStarted(`Error: ${err.message}`);
     }
   }, { busy: scheduling ? 'Scheduling…' : 'Starting…', done: scheduling ? 'Scheduled' : 'Started',
-    idleDisabled: () => !!budgetState.budget?.blocked || startSubmitInFlight || !!runTagGate() });
+    idleDisabled: () => !!budgetState.budget?.blocked || startSubmitInFlight || !!runTagGate() || !!presetBlockReason() });
 });
 
 // #555: card alerts for New pipeline go into #run-form, directly above its own action row
@@ -34389,7 +34484,7 @@ document.addEventListener('worca:level', () => {
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'tags', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
+const SETTINGS_TABS = ['general', 'tags', 'presets', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
 // Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
 // it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
 const SETTINGS_FORM_TABS = ['general', 'tags', 'runs', 'ask'];
@@ -34420,6 +34515,7 @@ function parseSettingsParam(param = '') {
   const tab = i === -1 ? param : param.slice(0, i);
   const sub = i === -1 ? '' : param.slice(i + 1);
   if (tab === 'tags' && !flagOn('runTags')) return ['general', ''];   // the Tags tab exists only while runTags is on
+  if (tab === 'presets' && !flagOn('runPresets')) return ['general', ''];
   return SETTINGS_TABS.includes(tab) ? [tab, sub] : ['general', ''];
 }
 // The canonical param for a tab: General is plain '#settings', never '#settings/general'.
@@ -34740,6 +34836,7 @@ function showSettingsTab(param = '') {
     void loadSettings().then(() => focusSettingsCard(settingsPanes.find((p) => p.dataset.tab === tab), sub));
   }
   if (tab === 'tags') void loadTagsTeam();
+  if (tab === 'presets') void loadPresetsView();
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
@@ -35292,6 +35389,374 @@ async function applyAskPrefill() {
   }
   if (p.sameAsSource && el.sameAsSource) { el.sameAsSource.checked = true; paintSameAsSource(); }
 }
+
+// ---- Run presets (#712, docs/run-presets.md) --------------------------------
+// A preset fills the New run form for THIS run: picking one enters preset mode, where the Agents rows,
+// loop budgets, human-in-the-loop and the workflow edit state.preset.setup (holdInPreset) instead of the
+// project config, and the submit handler sends the overlay + humanInLoop + presetId lane.
+
+/** The one-line reason Start is disabled by a broken preset reference, or ''. */
+function presetBlockReason() {
+  return state.preset && state.preset.broken.length ? state.preset.broken[0].message : '';
+}
+
+/** The applied preset's Human in the loop, or null when no preset sets it. */
+function presetHumanInLoop() {
+  return state.preset && typeof state.preset.setup.humanInLoop === 'boolean' ? state.preset.setup.humanInLoop : null;
+}
+
+/**
+ * A target change (project, Project/Workspace) in preset mode: once the new target's config load has repainted
+ * the pickers, put the preset's workflow, engine and guardrails back, then check the preset for this target.
+ */
+async function reapplyPresetAfter(cfgLoad) {
+  const p = state.preset;
+  if (!p || p.applying) return;
+  p.applying = true;
+  try {
+    await cfgLoad;
+    if (state.preset !== p) return;
+    state.engineTouched = true;   // the target change reset it; the late project defaults must not swap the engine
+    setRunEngine(p.setup.engine || 'claude');
+    await loadWorkflowsInto(p.setup.workflowId || 'wf_default');
+    await loadGuardrailsInto(p.setup.guardrailsId || 'permissive');
+    await renderWorkflowConfig(state.workflowId);
+  } finally {
+    p.applying = false;
+  }
+  if (state.preset !== p) return;
+  paintPresetChip();
+  await runPresetCheck();
+  paintHiddenSettings();
+}
+
+/** Group labels for pinned presets: "project:key" → project name, "workspace:id" → workspace name. */
+function presetTargetNames() {
+  const names = {};
+  for (const p of state.projects || []) if (p && p.key) names[`project:${p.key}`] = p.name;
+  for (const w of state.workspaces || []) if (w && w.id) names[`workspace:${w.id}`] = w.name;
+  return names;
+}
+
+function paintPresetMenu() {
+  const sel = el.presetSelect;
+  if (!sel) return;
+  sel.replaceChildren(option('', 'No preset'));
+  for (const g of presetMenuGroups(state.presets, presetTargetNames())) {
+    const og = document.createElement('optgroup');
+    og.label = g.label;
+    for (const p of g.items) og.appendChild(option(p.id, p.name));
+    sel.appendChild(og);
+  }
+  sel.appendChild(option('__manage__', 'Manage presets…'));
+  sel.value = state.preset ? state.preset.id : '';
+}
+
+function paintPresetChip() {
+  const chip = el.presetChip;
+  const p = state.preset;
+  if (chip) {
+    chip.hidden = !p;
+    chip.textContent = !p ? '' : p.applying ? `Checking ${p.name}…`
+      : p.modified ? `${p.name} · modified` : 'Preset — changes here apply to this run only';
+  }
+  if (el.presetUpdate) el.presetUpdate.hidden = !(p && p.modified);
+  if (el.presetSave) el.presetSave.textContent = p && p.modified ? 'Save as new…' : 'Save current setup…';
+}
+
+// A broken item the form has replaced since the check (#712 8.6): its reference is no longer what this run uses.
+function presetItemReplaced(item) {
+  const s = state.preset.setup;
+  if (item.item === 'guardrails') return state.guardrailsId !== item.ref && state.guardrailSets.some((g) => g.id === state.guardrailsId);
+  if (item.item === 'model') {
+    const m = s.overlay?.nodes?.[item.ref]?.model;
+    return !m || state.models.some((x) => x && String(x.id).toLowerCase() === String(m).toLowerCase());
+  }
+  if (item.item === 'node') return !s.overlay?.nodes?.[item.ref];
+  if (item.item === 'loop') return !s.overlay?.wires?.[item.ref];
+  if (item.item === 'workflow') return (s.workflowId || 'wf_default') !== item.ref;
+  if (item.item === 'engine') return state.engine !== item.ref;
+  return false;
+}
+
+function paintPresetBroken() {
+  if (!el.presetBroken) return;
+  if (!state.preset) { el.presetBroken.replaceChildren(); return; }
+  el.presetBroken.replaceChildren(renderBrokenCard(document, state.preset.broken, { onReset: (b) => void resetPresetItem(b) }));
+}
+
+/** "Reset to project default": drop the pick, repaint the form from what is left, and check again. */
+async function resetPresetItem(item) {
+  if (!state.preset) return;
+  const next = resetItem(state.preset.setup, item, {
+    projectWorkflowId: state.config.activeWorkflowId || 'wf_default',
+    defaultEngine: state.runDefaults?.engine?.value || 'claude',
+  });
+  state.preset.setup = next;
+  state.preset.modified = true;
+  state.preset.applying = true;
+  try {
+    if (item.item === 'guardrails') await loadGuardrailsInto('permissive');
+    else if (item.item === 'engine') setRunEngine(next.engine);
+    else if (item.item === 'workflow') await loadWorkflowsInto(next.workflowId);
+    else await renderWorkflowConfig(state.workflowId);
+  } finally {
+    if (state.preset) state.preset.applying = false;
+  }
+  paintPresetChip();
+  await runPresetCheck();
+  paintHiddenSettings();
+}
+
+/** Post the pick-time check for the form's target; a modified preset keeps only the items it has not replaced. */
+async function runPresetCheck() {
+  const p = state.preset;
+  if (!p) return;
+  if (p.modified) { p.broken = p.broken.filter((b) => !presetItemReplaced(b)); paintPresetBroken(); applyBudgetToNewView(); }
+  const target = state.runTarget === 'workspace' ? { workspaceId: (el.workspaceSelect && el.workspaceSelect.value) || '' } : { projectDir: selectedProjectPath() };
+  const r = await mcpApi('POST', `/api/presets/${encodeURIComponent(p.id)}/check`, target);
+  if (state.preset !== p) return;   // another pick (or No preset) since
+  if (!r.ok || !Array.isArray(r.data?.broken)) {
+    setFormMsg(`Could not check the preset: ${(r.data && r.data.error) || `HTTP ${r.status}`}`, 'err');
+    return;
+  }
+  // The server checks the STORED preset; the form's replacements count too (the start check reads the body).
+  p.broken = p.modified ? r.data.broken.filter((b) => !presetItemReplaced(b)) : r.data.broken;
+  paintPresetBroken();
+  applyBudgetToNewView();
+}
+
+let presetCheckTimer = null;
+function schedulePresetCheck() {
+  clearTimeout(presetCheckTimer);
+  presetCheckTimer = setTimeout(() => { presetCheckTimer = null; void runPresetCheck(); }, 300);
+}
+
+/** A form change the preset stores but no holder owns (guardrails, engine): the preset is modified. */
+function notePresetChange() {
+  if (!state.preset || state.preset.applying) return;
+  state.preset.modified = true;
+  paintPresetChip();
+  schedulePresetCheck();
+}
+
+/** Select `value` in `select`, adding the option first when the list does not hold it. */
+function setSelectValueAdding(select, value) {
+  if (![...select.options].some((o) => o.value === value)) select.appendChild(option(value, value));
+  select.value = value;
+}
+
+/** The run-tag inputs hold the preset's tags. dirty: the late project defaults (loadRunDefaults) leave them alone. */
+function applyRunTagsFromPreset(tags) {
+  const { slots, rest } = splitByDimensions(tags, state.tagDims.dims);
+  runTagInput.set(rest, { dirty: true });
+  runTagDims.set(Object.entries(slots).map(([key, value]) => formatTag({ key, value })));
+  paintRunTagDimsWarn();
+}
+
+async function applyPreset(id) {
+  const p = state.presets.find((x) => x.id === id);
+  if (!p) { leavePresetMode(); return; }
+  state.preset = { id: p.id, name: p.name, scope: p.scope, setup: structuredClone(p.setup), modified: false, applying: true, broken: [] };
+  if (el.presetSelect) el.presetSelect.value = p.id;
+  paintPresetChip();
+  const s = state.preset.setup;
+  try {
+    if (p.scope.kind === 'workspace') {
+      // Await its config load: that tail repaints the pickers with the OLD ids and would land after ours.
+      await setRunTarget('workspace');
+      await ensureWorkspaceOptions();
+      if (el.workspaceSelect) {
+        el.workspaceSelect.value = p.scope.ref;
+        el.workspaceSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+      }
+    } else if (p.scope.kind === 'project') {
+      setRunTarget('project');
+      // /api/projects rows carry `key` (src/core/projects.mjs); applyAskPrefill looks up by path, a preset stores the key.
+      const idx = state.projects.findIndex((x) => x && x.key === p.scope.ref);
+      if (idx >= 0) el.projectSelect.selectedIndex = idx + 1;   // +1: past the placeholder option
+      await onProjectChanged();
+    }
+    // onProjectChanged reset engineTouched and started loadRunDefaults un-awaited; touching it here
+    // stops that late answer from swapping in the project's default engine.
+    state.engineTouched = true;
+    setRunEngine(s.engine || 'claude');
+    await loadWorkflowsInto(s.workflowId || 'wf_default');
+    await loadGuardrailsInto(s.guardrailsId || 'permissive');   // keeps a missing set in preset mode
+    state.mcpOptOut = [...(s.mcpOptOut || [])];
+    renderMcpRuns();
+    el.mock.checked = !!s.mock;
+    if (el.nightMode) el.nightMode.checked = !!s.nightMode;
+    state.sync.autoSync = typeof s.syncBeforeStart === 'boolean' ? s.syncBeforeStart : null;
+    if (state.runTarget === 'workspace') {
+      // the per-member selects are rebuilt asynchronously on the change above (as applyAskPrefill waits for them)
+      const byKey = s.sourceBranchByKey || {};
+      for (const sel of el.wsSourceBranches ? el.wsSourceBranches.querySelectorAll('select.ws-src-select') : []) {
+        const want = byKey[sel.dataset.projectKey];
+        if (!want) continue;
+        for (let i = 0; i < 20 && sel.options.length <= 1; i++) await new Promise((r) => setTimeout(r, 25));
+        setSelectValueAdding(sel, want);
+      }
+    } else if (s.sourceBranch && el.sourceBranch) {
+      await refreshBranches(selectedProjectPath());
+      setSelectValueAdding(el.sourceBranch, s.sourceBranch);
+    }
+    if (flagOn('runTags') && Array.isArray(s.tags)) applyRunTagsFromPreset(s.tags);
+    applyPresetSwitches();
+    await renderWorkflowConfig(state.workflowId);
+  } finally {
+    if (state.preset && state.preset.id === p.id) state.preset.applying = false;
+  }
+  paintPresetChip();
+  await runPresetCheck();
+  paintHiddenSettings();
+}
+
+/** "Run on the source branch" follows the applied preset, again after each start (clearTask unchecks it, #688). */
+function applyPresetSwitches() {
+  if (!state.preset || !el.sameAsSource) return;
+  const want = !!state.preset.setup.sameAsSource;
+  if (el.sameAsSource.checked !== want) { el.sameAsSource.checked = want; paintSameAsSource(); }
+}
+
+function leavePresetMode() {
+  state.preset = null;
+  if (el.presetSelect) el.presetSelect.value = '';
+  paintPresetChip();
+  paintPresetBroken();
+  applyBudgetToNewView();
+  renderWorkflowConfig(state.workflowId);
+  loadGuardrailsInto(state.guardrailsId);
+  paintHiddenSettings();
+}
+
+async function loadPresets() {
+  const r = await mcpApi('GET', '/api/presets');
+  state.presets = r.ok && Array.isArray(r.data?.presets) ? r.data.presets : [];
+  // A pinned preset's group label (and Settings' "Workspace gone") reads state.workspaces, which a page load leaves
+  // empty until a target switch: load it first. The boot project list repaints the menu itself (loadProjects).
+  if (state.presets.some((p) => p.scope?.kind === 'workspace')) await withWorkspaces();
+  paintPresetMenu();
+  return state.presets;
+}
+
+/** The setup the form holds now: buildRunBody's choices, plus the applied preset's overlay and human-in-the-loop. */
+function presetSetupFromForm(draft, scopeKind) {
+  return {
+    ...setupFromBody(draft, { scope: scopeKind }),
+    ...(state.preset ? { overlay: state.preset.setup.overlay, humanInLoop: state.preset.setup.humanInLoop } : {}),
+  };
+}
+const presetBasis = (draft) => (draft.workspaceId ? { workspaceId: draft.workspaceId } : { projectDir: draft.projectDir });
+
+/** Save current setup… (or Save as new…): a loop over promptModal that reopens with the error under Name. */
+async function savePresetDialog() {
+  const draft = buildRunBody();
+  const ws = draft.workspaceId ? state.workspaces.find((w) => w && w.id === draft.workspaceId) : null;
+  const scopeOptions = [{ value: 'global', text: 'Any project' }];
+  if (ws) scopeOptions.push({ value: 'workspace', text: `Only workspace ${ws.name}` });
+  else if (draft.projectDir) scopeOptions.push({ value: 'project', text: `Only ${selectedProjectName()}` });
+  const SAVED = 'Saved: workflow, engine, guardrails, agents, loops, branches, Away mark, opt-outs. Never saved: title, prompt, Markdown, extra files, new branch name.';
+  let name = '';
+  let scope = 'global';
+  let error = '';
+  for (;;) {
+    const v = await promptModal({
+      title: 'Save as a run preset', confirmLabel: 'Save preset',
+      fields: [
+        { id: 'name', label: 'Name', value: name, required: true, ...(error ? { hint: error } : {}) },
+        { id: 'scope', label: 'Scope', value: scope, options: scopeOptions, hint: SAVED },
+      ],
+    });
+    if (!v) return;
+    name = v.name || '';
+    scope = v.scope || 'global';
+    error = saveDialogError(name, state.presets.map((p) => p.name));
+    if (error) continue;
+    const scopeBody = scope === 'project' ? { kind: 'project', projectDir: draft.projectDir }
+      : scope === 'workspace' ? { kind: 'workspace', workspaceId: draft.workspaceId } : { kind: 'global' };
+    const r = await mcpApi('POST', '/api/presets', { name, scope: scopeBody, setup: presetSetupFromForm(draft, scopeBody.kind), basis: presetBasis(draft) });
+    if (!r.ok) { error = r.status === 409 ? 'A preset with this name already exists' : (r.data && r.data.error) || `HTTP ${r.status}`; continue; }
+    state.presets = [...state.presets, r.data.preset];
+    paintPresetMenu();
+    await applyPreset(r.data.preset.id);
+    return;
+  }
+}
+
+/** Update preset: PUT the form's setup over the applied preset and leave it clean. */
+async function updateAppliedPreset() {
+  const p = state.preset;
+  if (!p) return;
+  const draft = buildRunBody();
+  const r = await mcpApi('PUT', `/api/presets/${encodeURIComponent(p.id)}`, { setup: presetSetupFromForm(draft, p.scope.kind), basis: presetBasis(draft) });
+  if (!r.ok) { setFormMsg(`Could not update the preset: ${(r.data && r.data.error) || `HTTP ${r.status}`}`, 'err'); return; }
+  state.presets = state.presets.map((x) => (x.id === p.id ? r.data.preset : x));
+  if (state.preset === p) { p.setup = structuredClone(r.data.preset.setup); p.modified = false; }
+  paintPresetChip();
+  await runPresetCheck();
+}
+
+if (el.presetSelect) {
+  el.presetSelect.addEventListener('change', () => {
+    const v = el.presetSelect.value;
+    if (v === '__manage__') { el.presetSelect.value = state.preset ? state.preset.id : ''; location.hash = '#settings/presets'; return; }
+    if (!v) { leavePresetMode(); return; }
+    void applyPreset(v);
+  });
+}
+el.presetSave?.addEventListener('click', () => void savePresetDialog());
+el.presetUpdate?.addEventListener('click', () => void updateAppliedPreset());
+
+// Settings › Presets (run-presets-view.mjs): Use / Rename / Duplicate / Edit scope / Delete.
+async function loadPresetsView() {
+  const host = document.getElementById('presets-list');
+  if (!host || !flagOn('runPresets')) return;
+  if (!(state.projects || []).length) await loadProjects();
+  await withWorkspaces();   // Edit scope offers every workspace
+  await loadPresets();
+  const names = presetTargetNames();
+  const presetError = (r) => notify({ tone: 'err', title: 'Could not change the preset', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+  const after = async (r) => { if (!r.ok) presetError(r); await loadPresetsView(); };
+  host.replaceChildren(renderPresetsList(document, state.presets, {
+    names,
+    onUse: (p) => { location.hash = '#new'; void applyPreset(p.id); },
+    onRename: async (p) => {
+      const v = await promptModal({ title: 'Rename preset', fields: [{ id: 'name', label: 'Name', value: p.name, required: true }] });
+      if (v) await after(await mcpApi('PUT', `/api/presets/${encodeURIComponent(p.id)}`, { name: v.name }));
+    },
+    onDuplicate: async (p) => after(await mcpApi('POST', `/api/presets/${encodeURIComponent(p.id)}/duplicate`, {})),
+    onEditScope: async (p) => {
+      const options = [{ value: 'global', text: 'Any project' },
+        ...(state.projects || []).filter((x) => x && x.key).map((x) => ({ value: `project:${x.key}`, text: `Only ${x.name}`, group: 'Project' })),
+        ...(state.workspaces || []).filter((w) => w && w.id).map((w) => ({ value: `workspace:${w.id}`, text: `Only workspace ${w.name}`, group: 'Workspace' }))];
+      const cur = p.scope.kind === 'global' ? 'global' : `${p.scope.kind}:${p.scope.ref}`;
+      const v = await promptModal({ title: 'Edit scope', fields: [{ id: 'scope', label: 'Scope', value: cur, options }] });
+      if (!v) return;
+      const [kind, ref] = v.scope === 'global' ? ['global', ''] : [v.scope.slice(0, v.scope.indexOf(':')), v.scope.slice(v.scope.indexOf(':') + 1)];
+      const proj = kind === 'project' ? state.projects.find((x) => x && x.key === ref) : null;
+      const scope = kind === 'project' ? { kind, projectDir: proj ? proj.path : '' } : kind === 'workspace' ? { kind, workspaceId: ref } : { kind: 'global' };
+      await after(await mcpApi('PUT', `/api/presets/${encodeURIComponent(p.id)}`, { scope }));
+    },
+    onDelete: async (p) => {
+      const ok = await confirmModal({ title: 'Delete preset', message: `Delete the preset “${p.name}”? Runs it started are not affected.`, confirmLabel: 'Delete preset', danger: true });
+      if (!ok) return;
+      const r = await mcpApi('DELETE', `/api/presets/${encodeURIComponent(p.id)}`);
+      if (r.ok && state.preset && state.preset.id === p.id) leavePresetMode();
+      await after(r);
+    },
+  }));
+}
+
+if (flagOn('runPresets')) void loadPresets();
+const offPresetsFlag = onFlagChange('runPresets', (on) => {
+  if (on) { void loadPresets(); return; }
+  if (state.preset) leavePresetMode();
+  state.presets = [];
+  paintPresetMenu();
+});
+// Test hook: flags.mjs's listener map outlives a jsdom boot, so a suite unsubscribes the previous app first.
+if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { offPresetsFlag });
 
 // ---- Away mode on the run page and New run --------------------------------
 // state.awayMode: the user-level GET /api/away-mode body (Settings card, boot, settings-changed).

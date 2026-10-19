@@ -20,6 +20,10 @@ Pull requests (add each number when it opens):
 - Shape it first: review checklists
 - Shape it first: plan in slices
 
+## Run presets (experimental)
+
+Save a New run setup as a named preset, pick it later, type a prompt and start: the run gets the preset's choices for that run only, and the project's settings never change. Read it: [Run presets](../run-presets.md)
+
 ## Watch PR fix runs in the chat
 
 **The chat that opened a pull request sees its fix runs.**

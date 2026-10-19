@@ -276,6 +276,15 @@
           <div class="grid single">
             <section class="card">
               <form id="run-form" autocomplete="off">
+                <!-- Run presets (#712, docs/run-presets.md): a named setup, applied for THIS run only. -->
+                <div id="preset-row" class="preset-row" data-flag="runPresets">
+                  <label for="presetSelect">Preset</label>
+                  <select id="presetSelect"><option value="">No preset</option></select>
+                  <span id="preset-chip" class="chip" hidden></span>
+                  <button type="button" id="preset-save" class="btn-ghost btn-mini">Save current setup…</button>
+                  <button type="button" id="preset-update" class="btn-ghost btn-mini" hidden>Update preset</button>
+                  <div id="preset-broken"></div>
+                </div>
                 <!-- Target switch and the thing it selects share one row: they are one
                      decision, and the switch is only meaningful next to its picker. -->
                 <div class="split-row">
@@ -1602,6 +1611,7 @@
                  strip. Plugins, Sets, Models and Providers left for the Add-ons pages. -->
             <button type="button" class="on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
             <button type="button" data-tab="tags" data-min-level="simple" data-flag="runTags" aria-pressed="false">Tags</button>
+            <button type="button" data-tab="presets" data-min-level="simple" data-flag="runPresets" data-flag-chip aria-pressed="false">Presets</button>
             <button type="button" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
             <!-- Experimental (docs/feature-flags.md) shows at every level: flags are not levels. -->
             <button type="button" data-tab="experimental" data-min-level="simple" aria-pressed="false">Experimental</button>
@@ -1830,6 +1840,14 @@
               </div>
             </section>
           </section><!-- /pane tags -->
+
+          <section class="settings-pane hidden" data-tab="presets">
+            <section class="card settings-card" id="presets-settings-card" data-min-level="simple" data-flag="runPresets">
+              <div class="card-head"><div class="label-row"><h2>Presets</h2></div></div>
+              <p class="hint">Named New run setups. Pick one in New run, type a prompt and start: its choices apply to that run only.</p>
+              <div id="presets-list"></div>
+            </section>
+          </section><!-- /pane presets -->
 
           <!-- ===== TAB: RUNS — how pipeline runs are capped, scheduled and reported.
                Simple, for Budget; the two Advanced cards keep their own level. ===== -->

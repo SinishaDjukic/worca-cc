@@ -63,6 +63,18 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-01-13',
     docs: 'docs/feature-flags.md',
   }),
+  entry({
+    key: 'runPresets',
+    title: 'Run presets',
+    description: 'Save a New run setup (workflow, engine, guardrails, agents, loops, branches, Away mark, opt-outs) as a named preset, then start a run from it with just a prompt.',
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.11.0',
+    added: '2026-10-16',
+    reviewBy: '2027-01-14',
+    docs: 'docs/run-presets.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));
