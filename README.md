@@ -575,7 +575,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 ### Scheduled runs
 
 - **Run it later** — start a pipeline once or on a repeat ("every weekday at
-  02:00") from New pipeline (*Start run* › *Schedule…*), an Ask card, the CLI
+  02:00", "every 15 minutes from 09:00 to 18:00") from New pipeline (*Start run* › *Schedule…*), an Ask card, the CLI
   (`--at`, `--every`, `--cron`) or the API (`POST /api/run` with `scheduledFor`
   or `repeat`). A series has overlap and failure-streak policies — by default it
   pauses itself after 3 failures in a row; **Settings › Runs › Scheduled runs**
@@ -924,6 +924,7 @@ worca pause <pipelineId>   # resume later with: worca resume <pipelineId>
 worca --project /path/to/your/project --prompt "Upgrade dependencies" --at "tomorrow 02:00"
 worca --project /path/to/your/project --prompt "Upgrade dependencies" --at 02:00 --wait --yes
 worca --project /path/to/your/project --file ./nightly.md --every "weekdays 02:00"
+worca --project /path/to/your/project --file ./poll.md --every "30m 09:00-18:00 weekdays"
 worca schedule list
 
 # offline demo — full pipeline, no tokens
