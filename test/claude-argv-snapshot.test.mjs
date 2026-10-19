@@ -241,10 +241,10 @@ async function spawnNode(key, opts = {}) {
 
 // ── the cases ────────────────────────────────────────────────────────────────
 
-test('the pin covers exactly the 32 shipped builtins', () => {
+test('the pin covers exactly the 33 shipped builtins', () => {
   assert.deepEqual(BUILTIN_KEYS, [
     'architect', 'architectSetup', 'clarify', 'deckAudit', 'deckBuilder', 'deckClarify', 'deckExport', 'deckNarrative', 'deckOutputs',
-    'deckReviewer', 'deckSystem', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting',
+    'deckReviewer', 'deckSystem', 'decomposer', 'diagramInterpreter', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting',
     'memoryDefragmenter', 'planReviewer', 'planner',
     'promoCapture', 'promoExplorer', 'promoMascot', 'promoReview', 'promoScenes', 'promoSetup', 'promoVoice', 'promoWriter',
     'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner',

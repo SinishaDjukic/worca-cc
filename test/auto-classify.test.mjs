@@ -36,7 +36,7 @@ test('agentVocabulary: placeable project agents in registry order; sidecar + fro
   // domain 'coding' keeps the coding agents and the 'shared'/'general' ones
   // (domainOk in classify.mjs); the seven presentation agents are filtered out.
   const v = agentVocabulary(REG, { domain: 'coding' });
-  assert.deepEqual(v.map((a) => a.key), ['clarify', 'planner', 'refiner', 'decomposer', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'memoryDefragmenter']);
+  assert.deepEqual(v.map((a) => a.key), ['clarify', 'planner', 'refiner', 'decomposer', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'memoryDefragmenter', 'diagramInterpreter']);
   assert.ok(!v.some((a) => a.key === 'workspaceScanner' || a.key === 'workspaceReviewer'), 'placeable:false and workspace-only are out');
   const web = v.find((a) => a.key === 'manualWebUiTesting');
   assert.equal(web.verifier, true);

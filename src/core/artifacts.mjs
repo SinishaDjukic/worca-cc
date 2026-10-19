@@ -10,6 +10,7 @@
 
 import { mkdir, writeFile, readFile, copyFile, readdir, access, stat } from 'node:fs/promises';
 import { NON_BROWSABLE_KIND_LIST } from '../shared/artifact-kinds.mjs';
+import { decodeDrawio } from './drawio.mjs';
 import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { realpathSync, existsSync, statSync, constants as fsConstants } from 'node:fs';
@@ -1224,11 +1225,23 @@ export async function createPipeline(projectDir, opts = {}) {
     for (const ex of extras) {
       if (!ex) continue;
       const src = resolveAgainst(projectDir, ex);
+      const dest = join(extrasDir, basename(src));
       try {
-        await copyFile(src, join(extrasDir, basename(src)));
+        await copyFile(src, dest);
         copiedExtras.push(join('extras', basename(src)));
       } catch {
-        // Skip unreadable extras; never fail pipeline creation on a bad path.
+        continue; // Skip unreadable extras; never fail pipeline creation on a bad path.
+      }
+      // A compressed draw.io page is base64+deflate no agent can read: write the plain XML
+      // beside it (the original stays as attached). A corrupt payload is skipped the same way.
+      if (/\.(drawio|xml)$/i.test(dest)) {
+        try {
+          const plain = decodeDrawio(await readFile(dest, 'utf8'));
+          if (plain !== null) {
+            await writeFile(`${dest}.decoded.xml`, plain, 'utf8');
+            copiedExtras.push(join('extras', `${basename(src)}.decoded.xml`));
+          }
+        } catch { /* corrupt payload: the agent sees the raw file only */ }
       }
     }
   }

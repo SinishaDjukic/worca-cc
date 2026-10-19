@@ -16,6 +16,7 @@ import { checkRows } from './helpers/rows.mjs';
 import { GRAPH_DEFAULT_WORKFLOW, GRAPH_PR_FIX_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_WORKSPACE_SCAN_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 import { GRAPH_ARCHITECTURE_WORKFLOW } from '../src/core/graph/architecture-workflow.mjs';
 import { GRAPH_PRESENTATION_WORKFLOW } from '../src/core/graph/presentation-workflow.mjs';
+import { GRAPH_DIAGRAM_WORKFLOW } from '../src/core/graph/diagram-workflow.mjs';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { RECIPE_SHAPES } from '../src/core/auto/recipes.mjs';
 
@@ -82,7 +83,7 @@ test('every shipped sidecar: required fields, runnable runnerType, v2 typed port
     { name: 'shipped sidecars have progressStage exactly as specified', run: async () => {
       const expect = {
         clarify: 'plan', planner: 'plan', refiner: 'plan', planReviewer: 'plan',
-        architect: 'plan', architectSetup: 'plan',
+        architect: 'plan', architectSetup: 'plan', diagramInterpreter: 'plan',
         decomposer: 'build', implementer: 'build',
         reviewer: 'review', workspaceReviewer: 'review',
         manualTestsChecklist: 'review', manualWebUiTesting: 'review',
@@ -103,7 +104,7 @@ test('every shipped sidecar: required fields, runnable runnerType, v2 typed port
       const keysOf = (wf) => wf.nodes.filter((n) => n.kind === 'agent').map((n) => n.key);
       const recipeKeys = RECIPE_SHAPES.flatMap((r) => r.shape.stages.flatMap((st) => (st.parallel || [st]).map((x) => x.agent)));
       const sets = [['wf_default', keysOf(GRAPH_DEFAULT_WORKFLOW)], ['wf_pr_fix', keysOf(GRAPH_PR_FIX_WORKFLOW)],
-        ['wf_architecture_c4', keysOf(GRAPH_ARCHITECTURE_WORKFLOW)], ['recipes', recipeKeys],
+        ['wf_architecture_c4', keysOf(GRAPH_ARCHITECTURE_WORKFLOW)], ['wf_diagram_plan', keysOf(GRAPH_DIAGRAM_WORKFLOW)], ['recipes', recipeKeys],
         ...SEED_TEMPLATES.map((t) => [t.id, keysOf(t)])];
       for (const [name, keys] of sets) {
         assert.ok(keys.length, `${name} has agents`);

@@ -1,5 +1,5 @@
 // test/graph-prompt-parity.test.mjs
-// THE prompt snapshot pin, in two layers. For each of the 24 non-presentation builtins this
+// THE prompt snapshot pin, in two layers. For each of the 25 non-presentation builtins this
 // assembles the v2 task prompt through the SAME builder runAgentExecution ships
 // (buildAgentPrompt, driven by the REAL agents/*.meta.json sidecars — never a
 // fixture) and then:
@@ -185,6 +185,8 @@ const MOCK_ROLES = {
   // The architecture pair is post-v1: the setup form rides the clarify writer, the
   // architect has its own c4-architect writer.
   architectSetup: 'clarify', architect: 'c4-architect',
+  // The diagram interpreter rides the planner writer: same plan port.
+  diagramInterpreter: 'planner-plan',
   // The promo video crew is post-v1 too: two form clarifiers on the clarify writer, the
   // producers on the generic writer, the review on the generic verifier (no bespoke roles).
   promoSetup: 'clarify', promoVoice: 'clarify', promoExplorer: 'generic-producer', promoWriter: 'generic-producer',

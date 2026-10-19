@@ -11,6 +11,7 @@ import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { GRAPH_DEFAULT_WORKFLOW, GRAPH_PR_FIX_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_WORKSPACE_SCAN_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 import { GRAPH_ARCHITECTURE_WORKFLOW } from '../src/core/graph/architecture-workflow.mjs';
 import { GRAPH_PRESENTATION_WORKFLOW } from '../src/core/graph/presentation-workflow.mjs';
+import { GRAPH_DIAGRAM_WORKFLOW } from '../src/core/graph/diagram-workflow.mjs';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -121,6 +122,7 @@ test('shipped workflows built from the real sidecars: staged ones get stages, th
     ...SEED_TEMPLATES.map((tpl) => ({ name: `seed ${tpl.id}`, run: () => assert.equal(modeOf(tpl), 'stages') })),
     { name: 'wf_pr_fix', run: () => assert.equal(modeOf(GRAPH_PR_FIX_WORKFLOW), 'stages') },
     { name: 'wf_architecture_c4', run: () => assert.equal(modeOf(GRAPH_ARCHITECTURE_WORKFLOW), 'stages') },
+    { name: 'wf_diagram_plan', run: () => assert.equal(modeOf(GRAPH_DIAGRAM_WORKFLOW), 'stages') },
     { name: 'wf_memory_defrag', run: () => assert.equal(modeOf(GRAPH_MEMORY_DEFRAG_WORKFLOW), 'nodes') },
     { name: 'wf_workspace_scan', run: () => assert.equal(modeOf(GRAPH_WORKSPACE_SCAN_WORKFLOW), 'nodes') },
     { name: 'wf_presentation', run: () => assert.equal(modeOf(GRAPH_PRESENTATION_WORKFLOW), 'nodes') },
