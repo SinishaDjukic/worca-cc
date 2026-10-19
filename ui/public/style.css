@@ -4672,6 +4672,16 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 @media (prefers-reduced-motion: reduce){.runs-chain-member.is-live .runs-chain-glyph{animation:none;}}
 .runs-chain-member.is-failed .runs-chain-glyph{color:var(--red-ink);}
 .runs-chain-pr{margin-left:auto;color:var(--blue-ink);}
+/* The PR glyph (runs-list.mjs renderPrIcon) ends the title's first line: pushed right, never shrunk.
+   GitHub's colours, unlike the detail's blue open PR (.rg-orb-pr-open). */
+.runs-pr{flex:none;display:inline-flex;align-items:center;gap:3px;margin:1px 0 0 auto;}
+.runs-pr-open{color:var(--green-ink);}
+.runs-pr-draft{color:var(--ink-2);}   /* --ink-3 is under 3:1 on --panel: an icon needs --ink-2 */
+.runs-pr-merged{color:var(--violet-ink);}
+.runs-pr-conflict{color:var(--amber-ink);}
+.runs-pr-closed{color:var(--red-ink);}
+.runs-pr-cut{stroke:var(--panel);}   /* the conflict badge's "!", cut out of its fill */
+.runs-pr-count{font-size:12px;line-height:1;color:var(--ink-2);}   /* a workspace run's member PRs, after the glyph */
 .runs-note{margin:0;padding:18px 12px;color:var(--ink-2);font-size:13px;text-align:center;}
 .runs-note-err{color:var(--red-ink);}
 .runs-pane{position:relative;min-width:0;min-height:0;background:var(--bg);}

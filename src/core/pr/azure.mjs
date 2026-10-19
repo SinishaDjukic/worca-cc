@@ -60,6 +60,7 @@ const toPr = (coords, pr) => ({
   state: STATE[pr?.status] || null,
   url: azurePrUrl(coords, pr.pullRequestId),
   number: Number.isInteger(pr?.pullRequestId) ? pr.pullRequestId : null,
+  isDraft: pr?.isDraft === true,
   mergeable: MERGE[pr?.mergeStatus] || 'UNKNOWN',
 });
 
@@ -119,7 +120,7 @@ export async function createPr({ base, head, title, body = '', baseRepo, pushRep
   }
 }
 
-/** { state: OPEN|MERGED|CLOSED|null, url, number, mergeable } | null — never throws. */
+/** { state: OPEN|MERGED|CLOSED|null, url, number, isDraft, mergeable } | null — never throws. */
 export async function viewPr({ prUrl, env = process.env }) {
   const p = parseAzurePrUrl(prUrl);
   if (!p) return null;
@@ -129,15 +130,19 @@ export async function viewPr({ prUrl, env = process.env }) {
   } catch { return null; }
 }
 
-/** { state: OPEN|MERGED, url, number, mergeable } | null — OPEN first, like the GitHub lookup. Never throws. */
-export async function findPrForBranch({ head, baseRepo, env = process.env }) {
+/**
+ * { state: OPEN|MERGED, url, number, isDraft, mergeable } | null — OPEN first, then MERGED, like the GitHub lookup;
+ * `includeClosed` adds the newest abandoned PR (CLOSED) as the last resort. Never throws.
+ */
+export async function findPrForBranch({ head, baseRepo, includeClosed = false, env = process.env }) {
   if (!head || !baseRepo?.org) return null;
   try {
     const q = `searchCriteria.sourceRefName=${enc(`refs/heads/${head}`)}&searchCriteria.status=all&$top=30`;
     const { json } = await adoFetch('read', `${repoApi(baseRepo)}/pullrequests?${q}`, { env });
     const prs = (Array.isArray(json?.value) ? json.value : []).filter((x) => !x?.forkSource)   // a fork's same-named branch is not ours
-      .map((x) => toPr(baseRepo, x)).filter((x) => x.state === 'OPEN' || x.state === 'MERGED');
-    return prs.find((x) => x.state === 'OPEN') || prs[0] || null;
+      .map((x) => toPr(baseRepo, x));
+    const pick = (state) => prs.find((x) => x.state === state);
+    return pick('OPEN') || pick('MERGED') || (includeClosed && pick('CLOSED')) || null;
   } catch { return null; }
 }
 
