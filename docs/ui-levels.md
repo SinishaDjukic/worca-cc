@@ -136,6 +136,7 @@ be skipped by forgetting it.
 |---|---|
 | New pipeline, Getting started, Runs, Projects | S |
 | Build: the group label, Workflows (the full-screen editor; agents and scripts live in its Library) | S |
+| Build: Requirements (behind the requirements flag) | S |
 | Runs counts: the amber Needs-you pill, else the live count as a grey number | S — each hidden at zero |
 | Chat (the first sidebar row; the app's home) | S |
 | The account corner and its menu: Interface mode, Settings, the away row, "Signed in as" (a shared identity) | S |

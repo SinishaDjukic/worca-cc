@@ -346,3 +346,12 @@ test('Save: declining the overwrite confirm sends no second POST', async () => {
   window.confirm = orig;
   assert.equal(calls.filter((c) => c.url.endsWith('/save')).length, 1);
 });
+
+import { readFileSync } from 'node:fs';
+test('index.html: a Simple-level, flag-gated nav row and a page section', () => {
+  const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+  assert.match(html, /<button type="button" data-nav="requirements" data-min-level="simple" data-flag="requirements" data-flag-chip>/);
+  assert.match(html, /<section class="view hidden" data-view="requirements">[\s\S]*id="requirements-host"/);
+  const topnav = readFileSync(new URL('../ui/public/topnav.mjs', import.meta.url), 'utf8');
+  assert.match(topnav, /requirements: 'Requirements'/);
+});

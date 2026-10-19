@@ -9288,3 +9288,37 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .branches-new > label.same-src-row{display:flex;margin:8px 0 0;}
 #sameAsSourceHint[hidden]{display:none;}   /* .hint{display:block} beats the UA [hidden] rule */
 #featureBranch:disabled{opacity:.65;cursor:not-allowed;}   /* no global .input:disabled rule exists */
+
+/* Requirements page (plans/requirements-design.md section 6). Tokens only. */
+.req-group{margin:0 0 22px}
+.req-group h3{font-size:13px;color:var(--ink-3);margin:0 0 8px;font-weight:600}
+.req-row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-ctrl);padding:12px 14px;margin:0 0 8px;color:var(--ink);cursor:pointer;font:inherit}
+.req-row:hover{border-color:var(--line-2)}
+.req-id,.req-item code{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+.req-title{flex:1;min-width:0}
+.req-cost{color:var(--ink-3);font-size:13px}
+.req-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 6px}
+.req-head h2{margin:0;font-size:20px}
+.req-meta{display:flex;flex-wrap:wrap;gap:14px;color:var(--ink-3);font-size:13px}
+.req-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.req-orient,.req-context{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-ctrl);padding:10px 14px;margin:0 0 12px}
+.req-orient summary,.req-context summary{cursor:pointer;font-weight:600}
+.req-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:900px){.req-cols{grid-template-columns:1fr}}
+.req-left,.req-right{min-width:0}
+.req-sect{margin:0 0 18px}
+.req-sect-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 6px}
+.req-sect-head h3{font-size:14px;margin:0}
+.req-edited{font-size:11px;color:var(--amber-ink)}
+.req-sect ul,.req-sect ol{margin:0;padding-left:20px}
+.req-item{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;margin:0 0 6px}
+.req-item-text{flex:1;min-width:0}
+.req-new{display:grid;gap:8px;max-width:640px}
+.req-new select,.req-new input,.req-new textarea,.req-edit input,.req-edit textarea,.req-context textarea,.req-item input{width:100%;box-sizing:border-box}
+.req-why{margin:2px 0 6px 28px}
+.req-error{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.req-archived-toggle{margin:0 0 12px}
+.req-q{margin-top:0}
+.req-retry{margin-left:8px}
+.req-confirm[aria-pressed="true"]{border-color:var(--green-ink);color:var(--green-ink)}
+.req-reject[aria-pressed="true"]{border-color:var(--red-ink);color:var(--red-ink)}

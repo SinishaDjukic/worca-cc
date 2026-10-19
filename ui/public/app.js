@@ -227,8 +227,9 @@ import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shar
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
+import { createRequirementsView } from './requirements-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
-import { applyFlags, decorateFlagChips } from './flags.mjs';
+import { applyFlags, decorateFlagChips, flagOn } from './flags.mjs';
 import { createFlagsView } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
@@ -1338,6 +1339,11 @@ function handleServerMessage(msg) {
   // is global, so repaint it regardless of the open view.
   if (msg.type === 'budget-changed') {
     refreshBudget();
+    return;
+  }
+  // Requirements: a feature changed (a round finished, an edit, another tab). Only the open page repaints.
+  if (msg.type === 'requirements-changed') {
+    if (currentView() === 'requirements') void requirementsView.changed(msg.seq);
     return;
   }
   // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
@@ -29268,6 +29274,14 @@ const schedulesView = createSchedulesView({
   },
 });
 
+// Requirements (plans/requirements-design.md section 6): the page module owns its host; app.js routes and relays frames.
+const requirementsView = createRequirementsView({
+  host: $('#requirements-host'),
+  subEl: $('#requirements-sub'),
+  msgEl: $('#requirements-msg'),
+  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; } },
+});
+
 /** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
 function withWorkspaces() {
   return (state.workspaces || []).length ? Promise.resolve() : loadWorkspaces();
@@ -32963,7 +32977,7 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers'];
+const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers'];
 // One Runs page, three route names: the bare list (#runs) and the two detail routes every
 // deep link already uses (#running/<id>…, #history/<projectKey>/<id>…). All three render
 // the `data-view="runs"` section and light the one Runs nav button.
@@ -33002,6 +33016,7 @@ const VIEW_TITLES = Object.freeze({
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules',
+  requirements: 'Requirements',
 });
 function pageMinLevel() {
   if (currentShownView === 'settings') return { key: currentSettingsTab, min: SETTINGS_TAB_MIN_LEVEL[currentSettingsTab] || 'simple' };
@@ -33120,6 +33135,8 @@ function showView(name, param = '') {
     const moved = redirectRoute(name, param);
     if (moved) return showView(moved[0], moved[1]);
   }
+  // Requirements is behind its flag (docs/feature-flags.md): a deep link while it is off lands on Chat.
+  if (name === 'requirements' && !flagOn('requirements')) return showView('chat', '');
   // A bare #running / #history is the Runs list now (both lists merged into it). Replace the
   // entry rather than letting the hash sync below PUSH #runs: Back would land on #history
   // again, normalize again, and never get past it.
@@ -33288,6 +33305,7 @@ function showView(name, param = '') {
     syncRunsPane();
   }
   if (name === 'stats') loadStatsView();
+  if (name === 'requirements') void requirementsView.show(param);
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') {
     // #team-metrics/timeline opens the Timeline tab. Switching tabs inside the page only repaints:
