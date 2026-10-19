@@ -14,7 +14,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { getStats } from '../src/core/stats.mjs';
-import { recordCostDelta, recordAskCostDelta } from '../src/core/cost-budget.mjs';
+import { recordCostDelta, recordAskCostDelta, recordRequirementsCostDelta, budgetStatus } from '../src/core/cost-budget.mjs';
 import { app, runs } from '../ui/server.mjs';
 
 useTempHome(after); // DB sandbox (WORCA_HOME)
@@ -208,4 +208,30 @@ test('a reply\'s next-prompt suggestion books its own ledger row on the reply id
   assert.equal(now.turns, before.turns + 1, 'the suggestion row is the same turn');
   assert.equal(now.sessions, before.sessions);
   assert.equal(now.spendUsd, Math.round((before.spendUsd + 0.03) * 1e6) / 1e6);
+});
+
+// Requirements spend (plans/requirements-design.md D9) counts toward the limit, so Statistics counts it
+// too: totals, prev, all-time and the series carry it, with a `requirements` breakdown beside `ask`, and
+// the spend card's all-time figure agrees with the all-time tile.
+test('requirements spend shows in totals, prev, all-time, series and the budget all-time figure', () => {
+  const week0 = getStats({ range: 'week', now: NOW });
+  const all0 = getStats({ range: 'all', now: NOW });
+  const budget0 = budgetStatus(NOW);
+  recordRequirementsCostDelta({ featureSeq: 1, turnId: 1, amountUsd: 0.5, tsMs: +new Date(2026, 7, 4, 9) });   // Tue
+  recordRequirementsCostDelta({ featureSeq: 2, turnId: 2, amountUsd: 0.25, tsMs: +new Date(2026, 7, 4, 10) });  // Tue
+  recordRequirementsCostDelta({ featureSeq: 1, turnId: 3, amountUsd: 1, tsMs: +new Date(2026, 6, 29, 10) });    // prev week
+  const week = getStats({ range: 'week', now: NOW });
+  assert.deepEqual(week.totals.requirements, { spendUsd: 0.75, features: 2 });
+  assert.equal(week.totals.spentUsd, Math.round((week0.totals.spentUsd + 0.75) * 1e4) / 1e4);
+  assert.equal(week.totals.pipelineSpendUsd, week0.totals.pipelineSpendUsd, 'pipeline spend stays pipeline-only');
+  assert.deepEqual(week.prev.requirements, { spendUsd: 1, features: 1 });
+  assert.equal(week.prev.spentUsd, Math.round((week0.prev.spentUsd + 1) * 1e4) / 1e4);
+  assert.equal(week.series[1].spentUsd, Math.round((week0.series[1].spentUsd + 0.75) * 1e4) / 1e4, 'Tue bar');
+  const all = getStats({ range: 'all', now: NOW });
+  assert.deepEqual(all.totals.requirements, { spendUsd: 1.75, features: 2 });
+  assert.equal(all.totals.spentUsd, Math.round((all0.totals.spentUsd + 1.75) * 1e4) / 1e4);
+  assert.equal(all.totals.savedUsd, Math.round((all.totals.humanHours * 35 - all.totals.spentUsd) * 100) / 100);
+  const budget = budgetStatus(NOW);
+  assert.equal(budget.allTimeSpendUsd, Math.round((budget0.allTimeSpendUsd + 1.75) * 1e4) / 1e4);
+  assert.equal(budget.allTimeSpendUsd, all.totals.spentUsd, 'the spend card and the all-time tile agree');
 });

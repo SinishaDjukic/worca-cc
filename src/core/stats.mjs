@@ -3,7 +3,7 @@
 // archive exists so these numbers survive history cleanup (spec §6.9). Pure
 // synchronous DB reads; no gh, no git, offline-correct.
 //
-// Attribution: money = cost_ledger + ask_cost_ledger by event timestamp
+// Attribution: money = cost_ledger + ask_cost_ledger + req_cost_ledger by event timestamp
 // (exact); runs, time, and PRs = cohort by started_at (a run belongs to the
 // bucket its start falls in, with its CURRENT status). 'today' differs: its totals count runs whose
 // lifespan [started_at, updated_at] overlaps the day ("active today"), and its
@@ -14,7 +14,7 @@
 import { prepare } from './db.mjs';
 import {
   budgetStatus, costWindowStart, costWindowEnd, allTimeTotals, roundUsd,
-  askWindowedSpendUsd,
+  askWindowedSpendUsd, requirementsWindowedSpendUsd,
 } from './cost-budget.mjs';
 import { savedUsd } from '../shared/human-estimate.mjs';
 import { effectiveHumanRateUsd } from './human-rate.mjs';
@@ -102,6 +102,15 @@ function askTotals(fromMs, toMs) {
   return { spendUsd: roundUsd(row?.s || 0), sessions: row?.sessions || 0, turns: row?.turns || 0 };
 }
 
+/** Requirements window aggregate (plans/requirements-design.md D9): spend, and the DISTINCT features
+ *  that spent in the window (orientation passes and interview rounds). */
+function requirementsTotals(fromMs, toMs) {
+  const row = prepare(`
+    SELECT COALESCE(SUM(amount_usd), 0) AS s, COUNT(DISTINCT feature_seq) AS features
+    FROM req_cost_ledger WHERE ts >= ? AND ts < ?`).get(fromMs, toMs);
+  return { spendUsd: roundUsd(row?.s || 0), features: row?.features || 0 };
+}
+
 /** "Saved this month/week" for the account menu's spend card (money-saved design §10): human
  *  hours × rate − spent over the budget's own reset window. The same cohort (runs STARTED in
  *  [windowStartMs, windowEndMs), archived included), the same rate and the same spend as the
@@ -180,11 +189,13 @@ export function getStats({ range = 'month', now = new Date() } = {}) {
     const c = windowTotalsFn(fromMs, toMs);
     const pipelineSpendUsd = ledgerSpend(fromMs, toMs);
     const ask = askTotals(fromMs, toMs);
+    const requirements = requirementsTotals(fromMs, toMs);
+    const spentUsd = roundUsd(pipelineSpendUsd + ask.spendUsd + requirements.spendUsd);
     return {
-      spentUsd: roundUsd(pipelineSpendUsd + ask.spendUsd),
-      pipelineSpendUsd, ask,
+      spentUsd,
+      pipelineSpendUsd, ask, requirements,
       humanHours: c.humanHours,
-      savedUsd: savedUsd(c.humanHours, rate, roundUsd(pipelineSpendUsd + ask.spendUsd)),
+      savedUsd: savedUsd(c.humanHours, rate, spentUsd),
       workedMs: c.workedMs,
       runs: c.runs, finished: c.finished, stopped: c.stopped, failed: c.failed,
       paused: c.paused, running: c.running,
@@ -197,11 +208,13 @@ export function getStats({ range = 'month', now = new Date() } = {}) {
     const at = allTimeTotals();
     const c = cohortTotals(0, windowEnd.getTime());
     const ask = askTotals(0, windowEnd.getTime());
+    const requirements = requirementsTotals(0, windowEnd.getTime());
+    const spentUsd = roundUsd(at.spendUsd + ask.spendUsd + requirements.spendUsd);
     totals = {
-      spentUsd: roundUsd(at.spendUsd + ask.spendUsd),
-      pipelineSpendUsd: at.spendUsd, ask,
+      spentUsd,
+      pipelineSpendUsd: at.spendUsd, ask, requirements,
       humanHours: at.humanHours,
-      savedUsd: savedUsd(at.humanHours, rate, roundUsd(at.spendUsd + ask.spendUsd)),
+      savedUsd: savedUsd(at.humanHours, rate, spentUsd),
       workedMs: at.activeMs,
       runs: c.runs, finished: c.finished, stopped: c.stopped, failed: c.failed,
       paused: c.paused, running: c.running,
@@ -220,7 +233,8 @@ export function getStats({ range = 'month', now = new Date() } = {}) {
     const c = bucketTotalsFn(startMs, endMs);
     return {
       bucketStartMs: startMs,
-      spentUsd: roundUsd(ledgerSpend(startMs, endMs) + askWindowedSpendUsd(startMs, endMs)),
+      spentUsd: roundUsd(ledgerSpend(startMs, endMs) + askWindowedSpendUsd(startMs, endMs)
+        + requirementsWindowedSpendUsd(startMs, endMs)),
       finished: c.finished, stopped: c.stopped, failed: c.failed,
     };
   });

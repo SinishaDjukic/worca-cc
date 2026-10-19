@@ -141,7 +141,7 @@ export function budgetStatus(now = new Date(), { scope = null } = {}) {
     windowEndMs,
     msUntilReset: windowEndMs - now.getTime(),
     windowSpendUsd,
-    allTimeSpendUsd: roundUsd(allTimeTotals().spendUsd + askWindowedSpendUsd(0)),
+    allTimeSpendUsd: roundUsd(allTimeTotals().spendUsd + askWindowedSpendUsd(0) + requirementsWindowedSpendUsd(0)),
     remainingUsd: totalLimitUsd == null ? null : Math.max(0, roundUsd(totalLimitUsd - windowSpendUsd)),
     blocked,
   };
