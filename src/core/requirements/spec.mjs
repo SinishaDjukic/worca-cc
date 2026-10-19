@@ -56,3 +56,16 @@ export function normalizeSection(section, value) {
   }
   return out;
 }
+
+/** The number for the next `${prefix}N` id: one above both the stored counter and the highest N among `items`
+ *  (objects with an id, or id strings), so an id is never reused even when the counter lags. */
+export function nextIdNumber(counter, items, prefix) {
+  let max = Number.isFinite(counter) ? counter : 0;
+  for (const it of items || []) {
+    const id = typeof it === 'string' ? it : it && it.id;
+    if (typeof id !== 'string' || !id.startsWith(prefix)) continue;
+    const rest = id.slice(prefix.length);
+    if (/^\d+$/.test(rest)) max = Math.max(max, Number(rest));
+  }
+  return max + 1;
+}

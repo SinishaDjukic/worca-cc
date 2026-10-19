@@ -1,8 +1,9 @@
 // src/core/requirements/edits.mjs
 // The product owner's edits (plans/requirements-design.md D6): ground truth the model may ask about but
 // never undo. Every edit is a turn, so the next round sees it in the thread.
-import { RequirementsError, SECTIONS, SCOPE_TYPES, ASSUMPTION_STATUSES, LIMITS, clip, normalizeSection } from './spec.mjs';
+import { RequirementsError, SECTIONS, SCOPE_TYPES, ASSUMPTION_STATUSES, LIMITS, clip, normalizeSection, nextIdNumber } from './spec.mjs';
 import { requireFeature, updateFeature, appendTurn, listTurns } from './store.mjs';
+import { tx } from '../db.mjs';
 import { isBusy } from './interview.mjs';
 
 function editable(seq) {
@@ -37,15 +38,26 @@ export function updateHeader(seq, { title, description, scopeType, scopeKey } = 
     patch.scopeType = scopeType;
     patch.scopeKey = scopeKey.trim();
   }
-  return updateFeature(seq, patch, { by });
+  const f = requireFeature(seq);
+  const header = [];
+  if (patch.title !== undefined && patch.title !== f.title) header.push('title');
+  if (patch.description !== undefined && patch.description !== f.description) header.push('description');
+  if (patch.scopeType !== undefined && (patch.scopeType !== f.scopeType || patch.scopeKey !== f.scopeKey)) header.push('scope');
+  if (!header.length) return updateFeature(seq, patch, { by });
+  return tx(() => {
+    appendTurn(seq, { kind: 'edit', payload: { header } }, { by });
+    return updateFeature(seq, patch, { by });
+  });
 }
 
 export function setSection(seq, section, value, { by = null } = {}) {
   const f = editable(seq);
   if (!SECTIONS.includes(section)) throw new RequirementsError('BAD_REQUEST', `unknown section "${String(section).slice(0, 40)}"`);
   const spec = { ...f.spec, [section]: normalizeSection(section, value), edited: { ...f.spec.edited, [section]: true } };
-  appendTurn(seq, { kind: 'edit', payload: { section } }, { by });
-  return updateFeature(seq, { spec }, { by });
+  return tx(() => {
+    appendTurn(seq, { kind: 'edit', payload: { section } }, { by });
+    return updateFeature(seq, { spec }, { by });
+  });
 }
 
 export function releaseSection(seq, section, { by = null } = {}) {
@@ -53,39 +65,50 @@ export function releaseSection(seq, section, { by = null } = {}) {
   if (!SECTIONS.includes(section)) throw new RequirementsError('BAD_REQUEST', `unknown section "${String(section).slice(0, 40)}"`);
   const edited = { ...f.spec.edited };
   delete edited[section];
-  appendTurn(seq, { kind: 'edit', payload: { section, released: true } }, { by });
-  return updateFeature(seq, { spec: { ...f.spec, edited } }, { by });
+  return tx(() => {
+    appendTurn(seq, { kind: 'edit', payload: { section, released: true } }, { by });
+    return updateFeature(seq, { spec: { ...f.spec, edited } }, { by });
+  });
 }
 
 export function addCriterion(seq, text, { by = null } = {}) {
   const f = editable(seq);
   const t = itemText(text);
-  const id = `R-po-${f.criteriaSeq + 1}`;
-  appendTurn(seq, { kind: 'edit', payload: { criterion: id, action: 'added' } }, { by });
-  return updateFeature(seq, { criteriaSeq: f.criteriaSeq + 1, spec: { ...f.spec, criteria: [...f.spec.criteria, { id, text: t, edited: true }] } }, { by });
+  const n = nextIdNumber(f.criteriaSeq, f.spec.criteria, 'R-po-');
+  const id = `R-po-${n}`;
+  return tx(() => {
+    appendTurn(seq, { kind: 'edit', payload: { criterion: id, action: 'added' } }, { by });
+    return updateFeature(seq, { criteriaSeq: n, spec: { ...f.spec, criteria: [...f.spec.criteria, { id, text: t, edited: true }] } }, { by });
+  });
 }
 
 export function editCriterion(seq, id, text, { by = null } = {}) {
   const f = editable(seq);
   const t = itemText(text);
   if (!f.spec.criteria.some((c) => c.id === id)) throw new RequirementsError('NOT_FOUND', `no criterion ${String(id).slice(0, 20)}`);
-  appendTurn(seq, { kind: 'edit', payload: { criterion: id, action: 'edited' } }, { by });
-  return updateFeature(seq, { spec: { ...f.spec, criteria: f.spec.criteria.map((c) => (c.id === id ? { id, text: t, edited: true } : c)) } }, { by });
+  return tx(() => {
+    appendTurn(seq, { kind: 'edit', payload: { criterion: id, action: 'edited' } }, { by });
+    return updateFeature(seq, { spec: { ...f.spec, criteria: f.spec.criteria.map((c) => (c.id === id ? { id, text: t, edited: true } : c)) } }, { by });
+  });
 }
 
 export function removeCriterion(seq, id, { by = null } = {}) {
   const f = editable(seq);
   if (!f.spec.criteria.some((c) => c.id === id)) throw new RequirementsError('NOT_FOUND', `no criterion ${String(id).slice(0, 20)}`);
-  appendTurn(seq, { kind: 'edit', payload: { criterion: id, action: 'removed' } }, { by });
-  return updateFeature(seq, { spec: { ...f.spec, criteria: f.spec.criteria.filter((c) => c.id !== id) } }, { by });
+  return tx(() => {
+    appendTurn(seq, { kind: 'edit', payload: { criterion: id, action: 'removed' } }, { by });
+    return updateFeature(seq, { spec: { ...f.spec, criteria: f.spec.criteria.filter((c) => c.id !== id) } }, { by });
+  });
 }
 
 export function setAssumption(seq, id, status, { by = null } = {}) {
   const f = editable(seq);
   if (!ASSUMPTION_STATUSES.includes(status)) throw new RequirementsError('BAD_REQUEST', 'status must be open, confirmed or rejected');
   if (!f.spec.assumptions.some((a) => a.id === id)) throw new RequirementsError('NOT_FOUND', `no assumption ${String(id).slice(0, 20)}`);
-  appendTurn(seq, { kind: 'assumption', payload: { id, status } }, { by });
-  return updateFeature(seq, { spec: { ...f.spec, assumptions: f.spec.assumptions.map((a) => (a.id === id ? { ...a, status } : a)) } }, { by });
+  return tx(() => {
+    appendTurn(seq, { kind: 'assumption', payload: { id, status } }, { by });
+    return updateFeature(seq, { spec: { ...f.spec, assumptions: f.spec.assumptions.map((a) => (a.id === id ? { ...a, status } : a)) } }, { by });
+  });
 }
 
 export function setArchived(seq, archived, { by = null } = {}) {

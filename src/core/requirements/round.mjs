@@ -2,7 +2,7 @@
 // One interview round, without I/O (plans/requirements-design.md §4): the prompts Worca sends, and what
 // Worca enforces on whatever comes back — the question cap, ids it assigns itself, sections the product
 // owner edited, items only the product owner removes. The interview runner (interview.mjs) calls these.
-import { SECTIONS, MAX_QUESTIONS, MAX_ROUNDS, clip, normalizeSection } from './spec.mjs';
+import { SECTIONS, MAX_QUESTIONS, MAX_ROUNDS, clip, normalizeSection, nextIdNumber } from './spec.mjs';
 
 export class RoundError extends Error {
   constructor(message) { super(message); this.name = 'RoundError'; }
@@ -13,8 +13,6 @@ const NEW_ITEMS_PER_ROUND = 20;
 
 /** User- or model-written text goes into prompts as data: `<` becomes `&lt;` so it can neither close nor open a tag. */
 export function asData(text) { return String(text ?? '').replaceAll('<', '&lt;'); }
-
-const maxSeq = (items, re) => items.reduce((m, it) => { const x = re.exec(it && it.id); return x ? Math.max(m, Number(x[1])) : m; }, 0);
 
 export const ROUND_SYSTEM_PROMPT = [
   'You help a product owner turn a feature idea into a clear, testable specification by interviewing them.',
@@ -89,6 +87,11 @@ function threadText(turns) {
       for (const a of t.payload.answers || []) lines.push(`  [${asData(a.id)}] ${asData(a.answer)}`);
     } else if (t.kind === 'edit') {
       if (t.payload.section) lines.push(`The product owner ${t.payload.released ? 'released' : 'edited'} "${asData(t.payload.section)}".`);
+      if (t.payload.header) {
+        const what = { title: 'the title', description: 'the description', scope: 'the project or workspace' };
+        const parts = t.payload.header.map((h) => what[h]).filter(Boolean);
+        if (parts.length) lines.push(`The product owner changed ${parts.join(' and ')}.`);
+      }
       if (t.payload.criterion) lines.push(`The product owner ${asData(t.payload.action)} criterion ${asData(t.payload.criterion)}.`);
     } else if (t.kind === 'assumption') {
       lines.push(`The product owner marked assumption ${asData(t.payload.id)} as ${asData(t.payload.status)}.`);
@@ -170,7 +173,7 @@ export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, fina
     spec[s] = normalizeSection(s, v);
   }
 
-  let cSeq = Math.max(criteriaSeq, maxSeq(spec.criteria, /^R-po-(\d+)$/));
+  let cSeq = nextIdNumber(criteriaSeq, spec.criteria, 'R-po-') - 1;
   const crit = new Map(spec.criteria.map((c) => [c.id, c]));
   const critSeen = new Set(spec.criteria.map((c) => c.text.toLowerCase()));
   let added = 0;
@@ -186,7 +189,7 @@ export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, fina
     spec.criteria.push({ id: `R-po-${cSeq}`, text });
   }
 
-  let aSeq = Math.max(assumptionSeq, maxSeq(spec.assumptions, /^A-(\d+)$/));
+  let aSeq = nextIdNumber(assumptionSeq, spec.assumptions, 'A-') - 1;
   const addAssumption = (text) => {
     asmSeen.add(text.toLowerCase());
     aSeq += 1;
