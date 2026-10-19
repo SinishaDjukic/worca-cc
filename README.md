@@ -76,7 +76,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 **Agents**. Diff, Artifacts and Actions start at Advanced (see
 [UI levels](docs/ui-levels.md)).
 
-![A finished run, "CSV export for contacts", on its Diff tab: 4 files changed (+36 −0) in a file tree beside the highlighted patch of src/routes/contacts.js, with the run's worca-cc/ branch, its time and cost, and a Create PR button](docs/screenshots/run-detail.png)
+![A finished run, "CSV export for contacts", on its Diff tab: 4 files changed (+36 −0) in a file tree beside the highlighted patch of src/routes/contacts.js, with the run's worca-cc/ branch, its time and cost, and the Create PR and Publish branch buttons](docs/screenshots/run-detail.png)
 
 ## Features
 
@@ -135,6 +135,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   and CI.
 
 ![Runs in Simple mode: three runs waiting on clarify questions under Needs you, the rest grouped by project, and a finished run's summary open — Ready to ship, 21m 32s, $4.82, +36 −0 across 4 files](docs/screenshots/running.png)
+
+![The Ship it? dialog for the finished run CSV export for contacts: 4 files, +36 −0, its worca-cc/ branch into main, Push branch to and Open PR in (GitHub) pickers set to origin — nimbus/nimbus-crm, a PR description previewed as What and How to test, Open as draft unticked and Watch PR ticked, Try it first with the Run, Test and Cursor buttons, and Cancel beside Open pull request](docs/screenshots/ship-it.png)
 
 ### Agents
 
@@ -201,7 +203,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   built in.
   Plugins can ship scripts and test cases of their own.
 
-![The Workflows view with the Library on its Scripts tab: built-in Git diff, Workspace map, Deck PDF, Deck audio, Deck bundle, Shell, JavaScript and Python rows grouped by domain, each with a runtime chip and its port line, under the All, Built-in and Yours chips and a + New script button, beside an empty canvas holding Task and End](docs/screenshots/scripts.png)
+![The Workflows view with the Library on its Scripts tab: the built-in scripts in coding, presentation, architecture, video and general folders (Git diff, Deck PDF, Deck audio, Deck bundle, C4 discover, check and render, Promo voices, narrate and render, Shell and JavaScript), each with a runtime chip and its port line, under the All, Built-in and Yours chips, beside an empty canvas holding Task and End](docs/screenshots/scripts.png)
 
 ### Workflows
 
@@ -255,7 +257,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   `worca workflow list`, `worca workflow export <id> --format json|claude|plugin`
   and `worca workflow import <file>`.
 
-![The Workflows view with the built-in Default pipeline on the full-screen canvas — Task, Clarify, Plan, Refine Plan, Implementation, Review Implementation and End wired port to port, amber loop wires swooping back under the reviewers with ≤3 pills — beside the Library open on its Workflows tab (Default, Memory defragment, Presentation), with the black + and the composer chat pill at the bottom and Auto-layout and the zoom menu bottom right](docs/screenshots/composer.png)
+![The Workflows view with the built-in Default pipeline on the full-screen canvas — Task, Clarify, Plan, Refine Plan, Implementation, Review Implementation and End wired port to port, amber loop wires swooping back under the reviewers with ≤3 pills — beside the Library open on its Workflows tab, its architecture, coding, presentation, video and shared folders with coding opened on Default, with the black + and the composer chat pill at the bottom and Auto-layout and the zoom menu bottom right](docs/screenshots/composer.png)
 
 ### Presentations
 
@@ -420,7 +422,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   [`docs/actions.md`](docs/actions.md).
 - **A terminal for runs and projects** — a pane on every page (Ctrl+`) with a shell in the run's or the project's folder, run by the Worca server; each command is recorded with output, exit code, duration and who ran it. A hosted Worca runs none unless WORCA_TERMINAL_REMOTE=1. See [docs/terminal.md](docs/terminal.md).
 
-![A finished nimbus-crm run's Actions tab: the checked-out branch and folder, the Run, Test, Terminal, Finder, Copy command and Discard buttons, and the log of an npm test that passed](docs/screenshots/actions.png)
+![A finished nimbus-crm run's Actions tab: the checked-out branch and folder, the Run, Test, Cursor, Terminal, Finder, Copy command and Discard buttons, and the log of an npm test that passed](docs/screenshots/actions.png)
 
 ### Plugins & chat
 
@@ -521,7 +523,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   built-in voice speaks English. See [`docs/speech.md`](docs/speech.md) and
   [`docs/speech-languages.md`](docs/speech-languages.md).
 
-![The Chat page: a finished "Paginate the search endpoint" run card for nimbus-crm with elapsed time, cost, 5/5 agents and its workflow graph, then a follow-up answer about the docs repository](docs/screenshots/ask-worca.png)
+![The Chat page with its chat list: a finished "Paginate the search endpoint" run card for nimbus-crm with elapsed time, cost, its workflow graph and the result — Ready to ship, +29 −2 across 4 files, the top changed files listed — then a follow-up answer about the docs repository](docs/screenshots/ask-worca.png)
+
+![Ask Worca agent mode: the chat "Run the CRM tests" with a Command card for npm test in nimbus-crm · main, exit 0, its 13-line output open showing one passing test, and the answer below it, beside the Terminal pane on the right with the chat's tab and the same bash session's npm test output](docs/screenshots/ask-terminal.png)
 
 ### Browser extension
 
@@ -613,7 +617,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   resumes and Ask turns until the window resets or you raise the limit. Team caps live in
   [Team policy](docs/team-policy.md).
 
-![Statistics on This week — Spent, Saved, Pipeline spend, Ask Worca, Time worked, Pipelines finished and PRs merged tiles above Spend per day and Runs per day charts, with the sidebar spend indicator at the bottom left](docs/screenshots/stats.png)
+![Statistics on a range with several days of data — Spent, Saved, Pipeline spend, Ask Worca, Time worked, Pipelines finished and PRs merged tiles above the Spend per day and Runs per day charts, with the Everyone and grouping filters](docs/screenshots/stats.png)
 
 ### Team metrics
 
@@ -710,6 +714,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   `worca models import copilot|openai|openrouter` do the same from a terminal.
   Both pages are Expert level. See [`docs/models.md`](docs/models.md).
 
+![New pipeline in Advanced mode for the nimbus-crm project: the Workflow picker on Auto beside the Engine picker set to Codex (Beta), the hint that Codex runs this pipeline including titles and summaries, a typed task to add an Idempotency-Key header to POST /contacts, and the Branches table starting from main, up to date](docs/screenshots/engine-picker.png)
+
 ### Storage
 
 - **Nothing in your working tree** — structured state (projects, workflows,
@@ -727,7 +733,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   scheduled and finished runs from every project on the machine (see
   [Pipeline](#pipeline)). See [`docs/storage.md`](docs/storage.md).
 
-![Runs page — runs from nimbus-jobs, nimbus-crm and lumen-docs grouped by project, one scheduled and one stopped, with the finished run Paginate the search endpoint open: Ready to ship, 17m 2s, $3.65, 2 files changed](docs/screenshots/history.png)
+![Runs page — runs from nimbus-crm, lumen-docs and nimbus-web grouped by project, one scheduled and one stopped, with the finished run Paginate the search endpoint open: Ready to ship, 17m 2s, $3.65, +29 −2 across 4 files](docs/screenshots/history.png)
 
 ### Experimental features
 
