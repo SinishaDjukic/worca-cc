@@ -53,7 +53,7 @@ function startJob(seq, d, fn, by, kind = 'round') {
     const job = { kind };
     try { await fn(job); }
     catch (err) {
-      try { failTurn(seq, { code: err?.code || 'FAILED', message: message(err), job: job.kind }, by, job.kind === 'look' ? restingStatus(seq) : 'your_turn'); }
+      try { failTurn(seq, { code: err?.code || 'FAILED', message: message(err), job: job.kind }, by, failedStatus(seq, job.kind)); }
       catch (e) { console.error('requirements: could not record the failure:', message(e)); }
     } finally {
       jobs.delete(seq);
@@ -248,6 +248,10 @@ function restingStatus(seq) {
   return listTurns(seq).filter((t) => t.kind === 'round').at(-1)?.payload.done ? 'done' : 'your_turn';
 }
 
+/** After a failed (or interrupted) job: a look leaves the interview where it was; a round hands the
+ *  product owner the turn, since whatever started it (answers, Finish now) is still waiting for a round. */
+const failedStatus = (seq, kind) => (kind === 'look' ? restingStatus(seq) : 'your_turn');
+
 export function submitAnswers(seq, input = {}, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   guard(seq);
@@ -288,13 +292,18 @@ export function retry(seq, { by = null } = {}, deps = {}) {
   return startJob(seq, d, () => runRound(seq, d, by, { final: lastReal?.kind === 'finish' }), by);
 }
 
-/** Boot sweep: a feature left looking/thinking by a restart goes back to the product owner. */
+/** Boot sweep: a feature left looking/thinking by a restart gets an error turn naming the job that was cut
+ *  short (so Try again re-runs that job: a look, not a paid round) and rests where a failed job of that kind would. */
 export function recoverInterrupted() {
   let n = 0;
   for (const f of listFeatures({ archived: true })) {
     if ((f.status !== 'looking' && f.status !== 'thinking') || isBusy(f.seq)) continue;
-    appendTurn(f.seq, { kind: 'error', payload: { code: 'INTERRUPTED', message: 'The last round did not finish because Worca restarted. Try again.' } });
-    updateFeature(f.seq, { status: 'your_turn' });
+    const job = f.status === 'looking' ? 'look' : 'round';
+    const msg = job === 'look'
+      ? 'The look at the code did not finish because Worca restarted. Try again.'
+      : 'The last round did not finish because Worca restarted. Try again.';
+    appendTurn(f.seq, { kind: 'error', payload: { code: 'INTERRUPTED', message: msg, job } });
+    updateFeature(f.seq, { status: failedStatus(f.seq, job) });
     n += 1;
   }
   return n;

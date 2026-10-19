@@ -476,3 +476,34 @@ test('a round never brings back a criterion the product owner removed', async ()
   assert.match(r.calls[0].prompt, /removed criterion R-po-1: A customer can cancel an unpaid order/);
   assert.deepEqual(getFeature(f.seq).spec.criteria.map((c) => c.text), ['Support is told']);
 });
+
+test('recoverInterrupted: an interrupted look on a done feature rests at done, and retry re-runs the look, not a round', async () => {
+  off();
+  const f = newFeature();
+  await startOrientation(f.seq, {}, deps(fakeRunner([ROUND2])));
+  await settled(f.seq);
+  assert.equal(getFeature(f.seq).status, 'done');
+  updateFeature(f.seq, { status: 'looking' });          // "Look again" cut short by a restart
+  assert.ok(recoverInterrupted() >= 1);
+  assert.equal(getFeature(f.seq).status, 'done');
+  const last = listTurns(f.seq).at(-1);
+  assert.equal(last.payload.code, 'INTERRUPTED');
+  assert.equal(last.payload.job, 'look');
+  setContext('project', 'shop-1234abcd', { lookAtCode: true });
+  const r = fakeRunner([{ summary: 'again', files: [] }]);
+  await retry(f.seq, {}, deps(r));
+  await settled(f.seq);
+  assert.equal(r.calls.length, 1);
+  assert.ok(r.calls[0].tools.length > 0, 'the look call, not a paid round');
+  assert.equal(getFeature(f.seq).rounds, 1);
+  assert.equal(getFeature(f.seq).status, 'done');
+  assert.equal(getFeature(f.seq).orientation.summary, 'again');
+});
+
+test('recoverInterrupted: an interrupted round records job round', () => {
+  const f = newFeature();
+  updateFeature(f.seq, { status: 'thinking' });
+  recoverInterrupted();
+  assert.equal(listTurns(f.seq).at(-1).payload.job, 'round');
+  assert.equal(getFeature(f.seq).status, 'your_turn');
+});
