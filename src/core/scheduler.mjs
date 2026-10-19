@@ -134,6 +134,7 @@ function rowToTicket(r, { withRequest = false } = {}) {
     createdBy: r.created_by || null,
     updatedBy: r.updated_by || null,
     summary: summarizeRequest(request),
+    ...(r.preset_id ? { presetId: r.preset_id } : {}),
   };
   if (withRequest) t.request = request;
   return t;
@@ -170,6 +171,7 @@ function rowToSchedule(r, { withRequest = false } = {}) {
     createdBy: r.created_by || null,
     updatedBy: r.updated_by || null,
     summary: summarizeRequest(request),
+    ...(r.preset_id ? { presetId: r.preset_id } : {}),
   };
   if (withRequest) s.request = request;
   return s;
@@ -223,6 +225,7 @@ export function createTicket({
   askThreadId = null, askCardId = null, forced = false,
   after = null, afterPolicy = 'done', sourceFromPrevious = false,
   resumePipelineId = null,
+  presetId = null,
   createdBy = null,
   now = Date.now(),
 }) {
@@ -236,13 +239,13 @@ export function createTicket({
   getDb().prepare(`
     INSERT INTO scheduled_runs (id, schedule_id, title, project_key, project_dir, workspace_id, run_at, request,
       status, if_missed, grace_min, owner_pid, owner_host, ask_thread_id, ask_card_id, forced,
-      after_kind, after_id, after_policy, source_from_previous, resume_pipeline_id, created_at, updated_at, created_by, updated_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      after_kind, after_id, after_policy, source_from_previous, resume_pipeline_id, preset_id, created_at, updated_at, created_by, updated_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, scheduleId, title, tc.project_key, tc.project_dir, tc.workspace_id, chained ? AFTER_RUN_AT : iso(runAtMs), JSON.stringify(request || {}),
     normPolicy(ifMissed, MISSED_POLICIES, 'run'), normGrace(graceMin), ownerPid, ownerPid != null ? (ownerHost || hostname()) : null,
     askThreadId, askCardId, forced ? 1 : 0,
     chained ? chained.kind : null, chained ? chained.id : null, normPolicy(afterPolicy, AFTER_POLICIES, 'done'), chained && sourceFromPrevious ? 1 : 0,
-    resumePipelineId ? resumePipelineId.trim() : null, ts, ts, byOf(createdBy), byOf(createdBy));
+    resumePipelineId ? resumePipelineId.trim() : null, presetId || null, ts, ts, byOf(createdBy), byOf(createdBy));
   return getTicket(id);
 }
 
@@ -732,7 +735,7 @@ export function resolveAfterRef(after, { projectDir = null, workspaceId = null, 
 export function createSchedule({
   title = null, projectDir = null, workspaceId = null, request, rule, overlap = 'skip',
   maxFailures = 3, ifMissed = 'run', graceMin = 360, id = `sch_${randomBytes(4).toString('hex')}`,
-  askThreadId = null, askCardId = null, createdBy = null, now = Date.now(),
+  askThreadId = null, askCardId = null, presetId = null, createdBy = null, now = Date.now(),
 }) {
   const norm = normalizeRule(rule, { todayLocal: rule?.anchor || null });
   if (!norm.ok) throw new Error(norm.error);
@@ -741,11 +744,11 @@ export function createSchedule({
   tx(() => {
     getDb().prepare(`
       INSERT INTO schedules (id, title, project_key, project_dir, workspace_id, request, rule, overlap, max_failures,
-        if_missed, grace_min, status, ask_thread_id, ask_card_id, created_at, updated_at, created_by, updated_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+        if_missed, grace_min, status, ask_thread_id, ask_card_id, preset_id, created_at, updated_at, created_by, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)
     `).run(id, title, tc.project_key, tc.project_dir, tc.workspace_id, JSON.stringify(request || {}), JSON.stringify(norm.rule),
       normPolicy(overlap, OVERLAP_POLICIES, 'skip'), normMaxFailures(maxFailures), normPolicy(ifMissed, MISSED_POLICIES, 'run'),
-      normGrace(graceMin), askThreadId, askCardId, ts, ts, byOf(createdBy), byOf(createdBy));
+      normGrace(graceMin), askThreadId, askCardId, presetId || null, ts, ts, byOf(createdBy), byOf(createdBy));
   });
   const ticket = materializeNext(id, { now });
   return { schedule: getSchedule(id), ticket };
@@ -790,7 +793,7 @@ export function materializeNext(scheduleId, { now = Date.now() } = {}) {
   }
   const ticket = createTicket({
     scheduleId, title: s.title, projectDir: s.projectDir, workspaceId: s.workspaceId, runAtMs: next,
-    request: s.request, ifMissed: s.ifMissed, graceMin: s.graceMin, createdBy: s.createdBy, now,
+    request: s.request, ifMissed: s.ifMissed, graceMin: s.graceMin, presetId: s.presetId || null, createdBy: s.createdBy, now,
   });
   getDb().prepare('UPDATE schedules SET next_run_at = ?, updated_at = ? WHERE id = ?').run(iso(next), iso(now), scheduleId);
   return ticket;
@@ -869,7 +872,7 @@ export function runScheduleNow(id, { now = Date.now(), by = undefined } = {}) {
   if (!s || s.status === 'ended') return null;
   return createTicket({
     scheduleId: id, title: s.title, projectDir: s.projectDir, workspaceId: s.workspaceId, runAtMs: now,
-    request: s.request, ifMissed: 'run', graceMin: s.graceMin, forced: true, createdBy: byOf(by) || s.createdBy, now,
+    request: s.request, ifMissed: 'run', graceMin: s.graceMin, forced: true, presetId: s.presetId || null, createdBy: byOf(by) || s.createdBy, now,
   });
 }
 

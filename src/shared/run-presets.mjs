@@ -42,3 +42,64 @@ export function nodeLabel(node) {
   const key = node && typeof node.key === 'string' && node.key ? node.key : String(node?.id || 'agent');
   return key.replace(/[-_]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 }
+
+/** The POST /api/run body a preset start sends — New run after a pick, `worca run --preset`, a fired schedule:
+ *  the setup's keys, the task and target over them, and the presetId the server checks (409 preset-broken). */
+export function presetRunBody(preset, task) {
+  return { ...bodyFromSetup(preset.setup, task), presetId: preset.id };
+}
+
+const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+/** The setup keys a start set to something other than the preset's own value (a field changed on the form, a choice
+ *  an Ask card made). A schedule keeps these as chosen; every other key follows the preset at fire time. */
+export function overriddenKeys(body, setup) {
+  return PRESET_SETUP_KEYS.filter((k) => body && body[k] !== undefined && !sameValue(body[k], setup ? setup[k] : undefined));
+}
+
+/** A fired ticket that follows a preset (D4): the stored request's task, the preset's CURRENT setup. Every setup key
+ *  of the stored copy is dropped first, so a pick removed from the preset is removed from the run — except the keys
+ *  in `keep`, the ones the start overrode (overriddenKeys), which stay as the person or the card chose them. An Any
+ *  project preset stores no branch names, so the request's own stay. */
+export function bodyFollowingPreset(request, preset, { keep = [] } = {}) {
+  const keepBranches = !preset.scope || preset.scope.kind === 'global';
+  const task = {};
+  for (const [k, v] of Object.entries(request || {})) {
+    if (PRESET_SETUP_KEYS.includes(k) && !keep.includes(k) && !(keepBranches && BRANCH_KEYS.includes(k))) continue;
+    task[k] = v;
+  }
+  return presetRunBody(preset, task);
+}
+
+/** Two run overlays: `top`'s per-node picks over `base`'s, loop budgets merged. */
+export function overlayOver(base, top) {
+  const nodes = { ...(base?.nodes || {}) };
+  for (const [id, pick] of Object.entries(top?.nodes || {})) nodes[id] = { ...(nodes[id] || {}), ...pick };
+  const wires = { ...(base?.wires || {}), ...(top?.wires || {}) };
+  return { ...(Object.keys(nodes).length ? { nodes: structuredClone(nodes) } : {}), ...(Object.keys(wires).length ? { wires: structuredClone(wires) } : {}) };
+}
+
+const CARD_ONLY_KEYS = ['humanInLoop', 'nightMode', 'mcpOptOut', 'syncBeforeStart', 'mock'];
+// The card already shows and sends these per node (card.nodes → its agent lane), so the preset's copy must never
+// sit under the lane: the lane sends only picks that differ from the project, and with "Save as project defaults"
+// it sends none, so a preset copy would silently undo a pick the person reset or saved on the card.
+const CARD_NODE_KEYS = ['model', 'effort', 'subagentModel'];
+/** Start on an Ask card proposed from a preset (D11): presetId, the keys the card has no control for, and the
+ *  preset's loop budgets and per-node fanOut/askQuestions under the card's own overlay — only while the card still
+ *  runs the preset's workflow. The preset's model/effort/subagentModel are never added (the card's lane owns them).
+ *  On another workflow the card's own overlay (already built for that workflow) goes out untouched. */
+export function applyPresetStart(body, cardPreset) {
+  const s = cardPreset.setup || {};
+  body.presetId = cardPreset.id;
+  for (const k of CARD_ONLY_KEYS) if (s[k] !== undefined) body[k] = structuredClone(s[k]);
+  if (body.workflowId === cardPreset.workflowId && s.overlay) {
+    const hidden = {};
+    for (const [id, pick] of Object.entries(s.overlay.nodes || {})) {
+      const rest = Object.fromEntries(Object.entries(pick || {}).filter(([k]) => !CARD_NODE_KEYS.includes(k)));
+      if (Object.keys(rest).length) hidden[id] = rest;
+    }
+    const merged = overlayOver({ ...(Object.keys(hidden).length ? { nodes: hidden } : {}), ...(s.overlay.wires ? { wires: s.overlay.wires } : {}) }, body.overlay);
+    if (Object.keys(merged).length) body.overlay = merged;
+  }
+  return body;
+}

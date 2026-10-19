@@ -117,7 +117,8 @@ test('a preset run with only a prompt sends the hand-made body plus the run-only
   const rb = getTicket(b.runId, { withRequest: true }).request;
   const strip = ({ overlay, humanInLoop, presetId, internal, ...rest }) => rest;
   assert.deepEqual(strip(rb), strip(ra));
-  assert.equal(rb.presetId, undefined, 'slice 1 never stores the link');
+  assert.equal(rb.presetId, undefined, 'the link lives in preset_id, never in the stored request');
+  assert.equal(getTicket(b.runId).presetId, preset.id, 'slice 3: the ticket follows the preset');
   assert.equal(rb.overlay.nodes.n_plan.model, 'claude-haiku-4-5');
 
   const cfgAfter = (await (await get(`/api/config?projectDir=${encodeURIComponent(project.path)}`)).json()).config;
