@@ -41,3 +41,36 @@ test('group page: title, card, tabs and table share edges; the row chevrons line
   assert.ok(problems.some((p) => p.rule === 'edges' && p.selector === '.gpage-tabs'));
   assert.ok(problems.some((p) => p.rule === 'open-column'));
 });
+
+test('QA 2: a title squeezed under half the row, or a chip over the title, fails', () => {
+  const doc = new JSDOM(`<!doctype html><body><div id="l"><div class="runs-item" data-state-word="In review"><a class="runs-row" id="row">
+    <span class="runs-row-title" id="t">1 · Found</span><span class="runs-row-right" id="r"><span class="runs-pr" id="c">Checks failing</span></span>
+    <span class="runs-row-sub" id="s">Fri</span></a></div></div></body>`).window.document;
+  const squeezed = env({ row: R(0, 300), t: R(0, 80), r: R(88, 300), c: R(88, 300) });
+  assert.deepEqual(auditRunsLayout(doc.getElementById('l'), squeezed, doc).map((p) => p.rule), ['title-share']);
+  const over = env({ row: R(0, 300), t: R(0, 200), r: R(150, 300), c: R(150, 300) });
+  assert.deepEqual(auditRunsLayout(doc.getElementById('l'), over, doc).map((p) => p.rule).sort(), ['overlap']);
+  const wrapped = env({ row: R(0, 300, 0, 60), t: R(0, 300), r: R(180, 300, 22, 40), c: R(180, 300, 22, 40) });
+  assert.deepEqual(auditRunsLayout(doc.getElementById('l'), wrapped, doc), [], 'dropped under the title: fine');
+});
+
+test('QA 8: group page rows: a chip over the cost fails; chip and cost under the title pass', () => {
+  const doc = new JSDOM(`<!doctype html><body><div class="gpage"><ol class="run-members is-table"><li class="run-member">
+    <span class="status-dot"></span><span class="run-member-num">1</span>
+    <span class="run-member-main"><a class="run-member-title" id="t">Found the bug</a><span class="run-member-line">Needs you</span></span>
+    <span class="run-member-pr"><a class="runs-pr is-failing" id="c"><span class="runs-pr-word">Checks failing</span></a></span>
+    <span class="run-member-cost" id="k">$1.20</span><span class="run-member-go"></span></li></ol></div></body>`).window.document;
+  const rules = (rects) => auditGroupPageLayout(doc.querySelector('.gpage'),
+    { rect: (e) => rects[e.id] || R(0, 250, 0, 80), viewport: { width: 290, height: 800 } }, doc).map((p) => p.rule);
+  assert.deepEqual(rules({ t: R(40, 140, 0, 40), c: R(150, 260), k: R(200, 260) }), ['overlap']);
+  assert.deepEqual(rules({ t: R(40, 200, 0, 40), c: R(40, 150, 44, 60), k: R(200, 240, 44, 60) }), [], 'stacked under the title');
+});
+
+test('QA 8: a group page row wider than its table (a ~290px pane) fails as row-overflow', () => {
+  const doc = new JSDOM(`<!doctype html><body><div class="gpage"><ol class="run-members is-table" id="tbl"><li class="run-member" id="row">
+    <a class="run-member-title" id="t">Billing: invoices</a></li></ol></div></body>`).window.document;
+  const rules = (rects) => auditGroupPageLayout(doc.querySelector('.gpage'),
+    { rect: (e) => rects[e.id] || R(0, 0), viewport: { width: 290, height: 800 } }, doc).map((p) => p.rule);
+  assert.deepEqual(rules({ tbl: R(72, 218), row: R(72, 262), t: R(104, 202) }), ['row-overflow']);
+  assert.deepEqual(rules({ tbl: R(72, 218), row: R(72, 218), t: R(92, 218) }), []);
+});

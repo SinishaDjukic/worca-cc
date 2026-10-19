@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // tools/ui-polish-cdp.mjs — the UI/UX polish measurements (review 2026-10-19, D23): a mock server on a temp HOME, a
 // finished 3-run feature with PRs (test/helpers/ship-world.mjs), and headless Chrome over the 9 review screens plus a
-// Chat feature card and a Ship card, in light and dark at 1280 and 375 px. Each combination runs the one-button audit
+// Chat feature card and a Ship card, in light and dark at 1280, 375 and 290 px. Each combination runs the one-button audit
 // and the surface audit (tools/button-audit.mjs) and records the measured heights of tabs, segments, tiles, info tips
 // and the page heading. NOT part of `npm test`: it needs Chrome.
 // Run: node tools/ui-polish-cdp.mjs [--out after.json] [--before before.json]
@@ -29,7 +29,7 @@ export const SCREENS = Object.freeze([
   { key: 'feature-card', hash: '#chat', prep: 'open-plan', ready: '.chat-home-plan .shape-feature' },
   { key: 'ship-card', hash: '#chat/{shipThread}', ready: '.ask-card[data-ship-card="ready"]' },
 ].map(Object.freeze));
-export const MATRIX = Object.freeze({ themes: ['light', 'dark'], widths: [1280, 375] });
+export const MATRIX = Object.freeze({ themes: ['light', 'dark'], widths: [1280, 375, 290] });
 
 /** One Markdown row per screen × theme × width: violations before → after. */
 export function table(before, after) {

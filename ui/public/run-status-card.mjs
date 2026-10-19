@@ -155,6 +155,16 @@ export function pauseResumeOwn(btn, status) {
   return {};
 }
 
+/** QA 4: a member row's status text. The row's PR chip already shows the PR state, so the text never repeats it:
+ *  merged reads "Done", and the chip's word and "PR #N" leave the line ("Needs you · Checks failing · PR #9" → "Needs you"). */
+export function memberStatusText(m) {
+  const text = statusText(m).text;
+  if (!m || !m.pr) return text;
+  if (m.state === 'merged') return 'Done';
+  const said = [` · ${m.pr.word}`, m.pr.number != null ? ` · PR #${m.pr.number}` : ''].filter(Boolean);
+  return said.reduce((t, s) => t.split(s).join(''), text) || m.word;
+}
+
 /** D11, D13: a group's member rows (Planning first, unnumbered), the same table on the group page and the chat card
  *  (A13, spec §3.4): each row is title over status, then PR, cost and a quiet chevron, with the title link stretched
  *  over the row. */
@@ -175,10 +185,10 @@ export function renderMemberRows(doc, row) {
     const title = textEl(doc, 'a', 'run-member-title', name);
     title.setAttribute('href', mb.href || '#runs');
     title.title = name;
-    const line = textEl(doc, 'span', 'run-member-line', statusText(m).text);
+    const line = textEl(doc, 'span', 'run-member-line', memberStatusText(m));
     const pr = textEl(doc, 'span', 'run-member-pr', '');
     if (mb.adhoc) pr.append(textEl(doc, 'span', 'runs-indep', 'Independent'));
-    if (m.pr) pr.append(prChip(doc, m.pr));
+    if (m.pr) pr.append(prChip(doc, m.pr, { link: true }));
     const num = textEl(doc, 'span', 'run-member-num', unnumbered ? '' : String(mb.position));
     const main = textEl(doc, 'span', 'run-member-main', '');
     main.append(title, line);
@@ -186,7 +196,7 @@ export function renderMemberRows(doc, row) {
     go.className = 'run-member-go';
     go.setAttribute('aria-hidden', 'true');
     go.append(icon(doc, 'chevron', 12));
-    li.append(num, dot, main, pr, textEl(doc, 'span', 'run-member-cost mono', mb.cost == null ? '' : fmtUsd(mb.cost)), go);
+    li.append(dot, num, main, pr, textEl(doc, 'span', 'run-member-cost mono', mb.cost == null ? '' : fmtUsd(mb.cost)), go);
     ol.append(li);
   }
   return ol;

@@ -72,3 +72,18 @@ test('runReceipts: plan and review receipts from the recorded run, no fetch; non
   assert.equal(runReceipts(sentBack).at(-1), 'Review Implementation · pass 1 · 2 blocking, sent back');
   assert.deepEqual(runReceipts({ status: 'done', pr: null }), []);
 });
+
+test('QA 7: the header offers Open PR only when the group has exactly one PR', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const gh = (n, o = {}) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN', ...o });
+  const mk = (g) => { const model = groupModel({ kind: 'feature', title: 'T', ...g }, { now: NOW });
+    return { kind: 'chain', groupKind: 'feature', groupId: 'f', title: 'T', model, costUsd: 0,
+      members: model.members.map((m, i) => ({ position: i + 1, title: `S${i + 1}`, href: `#running/r${i}`, model: m })) }; };
+  const head = (row) => { const root = buildGroupPage(doc); paintGroupPage(root, { row, project: 'p', tab: 'runs' }, NOOP);
+    return [...root.querySelectorAll('.gpage-actions [data-model-action]')].map((b) => b.dataset.modelAction); };
+  assert.deepEqual(head(mk({ members: [done, done], pr: gh(1) })), ['open-pr'], 'shipped as one PR');
+  assert.deepEqual(head(mk({ members: [{ ...done, pr: gh(2, { state: 'CLOSED' }) }, { ...done, pr: gh(1) }], pr: gh(1) })), ['open-pr'],
+    'shipped as one PR: closed slice drafts and the same PR on a member do not count');
+  assert.deepEqual(head(mk({ members: [{ ...done, pr: gh(1) }, done] })), ['open-pr'], 'one member PR');
+  assert.deepEqual(head(mk({ members: [{ ...done, pr: gh(1) }, { ...done, pr: gh(2) }] })), [], 'two PRs: the rows\' chips');
+});

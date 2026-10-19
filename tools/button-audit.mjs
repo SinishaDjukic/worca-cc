@@ -107,6 +107,13 @@ export function auditSurface(root, spec, env) {
   for (const el of root.querySelectorAll(spec.tiles.sel)) {
     if (visible(el) && (h(el) < spec.tiles.min || h(el) > spec.tiles.max)) bad(el, 'control-height', `${h(el)}px`);
   }
+  // QA 1: a badge never truncates (its text wider than its box).
+  const size = (env && env.size) || ((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+  for (const el of root.querySelectorAll('[class*="badge"]')) {
+    if (!visible(el) || el.classList.contains('auto-badge')) continue;
+    const s = size(el);
+    if (s.client > 0 && s.scroll > s.client + 1) bad(el, 'badge-truncated', `${s.scroll}px in ${s.client}px`);
+  }
   for (const el of root.querySelectorAll('.info-tip')) if (visible(el) && h(el) < spec.infoMin) bad(el, 'control-height', `${h(el)}px`);
   for (const el of root.querySelectorAll('*')) {
     if (!visible(el) || el.closest(spec.floating)) continue;

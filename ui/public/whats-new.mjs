@@ -3,7 +3,7 @@
 export const WHATS_NEW_KEY = 'worca-cc.whatsNew.runsRedesign';
 export const WHATS_NEW = Object.freeze({
   title: 'The Runs list has a new look',
-  body: 'Runs and groups share one status line. A ? marks a run that needs you and a ! one that failed. '
+  body: 'Runs and groups share one status line. A ? marks a run waiting on your answer and a ! one that failed. '
     + 'Filter and group from View, and tick rows to Stop, Archive or Delete them.',
 });
 

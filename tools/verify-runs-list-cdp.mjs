@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // tools/verify-runs-list-cdp.mjs — headless-Chrome proof of the Runs list layout (runs redesign §3.3a, Known bugs 5, 8, 9;
-// D27). At 375px and 1440px, in light and dark, it runs the pure layout audit (tools/runs-layout-audit.mjs) over the
+// D27). At 290px, 375px and 1440px, in light and dark, it runs the pure layout audit (tools/runs-layout-audit.mjs) over the
 // list, then again with the View menu open, with a row's ⋯ menu open and with the Add to group picker open, and the
-// one-button-style audit (tools/button-audit.mjs). It prints every problem and exits 1 on any. NOT part of `npm test`:
+// one-button-style audit (tools/button-audit.mjs). At 1440px it also drives the list's resize handle (QA 2). It prints every problem and exits 1 on any. NOT part of `npm test`:
 // it needs Chrome (test/verify-runs-list-cdp.test.mjs keeps its coverage from shrinking).
 // Run: node tools/verify-runs-list-cdp.mjs   (or: npm run verify:runs-list)
 import { spawn, execFileSync } from 'node:child_process';
@@ -133,8 +133,41 @@ async function audit(where) {
 const BUTTON_AUDIT = `(${auditButtons})(document.body, ${JSON.stringify(BUTTON_SPEC)}, null)`;
 const closeMenus = () => ev("document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));document.querySelector('.group-picker')?.remove();0");
 
+// QA 2: the list's resize handle: → x4 widens by 64px, Home resets the default, a drag reaches 600px and survives a reload.
+const listW = () => ev("Math.round(document.querySelector('#runs-shell .runs-list-pane').getBoundingClientRect().width)");
+const valueNow = () => ev("Number(document.querySelector('#runs-shell .runs-resize').getAttribute('aria-valuenow'))");
+async function press(key, code) {
+  for (const type of ['keyDown', 'keyUp']) await cdp('Input.dispatchKeyEvent', { type, key, code: key, windowsVirtualKeyCode: code });
+}
+async function resizeProof(at) {
+  await ev("document.querySelector('#runs-shell .runs-resize').focus();0");
+  // The list's rendered width: an unfocused headless page fires no focus event, so aria-valuenow may still be the
+  // width painted while the view was hidden.
+  const v0 = await listW();
+  for (let i = 0; i < 4; i++) await press('ArrowRight', 39);
+  const v1 = await valueNow();
+  check(v1 === v0 + 64 && (await listW()) === v1, `${at}: → x4 widens the list by 64px`, `${v0} → ${v1}, list ${await listW()}px`);
+  await press('Home', 36);
+  const def = await ev("Math.min(320, Math.max(280, Math.round(document.getElementById('runs-shell').clientWidth * 0.24)))");
+  check((await valueNow()) === def && (await listW()) === def, `${at}: Home resets the default (${def}px)`, `value ${await valueNow()}, list ${await listW()}px`);
+  const h = await ev("(() => { const r = document.querySelector('#runs-shell .runs-resize').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()");
+  const to = h.x + (600 - def);
+  await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: h.x, y: h.y });
+  await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: h.x, y: h.y, button: 'left', buttons: 1, clickCount: 1 });
+  await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.round((h.x + to) / 2), y: h.y, button: 'left', buttons: 1 });
+  await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: to, y: h.y, button: 'left', buttons: 1 });
+  await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to, y: h.y, button: 'left', buttons: 0, clickCount: 1 });
+  check((await valueNow()) === 600 && (await listW()) === 600, `${at}: a drag sets the list to 600px`, `value ${await valueNow()}, list ${await listW()}px`);
+  await cdp('Page.reload');
+  await waitFor("document.querySelectorAll('#runs-list .runs-item').length >= 5", `the list after a reload at ${at}`);
+  await sleep(400);
+  check((await listW()) === 600, `${at}: the width survives a reload`, `list ${await listW()}px`);
+  await audit(`the list at 600px, ${at}`);
+  await ev("localStorage.removeItem('worca-cc.runs.listWidth');0");   // the next combination starts from the default
+}
+
 await cdp('Page.enable'); await cdp('Runtime.enable');
-for (const width of [375, 1440]) {
+for (const width of [290, 375, 1440]) {
   for (const theme of ['light', 'dark']) {
     const at = `${width}px ${theme}`;
     await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
@@ -166,6 +199,7 @@ for (const width of [375, 1440]) {
     await closeMenus();
     const bad = await ev(BUTTON_AUDIT);
     check(bad.length === 0, `${at}: every button is .btn in 3 sizes x 4 variants`, JSON.stringify(bad.slice(0, 8)));
+    if (width === 1440 && theme === 'light') await resizeProof(at);
   }
 }
 check(errors.length === 0, 'no page exceptions', errors.slice(0, 4).join(' | '));

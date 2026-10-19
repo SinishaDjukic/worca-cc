@@ -1186,7 +1186,7 @@ test('feature card: Shaping, then the group row\'s chip, one status line and its
     assert.equal(lis.length, 4, 'Planning + 3');
     for (const li of lis) {
       assert.deepEqual([...li.children].map((c) => c.className.split(' ')[0]),
-        ['run-member-num', 'status-dot', 'run-member-main', 'run-member-pr', 'run-member-cost', 'run-member-go']);
+        ['status-dot', 'run-member-num', 'run-member-main', 'run-member-pr', 'run-member-cost', 'run-member-go']);
       assert.deepEqual([...li.querySelector('.run-member-main').children].map((c) => c.className), ['run-member-title', 'run-member-line']);
     }
     assert.equal($$('.chat-rc-fstatus, .chat-rc-chain, ol.chat-rc-members, .ask-rc-pill').length, 0, 'no Shaper duplicate');

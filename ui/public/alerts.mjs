@@ -79,10 +79,10 @@ export function askCardsIn(frame) {
 }
 /** A resume starts a new runId, so one pause tag per run is enough. */
 export function pauseTag(runId) { return questionTag(runId, 'pause'); }
-/** `title` with its "(N) ? " prefix set to n, or removed at 0 (runs redesign: the '?' is the Needs you symbol). */
+/** `title` with its "(N) " prefix set to n, or removed at 0. QA 6: no "?" in text; an old "(N) ? " prefix is stripped. */
 export function titleWithCount(title, n) {
   const base = String(title == null ? '' : title).replace(/^\(\d+\) (\? )?/, '');
-  return n > 0 ? `(${n}) ? ${base}` : base;
+  return n > 0 ? `(${n}) ${base}` : base;
 }
 export function badgeCount({ waitingRuns = 0, unreadProblems = 0 } = {}) {
   const c = (x) => (Number.isFinite(x) && x > 0 ? Math.floor(x) : 0);

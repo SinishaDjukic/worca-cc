@@ -54,3 +54,12 @@ test('status-dot CSS: 8px dot, 12px symbol, pulse off under reduced motion', () 
   assert.match(css, /\.status-sym > g\{stroke:var\(--on-signal\);\}/);
   assert.match(css, /--on-signal:light-dark\(#19191B,#19191B\)/);
 });
+
+test('QA 6: a plain Needs-you dot (no symbol) still names itself "Needs you"', () => {
+  const el = renderStatusDot(doc, { ...model('needs-you'), symbol: null });
+  assert.equal(el.querySelector('svg'), null);
+  assert.ok(el.classList.contains('is-amber') && !el.classList.contains('has-sym'));
+  assert.equal(el.getAttribute('role'), 'img');
+  assert.equal(el.getAttribute('aria-label'), 'Needs you');
+  assert.equal(el.getAttribute('aria-hidden'), null);
+});

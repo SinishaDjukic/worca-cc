@@ -46,6 +46,11 @@ export function buildGroupPage(doc) {
   return root;
 }
 
+/** QA 7: with several PRs a header "Open PR" is ambiguous; each row's chip opens its own. */
+export function headerActions(m) {
+  return m.prCount === 1 ? m : { ...m, actions: m.actions.filter((a) => a !== 'open-pr') };
+}
+
 /**
  * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean }.
  * `deps`: { onAction(id, btn), onTab(tab), mountQuestion(slot, member|null), mountOverview(host), mountDecisions(host, row), logsHref(member) }.
@@ -62,7 +67,7 @@ export function paintGroupPage(root, view, deps) {
   // groupRow's costUsd is always a number: a group with no cost yet says nothing, never "Cost $0.00 total".
   root.querySelector('.gpage-meta').textContent = [view.project, row.costUsd > 0 ? `Cost ${fmtUsd(row.costUsd)} total` : ''].filter(Boolean).join(' · ');
   paintRunStatus(root.querySelector('.gpage-card .run-status'), m);
-  syncActions(root.querySelector('.gpage-actions'), m, { onAction: deps.onAction, disable: { 'ask-changes': "Ask for changes from the run's chat" } });
+  syncActions(root.querySelector('.gpage-actions'), headerActions(m), { onAction: deps.onAction, disable: { 'ask-changes': "Ask for changes from the run's chat" } });
   const all = [...(row.planning ? [{ ...row.planning, isPlanning: true }] : []), ...row.members];
   const current = all.find((mb) => mb.model === m.current) || null;
   deps.mountQuestion(root.querySelector('.gpage-question'), current);

@@ -4,12 +4,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SCREENS, MATRIX, table } from '../tools/ui-polish-cdp.mjs';
 
-test('SCREENS: the 9 review screens plus a feature card and a Ship card; MATRIX gives 44 combinations', () => {
+test('SCREENS: the 9 review screens plus a feature card and a Ship card; MATRIX gives 66 combinations', () => {
   assert.equal(SCREENS.length, 11);
   assert.deepEqual(SCREENS.map((s) => s.key), ['chat', 'new-run', 'runs', 'run-page', 'group-page', 'schedules', 'workflows',
     'statistics', 'settings', 'feature-card', 'ship-card']);
   for (const s of SCREENS) assert.match(s.hash, /^#/);
-  assert.equal(SCREENS.length * MATRIX.themes.length * MATRIX.widths.length, 44);
+  assert.equal(SCREENS.length * MATRIX.themes.length * MATRIX.widths.length, 66);
 });
 
 test('SCREENS: the card screens wait for the real Shaper feature card and Ship card, never a generic run card', () => {
@@ -27,7 +27,7 @@ test('table: one row per screen x theme x width, before → after, "–" for a m
   const after = before.slice(1).map((m) => ({ ...m, violations: 0 }));
   const lines = table(before, after).split('\n');
   assert.equal(lines[0], '| Screen | Theme | Width | Violations before | after |');
-  assert.equal(lines.length, 2 + 44);
+  assert.equal(lines.length, 2 + 66);
   assert.equal(lines[2], '| chat | light | 1280 | 3 | – |', 'the first combination has no after');
   assert.equal(lines[3], '| chat | light | 375 | 3 | 0 |');
 });

@@ -277,20 +277,20 @@ test('only a workflow pin label shrinks: the badged Shaper pin keeps its name wh
   assert.equal(shrink[1], '.chat-home-act.is-pin:not(:has(> .chat-home-act-badge))');
 });
 
-test('the tile badge never wraps and has a compact size below a 960px home', () => {
+test('QA 1: the Shaper badge sits on its own line at normal size and never truncates', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  // Anchored at line start: the container-query line also contains `.chat-home-act-badge{`.
   const rule = css.match(/^\.chat-home-act-badge\{([^}]*)\}/m)[1];
   assert.match(rule, /white-space:nowrap/);
-  assert.match(rule, /max-width:100%/);
-  const compact = css.match(/^@container chat-home \(max-width:960px\)\{([^\n]*)\}$/m);
-  assert.ok(compact, 'the compact badge rule exists');
-  assert.match(compact[1], /\.chat-home-act-badge\{font-size:8\.5px;/);
-  // Same specificity as the base rule, so it must come after it to win.
-  assert.ok(compact.index > css.search(/^\.chat-home-act-badge\{/m), 'the compact rule follows the base badge rule');
-  // Flag off, nothing changes: only the tile that carries a badge (the gated Shaper pin) loses its padding.
-  assert.match(compact[1], /\.chat-home-act:has\(> \.chat-home-act-badge\)\{padding-inline:0;\}/);
-  assert.doesNotMatch(compact[1], /\.chat-home-act\{/, 'no rule for every tile');
+  assert.match(rule, /font-size:10px/);
+  assert.match(rule, /grid-area:b/);
+  assert.doesNotMatch(rule, /text-overflow|overflow:hidden|max-width/);
+  assert.match(css, /^\.chat-home-act:has\(> \.chat-home-act-badge\)\{display:grid;[^}]*grid-template-areas:"ic l" "ic b";/m);
+  assert.doesNotMatch(css, /\.chat-home-act-badge\{font-size:8\.5px/, 'no compact badge');
+  assert.doesNotMatch(css, /@container chat-home \(max-width:960px\)/);
+});
+
+test('review B10: the tile stays 56px in the narrow container too', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const narrow = css.match(/^@container chat-home \(max-width:440px\)\{([^\n]*)\}$/m)[1];
   assert.doesNotMatch(narrow, /\.chat-home-act\{/, 'review B10: the tile stays 56px in the narrow container too');
 });

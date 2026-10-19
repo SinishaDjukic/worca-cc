@@ -434,3 +434,36 @@ test('member rows: the title is ink with no underline at rest, on every surface 
   assert.ok(css.indexOf('@container chat-rc-members') < css.indexOf('@media (max-width:600px){\n  .run-members.is-table'),
     'the phone layout comes later, so it wins on a narrow viewport');
 });
+
+// QA 1: a badge is one word that is never cut. .auto-badge is a free-text workflow-name label (out of scope, plan §Open questions).
+test('badges never truncate: no text-overflow on a badge class', () => {
+  const ALLOW = new Set(['.auto-badge']);
+  const BADGE = /\.[\w-]*badge[\w-]*(?![\w-])/;
+  const bad = ALL.filter((r) => splitTop(r.sel).some((s) => { const last = s.trim().split(/\s+/).at(-1); return BADGE.test(last) && !ALLOW.has(last); }))
+    .flatMap((r) => decls(r.body, 'text-overflow').map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(bad, []);
+});
+
+// QA 8: narrow layouts follow their own container: the run page's stat boxes (.rd-facts), the group page's table
+// (.gpage-runs), and the run page's Group row on a phone.
+test('narrow layouts: stat boxes 2 per row, the Group row stacks, group page rows put chip and cost under the title', () => {
+  assert.ok(ALL.some((r) => r.sel === '.rd-facts' && /container:rd-facts \/ inline-size/.test(r.body)), 'the facts are a container');
+  const facts = css.match(/@container rd-facts \(max-width:420px\)\{([^\n]*)\}/);
+  assert.ok(facts, 'the narrow stat boxes block exists');
+  assert.match(facts[1], /\.rd-stats\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);\}/);
+  assert.match(facts[1], /\.rd-stats\[data-n="3"\] > div:last-child\{grid-column:1 \/ -1;\}/);
+  const phone = css.match(/@media \(max-width:640px\)\{\.rd-group-line\{([^}]*)\}([^\n]*)\}/);
+  assert.ok(phone, 'the phone Group row block exists');
+  assert.match(phone[1], /flex-direction:column/);
+  assert.match(phone[2], /\.rd-group-sep\{display:none;?\}/);
+  assert.ok(ALL.some((r) => r.sel === '.gpage-runs' && /container:gpage-runs \/ inline-size/.test(r.body)), 'the group table host is a container');
+  const at = css.indexOf('@container gpage-runs (max-width:480px)');
+  assert.ok(at > 0, 'the narrow group table block exists');
+  const block = css.slice(at, css.indexOf('\n}', at));
+  // Web UI review: "dot num main go" left the title ~96px and pushed rows past a 290px pane. The title spans the row
+  // after the dot; the number, chip and cost share the line under it; the hover-only chevron steps aside.
+  assert.match(block, /\.run-members\.is-table\{grid-template-columns:12px 20px minmax\(0,1fr\) max-content;column-gap:8px;\}/);
+  assert.match(block, /\.run-members\.is-table > \.run-member\{[^}]*grid-template-areas:"dot main main main" "\. num pr cost";/);
+  assert.match(block, /\.run-members\.is-table \.run-member-go\{display:none;?\}/);
+  assert.match(block, /\.run-members\.is-table \.run-member-title\{[^}]*-webkit-line-clamp:2;/);
+});

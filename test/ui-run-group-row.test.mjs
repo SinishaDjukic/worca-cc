@@ -23,6 +23,9 @@ test('a member run\'s page says "Part of Run tags · run 3 of 3" and links the g
   assert.equal(line.hidden, false);
   assert.equal(text(line), 'Group Part of Run tags · run 3 of 3');
   assert.equal(line.querySelector('a.rd-group-link').getAttribute('href'), '#feature/feat_1');
+  // QA 8: spans CSS can stack on a phone: the label, "Part of …", the separator, then "run 3 of 3".
+  assert.deepEqual([...line.children].map((c) => c.className), ['rd-group-k', 'rd-group-of', 'rd-group-sep', 'rd-group-pos']);
+  assert.equal(line.querySelector('.rd-group-pos').textContent, 'run 3 of 3');
   ctx.dispatch({ type: 'state', runId: 'r3', status: 'running', steps: [], active: [] });   // a repaint
   await ctx.settle();
   assert.equal(ctx.window.document.querySelectorAll('#run-detail .rd-group-line a').length, 1, 'never duplicated');

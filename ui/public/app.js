@@ -89,6 +89,7 @@ import { createConnection, paintConnectionBanner } from './connection-state.mjs'
 import { actionError, httpError } from './action-errors.mjs';
 import { paintWhatsNew } from './whats-new.mjs';
 import { createLogDrawer } from './log-drawer.mjs';
+import { mountRunsResize } from './runs-resize.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { trailColumns, nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
@@ -96,7 +97,7 @@ import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts } from './group-page.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
@@ -104,8 +105,7 @@ import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view
 import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody, rangeKeys } from './runs-selection.mjs';
 import { bulkConfirm } from '../../src/shared/run-bulk.mjs';
 import { openGroupPicker } from './group-picker.mjs';
-import { renderStatusDot } from './status-dot.mjs';
-import { ACTION_LABEL, RUN_STATES, groupModel, runModel } from '../../src/shared/run-model.mjs';
+import { ACTION_LABEL, groupModel, runModel } from '../../src/shared/run-model.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
 // History list card. They stay EXPORTED
@@ -23185,8 +23185,15 @@ function paintHdGlance(screen, record, data) {
   const link = screen.querySelector('.hd-pr-link');
   const slot = glance.querySelector('.rd-pr-slot');
   const linked = shown(link) && !link.hidden;
+  // QA 3: the PR box leads with the run model's chip, read by id: hdModelRun falls back to histRun(record), and `record`
+  // can be a replaced object after a History reload, so the lookup is unconditional.
+  const hdChip = () => {
+    const rec = (state.historyAll || []).find((p) => p && p.id === record.id) || record;
+    return runModel(hdModelRun(rec, data), { memo: memoFor(record.id) }).pr;
+  };
   paintRdPrStatus(glance.querySelector('.rd-pr-status'),
-    linked && pr === 'OPEN' && record.target !== 'workspace' ? { id: record.id, projectKey: record.projectKey } : null);
+    linked && pr === 'OPEN' && record.target !== 'workspace'
+      ? { id: record.id, projectKey: record.projectKey, chipOf: hdChip } : null);
   if (linked) {
     paintPrCta(slot, { state: pr === 'MERGED' ? 'merged' : 'view', href: link.href, cls: 'hd-g-pr-link' });
   } else if (shown(createBtn) && !createBtn.hidden) {
@@ -31025,7 +31032,8 @@ function groupAction(row, id, btn) {
       return next ? runAction({ runId: next.runId || null, pipelineId: next.pipelineId || null, title: next.title }, 'ship', btn, next.model) : undefined;
     }
     case 'open-pr': {
-      const url = (row.model.pr && row.model.pr.url) || (row.model.current && row.model.current.pr && row.model.current.pr.url);
+      // QA 7: the group's one PR (groupModel prUrl), else its own or the current member's.
+      const url = row.model.prUrl || (row.model.pr && row.model.pr.url) || (row.model.current && row.model.current.pr && row.model.current.pr.url);
       if (url) window.open(url, '_blank', 'noopener');
       return undefined;
     }
@@ -31097,10 +31105,11 @@ function runsSchedItem(t) {
 // pipelineId: a live row painted before its id arrived must repaint once it does (selection
 // and the focus fallbacks below match on it).
 // A group line's fraction is patched in place (paintRunsProgress); its presence is structural (the model's state).
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, r.model.line, r.model.pulse ? 1 : 0, r.count || '',
-  r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
+const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
+  r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
   r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
-  r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null])] : 0];
+  r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '',
+    m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.icon] : 0])] : 0];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over, then the selected row stands in;
@@ -31603,6 +31612,8 @@ if (el.runsShell && typeof window.ResizeObserver === 'function') {
     setRunsLayout(entries[0] && entries[0].contentRect ? entries[0].contentRect.width : 0);
   }).observe(el.runsShell);
 }
+// QA 2: the Runs list's resize handle (bare localStorage: app.js's guarded storage).
+if (el.runsShell) mountRunsResize(el.runsShell, { storage: localStorage, win: window });
 // Focus back to the row a run was opened from (slide layout only: side by side it never left).
 // The group copy, not the Needs-you repeat: the group is where the run lives. A finished run
 // is acknowledged when it opens, so it has left the live rows by the time it closes: its
@@ -32908,7 +32919,10 @@ function paintGroupLine(el, pipelineId, title, home) {
     if (el.dataset.sig === sig) return;
     el.dataset.sig = sig;
     const a = Object.assign(document.createElement('a'), { className: 'rd-group-link', href: groupHref(home.row), textContent: home.row.title });
-    el.replaceChildren(k(), ' Part of ', a, home.planning ? ' · planning' : ` · run ${home.position} of ${home.total}`);
+    const span = (cls, ...kids) => { const s = document.createElement('span'); s.className = cls; s.append(...kids); return s; };
+    // QA 8: spans a phone can stack. The leading space keeps textContent "Group Part of Run tags · run 4 of 5".
+    el.replaceChildren(k(), span('rd-group-of', ' Part of ', a), span('rd-group-sep', ' · '),
+      span('rd-group-pos', home.planning ? 'planning' : `run ${home.position} of ${home.total}`));
     return;
   }
   if (!pipelineId || !levelAtLeast('advanced')) { el.hidden = true; el.dataset.sig = ''; el.replaceChildren(); return; }
@@ -33375,7 +33389,8 @@ const prStatusKey = (scope) => `${scope.projectKey || ''}\u0000${scope.id}\u0000
 const prScopeBody = (scope) => ({ id: scope.id, projectKey: scope.projectKey, ...(scope.memberKey ? { memberKey: scope.memberKey } : {}) });
 function paintRdPrStatus(host, scope) {
   if (!host) return;
-  if (!scope) { host.hidden = true; host.dataset.key = ''; clearTimeout(host._prTimer); return; }
+  if (!scope) { host.hidden = true; host.dataset.key = ''; host._prScope = null; clearTimeout(host._prTimer); return; }
+  host._prScope = scope;                           // QA 3: refreshRdPrStatus redraws with this scope's chip
   const key = prStatusKey(scope);
   const cached = prStatusCache.get(key);
   if (host.dataset.key !== key) { host.dataset.key = key; host.dataset.sig = ''; host.hidden = true; clearTimeout(host._prTimer); }
@@ -33402,7 +33417,7 @@ async function loadRdPrStatus(host, scope) {
   try { c = await readPrStatus(key, q); }
   finally { host._prLoading = false; }
   // A change announced while this read was in flight: read once more, the answer may predate it.
-  if (host._prAgain && host.dataset.key === key) { void loadRdPrStatus(host, scope); return; }
+  if (host._prAgain && host.dataset.key === key) { void loadRdPrStatus(host, host._prScope || scope); return; }
   const w = c?.watch;
   const next = { at: Date.now(), checks: c?.checks || null, mergeable: c?.mergeable || 'UNKNOWN',
     status: c?.status && typeof c.status.label === 'string' ? c.status : null,
@@ -33423,8 +33438,12 @@ const PR_STATUS_ICONS = {
   'is-wait': '<circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/>',
   none: '<circle cx="12" cy="12" r="9"/>',
 };
+// QA 3: labels that restate a PR state the chip already words its own way (the chip is the one reading).
+const PR_STATE_LABELS = new Set(['Draft', 'Merge conflicts', 'Changes requested']);
 function renderRdPrStatus(host, scope, s) {
-  const sig = JSON.stringify([s.checks, s.status, s.watch, s.resolveError]);
+  // Read at paint time (after the fetch): a pr-watch-changed frame mutates the row after it asks for this repaint.
+  const chip = scope && scope.chipOf ? scope.chipOf() : null;
+  const sig = JSON.stringify([s.checks, s.status, s.watch, s.resolveError, chip && [chip.id, chip.word, chip.icon]]);
   if (host.dataset.sig === sig) return;
   host.dataset.sig = sig;
   const span = (cls, text) => { const el = document.createElement('span'); el.className = cls; el.textContent = text; return el; };
@@ -33437,6 +33456,8 @@ function renderRdPrStatus(host, scope, s) {
   const [tone, text] = v && v.label ? [v.tone === 'none' ? 'none' : `is-${v.tone}`, v.label]
     : c ? ['none', 'No checks'] : [null, ''];
   const notes = [];
+  // With the run model's chip as the lead, GitHub's verdict is a note only when it says something the chip does not.
+  if (chip && v && v.label && !PR_STATE_LABELS.has(v.label) && v.label !== chip.word) notes.push(span('rd-prs-detail', v.label));
   if (v && v.label && v.detail) notes.push(span('rd-prs-detail', v.detail));
   if (wst) {
     const doing = hdPrWatchLabel(wst);
@@ -33486,7 +33507,13 @@ function renderRdPrStatus(host, scope, s) {
     }
   }
   const parts = [];
-  if (tone) {
+  if (chip) {
+    const sum = document.createElement('span');
+    sum.className = 'rd-prs-sum';
+    sum.append(prChip(document, chip));
+    for (const n of notes) sum.append(span('rd-prs-sep', '·'), n);
+    parts.push(sum);
+  } else if (tone) {
     const sum = document.createElement('span');
     sum.className = 'rd-prs-sum';
     sum.innerHTML = `<svg class="rd-prs-ico ${tone}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PR_STATUS_ICONS[tone]}</svg>`;
@@ -33527,7 +33554,7 @@ function renderRdPrStatus(host, scope, s) {
     parts.push(row);
   }
   host.replaceChildren(...parts);
-  host.hidden = !tone && !wst;
+  host.hidden = !chip && !tone && !wst;            // a chip alone still shows the box
 }
 /** pr-watch-changed: re-read every status line showing that PR (a watch toggled elsewhere, a fix run). */
 function refreshRdPrStatus(projectKey, id, memberKey = '') {
@@ -33536,8 +33563,10 @@ function refreshRdPrStatus(projectKey, id, memberKey = '') {
   prStatusCache.delete(key);
   for (const host of document.querySelectorAll('.rd-pr-status')) {
     if (host.dataset.key !== key) continue;
+    // QA 3: the painted scope (its chipOf re-reads the model at paint time).
+    const sc = host._prScope && prStatusKey(host._prScope) === key ? host._prScope : scope;
     if (host._prLoading) host._prAgain = true;
-    else void loadRdPrStatus(host, scope);
+    else void loadRdPrStatus(host, sc);
   }
 }
 
@@ -33593,7 +33622,10 @@ function paintRdPrCta(screen, r) {
     const prState = pr ? String(pr.state || '').toUpperCase() : '';
     if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
       paintPrCta(slot, { state: prState === 'MERGED' ? 'merged' : 'view', href: pr.url });
-      paintRdPrStatus(status, prState === 'OPEN' && record.target !== 'workspace' ? { id: r.pipelineId, projectKey: key } : null);
+      // QA 3: the scope says how to read the run model's chip. rdModel → rdModelRun → rdHistoryRecord looks the row up in
+      // state.historyAll on every call, so it sees a pr-watch-changed frame's in-place `row.pr.fixing`.
+      paintRdPrStatus(status, prState === 'OPEN' && record.target !== 'workspace'
+        ? { id: r.pipelineId, projectKey: key, chipOf: () => rdModel(r).pr } : null);
       return;
     }
     paintRdPrStatus(status, null);
@@ -34254,16 +34286,12 @@ function updateNavCounts() {
   // count as a plain grey number. A zero is hidden; each element keeps its number.
   const nc = $('#nav-needs-count');
   if (nc) {
-    // D24: the '?' symbol, then the number. The symbol is an SVG with no text, so textContent stays the number;
-    // the button's aria-label says it in words.
+    // QA 6: the amber number alone. It sums mixed reasons (questions, PR problems, paused runs), so no "?".
+    // The button's aria-label says it in words.
     if (!nc.querySelector('.nav-count-n')) {
-      const sym = document.createElement('span');
-      sym.className = 'nav-count-sym';
-      sym.setAttribute('aria-hidden', 'true');
-      sym.append(renderStatusDot(document, { state: 'needs-you', ...RUN_STATES['needs-you'] }));
       const num = document.createElement('span');
       num.className = 'nav-count-n';
-      nc.replaceChildren(sym, num);
+      nc.replaceChildren(num);
     }
     nc.querySelector('.nav-count-n').textContent = String(needs);
     // A10: the count names itself too; the Runs button's aria-label stays the button's name.

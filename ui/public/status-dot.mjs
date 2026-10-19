@@ -1,7 +1,8 @@
 // ui/public/status-dot.mjs — the ONE status dot (runs redesign spec §2.1). Every surface that shows a run's state
 // draws it from runModel/groupModel's {state, dot, pulse, symbol, word}: Needs you and Failed are a 12px filled
 // circle with a stroke "?" / "!" (role img, aria-label = the state word), every other state an 8px dot that is
-// aria-hidden because the state word is always next to it (spec §4).
+// aria-hidden because the state word is always next to it (spec §4). QA 6: "?" only while Worca asks; a PR-driven
+// Needs you is a plain amber dot that keeps its label.
 import { ICONS } from './icons.mjs';
 
 // The glyph's colour is set in style.css (`.status-sym > g`): var() inside an SVG presentation attribute is not
@@ -18,12 +19,16 @@ export function paintStatusDot(el, m) {
   el.dataset.state = m.state;
   if (m.symbol) {
     if (el.dataset.symbol !== m.symbol) { el.innerHTML = symbolSvg(m.symbol); el.dataset.symbol = m.symbol; }
+  } else {
+    el.replaceChildren();
+    delete el.dataset.symbol;
+  }
+  // QA 6: a PR-driven Needs you is a plain dot, but the list shows no state word beside it, so it keeps its name.
+  if (m.symbol || m.state === 'needs-you') {
     el.setAttribute('role', 'img');
     el.setAttribute('aria-label', m.word);
     el.removeAttribute('aria-hidden');
   } else {
-    el.replaceChildren();
-    delete el.dataset.symbol;
     el.removeAttribute('role');
     el.removeAttribute('aria-label');
     el.setAttribute('aria-hidden', 'true');

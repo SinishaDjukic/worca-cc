@@ -487,11 +487,14 @@ function textEl(doc, tag, cls, text) {
   return n;
 }
 
-/** The PR chip (spec §2.1a): icon + word, the title in the tooltip. Shared with run-status-card.mjs (slice 4, D1). */
-export function prChip(doc, pr) {
-  const s = doc.createElement('span');
+/** The PR chip (spec §2.1a): icon + word, the title in the tooltip. Shared with run-status-card.mjs (slice 4, D1).
+ *  `link`: a member row's chip is its own link to the PR (QA 7), above the row's stretched title link. */
+export function prChip(doc, pr, { link = false } = {}) {
+  const asLink = link && !!pr.url;
+  const s = doc.createElement(asLink ? 'a' : 'span');
   s.className = `runs-pr is-${pr.id}`;
   s.title = pr.title;
+  if (asLink) { s.setAttribute('href', pr.url); s.setAttribute('target', '_blank'); s.setAttribute('rel', 'noopener'); }
   s.append(icon(doc, pr.icon, 14), textEl(doc, 'span', 'runs-pr-word', pr.word));
   return s;
 }
@@ -535,7 +538,8 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   // Rows carry no clock: the model's `now` keeps it deterministic. Group rows ('chain') carry their latest member's
   // activityMs, so "Ready to ship · Fri" and a group-PR row's "Fri" get their time too.
   const time = Number.isFinite(r.activityMs) ? rowTime(r.activityMs, now) : (r.time || '');
-  let line = level === 'member' && LIVE_MEMBER.has(r.model.state) ? r.model.line : listLine(r, { section, time });
+  // QA 3: a PR-driven member keeps the list's own line, so the model's reason line never sits next to its own chip.
+  let line = level === 'member' && LIVE_MEMBER.has(r.model.state) && !r.model.prNeeds ? r.model.line : listLine(r, { section, time });
   if (spansProjects && level === 'top' && r.groupName) line = and(line, r.groupName);
   a.append(textEl(doc, 'span', 'runs-row-title', position ? `${position} · ${r.title}` : r.title), right, textEl(doc, 'span', 'runs-row-sub', line));
   if (r.kind === 'chain' && !ENDED_STATES.has(r.model.state) && r.model.progress) {

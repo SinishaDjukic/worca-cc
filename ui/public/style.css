@@ -227,8 +227,6 @@ body{
   color:var(--ink-2);font-variant-numeric:tabular-nums;}
 .nav-count.n-grey{background:none;color:var(--ink-2);}
 .nav-count.n-amber{display:inline-flex;align-items:center;gap:4px;min-width:0;height:auto;padding:0;background:none;color:var(--amber-ink-strong);}
-/* Review A10: the needs-you count is a 12px amber icon and the number side by side, no tinted box. */
-#nav-needs-count .nav-count-sym svg,#nav-needs-count .status-sym{width:12px;height:12px;margin:0;}
 /* Schedules' unread-problems pill sits beside its grey count */
 #nav-schedules-unread{margin-left:6px;}
 .nav-count[hidden]{display:none;}
@@ -4477,8 +4475,15 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 /* ---------- Runs: one list beside one content pane (index.html section "runs") ---------- */
 .view[data-view="runs"]{flex:1 1 auto;min-height:0;padding:0;position:relative;}
 body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
-.runs-shell{position:relative;height:100%;display:grid;grid-template-columns:clamp(260px,24%,320px) minmax(0,1fr);grid-template-rows:minmax(0,1fr);overflow:hidden;}
-.runs-list-pane{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-right:1px solid var(--line);}
+/* QA 2: the list's width is the person's (runs-resize.mjs sets --runs-list-w, clamped), else the default. */
+.runs-shell{position:relative;height:100%;display:grid;grid-template-columns:var(--runs-list-w,clamp(280px,24%,320px)) minmax(0,1fr);grid-template-rows:minmax(0,1fr);overflow:hidden;}
+.runs-list-pane{position:relative;display:flex;flex-direction:column;min-height:0;background:var(--panel);border-right:1px solid var(--line);}
+/* QA 2: the handle straddles the list's right border; a 2px ink line on hover / focus, no resting shadow. */
+.runs-resize{position:absolute;top:0;bottom:0;right:-4px;width:7px;z-index:3;cursor:col-resize;touch-action:none;}
+.runs-resize:hover::before,.runs-shell.is-resizing .runs-resize::before{content:"";position:absolute;top:0;bottom:0;left:2px;width:2px;background:var(--line-2);}
+.runs-resize:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.runs-shell.is-resizing{cursor:col-resize;user-select:none;}
+.runs-shell[data-layout="slide"] .runs-resize{display:none;}
 .runs-list-pane:focus{outline:none;}
 .runs-head{flex:none;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 14px 6px 20px;}
 /* .runs-head stays the first .runs-head rule: test/ui-topnav-shell.test.mjs reads justify-content:flex-end from it.
@@ -4497,12 +4502,14 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 /* Only the row itself flips its dot: hovering or focusing an expanded member must not flip its group's dot too. */
 .runs-list.is-selecting .runs-pick .status-dot{display:none;}
 .runs-list.is-selecting .runs-pick .runs-check{display:block;}
-.runs-row{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:8px;padding:8px 0;color:inherit;text-decoration:none;min-width:0;}
+/* QA 2: the title keeps at least half the row; a right column (count, PR chip) that does not fit beside it wraps to
+   the next line, still ending at the row's right edge (the layout audit's right-edge rule). */
+.runs-row{display:flex;flex-wrap:wrap;align-items:center;column-gap:8px;padding:8px 0;color:inherit;text-decoration:none;min-width:0;}
 .runs-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.runs-row-title{grid-column:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.runs-row-right{grid-column:2;display:inline-flex;gap:8px;align-items:center;justify-self:end;font-variant-numeric:tabular-nums;}
-.runs-row-sub{grid-column:1 / -1;color:var(--ink-2);font-size:12px;}
-.runs-row > .runs-stage,.runs-row > .runs-row-prog{grid-column:1 / -1;margin-top:6px;}
+.runs-row-title{flex:1 1 50%;min-width:50%;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.runs-row-right{flex:0 0 auto;max-width:100%;margin-left:auto;display:inline-flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;align-items:center;font-variant-numeric:tabular-nums;}
+.runs-row-sub{flex:1 0 100%;color:var(--ink-2);font-size:12px;}
+.runs-row > .runs-stage,.runs-row > .runs-row-prog{flex:1 0 100%;margin-top:6px;}
 .runs-row-tail{display:inline-flex;justify-content:flex-end;align-items:center;height:36px;}
 .runs-members{grid-column:1 / -1;list-style:none;margin:0;padding:0;border-top:1px solid var(--line);}
 .runs-members > .runs-item:last-child{border-bottom:0;}
@@ -4527,7 +4534,6 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .runs-bulk{position:sticky;bottom:0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px;background:var(--panel);border-top:1px solid var(--line);}
 .runs-bulk[hidden]{display:none;}
 .runs-bulk-n{margin-right:auto;font-weight:600;}
-.nav-count-sym{display:inline-flex;margin:0;}
 .group-picker{position:fixed;z-index:60;width:320px;max-width:calc(100vw - 16px);max-height:60vh;overflow:auto;background:var(--panel);
   border:1px solid var(--line-2);border-radius:var(--r-sm);padding:8px;box-shadow:var(--shadow-menu);}
 .gp-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;width:100%;padding:6px 4px;border:0;background:none;text-align:left;color:inherit;cursor:pointer;}
@@ -4815,6 +4821,10 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-result[hidden]{display:none;}
 .rd-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px;text-align:center;}
 .rd-facts:empty{display:none;}
+/* QA 8: the stat boxes follow the facts' own width (a phone, or a narrow pane beside a wide Runs list): two per row,
+   a third spanning, so "+2716 −571" stays inside its box. */
+.rd-facts{container:rd-facts / inline-size;}
+@container rd-facts (max-width:420px){.rd-stats{grid-template-columns:repeat(2,minmax(0,1fr));}.rd-stats[data-n="3"] > div:last-child{grid-column:1 / -1;}}
 .rd-stats > div{background:var(--field);border-radius:var(--r-ctrl);padding:12px 6px;display:flex;flex-direction:column;gap:2px;min-width:0;}
 .rd-stats b{font:700 18px var(--sans);font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap;overflow-wrap:normal;}
 .rd-stats b .hd-diff-counts{font-size:inherit;font-weight:700;}
@@ -5287,10 +5297,10 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .sidebar.collapsed .nav-count{position:absolute;top:3px;right:2px;margin:0;font-size:9.5px;}
 .sidebar.collapsed .nav-count.n-amber{min-width:15px;height:15px;padding:0 4px;}
 .sidebar.collapsed .nav-count.n-grey:has(~ .nav-count.n-amber:not([hidden])){display:none;}
-/* Collapsed: the 12px icon with the number as a 9px superscript at the square's outer top-right corner, in the
-   rail's 10px side gutter, so it clears the 16px glyph (which ends 12px in from the square's right edge). */
-.sidebar.collapsed #nav-needs-count{position:absolute;top:1px;right:-9px;gap:0;min-width:0;height:auto;padding:0;background:none;}
-.sidebar.collapsed #nav-needs-count .nav-count-n{font-size:9px;line-height:1;vertical-align:super;margin-left:-2px;}
+/* Collapsed: the needs-you count is the amber number alone, in the square's top-right corner like the other counts
+   (it clears the 16px glyph, which ends 12px in from the square's right edge). */
+.sidebar.collapsed #nav-needs-count{gap:0;min-width:0;height:auto;padding:0;background:none;}
+.sidebar.collapsed #nav-needs-count .nav-count-n{font-size:9.5px;line-height:1;}
 
 /* The rail's foot centres its tiles (Running actions, the account avatar) inside a 4px
    side padding (51px wide). */
@@ -9304,12 +9314,12 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-member-open{display:flex;width:100%;gap:4px;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;}
 .chat-rc-member-open:disabled{cursor:default;opacity:.7;}
 .chat-rc-member-open:focus-visible,.chat-rc-log-show:focus-visible{outline:2px solid currentColor;outline-offset:2px;}
-/* Same word as Settings › Experimental; never wraps (the ellipsis is a safety net only). */
-.chat-home-act-badge{max-width:100%;box-sizing:border-box;padding:1px 7px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-/* Poppins SemiBold "Experimental" is ~81px at 10px: below a 960px home the 4- and 9-column tiles are 64–93px, so only
-   the tile that carries a badge (the gated shape tile) drops its inline padding and the badge goes compact (~61px).
-   After the base rule on purpose: same specificity, so source order makes it win. */
-@container chat-home (max-width:960px){.chat-home-act:has(> .chat-home-act-badge){padding-inline:0;}.chat-home-act-badge{font-size:8.5px;padding:1px 3px;letter-spacing:-.02em;}}
+/* QA 1: on a tile that carries a badge (the Shaper pin), the badge takes its own line under the label at its normal
+   size; "Experimental" (~81px at 10px) fits every tile (≥ 143px at a 290px home). Never truncated. */
+.chat-home-act:has(> .chat-home-act-badge){display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"ic l" "ic b";align-content:center;column-gap:10px;row-gap:2px;}
+.chat-home-act:has(> .chat-home-act-badge) > .chat-ic{grid-area:ic;}
+.chat-home-act:has(> .chat-home-act-badge) > .chat-home-act-l{grid-area:l;}
+.chat-home-act-badge{grid-area:b;justify-self:start;box-sizing:border-box;padding:1px 7px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;line-height:1.4;white-space:nowrap;}
 .shape-checklists{margin:12px 0;display:flex;flex-direction:column;gap:6px;}
 .shape-cl-title{font-size:13px;margin:0;color:var(--ink-2);}
 .shape-cl-cycle{border:1px solid var(--line);border-radius:var(--r-ctrl);padding:6px 10px;background:var(--panel);
@@ -9422,11 +9432,13 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .rd-group-line{margin:4px 0 0;font-size:13px;color:var(--ink-2);display:flex;gap:6px;align-items:center;}
 .rd-group-line[hidden]{display:none;}
 .rd-group-k{font-size:12px;font-weight:600;color:var(--ink-2);}
+/* QA 8: on a phone the Group row stacks: the label, "Part of …", then "run 4 of 5". */
+@media (max-width:640px){.rd-group-line{flex-direction:column;align-items:flex-start;gap:2px;}.rd-group-sep{display:none;}}
 /* member rows: dividers, never boxes (§1.4); the page table is one grid, rows are subgrids so columns line up (§3.3a) */
 .run-members{list-style:none;margin:0;padding:0;}
 .run-member{display:grid;grid-template-columns:16px 12px minmax(0,1fr) minmax(0,1.4fr) max-content;align-items:center;gap:8px;
   padding:6px 0;border-top:1px solid var(--line);}
-.run-members.is-table{display:grid;grid-template-columns:20px 12px minmax(0,1fr) max-content 64px 16px;column-gap:10px;}
+.run-members.is-table{display:grid;grid-template-columns:12px 20px minmax(0,1fr) max-content 64px 16px;column-gap:10px;}
 .run-members.is-table > .run-member{position:relative;grid-column:1 / -1;grid-template-columns:subgrid;padding:8px 0;}
 /* A13: title over its status line; the title link stretches over the row, so the whole row opens the run. */
 .run-members.is-table .run-member-main{display:flex;flex-direction:column;gap:2px;min-width:0;}
@@ -9438,6 +9450,9 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .run-members.is-table .run-member-go{color:var(--ink-3);opacity:0;}
 .run-members.is-table .run-member:hover .run-member-go{opacity:1;}
 .run-members.is-table .run-member-pr{position:relative;z-index:1;}   /* the PR chip stays its own link */
+/* QA 7: a member row's chip is its own link to the PR; it keeps the chip's tone colour (.runs-pr.is-*). */
+.run-members.is-table a.runs-pr{text-decoration:none;}
+.run-members.is-table a.runs-pr:hover .runs-pr-word{text-decoration:underline;}
 .run-member-num{font-size:12px;font-weight:500;color:var(--ink-2);text-align:right;}
 .run-member-line{color:var(--ink-2);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .run-member-cost{text-align:right;color:var(--ink-2);}
@@ -9451,12 +9466,12 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .gpage-ship[hidden],.gpage-panel[hidden],.gpage-question[hidden]{display:none;}
 /* Before the phone block: same specificity, so on a ≤600px viewport its two-line areas win; cost stays hidden there. */
 @container chat-rc-members (max-width:480px){
-  .run-members.is-table{grid-template-columns:20px 12px minmax(0,1fr) max-content 16px;}
+  .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content 16px;}
   .run-members.is-table .run-member-cost{display:none;}
 }
 @media (max-width:600px){
-  .run-members.is-table{grid-template-columns:20px 12px minmax(0,1fr) max-content;}
-  .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"num dot main go" ". . pr cost";}
+  .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content;}
+  .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"dot num main go" ". . pr cost";}
   .run-members.is-table .run-member-num{grid-area:num}
   .run-members.is-table .run-member > .status-dot{grid-area:dot}
   .run-members.is-table .run-member-main{grid-area:main}
@@ -9464,6 +9479,26 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
   .run-members.is-table .run-member-cost{grid-area:cost}
   .run-members.is-table .run-member-go{grid-area:go}
 }
+/* QA 8: the group page can sit in a ~290px pane on a wide viewport: its table stacks by its own width. The title (up
+   to 2 lines) spans the row after the dot; number, chip and cost share the line under it, and the hover-only chevron
+   steps aside (the title link already opens the run). The chip word may wrap, never overlap the cost. */
+.gpage-runs{container:gpage-runs / inline-size;}
+@container gpage-runs (max-width:480px){
+  .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content;column-gap:8px;}
+  .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"dot main main main" ". num pr cost";}
+  .run-members.is-table .run-member-num{grid-area:num}
+  .run-members.is-table .run-member > .status-dot{grid-area:dot}
+  .run-members.is-table .run-member-main{grid-area:main}
+  .run-members.is-table .run-member-pr{grid-area:pr}
+  .run-members.is-table .run-member-cost{grid-area:cost}
+  .run-members.is-table .run-member-go{display:none;}
+  .run-members.is-table .run-member-title{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;}
+  .run-members.is-table .run-member-pr{min-width:0;justify-self:start;}
+  .run-members.is-table .run-member-pr .runs-pr{flex-wrap:wrap;}
+}
+/* QA 8: the group heading keeps a sane width; the kind chip wraps under it when there is no room. */
+.gpage .rd-title-row{flex-wrap:wrap;}
+.gpage .gpage-title{flex:1 1 160px;min-width:min(100%,160px);}
 
 /* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint (a
    question the amber wash). It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a

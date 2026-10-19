@@ -6,8 +6,8 @@ import { readFileSync } from 'node:fs';
 
 const src = readFileSync(new URL('../tools/verify-feature-page-cdp.mjs', import.meta.url), 'utf8');
 
-test('the feature page proof audits the group page at 375 and 1440, light and dark', () => {
-  for (const needle of ['auditGroupPageLayout', '375', '1440', "'light'", "'dark'", '.gpage']) {
+test('the feature page proof audits the group page at 290, 375 and 1440, light and dark', () => {
+  for (const needle of ['auditGroupPageLayout', '290', '375', '1440', "'light'", "'dark'", '.gpage']) {
     assert.ok(src.includes(needle), `the proof names ${needle}`);
   }
 });

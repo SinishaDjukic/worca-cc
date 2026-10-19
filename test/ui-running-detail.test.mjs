@@ -1210,6 +1210,56 @@ test('a finished run with an open or merged pull request links to it, behind its
   })));
 });
 
+// QA 3: the run page PR box leads with the Runs list's own chip (prChip over the run model's prState), the same word and
+// icon as the list; GitHub's verdict stays a note only when it adds something the chip does not say.
+test('QA 3: the run page PR box leads with the list\'s chip, also after a pr-watch-changed refresh', async () => {
+  const url = 'https://github.com/o/r/pull/803';
+  const FAILING = { state: 'failing', total: 12, failed: 3, pending: 0 };
+  await checkRows([
+    { name: 'draft PR whose checks fail: the chip, not "Draft"', pr: { draft: true, checks: FAILING }, checks: FAILING,
+      status: { tone: 'none', label: 'Draft' }, word: 'Checks failing', cls: 'is-failing', icon: 'pull-request-draft', noText: 'Draft' },
+    { name: 'ready PR: the chip "Ready" and the note "Ready to merge"', pr: {}, checks: { state: 'passing', total: 12, failed: 0, pending: 0 },
+      status: { tone: 'ok', label: 'Ready to merge' }, word: 'Ready', cls: 'is-ready', icon: 'pull-request', note: 'Ready to merge' },
+    { name: 'a pr-watch-changed frame repaints the chip as Fixing', pr: { checks: FAILING }, checks: FAILING,
+      status: { tone: 'bad', label: 'Checks failing' }, word: 'Checks failing', cls: 'is-failing', icon: 'pull-request', fixing: true },
+  ].map((c) => ({ name: c.name, run: async () => {
+    const { ICONS } = await import('../ui/public/icons.mjs');
+    const row = { ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main',
+      pr: { url, number: 803, state: 'OPEN', ...c.pr } };
+    const ctx = await boot({
+      fetchHandler: (u) => {
+        if (u.includes('/api/pr/checks')) return ok({ checks: c.checks, mergeable: 'MERGEABLE', status: c.status, watch: null });
+        if (u.endsWith('/api/history/pr')) return ok({ ok: true });
+        if (u.endsWith('/api/history')) return ok({ pipelines: [row], ghAvailable: true });
+        if (u.endsWith('/api/budget')) return ok(okBudget());
+        if (u.includes('/api/runs/p1?projectDir=')) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
+        return null;
+      },
+    });
+    frame(ctx, { type: 'hello', runs: [] });
+    await settle(ctx.window, 6);
+    const rd = await openGlance(ctx);
+    frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+    await settle(ctx.window, 10);
+    const box = rd.querySelector('.rd-pr-status');
+    const chip = () => box.querySelector('.rd-prs-sum .runs-pr');
+    assert.equal(box.hidden, false, 'the box shows');
+    assert.ok(chip() && chip().classList.contains(c.cls), `the list's chip leads: ${box.innerHTML}`);
+    assert.equal(chip().querySelector('.runs-pr-word').textContent, c.word);
+    assert.equal(chip().querySelector('svg').innerHTML, ICONS[c.icon], `the ${c.icon} icon`);
+    if (c.noText) assert.doesNotMatch(box.textContent, new RegExp(c.noText), 'GitHub\'s restatement of the PR state is gone');
+    if (c.note) assert.match(box.textContent, new RegExp(c.note), 'a verdict the chip does not say stays');
+    if (c.fixing) {
+      // The handler asks for the repaint BEFORE it marks the row fixing (app.js pr-watch-changed): the chip is read at paint time.
+      frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: 'p1', fixing: true });
+      await settle(ctx.window, 10);
+      assert.ok(chip(), 'the refresh keeps the chip');
+      assert.equal(box.hidden, false);
+      assert.equal(chip().querySelector('.runs-pr-word').textContent, 'Fixing');
+    }
+  } })));
+});
+
 test('Details › Diff reads the live worktree while the run goes', async () => {
   const patch = 'diff --git a/src/limiter.js b/src/limiter.js\nnew file mode 100644\n--- /dev/null\n+++ b/src/limiter.js\n@@ -0,0 +1,2 @@\n+export const a = 1;\n+export const b = 2;\n';
   const ctx = await boot({

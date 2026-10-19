@@ -82,7 +82,7 @@ test('hello backfill sets the badge but does not notify; a live question notifie
   await tick();
   look.visible = false;
   assert.equal(N.shown.length, 0, 'D7: nothing that was already pending notifies');
-  assert.equal(window.document.title, '(1) ? Worca');
+  assert.equal(window.document.title, '(1) Worca');
 
   recv({ type: 'run-created', runId: 'r2', title: 'Live run', status: 'running' });
   recv({ type: 'question', runId: 'r2', id: 'q2', kind: 'questions', seq: 1, questions: [{ question: 'SECRET?' }] });
@@ -92,12 +92,12 @@ test('hello backfill sets the badge but does not notify; a live question notifie
   assert.equal(N.shown[0].title, 'Worca: Live run');
   assert.equal(N.shown[0].body, 'Needs you · 1 question');
   assert.equal(N.shown[0].tag, 'worca:r2:q2');
-  assert.equal(window.document.title, '(2) ? Worca');
+  assert.equal(window.document.title, '(2) Worca');
 
   recv({ type: 'question-resolved', runId: 'r2', id: 'q2', seq: 2 });
   await tick();
   assert.equal(N.shown[0].closed, true);
-  assert.equal(window.document.title, '(1) ? Worca');
+  assert.equal(window.document.title, '(1) Worca');
 });
 
 test('a reconnect hello notifies a wait raised while the socket was down, once; one already seen does not notify again', async () => {
@@ -145,7 +145,7 @@ test('a run paused on a usage limit notifies and joins the badge; stopping it cl
   assert.equal(N.shown.length, 1);
   assert.equal(N.shown[0].title, 'Worca: Limited run');
   assert.equal(N.shown[0].body, 'Paused · usage limit', 'the status line, never the limit detail');
-  assert.equal(window.document.title, '(1) ? Worca');
+  assert.equal(window.document.title, '(1) Worca');
   recv({ type: 'done', runId: 'r1', status: 'stopped' });
   await tick();
   assert.equal(N.shown[0].closed, true);
@@ -201,7 +201,7 @@ test('a paused run on page load counts on the badge without notifying; a manual 
   look.visible = false;
   assert.equal(N.shown.length, 0);
   // D25: the title says the sidebar's number (runsNeedsCount), which counts every paused run.
-  assert.equal(window.document.title, '(2) ? Worca');
+  assert.equal(window.document.title, '(2) Worca');
   recv({ type: 'run-created', runId: 'r3', title: 'Paused again', status: 'running' });
   recv({ type: 'done', runId: 'r3', status: 'paused', reason: null });
   await tick();
@@ -225,7 +225,7 @@ test('no notification while the tab is visible and focused; the badge still coun
   recv({ type: 'question', runId: 'r3', id: 'q3', kind: 'gate', seq: 1 });
   await tick();
   assert.equal(N.shown.length, 0);
-  assert.equal(window.document.title, '(1) ? Worca');
+  assert.equal(window.document.title, '(1) Worca');
 });
 
 test('click: focuses the window and opens the run detail; a schedule problem opens the scheduled runs view', async () => {

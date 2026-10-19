@@ -193,9 +193,9 @@ await ev(`document.querySelector('${OV} .shape-feature-more').click(), !document
 await auditButtonsBoth('the feature page');
 
 // ---- the group page (runs redesign slice 4, D21): title row, status card, tabs and Runs table share their edges,
-// and every row's Open ends at one x, at 375 and 1440 in light and dark.
+// and every row's Open ends at one x, at 290, 375 and 1440 in light and dark (QA 8: no row cells overlap at 290).
 const LAYOUT_AUDIT = `(${auditGroupPageLayout})(document.querySelector('.gpage'), null, document)`;
-for (const width of [375, 1440]) {
+for (const width of [290, 375, 1440]) {
   await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
   await cdp('Page.navigate', { url: `${base}/?w=${width}#feature/${f.id}` });
   await waitFor("!!document.querySelector('[data-view=\"feature\"] .gpage .run-members.is-table')", `the group page at ${width}`);

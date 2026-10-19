@@ -8,7 +8,7 @@ import { checkRows } from './helpers/rows.mjs';
 import { runModel, groupModel } from '../src/shared/run-model.mjs';
 import { buildRunsModel, renderRunsList, memberPrsOf } from '../ui/public/runs-list.mjs';
 import { createChatRunCard } from '../ui/public/chat/run-card.mjs';
-import { paintRunStatus, syncActions, statusText } from '../ui/public/run-status-card.mjs';
+import { paintRunStatus, syncActions, statusText, memberStatusText } from '../ui/public/run-status-card.mjs';
 import { buildGroupPage, paintGroupPage } from '../ui/public/group-page.mjs';
 import { createAlerts, ALERT_KEYS } from '../ui/public/alerts.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
@@ -115,7 +115,7 @@ const ROUND_ROWS = [
   { name: 'Watch PR fixing', run: { ...finished, pr: { ...PR, checks: FAIL }, watch: { status: 'fixing', reason: null, fixRuns: 1 } },
     state: 'in-review', line: /^In review · PR #759$/, pr: 'Fixing' },
   { name: 'Watch stopped', run: { ...finished, pr: { ...PR, checks: FAIL }, watch: { status: 'needs-person', reason: 'cap', fixRuns: 3 } },
-    state: 'needs-you', symbol: 'question', line: /^Needs you · Watch stopped · 3 fix runs, checks still failing$/, actions: ['open-pr', 'ask-changes'] },
+    state: 'needs-you', symbol: null, line: /^Needs you · Watch stopped · 3 fix runs, checks still failing$/, actions: ['open-pr', 'ask-changes'] },
 ];
 
 function groupMemberFacts(doc, run) {
@@ -144,11 +144,14 @@ test('D22 / D23: rounds and Watch PR read the same on the list row, the card, th
     assert.equal(list.line, m.line, 'list: data-line');
     for (const [where, f] of [['list', list], ['card', card], ['page', page], ['group page', member]]) {
       assert.equal(f.state, row.state, `${where}: state`);
-      if (row.symbol) assertDot(f.dot, { dot: 'amber', symbol: row.symbol }, 'Needs you', where);
+      // QA 6: a stopped Watch PR is a PR-driven Needs you: the plain amber dot (symbol null) everywhere.
+      if (row.symbol !== undefined) assertDot(f.dot, { dot: 'amber', symbol: row.symbol }, 'Needs you', where);
     }
-    for (const [where, f] of [['card', card], ['page', page], ['group page', member]]) {
+    for (const [where, f] of [['card', card], ['page', page]]) {
       assert.equal(f.text, statusText(m).text, `${where}: the same status text`);
     }
+    // QA 4: a member row's text never repeats its own PR chip ("In review · PR #759" → "In review").
+    assert.equal(member.text, memberStatusText(m), 'group page: the member status text');
     assert.equal(member.rows, 3, 'a round adds no member row');
     if (row.pr) assert.match(member.pr, new RegExp(row.pr), 'the member row\'s PR chip');
     if (row.actions) {

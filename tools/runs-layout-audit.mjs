@@ -20,6 +20,20 @@ export function auditRunsLayout(root, env, doc = root.ownerDocument) {
       const times = said.split(f).length - 1;
       if (times > 1) out.push({ rule: 'fact-twice', got: `"${f}" x${times}`, text: item.querySelector('.runs-row-title')?.textContent || '' });
     }
+    // QA 2 / 8: no two row cells overlap, and the title keeps half the row while the right column shares its line.
+    const hit = (a, b) => a.width > 0 && b.width > 0 && a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1;
+    const rowEl = item.querySelector(':scope > a.runs-row');
+    const titleEl = rowEl && rowEl.querySelector(':scope > .runs-row-title');
+    if (titleEl) {
+      const t = rect(titleEl);
+      for (const c of rowEl.querySelectorAll(':scope > .runs-row-right > *')) {
+        if (hit(t, rect(c))) out.push({ rule: 'overlap', got: c.className, text: titleEl.textContent });
+      }
+      const rightEl = rowEl.querySelector(':scope > .runs-row-right');
+      const rr = rect(rowEl);
+      const rt = rightEl ? rect(rightEl) : null;
+      if (rt && rt.width > 0 && rt.top < t.bottom - 1 && t.width < rr.width / 2 - 1) out.push({ rule: 'title-share', got: `${t.width} of ${rr.width}`, text: titleEl.textContent });
+    }
   }
   if (ends.length) {
     const x0 = Math.max(...ends.map((e) => e.x));
@@ -52,5 +66,16 @@ export function auditGroupPageLayout(root, env, doc) {
   if (rights.length > 1 && Math.max(...rights) - Math.min(...rights) > 1) out.push({ rule: 'open-column', rights });
   const vw = (env && env.viewport && env.viewport.width) || (doc && doc.defaultView ? doc.defaultView.innerWidth : Infinity);
   for (const [s, e] of found) { const r = rect(e); if (r.right > vw + 1) out.push({ rule: 'off-screen', selector: s, right: r.right }); }
+  // QA 8: inside each table row, the title, the PR chip and the cost never overlap, and no row runs past its table.
+  const hit = (a, b) => a.width > 0 && b.width > 0 && a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1;
+  for (const li of root.querySelectorAll('.run-members.is-table > .run-member')) {
+    const tr = rect(li.parentElement), lr = rect(li);
+    if (lr && tr && lr.width > 0 && (lr.right > tr.right + 1 || lr.left < tr.left - 1)) out.push({ rule: 'row-overflow', got: `${lr.left}-${lr.right} vs ${tr.left}-${tr.right}`, text: li.querySelector('.run-member-title')?.textContent || '' });
+    const cells = [li.querySelector('.run-member-title'), li.querySelector('.run-member-pr .runs-pr'), li.querySelector('.run-member-cost')]
+      .filter((n) => n && n.textContent.trim()).map((n) => [n, rect(n)]);
+    for (let i = 0; i < cells.length; i++) for (let j = i + 1; j < cells.length; j++) {
+      if (hit(cells[i][1], cells[j][1])) out.push({ rule: 'overlap', got: `${cells[i][0].className} × ${cells[j][0].className}`, text: li.querySelector('.run-member-title')?.textContent || '' });
+    }
+  }
   return out;
 }

@@ -150,6 +150,26 @@ test('PR chip: one word per state (§2.1a)', () => {
   assert.equal(word(ghPr({ checks: { state: 'passing', total: 12, failed: 0, pending: 0 } })), 'Ready');
 });
 
+test('QA 5: the chip icon is the git state, the word the most important problem', async () => {
+  await checkRows([
+    [ghPr({ draft: true, mergeable: 'CONFLICTING' }), 'Conflicts', 'pull-request-draft'],
+    [ghPr({ draft: true, checks: FAIL }), 'Checks failing', 'pull-request-draft'],
+    [ghPr({ draft: true, reviewDecision: 'CHANGES_REQUESTED' }), 'Changes requested', 'pull-request-draft'],
+    [ghPr({ draft: true, checks: RUN }), 'Checks running', 'pull-request-draft'],
+    [ghPr({ isDraft: true, fixing: true }), 'Fixing', 'pull-request-draft'],
+    [ghPr({ draft: true }), 'Draft', 'pull-request-draft'],
+    [ghPr({ mergeable: 'CONFLICTING' }), 'Conflicts', 'pull-request'],
+    [ghPr(), 'Ready', 'pull-request'],
+    [ghPr({ state: 'MERGED', draft: true }), 'Merged', 'merge'],
+    [ghPr({ state: 'CLOSED', mergeable: 'CONFLICTING' }), 'Closed', 'pull-request-closed'],
+    [{ url: 'https://dev.azure.com/o/p/_git/r/pullrequest/9', number: 9, state: 'CLOSED' }, 'Abandoned', 'pull-request-closed'],
+  ].map(([pr, word, icon]) => ({ name: `${word} ${icon}`, run: () => {
+    const s = prState(pr);
+    assert.deepEqual([s.word, s.icon], [word, icon]);
+  } })));
+  assert.equal(prState(ghPr({ draft: true, checks: FAIL })).title, '3 of 12 checks failed · PR #781', 'tooltip unchanged');
+});
+
 test('PR chip: a live fix run turns Conflicts / Checks failing into Fixing; tones and tooltips', () => {
   assert.equal(prState(ghPr({ checks: FAIL, fixing: true })).id, 'fixing');
   assert.equal(prState(ghPr({ mergeable: 'CONFLICTING', fixing: true })).id, 'fixing');
@@ -162,10 +182,10 @@ test('PR chip: a live fix run turns Conflicts / Checks failing into Fixing; tone
   assert.equal(prState(ghPr({ mergeable: 'CONFLICTING' })).title, 'Conflicts with the base branch · PR #781');
 });
 
-test('Checks failing or Conflicts make a finished run Needs you ("?"), unless a fix run is live', () => {
-  for (const pr of [ghPr({ checks: FAIL }), ghPr({ mergeable: 'CONFLICTING' })]) {
+test('Checks failing or Conflicts make a finished run Needs you (a plain amber dot), unless a fix run is live', () => {
+  for (const [pr, line] of [[ghPr({ checks: FAIL }), 'Checks failing · PR #781'], [ghPr({ mergeable: 'CONFLICTING' }), 'Conflicts · PR #781']]) {
     const m = runModel({ status: 'done', pr });
-    assert.deepEqual([m.state, m.symbol, m.prNeeds, m.actions, m.line], ['needs-you', 'question', true, ['open-pr'], 'In review · PR #781']);
+    assert.deepEqual([m.state, m.symbol, m.prNeeds, m.actions, m.line], ['needs-you', null, true, ['open-pr'], line]);
   }
   const fixing = runModel({ status: 'done', pr: ghPr({ checks: FAIL, fixing: true }) });
   assert.deepEqual([fixing.state, fixing.prNeeds, fixing.pr.word], ['in-review', false, 'Fixing']);
@@ -183,6 +203,44 @@ test('a slice whose PR fails checks raises the group to Needs you but still coun
   assert.equal(g.line, 'Run 2 of 3 · needs you');
   assert.deepEqual(g.actions, ['open-pr'], 'no question to answer, nothing to stop');
   assert.equal(g.prNeeds, false, 'slice 3 still waits: the group is not finished');
+});
+
+test('QA 6: "?" only when Worca asks; a PR-driven Needs you is a plain amber dot; Failed keeps "!"', () => {
+  const ask = runModel(R({ steps: [row('n_clarify', 'start')], active: [live('n_clarify')], pendingQuestion: { kind: 'plan' } }));
+  assert.deepEqual([ask.state, ask.dot, ask.symbol], ['needs-you', 'amber', 'question']);
+  const pr = runModel({ status: 'done', pr: ghPr({ checks: FAIL }) });
+  assert.deepEqual([pr.state, pr.dot, pr.symbol, pr.word], ['needs-you', 'amber', null, 'Needs you']);
+  const failed = runModel(R({ status: 'error', steps: [row('n_review', 'error')] }));
+  assert.equal(failed.symbol, 'alert');
+  // A group: plain while its only Needs you is a PR, "?" as soon as a member asks.
+  const byPr = groupModel({ kind: 'feature', members: [{ status: 'done', pr: ghPr({ checks: FAIL }) }, { ticket: { status: 'scheduled', after: { index: 1 } } }] });
+  assert.deepEqual([byPr.state, byPr.symbol], ['needs-you', null]);
+  const asks = groupModel({ kind: 'feature', members: [{ status: 'done', pr: ghPr({ checks: FAIL }) },
+    R({ steps: [row('n_clarify', 'start')], active: [live('n_clarify')], pendingQuestion: { kind: 'clarify', questions: [{}] } })] });
+  assert.deepEqual([asks.state, asks.symbol], ['needs-you', 'question']);
+});
+
+test('QA 3: a PR-driven Needs you line is the chip word + number; the page text reads "Needs you · Checks failing · PR #781"', () => {
+  const m = runModel({ status: 'done', pr: ghPr({ draft: true, checks: FAIL }) });
+  assert.equal(m.pr.word, 'Checks failing');
+  assert.equal(m.line, 'Checks failing · PR #781');
+  const ws = runModel({ status: 'done', memberPrs: [ghPr({ mergeable: 'CONFLICTING' }), ghPr({ url: 'https://github.com/o/r/pull/782', number: 782 }), ghPr({ url: 'https://github.com/o/r/pull/783', number: 783 })] });
+  assert.equal(ws.line, 'Conflicts · 3 PRs');
+  assert.equal(memberPrState([ghPr(), ghPr({ number: 782, url: 'https://github.com/o/r/pull/782' })]).count, 2);
+});
+
+test('QA 7: groupModel counts the group\'s distinct PRs (closed member PRs aside) and gives the url of exactly one', () => {
+  const pr = (n, more = {}) => ghPr({ number: n, url: `https://github.com/o/r/pull/${n}`, ...more });
+  const done = { status: 'done', endReached: true };
+  const one = groupModel({ kind: 'feature', members: [done, done], pr: pr(781) });
+  assert.deepEqual([one.prCount, one.prUrl], [1, pr(781).url]);
+  const shipped = groupModel({ kind: 'feature', pr: pr(781), members: [{ ...done, pr: pr(782, { state: 'CLOSED' }) },
+    { ...done, pr: pr(783, { state: 'CLOSED' }) }, { ...done, pr: pr(781) }] });
+  assert.deepEqual([shipped.prCount, shipped.prUrl], [1, pr(781).url], 'shipped as one PR');
+  const three = groupModel({ kind: 'feature', members: [{ ...done, pr: pr(1) }, { ...done, pr: pr(2) }, { ...done, pr: pr(3) }] });
+  assert.deepEqual([three.prCount, three.prUrl], [3, null]);
+  const closed = groupModel({ kind: 'feature', members: [{ ...done, pr: pr(1, { state: 'CLOSED' }) }, done] });
+  assert.deepEqual([closed.prCount, closed.prUrl], [0, null]);
 });
 
 test('D22 rounds: "Running · Round 2 · STAGE", the request for a Watch PR round; round 1 and finished runs unchanged', () => {
@@ -208,7 +266,7 @@ test('D23 Watch PR: a live fix round reads Fixing and never Needs you; a stopped
   for (const status of ['starting', 'publishing']) assert.equal(runModel({ status: 'done', pr: ghPr({ checks: FAIL }), watch: { status } }).pr.word, 'Fixing');
   const stopped = runModel({ status: 'done', pr: ghPr({ checks: FAIL }), watch: { status: 'needs-person', reason: 'cap', fixRuns: 3 } });
   assert.deepEqual([stopped.state, stopped.symbol, stopped.prNeeds, stopped.line, stopped.actions],
-    ['needs-you', 'question', true, 'Needs you · Watch stopped · 3 fix runs, checks still failing', ['open-pr', 'ask-changes']]);
+    ['needs-you', null, true, 'Needs you · Watch stopped · 3 fix runs, checks still failing', ['open-pr', 'ask-changes']]);
   assert.equal(ACTION_LABEL['ask-changes'], 'Ask for changes');
   assert.equal(runModel({ status: 'done', pr: ghPr(), watch: { status: 'needs-person', reason: 'fix-failed', fixRuns: 1 } }).line,
     'Needs you · Watch stopped · 1 fix run, the last fix run failed');

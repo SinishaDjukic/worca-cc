@@ -83,10 +83,11 @@ test('long-label: more than 3 words of visible text fail; "Approve with N open i
 });
 
 /** auditSurface on hand-built DOM: `rects` / `styles` by id; everything else is a visible 80x32 static box. */
-function surface(html, { styles = {}, heights = {} } = {}) {
+function surface(html, { styles = {}, heights = {}, sizes = {} } = {}) {
   const doc = new JSDOM(`<!doctype html><body>${html}</body>`).window.document;
   const env = {
     rect: (el) => ({ width: 80, height: heights[el.id] ?? 32 }),
+    size: (el) => sizes[el.id] || { scroll: 0, client: 0 },
     style: (el) => ({ position: 'static', boxShadow: 'none', backgroundColor: 'rgba(0, 0, 0, 0)',
       borderTopWidth: '0px', borderRightWidth: '0px', borderBottomWidth: '0px', borderLeftWidth: '0px',
       borderTopStyle: 'none', borderRightStyle: 'none', borderBottomStyle: 'none', borderLeftStyle: 'none', ...(styles[el.id] || {}) }),
@@ -138,4 +139,11 @@ test('the Chat › Plans row and the release row links are controls, not §1.2 b
 
 test('B7: the run page\'s "Add tags" is a quiet sm button with a short label — no finding', () => {
   assert.deepEqual(run('<button class="btn btn-sm btn-quiet hd-tags-edit" data-h="28">Add tags</button>'), []);
+});
+
+test('QA 1: a truncated badge fails the surface audit; a whole one passes', () => {
+  assert.deepEqual(surface('<button class="chat-home-act" id="t"><span class="chat-home-act-badge" id="b">Experimental</span></button>',
+    { heights: { t: 60 }, sizes: { b: { scroll: 81, client: 59 } } }), ['badge-truncated']);
+  assert.deepEqual(surface('<button class="chat-home-act" id="t"><span class="chat-home-act-badge" id="b">Experimental</span></button>',
+    { heights: { t: 60 }, sizes: { b: { scroll: 81, client: 81 } } }), []);
 });

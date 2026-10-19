@@ -94,12 +94,13 @@ test('tag format is worca:<runId>:<questionId>', () => {
   assert.equal(questionTag('r1', 'q-7'), 'worca:r1:q-7');
 });
 
-test('title prefix: (N) ? is added, replaced and removed at 0', () => {
-  assert.equal(titleWithCount('Worca', 2), '(2) ? Worca');
-  assert.equal(titleWithCount('(2) ? Worca', 3), '(3) ? Worca');
-  assert.equal(titleWithCount('(3) ? Worca', 0), 'Worca');
+test('title prefix: (N) is added, replaced and removed at 0', () => {
+  assert.equal(titleWithCount('Worca', 2), '(2) Worca');
+  assert.equal(titleWithCount('(2) Worca', 3), '(3) Worca');
+  assert.equal(titleWithCount('(3) Worca', 0), 'Worca');
   assert.equal(titleWithCount('Worca', 0), 'Worca');
-  assert.equal(titleWithCount('(1) Worca', 3), '(3) ? Worca', 'an old prefix without the ? is replaced');
+  assert.equal(titleWithCount('(1) Worca', 3), '(3) Worca', 'an existing prefix is replaced');
+  assert.equal(titleWithCount('(3) ? Worca', 2), '(2) Worca', 'QA 6: an old prefix with the ? is stripped');
 });
 
 test('badge count: runs waiting plus unread problems; junk counts as 0', () => {
@@ -335,13 +336,13 @@ test('test notification: shown only while notifications are on and granted, with
 
 // ── badge ─────────────────────────────────────────────────────────────────────
 
-test('badge: the title shows (2) ? with two waiting runs and goes back at 0; problems stay out of the title', () => {
+test('badge: the title shows (2) with two waiting runs and goes back at 0; problems stay out of the title', () => {
   const calls = [];
   const a = setup({ badge: true, nav: { setAppBadge: (n) => { calls.push(n); } } });
   a.alerts.updateBadge({ waitingRuns: 2 });
-  assert.equal(a.doc.title, '(2) ? Worca');
+  assert.equal(a.doc.title, '(2) Worca');
   a.alerts.updateBadge({ unreadProblems: 1 });
-  assert.equal(a.doc.title, '(2) ? Worca', 'unread schedule problems are not runs that need you');
+  assert.equal(a.doc.title, '(2) Worca', 'unread schedule problems are not runs that need you');
   assert.equal(calls.at(-1), 3, 'the app badge still counts them');
   a.alerts.updateBadge({ waitingRuns: 0, unreadProblems: 0 });
   assert.equal(a.doc.title, 'Worca');
@@ -393,7 +394,7 @@ test('badge switch off: no title, favicon or app-badge change; turning it off cl
   assert.deepEqual(calls, []);
   assert.deepEqual(a.drawn, []);
   a.alerts.setBadge(true);
-  assert.equal(a.doc.title, '(2) ? Worca');
+  assert.equal(a.doc.title, '(2) Worca');
   a.alerts.setBadge(false);
   assert.equal(a.doc.title, 'Worca');
   assert.equal(a.store.getItem(ALERT_KEYS.badge), '0');
@@ -402,7 +403,7 @@ test('badge switch off: no title, favicon or app-badge change; turning it off cl
 test('badge works with notifications off once the badge switch is on, and needs no permission', () => {
   const a = setup({ notify: false, badge: true, N: null });
   a.alerts.updateBadge({ waitingRuns: 1 });
-  assert.equal(a.doc.title, '(1) ? Worca');
+  assert.equal(a.doc.title, '(1) Worca');
 });
 
 test('a developer who never turns Alerts on sees no change', async () => {

@@ -116,9 +116,11 @@ test('counts: a plain grey mono number, the amber needs-you count is the one pil
   assert.match(ruleBody('.nav-count.n-amber'), /display:inline-flex;align-items:center;gap:4px;min-width:0;height:auto;padding:0;background:none;color:var\(--amber-ink-strong\);/);
   assert.equal(ruleBody('.nav-count[hidden]'), 'display:none;');
   assert.match(ruleBody('.sidebar.collapsed .nav-count'), /position:absolute;top:3px;right:2px;margin:0;font-size:9\.5px;/);
-  // Web UI review: at top:3px;right:2px the needs-you icon covered the Runs glyph's top-right (the glyph ends 12px
-  // from the 40px square's right edge). It rides the square's outer corner instead, in the rail's 10px side gutter.
-  assert.match(ruleBody('.sidebar.collapsed #nav-needs-count'), /position:absolute;top:1px;right:-9px;/);
+  // The needs-you count is the number alone now (no "?" icon), so it sits inside the square's top-right corner like
+  // the other counts: no outer-gutter offset, no superscript nudge that only made sense beside the icon.
+  assert.match(ruleBody('.sidebar.collapsed #nav-needs-count'), /min-width:0;height:auto;padding:0;background:none;/);
+  assert.doesNotMatch(ruleBody('.sidebar.collapsed #nav-needs-count'), /right:-|top:1px/);
+  assert.equal(ruleBody('.sidebar.collapsed #nav-needs-count .nav-count-n'), 'font-size:9.5px;line-height:1;');
   assert.equal(ruleBody('.sidebar.collapsed .nav-count.n-grey:has(~ .nav-count.n-amber:not([hidden]))'), 'display:none;',
     'on the rail the Schedules grey number steps aside for its unread pill (one corner, one badge)');
   for (const id of ['nav-needs-count', 'nav-running-count', 'nav-schedules-count', 'nav-schedules-unread']) {

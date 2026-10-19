@@ -902,7 +902,7 @@ test('A9: a question alert for a feature group member opens the group page (reco
   assert.equal(window.location.hash, `#feature/${FEATURE_GROUP.id}`, 'its target is the group row\'s');
 });
 
-test('badge: 2 runs need you → sidebar "?" + "2" and title "(2) ? Worca"; none → "Worca"', async () => {
+test('badge: 2 runs need you → sidebar "2" alone (QA 6: no "?") and title "(2) Worca"; none → "Worca"', async () => {
   // applyBadge writes the title only with the badge setting on; it follows notify, which defaults to off
   // (readAlertSettings, ui/public/alerts.mjs), and boot() clears localStorage.
   const { window, doc, recv } = await boot({ storage: { 'worca-cc.alerts.badge': '1' } });
@@ -910,11 +910,11 @@ test('badge: 2 runs need you → sidebar "?" + "2" and title "(2) ? Worca"; none
   await settle(window);
   const nc = doc.getElementById('nav-needs-count');
   assert.equal(nc.hidden, false);
-  assert.ok(nc.querySelector('.status-dot[data-state="needs-you"] svg.status-sym'));
+  assert.equal(nc.querySelector('svg'), null, 'QA 6: the amber number alone');
   assert.equal(nc.querySelector('.nav-count-n').textContent, '2');
   assert.equal(nc.getAttribute('role'), 'img', 'A10: the count names itself');
   assert.equal(nc.getAttribute('aria-label'), '2 need you');
-  assert.equal(window.document.title, '(2) ? Worca');
+  assert.equal(window.document.title, '(2) Worca');
   recv({ type: 'done', runId: 'b', status: 'stopped' });
   await settle(window);
   assert.equal(nc.getAttribute('aria-label'), '1 needs you');
@@ -924,13 +924,26 @@ test('badge: 2 runs need you → sidebar "?" + "2" and title "(2) ? Worca"; none
   assert.equal(nc.hidden, true);
 });
 
+test('QA 2: the Runs list has one resize handle; a stored width comes back clamped to the window', async () => {
+  const { window, doc } = await boot();
+  go(window, 'runs'); await settle(window);
+  assert.equal(doc.querySelectorAll('#runs-shell .runs-resize[role="separator"]').length, 1);
+  const again = await boot({ storage: { 'worca-cc.runs.listWidth': '400' } });
+  go(again.window, 'runs'); await settle(again.window);
+  const shell = again.doc.getElementById('runs-shell');
+  assert.equal(shell.style.getPropertyValue('--runs-list-w'), '400px', 'jsdom\'s 1024 px window allows up to 512');
+  assert.equal(shell.querySelector('.runs-resize').getAttribute('aria-valuemax'), '512');
+});
+
 test('D31: a PR with failing checks lists in Needs you with "Checks failing" until a live fix run makes it Fixing', async () => {
   const pr = { url: 'https://github.com/o/r/pull/781', number: 781, state: 'OPEN', checks: { state: 'failing', total: 12, failed: 3, pending: 0 } };
   const { window, doc, recv } = await boot({ history: [{ ...HIST[0], id: 'aaaa0005', title: 'Red CI', pr }] });
   go(window, 'runs'); await settle(window);
   const item = () => itemOf(doc, '[data-pipeline-id="aaaa0005"]');
   assert.equal(item().closest('.runs-sec').dataset.section, 'needs');
-  assert.ok(item().querySelector(':scope > .runs-pick .status-dot[data-state="needs-you"] svg.status-sym'));
+  const dot = item().querySelector(':scope > .runs-pick .status-dot[data-state="needs-you"]');
+  assert.ok(dot && !dot.querySelector('svg.status-sym'), 'QA 6: a PR-driven Needs you is a plain amber dot');
+  assert.equal(dot.getAttribute('aria-label'), 'Needs you');
   const chip = () => item().querySelector('.runs-pr');
   assert.equal(chip().querySelector('.runs-pr-word').textContent, 'Checks failing');
   assert.equal(chip().title, '3 of 12 checks failed · PR #781');

@@ -53,12 +53,13 @@ Pull requests (add each number when it opens):
 **One run model, one look, everywhere.**
 
 Runs, Shaper features and Run-after chains are now one thing on every surface: the Runs list, the chat card and the
-run and group pages draw the same dot, the same status line and the same actions. A **?** marks a run that needs you
-and a **!** one that failed. The list filters and groups from one View menu, rows can be selected and stopped,
+run and group pages draw the same dot, the same status line and the same actions. A **?** marks a run that is waiting
+on your answer (a question, a plan to approve, a gate or a recovery), a plain amber dot one that needs you because of
+its pull request (the chip says why), and a **!** one that failed. The list filters and groups from one View menu, rows can be selected and stopped,
 archived or deleted together, and any run can join a group. A server restart now pauses live runs and resumes them.
 Your existing runs, features, chains, archived runs and schedules carry over, and old links still open.
 
-Chips: one status line · ? needs you · View menu · select and act · groups · restart pauses
+Chips: one status line · ? asks you · View menu · select and act · groups · restart pauses
 
 | | Before | After |
 | --- | --- | --- |

@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { runModel, groupModel } from '../src/shared/run-model.mjs';
-import { statusText, kindLabel, paintRunStatus, syncActions, pauseResumeOwn, renderMemberRows, groupShipLine } from '../ui/public/run-status-card.mjs';
+import { statusText, memberStatusText, kindLabel, paintRunStatus, syncActions, pauseResumeOwn, renderMemberRows, groupShipLine } from '../ui/public/run-status-card.mjs';
 import { RUN_STATE_ROWS, NOW } from './helpers/run-states.mjs';
 
 const trackDom = useDomRelease(afterEach);
@@ -200,4 +200,30 @@ test('kindLabel, member rows and ship lines for a feature group', () => {
   assert.equal(groupShipLine({ ...row, model: ready, members: ready.members.map((m, i) => ({ position: i + 1, model: m })) }),
     'Merge in order 1 → 2 → 3, or ship as one PR');
   assert.equal(groupShipLine({ ...row, groupKind: 'user' }), '');
+});
+
+test('QA 3: the run page status text names the reason the chip gives', () => {
+  const m = runModel({ status: 'done', pr: { url: 'https://github.com/o/r/pull/803', number: 803, state: 'OPEN', checks: { state: 'failing', total: 12, failed: 3, pending: 0 } } });
+  assert.equal(statusText(m).text, 'Needs you · Checks failing · PR #803');
+});
+
+test('QA 4: a member row never repeats its chip ("Done" + "Merged"); the dot leads the row; the chip opens the PR', async () => {
+  const gh = (o) => ({ url: 'https://github.com/o/r/pull/9', number: 9, state: 'OPEN', ...o });
+  await checkRows([
+    [{ status: 'done', endReached: true, pr: gh({ state: 'MERGED' }) }, 'Done', 'Merged'],
+    [{ status: 'done', endReached: true, pr: gh({ checks: { state: 'failing', total: 4, failed: 1, pending: 0 } }) }, 'Needs you', 'Checks failing'],
+    [{ status: 'done', endReached: true, pr: gh({ draft: true }) }, 'In review', 'Draft'],
+    [{ status: 'done', endReached: true, pr: gh({ state: 'CLOSED' }) }, 'Ready to ship', 'Closed'],
+  ].map(([run, line, chip]) => ({ name: chip, run: () => {
+    const m = runModel(run, { now: NOW, timeZone: 'UTC' });
+    assert.equal(memberStatusText(m), line);
+    const doc = dom();
+    const li = renderMemberRows(doc, { members: [{ position: 1, title: 'Slice', href: '#running/r1', model: m }] }).querySelector('.run-member');
+    assert.equal(li.querySelector('.run-member-line').textContent, line);
+    assert.equal(li.querySelector('.runs-pr-word').textContent, chip);
+    assert.ok(li.firstElementChild.classList.contains('status-dot'), 'the dot is the row start, not next to the number');
+    const a = li.querySelector('a.runs-pr');
+    assert.equal(a.getAttribute('href'), 'https://github.com/o/r/pull/9');
+    assert.equal(a.getAttribute('target'), '_blank');
+  } })));
 });
