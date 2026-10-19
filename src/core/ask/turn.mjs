@@ -345,7 +345,7 @@ class AskTurn extends EventEmitter {
       let defaults = {};
       try { defaults = d.scheduleDefaults() || {}; } catch { defaults = {}; }
       // The sign-in answer this turn handed its MCP child (run()): the card is checked as the model's own call was.
-      const r = await d.validateProposal(inp, { cardId, attachments, timeZone: this.timeZone, nowMs: d.now(), scheduleDefaults: defaults, lookupTask: d.lookupTask, ...(this.claudeAuth ? { claudeAuth: this.claudeAuth } : {}) });
+      const r = await d.validateProposal(inp, { cardId, attachments, timeZone: this.timeZone, nowMs: d.now(), scheduleDefaults: defaults, lookupTask: d.lookupTask, ...(this.claudeAuth ? { claudeAuth: this.claudeAuth } : {}), ...(this.reader ? { owner: this.reader } : {}) });
       if (r && r.ok) {
         // #397 guardrail: a proposal targeting a DIFFERENT project/workspace than
         // the pinned one is accepted but flagged — the card renders the mismatch

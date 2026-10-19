@@ -1435,6 +1435,7 @@ export class RunHarness extends EventEmitter {
         startedBy: this.opts.startedBy || null,
         prWatchRunId: this.opts.prWatchRunId || null,
         tags: this.opts.tags || [],
+        runSetup: typeof this.opts.runSetup === 'string' ? this.opts.runSetup : null,
         ...(this.isWorkspace ? {
           workspaceKey: this.workspaceKey,
           workspaceId: this.workspace.id,

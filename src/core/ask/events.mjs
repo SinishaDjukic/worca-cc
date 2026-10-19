@@ -193,6 +193,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'mark_schedule_activity_read': return 'Marking activity read';
     case 'list_task_sources': return 'Looking at task sources';
     case 'find_tasks': return input?.search ? `Searching tasks: ${String(input.search).slice(0, 40)}` : 'Searching tasks';
+    case 'list_presets': return 'Looking at run presets';
     case 'get_task': return input?.id ? `Reading task ${String(input.id).slice(0, 40)}` : 'Reading a task';
     case 'list_models': return 'Looking at models';
     case 'get_providers': return 'Looking at providers';

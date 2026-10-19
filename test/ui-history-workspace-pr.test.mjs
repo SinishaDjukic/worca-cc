@@ -410,3 +410,32 @@ test('workspace detail: pr-watch-changed for the run\'s store key rereads only t
   await settle(ctx.window);
   assert.deepEqual([gets(API), gets(WEB)], [before[0] + 1, before[1]]);
 });
+
+test('#620: each repo line reads the newer check and a stale one is redone quietly when the dialog opens', async () => {
+  const ago = (ms) => new Date(Date.now() - ms).toISOString();
+  const conflicts = (at) => ({ status: 'conflicts', base: 'main', fileCount: 1, at });
+  const up = (at) => ({ status: 'up-to-date', base: 'main', behind: 0, at });
+  const branches = {
+    [API]: { source: 'main', feature: 'worca-cc/feat-api', baseCheck: up(ago(60_000)) },     // newer than the row's
+    [WEB]: { source: 'main', feature: 'worca-cc/feat-web' },                                   // only the row's, old
+  };
+  const detail = { ...WS_DETAIL, state: { ...WS_DETAIL.state, branches } };
+  const answers = [fail(500, { error: 'boom' }),                                                // the detail's own try
+    ok({ ok: true, members: [{ projectKey: WEB, baseCheck: up(ago(0)) }], settled: {} })];
+  const checks = [];
+  const ctx = await bootShip({ detail, rows: [wsRow([
+    member(API, 'api', { baseCheck: conflicts(ago(3 * 60_000)) }),
+    member(WEB, 'web', { baseCheck: conflicts(ago(10 * 60_000)) })])],
+  arms: (url, opts) => {
+    if (!(/\/api\/runs\/[^/]+\/base-check\?/.test(url) && opts.method === 'POST')) return null;
+    checks.push(JSON.parse(opts.body));
+    return answers.shift();
+  } });
+  await openDetail(ctx, wksDetailHash);
+  assert.equal(checks.length, 1, 'the detail checks the old one on open');
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 8);
+  assert.deepEqual(checks, [{ auto: true }, { auto: true }], 'the dialog redoes it');
+  const lines = [...modalOf(ctx.window).querySelectorAll('#shipit-repos .shipit-repo')]
+    .map((r) => [r.dataset.memberKey, r.querySelector('.shipit-basecheck').hidden]);
+  assert.deepEqual(lines, [[API, true], [WEB, true]], 'no conflict line: both repos are up to date now');
+});
