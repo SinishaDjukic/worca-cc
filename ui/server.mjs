@@ -311,12 +311,14 @@ import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
-  markPrReady, closePr, uncommittedPatch } from '../src/core/git-info.mjs';
+  markPrReady, closePr, uncommittedPatch, ghItemSummaries } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID } from '../src/core/pr-watch.mjs';
-import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
+import { forkRefusal, workItemIdFromSourceRef, prSummary, workItemSummaries } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
+import { createRefResolver } from '../src/core/ask/refs.mjs';
+import { REFS_MAX } from '../src/shared/chip-refs.mjs';
 import { archivePipeline, restorePipeline, discardRetainedWorktrees, applyRetainedWork } from '../src/core/pipeline-delete.mjs';
 import {
   listWorkspaces, readWorkspace, checkNewWorkspace, scanMemberProblems,
@@ -12021,6 +12023,54 @@ app.get('/api/ask/runs/:id', async (req, res) => {
   }
 });
 
+// Chat answer chips (src/core/ask/refs.mjs): one batch of ref keys -> a title and a status per ref. Read-only. Someone
+// else's chat answers exactly like an unknown one (askThreadVisible), a Workflows composer thread is no chat, and the
+// GitHub / Azure DevOps lookups run on worca's own credentials, so a caller that may be an agent gets none of them.
+const askRefResolver = createRefResolver({
+  github: (repo, numbers) => ghItemSummaries({ repo, numbers }),
+  azurePr: (ref) => prSummary(ref),
+  workItems: (org, ids) => workItemSummaries({ org, ids }),
+});
+/** One run for a chip, by History id or app run id: the live entry's title, status and pause cause first (fresher
+ *  than the row), the saved row's #history home. A saved run's pause cause rides resume_point, read the way
+ *  rowToState reads it. A live run with no History row yet answers its app run id only (id null). null when
+ *  neither the runs Map nor the DB knows it. */
+function askRefRun(id) {
+  const entry = liveRunEntry(id);
+  const pid = (entry && entry.pipelineId) || (/^[0-9a-f]{8}$/.test(id) ? id : null);
+  const row = pid ? findPipelineRowById(pid) : null;
+  if (!row && !entry) return null;
+  const saved = row ? askRunFromPipelineRow(row) : null;
+  const live = entry ? askLiveRun(entry.id) : null;
+  let rp = null;
+  try { rp = row && row.resume_point ? JSON.parse(row.resume_point) : null; } catch { rp = null; }
+  return {
+    id: saved ? saved.id : pid, runId: entry ? entry.id : null,
+    title: (live && live.title) || (saved && saved.title) || '',
+    status: (live && live.status) || (saved && saved.status) || '',
+    pauseReason: entry ? (entry.pauseReason || null) : (rp && typeof rp.pauseReason === 'string' ? rp.pauseReason : null),
+    home: row ? (row.workspace_key ? `workspaces/${row.workspace_key}` : (row.project_key || null)) : (live ? live.home : null),
+  };
+}
+app.post('/api/ask/refs/resolve', async (req, res) => {
+  const refs = req.body && req.body.refs;
+  if (!Array.isArray(refs) || refs.length > REFS_MAX || !refs.every((k) => typeof k === 'string' && k.length <= 300)) {
+    return badRequest(res, `refs must be an array of at most ${REFS_MAX} ref keys`);
+  }
+  try {
+    res.json({ refs: await askRefResolver.resolve(refs, {
+      run: askRefRun,
+      chat: (id) => {
+        const thread = askGetThread(id);
+        return thread && thread.mode !== 'composer' && askThreadVisible(thread, req) ? { title: thread.title || '' } : null;
+      },
+      external: !agentMayBeCaller(req),
+    }) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 app.patch('/api/ask/threads/:id', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
@@ -16175,7 +16225,7 @@ export const _testing = {
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor,
   startCloneJob, followCloneCard, CLONE_JOBS,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
+  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,
   broadcast, askFilesRunDir,
   validateResumeTarget, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,

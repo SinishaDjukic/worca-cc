@@ -9722,3 +9722,22 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-home-plan-feature{margin:0 10px 4px;color:var(--ink-2);font-size:12px;}
 .chat-home-plan-feature>summary{cursor:pointer;}
 .chat-home-plan-feature-body{margin-top:6px;}
+
+/* ===== Chat: answer ref chips (ui/public/ask-ref-chips.mjs) ===== */
+/* A PR, issue, work item, run or chat an answer names: glyph, ref, title (cut with an ellipsis; the whole text is the
+   chip's title tooltip) and a status pill. Inline in the text line; never wider than the column. */
+.ask-md a.ask-ref-chip{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:22px;box-sizing:border-box;padding:0 7px 0 6px;border-radius:7px;vertical-align:-5px;overflow:hidden;background:var(--blue-bg);color:var(--blue-ink-strong);font-size:12.5px;line-height:22px;text-decoration:none;white-space:nowrap;}
+.ask-md a.ask-ref-chip:hover{background:color-mix(in srgb,var(--blue-bg) 72%,var(--blue));}
+.ask-md a.ask-ref-chip:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.ask-ref-ic{flex:none;}
+.ask-ref-label{flex:none;max-width:28ch;overflow:hidden;text-overflow:ellipsis;font-weight:600;}
+.ask-ref-sep{flex:none;}
+.ask-ref-title{min-width:0;max-width:36ch;overflow:hidden;text-overflow:ellipsis;}
+.ask-ref-pill{flex:none;height:16px;padding:0 6px;border-radius:999px;font-size:10.5px;font-weight:600;line-height:16px;}
+.ask-ref-pill.tone-green{background:var(--green-bg);color:var(--green-ink);}
+.ask-ref-pill.tone-violet{background:var(--violet-bg);color:var(--violet-ink);}
+.ask-ref-pill.tone-red{background:var(--red-bg);color:var(--red-ink);}
+.ask-ref-pill.tone-amber{background:var(--amber-bg);color:var(--amber-ink);}
+.ask-ref-pill.tone-peach{background:var(--peach-bg);color:var(--h-peach-ink);}
+.ask-ref-pill.tone-blue{background:var(--panel);color:var(--h-blue-ink);}
+.ask-ref-pill.tone-slate{background:var(--slate-bg);color:var(--slate-ink);}
