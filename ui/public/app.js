@@ -38,6 +38,8 @@ const state = {
   engine: 'claude', // New pipeline: who runs the agent nodes, per run, never remembered
   runDefaults: null,
   engineTouched: false,
+  presets: [],    // GET /api/presets (run presets, #712), while the runPresets flag is on
+  preset: null,   // the applied preset: { id, name, scope, setup, modified, applying, broken[] } — preset mode
   guardrailSets: [], // GET /api/guardrails cache for the picker + hint
   agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
@@ -86,7 +88,7 @@ import { runProgress, chainProgress, progressWidth } from '../../src/shared/run-
 import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS, tagFilterGroups } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, prGlyphOf, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS, tagFilterGroups } from './runs-list.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
 // History list card. They stay EXPORTED
@@ -105,9 +107,11 @@ import { createAskPanel } from './ask-panel.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards.mjs';
+import { registerFilesCard, filesForViewer, fileViewerUrls } from './chat/files-card.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
+import { guardModal, dialogOpen } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
 import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, GETTING_STARTED_STEPS } from './getting-started.mjs';
 import { createGuideSpot } from './guide-spot.mjs';
@@ -124,6 +128,8 @@ import {
 import { groupCommentThreads, commentWhen } from './comment-thread.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
 import { exportSlugPreview } from './export-slug.mjs';
+import { fillMarketplaceSelect, marketplaceExportBody, marketplaceNameProblem, marketplacePlanExtras, marketplaceDoneView,
+  renderMarketplaceSkipped, marketplaceLoadError, syncMarketplaceButtons, requestTicket, ticketIsCurrent } from './export-marketplace.mjs';
 import { createCodeEditor } from './code-editor.mjs';
 import { previewAskFromDef, previewFileUrl } from './ask/form-preview.mjs';
 import { projectForm } from '../../src/shared/forms/project.mjs';
@@ -222,7 +228,7 @@ import {
   freshSyncState, ago, listRowModel, projectBarModel, wsRollupModel, ffRefusalCopy, syncStageLabel, fetchedAgo, isSyncableBranchName,
   runOutcomeModel, openSyncDialog, chooseSyncRefusal,
 } from './branch-sync.mjs';
-import { baseCheckModel, baseRowNote } from './base-check.mjs';
+import { baseCheckModel, baseRowNote, newerBaseCheck } from './base-check.mjs';
 import { describeRule, formatInstant } from '../../src/shared/schedule/recurrence.mjs';
 import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, kindShort, awayAnswerRows, awayAnswerCounts, checksFirst, awayAnswersSummary, decidedByText, awayAskCaption } from '../../src/shared/away-mode/labels.mjs';
 import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
@@ -231,7 +237,11 @@ import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdow
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
-import { applyFlags, decorateFlagChips, flagOn } from './flags.mjs';
+import { applyFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
+import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
+import { runPresetScopeOptions, runPresetRequest, runPresetErrorText, RUN_PRESET_SAVED_NOTE } from './run-presets-save.mjs';
+import { renderPresetsList } from './run-presets-view.mjs';
+import { setupFromBody } from '../../src/shared/run-presets.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor } from './tag-input.mjs';
 import { normaliseTags, formatTag } from '../../src/shared/run-tags.mjs';
 import { splitByDimensions, tagGroupOptions, dimensionLabel, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
@@ -322,7 +332,7 @@ function bindMarkdownReady() {
 // The renderer as the injectable seam a pure module takes (source-pane.mjs).
 const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' });
 
-let askPanel = null;           // Ask Worca panel — assigned by the boot mount; every seam uses askPanel?.
+let askPanel = null;           // Chat panel — assigned by the boot mount; every seam uses askPanel?.
 // Pinpoint (#669): one selection controller for the page. Created at load, so its window key handler runs ahead of
 // the artifact viewer's (added when a popup opens).
 const pinpoint = createPinpoint({ doc: document, win: window, fetch: (u, o) => fetch(u, o) });
@@ -548,6 +558,11 @@ const el = {
   sourceBranch: $('#sourceBranch'),
   featureBranch: $('#featureBranch'),
   sameAsSource: $('#sameAsSource'),
+  presetSelect: $('#presetSelect'),
+  presetChip: $('#preset-chip'),
+  presetSave: $('#preset-save'),
+  presetUpdate: $('#preset-update'),
+  presetBroken: $('#preset-broken'),
   sameAsSourceHint: $('#sameAsSourceHint'),
   sourceRadios: $$('input[name="source"]'),
   promptPane: $('#prompt-pane'),
@@ -918,7 +933,7 @@ const alerts = createAlerts({
   storage: { getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) },
   win: window,
   onOpen: (target) => {
-    if (target.askThread) { openChat({ threadId: target.askThread }); return; }   // Ask Worca is the Chat page: open that chat
+    if (target.askThread) { openChat({ threadId: target.askThread }); return; }   // chats live on the Chat page: open that chat
     location.hash = target.schedule ? 'schedules' : rdHash(target.runId);
   },
 });
@@ -1278,7 +1293,8 @@ function applyBudgetToNewView() {
   if (!note || !start) return;
   const blocked = !!(b && b.blocked);
   const tagReason = runTagGate();
-  start.disabled = blocked || startSubmitInFlight || !!tagReason;
+  const presetReason = presetBlockReason();   // a preset with a broken reference (#712)
+  start.disabled = blocked || startSubmitInFlight || !!tagReason || !!presetReason;
   note.hidden = !blocked;
   if (blocked) {
     const w = b.resetPeriod === 'weekly' ? 'week' : 'month';
@@ -1288,7 +1304,7 @@ function applyBudgetToNewView() {
     note.textContent = msg;
     start.title = msg;
   } else {
-    start.title = tagReason || '';
+    start.title = presetReason || tagReason || '';
   }
 }
 
@@ -1492,7 +1508,7 @@ function handleServerMessage(msg) {
     // here is REQUIRED, not a nicety — the budget tick only refetches while
     // pipelines are live, so chat-only spend would otherwise stay stale.
     if (msg.type === 'ask-done' || msg.type === 'ask-error') {
-      scheduleOnboardingRefresh();   // the first thread ticks "Ask Worca about a run"
+      scheduleOnboardingRefresh();   // the first thread ticks "Ask about a run in Chat"
       refreshBudget();
       if (currentView() === 'stats') loadStatsView();
     }
@@ -3998,9 +4014,18 @@ async function loadGuardrailsInto(selectId) {
   // Fall back to the Permissive default if the wanted id is gone (deleted set) —
   // and SAY so via the form's message line: a vanished selection must never
   // silently revert while the user believes it is still selected.
-  state.guardrailsId = list.some((g) => g.id === want) ? want : 'permissive';
-  if (want !== 'permissive' && state.guardrailsId === 'permissive') {
-    setFormMsg(`Guardrail set "${want}" no longer exists — this run will use Permissive (no restrictions).`, 'err');
+  if (state.preset && !list.some((g) => g.id === want)) {
+    // Preset mode (#712): no silent fallback to Permissive — the gone set stays selected, and the broken card names it.
+    state.guardrailsId = want;
+    const o = option(want, '');
+    o.textContent = `(missing) ${want}`;
+    o.disabled = true;
+    sel.appendChild(o);
+  } else {
+    state.guardrailsId = list.some((g) => g.id === want) ? want : 'permissive';
+    if (want !== 'permissive' && state.guardrailsId === 'permissive') {
+      setFormMsg(`Guardrail set "${want}" no longer exists — this run will use Permissive (no restrictions).`, 'err');
+    }
   }
   sel.value = state.guardrailsId;
   updateGuardrailsHint();
@@ -4031,10 +4056,11 @@ async function renderWorkflowConfig(workflowId) {
     if (el.humanInLoop) {
       if (state.runTarget === 'workspace') {
         // D-W1: a workspace has no stored switch — the value lives for this form only and rides the run body.
-        el.humanInLoop.checked = state.wsHumanInLoop !== false;
+        // An applied preset's value wins: it is what the run body sends.
+        el.humanInLoop.checked = presetHumanInLoop() ?? state.wsHumanInLoop !== false;
         el.humanInLoop.disabled = false;
       } else {
-        el.humanInLoop.checked = state.config.humanInLoop !== false;   // readRunConfig echoes only `false`
+        el.humanInLoop.checked = presetHumanInLoop() ?? state.config.humanInLoop !== false;   // readRunConfig echoes only `false`
         el.humanInLoop.disabled = !agentsEditable();
       }
     }
@@ -4060,7 +4086,9 @@ async function renderWorkflowConfig(workflowId) {
     setAgentsHeader(null, '');
     return;
   }
-  const runConfig = (state.config.workflows && state.config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
+  // Preset mode (#712): the preset's picks merge over the project's config per node and per wire.
+  const cfg = state.preset ? configWithPreset(state.config, workflowId, state.preset.setup) : state.config;
+  const runConfig = (cfg.workflows && cfg.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
   // wf_default stores its overrides per ROLE (the legacy `steps` blob the CLI and
   // every older install write); saved workflows store them per node id.
   const rows = buildNodeConfigRows(wf, registry, runConfig,
@@ -4072,6 +4100,12 @@ async function renderWorkflowConfig(workflowId) {
   if (el.wfFeedbackConfig) el.wfFeedbackConfig.dataset.graph = wf.version === 2 ? '1' : '';
   setAgentsHeader(rows, wf.name || workflowId);
   setAgentRowsEnabled(agentsEditable());
+  if (state.preset && el.wfFeedbackConfig && el.wfFeedbackConfig.dataset.graph !== '1') {
+    for (const i of el.wfFeedbackConfig.querySelectorAll('input[data-fb-id]')) {
+      i.disabled = true;
+      i.title = 'Loop budgets of this workflow cannot be held in a preset';
+    }
+  }
   if (currentView() === 'new') schedulePolicyLine();   // the picked models changed with the workflow (board 8)
 }
 
@@ -4113,7 +4147,9 @@ function setAgentsHeader(rows, workflowName) {
       : (editable ? agentsHeaderText(rows) : 'select a project to change these');
     el.agentsSummary.classList.toggle('muted', !editable);
   }
-  const anyModified = editable && !!rows && rows.some((r) => r.modified);
+  // Preset mode (#712): the rows show the preset's picks for this run; Reset and Save as workflow defaults would
+  // write the project's or the workflow's config, so neither is offered.
+  const anyModified = editable && !state.preset && !!rows && rows.some((r) => r.modified);
   if (el.agentsReset) el.agentsReset.hidden = !anyModified;
   if (el.agentsPromote) {
     // A graph BUILT-IN is frozen and never persisted, so it has no row to carry defaults
@@ -4139,8 +4175,11 @@ function paintHiddenSettings() {
   if (!levelAtLeast('advanced')) {
     const gr = (state.guardrailSets || []).find((g) => g.id === state.guardrailsId);
     if (state.guardrailsId && state.guardrailsId !== 'permissive') items.push(`${(gr && gr.name) || state.guardrailsId} guardrails`);
-    const n = Object.values(agentRowsById || {}).filter((r) => r && r.modified).length;
-    if (n) items.push(n === 1 ? '1 agent override' : `${n} agent overrides`);
+    if (state.preset) items.push(...presetHiddenItems(state.preset.setup));   // the preset's picks, counted once (#712)
+    else {
+      const n = Object.values(agentRowsById || {}).filter((r) => r && r.modified).length;
+      if (n) items.push(n === 1 ? '1 agent override' : `${n} agent overrides`);
+    }
     const hitlRow = document.getElementById('hitl-row');
     if (el.humanInLoop && hitlRow && !hitlRow.hidden && !el.humanInLoop.checked) items.push('Human in the loop off');
   }
@@ -4644,6 +4683,7 @@ if (el.engineSelect) {
   el.engineSelect.addEventListener('change', () => {
     state.engineTouched = true;
     setRunEngine(el.engineSelect.value);
+    notePresetChange();
   });
 }
 
@@ -4655,6 +4695,7 @@ if (el.guardrailsSelect) {
     showEngineRefusal(null); // the refusal and any consent were for the OLD guardrail set
     updateGuardrailsHint();
     schedulePolicyLine();
+    notePresetChange();
   });
 }
 
@@ -4707,8 +4748,25 @@ function liveRowValues(row, body) {
 // Default workflow and the per-NODE writer for a saved one. `next` carries only
 // what the user just changed; everything else rides along at what the row's
 // controls currently show.
+// Preset mode (#712): a change edits the applied preset's setup for THIS run; the project config is untouched.
+function holdInPreset(edit) {
+  if (!state.preset) return false;
+  edit(state.preset.setup);
+  if (!state.preset.applying) {
+    state.preset.modified = true;
+    paintPresetChip();
+    schedulePresetCheck();
+  }
+  return true;
+}
+
 async function saveAgentRow(row, next, body) {
   if (!row) return;
+  if (holdInPreset((s) => {
+    const patch = pruneNodeSelection(row, { ...liveRowValues(row, body), ...next });
+    s.overlay = s.overlay || {};
+    s.overlay.nodes = { ...(s.overlay.nodes || {}), [row.nodeId]: presetNodePick(patch, row.def) };
+  })) { renderWorkflowConfig(state.workflowId); return; }
   // Defence in depth: the controls are disabled without a project, but if one
   // is ever reached anyway, say so rather than letting the save no-op and the
   // re-render quietly undo the edit. Same wording as the submit guard.
@@ -4752,6 +4810,7 @@ async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions,
 // Persist one feedback loop's cycle count (CONV-2): PATCH /api/config
 // { projectDir, workflowId, feedbacks:{ [fbId]:{maxCycles} } }.
 async function saveFeedback(workflowId, fbId, maxCycles) {
+  if (state.preset) return;   // a v1 workflow's loop budgets cannot be held in a preset (its inputs are disabled)
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
@@ -4775,6 +4834,7 @@ async function saveFeedback(workflowId, fbId, maxCycles) {
 // { projectDir, workflowId, wires:{ [wireId]:{maxCycles} } }. The v1 twin above
 // posts `feedbacks:{…}` and stays until the v1 engine dies in P8.
 async function saveWire(workflowId, wireId, maxCycles) {
+  if (holdInPreset((s) => { s.overlay = s.overlay || {}; s.overlay.wires = { ...(s.overlay.wires || {}), [wireId]: { maxCycles } }; })) return;
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
@@ -4792,6 +4852,7 @@ async function saveWire(workflowId, wireId, maxCycles) {
 
 // Persist the active workflow selection (CONV-2): PATCH /api/config { projectDir, activeWorkflowId }.
 async function saveActiveWorkflow(workflowId) {
+  if (holdInPreset((s) => { s.workflowId = workflowId; delete s.overlay; })) return;   // node ids belong to the old workflow
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
@@ -4812,6 +4873,7 @@ async function saveActiveWorkflow(workflowId) {
 // A workspace target keeps it for this form only — checked FIRST, because selectedProjectPath()
 // reads the hidden project select and would PATCH an unrelated project.
 async function saveHumanInLoop(on) {
+  if (holdInPreset((s) => { s.humanInLoop = !!on; })) return;
   if (state.runTarget === 'workspace') { state.wsHumanInLoop = !!on; return; }   // D-W1: no PATCH
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
@@ -6122,15 +6184,14 @@ function openWorkflowPopup(w, wf, handle, opener) {
   const pan = view.createNav({});
   fit();
 
-  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); shut(); } };
   function shut() {
-    document.removeEventListener('keydown', onKey, true);
     pan.destroy(); view.destroy(); ov.remove();
     if (opener && opener.isConnected) opener.focus();
   }
-  document.addEventListener('keydown', onKey, true);
   close.addEventListener('click', shut);
-  ov.addEventListener('click', (e) => { if (e.target === ov) shut(); });
+  // Read-only: a backdrop click or Escape closes it (modal-guard). A drag that pans the graph and ends on
+  // the overlay is not an outside click.
+  guardModal(ov, { kind: 'viewer', close: shut }).opened();
   close.focus();
 }
 
@@ -7590,6 +7651,7 @@ async function loadProjects(selectName) {
     state.projects = [];
   }
   renderProjectOptions(selectName);
+  if (state.presets.length) paintPresetMenu();   // pinned presets' group labels name the projects
 }
 
 function renderProjectOptions(selectName) {
@@ -8185,7 +8247,7 @@ el.projectSelect.addEventListener('change', () => {
     return;
   }
   hideAddProject();
-  onProjectChanged();
+  void reapplyPresetAfter(onProjectChanged());
 });
 
 function openAddProject() {
@@ -8300,6 +8362,7 @@ async function openFolderBrowser(seedPath, onSelect, { multiple = false, onSelec
   if (el.folderBrowserTitle) el.folderBrowserTitle.textContent = folderManySink ? 'Select folders' : 'Select a folder';
   syncFolderPicks();
   el.folderBrowser.classList.remove('hidden');
+  folderGuard.opened();
   // A stale or mistyped seed path from the text field 400s; fall back to home.
   // Only the SEED gets this retry — navigation failures keep the current
   // listing (loadFolders shows the error) instead of yanking the user home.
@@ -8420,16 +8483,10 @@ el.folderSelectMany.addEventListener('click', () => {
   closeFolderBrowser();
   if (sink && paths.length) sink(paths);
 });
-el.folderBrowserClose.addEventListener('click', closeFolderBrowser);
-// Backdrop click (the overlay itself, not the inner card) and Escape close it,
-// matching the viewer modal's behavior.
-el.folderBrowser.addEventListener('click', (e) => {
-  if (e.target === el.folderBrowser) closeFolderBrowser();
-});
-// The folder browser owns this Escape: later listeners (the wizard's) skip it.
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !el.folderBrowser.classList.contains('hidden')) { e.preventDefault(); closeFolderBrowser(); }
-});
+// A picker, often over another dialog: a backdrop click never closes it. Escape closes it, asking first
+// only when folders are ticked (multi mode); its Cancel closes at once.
+const folderGuard = guardModal(el.folderBrowser, { kind: 'form', close: () => closeFolderBrowser(), isDirty: () => folderPicks.size > 0 });
+el.folderBrowserClose.addEventListener('click', () => folderGuard.cancel());
 
 // NOTE: New Pipeline has no inline project-delete. Removing a project is rare
 // and destructive, so it lives in the Projects view (deleteProject, with the
@@ -8452,8 +8509,10 @@ const wsBasename = (p) => {
 // ---- Target selector (New Pipeline) ----------------------------------------
 
 // Toggle Project vs Workspace target. Persists the choice; in workspace mode
-// lazy-loads options and re-points the config panel at the built-in models.
+// lazy-loads options and re-points the config panel at the built-in models. Returns the config load,
+// whose tail repaints the workflow/guardrail pickers — a caller that sets them next must await it.
 function setRunTarget(target) {
+  let cfgLoad;
   const t = target === 'workspace' ? 'workspace' : 'project';
   state.runTarget = t;
   showEngineRefusal(null); // the refusal and any consent were for the OLD target's context
@@ -8485,7 +8544,7 @@ function setRunTarget(target) {
     // vanishing entirely made the row jump.
     showWorkspaceBranchPlaceholder();
     // Config panel: no projectDir → built-in models/efforts; workflow picker still works.
-    loadConfig('');
+    cfgLoad = loadConfig('');
     ensureWorkspaceOptions();
     // The binding scope just changed from a project to a workspace; the project
     // mode branch below re-resolves via onProjectChanged().
@@ -8498,10 +8557,11 @@ function setRunTarget(target) {
     if (el.sourceBranch) el.sourceBranch.disabled = false;
     if (el.wsSourceBranches) { el.wsSourceBranches.classList.add('hidden'); el.wsSourceBranches.innerHTML = ''; }
     // Restore the project-driven branch list + config for the selected project.
-    onProjectChanged();
+    cfgLoad = onProjectChanged();
   }
   syncPreviousBranchEverywhere();
   paintBranches();
+  return cfgLoad;
 }
 
 // Workspace mode with nothing to pick per member yet: keep the field occupied by
@@ -8678,7 +8738,7 @@ async function ensureWorkspaceOptions({ keepMembers = false } = {}) {
 
 if (el.targetSeg) {
   $$('#target-seg button[data-target]').forEach((btn) => {
-    btn.addEventListener('click', () => setRunTarget(btn.dataset.target));
+    btn.addEventListener('click', () => void reapplyPresetAfter(setRunTarget(btn.dataset.target)));
   });
 }
 if (el.workspaceSelect) {
@@ -8688,7 +8748,8 @@ if (el.workspaceSelect) {
     // D-W1: Human in the loop is per run on a workspace — a new workspace starts it on again. This
     // listener does not re-run renderWorkflowConfig, so repaint the switch here.
     state.wsHumanInLoop = true;
-    if (state.runTarget === 'workspace' && state.workflowId === AUTO_WORKFLOW_ID && el.humanInLoop) el.humanInLoop.checked = true;
+    if (state.runTarget === 'workspace' && state.workflowId === AUTO_WORKFLOW_ID && el.humanInLoop) el.humanInLoop.checked = presetHumanInLoop() ?? true;
+    if (state.preset && !state.preset.applying) schedulePresetCheck();   // the check answers for this target
     renderWorkspaceMembers();
     renderWorkspaceSourceBranches();
     schedulePolicyLine();                   // team policy notes for the new target (design board 8)
@@ -9778,9 +9839,9 @@ function openWsAddMembers(id) {
     row.append(box, name, path);
     body.appendChild(row);
   }
-  // The header's Close is the way out; the one action adds the picks, or — with nothing to pick —
+  // Cancel (or the header's Close) is the way out; the one action adds the picks, or — with nothing to pick —
   // leads to the Projects page and opens its Add project dialog (a folder or a clone).
-  const actions = candidates.length ? [['Add', 'btn btn-primary btn-mini', async () => {
+  const actions = candidates.length ? [['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()], ['Add', 'btn btn-primary btn-mini', async () => {
     if (!chosen.size) return;
     const r = await postWsMembers(id, { add: [...chosen] });
     if (r.ok) { closePluginModal(); return; }
@@ -10487,18 +10548,20 @@ if (el.wizImportPaste) el.wizImportPaste.addEventListener('keydown', (e) => {
   void addWizardPastedPaths();
 });
 
-// A11y: Escape in the wizard view triggers #wiz-close (which navigates away; the showView
-// leave-guard resets the wizard). A layer above the wizard owns its own Escape: an Escape another
-// handler already took (the folder browser hides itself first, then calls preventDefault), the Ask
-// dock, the terminal, and any open dialog or guide (the mobile-nav handler's selector).
+// A11y: Escape in the wizard view triggers #wiz-close (which navigates away; the showView leave-guard
+// resets the wizard). A layer above the wizard owns its own Escape: an Escape another handler already took,
+// the Ask dock, the terminal, a guarded pop-up (modal-guard: the folder browser, the Claude setup dialog) and
+// any other open dialog or guide (the mobile-nav handler's selector). Capture phase like the detail arms: it
+// reads whether a pop-up is up BEFORE modal-guard closes it.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || e.defaultPrevented) return;
   if (currentView() !== 'workspace-create') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (dialogOpen(document)) return;                                    // a pop-up owns Escape
   if (document.querySelector('.viewer-modal:not(.hidden), .guide-layer')) return; // a dialog or the guide owns Escape
   if (el.wizClose) el.wizClose.click();
-});
+}, true);
 
 // Test hook: expose the wizard helpers + workspace renderers for jsdom tests.
 if (typeof window !== 'undefined') {
@@ -12945,12 +13008,20 @@ function buildPdMemory(sec, key) {
 // (opt-in). `done` always clears every opt-in again — the modal is shared, and
 // neither the tint nor a leftover field may leak into the next, harmless call.
 let modalGen = 0;
+// One guard for the shared #confirm-modal: a plain confirm is a decision (a backdrop click or Escape is the
+// safe No); promptModal's fields make it a form (never on the backdrop; Escape asks once typed in).
+const confirmGuard = el.confirmModal ? guardModal(el.confirmModal) : null;
+// The call the shell is showing. A new call replaces its content, so the one still waiting is settled
+// first as the safe No: it was never answered, and its OK must not stay live on #confirm-ok for the next
+// confirm's OK to run (a double-click on a delete stacks two calls).
+let shellDone = null;
 function modalShell({
   title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel',
   checkbox = null, danger = false, fields = null, messageTone = null,
 } = {}) {
   return new Promise((resolve) => {
     modalGen += 1;   // the extension pair prompt checks this to detect a confirm opened over it (see promptExtensionPair)
+    shellDone?.(false);
     el.confirmTitle.textContent = title;
     el.confirmTitle.classList.toggle('danger', !!danger);
     // message: a string, or parts [text | { strong: text }] so the variable bits (a branch, a command)
@@ -13020,9 +13091,14 @@ function modalShell({
     el.confirmCheckbox.checked = false;
     el.confirmCheckboxLabel.textContent = checkbox ? checkbox.label : '';
     el.confirmModal.classList.remove('hidden');
+    confirmGuard?.opened({ kind: fields ? 'form' : 'decision', close: () => done(false) });
     (inputs[0] || el.confirmOk).focus();
 
+    let settled = false;
     const done = (val) => {
+      if (settled) return;   // a newer call may own the shell by now: never tear its content down
+      settled = true;
+      if (shellDone === done) shellDone = null;
       const checked = el.confirmCheckbox.checked;
       const values = {};
       for (const i of inputs) values[i.dataset.fieldId] = i.value.trim();
@@ -13036,24 +13112,22 @@ function modalShell({
       el.confirmCheckboxWrap.classList.add('hidden');
       el.confirmOk.removeEventListener('click', onOk);
       el.confirmCancel.removeEventListener('click', onCancel);
-      el.confirmModal.removeEventListener('click', onBackdrop);
       document.removeEventListener('keydown', onKey);
       if (fields) resolve(val ? values : null);
       else resolve(checkbox ? { ok: val, checked } : val);
     };
     const onOk = () => { if (!el.confirmOk.disabled) done(true); };
     const onCancel = () => done(false);
-    const onBackdrop = (e) => { if (e.target === el.confirmModal) done(false); };
     const onKey = (e) => {
-      if (e.key === 'Escape') done(false);
-      // Enter submits a filled-in prompt, the way the native one did
-      else if (e.key === 'Enter' && fields && !el.confirmOk.disabled) { e.preventDefault(); done(true); }
+      // Escape is modal-guard's. Enter submits a filled-in prompt, the way the native one did — but never
+      // while the "Discard changes?" question is up over it, wherever the focus is.
+      if (e.key === 'Enter' && fields && !el.confirmOk.disabled && !document.querySelector('dialog.discard-modal[open]')) { e.preventDefault(); done(true); }
     };
 
     el.confirmOk.addEventListener('click', onOk);
     el.confirmCancel.addEventListener('click', onCancel);
-    el.confirmModal.addEventListener('click', onBackdrop);
     document.addEventListener('keydown', onKey);
+    shellDone = done;
   });
 }
 
@@ -13135,6 +13209,21 @@ function setProjAddMsg(text, kind) {
   el.projAddMsg.className = 'hint' + (kind ? ' ' + kind : '');
 }
 
+// A request this dialog sent is out (Add, or the clone's start): until it answers, its Cancel is
+// disabled and Escape does nothing (modal-guard `busy` — the Stop dialog's rule).
+let projAddBusy = false;
+// The "Cloning in the background" note a Hide raised; the clone's own result closes it.
+let cloneHideToast = null;
+
+// A form: a backdrop click never closes it. Escape asks first once something was typed or picked here —
+// except over a running clone: its fields are locked and its work goes on, so Hide loses nothing.
+const projAddGuard = el.projectAddModal ? guardModal(el.projectAddModal, {
+  kind: 'form',
+  close: () => dismissProjectAdd(),
+  busy: () => projAddBusy,
+  isDirty: () => !(cloneFollow && projAddMode === 'clone') && projAddGuard.changed(),
+}) : null;
+
 function openProjectAddModal(path, { mode = 'folder' } = {}) {
   el.projAddPath.value = path || '';
   el.projAddName.value = path ? basenameOf(path) : '';
@@ -13145,9 +13234,21 @@ function openProjectAddModal(path, { mode = 'folder' } = {}) {
     el.projCloneName.placeholder = 'the repository name';
   }
   el.projectAddModal.classList.remove('hidden');
+  projAddGuard?.opened();                    // what the open filled in (a picked folder) is the starting point
+  // A clone started here earlier still runs in the background. With a folder to add, open on Folder (the
+  // Folder tab works during a clone); with none, the Clone tab shows the progress.
+  if (cloneFollow) {
+    setProjAddMode(path ? 'folder' : 'clone');
+    if (path) {
+      setProjAddMsg(`Still cloning ${cloneFollow.url} — a notification says when it is done.`);
+      el.projAddName.focus();
+      el.projAddName.select();
+    }
+    return;
+  }
   setProjAddMode(mode);
-  // A clone still in flight from an earlier open keeps its progress line.
-  if (cloneFollow) { setProjAddMode('clone'); setProjAddMsg(`Cloning ${cloneFollow.url} …`); lockCloneForm(true); return; }
+  // Informational hint only when there is no path (manual-entry fallback);
+  // neutral default .hint styling (no .hint.warn class exists).
   if (mode === 'folder') {
     el.projAddName.focus();
     el.projAddName.select();
@@ -13164,8 +13265,10 @@ function setProjAddMode(mode) {
   el.projAddFolderPane.hidden = projAddMode !== 'folder';
   el.projAddClonePane.hidden = projAddMode !== 'clone';
   el.projAddSave.textContent = projAddMode === 'clone' ? 'Clone and add' : 'Add project';
-  setProjAddMsg(projAddMode === 'clone' ? 'Worca clones the repository into its projects folder with the deployment\'s credential for its host (GitHub or Azure DevOps).' : '');
-  if (projAddMode === 'clone') el.projCloneUrl.focus();
+  if (projAddMode === 'clone' && cloneFollow) setProjAddMsg(`Cloning ${cloneFollow.url} …`);
+  else setProjAddMsg(projAddMode === 'clone' ? 'Worca clones the repository into its projects folder with the deployment\'s credential for its host (GitHub or Azure DevOps).' : '');
+  syncProjAddControls();
+  if (projAddMode === 'clone' && !cloneFollow) el.projCloneUrl.focus();
 }
 
 /** The folder name worca will use for a clone URL (planClone's rule), or '' when the URL does not name one repository.
@@ -13188,9 +13291,18 @@ function repoNameFromUrl(url) {
 let cloneFollow = null;
 let clonePoll = null;
 
-function lockCloneForm(locked) {
-  for (const n of [el.projCloneUrl, el.projCloneBranch, el.projCloneName, el.projAddSave]) if (n) n.disabled = locked;
-  if (el.projAddTabs) for (const t of el.projAddTabs.querySelectorAll('.md-tab')) t.disabled = locked;
+// What is usable, from three facts: a request out (everything waits for its answer), a clone running
+// (the Clone tab's fields and its button stay locked — the Folder tab works) and the tab shown. The way
+// out reads Hide over a running clone: the clone goes on and its result arrives as a notification.
+function syncProjAddControls() {
+  const cloning = !!cloneFollow;
+  for (const n of [el.projCloneUrl, el.projCloneBranch, el.projCloneName]) if (n) n.disabled = projAddBusy || cloning;
+  if (el.projAddTabs) for (const t of el.projAddTabs.querySelectorAll('.md-tab')) t.disabled = projAddBusy;
+  if (el.projAddSave) el.projAddSave.disabled = projAddBusy || (projAddMode === 'clone' && cloning);
+  if (el.projAddCancel) {
+    el.projAddCancel.textContent = projAddMode === 'clone' && cloning ? 'Hide' : 'Cancel';
+    el.projAddCancel.disabled = projAddBusy;
+  }
 }
 
 async function saveProjectClone() {
@@ -13201,20 +13313,23 @@ async function saveProjectClone() {
   const name = el.projCloneName.value.trim();
   if (branch) body.branch = branch;
   if (name) body.name = name;
-  lockCloneForm(true);
+  projAddBusy = true;
+  syncProjAddControls();
   setProjAddMsg(`Cloning ${url} …`);
   try {
     const res = await fetch('/api/projects/clone', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     const data = await safeJson(res);
-    if (!res.ok || !data.jobId) { lockCloneForm(false); setProjAddMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    if (!res.ok || !data.jobId) { setProjAddMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     cloneFollow = { id: data.jobId, url };
     if (data.job && data.job.state !== 'running') { onCloneJob(data.job); return; }
     clonePoll = setInterval(pollCloneJob, 2000);
   } catch (e) {
-    lockCloneForm(false);
     setProjAddMsg(e.message, 'err');
+  } finally {
+    projAddBusy = false;
+    syncProjAddControls();
   }
 }
 
@@ -13234,15 +13349,18 @@ function onCloneJob(job) {
   clearInterval(clonePoll);
   clonePoll = null;
   cloneFollow = null;
-  lockCloneForm(false);
-  const open = el.projectAddModal && !el.projectAddModal.classList.contains('hidden');
+  if (cloneHideToast) { cloneHideToast.close(); cloneHideToast = null; }
+  // Showing that clone = open on the Clone tab. Open on Folder means another project is being added
+  // there: leave it alone and report by toast, as when the dialog is hidden.
+  const showing = el.projectAddModal && !el.projectAddModal.classList.contains('hidden') && projAddMode === 'clone';
+  syncProjAddControls();
   if (job.state === 'error') {
-    if (open) { setProjAddMode('clone'); setProjAddMsg(job.error || 'The clone failed.', 'err'); }
+    if (showing) setProjAddMsg(job.error || 'The clone failed.', 'err');
     else setProjectsMsg(`Clone failed: ${job.error || 'unknown error'}`, 'err');
     return;
   }
   const name = (job.project && job.project.name) || job.name || '';
-  if (open) closeProjectAddModal();
+  if (showing) closeProjectAddModal();
   void (async () => {
     try {
       const res = await fetch('/api/projects');
@@ -13259,6 +13377,16 @@ function closeProjectAddModal() {
   el.projectAddModal.classList.add('hidden');
 }
 
+// Cancel, Hide or Escape. A clone started here goes on in the background — say so once, so closing the
+// dialog never reads as the clone stopping. Its result closes this note (onCloneJob).
+function dismissProjectAdd() {
+  if (cloneFollow && !cloneHideToast) {
+    cloneHideToast = notify({ tone: 'info', title: 'Cloning in the background',
+      detail: `${cloneFollow.url} — a notification says when it is done.`, timeout: 0 });
+  }
+  closeProjectAddModal();
+}
+
 // The dialog first (#649): its Folder tab's Choose folder… opens the native picker, and Clone from URL
 // needs no folder at all. No folder picker here (a container or hosted worca): the repository is the way in.
 async function addProjectFlow() {
@@ -13272,7 +13400,8 @@ async function saveProjectAdd() {
   const path = el.projAddPath.value.trim();
   if (!name) return setProjAddMsg('Name is required.', 'err');
   if (!path) return setProjAddMsg('Folder is required.', 'err');
-  el.projAddSave.disabled = true;
+  projAddBusy = true;
+  syncProjAddControls();
   try {
     const res = await fetch('/api/projects', {
       method: 'POST',
@@ -13288,7 +13417,8 @@ async function saveProjectAdd() {
   } catch (e) {
     setProjAddMsg(e.message, 'err');
   } finally {
-    el.projAddSave.disabled = false;
+    projAddBusy = false;
+    syncProjAddControls();
   }
 }
 
@@ -13310,6 +13440,14 @@ function projBulkAlert(title, detail = '') {
   cardAlert(projBulkCard(), { title, detail });
 }
 
+// A form: a backdrop click never closes it; Escape asks once a row was unticked or renamed. While the
+// POST is out, Cancel and Escape wait for its answer.
+const projBulkGuard = el.projectBulkModal ? guardModal(el.projectBulkModal, {
+  kind: 'form',
+  close: () => closeProjectBulkModal(),
+  busy: () => !!(projBulk && projBulk.saving),
+}) : null;
+
 function openProjectBulkModal(paths, { onDone = null } = {}) {
   const known = new Map((state.projects || []).map((p) => [p.path, p.name]));
   const rows = [];
@@ -13329,6 +13467,7 @@ function openProjectBulkModal(paths, { onDone = null } = {}) {
   cardAlert(projBulkCard(), null);
   renderProjectBulkRows();
   el.projectBulkModal.classList.remove('hidden');
+  projBulkGuard?.opened();
   const first = el.projBulkList.querySelector('.pb-name:not(:disabled)');
   if (first) first.focus();
 }
@@ -13342,6 +13481,7 @@ function syncProjBulkSave() {
   const n = projBulkPending().length;
   el.projBulkSave.disabled = n === 0 || !!(projBulk && projBulk.saving);
   el.projBulkSave.textContent = n === 1 ? 'Add 1 project' : `Add ${n} projects`;
+  if (el.projBulkClose) el.projBulkClose.disabled = !!(projBulk && projBulk.saving);
 }
 
 function renderProjectBulkRows() {
@@ -13542,7 +13682,7 @@ if (el.projDetail) {
 if (el.projectAddBtn) el.projectAddBtn.addEventListener('click', addProjectFlow);
 if (el.projAddSave) {
   el.projAddSave.addEventListener('click', saveProjectAdd);
-  el.projAddCancel.addEventListener('click', closeProjectAddModal);
+  el.projAddCancel.addEventListener('click', () => projAddGuard.cancel());   // Cancel / Hide: at once, never asks
   const fillProjAdd = (p) => {
     el.projAddPath.value = p;
     if (!el.projAddName.value.trim()) el.projAddName.value = basenameOf(p);
@@ -13575,25 +13715,17 @@ if (el.projAddSave) {
     });
     el.projCloneUrl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void saveProjectAdd(); } });
   }
-  el.projectAddModal.addEventListener('click', (e) => { if (e.target === el.projectAddModal) closeProjectAddModal(); });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && el.projectAddModal && !el.projectAddModal.classList.contains('hidden')) closeProjectAddModal();
-  });
 }
 if (el.projectBulkModal) {
   el.projBulkSave.addEventListener('click', () => { void saveProjectBulk(); });
-  el.projBulkClose.addEventListener('click', closeProjectBulkModal);
-  el.projectBulkModal.addEventListener('click', (e) => { if (e.target === el.projectBulkModal) closeProjectBulkModal(); });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !el.projectBulkModal.classList.contains('hidden')) closeProjectBulkModal();
-  });
+  el.projBulkClose.addEventListener('click', () => projBulkGuard.cancel());
 }
 
 // Test hook (mirrors window.__agents at app.js:4219).
 if (typeof window !== 'undefined') {
   window.__projects = {
     loadProjectsView, renderProjectsList, buildProjectRow, deleteProject,
-    confirmModal, addProjectFlow, openProjectAddModal, saveProjectAdd,
+    confirmModal, promptModal, addProjectFlow, openProjectAddModal, saveProjectAdd,
     openProjectBulkModal, saveProjectBulk, closeProjectBulkModal, openFolderBrowser,
   };
 }
@@ -13826,43 +13958,15 @@ if (typeof window !== 'undefined') {
 // ---------------------------------------------------------------------------
 // Start a run
 // ---------------------------------------------------------------------------
-el.form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  // Enter in any field submits the form directly, bypassing the disabled Start
-  // button — so the in-flight window has to be closed here too, not only via
-  // start.disabled, or a second Enter starts the same run twice.
-  if (startSubmitInFlight) return;
-  setFormMsg('', '');
-  clearFieldErrors(el.form); cardAlert(newFormCard(), null);
-
-  // Target branch (§5.4 mutual exclusivity): workspace mode sends {workspaceId}
-  // and NO projectDir; project mode sends {projectDir} and NO workspaceId.
+// The New run body the form's choices make, before the task (prompt, source, schedule, extras): the submit
+// handler starts it, and Save current setup… keeps its choices as a run preset (#712). The target is not
+// checked here — the submit handler refuses a missing project or workspace first.
+function buildRunBody() {
   const target = state.runTarget === 'workspace' ? 'workspace' : 'project';
-  let projectDir = '';
-  let workspaceId = '';
-  let workspaceName = '';
-  let workspaceProjectNames = null;
-  if (target === 'workspace') {
-    workspaceId = (el.workspaceSelect && el.workspaceSelect.value) || '';
-    if (!workspaceId) return fieldError(el.workspaceSelect, 'Select a workspace first (or create one).');
-    const ws = state.workspaces.find((w) => w && w.id === workspaceId);
-    workspaceName = (ws && ws.name) || '';
-    workspaceProjectNames = ws && Array.isArray(ws.projectPaths)
-      ? ws.projectPaths.map(projectName) : null;
-  } else {
-    projectDir = selectedProjectPath();
-    if (!projectDir) return fieldError(el.projectSelect, 'Select a project first (or add one).');
-  }
-
-  const source = (el.sourceRadios.find((r) => r.checked) || {}).value || 'prompt';
-  const promptText = el.prompt.value.trim();
-  const mdText = el.promptMarkdown.value.trim();
+  const workspaceId = target === 'workspace' ? ((el.workspaceSelect && el.workspaceSelect.value) || '') : '';
+  const projectDir = target === 'workspace' ? '' : selectedProjectPath();
   const title = el.title.value.trim();
-
-  // Memory defragment (agent memory §7.3): one scope, a synthesised brief, and the `normal`
-  // guardrails the API wrappers use unless the user deliberately picked another set.
   const isDefragRun = state.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
-
   autoSameAsSource();   // Enter-to-submit, or a click before the feature input's `change`, must not skip the switch
   const body = {
     title: title || undefined,
@@ -13927,6 +14031,51 @@ el.form.addEventListener('submit', async (e) => {
     delete body.sourceBranchByKey; body.sourceFromPrevious = true;
   }
 
+  // #527: Auto-sync only when the person touched the switch for this run (untouched, each
+  // member follows its own sync.beforeRun). Before the schedule merge, so the sheet's choice wins.
+  if (state.sync.autoSync !== null && syncApplies() && levelAtLeast('advanced')) body.syncBeforeStart = state.sync.autoSync;
+  return body;
+}
+
+el.form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  // Enter in any field submits the form directly, bypassing the disabled Start
+  // button — so the in-flight window has to be closed here too, not only via
+  // start.disabled, or a second Enter starts the same run twice.
+  if (startSubmitInFlight) return;
+  setFormMsg('', '');
+  clearFieldErrors(el.form); cardAlert(newFormCard(), null);
+
+  // Target branch (§5.4 mutual exclusivity): workspace mode sends {workspaceId}
+  // and NO projectDir; project mode sends {projectDir} and NO workspaceId.
+  const target = state.runTarget === 'workspace' ? 'workspace' : 'project';
+  let projectDir = '';
+  let workspaceId = '';
+  let workspaceName = '';
+  let workspaceProjectNames = null;
+  if (target === 'workspace') {
+    workspaceId = (el.workspaceSelect && el.workspaceSelect.value) || '';
+    if (!workspaceId) return fieldError(el.workspaceSelect, 'Select a workspace first (or create one).');
+    const ws = state.workspaces.find((w) => w && w.id === workspaceId);
+    workspaceName = (ws && ws.name) || '';
+    workspaceProjectNames = ws && Array.isArray(ws.projectPaths)
+      ? ws.projectPaths.map(projectName) : null;
+  } else {
+    projectDir = selectedProjectPath();
+    if (!projectDir) return fieldError(el.projectSelect, 'Select a project first (or add one).');
+  }
+
+  const source = (el.sourceRadios.find((r) => r.checked) || {}).value || 'prompt';
+  const promptText = el.prompt.value.trim();
+  const mdText = el.promptMarkdown.value.trim();
+  const title = el.title.value.trim();
+
+  // Memory defragment (agent memory §7.3): one scope, a synthesised brief, and the `normal`
+  // guardrails the API wrappers use unless the user deliberately picked another set.
+  const isDefragRun = state.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
+
+  const body = buildRunBody();
+
   const psrc = state.activePluginSource;
   if (isDefragRun) {
     // A defragment run needs no task text: synthesise the same brief and title the API wrapper
@@ -13957,10 +14106,8 @@ el.form.addEventListener('submit', async (e) => {
   // A time picked earlier (Schedule… in the split menu, Schedules › Schedule a run, Change…)
   // rides the same POST /api/run body — `scheduledFor` (once) or `repeat` (recurring).
   const scheduling = !!pendingSchedule;
-  // #527: Auto-sync only when the person touched the switch for this run (untouched, each
-  // member follows its own sync.beforeRun). Before the schedule merge, so the sheet's choice wins.
+  // #527: a base that cannot start from origin blocks the start (the switch itself is in buildRunBody).
   if (state.sync.blocked && levelAtLeast('advanced')) return cardAlert(newFormCard(), { title: 'Run not started', detail: `${state.sync.blocked} can’t start from origin yet. Push its commits, or use Local copy.` });
-  if (state.sync.autoSync !== null && syncApplies() && levelAtLeast('advanced')) body.syncBeforeStart = state.sync.autoSync;
   if (scheduling) {
     const { sync: schedSync, ...schedRest } = pendingSchedule;
     Object.assign(body, schedRest);
@@ -13968,6 +14115,14 @@ el.form.addEventListener('submit', async (e) => {
     if (body.after && 'branchGone' in body.after) { const { branchGone: _bg, ...a } = body.after; body.after = a; }
     if (schedSync && typeof schedSync.beforeRun === 'boolean') body.syncBeforeStart = schedSync.beforeRun;
     if (schedSync && (schedSync.onDiverged === 'origin' || schedSync.onDiverged === 'fail')) body.syncOnDiverged = schedSync.onDiverged;
+  }
+  // Run presets (#712): the run-only lane. Agent picks and loop budgets ride the per-run overlay and
+  // human-in-the-loop its body key, so the project config never changes; every other key came from the form.
+  if (state.preset) {
+    const s = state.preset.setup;
+    body.presetId = state.preset.id;
+    if (s.overlay && state.workflowId !== AUTO_WORKFLOW_ID) body.overlay = structuredClone(s.overlay);
+    if (typeof s.humanInLoop === 'boolean') body.humanInLoop = s.humanInLoop;
   }
 
   // #555: withButton owns #start-btn from here, and reads undefined as success, so every exit
@@ -14037,6 +14192,14 @@ el.form.addEventListener('submit', async (e) => {
         showEngineRefusal(data);
         return notStarted(data.overridable ? 'Tick Allow unguarded to run anyway, or pick Claude.' : (data.error || 'The engine cannot run this.'));
       }
+      // A preset whose references are gone (#712): the broken card names each one, Start waits for them.
+      if (res.status === 409 && data && data.code === 'preset-broken' && state.preset) {
+        startSubmitInFlight = false;
+        state.preset.broken = Array.isArray(data.broken) ? data.broken : [];
+        paintPresetBroken();
+        applyBudgetToNewView();
+        return notStarted(data.error);
+      }
       // Enforced tags (D13): the server's reason goes under the tag field, not into a card alert.
       if (res.status === 422 && data?.fields?.tags) {
         startSubmitInFlight = false;
@@ -14055,6 +14218,7 @@ el.form.addEventListener('submit', async (e) => {
         resetSyncChoice();
         showEngineRefusal(null);
         clearTask(submittedTask);
+        applyPresetSwitches();   // clearTask unchecks Run on the source branch (#688); a preset keeps its own
         // Keep the warn tone when the server attached a budget warning. showView('schedules')
         // already shows the ticket, so the toast needs no Open action.
         notify({ tone: data.budgetWarning ? 'warn' : 'ok', title: 'Scheduled', detail: data.budgetWarning || title || '' });
@@ -14071,6 +14235,7 @@ el.form.addEventListener('submit', async (e) => {
       resetSyncChoice();
       showEngineRefusal(null);
       clearTask(submittedTask);
+      applyPresetSwitches();
       // D6: the user is on the run's page now, so the result is a toast, not a #form-msg line.
       notify({ tone: 'ok', title: 'Run started', detail: title || '', key: `run-${data.runId}`,
         action: { label: 'Open run', run: () => { location.hash = rdHash(data.runId); } } });
@@ -14089,7 +14254,7 @@ el.form.addEventListener('submit', async (e) => {
       return notStarted(`Error: ${err.message}`);
     }
   }, { busy: scheduling ? 'Scheduling…' : 'Starting…', done: scheduling ? 'Scheduled' : 'Started',
-    idleDisabled: () => !!budgetState.budget?.blocked || startSubmitInFlight || !!runTagGate() });
+    idleDisabled: () => !!budgetState.budget?.blocked || startSubmitInFlight || !!runTagGate() || !!presetBlockReason() });
 });
 
 // #555: card alerts for New pipeline go into #run-form, directly above its own action row
@@ -14538,7 +14703,7 @@ function promptExtensionPair(r) {
         title: 'Connect a browser extension?',
         message: [`${r.name} (${browserLabel(r.browser)}) wants to use this Worca.\nExtension id: ${r.origin}\n\nCode: `,
           { strong: formatPairCode(r.code) },
-          '\n\nApprove only if the Worca sidebar in your browser shows the same code. The extension will be able to chat with Ask Worca, explain selected text on web pages and list your projects and workspaces.'],
+          '\n\nApprove only if the Worca sidebar in your browser shows the same code. The extension will be able to use Chat, explain selected text on web pages and list your projects and workspaces.'],
         confirmLabel: 'Approve',
       });
       const gen = modalGen;   // the Promise executor ran synchronously, so modalGen now counts THIS prompt
@@ -15393,7 +15558,7 @@ async function loadAskHistory() {
 }
 // One bullet per non-zero count; the in-progress line only when a turn is live.
 function askHistoryConfirmMessage(c) {
-  const lines = ['This permanently deletes all Ask Worca chat history:'];
+  const lines = ['This permanently deletes all chat history:'];
   if (c.threads) lines.push(`• ${askHistoryCount(c.threads, 'chat thread')} and ${c.threads === 1 ? 'its transcript' : 'their transcripts'}`);
   if (c.worktrees) {
     lines.push(`• ${askHistoryCount(c.worktrees, 'git worktree')} checked out for ${c.threads === 1 ? 'that chat' : 'those chats'} (removed from ${c.worktrees === 1 ? 'its source repo' : 'their source repos'})`);
@@ -15571,11 +15736,30 @@ function setPluginsMsg(text, kind, extra) {
   reportStatus(el.pluginsMsg, 'form-msg', text, kind, extra);
 }
 
-// Tiny modal shell around #plugin-modal: swap in a body element + action buttons.
-// `pluginModalAfterClose`: the open step's own Cancel, run once when the header Close dismisses it (set through
-// mcpTab's `afterClose`); every open starts without one.
+// The "user dismissed #plugin-modal" callbacks (header Close, Escape): a picker or a confirm built on the
+// shell settles through them. Cleared whenever the shell closes — they belong to its content.
+const pluginDismissHooks = new Set();
+function onPluginModalDismiss(fn) { pluginDismissHooks.add(fn); return () => pluginDismissHooks.delete(fn); }
+// `pluginModalAfterClose`: the open step's own Cancel, run once when the header Close or Escape dismisses it (set
+// through mcpTab's `afterClose`); every open starts without one.
 let pluginModalAfterClose = null;
-function pluginModal(title, bodyEl, actions = []) {
+// Header Close and Escape: the guardrails wizard leaves at once (Close never asks); anything else runs its
+// dismiss hooks, then hides, then runs the open step's Cancel.
+function dismissPluginModal() {
+  if (grvState.wizard) { grvExitWizard(); return; }
+  const after = pluginModalAfterClose;
+  pluginModalAfterClose = null;
+  for (const fn of [...pluginDismissHooks]) fn();
+  closePluginModal();
+  if (after) void after();
+}
+// Every body is a form here: a backdrop click never closes it (as before); Escape closes an untouched body
+// and asks over a changed one. A body with nothing to type is never dirty, so Escape simply closes it.
+const pluginGuard = el.pluginModal ? guardModal(el.pluginModal, { kind: 'form', close: () => dismissPluginModal() }) : null;
+
+// Tiny modal shell around #plugin-modal: swap in a body element + action buttons. `guard` overrides the
+// pop-up rules for this body (the wizard's own dirty test and sentence).
+function pluginModal(title, bodyEl, actions = [], guard = {}) {
   pluginModalAfterClose = null;
   el.pluginModalTitle.textContent = title;
   el.pluginModalBody.replaceChildren(bodyEl);
@@ -15586,8 +15770,9 @@ function pluginModal(title, bodyEl, actions = []) {
     return b;
   }));
   el.pluginModal.classList.remove('hidden');
+  pluginGuard?.opened(guard);
 }
-function closePluginModal() { el.pluginModal.classList.add('hidden'); }
+function closePluginModal() { el.pluginModal.classList.add('hidden'); pluginDismissHooks.clear(); }
 
 // Team metrics "Enable" dialog. Reuses the generic slot modal above; the body re-renders
 // when the "Where to record" radio changes.
@@ -15653,10 +15838,12 @@ async function openTmEnableDialog(projectKeyStr, { mode = 'here', change = false
     await Promise.all([paintProjectTmCells(true), onDone ? onDone(j) : null]);
     return done(true);
   };
+  // The submit is not a withButton(), so the shell's default busy() cannot see it: while the POST is out,
+  // Escape and the header Close wait for its answer (it lands in this dialog).
   pluginModal('Set up team metrics', holder, [
     ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
     [view.mode === 'delegate' ? 'Create marker and enable' : 'Create branch and enable', 'btn btn-primary btn-mini tm-enable-submit', submit],
-  ]);
+  ], { busy: () => submitting });
   // Re-label the primary action when the mode flips (pluginModal renders actions once).
   holder.addEventListener('change', () => {
     const b = document.querySelector('#plugin-modal .tm-enable-submit');
@@ -16167,18 +16354,15 @@ if (el.pluginAddBtn) el.pluginAddBtn.addEventListener('click', () => {
   if (!el.marketplaceAddRow.classList.contains('hidden')) el.marketplaceUrl.focus();
 });
 if (el.marketplaceAdd) el.marketplaceAdd.addEventListener('click', addMarketplaceFromInput);
-if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', () => {
-  if (grvState.wizard) return grvCloseWizard();
-  const after = pluginModalAfterClose;
-  pluginModalAfterClose = null;
-  closePluginModal();
-  if (after) void after();
-});
+if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', () => pluginGuard?.cancel());
 
 // ---- Guardrails view (named sets: list + two-step wizard popup) ----
 // All view state lives here; loadGuardrailsView rebuilds the list, and the wizard
 // (Step 1 start-picker -> Step 2 editor) renders into the #plugin-modal body.
 const grvState = { sets: [], editing: null, saved: null, wizard: null };
+// The wizard's dirty test (Step 1 has no editor: never dirty) and sentence, for the pop-up rules.
+const grvWizardDirty = () => { const root = el.pluginModalBody.querySelector('.grv-editor'); return !!root && grvDirty(root); };
+const GRV_GUARD = { isDirty: grvWizardDirty, discardMessage: 'This guardrail set has unsaved changes.' };
 const grvClone = (o) => JSON.parse(JSON.stringify(o));
 const emptyGuardrails = () => ({ honorProjectSettings: true, envScrub: false, envAllowlist: [], protectedPaths: [], deny: [] });
 
@@ -16208,7 +16392,7 @@ function openGuardrailWizard(mode, set) {
     grvState.editing = { id: null, name: '', origin: null };
     grvState.saved = { name: '', settings: emptyGuardrails() };
     const sources = grvState.sets.map((s) => ({ id: s.id, name: s.name, origin: s.origin }));
-    pluginModal('Create guardrails', renderStartStep(sources, { selectedId: '' }), []);
+    pluginModal('Create guardrails', renderStartStep(sources, { selectedId: '' }), [], GRV_GUARD);
     (el.pluginModalBody.querySelector('.grv-source:checked') || el.pluginModalBody.querySelector('.grv-next'))?.focus();
   } else {
     grvState.wizard = { mode, step: 2, sourceId: '' };
@@ -16216,7 +16400,7 @@ function openGuardrailWizard(mode, set) {
     grvState.saved = { name: set.name, settings: grvClone(set.settings) };
     pluginModal(mode === 'view' ? 'View guardrail set' : 'Edit guardrail set',
       renderGuardrailEditor({ ...grvState.editing, settings: grvClone(set.settings) },
-        { mode, dirty: false, msg: '', msgErr: false }), []);
+        { mode, dirty: false, msg: '', msgErr: false }), [], GRV_GUARD);
     el.pluginModalBody.querySelector(mode === 'view' ? '.grv-save' : '.grv-name-input')?.focus();
   }
 }
@@ -16229,21 +16413,6 @@ function grvExitWizard() {
   closePluginModal();
   if (location.hash.slice(1).startsWith('settings/guardrails/')) location.hash = 'settings/guardrails';
   else loadGuardrailsView();
-}
-
-// Close with a dirty-guard: confirm discard only when the Step-2 editor has unsaved
-// changes; Step 1 (no editor) always closes freely.
-async function grvCloseWizard() {
-  const root = el.pluginModalBody.querySelector('.grv-editor');
-  if (root && grvDirty(root)) {
-    const ok = await confirmModal({
-      title: 'Discard changes?',
-      message: 'This guardrail set has unsaved changes. Discard them?',
-      confirmLabel: 'Discard',
-    });
-    if (!ok) return;
-  }
-  grvExitWizard();
 }
 
 function grvDirty(rootEl) {
@@ -17128,17 +17297,8 @@ function mountScriptsView(param = '', { draft = null } = {}) {
       modal: {
         open: pluginModal,
         close: closePluginModal,
-        // #plugin-modal has a header Close button and no Escape/backdrop handler of
-        // its own; a picker must settle on both (the import-workflow confirm's rule).
-        onClose: (fn) => {
-          const onKey = (e) => { if (e.key === 'Escape') fn(); };
-          if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', fn);
-          document.addEventListener('keydown', onKey);
-          return () => {
-            if (el.pluginModalClose) el.pluginModalClose.removeEventListener('click', fn);
-            document.removeEventListener('keydown', onKey);
-          };
-        },
+        // A picker must settle when the shell itself is dismissed (header Close, Escape): its dismiss hooks.
+        onClose: (fn) => onPluginModalDismiss(fn),
       },
       ws: { send: (obj) => { const sock = state.ws; if (sock && state.wsReady) { try { sock.send(JSON.stringify(obj)); } catch { /* ignore */ } } } },
       doc: document,
@@ -17259,7 +17419,12 @@ function revealModelsPanel() {
 // ── Model editor dialog (configurable-models-design.md §4.10) ───────────────
 // The editor is a task: it opens over the catalog, owns Escape and the backdrop, and guards unsaved
 // work on the way out. `mvState.editing` / `openCreate` / `prefill` still say WHAT it edits.
-const mvEditor = { dirty: false, lastFocus: null };
+const mvEditor = { lastFocus: null };
+// A form: a backdrop click never closes it; Escape asks once something changed (an env row added or removed
+// counts). Cancel closes at once — never asks; a successful Save closes it too.
+const modelEditorGuard = el.modelEditorModal ? guardModal(el.modelEditorModal, {
+  kind: 'form', close: () => closeModelEditorDialog(), discardMessage: 'This model has unsaved changes.',
+}) : null;
 
 /** The open editor, wherever it lives (the dialog today; the page while it is closing). */
 function modelEditorEl() {
@@ -17275,9 +17440,9 @@ function openModelEditorDialog() {
   const title = editor.querySelector('.mv-editor-title');
   if (title) title.id = 'mv-editor-heading';
   el.modelEditorHost.replaceChildren(editor);
-  mvEditor.dirty = false;
   mvEditor.lastFocus = document.activeElement;
   el.modelEditorModal.classList.remove('hidden');
+  modelEditorGuard?.opened();
   // A fresh create starts empty enough to type into; an edit keeps the caret out of the way.
   setTimeout(() => {
     const first = editor.querySelector(mvState.editing ? '.mv-editor-btns .btn-go' : 'input:not([type="checkbox"]):not([disabled]), select, textarea');
@@ -17285,18 +17450,10 @@ function openModelEditorDialog() {
   }, 0);
 }
 
-async function closeModelEditorDialog({ force = false } = {}) {
+function closeModelEditorDialog() {
   if (!el.modelEditorModal || el.modelEditorModal.classList.contains('hidden')) return;
-  if (!force && mvEditor.dirty) {
-    const ok = await confirmModal({
-      title: 'Discard changes?', message: 'This model has unsaved changes.',
-      confirmLabel: 'Discard', cancelLabel: 'Keep editing', danger: true,
-    });
-    if (!ok) return;
-  }
   el.modelEditorModal.classList.add('hidden');
   el.modelEditorHost?.replaceChildren();
-  mvEditor.dirty = false;
   mvState.editing = null; mvState.openCreate = false; mvState.prefill = null;
   try { mvEditor.lastFocus?.focus(); } catch { /* the opener may be gone */ }
 }
@@ -17828,7 +17985,10 @@ async function refreshCopilotQuotaFlow(btn) {
 // ONE dialog, two sources: GitHub Copilot's catalog, and any OpenAI-compatible server you run.
 // It belongs to the CATALOG, not to a provider — what it produces is catalog rows, and a flow
 // whose result lands on another tab reads as "nothing happened". The Providers tab links into it.
-const mimp = { source: 'copilot', baseUrl: '', payload: null, lastFocus: null };
+const mimp = { source: 'copilot', baseUrl: '', payload: null, lastFocus: null, importing: false };
+// A form: a backdrop click never closes it; Escape asks once a model is ticked or a URL typed since the last
+// list. While "Import selected" is out, Cancel and Escape wait for its answer.
+const importGuard = el.modelImportModal ? guardModal(el.modelImportModal, { kind: 'form', close: () => closeImportDialog(), busy: () => mimp.importing }) : null;
 
 function setImportMsg(text, kind) {
   if (!el.mimpMsg) return;
@@ -17876,6 +18036,7 @@ function openImportDialog({ source, baseUrl, goToModels } = {}) {
   if (el.mimpGo) el.mimpGo.disabled = true;
   setImportMsg('');
   el.modelImportModal?.classList.remove('hidden');
+  importGuard?.opened();
   setTimeout(() => (mimp.source === 'openai' ? el.mimpBase : el.mimpList)?.focus(), 0);
   // Copilot has one catalog, so it loads at once; an endpoint is listed only when the caller NAMED
   // one (the Providers shortcut). The provider's stored URL is offered as a default, not queried —
@@ -17939,6 +18100,7 @@ async function listImportModels() {
       el.mimpFilter.value = '';
     }
     applyImportFilter();
+    importGuard?.markClean();   // a fresh list is the new starting point
     if (el.mimpGo) el.mimpGo.disabled = !rows;
     setImportMsg(rows ? '' : 'Nothing here can be imported.', rows ? '' : 'err');
     if (endpoint && Array.isArray(data.models) && !data.models.length) setImportMsg('This endpoint lists no models.', 'err');
@@ -17957,6 +18119,8 @@ async function importModelsFlow() {
   if (!ids.length) return setImportMsg('Pick at least one model.', 'err');
   const endpoint = sheet.dataset.source === 'endpoint';
   if (el.mimpGo) el.mimpGo.disabled = true;
+  mimp.importing = true;
+  if (el.mimpCancel) el.mimpCancel.disabled = true;
   setImportMsg('Importing…');
   try {
     const res = endpoint
@@ -17981,6 +18145,8 @@ async function importModelsFlow() {
     setImportMsg(e.message, 'err');
   } finally {
     if (el.mimpGo) el.mimpGo.disabled = false;
+    mimp.importing = false;
+    if (el.mimpCancel) el.mimpCancel.disabled = false;
   }
 }
 
@@ -18101,7 +18267,7 @@ async function saveModelEditorFlow() {
   if (r.skipped) return;
   if (!r.ok) { cardAlert(rootEl, { title: editing ? 'Not saved' : 'Not added', detail: r.error }); return; }
   // Saved work is no longer unsaved work: the dialog closes without asking.
-  await closeModelEditorDialog({ force: true });
+  closeModelEditorDialog();
   setModelsMsg(editing ? 'Model saved.' : 'Model added.', 'ok');
   await refreshModelsEverywhere();
 }
@@ -18277,7 +18443,7 @@ function onModelsClick(ev) {
       mvState.openShare = false;
       renderModelsViewBody();
     } else if (t.classList.contains('mv-cancel')) {
-      closeModelEditorDialog();
+      modelEditorGuard?.cancel();
     } else if (t.classList.contains('mv-env-add')) {
       const wrap = modelEditorEl()?.querySelector('.mv-env');
       if (wrap) wrap.appendChild(makeEnvRow());
@@ -18332,16 +18498,6 @@ for (const host of [el.modelsList, el.modelEditorModal]) {
   host.addEventListener('change', onModelsConnChange);
   host.addEventListener('change', onModelsEngineChange);
 }
-// Unsaved work is guarded on the way out (§4.10), so every edit inside the dialog is remembered.
-if (el.modelEditorModal) {
-  el.modelEditorModal.addEventListener('input', () => { mvEditor.dirty = true; });
-  el.modelEditorModal.addEventListener('change', () => { mvEditor.dirty = true; });
-  el.modelEditorModal.addEventListener('mousedown', (ev) => { if (ev.target === el.modelEditorModal) closeModelEditorDialog(); });
-  document.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Escape' || el.modelEditorModal.classList.contains('hidden')) return;
-    if (!el.confirmModal || el.confirmModal.classList.contains('hidden')) { ev.stopPropagation(); closeModelEditorDialog(); }
-  }, true);
-}
 
 // ── Import dialog wiring ────────────────────────────────────────────────────
 if (el.modelImportModal) {
@@ -18360,7 +18516,7 @@ if (el.modelImportModal) {
   el.mimpBase?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
   el.mimpFilter?.addEventListener('input', () => applyImportFilter());
   el.mimpGo?.addEventListener('click', () => importModelsFlow());
-  el.mimpCancel?.addEventListener('click', () => closeImportDialog());
+  el.mimpCancel?.addEventListener('click', () => importGuard?.cancel());
   // The select-all box lives inside the sheet the dialog hosts.
   el.modelImportModal.addEventListener('change', (ev) => {
     const t = ev.target;
@@ -18370,11 +18526,6 @@ if (el.modelImportModal) {
       if (sheet) for (const c of sheet.querySelectorAll('tbody tr:not(.is-filtered) .mvi-cb')) { if (!c.disabled) c.checked = t.checked; }
     } else if (t && t.closest && t.closest('.mvi-or-filters')) applyImportFilter();   // Free / Tools / window
   });
-  // Backdrop click and Escape close it, like every other overlay in this file.
-  el.modelImportModal.addEventListener('mousedown', (ev) => { if (ev.target === el.modelImportModal) closeImportDialog(); });
-  document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && !el.modelImportModal.classList.contains('hidden')) { ev.stopPropagation(); closeImportDialog(); }
-  }, true);
 }
 
 if (el.modelCreateBtn) {
@@ -18412,7 +18563,7 @@ function storeChoice(key, value) {
 }
 
 const statsState = { range: null, from: '', to: '', tags: [], person: '', groupBy: '', view: storedChoice(STATS_VIEW_KEY, VIEW_CHIPS, 'overview'), last: null };
-const statsTagInput = createTagInput(document, { suggest: fetchTagVocabulary, placeholder: 'Filter: client:acme…' });
+const statsTagInput = createTagInput(document, { suggest: fetchTagVocabulary, placeholder: 'Filter: client:acme…', strict: false });
 document.getElementById('stats-tags')?.appendChild(statsTagInput.el);
 statsTagInput.onChange((tags) => { statsState.tags = tags; loadStatsView(); });
 
@@ -18658,19 +18809,6 @@ if (el.pluginModalBody) {
       grvMutate(root, (s) => { if (!s[fld].includes(v)) s[fld] = [...s[fld], v]; });
       el.pluginModalBody.querySelector(`.gr-add[data-list="${addRow.dataset.list}"] input`)?.focus();
     }
-  });
-}
-
-// Dismiss the wizard via Esc / backdrop click, routed through grvCloseWizard (dirty-guard).
-// Gated on grvState.wizard so other #plugin-modal consumers (plugin install/settings/doctor/409)
-// are untouched. Esc yields when the confirm dialog is on top so it doesn't close both at once.
-if (el.pluginModal) {
-  el.pluginModal.addEventListener('click', (e) => {
-    if (grvState.wizard && e.target === el.pluginModal) grvCloseWizard();
-  });
-  document.addEventListener('keydown', (e) => {
-    if (grvState.wizard && e.key === 'Escape'
-      && (!el.confirmModal || el.confirmModal.classList.contains('hidden'))) grvCloseWizard();
   });
 }
 
@@ -18947,8 +19085,8 @@ document.addEventListener('click', (e) => {
 
 // Teardown handle for the OPEN stop modal (null when closed). closeRunDetail calls
 // through it: the modal is a TOP-LEVEL overlay, not a child of the detail screen,
-// so emptying #run-detail would otherwise leave a full-screen overlay (and a live
-// document keydown listener) over the LIST — after which the double-open guard
+// so emptying #run-detail would otherwise leave a full-screen overlay (still the
+// pop-up on top, owning Escape) over the LIST — after which the double-open guard
 // below makes Stop permanently dead. Exact analogue of shipItClose.
 let stopModalClose = null;
 function closeStopModal() { if (stopModalClose) stopModalClose(); }
@@ -19000,15 +19138,14 @@ function openStopModal(target) {
     if (stopModalClose === done) stopModalClose = null;  // never clobber a newer handle
     ok.removeEventListener('click', onOk);
     cancel.removeEventListener('click', onCancel);
-    modal.removeEventListener('click', onBackdrop);
-    document.removeEventListener('keydown', onKey);
   };
   stopModalClose = done;
-  // All three user-driven dismissals bail while the stop is under way — the
-  // button is also disabled, but Escape and the backdrop have no disabled state.
-  const onCancel = () => { if (!inFlight) done(); };
-  const onBackdrop = (e) => { if (!inFlight && e.target === modal) done(); };
-  const onKey = (e) => { if (!inFlight && e.key === 'Escape') done(); };
+  // A decision: a backdrop click or Escape is the safe "Keep running/paused" — and, like Cancel, does
+  // nothing while the stop is under way (modal-guard `busy`: the button is also disabled, but Escape
+  // and the backdrop have no disabled state).
+  const guard = guardModal(modal, { kind: 'decision', close: done, busy: () => inFlight });
+  guard.opened();
+  const onCancel = () => guard.cancel();
   const onOk = async () => {
     inFlight = true;
     ok.disabled = true;
@@ -19026,8 +19163,6 @@ function openStopModal(target) {
   };
   ok.addEventListener('click', onOk);
   cancel.addEventListener('click', onCancel);
-  modal.addEventListener('click', onBackdrop);
-  document.addEventListener('keydown', onKey);
 }
 
 // The ONE source of the filter bar's markup is #log-bar-tpl; the run page's Logs tab and History
@@ -19288,10 +19423,11 @@ async function openPolicyEnableDialog(projectKeyStr, { mode = 'here', change = f
     if (j?.action === 'created' && view.mode === 'here') location.hash = `team-policy/project:${s.key}`;
     return done(true);
   };
+  // As with team metrics: Escape and the header Close wait for the POST's answer (not a withButton()).
   pluginModal('Set up team policy', holder, [
     ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
     [view.mode === 'follow' ? 'Create marker and follow' : 'Create branch and enable', 'btn btn-primary btn-mini tp-enable-submit', submit],
-  ]);
+  ], { busy: () => submitting });
 }
 
 // Workspace cards (board 6): the policy home line per card + the home sheet + routing.
@@ -21941,9 +22077,12 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     }
     paintHdPr(screen, rec, data);
     paintHdAfter(screen, rec, data);
+    void paintHdSavePreset(screen, data);
     // histCanShip carries both old belts plus the workspace rule:
-    //  - `!rec.pr` (single runs) — the stale-button -> double-POST race is fixed at the
-    //    source (the ship path calls patchHistoryPr); this is the backstop.
+    //  - no open or merged PR (single runs) — the stale-button -> double-POST race is fixed at the
+    //    source (the ship path calls patchHistoryPr, and a shipped record is OPEN); this is the
+    //    backstop. A CLOSED PR does not block, as in paintHdPr: the history-pr rows carry closed
+    //    PRs (the Runs list draws them), and the Create button offered for one must still open the dialog.
     //  - `histPrEligible(rec)` — MANDATORY. Without it the modal opens for a run whose
     //    own detail button paintHdPr just deliberately hid (gh gone, branch deleted
     //    between paint and click), and confirming fires a POST /api/pr that fails.
@@ -21992,13 +22131,13 @@ function paintHistStatusIcon(host, p) {
 // Teardown handle for the OPEN ship-it modal (null when closed). closeHistDetail
 // calls through it: the modal is a top-level overlay, not a child of the detail
 // screen, so emptying #hist-detail would otherwise leave a full-screen overlay
-// (and a live document keydown listener) over the LIST — after which the
+// (still the pop-up on top, owning Escape) over the LIST — after which the
 // double-open guard below makes Create PR permanently dead.
 let shipItClose = null;
 function closeShipItModal() { if (shipItClose) shipItClose(); }
 
-// Per-open generation for the remotes fetch. Cancel is never disabled, so a
-// response can land after the modal was closed and re-opened for a NEWER
+// Per-open generation for the remotes fetch. Cancel stays live while the remotes
+// load, so a response can land after the modal was closed and re-opened for a NEWER
 // generation; it must not repopulate selects it does not own. Same guard as
 // populateBranchSelect's `_branchGen` (:5204-5205).
 let shipItRemotesGen = 0;
@@ -22232,7 +22371,7 @@ async function openShipItFor(ref = {}, link = null) {
     data = await safeJson(res);
     if (!res.ok || !data || !data.state) throw new Error((data && data.error) || `HTTP ${res.status}`);
   } catch (e) { return { opened: false, error: `Could not load this run: ${e.message}` }; }
-  if (!histCanShip(record)) return { opened: false, error: record.pr ? 'This run already has a pull request.' : 'No pull request can be opened for this run.' };
+  if (!histCanShip(record)) return { opened: false, error: prLive(record.pr) ? 'This run already has a pull request.' : 'No pull request can be opened for this run.' };
   const askLink = link && link.askThreadId && link.askCardId ? { askThreadId: link.askThreadId, askCardId: link.askCardId } : null;
   return new Promise((resolve) => {
     const shown = openShipItModal(record, data, { link: askLink, onClose: (out) => resolve(out) });
@@ -22272,10 +22411,13 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   q('.shipit-branch').textContent = record.branch || '';
   q('.shipit-base').textContent = record.sourceBranch || '';
   // #620: the local conflict check before a PR exists (the forge pill takes over once one does). Re-run by
-  // loadShipItRemotes when the base pick appears or changes.
+  // loadShipItRemotes when the base pick appears or changes. The newer of the detail's and the row's check, as the
+  // History detail reads it; one that may be out of date is redone quietly (shipItBaseRecheck).
+  const shipBranch = () => (data && data.state && data.state.branch) || {};
+  const shipBaseRec = () => newerBaseCheck(shipBranch().baseCheck, record.baseCheck);
   const paintShipBase = () => {
     const el = q('.shipit-basecheck'); if (!el) return;
-    const rec = (data && data.state && data.state.branch && data.state.branch.baseCheck) || record.baseCheck || null;
+    const rec = shipBaseRec();
     const show = !!rec && rec.base === shipItChosenBase(modal, record) && (rec.status === 'conflicts' || rec.status === 'clean');
     el.hidden = !show;
     if (!show) return;
@@ -22287,6 +22429,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   };
   modal._paintShipBase = paintShipBase;
   paintShipBase();
+  shipItBaseRecheck(modal, record, data, [{ rec: shipBaseRec(), published: shipBranch().published }], paintShipBase);
   // Spec §5.10: omit the whole summary line when there is nothing to summarize.
   // (No `&& !record.branch` term: histPrEligible gates BOTH doors into this modal
   // and requires `branch`, so that clause could never be false.)
@@ -22297,23 +22440,23 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   q('.shipit-draft-input').checked = false;          // D1: draft is opt-in per ship, never remembered
   q('.shipit-watch-input').checked = false;
   const okBtn = q('.shipit-ok');
+  const cancelBtn = q('.shipit-cancel');
   okBtn.disabled = false; okBtn.textContent = 'Open pull request';
+  cancelBtn.disabled = false;                       // a previous open may have parked it mid-POST
   modal.classList.remove('hidden');
   okBtn.focus();
   // The double-open guard above already returned for a second open, so the
   // generation only advances for a real one.
   const gen = ++shipItRemotesGen;
 
-  // `closed` is load-bearing, not defensive noise. Cancel is NOT disabled while the
-  // POST is in flight, so this sequence is reachable: confirm -> cancel mid-flight
-  // -> `.hd-pr` is still visible (record.pr is not set yet) -> click it -> the
-  // `!hidden` guard above passes -> a SECOND generation of listeners attaches. When
-  // the first fetch finally settles, a non-idempotent `done()` would hide the
-  // freshly-opened modal, null out the NEW generation's `shipItClose` handle (so
-  // closeHistDetail can no longer tear it down) and leave its document keydown
-  // listener attached — after which every further open stacks another `onOk`, i.e.
-  // one click = N POSTs. That is exactly the double-POST these guards prevent.
+  // `closed` is load-bearing, not defensive noise. Cancel and Escape wait for the PR POST's answer (the
+  // Stop dialog's rule), but closeShipItModal — leaving the detail screen, a detail->detail hop — can still
+  // tear the modal down while it is in flight, and a new open then attaches a SECOND generation of
+  // listeners. When the first fetch settles, a non-idempotent `done()` would hide the fresh modal, null out
+  // the NEW generation's `shipItClose` handle and leave its listeners attached — after which every further
+  // open stacks another `onOk`, i.e. one click = N POSTs.
   let closed = false;
+  let posting = false;                              // the PR POST is out
   // The in-flight Generate with AI request (null when idle). Stop and done() abort
   // it; its handler acts only while it is still THIS open's current request.
   let genCtl = null;
@@ -22325,27 +22468,20 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     modal.classList.add('hidden');
     if (shipItClose === done) shipItClose = null;    // never clobber a newer generation's handle
     okBtn.removeEventListener('click', onOk);
-    q('.shipit-cancel').removeEventListener('click', onCancel);
-    modal.removeEventListener('click', onBackdrop);
-    document.removeEventListener('keydown', onKey);
+    cancelBtn.removeEventListener('click', onCancel);
     descBox.removeEventListener('click', onDescClick);
     // worca Chat P2: the opener waits for this close (openShipItFor).
     if (typeof onClose === 'function') { try { onClose(shipped || { opened: false }); } catch { /* a caller's bug never keeps the dialog open */ } }
   };
   shipItClose = done;
-  const onCancel = () => done();
-  const onBackdrop = (e) => { if (e.target === modal) done(); };
-  // Escape while the "replace the description?" confirm is up belongs to that
-  // confirm (its own listener closes it) — it must not take this modal down too.
-  const onKey = (e) => {
-    if (e.key !== 'Escape') return;
-    const cm = document.getElementById('confirm-modal');
-    if (cm && !cm.classList.contains('hidden')) return;
-    done();
-  };
   const descBox = q('.shipit-desc');
   const descInput = q('.shipit-desc-input');
   const descErr = q('.shipit-desc-err');
+  // A form: a backdrop click never closes it; Escape asks once the description or a pick changed (what the
+  // remotes fetch fills in afterwards is not a change). Cancel closes at once.
+  const guard = guardModal(modal, { kind: 'form', close: done, busy: () => posting });
+  guard.opened();
+  const onCancel = () => guard.cancel();
   const stopGenerate = () => {
     if (!genCtl) return;
     const ctl = genCtl;
@@ -22400,6 +22536,8 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   };
   const onOk = async () => {
     okBtn.disabled = true;
+    posting = true;
+    cancelBtn.disabled = true;
     okBtn.textContent = 'Opening…';
     setShipItRemotesDisabled(modal, true);
     cardAlert(card, null);
@@ -22427,6 +22565,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
       const pr = { state: 'OPEN', url: dd.url || '#', number: null };
       record.pr = pr;
       shipped = { opened: true, ...(dd.url ? { url: dd.url } : {}) };
+      posting = false;
       done();
       // Keep the model row in step — list<->detail hops deliberately do NOT reload, so
       // without this a later reopen would offer "Create PR" again for a run that already
@@ -22439,6 +22578,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
       if (screen) {
         paintHdPr(screen, record, histDetailState.data);
         paintHdAfter(screen, record, histDetailState.data);
+        void paintHdSavePreset(screen, histDetailState.data);
         const mergeEl = screen.querySelector('.hist-merge');
         if (mergeEl) {
           setMergePill(mergeEl, dd.mergeable);
@@ -22450,22 +22590,24 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
         }
       }
     } catch (e2) {
-      // The user cancelled (or navigated) while this POST was in flight and a new
+      posting = false;
+      // The user navigated away while this POST was in flight and a new
       // generation may already own the modal — do not re-enable its button or
       // stamp a stale error onto it.
       if (closed) return;
       okBtn.disabled = false;
+      cancelBtn.disabled = false;
       okBtn.textContent = 'Open pull request';
       if (!q('.shipit-remotes').hidden || !q('.shipit-base-wrap').hidden) setShipItRemotesDisabled(modal, false);
       cardAlert(card, { title: 'Not shipped', detail: e2.message });
     }
   };
   okBtn.addEventListener('click', onOk);
-  q('.shipit-cancel').addEventListener('click', onCancel);
-  modal.addEventListener('click', onBackdrop);
-  document.addEventListener('keydown', onKey);
+  cancelBtn.addEventListener('click', onCancel);
   descBox.addEventListener('click', onDescClick);
-  loadShipItRemotes(modal, record, gen, () => closed);
+  // The remote and base-branch picks this fetch fills in are the starting point, not a change. Not once
+  // the user typed or pressed something meanwhile: re-baselining then would hide that edit.
+  loadShipItRemotes(modal, record, gen, () => closed).then(() => { if (!closed && !guard.touched) guard.markClean(); });
   paintShipItTry(modal, record, gen, () => closed);
   return true;
 }
@@ -22496,17 +22638,39 @@ function chainItemFor(r) {
  *  missing one for the chosen remote (D8). */
 function prHostAvailable() { return !!(state.ghAvailable || state.adoAvailable); }
 
+/** Ship it's base lines describe the branch now: when a check it shows may be out of date (baseCheckStale), the
+ *  dialog redoes it quietly as the History detail does, stores it into the loaded detail and repaints its lines
+ *  (and the open detail's block, which reads the same record). entries: [{ rec, published }]. */
+function shipItBaseRecheck(modal, record, data, entries, repaint) {
+  if (!record || !record.id || !entries.some((e) => baseCheckStale(e.rec, e.published))) return;
+  const pid = modal.dataset.pipelineId;
+  baseAutoCheck(record, data).then((stored) => {
+    if (!stored) return;
+    if (modal.dataset.pipelineId === pid && !modal.classList.contains('hidden')) repaint();
+    if (hdShowsRun(record) && histDetailState.data === data) paintHdBase(histDetailState.screen, histDetailState.record, data);
+  });
+}
+
+function paintShipItRepoBase(row, rec) {
+  row.baseNote.hidden = !(rec && rec.status === 'conflicts');
+  if (row.baseNote.hidden) return;
+  const md = baseCheckModel(rec);
+  row.baseNote.className = `hint shipit-basecheck tone-${md.tone}`;
+  row.baseNote.textContent = `${md.label} with ${rec.base}${md.when ? ` (${md.when})` : ''}. Resolve them first, or open the PR anyway.`;
+}
+
 // --- Ship-it, workspace mode: one row per affected member repo --------------
 
 // One Ship-it row per member repo. `row` is the mutable record the batch drives:
 // { el, member, pick, done, failed, busy, statusEl, remotesBox, pushSel, baseSel, branchWrap,
-//   branchSel, baseLabel, hint, remotes, mergeable }. `failed`: the last round's POST failed.
+//   branchSel, baseLabel, baseNote, hint, remotes, mergeable }. `failed`: the last round's POST failed.
 function buildShipItRepoRow(member, summary, canShip) {
   const el = document.createElement('div');
   el.className = 'shipit-repo';
   el.dataset.memberKey = member.memberKey;
   const row = { el, member, pick: null, done: false, failed: false, busy: false, statusEl: null, remotesBox: null,
-    pushSel: null, baseSel: null, branchWrap: null, branchSel: null, baseLabel: null, hint: null, remotes: [], mergeable: null };
+    pushSel: null, baseSel: null, branchWrap: null, branchSel: null, baseLabel: null, baseNote: null, hint: null, remotes: [],
+    mergeable: null };
   const head = document.createElement('label');
   head.className = 'shipit-repo-head';
   if (canShip) {
@@ -22556,15 +22720,11 @@ function buildShipItRepoRow(member, summary, canShip) {
   row.branchWrap.appendChild(row.branchSel);
   line.append(b, arrow, row.baseLabel, row.branchWrap);
   el.appendChild(line);
-  // #620: this member's stored conflict check (the History row summary), while no PR exists.
-  const bc = member.baseCheck;
-  if (bc && bc.status === 'conflicts') {
-    const md = baseCheckModel(bc);
-    const note = document.createElement('small');
-    note.className = `hint shipit-basecheck tone-${md.tone}`;
-    note.textContent = `${md.label} with ${bc.base}${md.when ? ` (${md.when})` : ''}. Resolve them first, or open the PR anyway.`;
-    el.appendChild(note);
-  }
+  // #620: this member's conflict check, while no PR exists (painted by openShipItWsModal: paintShipItRepoBase).
+  row.baseNote = document.createElement('small');
+  row.baseNote.className = 'hint shipit-basecheck';
+  row.baseNote.hidden = true;
+  el.appendChild(row.baseNote);
   row.remotesBox = document.createElement('div');
   row.remotesBox.className = 'shipit-repo-remotes';
   row.remotesBox.hidden = true;
@@ -22732,6 +22892,13 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     list.appendChild(row.el);
     rows.push(row);
   }
+  // #620: each repo's base line reads the newer of the detail's and the row's check; a stale one is redone.
+  const branches = (data && data.state && data.state.branches) || {};
+  const repoBase = (r) => newerBaseCheck(branches[r.member.memberKey]?.baseCheck, r.member.baseCheck);
+  const paintRepoBases = () => { for (const r of rows) if (r.baseNote) paintShipItRepoBase(r, repoBase(r)); };
+  paintRepoBases();
+  shipItBaseRecheck(modal, record, data, rows.filter((r) => r.baseNote)
+    .map((r) => ({ rec: repoBase(r), published: branches[r.member.memberKey]?.published })), paintRepoBases);
   if (skipped.length) {
     const p = document.createElement('p');
     p.className = 'shipit-skipped hint';
@@ -22770,14 +22937,15 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     if (shipItClose === done) shipItClose = null;
     okBtn.removeEventListener('click', onOk);
     q('.shipit-cancel').removeEventListener('click', onCancel);
-    modal.removeEventListener('click', onBackdrop);
-    document.removeEventListener('keydown', onKey);
     if (typeof onClose === 'function') { try { onClose(shipped || { opened: false }); } catch { /* never keeps the dialog open */ } }
   };
   shipItClose = done;
-  const onCancel = () => done();
-  const onBackdrop = (e) => { if (e.target === modal) done(); };
-  const onKey = (e) => { if (e.key === 'Escape') done(); };
+  // A form, like the single-repo dialog: a backdrop click never closes it; Escape asks once a pick or a
+  // base branch changed (what the remotes fetch fills in is not a change). Cancel closes at once — and
+  // mid-batch it stops before the next repo, as before.
+  const guard = guardModal(modal, { kind: 'form', close: done });
+  guard.opened();
+  const onCancel = () => guard.cancel();
 
   // Sequential per repo. A failure never rolls back an opened PR; the failed rows stay
   // ticked, so the next click retries exactly those. Cancel stops before the next repo.
@@ -22833,11 +23001,10 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     if (note) msgs.push(note);
     cardAlert(card, { title: 'Not shipped', detail: msgs.join(' ') });
     paintOk();
+    guard.markClean();                                 // the rows left are the retry, not unsaved edits
   };
   okBtn.addEventListener('click', onOk);
   q('.shipit-cancel').addEventListener('click', onCancel);
-  modal.addEventListener('click', onBackdrop);
-  document.addEventListener('keydown', onKey);
   for (const r of rows) if (r.pick) loadShipItRowRemotes(record, r, gen, () => closed);
   return true;
 }
@@ -22912,7 +23079,8 @@ function histPrEligible(p) {
 function histCanShip(p) {
   if (!p) return false;
   if (p.target === 'workspace' && hasWsMembers(p)) return !wsPrPending(p) && histPrEligible(p);
-  return !p.pr && histPrEligible(p);
+  const live = p.pr && typeof p.pr === 'object' ? String(p.pr.state || '').toUpperCase() : '';
+  return live !== 'OPEN' && live !== 'MERGED' && histPrEligible(p);
 }
 
 // Run on the source branch (branch.sameAsSource): no PR. Once the work was merged back, the one shipping
@@ -22972,7 +23140,9 @@ function hdSyncPr(projectKey, id, row) {
   paintHdOvPrs(histDetailState.screen.querySelector('.hd-ov-prs'), histDetailState.record);
   paintHdBase(histDetailState.screen, histDetailState.record, histDetailState.data);   // an open PR owns the pipeline Resolve
   paintHdAfter(histDetailState.screen, histDetailState.record, histDetailState.data);
+  void paintHdSavePreset(histDetailState.screen, histDetailState.data);
   paintHdGlance(histDetailState.screen, histDetailState.record, histDetailState.data);
+  paintHdPublish(histDetailState.screen, histDetailState.record, histDetailState.data);   // a new PR pushed the branch
 }
 
 // ── History glance ──────────────────────────────────────────────────────────
@@ -23056,6 +23226,65 @@ function paintHdGlance(screen, record, data) {
 // Run chains: every pipeline can be waited for — the button deep-links to New pipeline with the pick made.
 // The record's status is the list row's (fresher than the load-time payload); a deep link's stub has
 // none, so the detail payload's stands in.
+// Run presets slice 2 (#712): Save setup as preset on a run's page. Shown only with the flag on and a stored setup
+// (pipelines.run_setup, v62); a run from before v62, the CLI or a scan has none. One GET per run id per page load.
+const runSetupKnown = new Map();   // pipeline id -> setup object | null
+async function paintHdSavePreset(screen, data) {
+  const btn = screen && screen.querySelector('.hd-save-preset');
+  if (!btn) return;
+  const run = data && data.state;
+  const id = run && run.id;
+  if (!id || !flagOn('runPresets')) { btn.hidden = true; btn.onclick = null; return; }
+  if (!runSetupKnown.has(id)) {
+    btn.hidden = true;
+    const r = await mcpApi('GET', `/api/pipelines/${encodeURIComponent(id)}/setup`);
+    if (!r.ok) return;                                  // 404 / offline: stay hidden, ask again on the next paint
+    runSetupKnown.set(id, (r.data && r.data.setup) || null);
+  }
+  if (!histDetailState || histDetailState.data !== data) return;   // closed, or another run opened while this one was asked about
+  const setup = runSetupKnown.get(id);
+  btn.hidden = !setup;
+  btn.onclick = setup ? () => void saveRunPresetDialog(run, btn) : null;
+}
+
+async function saveRunPresetDialog(run, btn) {
+  if (!state.presets.length) await loadPresets();
+  const scopeOptions = runPresetScopeOptions(run, presetTargetNames());
+  let name = '';
+  let scope = scopeOptions[0].value;
+  let error = '';
+  for (;;) {
+    const v = await promptModal({
+      title: 'Save run setup as a preset', confirmLabel: 'Save preset',
+      fields: [
+        { id: 'name', label: 'Name', value: name, required: true, ...(error ? { hint: error } : {}) },
+        { id: 'scope', label: 'Scope', value: scope, options: scopeOptions, hint: RUN_PRESET_SAVED_NOTE },
+      ],
+    });
+    if (!v) return;
+    name = v.name || '';
+    scope = v.scope || 'global';
+    error = saveDialogError(name, state.presets.map((p) => p.name));
+    if (error) continue;
+    const r = await mcpApi('POST', `/api/pipelines/${encodeURIComponent(run.id)}/preset`, runPresetRequest(name, scope));
+    if (!r.ok) {
+      const text = runPresetErrorText(r.status, r.data);
+      if (r.data && r.data.code === 'no-run-setup') {
+        runSetupKnown.set(run.id, null);
+        if (btn) btn.hidden = true;
+        notify({ tone: 'err', title: 'Could not save the preset', detail: text });
+        return;
+      }
+      error = text;
+      continue;
+    }
+    state.presets = [...state.presets, r.data.preset];
+    paintPresetMenu();
+    notify({ tone: 'ok', title: `Saved preset "${r.data.preset.name}"`, detail: 'Pick it in New run or on the Chat home' });
+    return;
+  }
+}
+
 function paintHdAfter(screen, record, data = null) {
   const btn = screen.querySelector('.hd-after');
   if (!btn) return;
@@ -23332,7 +23561,8 @@ function hdWsRepoItem(m) {
 
 // --- Publish branch (#618): push a finished run's branch without opening a PR ----
 // GET /api/runs/:id/publish answers each repo's state from refs only: 'none' (no branch here),
-// 'unpublished', 'published' or 'moved' (local commits since: the action reads Push changes).
+// 'unpublished', 'published', 'moved' (local commits not on the remote: the action reads Push changes)
+// or 'diverged' (the remote has commits too: a push would be refused, so no action for it).
 const PUBLISH_FINISHED = new Set(['done', 'stopped', 'error']);
 let publishPaintGen = 0;
 
@@ -23355,7 +23585,13 @@ async function paintHdPublish(screen, record, data) {
     const res = await fetch(`/api/runs/${encodeURIComponent(record.id)}/publish?${new URLSearchParams(publishScope(record))}`);
     const d = await safeJson(res);
     if (!res.ok || !d || !Array.isArray(d.members)) return;
-    members = d.members.filter((m) => m && m.branch && m.state && m.state !== 'none');
+    // A branch with a pull request was pushed when the PR opened: never "Publish branch" for it. Ship it repaints
+    // this block once the PR is recorded (hdSyncPr), and this gate covers the forge deleting the merged branch
+    // and a fetch pruning its tracking ref. Push changes stays for local commits.
+    const ws = record.target === 'workspace';
+    const prOf = (m) => (ws ? histWsMembers(record).find((x) => x.memberKey === m.memberKey)?.pr : record.pr);
+    members = d.members.filter((m) => m && m.branch && m.state && m.state !== 'none'
+      && !(m.state === 'unpublished' && prLive(prOf(m))));
   } catch { return; }
   if (gen !== publishPaintGen || !members.length) return;
   const pub = members.filter((m) => m.remote && m.state !== 'unpublished');
@@ -23369,7 +23605,7 @@ async function paintHdPublish(screen, record, data) {
   if (!moved && !members.some((m) => m.state === 'unpublished')) return;
   btn.textContent = moved ? 'Push changes' : 'Publish branch';
   btn.hidden = false;
-  btn.onclick = () => openPublishModal(screen, record, data, members);   // property: repaints re-bind it
+  btn.onclick = () => openPublishModal(screen, record, data, members.filter((m) => m.state !== 'diverged'));   // property: repaints re-bind it
 }
 
 function openPublishModal(screen, record, data, members) {
@@ -23437,12 +23673,13 @@ function openPublishModal(screen, record, data, members) {
     closed = true;
     modal.classList.add('hidden');
     okBtn.removeEventListener('click', onOk);
-    q('.publish-cancel').removeEventListener('click', done);
-    modal.removeEventListener('click', onBackdrop);
-    document.removeEventListener('keydown', onKey);
+    q('.publish-cancel').removeEventListener('click', onCancel);
   };
-  const onBackdrop = (e) => { if (e.target === modal) done(); };
-  const onKey = (e) => { if (e.key === 'Escape') done(); };
+  // A form: a backdrop click never closes it; Escape asks once a pick or a remote changed. Cancel closes at
+  // once (mid-batch it stops before the next branch).
+  const guard = guardModal(modal, { kind: 'form', close: done });
+  guard.opened();
+  const onCancel = () => guard.cancel();
 
   // Sequential per repo, like the workspace Ship-it batch: failed rows stay ticked for a retry.
   const onOk = async () => {
@@ -23476,11 +23713,10 @@ function openPublishModal(screen, record, data, members) {
     if (!failed) { done(); return; }
     cardAlert(card, { title: 'Not published', detail: `${failed} of ${batch.length} branch${batch.length === 1 ? '' : 'es'} could not be pushed. Fix the cause and retry.` });
     okLabel();
+    guard.markClean();                                    // the rows left are the retry, not unsaved edits
   };
   okBtn.addEventListener('click', onOk);
-  q('.publish-cancel').addEventListener('click', done);
-  modal.addEventListener('click', onBackdrop);
-  document.addEventListener('keydown', onKey);
+  q('.publish-cancel').addEventListener('click', onCancel);
 
   for (const r of rows) {
     const qs = new URLSearchParams({ id: record.id, ...publishScope(record), ...(r.m.memberKey ? { memberKey: r.m.memberKey } : {}) });
@@ -24073,21 +24309,21 @@ function hdSetArchiveGate(btn, retained, checkout = null) {
 // Resolve in a pipeline / Resolve in a terminal. Idempotent (re-run by refreshHdFromRow); handlers are properties.
 const BASE_FINISHED = new Set(['done', 'stopped', 'error']);
 
-/** [{ key, name, rec, resolving, prOpen }] from the detail state; a row-level summary newer than the detail wins
- *  (no file list then). `prOpen`: the branch has an open PR, whose Overview row owns the pipeline Resolve. */
+/** [{ key, name, rec, published, resolving, prOpen }] from the detail state; a row-level summary newer than the
+ *  detail wins (no file list then). `published`: the branch's last recorded push. `prOpen`: the branch has an open
+ *  PR, whose Overview row owns the pipeline Resolve. */
 function hdBaseMembers(record, data) {
   const st = (data && data.state) || {};
-  const newer = (a, b) => (b && (!a || Date.parse(b.at || '') > Date.parse(a.at || '')) ? b : a);
   if (st.target === 'workspace') {
     const names = new Map((st.projects || []).map((p) => [p.projectKey, p.projectName]));
     const rows = new Map(((record && record.members) || []).map((m) => [m.memberKey, m]));
     return Object.entries(st.branches || {}).filter(([, br]) => br && br.feature && br.branchKept !== false && !br.branchDeleted)
-      .map(([key, br]) => ({ key, name: names.get(key) || key, rec: newer(br.baseCheck, rows.get(key) && rows.get(key).baseCheck),
-        resolving: !!br.baseResolve, prOpen: prStateOf(rows.get(key) && rows.get(key).pr) === 'OPEN' }));
+      .map(([key, br]) => ({ key, name: names.get(key) || key, rec: newerBaseCheck(br.baseCheck, rows.get(key) && rows.get(key).baseCheck),
+        published: br.published || null, resolving: !!br.baseResolve, prOpen: prStateOf(rows.get(key) && rows.get(key).pr) === 'OPEN' }));
   }
   const br = st.branch || {};
-  return br.feature ? [{ key: null, name: null, rec: newer(br.baseCheck, record && record.baseCheck), resolving: !!br.baseResolve,
-    prOpen: prStateOf(record && record.pr) === 'OPEN' }] : [];
+  return br.feature ? [{ key: null, name: null, rec: newerBaseCheck(br.baseCheck, record && record.baseCheck),
+    published: br.published || null, resolving: !!br.baseResolve, prOpen: prStateOf(record && record.pr) === 'OPEN' }] : [];
 }
 
 function paintHdBase(screen, record, data) {
@@ -24105,26 +24341,42 @@ function paintHdBase(screen, record, data) {
   if (members.length) hdBaseAuto(screen, record, data, members);
 }
 
-/** The check runs by itself once per open of the detail when a branch was never checked, or was checked
- *  over BASE_AUTO_MS ago. Quiet: no result line, a failed request leaves the stored line as it was. */
+/** The check runs by itself once per open of the detail (and on each open of Ship it) when a branch was never
+ *  checked, was checked over BASE_AUTO_MS ago, or was checked before its last recorded push. Quiet: no result
+ *  line, a failed request leaves the stored line as it was. */
 const BASE_AUTO_MS = 5 * 60_000;
 let hdBaseAutoFor = null;          // the run whose open may still auto-check (setupHdActions arms it)
 
-function hdBaseAuto(screen, record, data, members) {
-  if (hdBaseAutoFor !== record.id) return;
-  const stale = (rec) => !rec || !(Date.now() - Date.parse(rec.at || '') < BASE_AUTO_MS);
-  if (!members.some((m) => stale(m.rec))) return;
-  hdBaseAutoFor = null;
+/** A stored check that may not describe the branch now. A check made after the last push read the head as it is
+ *  (local commits not pushed included). An older one is out of date when it checked another head than the push
+ *  record names; a record without heads falls back to the times. */
+function baseCheckStale(rec, published) {
+  if (!rec || !(Date.now() - Date.parse(rec.at || '') < BASE_AUTO_MS)) return true;
+  if (!published || Date.parse(rec.at || '') > Date.parse(published.at || '')) return false;
+  return published.sha && rec.headSha ? published.sha !== rec.headSha : Date.parse(published.at || '') > Date.parse(rec.at || '');
+}
+
+/** POST base-check { auto } and store every member's answer into the loaded detail. Resolves true once stored. */
+function baseAutoCheck(record, data) {
   const ws = data && data.state && data.state.target === 'workspace';
-  fetch(`/api/runs/${encodeURIComponent(record.id)}/base-check?${runActionQuery(record.projectDir || null, record).toString()}`,
+  return fetch(`/api/runs/${encodeURIComponent(record.id)}/base-check?${runActionQuery(record.projectDir || null, record).toString()}`,
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto: true }) })
     .then(async (res) => {
       const d = res.ok ? await safeJson(res) : null;
-      if (!d || !Array.isArray(d.members)) return;
+      if (!d || !Array.isArray(d.members)) return false;
       for (const x of d.members) hdBaseStore(data, ws ? x.projectKey : null, x.baseCheck);
-      if (hdBaseMsgsFor === record.id) paintHdBase(screen, record, data);   // still this run's detail
+      return true;
     })
-    .catch(() => {});
+    .catch(() => false);
+}
+
+function hdBaseAuto(screen, record, data, members) {
+  if (hdBaseAutoFor !== record.id) return;
+  if (!members.some((m) => baseCheckStale(m.rec, m.published))) return;
+  hdBaseAutoFor = null;
+  baseAutoCheck(record, data).then((stored) => {
+    if (stored && hdBaseMsgsFor === record.id) paintHdBase(screen, record, data);   // still this run's detail
+  });
 }
 
 function hdBaseNeedsLine(m) {
@@ -24171,11 +24423,12 @@ function hdBaseItem(screen, record, data, m) {
 const hdBaseMsgs = new Map();
 let hdBaseMsgsFor = null;
 
-/** Write a fresh record into the loaded detail so a repaint shows it. */
+/** Write a fresh record into the loaded detail so a repaint shows it. Answers can land out of order (an automatic
+ *  check that started before an Update branch answers after it): a record older than the stored one is dropped. */
 function hdBaseStore(data, key, rec) {
   const st = data && data.state; if (!st || !rec) return;
-  if (st.target === 'workspace') { if (st.branches && st.branches[key]) st.branches[key].baseCheck = rec; }
-  else if (st.branch) st.branch.baseCheck = rec;
+  const br = st.target === 'workspace' ? st.branches && st.branches[key] : st.branch;
+  if (br) br.baseCheck = newerBaseCheck(rec, br.baseCheck);
 }
 
 /** The loaded detail learns of a resolution the server just marked, so Re-check shows without a reload. */
@@ -24475,6 +24728,7 @@ function setupHdActions(screen, record, data) {
 
   paintHdPr(screen, record, data);
   paintHdAfter(screen, record, data);
+  void paintHdSavePreset(screen, data);
   paintHdPublish(screen, record, data);
   hdBaseAutoFor = record.id;
   paintHdBase(screen, record, data);
@@ -24669,10 +24923,10 @@ function refreshHdFromRow() {
   // History rows intentionally carry only base-check summaries. If one is newer than the loaded detail,
   // rehydrate the detail instead of replacing its authoritative conflicting-file list with that summary.
   const st = histDetailState.data.state || {};
-  const newerBaseCheck = (summary, full) => summary && (!full || Date.parse(summary.at || '') > Date.parse(full.at || ''));
+  const rowNewer = (summary, full) => !!summary && newerBaseCheck(full, summary) === summary;
   const baseChanged = st.target === 'workspace'
-    ? (row.members || []).some((m) => newerBaseCheck(m.baseCheck, st.branches?.[m.memberKey]?.baseCheck))
-    : newerBaseCheck(row.baseCheck, st.branch?.baseCheck);
+    ? (row.members || []).some((m) => rowNewer(m.baseCheck, st.branches?.[m.memberKey]?.baseCheck))
+    : rowNewer(row.baseCheck, st.branch?.baseCheck);
   if (baseChanged && reloadHistDetail()) return;
   histDetailState.record = row;
   const { screen, data } = histDetailState;
@@ -24682,6 +24936,7 @@ function refreshHdFromRow() {
   refreshHistResumeGating();
   paintHdPr(screen, row, data);                         // idempotent; re-binds btn.onclick
   paintHdAfter(screen, row, data);
+  void paintHdSavePreset(screen, data);
   paintHdBase(screen, row, data);                       // #620: a post-run check that landed after the open
   paintHdLive(screen, row, data);
   paintHdGlance(screen, row, data);   // the head's project/day/clock line re-reads the record
@@ -25253,7 +25508,7 @@ function hdCommentCard(doc, comment, ctx, { detached = false, reply = false, las
     }
     actions.append(
       act('hd-cmt-resolve', comment.resolved ? 'Reopen' : 'Resolve', () => { void ctx.setResolved(comment, !comment.resolved, card); }),
-      act('hd-cmt-ask', 'Ask Worca', () => ctx.toAsk(comment)),
+      act('hd-cmt-ask', 'Ask in Chat', () => ctx.toAsk(comment)),
       act('hd-cmt-delete', 'Delete', () => { void ctx.remove(comment); }),
       act('hd-cmt-reply', 'Reply', () => ctx.openReply(comment, threadEl), 'reply'),
     );
@@ -28136,34 +28391,24 @@ function rdHandOffOpen() {
 }
 
 // Escape on the History detail screen navigates back to the list — but never
-// while an overlay modal is open (those own Escape). Capture-phase so the guard
-// reads each modal's PRE-close state; the viewer's own handler and confirmModal's
-// per-invocation handler run in bubble phase after.
+// while an overlay modal is open (those own Escape).
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
-  // #527: a sync dialog (details / refusal card) owns Escape; the detail screen stays.
-  if (document.querySelector('.viewer-modal.sync-modal')) return;
+  // Any pop-up on screen owns Escape — modal-guard.mjs hands it to the one on top — and the detail screen
+  // stays. Capture phase, so this reads the state BEFORE the guard closes that pop-up.
+  if (dialogOpen(document)) return;
   if (currentView() !== 'history') return;
   if (!el.histShell || !el.histShell.classList.contains('detail-open')) return;
   // The search box owns its Escape (clears and closes the search).
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search-row')) return;
   if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
-  if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
-  if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
-  if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
-  if (el.reportModal && !el.reportModal.classList.contains('hidden')) return;
   // An open diff-comment composer owns Escape: it cancels the draft (the textarea's
   // own keydown does that) instead of sending the whole detail screen back to the
   // list. Same shape as the modal guards above — this listener is CAPTURE phase, so
   // a guard here is the only way to opt a subtree out.
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('.hd-cmt-composer')) return;
-  const ship = document.getElementById('shipit-modal');
-  if (ship && !ship.classList.contains('hidden')) return;
-  // Symmetry with the Running arm below: whichever overlay is up owns Escape.
-  const stopUp = document.getElementById('stop-modal');
-  if (stopUp && !stopUp.classList.contains('hidden')) return;
   // The header's ⋯ menu owns Escape while it is open: dismiss it and stay on the
   // screen. Handled HERE rather than in its own listener because this one is capture
   // phase — a separate listener would fire after the navigation had already run.
@@ -28183,21 +28428,12 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
-  // #527: a sync dialog (details / refusal card) owns Escape; the detail screen stays.
-  if (document.querySelector('.viewer-modal.sync-modal')) return;
+  if (dialogOpen(document)) return;                                    // a pop-up owns Escape (modal-guard.mjs)
   if (currentView() !== 'running') return;
   if (!el.runShell || !el.runShell.classList.contains('detail-open')) return;
   // The search box owns its Escape (clears and closes the search).
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search-row')) return;
   if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
-  if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
-  if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
-  if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
-  // This arm does NOT inherit the History arm's guards — every modal that can be up
-  // over the Running detail screen has to be listed here too.
-  if (el.reportModal && !el.reportModal.classList.contains('hidden')) return;
-  const stop = document.getElementById('stop-modal');
-  if (stop && !stop.classList.contains('hidden')) return;
   // The header cost's breakdown owns Escape while it is open (same reason as History's ⋯ menu).
   if (closeCostPop({ focusTrigger: true })) return;
   // Details steps back to the run's glance; the glance steps back to the list, in the
@@ -28214,14 +28450,9 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
-  // #527: a sync dialog (details / refusal card) owns Escape; the detail screen stays.
-  if (document.querySelector('.viewer-modal.sync-modal')) return;
+  if (dialogOpen(document)) return;                                    // a pop-up owns Escape (modal-guard.mjs)
   if (currentView() !== 'projects') return;
   if (!el.projShell || !el.projShell.classList.contains('detail-open')) return;
-  if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
-  if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
-  if (el.projectAddModal && !el.projectAddModal.classList.contains('hidden')) return;
-  if (el.projectBulkModal && !el.projectBulkModal.classList.contains('hidden')) return;
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('.mem-editor')) return;
   void leaveProjDetail();
 }, true);
@@ -28240,15 +28471,14 @@ document.addEventListener('keydown', (e) => {
 //     the mousedown on the link itself causes, so a `change` binding would navigate
 //     with the previous href and silently drop the text the user just typed.
 //
-// This section sits AFTER the two capture-phase route guards above on purpose. Both
-// they and the Escape closer below listen on `document`, and an Escape dispatched AT
-// `document` runs them in REGISTRATION order regardless of the capture flag. Register
-// this earlier and one Escape would both close the modal and send the detail screen
-// back to its list.
+// One Escape never both closes this modal and sends the detail screen back to its list:
+// the capture-phase route guards above stand down while a pop-up is up (dialogOpen), and
+// capture listeners on `document` run before its bubble listeners — modal-guard's Escape
+// among them — even for an event dispatched AT `document` (DOM spec; jsdom 29 does the same).
 
 const reportState = {
   pipelineId: '', payload: null, issue: null, token: 0, debounce: 0,
-  include: { paths: false, prompt: false },
+  include: { paths: false, prompt: false }, filing: false,
 };
 
 function reportError(message) {
@@ -28313,11 +28543,13 @@ function openReportModal(pipelineId) {
   reportState.pipelineId = pipelineId;
   reportState.include = { paths: false, prompt: false };
   el.reportExpectation.value = '';
+  el.reportClose.textContent = 'Cancel';
   // The browser fallback is offered only once the server has told us gh cannot do it.
   el.reportIssue.hidden = true;
   el.reportReason.replaceChildren(...renderReasonOptions({ doc: document }));
   el.reportOptins.replaceChildren(renderOptIns({ doc: document, include: reportState.include }));
   el.reportModal.classList.remove('hidden');
+  reportGuard.opened();
   el.reportReason.focus();
   refreshReport();
 }
@@ -28332,6 +28564,10 @@ function closeReportModal() {
   reportState.payload = null;
 }
 
+// A form: a backdrop click never closes it; Escape asks once the reason, the text or an opt-in changed.
+// While "Create GitHub issue" is out, Cancel and Escape wait for its answer.
+const reportGuard = guardModal(el.reportModal, { kind: 'form', close: () => closeReportModal(), busy: () => reportState.filing });
+
 /** Best-effort clipboard write; returns whether it landed. Mirrors copyLogToClipboard. */
 async function reportCopyText() {
   const text = el.reportPreview.textContent;
@@ -28343,8 +28579,7 @@ async function reportCopyText() {
   }
 }
 
-el.reportClose.addEventListener('click', closeReportModal);
-el.reportModal.addEventListener('click', (e) => { if (e.target === el.reportModal) closeReportModal(); });
+el.reportClose.addEventListener('click', () => reportGuard.cancel());
 el.reportReason.addEventListener('change', refreshReport);
 el.reportExpectation.addEventListener('input', () => {
   clearTimeout(reportState.debounce);
@@ -28364,12 +28599,6 @@ el.reportOptins.addEventListener('change', (e) => {
   if (!key || !(key in reportState.include)) return;
   reportState.include[key] = !!e.target.checked;
   refreshReport();
-});
-
-// Bubble-phase, like #viewer-card: the two capture-phase route guards bail while
-// this modal is open, then this closes it.
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !el.reportModal.classList.contains('hidden')) closeReportModal();
 });
 
 el.reportCopy.addEventListener('click', async (e) => {
@@ -28414,6 +28643,9 @@ function showFiledIssue(url) {
   a.textContent = url.replace(/^https?:\/\/(?:www\.)?github\.com\//, '');
   el.reportFiled.append(document.createTextNode('Issue filed: '), a);
   el.reportFiled.hidden = false;
+  // Filed: nothing here is unsaved any more — the way out says Close and asks nothing.
+  el.reportClose.textContent = 'Close';
+  reportGuard.markClean();
 }
 
 el.reportCreate.addEventListener('click', async (e) => {
@@ -28435,6 +28667,8 @@ el.reportCreate.addEventListener('click', async (e) => {
   clearTimeout(btn._copyTimer);
   btn.disabled = true;
   btn.textContent = 'Filing…';
+  reportState.filing = true;
+  el.reportClose.disabled = true;
   reportError('');
   try {
     const res = await fetch(`/api/pipelines/${encodeURIComponent(reportState.pipelineId)}/report-issue`, {
@@ -28465,6 +28699,8 @@ el.reportCreate.addEventListener('click', async (e) => {
     clearTimeout(btn._copyTimer);
     btn.disabled = false;
     btn.textContent = label;
+    reportState.filing = false;
+    el.reportClose.disabled = false;
   }
 });
 
@@ -28496,6 +28732,7 @@ function showViewer(title, text) {
   el.viewer.classList.remove('holds-artifact');
   el.viewer.textContent = text;
   el.viewerCard.classList.remove('hidden');
+  viewerGuard.opened();
   el.viewerCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -28530,15 +28767,9 @@ function hideViewer() {
   // the modal is next opened with different content. Same for an <embed> PDF.
   el.viewer.replaceChildren();
 }
+// Read-only: a backdrop click (press and release on the overlay) or Escape closes it.
+const viewerGuard = guardModal(el.viewerCard, { kind: 'viewer', close: () => hideViewer() });
 el.viewerClose.addEventListener('click', hideViewer);
-// Close the modal on backdrop click (overlay itself, not its inner card)...
-el.viewerCard.addEventListener('click', (e) => {
-  if (e.target === el.viewerCard) hideViewer();
-});
-// ...and on Escape, when it's open.
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !el.viewerCard.classList.contains('hidden')) hideViewer();
-});
 
 // Delegated: an artifact log line (`.log-artifact`) opens in the viewer. The run
 // context rides on the enclosing log pane's `_artifactCtx` (set by the live card
@@ -29843,6 +30074,32 @@ async function downloadRunArtifact(ctx, artifact) {
 // Chat P5 (CONTRACT §3): the Chat opens artifacts in this same popup. ask-panel reads chatDeps.openArtifact at call
 // time; chatDeps is P1's, declared at the top of this file beside askPanel, so it exists when this statement runs.
 chatDeps.openArtifact = (ref, artifact) => { openRunArtifactPopup(ref || {}, artifact); };
+// The chat files card (show_files, docs/show-files.md) opens its files in the same popup, over the attachment route.
+chatDeps.openFiles = ({ threadId, items, index = 0 }) => {
+  if (!threadId || !Array.isArray(items) || !items.length) return null;
+  const list = filesForViewer(items);
+  return openArtifactViewer({
+    doc: document, win: window, fetch: (u, o) => fetch(u, o),
+    artifact: list[index] || list[0], list,
+    urls: fileViewerUrls(threadId),
+    metaFor: () => ({ step: null, cycle: null }),
+    deps: { ...artifactViewerDeps(), hljsLoader: diffHljsLoader },
+  });
+};
+// Show in folder on the files card: whether this worca can open a folder on this machine (asked once; null = no) and the
+// open itself. The server keeps the path; the card only names the attachment.
+let askRevealInfo = null;
+chatDeps.revealInfo = () => (askRevealInfo ??= fetch('/api/ask/reveal')
+  .then((r) => (r.ok ? r.json() : null), () => null)
+  .then((j) => (j && j.available && j.label ? { label: j.label } : null)));
+chatDeps.revealFile = async ({ threadId, attId, name }) => {
+  let r = null;
+  try { r = await fetch(`/api/ask/threads/${encodeURIComponent(threadId)}/attachments/${encodeURIComponent(attId)}/reveal`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); }
+  catch { r = null; }
+  if (r && r.ok) return;
+  const body = r ? await r.json().catch(() => null) : null;
+  notify({ tone: 'err', title: `Could not show ${name || 'the file'}`, detail: (body && body.error) || 'The server did not answer.' });
+};
 
 // One clickable artifact row (kind chip · name · byte size) for the Agents tab's per-node list. It opens the popup with
 // its node's rows as the ←/→ list.
@@ -30423,6 +30680,7 @@ function runsLiveItem(r) {
     failedStep: failed && failed.nodeId ? nodeLabel(r.stepper, failed.nodeId) : '',
     startedAt: r.startedAt, groupKey: g.key, groupName: g.name, by: runsPersonKey(r.startedBy),
     pr: terminal ? glancePrInput(rec) : null,
+    ...prGlyphOf(rec),
     checks: rec && typeof rec.checks === 'number' ? rec.checks : null,
     files: rec && typeof rec.files === 'number' ? rec.files : null,
     tags: flagOn('runTags') ? (r.tags || []) : [],
@@ -30472,6 +30730,7 @@ function runsHistItem(p) {
     limitEngine: p.limitEngine || null, limitNote: limitRowNote(p),
     startedAt: p.startedAt, mtime: p.mtime, groupName: histGroupName(p), by: runsPersonKey(p.startedBy),
     pr: glancePrInput(p),
+    ...prGlyphOf(p),
     archived: !!p.archived,
     checks: typeof p.checks === 'number' ? p.checks : null,
     files: typeof p.files === 'number' ? p.files : null,
@@ -30490,9 +30749,11 @@ function runsSchedItem(t) {
 // and the focus fallbacks below match on it).
 // `r.progress ? 1 : 0`: the line's presence is structural; its fraction/tone are patched in place (paintRunsProgress).
 // A member's icon and asks: the fields its dot reads, so a paused member that gains a question (icon stays 'paused')
-// repaints amber.
+// repaints amber. prIcon/prCount: a history-pr batch can turn an open PR into a draft or a conflicting one while
+// the word stays "In review".
 const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.icon, r.word, r.detail, r.time, r.groupName, r.base, (r.tags || []).join(','),
-  r.progress ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.href, m.icon, !!m.asks])] : 0];
+  r.progress ? 1 : 0, r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.pipelineId, m.ticketId, m.state, m.title, m.prUrl, m.href, m.icon, !!m.asks])] : 0,
+  r.prIcon, r.prCount];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over (same slot first), then the
@@ -31336,7 +31597,7 @@ function closeRunDetail({ instant = false } = {}) {
   if (!shell.classList.contains('detail-open')) { runDetailState = { runId: '', screen: null }; return; }
   // Tear the stop modal down: it is a TOP-LEVEL overlay, not a child of the detail
   // screen, so emptying #run-detail would otherwise strand a full-screen overlay
-  // (and its live document keydown listener) over the list — after which
+  // (still the pop-up on top, owning Escape) over the list — after which
   // openStopModal's double-open guard makes Stop permanently dead. Below the
   // detail-open guard: with no detail open there is no modal of its to close.
   closeStopModal();
@@ -33687,6 +33948,7 @@ function openClaudeSetup() {
   if (!modal) return;
   paintClaudeSetupStatus();
   modal.classList.remove('hidden');
+  claudeSetupGuard?.opened();
   document.getElementById('claude-setup-check')?.focus?.();
   // The page's status may predate a sign-in (or a transient signed-out probe):
   // ask again on open instead of repeating it.
@@ -33699,14 +33961,11 @@ async function recheckClaudeSetup() {
   paintClaudeSetupStatus();
 }
 function closeClaudeSetup() { document.getElementById('claude-setup-modal')?.classList.add('hidden'); }
+// Read-only status: a backdrop click or Escape closes it.
+const claudeSetupEl = document.getElementById('claude-setup-modal');
+const claudeSetupGuard = claudeSetupEl ? guardModal(claudeSetupEl, { kind: 'viewer', close: () => closeClaudeSetup() }) : null;
 document.getElementById('claude-setup-close')?.addEventListener('click', closeClaudeSetup);
-document.getElementById('claude-setup-modal')?.addEventListener('click', (e) => { if (e.target === e.currentTarget) closeClaudeSetup(); });
 document.getElementById('claude-setup-check')?.addEventListener('click', recheckClaudeSetup);
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  const m = document.getElementById('claude-setup-modal');
-  if (m && !m.classList.contains('hidden')) closeClaudeSetup();
-});
 
 // ── Guides ──────────────────────────────────────────────────────────────────
 // Each hop is derived from REAL UI state at the moment it is needed (which view
@@ -34288,7 +34547,7 @@ const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'adv
 const VIEW_TITLES = Object.freeze({
   chat: 'Chat', stats: 'Statistics', workflows: 'Workflows', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'team-metrics': 'Team metrics', 'team-policy': 'Team policy',
-  guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca', tags: 'Tags',
+  guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules',
 });
@@ -34335,7 +34594,7 @@ document.addEventListener('worca:level', () => {
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'tags', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
+const SETTINGS_TABS = ['general', 'tags', 'presets', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
 // Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
 // it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
 const SETTINGS_FORM_TABS = ['general', 'tags', 'runs', 'ask'];
@@ -34366,6 +34625,7 @@ function parseSettingsParam(param = '') {
   const tab = i === -1 ? param : param.slice(0, i);
   const sub = i === -1 ? '' : param.slice(i + 1);
   if (tab === 'tags' && !flagOn('runTags')) return ['general', ''];   // the Tags tab exists only while runTags is on
+  if (tab === 'presets' && !flagOn('runPresets')) return ['general', ''];
   return SETTINGS_TABS.includes(tab) ? [tab, sub] : ['general', ''];
 }
 // The canonical param for a tab: General is plain '#settings', never '#settings/general'.
@@ -34440,8 +34700,8 @@ function showView(name, param = '') {
   } else {
     runsUi.skipRestore = false;
   }
-  // #report-modal is a top-level `position:fixed;inset:0` overlay with a live document
-  // keydown listener — the same class as #stop-modal below. Leaving the view with one
+  // #report-modal is a top-level `position:fixed;inset:0` overlay that owns Escape while
+  // it is up — the same class as #stop-modal below. Leaving the view with one
   // up would float a dialog for a run the user has navigated away from over the next
   // view, and its pending debounce could still POST /report for that run.
   // Unconditional and first: closeReportModal is a no-op when nothing is open.
@@ -34494,7 +34754,7 @@ function showView(name, param = '') {
   // closeStopModal() is called HERE and not from closeRunDetail, whose teardown
   // sits below a `detail-open` early return. A route change away from the live run is
   // the moment to drop it — #stop-modal is a top-level `position:fixed;inset:0` overlay
-  // with a live document keydown listener, so leaving with one up would float it over
+  // that owns Escape while it is up, so leaving with one up would float it over
   // the next view. Same class of guard as the guardrail wizard and info-tip above.
   if (currentShownView === 'running' && name !== 'running') {
     closeStopModal();
@@ -34686,6 +34946,7 @@ function showSettingsTab(param = '') {
     void loadSettings().then(() => focusSettingsCard(settingsPanes.find((p) => p.dataset.tab === tab), sub));
   }
   if (tab === 'tags') void loadTagsTeam();
+  if (tab === 'presets') void loadPresetsView();
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
@@ -34721,9 +34982,9 @@ function mcpTab() {
       navigate: (hash) => { if (location.hash.slice(1) !== hash) location.hash = hash; },
       confirm: confirmModal,
       // `shows(node)`: is this node still in the open dialog? A flow whose answer lands after the dialog's own Close, a
-      // tab switch or another dialog opens nothing (skill-import.mjs). `afterClose(fn)`: the dialog's own Close runs fn
-      // once, as the open step's Cancel (an Import preview's or an Update's staged copy is discarded).
-      modal: { open: pluginModal, close: closePluginModal,
+      // tab switch or another dialog opens nothing (skill-import.mjs). `afterClose(fn)`: the dialog's own Close (or
+      // Escape) runs fn once, as the open step's Cancel (an Import preview's or an Update's staged copy is discarded).
+      modal: { open: pluginModal, close: closePluginModal, onClose: onPluginModalDismiss,
         shows: (node) => !el.pluginModal.classList.contains('hidden') && el.pluginModalBody.contains(node),
         afterClose: (fn) => { pluginModalAfterClose = fn; } },
       notify: (o) => notify(o),
@@ -35239,6 +35500,383 @@ async function applyAskPrefill() {
   if (p.sameAsSource && el.sameAsSource) { el.sameAsSource.checked = true; paintSameAsSource(); }
 }
 
+// ---- Run presets (#712, docs/run-presets.md) --------------------------------
+// A preset fills the New run form for THIS run: picking one enters preset mode, where the Agents rows,
+// loop budgets, human-in-the-loop and the workflow edit state.preset.setup (holdInPreset) instead of the
+// project config, and the submit handler sends the overlay + humanInLoop + presetId lane.
+
+/** The one-line reason Start is disabled by a broken preset reference, or ''. */
+function presetBlockReason() {
+  return state.preset && state.preset.broken.length ? state.preset.broken[0].message : '';
+}
+
+/** The applied preset's Human in the loop, or null when no preset sets it. */
+function presetHumanInLoop() {
+  return state.preset && typeof state.preset.setup.humanInLoop === 'boolean' ? state.preset.setup.humanInLoop : null;
+}
+
+/**
+ * A target change (project, Project/Workspace) in preset mode: once the new target's config load has repainted
+ * the pickers, put the preset's workflow, engine and guardrails back, then check the preset for this target.
+ */
+async function reapplyPresetAfter(cfgLoad) {
+  const p = state.preset;
+  if (!p || p.applying) return;
+  p.applying = true;
+  try {
+    await cfgLoad;
+    if (state.preset !== p) return;
+    state.engineTouched = true;   // the target change reset it; the late project defaults must not swap the engine
+    setRunEngine(p.setup.engine || 'claude');
+    await loadWorkflowsInto(p.setup.workflowId || 'wf_default');
+    await loadGuardrailsInto(p.setup.guardrailsId || 'permissive');
+    await renderWorkflowConfig(state.workflowId);
+  } finally {
+    p.applying = false;
+  }
+  if (state.preset !== p) return;
+  paintPresetChip();
+  await runPresetCheck();
+  paintHiddenSettings();
+}
+
+/** Group labels for pinned presets: "project:key" → project name, "workspace:id" → workspace name. */
+function presetTargetNames() {
+  const names = {};
+  for (const p of state.projects || []) if (p && p.key) names[`project:${p.key}`] = p.name;
+  for (const w of state.workspaces || []) if (w && w.id) names[`workspace:${w.id}`] = w.name;
+  return names;
+}
+
+function paintPresetMenu() {
+  const sel = el.presetSelect;
+  if (!sel) return;
+  sel.replaceChildren(option('', 'No preset'));
+  for (const g of presetMenuGroups(state.presets, presetTargetNames())) {
+    const og = document.createElement('optgroup');
+    og.label = g.label;
+    for (const p of g.items) og.appendChild(option(p.id, p.name));
+    sel.appendChild(og);
+  }
+  sel.appendChild(option('__manage__', 'Manage presets…'));
+  sel.value = state.preset ? state.preset.id : '';
+}
+
+function paintPresetChip() {
+  const chip = el.presetChip;
+  const p = state.preset;
+  if (chip) {
+    chip.hidden = !p;
+    chip.textContent = !p ? '' : p.applying ? `Checking ${p.name}…`
+      : p.modified ? `${p.name} · modified` : 'Preset — changes here apply to this run only';
+  }
+  if (el.presetUpdate) el.presetUpdate.hidden = !(p && p.modified);
+  if (el.presetSave) el.presetSave.textContent = p && p.modified ? 'Save as new…' : 'Save current setup…';
+}
+
+// A broken item the form has replaced since the check (#712 8.6): its reference is no longer what this run uses.
+function presetItemReplaced(item) {
+  const s = state.preset.setup;
+  if (item.item === 'guardrails') return state.guardrailsId !== item.ref && state.guardrailSets.some((g) => g.id === state.guardrailsId);
+  if (item.item === 'model') {
+    const m = s.overlay?.nodes?.[item.ref]?.model;
+    return !m || state.models.some((x) => x && String(x.id).toLowerCase() === String(m).toLowerCase());
+  }
+  if (item.item === 'node') return !s.overlay?.nodes?.[item.ref];
+  if (item.item === 'loop') return !s.overlay?.wires?.[item.ref];
+  if (item.item === 'workflow') return (s.workflowId || 'wf_default') !== item.ref;
+  if (item.item === 'engine') return state.engine !== item.ref;
+  return false;
+}
+
+function paintPresetBroken() {
+  if (!el.presetBroken) return;
+  if (!state.preset) { el.presetBroken.replaceChildren(); return; }
+  el.presetBroken.replaceChildren(renderBrokenCard(document, state.preset.broken, { onReset: (b) => void resetPresetItem(b) }));
+}
+
+/** "Reset to project default": drop the pick, repaint the form from what is left, and check again. */
+async function resetPresetItem(item) {
+  if (!state.preset) return;
+  const next = resetItem(state.preset.setup, item, {
+    projectWorkflowId: state.config.activeWorkflowId || 'wf_default',
+    defaultEngine: state.runDefaults?.engine?.value || 'claude',
+  });
+  state.preset.setup = next;
+  state.preset.modified = true;
+  state.preset.applying = true;
+  try {
+    if (item.item === 'guardrails') await loadGuardrailsInto('permissive');
+    else if (item.item === 'engine') setRunEngine(next.engine);
+    else if (item.item === 'workflow') await loadWorkflowsInto(next.workflowId);
+    else await renderWorkflowConfig(state.workflowId);
+  } finally {
+    if (state.preset) state.preset.applying = false;
+  }
+  paintPresetChip();
+  await runPresetCheck();
+  paintHiddenSettings();
+}
+
+/** Post the pick-time check for the form's target; a modified preset keeps only the items it has not replaced. */
+async function runPresetCheck() {
+  const p = state.preset;
+  if (!p) return;
+  if (p.modified) { p.broken = p.broken.filter((b) => !presetItemReplaced(b)); paintPresetBroken(); applyBudgetToNewView(); }
+  const target = state.runTarget === 'workspace' ? { workspaceId: (el.workspaceSelect && el.workspaceSelect.value) || '' } : { projectDir: selectedProjectPath() };
+  const r = await mcpApi('POST', `/api/presets/${encodeURIComponent(p.id)}/check`, target);
+  if (state.preset !== p) return;   // another pick (or No preset) since
+  if (!r.ok || !Array.isArray(r.data?.broken)) {
+    setFormMsg(`Could not check the preset: ${(r.data && r.data.error) || `HTTP ${r.status}`}`, 'err');
+    return;
+  }
+  // The server checks the STORED preset; the form's replacements count too (the start check reads the body).
+  p.broken = p.modified ? r.data.broken.filter((b) => !presetItemReplaced(b)) : r.data.broken;
+  paintPresetBroken();
+  applyBudgetToNewView();
+}
+
+let presetCheckTimer = null;
+function schedulePresetCheck() {
+  clearTimeout(presetCheckTimer);
+  presetCheckTimer = setTimeout(() => { presetCheckTimer = null; void runPresetCheck(); }, 300);
+}
+
+/** A form change the preset stores but no holder owns (guardrails, engine): the preset is modified. */
+function notePresetChange() {
+  if (!state.preset || state.preset.applying) return;
+  state.preset.modified = true;
+  paintPresetChip();
+  schedulePresetCheck();
+}
+
+/** Select `value` in `select`, adding the option first when the list does not hold it. */
+function setSelectValueAdding(select, value) {
+  if (![...select.options].some((o) => o.value === value)) select.appendChild(option(value, value));
+  select.value = value;
+}
+
+/** The run-tag inputs hold the preset's tags. dirty: the late project defaults (loadRunDefaults) leave them alone. */
+function applyRunTagsFromPreset(tags) {
+  const { slots, rest } = splitByDimensions(tags, state.tagDims.dims);
+  runTagInput.set(rest, { dirty: true });
+  runTagDims.set(Object.entries(slots).map(([key, value]) => formatTag({ key, value })));
+  paintRunTagDimsWarn();
+}
+
+async function applyPreset(id) {
+  const p = state.presets.find((x) => x.id === id);
+  if (!p) { leavePresetMode(); return; }
+  state.preset = { id: p.id, name: p.name, scope: p.scope, setup: structuredClone(p.setup), modified: false, applying: true, broken: [] };
+  if (el.presetSelect) el.presetSelect.value = p.id;
+  paintPresetChip();
+  const s = state.preset.setup;
+  try {
+    if (p.scope.kind === 'workspace') {
+      // Await its config load: that tail repaints the pickers with the OLD ids and would land after ours.
+      await setRunTarget('workspace');
+      await ensureWorkspaceOptions();
+      if (el.workspaceSelect) {
+        el.workspaceSelect.value = p.scope.ref;
+        el.workspaceSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+      }
+    } else if (p.scope.kind === 'project') {
+      setRunTarget('project');
+      // /api/projects rows carry `key` (src/core/projects.mjs); applyAskPrefill looks up by path, a preset stores the key.
+      const idx = state.projects.findIndex((x) => x && x.key === p.scope.ref);
+      if (idx >= 0) el.projectSelect.selectedIndex = idx + 1;   // +1: past the placeholder option
+      await onProjectChanged();
+    }
+    // onProjectChanged reset engineTouched and started loadRunDefaults un-awaited; touching it here
+    // stops that late answer from swapping in the project's default engine.
+    state.engineTouched = true;
+    setRunEngine(s.engine || 'claude');
+    await loadWorkflowsInto(s.workflowId || 'wf_default');
+    await loadGuardrailsInto(s.guardrailsId || 'permissive');   // keeps a missing set in preset mode
+    state.mcpOptOut = [...(s.mcpOptOut || [])];
+    renderMcpRuns();
+    el.mock.checked = !!s.mock;
+    if (el.nightMode) el.nightMode.checked = !!s.nightMode;
+    state.sync.autoSync = typeof s.syncBeforeStart === 'boolean' ? s.syncBeforeStart : null;
+    if (state.runTarget === 'workspace') {
+      // the per-member selects are rebuilt asynchronously on the change above (as applyAskPrefill waits for them)
+      const byKey = s.sourceBranchByKey || {};
+      for (const sel of el.wsSourceBranches ? el.wsSourceBranches.querySelectorAll('select.ws-src-select') : []) {
+        const want = byKey[sel.dataset.projectKey];
+        if (!want) continue;
+        for (let i = 0; i < 20 && sel.options.length <= 1; i++) await new Promise((r) => setTimeout(r, 25));
+        setSelectValueAdding(sel, want);
+      }
+    } else if (s.sourceBranch && el.sourceBranch) {
+      await refreshBranches(selectedProjectPath());
+      setSelectValueAdding(el.sourceBranch, s.sourceBranch);
+    }
+    if (flagOn('runTags') && Array.isArray(s.tags)) applyRunTagsFromPreset(s.tags);
+    applyPresetSwitches();
+    await renderWorkflowConfig(state.workflowId);
+  } finally {
+    if (state.preset && state.preset.id === p.id) state.preset.applying = false;
+  }
+  paintPresetChip();
+  await runPresetCheck();
+  paintHiddenSettings();
+}
+
+/** Settings › Presets' Use and the Chat home chips: New run with the preset applied, then the (empty) prompt focused. */
+async function usePresetOnNewRun(id) {
+  location.hash = '#new';
+  await applyPreset(id);
+  el.prompt.focus();
+}
+
+/** "Run on the source branch" follows the applied preset, again after each start (clearTask unchecks it, #688). */
+function applyPresetSwitches() {
+  if (!state.preset || !el.sameAsSource) return;
+  const want = !!state.preset.setup.sameAsSource;
+  if (el.sameAsSource.checked !== want) { el.sameAsSource.checked = want; paintSameAsSource(); }
+}
+
+function leavePresetMode() {
+  state.preset = null;
+  if (el.presetSelect) el.presetSelect.value = '';
+  paintPresetChip();
+  paintPresetBroken();
+  applyBudgetToNewView();
+  renderWorkflowConfig(state.workflowId);
+  loadGuardrailsInto(state.guardrailsId);
+  paintHiddenSettings();
+}
+
+async function loadPresets() {
+  const r = await mcpApi('GET', '/api/presets');
+  state.presets = r.ok && Array.isArray(r.data?.presets) ? r.data.presets : [];
+  // A pinned preset's group label (and Settings' "Workspace gone") reads state.workspaces, which a page load leaves
+  // empty until a target switch: load it first. The boot project list repaints the menu itself (loadProjects).
+  if (state.presets.some((p) => p.scope?.kind === 'workspace')) await withWorkspaces();
+  paintPresetMenu();
+  return state.presets;
+}
+
+/** The setup the form holds now: buildRunBody's choices, plus the applied preset's overlay and human-in-the-loop. */
+function presetSetupFromForm(draft, scopeKind) {
+  return {
+    ...setupFromBody(draft, { scope: scopeKind }),
+    ...(state.preset ? { overlay: state.preset.setup.overlay, humanInLoop: state.preset.setup.humanInLoop } : {}),
+  };
+}
+const presetBasis = (draft) => (draft.workspaceId ? { workspaceId: draft.workspaceId } : { projectDir: draft.projectDir });
+
+/** Save current setup… (or Save as new…): a loop over promptModal that reopens with the error under Name. */
+async function savePresetDialog() {
+  const draft = buildRunBody();
+  const ws = draft.workspaceId ? state.workspaces.find((w) => w && w.id === draft.workspaceId) : null;
+  const scopeOptions = [{ value: 'global', text: 'Any project' }];
+  if (ws) scopeOptions.push({ value: 'workspace', text: `Only workspace ${ws.name}` });
+  else if (draft.projectDir) scopeOptions.push({ value: 'project', text: `Only ${selectedProjectName()}` });
+  const SAVED = 'Saved: workflow, engine, guardrails, agents, loops, branches, Away mark, opt-outs. Never saved: title, prompt, Markdown, extra files, new branch name.';
+  let name = '';
+  let scope = 'global';
+  let error = '';
+  for (;;) {
+    const v = await promptModal({
+      title: 'Save as a run preset', confirmLabel: 'Save preset',
+      fields: [
+        { id: 'name', label: 'Name', value: name, required: true, ...(error ? { hint: error } : {}) },
+        { id: 'scope', label: 'Scope', value: scope, options: scopeOptions, hint: SAVED },
+      ],
+    });
+    if (!v) return;
+    name = v.name || '';
+    scope = v.scope || 'global';
+    error = saveDialogError(name, state.presets.map((p) => p.name));
+    if (error) continue;
+    const scopeBody = scope === 'project' ? { kind: 'project', projectDir: draft.projectDir }
+      : scope === 'workspace' ? { kind: 'workspace', workspaceId: draft.workspaceId } : { kind: 'global' };
+    const r = await mcpApi('POST', '/api/presets', { name, scope: scopeBody, setup: presetSetupFromForm(draft, scopeBody.kind), basis: presetBasis(draft) });
+    if (!r.ok) { error = r.status === 409 ? 'A preset with this name already exists' : (r.data && r.data.error) || `HTTP ${r.status}`; continue; }
+    state.presets = [...state.presets, r.data.preset];
+    paintPresetMenu();
+    await applyPreset(r.data.preset.id);
+    return;
+  }
+}
+
+/** Update preset: PUT the form's setup over the applied preset and leave it clean. */
+async function updateAppliedPreset() {
+  const p = state.preset;
+  if (!p) return;
+  const draft = buildRunBody();
+  const r = await mcpApi('PUT', `/api/presets/${encodeURIComponent(p.id)}`, { setup: presetSetupFromForm(draft, p.scope.kind), basis: presetBasis(draft) });
+  if (!r.ok) { setFormMsg(`Could not update the preset: ${(r.data && r.data.error) || `HTTP ${r.status}`}`, 'err'); return; }
+  state.presets = state.presets.map((x) => (x.id === p.id ? r.data.preset : x));
+  if (state.preset === p) { p.setup = structuredClone(r.data.preset.setup); p.modified = false; }
+  paintPresetChip();
+  await runPresetCheck();
+}
+
+if (el.presetSelect) {
+  el.presetSelect.addEventListener('change', () => {
+    const v = el.presetSelect.value;
+    if (v === '__manage__') { el.presetSelect.value = state.preset ? state.preset.id : ''; location.hash = '#settings/presets'; return; }
+    if (!v) { leavePresetMode(); return; }
+    void applyPreset(v);
+  });
+}
+el.presetSave?.addEventListener('click', () => void savePresetDialog());
+el.presetUpdate?.addEventListener('click', () => void updateAppliedPreset());
+
+// Settings › Presets (run-presets-view.mjs): Use / Rename / Duplicate / Edit scope / Delete.
+async function loadPresetsView() {
+  const host = document.getElementById('presets-list');
+  if (!host || !flagOn('runPresets')) return;
+  if (!(state.projects || []).length) await loadProjects();
+  await withWorkspaces();   // Edit scope offers every workspace
+  await loadPresets();
+  const names = presetTargetNames();
+  const presetError = (r) => notify({ tone: 'err', title: 'Could not change the preset', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+  const after = async (r) => { if (!r.ok) presetError(r); await loadPresetsView(); };
+  host.replaceChildren(renderPresetsList(document, state.presets, {
+    names,
+    onUse: (p) => void usePresetOnNewRun(p.id),
+    onRename: async (p) => {
+      const v = await promptModal({ title: 'Rename preset', fields: [{ id: 'name', label: 'Name', value: p.name, required: true }] });
+      if (v) await after(await mcpApi('PUT', `/api/presets/${encodeURIComponent(p.id)}`, { name: v.name }));
+    },
+    onDuplicate: async (p) => after(await mcpApi('POST', `/api/presets/${encodeURIComponent(p.id)}/duplicate`, {})),
+    onEditScope: async (p) => {
+      const options = [{ value: 'global', text: 'Any project' },
+        ...(state.projects || []).filter((x) => x && x.key).map((x) => ({ value: `project:${x.key}`, text: `Only ${x.name}`, group: 'Project' })),
+        ...(state.workspaces || []).filter((w) => w && w.id).map((w) => ({ value: `workspace:${w.id}`, text: `Only workspace ${w.name}`, group: 'Workspace' }))];
+      const cur = p.scope.kind === 'global' ? 'global' : `${p.scope.kind}:${p.scope.ref}`;
+      const v = await promptModal({ title: 'Edit scope', fields: [{ id: 'scope', label: 'Scope', value: cur, options }] });
+      if (!v) return;
+      const [kind, ref] = v.scope === 'global' ? ['global', ''] : [v.scope.slice(0, v.scope.indexOf(':')), v.scope.slice(v.scope.indexOf(':') + 1)];
+      const proj = kind === 'project' ? state.projects.find((x) => x && x.key === ref) : null;
+      const scope = kind === 'project' ? { kind, projectDir: proj ? proj.path : '' } : kind === 'workspace' ? { kind, workspaceId: ref } : { kind: 'global' };
+      await after(await mcpApi('PUT', `/api/presets/${encodeURIComponent(p.id)}`, { scope }));
+    },
+    onDelete: async (p) => {
+      const ok = await confirmModal({ title: 'Delete preset', message: `Delete the preset “${p.name}”? Runs it started are not affected.`, confirmLabel: 'Delete preset', danger: true });
+      if (!ok) return;
+      const r = await mcpApi('DELETE', `/api/presets/${encodeURIComponent(p.id)}`);
+      if (r.ok && state.preset && state.preset.id === p.id) leavePresetMode();
+      await after(r);
+    },
+  }));
+}
+
+if (flagOn('runPresets')) void loadPresets();
+const offPresetsFlag = onFlagChange('runPresets', (on) => {
+  if (histDetailState?.screen) void paintHdSavePreset(histDetailState.screen, histDetailState.data);
+  if (chatHome && lastChatHomeFlags) chatHome.update({ flags: { ...lastChatHomeFlags, runPresets: on } });
+  if (on) { void loadPresets(); return; }
+  if (state.preset) leavePresetMode();
+  state.presets = [];
+  paintPresetMenu();
+});
+// Test hook: flags.mjs's listener map outlives a jsdom boot, so a suite unsubscribes the previous app first.
+if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { offPresetsFlag });
+
 // ---- Away mode on the run page and New run --------------------------------
 // state.awayMode: the user-level GET /api/away-mode body (Settings card, boot, settings-changed).
 // state.awayModeByDir: one body per run project, since a run's config includes its project's layer.
@@ -35361,6 +35999,8 @@ if (bootTarget === 'workspace') setRunTarget('workspace');
 // run panel (no link). chatDeps is P1's top-level const; openShipItFor is a hoisted function declaration.
 registerChatActionCards();
 chatDeps.openShipIt = openShipItFor;
+// The chat files card (show_files) and its built-in file renderers, registered before the chat mounts too.
+registerFilesCard();
 
 // worca Chat P6 (CONTRACT §2/§8): the composer's intent chip — a composer add-on, registered before the chat mounts.
 // A send from the home arms the hero → dock glide (chatHome.armFlip). The home itself mounts right after the page
@@ -35406,8 +36046,28 @@ function mountChatHome() {
       level: () => currentLevel(),
       plans: chatHomePlans,
       mountFeature: mountShapeFeature,
+      presets: chatHomePresets,
+      usePreset: (id) => void usePresetOnNewRun(id),   // Settings › Presets' Use path (D14)
     },
   });
+}
+
+/** The Chat home's presets (#712 slice 2): the viewer's list, fresh per visit, and New run's current target. */
+async function chatHomePresets() {
+  if (!flagOn('runPresets')) return { presets: [], target: null };
+  await loadPresets();
+  return { presets: state.presets, target: presetTargetNow() };
+}
+/** New run's current target as a preset scope ({ kind, ref }), or null before a project is chosen. The same reads
+ *  as buildRunBody / runPresetCheck: the workspace select's value, or selectedProjectPath() (there is no state.workspaceId). */
+function presetTargetNow() {
+  if (state.runTarget === 'workspace') {
+    const id = (el.workspaceSelect && el.workspaceSelect.value) || '';
+    return id ? { kind: 'workspace', ref: id } : null;
+  }
+  const dir = selectedProjectPath();
+  const p = dir ? (state.projects || []).find((x) => x && x.path === dir) : null;
+  return p && p.key ? { kind: 'project', ref: p.key } : null;
 }
 
 /** The home's runs: Needs you (the Runs badge's rule — live items and History rows this tab has no live run for),
@@ -35522,6 +36182,7 @@ async function chatHomeFlags() {
   } catch { /* none known */ }
   // Read after the awaits: a boot's first load, started before the hello, would otherwise keep a stale gate.
   out['shapeFirst'] = shapeFirstOn();
+  out.runPresets = flagOn('runPresets');
   lastChatHomeFlags = { ...out };
   return out;
 }
@@ -35673,16 +36334,32 @@ async function exportApply(id, opts) { return exportCall(id, opts); }
 // first — one Export… per row instead of one button per format.
 // `planned`: a Preview (dry run) for the CURRENT inputs is on screen. Export runs
 // its own dry run when there is none, so the primary button is never dead.
-const exportModalState = { item: null, format: 'json', destination: 'global', conflicts: [], planned: false };
+// `targets`: the PR-capable marketplaces (null until read; a failed read leaves it null so the next
+// open retries), `skipped`: the registered ones the server left out, with why. `targetsLoad`: the
+// read in flight, shared by every caller while it runs and reset per open (a reopen reads afresh;
+// the older read's late answer is dropped). `busy`: a Preview or an Export is in flight. `seq`: bumped by every
+// plan invalidation, close and open; a Preview answer that lands after a bump is for a dialog that no longer exists.
+const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, skipped: [], targetsLoad: null, busy: false, conflicts: [], planned: false, seq: 0 };
+const exportModalHidden = () => { const m = document.getElementById('export-modal'); return !m || m.classList.contains('hidden'); };
+// Set by bindExportModal. A form: a backdrop click never closes it; Escape asks once a choice changed; while
+// a Preview or an Export is out, Cancel and Escape wait for its answer.
+let exportGuard = null;
 
 function openExportModal(item) {
   const modal = document.getElementById('export-modal');
   if (!modal) return;
+  exportModalState.seq++;                                 // a Preview still in flight belongs to the previous open
   exportModalState.item = item;
   exportModalState.format = 'json';
   exportModalState.destination = 'global';
+  exportModalState.pluginDest = 'folder';
+  exportModalState.targets = null;                       // re-read: a marketplace may have been added since
+  exportModalState.targetsLoad = null;                   // a read still in flight belongs to the previous open: its answer is dropped
+  exportModalState.skipped = [];
   exportModalState.conflicts = [];
   exportModalState.planned = false;
+  document.getElementById('export-draft').checked = false;   // draft is opt-in per export, never remembered
+  exportSetBusy(false);
   document.getElementById('export-slug').value = '';
   document.getElementById('export-folder').value = '';
   document.getElementById('export-plugin-name').value = '';
@@ -35695,10 +36372,12 @@ function openExportModal(item) {
   exportSyncFormat();
   exportSyncSlugPreview();
   modal.classList.remove('hidden');
+  exportGuard?.opened();
 }
 function closeExportModal() {
   const modal = document.getElementById('export-modal');
   if (modal) modal.classList.add('hidden');
+  exportModalState.seq++;                                 // a Preview still in flight has no dialog to land in
   exportSetDone(false);
 }
 /** Swap the form for the result view (or back). The dialog stays open so the
@@ -35708,7 +36387,9 @@ function exportSetDone(done) {
   g('export-form').classList.toggle('hidden', done);
   g('export-done').classList.toggle('hidden', !done);
   for (const id of ['export-cancel', 'export-plan-btn', 'export-apply-btn']) g(id).classList.toggle('hidden', done);
-  if (!done && exportModalState.item) exportSyncFormat();          // Preview visibility is format-driven
+  // Preview visibility is format-driven. Not while the dialog is hidden: closing swaps the view back too, and with
+  // Marketplace selected the sync would read the publish targets into a dialog nobody sees (its error line included).
+  if (!done && exportModalState.item && !exportModalHidden()) exportSyncFormat();
   g('export-done-close').classList.toggle('hidden', !done);
   if (done) g('export-done-close').focus();
 }
@@ -35730,6 +36411,7 @@ function exportShowDone(r) {
   if (typeof r.next === 'string') next.textContent = r.next; else if (r.next) next.appendChild(r.next);
   next.classList.toggle('hidden', !r.next);
   exportSetDone(true);
+  exportGuard?.markClean();   // exported: nothing left unsaved, Escape just closes
 }
 /** "Then run <code>x</code>": a text + code fragment for the next-step line. */
 function exportNextStep(before, code, after = '') {
@@ -35748,11 +36430,16 @@ function exportJsonFilename(id) {
 function exportSyncFormat() {
   const { format, destination } = exportModalState;
   const json = format === 'json', skill = format === 'skill', plugin = format === 'plugin';
+  const market = plugin && exportModalState.pluginDest === 'marketplace';
   const show = (id, on) => document.getElementById(id).classList.toggle('hidden', !on);
-  for (const b of document.querySelectorAll('#export-format .seg-btn')) b.classList.toggle('on', b.dataset.format === format);
-  for (const b of document.querySelectorAll('#export-dest .seg-btn')) b.classList.toggle('on', b.dataset.dest === destination);
+  for (const b of document.querySelectorAll('#export-format .seg-btn')) { const on = b.dataset.format === format; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
+  for (const b of document.querySelectorAll('#export-dest .seg-btn')) { const on = b.dataset.dest === destination; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
+  for (const b of document.querySelectorAll('#export-plugin-dest .seg-btn')) { const on = b.dataset.pdest === exportModalState.pluginDest; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
   show('export-dest-field', skill);
-  show('export-folder-field', (skill && destination === 'project') || plugin);
+  show('export-plugin-dest-field', plugin);
+  show('export-folder-field', (skill && destination === 'project') || (plugin && !market));
+  show('export-marketplace-field', market);
+  show('export-keep-version-row', plugin && !market);
   document.getElementById('export-folder-label').textContent = plugin ? 'Plugin folder' : 'Folder';
   document.getElementById('export-folder').placeholder = plugin ? '/path/to/my-plugin' : '/path/to/repo';
   show('export-plugin-field', plugin);
@@ -35763,38 +36450,111 @@ function exportSyncFormat() {
   // (dry run); Export runs that dry run itself and writes unless it finds a
   // conflict, which the user then resolves per file before exporting again.
   document.getElementById('export-plan-btn').classList.toggle('hidden', json);
+  document.getElementById('export-plan-btn').disabled = false;
   const apply = document.getElementById('export-apply-btn');
-  apply.textContent = json ? 'Download' : 'Export';
+  apply.textContent = json ? 'Download' : market ? 'Open pull request' : 'Export';
   apply.disabled = false;
   const name = exportModalState.item ? exportModalState.item.name : '';
   document.getElementById('export-subtitle').textContent = json
     ? `Download "${name}" as a JSON file another Worca user can import.`
-    : plugin
-      ? `Export "${name}" as a Worca plugin folder to share with other Worca users.`
-      : `Export "${name}" as a runnable /command skill.`;
+    : market
+      ? `Open a pull request that adds "${name}" to a team marketplace as a Worca plugin.`
+      : plugin
+        ? `Export "${name}" as a Worca plugin folder to share with other Worca users.`
+        : `Export "${name}" as a runnable /command skill.`;
   document.getElementById('export-format-hint').textContent = json
     ? 'The saved graph only — no agents or skills travel with it. The recipient uses Import… in their saved list.'
-    : plugin
-      ? 'Bundles the pipeline, your own agents it uses and the skills they need. Built-in agents are not copied. The recipient runs: worca plugin link <folder>'
-      : 'Writes a SKILL.md plus the agents it dispatches under .claude/, so the pipeline runs inside Claude Code without Worca.';
+    : market
+      ? 'Builds the plugin in a fresh copy of the marketplace, lists it in worca-cc-marketplace.json, validates it (lint, script cases, the marketplace\'s own discovery) and opens one pull request on worca/plugin/<name>.'
+      : plugin
+        ? 'Bundles the pipeline, your own agents it uses and the skills they need. Built-in agents are not copied. The recipient runs: worca plugin link <folder>'
+        : 'Writes a SKILL.md plus the agents it dispatches under .claude/, so the pipeline runs inside Claude Code without Worca.';
+  if (market) void exportLoadTargets();
+}
+const exportIsMarketplace = () => exportModalState.format === 'plugin' && exportModalState.pluginDest === 'marketplace';
+/** Fetch the PR-capable marketplaces once per open, fill the select, and disable Preview/Open pull request when
+ *  there are none. A failed read is not "no marketplaces": it is said as an error, both buttons stay disabled, and
+ *  nothing is cached, so the next open (or the next switch to Marketplace) retries. When the list is empty but the
+ *  server skipped registered marketplaces, the hint under the select says why. */
+async function exportLoadTargets() {
+  const select = document.getElementById('export-marketplace');
+  const skippedEl = document.getElementById('export-marketplace-skipped');
+  if (exportModalState.targets === null) {
+    exportSyncMarketplaceButtons(0);                       // nothing to send to until the list is in
+    fillMarketplaceSelect(select, [], { doc: document, emptyText: 'Loading marketplaces…' });   // never the previous open's list
+    renderMarketplaceSkipped(skippedEl, [], { doc: document });
+    if (!exportModalState.targetsLoad) exportModalState.targetsLoad = exportFetchTargets();
+    const load = exportModalState.targetsLoad;
+    const loaded = await load;
+    if (exportModalState.targetsLoad !== load) return;     // the dialog was reopened meanwhile: this answer is stale, the new open reads again
+    exportModalState.targetsLoad = null;
+    if (!exportIsMarketplace()) return;                    // switched away while reading: nothing to show
+    if (loaded.error !== undefined) {
+      fillMarketplaceSelect(select, [], { doc: document, emptyText: 'Marketplaces could not be loaded' });
+      renderMarketplaceSkipped(skippedEl, [], { doc: document });
+      exportSyncMarketplaceButtons(0);
+      exportSay(marketplaceLoadError(loaded.error), true);
+      return;
+    }
+    exportModalState.targets = loaded.targets;
+    exportModalState.skipped = loaded.skipped;
+  }
+  const n = fillMarketplaceSelect(select, exportModalState.targets, { doc: document, keep: select.value });
+  renderMarketplaceSkipped(skippedEl, n === 0 ? exportModalState.skipped : [], { doc: document });
+  exportSyncMarketplaceButtons(n);
+}
+/** GET /api/marketplaces/publish-targets → {targets, skipped} | {error} (the server's message, else the status or the network error). */
+async function exportFetchTargets() {
+  try {
+    const r = await fetch('/api/marketplaces/publish-targets');
+    const j = await safeJson(r);
+    if (!r.ok) return { error: j.error || `HTTP ${r.status}` };
+    return { targets: j.targets || [], skipped: j.skipped || [] };
+  } catch (err) { return { error: err && err.message ? err.message : String(err) }; }
+}
+function exportSyncMarketplaceButtons(n = (exportModalState.targets || []).length) {
+  if (!exportIsMarketplace()) return;
+  syncMarketplaceButtons({ plan: document.getElementById('export-plan-btn'), apply: document.getElementById('export-apply-btn') },
+    { busy: exportModalState.busy, targets: n });
+}
+/** A Preview or an Export starts (`busy`) or ends: Cancel is off while it runs (the guard holds Escape too). For a
+ *  marketplace request both action buttons are off as well, then back by the dialog's rule
+ *  (a no-op when the user switched destination meanwhile — that destination's own sync already set them). The inputs
+ *  the request was built from (name, marketplace, draft) are locked too, so the answer is for what the dialog shows;
+ *  they are unlocked UNCONDITIONALLY — the name field is shared with Local folder, whose sync never touches it. */
+function exportSetBusy(busy) {
+  exportModalState.busy = busy;
+  document.getElementById('export-cancel').disabled = busy;
+  for (const id of ['export-plugin-name', 'export-marketplace', 'export-draft']) document.getElementById(id).disabled = busy;
+  if (busy) {
+    if (!exportIsMarketplace()) return;
+    document.getElementById('export-plan-btn').disabled = true;
+    document.getElementById('export-apply-btn').disabled = true;
+    return;
+  }
+  exportSyncMarketplaceButtons();
 }
 /** Plugin names are kebab-case (worca-cc-plugin.json `name`). Derive one from
  *  what the user typed, else from the folder's basename, and say so under the
  *  field — the same look-before-you-export the skill slug has. */
 function exportPluginName() {
   const typed = document.getElementById('export-plugin-name').value.trim();
+  const market = exportIsMarketplace();
   const folder = document.getElementById('export-folder').value.trim().replace(/[\\/]+$/, '');
-  const raw = typed || folder.split(/[\\/]/).pop() || '';
+  const fallback = market ? (exportModalState.item ? exportModalState.item.name : '') : (folder.split(/[\\/]/).pop() || '');
+  const raw = typed || fallback;
   const name = raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
-  return { raw, name, fromFolder: !typed };
+  return { raw, name, fromFolder: !typed && !market, fromPipeline: !typed && market };
 }
 function exportSyncPluginNamePreview() {
-  const { raw, name, fromFolder } = exportPluginName();
+  const { raw, name, fromFolder, fromPipeline } = exportPluginName();
   const el = document.getElementById('export-plugin-name-preview');
   if (!raw) { el.textContent = 'Plugin name: (choose a folder first)'; return; }
-  el.textContent = name
-    ? `Plugin name: ${name}${fromFolder ? ' (from the folder name)' : ''}`
-    : 'Plugin name: needs at least one letter or digit';
+  if (!name) { el.textContent = 'Plugin name: needs at least one letter or digit'; return; }
+  const problem = exportIsMarketplace() ? marketplaceNameProblem({ raw, name }) : '';
+  if (problem) { el.textContent = `${problem} Got "${name}".`; return; }
+  el.textContent = `Plugin name: ${name}${fromFolder ? ' (from the folder name)' : fromPipeline ? ' (from the pipeline name)' : ''}`
+    + (exportIsMarketplace() ? ` · branch worca/plugin/${name}` : '');
 }
 function exportSyncSlugPreview() {
   const raw = document.getElementById('export-slug').value;
@@ -35805,6 +36565,12 @@ function exportSyncSlugPreview() {
 function exportBuildOpts() {
   const dest = exportModalState.destination;
   if (exportModalState.format === 'plugin') {
+    if (exportModalState.pluginDest === 'marketplace') {
+      return marketplaceExportBody({
+        marketplaceId: document.getElementById('export-marketplace').value,
+        pluginName: exportPluginName().name, draft: document.getElementById('export-draft').checked,
+      });
+    }
     const opts = {
       destination: 'plugin',
       pluginDir: document.getElementById('export-folder').value.trim(),
@@ -35888,6 +36654,7 @@ function exportUpdateApplyEnabled() {
 // If any of those change afterward, the shown plan (and its gathered resolutions) no longer
 // matches what Apply would do — drop it and re-disable Apply so the user must re-Plan.
 function exportInvalidatePlan() {
+  exportModalState.seq++;                                 // a Preview in flight was asked for the old inputs: its answer is dropped
   exportModalState.conflicts = [];
   exportModalState.planned = false;
   const planEl = document.getElementById('export-plan');
@@ -35895,17 +36662,24 @@ function exportInvalidatePlan() {
   // Export re-plans on its own, so a stale preview never leaves the button dead.
   const applyBtn = document.getElementById('export-apply-btn');
   if (applyBtn) applyBtn.disabled = false;
+  exportSyncMarketplaceButtons();
   exportSay('');
 }
 function bindExportModal() {
   const modal = document.getElementById('export-modal');
   if (!modal) return;
+  exportGuard = guardModal(modal, { kind: 'form', close: () => closeExportModal(), busy: () => exportModalState.busy });
   for (const b of document.querySelectorAll('#export-format .seg-btn')) {
     b.addEventListener('click', () => { exportModalState.format = b.dataset.format; exportInvalidatePlan(); exportSyncFormat(); });
   }
   for (const b of document.querySelectorAll('#export-dest .seg-btn')) {
     b.addEventListener('click', () => { exportModalState.destination = b.dataset.dest; exportInvalidatePlan(); exportSyncFormat(); });
   }
+  for (const b of document.querySelectorAll('#export-plugin-dest .seg-btn')) {
+    // the name fallback changes with the destination (folder basename ↔ pipeline name), so re-render its preview
+    b.addEventListener('click', () => { exportModalState.pluginDest = b.dataset.pdest; exportInvalidatePlan(); exportSyncFormat(); exportSyncPluginNamePreview(); });
+  }
+  document.getElementById('export-marketplace').addEventListener('change', exportInvalidatePlan);
   document.getElementById('export-slug').addEventListener('input', () => { exportSyncSlugPreview(); exportInvalidatePlan(); });
   document.getElementById('export-include-agents').addEventListener('change', exportInvalidatePlan);
   document.getElementById('export-folder').addEventListener('input', exportInvalidatePlan);
@@ -35924,16 +36698,39 @@ function bindExportModal() {
     if (data && data.status === 'busy') { exportSay('A folder dialog is already open — finish or cancel it first.'); return; }
     openFolderBrowser(folder.value.trim(), set);
   });
-  document.getElementById('export-cancel').addEventListener('click', closeExportModal);
-  document.getElementById('export-done-close').addEventListener('click', closeExportModal);
+  document.getElementById('export-cancel').addEventListener('click', () => exportGuard.cancel());
+  document.getElementById('export-done-close').addEventListener('click', () => exportGuard.cancel());
   // Preview: the optional dry run — shows what Export would write, writes nothing.
+  // The destination and the body are read ONCE, before the request, and the answer is shown only when the
+  // dialog still asks the same question: nothing invalidated the plan meanwhile (a typed name, another
+  // marketplace, a switched destination, a close) and the inputs still build the body that was sent. A
+  // marketplace plan has no `created` list, so rendering it after a switch to Local folder would also throw.
   document.getElementById('export-plan-btn').addEventListener('click', async () => {
+    const market = exportIsMarketplace();
+    const nameProblem = market ? marketplaceNameProblem(exportPluginName()) : '';
+    if (nameProblem) { exportSay(nameProblem, true); return; }
     exportSay('Previewing…');
+    exportSetBusy(true);
+    const opts = exportBuildOpts();
+    const ticket = requestTicket(exportModalState.seq, opts);
+    const current = () => !exportModalHidden() && exportIsMarketplace() === market && ticketIsCurrent(ticket, exportModalState.seq, exportBuildOpts());
     try {
-      const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
+      const plan = await exportPlan(exportModalState.item.id, opts);
+      if (!current()) return;
+      if (market) {
+        exportRenderPlan({ ...plan.files, warnings: plan.warnings, conflicts: [] });
+        document.getElementById('export-plan').appendChild(marketplacePlanExtras(plan, { doc: document }));
+        exportSay(plan.status === 'unchanged' ? 'No changes — the marketplace already has this export.'
+          : 'Preview only — nothing is pushed until you click Open pull request.');
+        return;
+      }
       exportRenderPlan(plan);
       exportSay(plan.conflicts.length ? 'Resolve each conflict below, then Export.' : 'Preview only — nothing is written until you click Export.');
-    } catch (err) { exportSay(`Preview failed: ${err.message}`, true); }
+    } catch (err) {
+      if (current()) exportSay(`Preview failed: ${err.message}`, true);
+    } finally {
+      exportSetBusy(false);
+    }
   });
   // Export: writes. Without a preview for the current inputs it runs the dry run
   // itself first; a conflict (only the skill format can raise one) stops it and is
@@ -35954,6 +36751,29 @@ function bindExportModal() {
       });
       return;
     }
+    if (exportIsMarketplace()) {
+      const nameProblem = marketplaceNameProblem(exportPluginName());
+      if (nameProblem) { exportSay(nameProblem, true); return; }
+      exportSay('Building the plugin in a copy of the marketplace, validating, then opening the pull request…');
+      exportSetBusy(true);                                 // about a minute: a second click must not start a second export
+      // The inputs are locked while it runs, so the result is for what the dialog shows — it reports what
+      // happened, not what would happen, so it is never stale. Only a dialog closed meanwhile is not painted:
+      // the log keeps the outcome (and the PR link) either way.
+      try {
+        const r = await exportApply(exportModalState.item.id, exportBuildOpts());
+        appendLog({ source: 'ui', level: 'info', text: `exported ${exportModalState.item.name} to marketplace ${r.marketplace.name}: ${r.status}${r.prUrl ? ` ${r.prUrl}` : ''}` });
+        if (exportModalHidden()) return;
+        exportShowDone(marketplaceDoneView(r, { doc: document }));
+      } catch (err) {
+        if (exportModalHidden()) { appendLog({ source: 'ui', level: 'error', text: `marketplace export of ${exportModalState.item.name} failed: ${err.message}` }); return; }
+        exportInvalidatePlan();
+        exportSay(`Export failed: ${err.message}`, true);
+      } finally {
+        exportSetBusy(false);
+      }
+      return;
+    }
+    exportSetBusy(true);
     exportSay('Exporting…');
     try {
       if (!exportModalState.planned) {
@@ -36009,10 +36829,10 @@ function bindExportModal() {
     } catch (err) {
       exportInvalidatePlan();
       exportSay(`Export failed: ${err.message}`, true);
+    } finally {
+      exportSetBusy(false);
     }
   });
-  // Backdrop click (the overlay itself, not the inner card) closes the modal.
-  modal.addEventListener('click', (e) => { if (e.target === modal) closeExportModal(); });
 }
 bindExportModal();
 
@@ -36042,20 +36862,17 @@ function gvConfirmScriptImport(list) {
         body.append(head, pre);
       }
     }
-    // Every way out settles the promise ONCE: the two buttons, the modal's own Close, Escape.
+    // Every way out settles the promise ONCE: the two buttons, and the shell's own dismissal (Close, Escape).
     let settled = false;
-    const onClose = () => done(false);
-    const onKey = (e) => { if (e.key === 'Escape') done(false); };
+    let unhook = null;
     function done(ok) {
       if (settled) return;
       settled = true;
-      if (el.pluginModalClose) el.pluginModalClose.removeEventListener('click', onClose);
-      document.removeEventListener('keydown', onKey);
+      if (unhook) unhook();
       closePluginModal();
       resolve(ok);
     }
-    if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', onClose);
-    document.addEventListener('keydown', onKey);
+    unhook = onPluginModalDismiss(() => done(false));
     pluginModal('Import this workflow?', body, [['Cancel', 'btn btn-ghost', () => done(false)], ['Import', 'btn btn-primary', () => done(true)]]);
   });
 }

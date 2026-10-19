@@ -41,6 +41,9 @@ import { shapeFirstEnabled } from '../shape/gate.mjs';
 import { nudgeFor } from '../shape/nudge.mjs';
 import { estimateChoices } from '../shape/estimate.mjs';
 import { DEFAULT_PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
+import { presetProposalInput, PRESET_PROPOSAL_ERRORS } from './proposal-preset.mjs';
+import { readPreset as readPresetRow } from '../run-presets-store.mjs';
+import { flagEnabled } from '../flags.mjs';
 
 export const PROPOSAL_ERRORS = Object.freeze({
   bothTargets: 'provide workspaceId OR projectKey, not both',
@@ -149,6 +152,8 @@ function cleanNote(v, max = ASK_LIMITS.proposalNoteMaxChars) {
 
 function safeIds(plugin) { try { return realListProfileIds(plugin); } catch { return []; } }
 
+const given = (v) => v !== undefined && v !== null && v !== '';
+
 /**
  * @param {{listProjects?:Function, readWorkspace?:Function, readWorkflow?:Function, assertRunnableWorkflow?:Function, readGuardrailSet?:Function, isGitRepo?:Function, pathExists?:Function, shapeFirst?:Function, estimate?:Function|null}} [deps]
  */
@@ -192,6 +197,10 @@ export function createProposalValidator({
     try { const p = cachedPolicyFor(projectDir || policyProject); return p ? fieldsForRun(p.doc, { workspaceRun: !projectDir }) : {}; } catch { return {}; }
   },
   costOf = modelCostConfig,
+  // Run presets (#712 slice 3): propose_run's presetId. Null / off by default, so a validator built on fake readers
+  // never reads presets; the module singleton below binds the real ones.
+  readPreset = null,
+  presetsOn = () => false,
 } = {}) {
   /** propose_run `nodes` → { nodes, errors, warnings }: the run API's check (run-overlay.mjs) on the catalog the run's
    *  engine runs, plus Ask's own: signed out, every agent node needs a model the install can run (auto/runnable.mjs,
@@ -256,8 +265,21 @@ export function createProposalValidator({
    */
   // `claudeAuth`: the sign-in answer the Ask turn handed its MCP child (turn.mjs _onProposal), so the card is checked
   // with the answer the model's own call was checked with.
-  async function validateProposal(input, { cardId = null, attachments = [], timeZone = null, nowMs = Date.now(), scheduleDefaults = {}, lookupTask = null, claudeAuth: authAnswer = null } = {}) {
-    const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  async function validateProposal(input, { cardId = null, attachments = [], timeZone = null, nowMs = Date.now(), scheduleDefaults = {}, lookupTask = null, claudeAuth: authAnswer = null, owner = null } = {}) {
+    let inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+    // Run presets (D9): the preset's picks fill the input BEFORE every check below, so its broken items are named by them.
+    // `owner`: the thread's reader on a shared deployment (null = the local install, which sees every preset).
+    let cardPreset = null;
+    if (given(inp.presetId)) {
+      if (!presetsOn() || !readPreset) return { ok: false, errors: [PRESET_PROPOSAL_ERRORS.off] };
+      if (typeof inp.presetId !== 'string') return { ok: false, errors: [PRESET_PROPOSAL_ERRORS.type] };
+      const preset = await readPreset(inp.presetId.trim(), { owner });
+      if (!preset) return { ok: false, errors: [PRESET_PROPOSAL_ERRORS.unknown(inp.presetId)] };
+      const merged = presetProposalInput(preset, inp);
+      if (merged.errors.length) return { ok: false, errors: merged.errors };
+      inp = merged.input;
+      cardPreset = merged.cardPreset;
+    }
     const errors = [];
     const fail = () => ({ ok: false, errors });
     const str = (v) => (typeof v === 'string' ? v.trim() : '');
@@ -439,7 +461,7 @@ export function createProposalValidator({
       errors.push(`featureBranch and sourceBranch are both "${sourceBranch}": to commit onto it, set sameAsSource: true (and drop featureBranch); otherwise name another feature branch`);
     }
 
-    // ── schedule (docs/scheduled-runs.md "Ask Worca"): when | every, read in the user's zone ──
+    // ── schedule (docs/scheduled-runs.md "Chat"): when | every, read in the user's zone ──
     const spec = resolveScheduleSpec({ ...inp, projectKey: target.projectKey || '', workspaceId: target.workspaceId || '' }, { nowMs, timeZone, defaults: scheduleDefaults, afterRef });
     if (!spec.ok) errors.push(...spec.errors);
     if (spec.ok && spec.schedule && spec.schedule.kind === 'after' && spec.schedule.sourceFromPrevious && (sourceBranch || (sourceBranchByKey && Object.keys(sourceBranchByKey).length))) {
@@ -460,8 +482,8 @@ export function createProposalValidator({
       }
     }
 
-    // Run tags (#718): the one normaliser; the card carries the clean list.
-    const tagCheck = normaliseTags(inp.tags);
+    // Run tags (#718): the one normaliser; the card carries the clean list. A proposal writes tags: key:value only.
+    const tagCheck = normaliseTags(inp.tags, { strict: true });
     for (const e of tagCheck.errors) errors.push(`tags: ${e}`);
     if (shape && spec.schedule) errors.push(PROPOSAL_ERRORS.shapeScheduled);
     const nudgeBase = !shape && !spec.schedule && shapeFirst() ? nudgeFor(inp.assess) : null;
@@ -510,7 +532,9 @@ export function createProposalValidator({
         ...(sameAsSource ? { sameAsSource: true } : {}),
         // Only a shaped card / a nudged card carries these (run cards are pinned).
         ...(shape ? { shape } : {}),
-        ...(nudge ? { nudge } : {}) },
+        ...(nudge ? { nudge } : {}),
+        // Only a card proposed from a run preset: what Start adds (applyPresetStart, src/shared/run-presets.mjs).
+        ...(cardPreset ? { preset: cardPreset } : {}) },
     };
   }
   return { validateProposal };
@@ -522,4 +546,6 @@ export const validateProposal = createProposalValidator({
     resolveGitSourceRef(dir, name, { remote: effectiveSyncSettings(projectKey).remote }),
   remoteName: (projectKey) => effectiveSyncSettings(projectKey).remote,
   estimate: (wfs) => estimateChoices(wfs),
+  readPreset: async (id, opts) => readPresetRow(id, opts),
+  presetsOn: () => flagEnabled('runPresets'),
 }).validateProposal;

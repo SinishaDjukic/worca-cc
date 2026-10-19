@@ -29,7 +29,8 @@ function stub({ ahead = '2' } = {}) {
     if (cmd === 'git' && args[0] === 'rev-list') return ok(opts.cwd === '/r/doc' ? `${ahead}\n` : '0\n');
     if (cmd === 'git' && args[0] === 'diff') return ok(' 1 file changed, 4 insertions(+), 1 deletion(-)\n');
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list')
-      return ok(opts.cwd === '/r/web' ? '[{"number":8,"state":"OPEN","url":"https://github.com/o/web/pull/8"}]' : '[]');
+      return ok(opts.cwd === '/r/web' ? '[{"number":8,"state":"OPEN","url":"https://github.com/o/web/pull/8"}]'
+        : opts.cwd === '/r/doc' ? '[{"number":2,"state":"CLOSED","url":"https://github.com/o/doc/pull/2"}]' : '[]');
     return ok('');
   });
 }
@@ -78,15 +79,18 @@ test('lite rows carry no members (no git)', async () => {
   assert.equal(row.members, undefined);
 });
 
-test('enrichPipelinesPr resolves + persists per member and sends a rollup', async () => {
+test('enrichPipelinesPr resolves + persists per member and sends a rollup; a closed member PR is sent, never recorded', async () => {
   stub();
   const batches = [];
   await enrichPipelinesPr(async (items, done) => { batches.push({ items, done }); });
   const it = batches.flatMap((b) => b.items).find((x) => x.id === runId);
   assert.deepEqual(it.pr, { state: 'OPEN', url: 'https://github.com/o/web/pull/8', number: 8 });
-  assert.deepEqual(it.members.find((m) => m.memberKey === 'web-00000002').pr, { state: 'OPEN', url: 'https://github.com/o/web/pull/8', number: 8 });
+  assert.deepEqual(it.members.find((m) => m.memberKey === 'web-00000002').pr,
+    { state: 'OPEN', url: 'https://github.com/o/web/pull/8', number: 8, isDraft: false, mergeable: 'UNKNOWN' });
   assert.equal(it.members.find((m) => m.memberKey === 'api-00000001').pr, null);
+  assert.equal(it.members.find((m) => m.memberKey === 'doc-00000003').pr.state, 'CLOSED', 'the Runs list draws it');
   assert.deepEqual(readMemberPrStates(runId)['web-00000002'].url, 'https://github.com/o/web/pull/8');
+  assert.equal(readMemberPrStates(runId)['doc-00000003'], undefined, 'a closed PR is never a member pr_url');
   assert.equal(batches.at(-1).done, true);
 });
 
@@ -136,6 +140,6 @@ test('a legacy workspace row (no workspace_meta.projects) keeps its primary-only
   });
   const row = (await listAllPipelines({ withPr: true })).find((p) => p.id === legacy.id);
   assert.deepEqual(row.members, []);
-  assert.deepEqual(row.pr, { number: 4, state: 'MERGED', url: 'https://github.com/o/old/pull/4' },
+  assert.deepEqual(row.pr, { number: 4, state: 'MERGED', url: 'https://github.com/o/old/pull/4', isDraft: false, mergeable: 'UNKNOWN' },
     'no members -> the primary-only lookup stands (never overwritten with a null rollup)');
 });

@@ -165,8 +165,8 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   // The catalog lists no Codex model while this codex cannot be locked down for a chat (docs/models.md#codex): a saved
   // Codex choice then starts new chats on Claude, and the card says so instead of offering an empty model row.
   const codexOffered = catalog.some((m) => m && m.engine === 'codex');
-  const unavailable = engineLock('codex') !== null ? 'Ask on Codex is off while the credential broker is on, so new chats start on Claude.'
-    : 'Ask on Codex is unavailable on this codex version, so new chats start on Claude.';
+  const unavailable = engineLock('codex') !== null ? 'Chat on Codex is off while the credential broker is on, so new chats start on Claude.'
+    : 'Chat on Codex is unavailable on this codex version, so new chats start on Claude.';
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
     hint: `A chat keeps the engine it started on; to switch, start a new chat.${codexOffered ? '' : ` ${unavailable}`}`,
     options: [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: codexOffered ? engineChoiceLabel('codex') : 'Codex (unavailable)' }],

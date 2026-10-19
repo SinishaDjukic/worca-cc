@@ -221,7 +221,7 @@ test('GET /api/runs?projectDir still returns inline pr (per-project withPr uncha
   });
   const j = await (await fetch(`${base}/api/runs?projectDir=${encodeURIComponent(repoDir)}`)).json();
   const row = j.pipelines.find((p) => p.id === rpId);
-  assert.deepEqual(row.pr, { state: 'OPEN', url: 'https://gh/r/pull/9', number: 9 });
+  assert.deepEqual(row.pr, { state: 'OPEN', url: 'https://gh/r/pull/9', number: 9, isDraft: false, mergeable: 'UNKNOWN' });
 });
 
 test('POST /api/pr/mergeable error paths: 400 without id; 200 UNKNOWN when gh is missing or the key is malformed', async () => {
@@ -478,6 +478,46 @@ test('a chained run: GET offers the chain root first as the default; POST withou
   stubForkRepo(s2);
   assert.equal((await post({ projectKey: betaKey, id: nb3, baseBranch: 'dev' })).status, 200);
   assert.deepEqual(s2.find((c) => c[2] === 'create').slice(5, 7), ['--base', 'dev']);
+});
+
+// A run started from a remote-tracking ref (the Ask agent's start_run with sourceBranch "origin/dev") records it
+// verbatim; on the remote that branch is `dev`.
+test('a run whose source is origin/dev: GET defaults to dev on origin; POST opens against dev', async () => {
+  await setPrRemotePrefs(betaRepo, { pushRemote: 'origin', baseRemote: 'origin' });
+  try {
+    const feature = 'worca-cc/from-remote-ref';
+    const seeded = await seedPipeline(betaRepo, { title: 'From origin/dev', status: 'stopped', startedAt: '2026-06-03T00:00:00Z',
+      branch: { source: 'origin/dev', feature, branchKept: true, commit: 'abc', baseSha: 'a'.repeat(40),
+        sync: { remote: 'origin', remoteSha: 'b'.repeat(40) } } });
+    const refs = `${REFS}refs/remotes/origin/dev\n`;
+    const seen = [];
+    const synced = [];
+    stubForkRepo(seen, { refs });
+    stubSyncRepo(synced, { moved: '2' });
+    const j = await (await getRemotes({ projectKey: betaKey, id: seeded.id })).json();
+    assert.deepEqual([j.chain, j.defaultBase], [['dev'], 'dev']);
+    assert.ok(j.branches.origin.includes('dev'), 'the default is offered on the base remote: no "not on origin" warning');
+    assert.equal(j.baseStatus.base, 'dev');
+    assert.equal(j.baseStatus.movedSinceRun, 2);
+    assert.ok(synced.some((a) => a[0] === 'rev-list' && a[2] === `${'b'.repeat(40)}..refs/remotes/origin/dev`),
+      'the recorded origin tip is the same ref as the mapped base: measured from it');
+
+    for (const extra of [{}, { baseBranch: 'origin/dev' }]) {
+      const s = [];
+      stubForkRepo(s, { refs });
+      const r = await post({ projectKey: betaKey, id: seeded.id, ...extra });
+      assert.equal(r.status, 200, JSON.stringify(extra));
+      assert.deepEqual(s.find((c) => c[2] === 'create').slice(3, 9), ['--repo', 'me/repo', '--base', 'dev', '--head', feature], JSON.stringify(extra));
+    }
+
+    // A real local branch named origin/dev stays the base, as before.
+    const local = `${refs}refs/heads/origin/dev\n`;
+    stubForkRepo([], { refs: local });
+    const k = await (await getRemotes({ projectKey: betaKey, id: seeded.id })).json();
+    assert.deepEqual([k.chain, k.defaultBase], [['origin/dev'], 'origin/dev']);
+  } finally {
+    await setPrRemotePrefs(betaRepo, {});
+  }
 });
 
 // ---------------------------------------------------------------------------

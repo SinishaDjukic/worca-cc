@@ -264,7 +264,7 @@ test('clearing chat history: the button refetches counts and opens a danger conf
       assert.equal(dlg.confirmLabel, 'Delete everything');
       assert.ok(window.document.getElementById('confirm-ok').classList.contains('danger'));
       assert.equal(dlg.message, [
-        'This permanently deletes all Ask Worca chat history:',
+        'This permanently deletes all chat history:',
         '• 3 chat threads and their transcripts',
         '• 2 git worktrees checked out for those chats (removed from their source repos)',
         '• 5 attachments',
@@ -314,7 +314,7 @@ test('ui-settings-ask: the script toggle paints from chat prefs and rides the ca
   const { window, $, posts, tick, openSettings } = await boot();
   await openSettings();
   const cb = $('#askScriptTools');
-  assert.ok(cb, 'the toggle is mounted in the Ask Worca card');
+  assert.ok(cb, 'the toggle is mounted in the Chat card');
   assert.equal(cb.checked, true, 'an absent pref is ON');
   assert.equal($('#ask-script-tools-host').textContent.trim(), 'Create and run scripts');
   edit(window, cb, false);
@@ -327,7 +327,7 @@ test('ui-settings-ask: the suggestions toggle paints from chat prefs and rides t
   const { window, $, posts, tick, openSettings } = await boot();
   await openSettings();
   const cb = $('#askSuggestions');
-  assert.ok(cb, 'the toggle is mounted in the Ask Worca card');
+  assert.ok(cb, 'the toggle is mounted in the Chat card');
   assert.equal(cb.checked, true, 'an absent pref is ON');
   assert.equal($('#ask-suggestions-host').textContent.trim(), 'Suggest a next prompt after each reply');
   edit(window, cb, false);

@@ -230,10 +230,10 @@ function renderSpeechRow(doc, sp) {
   row.dataset.provider = 'speech';
   const main = h(doc, 'div', 'mv-pv-main');
   const spHead = h(doc, 'div', 'mv-head');
-  spHead.appendChild(h(doc, 'b', 'mv-name', 'Speech (Ask Worca voice)'));
+  spHead.appendChild(h(doc, 'b', 'mv-name', 'Speech (Chat voice)'));
   main.appendChild(spHead);
   main.appendChild(h(doc, 'small', 'hint',
-    'Voice mode for Ask Worca. Built in: Whisper and Kokoro run inside your browser — the first use downloads the speech models once (up to about 500 MB), and audio never leaves this computer. Or point Worca at speech servers you run (whisper.cpp, Kokoro-FastAPI, …) through their OpenAI-compatible audio API.'));
+    'Voice mode for Chat. Built in: Whisper and Kokoro run inside your browser — the first use downloads the speech models once (up to about 500 MB), and audio never leaves this computer. Or point Worca at speech servers you run (whisper.cpp, Kokoro-FastAPI, …) through their OpenAI-compatible audio API.'));
   if (sp.cacheBytes) {
     // The built-in engines' downloads (~/.worca-cc/speech-cache); the next mic use fetches them again.
     const cache = h(doc, 'div', 'mv-pv-btns mv-sp-cache');
@@ -640,9 +640,11 @@ export function renderEndpointSheet(payload, { doc = globalThis.document } = {})
     : `${p.baseUrl || ''} — these run through the translation layer (no thinking blocks, no web tools) and are priced free: a model on your own machine bills nothing. Worca pins the prompt limit only when the server reports the window it really serves.`));
   for (const w of Array.isArray(p.warnings) ? p.warnings : []) root.appendChild(h(doc, 'small', 'hint mvi-warn', w));
   // A hosted catalog lists hundreds of models: beside the dialog's text filter, narrow by what a
-  // pipeline decides on. The controls only mark the view — endpointRowMatches reads them.
+  // pipeline decides on. The controls only mark the view — endpointRowMatches reads them — so, like
+  // that text filter, they are no change the dialog could lose (data-dirty-ignore).
   if (hosted && list.length) {
     const bar = h(doc, 'div', 'chip-select mvi-or-filters');
+    bar.dataset.dirtyIgnore = '';
     const chip = (cls, text) => {
       const l = h(doc, 'label', 'mvi-chip');
       const cb = h(doc, 'input', cls); cb.type = 'checkbox';

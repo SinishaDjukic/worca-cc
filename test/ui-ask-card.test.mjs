@@ -567,3 +567,19 @@ test('ui-ask-card: a script draft saves through POST /api/scripts and its cases;
   assert.equal(w.location.hash, '#workflows/scripts/new/node');
   assert.deepEqual(w.__scripts.ctl().pendingCases(), SCRIPT_CARD.draft.cases);
 });
+
+test('ui-ask-card: a card from a preset says so, and Start posts presetId with the preset\'s hidden picks', async () => {
+  const preset = { id: 'rp_aaaaaaaaaaaa', name: 'Quick fix', workflowId: 'wf_review',
+    setup: { humanInLoop: false, nightMode: true, overlay: { wires: { w_review: { maxCycles: 2 } } } } };
+  const ctx = await boot();
+  await openCard(ctx, { ...CARD, preset });
+  const doc = ctx.window.document;
+  assert.match(doc.querySelector('.ask-card-preset').textContent, /From preset Quick fix/);
+  doc.querySelector('[data-ask-card-start]').click();
+  await settle(ctx.window, 6);
+  const body = ctx.runBodies.at(-1);
+  assert.equal(body.presetId, 'rp_aaaaaaaaaaaa');
+  assert.equal(body.nightMode, true);
+  assert.equal(body.humanInLoop, false);
+  assert.deepEqual(body.overlay, { wires: { w_review: { maxCycles: 2 } } });
+});

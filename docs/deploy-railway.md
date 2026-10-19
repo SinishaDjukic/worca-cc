@@ -162,7 +162,7 @@ Setting a variable redeploys the service. Other settings changes apply on the ne
 Projects live on the volume under `/data/projects`. Add one from the UI: **Projects → Add project →
 Clone from URL**, with the repository's `https://` URL and, optionally, a branch and a folder name.
 Worca clones it with the deployment's GitHub read credential (token or App), as the `worca` user,
-into a new folder, and registers it. The same works from Ask Worca ("set up github.com/acme/api"
+into a new folder, and registers it. The same works from Chat ("set up github.com/acme/api"
 proposes a card you apply) and from a shell with `worca add --clone <url>`.
 
 - Only `https://` URLs; a URL with credentials in it is refused (the credential belongs in the
@@ -173,7 +173,7 @@ proposes a card you apply) and from a shell with `worca add --clone <url>`.
   removes its folder. Large repositories are cloned partially (`--filter=blob:none`) and fetch
   file contents as they are needed.
 
-Ask Worca knows it runs hosted. Each turn tells it the projects folder, whether a GitHub credential is
+Chat knows it runs hosted. Each turn tells it the projects folder, whether a GitHub credential is
 set, and who is signed in. It points people here to add a project, never asks for a token in chat,
 and says that pull requests come from the deployment's GitHub account.
 

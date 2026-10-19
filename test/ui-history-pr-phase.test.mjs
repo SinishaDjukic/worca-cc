@@ -109,6 +109,68 @@ test('history-pr OPEN and MERGED batches turn the row word into In review / Merg
   ]);
 });
 
+test('history-pr batches repaint the row’s PR glyph in place, even when the word stays "In review"', async () => {
+  const ctx = await boot({ fetchHandler: (url) => (url.endsWith('/api/history') ? skeleton([ROW()]) : null) });
+  ctx.showRuns();
+  await ctx.tick();
+  const token = ctx.prTokens().at(-1);
+  // Re-queried on every call: a repaint replaces the row.
+  const glyph = () => {
+    const ic = ctx.window.document.querySelector(`${rowSel('p1', 'proj-0000abcd')} .runs-pr`);
+    return ic ? [ic.className, ic.getAttribute('aria-label')] : null;
+  };
+  const send = async (pr) => {
+    ctx.dispatchPr({ token, items: [{ projectKey: 'proj-0000abcd', id: 'p1', pr }] });
+    await ctx.tick();
+  };
+  const OPEN = { state: 'OPEN', url: 'https://gh/x/pull/8', number: 8 };
+  assert.equal(glyph(), null, 'the lookup has not answered: nothing drawn');
+  await send({ ...OPEN, isDraft: true, mergeable: 'UNKNOWN' });
+  assert.deepEqual(glyph(), ['runs-pr runs-pr-draft', 'Pull request: draft']);
+  assert.equal(wordOf(ctx), 'In review');
+  // Same word from here on: only the glyph's state tells the repaint something changed.
+  await send({ ...OPEN, isDraft: false, mergeable: 'UNKNOWN' });
+  assert.deepEqual(glyph(), ['runs-pr runs-pr-open', 'Pull request: open']);
+  await send({ ...OPEN, isDraft: false, mergeable: 'CONFLICTING' });
+  assert.deepEqual(glyph(), ['runs-pr runs-pr-conflict', 'Pull request: has conflicts']);
+  assert.equal(wordOf(ctx), 'In review');
+  await send({ ...OPEN, state: 'CLOSED', isDraft: false, mergeable: 'UNKNOWN' });
+  assert.deepEqual(glyph(), ['runs-pr runs-pr-closed', 'Pull request: closed without merging']);
+  assert.equal(wordOf(ctx), 'PR closed');
+  await send({ ...OPEN, state: 'MERGED', isDraft: false, mergeable: 'UNKNOWN' });
+  assert.deepEqual(glyph(), ['runs-pr runs-pr-merged', 'Pull request: merged']);
+  await send(null);
+  assert.equal(glyph(), null, 'no PR: the glyph goes');
+});
+
+test('a workspace run’s history-pr batch draws its most urgent member PR and their count', async () => {
+  const member = (memberKey) => ({ memberKey, name: memberKey, projectDir: `/x/${memberKey}`, branch: 'worca-cc/feat-1',
+    sourceBranch: 'main', survived: true, affected: true });
+  const ws = ROW({ target: 'workspace', members: [member('api'), member('web'), member('doc')] });
+  const ctx = await boot({ fetchHandler: (url) => (url.endsWith('/api/history') ? skeleton([ws]) : null) });
+  ctx.showRuns();
+  await ctx.tick();
+  const token = ctx.prTokens().at(-1);
+  const glyph = () => {
+    const ic = ctx.window.document.querySelector(`${rowSel('p1', 'proj-0000abcd')} .runs-pr`);
+    return ic ? [ic.className, ic.querySelector('.runs-pr-count')?.textContent ?? null, ic.getAttribute('aria-label')] : null;
+  };
+  const pr = (n, more = {}) => ({ state: 'OPEN', url: `https://gh/x/pull/${n}`, number: n, isDraft: false, mergeable: 'UNKNOWN', ...more });
+  const send = async (members) => {
+    ctx.dispatchPr({ token, items: [{ projectKey: 'proj-0000abcd', id: 'p1', pr: pr(1), members }] });
+    await ctx.tick();
+  };
+  await send([{ memberKey: 'api', pr: pr(1) }, { memberKey: 'web', pr: pr(2, { state: 'MERGED' }) }, { memberKey: 'doc', pr: null }]);
+  assert.deepEqual(glyph(), ['runs-pr runs-pr-open', '2', '2 pull requests, the most urgent is open']);
+  await send([{ memberKey: 'api', pr: pr(1) }, { memberKey: 'web', pr: pr(2, { state: 'MERGED' }) }, { memberKey: 'doc', pr: pr(3) }]);
+  assert.deepEqual(glyph(), ['runs-pr runs-pr-open', '3', '3 pull requests, the most urgent is open'], 'the count alone repaints the row');
+  // The rollup (`pr`) stays the same open PR: only the members' states repaint the row.
+  await send([{ memberKey: 'api', pr: pr(1) }, { memberKey: 'web', pr: pr(2, { mergeable: 'CONFLICTING' }) }, { memberKey: 'doc', pr: pr(3, { isDraft: true }) }]);
+  assert.deepEqual(glyph(), ['runs-pr runs-pr-conflict', '3', '3 pull requests, the most urgent has conflicts']);
+  await send([{ memberKey: 'api', pr: pr(1) }, { memberKey: 'web', pr: null }, { memberKey: 'doc', pr: null }]);
+  assert.deepEqual(glyph(), ['runs-pr runs-pr-open', null, 'Pull request: open'], 'one member PR: no count');
+});
+
 test('id collision across projects: only the (id, projectKey)-matched row is patched', async () => {
   const ctx = await boot({
     fetchHandler: (url) => (url.endsWith('/api/history')

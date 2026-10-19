@@ -770,7 +770,7 @@ test('workflow card: a width change during the build animation lands nothing ear
   assert.equal(hidden(), before, 'the build keeps its hidden cards and wires');
 });
 
-// ---- Scheduled runs (docs/scheduled-runs.md "Ask Worca") ----
+// ---- Scheduled runs (docs/scheduled-runs.md "Chat") ----
 const ONCE = { kind: 'once', runAt: '2026-09-19T00:00:00.000Z', when: 'Sat Sep 19, 02:00', timeZone: 'Europe/Berlin' };
 const REPEAT = {
   kind: 'repeat', rule: { freq: 'weekly', interval: 1, time: '02:00', tz: 'Europe/Berlin', weekdays: ['mo', 'tu', 'we', 'th', 'fr'], anchor: '2026-09-18', end: { type: 'never' } },
@@ -779,7 +779,7 @@ const REPEAT = {
 
 test('ask-panel-card: a scheduled proposal makes Schedule primary (Start now the alternative); a repeating one posts repeat; a plain card keeps Advanced "Schedule…"', async () => {
   await checkRows([
-    { name: 'ask-panel-card: a proposal Ask Worca scheduled makes Schedule the primary action; Start now is the alternative', run: async () => {
+    { name: 'ask-panel-card: a proposal Chat scheduled makes Schedule the primary action; Start now is the alternative', run: async () => {
       const rec = {};
       const ctx = await openWithCard({ ...PROJECT_CARD, schedule: ONCE }, rec);
       const cardEl = ctx.doc.querySelector('.ask-card');
@@ -1038,7 +1038,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       push('card_00000010', 'proposed');
       const el = ctx.doc.querySelector('[data-ask-webcard="proposed"]');
       assert.ok(el);
-      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Ask Worca wants to read a new site');
+      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Chat wants to read a new site');
       assert.equal(el.querySelector('.ask-mcard-after').textContent, 'https://jev.example.dev/docs?v=2');
       assert.equal(el.querySelector('.ask-mcard-note').textContent, '<i>docs</i>'); assert.equal(el.querySelector('.ask-mcard-note i'), null);
       el.querySelector('[data-ask-web-chat]').click(); await ctx.tick();
@@ -1502,23 +1502,23 @@ test('ask-panel-card: card.nodes pre-fills the lane — marker with the reason, 
   assert.equal(plan.querySelector('.ask-rp-model').value, 'claude-opus-5-5');
   assert.equal(plan.querySelector('.ask-rp-eff button.on').textContent, 'high');
   const mark = plan.querySelector('.ask-rp-prop');
-  assert.equal(mark.textContent, 'Ask Worca');
-  assert.equal(mark.title, 'Proposed by Ask Worca for this run — Plans the auth change: a judgement step — anthropic · top tier · $4/$20 per Mtok');
+  assert.equal(mark.textContent, 'Chat');
+  assert.equal(mark.title, 'Proposed by Chat for this run — Plans the auth change: a judgement step — anthropic · top tier · $4/$20 per Mtok');
   assert.deepEqual([mark.tabIndex, mark.getAttribute('aria-label')], [0, mark.title], 'the reason reaches keyboard and screen-reader users too');
-  assert.equal(plan.querySelector('.ask-rp-name small').textContent, 'Ask Worca · step 1 · project: inherit');
+  assert.equal(plan.querySelector('.ask-rp-name small').textContent, 'Chat · step 1 · project: inherit');
   assert.ok(!plan.classList.contains('mod'), 'a proposed pick is not the user\'s edit');
   assert.equal(tileOf(lane, 'n_rev').querySelector('.ask-rp-eff button.on').textContent, 'medium');
   assert.equal(tileOf(lane, 'n_impl').querySelector('.ask-rp-prop'), null, 'a node the proposal does not name');
   assert.equal(tileOf(lane, 'n_impl').querySelector('.ask-rp-row-reset'), null, 'nothing to reset');
-  assert.match(lane.querySelector('.ask-rp-sec-sub').textContent, /^Ask Worca picked 2 agents for this run · 2 overrides of the workflow defaults$/);
+  assert.match(lane.querySelector('.ask-rp-sec-sub').textContent, /^Chat picked 2 agents for this run · 2 overrides of the workflow defaults$/);
   assert.equal(lane.querySelector('.ask-rp-mini').hidden, true, 'nothing to reset to the proposal yet');
-  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Opus 5.5 ×2 · Haiku 4.5 ×1 · 1 fan-out · 2 picked by Ask Worca');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Opus 5.5 ×2 · Haiku 4.5 ×1 · 1 fan-out · 2 picked by Chat');
   plan.querySelector('.ask-rp-row-reset').click();
   const plan2 = tileOf(lane, 'n_plan');
   assert.equal(plan2.querySelector('.ask-rp-model').value, '', 'back to the project\'s own setting');
   assert.ok(plan2.classList.contains('mod'), 'moved off the proposal');
   assert.equal(plan2.querySelector('.ask-rp-m').textContent, 'project default');
-  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · inherit ×1 · Opus 5.5 ×1 · Haiku 4.5 ×1 · 1 fan-out · 1 picked by Ask Worca');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · inherit ×1 · Opus 5.5 ×1 · Haiku 4.5 ×1 · 1 fan-out · 1 picked by Chat');
   assert.equal(lane.querySelector('.ask-rp-mini').hidden, false);
   lane.querySelector('.ask-rp-mini').click();
   assert.equal(tileOf(lane, 'n_plan').querySelector('.ask-rp-model').value, 'claude-opus-5-5', 'Reset to proposal brings the pick back');
@@ -1640,7 +1640,7 @@ test('ask-panel-card: on a workspace card a standing pick is sent outright, even
   assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high' } } });
 });
 
-test('ask-panel-card: a Start whose lane never loaded still sends Ask Worca\'s picks as proposed — the run API checks them', async () => {
+test('ask-panel-card: a Start whose lane never loaded still sends Chat\'s picks as proposed — the run API checks them', async () => {
   const rec = { laneFail: true };
   const ctx = await openWithCard(NODES_CARD, rec);
   await laneOf(ctx);
@@ -1675,7 +1675,7 @@ test('ask-panel-card: on a workspace card an agent the workspace run always fans
   assert.equal(tileOf(lane2, 'n_impl').querySelector('[data-ctl="fanOut"]').disabled, false, 'a project run fans out as the lane says');
 });
 
-test('ask-panel-card: on a workspace card another edit on a picked agent keeps Ask Worca\'s model in the overlay', async () => {
+test('ask-panel-card: on a workspace card another edit on a picked agent keeps Chat\'s model in the overlay', async () => {
   const rec = {};
   const ctx = await openWithCard({ ...WS_CARD, nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high', reason: 'A wide change' } } }, rec);
   const lane = await laneOf(ctx);

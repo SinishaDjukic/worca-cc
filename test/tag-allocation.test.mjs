@@ -18,14 +18,14 @@ test('sharePercents: integers by largest remainder, summing to exactly 100; a $0
   assert.deepEqual(sharePercents([0, 0]), [null, null]);
 });
 
-test('allocationModel: values by spend, an Untagged row even when the server dropped it, Ask Worca last', () => {
+test('allocationModel: values by spend, an Untagged row even when the server dropped it, Chat last', () => {
   const m = allocationModel({ key: 'client', label: 'client', rows: fromStatsRows([
     { kind: 'value', label: 'globex', spentUsd: 2, runs: 1 },
     { kind: 'value', label: 'acme', spentUsd: 2.25, runs: 2 },
-    { kind: 'ask', label: 'Ask Worca', spentUsd: 0.75, runs: 0 },
+    { kind: 'ask', label: 'Chat', spentUsd: 0.75, runs: 0 },
   ]) });
   assert.deepEqual(m.top.map((r) => r.label), ['acme', 'globex']);
-  assert.deepEqual(m.tail.map((r) => [r.label, r.usd, r.runs]), [['Untagged', 0, 0], ['Ask Worca', 0.75, null]]);
+  assert.deepEqual(m.tail.map((r) => [r.label, r.usd, r.runs]), [['Untagged', 0, 0], ['Chat', 0.75, null]]);
   assert.equal(sum(visibleShares(m)), 100);
   assert.equal(m.totalUsd, 5);
   assert.equal(m.totalRuns, 3);

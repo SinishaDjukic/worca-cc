@@ -456,7 +456,7 @@ test('per-person Away on a shared sign-in: in an ownerless (legacy) thread every
 
 test('receipt Revert brings back the Settings page\'s "No cap" tick (a stored null), never an unset cap a team default fills', async () => {
   const { readSettings } = await import('../src/core/settings.mjs');
-  assert.equal((await post('/api/settings', { askMaxBudgetUsd: null })).status, 200);   // Settings › Ask Worca: No cap ticked
+  assert.equal((await post('/api/settings', { askMaxBudgetUsd: null })).status, 200);   // Settings › Chat: No cap ticked
   assert.equal(readSettings().askMaxBudgetUsd, null);
   const minted = await host().apply({ kind: 'setting', id: 'askMaxBudgetUsd', scope: 'user', value: 5 }, { actor: 'local' });
   assert.equal(minted.ok, true, JSON.stringify(minted));

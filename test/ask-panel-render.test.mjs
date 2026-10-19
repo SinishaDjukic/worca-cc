@@ -7,6 +7,9 @@ import { checkRows } from './helpers/rows.mjs';
 
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { applyLevel } from '../ui/public/ui-level.mjs';
+import { registerFilesCard } from '../ui/public/chat/files-card.mjs';
+import { _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
+import { _resetFileRenderers } from '../ui/public/chat/file-renderers.mjs';
 
 const TID = 'ask_00000001';
 
@@ -89,7 +92,7 @@ test('ask-panel-render: user bubble + attachment pills, plain-fallback answer, a
     { name: 'ask-panel-render: activity head — one dot-separated line, the meter beside it; stopped keeps its label', run: async () => {
       const snap = snapBody([
         asstRow('askm_00000001', 1),
-        asstRow('askm_00000002', 2, { status: 'stopped', reason: 'max_turns', durationMs: 72000, blocks: [{ kind: 'notice', text: 'Stopped: reached the 40-turn limit (Settings → Ask Worca)' }] }),
+        asstRow('askm_00000002', 2, { status: 'stopped', reason: 'max_turns', durationMs: 72000, blocks: [{ kind: 'notice', text: 'Stopped: reached the 40-turn limit (Settings → Chat)' }] }),
       ]);
       const ctx = makePanel({ fetchHandler: handlerFor(snap) });
       await openThread(ctx);
@@ -532,4 +535,32 @@ test('ask-panel-render: a 404 thread clears the stored id and renders nothing', 
   await openThread(ctx);
   assert.equal(ctx.doc.querySelector('.ask-msg-user'), null);
   assert.equal(ctx.storage.getItem('worca-cc.ask.thread'), null, 'stored id dropped on 404');
+});
+
+test('ask-panel-render: a stored files card replays on thread open, inline, and a tile click calls chatDeps.openFiles', async () => {
+  registerFilesCard();
+  try {
+    const item = { attId: 'att_00000001', name: 'home.png', kind: 'image', mime: 'image/png', bytes: 2048 };
+    const snap = snapBody([
+      userRow('askm_u0000001', 1, 'screenshot it'),
+      asstRow('askm_00000001', 2, { text: 'Here it is.\n\nLooks right.', blocks: [{ kind: 'card', id: 'card_00000001', state: 'shown', textAt: 'Here it is.'.length, card: { type: 'files', title: 'home.png', items: [item] } }] }),
+    ]);
+    const opened = [];
+    const ctx = makePanel({ fetchHandler: handlerFor(snap), deps: { chatDeps: { openFiles: (o) => opened.push(o) } } });
+    await openThread(ctx);
+    const card = ctx.doc.querySelector('.ask-msg-assistant .ask-filescard');
+    assert.ok(card, 'the files card replays');
+    const msg = ctx.doc.querySelector('.ask-msg-assistant');
+    const order = [...msg.children].filter((c) => !c.hidden && (c.classList.contains('ask-answer') || c.classList.contains('ask-filescard')))
+      .map((c) => (c.classList.contains('ask-filescard') ? 'card' : c.textContent.trim()));
+    assert.deepEqual(order, ['Here it is.', 'card', 'Looks right.'], 'inside the answer where it was shown (textAt)');
+    assert.equal(card.querySelectorAll('img').length, 1);
+    card.querySelector('.ask-filescard-thumb').click();
+    assert.equal(opened.length, 1);
+    assert.equal(opened[0].threadId, TID);
+    assert.equal(opened[0].index, 0);
+  } finally {
+    _resetChatExtensions();
+    _resetFileRenderers();
+  }
 });

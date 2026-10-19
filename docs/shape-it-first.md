@@ -38,7 +38,7 @@ chips, **Fix**, **Save to plans/**, **Merge with next**, **Remove**.
 
 - **Shaper.** The tile on the Chat home. Describe the task; Worca
   proposes a shaped run on a card.
-- **The nudge.** When Ask Worca judges a task to have open decisions, the run card
+- **The nudge.** When Chat judges a task to have open decisions, the run card
   offers **Shaper** next to **Run as is**, with an estimate of each.
 - **New run.** The New run page links to the same flow.
 

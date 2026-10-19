@@ -1,5 +1,5 @@
 // src/core/ask/metrics-deps.mjs
-// The team-metrics dependency bundle of the Ask Worca tools (docs/team-metrics.md "Ask Worca"):
+// The team-metrics dependency bundle of the Ask Worca tools (docs/team-metrics.md "Chat"):
 // the ONE module that touches the metrics core on the tools' behalf. tools.mjs may not import
 // anything, so every reader, the validator and the two writers live here. Two callers:
 //   • the MCP child (mcp-stdio.mjs): deps.metrics.* behind get_team_metrics, list_team_metrics_runs,

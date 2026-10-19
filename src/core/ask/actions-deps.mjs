@@ -1,5 +1,5 @@
 // src/core/ask/actions-deps.mjs
-// The Actions dependency bundle of the Ask Worca tools (docs/actions.md "Ask Worca"): the ONE module
+// The Actions dependency bundle of the Ask Worca tools (docs/actions.md "Chat"): the ONE module
 // that reads a project's actions, a workspace's stacks, a run's checkout and the running services on
 // the tools' behalf (tools.mjs may not import anything). Read-only, plus the card's validator:
 //   • the MCP child (mcp-stdio.mjs): deps.actions.* behind get_project_actions, get_workspace_stacks,

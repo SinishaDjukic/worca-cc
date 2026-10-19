@@ -5,7 +5,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { addProject } from '../src/core/projects.mjs';
-import { createThread, appendMessage, addAttachment } from '../src/core/ask/store.mjs';
+import { createThread, appendMessage, addAttachment, getAttachment, attachmentPath, attachmentSourcePath, askOutDir, attachmentsDir } from '../src/core/ask/store.mjs';
 import { createRpcServer, parseArgv, main } from '../src/core/ask/mcp-stdio.mjs';
 import { scriptBaseEnv } from '../src/core/graph/script-runner.mjs';
 import { Readable, Writable } from 'node:stream';
@@ -150,13 +150,13 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
     'list_memory', 'read_memory', 'remember', 'forget',
     'list_schedules', 'get_schedule', 'list_schedule_activity', 'preview_schedule', 'propose_schedule_change',
     'pause_schedule', 'resume_schedule', 'skip_next_run', 'mark_schedule_activity_read',
-    'list_task_sources', 'find_tasks', 'get_task',
+    'list_task_sources', 'find_tasks', 'get_task', 'list_presets',
     'list_scripts', 'get_script', 'save_script', 'test_script',
     'build_workflow', 'draft_agent', 'draft_script', 'get_agent', 'get_workflow',
     'list_models', 'get_providers', 'test_provider', 'list_copilot_models', 'list_endpoint_models', 'propose_model_change', 'propose_clone_project',
     'propose_workspace_change',
     'get_project_actions', 'get_workspace_stacks', 'get_run_checkout', 'list_running_actions', 'propose_actions_change',
-    'list_settings', 'change_setting', 'pause_run', 'resume_run', 'propose_stop_run', 'send_direction', 'propose_pull_request']);
+    'show_files', 'list_settings', 'change_setting', 'pause_run', 'resume_run', 'propose_stop_run', 'send_direction', 'propose_pull_request']);
   const projects = JSON.parse(msgs[2].result.content[0].text);
   assert.equal(projects.projects[0].key, project.key);
   const run = JSON.parse(msgs[3].result.content[0].text);
@@ -226,4 +226,29 @@ test('main() drops every MCPSECRET_* (any case) before the relay branch, so test
     delete process.env.MCPSECRET_AAAA1111;
     delete process.env.mcpsecret_bbbb2222;
   }
+});
+
+test('real child: show_files snapshots a $WORCA_ASK_OUT file into this thread\'s attachment store (no message id), and refuses outside paths', async () => {
+  const thread = createThread();
+  const out = askOutDir(thread.id);
+  mkdirSync(out, { recursive: true });
+  const PNG = Buffer.concat([Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), Buffer.from([0, 0, 0, 4, 0, 0, 0, 3]), Buffer.alloc(16)]);
+  writeFileSync(join(out, 'a.png'), PNG);
+  const r = await runChild(['--home', home, '--thread', thread.id], [
+    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'show_files', arguments: { files: [{ path: '$WORCA_ASK_OUT/a.png' }, { path: '/etc/hosts' }], caption: 'Home' } } },
+  ], { env: { WORCA_ASK_WEB: '', WORCA_ASK_COMMANDS: '', ASK_COMMAND_TOKEN: '' } });
+  assert.equal(r.code, 0, `exit 0 (stderr: ${r.err})`);
+  const [m] = r.out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.equal(m.result.isError, undefined, m.result.content[0].text);
+  const res = JSON.parse(m.result.content[0].text);
+  assert.equal(res.ok, true);
+  assert.equal(res.caption, 'Home');
+  assert.deepEqual({ ...res.items[0], attId: 'x' }, { attId: 'x', name: 'a.png', kind: 'image', mime: 'image/png', bytes: PNG.length, width: 4, height: 3, source: true });
+  assert.match(res.refused[0].reason, /not found inside/);
+  const att = getAttachment(thread.id, res.items[0].attId);
+  assert.ok(att, 'the snapshot row exists in the store');
+  assert.equal(att.messageId, null, 'a show_files copy has no message id');
+  assert.equal(attachmentSourcePath(thread.id, att.id), realpathSync(join(out, 'a.png')), 'the copy remembers its original, server-side');
+  const file = attachmentPath(thread.id, att.id);
+  assert.ok(file && realpathSync(file).startsWith(realpathSync(attachmentsDir(thread.id))), file);
 });

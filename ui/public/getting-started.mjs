@@ -5,6 +5,7 @@
 // state — so test/ui-getting-started.test.mjs drives it in jsdom without booting
 // app.js. Completion is never decided here: `status.steps` is the server's word
 // (GET /api/onboarding, src/core/onboarding.mjs), this module only paints it.
+import { guardModal } from './modal-guard.mjs';
 
 /** Shelf order = the arc: prerequisite → first object → see the loop → talk to
  *  it → know the workflows → real work → scale. Labels are outcomes, never settings. */
@@ -12,7 +13,7 @@ export const GETTING_STARTED_STEPS = Object.freeze([
   { id: 'claude',      label: 'Connect Claude Code',             vig: 'claude' },
   { id: 'project',     label: 'Add your first project',          vig: 'project' },
   { id: 'run',         label: 'Watch a run end to end',          vig: 'run' },
-  { id: 'ask',         label: 'Ask Worca about a run',           vig: 'ask' },
+  { id: 'ask',         label: 'Ask about a run in Chat',         vig: 'ask' },
   { id: 'realRun',     label: 'Run a real pipeline',             vig: 'realRun' },
   { id: 'workflows',   label: 'Explore the built-in workflows',  vig: 'workflow' },
   { id: 'workspace',   label: 'Group projects into a workspace', vig: 'workspace',   level: 'advanced' },
@@ -268,21 +269,18 @@ export function renderGettingStartedPill(host, status, onOpen) {
 /* ---------------------------------------------------------------- welcome */
 
 /**
- * Wire the static welcome dialog (#welcome-modal in index.html): each door
- * hands its step id to `onDoor`, Skip / the backdrop / Esc call `onSkip`.
- * Returns a function that unbinds the Esc listener (the modal itself is reused).
+ * Wire the static welcome dialog (#welcome-modal in index.html): each door hands its step id to `onDoor`;
+ * Skip, a backdrop click and Esc call `onSkip` (modal-guard: a decision, Skip is its safe answer).
+ * Returns a function that takes the dialog off those rules (the modal itself is reused).
  * @param {Element} modal
  * @param {{onDoor:(step:string)=>void, onSkip:()=>void, win?:Window}} h
  */
-export function bindWelcome(modal, { onDoor, onSkip, win }) {
+export function bindWelcome(modal, { onDoor, onSkip }) {
   if (!modal) return () => {};
-  const w = win || modal.ownerDocument.defaultView;
   for (const door of modal.querySelectorAll('[data-door]')) {
     door.addEventListener('click', () => onDoor(door.dataset.door));
   }
   modal.querySelector('.ob-skip')?.addEventListener('click', () => onSkip());
-  modal.addEventListener('click', (e) => { if (e.target === modal) onSkip(); });
-  const onKey = (e) => { if (e.key === 'Escape' && !modal.classList.contains('hidden')) onSkip(); };
-  w.document.addEventListener('keydown', onKey);
-  return () => w.document.removeEventListener('keydown', onKey);
+  const guard = guardModal(modal, { kind: 'decision', close: () => onSkip() }).opened();
+  return () => guard.release();
 }

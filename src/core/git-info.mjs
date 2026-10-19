@@ -608,17 +608,24 @@ export async function ghPrChecks({ projectDir, prUrl }) {
   } catch { return null; }
 }
 
+// The PR fields findPrForBranch reads. `isDraft` and `mergeable` ride the same call, so the
+// Runs list's PR glyph (draft, conflicts) costs no extra gh call per PR.
+const PR_FIELDS = 'number,state,url,isDraft,mergeable';
+
 const normalizePr = (pr) => ({
   state: String(pr?.state || '').toUpperCase(),
   url: String(pr?.url || ''),
   number: Number(pr?.number) || null,
+  isDraft: pr?.isDraft === true,
+  mergeable: normalizeMergeable(pr?.mergeable),
 });
 
 /**
  * Look up an existing PR for `head`, so the History UI can hide the Create-PR
- * button when a PR is already open or merged. Returns { state, url, number } with
- * state ∈ { OPEN, MERGED }, or null when there is no open/merged PR / on any gh
- * failure. Never throws.
+ * button when a PR is already open or merged. Returns { state, url, number,
+ * isDraft, mergeable } with state ∈ { OPEN, MERGED }, or null when there is no
+ * open/merged PR / on any gh failure. Never throws. `mergeable` is normalized
+ * like prMergeable's (MERGEABLE | CONFLICTING | UNKNOWN).
  *
  * With a persisted `prUrl` (spec: later lookups use pr_url) the PR is read
  * directly via `gh pr view <url>` — repo-agnostic, so a cross-repo PR is found
@@ -629,36 +636,41 @@ const normalizePr = (pr) => ({
  * CLOSED (unmerged) — a newer PR may exist for the branch. The list keeps the
  * BARE branch: `gh pr list --head owner:branch` matches nothing. It scans the
  * matches and selects by priority OPEN > MERGED, so a newer closed PR never
- * masks an older merged one; a closed-but-not-merged PR is ignored.
+ * masks an older merged one; a closed-but-not-merged PR is ignored, unless
+ * `includeClosed` asks for it as the last resort (the closed PR behind the URL,
+ * else the branch's newest closed one): the Runs list draws a PR dropped
+ * without merging, where every other caller reads "no PR" and offers Create.
  */
-async function ghFindPrForBranch({ projectDir, head, prUrl = null }) {
+async function ghFindPrForBranch({ projectDir, head, prUrl = null, includeClosed = false }) {
+  let closedAtUrl = null;
   if (prUrl) {
-    const v = await _run('gh', ['pr', 'view', prUrl, '--json', 'number,state,url'], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(prUrl) })).env });
+    const v = await _run('gh', ['pr', 'view', prUrl, '--json', PR_FIELDS], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(prUrl) })).env });
     if (v.ok) {
       let obj = null;
       try { obj = JSON.parse(v.stdout || 'null'); } catch { obj = null; }
       if (obj && typeof obj === 'object' && !Array.isArray(obj) && obj.url) {
         const pr = normalizePr(obj);
         if (pr.state === 'OPEN' || pr.state === 'MERGED') return pr;
-        // CLOSED: fall through to the branch search below.
+        // CLOSED: fall through to the branch search below; includeClosed's last resort.
+        if (pr.state === 'CLOSED') closedAtUrl = pr;
       }
     }
   }
   const r = await _run(
     'gh',
-    ['pr', 'list', '--head', head, '--state', 'all', '--json', 'number,state,url', '--limit', '30'],
+    ['pr', 'list', '--head', head, '--state', 'all', '--json', PR_FIELDS, '--limit', '30'],
     { cwd: projectDir, env: (await githubEnv('read', { repo: null })).env },
   );
-  if (!r.ok) return null;
-  let arr;
-  try { arr = JSON.parse(r.stdout || '[]'); } catch { return null; }
-  if (!Array.isArray(arr) || arr.length === 0) return null;
-  // Keep only the states the UI acts on; closed/declined PRs are deliberately dropped.
-  const norm = arr.map(normalizePr).filter((pr) => pr.state === 'OPEN' || pr.state === 'MERGED');
-  if (norm.length === 0) return null;
-  // Requirement is binary: hide the button if any OPEN or MERGED PR exists. After
-  // the filter, norm[0] is necessarily a MERGED entry when there is no OPEN one.
-  return norm.find((p) => p.state === 'OPEN') || norm[0];
+  let norm = [];
+  try {
+    const arr = r.ok ? JSON.parse(r.stdout || '[]') : [];
+    if (Array.isArray(arr)) norm = arr.map(normalizePr);
+  } catch { /* unparseable output: no PR */ }
+  // Requirement is binary: hide the button if any OPEN or MERGED PR exists.
+  const live = norm.find((p) => p.state === 'OPEN') || norm.find((p) => p.state === 'MERGED');
+  if (live) return live;
+  if (!includeClosed) return null;
+  return closedAtUrl || norm.find((p) => p.state === 'CLOSED') || null;
 }
 
 /** A PR's current body via its (repo-agnostic) URL. { ok, body } | { ok:false, error }. Never throws. */
@@ -684,6 +696,54 @@ export async function editPrBody({ projectDir = null, prUrl, body } = {}) {
 /** gh's PR selector for a head branch: `owner:branch` for a cross-repo head, else bare. */
 export function prHeadRef(head, headOwner) {
   return headOwner ? `${headOwner}:${head}` : head;
+}
+
+// ── Marketplace publishing (#717): push access and forks ─────────────────────
+
+/**
+ * Can worca's write credential push to `repo` (OWNER/REPO on github.com)? `gh api repos/O/R` →
+ * `.permissions.push`. A GitHub App installation token gets no `permissions` block → canPush:null
+ * (unknown: the caller tries the push and forks on a refusal). Same credential path as createPr
+ * (githubEnv write, push-as-person when configured). Never throws:
+ * { ok:true, canPush:true|false|null } | { ok:false, error }.
+ */
+export async function ghRepoAccess({ repo } = {}) {
+  const slug = ownerRepo(repo);
+  if (!slug) return { ok: false, error: 'repo is required' };
+  const cred = await githubEnv('write', { repo: slug });
+  if (cred.error) return { ok: false, error: cred.error };
+  const r = await _run('gh', ['api', `repos/${slug}`, '--jq', '.permissions'], { env: cred.env, timeout: 30_000 });
+  if (!r.ok) return { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+  let perms = null;
+  try { perms = JSON.parse(String(r.stdout || '').trim() || 'null'); } catch { perms = null; }
+  return { ok: true, canPush: perms && typeof perms === 'object' ? perms.push === true : null };
+}
+
+/**
+ * Fork `repo` into the credential's account (`POST repos/O/R/forks`; GitHub answers with the
+ * EXISTING fork when there is one, possibly renamed, so the name comes from the answer) and wait
+ * until it serves `repos/<fork>` — forks are created asynchronously and a push right after the
+ * POST can 404. Installation tokens cannot fork: that 403 is returned as the error.
+ * Never throws: { ok:true, owner, repo, slug } | { ok:false, error }.
+ */
+export async function ghForkRepo({ repo, waitMs = 60_000, stepMs = 2_000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  const slug = ownerRepo(repo);
+  if (!slug) return { ok: false, error: 'repo is required' };
+  const cred = await githubEnv('write', { repo: slug });
+  if (cred.error) return { ok: false, error: cred.error };
+  const r = await _run('gh', ['api', '-X', 'POST', `repos/${slug}/forks`, '-F', 'default_branch_only=true', '--jq', '.full_name'],
+    { env: cred.env, timeout: 60_000 });
+  const full = String(r.stdout || '').trim();
+  if (!r.ok || !/^[^/\s]+\/[^/\s]+$/.test(full)) return { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const v = await _run('gh', ['api', `repos/${full}`, '--jq', '.full_name'], { env: cred.env, timeout: 30_000 });
+    if (v.ok && String(v.stdout || '').trim()) break;
+    if (Date.now() >= until) return { ok: false, error: `the fork ${full} was not ready after ${Math.round(waitMs / 1000)} s — try again in a minute` };
+    await sleep(stepMs);
+  }
+  const [owner, name] = full.split('/');
+  return { ok: true, owner, repo: name, slug: full };
 }
 
 /**
@@ -739,6 +799,23 @@ export async function listRemoteBranches(projectDir, remoteNames = []) {
     if (branch && branch !== 'HEAD') byRemote[name].push(branch);
   }
   return { ok: true, byRemote };
+}
+
+/**
+ * The branch name a PR base means on its remote. A run's source may be a remote-tracking
+ * ref (`origin/dev`, as the Ask agent's start_run passes it): a valid start point, but no
+ * branch on the remote. Such a name maps to the part after `<remote>/` when it is no local
+ * branch and `refs/remotes/<name>` exists; a real local branch named `origin/x` stays.
+ * Every other name comes back as is, without a git call. Never throws.
+ */
+export async function prBaseBranch(projectDir, name, remoteNames = []) {
+  if (!projectDir || typeof name !== 'string') return name;
+  const remote = [...remoteNames].sort((a, b) => b.length - a.length).find((n) => name.startsWith(`${n}/`));
+  if (!remote || name.length === remote.length + 1) return name;
+  const r = await _run('git', ['for-each-ref', '--format=%(refname)', `refs/heads/${name}`, `refs/remotes/${name}`], { cwd: projectDir });
+  if (!r.ok) return name;
+  const refs = new Set((r.stdout || '').split(/\r?\n/).map((s) => s.trim()));
+  return !refs.has(`refs/heads/${name}`) && refs.has(`refs/remotes/${name}`) ? name.slice(remote.length + 1) : name;
 }
 
 // ── Check out (#529) ────────────────────────────────────────────────────────
@@ -857,19 +934,26 @@ export async function prMergeable(opts = {}) {
   return ghPrMergeable(opts);
 }
 
-/** { state: OPEN|MERGED, url, number } | null for `head`, by forge (see ghFindPrForBranch). Never throws. */
-export async function findPrForBranch({ projectDir, head, prUrl = null } = {}) {
+/**
+ * { state: OPEN|MERGED, url, number, isDraft, mergeable } | null for `head`, by forge (see ghFindPrForBranch).
+ * `includeClosed` adds a CLOSED (Azure: abandoned) PR as the last resort. Never throws.
+ */
+export async function findPrForBranch({ projectDir, head, prUrl = null, includeClosed = false } = {}) {
   if (!projectDir || !head) return null;
-  const strip = (pr) => (pr ? { state: pr.state, url: pr.url, number: pr.number } : null);
+  const strip = (pr) => (pr ? { state: pr.state, url: pr.url, number: pr.number, isDraft: pr.isDraft === true, mergeable: pr.mergeable || 'UNKNOWN' } : null);
   if (forgeOfPrUrl(prUrl) === 'azure') {
     const pr = await azurePr.viewPr({ prUrl });
     if (pr && (pr.state === 'OPEN' || pr.state === 'MERGED')) return strip(pr);
-    return strip(await azurePr.findPrForBranch({ head, baseRepo: parseAzurePrUrl(prUrl) }));   // CLOSED: search the branch
+    // CLOSED: search the branch; the closed PR behind the URL stays the last resort.
+    const found = await azurePr.findPrForBranch({ head, baseRepo: parseAzurePrUrl(prUrl), includeClosed });
+    if (found && found.state !== 'CLOSED') return strip(found);
+    if (!includeClosed) return null;
+    return strip(pr?.state === 'CLOSED' ? pr : found);
   }
   const az = prUrl ? null : await azureBaseRemote(projectDir);
-  if (az) return strip(await azurePr.findPrForBranch({ head, baseRepo: az }));
+  if (az) return strip(await azurePr.findPrForBranch({ head, baseRepo: az, includeClosed }));
   if (!(await ghUsable())) return null;
-  return ghFindPrForBranch({ projectDir, head, prUrl });
+  return ghFindPrForBranch({ projectDir, head, prUrl, includeClosed });
 }
 
 /** OPEN | MERGED | CLOSED | null for a persisted PR URL, by its forge (see ghPrLifecycleState). */
@@ -903,6 +987,23 @@ export async function branchTips(projectDir, branch, remote) {
   // for-each-ref also matches refs UNDER a pattern (refs/heads/feat/sub), so keep exact names only.
   const sha = new Map((r.stdout || '').split(/\r?\n/).map((l) => l.trim().split(' ')).filter((p) => p.length === 2));
   return { local: sha.get(refs[0]) || null, remote: remote ? sha.get(refs[1]) || null : null };
+}
+
+/**
+ * How a local tip stands against its remote-tracking tip (two shas from branchTips): 'same',
+ * 'ahead' (commits only local: Push changes), 'behind' (commits only on the remote, e.g. the PR's
+ * Update branch or a collaborator's push) or 'diverged' (both; a plain push is refused).
+ * null when a tip is missing or git cannot tell. No network.
+ */
+export async function tipsRelation(projectDir, local, remote) {
+  if (!projectDir || !local || !remote) return null;
+  if (local === remote) return 'same';
+  const r = await _run('git', ['rev-list', '--left-right', '--count', `${remote}...${local}`], { cwd: projectDir });
+  const m = r.ok && /^(\d+)\s+(\d+)\s*$/.exec(r.stdout || '');
+  if (!m) return null;
+  const behind = Number(m[1]) > 0;
+  const ahead = Number(m[2]) > 0;
+  return ahead && behind ? 'diverged' : ahead ? 'ahead' : behind ? 'behind' : 'same';
 }
 
 /** Recreate a local branch from its remote-tracking ref (checkout D7). */

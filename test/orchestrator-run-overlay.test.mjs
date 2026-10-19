@@ -86,3 +86,26 @@ test('the overlay record is not a model the run dispatches: the credential prefl
   assert.notEqual(dropped.manifest.graph.nodes.find((n) => n.id === 'n_plan').model, 'gpt-5.5');
   assert.equal(manifestModels(dropped.manifest).has('gpt-5.5'), false);
 });
+
+test('an overlay\'s loop budgets reach resolveGraph and the record; a wires-only overlay records no nodes', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'worca-cc-oro-w-'));
+  try {
+    const { id } = await writeGraphWorkflow({
+      id: 'wf_oro_w', name: 'ORO wires', domain: 'coding',
+      nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+        { id: 'n_impl', kind: 'agent', key: 'implementer', x: 300, y: 0, config: {} },
+        { id: 'n_rev', kind: 'agent', key: 'reviewer', x: 600, y: 0, config: {} },
+        { id: 'n_end', kind: 'end', x: 900, y: 0, config: {} }],
+      wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_impl', port: 'plan' } },
+        { id: 'w2', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_rev', port: 'done' } },
+        { id: 'w_loop', from: { node: 'n_rev', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 4 } },
+        { id: 'w3', from: { node: 'n_rev', port: 'pass' }, to: { node: 'n_end', port: 'result' } }],
+    });
+    const orch = createOrchestrator({ projectDir, workflowId: id, claude: { mock: true }, overlay: { wires: { w_loop: { maxCycles: 1 } } } });
+    const t = await orch._resolveTopology(REG);
+    assert.deepEqual(t.manifest.runOverlay, { wires: { w_loop: { maxCycles: 1 } } });
+    assert.equal(orch.resolved.wires.w_loop.maxCycles, 1);
+  } finally {
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});

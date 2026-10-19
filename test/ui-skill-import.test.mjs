@@ -92,7 +92,7 @@ test('Folder: Browse fills the path, Preview stages { kind: dir }; the preview s
   assert.equal(consent.querySelector('b').textContent, SKILL_CONSENT);
   assert.deepEqual([...consent.querySelectorAll('.sk-consent-note')].map((p) => p.textContent), [SKILL_SHELL_NOTE], 'a skill with shell blocks says what they do');
   assert.equal(SKILL_CONSENT, 'Worca copies these files into its library. Agents may read them and run the scripts where their guardrails allow.');
-  assert.equal(SKILL_SHELL_NOTE, 'Its inline shell blocks (!`cmd`) run in pipeline runs without guardrail checks; Ask Worca never runs them.');
+  assert.equal(SKILL_SHELL_NOTE, 'Its inline shell blocks (!`cmd`) run in pipeline runs without guardrail checks; Chat never runs them.');
   await act(m.modal, 'Import');
   await settle();
   assert.deepEqual(m.calls.find(([, p]) => p === '/api/skills/import')[2], { stage: STAGE, name: 'db-migrations' });

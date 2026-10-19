@@ -104,7 +104,7 @@ same shortcut, and carries its base URL into the dialog.
 never fail. For Copilot it is the one knob that lowers the abuse-detection risk
 described below, so it ships at 4.
 
-**Speech.** The same tab has a **Speech** card for Ask Worca's voice mode:
+**Speech.** The same tab has a **Speech** card for Chat's voice mode:
 speech-to-text and text-to-speech each run in the browser (Whisper, Kokoro — the
 default) or on a server you run (whisper.cpp, Kokoro-FastAPI, Piper), reached
 through the OpenAI audio API. It is not a model
@@ -393,15 +393,15 @@ may ship `upstream` models under the same rule.
 
 ## Codex
 
-worca can run pipelines and Ask Worca chats on OpenAI's Codex CLI.
+worca can run pipelines and chats on OpenAI's Codex CLI.
 
 1. Install the `codex` CLI (or use the one bundled with the ChatGPT desktop app) and make sure worca finds it: on `PATH`, or `WORCA_CODEX_BIN=/path/to/codex` in worca's environment.
 2. Sign in once in a terminal: `codex login`. `codex login status` must say you are logged in.
-3. Pick Codex per run on New pipeline, or as a default on the Models page (Engines). For Ask Worca, Settings › Ask Worca › Engine & models.
+3. Pick Codex per run on New pipeline, or as a default on the Models page (Engines). For Chat, Settings › Chat › Engine & models.
 
 On a Codex run the helper jobs (titles, the run overview, the PR description, the Auto workflow classifier, and Away mode's night decider) run on Codex too, read-only with codex's shell switched off, because they read text worca did not write. These jobs need a codex that knows `--disable shell_tool` and `--disable unified_exec` (`codex-cli 0.146` does).
 
-- **The classifier and the night decider still look into the repository.** With no shell, they read it through worca's own `read_file`, `grep` and `glob`, limited to the run's checkout (and, for the night decider, its plan files), under the same protected-file rules as Ask Worca. Their tool calls are capped as on Claude: 10 for the classifier, 12 for the night decider.
+- **The classifier and the night decider still look into the repository.** With no shell, they read it through worca's own `read_file`, `grep` and `glob`, limited to the run's checkout (and, for the night decider, its plan files), under the same protected-file rules as Chat. Their tool calls are capped as on Claude: 10 for the classifier, 12 for the night decider.
 - **The night decider uses Codex models on a Codex run.** Away mode's "Decided by" model is used when it is a Codex model; otherwise the run's own Codex model, otherwise Codex's default.
 - **Every Codex call is priced.** When no Codex model is set, worca runs Codex's own default, GPT-5.6 Sol, by name, so its cost shows instead of $0.00.
 
@@ -443,7 +443,7 @@ On a Codex run the helper jobs (titles, the run overview, the PR description, th
 - worca does not use OpenAI's list prices for an endpoint model, so its cost shows as unknown unless you set Pricing on the model.
 - The model's Test button checks the endpoint, and a model whose endpoint has no key shows "needs API key" in pickers, like a bridged model.
 
-**Ask Worca on Codex** needs `codex-cli 0.162` or newer. A Codex chat runs with every Codex tool that reaches the disk or the web switched off. An older codex cannot switch off its image viewer, so there a Codex chat refuses to start with "Codex isn't ready: … update codex". Pipelines on Codex are unaffected.
+**Chat on Codex** needs `codex-cli 0.162` or newer. A Codex chat runs with every Codex tool that reaches the disk or the web switched off. An older codex cannot switch off its image viewer, so there a Codex chat refuses to start with "Codex isn't ready: … update codex". Pipelines on Codex are unaffected.
 
 What an Ask chat on Codex can do, and what it cannot do:
 
@@ -508,13 +508,13 @@ There is no sign-in status command, so worca checks only that the binary runs be
 
 **Not on Copilot yet:**
 
-- Ask Worca chats.
+- Chat conversations.
 - Per-engine step and helper model slots on the Models page.
 - Resuming a paused run on another engine from the usage-limit banner. `worca resume <id> --engine copilot` (or `claude`) still works.
 
 ## Cursor
 
-worca can run pipelines on Cursor's headless CLI agent. Ask Worca does not run on Cursor.
+worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cursor.
 
 > **Unverified.** This engine was built without a Cursor CLI to test against. Each fact it relies on (binary name,
 > flags, the stream format, the permission and MCP files) is listed as unverified at the top of
@@ -547,11 +547,11 @@ worca can run pipelines on Cursor's headless CLI agent. Ask Worca does not run o
 - **A provider or a custom endpoint** (a gateway's quota, an API key's limit): the pause names the provider (*OpenAI-compatible limit — …*). No other harness is offered: it would reach the same provider.
 - **Either way**, *Resume with another model…* (the run page's banner and the Resume menu) picks a model on another connection, and every remaining step of the run runs on it. From the command line: `worca resume <id> --model <model id>`. It must be a catalog model the run's harness can run.
 
-**Ask Worca on Cursor is not available.** A chat needs every shell and disk tool switched off, and no Cursor switch for that is known. Cursor models are not offered in Ask Worca.
+**Chat on Cursor is not available.** A chat needs every shell and disk tool switched off, and no Cursor switch for that is known. Cursor models are not offered in Chat.
 
-## Ask Worca
+## Chat
 
-Ask Worca can read the catalog and the providers, explain why a model is not
+Chat can read the catalog and the providers, explain why a model is not
 ready, and set models up for you. The rule: **every change is a card you
 confirm** — nothing in the catalog or on the Providers card changes until you
 click Apply.
@@ -578,7 +578,7 @@ click Apply.
   restates the key; applying replays the patch onto the entry as it is then.
 - **Credentials never pass through the chat.** A key is a `${VAR}` reference to a
   variable in Worca's environment or nothing — a literal key, an env value that
-  looks like a token, or an auth header is refused, and Ask Worca tells you to
+  looks like a token, or an auth header is refused, and Chat tells you to
   paste it on the Providers page instead.
 - Signing in to Copilot and acknowledging its notice stay on the Providers card;
   built-in, plugin and team-policy models are read-only (a user entry with the
@@ -589,7 +589,7 @@ click Apply.
 
 ### Per-agent models for one run
 
-When Ask Worca proposes a run of a saved workflow it can also pick a model and effort for each
+When Chat proposes a run of a saved workflow it can also pick a model and effort for each
 agent step (`propose_run` `nodes`), from the models the run's engine runs:
 
 - **The picking policy** — judgement steps (Plan, Plan Review, Refine Plan, Review
@@ -615,7 +615,7 @@ agent step (`propose_run` `nodes`), from the models the run's engine runs:
   show each model's vendor, tier, list price, free flag and prompt window; a user or plugin entry's
   own `cost` wins over the list price. Haiku 5.5's prompts over 100k tokens cost 5× its listed rates.
 - **On the card** the Agents section shows each pick beside the project's own setting
-  (*project: …*), marked **Ask Worca** with the reason and the model's facts on hover; a row
+  (*project: …*), marked **Chat** with the reason and the model's facts on hover; a row
   carrying a pick or an edit has **Use project default** (*Use default* on a workspace card), and
   **Reset to proposal** brings the picks back. The section shows at every interface mode when the
   card carries picks.
@@ -646,6 +646,12 @@ agent step (`propose_run` `nodes`), from the models the run's engine runs:
   so "inherit" over a model the project set itself rides as the workflow default's model when
   the workflow names one; when it names none, Start refuses it: pick a model, or save it as the
   project default.
+- **Loop budgets for one run** — the same body key takes `overlay.wires`:
+  `{ "<wireId>": { "maxCycles": 2 } }`, a whole number from 1 to 100 per loop wire of the
+  workflow. It merges per wire over the project's saved budgets for that run only, and the run
+  records it beside the nodes (`runOverlay.wires`). A wire that is not a wire of the workflow is
+  refused; any other top-level key is refused with *overlay takes nodes and wires only*. A
+  [run preset](run-presets.md) sends its loop budgets this way.
 
 ## When the network drops
 

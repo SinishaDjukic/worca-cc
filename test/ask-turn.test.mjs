@@ -13,7 +13,7 @@ import { createAskTurn, humanErrorText } from '../src/core/ask/turn.mjs';
 import { normalizingOnEvent } from '../src/core/engines/claude-events.mjs';
 import {
   createThread, appendMessage, getMessage, getThread,
-  updateThread, setThreadTitle, deleteThread,
+  updateThread, setThreadTitle, deleteThread, addAttachment,
 } from '../src/core/ask/store.mjs';
 import { proposalFor } from './helpers/auto-proposal-fixture.mjs';
 
@@ -507,7 +507,7 @@ test('R-C terminations: user stop (stopped/user, null cost, partial text), the 3
       assert.equal(done.status, 'stopped');
       assert.equal(done.reason, 'max_turns');
       const notice = getMessage(s.asst.id).blocks.find((b) => b.kind === 'notice');
-      assert.equal(notice.text, 'Stopped: reached the 7-turn limit (Settings → Ask Worca)');
+      assert.equal(notice.text, 'Stopped: reached the 7-turn limit (Settings → Chat)');
     } },
   ]);
 });
@@ -723,7 +723,7 @@ test('title: the first turn titles with the hardened option set; a mid-generatio
         runClaudeImpl: async (opts) => { push(opts.onEvent, RESULT()); return { text: 'x', exitCode: 0 }; },
       });
       await turn.run();
-      assert.equal(getThread(s.thread.id).title, null, 'nothing is stamped while haiku runs — the header stays "Ask Worca"');
+      assert.equal(getThread(s.thread.id).title, null, 'nothing is stamped while haiku runs — the header stays "New chat"');
       setThreadTitle(s.thread.id, 'User Named It');       // PATCH landed while haiku ran
       release();
       await turn.titlePromise;
@@ -1820,6 +1820,93 @@ test('a command card records where in the answer it ran (textAt), so the chat sh
   const card = msg.blocks.find((b) => b.kind === 'card');
   assert.equal(msg.text, 'Running the tests.\n\nAll green.');
   assert.equal(card.textAt, 'Running the tests.'.length);
+});
+
+const PNG = Buffer.concat([Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), Buffer.from([0, 0, 2, 128, 0, 0, 1, 224]), Buffer.alloc(16)]);
+const filesRunner = (results) => async (opts) => {
+  results.forEach((text, i) => {
+    const id = `toolu_${i + 1}`;
+    push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: `msg_${i + 1}`, content: [{ type: 'tool_use', id, name: 'mcp__worca__show_files', input: {} }] } });
+    push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
+  });
+  await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+  push(opts.onEvent, RESULT());
+  return { text: '', exitCode: 0 };
+};
+
+test("show_files result: a files card from THIS thread's attachment rows (forged ids and echoed names dropped), persisted inline", async () => {
+  const s = seed();
+  const att = addAttachment(s.thread.id, null, { name: 'home.png', kind: 'image', mime: 'image/png', data: PNG });
+  const result = JSON.stringify({ ok: true, caption: 'Home page',
+    items: [{ attId: att.id, name: 'LIES.png', kind: 'image', bytes: 9, width: 640, height: 480 }, { attId: 'att_deadbeef', name: 'x', kind: 'image', bytes: 1 }],
+    refused: [{ source: '/abs/secret/.env', reason: '.env looks like a credential file; credential files are never shown' }] });
+  const { turn, frames } = makeTurn(s, {}, { runClaudeImpl: filesRunner([result]) });
+  await turn.run();
+  const cards = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].state, 'shown');
+  assert.ok(Number.isFinite(cards[0].textAt));
+  assert.deepEqual(cards[0].card, { type: 'files', title: 'Home page', caption: 'Home page',
+    items: [{ attId: att.id, name: 'home.png', kind: 'image', mime: 'image/png', bytes: PNG.length, width: 640, height: 480 }],
+    skipped: [{ name: '.env', reason: '.env looks like a credential file; credential files are never shown' }] });
+  assert.ok(frames.some((f) => f.type === 'ask-card' && f.block.card.type === 'files'));
+});
+
+test('show_files result: an item gets `source` (Show in folder) from its row, never from the tool echo; no path in the card', async () => {
+  const s = seed();
+  const copy = addAttachment(s.thread.id, null, { name: 'home.png', kind: 'image', mime: 'image/png', data: PNG, sourcePath: '/w/out/home.png' });
+  const upload = addAttachment(s.thread.id, null, { name: 'up.png', kind: 'image', mime: 'image/png', data: PNG });
+  const result = JSON.stringify({ ok: true, items: [{ attId: copy.id, kind: 'image' }, { attId: upload.id, kind: 'image', source: true }] });
+  const { turn } = makeTurn(s, {}, { runClaudeImpl: filesRunner([result]) });
+  await turn.run();
+  const [card] = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
+  assert.deepEqual(card.card.items.map((i) => [i.name, i.source]), [['home.png', true], ['up.png', undefined]]);
+  assert.equal(JSON.stringify(card).includes('/w/out'), false);
+});
+
+test('show_files result: ok:false, only forged ids, or another thread\'s attachment mint no card', async () => {
+  const s = seed();
+  const other = seed();
+  const foreign = addAttachment(other.thread.id, null, { name: 'x.png', kind: 'image', mime: 'image/png', data: PNG });
+  const { turn } = makeTurn(s, {}, { runClaudeImpl: filesRunner([
+    JSON.stringify({ ok: false, errors: ['a: refused'], refused: [] }),
+    JSON.stringify({ ok: true, items: [{ attId: 'att_deadbeef', name: 'x', kind: 'image', bytes: 1 }] }),
+    JSON.stringify({ ok: true, items: [{ attId: foreign.id, name: 'x.png', kind: 'image', bytes: PNG.length }] }),
+  ]) });
+  await turn.run();
+  assert.equal(getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card').length, 0);
+});
+
+test('show_files result: an is_error result and a non-ok body mint nothing; junk kinds/dims and items past maxFiles are dropped; the card is persisted mid-turn', async () => {
+  const s = seed();
+  const atts = Array.from({ length: 13 }, (_, i) => addAttachment(s.thread.id, null, { name: `f${i}.png`, kind: 'image', mime: 'image/png', data: PNG }));
+  const it = (a, over = {}) => ({ attId: a.id, kind: 'image', ...over });
+  let mid = null;
+  const runner = async (opts) => {
+    const send = (id, text, isError) => {
+      push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: `msg_${id}`, content: [{ type: 'tool_use', id, name: 'mcp__worca__show_files', input: {} }] } });
+      push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: text, ...(isError ? { is_error: true } : {}) }] } });
+    };
+    send('toolu_1', JSON.stringify({ ok: true, items: [it(atts[0])] }), true);
+    send('toolu_2', JSON.stringify({ ok: false, items: [it(atts[0])] }), false);
+    send('toolu_3', JSON.stringify({ ok: true, items: [it(atts[0], { kind: 'Bad Kind', width: 1e9, height: 1e9 }), it(atts[1], { kind: undefined }), ...atts.slice(2).map((a) => it(a))] }), false);
+    await new Promise((r) => setImmediate(r));
+    mid = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card').length;
+    await new Promise((r) => setImmediate(r));
+    push(opts.onEvent, RESULT());
+    return { text: '', exitCode: 0 };
+  };
+  const { turn } = makeTurn(s, {}, { runClaudeImpl: runner });
+  await turn.run();
+  const cards = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
+  assert.equal(cards.length, 1, 'the is_error and the ok:false results mint nothing');
+  assert.equal(mid, 1, 'persisted while the turn streams (_persistBlocks)');
+  const { items, title } = cards[0].card;
+  assert.equal(items.length, 12, 'ASK_LIMITS.showFiles.maxFiles');
+  assert.equal(title, '12 files');
+  assert.equal(items[0].kind, 'file');
+  assert.ok(!('width' in items[0]) && !('height' in items[0]), 'out-of-range dimensions are dropped');
+  assert.equal(items[1].kind, 'file', 'a missing kind is not the string "undefined"');
 });
 
 const CE_TOOL = 'mcp__worca__edit_canvas';

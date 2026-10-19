@@ -406,7 +406,7 @@ async function send() {
   } catch (err) {
     // Only the plain "turn in flight" 409 is "still replying". The engine-broker / credential-missing 409s carry a
     // code; 'thread is being deleted' has none but does not match /in flight/ (ui/server.mjs:11242, :11260, :11265).
-    st.error = err.status === 409 && !err.code && /in flight/i.test(err.message || '') ? 'Ask Worca is still replying — try again once the answer lands.' : err.message;
+    st.error = err.status === 409 && !err.code && /in flight/i.test(err.message || '') ? 'Chat is still replying — try again once the answer lands.' : err.message;
     if (err.kind === 'offline') { st.posting = false; return setPhase('offline'); }
   }
   st.posting = false;

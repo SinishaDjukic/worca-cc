@@ -112,6 +112,22 @@ test('a live run groups with its registered project even before History loads', 
   assert.equal(doc.querySelector('#runs-list .runs-row[data-run-id="r1"]').closest('.runs-group').dataset.groupKey, KEY);
 });
 
+test('a finished run still listed live ends its row with its History row’s PR glyph', async () => {
+  const { window, doc, recv } = await boot();
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'aaaa0001' }), live('r2')] });
+  recv({ type: 'done', runId: 'r1', status: 'done' });     // a run that ends live lingers until opened
+  go(window, 'runs'); await settle(window);
+  const glyph = (id) => doc.querySelector(`#runs-list .runs-group .runs-row[data-run-id="${id}"] .runs-pr`);
+  assert.ok(doc.querySelector('#runs-list .runs-row[data-run-id="r1"]'), 'the finished run is listed live');
+  assert.ok(glyph('r1'), 'the live row stands for its History row (MERGED), so it shows the PR');
+  assert.equal(glyph('r1').className, 'runs-pr runs-pr-merged');
+  assert.equal(glyph('r1').getAttribute('aria-label'), 'Pull request: merged');
+  assert.equal(glyph('r2'), null, 'a running run has no PR yet');
+  click(window, glyph('r1').querySelector('svg path'));
+  // Read before the route settles: a finished run then moves on to its saved page.
+  assert.equal(window.location.hash, '#running/r1', 'the glyph is not a control: a click on it is the row’s');
+});
+
 test('a finished run opens its saved page in the same pane and closes the live one', async () => {
   const { window, doc, recv } = await boot();
   recv({ type: 'hello', runs: [live('r1')] });

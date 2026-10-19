@@ -24,12 +24,12 @@ export const KIND_TITLES = Object.freeze({
 export const GENERIC_TITLE = 'Waiting for you';
 /** Ask Worca card → notification title (a run proposal carries no `type`, only its workflow). */
 export const ASK_CARD_TITLES = Object.freeze({
-  run: 'Ask Worca: run to approve',
-  web: 'Ask Worca: web access to approve',
-  workflow: 'Ask Worca: workflow to review',
-  schedule: 'Ask Worca: schedule to approve',
+  run: 'Chat: run to approve',
+  web: 'Chat: web access to approve',
+  workflow: 'Chat: workflow to review',
+  schedule: 'Chat: schedule to approve',
 });
-export const ASK_GENERIC_TITLE = 'Ask Worca proposal to review';
+export const ASK_GENERIC_TITLE = 'Chat proposal to review';
 export const ASK_BODY = 'Open the chat to review it.';
 /** Pause reason (failure-policy REASON) → notification title. A reason not listed — no reason
  * (Pause pressed) or 'drain' (the server stopping) — waits on nobody, so it never notifies. */
