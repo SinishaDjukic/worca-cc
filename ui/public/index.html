@@ -1844,19 +1844,6 @@
               </div>
             </div>
 
-            <!-- Keep awake (UI/UX review F): the keepAwake beta flag, the same value as its Settings › Experimental row. -->
-            <section class="card settings-card" id="keepawake-settings-card" data-min-level="simple">
-              <div class="card-head">
-                <div class="label-row"><h2>Keep awake</h2></div>
-              </div>
-              <div class="switch-row" id="keepAwakeRow">
-                <div class="switch on" role="switch" tabindex="0" id="keepAwakeSwitch" aria-checked="true" aria-labelledby="keepAwakeTxt"></div>
-                <span class="txt" id="keepAwakeTxt" data-flag-chip="keepAwake">Keep the computer awake while runs are working</span>
-              </div>
-              <small class="hint">The display may still turn off. No effect on a container or hosted worca.</small>
-              <p class="form-msg" id="keepAwakeMsg" role="status"></p>
-            </section>
-
             <section class="card settings-card" id="budget-settings-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row">
@@ -1938,6 +1925,19 @@
                 <button type="button" id="nightModeReset" class="btn btn-sm">Use defaults</button>
                 <button type="button" id="nightModeSave" class="btn btn-primary btn-sm">Save</button>
               </div>
+            </section>
+
+            <!-- Keep awake (UI/UX review F): the keepAwake beta flag, the same value as its Settings › Experimental row. -->
+            <section class="card settings-card" id="keepawake-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row"><h2>Keep awake</h2></div>
+              </div>
+              <div class="switch-row" id="keepAwakeRow">
+                <div class="switch on" role="switch" tabindex="0" id="keepAwakeSwitch" aria-checked="true" aria-labelledby="keepAwakeTxt"></div>
+                <span class="txt" id="keepAwakeTxt" data-flag-chip="keepAwake">Keep the computer awake while runs are working</span>
+              </div>
+              <small class="hint">The display may still turn off. No effect on a container or hosted worca.</small>
+              <p class="form-msg" id="keepAwakeMsg" role="status"></p>
             </section>
 
             <!-- Scheduled runs: the defaults a NEW schedule inherits. Each schedule keeps
