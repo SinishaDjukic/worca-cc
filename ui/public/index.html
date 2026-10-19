@@ -2585,6 +2585,24 @@
             <button type="button" class="seg-btn" data-dest="project">Project folder</button>
           </div>
         </div>
+        <!-- Worca plugin destination (#717): a local folder (as before) or a registered marketplace,
+             which gets ONE pull request on worca/plugin/<name>; nothing is pushed to its own branch. -->
+        <div id="export-plugin-dest-field" class="export-field hidden">
+          <span class="export-label">Destination</span>
+          <div id="export-plugin-dest" class="seg" role="group" aria-label="Plugin destination">
+            <button type="button" class="seg-btn on" data-pdest="folder">Local folder</button>
+            <button type="button" class="seg-btn" data-pdest="marketplace">Marketplace</button>
+          </div>
+        </div>
+        <div id="export-marketplace-field" class="export-field hidden">
+          <label class="export-label" for="export-marketplace">Marketplace</label>
+          <span class="select-wrap"><select id="export-marketplace" class="select" aria-label="Marketplace"></select></span>
+          <span class="hint">The pull request targets the branch the marketplace tracks, else its default branch. Without push access it comes from your fork.</span>
+          <!-- Only when no marketplace can take a pull request: the registered ones that were left out, with why. -->
+          <span id="export-marketplace-skipped" class="hint hidden"></span>
+          <!-- Draft is opt-in per export (unchecked on every open), like Ship it? (#597). -->
+          <label class="confirm-checkbox" for="export-draft"><input id="export-draft" type="checkbox" /> Open as draft</label>
+        </div>
         <div id="export-folder-field" class="export-field hidden">
           <span class="export-label" id="export-folder-label">Folder</span>
           <div class="export-folder-row">
@@ -2601,7 +2619,7 @@
           <!-- Re-export only: a changed export into an existing plugin folder bumps
                the manifest's patch version (0.1.0 → 0.1.1) so the recipient's
                `worca plugin update` sees it. A first export is always 0.1.0. -->
-          <label class="confirm-checkbox">
+          <label class="confirm-checkbox" id="export-keep-version-row">
             <input type="checkbox" id="export-keep-version" />
             <span>Don't bump the plugin version when updating an existing plugin folder<br><span class="hint">A changed re-export normally goes 0.1.0 → 0.1.1 so recipients see an update. A first export is always 0.1.0.</span></span>
           </label>

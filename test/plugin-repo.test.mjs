@@ -13,7 +13,7 @@ import { join, dirname } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import {
-  addPluginRepo, fetchCandidate, exportVersion, repoCacheDir, parseMarketplaceManifest, repoSlug, pluginGitEnv,
+  addPluginRepo, discoverAtCommit, fetchCandidate, exportVersion, repoCacheDir, parseMarketplaceManifest, repoSlug, pluginGitEnv,
 } from '../src/core/plugin-repo.mjs';
 import { ADO_GIT_CREDENTIAL_HELPER } from '../src/core/azure-credentials.mjs';
 import { withEnv } from './helpers/with-env.mjs';
@@ -370,4 +370,25 @@ test('plugin repo git calls carry worca\'s GitHub read env plus the host-scoped 
     AZURE_DEVOPS_EXT_PAT: undefined }, () => pluginGitEnv());
   assert.equal(none.WORCA_ADO_GIT_TOKEN, undefined);
   assert.equal(Object.values(none).includes(ADO_GIT_CREDENTIAL_HELPER), false);
+});
+
+test('discoverAtCommit: discovery at a given commit of a checkout — index authoritative, version read from that commit', async () => {
+  const root = mkdtempSync(join(scratch, 'disc-'));
+  await git(root, 'init', '-q', '-b', 'main');
+  writeTree(root, {
+    'worca-cc-marketplace.json': JSON.stringify({ name: 'M', plugins: ['plugins/aa'] }),
+    'plugins/aa/worca-cc-plugin.json': JSON.stringify({ name: 'aa', version: '0.1.0' }),
+  });
+  await git(root, 'add', '-A'); await git(root, 'commit', '-qm', 'c1');
+  const first = await git(root, 'rev-parse', 'HEAD');
+  writeTree(root, { 'plugins/aa/worca-cc-plugin.json': JSON.stringify({ name: 'aa', version: '0.1.1' }) });
+  await git(root, 'commit', '-qam', 'c2');
+  const gitDirAbs = await git(root, 'rev-parse', '--absolute-git-dir');      // <root>/.git — a NON-bare checkout's git dir
+
+  const atFirst = await discoverAtCommit(gitDirAbs, first);
+  assert.equal(atFirst.sha, first);
+  assert.deepEqual(atFirst.discovered.map((p) => [p.name, p.subdir, p.manifest.version]), [['aa', 'plugins/aa', '0.1.0']]);
+  assert.deepEqual(atFirst.marketplace, { name: 'M', description: '' });
+  const atHead = await discoverAtCommit(gitDirAbs, await git(root, 'rev-parse', 'HEAD'));
+  assert.equal(atHead.discovered[0].manifest.version, '0.1.1');
 });

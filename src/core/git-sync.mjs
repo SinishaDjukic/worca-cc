@@ -56,7 +56,7 @@ const NETWORK_CMDS = new Set(['fetch', 'merge', 'merge-tree']);
  *  can hold no hooks (a directory could be created and filled later); on Windows, a worca-home
  *  folder that does not exist simply has no hooks. The shared .git/config is just as writable, so
  *  a planted core.fsmonitor command (run by `git status`) and http.sslVerify=false are overridden too. */
-function hookFreeArgs() {
+export function hookFreeArgs() {
   let dir = devNull;
   if (process.platform === 'win32') { try { dir = join(worcaHome(), 'no-hooks'); } catch { /* devNull */ } }
   return ['-c', `core.hooksPath=${dir}`, '-c', 'core.fsmonitor=false', '-c', 'http.sslVerify=true'];

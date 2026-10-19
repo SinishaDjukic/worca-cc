@@ -1860,6 +1860,50 @@ test('the Workflows tour survives a Library search query: ✕ on the open search
   }
 });
 
+// Export… → Worca plugin → Marketplace (#717): the dialog re-reads the PR-capable marketplaces on every open (one may
+// have been added since). A reopen while that read is still in flight must start its own read — and the first read's
+// late answer must not paint over the new open's state.
+test('Export… → Marketplace: reopening the dialog mid-read starts a fresh marketplace read, and the stale answer never paints', async () => {
+  const { window: w } = await boot();
+  await go(w, 'workflows');
+  w.__wfv.library().open('workflows');
+  const doc = w.document;
+  const real = globalThis.fetch;
+  const pending = [];                                        // one resolver per publish-targets request, in order
+  const fetchTargets = (u, init) => {
+    if (!String(u).includes('/api/marketplaces/publish-targets')) return real(u, init);
+    return new Promise((resolve) => pending.push((body) => resolve({ ok: true, status: 200, json: async () => body })));
+  };
+  globalThis.fetch = fetchTargets; w.fetch = fetchTargets;
+  const options = () => [...doc.getElementById('export-marketplace').options].map((o) => o.value);
+  const openMarketplace = async () => {
+    doc.querySelector('.wfl-wf[data-id="wf_g"] .wfl-export').click();
+    doc.querySelector('#export-format .seg-btn[data-format="plugin"]').click();
+    doc.querySelector('#export-plugin-dest .seg-btn[data-pdest="marketplace"]').click();
+    await tick();
+  };
+  try {
+    await openMarketplace();
+    assert.equal(pending.length, 1, 'the first open reads the marketplaces');
+    await openMarketplace();                                 // reopened while the first read is still in flight
+    assert.equal(pending.length, 2, 'the reopen starts its own read instead of reusing the stale one');
+    pending[0]({ targets: [{ id: 'old', name: 'Old', repo: 'o/m', ref: null }], skipped: [] });   // the stale read answers late
+    await tick(2);
+    assert.equal(options().includes('old'), false, 'the stale answer never paints');
+    assert.equal(doc.getElementById('export-apply-btn').disabled, true, 'still waiting on the live read');
+    pending[1]({ targets: [{ id: 'new', name: 'New', repo: 'n/m', ref: null }], skipped: [] });
+    await tick(2);
+    assert.deepEqual(options(), ['new']);
+    assert.equal(doc.getElementById('export-apply-btn').disabled, false);
+    // and the read is not stuck: a later switch away and back reuses the list without another request
+    doc.querySelector('#export-plugin-dest .seg-btn[data-pdest="folder"]').click();
+    doc.querySelector('#export-plugin-dest .seg-btn[data-pdest="marketplace"]').click();
+    await tick();
+    assert.equal(pending.length, 2);
+    assert.deepEqual(options(), ['new']);
+  } finally { globalThis.fetch = real; w.fetch = real; }
+});
+
 test('Ask\'s graph card: Open in Workflows opens the graph on the canvas as a NEW unsaved workflow', async () => {
   const { window: w } = await boot();
   await w.__wfv.openBuildFromAsk({ name: 'Bug fix', domain: 'coding', wires: [],
