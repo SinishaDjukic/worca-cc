@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { RUN_STATE_ROWS } from './helpers/run-states.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
@@ -27,8 +28,9 @@ function fakeNotification(permission = 'granted') {
   return N;
 }
 
-async function boot({ alertsOn = true, unread = 0, storage = null, setup = null } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+// `route(url)` may answer a request first (a Response-like object); undefined falls through to the stubs below.
+async function boot({ alertsOn = true, unread = 0, storage = null, setup = null, url: pageUrl = 'http://localhost:4317/', route = null } = {}) {
+  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: pageUrl }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   const wsBox = { ws: null };
@@ -40,6 +42,8 @@ async function boot({ alertsOn = true, unread = 0, storage = null, setup = null 
   };
   window.fetch = (url) => {
     const u = String(url);
+    const own = route ? route(u) : undefined;
+    if (own !== undefined) return Promise.resolve({ ok: true, status: 200, json: async () => own });
     if (u.includes('/api/counts'))
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ schedules: { scheduled: 0, missed: 0, recurring: 0, unread } }) });
     if (u.includes('/api/projects'))
@@ -84,8 +88,9 @@ test('hello backfill sets the badge but does not notify; a live question notifie
   recv({ type: 'question', runId: 'r2', id: 'q2', kind: 'questions', seq: 1, questions: [{ question: 'SECRET?' }] });
   await tick();
   assert.equal(N.shown.length, 1);
-  assert.equal(N.shown[0].title, 'Worca: Questions waiting');
-  assert.equal(N.shown[0].body, 'Live run');
+  // §5a.5: the title names the run; the body is its list row's status line.
+  assert.equal(N.shown[0].title, 'Worca: Live run');
+  assert.equal(N.shown[0].body, 'Needs you: 1 question');
   assert.equal(N.shown[0].tag, 'worca:r2:q2');
   assert.equal(window.document.title, '(2) ? Worca');
 
@@ -115,7 +120,8 @@ test('a reconnect hello notifies a wait raised while the socket was down, once; 
   await tick();
   assert.equal(N.shown.length, 2, 'exactly one new notification');
   assert.equal(N.shown[1].tag, 'worca:r3:q3');
-  assert.equal(N.shown[1].title, 'Worca: Recovery decision needed');
+  assert.equal(N.shown[1].title, 'Worca: Waited while down');
+  assert.equal(N.shown[1].body, 'Needs you: a step failed');
 });
 
 test('a reconnect hello that no longer lists a pending question closes its notification', async () => {
@@ -137,8 +143,8 @@ test('a run paused on a usage limit notifies and joins the badge; stopping it cl
   recv({ type: 'done', runId: 'r1', status: 'paused', reason: 'usage_limit', detail: "You've hit your session limit", limitEngine: 'claude' });
   await tick();
   assert.equal(N.shown.length, 1);
-  assert.equal(N.shown[0].title, 'Worca: Usage limit reached');
-  assert.equal(N.shown[0].body, 'Limited run', 'the body names the run, never the limit detail');
+  assert.equal(N.shown[0].title, 'Worca: Limited run');
+  assert.equal(N.shown[0].body, 'Paused: usage limit', 'the status line, never the limit detail');
   assert.equal(window.document.title, '(1) ? Worca');
   recv({ type: 'done', runId: 'r1', status: 'stopped' });
   await tick();
@@ -150,7 +156,7 @@ test('a page that loads hidden notifies what is already waiting; one that loads 
   const a = await boot();
   a.recv(HELLO([{ runId: 'r1', title: 'Waiting in a background tab', status: 'paused', pendingQuestion: { id: 'q1', kind: 'workflow' } }]));
   await a.tick();
-  assert.deepEqual(a.N.shown.map((n) => n.title), ['Worca: Workflow proposal to review'], 'a background reload does not swallow it');
+  assert.deepEqual(a.N.shown.map((n) => n.title), ['Worca: Waiting in a background tab'], 'a background reload does not swallow it');
 
   const b = await boot();
   b.look.visible = true;
@@ -208,7 +214,8 @@ test('a reconnect hello notifies a pause that happened while the socket was down
   recv(HELLO([{ runId: 'r1', title: 'Running', status: 'paused', pauseReason: 'cost_total' }]));
   await tick();
   assert.equal(N.shown.length, 1);
-  assert.equal(N.shown[0].title, 'Worca: Cost cap reached');
+  assert.equal(N.shown[0].title, 'Worca: Running');
+  assert.equal(N.shown[0].body, 'Paused: total budget');
 });
 
 test('no notification while the tab is visible and focused; the badge still counts', async () => {
@@ -227,7 +234,7 @@ test('click: focuses the window and opens the run detail; a schedule problem ope
   recv({ type: 'run-created', runId: 'r4', title: 'Clicky', status: 'running' });
   recv({ type: 'question', runId: 'r4', id: 'q4', kind: 'recovery', seq: 1 });
   await tick();
-  assert.equal(N.shown[0].title, 'Worca: Recovery decision needed');
+  assert.equal(N.shown[0].title, 'Worca: Clicky');
   N.shown[0].onclick({ preventDefault() {} });
   assert.equal(focused(), 1);
   assert.equal(window.location.hash, '#running/r4');
@@ -287,4 +294,39 @@ test('a localStorage that throws on the Alerts keys does not break the page', as
   assert.equal(N.shown.length, 0);
   assert.equal(window.document.title, 'Worca');
   assert.ok($('#alerts-card'));
+});
+
+// §5a.5: the alert says what the Runs list says, and opens what the row opens.
+const NEEDS = RUN_STATE_ROWS.find((r) => r.state === 'needs-you').run;
+const stateFrame = (over = {}) => ({ type: 'state', runId: 'r1', id: 'p1', status: NEEDS.status, stepper: NEEDS.stepper, steps: NEEDS.steps,
+  active: NEEDS.active, endReached: NEEDS.endReached, tokens: NEEDS.tokens, progressFacts: NEEDS.progressFacts, subAgents: [], totalCostUsd: 1, ...over });
+
+test("a Needs you alert's text equals the list row's status line, and its click opens what the row opens", async () => {
+  const FEATURE = { id: 'feat_1', kind: 'feature', title: 'Run tags', projectKey: null, planning: null, cost: { usd: 0, byPipeline: {} }, members: [
+    { position: 1, title: 'Store tags', pipelineId: 'p0', ticketId: null, status: 'done', pr: null, ticket: null, adhoc: false, after: null },
+    { position: 2, title: 'Fix the login bug', pipelineId: 'p1', ticketId: null, status: 'running', pr: null, ticket: null, adhoc: false, after: 1 },
+    { position: 3, title: 'Cost report', pipelineId: null, ticketId: 't3', status: null, pr: null, ticket: { id: 't3', status: 'scheduled', runAt: null, after: true }, adhoc: false, after: 2 }] };
+  for (const [name, groups, rowSel, hrefRe] of [
+    ['a single run', [], '#runs-list .runs-row[data-run-id="r1"]', /^#running\/r1$/],
+    ['a feature member', [FEATURE], '#runs-list .runs-item[data-row-key="chain:feat_1"] > a.runs-row', /^#feature\/feat_1$/],
+  ]) {
+    const route = (u) => (u.endsWith('/api/history') ? { pipelines: [] } : u.endsWith('/api/run-groups') ? { groups } : undefined);
+    const { window, N, look, tick, recv } = await boot({ url: 'http://localhost:4317/#runs', route });
+    look.visible = true;
+    recv(HELLO([{ runId: 'r1', pipelineId: 'p1', title: 'Fix the login bug', projectDir: '/tmp/p', status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z' }]));
+    for (let i = 0; i < 4; i++) await tick();
+    look.visible = false;
+    recv(stateFrame());
+    recv({ type: 'question', runId: 'r1', seq: 1, ...NEEDS.pendingQuestion });
+    for (let i = 0; i < 4; i++) await tick();
+    const row = window.document.querySelector(rowSel);
+    assert.ok(row, `${name}: the list row`);
+    assert.equal(row.dataset.state, 'needs-you', `${name}: the row needs you`);
+    assert.equal(N.shown.length, 1, `${name}: one alert`);
+    assert.equal(N.shown[0].title, 'Worca: Fix the login bug');
+    assert.equal(N.shown[0].body, row.dataset.line, `${name}: the alert body is the row's status line`);
+    N.shown[0].onclick({ preventDefault() {} });
+    assert.match(row.getAttribute('href'), hrefRe);
+    assert.equal(window.location.hash, row.getAttribute('href'), `${name}: the click opens what the row opens`);
+  }
 });

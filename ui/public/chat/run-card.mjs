@@ -144,7 +144,7 @@ const isWebUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);
 
 /**
  * @param {{doc: Document, win?: Window|null, snapshot?: object|null, ctx?: object, controls?: object, ident?: object, refresh?: (() => void)|null}} opts
- * @returns {{el: HTMLElement, parts: {graph: HTMLElement}, update(snap: object|null): void, relayout(width?: number): void, setReason(text: string): void, destroy(): void, snapshot: object|null}}
+ * @returns {{el: HTMLElement, parts: {graph: HTMLElement}, update(snap: object|null): void, relayout(width?: number): void, setReason(text: string): void, reasonText: string, destroy(): void, snapshot: object|null}}
  */
 export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, controls = {}, ident = {}, refresh = null }) {
   void win;
@@ -208,7 +208,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const qHead = h('div', 'chat-rc-q-head');
   const qBody = h('div', 'chat-rc-qbody');
   qBody.appendChild(h('div', 'qpanel hidden'));
-  const qErr = h('div', 'chat-rc-q-err', 'Answer not sent');
+  const qErr = h('div', 'chat-rc-q-err', 'Answer not sent. It is still in the form; check the connection and send it again.');
   qErr.hidden = true;
   qErr.setAttribute('role', 'status');
   const receipt = h('details', 'chat-rc-receipt');
@@ -277,7 +277,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     Promise.resolve(resume ? call(controls.resume, ref(), pauseBtn) : call(controls.pause, ref(), pauseBtn))
       .then((why) => {
         if (dead || resume) return;
-        if (why) { footErr.textContent = `Could not pause: ${why}`; footErr.hidden = false; }
+        if (why) { footErr.textContent = `Could not pause: ${String(why).replace(/\.+$/, '')}. Try again.`; footErr.hidden = false; }
         else pauseAsked = asked;               // the run reads `running` until its pausing frame lands — keep Pause off
       })
       .catch(() => {})
@@ -692,10 +692,16 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     update,
     relayout,
     setReason(text) { reason.textContent = text || ''; reason.hidden = !text; },
+    get reasonText() { return reason.textContent; },
     destroy,
     get snapshot() { return last; },
   };
 }
+
+// §5a.2: the card's first load, before anything has painted it.
+const CARD_LOADING = 'Loading run…';
+const CARD_DELETED = 'This run was deleted. The chat keeps what was said about it.';
+const CARD_UNREACHABLE = "Could not load this run: Worca's server could not be reached. The card fills in when it is back.";
 
 // ---- the controller: what ask-panel's built-in progress cards owned (spec D1 store seam, D9 REST hydration, D11
 // cadence), now for the chat run card. One per registration; every card it builds shares one store subscription
@@ -762,9 +768,13 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
     const fetchFn = entry.ctx && entry.ctx.fetch;
     if (dead || entry.hydrating || !pid || typeof fetchFn !== 'function') return;
     entry.hydrating = true;
+    const painted = () => !!(entry.rest || entry.card.snapshot);
+    if (!painted()) entry.card.setReason(CARD_LOADING);
+    let miss = '';                                       // '' | CARD_DELETED | CARD_UNREACHABLE
     try {
       const res = await fetchFn(`/api/ask/runs/${encodeURIComponent(pid)}`);
-      if (res && res.ok) {
+      if (res && res.status === 404) miss = CARD_DELETED;
+      else if (res && res.ok) {
         const body = await res.json();
         // The envelope, not any 200: a stub that answers every URL must never paint a run.
         if (body && body.state && typeof body.state.status === 'string' && body.state.id === pid) {
@@ -773,11 +783,17 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
           if (body.live && body.live.runId) entry.ident.runId = body.live.runId;
         }
       }
-    } catch { /* offline: the card keeps its last paint */ }
+    } catch { miss = CARD_UNREACHABLE; }                 // after a paint it keeps the paint (D24)
     entry.hydrating = false;
     entry.nextHydrateAt = now() + rehydrateMs;
     if (dead || entries.get(entry.ident.cardId) !== entry) return;
     entry.card.update(resolve(entry));
+    // §5a.2: decided after the update (the store may have painted it), and only this function's own three lines are
+    // touched, so "Run failed: …" (set by the feed) is never wiped.
+    const mine = [CARD_LOADING, CARD_DELETED, CARD_UNREACHABLE].includes(entry.card.reasonText);
+    if (painted()) { if (mine) entry.card.setReason(''); }
+    else if (miss) entry.card.setReason(miss);
+    else if (mine) entry.card.setReason('');
     if (entry.again) { entry.again = false; hydrate(entry); }   // a `done` frame landed while this read was in flight
   }
 

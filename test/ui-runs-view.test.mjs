@@ -67,7 +67,7 @@ async function pickView(window, doc, label) {
 // `runGroups` answers GET /api/run-groups with the array's current contents; `onGroupCall` sees each POST / DELETE on
 // /api/run-groups* (logged in `groupPosts`); `bulk(body)` answers POST /api/runs/bulk (bodies logged in `posts`).
 async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [{ name: 'proj', path: PROJECT, exists: true }], history = HIST, archived = [ARCH], chains = [],
-  runGroups = [], onGroupCall = () => {}, bulk = () => ({ ok: true, done: [], cancelled: [], skipped: [] }), setup } = {}) {
+  runGroups = [], onGroupCall = () => {}, bulk = () => ({ ok: true, done: [], cancelled: [], skipped: [] }), setup, tickets = [] } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
   const { window } = dom;
   windows.push(window);
@@ -81,7 +81,8 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
   };
   const posts = [];
   const groupPosts = [];
-  const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
+  const schedCalls = [];
+  const ok =(body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
   window.fetch = (u, init = {}) => {
     const s = String(u);
     const method = (init.method || 'GET').toUpperCase();
@@ -99,7 +100,8 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
     if (/\/api\/history\/[^/]+\/cccc0009$/.test(s)) return ok({ state: { title: 'Archived thing', status: 'done', steps: [], stepper: null, archivedAt: ARCH.archivedAt } });
     if (s.includes('/api/runs/cccc0009/restore')) return ok({ ok: true, id: 'cccc0009', restored: true, warnings: [] });
     if (s.includes('/api/workspaces')) return ok({ workspaces: [] });
-    if (s.endsWith('/api/schedules')) return ok({ schedules: [], tickets: [], counts: {}, chains });
+    if (s.includes('/api/schedules/') && method !== 'GET') { schedCalls.push({ method, url: s }); return ok({ status: 'queued' }); }
+    if (s.endsWith('/api/schedules')) return ok({ schedules: [], tickets, counts: {}, chains });
     return ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [], pipelines: 0, projects: 0, workspaces: 0 });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
@@ -117,7 +119,7 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
     click(window, window.document.getElementById(yes ? 'confirm-ok' : 'confirm-cancel'));
     await settle(window, 8);
   };
-  return { window, doc: window.document, recv, posts, groupPosts, confirmWith };
+  return { window, doc: window.document, recv, posts, groupPosts, schedCalls, confirmWith };
 }
 
 test('one Runs nav item; a bare #running or #history lands on #runs with the empty state', async () => {
@@ -742,6 +744,22 @@ test('Add to group / Remove from group repaint the group with its new count and 
   await settle(window, 8);
   assert.equal(groupPosts.at(-1).method, 'DELETE');
   assert.equal(groupRowEl().querySelector('.runs-count').textContent, '1/2');
+});
+
+test('a waiting row\'s ⋯ offers Start now and Cancel, and each calls the schedule route', async () => {
+  const soon = new Date(Date.now() + 3600_000).toISOString();
+  const { window, doc, schedCalls } = await boot({ tickets: [{ id: 't_1', scheduleId: null, title: 'Upgrade', status: 'scheduled', runAt: soon }] });
+  go(window, 'runs'); await settle(window);
+  const items = () => [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')];
+  const pick = async (label) => {
+    click(window, groupItem(doc, 'sched:t_1').querySelector(':scope > .runs-row-tail .runs-more'));
+    assert.deepEqual(items().map((n) => n.textContent.trim()), ['Start now', 'Cancel'], 'no Stop / Archive / Delete on a waiting run');
+    click(window, items().find((n) => n.textContent.trim() === label));
+    await settle(window, 8);
+  };
+  await pick('Start now');
+  await pick('Cancel');
+  assert.deepEqual(schedCalls, [{ method: 'POST', url: '/api/schedules/t_1/run-now' }, { method: 'DELETE', url: '/api/schedules/t_1' }]);
 });
 
 test('rows and expanded members draw Needs you / Failed with the ? / ! symbol in the booted list', async () => {

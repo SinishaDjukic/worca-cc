@@ -108,7 +108,7 @@ import {
   addAttachment as askAddAttachment, listAttachments as askListAttachments,
   getAttachment as askGetAttachment, attachmentPath as askAttachmentPath,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
-  findRunLinksByPipeline as askFindRunLinksByPipeline,
+  findRunLinksByPipeline as askFindRunLinksByPipeline, runLinkTarget,
   finishMessage as askFinishMessage,
 } from '../src/core/ask/store.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
@@ -6447,6 +6447,12 @@ app.post('/api/runs/bulk', async (req, res) => {
 });
 
 const groupError = (res, err) => (err instanceof RunGroupError ? res.status(err.status).json({ error: err.message, code: err.code }) : res.status(500).json({ error: String(err.message || err) }));
+// Runs redesign §5a.1: an old `#running/<runId>` link from chat history → the saved run it became.
+app.get('/api/run-links/:runId', (req, res) => {
+  const t = runLinkTarget(String(req.params.runId || ''));
+  if (!t) return res.status(404).json({ error: 'No saved run for that link' });
+  res.json(t);
+});
 app.get('/api/run-groups', (req, res) => { try { res.json({ groups: listRunGroups() }); } catch (err) { groupError(res, err); } });
 app.post('/api/run-groups', (req, res) => {
   try {
@@ -11666,8 +11672,10 @@ app.get('/api/ask/runs/:id', async (req, res) => {
   if (!ASK_RUN_REF_RE.test(id)) return res.status(400).json({ error: 'invalid run id' });
   try {
     const entry = liveRunEntry(id);
-    const state = readPipelineStateById(entry && entry.pipelineId ? entry.pipelineId : id);
-    if (!state) return res.status(404).json({ error: 'run not found' });
+    const row = findPipelineRowById(entry && entry.pipelineId ? entry.pipelineId : id);
+    // A deleted run keeps an anonymised row (deleted_at) for Statistics; the chat card must still read it as gone.
+    if (!row || row.deleted_at) return res.status(404).json({ error: 'run not found' });
+    const state = readPipelineStateById(row.id);
     // Shape it first, plan in slices: state.shaping is in memory only (F46), so a finished or unloaded slice 1 would
     // lose its feature strip. The feature row is durable. Best effort, and only while the gate is on.
     if (!state.shaping && shapeFirstEnabled()) {
@@ -11676,7 +11684,7 @@ app.get('/api/ask/runs/:id', async (req, res) => {
         if (at && at.idx === 1) state.shaping = { feature: { id: at.featureId, index: 1 } };
       } catch { /* the feature tables are best-effort here */ }
     }
-    const extras = await askRunCardExtras(findPipelineRowById(state.id));
+    const extras = await askRunCardExtras(row);
     res.json({ state, live: entry ? { runId: entry.id, status: entry.status } : null, extras });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });

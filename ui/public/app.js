@@ -76,13 +76,16 @@ const state = {
 };
 // The group page host (runs redesign slice 4, D16). Up here, next to `state`: the boot's synchronous showView runs
 // mountGroupPage on a #feature/… reload, and a `const` declared below that call would still be in its TDZ.
-const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, resolving: false, reentered: false };
+const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false };
 
 import { icon } from './icons.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 import { alreadyApplied, noteBoot } from './ws-seq.mjs';
 import { createAlerts, mountAlertsCard } from './alerts.mjs';
+import { createConnection, paintConnectionBanner } from './connection-state.mjs';
+import { actionError, httpError } from './action-errors.mjs';
+import { paintWhatsNew } from './whats-new.mjs';
 import { createLogDrawer } from './log-drawer.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
@@ -99,7 +102,7 @@ import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody } fro
 import { bulkConfirm } from '../../src/shared/run-bulk.mjs';
 import { openGroupPicker } from './group-picker.mjs';
 import { renderStatusDot } from './status-dot.mjs';
-import { RUN_STATES, groupModel, runModel } from '../../src/shared/run-model.mjs';
+import { ACTION_LABEL, RUN_STATES, groupModel, runModel } from '../../src/shared/run-model.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
 // History list card. They stay EXPORTED
@@ -273,6 +276,15 @@ import { toggleMenu, openMenu } from './workflows/menu.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
 import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
+
+// With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
+// this module resolves here: the browser's storage, else an in-memory stand-in, so the page boots and forgets on reload.
+const localStorage = (() => {
+  try { const s = globalThis.localStorage; if (s) return s; } catch { /* blocked */ }
+  const m = new Map();
+  return { getItem: (k) => (m.has(String(k)) ? m.get(String(k)) : null), setItem: (k, v) => { m.set(String(k), String(v)); },
+    removeItem: (k) => { m.delete(String(k)); }, clear: () => m.clear(), key: (i) => [...m.keys()][i] ?? null, get length() { return m.size; } };
+})();
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
 
@@ -834,6 +846,22 @@ const settingsDirty = new Map();
 // ---------------------------------------------------------------------------
 // WebSocket
 // ---------------------------------------------------------------------------
+// Runs redesign §5a.2: one connection state feeds the one banner (#conn-banner). The socket's close reports lost(),
+// the next hello back(); the banner shows only after 3 s, so a routine reconnect never flashes it.
+function retryConnection() {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (!state.wsReady) connectWS();
+}
+const conn = createConnection({
+  onChange: (down) => {
+    paintConnectionBanner(document.getElementById('conn-banner'), down, { onRetry: retryConnection });
+    // D6: back online — the hello already re-sent the live runs; catch up History and the groups once. On the Runs
+    // view (and the Chat run panel) onHello reloads both itself, so only the other views reload here.
+    if (!down && !(inRunsView() || crpShowsRun())) { loadHistoryView({ force: true }); void loadRunGroups(); }
+    scheduleRunsPaint();
+    paintGroupPageNow();
+  },
+});
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const url = `${proto}://${location.host}/ws`;
@@ -868,6 +896,7 @@ function connectWS() {
 
   ws.addEventListener('close', (e) => {
     state.wsReady = false;
+    conn.lost();
     if (terminalPane) terminalPane.onConnection(false);   // its keys are not sent until the next hello
     // 4001: the server closed it because the sign-in token it opened with expired (W7). Reconnect
     // straight away: the gate in front checks the session again on the new upgrade.
@@ -907,11 +936,21 @@ const alerts = createAlerts({
   win: window,
   onOpen: (target) => {
     if (target.askThread) { openChat({ threadId: target.askThread }); return; }   // Ask Worca is the Chat page: open that chat
+    if (target.href) { location.hash = target.href; return; }   // §5a.5: what the run's list row opens
     location.hash = target.schedule ? 'schedules' : rdHash(target.runId);
   },
 });
-/** The run as alerts.mjs names it: makeRun's '(untitled)' placeholder is no title (the id stands in). */
-const alertRun = (r) => ({ runId: r.runId, title: r.title === '(untitled)' ? '' : r.title });
+/** The run as alerts.mjs names it (makeRun's '(untitled)' placeholder is no title: the id stands in), with its list
+ *  row's status line and target (§5a.5): the group row's for a group member. rdModel and groupHomeOf are defined
+ *  further down; this only runs from the hello and frame handlers, after the module has evaluated. */
+const alertRun = (r) => {
+  const home = r.pipelineId ? groupHomeOf(r.pipelineId) : null;
+  return {
+    runId: r.runId, title: r.title === '(untitled)' ? '' : r.title,
+    line: home ? home.row.model.line : rdModel(r).line,
+    href: home ? home.row.href : `#${rdHash(r.runId)}`,
+  };
+};
 
 // ---------------------------------------------------------------------------
 // Sidebar collapse (icon rail) + the responsive nav tiers. `sidebarCollapsed` is
@@ -1441,6 +1480,7 @@ function handleServerMessage(msg) {
   if (!msg || !msg.type) return;
 
   if (msg.type === 'hello') {
+    conn.back();
     onHello(msg);
     refreshRunningActions();
     if (terminalPane) terminalPane.onHello(msg);
@@ -6600,8 +6640,9 @@ function onDone(r, msg) {
     r._finished = false;
     alerts.onResolved(alertRun(r));   // the pause no longer waits on anyone
   }
-  if (msg.status === 'paused') alerts.onPaused(alertRun(r), r.pauseReason);
   finishRun(r, msg.status || 'done');
+  // After finishRun: the alert's body is the run's list-row status line (§5a.5), which reads the paused status.
+  if (msg.status === 'paused') alerts.onPaused(alertRun(r), r.pauseReason);
   // Nothing else picks up the FINAL spend delta: a non-cost `done` broadcasts no
   // budget-changed, and startBudgetTick refetches only while runs are live. Without
   // this the delta — and the `blocked` flip it can cause — waited for a reload, so
@@ -28624,8 +28665,8 @@ function runAction(ref0, id, btn = null, m = null) {
     case 'answer': return focusQuestionOf(btn, ref);
     case 'report': return pid ? openReportModal(pid) : undefined;
     case 'archive': return runBulkAction('archive', [rowTarget({ key: pid, title: ref.title || pid, model: m || { state: 'stopped' }, run: r, pipelineId: pid, runId: r ? r.runId : null })]);
-    case 'start-now': return ref.ticketId ? scheduleCall('POST', `/api/schedules/${encodeURIComponent(ref.ticketId)}/run-now`, 'Run started') : undefined;
-    case 'cancel': return ref.ticketId ? scheduleCall('DELETE', `/api/schedules/${encodeURIComponent(ref.ticketId)}`, 'Run cancelled') : undefined;
+    case 'start-now': return ref.ticketId ? scheduleCall('POST', `/api/schedules/${encodeURIComponent(ref.ticketId)}/run-now`, 'Run started', 'start the run now') : undefined;
+    case 'cancel': return ref.ticketId ? scheduleCall('DELETE', `/api/schedules/${encodeURIComponent(ref.ticketId)}`, 'Run cancelled', 'cancel the waiting run') : undefined;
     case 'ship': {
       // openShipItFor needs projectKey or workspaceId, and answers { opened:false, error } without one. A live run
       // object (makeRun) has no projectKey: a finished run's History row does.
@@ -28650,12 +28691,12 @@ function focusQuestionOf(btn, ref = {}) {
   if (ref.runId) location.hash = rdHash(ref.runId);
   else if (ref.href) location.hash = ref.href;
 }
-async function scheduleCall(method, url, ok) {
+async function scheduleCall(method, url, ok, what) {
   try {
     const res = await fetch(url, { method });
-    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || `HTTP ${res.status}`); }
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw httpError(res, j); }
     announce(ok);
-  } catch (e) { notify({ tone: 'err', title: 'That did not work', detail: e.message }); }
+  } catch (e) { notify(actionError(what, e)); }
 }
 const chatRunControls = {
   pause(ref, btn = null) {
@@ -30328,8 +30369,10 @@ function runsGroupItems() {
 async function loadRunGroups() {
   try {
     const r = await fetch('/api/run-groups');
-    state.runGroups = r.ok ? ((await r.json()).groups || []) : (state.runGroups || []);
-  } catch { state.runGroups = state.runGroups || []; }
+    // §5a.2: a failed load is not an answer; the group page says "could not load", never "no longer exists".
+    if (r.ok) { state.runGroups = (await r.json()).groups || []; state.runGroupsFailed = false; }
+    else { state.runGroups = state.runGroups || []; state.runGroupsFailed = true; }
+  } catch { state.runGroups = state.runGroups || []; state.runGroupsFailed = true; }
   state.runGroupsLoaded = true;                    // every outcome: the group page tells "loading" from "no such group"
   scheduleRunsPaint();
   paintGroupPageNow();
@@ -30339,7 +30382,7 @@ async function loadRunGroups() {
 // ── The group page (runs redesign slice 4, D13 to D17): #feature/ID[/tab] and #group/ID[/tab] ──
 async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
-  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, resolving: false } : {}) });
+  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false } : {}) });
   if (fresh) {
     host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-loading', textContent: 'Loading group…' }));
     host.__gp = null;
@@ -30360,6 +30403,8 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
       const res = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
       if (GROUP_PAGE.id !== id || GROUP_PAGE.route !== route) return;
       GROUP_PAGE.resolving = false;
+      // A network error or a 5xx is not an answer; only a 404 means gone.
+      GROUP_PAGE.failed = !res || (!res.ok && res.status !== 404);
       if (res && res.status === 404) GROUP_PAGE.gone = true;
       else if (res && res.ok) GROUP_PAGE.featureId = ((await res.json().catch(() => ({}))).id) || id;
     }
@@ -30371,15 +30416,33 @@ function paintGroupPageNow() {
   if (!host || !host.isConnected || host.closest('.view.hidden')) return;
   const gid = GROUP_PAGE.featureId || id;
   const it = !GROUP_PAGE.gone && state.runGroupsLoaded ? runsGroupItems().find((g) => g.id === gid) : null;
+  if (!it && !GROUP_PAGE.gone && (state.runGroupsFailed || GROUP_PAGE.failed)) {
+    const p = Object.assign(document.createElement('p'), { className: 'feature-page-error',
+      textContent: "Could not load this group: Worca's server could not be reached. It loads when the connection is back. " });
+    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-sm btn-secondary', textContent: 'Try again' });
+    b.addEventListener('click', () => {
+      const { host: h, route: rt, id: gid0, tab: tb } = GROUP_PAGE;
+      GROUP_PAGE.failed = false;
+      void loadRunGroups();
+      // mountGroupPage refetches the feature only when it counts as fresh (a new host, route or id).
+      if (rt === 'feature') { GROUP_PAGE.id = ''; void mountGroupPage(h, { route: rt, id: gid0, tab: tb }); }
+    });
+    p.append(b);
+    host.replaceChildren(p);
+    host.__gp = null;
+    return;
+  }
   if (!it) {
     // "Gone" only after every source has answered: a frame while the replaced-id lookup or the chains load is in
     // flight must not flash "no longer exists".
     if (GROUP_PAGE.gone || (state.runGroupsLoaded && !GROUP_PAGE.resolving)) {
       // runChains lists a chain only while a member is current or waiting; its id is the root's key (p:… / t:…).
       const chain = route === 'group' && /^[pt]:/.test(id);
-      host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-gone',
+      const gone = Object.assign(document.createElement('p'), { className: 'feature-page-gone',
         textContent: route === 'feature' ? 'This feature no longer exists.'
-          : chain ? 'This chain has finished. Its runs are in the Runs list.' : 'This group no longer exists.' }));
+          : chain ? 'This chain has finished. Its runs are in the Runs list.' : 'This group no longer exists.' });
+      gone.append(' ', Object.assign(document.createElement('a'), { href: '#runs', textContent: 'Open the Runs list' }));
+      host.replaceChildren(gone);
       host.__gp = null;
     }
     return;                                        // not loaded yet: "Loading group…" stays; loadRunGroups repaints
@@ -30565,6 +30628,13 @@ function paintRunsList() {
   const note = archivedView
     ? (state.historyArchivedError && !histSource.length ? `Could not load archived runs: ${state.historyArchivedError}` : '')
     : (state.historyError && !(state.historyAll || []).length ? `Could not load finished runs: ${state.historyError}` : '');
+  // §5a.2: History has answered once loadHistoryView succeeded (crp.historySeen) or failed (crpHistoryAnswered also
+  // sets crp.historySeen; renderHistoryError paints before that, so historyError is checked too). No helloSeeded:
+  // an empty History with no hello yet is "No runs yet", and a later hello's live run replaces that note.
+  const answered = archivedView ? state.historyArchived !== null || !!state.historyArchivedError
+    : crp.historySeen || !!state.historyError;
+  const offline = conn.isDown();
+  const loading = !answered && !offline;
   // The view survives a reload: a first paint under Show = Archived fetches its feed without a click.
   if (archivedView && state.historyArchived === null) loadHistoryArchived();
   runsUi.lastModel = model;
@@ -30575,7 +30645,7 @@ function paintRunsList() {
   const checked = new Set(runsUi.sel.keys());
   const sig = JSON.stringify([
     model.sections.map((s) => [s.id, s.title, s.count, s.more || 0, s.collapsed ? 1 : 0, s.collapsed ? [] : s.rows.map(runsRowSig)]),
-    model.shown, model.view, model.spansProjects, note, [...checked], runsUi.selecting,
+    model.shown, model.view, model.spansProjects, note, [...checked], runsUi.selecting, loading, offline,
   ]);
   let refocus = null;
   if (host.dataset.sig !== sig) {
@@ -30593,7 +30663,8 @@ function paintRunsList() {
       const k = i.closest('.runs-row')?.dataset.rowKey;
       if (k && !lineFrom.has(k) && i.style.width) lineFrom.set(k, i.style.width);
     }
-    host.replaceChildren(...renderRunsList(document, model, { checked, selecting: runsUi.selecting, emptyText: 'No runs yet. Start one from New run.', note, lineFrom }));
+    host.replaceChildren(...renderRunsList(document, model, { checked, selecting: runsUi.selecting, emptyText: 'No runs yet. Start one from New run.', note, lineFrom,
+      loading, offline, retry: !!note }));
     if (lineFrom.size) void host.offsetWidth;   // commit the start widths, so the patch below transitions
   }
   paintRunsProgress(host, model);   // P2/P7: the group lines' fraction, in place
@@ -30667,6 +30738,11 @@ el.runsList?.addEventListener('click', (e) => {
   const head = e.target.closest && e.target.closest('.runs-sec-head[data-section-key]');
   if (head) { toggleRunsGroup(head.dataset.sectionKey); return; }
   if (e.target.closest && e.target.closest('.runs-older')) { runsUi.recentShown += RECENT_PAGE; paintRunsList(); return; }
+  // §5a.2: the load-failed note's Try again re-fetches the feed it is about.
+  if (e.target.closest && e.target.closest('[data-runs-retry]')) {
+    if (runsUi.view.show === 'archived') loadHistoryArchived(); else loadHistoryView({ force: true });
+    return;
+  }
   const a = e.target.closest && e.target.closest('a.runs-row');
   if (!a || e.defaultPrevented || (e.button || 0) !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
@@ -30803,7 +30879,7 @@ function paintRunsBar() {
 async function postBulk(body) {
   const r = await fetch('/api/runs/bulk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const out = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(out.error || `HTTP ${r.status}`);
+  if (!r.ok) throw httpError(r, out);
   return out;
 }
 /** What the pipelines-changed frame does: the History feed, and the Archived feed once it was loaded. */
@@ -30827,11 +30903,12 @@ async function runBulkAction(action, targets = selectedTargets()) {
     // D19: Archive has no confirm; its toast offers Undo (restore), for TOAST_AUTO_MS.
     const undo = action === 'archive' && out.done.length ? { label: 'Undo', run: () => postBulk({ action: 'restore', targets: out.done.map((d) => ({ pipelineId: d.id })), groups: [] })
       .then(() => reloadRunsHistory())
-      .catch((e) => notify({ tone: 'err', title: 'Could not undo the archive', detail: e.message })) } : null;
+      // The archive did happen, so "Nothing was changed" would be false: the Undo names its own next step.
+      .catch((e) => notify(actionError('undo the archive', e, { next: 'The runs stay archived; restore them from Show = Archived.' }))) } : null;
     notify({ tone: n ? 'ok' : 'warn', title: `${verb} ${runsWord(n)}`, detail: skipped, action: undo });
     reloadRunsHistory();
   } catch (e) {
-    notify({ tone: 'err', title: `Could not ${action} the selected runs`, detail: `${e.message}. Nothing was changed; try again.` });
+    notify(actionError(`${action} the selected runs`, e));
   }
   paintRunsList();
 }
@@ -30857,6 +30934,14 @@ el.runsList?.addEventListener('click', (e) => {
   const adhoc = !!(g && g.members.some((x) => x.adhoc && x.pipelineId === r.pipelineId));
   // A group offers its current member's PR (D31: a group raised to Needs you by a PR offers Open PR).
   const prUrl = (r.model.pr && r.model.pr.url) || (r.kind === 'chain' && r.model.current && r.model.current.pr && r.model.current.pr.url) || '';
+  // A waiting run is a schedule ticket: it has nothing to stop, archive or delete, only the model's own actions (D5).
+  const ticketActs = r.kind === 'sched' ? r.model.actions.filter((id) => id === 'start-now' || id === 'cancel') : [];
+  if (ticketActs.length) {
+    const ref = { ticketId: t.ticketId, title: r.title };
+    const acts = ticketActs.map((id) => ({ label: ACTION_LABEL[id], onSelect: () => runAction(ref, id, more, r.model) }));
+    openMenu({ doc: document, anchor: more, align: 'end', label: `More for ${r.title}`, items: acts });
+    return;
+  }
   const items = [
     { label: 'Stop', disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
     { label: 'Archive', disabled: !m.archive.count, title: m.archive.title, onSelect: () => runBulkAction('archive', [t]) },
@@ -30874,19 +30959,19 @@ function openAddToGroup(anchor, r) {
     return { id: g.id, title: g.title, model: groupModel({ kind: g.kind === 'feature' ? 'feature' : 'chain', title: g.title, members: it.members.map((x) => x.run) }) };
   });
   openGroupPicker({ doc: document, anchor, groups,
-    onPick: (g) => groupCall(`/api/run-groups/${encodeURIComponent(g.id)}/members`, 'POST', { pipelineId: r.pipelineId }, `Added to ${g.title}`),
-    onCreate: (title) => groupCall('/api/run-groups', 'POST', { title, pipelineId: r.pipelineId }, `Added to ${title}`) });
+    onPick: (g) => groupCall(`/api/run-groups/${encodeURIComponent(g.id)}/members`, 'POST', { pipelineId: r.pipelineId }, `Added to ${g.title}`, 'add the run to the group'),
+    onCreate: (title) => groupCall('/api/run-groups', 'POST', { title, pipelineId: r.pipelineId }, `Added to ${title}`, 'create the group') });
 }
-const removeRunFromGroup = (r) => groupCall(`/api/run-groups/members/${encodeURIComponent(r.pipelineId)}`, 'DELETE', null, 'Removed from the group');
-async function groupCall(url, method, body, ok) {
+const removeRunFromGroup = (r) => groupCall(`/api/run-groups/members/${encodeURIComponent(r.pipelineId)}`, 'DELETE', null, 'Removed from the group', 'remove the run from the group');
+async function groupCall(url, method, body, ok, what) {
   try {
     const res = await fetch(url, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
     const out = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(out.error || `HTTP ${res.status}`);
+    if (!res.ok) throw httpError(res, out);
     notify({ tone: 'ok', title: ok });
     await loadRunGroups();
   } catch (e) {
-    notify({ tone: 'err', title: 'Could not change the group', detail: e.message });
+    notify(actionError(what, e));
   }
 }
 
@@ -31134,8 +31219,16 @@ function bounceUnknownRun(runId) {
     if (m.pipelineId && m.projectKey) { replaceRoute(`history/${m.projectKey}/${m.pipelineId}`); return; }
     forgetLastRun();
   }
-  runsUi.skipRestore = true;
-  replaceRoute('runs');
+  // §5a.1: an old link in chat history. The server still knows which saved run a chat-started run became.
+  fetch(`/api/run-links/${encodeURIComponent(runId)}`)
+    .then((r) => (r.ok ? r.json() : null)).catch(() => null)
+    .then((t) => {
+      if (parseHash()[0] !== 'running' || runDetailParts(parseHash()[1]).runId !== runId) return;   // the person moved on
+      if (t && t.pipelineId && t.historyKey) { replaceRoute(`history/${t.historyKey}/${t.pipelineId}`); return; }
+      runsUi.skipRestore = true;
+      replaceRoute('runs');
+      notify({ tone: 'info', title: 'That run is no longer open', detail: 'Its link is from an earlier session; find it in the Runs list.' });
+    });
 }
 
 // The statuses that END a run for this screen (C14) — the ONE predicate the
@@ -34779,6 +34872,10 @@ function showView(name, param = '') {
       routeHistoryDetail(param, { instant: entering });
     }
     paintRunsList();
+    // §5a.9: the one-time What's new note above the list (idempotent; gone for good after Got it).
+    paintWhatsNew(document.getElementById('runs-whats-new'), {
+      storage: { getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) },
+      focusAfter: document.querySelector('.runs-head-title') });
     syncRunsPane();
   }
   if (name === 'stats') loadStatsView();
@@ -35760,7 +35857,7 @@ askPanel = createAskPanel({
   openClaudeSetup: () => { openClaudeSetup(); },
   loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,
-  storage: window.localStorage,
+  storage: localStorage,
   raf: window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : ((fn) => setTimeout(fn, 0)),
   now: () => Date.now(),
   runStore: askRunStore,
@@ -35833,7 +35930,7 @@ terminalPane = createTerminalPane({
   },
   getPageContext,
   confirm: confirmModal,
-  storage: window.localStorage,
+  storage: localStorage,
 });
 document.body.appendChild(terminalPane.root);
 // Its openers are the run and project pages' header buttons (.term-opener); a page cloned later (the

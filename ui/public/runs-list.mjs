@@ -566,7 +566,12 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
 const SHOW_EMPTY = Object.freeze({ needs: 'Nothing needs you.', running: 'No running runs.', finished: 'No finished runs yet.', archived: 'No archived runs.' });
 
 /** The list's children: one section element each, then the empty note and the error note. */
-export function renderRunsList(doc, model, { checked = new Set(), selecting = false, lineFrom = null, emptyText = 'No runs yet.', note = '' } = {}) {
+/** §5a.2: the empty list's note before History has answered, and while the server is unreachable. */
+export const RUNS_LOADING = 'Loading runs…';
+export const RUNS_OFFLINE = "The runs show here once Worca's server is reachable again.";
+
+export function renderRunsList(doc, model, { checked = new Set(), selecting = false, lineFrom = null, emptyText = 'No runs yet.', note = '',
+  loading = false, offline = false, retry = false } = {}) {
   const out = [];
   for (const s of model.sections) {
     const sec = doc.createElement('section');
@@ -591,7 +596,21 @@ export function renderRunsList(doc, model, { checked = new Set(), selecting = fa
     }
     out.push(sec);
   }
-  if (!model.shown) out.push(textEl(doc, 'p', 'runs-note', SHOW_EMPTY[model.view.show] || emptyText));
-  if (note) out.push(textEl(doc, 'p', 'runs-note runs-note-err', note));
+  if (!model.shown) {
+    // Only a list with nothing at all says loading or offline: a Show-filtered empty view keeps its own note.
+    if (loading && !model.total) out.push(textEl(doc, 'p', 'runs-note runs-loading', RUNS_LOADING));
+    else if (offline && !model.total) out.push(textEl(doc, 'p', 'runs-note runs-offline', RUNS_OFFLINE));
+    else out.push(textEl(doc, 'p', 'runs-note', SHOW_EMPTY[model.view.show] || emptyText));
+  }
+  if (note) {
+    const p = textEl(doc, 'p', 'runs-note runs-note-err', note);
+    if (retry) {
+      const b = textEl(doc, 'button', 'btn btn-sm btn-secondary runs-retry', 'Try again');
+      b.type = 'button';
+      b.dataset.runsRetry = '1';
+      p.append(' ', b);
+    }
+    out.push(p);
+  }
   return out;
 }

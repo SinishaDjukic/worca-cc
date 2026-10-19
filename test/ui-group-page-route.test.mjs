@@ -52,7 +52,7 @@ test('#feature/:id for an unknown id says so; #group/:id renders a user group wi
   const ctx = await boot();
   ctx.go('feature/feat_gone');
   await ctx.settle(6);
-  assert.equal(pageOf(ctx).textContent.trim(), 'This feature no longer exists.');
+  assert.equal(pageOf(ctx).textContent.trim(), 'This feature no longer exists. Open the Runs list');
   ctx.go('group/g_1');
   await ctx.settle(6);
   const gp = pageOf(ctx).querySelector('.gpage');
@@ -60,7 +60,41 @@ test('#feature/:id for an unknown id says so; #group/:id renders a user group wi
   assert.equal(gp.querySelector('.rd-tab[data-tab="overview"]').hidden, true);
   ctx.go('group/p:gone');
   await ctx.settle(6);
-  assert.equal(pageOf(ctx).textContent.trim(), 'This chain has finished. Its runs are in the Runs list.');
+  assert.equal(pageOf(ctx).textContent.trim(), 'This chain has finished. Its runs are in the Runs list. Open the Runs list');
+});
+
+test('offline: a failed /api/run-groups shows the error with Try again, not "no longer exists" (§5a.2)', async () => {
+  for (const [name, fail] of [['rejected', () => Promise.reject(new TypeError('Failed to fetch'))], ['503', () => json({ error: 'busy' }, 503)]]) {
+    for (const route of ['group/g_1', 'feature/feat_1']) {
+      let down = true;
+      const h = (url, o) => (down && (url.startsWith('/api/run-groups') || url.startsWith('/api/shape/features/')) ? fail() : handler(url, o));
+      const ctx = await boot(h);
+      ctx.go(route);
+      await ctx.settle(6);
+      const page = pageOf(ctx);
+      const err = page.querySelector('.feature-page-error');
+      assert.ok(err, `${name} ${route}: the error state`);
+      assert.match(err.textContent, /^Could not load this group: Worca's server could not be reached\. It loads when the connection is back\./);
+      assert.equal(page.querySelector('.feature-page-gone'), null, `${name} ${route}: never "no longer exists" while unreachable`);
+      const retry = err.querySelector('button');
+      assert.equal(retry.textContent, 'Try again');
+      assert.match(retry.className, /\bbtn\b.*\bbtn-sm\b.*\bbtn-secondary\b/);
+      down = false;
+      retry.click();
+      await ctx.settle(8);
+      assert.ok(pageOf(ctx).querySelector('.gpage'), `${name} ${route}: Try again renders the page once the server answers`);
+      assert.equal(pageOf(ctx).querySelector('.feature-page-error'), null);
+    }
+  }
+});
+
+test('gone offers a way back: an answered "no such group" links the Runs list', async () => {
+  const ctx = await boot();
+  ctx.go('group/g_gone');
+  await ctx.settle(6);
+  const a = pageOf(ctx).querySelector('.feature-page-gone a[href="#runs"]');
+  assert.ok(a, 'a link to the Runs list');
+  assert.equal(a.textContent, 'Open the Runs list');
 });
 
 test('Logs follows the run page\'s Expert Logs tab: hidden at Advanced (/logs shows Runs), back at Expert without a reload', async () => {
