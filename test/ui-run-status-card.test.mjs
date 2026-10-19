@@ -3,6 +3,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { runModel, groupModel } from '../src/shared/run-model.mjs';
@@ -59,6 +60,34 @@ test('paintRunStatus: symbol states never paint a plain dot; bars follow D20', a
     assert.equal(host.querySelector('.run-status-bar').hidden, !bar, `${state}: bar ${bar ? 'shown' : 'hidden'}`);
     assert.equal(host.querySelector('.run-status-group').hidden, true, 'a single run has no group bar');
   } })));
+});
+
+test('paintRunStatus: live role rows under the status line, the Refine line, hidden without roles (A12)', () => {
+  const doc = dom();
+  const host = doc.createElement('div');
+  const base = runModel({ status: 'running' }, { now: NOW, timeZone: 'UTC' });
+  const roles = { rows: [{ key: 'product', label: 'Product', state: 'reviewing', live: true },
+    { key: 'ux', label: 'UX', state: '1 major', live: false }], refine: '' };
+  paintRunStatus(host, { ...base, roles });
+  const rows = [...host.querySelectorAll('.run-status-roles .run-role-row')];
+  assert.equal(host.querySelector('.run-status-roles').hidden, false);
+  assert.deepEqual(rows.map((r) => [r.dataset.role, r.querySelector('.run-role-name').textContent, r.querySelector('.run-role-state').textContent]),
+    [['product', 'Product', 'reviewing'], ['ux', 'UX', '1 major']]);
+  assert.ok(rows[0].querySelector('.run-role-dot').classList.contains('is-live'));
+  assert.equal(rows[1].querySelector('.run-role-dot').classList.contains('is-live'), false);
+  paintRunStatus(host, { ...base, roles: { rows: [], refine: 'Refine · fixing 3 findings from UX and Architect' } });
+  assert.equal(host.querySelectorAll('.run-role-row').length, 0);
+  assert.equal(host.querySelector('.run-role-refine').textContent, 'Refine · fixing 3 findings from UX and Architect');
+  paintRunStatus(host, { ...base, roles: null });
+  assert.equal(host.querySelector('.run-status-roles').hidden, true, 'roles:null hides the block');
+  assert.equal(host.querySelectorAll('.run-status-roles').length, 1, 'made once');
+  // A group model reads its current member's roles.
+  const gh = doc.createElement('div');
+  const g = groupModel({ kind: 'feature', title: 'F', members: [{ status: 'running' }, { ticket: { status: 'scheduled', after: { index: 1 } } }] }, { now: NOW });
+  paintRunStatus(gh, { ...g, current: { ...g.current, roles } });
+  assert.equal(gh.querySelectorAll('.run-role-row').length, 2);
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /prefers-reduced-motion: reduce\)\{[^@]*\.run-role-dot\.is-live\{animation:none;\}/, 'the live dot holds still under reduced motion');
 });
 
 test('syncActions: model order, one primary, own buttons follow the model, stale buttons go', () => {
@@ -149,11 +178,28 @@ test('kindLabel, member rows and ship lines for a feature group', () => {
   assert.equal(kindLabel(null), 'Run');
   assert.equal(kindLabel(row), 'Feature · 3 runs');
   assert.equal(kindLabel({ ...row, groupKind: 'chain' }), 'Chain · 3 runs');
-  const ol = renderMemberRows(doc, row, { openButtons: true });
+  const ol = renderMemberRows(doc, row, { table: true });
   const lis = [...ol.querySelectorAll('li.run-member')];
   assert.deepEqual(lis.map((li) => li.querySelector('.run-member-num').textContent), ['', '1', '2', '3']);
   assert.equal(lis[2].querySelector('.status-dot').getAttribute('aria-label'), 'Failed', 'a failed member draws "!"');
-  assert.equal(ol.querySelectorAll('.run-member-open').length, 4);
+  // A13: no Open button; title over its status line, then PR, cost and a quiet chevron; the title link is the target.
+  assert.equal(ol.querySelectorAll('.run-member-open').length, 0);
+  assert.equal(ol.querySelectorAll('.run-member-go').length, 4);
+  for (const li of lis) {
+    const main = li.querySelector(':scope > .run-member-main');
+    assert.deepEqual([...main.children].map((c) => c.className), ['run-member-title', 'run-member-line']);
+    assert.equal(li.querySelector('.run-member-go').getAttribute('aria-hidden'), 'true');
+    assert.ok(li.querySelector('.run-member-go svg'), 'the chevron icon');
+  }
+  assert.equal(lis[1].querySelector('.run-member-title').getAttribute('href'), '#history/acme/p1');
+  assert.equal(lis[1].querySelector('.run-member-title').title, 'Slice 1');
+  assert.equal(lis[1].querySelector('.run-member-cost').textContent, '$1.00');
+  // The chat card (no option) keeps today's cells.
+  const plain = renderMemberRows(doc, row);
+  assert.equal(plain.classList.contains('is-table'), false);
+  assert.equal(plain.querySelectorAll('.run-member-main, .run-member-go, .run-member-cost').length, 0);
+  assert.deepEqual([...plain.querySelector('li.run-member').children].map((c) => c.className.split(' ')[0]),
+    ['run-member-num', 'status-dot', 'run-member-title', 'run-member-line', 'run-member-pr']);
   assert.equal(groupShipLine(row), 'Ship card comes when all 3 runs are done, here and in the chat.');
   const ready = groupModel({ kind: 'feature', members: [done, done, done] }, { now: NOW });
   assert.equal(groupShipLine({ ...row, model: ready, members: ready.members.map((m, i) => ({ position: i + 1, model: m })) }),

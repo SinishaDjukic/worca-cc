@@ -819,7 +819,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       if (thenAdd) await addMember({ serverId: `manual:${name}` });
     };
     const list = [['Cancel', 'btn btn-sm', () => modal.close()], ['Save', 'btn btn-sm', () => save(false)]];
-    if (!edit) list.push(['Save and add to set', 'btn btn-primary btn-sm', () => save(true)]);
+    if (!edit) list.push(['Save to set', 'btn btn-primary btn-sm', () => save(true)]);
     modal.open(edit ? `Edit definition · ${server.base}` : 'Add MCP server', wrap, list);
   }
 

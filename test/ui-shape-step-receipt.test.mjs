@@ -25,8 +25,8 @@ const ROWS = [
   ['outline of 3, approve', SPLIT, { decision: 'approve', approveEach: false }, {}, 'Split into 3 runs'],
   ['outline of 3, approve after a merge', SPLIT, { decision: 'approve', edits: [{ op: 'merge', id: 's1' }] }, {}, 'Split into 2 runs'],
   ['outline, flat', SPLIT, { decision: 'flat' }, {}, 'Not split · planned as one run'],
-  ['gate, another', GATE, { decision: 'another' }, {}, 'Another cycle approved'],
-  ['gate, continue', GATE, { decision: 'continue' }, {}, 'Continued with what you have'],
+  ['gate, another', GATE, { decision: 'another' }, {}, 'Another cycle started'],
+  ['gate, continue', GATE, { decision: 'continue' }, {}, 'Accepted as is'],
   ['recovery, retry', RECOVERY, { decision: 'retry' }, {}, 'Retried'],
   ['recovery, pause', RECOVERY, { decision: 'pause' }, {}, 'Paused'],
   ['recovery, abort', RECOVERY, { decision: 'abort' }, {}, 'Aborted'],
@@ -57,7 +57,7 @@ test('noteAnswer then namedAnswer returns { text, answers }; forgetAnswer clears
   noteAnswer('run-a', CLARIFY, TWO, { shaping: true });
   assert.deepEqual(namedAnswer('run-a', 'c1'), { text: 'Clarify · 2 answers', answers: TWO.answers });
   noteAnswer('run-a', GATE, { decision: 'another' });
-  assert.deepEqual(namedAnswer('run-a', 'g1'), { text: 'Another cycle approved', answers: [] });
+  assert.deepEqual(namedAnswer('run-a', 'g1'), { text: 'Another cycle started', answers: [] });
   forgetAnswer('run-a', 'c1');
   assert.equal(namedAnswer('run-a', 'c1'), null);
   assert.equal(namedAnswer('run-a', ''), null);
@@ -68,9 +68,9 @@ test('noteAnswer then namedAnswer returns { text, answers }; forgetAnswer clears
 test('a note on run A\'s question never names run B\'s question with the same id (engine ids repeat across runs)', () => {
   noteAnswer('run-a', { ...GATE, id: 'gate-review-1' }, { decision: 'another' });
   assert.equal(namedAnswer('run-b', 'gate-review-1'), null);
-  assert.equal(namedAnswer('run-a', 'gate-review-1').text, 'Another cycle approved');
+  assert.equal(namedAnswer('run-a', 'gate-review-1').text, 'Another cycle started');
   forgetAnswer('run-b', 'gate-review-1');
-  assert.equal(namedAnswer('run-a', 'gate-review-1').text, 'Another cycle approved', 'forgetting run B leaves run A');
+  assert.equal(namedAnswer('run-a', 'gate-review-1').text, 'Another cycle started', 'forgetting run B leaves run A');
   forgetAnswer('run-a', 'gate-review-1');
 });
 
@@ -82,8 +82,8 @@ test('noteAnswer keeps nothing for a kind without a step name', () => {
 test('the 201st note evicts the first', () => {
   for (let i = 0; i < 201; i++) noteAnswer('run-a', { ...GATE, id: `n${i}` }, { decision: 'continue' });
   assert.equal(namedAnswer('run-a', 'n0'), null);
-  assert.equal(namedAnswer('run-a', 'n1').text, 'Continued with what you have');
-  assert.equal(namedAnswer('run-a', 'n200').text, 'Continued with what you have');
+  assert.equal(namedAnswer('run-a', 'n1').text, 'Accepted as is');
+  assert.equal(namedAnswer('run-a', 'n200').text, 'Accepted as is');
   for (let i = 0; i < 201; i++) forgetAnswer('run-a', `n${i}`);
 });
 

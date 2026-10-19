@@ -12,13 +12,18 @@ import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
 import { roundsOf } from './rounds.mjs';
 import { getWatch, stoppedWatchFact } from '../pr-watch.mjs';
+import { clipTitle } from '../title.mjs';
 
 const j = (t, d) => { try { return t ? JSON.parse(t) : d; } catch { return d; } };
 const iso = (ms) => new Date(ms).toISOString();
 const FILES_IN_SCOPE = 25;
 
+export const SLICE_TITLE_MAX = 40;
+
+/** A slice run's title (review D): "Run 2 · Pin charts". The feature name lives in the run's "Part of …" row; the
+ *  feature title and total stay in the signature for the callers. */
 export function sliceTitle(featureTitle, index, total, slice) {
-  return `${featureTitle} · ${index}/${total}: ${slice.title}`.slice(0, 200);
+  return `Run ${index} · ${clipTitle(slice && slice.title, SLICE_TITLE_MAX) || `slice ${index}`}`;
 }
 
 /** F24: a stored request's run options. A fired ticket reads its model and starter from `request.internal`

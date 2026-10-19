@@ -363,7 +363,7 @@
                   <div id="runTagDimsField" hidden></div>
                   <small class="hint tag-dims-warn" id="runTagDimsWarn" aria-live="polite" hidden></small>
                   <div id="runTagsField"></div>
-                  <small class="hint">Used to allocate cost. <button type="button" class="link-btn" id="runTagsSaveDefault">Save as project default</button></small>
+                  <small class="hint">Used to allocate cost. <button type="button" class="link-btn" id="runTagsSaveDefault">Save as default</button></small>
                 </div>
 
                 <!-- Workflow picker (Default + saved) and the engine that runs it, on one row: the
@@ -439,7 +439,7 @@
                       <span id="mdFileName" class="state hint"></span>
                       <input id="mdFile" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden />
                     </div>
-                    <p class="shape-chat-link" id="shapeChatLink" data-min-level="advanced" hidden><button type="button" class="link-btn" id="shapeChatLinkBtn">Not sure what to build yet? Try Shaper in Chat →</button></p>
+                    <p class="shape-chat-link" id="shapeChatLink" data-min-level="advanced" hidden>Not sure what to build yet? <button type="button" class="link-btn" id="shapeChatLinkBtn">Try Shaper</button></p>
                   </div>
                   <div id="plugin-source-pane" class="source-pane hidden"></div>
                   <!-- #687: a started run takes its task with it; this puts it back (app.js#clearTask). -->
@@ -534,7 +534,7 @@
                       <span class="agents-wf" id="agentsWorkflow"></span>
                       <span class="agents-summary" id="agentsSummary">all defaults</span>
                       <span class="agents-actions">
-                        <button type="button" id="agentsPromote" class="btn btn-sm" data-min-level="expert" hidden>Save as workflow defaults</button>
+                        <button type="button" id="agentsPromote" class="btn btn-sm" data-min-level="expert" hidden>Save as defaults</button>
                         <button type="button" id="agentsReset" class="btn btn-sm" hidden>Reset</button>
                       </span>
                     </div>
@@ -677,7 +677,7 @@
                 <button type="button" class="btn btn-sm btn-quiet runs-view-btn" id="runs-view-btn" aria-haspopup="menu" aria-expanded="false">
                   View <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9.5l6 6 6-6"></path></svg>
                 </button>
-                <input type="checkbox" class="runs-check runs-all" id="runs-all" aria-label="Select all visible runs">
+                <label class="runs-all-wrap" hidden><input type="checkbox" class="runs-check runs-all" id="runs-all" aria-label="Select all visible runs"> Select all</label>
               </div>
               <div class="runs-view-chip" id="runs-view-chip" hidden>
                 <span class="runs-view-chip-t"></span>
@@ -765,7 +765,7 @@
                       <button type="button" role="menuitem" class="rd-resume-limit" hidden><b>Resume at</b><small>When the limit resets</small></button>
                       <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
-                      <button type="button" role="menuitem" class="resume-with-model" hidden><b>Resume with another model…</b><small>Every remaining step runs on the model you pick</small></button>
+                      <button type="button" role="menuitem" class="resume-with-model" hidden><b>Switch model…</b><small>Every remaining step runs on the model you pick</small></button>
                       <button type="button" role="menuitem" class="rd-resume-at"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
@@ -930,7 +930,7 @@
                       <button type="button" role="menuitem" class="hd-resume-limit-item" hidden><b>Resume at</b><small>When the limit resets</small></button>
                       <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
-                      <button type="button" role="menuitem" class="resume-with-model" hidden><b>Resume with another model…</b><small>Every remaining step runs on the model you pick</small></button>
+                      <button type="button" role="menuitem" class="resume-with-model" hidden><b>Switch model…</b><small>Every remaining step runs on the model you pick</small></button>
                       <button type="button" role="menuitem" class="hd-resume-at-item"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
@@ -1095,10 +1095,10 @@
           <p id="schedules-msg" class="form-msg" aria-live="polite"></p>
           <!-- Tabs, the Statistics .seg idiom: #schedules/<tab> routes them (activity | once | repeating). -->
           <div class="sched-tabs">
-            <div class="seg" id="schedules-tabs" role="group" aria-label="Schedules">
-              <button type="button" data-tab="activity">Activity</button>
-              <button type="button" data-tab="once">Once</button>
-              <button type="button" data-tab="repeating">Repeating</button>
+            <div class="tabs" id="schedules-tabs" role="group" aria-label="Schedules">
+              <button type="button" class="tab" data-tab="activity">Activity</button>
+              <button type="button" class="tab" data-tab="once">Once</button>
+              <button type="button" class="tab" data-tab="repeating">Repeating</button>
             </div>
           </div>
           <section class="card sched-feed sched-pane" id="schedules-feed" data-pane="activity" aria-label="Activity"></section>
@@ -1156,9 +1156,9 @@
           </div>
           <div class="tm-filter">
             <div class="select-wrap tm-scope-wrap"><select id="tm-scope" class="select" aria-label="Scope"></select></div>
-            <div class="seg tm-tabs" id="tm-tabs" role="tablist" aria-label="Team metrics view">
-              <button type="button" role="tab" data-tm-tab="overview" aria-selected="true" class="on">Overview</button>
-              <button type="button" role="tab" data-tm-tab="timeline" aria-selected="false">Timeline</button>
+            <div class="tabs tm-tabs" id="tm-tabs" role="tablist" aria-label="Team metrics view">
+              <button type="button" class="tab on" role="tab" data-tm-tab="overview" aria-selected="true">Overview</button>
+              <button type="button" class="tab" role="tab" data-tm-tab="timeline" aria-selected="false">Timeline</button>
             </div>
             <div class="seg" id="tm-range" role="group" aria-label="Time range">
               <button type="button" data-range="this-month">This month</button>
@@ -1592,18 +1592,18 @@
              NOTE: the routed-view census (test/ui-boot.test.mjs) counts DOM
              elements, not the literal routing attribute name in this source. -->
         <section class="view hidden" data-view="settings">
-          <div class="seg settings-tabs" id="settings-tabs" role="group" aria-label="Settings section">
+          <div class="tabs settings-tabs" id="settings-tabs" role="group" aria-label="Settings section">
             <!-- Ordered by mode (Simple, Advanced, Expert) so each mode sees a gap-free prefix of the
                  strip. Plugins, Sets, Models and Providers left for the Add-ons pages. -->
-            <button type="button" class="on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
-            <button type="button" data-tab="tags" data-min-level="simple" data-flag="runTags" aria-pressed="false">Tags</button>
-            <button type="button" data-tab="presets" data-min-level="simple" data-flag="runPresets" data-flag-chip aria-pressed="false">Presets</button>
-            <button type="button" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
+            <button type="button" class="tab on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
+            <button type="button" class="tab" data-tab="tags" data-min-level="simple" data-flag="runTags" aria-pressed="false">Tags</button>
+            <button type="button" class="tab" data-tab="presets" data-min-level="simple" data-flag="runPresets" data-flag-chip aria-pressed="false">Presets</button>
+            <button type="button" class="tab" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
             <!-- Experimental (docs/feature-flags.md) shows at every level: flags are not levels. -->
-            <button type="button" data-tab="experimental" data-min-level="simple" aria-pressed="false">Experimental</button>
-            <button type="button" data-tab="ask" data-min-level="advanced" aria-pressed="false">Ask Worca</button>
-            <button type="button" data-tab="guardrails" data-min-level="advanced" aria-pressed="false">Guardrails</button>
-            <button type="button" data-tab="memory" data-min-level="advanced" aria-pressed="false">Memory</button>
+            <button type="button" class="tab" data-tab="experimental" data-min-level="simple" aria-pressed="false">Experimental</button>
+            <button type="button" class="tab" data-tab="ask" data-min-level="advanced" aria-pressed="false">Ask Worca</button>
+            <button type="button" class="tab" data-tab="guardrails" data-min-level="advanced" aria-pressed="false">Guardrails</button>
+            <button type="button" class="tab" data-tab="memory" data-min-level="advanced" aria-pressed="false">Memory</button>
           </div>
           <p id="settingsLoadMsg" class="form-msg err settings-load-msg" role="alert" hidden></p>
 
@@ -1843,6 +1843,19 @@
                 <div class="sub">Cost limits and defaults for your pipeline runs</div>
               </div>
             </div>
+
+            <!-- Keep awake (UI/UX review F): the keepAwake beta flag, the same value as its Settings › Experimental row. -->
+            <section class="card settings-card" id="keepawake-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row"><h2>Keep awake</h2></div>
+              </div>
+              <div class="switch-row" id="keepAwakeRow">
+                <div class="switch on" role="switch" tabindex="0" id="keepAwakeSwitch" aria-checked="true" aria-labelledby="keepAwakeTxt"></div>
+                <span class="txt" id="keepAwakeTxt" data-flag-chip="keepAwake">Keep the computer awake while runs are working</span>
+              </div>
+              <small class="hint">The display may still turn off. No effect on a container or hosted worca.</small>
+              <p class="form-msg" id="keepAwakeMsg" role="status"></p>
+            </section>
 
             <section class="card settings-card" id="budget-settings-card" data-min-level="simple">
               <div class="card-head">
@@ -2251,7 +2264,7 @@
                     Every saved Ask Worca chat: transcripts, attachments and the git worktrees checked out for them. Runs started from a chat are not affected.
                   </span></button>
                 </div>
-                <button type="button" id="askHistoryDelete" class="btn btn-danger ask-history-delete" disabled>Delete all chat history</button>
+                <button type="button" id="askHistoryDelete" class="btn btn-danger ask-history-delete" disabled>Delete all chats</button>
                 <small class="hint" id="askHistoryCounts"></small>
                 <small class="hint" id="askHistoryMsg"></small>
               </div>
@@ -2689,9 +2702,9 @@
         <div class="shipit-desc">
           <div class="shipit-desc-head">
             <label for="shipit-desc-input">PR description</label>
-            <div class="md-tabs" role="tablist" aria-label="PR description editor">
-              <button type="button" class="md-tab shipit-desc-tab" role="tab" data-mode="text" aria-selected="true">Write</button>
-              <button type="button" class="md-tab shipit-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
+            <div class="md-tabs tabs" role="tablist" aria-label="PR description editor">
+              <button type="button" class="md-tab tab shipit-desc-tab" role="tab" data-mode="text" aria-selected="true">Write</button>
+              <button type="button" class="md-tab tab shipit-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
             </div>
             <button type="button" class="shipit-generate-stop btn btn-sm" hidden>Stop</button>
             <button type="button" class="shipit-generate btn btn-sm">Generate with AI</button>
@@ -2840,9 +2853,9 @@
         <!-- Two ways in: a folder already on this machine, or a repository cloned into the
              projects folder by the server (POST /api/projects/clone). Clone is the default
              where no folder picker exists (a container or hosted worca). -->
-        <div class="md-tabs proj-add-tabs" id="proj-add-tabs" role="tablist" aria-label="How to add the project">
-          <button type="button" class="md-tab" role="tab" id="proj-add-tab-folder" data-mode="folder" aria-selected="true" aria-controls="proj-add-folder-pane">Folder</button>
-          <button type="button" class="md-tab" role="tab" id="proj-add-tab-clone" data-mode="clone" aria-selected="false" aria-controls="proj-add-clone-pane">Clone from URL</button>
+        <div class="md-tabs tabs proj-add-tabs" id="proj-add-tabs" role="tablist" aria-label="How to add the project">
+          <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-folder" data-mode="folder" aria-selected="true" aria-controls="proj-add-folder-pane">Folder</button>
+          <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-clone" data-mode="clone" aria-selected="false" aria-controls="proj-add-clone-pane">Clone from URL</button>
         </div>
         <div id="proj-add-folder-pane" role="tabpanel" aria-labelledby="proj-add-tab-folder">
           <div class="field">

@@ -7,6 +7,7 @@ import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
 import { prChip } from './runs-list.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
 import { ACTION_LABEL } from '../../src/shared/run-model.mjs';
+import { icon } from './icons.mjs';
 
 const BAR_STATES = new Set(['starting', 'working', 'needs-you', 'paused']);       // D20: the states the list draws a bar for
 const GROUP_ENDED = new Set(['ready', 'in-review', 'merged']);
@@ -48,8 +49,10 @@ export function paintRunStatus(host, m) {
     const bar = textEl(doc, 'div', 'run-prog run-status-bar', '');
     group.hidden = true;
     bar.hidden = true;
-    host.append(head, group, bar);
-    host.__rs = { dot, text, group, bar };
+    const roles = textEl(doc, 'div', 'run-status-roles', '');
+    roles.hidden = true;
+    host.append(head, roles, group, bar);
+    host.__rs = { dot, text, group, bar, roles };
   }
   const { dot, text, group, bar } = host.__rs;
   host.dataset.state = m.state;
@@ -62,6 +65,20 @@ export function paintRunStatus(host, m) {
     paintChainBar(group, { total: m.progress.total, fraction: m.progress.fraction, text: `${m.count.done} done` });
   } else group.hidden = true;
   const cur = g ? m.current : m;
+  // A12: one row per role while role reviews run, or the one Refine line (role-review.mjs liveRoleRows).
+  const roles = cur ? cur.roles : null;
+  host.__rs.roles.hidden = !roles;
+  if (roles) {
+    host.__rs.roles.replaceChildren(...(roles.refine ? [textEl(doc, 'div', 'run-role-refine', roles.refine)]
+      : roles.rows.map((x) => {
+        const row = textEl(doc, 'div', 'run-role-row', '');
+        const rdot = doc.createElement('span');
+        rdot.className = `status-dot run-role-dot${x.live ? ' is-live' : ''}`;
+        row.append(rdot, textEl(doc, 'span', 'run-role-name', x.label), textEl(doc, 'span', 'run-role-state', x.state));
+        row.dataset.role = x.key;
+        return row;
+      })));
+  }
   const show = !!(cur && cur.progress && BAR_STATES.has(cur.state));
   bar.hidden = !show;
   if (show) paintProgressBar(bar, cur.progress, { pulse: !!cur.pulse });
@@ -138,10 +155,11 @@ export function pauseResumeOwn(btn, status) {
   return {};
 }
 
-/** D11, D13: a group's member rows (Planning first, unnumbered). `openButtons` adds the cost and Open columns. */
-export function renderMemberRows(doc, row, { openButtons = false } = {}) {
+/** D11, D13: a group's member rows (Planning first, unnumbered). `table` (the group page, A13) lays each row out as
+ *  title over status, then PR, cost and a quiet chevron, with the title link stretched over the row. */
+export function renderMemberRows(doc, row, { table = false } = {}) {
   const ol = doc.createElement('ol');
-  ol.className = `run-members${openButtons ? ' is-table' : ''}`;
+  ol.className = `run-members${table ? ' is-table' : ''}`;
   const items = [...(row.planning && row.planning.model ? [{ ...row.planning, isPlanning: true }] : []), ...(row.members || [])];
   for (const mb of items) {
     const m = mb.model;
@@ -152,19 +170,25 @@ export function renderMemberRows(doc, row, { openButtons = false } = {}) {
     const unnumbered = mb.isPlanning || mb.adhoc || row.groupKind === 'user';
     const dot = doc.createElement('span');
     paintStatusDot(dot, m);
-    const title = textEl(doc, 'a', 'run-member-title', mb.isPlanning ? 'Planning' : (mb.title || '(untitled)'));
+    const name = mb.isPlanning ? 'Planning' : (mb.title || '(untitled)');
+    const title = textEl(doc, 'a', 'run-member-title', name);
     title.setAttribute('href', mb.href || '#runs');
+    const line = textEl(doc, 'span', 'run-member-line', statusText(m).text);
     const pr = textEl(doc, 'span', 'run-member-pr', '');
     if (mb.adhoc) pr.append(textEl(doc, 'span', 'runs-indep', 'Independent'));
     if (m.pr) pr.append(prChip(doc, m.pr));
-    li.append(textEl(doc, 'span', 'run-member-num', unnumbered ? '' : String(mb.position)), dot, title,
-      textEl(doc, 'span', 'run-member-line', statusText(m).text), pr);
-    if (openButtons) {
-      li.append(textEl(doc, 'span', 'run-member-cost mono', mb.cost == null ? '' : fmtUsd(mb.cost)));
-      const open = textEl(doc, 'a', 'btn btn-sm run-member-open', 'Open');
-      open.setAttribute('href', mb.href || '#runs');
-      open.setAttribute('aria-label', `Open ${mb.isPlanning ? 'Planning' : (mb.title || 'run')}`);
-      li.append(open);
+    const num = textEl(doc, 'span', 'run-member-num', unnumbered ? '' : String(mb.position));
+    if (!table) {
+      li.append(num, dot, title, line, pr);
+    } else {
+      title.title = name;
+      const main = textEl(doc, 'span', 'run-member-main', '');
+      main.append(title, line);
+      const go = doc.createElement('span');
+      go.className = 'run-member-go';
+      go.setAttribute('aria-hidden', 'true');
+      go.append(icon(doc, 'chevron', 12));
+      li.append(num, dot, main, pr, textEl(doc, 'span', 'run-member-cost mono', mb.cost == null ? '' : fmtUsd(mb.cost)), go);
     }
     ol.append(li);
   }

@@ -30,7 +30,7 @@ function tabsWidget(item, ctx) {
   const defs = Array.isArray(item.tabs) ? item.tabs : [];
   const id = ctx.idFor(`tabs-${defs.length}`);
   const box = h(ctx.doc, 'div', 'af-tabs');
-  const bar = h(ctx.doc, 'div', 'af-tabs-bar');
+  const bar = h(ctx.doc, 'div', 'af-tabs-bar tabs');
   bar.setAttribute('role', 'tablist');
   const tabs = [];
   const panes = [];
@@ -55,7 +55,7 @@ function tabsWidget(item, ctx) {
     for (const node of ctx.render(def && def.children)) pane.appendChild(node);
     panes.push(pane);
 
-    const tab = h(ctx.doc, 'button', i === 0 ? 'af-tab on' : 'af-tab', String((def && def.label) || `Tab ${i + 1}`));
+    const tab = h(ctx.doc, 'button', i === 0 ? 'af-tab tab on' : 'af-tab tab', String((def && def.label) || `Tab ${i + 1}`));
     tab.type = 'button';
     tab.id = `${id}-t${i}`;
     tab.setAttribute('role', 'tab');

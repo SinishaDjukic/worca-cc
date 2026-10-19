@@ -618,6 +618,51 @@ test('keyboard (§5a.4): Space toggles the focused row, ⌘A selects every visib
   assert.equal(doc.getElementById('runs-bulk').hidden, true);
 });
 
+test('A11: no checkbox on hover; ⌘-click selects without navigating, Shift-click adds the range, Esc ends it', async () => {
+  const css = readFileSync(join(__dir, '..', 'ui', 'public', 'style.css'), 'utf8');
+  assert.doesNotMatch(css, /:has\(> \.runs-pick:hover/, 'checkboxes show only while selecting');
+  const { window, doc, recv } = await boot();
+  recv({ type: 'hello', runs: [live('r1'), live('r2'), live('r3'), live('r4')] });
+  go(window, 'runs'); await settle(window);
+  const wrap = doc.querySelector('.runs-all-wrap');
+  assert.ok(wrap && wrap.contains(doc.getElementById('runs-all')), '#runs-all sits in its "Select all" label');
+  assert.equal(wrap.hidden, true, 'Select all shows only while selecting');
+  const keys = [...doc.querySelectorAll('#runs-list .runs-item[data-level="top"]')].map((n) => n.dataset.rowKey);
+  const rowOf = (k) => doc.querySelector(`#runs-list .runs-item[data-row-key="${k}"] > a.runs-row`);
+  const modClick = (k, o) => rowOf(k).dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, ...o }));
+  const checked = () => [...doc.querySelectorAll('#runs-list .runs-item[data-level="top"].is-checked')].map((n) => n.dataset.rowKey);
+  modClick(keys[0], { metaKey: true });
+  await settle(window);
+  assert.equal(window.location.hash, '#runs', '⌘-click never opens the run');
+  assert.deepEqual(checked(), [keys[0]]);
+  assert.ok(doc.getElementById('runs-list').classList.contains('is-selecting'));
+  assert.equal(doc.querySelector('.runs-all-wrap').hidden, false);
+  modClick(keys[2], { shiftKey: true });
+  await settle(window);
+  assert.deepEqual(checked(), keys.slice(0, 3), 'Shift-click adds the range from the anchor');
+  doc.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await settle(window);
+  assert.deepEqual(checked(), []);
+  assert.equal(doc.querySelector('.runs-all-wrap').hidden, true);
+  modClick(keys[3], { shiftKey: true });
+  await settle(window);
+  assert.deepEqual(checked(), [keys[3]], 'Esc dropped the anchor: a Shift-click toggles one row');
+});
+
+test('A11: the row ⋯ menu offers Select, which enters selection with that row', async () => {
+  const { window, doc, recv } = await boot();
+  recv({ type: 'hello', runs: [live('r1'), live('r2')] });
+  go(window, 'runs'); await settle(window);
+  const item = itemOf(doc, '[data-run-id="r1"]');
+  click(window, item.querySelector(':scope > .runs-row-tail .runs-more'));
+  const sel = [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.trim() === 'Select');
+  assert.ok(sel, 'the ⋯ menu lists Select');
+  click(window, sel);
+  await settle(window);
+  assert.ok(itemOf(doc, '[data-run-id="r1"]').classList.contains('is-checked'));
+  assert.equal(doc.getElementById('runs-bulk').hidden, false);
+});
+
 test('⌘A / Ctrl+A after a click on the pane\'s blank area: focus stays in the list pane and every row is ticked', async () => {
   const { window, doc, recv } = await boot();
   recv({ type: 'hello', runs: [live('r1'), live('r2')] });
@@ -796,6 +841,51 @@ test('Esc with a run open clears the selection only: the detail stays and the ha
 // "2 need you" counts the usage-limit pause: the list's needsYou() (runs-list.mjs) and the badge's runsNeedsCount()
 // treat any paused live run as needing you, although run-model.mjs gives it state 'paused' (grey dot), not 'needs-you'.
 // Never count the badge by runModel().state === 'needs-you': that would read 1 here.
+// A9 (UI/UX review 2026-10-19): the view jumped to another group page ~1.5 s after a run finished. Played back: the
+// finish sequence on an open run page never routes to #feature/… on its own.
+test('A9: a run that finishes and then joins a feature group never moves the open page to #feature/…', async () => {
+  const groups = [];
+  let hist = [];
+  const { window, recv } = await boot({ runGroups: groups, history: () => hist });
+  const hashes = [];
+  window.addEventListener('hashchange', () => hashes.push(window.location.hash));
+  for (const m of ['pushState', 'replaceState']) {
+    const orig = window.history[m].bind(window.history);
+    window.history[m] = (st, t, url) => { if (url != null) hashes.push(String(url)); return orig(st, t, url); };
+  }
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'p-a9' })] });
+  go(window, 'running/r1'); await settle(window);
+  hist = [{ id: 'p-a9', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'r1', status: 'done', startedAt: '2026-10-19T09:00:00Z', mtime: 9 }];
+  recv({ type: 'state', runId: 'r1', status: 'done' });
+  recv({ type: 'done', runId: 'r1', status: 'done' });
+  recv({ type: 'pipelines-changed' });
+  await settle(window, 8);
+  groups.push({ ...FEATURE_GROUP, members: [{ ...FEATURE_GROUP.members[0], pipelineId: 'p-a9', status: 'done' }, ...FEATURE_GROUP.members.slice(1)] });
+  recv({ type: 'pipelines-changed' });
+  await new Promise((res) => setTimeout(res, 2000));
+  await settle(window, 8);
+  assert.deepEqual(hashes.filter((h) => /#feature\//.test(h)), [], 'no #feature/ hash on its own');
+  assert.match(window.location.hash, /^#history\//, 'the finished run lands on its saved page');
+});
+
+test('A9: a question alert for a feature group member opens the group page (recorded behaviour, review A9)', async () => {
+  class N {
+    constructor(title, opts = {}) { this.title = title; this.tag = opts.tag; N.shown.push(this); }
+    close() {}
+  }
+  N.shown = []; N.permission = 'granted'; N.requestPermission = () => Promise.resolve('granted');
+  const { window, recv } = await boot({ runGroups: [FEATURE_GROUP], history: [], storage: { 'worca-cc.alerts.notify': '1' },
+    setup: (w) => { w.Notification = N; } });
+  recv({ type: 'hello', runs: [live('r-live', { pipelineId: 'p-live' })] });
+  go(window, 'runs'); await settle(window);
+  recv({ type: 'question', runId: 'r-live', question: { id: 'q1', kind: 'clarify', questions: [] } });
+  await settle(window);
+  assert.equal(N.shown.length, 1, 'one alert');
+  N.shown[0].onclick({ preventDefault() {} });
+  await settle(window);
+  assert.equal(window.location.hash, `#feature/${FEATURE_GROUP.id}`, 'its target is the group row\'s');
+});
+
 test('badge: 2 runs need you → sidebar "?" + "2" and title "(2) ? Worca"; none → "Worca"', async () => {
   // applyBadge writes the title only with the badge setting on; it follows notify, which defaults to off
   // (readAlertSettings, ui/public/alerts.mjs), and boot() clears localStorage.
@@ -806,9 +896,13 @@ test('badge: 2 runs need you → sidebar "?" + "2" and title "(2) ? Worca"; none
   assert.equal(nc.hidden, false);
   assert.ok(nc.querySelector('.status-dot[data-state="needs-you"] svg.status-sym'));
   assert.equal(nc.querySelector('.nav-count-n').textContent, '2');
+  assert.equal(nc.getAttribute('role'), 'img', 'A10: the count names itself');
+  assert.equal(nc.getAttribute('aria-label'), '2 need you');
   assert.equal(window.document.title, '(2) ? Worca');
-  recv({ type: 'done', runId: 'a', status: 'stopped' });
   recv({ type: 'done', runId: 'b', status: 'stopped' });
+  await settle(window);
+  assert.equal(nc.getAttribute('aria-label'), '1 needs you');
+  recv({ type: 'done', runId: 'a', status: 'stopped' });
   await settle(window);
   assert.equal(window.document.title, 'Worca');
   assert.equal(nc.hidden, true);

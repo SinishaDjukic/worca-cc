@@ -185,7 +185,7 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
       if (b.state === 'proposed') {
         row.append(button('Decline', 'btn btn-sm', () => decline(b)), h('span', 'wfc-spacer'),
           button('Open in Workflows', 'btn btn-sm', () => openBuild(b)),
-          button(c.thenRun ? 'Save & propose run' : 'Save as workflow', 'btn btn-sm btn-primary', () => saveBuild(b)));
+          button(c.thenRun ? 'Save & propose' : 'Save as workflow', 'btn btn-sm btn-primary', () => saveBuild(b)));
       } else if (b.state === 'saved') {
         row.append(h('span', 'wfc-chip-ok', `✓ Saved as ${b.workflowId || c.name}`), h('span', 'wfc-spacer'), button('Open in Workflows', 'btn btn-sm', () => openBuild(b)));
       } else {

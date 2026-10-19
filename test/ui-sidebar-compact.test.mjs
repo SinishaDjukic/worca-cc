@@ -112,9 +112,13 @@ test('counts: a plain grey mono number, the amber needs-you count is the one pil
   assert.match(count, /color:var\(--ink-2\);/, 'a count carries information: --ink-2 (--ink-3 is for labels)');
   assert.doesNotMatch(count, /background|border-radius/, 'a number, not a badge');
   assert.equal(ruleBody('.nav-count.n-grey'), 'background:none;color:var(--ink-2);', 'the .n-grey disc utility must not paint a disc here, nor its --ink-3');
-  assert.match(ruleBody('.nav-count.n-amber'), /height:18px;padding:0 6px;border-radius:var\(--r-xs\);background:var\(--amber-bg\);color:var\(--amber-ink-strong\);/);
+  // Review A10: icon and number side by side, no tinted box; the number keeps the strong amber ink.
+  assert.match(ruleBody('.nav-count.n-amber'), /display:inline-flex;align-items:center;gap:4px;min-width:0;height:auto;padding:0;background:none;color:var\(--amber-ink-strong\);/);
   assert.equal(ruleBody('.nav-count[hidden]'), 'display:none;');
   assert.match(ruleBody('.sidebar.collapsed .nav-count'), /position:absolute;top:3px;right:2px;margin:0;font-size:9\.5px;/);
+  // Web UI review: at top:3px;right:2px the needs-you icon covered the Runs glyph's top-right (the glyph ends 12px
+  // from the 40px square's right edge). It rides the square's outer corner instead, in the rail's 10px side gutter.
+  assert.match(ruleBody('.sidebar.collapsed #nav-needs-count'), /position:absolute;top:1px;right:-9px;/);
   assert.equal(ruleBody('.sidebar.collapsed .nav-count.n-grey:has(~ .nav-count.n-amber:not([hidden]))'), 'display:none;',
     'on the rail the Schedules grey number steps aside for its unread pill (one corner, one badge)');
   for (const id of ['nav-needs-count', 'nav-running-count', 'nav-schedules-count', 'nav-schedules-unread']) {
@@ -127,9 +131,9 @@ test('counts: a plain grey mono number, the amber needs-you count is the one pil
   }
 });
 
-test('the 60px rail: 40x34 squares 3px apart, section labels as 1px hairlines, child-combinator row rules only', () => {
+test('the 60px rail: 40x32 squares (review A5: on the size scale) 3px apart, section labels as 1px hairlines, child-combinator row rules only', () => {
   assert.equal(ruleBody('.sidebar.collapsed .nav'), 'align-items:center;gap:3px;');
-  assert.match(css, /\.sidebar\.collapsed \.nav > button,\.sidebar\.collapsed \.gs-pill-host > button\{flex:0 0 auto;width:40px;height:34px;padding:0;gap:0;justify-content:center;\}/);
+  assert.match(css, /\.sidebar\.collapsed \.nav > button,\.sidebar\.collapsed \.gs-pill-host > button\{flex:0 0 auto;width:40px;height:32px;padding:0;gap:0;justify-content:center;\}/);
   assert.match(ruleBody('.sidebar.collapsed .nav-sect'), /align-self:stretch;height:1px;margin:10px 6px;padding:0;font-size:0;/);
   assert.match(ruleBody('.sidebar.collapsed .nav-sect'), /background:var\(--line\);/);
   assert.equal(ruleBody('.sidebar.collapsed .nav .gs-pill .gs-pill-count'), 'display:none;');

@@ -71,7 +71,7 @@ function mount(render, pq, submit = async () => true) {
   return { panel, posts, parentClicks, $: (s) => panel.querySelector(s), $$: (s) => [...panel.querySelectorAll(s)] };
 }
 
-test('the gate card: head, intro twins, issues, and its own Continue / Approve another cycle', async () => {
+test('the gate card: head, intro twins, issues, and its own Accept as is / Run another cycle (A14)', async () => {
   const { $, $$, posts, parentClicks } = mount(renderGateCard, GATE);
   assert.equal($('.ask-mcard-kind').textContent, 'Gate');
   assert.equal($('.ask-mcard-title').textContent, 'Review needs a decision');
@@ -80,8 +80,11 @@ test('the gate card: head, intro twins, issues, and its own Continue / Approve a
   assert.equal($$('.gate-intro')[1].dataset.maxLevel, 'simple');
   assert.equal($$('.issues .issue.sev-major').length, 1);
   assert.equal($('.issue-loc').textContent, 'a.mjs:3');
-  assert.deepEqual($$('.qpanel-foot button').map((b) => b.textContent), ['Continue with what you have', 'Approve another cycle']);
+  assert.deepEqual($$('.qpanel-foot button').map((b) => b.textContent), ['Accept as is', 'Run another cycle']);
+  assert.ok($('.gate-continue').classList.contains('btn-quiet'));
   assert.ok($('.gate-another').classList.contains('btn-primary'));
+  assert.equal($$('.qpanel-foot').length, 1, 'the Simple-mode twin reads the same two buttons');
+  assert.match($$('.gate-intro')[0].textContent, /Run another cycle to keep iterating, or accept the result as is\./);
   $('.gate-continue').click();
   await flush();
   $('.gate-another').click();

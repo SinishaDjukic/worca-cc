@@ -167,7 +167,7 @@ test('building → proposed: the trace renders first; the flip mounts the REAL g
   assert.ok(el.querySelector('.ask-wfcard-graph.gv-well .gv-stage.gv-monitor') && !el.querySelector('.ask-wfcard-graph .gv-flow'), 'the Workflows rendering in a pannable well (template x/y, lanes), not the flow rows');
   assert.equal(el.querySelector('.ask-wfcard-graph > .gv-nav [data-nav="expand"]').getAttribute('aria-label'), 'Open full screen in Workflows', 'app.js hands the chat its openBuild: a NEW proposal has a way in');
   assert.equal(el.querySelector('.ask-wfcard-graph .bchip.model').tagName, 'BUTTON', 'chips are pickable on a NEW-row card');
-  assert.equal(el.querySelector('[data-ask-wf-save]').textContent.trim(), 'Save & propose run');
+  assert.equal(el.querySelector('[data-ask-wf-save]').textContent.trim(), 'Save & propose');
   assert.ok(el.querySelector('[data-ask-wf-decline]'));
   assert.equal(el.querySelector('.ask-wfcard-reason').textContent, p.reasoning, 'the classifier reasoning wins over the note');
   el.querySelector('.ask-wfcard-edit').click();

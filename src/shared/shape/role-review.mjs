@@ -171,3 +171,62 @@ export function reviewedLine(roleReviews) {
   const open = openBlocking(roleReviews);
   return `Reviewed by ${n} role${n === 1 ? '' : 's'}${open ? ` · ${open} open` : ''}`;
 }
+
+const TERMINAL = new Set(['done', 'error', 'stopped', 'paused']);
+const joinLabels = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+
+/** "no findings" or the worst severity with its count ("1 major"), spec §4a live rows. */
+export function worstText(findings) {
+  const list = Array.isArray(findings) ? findings : [];
+  if (!list.length) return 'no findings';
+  const worst = SEV_ORDER.find((s) => list.some((f) => f.severity === s));
+  return worst ? `${list.filter((f) => f.severity === worst).length} ${worst}` : 'no findings';
+}
+
+/**
+ * Spec §4a "who is challenging, live": rows while a role-review round runs, its record's rows until Plan ends, or the
+ * Refine line while blocking findings are being fixed. Reads only existing state: progressFacts.roleReview
+ * {nodeId, round}, the ledger (steps), active [{nodeId, executionId}], roleReviews.rounds, shaping.perspectives.
+ * `stage` is runProgress's stage; outside 'plan' the Plan step card owns the per-role rows, so this returns null.
+ * @returns {{rows:Array<{key:string,label:string,state:string,live:boolean}>, refine:string}|null}
+ */
+export function liveRoleRows(run, { stage = null } = {}) {
+  const r = run || {};
+  const fact = r.progressFacts && r.progressFacts.roleReview;
+  if (!fact || !fact.nodeId || stage !== 'plan' || ['done', 'error', 'stopped'].includes(String(r.status || ''))) return null;
+  const steps = Array.isArray(r.steps) ? r.steps : [];
+  const ended = (exec) => steps.some((s) => s && s.executionId === exec && TERMINAL.has(s.status));
+  const active = (Array.isArray(r.active) ? r.active : []).filter((a) => a && a.nodeId && !ended(a.executionId));
+  const roleExec = (active.find((a) => a.nodeId === fact.nodeId) || {}).executionId || null;
+  const rounds = Array.isArray(r.roleReviews && r.roleReviews.rounds) ? r.roleReviews.rounds : [];
+  const lastRec = rounds.at(-1) || null;
+  const record = lastRec && lastRec.round === fact.round ? lastRec : null;
+  const label = (key) => (perspectiveByKey(key) && perspectiveByKey(key).label) || key;
+  if (!roleExec) {
+    if (!record) return null;
+    // A skipped role carries the previous round's findings, so the Refine count reads only the roles reviewed now.
+    const openBy = record.roles.filter((x) => !x.skipped).flatMap((x) => (x.findings || [])
+      .filter((f) => f.status === 'open' && BLOCKING.has(f.severity)).map(() => x.label || label(x.key)));
+    if (openBy.length && active.length > 0) {
+      const n = openBy.length;
+      return { rows: [], refine: `Refine · fixing ${n} finding${n === 1 ? '' : 's'} from ${joinLabels([...new Set(openBy)])}` };
+    }
+    return { rows: record.roles.map((x) => ({ key: x.key, label: x.label || label(x.key),
+      state: x.skipped ? 'skipped: nothing open' : worstText(x.findings), live: false })), refine: '' };
+  }
+  // This round's role rows only: a slice row's parentExecutionId is the active role node's execution.
+  const mineRows = steps.filter((s) => s && s.parentExecutionId === roleExec && /^role-[\w-]+$/.test(String(s.taskId || '')));
+  const mine = (key) => mineRows.findLast((s) => s.taskId === roleTaskId(key)) || null;
+  const prev = rounds.filter((x) => x.round < fact.round).at(-1) || null;
+  const picked = r.shaping && Array.isArray(r.shaping.perspectives) ? r.shaping.perspectives : null;
+  const keys = picked
+    ? rolesForRound(picked, Number(fact.round) || 1, prev)
+    : [...new Set(mineRows.map((s) => String(s.taskId).slice('role-'.length)))].map((key) => ({ key, skip: false }));
+  const rows = keys.map(({ key, skip }) => {
+    if (skip) return { key, label: label(key), state: 'skipped: nothing open', live: false };
+    const s = mine(key);
+    if (!s || !TERMINAL.has(s.status)) return { key, label: label(key), state: 'reviewing', live: !!s };
+    return { key, label: label(key), state: 'reviewed', live: false };
+  });
+  return rows.length ? { rows, refine: '' } : null;
+}

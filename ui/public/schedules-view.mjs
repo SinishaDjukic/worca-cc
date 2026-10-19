@@ -79,7 +79,7 @@ export const SCHEDULE_TABS = ['activity', 'once', 'repeating'];
 
 /**
  * @param {object} o
- * @param {HTMLElement} o.tabsHost       the .seg holding button[data-tab]
+ * @param {HTMLElement} o.tabsHost       the .tabs strip holding button[data-tab]
  * @param {HTMLElement} o.feedHost       the Activity pane (the feed)
  * @param {HTMLElement} o.onceHost       the Once pane (one-off runs)
  * @param {HTMLElement} o.repeatingHost  the Repeating pane (series)
@@ -373,7 +373,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       acts.append(b);
     }
     if (n.unread) {
-      const b = h('button', { type: 'button', class: 'sched-feed-read', text: 'Mark read', title: 'Mark as read' });
+      const b = h('button', { type: 'button', class: 'btn btn-sm btn-quiet sched-feed-read', text: 'Mark read', title: 'Mark as read' });
       b.addEventListener('click', async () => { try { await api('POST', `/api/notifications/${n.id}/read`); } catch (err) { say(err.message, 'err'); } await loadFeed(); });
       acts.append(b);
     }

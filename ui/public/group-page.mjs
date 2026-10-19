@@ -23,11 +23,11 @@ export function buildGroupPage(doc) {
   const q = el(doc, 'div', 'gpage-question');
   q.hidden = true;
   card.append(el(doc, 'div', 'run-status'), q);
-  const tabs = el(doc, 'nav', 'gpage-tabs rd-tabs');
+  const tabs = el(doc, 'nav', 'gpage-tabs rd-tabs tabs');
   tabs.setAttribute('role', 'tablist');
   const panels = [];
   for (const [id, label] of GROUP_TABS) {
-    const t = el(doc, 'button', 'rd-tab', label);
+    const t = el(doc, 'button', 'rd-tab tab', label);
     t.type = 'button';
     t.setAttribute('role', 'tab');
     t.dataset.tab = id;
@@ -55,7 +55,9 @@ export function paintGroupPage(root, view, deps) {
   const { row } = view;
   const m = row.model;
   root.__onTab = deps.onTab;
-  root.querySelector('.gpage-title').textContent = row.title;
+  const title = root.querySelector('.gpage-title');
+  title.textContent = row.title;
+  title.title = row.title;   // D13: the heading clamps at 2 lines
   root.querySelector('.gpage-head .kind-chip').textContent = kindLabel(row);
   // groupRow's costUsd is always a number: a group with no cost yet says nothing, never "Cost $0.00 total".
   root.querySelector('.gpage-meta').textContent = [view.project, row.costUsd > 0 ? `Cost ${fmtUsd(row.costUsd)} total` : ''].filter(Boolean).join(' · ');
@@ -72,7 +74,7 @@ export function paintGroupPage(root, view, deps) {
     t.classList.toggle('active', t.dataset.tab === tab);
   }
   for (const p of root.querySelectorAll('.gpage-panel')) p.hidden = p.dataset.tab !== tab;
-  root.querySelector('.gpage-runs').replaceChildren(renderMemberRows(doc, row, { openButtons: true }));
+  root.querySelector('.gpage-runs').replaceChildren(renderMemberRows(doc, row, { table: true }));
   const line = groupShipLine(row);
   const ship = root.querySelector('.gpage-ship');
   ship.textContent = line;

@@ -215,7 +215,7 @@ order, since each slice's branch starts from the one before. When the last run i
 done, a **Ship card** appears once in the chat that started the feature, and the
 same card shows on the group page and the Plans tab. It reads `3 runs · 12 files ·
 +840 −120` with the reason for its suggestion, and ships in one click:
-**Stacked PRs** marks each draft ready for review, **Ship as one PR** opens one pull
+**Stacked PRs** marks each draft ready for review, **One PR** opens one pull
 request from the last slice's branch into the feature's base and closes the slices'
 drafts with a link to it. The suggested mode is the highlighted button (one PR for a
 feature under about 1,500 added lines). In the chat, **Not now** puts the card away;

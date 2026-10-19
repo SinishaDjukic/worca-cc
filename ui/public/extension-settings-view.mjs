@@ -56,13 +56,13 @@ export function renderExtensionInstall(data, { doc = document, browser = 'chrome
   const root = make('div', 'xi');
   root.append(make('h3', 'xi-head', 'Install'));
   if (!validInstall(data)) { root.append(make('p', 'xp-empty', 'Could not load the packaged browser extension.')); return root; }
-  const tabs = make('div', 'seg seg-sm xi-tabs');
+  const tabs = make('div', 'tabs xi-tabs');
   tabs.setAttribute('role', 'tablist');
   tabs.setAttribute('aria-label', 'Browser');
   root.append(tabs);
   const pick = data.builds.some((b) => b.browser === browser) ? browser : data.builds[0].browser;
   for (const b of data.builds) {
-    const tab = make('button', null, browserLabel(b.browser));
+    const tab = make('button', 'tab', browserLabel(b.browser));
     tab.type = 'button';
     tab.id = `xi-tab-${b.browser}`;
     tab.dataset.xiBrowser = b.browser;

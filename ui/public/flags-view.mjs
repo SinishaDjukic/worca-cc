@@ -3,7 +3,7 @@
 // Split out of app.js so a test can drive it against the real pane without booting the app.
 // The host owns the endpoints: `api(method, body)` answers { ok, status, data } and never rejects
 // (app.js#mcpApi bound to /api/flags); `confirm(opts)` resolves a boolean (app.js#confirmModal).
-import { STAGE_LABEL, applyFlags } from './flags.mjs';
+import { STAGE_LABEL, applyFlags, currentFlags, onFlagChange } from './flags.mjs';
 import { flagByKey } from '../../src/shared/flags/registry.mjs';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -114,4 +114,42 @@ export function createFlagsView({ host, msgEl = null, resetBtn = null, api, conf
   });
   if (resetBtn) resetBtn.addEventListener('click', () => { void resetAll(); });
   return { load, toggle, resetAll };
+}
+
+/**
+ * A single flag's switch outside the Experimental page (Settings › Runs, review F): the same value, one source.
+ * `el` is a `.switch[role=switch]`; `api(method, body)` is the /api/flags binding ({ok, status, data}, never throws).
+ * Returns an unbind function.
+ */
+export function bindFlagSwitch(el, key, { api, msgEl = null }) {
+  const doc = el.ownerDocument;
+  const paint = (on) => { el.classList.toggle('on', on); el.setAttribute('aria-checked', String(on)); };
+  const lock = () => { el.classList.add('disabled'); el.setAttribute('aria-disabled', 'true'); el.tabIndex = -1; };
+  const say = (text, cls = 'form-msg err') => { if (msgEl) { msgEl.textContent = text; msgEl.className = text ? cls : 'form-msg'; } };
+  paint(currentFlags(doc)[key] === true);
+  const off = onFlagChange(key, paint);
+  api('GET').then((r) => {
+    const f = r && r.ok && Array.isArray(r.data && r.data.flags) ? r.data.flags.find((x) => x.key === key) : null;
+    if (!f) return;
+    paint(f.on === true);
+    if (f.locked) { lock(); say('Locked by WORCA_FLAGS', 'form-msg'); }
+  });
+  async function flip() {
+    if (el.classList.contains('disabled')) return;
+    const want = el.getAttribute('aria-checked') !== 'true';
+    paint(want);
+    const r = await api('PATCH', { [key]: want });
+    if (!r.ok) {
+      paint(!want);
+      say((r.data && r.data.error) || 'Could not save.');
+      if (r.status === 409) lock();
+      return;
+    }
+    say('');
+    applyFlags(Object.fromEntries((r.data.flags || []).map((f) => [f.key, f.on])), doc);
+  }
+  const onKey = (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } };
+  el.addEventListener('click', flip);
+  el.addEventListener('keydown', onKey);
+  return () => { off(); el.removeEventListener('click', flip); el.removeEventListener('keydown', onKey); };
 }

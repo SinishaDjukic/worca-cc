@@ -379,7 +379,7 @@ test('chooseSyncRefusal: diverged → origin; forbidden → Cancel only; fetch-f
   m = w.document.querySelector('.sync-modal');
   assert.match(m.textContent, /A: Sign-in to origin failed/);
   assert.match(m.textContent, /B: origin could not be reached/);
-  [...m.querySelectorAll('button')].find((b) => b.textContent === 'Start anyway from last fetch').click();
+  [...m.querySelectorAll('button')].find((b) => b.textContent === 'Start anyway').click();
   assert.equal(await p, 'last-fetch');
 
   p = chooseSyncRefusal({ code: 'sync-diverged', options: ['origin', 'cancel'], members });

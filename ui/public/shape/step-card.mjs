@@ -152,7 +152,7 @@ export function renderGateCard(panel, pq, deps) {
   panel.appendChild(stepHead(doc, deps.title, deps.chip));
   const intro = doc.createElement('div');
   intro.className = 'gate-intro';
-  intro.textContent = `This cycle reached its limit${deps.wireCopy || ''}${issues.length ? ' with open issues' : ''}. Approve another cycle to keep iterating, or continue with what you have.`;
+  intro.textContent = `This cycle reached its limit${deps.wireCopy || ''}${issues.length ? ' with open issues' : ''}. Run another cycle to keep iterating, or accept the result as is.`;
   deps.tagLevel(intro, 'advanced');
   // Simple mode reads the same decision without the vocabulary (docs/ui-levels.md: a blocking
   // prompt is never hidden, only simplified). Twin elements, so a mode change needs no re-render.
@@ -169,8 +169,8 @@ export function renderGateCard(panel, pq, deps) {
   const foot = doc.createElement('div');
   foot.className = 'qpanel-foot gate-actions';
   foot.append(
-    ownButton(doc, 'gate-continue', 'Continue with what you have', () => send({ decision: 'continue' })),
-    ownButton(doc, 'btn-primary gate-another', 'Approve another cycle', () => send({ decision: 'another' })));
+    ownButton(doc, 'btn-quiet gate-continue', 'Accept as is', () => send({ decision: 'continue' })),
+    ownButton(doc, 'btn-primary gate-another', 'Run another cycle', () => send({ decision: 'another' })));
   panel.append(err, foot);
 }
 

@@ -1532,7 +1532,7 @@ test('another workflow opened drops a draft card\'s "Save & add to canvas" (sig 
     then: { ops: [{ op: 'add_node', id: 'n_note0001', kind: 'agent', key: 'notesWriter', x: 500, y: 200 }] } } };
   recv({ type: 'ask-card', threadId: 'ask_0000abcd', messageId: 'askm_0000bbbb', seq: 2, block: draft });
   await tick(6);
-  const has = () => [...doc.querySelectorAll('#wfc [data-card-id="card_0000dddd"] button')].some((b) => b.textContent === 'Save & add to canvas');
+  const has = () => [...doc.querySelectorAll('#wfc [data-card-id="card_0000dddd"] button')].some((b) => b.textContent === 'Add to canvas');
   assert.equal(has(), true, 'precondition');
   await go(w, 'workflows/wf_g');                      // another saved workflow (a clean canvas: no discard prompt)
   await tick(6);

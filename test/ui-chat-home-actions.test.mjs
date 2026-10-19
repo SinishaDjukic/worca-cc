@@ -206,5 +206,5 @@ test('the tile badge never wraps and has a compact size below a 960px home', () 
   assert.match(compact[1], /\.chat-home-act:has\(> \.chat-home-act-badge\)\{padding-inline:0;\}/);
   assert.doesNotMatch(compact[1], /\.chat-home-act\{/, 'no rule for every tile');
   const narrow = css.match(/^@container chat-home \(max-width:440px\)\{([^\n]*)\}$/m)[1];
-  assert.match(narrow, /\.chat-home-act\{min-height:64px;\}/, 'every other tile keeps today\'s narrow rule');
+  assert.doesNotMatch(narrow, /\.chat-home-act\{/, 'review B10: the tile stays 56px in the narrow container too');
 });

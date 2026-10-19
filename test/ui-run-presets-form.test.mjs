@@ -34,7 +34,7 @@ const preset = (over = {}) => ({ id: 'rp_aaaaaaaaaaaa', name: 'Quick fix', scope
   setup: { workflowId: 'wf_default', guardrailsId: 'normal', humanInLoop: false, overlay: { nodes: { n_plan: { model: 'claude-haiku-4-5', effort: 'medium' } } } }, ...over });
 
 let offPrev = null;
-async function boot({ presets = [], check = () => ({ broken: [] }), runDefaults = null, runReply = null, wsConfigDelayMs = 0, namesDelayMs = 0 } = {}) {
+async function boot({ presets = [], check = () => ({ broken: [] }), runDefaults = null, runReply = null, wsConfigDelayMs = 0, namesDelayMs = 0, activeWorkflowId = 'wf_default' } = {}) {
   if (offPrev) offPrev();   // flags.mjs's listener map is shared across boots: drop the previous app's subscription
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/#new' }));
   const { window } = dom;
@@ -67,7 +67,7 @@ async function boot({ presets = [], check = () => ({ broken: [] }), runDefaults 
       return Promise.resolve(ok(runReply ? runReply(posted.length) : { runId: `run-${posted.length}` }));
     }
     if (u.includes('/api/config')) {
-      const body = ok({ config: { steps: {}, customModels: [], activeWorkflowId: 'wf_default' }, models: MODELS, efforts: ['medium', 'high'] });
+      const body = ok({ config: { steps: {}, customModels: [], activeWorkflowId }, models: MODELS, efforts: ['medium', 'high'] });
       // wsConfigDelayMs: the workspace target's config load (no projectDir) answers late, after the preset's own pickers.
       const delay = method === 'GET' && !u.includes('projectDir') ? wsConfigDelayMs : 0;
       return delay ? new Promise((r) => setTimeout(() => r(body), delay)) : Promise.resolve(body);
@@ -272,6 +272,17 @@ test('Save current setup… under a name the menu holds reopens with the duplica
   ctx.doc.querySelector('#confirm-cancel').click();
   await tick();
   assert.equal(ctx.calls.filter((c) => c.url.includes('/api/presets') && c.method === 'POST').length, 0);
+});
+
+test('Save current setup… names the workflow and says when it is the project\'s default (review G)', async () => {
+  const ctx = await boot({ activeWorkflowId: 'wf_auto' });
+  applyFlags({ runPresets: true }, ctx.doc);
+  await waitFor(() => ctx.doc.querySelector('#workflowSelect').value === 'wf_auto');
+  ctx.doc.querySelector('#preset-save').click();
+  await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
+  assert.match(ctx.doc.querySelector('#confirm-fields').textContent, /Saved: workflow Auto \(this project's default\), engine, guardrails/);
+  ctx.doc.querySelector('#confirm-cancel').click();
+  await tick();
 });
 
 test('with the flag off the picker is gated and no /api/presets request is made', async () => {

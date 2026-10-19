@@ -96,13 +96,14 @@ test('the composer buttons keep their size, the run panel slot hides, cards meas
 });
 
 test('the mockup look (2026-10-10, corners and shadows per the runs redesign): the composer is frosted glass the transcript scrolls under, the run card a white bordered card with no resting shadow, History toggles like the menu', () => {
-  assert.equal(ruleBody('.chat-page .ask-composer-box'), 'border-color:var(--glass-line);border-radius:var(--r-sm);background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);');
-  assert.equal(ruleBody('.chat-hero-slot .ask-composer-box'), 'border-radius:var(--r-sm);');
+  // Review C (decided 2026-10-19): the composer shell is the one 12px (--r-lg) corner; the run card a card (--r-card, 8px).
+  assert.equal(ruleBody('.chat-page .ask-composer-box'), 'border-color:var(--glass-line);border-radius:var(--r-lg);background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);');
+  assert.equal(ruleBody('.chat-hero-slot .ask-composer-box'), 'border-radius:var(--r-lg);');
   assert.equal(ruleBody('.chat-page .ask-composer-box:has(.guide-target)'), '-webkit-backdrop-filter:none;backdrop-filter:none;', 'a Getting started ring escapes the blur\'s stacking context');
   assert.equal(ruleBody('.chat-dock > .ask-composer'), 'pointer-events:none;');
   assert.equal(ruleBody('.chat-dock > .ask-jump,.chat-dock > .ask-composer > *'), 'pointer-events:auto;', 'only the composer\'s own parts take the pointer');
   assert.match(ruleBody('.chat-dock::before'), /^content:"";position:absolute;left:0;right:0;bottom:0;height:56px;/);
-  assert.equal(ruleBody('.ask-card.chat-rc'), 'gap:0;border-radius:var(--r-sm);');
+  assert.equal(ruleBody('.ask-card.chat-rc'), 'gap:0;border-radius:var(--r-card);');
   assert.doesNotMatch(css, /--shadow-card\b/, 'the resting card shadow token is gone');
   assert.doesNotMatch(css, /--shadow-glass\b/, 'and so is the composer\'s');
   assert.equal(ruleBody('.chat-head-btn.chat-history-toggle'), 'width:32px;height:32px;border-radius:var(--r-sm);', 'the menu toggle\'s square (.side-toggle)');

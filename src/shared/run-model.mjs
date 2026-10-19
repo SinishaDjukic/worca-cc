@@ -9,6 +9,7 @@
 // Optional: `round` ({n, request, by}) or the raw marker `branch.roundOf` ({round, request, by}), a round of the same
 // run (spec §3.6); `watch` ({status, reason, fixRuns}), the run's Watch PR (§3.6a, statuses of src/core/pr-watch.mjs).
 import { runProgress, groupProgress, askWhat } from './run-progress.mjs';
+import { liveRoleRows } from './shape/role-review.mjs';
 
 export const RUN_STATES = Object.freeze({
   starting: Object.freeze({ word: 'Starting', dot: 'peach', pulse: true, symbol: null }),
@@ -228,7 +229,9 @@ export function runModel(run, opts = {}) {
   const base = watchNeeds ? watch.line : prNeeds ? singleLine('in-review', r, prog, pr, opts) : singleLine(state, r, prog, pr, opts);
   const round = roundOf(r);
   const { line, lineSaysState } = roundLine(state, round, base, prog, prNeeds);
-  return { state, ...meta, line, lineSaysState, actions: [...actions], pr, prNeeds, round, progress: prog };
+  // Review A12: the live role-review rows (or the Refine line) under the status line; null when there are none.
+  return { state, ...meta, line, lineSaysState, actions: [...actions], pr, prNeeds, round, progress: prog,
+    roles: liveRoleRows(r, { stage: prog ? prog.stage : null }) };
 }
 
 // A run raised to Needs you by its PR (D31) is still a finished run for count and bar.

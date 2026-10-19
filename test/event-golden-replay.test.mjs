@@ -144,7 +144,7 @@ test('golden: Shaper feature, 3 runs — proposal → clarify → split → run 
     ['run3-plan', 'feature'], ['run3-review', 'feature'], ['gate', 'feature'], ['ready', 'feature'],
   ]);
   assert.deepEqual(out.at(-1).log, ['Clarify · 2 answers', 'Split into 3 runs', 'Run 1 · Plan approved · after 1 round of changes',
-    'Run 2 · Plan approved', 'Run 3 · Plan approved', 'Run 3 · Another cycle approved']);
+    'Run 2 · Plan approved', 'Run 3 · Plan approved', 'Run 3 · Another cycle started']);
   assert.deepEqual(out.map((o) => o.step && o.step.kind), [null, 'clarify', 'outline', 'plan', null, 'plan', null, 'plan', null, 'gate', null]);
   assert.deepEqual(out.find((o) => o.label === 'run2-plan').target, { index: 2, status: 'running', asks: true });
   check('shaper-feature-3-runs', out);

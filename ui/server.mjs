@@ -589,7 +589,7 @@ const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
 const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
 // local | container | hosted (src/core/deployment.mjs): what Ask Worca is told about where it runs.
 const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
-// Experimental keepAwake flag (docs/feature-flags.md): one OS child holds off idle system sleep while
+// Beta keepAwake flag, default on locally (docs/feature-flags.md): one OS child holds off idle system sleep while
 // any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it wherever a
 // run's status or pendingQuestion changes, and when the flag flips.
 const keepAwake = createKeepAwake({ deployment: DEPLOYMENT, log: (line) => console.warn(line) });

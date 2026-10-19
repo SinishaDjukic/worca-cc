@@ -196,6 +196,10 @@ test('neutral bar CSS: ink steps 40/60/80/100%, --line-2 upcoming, no tone colou
   assert.match(rule('.run-prog-sec'), /background:var\(--line-2\)/);
   assert.doesNotMatch(css, /data-tone="(?:amber|green|red)"\][^{]*\.run-prog-fill/);
   assert.match(rule('.run-chain-track > .run-prog-fill'), /background:var\(--ink-2\)/);
+  // A1: the Runs list row bar is ink-grey too; its data-tone stays for other readers, but no CSS colours it.
+  assert.match(rule('.runs-row-prog > i'), /background:var\(--ink-2\)/);
+  assert.doesNotMatch(css, /\.runs-row-prog\[data-tone/);
+  assert.doesNotMatch(css, /\.runs-row-prog[^{]*\{[^}]*--blue/);
   assert.match(css, /prefers-reduced-motion: reduce\)\{[^@]*\.run-prog\[data-pulse="on"\] \.run-prog-sec\.is-current > \.run-prog-fill::after\{animation:none;\}/);
 });
 

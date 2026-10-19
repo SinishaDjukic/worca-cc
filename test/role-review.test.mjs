@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { rolesForRound, roleBriefBlock, houseBriefBlock, roleRecord, roleItems, refinerVerdict, applyAddressed, openBlocking, findingsMarkdown,
-  currentPass, roleSummaries, reviewedLine }
+  currentPass, roleSummaries, reviewedLine, liveRoleRows, worstText }
   from '../src/shared/shape/role-review.mjs';
 
 // A recorded Shaper plan (real data): the 18 Oct "Shaper as chat cards" plan v2, copied verbatim.
@@ -109,4 +109,49 @@ test('reviewedLine and currentPass: the last pass only; empty without rounds', (
   assert.equal(reviewedLine(null), '');
   assert.equal(currentPass({ rounds: [] }), null);
   assert.deepEqual(roleSummaries({ rounds: [] }), []);
+});
+
+// Spec §4a "who is challenging, live" (review A12): ledger rows as the scheduler writes them (status 'start' while in
+// flight), the role node's active shell execution, the round's record once it lands.
+const slice = (round, key, status) => ({ executionId: `roles:${round}:role-${key}`, parentExecutionId: `roles:${round}`, taskId: `role-${key}`, status });
+const liveRun = ({ round = 1, steps = [], active = [{ nodeId: 'roles', executionId: `roles:${round}` }], rounds = [], perspectives = ['architect', 'ux'], status = 'running' } = {}) => ({
+  status, steps, active, progressFacts: { roleReview: { nodeId: 'roles', round } }, roleReviews: { rounds }, shaping: { perspectives },
+});
+const rows = (out) => out.rows.map((x) => [x.key, x.state, x.live]);
+
+test('liveRoleRows: reviewing / reviewed while the round runs, round 2 reads its own rows and skips a clean role', () => {
+  const r1 = liveRun({ steps: [slice(1, 'product', 'start'), slice(1, 'architect', 'done')] });
+  assert.deepEqual(rows(liveRoleRows(r1, { stage: 'plan' })),
+    [['product', 'reviewing', true], ['architect', 'reviewed', false], ['ux', 'reviewing', false]]);
+  assert.equal(liveRoleRows(r1, { stage: 'plan' }).rows[0].label, 'Product');
+  const rec1 = { pass: 1, round: 1, roles: [
+    roleRecord('product', 1, { issues: [{ severity: 'major', title: 't', fix: 'f' }] }, []),
+    roleRecord('architect', 1, { issues: [], checklist: [] }, []),
+    roleRecord('ux', 1, { issues: [{ severity: 'critical', title: 't', fix: 'f' }] }, []),
+  ] };
+  const r2 = liveRun({ round: 2, rounds: [rec1], steps: [slice(1, 'product', 'done'), slice(1, 'ux', 'done'), slice(1, 'architect', 'done'),
+    slice(2, 'product', 'done'), slice(2, 'ux', 'start')] });
+  assert.deepEqual(rows(liveRoleRows(r2, { stage: 'plan' })),
+    [['product', 'reviewed', false], ['architect', 'skipped: nothing open', false], ['ux', 'reviewing', true]]);
+});
+
+test('liveRoleRows: the landed record\'s states, the Refine line, and null outside a live Plan stage', () => {
+  const rec = { pass: 1, round: 1, roles: [
+    roleRecord('ux', 1, { issues: [{ severity: 'major', title: 'a', fix: 'f' }, { severity: 'critical', title: 'b', fix: 'f' }] }, []),
+    roleRecord('architect', 1, { issues: [{ severity: 'major', title: 'c', fix: 'f' }, { severity: 'minor', title: 'd', fix: 'f' }] }, []),
+    roleRecord('product', 1, { issues: [] }, []),
+    { key: 'qa', label: 'QA', skipped: true, findings: [{ severity: 'major', status: 'open' }], checklist: [] },
+  ] };
+  const landed = liveRun({ rounds: [rec], active: [] });
+  assert.deepEqual(rows(liveRoleRows(landed, { stage: 'plan' })),
+    [['ux', '1 critical', false], ['architect', '1 major', false], ['product', 'no findings', false], ['qa', 'skipped: nothing open', false]]);
+  const refining = liveRun({ rounds: [rec], active: [{ nodeId: 'refine', executionId: 'refine:1' }] });
+  assert.deepEqual(liveRoleRows(refining, { stage: 'plan' }), { rows: [], refine: 'Refine · fixing 3 findings from UX and Architect' });
+  assert.equal(liveRoleRows({ ...landed, status: 'done' }, { stage: 'plan' }), null, 'a finished run');
+  assert.equal(liveRoleRows(landed, { stage: 'build' }), null, 'the Plan step card owns the rows after Plan');
+  assert.equal(liveRoleRows(landed, { stage: null }), null, 'nodes progress mode');
+  assert.equal(liveRoleRows(landed), null);
+  assert.equal(liveRoleRows({ status: 'running' }, { stage: 'plan' }), null, 'no role review fact');
+  assert.equal(worstText([]), 'no findings');
+  assert.equal(worstText([{ severity: 'minor' }, { severity: 'minor' }]), '2 minor');
 });

@@ -279,7 +279,7 @@ test('Project page: "Set up team policy…" opens the dialog; the follow mode po
   follow.dispatchEvent(new window.Event('change', { bubbles: true }));
   await settle();
   assert.equal(modal.querySelector('.tp-follow-target').value, 'acme/gateway');
-  assert.equal(modal.querySelector('.tp-enable-submit').textContent, 'Create marker and follow');
+  assert.equal(modal.querySelector('.tp-enable-submit').textContent, 'Create and follow');
   modal.querySelector('.tp-enable-submit').click();
   await settle(6);
   assert.equal(posts.length, 1);

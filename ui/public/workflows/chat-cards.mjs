@@ -233,7 +233,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
         lastEdit = { cardId: b.id, depth: a.depth, docToken: composer.docToken(), after: snap() };
         await flip(b.id, { state: 'added', card: { added: true } });
       })) : null,
-      proposedExtra: placeable ? (row) => row.appendChild(button('Save & add to canvas', 'btn btn-sm btn-primary', () => saveDraft(b, { add: true }))) : null });
+      proposedExtra: placeable ? (row) => row.appendChild(button('Add to canvas', 'btn btn-sm btn-primary', () => saveDraft(b, { add: true }))) : null });
   }
 
   return {

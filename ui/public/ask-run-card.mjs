@@ -88,7 +88,9 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
       pendingQuestion: null, pauseReason: state.pauseReason || '', pr, resumable: state.resumable === true,
       // D24: the round marker (branch.roundOf) and the Watch PR fact (extras.watch) pass through; the model words them.
       branch: state.branch && typeof state.branch === 'object' ? state.branch : null, round: state.round || null,
-      watch: (x && x.watch) || null },
+      watch: (x && x.watch) || null,
+      // Review A12: the live role rows read the picked perspectives and the role-review rounds.
+      shaping: state.shaping || null, roleReviews: state.roleReviews || null },
   };
 }
 

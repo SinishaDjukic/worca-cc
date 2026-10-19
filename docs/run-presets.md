@@ -56,7 +56,7 @@ replaced by Permissive). Instead, a card titled *This preset needs attention* li
 for example *Planner: model my-gateway-opus is no longer in the catalog*, and **Start run** stays
 disabled until each one is fixed:
 
-- **Reset to project default** drops the preset's pick, so the project's own setting applies;
+- **Reset to default** drops the preset's pick, so the project's own setting applies;
 - or pick another value in the form (another model in the Planner row, another guardrail set);
 - a gone project or workspace has no reset: edit the preset's scope in **Settings › Presets**.
 

@@ -1,5 +1,5 @@
 // ui/public/shape/step-receipt.mjs — the receipt a step card leaves once answered (shaper-cards spec §2.2): the decision,
-// named ("Plan approved", "Split into 3 runs", "Another cycle approved"), never "Answered". Pure naming + a per-tab note
+// named ("Plan approved", "Split into 3 runs", "Another cycle started"), never "Answered". Pure naming + a per-tab note
 // keyed by run id AND question id (engine ids such as `gate-review-1` repeat across runs and resumes), written by app.js
 // postAnswer BEFORE its POST (question-resolved can land before the 200).
 import { applyOutlineEdits } from '../../../src/shared/shape/slices.mjs';

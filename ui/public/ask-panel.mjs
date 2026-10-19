@@ -3809,7 +3809,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (proposed) {
       const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-wf-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
-      const save = btn('btn btn-sm btn-primary', card.thenRun ? 'Save & propose run' : 'Save as workflow', 'data-ask-wf-save', WF_ICO.save);
+      const save = btn('btn btn-sm btn-primary', card.thenRun ? 'Save & propose' : 'Save as workflow', 'data-ask-wf-save', WF_ICO.save);
       // A 200 means the row exists now: drop the cached option lists so every later consumer sees it.
       save.addEventListener('click', () => postCard(block, rootEl, { state: 'saved', name: handle.getName(), nodes: diffNodes(card.nodes, wf.nodes) }, save)
         .then((out) => { if (out) st.cardOptions = null; }));
@@ -4165,7 +4165,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const always = btn('btn btn-sm btn-quiet ask-card-not-now', 'Always allow', 'data-ask-web-always');
       always.title = `Adds ${host} to Settings → Ask Worca → Web access`;
       always.addEventListener('click', () => postCard(block, rootEl, { state: 'applied', scope: 'always' }, always));
-      const chat = btn('btn btn-sm btn-primary', 'Allow for this chat', 'data-ask-web-chat');
+      const chat = btn('btn btn-sm btn-primary', 'Allow in chat', 'data-ask-web-chat');
       chat.addEventListener('click', () => postCard(block, rootEl, { state: 'applied', scope: 'chat' }, chat));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, always, chat);
       rootEl.appendChild(actions);
@@ -4539,7 +4539,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const targetHead = make('div', 'ask-rp-sec-head');
     const targetSub = make('span', 'ask-rp-sec-sub');
     targetHead.append(make('span', 'ask-rp-sec-title', 'Where it runs'), targetSub);
-    const seg = make('div', 'ask-card-seg');
+    const seg = make('div', 'seg seg-sm ask-card-seg');
     seg.setAttribute('role', 'tablist');
     const segBtns = {};
     for (const [t, label] of [['project', 'Project'], ['workspace', 'Workspace']]) {
@@ -4807,7 +4807,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const main = make('div', 'ask-rp-sec ask-rp-shape-main');
       const preview = make('div', 'ask-rp-brief-preview',
         card.source ? (card.source.title || card.source.taskId || '') : brief.value);
-      const more = make('button', 'link-btn ask-rp-brief-more', 'Show the full brief');
+      const more = make('button', 'link-btn ask-rp-brief-more', 'Show brief');
       more.type = 'button';
       more.setAttribute('data-ask-card-brief-more', '');
       briefSec.hidden = true;

@@ -1,7 +1,7 @@
 // test/ui-runs-selection.test.mjs — Runs list selection (runs redesign §3.2, §5a.4): keys, the selection set, the bar, the bulk body
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createRunsSelection, runsKeyAction, barModel, bulkBody } from '../ui/public/runs-selection.mjs';
+import { createRunsSelection, runsKeyAction, barModel, bulkBody, rangeKeys } from '../ui/public/runs-selection.mjs';
 
 const ev = (key, o = {}) => ({ key, metaKey: false, ctrlKey: false, targetIsRow: true, inField: false, ...o });
 
@@ -48,4 +48,11 @@ test('a plain Run-after chain is sent as a group with its member refs, so the se
   assert.equal(barModel([chain]).stop.count, 2);
   assert.deepEqual(bulkBody('stop', [chain]), { action: 'stop', targets: [], groups: [{ id: 'p:p1', kind: 'chain', title: 'Chain',
     members: [{ pipelineId: 'p1', runId: 'r1', ticketId: null }, { pipelineId: null, runId: null, ticketId: 't2' }] }] });
+});
+
+test('rangeKeys (A11, spec §3.2): Shift-click selects the visible keys from the anchor through the key, either way', () => {
+  assert.deepEqual(rangeKeys(['a', 'b', 'c', 'd'], 'b', 'd'), ['b', 'c', 'd']);
+  assert.deepEqual(rangeKeys(['a', 'b', 'c', 'd'], 'd', 'b'), ['b', 'c', 'd']);
+  assert.deepEqual(rangeKeys(['a', 'b', 'c', 'd'], 'x', 'c'), ['c'], 'a missing anchor selects just the key');
+  assert.deepEqual(rangeKeys(['a', 'b', 'c', 'd'], 'a', 'z'), [], 'a key outside the list selects nothing');
 });

@@ -76,7 +76,7 @@ function defragIcon(doc) {
  * `{ key, name } | null` — the project that would host a GLOBAL defragment run (a project scope
  * hosts its own, so `host` is ignored there); with no registered project the button is disabled
  * and the hint says so, in visible text as well as the title. While a run is live the button stays
- * ENABLED, reads "Defragmenting… open the run" and carries `data-run-id`: the controller routes to
+ * ENABLED, reads "Open run" (the counters line says it is defragmenting) and carries `data-run-id`: the controller routes to
  * `#running/<id>`. The global host hint also names Settings › Memory's defragment model when one is
  * set (`report.defragModel`, see defragModelPhrase).
  */
@@ -94,14 +94,15 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
   head.appendChild(h(doc, 'span', 'mem-counters',
     `${plural(health.files || 0, 'file')} · ${health.bytes || 0} bytes · ${health.alwaysOnBytes || 0} bytes always loaded · ${plural(health.writesSinceDefrag || 0, 'write')} since the last defragment` +
     (health.lastDefragAt ? ` · last defragmented ${formatWhen(health.lastDefragAt)}` : '') +
-    (health.failedWrites ? ` · ${plural(health.failedWrites, 'failed write')}` : '')));
+    (health.failedWrites ? ` · ${plural(health.failedWrites, 'failed write')}` : '') +
+    (report?.defragRunId ? ' · defragmenting now' : '')));
   // The ONE control sits at the head's right edge (margin-left:auto), styled like every other
   // secondary pill (btn) with the defragment glyph before its label.
   const runId = report?.defragRunId ? String(report.defragRunId) : '';
   const btn = h(doc, 'button', 'btn btn-sm mem-defrag');
   btn.type = 'button';
   btn.appendChild(defragIcon(doc));
-  btn.appendChild(doc.createTextNode(runId ? 'Defragmenting… open the run' : 'Defragment'));
+  btn.appendChild(doc.createTextNode(runId ? 'Open run' : 'Defragment'));
   if (runId) btn.dataset.runId = runId;
   else if (isGlobal && !host) { btn.disabled = true; btn.title = NO_HOST_HINT; }
   head.appendChild(btn);

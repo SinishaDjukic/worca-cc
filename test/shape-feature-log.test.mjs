@@ -18,7 +18,8 @@ test('wording: the receipts\' words', () => {
   assert.equal(planApprovedText(1), 'Plan approved · after 1 round of changes');
   assert.equal(splitText(3), 'Split into 3 runs');
   assert.equal(splitText(1), 'Planned as one run');
-  assert.equal(gateText('another'), 'Another cycle approved');
+  assert.equal(gateText('another'), 'Another cycle started');
+  assert.equal(gateText('continue'), 'Accepted as is');
   assert.equal(replanText([4, 3]), 'Re-planning runs 3–4');
   assert.equal(replanText([3]), 'Re-planning run 3');
   assert.equal(NOT_SPLIT_TEXT, 'Not split · planned as one run');
@@ -44,7 +45,7 @@ test('a sliced feature: Clarify, Split, run 1 plan after one revise, run 2 plan,
   });
   assert.deepEqual(log.map((l) => [l.run, l.text]), [
     [null, 'Clarify · 2 answers'], [null, 'Split into 3 runs'], [1, 'Plan approved · after 1 round of changes'],
-    [2, 'Plan approved'], [3, 'Another cycle approved'],
+    [2, 'Plan approved'], [3, 'Another cycle started'],
   ]);
   assert.deepEqual(log[0].detail, ['Where? → Redis', 'How? → JSON', 'Why? → —']);
   assert.deepEqual(log[1].detail, ['1 · Part 1', '2 · Part 2', '3 · Part 3']);

@@ -44,18 +44,22 @@ const ALL = rules(css);
 const decls = (body, prop) => [...body.matchAll(new RegExp(`(?:^|;)\\s*(${prop})\\s*:\\s*([^;]+)`, 'g'))].map((m) => [m[1], m[2].replace(/!important/, '').trim()]);
 const where = (r, v) => `style.css:${r.line} ${r.sel.slice(0, 80)} → ${v}`;
 
-const TOKEN = /^(?:var\(--r-(?:xs|sm|card|ctrl)\)|0|inherit)$/;
+const TOKEN = /^(?:var\(--r-(?:xs|sm|md|lg|pill|card|ctrl)\)|0|inherit)$/;
 // D2: the five round kinds. Extend only with a selector of one of these kinds.
 // Dots: nav-rollup, tl-mark.is-open, tl-pr-start, hd-base-pill::before, rg-td, ask-rp-kicker::before, npip/nwarn.
 // Knobs: .wz .tog::after. Spinners: the busy::after rings.
 const ROUND = /dot|\bava\b|-ava\b|avatar|person-ini|knob|switch::after|tog::after|spin|busy::after|\bled\b|radio|status-word::before|nav-rollup|tl-mark\.is-open|tl-pr-start|hd-base-pill::before|rg-td|kicker::before|npip|nwarn/;
 
-test('radius tokens: --r-xs 2px, --r-sm 4px, --r-card and --r-ctrl map to --r-sm', () => {
+test('radius tokens (decided 2026-10-19): xs 4, sm 6, md 8, lg 12, pill; card = md, ctrl = sm', () => {
   const root = ALL.find((r) => r.sel === ':root').body;   // the first :root (line 14) is the token block
-  assert.match(root, /--r-xs:2px;/);
-  assert.match(root, /--r-sm:4px;/);
-  assert.match(root, /--r-card:var\(--r-sm\);/);
-  assert.match(root, /--r-ctrl:var\(--r-sm\);/);
+  for (const re of [/--r-xs:4px;/, /--r-sm:6px;/, /--r-md:8px;/, /--r-lg:12px;/, /--r-pill:999px;/,
+    /--r-card:var\(--r-md\);/, /--r-ctrl:var\(--r-sm\);/]) assert.match(root, re);
+});
+
+test('--r-pill only on the switch track, --r-lg only on the chat composer shell', () => {
+  const uses = (tok) => ALL.filter((r) => decls(r.body, 'border-radius').some(([, v]) => v.includes(`var(--r-${tok})`)));
+  assert.deepEqual(uses('pill').filter((r) => !splitTop(r.sel).every((s) => /^\.switch$/.test(s))).map((r) => where(r, 'pill')), []);
+  assert.deepEqual(uses('lg').filter((r) => !splitTop(r.sel).every((s) => /\.ask-composer-box$/.test(s))).map((r) => where(r, 'lg')), []);
 });
 
 test('every border-radius in style.css is a token, 0, inherit, or 50% on a dot/avatar/knob/spinner/radio', () => {
@@ -190,7 +194,7 @@ test('no coloured left-border accent cards (D16)', () => {
 
 const KIND_CHIPS = ['.badge', '.flag-chip', '.issue-sev', '.artifact-kind', '.tp-kind', '.sk-kind', '.team-chip .kind',
   '.hd-ov-file-kind', '.ask-mcard-kind', '.wf-log-live', '.kind-chip'];
-test('kind and state chips are one 11px sans chip with 2px corners (D13)', () => {
+test('kind and state chips are one 11px sans chip with 4px corners (D13)', () => {
   const group = ALL.find((r) => r.sel.startsWith(':is(.badge,'));
   assert.ok(group, 'the grouped chip rule');
   for (const k of KIND_CHIPS) assert.ok(group.sel.includes(k), `${k} is in the grouped chip rule`);
@@ -255,4 +259,144 @@ test('the Runs header holds no search field or filter row (spec §3.1, Known bug
   // input (text, search, a bare <input>) is the old search field coming back.
   assert.deepEqual([...head.querySelectorAll('input:not([type="checkbox"]), .runs-filter, .runs-search-row')].map((e) => e.outerHTML.slice(0, 80)), []);
   assert.equal(doc.querySelector('#runs-search, #runs-filter, #historyFilter'), null);
+});
+
+// Floating surfaces may cast a shadow; anything else at rest may not (review A2, spec §1.3). A selector floats when
+// FLOATING names it or some rule for its last compound positions it fixed/absolute/sticky.
+// drop-label: the drag-and-drop overlay label; sheet-card: the card inside the absolute .wfv-sheet overlay;
+// apv-card: the preview modal; [data-open: the expanded chat composer floats over the page.
+const FLOATING = /menu|pop|modal|dialog|bubble|balloon|toast|drawer|dock|tip|picker|dropdown|overlay|fly|tsearch-(?:list|panel)|confirm|knob|switch::after|tog::after|drop-label|sheet-card|apv-card|\[data-open/;
+const lastCompound = (s) => s.split(/\s*[>+~]\s*|\s+/).at(-1).replace(/:(?:hover|focus(?:-visible)?|active)\b/g, '');
+const POSITIONED = new Set(ALL.filter((r) => decls(r.body, 'position').some(([, v]) => /^(?:fixed|absolute|sticky)$/.test(v)))
+  .flatMap((r) => splitTop(r.sel).map(lastCompound)));
+test('the floating shadow tokens only on floating surfaces (A2)', () => {
+  const floats = (s) => FLOATING.test(s) || POSITIONED.has(lastCompound(s));
+  const bad = ALL.filter((r) => !/:hover|:focus|:active|\.is-open|\[open\]|\.open\b/.test(r.sel))
+    .flatMap((r) => decls(r.body, 'box-shadow').filter(([, v]) => /var\(--shadow-(?:pop|sheet|menu|dock)\)/.test(v)
+      && !splitTop(r.sel).every(floats)).map(([, v]) => where(r, v)));
+  assert.deepEqual(bad, []);
+  assert.doesNotMatch(css, /gs-pill-glow/);
+  for (const r of ALL.filter((x) => splitTop(x.sel).includes('.tsearch-field'))) assert.doesNotMatch(r.body, /box-shadow/, where(r, 'ring'));
+});
+
+// One tab style (review A3, B4): .tab is underline; per-view tab classes keep spacing only.
+const TAB_HOOKS = ['rd-tab', 'hd-tab', 'pd-tab', 'tp-tab', 'chat-home-tab', 'wfl-tab', 'af-tab', 'md-tab', 'hd-cmt-tab', 'activity-tab'];
+const TAB_SKIN = /^(?:height|min-height|border(?:-[a-z]+)*|background(?:-[a-z]+)?|color|font(?:-[a-z]+)?|box-shadow|letter-spacing|text-transform|line-height)$/;
+test('tabs: one underline .tab at 32px; no boxed or per-view tab skin (A3)', () => {
+  const tab = (ALL.find((r) => r.sel === '.tab') || {}).body || '';
+  assert.match(tab, /height:32px;/);
+  assert.match(tab, /font:500 13px\/1 var\(--sans\);/);
+  assert.match(tab, /border:0;/);
+  assert.match(tab, /background:none;/);
+  const bad = [];
+  for (const r of ALL) {
+    for (const s of splitTop(r.sel)) {
+      const last = s.split(/\s*[>+~]\s*|\s+/).at(-1);
+      if (last.includes('::') || !TAB_HOOKS.some((c) => new RegExp(`\\.${c}(?![\\w-])`).test(last))) continue;
+      for (const [p, v] of decls(r.body, '[\\w-]+')) if (TAB_SKIN.test(p)) bad.push(where(r, `${p}:${v}`));
+    }
+  }
+  assert.deepEqual(bad, []);
+  assert.doesNotMatch(css, /\.chat-home-ink\b/);
+});
+
+// Every tab emitter wears the one skin (impl review 1): a role="tab" names .tab (or sits in a .seg), a
+// role="tablist" names .tabs, within the few lines that build it. Allowed, each with its reason:
+const TABLIST_OK = [
+  /class="(?:rd|hd|pd|tp)-tabs"/,   // initDetailTabs hosts: `bar.classList.add('tabs')` when the screen renders
+  /make\('div', 'term-tabs'\)/,       // terminal-pane.mjs: the terminal strip is a browser-style tab row, not the underline
+];
+const TAB_OK = [/button\(text, 'term-tab'/];   // the terminal's own tabs, same reason
+const ROLE_TAB = /role(?:'\s*,\s*'|=")(tab|tablist)['"]/;
+const classTok = (w) => new RegExp(`['"\`][^'"\`\\n]*(?<![\\w-])(?:${w})(?![\\w-])[^'"\`\\n]*['"\`]`);
+function tabEmitterHits(files) {
+  const hits = [];
+  for (const f of files.filter((x) => !x.endsWith('.css'))) {
+    const lines = code(readFileSync(f, 'utf8')).split('\n');
+    lines.forEach((l, i) => {
+      const m = l.match(ROLE_TAB);
+      if (!m || /closest\(|querySelector/.test(l)) return;
+      const near = lines.slice(Math.max(0, i - 6), i + 1).join('\n').replace(new RegExp(ROLE_TAB.source, 'g'), '');
+      const list = m[1] === 'tablist';
+      if ((list ? TABLIST_OK : TAB_OK).some((re) => re.test(lines.slice(Math.max(0, i - 6), i + 1).join('\n')))) return;
+      if (!classTok(list ? 'tabs|seg' : 'tab|seg').test(near)) hits.push(`${rel(f)}:${i + 1}: ${l.trim().slice(0, 100)}`);
+    });
+  }
+  return hits;
+}
+test('every role="tab" / role="tablist" emitter adds .tab / .tabs (impl review 1)', () => {
+  assert.deepEqual(tabEmitterHits(FILES), []);
+});
+test('the tab-emitter scan flags a bare per-view tab (self-test)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tab-emit-'));
+  try {
+    const f = join(dir, 'x.mjs');
+    writeFileSync(f, "const bar = h(doc, 'div', 'tp-tabs tp-edit-tabs'); bar.setAttribute('role', 'tablist');\n"
+      + "const btn = h(doc, 'button', 'tp-tab'); btn.setAttribute('role', 'tab');\n");
+    assert.equal(tabEmitterHits([f]).length, 2);
+    writeFileSync(f, "const bar = h(doc, 'div', 'tp-tabs tabs'); bar.setAttribute('role', 'tablist');\n"
+      + "const btn = h(doc, 'button', 'tp-tab tab'); btn.setAttribute('role', 'tab');\n");
+    assert.deepEqual(tabEmitterHits([f]), []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// Size scale (review A5, C): controls at 28/32/40, tiles 56-64, an info tip's hit target at least 24.
+const CONTROL_HEIGHTS = { '.tab': 32, '.seg button': 28, '.seg.seg-sm button': 24, '.chat-home-preset': 28, '.wfl-chip': 28,
+  '.wfl-folder': 32, '.info-tip': 24, '.chat-home-act': 56 };
+const OFF_SCALE = [26, 31, 34, 36, 43, 44, 55, 78];
+const CONTROL_WORD = /^(?:tab|tabs|seg|btn|chip|preset|act|folder|switch|button)$/;
+// Rows, not controls (spec §1.2): allowed at their own height. Each entry names its reason.
+const ROW_OK = ['.act-srow'];                            // activity list row, 26px dense row (spec §3.1)
+const classWords = (s) => (s.match(/\.[\w-]+/g) || []).flatMap((c) => c.slice(1).split('-'));
+test('control heights on the scale (A5)', () => {
+  for (const [sel, h] of Object.entries(CONTROL_HEIGHTS)) {
+    const body = ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
+    assert.match(body, new RegExp(`(?:^|;)\\s*(?:min-)?height\\s*:\\s*${h}px`), `${sel} is ${h}px`);
+  }
+  const off = ALL.flatMap((r) => decls(r.body, '(?:min-)?height')
+    .filter(([, v]) => /^\d+px$/.test(v) && OFF_SCALE.includes(parseInt(v, 10))
+      && splitTop(r.sel).some((s) => !ROW_OK.some((ok) => s.includes(ok))
+        && (/\bbutton\b/.test(s) || classWords(lastCompound(s)).some((w) => CONTROL_WORD.test(w)))))
+    .map(([, v]) => where(r, v)));
+  assert.deepEqual(off, []);
+});
+
+test('switch: one 32x18 pill track and a round knob (B6)', () => {
+  const sw = (ALL.find((r) => r.sel === '.switch') || {}).body || '';
+  assert.match(sw, /width:32px;height:18px;border-radius:var\(--r-pill\);/);
+  const sized = ALL.filter((r) => r.sel !== '.switch' && splitTop(r.sel).some((s) => /\.switch(?![\w-])/.test(lastCompound(s)) && !s.includes('::')))
+    .flatMap((r) => decls(r.body, '(?:width|height|transform)').map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(sized, []);
+});
+
+// One border level per card (B2). Inputs, buttons and segments keep theirs.
+const CARD_HOSTS = /\.(?:ask-card|chat-rc|shape-feature)(?![\w-])/;
+const OWN_BORDER = /\b(?:btn|seg|textarea|input|select|field|switch|kbd)\b|input|textarea|select|:focus/;
+const IN_CARD = ['.qpanel', '.qblock', '.qopt', '.af-choice', '.af-form', '.issue-detail', '.opt-row', '.shape-plan-notes',
+  '.outline-slice', '.shape-plan-outline-change', '.chat-rc-result', '.shape-card'];
+test('no bordered box inside a bordered card (B2)', () => {
+  const bad = ALL.filter((r) => splitTop(r.sel).some((s) => CARD_HOSTS.test(s) && s.trim().split(/\s+/).length > 1
+      && !OWN_BORDER.test(s.trim().split(/\s+/).at(-1))))
+    .flatMap((r) => decls(r.body, 'border').filter(([, v]) => !/^(?:0|none)\b/.test(v)).map(([, v]) => where(r, v)));
+  assert.deepEqual(bad, []);
+  // The one in-card override (D16) names every nested box and drops its border.
+  const ov = ALL.find((r) => r.sel.startsWith(':is(.ask-card,.chat-rc,.shape-feature) :is('));
+  assert.ok(ov, 'the in-card override rule exists');
+  for (const c of IN_CARD) assert.ok(ov.sel.includes(`${c},`) || ov.sel.includes(`${c})`), `${c} is in the override`);
+  assert.match(ov.body, /border:0;/);
+});
+
+test('run bars are neutral: no blue fill on a progress bar (A1, spec §2.3)', () => {
+  const bad = ALL.filter((r) => /prog|chain-track|progress/.test(r.sel) && !/ask-ctx/.test(r.sel))
+    .flatMap((r) => decls(r.body, 'background(?:-color)?').filter(([, v]) => /--blue/.test(v)).map(([, v]) => where(r, v)));
+  assert.deepEqual(bad, []);
+});
+
+test('a flag chip in a tab strip sits inside its tab label (A4)', async () => {
+  const { decorateFlagChips } = await import('../ui/public/flags.mjs');
+  const doc = new JSDOM(readFileSync(join(ROOT, 'ui/public/index.html'), 'utf8')).window.document;
+  decorateFlagChips(doc);
+  for (const strip of doc.querySelectorAll('.tabs, .seg, [role="tablist"]')) {
+    assert.deepEqual([...strip.children].filter((c) => c.matches('.flag-chip, a')).map((c) => c.outerHTML.slice(0, 60)), []);
+  }
 });

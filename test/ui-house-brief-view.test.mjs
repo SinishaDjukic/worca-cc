@@ -98,16 +98,16 @@ test('a read failure shows a card alert', async () => {
   assert.match(host.querySelector('.card-alert').textContent, /House brief could not be read.*boom/s);
 });
 
-test('CSS: no radius outside --r-xs/--r-sm, tokens defined, dividers 1px, colours only tokens', () => {
+test('CSS: no radius outside --r-xs/--r-sm/--r-card, tokens defined, dividers 1px, colours only tokens', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-  // D11: defined once, in :root, with the Runs redesign's exact values (whether this branch or dev added them).
-  assert.equal((css.match(/--r-xs:\s*2px;/g) || []).length, 1);
-  assert.equal((css.match(/--r-sm:\s*4px;/g) || []).length, 1);
-  assert.match(/(?:^|\})\s*:root\s*\{([^{}]*)\}/m.exec(css)?.[1] || '', /--r-xs:\s*2px;[\s\S]*--r-sm:\s*4px;|--r-sm:\s*4px;[\s\S]*--r-xs:\s*2px;/);
+  // D11: defined once, in :root, with the UI/UX review's values (decided 2026-10-19: xs 4px, sm 6px).
+  assert.equal((css.match(/--r-xs:\s*4px;/g) || []).length, 1);
+  assert.equal((css.match(/--r-sm:\s*6px;/g) || []).length, 1);
+  assert.match(/(?:^|\})\s*:root\s*\{([^{}]*)\}/m.exec(css)?.[1] || '', /--r-xs:\s*4px;[\s\S]*--r-sm:\s*6px;|--r-sm:\s*6px;[\s\S]*--r-xs:\s*4px;/);
   const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /house-brief/.test(m[1]));
   assert.ok(rules.length >= 8);
   for (const [, sel, body] of rules) {
-    for (const r of body.matchAll(/border-radius\s*:\s*([^;]+)/g)) assert.match(r[1].trim(), /^var\(--r-(xs|sm)\)$/, sel.trim());
+    for (const r of body.matchAll(/border-radius\s*:\s*([^;]+)/g)) assert.match(r[1].trim(), /^var\(--r-(xs|sm|card)\)$/, sel.trim());
     assert.doesNotMatch(body, /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i, sel.trim());
     for (const b of body.matchAll(/border(?:-top|-bottom)?\s*:\s*([^;]+)/g)) assert.match(b[1], /^1px solid var\(--line(-2)?\)$/, sel.trim());
   }

@@ -31,7 +31,11 @@ test('the group page: header, title + kind, meta, status card, tabs, Runs table,
   assert.equal(root.querySelector('.gpage-card .run-status .status-dot').getAttribute('aria-label'), 'Needs you');
   assert.deepEqual([...root.querySelectorAll('.gpage-tabs .rd-tab')].map((t) => t.textContent), GROUP_TABS.map(([, l]) => l));
   assert.equal(root.querySelector('.gpage-tabs .rd-tab[aria-selected="true"]').dataset.tab, 'runs');
-  assert.equal(root.querySelectorAll('.gpage-panel[data-tab="runs"] .run-member-open').length, 4);
+  // A6/A13: no Open button; each row is the target (its title link stretches over it) with a quiet chevron.
+  assert.equal(root.querySelectorAll('.gpage-panel[data-tab="runs"] .run-member-open').length, 0);
+  assert.equal(root.querySelectorAll('.gpage-panel[data-tab="runs"] .run-member-go').length, 4);
+  assert.ok(root.querySelector('.gpage-panel[data-tab="runs"] .run-members').classList.contains('is-table'));
+  assert.equal(root.querySelector('.gpage-title').title, 'Run tags', 'D13: the clamped heading carries the full title');
   assert.equal(root.querySelector('.gpage-ship').textContent, 'Ship card comes when all 3 runs are done, here and in the chat.');
   assert.deepEqual([...root.querySelectorAll('.gpage-actions [data-model-action]')].map((b) => b.dataset.modelAction), ['answer', 'stop']);
   paintGroupPage(root, { row: row(), project: 'acme-app', tab: 'runs', overview: true }, NOOP);

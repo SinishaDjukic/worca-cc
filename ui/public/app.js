@@ -100,7 +100,7 @@ import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.m
 import { buildGroupPage, paintGroupPage, runReceipts } from './group-page.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
-import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody } from './runs-selection.mjs';
+import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody, rangeKeys } from './runs-selection.mjs';
 import { bulkConfirm } from '../../src/shared/run-bulk.mjs';
 import { openGroupPicker } from './group-picker.mjs';
 import { renderStatusDot } from './status-dot.mjs';
@@ -258,7 +258,7 @@ import { setupFromBody } from '../../src/shared/run-presets.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor } from './tag-input.mjs';
 import { normaliseTags, formatTag } from '../../src/shared/run-tags.mjs';
 import { splitByDimensions, tagGroupOptions, dimensionLabel, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
-import { createFlagsView } from './flags-view.mjs';
+import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
@@ -605,6 +605,7 @@ const readyFor = (pause, onLoad) => (pause?.reason === 'usage_limit' && pause?.l
 // ---------------------------------------------------------------------------
 const el = {
   form: $('#run-form'),
+  keepAwakeSwitch: $('#keepAwakeSwitch'),
   projectSelect: $('#projectSelect'),
   projectHint: $('#projectHint'),
   addProject: $('#add-project'),
@@ -2720,7 +2721,8 @@ function onState(r, msg) {
   // omits the field (older runs / partial snapshots) leaves the delta-built array.
   r.subAgents = msg.subAgents || r.subAgents;
   // v2 run-level outcome fields (ignored by v1 runs, which never send them).
-  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts']) {
+  // roleReviews: the role-review rounds runModel's live role rows read (review A12).
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews']) {
     if (msg[k] !== undefined) r[k] = msg[k];
   }
   // Skills registry §6 board 9: the run's set skills (run-harness state.skillMount) for its Overview.
@@ -4738,7 +4740,7 @@ document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (
   const btn = e.currentTarget;
   const key = state.runTagsProjectKey;
   if (!key) return;
-  const label = 'Save as project default';
+  const label = 'Save as default';
   let msg = 'Saved';
   const tags = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;   // the dimension slots too
   try {
@@ -9318,9 +9320,9 @@ function buildWdOverview(sec, id) {
   const pane = document.createElement('div');
   pane.className = 'ws-desc-edit';
   pane.hidden = true;
-  pane.innerHTML = '<div class="md-tabs" role="tablist" aria-label="Description editor">'
-    + '<button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="text" aria-selected="true">Text</button>'
-    + '<button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button></div>'
+  pane.innerHTML = '<div class="md-tabs tabs" role="tablist" aria-label="Description editor">'
+    + '<button type="button" class="md-tab tab ws-desc-tab" role="tab" data-mode="text" aria-selected="true">Text</button>'
+    + '<button type="button" class="md-tab tab ws-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button></div>'
     + '<textarea class="ws-desc-input textarea" rows="10" spellcheck="false"></textarea>'
     + '<div class="ws-desc-preview md-preview viewer" hidden></div>'
     + '<div class="actions" style="justify-content:flex-end;margin-top:10px">'
@@ -15793,13 +15795,8 @@ async function openTmEnableDialog(projectKeyStr, { mode = 'here', change = false
   };
   pluginModal('Set up team metrics', holder, [
     ['Cancel', 'btn btn-sm', () => closePluginModal()],
-    [view.mode === 'delegate' ? 'Create marker and enable' : 'Create branch and enable', 'btn btn-primary btn-sm tm-enable-submit', submit],
+    ['Create and enable', 'btn btn-primary btn-sm tm-enable-submit', submit],
   ]);
-  // Re-label the primary action when the mode flips (pluginModal renders actions once).
-  holder.addEventListener('change', () => {
-    const b = document.querySelector('#plugin-modal .tm-enable-submit');
-    if (b) b.textContent = view.mode === 'delegate' ? 'Create marker and enable' : 'Create branch and enable';
-  });
 }
 
 // JSON fetch helper: { ok, status, data } — body omitted when undefined.
@@ -19390,7 +19387,7 @@ async function openPolicyEnableDialog(projectKeyStr, { mode = 'here', change = f
       paint();
       holder.querySelector(`input[name="tp-where"][value="${view.mode}"]`)?.focus();
       const b = document.querySelector('#plugin-modal .tp-enable-submit');
-      if (b) b.textContent = view.mode === 'follow' ? 'Create marker and follow' : 'Create branch and enable';
+      if (b) b.textContent = view.mode === 'follow' ? 'Create and follow' : 'Create and enable';
     }
   });
   let submitting = false;
@@ -19428,7 +19425,7 @@ async function openPolicyEnableDialog(projectKeyStr, { mode = 'here', change = f
   };
   pluginModal('Set up team policy', holder, [
     ['Cancel', 'btn btn-sm', () => closePluginModal()],
-    [view.mode === 'follow' ? 'Create marker and follow' : 'Create branch and enable', 'btn btn-primary btn-sm tp-enable-submit', submit],
+    [view.mode === 'follow' ? 'Create and follow' : 'Create and enable', 'btn btn-primary btn-sm tp-enable-submit', submit],
   ]);
 }
 
@@ -21873,7 +21870,9 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
   });
   screen.querySelector('.hd-title').textContent = record.title || parsed.id;
   // paintPageHead runs only once the details land: name the run now, so the title is never blank while loading.
-  screen.querySelector('.hd-glance .rd-page-title').textContent = record.title || parsed.id;
+  const hdPageTitle = screen.querySelector('.hd-glance .rd-page-title');
+  hdPageTitle.textContent = record.title || parsed.id;
+  hdPageTitle.title = hdPageTitle.textContent;
   paintHistStatusIcon(screen.querySelector('.hd-sic'), record);
 
   // Chat P4: the run panel is not the Runs page — no pane to open, no focus hand-off, no remembered run.
@@ -25035,13 +25034,14 @@ function initDetailTabs(screen, tabs, ctx, opts) {
   const secs = screen.querySelector(secsSel);
   if (!bar || !secs) return;   // a screen whose template lacks the two hosts
   bar.innerHTML = '';
+  bar.classList.add('tabs');
   secs.innerHTML = '';
   const shown = tabs.filter((t) => t.visible(ctx));
   const cells = new Map();
   for (const t of shown) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = tabClass;
+    btn.className = `${tabClass} tab`;
     btn.dataset.sec = t.key;
     btn.id = `${idPrefix}-tab-${t.key}`;
     btn.setAttribute('role', 'tab');
@@ -25574,12 +25574,12 @@ function hdCommentComposer(doc, anchor, ctx, onClose, { mode = 'comment', root =
   const label = doc.createElement('span');
   label.textContent = isReply ? 'Your reply' : 'New comment';
   const tabs = doc.createElement('div');
-  tabs.className = 'hd-cmt-tabs';
+  tabs.className = 'hd-cmt-tabs tabs';
   tabs.setAttribute('role', 'tablist');
   const tab = (text) => {
     const b = doc.createElement('button');
     b.type = 'button';
-    b.className = 'hd-cmt-tab';
+    b.className = 'hd-cmt-tab tab';
     b.setAttribute('role', 'tab');
     b.textContent = text;
     return b;
@@ -27938,7 +27938,7 @@ function rdOvStateBanner(host, r) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn btn-sm rd-ov-model';
-    btn.textContent = 'Resume with another model…';
+    btn.textContent = 'Switch model…';
     btn.title = 'Every remaining step runs on the model you pick';
     btn.addEventListener('click', async () => {
       const pauseBtn = rdOpenPauseBtn();
@@ -30722,7 +30722,7 @@ const RUNS_COLLAPSED_KEY = 'worca-cc.runs.collapsed';   // project / date sectio
 // groupsToggled: a person's ⌄ per group key for this session (D29); sel / selecting: the ticked rows (D20).
 // rowsByKey: every top-level and member row of the last paint; memos: runProgress / cost memos per run and group.
 const runsUi = { view: loadRunsView(localStorage), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false,
-  groupsToggled: new Map(), recentShown: RECENT_PAGE, selecting: false,
+  groupsToggled: new Map(), recentShown: RECENT_PAGE, selecting: false, anchorKey: null,
   sel: createRunsSelection(), rowsByKey: new Map(), memos: new Map(), lastModel: null, listCounts: null };
 const memoFor = (id) => { if (!runsUi.memos.has(id)) runsUi.memos.set(id, {}); return runsUi.memos.get(id); };
 
@@ -31334,6 +31334,7 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
   runsUi.sel.clear();
   runsUi.selecting = false;
+  runsUi.anchorKey = null;
   paintRunsList();
 });
 // Touch: a long-press starts selecting (§3.2); the click that follows is swallowed.
@@ -31347,6 +31348,19 @@ el.runsList?.addEventListener('pointerdown', (e) => {
 });
 for (const type of ['pointerup', 'pointercancel', 'pointermove']) el.runsList?.addEventListener(type, () => { clearTimeout(runsPress); runsPress = null; });
 el.runsList?.addEventListener('click', (e) => { if (runsPressed) { e.preventDefault(); e.stopPropagation(); runsPressed = ''; } }, true);
+// A11 (spec §3.2): ⌘/Ctrl-click toggles a row and enters selection; Shift-click adds the range from the anchor. Neither opens the run.
+el.runsList?.addEventListener('click', (e) => {
+  const row = e.target.closest?.('a.runs-row');
+  if (!row || !(e.metaKey || e.ctrlKey || e.shiftKey)) return;
+  const key = row.dataset.rowKey || row.closest('.runs-item')?.dataset.rowKey;
+  if (!key) return;
+  e.preventDefault();
+  e.stopPropagation();
+  runsUi.selecting = true;
+  const range = e.shiftKey && runsUi.anchorKey ? rangeKeys(visibleTopKeys(), runsUi.anchorKey, key) : [];
+  if (range.length) { runsUi.sel.selectAll(range); paintRunsList(); }   // selectAll adds; the range joins the selection
+  else { runsUi.anchorKey = key; toggleRunsKey(key); }                   // toggleRunsKey repaints and leaves selection when empty
+}, true);
 
 const selectedTargets = () => [...runsUi.sel.keys()].map((k) => runsUi.rowsByKey.get(k)).filter(Boolean).map(rowTarget);
 function paintRunsBar() {
@@ -31356,6 +31370,8 @@ function paintRunsBar() {
   bar.hidden = !on;
   el.runsList.classList.toggle('is-selecting', on);
   const all = document.getElementById('runs-all');
+  const allWrap = document.querySelector('.runs-all-wrap');
+  if (allWrap) allWrap.hidden = !runsUi.selecting;
   const top = visibleTopKeys();
   const n = top.filter((k) => runsUi.sel.has(k)).length;
   if (all) {
@@ -31412,7 +31428,7 @@ async function runBulkAction(action, targets = selectedTargets()) {
 document.getElementById('runs-bulk')?.addEventListener('click', (e) => {
   const b = e.target.closest && e.target.closest('[data-bulk]');
   if (!b) return;
-  if (b.dataset.bulk === 'cancel') { runsUi.sel.clear(); runsUi.selecting = false; paintRunsList(); return; }
+  if (b.dataset.bulk === 'cancel') { runsUi.sel.clear(); runsUi.selecting = false; runsUi.anchorKey = null; paintRunsList(); return; }
   runBulkAction(b.dataset.bulk);
 });
 
@@ -31440,6 +31456,7 @@ el.runsList?.addEventListener('click', (e) => {
     return;
   }
   const items = [
+    { label: 'Select', onSelect: () => { runsUi.selecting = true; runsUi.anchorKey = r.key; toggleRunsKey(r.key); } },
     { label: 'Stop', disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
     { label: 'Archive', disabled: !m.archive.count, title: m.archive.title, onSelect: () => runBulkAction('archive', [t]) },
     ...(adv ? [{ label: 'Delete', disabled: !m.delete.count, title: m.delete.title, onSelect: () => runBulkAction('delete', [t]) }] : []),
@@ -32025,7 +32042,7 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   else {                                                         // deep link before hello
     screen.querySelector('.rd-title').textContent = runId;
     const pt = screen.querySelector('.rd-page-title');
-    if (pt && !pt.textContent) pt.textContent = runId;
+    if (pt && !pt.textContent) { pt.textContent = runId; pt.title = runId; }
   }
   if (r) loadNightDecisions(r);
 
@@ -33049,6 +33066,7 @@ function paintPageHead(glance, title, meta) {
   const h = glance.querySelector('.rd-page-title');
   const m = glance.querySelector('.rd-page-meta');
   if (h && h.textContent !== title) h.textContent = title;
+  if (h && h.title !== title) h.title = title;   // D13: the heading clamps at 2 lines; the full title is the tooltip
   if (m) {
     const text = meta.filter(Boolean).join(' · ');
     const node = m.firstChild && m.firstChild.nodeType === 3 ? m.firstChild : null;
@@ -34236,6 +34254,9 @@ function updateNavCounts() {
       nc.replaceChildren(sym, num);
     }
     nc.querySelector('.nav-count-n').textContent = String(needs);
+    // A10: the count names itself too; the Runs button's aria-label stays the button's name.
+    nc.setAttribute('role', 'img');
+    nc.setAttribute('aria-label', `${needs} need${needs === 1 ? 's' : ''} you`);
     nc.hidden = needs === 0;
   }
   const c = $('#nav-running-count');
@@ -34811,7 +34832,7 @@ function gsHops(step, g) {
         const change = !!block().querySelector('.tm-change');
         return [...walk, { id: 'why', info: true, nextLabel: 'Done', target: '#proj-detail .pd-team-metrics',
           text: on ? `Team metrics is already on for this project: every finished run is recorded on the shared branch. Include my runs is your own switch${change ? '; Change… points the project at another home' : ''}.`
-            : 'Team metrics lives on a git remote. This project has none yet — push it to one and “Set up team metrics…” appears here.' }];
+            : 'Team metrics lives on a git remote. This project has none yet — push it to one and “Set up metrics…” appears here.' }];
       }
       return [
         ...walk,
@@ -34854,7 +34875,7 @@ function gsHops(step, g) {
         const on = !!document.querySelector('#proj-detail .tp-cell .tp-open');
         return [...walk, { id: 'after', info: true, nextLabel: 'Done', target: ['#proj-detail .tp-cell', '#proj-detail .pd-team-policy'],
           text: on ? 'Team policy is on for this project. Open takes you to the Team policy page, where the document is read and edited.'
-            : 'Nothing was enabled — “Set up team policy…” stays here for when you are ready.' }];
+            : 'Nothing was enabled — “Set up policy…” stays here for when you are ready.' }];
       }
       if (!pageOpen() || !tabActive() || !block()) return [...walk, { id: 'enable', target: ['#proj-detail .tp-enable', '#proj-detail .pd-team-policy'], met: () => false, text: 'A team policy is switched on from the project’s Team tab.' }];
       if (!canEnable()) {
@@ -34864,7 +34885,7 @@ function gsHops(step, g) {
         const change = !!block().querySelector('.tp-change');
         return [...walk, { id: 'why', info: true, nextLabel: 'Done', target: '#proj-detail .pd-team-policy',
           text: on ? `Team policy is already on for this project. Open shows the document on the Team policy page${change ? '; Change… points the project at another home' : ''}.`
-            : 'A team policy lives on a git remote. This project has none yet — push it to one and “Set up team policy…” appears here.' }];
+            : 'A team policy lives on a git remote. This project has none yet — push it to one and “Set up policy…” appears here.' }];
       }
       return [
         ...walk,
@@ -36293,7 +36314,10 @@ async function savePresetDialog() {
   const scopeOptions = [{ value: 'global', text: 'Any project' }];
   if (ws) scopeOptions.push({ value: 'workspace', text: `Only workspace ${ws.name}` });
   else if (draft.projectDir) scopeOptions.push({ value: 'project', text: `Only ${selectedProjectName()}` });
-  const SAVED = 'Saved: workflow, engine, guardrails, agents, loops, branches, Away mark, opt-outs. Never saved: title, prompt, Markdown, extra files, new branch name.';
+  // Review G: name the workflow, and say when it is the project's default (picking a project can switch to it).
+  const wfLabel = (el.workflowSelect?.selectedOptions?.[0]?.textContent || '').trim();
+  const isDefault = !!draft.projectDir && draft.workflowId === state.config?.activeWorkflowId;
+  const SAVED = `Saved: workflow${wfLabel ? ` ${wfLabel}` : ''}${isDefault ? " (this project's default)" : ''}, engine, guardrails, agents, loops, branches, Away mark, opt-outs. Never saved: title, prompt, Markdown, extra files, new branch name.`;
   let name = '';
   let scope = 'global';
   let error = '';
@@ -36396,6 +36420,13 @@ const offPresetsFlag = onFlagChange('runPresets', (on) => {
 });
 // Test hook: flags.mjs's listener map outlives a jsdom boot, so a suite unsubscribes the previous app first.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { offPresetsFlag });
+
+// Settings › Runs › Keep awake (UI/UX review F): the keepAwake flag's own switch, one source with Settings › Experimental.
+if (el.keepAwakeSwitch) {
+  window.__np.offKeepAwakeSwitch?.();
+  window.__np.offKeepAwakeSwitch = bindFlagSwitch(el.keepAwakeSwitch, 'keepAwake', {
+    api: (method, body) => mcpApi(method, '/api/flags', body), msgEl: $('#keepAwakeMsg') });
+}
 
 // ---- Away mode on the run page and New run --------------------------------
 // state.awayMode: the user-level GET /api/away-mode body (Settings card, boot, settings-changed).

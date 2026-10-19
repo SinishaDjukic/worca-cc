@@ -63,7 +63,11 @@ const settle = async () => {
 const state = (view, i) => view.slices[i - 1].state;
 
 test('sliceTitle and createSliceFeature: row, slice rows, chained tickets', () => {
-  assert.equal(sliceTitle('Charts', 2, 3, { title: 'Pin' }), 'Charts · 2/3: Pin');
+  // Review D: "Run 2 · Pin charts"; the feature name lives in the run's "Part of …" row. The slice title clips at 40.
+  assert.equal(sliceTitle('Charts', 2, 3, { title: 'Pin' }), 'Run 2 · Pin');
+  const long = sliceTitle('Charts', 5, 5, { title: 'Customer perspective upgrade safety '.repeat(4).trim() });
+  assert.ok(long.startsWith('Run 5 · ') && long.length <= 'Run 5 · '.length + 40, long);
+  assert.equal(sliceTitle('Charts', 2, 3, { title: '' }), 'Run 2 · slice 2');
   const { id, total, pid } = mk(3);
   assert.equal(total, 3);
   assert.match(id, /^feat_[0-9a-f]{12}$/);
@@ -76,7 +80,8 @@ test('sliceTitle and createSliceFeature: row, slice rows, chained tickets', () =
   assert.deepEqual(t2.after, { kind: 'pipeline', id: pid, policy: 'done' });
   assert.deepEqual(t3.after, { kind: 'ticket', id: t2.id, policy: 'done' });
   assert.equal(t2.sourceFromPrevious, true);
-  assert.equal(t2.title, 'Charts · 2/3: Slice 2');
+  assert.equal(t2.title, 'Run 2 · Slice 2');
+  assert.equal(t3.title, 'Run 3 · Slice 3');
   const f = getDb().prepare('SELECT * FROM shape_features WHERE id = ?').get(id);
   assert.equal(f.status, 'active');
   assert.equal(f.origin_pipeline_id, pid);
@@ -99,7 +104,7 @@ test('sliceRequest: model and starter ride internal, engine/mock/guardrailsId at
   assert.equal('model' in r, false);
   assert.deepEqual(r.shape.slice, { feature: 'feat_x', index: 2, total: 3, outline: outlineOf(3) });
   assert.equal(r.shape.slices, 'off');
-  assert.equal(r.title, 'Charts · 2/3: Slice 2');
+  assert.equal(r.title, 'Run 2 · Slice 2');
   assert.equal('sourceBranch' in r, false);
   assert.equal(sliceRequest({ feature: { id: 'f', title: 'T' }, index: 1, outline: outlineOf(2), perspectives: [], workflowId: 'w', projectDir: root, sourceBranch: 'dev' }).sourceBranch, 'dev');
 });

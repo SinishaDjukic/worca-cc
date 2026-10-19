@@ -248,7 +248,7 @@ export function createWorkflowsShell({ doc, els, composer, actions }) {
       }
       kids.push(sep());
     } else if (node.kind === 'task') {
-      const b = btn('planStoreSeed', 'Seed the plan store', { pressed: node.config.planStoreSeed === true, title: 'treat an attached plan as the run’s plan' });
+      const b = btn('planStoreSeed', 'Seed plans', { pressed: node.config.planStoreSeed === true, title: 'treat an attached plan as the run’s plan' });
       b.addEventListener('click', () => setCfg(node.id, 'planStoreSeed', { planStoreSeed: node.config.planStoreSeed === true ? null : true }));
       kids.push(b, sep());
     }

@@ -121,7 +121,7 @@ export function renderProjectTmCell(s, { doc = globalThis.document, heading = tr
       // Team-level setup (creates the shared branch on origin): a button that names
       // the feature, never a switch — turning it off again is not a one-click action.
       status.classList.add('muted'); status.textContent = 'Off · runs stay on this machine';
-      actions.append(btn(doc, 'tm-enable', 'Set up team metrics…'));
+      actions.append(btn(doc, 'tm-enable', 'Set up metrics…'));
       break;
     case 'delegate-invalid':
       line.append(dot(doc, 'red'));
@@ -446,7 +446,7 @@ export function renderWsMetricsRow(ws, { doc = globalThis.document } = {}) {
     head.append(h(doc, 'span', 'ws-members-summary', `${routed} routed · ${members.filter(needsAttention).length} not routed`));
   }
   const actions = h(doc, 'span', 'ws-tbl-actions');
-  if (home.state !== 'unset' && members.some(routable)) actions.append(btn(doc, 'ws-route', 'Route all to metrics home'));
+  if (home.state !== 'unset' && members.some(routable)) actions.append(btn(doc, 'ws-route', 'Route all'));
   actions.append(btn(doc, 'ws-home-change', home.state === 'unset' ? 'Choose metrics home…' : 'Change metrics home…'));
   head.append(actions);
   root.append(head);

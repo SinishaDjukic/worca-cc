@@ -1025,7 +1025,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Repository', 'Branch', 'Folder', 'Azure DevOps']);
       assert.equal([...el.querySelectorAll('.ask-mcard-after')].at(-1).textContent, 'the Azure DevOps token (WORCA_ADO_TOKEN)');
     } },
-    { name: 'web card: host, reason and exact URL as text; Deny / Always allow / Allow for this chat post the verbs; applied and failed read as such', run: async () => {
+    { name: 'web card: host, reason and exact URL as text; Deny / Always allow / Allow in chat post the verbs; applied and failed read as such', run: async () => {
       const rec = { cardPosts: [] };
       const base = apiHandler(rec);
       const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
@@ -1400,7 +1400,7 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       assert.equal(cardEl.querySelector('.ask-rp-kicker').textContent, 'Shaper');
       const main = cardEl.querySelector('.ask-rp-shape-main');
       assert.equal(main.querySelector('.ask-rp-brief-preview').textContent, 'Fix the login bug');
-      assert.equal(main.querySelector('[data-ask-card-brief-more]').textContent, 'Show the full brief');
+      assert.equal(main.querySelector('[data-ask-card-brief-more]').textContent, 'Show brief');
       assert.equal(cardEl.querySelector('.ask-rp-brief-host').hidden, true, 'the full brief waits behind its link');
       const labels = [...main.querySelectorAll('.ask-rp-field > .ask-rp-label')].map((l) => l.firstChild.textContent);
       assert.deepEqual(labels, ['Project', 'Base branch', 'Perspectives']);
@@ -1878,7 +1878,7 @@ test('Ask graph card: a declined draft refuses Save (nothing posted); Open in Wo
   await ticks(ctx, 3);
   assert.equal(r.cardPosts, undefined, 'nothing posted');
   assert.match(cards[0].querySelector('.wfc-err:not([hidden])').textContent, /needs "releaseNotes", which was declined/);
-  assert.ok([...cards[1].querySelectorAll('button')].some((b) => b.textContent === 'Save & propose run'));
+  assert.ok([...cards[1].querySelectorAll('button')].some((b) => b.textContent === 'Save & propose'));
   clickText(cards[1], 'Open in Workflows');
   await ticks(ctx, 3);
   assert.deepEqual(opened, [{ name: 'Fix and review', domain: 'coding', nodes: WF_DEFAULT_TPL.nodes, wires: WF_DEFAULT_TPL.wires }]);

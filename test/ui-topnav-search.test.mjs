@@ -432,14 +432,15 @@ function ruleBody(selector) {
   return m ? m[1].replace(/\s+/g, ' ') : null;
 }
 
-test('the look: a 34px pill, the open ring from the search tokens, a listbox as wide as the pill (360px at least), [hidden] restated', () => {
+test('the look: a 34px field with a 1px border and no ring at rest (A2), the open line from the search token, a listbox as wide as the field (360px at least), [hidden] restated', () => {
   assert.match(css, /--search-line:light-dark\(rgba\(221,107,77,\.45\),rgba\(240,154,124,\.45\)\);/);
-  assert.match(css, /--search-ring:light-dark\(rgba\(221,107,77,\.24\),rgba\(240,154,124,\.26\)\);/);
   const field = ruleBody('.tsearch-field');
   assert.match(field, /height:34px;/);
+  assert.match(field, /border:1px solid var\(--line\);/);
   assert.match(field, /border-radius:var\(--r-sm\);/);
-  assert.match(field, /box-shadow:0 0 0 1px var\(--line\);/);
-  assert.match(ruleBody('.tsearch.is-open .tsearch-field'), /box-shadow:0 0 0 1px var\(--search-line\),0 0 0 4px var\(--search-ring\);/);
+  assert.doesNotMatch(field, /box-shadow/);
+  assert.match(ruleBody('.tsearch.is-open .tsearch-field'), /border-color:var\(--search-line\);/);
+  assert.doesNotMatch(ruleBody('.tsearch.is-open .tsearch-field'), /box-shadow/);
   // Both buttons are .btn, whose later display:inline-flex would beat a one-class hide rule: two classes win.
   assert.equal(ruleBody('.tsearch .tsearch-open,.tsearch .tsearch-close'), 'display:none;', 'desktop: no phone buttons');
   assert.equal(ruleBody('.tsearch-kbd:empty'), 'display:none;', 'no empty chip before the script names the chord');

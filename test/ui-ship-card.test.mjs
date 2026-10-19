@@ -23,7 +23,7 @@ test('ready: the suggested mode is the primary, the summary names runs, files an
   const { el, posts } = chat({ id: 'card_00000001', state: 'proposed', card: READY });
   assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'Ship');
   assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Charts');
-  assert.deepEqual(buttons(el).map((b) => b.textContent), ['Not now', 'Stacked PRs', 'Ship as one PR']);
+  assert.deepEqual(buttons(el).map((b) => b.textContent), ['Not now', 'Stacked PRs', 'One PR']);
   assert.ok(el.querySelector('[data-act="ship-one"]').classList.contains('btn-primary'));
   assert.ok(el.querySelector('[data-act="ship-stacked"]').classList.contains('ask-card-not-now'));
   assert.ok(el.querySelector('[data-act="ship-not-now"]').classList.contains('ask-card-not-now'));
@@ -54,7 +54,7 @@ test('a 409 shows the error line, unlocks the buttons and keeps the typed versio
   el.querySelector('[data-act="ship-one"]').click(); await tick();
   assert.equal(el.querySelector('.ask-card-err').textContent, 'this feature was already shipped as one PR');
   assert.deepEqual(buttons(el).map((b) => b.disabled), [false, false, false]);
-  assert.equal(el.querySelector('[data-act="ship-one"]').textContent, 'Ship as one PR');
+  assert.equal(el.querySelector('[data-act="ship-one"]').textContent, 'One PR');
   assert.equal(el.querySelector('.release-row-text').textContent, 'Release v3.1.0 · draft after merge · ');
 });
 
@@ -103,7 +103,7 @@ test('waiting (group page): the line and no buttons; no onNotNow → no Not now'
   assert.equal(el.textContent, 'Ship card comes when all 3 runs are done, here and in the chat.');
   assert.equal(el.querySelectorAll('button').length, 0);
   const ready = renderShipCard(docOf(), { phase: 'ready', title: 'Charts', runs: 3, suggested: 'stacked', added: 2000 }, { onShip: async () => {} });
-  assert.deepEqual(buttons(ready).map((b) => b.textContent), ['Stacked PRs', 'Ship as one PR']);
+  assert.deepEqual(buttons(ready).map((b) => b.textContent), ['Stacked PRs', 'One PR']);
   assert.ok(ready.querySelector('[data-act="ship-stacked"]').classList.contains('btn-primary'));
 });
 

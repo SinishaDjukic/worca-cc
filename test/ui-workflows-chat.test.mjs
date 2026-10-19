@@ -281,8 +281,8 @@ test('an agent draft: Save posts saved+savedKey; Save & add applies its then-ops
     client: { postCard: async (id, body) => { posts.push(body); return { ok: true }; } },
     actions: { saveAgentDraft: async (d) => ({ ok: true, key: d.key }), reloadRegistry: async () => {} } });
   const el = cc.render(b);
-  assert.deepEqual([...el.querySelectorAll('.wfc-actions button')].map((x) => x.textContent), ['Edit…', 'Decline', 'Save agent', 'Save & add to canvas']);
-  [...el.querySelectorAll('button')].find((x) => x.textContent === 'Save & add to canvas').click();
+  assert.deepEqual([...el.querySelectorAll('.wfc-actions button')].map((x) => x.textContent), ['Edit…', 'Decline', 'Save agent', 'Add to canvas']);
+  [...el.querySelectorAll('button')].find((x) => x.textContent === 'Add to canvas').click();
   await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(composer.log.map((l) => l[0]), ['applyOps']);
   assert.deepEqual(posts.at(-1), { state: 'added', card: { savedKey: 'releaseNotes', added: true } });
@@ -576,7 +576,7 @@ test('a "Save & add" whose add the canvas refuses still saves, and the card says
     const cc = createCardController({ doc: dom.window.document, composer, sessionId: 'cs_ab12cd34', blocks: () => [b],
       client: { postCard: async (id, body) => { posts.push(body); return { ok: true }; } },
       actions: { saveAgentDraft: async (d) => ({ ok: true, key: d.key }), reloadRegistry: async () => {} } });
-    [...cc.render(b).querySelectorAll('button')].find((x) => x.textContent === 'Save & add to canvas').click();
+    [...cc.render(b).querySelectorAll('button')].find((x) => x.textContent === 'Add to canvas').click();
     await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
     assert.deepEqual(composer.log.map((l) => l[0]), ['applyOps']);
     const el = cc.render({ ...b, state: posts.at(-1).state });
@@ -1014,7 +1014,7 @@ test('a refused "Save & add" is said: the card and the live region tell why the 
   const draft = agentDraft('card_0000dddd', 'releaseNotes', 'Release Notes', 'proposed', { ops: [{ op: 'add_node', id: 'n_abcdefgh', kind: 'agent', key: 'releaseNotes', x: 400, y: 200 }] });
   draft.card.docToken = s.c.docToken();
   await draftTurn(s, [draft], { live: true });
-  [...s.g('wfc').querySelectorAll('button')].find((b) => b.textContent === 'Save & add to canvas').click();
+  [...s.g('wfc').querySelectorAll('button')].find((b) => b.textContent === 'Add to canvas').click();
   for (let i = 0; i < 3; i += 1) await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(s.f.calls.filter((c) => /\/cards\//.test(c.url)).at(-1).body, { state: 'saved', card: { savedKey: 'releaseNotes' } }, 'saved all the same');
   s.dock.pushFrame({ type: 'ask-card', threadId: THREAD.id, messageId: 'msg_0000bbbb', seq: 3, block: { ...draft, state: 'saved' } });   // the server's flip
@@ -1067,7 +1067,7 @@ test('another workflow opened while a draft\'s registry reload runs takes none o
     client: { postCard: async (id, body) => { posts.push(body); return { ok: true }; } },
     actions: { saveAgentDraft: async (d) => ({ ok: true, key: d.key }), notify: (o) => notes.push(o.title),
       reloadRegistry: async () => { composer.setTok('d_other001'); } } });   // the user opened another workflow meanwhile
-  [...cc.render(b).querySelectorAll('button')].find((x) => x.textContent === 'Save & add to canvas').click();
+  [...cc.render(b).querySelectorAll('button')].find((x) => x.textContent === 'Add to canvas').click();
   for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(composer.log, [], 'the other workflow takes no node');
   assert.deepEqual(posts.at(-1), { state: 'saved', card: { savedKey: 'releaseNotes' } }, 'saved all the same');

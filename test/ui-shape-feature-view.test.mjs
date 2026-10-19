@@ -134,7 +134,7 @@ test('the Ship card: the waiting line until every run is done, no buttons; the r
     ship: { ready: true, mode: null, suggested: 'one', linesAdded: 840, linesRemoved: 120, files: 12, prUrl: null, hint: null, result: null } };
   const { el, d } = mount(done, PLANS());
   const btns = [...el.querySelectorAll('[data-ship-card="ready"] button[data-act^="ship-"]')];
-  assert.deepEqual(btns.map((b) => b.textContent), ['Stacked PRs', 'Ship as one PR'], 'no Not now on the group page');
+  assert.deepEqual(btns.map((b) => b.textContent), ['Stacked PRs', 'One PR'], 'no Not now on the group page');
   assert.ok(el.querySelector('[data-act="ship-one"]').classList.contains('btn-primary'));
   assert.equal(el.querySelector('.ask-shipcard-stats').textContent, '3 runs · 12 files · +840 \u2212120');
   assert.match(el.querySelector('.ask-shipcard-why').textContent, /840 lines: one PR is easier to review/);

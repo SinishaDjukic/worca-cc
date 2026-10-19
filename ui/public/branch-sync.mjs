@@ -501,7 +501,7 @@ export function chooseSyncRefusal(data = {}) {
         body.append(h('p', { class: 'qtext', text: many ? `${m.projectName || m.projectKey}: ${line}` : line }));
       }
       if (options.includes('last-fetch')) {
-        goBtn = h('button', { type: 'button', class: 'btn btn-primary', text: 'Start anyway from last fetch' });
+        goBtn = h('button', { type: 'button', class: 'btn btn-primary', text: 'Start anyway' });
         choice = 'last-fetch';
       }
     }

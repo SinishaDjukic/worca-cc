@@ -6,7 +6,7 @@ const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 export const clarifyText = (k) => (k ? `Clarify · ${plural(k, 'answer')}` : 'Clarify · no answers');
 export const planApprovedText = (rounds) => (rounds > 0 ? `Plan approved · after ${plural(rounds, 'round')} of changes` : 'Plan approved');
 export const splitText = (n) => (n < 2 ? 'Planned as one run' : `Split into ${n} runs`);
-export const gateText = (d) => (d === 'another' ? 'Another cycle approved' : 'Continued with what you have');
+export const gateText = (d) => (d === 'another' ? 'Another cycle started' : 'Accepted as is');
 export const NOT_SPLIT_TEXT = 'Not split · planned as one run';
 export function replanText(indexes) {
   const xs = [...indexes].sort((a, b) => a - b);

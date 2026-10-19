@@ -16,6 +16,16 @@ export function createRunsSelection() {
   };
 }
 
+/** Shift-click (spec §3.2): every visible key between `anchor` and `key`, inclusive, in list order. A missing anchor
+ *  selects just `key`; a key outside `visible` selects nothing (the caller falls back to a toggle). */
+export function rangeKeys(visible, anchor, key) {
+  const a = visible.indexOf(anchor);
+  const b = visible.indexOf(key);
+  if (b < 0) return [];
+  if (a < 0) return [key];
+  return visible.slice(Math.min(a, b), Math.max(a, b) + 1);
+}
+
 /** 'toggle' | 'all' | 'clear' | null for a keydown in the list pane. ⌘A on a Mac, Ctrl+A elsewhere (either is taken). */
 export function runsKeyAction(e, { size = 0 } = {}) {
   if (e.key === 'Escape') return size > 0 ? 'clear' : null;

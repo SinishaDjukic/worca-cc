@@ -120,7 +120,7 @@ export function renderProjectTpCell(s, { doc = globalThis.document, now = Date.n
       break;
     case 'off':
       status.classList.add('muted'); status.textContent = 'Off · your settings apply';
-      actions.append(btn(doc, 'tp-enable', 'Set up team policy…'));
+      actions.append(btn(doc, 'tp-enable', 'Set up policy…'));
       break;
     case 'unsupported':
       line.append(dot(doc, 'red'));
@@ -1061,11 +1061,11 @@ export function renderPolicyEditor(policyDoc, { registry = [], doc = globalThis.
   const root = h(doc, 'div', 'tp-editor');
   root.dataset.original = JSON.stringify(canonicalDoc(src));
   // ---- tabs: the read view's pills, one section per subject, so the form is never one long scroll.
-  const tabsBar = h(doc, 'div', 'tp-tabs tp-edit-tabs'); tabsBar.setAttribute('role', 'tablist');
+  const tabsBar = h(doc, 'div', 'tp-tabs tp-edit-tabs tabs'); tabsBar.setAttribute('role', 'tablist');
   const secs = h(doc, 'div', 'tp-edit-sections');
   const tabs = [];
   const addTab = (key, label, count) => {
-    const btn = h(doc, 'button', 'tp-tab'); btn.type = 'button'; btn.dataset.sec = key; btn.setAttribute('role', 'tab');
+    const btn = h(doc, 'button', 'tp-tab tab'); btn.type = 'button'; btn.dataset.sec = key; btn.setAttribute('role', 'tab');
     btn.append(label);
     const badge = h(doc, 'span', 'tp-tab-badge'); badge.hidden = true; btn.append(badge);
     const sec = h(doc, 'div', 'tp-sec tp-edit-sec'); sec.dataset.sec = key; sec.hidden = true; sec.setAttribute('role', 'tabpanel');
@@ -1159,7 +1159,7 @@ export function renderPolicyEditor(policyDoc, { registry = [], doc = globalThis.
   const count = h(doc, 'span', 'tp-change-count', 'no changes');
   grow.append(count, ' · ');
   const vj = h(doc, 'button', 'linkish tp-view-json', 'View JSON'); vj.type = 'button';
-  const cj = h(doc, 'button', 'linkish tp-copy-json', 'Copy for a pull request'); cj.type = 'button';
+  const cj = h(doc, 'button', 'linkish tp-copy-json', 'Copy for PR'); cj.type = 'button';
   grow.append(vj, ' · ', cj);
   const publish = h(doc, 'button', 'btn btn-primary btn-sm tp-publish', 'Publish to worca-policy'); publish.type = 'button'; publish.disabled = true;
   bar.append(grow, publish);
@@ -1273,7 +1273,7 @@ export function renderWsPolicyLine(w, { doc = globalThis.document } = {}) {
   root.append(h(doc, 'span', 'tm-label', 'Team policy'));
   const actions = h(doc, 'span', 'ws-tbl-actions');
   if (home.state === 'ok') actions.append(btn(doc, 'wsp-open', 'Open policy'));
-  if (home.state === 'ok' && members.some((m) => m.state === 'none')) actions.append(btn(doc, 'wsp-route', 'Route all to policy home'));
+  if (home.state === 'ok' && members.some((m) => m.state === 'none')) actions.append(btn(doc, 'wsp-route', 'Route all'));
   actions.append(btn(doc, 'wsp-home-change', home.state === 'unset' ? 'Choose policy home…' : 'Change policy home…'));
   root.append(actions);
 

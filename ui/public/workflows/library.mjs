@@ -262,11 +262,11 @@ export function createLibrary({ doc, host, actions }) {
   /** Agents · Scripts · Workflows (registry counts) and, at the right, the section's "+" — Workflows keeps its slot. */
   function bar() {
     const row = h('div', 'wfl-bar');
-    const seg = h('div', 'wfl-seg');
+    const seg = h('div', 'wfl-seg tabs');
     seg.setAttribute('role', 'tablist');
     seg.setAttribute('aria-label', 'Library sections');
     for (const t of TOPS) {
-      const b = h('button', 'wfl-tab');
+      const b = h('button', 'wfl-tab tab');
       b.type = 'button';
       b.id = `wfl-tab-${t}`;
       b.dataset.tab = t;                                  // the tour and the proofs find a section by it

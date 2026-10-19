@@ -60,23 +60,36 @@ export function applyFlags(patch, doc) {
 }
 
 const INTERACTIVE = 'a, button, input, select, textarea, label, summary';
+const TAB_HOST = '[role="tab"], .tab, .tabs > button, .seg > button';
 
 /** D9: give a [data-flag] element its stage chip, linking to its row in Settings › Experimental.
  *  Inside the host, or right after it when the host is interactive (no link inside a button). The
- *  chip carries the host's data-flag, so it is gated exactly like the host. Idempotent. */
+ *  chip carries the host's data-flag, so it is gated exactly like the host. A tab gets a plain span
+ *  inside its label instead (review A4). A non-empty data-flag-chip value names the flag without
+ *  gating the host, so its chip is never hidden by the flag gate. Idempotent. */
 export function chip(el, doc) {
   const d = docOf(doc || (el && el.ownerDocument));
-  const key = String((el && el.dataset && el.dataset.flag) || '').split(/\s+/).find((k) => flagByKey(k));
+  const named = el && el.dataset && el.dataset.flagChip;
+  const key = String(named || (el && el.dataset && el.dataset.flag) || '').split(/\s+/).find((k) => flagByKey(k));
   if (!key || el.dataset.flagChipped) return el;
   el.dataset.flagChipped = '1';
   const f = flagByKey(key);
   const label = STAGE_LABEL[f.stage] || f.stage;
+  const title = `${f.title} is ${f.stage === 'beta' ? 'in beta' : 'experimental'}.`;
+  if (el.matches(TAB_HOST)) {
+    const s = d.createElement('span');
+    s.className = `flag-chip flag-chip-${f.stage}`;
+    s.textContent = label;
+    s.title = title;
+    el.appendChild(s);
+    return el;
+  }
   const a = d.createElement('a');
   a.className = `flag-chip flag-chip-${f.stage}`;
   a.href = `#settings/experimental/${key}`;
-  a.dataset.flag = el.dataset.flag;
+  if (el.dataset.flag) a.dataset.flag = el.dataset.flag;
   a.textContent = label;
-  a.title = `${f.title} is ${f.stage === 'beta' ? 'in beta' : 'experimental'}. Open its switch in Settings › Experimental.`;
+  a.title = `${title} Open its switch in Settings › Experimental.`;
   if (el.matches(INTERACTIVE)) el.after(a); else el.appendChild(a);
   return el;
 }

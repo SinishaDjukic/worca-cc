@@ -309,7 +309,7 @@ test('chat run card question: the run page body mounts through controls.paintQue
       assert.equal($('.chat-rc-receipt').hidden, false);
       assert.equal($('.chat-rc-receipt summary').textContent, 'Answered · Planner');
     } },
-    { name: 'the real gate card posts {decision} itself and the receipt names it: Another cycle approved; the step head says it once', run: async () => {
+    { name: 'the real gate card posts {decision} itself and the receipt names it: Another cycle started; the step head says it once', run: async () => {
       const pq = { id: 'rc-gate-1', kind: 'gate', nodeId: 'n_impl', issues: [] };
       const q = stepStub(pq, renderGateCard);
       const answers = [];
@@ -322,7 +322,7 @@ test('chat run card question: the run page body mounts through controls.paintQue
       assert.deepEqual(q.log.posts, [{ decision: 'another' }]);
       assert.deepEqual(answers, [], 'the card\'s delegate never double-posts a step card');
       card.update(live());
-      assert.equal($('.chat-rc-receipt summary').textContent, 'Another cycle approved');
+      assert.equal($('.chat-rc-receipt summary').textContent, 'Another cycle started');
       forgetAnswer('run-uuid-1', pq.id);
     } },
     { name: 'approving the real plan and Split cards leaves "Plan approved" and "Split into 3 runs"; none reads "Answered"', run: async () => {
@@ -468,8 +468,8 @@ test('chat run card helpers: progressIdent, runRefOf, autoChip, resultWord, answ
       assert.equal(resultWord({ status: 'running' }), null);
       assert.equal(resultWord({ status: 'interrupted' }), null, 'resumable: no result region');
       noteAnswer('run-a', { id: 'rc-named-1', kind: 'gate', issues: [] }, { decision: 'continue' });
-      assert.equal(answerReceipt(null, { id: 'rc-named-1', runId: 'run-a', step: 'Review' }), 'Continued with what you have', 'the named note wins');
-      assert.equal(answerReceipt({ kind: 'gate', payload: { decision: 'continue' } }, { id: 'rc-named-1', runId: 'run-a', step: 'Review' }), 'Continued with what you have');
+      assert.equal(answerReceipt(null, { id: 'rc-named-1', runId: 'run-a', step: 'Review' }), 'Accepted as is', 'the named note wins');
+      assert.equal(answerReceipt({ kind: 'gate', payload: { decision: 'continue' } }, { id: 'rc-named-1', runId: 'run-a', step: 'Review' }), 'Accepted as is');
       assert.equal(answerReceipt(null, { id: 'rc-named-1', runId: 'run-b', step: 'Review' }), 'Answered · Review', 'another run\'s note never names this one');
       forgetAnswer('run-a', 'rc-named-1');
       assert.equal(namedAnswer('run-a', 'rc-named-1'), null);
@@ -737,7 +737,7 @@ function askMounts(kind) {
   return { chat: card.el.querySelector('.chat-rc-q'), runs: runs.querySelector('.rd-questions') };
 }
 
-test('chat run card CSS: every card of the question is white (var(--panel)) with the 1px amber line, the Runs page keeps its grey line, and no amber wash anywhere in the chat question', async () => {
+test('chat run card CSS: one border level (review B2): the question\'s boxes are tinted, not boxed (the question amber, the form --field), the pill footer keeps its 1px amber line, the Runs page keeps its grey line, and no amber wash anywhere in the chat question', async () => {
   const look = (el) => ({ bg: cascaded(el, ['background', 'background-color']), line: cascaded(el, ['border', 'border-color']) });
   await checkRows(ASK_KINDS.map((kind) => ({ name: kind, run: () => {
     const { chat, runs } = askMounts(kind);
@@ -751,7 +751,11 @@ test('chat run card CSS: every card of the question is white (var(--panel)) with
       return [panel];
     };
     assert.equal(cards(chat).length, kind === 'clarify' || kind === 'form' ? 2 : 1);
-    for (const el of cards(chat)) assert.deepEqual(look(el), { bg: 'var(--panel)', line: 'var(--amber-line)' }, `chat ${el.className}`);
+    for (const el of cards(chat)) {
+      const want = el.matches('.qpanel-foot') ? { bg: 'var(--panel)', line: 'var(--amber-line)' }
+        : { bg: el.matches('.af-form') ? 'var(--field)' : 'var(--amber-bg)', line: '0px' };
+      assert.deepEqual(look(el), want, `chat ${el.className}`);
+    }
     for (const el of cards(runs)) assert.deepEqual(look(el), { bg: 'var(--panel)', line: '1px solid var(--line)' }, `Runs page ${el.className}`);
     if (kind === 'clarify' || kind === 'form') {
       assert.deepEqual(look(chat.querySelector('.qpanel')), { bg: 'none', line: '0px' }, 'the stack itself draws nothing');
@@ -837,7 +841,7 @@ test('chat run card: a receipt with nothing to expand is no tab stop and does no
   await settle();
   g.card.update(live({ pendingQuestion: null }));
   const sum = g.$('.chat-rc-receipt summary');
-  assert.equal(sum.textContent, 'Another cycle approved');
+  assert.equal(sum.textContent, 'Another cycle started');
   forgetAnswer('run-uuid-1', gpq.id);
   assert.equal(sum.tabIndex, -1);
   sum.click();
@@ -930,7 +934,7 @@ test('member rows CSS: the narrow grid areas are the page table\'s only, so the 
   // Chrome, 375 px: an unscoped `.run-member-title{grid-area:title}` put the chat card's title and line in one implicit
   // cell, drawn over each other at the right edge (the plain list has no grid-template-areas).
   const rules = [...css.matchAll(/([^{}]+)\{grid-area:[a-z]+\}/g)].map((m) => m[1].trim()).filter((s) => /\.run-member/.test(s));
-  assert.ok(rules.length >= 7, `the narrow table's area rules (${rules.length})`);
+  assert.ok(rules.length >= 6, `the narrow table's area rules (${rules.length})`);
   for (const sel of rules) assert.ok(sel.startsWith('.run-members.is-table '), sel);
 });
 

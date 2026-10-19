@@ -47,7 +47,7 @@ export function auditGroupPageLayout(root, env, doc) {
       out.push({ rule: 'edges', selector: s === '.run-members.is-table' ? '.run-members' : s, left: r.left, right: r.right, want: [ref.left, ref.right] });
     }
   }
-  const opens = [...root.querySelectorAll('.run-members.is-table .run-member-open')].filter((e) => !e.closest('[hidden]'));
+  const opens = [...root.querySelectorAll('.run-members.is-table .run-member-go')].filter((e) => !e.closest('[hidden]'));
   const rights = opens.map((e) => rect(e).right);
   if (rights.length > 1 && Math.max(...rights) - Math.min(...rights) > 1) out.push({ rule: 'open-column', rights });
   const vw = (env && env.viewport && env.viewport.width) || (doc && doc.defaultView ? doc.defaultView.innerWidth : Infinity);

@@ -25,14 +25,14 @@ test('fails on a right edge 6px off (Known bug 5), a menu off-screen (Known bug 
   assert.deepEqual(auditRunsLayout(doc.getElementById('l'), bad, doc).map((p) => p.rule).sort(), ['fact-twice', 'off-screen', 'right-edge']);
 });
 
-test('group page: title, card, tabs and table share edges; Open buttons line up', () => {
+test('group page: title, card, tabs and table share edges; the row chevrons line up', () => {
   const doc = new JSDOM(`<!doctype html><body><div class="gpage"><header class="gpage-head"></header><section class="gpage-card"></section>
     <nav class="gpage-tabs"></nav><div class="gpage-panel"><ol class="run-members is-table">
-    <li class="run-member"><a class="run-member-open">Open</a></li><li class="run-member"><a class="run-member-open">Open</a></li></ol></div></div></body>`).window.document;
+    <li class="run-member"><span class="run-member-go"></span></li><li class="run-member"><span class="run-member-go"></span></li></ol></div></div></body>`).window.document;
   const rects = new Map([['.gpage-head', R(20, 980, 0, 40)], ['.gpage-card', R(20, 980, 50, 200)], ['.gpage-tabs', R(20, 980, 210, 240)], ['.run-members', R(20, 980, 250, 330)]]);
   const opens = [R(920, 980, 260, 288), R(920, 980, 300, 328)];
-  const openEls = [...doc.querySelectorAll('.run-member-open')];
-  const env = { rect: (e) => (e.classList.contains('run-member-open') ? opens[openEls.indexOf(e)] : rects.get([...rects.keys()].find((k) => e.matches(k)))),
+  const openEls = [...doc.querySelectorAll('.run-member-go')];
+  const env = { rect: (e) => (e.classList.contains('run-member-go') ? opens[openEls.indexOf(e)] : rects.get([...rects.keys()].find((k) => e.matches(k)))),
     viewport: { width: 1000, height: 800 } };
   assert.deepEqual(auditGroupPageLayout(doc.querySelector('.gpage'), env, doc), []);
   opens[1] = R(900, 960, 300, 328);

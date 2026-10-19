@@ -141,15 +141,18 @@ test('#feature/:id renders the group page with the Shaper flag off, without Over
   assert.equal(gp.querySelector('.rd-tab[data-tab="overview"]').hidden, true);
 });
 
-test('a finished member\'s Open goes to its History page, not back to the group page', async () => {
+test('a finished member\'s row goes to its History page, not back to the group page', async () => {
   const hist = [{ id: 'p1', projectKey: 'acme', title: 'Slice 1', status: 'done', mtime: Date.now() }];
   const h = (url, o) => (url.startsWith('/api/history') ? json({ pipelines: hist }) : handler(url, o));
   const ctx = await boot(h);
   await ctx.settle(4);
   ctx.go('feature/feat_1');
   await ctx.settle(6);
-  const open = pageOf(ctx).querySelector('.run-member[data-key="p1"] .run-member-open');
-  assert.equal(open.getAttribute('href'), '#history/acme/p1');
+  const link = pageOf(ctx).querySelector('.run-member[data-key="p1"] .run-member-title');
+  assert.equal(link.getAttribute('href'), '#history/acme/p1');
+  link.click();
+  await ctx.settle(6);
+  assert.equal(ctx.window.location.hash, '#history/acme/p1', 'clicking the row\'s link opens the run');
 });
 
 test('Ship on a ready user group opens Ship it for its first ready run; the page\'s address stays', async () => {
