@@ -22,7 +22,7 @@ import path from 'node:path';
 
 const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium',
-  'C:\Program Files\Google\Chrome\Application\chrome.exe'];
+  'C:/Program Files/Google/Chrome/Application/chrome.exe'];
 const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p)) || CHROME_PATHS[0];
 const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0
   ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
@@ -131,17 +131,28 @@ async function openPage(url) {
 const A = await openPage(`${base}/#chat`);
 const navShown = () => A.evalJs(`(() => { const b = document.querySelector('.nav button[data-nav="requirements"]'); return !!b && getComputedStyle(b).display !== 'none'; })()`);
 const until = async (fn, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await fn()) return true; await sleep(100); } return false; };
-await until(async () => A.evalJs('!!window.__np && !!window.__np.flags'), 15000);
+const booted = await until(async () => A.evalJs('!!window.__np && !!window.__np.flags'), 15000);
+check('the app booted (window.__np.flags exists)', booted);
+if (!booted) await shutdown(1);
+// Not vacuous: the nav row must exist in the DOM (so "hidden" is a real computed style) and the server must
+// report the flag registered and off before "no row" counts; then give the hello frame a moment to land.
+const navExists = () => A.evalJs(`!!document.querySelector('.nav button[data-nav="requirements"]')`);
+const flagOff = () => A.evalJs(`fetch('/api/flags').then((r) => r.json()).then((d) => (d.flags || []).some((f) => f.key === 'requirements' && f.on === false))`);
+check('flag off (precondition): the nav row exists in the DOM and the server reports the flag off',
+  await until(async () => (await navExists()) && (await flagOff()), 8000));
+await sleep(500);
 check('flag off: no Requirements row', !(await navShown()));
 await A.evalJs(`window.__np.flags.set('requirements', true)`);
 check('flag on: the row appears without a reload', await until(navShown, 2000));
 await A.evalJs(`location.hash = '#requirements/new'`);
 check('the new-feature form renders', await until(() => A.evalJs(`!!document.getElementById('req-new-title')`)));
-await A.evalJs(`(() => { const sel = document.getElementById('req-new-target');
-  const opt = [...sel.options].find((o) => o.text === 'shop'); if (opt) sel.value = opt.value;
+const filled = await A.evalJs(`(() => { const sel = document.getElementById('req-new-target');
+  const opt = [...sel.options].find((o) => o.text === 'shop'); if (!opt) return false; sel.value = opt.value;
   document.getElementById('req-new-title').value = 'Cancel an order';
   document.getElementById('req-new-desc').value = 'Customers cancel before it ships';
-  [...document.querySelectorAll('.req-new .btn-go')].at(-1).click(); })()`);
+  [...document.querySelectorAll('.req-new .btn-go')].at(-1).click(); return true; })()`);
+check("the target select offers the 'shop' project", filled);
+if (!filled) await shutdown(1);
 check('round 1 asks (mock): the question card shows', await until(() => A.evalJs(`!!document.querySelector('#requirements-host .qpanel .qopt')`)));
 await A.evalJs(`document.querySelector('#requirements-host .req-skip').click()`);
 check('after answering, the spec has R-po-1 and the interview is done',
