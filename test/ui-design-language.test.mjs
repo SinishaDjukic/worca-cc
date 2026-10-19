@@ -3,9 +3,11 @@
 // gradients or accent borders.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { JSDOM } from 'jsdom';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Comments blanked but newlines kept, so a rule's line number is its real line.
@@ -217,4 +219,40 @@ test('the scan helpers: comments are stripped, data- attributes and longer class
   assert.equal(rules('@media (x){.a{b:1}}.c{d:2}').map((r) => r.sel).join(), '.a,.c');
   assert.deepEqual(splitTop('0 0 0 1px color-mix(in srgb, var(--c) 5%, red),var(--shadow-pop)'),
     ['0 0 0 1px color-mix(in srgb, var(--c) 5%, red)', 'var(--shadow-pop)']);
+});
+
+// Known bug 10 (spec): rules slices 3 and 4 removed must not come back with a merge. Classes deleted from style.css
+// by d9a6ba81 (the Runs list) and 67f3eca8 (the run page), and ids deleted from index.html.
+const REMOVED_RUNS = [
+  'hist-filter', 'pal-filter', 'pill-count', 'runs-chain', 'runs-chain-glyph', 'runs-chain-member', 'runs-chain-members',
+  'runs-chain-pr', 'runs-chain-toggle', 'runs-chev', 'runs-filter', 'runs-glyph', 'runs-group', 'runs-group-btn',
+  'runs-group-head', 'runs-group-rows', 'runs-group-wrap', 'runs-head-tools', 'runs-ic', 'runs-ic-ask', 'runs-ic-done',
+  'runs-ic-fail', 'runs-ic-paused', 'runs-ic-run', 'runs-ic-scheduled', 'runs-ic-start', 'runs-ic-stop', 'runs-needs',
+  'runs-needs-head', 'runs-people', 'runs-row-body', 'runs-row-tags', 'runs-search', 'runs-search-btn', 'runs-search-row',
+  'runs-tag-wrap',
+  'rd-now-elapsed', 'rd-now-state', 'rd-now-sub', 'rd-now-text', 'rd-now-title', 'rd-orb', 'rd-prog', 'rd-prog-chain',
+  'rd-slice-line', 'rd-slice-link',
+  // ids removed from index.html that are not also class names above
+  'historyFilter', 'runs-archived-btn', 'runs-tag',
+];
+test('no Runs list or run page rule removed by the redesign comes back (Known bug 10)', () => {
+  assert.deepEqual([...new Set(REMOVED_RUNS)].flatMap((c) => scan(classRe(c)).map((h) => `${c} — ${h}`)), []);
+});
+test('the removed-selector scan flags a reappearance (self-test)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wdl-'));
+  const f = join(dir, 'x.css');
+  writeFileSync(f, '/* .runs-search in a comment is fine */\n.runs-search { display: flex; }\n.run-prog { }\n');
+  try {
+    assert.deepEqual(scan(classRe('runs-search'), [f]).map((h) => h.replace(/^.*x\.css:/, '')), ['2: .runs-search { display: flex; }']);
+    assert.deepEqual(scan(classRe('rd-prog'), [f]), [], 'run-prog is a live class, not rd-prog');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+test('the Runs header holds no search field or filter row (spec §3.1, Known bug 10 layout)', () => {
+  const doc = new JSDOM(readFileSync(join(ROOT, 'ui/public/index.html'), 'utf8')).window.document;
+  const head = doc.querySelector('.runs-head');
+  assert.ok(head, 'the Runs header exists');
+  // Slice 3's select-all checkbox (input.runs-check.runs-all, ui/public/index.html:671) belongs there; any other
+  // input (text, search, a bare <input>) is the old search field coming back.
+  assert.deepEqual([...head.querySelectorAll('input:not([type="checkbox"]), .runs-filter, .runs-search-row')].map((e) => e.outerHTML.slice(0, 80)), []);
+  assert.equal(doc.querySelector('#runs-search, #runs-filter, #historyFilter'), null);
 });

@@ -16,6 +16,7 @@
 import { formatInstant, formatCountdown } from '../../src/shared/schedule/recurrence.mjs';
 import { openScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
 import { splitMessage } from './feedback.mjs';
+import { actionError, httpError } from './action-errors.mjs';
 
 const ICON = {
   clock: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path></svg>',
@@ -61,7 +62,7 @@ async function api(method, url, body) {
   const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   let data = {};
   try { data = await res.json(); } catch { /* empty body */ }
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) throw httpError(res, data);
   return data;
 }
 
@@ -100,10 +101,14 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
   const when = (iso) => formatInstant(Date.parse(iso), tz);
   const countdown = (iso) => formatCountdown(Date.parse(iso) - Date.now());
 
-  async function act(fn, okText = '') {
+  /** `what` completes "Could not …" (D8): the failure toast then names the action and the next step. */
+  async function act(fn, okText = '', what = '') {
     say('');
     try { await fn(); if (okText) say(okText, 'ok'); }
-    catch (err) { say(err.message, 'err'); }
+    catch (err) {
+      if (what && deps.notify) deps.notify(actionError(what, err));
+      else say(err.message, 'err');
+    }
     await load();
   }
 
@@ -187,7 +192,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
         const out = await api('POST', `/api/schedules/${t.id}/run-now`);
         if (out.status === 'failed') throw new Error(out.failReason || 'The run could not be started.');
         if (out.status === 'fired' && deps.openRun) deps.openRun(out.resume ? { runId: out.runId, pipelineId: out.pipelineId } : { runId: out.runId });
-      }, 'Run started'));
+      }, 'Run started', 'start the run now'));
       acts.append(runNow);
       if (!t.scheduleId) {
         const move = h('button', { type: 'button', class: 'btn btn-sm', text: chained ? 'Change…' : (missed ? 'Reschedule' : 'Change time') });
@@ -218,7 +223,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
             cancel.disabled = false;
             if (!(await deps.confirmModal({ title: 'Cancel scheduled run', message: `Cancel “${t.title || 'this run'}”?\nIt will not start. Nothing has run yet, so there is nothing to clean up.${note}`, confirmLabel: 'Cancel run' }))) return;
           }
-          act(() => api('DELETE', `/api/schedules/${t.id}`), 'Schedule cancelled');
+          act(() => api('DELETE', `/api/schedules/${t.id}`), 'Schedule cancelled', missed ? 'dismiss the missed run' : 'cancel the waiting run');
         });
         acts.append(move, cancel);
       }
@@ -262,7 +267,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
         const out = await api('POST', `/api/schedules/${s.id}/run-now`);
         if (out.status === 'failed') throw new Error(out.failReason || 'The run could not be started.');
         if (out.status === 'fired' && deps.openRun) deps.openRun({ runId: out.runId });
-      }, 'Run started'));
+      }, 'Run started', 'start the run now'));
       const skip = h('button', { type: 'button', class: 'btn btn-sm', text: 'Skip next', hidden: paused });
       skip.addEventListener('click', () => act(() => api('POST', `/api/schedules/${s.id}/skip-next`), 'Next run skipped'));
       const edit = h('button', { type: 'button', class: 'btn btn-sm', text: 'Edit' });
@@ -354,7 +359,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     const acts = h('div', { class: 'sched-feed-acts' });
     if (!n.resolvedAt && n.kind === 'missed' && ticket && ticket.status === 'missed') {
       const b = h('button', { type: 'button', class: 'btn btn-sm', text: 'Run now' });
-      b.addEventListener('click', () => act(() => api('POST', `/api/schedules/${ticket.id}/run-now`), 'Run started'));
+      b.addEventListener('click', () => act(() => api('POST', `/api/schedules/${ticket.id}/run-now`), 'Run started', 'start the run now'));
       acts.append(b);
     }
     if (!n.resolvedAt && n.kind === 'paused' && series && series.status === 'paused') {

@@ -338,7 +338,8 @@ test('#feature whose first load fails says so instead of loading forever', async
 
 test('#feature for an unknown id says the feature no longer exists', async () => {
   const { page } = await openFeaturePage();
-  assert.equal(page.querySelector('.feature-page-gone').textContent, 'This feature no longer exists.');
+  // §5a.2: the gone text offers a way back to the Runs list.
+  assert.equal(page.querySelector('.feature-page-gone').textContent, 'This feature no longer exists. Open the Runs list');
 });
 
 test('#feature with the gate off still renders the group page, without Overview (slice 4, D16)', async () => {

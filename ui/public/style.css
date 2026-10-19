@@ -4554,6 +4554,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .runs-row-prog[data-tone="red"] > i{background:var(--red);}
 .runs-note{margin:0;padding:18px 12px;color:var(--ink-2);font-size:13px;text-align:center;}
 .runs-note-err{color:var(--red-ink);}
+.runs-note-err .runs-retry{margin-left:8px;}
 .runs-pane{position:relative;min-width:0;min-height:0;background:var(--bg);}
 .runs-pane > :is(.run-shell,.hist-shell){position:absolute;inset:0;}
 /* Two rules, not one grouped selector (the ui-ask-clearance test that read each by `<sel>{` is gone). */
@@ -6753,6 +6754,20 @@ a.ask-card-task-title:hover{text-decoration-color:currentColor;}
 .level-banner .btn{margin-left:auto;}
 body.view-runs .level-banner,body.view-projects .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
+
+/* Runs redesign §5a.2: the one "server unreachable" banner (connection-state.mjs), every view. */
+.conn-banner{display:flex;align-items:center;gap:12px;padding:8px 16px;background:var(--panel);
+  color:var(--ink);border-bottom:1px solid var(--line);border-radius:0;}
+.conn-banner[hidden]{display:none;}
+.conn-banner-text{flex:1 1 auto;min-width:0;}
+
+/* Runs redesign §5a.9: the one-time What's new note above the Runs list (whats-new.mjs). */
+.whats-new{display:flex;align-items:flex-start;gap:12px;padding:12px 16px;margin:0 0 12px;
+  border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);}
+.whats-new-text{flex:1 1 auto;min-width:0;}
+.whats-new-title{margin:0 0 4px;font-weight:600;}
+.whats-new-body{margin:0;color:var(--ink-2);}
+@media (max-width:600px){.whats-new{flex-wrap:wrap;}}
 
 /* Simple hides the Target switch, which leaves .split-row's picker alone in the row: auto-placement
    would drop it into the narrow first track, so the row becomes one full-width column. */
@@ -9330,6 +9345,9 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 /* D16: the feature page (#feature/ID), full width; one bar part per slice, tinted by its state. */
 .feature-page{padding:16px 20px;}
 .feature-page-gone,.feature-page-loading{color:var(--ink-3);}
+/* §5a.2: the group page could not load (server unreachable): the error and a Try again on one line. */
+.feature-page-error{color:var(--red-ink);}
+.feature-page-error .btn{margin-left:8px;}
 .shape-feature.is-page{width:100%;box-sizing:border-box;font-size:14px;}
 .shape-feature-segs{display:flex;gap:3px;height:8px;}
 .shape-feature-seg{flex:1 1 0;border-radius:var(--r-sm);background:var(--line);}

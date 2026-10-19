@@ -595,6 +595,20 @@ export function findRunLinksByPipeline(pipelineId) {
   return prepare('SELECT * FROM ask_run_links WHERE pipeline_id = ? ORDER BY created_at DESC, run_id').all(pipelineId).map(rowToRunLink);
 }
 
+/** An old `#running/<runId>` link (chat history) → its saved run: `{ pipelineId, historyKey }` (the `#history/` key,
+ *  as listAllPipelines builds it), or null when no chat ever linked that id or the run was deleted. A resumed run's
+ *  link row carries the new runId (updateRunLink), so a link from before the resume cannot resolve. */
+export function runLinkTarget(runId) {
+  getDb();
+  if (typeof runId !== 'string' || !runId) return null;
+  const r = prepare(`SELECT p.id, p.target, p.project_key, p.workspace_key FROM ask_run_links l
+    JOIN pipelines p ON p.id = l.pipeline_id
+    WHERE l.run_id = ? AND p.deleted_at IS NULL ORDER BY l.created_at DESC LIMIT 1`).get(runId);
+  if (!r) return null;
+  const historyKey = r.target === 'workspace' && r.workspace_key ? `workspaces/${r.workspace_key}` : r.project_key || null;
+  return historyKey ? { pipelineId: r.id, historyKey } : null;
+}
+
 export function listRunLinks(threadId) {
   getDb();
   return prepare('SELECT * FROM ask_run_links WHERE thread_id = ? ORDER BY created_at DESC, run_id').all(threadId).map(rowToRunLink);

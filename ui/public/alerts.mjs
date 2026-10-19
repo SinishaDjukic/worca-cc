@@ -52,6 +52,14 @@ const DOT_COLOR = '#e5484d';
 export function kindTitle(kind) {
   return TITLE_PREFIX + (Object.hasOwn(KIND_TITLES, kind) ? KIND_TITLES[kind] : GENERIC_TITLE);
 }
+/** §5a.5: with the list row's status line, the title names the run and the body is that line; without one (older
+ *  callers), the kind title and the run's name, as before. Never the question's text (askWhat is generic). */
+function runCopy(run, kindTitleText) {
+  if (!run.line) return { title: kindTitleText, body: run.title || run.runId };
+  return { title: run.title ? `${TITLE_PREFIX}${run.title}` : kindTitleText, body: run.line };
+}
+const runTarget = (run) => (run.href ? { runId: run.runId, href: run.href } : { runId: run.runId });
+
 export function questionTag(runId, questionId) { return `worca:${runId}:${questionId}`; }
 /** The title for a pause that waits on a person, or null. */
 export function pauseTitle(reason) {
@@ -231,13 +239,15 @@ export function createAlerts({ Notification: N = null, doc, nav = {}, storage = 
     onQuestion(run, msg, { backfill = false } = {}) {
       if (!run || !run.runId || !msg) return;
       const tag = questionTag(run.runId, msg.id != null ? msg.id : msg.kind);
-      notifyOnce(tag, kindTitle(msg.kind), run.title || run.runId, { runId: run.runId }, backfill && looking());
+      const { title, body } = runCopy(run, kindTitle(msg.kind));
+      notifyOnce(tag, title, body, runTarget(run), backfill && looking());
     },
     /** A run paused for `reason`. `backfill`: as for onQuestion. */
     onPaused(run, reason, { backfill = false } = {}) {
-      const title = pauseTitle(reason);
-      if (!run || !run.runId || !title) return;
-      notifyOnce(pauseTag(run.runId), title, run.title || run.runId, { runId: run.runId }, backfill && looking());
+      const kind = pauseTitle(reason);
+      if (!run || !run.runId || !kind) return;
+      const { title, body } = runCopy(run, kind);
+      notifyOnce(pauseTag(run.runId), title, body, runTarget(run), backfill && looking());
     },
     /** Any Ask Worca frame: a card that is `proposed` waits for an OK; any other state settles it. */
     onAskFrame(frame) {

@@ -522,3 +522,21 @@ test('card: a throwing localStorage does not break the card', async () => {
   await assert.doesNotReject(() => a.flip('#alertsNotify'));
   await assert.doesNotReject(() => a.flip('#alertsBadge'));
 });
+
+// ── §5a.5: an alert says what the list says ───────────────────────────────────
+
+test('a run with a status line: title names the run, body is the line, click opens its href (§5a.5)', () => {
+  const a = setup();
+  a.alerts.onQuestion({ ...RUN, line: 'Plan · needs you: answer 2 questions', href: '#feature/feat_1' }, Q('q1', 'questions'));
+  assert.equal(a.N.shown[0].title, 'Worca: Fix the login bug');
+  assert.equal(a.N.shown[0].body, 'Plan · needs you: answer 2 questions');
+  a.N.shown[0].onclick({ preventDefault() {} });
+  assert.deepEqual(a.opened, [{ runId: 'r1', href: '#feature/feat_1' }]);
+});
+
+test('a paused run with a status line uses it too; an untitled one keeps the kind title', () => {
+  const a = setup();
+  a.alerts.onPaused({ runId: 'r2', title: '', line: 'Paused · usage limit' }, 'usage_limit');
+  assert.equal(a.N.shown[0].title, 'Worca: Usage limit reached');
+  assert.equal(a.N.shown[0].body, 'Paused · usage limit');
+});

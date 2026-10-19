@@ -383,3 +383,18 @@ test('D23: a History row whose Watch PR stopped for a person lists under Needs y
   assert.equal(needsYouItems({ history: [{ id: 'h1', status: 'done', pr, watch: { status: 'needs-person', reason: 'cap', fixRuns: 3 } }] }).history.length, 1);
   assert.equal(needsYouItems({ history: [{ id: 'h1', status: 'done', pr: { ...pr, checks: FAIL }, watch: { status: 'fixing' } }] }).history.length, 0);
 });
+test('renderRunsList: loading, offline-empty and the retry note (§5a.2)', () => {
+  const empty = buildRunsModel({ now: NOW });
+  const text = (out) => out.map((e) => `${e.className}|${e.textContent}`);
+  assert.deepEqual(text(renderRunsList(doc, empty, { loading: true })), ['runs-note runs-loading|Loading runs…']);
+  assert.deepEqual(text(renderRunsList(doc, empty, { offline: true })), ["runs-note runs-offline|The runs show here once Worca's server is reachable again."]);
+  assert.deepEqual(text(renderRunsList(doc, empty, {})), ['runs-note|No runs yet.']);
+  const [, err] = renderRunsList(doc, empty, { note: 'Could not load finished runs: boom.', retry: true });
+  assert.equal(err.querySelector('button[data-runs-retry]').textContent, 'Try again');
+  const full = buildRunsModel({ history: [{ id: 'p1', projectKey: 'k', title: 'A', status: 'done', run: { status: 'done' } }], now: NOW });
+  assert.equal(renderRunsList(doc, full, { loading: true, offline: true }).filter((e) => /runs-(loading|offline)/.test(e.className)).length, 0,
+    'rows on screen: no loading or offline note (the banner says it)');
+  const needs = buildRunsModel({ history: [{ id: 'p1', projectKey: 'k', title: 'A', status: 'done', run: { status: 'done' } }], show: 'needs', now: NOW });
+  assert.deepEqual(text(renderRunsList(doc, needs, { loading: true, offline: true })), ['runs-note|Nothing needs you.'],
+    'a Show-filtered empty view with rows elsewhere keeps its own note');
+});

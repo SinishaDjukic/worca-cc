@@ -160,7 +160,7 @@ test('chat run card controls: Pause / Resume / Stop through `controls`, disabled
       await settle();
       assert.deepEqual(seen, [['run-uuid-1', $('.chat-rc-pause')]]);
       assert.equal($('.chat-rc-err').hidden, false);
-      assert.equal($('.chat-rc-err').textContent, 'Could not pause: CANNOT_PAUSE');
+      assert.equal($('.chat-rc-err').textContent, 'Could not pause: CANNOT_PAUSE. Try again.');
     } },
     { name: 'an accepted pause keeps Pause off while the run still reads running (one POST); the next status re-arms the button', run: async () => {
       let n = 0;
@@ -262,7 +262,7 @@ test('chat run card question: the run page body mounts through controls.paintQue
       $('.chat-rc-q .btn-primary').click();
       await settle();
       assert.equal($('.chat-rc-q-err').hidden, false);
-      assert.equal($('.chat-rc-q-err').textContent, 'Answer not sent');
+      assert.equal($('.chat-rc-q-err').textContent, 'Answer not sent. It is still in the form; check the connection and send it again.');
       assert.equal($('.chat-rc-receipt').hidden, true);
       assert.ok($('.chat-rc-q .btn-primary'), 'the form is still there');
     } },

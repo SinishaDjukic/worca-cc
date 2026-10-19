@@ -10,6 +10,7 @@ import { buildRunsModel, renderRunsList } from '../ui/public/runs-list.mjs';
 import { createChatRunCard } from '../ui/public/chat/run-card.mjs';
 import { paintRunStatus, syncActions, statusText } from '../ui/public/run-status-card.mjs';
 import { buildGroupPage, paintGroupPage } from '../ui/public/group-page.mjs';
+import { createAlerts, ALERT_KEYS } from '../ui/public/alerts.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
 import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
 import * as hd from './helpers/history-detail-boot.mjs';
@@ -81,6 +82,26 @@ test('§5.3 one model: list row, chat card and run page agree for every §2.1 st
     assert.deepEqual(card.actions, m.actions, 'card: the model actions, in order');
     assert.deepEqual(page.actions, m.actions, 'page: the model actions, in order');
   } })));
+});
+
+// §5a.5: the Needs you alert says what the list row and the card say. The fake Notification, hidden tab and notify
+// flag are test/alerts.test.mjs setup()'s, copied here (no shared harness, by convention).
+test('§5a.5 one model: a Needs you alert\'s body equals the card\'s and the list row\'s data-line', () => {
+  const row = RUN_STATE_ROWS.find((r) => r.state === 'needs-you');
+  const dom = trackDom(new JSDOM('<!doctype html><head><title>Worca</title></head><body></body>'));
+  const doc = dom.window.document;
+  Object.defineProperty(doc, 'visibilityState', { configurable: true, get: () => 'hidden' });
+  doc.hasFocus = () => false;
+  class N { constructor(title, opts = {}) { this.title = title; this.body = opts.body; N.shown.push(this); } close() {} }
+  N.shown = [];
+  N.permission = 'granted';
+  const store = new Map([[ALERT_KEYS.notify, '1']]);
+  const alerts = createAlerts({ Notification: N, doc, storage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) },
+    win: Object.assign(new dom.window.EventTarget(), { focus() {} }), drawFavicon: () => Promise.resolve(null) });
+  alerts.onQuestion({ runId: 'r1', title: 'Store tags', line: runModel(row.run, { now: NOW, timeZone: 'UTC' }).line }, { id: 'q1', kind: row.run.pendingQuestion.kind });
+  assert.equal(N.shown.length, 1);
+  assert.equal(N.shown[0].body, cardFacts(doc, row.run).line, 'the card\'s data-line');
+  assert.equal(N.shown[0].body, listFacts(doc, row.run, row.state).line, 'the list row\'s data-line');
 });
 
 const FAIL = { state: 'failing', total: 12, failed: 3, pending: 0 };

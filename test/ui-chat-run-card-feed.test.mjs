@@ -154,6 +154,68 @@ test('controller: a started run proposal learns its pipeline id from the store, 
   ]);
 });
 
+test('controller: the first load says loading, deleted or unreachable; a painted card keeps its paint (§5a.2)', async () => {
+  const LOADING = 'Loading run…';
+  const DELETED = 'This run was deleted. The chat keeps what was said about it.';
+  const UNREACHABLE = "Could not load this run: Worca's server could not be reached. The card fills in when it is back.";
+  const reasonOf = (built) => { const r = built.el.querySelector('.ask-rc-reason'); return r.hidden ? '' : r.textContent; };
+  const card = (handler, { now } = {}) => {
+    const { doc, ctx } = env(handler);
+    const ctl = createRunCardController({ controls: {}, runStore: fakeStore(), tickMs: 0, ...(now ? { now } : {}) });
+    const built = ctl.build(BLOCK, ctx);
+    doc.body.appendChild(built.el);
+    return { ctl, built };
+  };
+  await checkRows([
+    { name: 'in flight: Loading run…', run: async () => {
+      const { ctl, built } = card(() => new Promise(() => {}));
+      await settle();
+      assert.equal(reasonOf(built), LOADING);
+      ctl.destroy();
+    } },
+    { name: 'a 404: the run was deleted', run: async () => {
+      const { ctl, built } = card(() => ({ ok: false, status: 404, json: async () => ({}) }));
+      await settle();
+      assert.equal(reasonOf(built), DELETED);
+      ctl.destroy();
+    } },
+    { name: 'a network error: unreachable', run: async () => {
+      const { ctl, built } = card(() => Promise.reject(new TypeError('Failed to fetch')));
+      await settle();
+      assert.equal(reasonOf(built), UNREACHABLE);
+      ctl.destroy();
+    } },
+    { name: 'painted, then the server goes: the last paint stays, no reason', run: async () => {
+      let t = 1000;
+      let up = true;
+      const { ctl, built } = card(() => (up ? ok({ state: STATE({ status: 'running' }), live: null, extras: null }) : Promise.reject(new TypeError('Failed to fetch'))), { now: () => t });
+      await settle();
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working');
+      up = false;
+      t += PROGRESS_REHYDRATE_MS;
+      ctl.tick();
+      await settle();
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working', 'the last paint stays');
+      assert.equal(reasonOf(built), '');
+      ctl.destroy();
+    } },
+    { name: 'unreachable, then the next hydrate answers: the line goes and the card paints', run: async () => {
+      let t = 1000;
+      let up = false;
+      const { ctl, built } = card(() => (up ? ok({ state: STATE({ status: 'running' }), live: null, extras: null }) : Promise.reject(new TypeError('Failed to fetch'))), { now: () => t });
+      await settle();
+      assert.equal(reasonOf(built), UNREACHABLE);
+      up = true;
+      t += PROGRESS_REHYDRATE_MS;
+      ctl.tick();
+      await settle();
+      assert.equal(reasonOf(built), '');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working');
+      ctl.destroy();
+    } },
+  ]);
+});
+
 test('registerChatRunCard registers the controller\'s builder as the chat `progress` card', () => {
   _resetChatExtensions();
   const ctl = registerChatRunCard({ controls: {}, runStore: fakeStore(), tickMs: 0 });
