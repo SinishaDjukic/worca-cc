@@ -8,7 +8,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { createFeature, getFeature, listTurns, updateFeature, setContext } from '../src/core/requirements/store.mjs';
 import { REPO_LOOK_TOOLS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import {
-  startOrientation, submitAnswers, finishInterview, retry, settled, isBusy, recoverInterrupted, requirementsModel,
+  startOrientation, submitAnswers, finishInterview, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS,
 } from '../src/core/requirements/interview.mjs';
 import { requirementsWindowedSpendUsd } from '../src/core/cost-budget.mjs';
 import { removeCriterion } from '../src/core/requirements/edits.mjs';
@@ -506,4 +506,46 @@ test('recoverInterrupted: an interrupted round records job round', () => {
   recoverInterrupted();
   assert.equal(listTurns(f.seq).at(-1).payload.job, 'round');
   assert.equal(getFeature(f.seq).status, 'your_turn');
+});
+
+test('both call kinds run as aux spawns (the credential broker\'s short-lived token)', async () => {
+  const f = newFeature();
+  const r = fakeRunner([{ summary: 'x', files: [] }, ROUND1]);
+  await startOrientation(f.seq, {}, deps(r));
+  await settled(f.seq);
+  assert.equal(r.calls.length, 2);
+  assert.deepEqual(r.calls.map((c) => c.spawnKind), ['aux', 'aux']);
+});
+
+test('at most MAX_JOBS requirements jobs run at once; one more is BUSY and leaves no trace', async () => {
+  off();
+  assert.equal(MAX_JOBS, 4);
+  let release;
+  const gate = new Promise((res) => { release = res; });
+  const d = deps({ runClaudeImpl: async () => { await gate; return { text: JSON.stringify(ROUND1) }; } });
+  const running = [];
+  for (let i = 0; i < MAX_JOBS; i += 1) running.push(startOrientation(newFeature().seq, {}, d));
+  const extra = newFeature();
+  updateFeature(extra.seq, { status: 'your_turn' });
+  const before = listTurns(extra.seq).length;
+  assert.throws(() => startOrientation(extra.seq, {}, d),
+    (e) => e.code === 'BUSY' && e.message === 'Worca is working on several features; try again in a moment.');
+  assert.equal(isBusy(extra.seq), false);
+  assert.equal(getFeature(extra.seq).status, 'your_turn', 'the refused feature is untouched');
+  assert.equal(listTurns(extra.seq).length, before);
+  release();
+  await Promise.all(running);
+});
+
+test('a round whose questions are all invalid is retried, then an error turn', async () => {
+  off();
+  const f = newFeature();
+  const junk = { spec: {}, questions: [{ question: 'Only one option?', options: ['a'] }], done: false };
+  const r = fakeRunner([junk, junk]);
+  await startOrientation(f.seq, {}, deps(r));
+  await settled(f.seq);
+  assert.equal(r.calls.length, 2, 'retried once');
+  assert.equal(listTurns(f.seq).at(-1).payload.code, 'BAD_REPLY');
+  assert.equal(getFeature(f.seq).status, 'your_turn');
+  assert.equal(getFeature(f.seq).rounds, 0);
 });

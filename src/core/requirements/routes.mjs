@@ -7,7 +7,7 @@ import { listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, parseFeatureSeq, SCOPE_TYPES } from './spec.mjs';
 import { createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature } from './store.mjs';
-import { startOrientation, submitAnswers, finishInterview, retry, isBusy } from './interview.mjs';
+import { startOrientation, submitAnswers, finishInterview, retry, isBusy, assertCapacity } from './interview.mjs';
 import { pendingRound } from './round.mjs';
 import {
   updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, setArchived,
@@ -51,7 +51,8 @@ export function featureView(seq) {
 const summary = ({ spec, orientation, description, ...rest }) => ({ ...rest, busy: isBusy(rest.seq) });
 
 async function checkTarget(scopeType, scopeKey) {
-  if (!SCOPE_TYPES.includes(scopeType) || typeof scopeKey !== 'string') throw new RequirementsError('BAD_REQUEST', 'scopeType must be "project" or "workspace"');
+  if (!SCOPE_TYPES.includes(scopeType)) throw new RequirementsError('BAD_REQUEST', 'scopeType must be "project" or "workspace"');
+  if (typeof scopeKey !== 'string' || !scopeKey.trim()) throw new RequirementsError('BAD_REQUEST', 'scopeKey is required');
   if (scopeType === 'project') {
     const p = (await listProjects()).find((x) => x.key === scopeKey);
     if (!p) throw new RequirementsError('BAD_REQUEST', 'unknown project');
@@ -102,6 +103,7 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
     [`POST ${P}`]: async (req, res) => {
       const b = req.body || {};
       await checkTarget(b.scopeType, b.scopeKey);
+      assertCapacity();   // before creating: a refused start must not leave a feature stuck at "looking"
       const f = createFeature({ scopeType: b.scopeType, scopeKey: b.scopeKey, title: b.title, description: b.description }, { by: by(req) });
       startOrientation(f.seq, { by: by(req) }, d);
       changed(res, f.seq, 201);

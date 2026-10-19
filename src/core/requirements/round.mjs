@@ -223,7 +223,13 @@ export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, fina
   }
 
   let questions = final ? [] : normalizeQuestions(raw.questions);
-  if (final) {
+  // Questions were asked but none is usable: that is an unreadable reply, not the end of the interview
+  // (unless the model also said it is done).
+  if (!final && !questions.length && raw.done !== true && Array.isArray(raw.questions) && raw.questions.length) {
+    throw new RoundError('none of the questions has a question and 2 to 4 options');
+  }
+  // Whenever the interview ends, whatever is still open becomes an assumption (D5).
+  if (final || !questions.length) {
     for (const open of spec.openQuestions) {
       const text = clip(`Not decided: ${open}`);
       if (text && !asmSeen.has(text.toLowerCase())) addAssumption(text);

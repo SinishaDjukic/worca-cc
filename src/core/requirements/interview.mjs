@@ -29,8 +29,14 @@ const DEFAULTS = Object.freeze({
   openLook: openRepoLook, openWorkspaceLook: openWorkspaceRepoLook, budget: () => budgetStatus(), onChange: () => {},
 });
 
+/** At most this many requirements jobs (looks and rounds, across all features) run at once. */
+export const MAX_JOBS = 4;
 const jobs = new Map();
 export const isBusy = (seq) => jobs.has(Number(seq));
+/** Throws BUSY when MAX_JOBS jobs are running: checked before anything is written for a new job. */
+export function assertCapacity() {
+  if (jobs.size >= MAX_JOBS) throw new RequirementsError('BUSY', 'Worca is working on several features; try again in a moment.');
+}
 /** Resolves when the feature's current job (if any) has finished. Tests and the routes' callers await it. */
 export const settled = (seq) => jobs.get(Number(seq)) || Promise.resolve();
 
@@ -49,6 +55,7 @@ export async function requirementsModel(list = listModels) {
 function startJob(seq, d, fn, by, kind = 'round') {
   seq = Number(seq);
   if (jobs.has(seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
+  assertCapacity();
   const p = (async () => {
     const job = { kind };
     try { await fn(job); }
@@ -108,6 +115,7 @@ async function callModel(d, { cwd, systemPrompt, prompt, model, tools, maxTurns 
       allowedTools: [...tools], tools: [...tools], strictMcpConfig: true,
       ...(maxTurns ? { maxTurns } : {}),
       effort: 'medium', permissionMode: 'acceptEdits', signal: ctrl.signal,
+      spawnKind: 'aux',   // credential broker: a short-lived token, as pr-description.mjs
       onEvent: normalizingOnEvent((e) => {
         if (e.type !== 'result' || e.costUsd == null) return;
         const c = resolveModelCost(model, Number(e.costUsd), e.usage ?? null);
@@ -229,6 +237,7 @@ function guard(seq) {
   const f = requireFeature(seq);
   if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
   if (isBusy(seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
+  assertCapacity();   // before an answers or finish turn is written for a job that could not start
   return f;
 }
 

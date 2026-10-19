@@ -186,3 +186,17 @@ test('a criterion the product owner removed never comes back under a new id', ()
   assert.deepEqual(removedCriteria([...turns, { id: 2, kind: 'edit', payload: { criterion: 'R-po-1', action: 'removed' } },
     { id: 3, kind: 'edit', payload: { criterion: 'R-po-2', action: 'added' } }]), ['Customers <b>get</b> an email']);
 });
+
+test('a non-final reply whose questions are all invalid is a RoundError, not a silent end', () => {
+  assert.throws(() => applyRound(base(), { spec: {}, questions: [{ question: '', options: [] }, { question: 'Only one?', options: ['a'] }] },
+    { criteriaSeq: 2, assumptionSeq: 2 }), RoundError);
+  // the final round ignores questions altogether
+  assert.equal(applyRound(base(), { spec: {}, questions: [{ question: '' }] }, { criteriaSeq: 2, assumptionSeq: 2, final: true }).done, true);
+});
+
+test('a non-final reply with no questions and done: true ends the interview; open questions become assumptions', () => {
+  const r = applyRound(base(), { spec: { openQuestions: ['Who pays shipping?'] }, questions: [], done: true }, { criteriaSeq: 2, assumptionSeq: 2 });
+  assert.equal(r.done, true);
+  assert.deepEqual(r.spec.openQuestions, []);
+  assert.deepEqual(r.spec.assumptions.at(-1), { id: 'A-3', text: 'Not decided: Who pays shipping?', status: 'open' });
+});

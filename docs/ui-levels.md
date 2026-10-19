@@ -296,6 +296,13 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Providers page: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |
 | The Copilot notice modal; a card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
 
+### Requirements (behind the `requirements` flag)
+
+| Element | Level |
+|---|---|
+| The page: the feature list (grouped by project or workspace, state, cost), Show archived, New feature; a feature's question card, its earlier rounds, the error line and Try again, the spec column and its edits, What Worca found in the code and Look again, Project context, Save to specs/, Copy Markdown, Download .md, Archive / Restore | S — product owners are its users |
+| What Worca found in the code: the files Worca read | A |
+
 ### Statistics, Team metrics, Team policy, Ask Worca, Getting started
 
 | Element | Level |

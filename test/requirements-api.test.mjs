@@ -119,3 +119,13 @@ test('flag off: a change sends no requirements-changed frame; flag on: it does',
   onChange('7');
   assert.deepEqual(sent, [{ type: 'requirements-changed', seq: 7 }]);
 });
+
+test('create: a valid scopeType with a missing or bad scopeKey says scopeKey is required', async () => {
+  for (const scopeKey of [undefined, 5, '', '   ']) {
+    const r = await call('POST', '/api/requirements', { scopeType: 'project', scopeKey, title: 't', description: 'd' });
+    assert.equal(r.status, 400, String(scopeKey));
+    assert.equal(r.json.error, 'scopeKey is required', String(scopeKey));
+  }
+  const bad = await call('POST', '/api/requirements', { scopeType: 'team', scopeKey: projKey, title: 't', description: 'd' });
+  assert.equal(bad.json.error, 'scopeType must be "project" or "workspace"');
+});

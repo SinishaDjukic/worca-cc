@@ -8,6 +8,7 @@ import {
 } from '../src/core/requirements/edits.mjs';
 import { emptySpec, nextIdNumber } from '../src/core/requirements/spec.mjs';
 import { buildRoundPrompt } from '../src/core/requirements/round.mjs';
+import { renderSpecMarkdown } from '../src/core/requirements/markdown.mjs';
 import { startOrientation, settled, isBusy } from '../src/core/requirements/interview.mjs';
 
 useTempHome(after);
@@ -136,4 +137,11 @@ test('a removed criterion keeps its text on the edit turn, and the next round pr
   assert.deepEqual(t.payload, { criterion: 'R-po-3', action: 'removed', text: 'c3' });
   const text = buildRoundPrompt({ feature: getFeature(f.seq), turns: listTurns(f.seq) });
   assert.match(text, /The product owner removed criterion R-po-3: c3/);
+});
+
+test('an updated title collapses newlines, so the Markdown heading cannot break', () => {
+  const f = make();
+  const g = updateHeader(f.seq, { title: 'Refund\n\n# not a heading' });
+  assert.equal(g.title, 'Refund # not a heading');
+  assert.equal(renderSpecMarkdown(g).split('\n')[0], `# ${g.id}: Refund # not a heading`);
 });

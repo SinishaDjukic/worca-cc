@@ -80,3 +80,9 @@ test('contexts: defaults, upsert, partial update', () => {
   assert.deepEqual([c.body, c.lookAtCode], ['Actors: buyer', false]);
   assert.throws(() => setContext('project', 'ctx-1', { body: 'x'.repeat(LIMITS.context + 1) }), (e) => e.code === 'BAD_REQUEST');
 });
+
+test('a title is one line: inner whitespace and newlines collapse to single spaces', () => {
+  const f = createFeature({ scopeType: 'project', scopeKey: 'k', title: '  Cancel\n  an\r\norder\tnow ', description: 'Line one\nLine two' });
+  assert.equal(f.title, 'Cancel an order now');
+  assert.equal(f.description, 'Line one\nLine two', 'the description keeps its lines');
+});

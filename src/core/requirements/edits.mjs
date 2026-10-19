@@ -22,7 +22,7 @@ export function updateHeader(seq, { title, description, scopeType, scopeKey } = 
   editable(seq);
   const patch = {};
   if (title !== undefined) {
-    const t = typeof title === 'string' ? title.trim() : '';
+    const t = typeof title === 'string' ? title.trim().replace(/\s+/g, ' ') : '';   // one line, as on create
     if (!t || t.length > LIMITS.title) throw new RequirementsError('BAD_REQUEST', `title must be 1 to ${LIMITS.title} characters`);
     patch.title = t;
   }

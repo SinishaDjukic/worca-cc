@@ -15,8 +15,9 @@ function checkScope(scopeType, scopeKey) {
   if (typeof scopeKey !== 'string' || !scopeKey.trim()) throw new RequirementsError('BAD_REQUEST', 'scopeKey is required');
 }
 
-function requiredText(v, field, max) {
-  const s = typeof v === 'string' ? v.trim() : '';
+function requiredText(v, field, max, { oneLine = false } = {}) {
+  let s = typeof v === 'string' ? v.trim() : '';
+  if (oneLine) s = s.replace(/\s+/g, ' ');
   if (!s) throw new RequirementsError('BAD_REQUEST', `${field} is required`);
   if (s.length > max) throw new RequirementsError('BAD_REQUEST', `${field} is longer than ${max} characters`);
   return s;
@@ -36,7 +37,7 @@ function toFeature(r) {
 
 export function createFeature({ scopeType, scopeKey, title, description } = {}, { by = null } = {}) {
   checkScope(scopeType, scopeKey);
-  const t = requiredText(title, 'title', LIMITS.title);
+  const t = requiredText(title, 'title', LIMITS.title, { oneLine: true });   // one line: the Markdown heading cannot break
   const d = requiredText(description, 'description', LIMITS.description);
   getDb();
   const ts = iso();

@@ -67,3 +67,14 @@ test('save: refuses specs/ outside the project, a dangling link, and a symlinked
   assert.equal(readFileSync(join(outside, 'victim.md'), 'utf8'), 'keep');
   assert.equal(existsSync(join(outside, specFileName(feature))), false);
 });
+
+test('save: specs/ as a regular file, or the spec path as a directory, is a 409, not a throw', async () => {
+  const p1 = tmp('req-file-');
+  writeFileSync(join(p1, 'specs'), 'not a folder');
+  assert.deepEqual(await saveSpecToCheckout({ projectDir: p1, feature, markdown: 'x' }), { ok: false, status: 409, error: 'specs/ is not a directory' });
+  const p2 = tmp('req-dir-');
+  mkdirSync(join(p2, 'specs', specFileName(feature)), { recursive: true });
+  for (const overwrite of [false, true]) {
+    assert.deepEqual(await saveSpecToCheckout({ projectDir: p2, feature, markdown: 'x', overwrite }), { ok: false, status: 409, error: 'the spec path is a directory' });
+  }
+});
