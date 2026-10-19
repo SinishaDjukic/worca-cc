@@ -314,20 +314,95 @@ test('a job that finishes after the feature was archived leaves it archived', as
   assert.equal(getFeature(f2.seq).status, 'archived');
 });
 
-test('a failed job rests at done when the latest round said done', async () => {
+test('a failed look-again rests at the feature\'s resting status (done stays done)', async () => {
   off();
   const f = newFeature();
   await startOrientation(f.seq, {}, deps(fakeRunner([ROUND2])));
   await settled(f.seq);
   assert.equal(getFeature(f.seq).status, 'done');
+  setContext('project', 'shop-1234abcd', { lookAtCode: true });
+  await startOrientation(f.seq, { thenRound: false }, deps(fakeRunner([]), { budget: () => ({ blocked: true }) }));
+  assert.equal(getFeature(f.seq).status, 'done');
+  assert.equal(listTurns(f.seq).at(-1).payload.job, 'look');
+});
+
+test('a failed round rests at your turn, even on a done feature', async () => {
+  off();
+  const f = newFeature();
+  const d = deps(fakeRunner([ROUND1, ROUND2]));
+  await startOrientation(f.seq, {}, d);
+  await settled(f.seq);
+  const round = listTurns(f.seq).find((t) => t.kind === 'round');
+  await submitAnswers(f.seq, { roundTurnId: round.id, useRecommended: true }, {}, d);
+  await settled(f.seq);
+  assert.equal(getFeature(f.seq).status, 'done');
+  await submitAnswers(f.seq, { roundTurnId: round.id, answers: [{ id: 'who', option: 'Support' }] }, {}, deps(fakeRunner([]), { budget: () => ({ blocked: true }) }));
+  await settled(f.seq);
+  assert.equal(listTurns(f.seq).at(-1).payload.code, 'BUDGET');
+  assert.equal(listTurns(f.seq).at(-1).payload.job, 'round');
+  assert.equal(getFeature(f.seq).status, 'your_turn');
+});
+
+test('retry after a failed look-again re-runs the look, not a round', async () => {
+  const f = newFeature();
+  await startOrientation(f.seq, {}, deps(fakeRunner([{ summary: 'first' }, ROUND1])));
+  await settled(f.seq);
+  await startOrientation(f.seq, { thenRound: false }, deps(fakeRunner([]), { budget: () => ({ blocked: true }) }));
+  assert.equal(listTurns(f.seq).at(-1).kind, 'error');
+  const r = fakeRunner([{ summary: 'second', files: [] }]);
+  await retry(f.seq, {}, deps(r));
+  await settled(f.seq);
+  assert.equal(r.calls.length, 1);
+  assert.equal(r.calls[0].tools.length > 0, true, 'the look call, not a round');
+  assert.equal(getFeature(f.seq).rounds, 1);
+  assert.equal(getFeature(f.seq).orientation.summary, 'second');
+  assert.equal(listTurns(f.seq).at(-1).kind, 'orientation');
+});
+
+test('a job that finds the feature archived before its model call makes no call', async () => {
+  off();
+  const f = newFeature();
+  let release;
+  const gate = new Promise((res) => { release = res; });
+  const r = fakeRunner([ROUND1]);
+  let entered;
+  const inModels = new Promise((res) => { entered = res; });
+  const d = deps(r, { listModels: async () => { entered(); await gate; return [{ id: 'claude-opus-5-5' }]; } });
+  const p = startOrientation(f.seq, {}, d);
+  await inModels;
+  updateFeature(f.seq, { status: 'archived' });
+  release();
+  await p;
+  assert.equal(r.calls.length, 0);
+  assert.equal(getFeature(f.seq).status, 'archived');
+  // the same before the orientation call
+  setContext('project', 'shop-1234abcd', { lookAtCode: true });
+  const f2 = newFeature();
+  let release2;
+  const gate2 = new Promise((res) => { release2 = res; });
+  let entered2;
+  const inLook = new Promise((res) => { entered2 = res; });
+  const r2 = fakeRunner([{ summary: 'x' }, ROUND1]);
+  const d2 = deps(r2, { openLook: async () => { entered2(); await gate2; return { cwd: repoDir, close: async () => {} }; } });
+  const p2 = startOrientation(f2.seq, {}, d2);
+  await inLook;
+  updateFeature(f2.seq, { status: 'archived' });
+  release2();
+  await p2;
+  assert.equal(r2.calls.length, 0);
+  assert.equal(getFeature(f2.seq).status, 'archived');
+});
+
+test('a throwing in-job change hook does not fail the job', async () => {
+  off();
+  const f = newFeature();
   const orig = console.error;
   console.error = () => {};
   try {
-    let n = 0;
-    const bad = deps(fakeRunner([]), { onChange: () => { if (++n === 1) throw new Error('hook'); } });
-    await startOrientation(f.seq, { thenRound: false }, bad);
+    await startOrientation(f.seq, {}, deps(fakeRunner([ROUND1]), { onChange: () => { throw new Error('hook down'); } }));
   } finally { console.error = orig; }
-  assert.equal(getFeature(f.seq).status, 'done');
+  assert.equal(getFeature(f.seq).rounds, 1);
+  assert.equal(listTurns(f.seq).some((t) => t.kind === 'error'), false);
 });
 
 test('the job promise never rejects, even if the change hook throws', async () => {
