@@ -61,7 +61,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // Unsaved input of the feature page, kept across repaints (read from the DOM before a rebuild, put back after).
   let ui = freshUi();
   let ctxEls = null;
-  function freshUi() { return { editVals: null, crit: '', orientOpen: false, ctx: { open: false, loaded: false, loading: false, body: '', look: false } }; }
+  function freshUi() { return { editVals: null, crit: '', orientOpen: false, roundsOpen: [], ctx: { open: false, loaded: false, loading: false, body: '', look: false } }; }
 
   if (subEl) subEl.textContent = 'Turn an idea into a clear, testable feature spec before anything is built';
   const say = (text, kind = '') => { if (msgEl) { msgEl.textContent = text || ''; msgEl.className = `form-msg${kind ? ` ${kind}` : ''}`; } };
@@ -103,7 +103,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       if (key === 'new') { if (mine === paintNo) { paintNew(); paintedKey = key; } return; }
       if (seqShown != null) {
         const data = await api('GET', `/api/requirements/${seqShown}`);
-        if (mine === paintNo) { paintFeature(data.feature); paintedKey = key; }
+        if (mine === paintNo) { paintFeature(data.feature, data.turns || []); paintedKey = key; }
         return;
       }
       const data = await api('GET', `/api/requirements${showArchived ? '?archived=1' : ''}`);
@@ -136,6 +136,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
     const orient = host.querySelector('.req-orient');
     if (orient) ui.orientOpen = orient.open;
+    ui.roundsOpen = [...host.querySelectorAll('details.req-round')].filter((d) => d.open).map((d) => Number(d.getAttribute('data-round')));
     return focus;
   }
 
@@ -228,10 +229,37 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return panel;
   }
 
-  function conversation(f) {
+  // Earlier rounds, read-only and folded: each round's questions with the latest answers given, and its note.
+  // The round waiting for answers is the question card instead.
+  function earlierRounds(f, turns) {
+    const latest = new Map();
+    for (const t of turns) if (t.kind === 'answers') latest.set(t.payload.roundTurnId, t.payload.answers || []);
+    const out = [];
+    let n = 0;
+    for (const t of turns) {
+      if (t.kind !== 'round') continue;
+      n += 1;
+      if (f.pending && t.id === f.pending.turnId) continue;
+      const qs = t.payload.questions || [];
+      const given = new Map((latest.get(t.id) || []).map((a) => [a.id, a]));
+      out.push(h('details', { class: 'req-round', 'data-round': t.id, open: ui.roundsOpen.includes(t.id) },
+        h('summary', { text: qs.length ? `Round ${n} · ${qs.length} question${qs.length === 1 ? '' : 's'}` : `Round ${n} · no more questions` }),
+        t.payload.note ? h('p', { class: 'hint req-round-note', text: t.payload.note }) : null,
+        ...qs.map((q) => {
+          const a = given.get(q.id);
+          return h('div', { class: 'req-round-q' },
+            h('div', { class: 'qtext', text: q.question }),
+            h('div', { class: 'req-round-answer', text: a ? `Your answer: ${a.answer}${a.recommended ? ' (recommended)' : ''}` : 'Not answered' }));
+        })));
+    }
+    return out;
+  }
+
+  function conversation(f, turns) {
     const working = isWorking(f);
     const open = !isLocked(f);
     return h('div', { class: 'req-left' },
+      ...earlierRounds(f, turns),
       working ? h('p', { class: 'hint', text: f.status === 'looking' ? 'Worca is looking at the code…' : 'Worca is thinking…' }) : null,
       f.status === 'archived' ? h('p', { class: 'hint', text: 'This feature is archived. Restore it to continue.' }) : null,
       open && f.lastError ? h('div', { class: 'req-error form-msg err' }, f.lastError, ' ',
@@ -350,7 +378,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/look`, {}); await paint(); }) }, 'Look again'));
   }
 
-  function paintFeature(f) {
+  function paintFeature(f, turns = []) {
     const save = () => act(async () => {
       try {
         const r = await api('POST', `/api/requirements/${f.seq}/save`, {});
@@ -388,7 +416,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       orientationBox(f),
       contextPanel(f),
       h('div', { class: 'req-cols' },
-        conversation(f),
+        conversation(f, turns),
         h('div', { class: 'req-right' },
           ...SECTIONS.slice(0, 6).map(([k, t]) => sectionBlock(f, k, t)),
           criteriaBlock(f), assumptionsBlock(f),

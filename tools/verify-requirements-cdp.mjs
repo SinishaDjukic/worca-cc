@@ -2,7 +2,8 @@
 // tools/verify-requirements-cdp.mjs — headless-Chrome proof of the Requirements page (plans/requirements-design.md §6).
 // Checks: with the `requirements` flag off there is no nav row; flipping it on shows the row without a reload;
 // the new-feature form renders; creating a feature in mock mode shows round 1's question card; answering it
-// (Skip, use recommended) fills the spec with R-po-1 and marks the interview done; no page errors.
+// (Skip, use recommended) fills the spec with R-po-1 and marks the interview done; the answered rounds stay on
+// the page, folded; no page errors.
 // NOT part of `npm test`.
 // Run: npm run verify:requirements   (set CHROME_BIN to a Chrome/Chromium binary if it is not auto-found,
 // e.g. CHROME_BIN="C:/Program Files/Google/Chrome/Application/chrome.exe" on Windows)
@@ -157,6 +158,9 @@ check('round 1 asks (mock): the question card shows', await until(() => A.evalJs
 await A.evalJs(`document.querySelector('#requirements-host .req-skip').click()`);
 check('after answering, the spec has R-po-1 and the interview is done',
   await until(() => A.evalJs(`!!document.querySelector('[data-criterion="R-po-1"]') && /Interview done/.test(document.querySelector('#requirements-host .req-head').textContent)`)));
+check('the answered rounds stay on the page, folded, with the answer given',
+  await A.evalJs(`(() => { const r = [...document.querySelectorAll('#requirements-host details.req-round')];
+    return r.length === 2 && r.every((d) => !d.open) && /Your answer: Customers/.test(r[0].textContent); })()`));
 check('no page errors', A.pageErrors.length === 0, A.pageErrors.join(' | '));
 log(failed ? `${failed} check(s) failed` : 'all checks passed');
 await shutdown(failed ? 1 : 0);

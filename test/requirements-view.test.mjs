@@ -355,3 +355,51 @@ test('index.html: a Simple-level, flag-gated nav row and a page section', () => 
   const topnav = readFileSync(new URL('../ui/public/topnav.mjs', import.meta.url), 'utf8');
   assert.match(topnav, /requirements: 'Requirements'/);
 });
+
+test('earlier rounds: folded, read-only, with their questions, the latest answers and the note; the pending one is not repeated', async () => {
+  const turns = [
+    { id: 2, kind: 'orientation', payload: {} },
+    { id: 3, kind: 'round', payload: { questions: [{ id: 'who', question: 'Who may cancel?', options: ['Customers', 'Support'], recommended: 'Customers' }], note: 'Start <b>here</b>.' } },
+    { id: 4, kind: 'answers', payload: { roundTurnId: 3, answers: [{ id: 'who', question: 'Who may cancel?', answer: 'Customers' }] } },
+    { id: 5, kind: 'answers', payload: { roundTurnId: 3, revises: true, answers: [{ id: 'who', question: 'Who may cancel?', answer: 'Support' }] } },
+    { id: 9, kind: 'round', payload: { questions: Q, note: 'One question.' } },
+  ];
+  fakeApi({
+    'GET /api/requirements/4': { feature: feature({ rounds: 2 }), turns },
+    'GET /api/projects': { projects: [] }, 'GET /api/workspaces': { workspaces: [] },
+  });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const rounds = [...host.querySelectorAll('details.req-round')];
+  assert.equal(rounds.length, 1, 'only the earlier round; the pending one is the question card');
+  const r = rounds[0];
+  assert.equal(r.open, false, 'folded');
+  assert.match(r.querySelector('summary').textContent, /Round 1/);
+  assert.match(r.textContent, /Who may cancel\?/);
+  assert.match(r.textContent, /Support/, 'the latest answer');
+  assert.doesNotMatch(r.querySelector('.req-round-answer').textContent, /Customers/, 'a superseded answer is not shown');
+  assert.equal(r.querySelector('.req-round-note').textContent, 'Start <b>here</b>.', 'the note, as text');
+  assert.equal(r.querySelectorAll('button, input, textarea').length, 0, 'read-only');
+  // the open state survives a live repaint
+  r.open = true;
+  await view.changed(4);
+  assert.equal(host.querySelector('details.req-round').open, true);
+});
+
+test('earlier rounds: a done interview lists every round, the last one with no questions shows its note', async () => {
+  const turns = [
+    { id: 3, kind: 'round', payload: { questions: Q, note: 'One question.' } },
+    { id: 4, kind: 'answers', payload: { roundTurnId: 3, answers: [{ id: 'who', question: 'Who may cancel?', answer: 'Customers' }] } },
+    { id: 6, kind: 'round', payload: { questions: [], note: 'The spec is complete.', done: true } },
+  ];
+  fakeApi({
+    'GET /api/requirements/4': { feature: feature({ status: 'done', pending: null, rounds: 2 }), turns },
+    'GET /api/projects': { projects: [] }, 'GET /api/workspaces': { workspaces: [] },
+  });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const rounds = [...host.querySelectorAll('details.req-round')];
+  assert.deepEqual(rounds.map((d) => d.querySelector('summary').textContent.match(/Round \d/)[0]), ['Round 1', 'Round 2']);
+  assert.equal(rounds[1].querySelector('.req-round-note').textContent, 'The spec is complete.');
+  assert.equal(rounds[1].querySelectorAll('.req-round-q').length, 0);
+});
