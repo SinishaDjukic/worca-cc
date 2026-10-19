@@ -84,6 +84,7 @@ import {
   stepModelsSetting, assertStepModelsInput, setStepModels,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
   askEngineSetting, assertAskEngineInput, setAskEngineSetting, askModelsSetting, assertAskModelsInput, setAskModels,
+  chatHomePinsFor, setChatHomePinsFor,
 } from '../src/core/settings.mjs';
 import { resolveSetting, resolveAll, writeProjectSettings, assertProjectSettingsPatch, resolveRunEngine, defragSlotPair } from '../src/core/settings-cascade.mjs';
 import { resolveNightConfig, validateNightPatch } from '../src/core/night/config.mjs';
@@ -11773,6 +11774,19 @@ async function runSetupOf(normalized, basis) {
     return null;
   }
 }
+
+// The Chat home's pinned workflows (src/shared/home-pins.mjs): one ordered list per person, in settings.json.
+app.get('/api/chat-home/pins', (req, res) => {
+  res.json({ pins: chatHomePinsFor(askViewer(req)) });
+});
+app.put('/api/chat-home/pins', async (req, res) => {
+  try {
+    res.json({ pins: await setChatHomePinsFor(askViewer(req), (req.body || {}).pins) });
+  } catch (err) {
+    if (err && err.code === 'BAD_HOME_PINS') return badRequest(res, err.message);
+    res.status(500).json({ error: String((err && err.message) || err) });
+  }
+});
 
 app.use('/api/presets', requireFlag('runPresets'));
 

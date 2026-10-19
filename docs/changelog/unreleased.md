@@ -20,6 +20,10 @@ Pull requests (add each number when it opens):
 - Shape it first: review checklists
 - Shape it first: plan in slices
 
+## Pin any workflow to the Chat home
+
+Any workflow can be a quick button on the Chat home: pin it from the Library row's ⋯ menu or the workflow page's **Workflows** menu. One pin sits in the row after the built-in tiles and the rest are listed in **More** under **Pinned**; Shaper is pinned by default. A pinned tile arms New run with that workflow. Read it: [Chat home](../chat-home.md)
+
 ## Run presets (beta)
 
 Save a New run setup as a named preset, pick it later, type a prompt and start: the run gets the preset's choices for that run only, and the project's settings never change. Read it: [Run presets](../run-presets.md)

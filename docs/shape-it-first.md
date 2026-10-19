@@ -37,8 +37,8 @@ chips, **Save to plans/** and **Open in New run**.
 
 ## Three ways in
 
-- **Shaper.** The tile on the Chat home. Describe the task; Worca
-  proposes a shaped run on a card.
+- **Shaper.** The default pin on the Chat home; it can be unpinned (see
+  [Chat home](chat-home.md)). Describe the task; Worca proposes a shaped run on a card.
 - **The nudge.** When Ask Worca judges a task to have open decisions, the run card
   offers **Shaper** next to **Run as is**, with an estimate of each.
 - **New run.** The New run page links to the same flow.

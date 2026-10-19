@@ -9084,7 +9084,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-home-body{container:chat-home / inline-size;display:flex;flex-direction:column;gap:24px;width:100%;max-width:1040px;margin:20px auto 32px;box-sizing:border-box;}
 .chat-ic{display:inline-grid;place-items:center;flex:none;line-height:0;}
 .chat-ic svg{width:100%;height:100%;}
-/* Quick actions: all 8 tiles (7 intents + More) in one row above a 640px container (8 × 72px + gaps), 4 per row
+/* Quick actions: all 7 tiles, 1 pin and More in one row above a 640px container (8 × 72px + gaps), 4 per row
    below it. auto-fit: a level-gated or switched-off tile collapses its track instead of leaving a hole. */
 /* Quick actions (review B10): 56px, icon + label on one line, no border, hover tint. */
 .chat-home-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:4px;}
@@ -9094,6 +9094,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-home-act:hover{background:var(--hover);}
 .chat-home-act > .chat-ic{color:var(--ink-2);}
 .chat-home-act-l{flex:none;white-space:nowrap;}
+.chat-home-act.is-pin:not(:has(> .chat-home-act-badge)) .chat-home-act-l{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .chat-home-tab-n{min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font:600 11px/18px var(--sans);text-align:center;}
 .chat-home-panel{min-height:120px;padding-top:14px;}
 .chat-home-empty{margin:0;padding:28px 0;text-align:center;color:var(--ink-2);font-size:13px;}

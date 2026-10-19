@@ -29,13 +29,13 @@ const WORKFLOWS = [
 const ARCH = [{ id: 'wf_gone', name: 'Gone flow', version: 2, domain: 'coding' }];
 const FLOW_ROWS = ['flow:task', 'flow:end', 'flow:and', 'flow:or', 'flow:combine'];
 
-async function boot(data = {}) {
+async function boot(data = {}, extra = {}) {
   const dom = new JSDOM('<!doctype html><body><aside id="lib"></aside></body>', { url: 'http://localhost:4317/' });
   const doc = dom.window.document;
   const { createLibrary } = await import(LIB_URL);
   const calls = [];
   const rec = (name) => (...a) => { calls.push([name, ...a]); };
-  const actions = new Proxy({ portsFn: () => ({ inputs: [], outputs: [] }) }, { get: (t, k) => (k in t ? t[k] : rec(String(k))) });
+  const actions = new Proxy({ portsFn: () => ({ inputs: [], outputs: [] }), ...extra }, { get: (t, k) => (k in t ? t[k] : rec(String(k))) });
   const lib = createLibrary({ doc, host: doc.getElementById('lib'), actions });
   lib.setData({ agents: AGENTS, scripts: SCRIPTS, workflows: WORKFLOWS, archived: [], placedKinds: ['task', 'end'], openId: 'wf_default', newIds: new Set(['wf_mine']), ...data });
   lib.setOpen(true);
@@ -546,4 +546,23 @@ test('the search box slides over the title (reduced motion: at once); folders an
   assert.doesNotMatch(css, /\.wfl-(crumbs?|trail|csep|up|search|gh|gn|group|archived)\b/);
   const src = readFileSync(new URL('../ui/public/workflows/library.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /wfl-(crumbs?|crumb-home|trail|csep|up|search|gh|gn|group|archived)\b/);
+});
+
+test('workflow row ⋯: Pin to Chat home / Unpin from Chat home calls togglePin with the row', async () => {
+  const pinned = new Set(['wf_mine']);
+  const s = await boot({}, { isPinned: (id) => pinned.has(id) });
+  s.lib.openFolder(['workflows', 'general']);
+  const more = s.host.querySelector('.wfl-wf[data-id="wf_mine"] .wfl-more');
+  assert.ok(more.classList.contains('btn') && more.classList.contains('btn-icon'));
+  assert.equal(more.getAttribute('aria-label'), 'More for "Mine"');
+  click(more);
+  const items = [...s.doc.querySelectorAll('.wfv-menu-item')];
+  assert.deepEqual(items.map((b) => b.textContent), ['Unpin from Chat home']);
+  click(items[0]);
+  assert.equal(s.calls.at(-1)[0], 'togglePin');
+  assert.equal(s.calls.at(-1)[1].id, 'wf_mine');
+  assert.equal(s.doc.querySelector('.wfv-menu'), null, 'picking an item closes the menu');
+  pinned.clear();
+  click(more);   // reopen: the label follows the state at open time
+  assert.deepEqual([...s.doc.querySelectorAll('.wfv-menu-item')].map((b) => b.textContent), ['Pin to Chat home']);
 });

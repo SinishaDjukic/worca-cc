@@ -7,10 +7,10 @@ const items = (doc) => [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')]
 const click = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
 const keydown = (el, key, extra = {}) => el.dispatchEvent(new el.ownerDocument.defaultView.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra }));
 
-test('"Workflows ▾": New canvas, Open…, Import…, Export… (live on an unsaved canvas too)', async () => {
+test('"Workflows ▾": New canvas, Open…, Import…, Export… (live on an unsaved canvas too), Pin to Chat home', async () => {
   const s = await bootShell({ template: { ...fixture(), id: '' } });
   click(s.g('wfv-wf-menu'));
-  assert.deepEqual(items(s.doc), ['New canvas', 'Open…', 'Import…', 'Export…']);
+  assert.deepEqual(items(s.doc), ['New canvas', 'Open…', 'Import…', 'Export…', 'Pin to Chat home']);
   const exp = [...s.doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.startsWith('Export'));
   assert.equal(exp.disabled, false, 'exportCurrent saves first — the item is never a dead end');
   click(s.g('wfv-wf-menu'));                                           // the trigger's second click closes it
@@ -18,6 +18,24 @@ test('"Workflows ▾": New canvas, Open…, Import…, Export… (live on an uns
   click([...s.doc.querySelectorAll('.wfv-menu-item')][0]);
   assert.deepEqual(s.calls.at(-1), ['newCanvas']);
   assert.equal(s.doc.querySelector('.wfv-menu'), null, 'a pick closes the menu');
+});
+
+test('Workflows menu: the pin item follows pinState, is disabled on an unsaved canvas, and calls togglePin', async () => {
+  let state = null;
+  let toggled = 0;
+  // bootShell (test/helpers/workflows-shell.mjs) merges `actions` after its recorded defaults, which do not include
+  // togglePin: the test supplies it.
+  const s = await bootShell({ actions: { pinState: () => state, togglePin: () => { toggled += 1; } } });
+  click(s.g('wfv-wf-menu'));
+  const last = () => [...s.doc.querySelectorAll('.wfv-menu-item')].at(-1);
+  assert.equal(last().disabled, true);
+  assert.equal(last().getAttribute('aria-disabled'), 'true');
+  click(s.g('wfv-wf-menu'));                    // close
+  state = { id: 'wf_pay', pinned: true };
+  click(s.g('wfv-wf-menu'));
+  assert.equal(last().querySelector('.wfv-menu-l').textContent, 'Unpin from Chat home');
+  click(last());
+  assert.equal(toggled, 1);
 });
 
 test('zoom menu: exactly Zoom in / Zoom out / Fit graph to view; the label follows the zoom', async () => {

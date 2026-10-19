@@ -10,6 +10,7 @@
 import { safeAgentIcon, SCRIPT_GLYPH, thumbnailFor } from '../graph/view.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { DND_TYPE, FLOW_CARDS } from './shell.mjs';
+import { toggleMenu } from './menu.mjs';
 
 /** The sections, in the selector's order. */
 export const TOPS = Object.freeze(['agents', 'scripts', 'workflows']);
@@ -27,6 +28,8 @@ const SEARCH_GLYPH = '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>
 const CLOSE_GLYPH = '<path d="M6 6l12 12M18 6L6 18"/>';
 const PLUS_GLYPH = '<path d="M12 6v12M6 12h12"/>';
 const TRASH_GLYPH = '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>';
+/** The row ⋯ (shell.mjs ICONS.more): an SVG, never a text glyph. */
+const MORE_GLYPH = '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>';
 const FLOW_DESC = {
   task: 'The pipeline entry: the prompt and its attached files.',
   end: 'The pipeline sink. A token arriving here completes the run.',
@@ -78,7 +81,8 @@ export function workflowDomains(list) {
  * @param {HTMLElement} o.host  aside#wfv-library
  * @param {object} o.actions  {addToCanvas(entry), openWorkflow(id), deleteWorkflow(wf), deleteArchived(wf),
  *   exportWorkflow(wf), newAgent(), newScript(), viewAgent(key), editAgent(key), deleteAgent(agent),
- *   duplicateAgent(agent), openScript(key), deleteScript(script), duplicateScript(script), portsFn(node), closeLibrary()}
+ *   duplicateAgent(agent), openScript(key), deleteScript(script), duplicateScript(script), portsFn(node), closeLibrary(),
+ *   isPinned(id), togglePin(wf)}  — the last two: the Chat home pins (src/shared/home-pins.mjs) from the row ⋯ menu
  */
 export function createLibrary({ doc, host, actions }) {
   const win = doc.defaultView || globalThis;
@@ -547,6 +551,22 @@ export function createLibrary({ doc, host, actions }) {
       del.appendChild(svg(TRASH_GLYPH));
       del.addEventListener('click', () => act('deleteWorkflow', w));
       tail.appendChild(del);
+    }
+    if (!w.archivedAt) {
+      const more = h('button', 'btn btn-sm btn-quiet btn-icon wfl-more');
+      more.type = 'button';
+      more.title = 'More';
+      more.setAttribute('aria-label', `More for "${w.name || w.id}"`);
+      more.setAttribute('aria-haspopup', 'menu');
+      more.dataset.focusKey = `workflow:${w.id}:more`;
+      more.appendChild(svg(MORE_GLYPH));
+      more.addEventListener('click', () => {
+        const pinned = act('isPinned', w.id) === true;
+        toggleMenu({ doc, anchor: more, align: 'end', label: `More for ${w.name || w.id}`, items: [
+          { label: pinned ? 'Unpin from Chat home' : 'Pin to Chat home', onSelect: () => act('togglePin', w) },
+        ] });
+      });
+      tail.appendChild(more);
     }
     item.appendChild(tail);
     return item;

@@ -93,6 +93,7 @@ import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { trailColumns, nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
+import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf } from './runs-list.mjs';
@@ -3074,6 +3075,7 @@ async function wfvRefreshWorkflows() {
   const [rows, archived] = await Promise.all([gvApi.listWorkflows(), gvApi.listArchived()]);
   gvComposer?.setSavedDomains([...new Set(rows.map((w) => w.domain || 'general'))].sort());
   wfvLibrary?.setData({ workflows: rows, archived, newIds: gvNewIds });
+  void loadHomePins();                           // the Library ⋯ and Workflows menu labels follow the viewer's pins
 }
 
 /** Mount the engine + chrome ONCE. Resolves true on the first mount. */
@@ -3169,6 +3171,8 @@ function wfvSetLibraryOpen(open) {
 
 function wfvShellActions() {
   return {
+    pinState: () => { const t = gvComposer.template(); return t && t.id ? { id: t.id, pinned: homePinned(t.id) } : null; },
+    togglePin: () => { const t = gvComposer.template(); if (t && t.id) void toggleHomePin(t); },
     back: () => { location.hash = wfvReturn || 'chat'; },
     newCanvas: () => { void gvComposer.newCanvas().then((t) => { if (t) gvComposer.fit(); }); },
     openLibrary: (tab) => { wfvSetLibraryOpen(true); wfvLibrary?.open(tab); },
@@ -3479,6 +3483,8 @@ function wfvLibraryActions() {
   const scriptsList = async () => { const r = await scriptsApi.list(); return r.ok && Array.isArray(r.data.scripts) ? r.data.scripts : []; };
   return {
     portsFn: (n) => gvPortsFn(n),
+    isPinned: homePinned,
+    togglePin: (wf) => void toggleHomePin(wf),
     closeLibrary: () => { wfvSetLibraryOpen(false); document.getElementById('wfv-lib-toggle')?.focus(); },
     addToCanvas: (payload) => {
       const node = gvComposer.spawn(toSpawnEntry(payload));
@@ -36603,9 +36609,45 @@ function mountChatHome() {
       mountFeature: mountShapeFeature,
       presets: chatHomePresets,
       usePreset: (id) => void usePresetOnNewRun(id),   // Settings › Presets' Use path (D14)
+      pins: loadHomePins,
+      savePins: saveHomePins,
     },
   });
 }
+
+// ── Chat home pins (src/shared/home-pins.mjs): the viewer's ordered workflow ids, GET/PUT /api/chat-home/pins ──
+let homePins = null;   // null = not loaded yet
+async function loadHomePins() {
+  try {
+    const res = await fetch('/api/chat-home/pins');
+    const data = await safeJson(res);
+    if (res.ok && Array.isArray(data.pins)) homePins = data.pins;
+  } catch { /* keep the last known list */ }
+  return homePins;
+}
+async function saveHomePins(list) {
+  try {
+    const res = await fetch('/api/chat-home/pins', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pins: list }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok || !Array.isArray(data.pins)) return null;
+    homePins = data.pins;
+    return homePins;
+  } catch { return null; }
+}
+async function toggleHomePin(wf) {
+  if (!wf || !wf.id) return;
+  // Never write from a guessed list: a PUT built on the default after a failed GET would replace the person's real pins.
+  const cur = homePins || (await loadHomePins());
+  if (!cur) { notify({ tone: 'err', title: 'Could not update the Chat home pins' }); return; }
+  const was = isPinned(cur, wf.id);
+  const saved = await saveHomePins(was ? unpinWorkflow(cur, wf.id) : pinWorkflow(cur, wf.id));
+  const name = wf.name || wf.id;
+  if (!saved) { notify({ tone: 'err', title: 'Could not update the Chat home pins' }); return; }
+  notify({ title: was ? `Unpinned ${name} from Chat home` : `Pinned ${name} to Chat home` });
+}
+function homePinned(id) { return isPinned(homePins || DEFAULT_HOME_PINS, id); }
 
 /** The Chat home's presets (#712 slice 2): the viewer's list, fresh per visit, and New run's current target. */
 async function chatHomePresets() {

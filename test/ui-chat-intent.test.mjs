@@ -353,3 +353,31 @@ test('splitIntentLead: the Shaper lead is for the model only (D21)', () => {
   assert.deepEqual(splitIntentLead(undefined), { intent: null, text: '' });
   assert.deepEqual(splitIntentLead(`${INTENTS.run.lead}\n\nx`), { intent: null, text: `${INTENTS.run.lead}\n\nx` }, 'other intents unchanged');
 });
+
+test('pinned workflow: run intent with the workflow names the chip, keeps the run placeholder and leads with its id', () => {
+  const s = setup();
+  s.ctl.set('run', { workflow: { id: 'wf_pay', name: 'Payroll close' } });
+  assert.equal(s.doc.querySelector('.chat-intent-l').textContent, 'Payroll close');
+  assert.equal(s.doc.querySelector('.chat-intent-x').getAttribute('aria-label'), 'Remove Payroll close');
+  assert.equal(s.input.placeholder, INTENTS.run.placeholder);
+  assert.equal(s.handle.transformSend('close October'),
+    'Propose a pipeline run of workflow wf_pay ("Payroll close") for this task.\n\nclose October');
+});
+
+test('re-arming run with another workflow repaints; plain run keeps its lead byte for byte', () => {
+  const s = setup();
+  s.ctl.set('run', { workflow: { id: 'wf_pay', name: 'Payroll close' } });
+  s.ctl.set('run', { workflow: { id: 'wf_post', name: 'Social post' } });
+  assert.equal(s.doc.querySelector('.chat-intent-l').textContent, 'Social post');
+  s.ctl.set('run');
+  assert.equal(s.doc.querySelector('.chat-intent-l').textContent, 'New run');
+  assert.equal(intentText('run', 'x'), 'Propose a pipeline run for this task.\n\nx');
+  assert.equal(s.ctl.workflow(), null);
+});
+
+test('a workflow on any intent but run is ignored', () => {
+  const s = setup();
+  s.ctl.set('clone', { workflow: { id: 'wf_pay', name: 'Payroll close' } });
+  assert.equal(s.doc.querySelector('.chat-intent-l').textContent, 'Clone a repo');
+  assert.equal(s.ctl.workflow(), null);
+});

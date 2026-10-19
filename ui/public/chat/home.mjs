@@ -365,7 +365,15 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     if (token !== st.visit) return;
     st.workflows = validWorkflows(got && got.list);
     st.portsFn = got && typeof got.portsFn === 'function' ? got.portsFn : null;
+    actions.setPins({ workflows: st.workflows });
     if (st.tab === 'workflows') renderPanel();
+  }
+  // The person's pinned workflows (src/shared/home-pins.mjs), fresh per visit; the row shows the visible ones.
+  async function loadPins(token) {
+    let got = null;
+    try { got = typeof deps.pins === 'function' ? await deps.pins() : null; } catch { got = null; }
+    if (token !== st.visit) return;
+    if (Array.isArray(got)) actions.setPins({ pins: got });   // null = keep the row's default (Shaper)
   }
   async function loadPlans(token) {
     let list = [];
@@ -436,6 +444,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     pullRuns();                                 // the switches keep their last known values until loadFlags answers
     void loadThreads(token);
     void loadWorkflows(token);
+    void loadPins(token);
     void loadPresets(token);
     void loadFlags(token);
     if (st.plansOn) void loadPlans(token);
@@ -471,6 +480,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
       if (data.workflows && Array.isArray(data.workflows.list)) {
         st.workflows = validWorkflows(data.workflows.list);
         st.portsFn = typeof data.workflows.portsFn === 'function' ? data.workflows.portsFn : null;
+        actions.setPins({ workflows: st.workflows });
       }
       if (data.runs) applyRuns(normRuns(data.runs));
       else { maybeChoose(); if (st.chosen) renderPanel(); }
