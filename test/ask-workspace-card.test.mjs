@@ -460,3 +460,18 @@ test('the parent validator reads live runs from pipeline rows: a running or PAUS
     } },
   ]);
 });
+
+test('a Folder project joins a create card; its member row carries vcs none (Git rows unchanged)', async () => {
+  const { v } = validator({ listProjects: async () => [...PROJECTS, { key: 'kn', name: 'notes', path: '/r/notes', vcs: 'none' }] });
+  const r = await v({ kind: 'create', name: 'Mixed', projectKeys: ['ka', 'kn'] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.card.members, [{ key: 'ka', name: 'api', path: '/r/api' }, { key: 'kn', name: 'notes', path: '/r/notes', vcs: 'none' }]);
+});
+
+test('a remove_member card for a Folder member carries vcs none (its Remove row shows the Folder chip); a Git member\'s does not', async () => {
+  const { v } = validator({ listProjects: async () => PROJECTS.map((p) => (p.key === 'kb' ? { ...p, vcs: 'none' } : p)) });
+  const r = await v({ kind: 'remove_member', workspaceId: WS.id, projectKey: 'kb' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.card.removed, { key: 'kb', name: 'web', path: '/r/web', vcs: 'none' });
+  assert.deepEqual((await v({ kind: 'remove_member', workspaceId: WS.id, projectKey: 'ka' })).card.removed, { key: 'ka', name: 'api', path: '/r/api' });
+});

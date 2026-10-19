@@ -3727,6 +3727,11 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .fc-bar-l svg{flex:none;}
 .fc-bar-r{margin-left:auto;display:flex;gap:8px;}
 .rd-sec .fc-bar-host:not([hidden]){margin-bottom:12px;}
+/* P5: a workspace run's Changes — one section per Folder member (name + Folder chip), and the Apply dialog's member line */
+.fc-member + .fc-member{margin-top:20px;}
+.fc-member-head{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:14px;font-weight:600;}
+.fc-member-body .fc-bar-host:not([hidden]){margin-bottom:12px;}
+.fc-member-line{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;overflow-wrap:anywhere;}
 .fc-sign{width:12px;flex:none;text-align:center;font:500 13px var(--mono);}
 .rd-diff-row.fc-file{align-items:flex-start;}
 .fc-file .rd-diff-row-path{white-space:normal;overflow-wrap:anywhere;}   /* a long path wraps: clipped, rows sharing a long prefix read the same */

@@ -43,6 +43,7 @@ import { harvestWork, ownWorkDir, WORK_ARTIFACT_KIND } from './no-project-work.m
 import { appendDirection, readDirections, pendingDirections, DIRECTIONS_FILE, DIRECTIONS_KIND, DIRECTIONS_CLOSED } from './directions.mjs';
 import { worcaHome } from './projects.mjs';
 import { normalizeWorkMode, workModeOfRow, folderFiles, CHANGES_FILE, CHANGES_PATCH_FILE } from './project-kind.mjs';
+import { folderMemberFiles } from './folder-members.mjs';
 import {
   copyFolder, writeFolderManifest, readFolderManifest, manifestHas, scanChanges, buildChangesPatch,
   writeChangesFiles, readChangesFile, sizeLabel, folderCopyRoot,
@@ -727,6 +728,11 @@ const PAUSED_STATE_SKIP = new Set([
   'projectDir', 'projectKey', 'resumable', 'scheduledFor', 'scheduleId', 'active', 'gate', 'changes',
 ]);
 
+/** P1a's A/M/D mapping of a folder scan's files into git name-status rows (assembleResults input). */
+function folderNameStatus(files) {
+  return files.map((f) => ({ path: f.path, status: f.change === 'added' ? 'A' : f.change === 'deleted' ? 'D' : 'M' }));
+}
+
 export class RunHarness extends EventEmitter {
   constructor(opts) {
     super();
@@ -761,7 +767,7 @@ export class RunHarness extends EventEmitter {
     // never leak `undefined` into a branch slug.
     this.members = Array.isArray(this.workspace?.projects)
       ? this.workspace.projects
-          .slice()
+          .map(({ workMode, ...m }) => ({ ...m, ...(workMode === 'folder' ? { workMode: 'folder' } : {}) }))   // P5: absent = git
           .sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0))
       : (() => {
           const dir = resolve(this.opts.projectDir || process.cwd());
@@ -772,8 +778,10 @@ export class RunHarness extends EventEmitter {
     // P1 (CONTRACT §2): 'git' (a worktree) | 'folder' (a copy, then Apply) | 'none' (P3). A resume or a stop reads the
     // RECORDED mode (state.branch / workspace_meta) — never its caller's; a fresh start takes opts.workMode (decided by
     // the server / CLI); absent → 'git', so every existing caller is unchanged. P5 widens the workspace arm.
-    this.workMode = this.isWorkspace ? 'git'
-      : (this.opts.resume?.row ? workModeOfRow(this.opts.resume.row) : normalizeWorkMode(this.opts.workMode));
+    // P5: a fresh workspace is 'folder' only when every member is a Folder member (else a git run with Folder members).
+    this.workMode = this.opts.resume?.row ? workModeOfRow(this.opts.resume.row)
+      : this.isWorkspace ? (this.members.some((m) => m.workMode !== 'folder') ? 'git' : 'folder')
+      : normalizeWorkMode(this.opts.workMode);
     if (this._noProject) this.workMode = 'none';
     this.workDirs = new Map();         // projectKey -> worktree checkout dir
     this.checkpointRefs = {};          // projectKey -> pre-run commit
@@ -1516,6 +1524,7 @@ export class RunHarness extends EventEmitter {
           projectKey: m.projectKey,
           projectDir: resolve(m.projectDir),
           projectName: m.projectName,
+          ...(m.workMode === 'folder' ? { workMode: 'folder' } : {}),   // P5: absent = git (the recorded mode, R5)
         }));
         this.state.checkpointRefs = {};
         this.state.branches = {};
@@ -2110,7 +2119,7 @@ export class RunHarness extends EventEmitter {
       }
     }
 
-    if (this.workMode === 'folder') {
+    if (this.workMode === 'folder' && !this.isWorkspace) {   // P5: an all-Folder workspace takes the rehydration loop
       const key = this.members[0]?.projectKey;
       let copy = this.state.branch?.copyDir || null;
       // a copy that is not the run's own folder (a link the agent swapped in) is no copy: mounts and scans never follow it
@@ -2195,6 +2204,18 @@ export class RunHarness extends EventEmitter {
       this.workspaceDescription = meta.workspaceDescription || '';
       this.workspaceOverrides = await this._scanOverrides();
       this.checkpointRefs = meta.checkpointRefs || {};
+      // P5: a Folder member re-attaches its copy from its record (the recorded mode: members come from
+      // workspace_meta.projects) — never branchInfos, never a diff base.
+      for (const m of this.members) {
+        if (this._memberWorkMode(m.projectKey) !== 'folder') continue;
+        let copy = meta.branches?.[m.projectKey]?.copyDir || null;
+        if (copy && !(await folderCopyRoot(copy, { pipelineId: row.id, key: m.projectKey }))) {
+          if (strict) throw new Error(`copy missing: ${copy} — cannot resume`);
+          this._log('worktree', 'warn', `copy missing: ${copy} — nothing to keep`);
+          copy = null;
+        }
+        if (copy) this.workDirs.set(m.projectKey, copy);
+      }
       for (const p of rehydrated.memberWorktrees) {
         if (p.projectKey && p.worktreeDir) {
           if (!existsSync(p.worktreeDir)) {
@@ -2435,6 +2456,11 @@ export class RunHarness extends EventEmitter {
     // A resume REPLAY keeps the mode the row recorded — never the live flag — unless
     // the paused run never got far enough to record one (then this IS run()'s read).
     if (!replay || !this._modeRecorded) this.runRootMode = runRootMode(); // §10 flag, read ONCE, here, per pipeline
+    // P5: a Folder member's copy lives in the run root — never inside the folder it copies.
+    if (this.members.some((m) => this._memberWorkMode(m.projectKey) === 'folder') && this.runRootMode !== 'detached') {
+      this._log('worktree', 'info', 'folder run: the copy lives in the run root (run-root mode legacy ignored)');
+      this.runRootMode = 'detached';
+    }
     this.state.runRootMode = this.runRootMode;            // top-level pin → workspace_meta (artifacts.mjs)
     const detached = this.runRootMode === 'detached';
     this.runRoot = detached ? join(worcaHome(), 'runs', this.pipeline.id) : null;
@@ -2450,6 +2476,7 @@ export class RunHarness extends EventEmitter {
     // the legacy sweep disabled, i.e. permanent. The partial-setup test
     // (test/orchestrator-workspace.test.mjs) guards exactly this.
     const setupFailures = [];
+    const folderWarns = [];
     try {
       await mapWithCap(this.members, fanoutCap(), async (m) => {
         // Replay: a member whose checkout survived the pause is already re-attached by
@@ -2459,6 +2486,17 @@ export class RunHarness extends EventEmitter {
         const kept = replay ? this.workDirs.get(m.projectKey) : null;
         if (kept && existsSync(kept)) {
           this._log('orchestrator', 'info', `setup replay: ${m.projectKey} keeps its checkout ${kept}`);
+          return;
+        }
+        if (this._memberWorkMode(m.projectKey) === 'folder') {
+          // P5: a Folder member of a mixed workspace — its own copy; never a branch, sync, worktree or any git.
+          try {
+            const rec = await this._setupFolderMember(m, { copyDir: join(reposBase, m.projectKey), files: this._folderFilesFor(m.projectKey), replay, onWarn: (w) => folderWarns.push(w) });
+            this.workDirs.set(m.projectKey, rec.copyDir);
+            this._setFolderRecord(m.projectKey, rec);
+          } catch (err) {
+            setupFailures.push(err);
+          }
           return;
         }
         try {
@@ -2619,6 +2657,7 @@ export class RunHarness extends EventEmitter {
       this.state.branch = { ...this.state.branches[primaryKey], runRootMode: this.runRootMode };
     }
     if (setupFailures.length) {
+      for (const w of folderWarns) await this._recordRunWarning(w);
       // A terminal failure (a diverged member under onDiverged 'fail', the feature == source guard)
       // must win over another member's pausable one: pausing would let a resume — which never
       // syncs — start that member from its local diverged base and bypass 'fail'.
@@ -2641,7 +2680,7 @@ export class RunHarness extends EventEmitter {
       // per member; it is the SINGLE-project delete path that reads state.branch.
       // The pin rides workspace_meta.runRootMode via this.state.runRootMode + the
       // artifacts.mjs whitelist delta.
-      this.state.branch = { ...this.state.branches[primary.projectKey] };
+      this.state.branch = this._primaryMirror(this.state.branches[primary.projectKey]);
     }
     // Minimal manifest, written HERE: the boot sweep and pipeline-delete need member
     // real dirs + worktree paths from the very first detached run, before any context
@@ -2651,20 +2690,27 @@ export class RunHarness extends EventEmitter {
       pipelineId: this.pipeline.id,
       runRootMode: this.runRootMode,
       isWorkspace: this.isWorkspace,
-      members: this.members.map((m) => ({
-        projectKey: m.projectKey, projectName: m.projectName,
-        projectDir: resolve(m.projectDir),               // the REAL repo — what `git worktree remove` needs
-        worktreeDir: this.workDirs.get(m.projectKey),
-      })),
+      members: this.members.map((m) => (this._memberWorkMode(m.projectKey) === 'folder'
+        ? { projectKey: m.projectKey, projectName: m.projectName, projectDir: resolve(m.projectDir), copyDir: this.workDirs.get(m.projectKey), workMode: 'folder' }
+        : {
+          projectKey: m.projectKey, projectName: m.projectName,
+          projectDir: resolve(m.projectDir),               // the REAL repo — what `git worktree remove` needs
+          worktreeDir: this.workDirs.get(m.projectKey),
+        })),
     });
+    // P5: a Folder member's copy warnings land AFTER the minimal manifest, which replaces run.json (P1's order).
+    for (const w of folderWarns) await this._recordRunWarning(w);
     await this._persist();
     this._emit('state', this.getState());
   }
 
   // ── Folder runs (P1, CONTRACT §2), keyed by member (S23). Single project: the member record is state.branch. ──
-  _memberWorkMode(key) { void key; return this.workMode; }
-  _folderFilesFor(key) { void key; return folderFiles(this.pipeline.dir); }
-  _folderRecord(key) { void key; return this.state.branch; }
+  _memberWorkMode(key) {
+    if (!this.isWorkspace) return this.workMode;
+    return this.memberByKey.get(key)?.workMode === 'folder' ? 'folder' : 'git';   // P5: the recorded per-member mode
+  }
+  _folderFilesFor(key) { return this.isWorkspace ? folderMemberFiles(this.pipeline.dir, key) : folderFiles(this.pipeline.dir); }
+  _folderRecord(key) { return this.isWorkspace ? (this.state.branches?.[key] ?? null) : this.state.branch; }
   /** The member's real folder: its record's realDir, else its projectDir. */
   _folderRealDir(key) {
     const m = this.members.find((x) => x.projectKey === key);
@@ -2672,10 +2718,34 @@ export class RunHarness extends EventEmitter {
   }
   /** A Folder run's cwd is still the run's own copy (folderCopyRoot): never a link the agent swapped in at its path. */
   async _folderCopyIntact() {
+    if (this.isWorkspace) {
+      // P5: a workspace works at the run root; each Folder member's copy must still be the run's own folder. The first
+      // copy that is not is kept on `_badFolderCopy`, so the pause names it (the run root names no member).
+      this._badFolderCopy = null;
+      for (const m of this.members) {
+        if (this._memberWorkMode(m.projectKey) !== 'folder') continue;
+        const dir = this.workDirs.get(m.projectKey);
+        if (dir && !(await folderCopyRoot(dir, { pipelineId: this.pipeline?.id, key: m.projectKey }))) { this._badFolderCopy = dir; return false; }
+      }
+      return true;
+    }
     const key = this.members[0]?.projectKey;
     return !!(this.runCwd && key && (await folderCopyRoot(this.runCwd, { pipelineId: this.pipeline?.id, key })));
   }
+  /** P5: the workspace scalar mirror of the primary's record. On a git run (any Git member) a Folder primary's mirror
+   *  drops `workMode`: readers that fall back to `state.branch.workMode` (run-kind.mjs workModeOf) must read the RUN's
+   *  mode, never the primary member's. An all-Folder workspace keeps it (state.workMode says folder too). */
+  _primaryMirror(rec) {
+    const { workMode, ...rest } = rec || {};
+    return this.workMode === 'git' ? rest : { ...(rec || {}) };
+  }
   _setFolderRecord(key, patch) {
+    if (this.isWorkspace) {
+      const branches = this.state.branches || {};
+      this.state.branches = { ...branches, [key]: { ...(branches[key] || {}), ...patch } };
+      if (key === this.members[0]?.projectKey) this.state.branch = this._primaryMirror(this.state.branches[key]);   // the scalar mirror
+      return;
+    }
     this.state.branch = { ...(this.state.branch || {}), ...patch };
     this.state.branches = { ...(this.state.branches || {}), [key]: this.state.branch };
   }
@@ -2717,14 +2787,14 @@ export class RunHarness extends EventEmitter {
     const primary = this.members[0];
     const copyDir = this.workDirs.get(primary.projectKey);
     this.workDir = copyDir;
-    this.runCwd = copyDir;
+    this.runCwd = this.isWorkspace ? this.runRoot : copyDir;   // P5: a workspace works at the neutral run root
     this.branchInfo = null;
     await writeRunManifest(this.runRoot, {
       pipelineId: this.pipeline.id,
       runRootMode: 'detached',
       workMode: 'folder',
-      isWorkspace: false,
-      members: [{ projectKey: primary.projectKey, projectName: primary.projectName, projectDir: resolve(primary.projectDir), copyDir, workMode: 'folder' }],
+      isWorkspace: this.isWorkspace,
+      members: this.members.map((m) => ({ projectKey: m.projectKey, projectName: m.projectName, projectDir: resolve(m.projectDir), copyDir: this.workDirs.get(m.projectKey), workMode: 'folder' })),
     });
     for (const w of warns) await this._recordRunWarning(w);
     await this._persist();
@@ -2748,6 +2818,7 @@ export class RunHarness extends EventEmitter {
 
   /** Scan the copy, write changes.json + changes.patch, index them. Serialized; never throws. */
   _refreshFolderChanges(key, files) {
+    if (this._isWorkspaceScan()) return Promise.resolve(null);   // P5 (S51): a read-only scan writes no Changes
     const run = async () => {
       try {
         const copyDir = this.workDirs.get(key) || null;            // only an attached copy (setup / _reattachCheckouts)
@@ -2788,6 +2859,7 @@ export class RunHarness extends EventEmitter {
 
   /** The refresh, then the settle rule (P1b S7): a settled run that changed nothing releases its copy. */
   async _finalizeFolderMember(key, files, { stage = false } = {}) {
+    if (this._isWorkspaceScan()) return null;                    // P5 (S51): a read-only scan writes no Changes
     void stage;
     const r = await this._refreshFolderChanges(key, files);
     if (!r) return null;
@@ -2817,6 +2889,7 @@ export class RunHarness extends EventEmitter {
 
   /** The folder arm of _buildResults (single project): results.json from the copy's changes. */
   async _buildFolderResults({ stage = false } = {}) {
+    if (this.isWorkspace) return this._buildFolderWorkspaceResults({ stage });
     const key = this.members[0].projectKey;
     const files = this._folderFilesFor(key);
     const reviews = readPipelineExtras(this.pipeline.id).reviews || [];
@@ -2824,12 +2897,38 @@ export class RunHarness extends EventEmitter {
     if (!r) return;
     let summary = null;
     if (r.files.length || !stage) {
-      const results = assembleResults({
-        nameStatus: r.files.map((f) => ({ path: f.path, status: f.change === 'added' ? 'A' : f.change === 'deleted' ? 'D' : 'M' })),
-        numstat: r.numstat, reviews,
-      });
+      const results = assembleResults({ nameStatus: folderNameStatus(r.files), numstat: r.numstat, reviews });
       const memory = this.memorySummary();
       if (memory) results.memory = memory;
+      await persistResults(this.pipeline.dir, results);
+      summary = results.summary;
+    }
+    this.state.runSize = sizeOfChange(summary);
+    await this._persist();
+  }
+
+  /** P5: every Folder member's finalized changes as results entries ({ projectKey, results }), in member order. */
+  async _folderMemberResults({ stage = false, reviews = [] } = {}) {
+    const out = [];
+    for (const m of this.members) {
+      if (this._memberWorkMode(m.projectKey) !== 'folder') continue;
+      const r = await this._finalizeFolderMember(m.projectKey, this._folderFilesFor(m.projectKey), { stage });
+      if (!r) continue;
+      out.push({ projectKey: m.projectKey, listed: r.files.length > 0, results: assembleResults({ nameStatus: folderNameStatus(r.files), numstat: r.numstat, reviews }) });
+    }
+    return out;
+  }
+
+  /** P5: the all-Folder workspace arm of _buildFolderResults — the workspace results shape (perProject + rollup). */
+  async _buildFolderWorkspaceResults({ stage = false } = {}) {
+    const reviews = readPipelineExtras(this.pipeline.id).reviews || [];
+    const members = await this._folderMemberResults({ stage, reviews });
+    if (!members.length) return;
+    let summary = null;
+    if (members.some((x) => x.listed) || !stage) {
+      const perProject = buildPerProject(members.map(({ projectKey: k, results }) => ({ projectKey: k, results })));
+      const memory = this.memorySummary();
+      const results = { summary: rollupSummary(perProject), perProject, ...(memory ? { memory } : {}) };
       await persistResults(this.pipeline.dir, results);
       summary = results.summary;
     }
@@ -2858,7 +2957,8 @@ export class RunHarness extends EventEmitter {
     const now = this._folderRecord(key) || {};
     // Kept unless settled: a copy whose changes were never listed (every scan failed, or a teardown before the copy
     // was re-attached) stays under folder-apply; only discarded / applied, or no manifest (setup never finished), lets go.
-    const pending = exists && existsSync(files.manifest) && now.changes?.state !== 'discarded' && now.changes?.state !== 'applied';
+    // P5 (S51): a read-only scan writes no Changes and keeps no copy — never pending, so the run root goes with rmGuarded.
+    const pending = !this._isWorkspaceScan() && exists && existsSync(files.manifest) && now.changes?.state !== 'discarded' && now.changes?.state !== 'applied';
     if (pending && !now.changes) await this._recordRunWarning(`changes could not be listed — the copy is kept at ${copyDir}`);
     if (!exists && now.changes?.state === 'pending') await this._settleFolderState(key, files, 'discarded');
     if (pending && now.changes && pipelineDir) {
@@ -4495,6 +4595,11 @@ export class RunHarness extends EventEmitter {
     const dirs = this.members.map((m) => resolve(m.projectDir));
     const toolsByDir = await detectToolsPerProject(dirs); // never throws
     await mapWithCap(this.members, 4, async (m) => {
+      if (this._memberWorkMode(m.projectKey) !== 'git') {
+        this.toolInstructions.set(m.projectKey, '');
+        this._log('graph', 'info', `graphify skipped for ${m.projectKey} (Folder project).`);
+        return;
+      }
       const workDir = this.workDirs.get(m.projectKey);
       const info = toolsByDir.get(resolve(m.projectDir));
       if (!workDir || workDir === resolve(m.projectDir)) {
@@ -4815,7 +4920,9 @@ export class RunHarness extends EventEmitter {
       this.workDirs.delete(key);
     }
     // Keep the scalar mirror coherent for late observers (never on a retained member).
-    if (!retainedMembers.length && this.workMode === 'git') this._mirrorPrimaryBranchTeardown();
+    // P5: a pending Folder member (folder-apply) is no reason to leave a Git primary's mirror unstamped; a Folder primary has none.
+    const commitRetained = retainedMembers.some((r) => (r.reason ?? RETAIN_REASONS.COMMIT_FAILED) === RETAIN_REASONS.COMMIT_FAILED);
+    if (!commitRetained && this.workMode === 'git' && this._memberWorkMode(this.members[0]?.projectKey) === 'git') this._mirrorPrimaryBranchTeardown();
     this.branchInfo = null;
     this.workDir = this.projectDir;
 
@@ -5651,6 +5758,10 @@ export class RunHarness extends EventEmitter {
         worktreeDir: this.workDirs.get(m.projectKey),
         checkpointRef: this.checkpointRefs[m.projectKey],
         graphInstruction: this.toolInstructions.get(m.projectKey) || '',
+        // P5: the member record's own mode (fake-this callers carry members only); absent = git.
+        // A read-only scan writes no Changes (S51): its agents are never pointed at a changes file.
+        ...(m.workMode === 'folder'
+          ? { workMode: 'folder', ...(this._isWorkspaceScan?.() ? {} : { changesPatch: folderMemberFiles(this.pipeline.dir, m.projectKey).patch }) } : {}),
       })),
     };
   }
@@ -5670,6 +5781,9 @@ export class RunHarness extends EventEmitter {
       relDir: this.runRootMode === 'detached' ? `repos/${m.projectKey}` : null,  // render-only token
       checkpointRef: this.checkpointRefs[m.projectKey] || null,
       graphInstruction: this.toolInstructions.get(m.projectKey) || '',
+      // P5: no changes file on a read-only scan (S51) — it writes none.
+      ...(this.isWorkspace && this._memberWorkMode(m.projectKey) === 'folder'
+        ? { workMode: 'folder', ...(this._isWorkspaceScan() ? {} : { changesPatch: this._folderFilesFor(m.projectKey).patch }) } : {}),
     }));
   }
 
@@ -6440,7 +6554,11 @@ export class RunHarness extends EventEmitter {
       // results.json, one un-prefixed patch) via the members.length === 1 special case.
       const members = [];
       const patches = [];
+      // P5: a mixed workspace's Folder members — their own changes (members/<key>/changes.patch), no diff patch entry.
+      const folderMembers = this.isWorkspace ? await this._folderMemberResults({ stage, reviews }) : [];
+      for (const x of folderMembers) members.push({ projectKey: x.projectKey, results: x.results });
       for (const [key, dir] of this.workDirs.entries()) {
+        if (this._memberWorkMode(key) !== 'git') continue;
         const base = this.checkpointRefs[key];
         if (!base) continue;
         // §8.8: the same exclusion set the commit uses, so results.json and
@@ -6469,8 +6587,8 @@ export class RunHarness extends EventEmitter {
       // An EMPTY patch while name-status lists changes is a failed `git diff`
       // spawn (diffPatch returns '' on error), not a clean tree — say so, and
       // still persist the results the other two diffs produced.
-      const listed = patches.some((p) => p.listed);
-      if (noPatch && listed) this._log('results', 'warn', 'diff patch is empty although name-status lists changes — git diff failed; results.json is persisted without a patch');
+      const listed = patches.some((p) => p.listed) || folderMembers.some((x) => x.listed);
+      if (noPatch && patches.some((p) => p.listed)) this._log('results', 'warn', 'diff patch is empty although name-status lists changes — git diff failed; results.json is persisted without a patch');
       // Stopped/error paths (`stage`) with nothing changed write nothing — absent IS
       // the truth (above). The DONE path always persists results.json: it carries
       // the review-derived keyThingsToCheck/blockingIssues that the task-source
@@ -8088,10 +8206,14 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<Map>} resolvedSkills
    */
   async _replaySetup() {
-    // 3) checkpoint
-    if (!this.checkpointRef) {
-      if (this.isWorkspace) await this._ensureGitCheckpointAll(); else await this._ensureGitCheckpoint();
-    } else if (!this.isWorkspace) {
+    // 3) checkpoint. P5: a workspace re-checkpoints only when its first GIT member lacks a ref (a Folder primary has
+    // none, ever) — the primary's own ref on an all-git workspace, so all-git runs replay exactly as before.
+    const firstGit = this.isWorkspace ? this.members.find((m) => this._memberWorkMode(m.projectKey) === 'git') : null;
+    if (this.isWorkspace) {
+      if (firstGit && !this.checkpointRefs[firstGit.projectKey]) await this._ensureGitCheckpointAll();
+    } else if (!this.checkpointRef) {
+      await this._ensureGitCheckpoint();
+    } else {
       const onlyKey = this.members[0]?.projectKey;
       if (onlyKey && !this.checkpointRefs[onlyKey]) {
         this.checkpointRefs[onlyKey] = this.checkpointRef;

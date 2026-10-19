@@ -21,6 +21,11 @@ const WORKSPACES = [
     projectKeys: ['svc-iam-aaaa1111', 'svc-ui-bbbb2222'], exists: [true, true], createdAt: 'x', updatedAt: 'x' },
   // No members: renderWorkspaceSourceBranches takes its early return and the single select stays as a disabled stand-in.
   { id: 'ws_2', name: 'Empty WS', description: '', projectPaths: [], projectKeys: [], exists: [], createdAt: 'x', updatedAt: 'x' },
+  // P5 (annotated vcs): every member a Folder project, and a Git member beside a Folder member.
+  { id: 'ws_3', name: 'Folders WS', description: '', projectPaths: ['/f/notes', '/f/docs'], projectKeys: ['notes-cccc3333', 'docs-dddd4444'],
+    exists: [true, true], vcs: ['none', 'none'], createdAt: 'x', updatedAt: 'x' },
+  { id: 'ws_4', name: 'Mixed WS', description: '', projectPaths: ['/a/svc-iam', '/f/notes'], projectKeys: ['svc-iam-aaaa1111', 'notes-cccc3333'],
+    exists: [true, true], vcs: ['git', 'none'], createdAt: 'x', updatedAt: 'x' },
 ];
 const BRANCHES = {
   '/a/svc-iam': { branches: ['main', 'worca/refactor-p1'], current: 'main', runs: [{ branch: 'worca/refactor-p1', pipelineId: 'p1', title: 'Refactor', status: 'running', endedAt: null }] },
@@ -37,11 +42,12 @@ async function branchesReady(doc) {
   for (let i = 0; i < 200 && !doc.getElementById('sourceBranch').dataset.current; i++) await tick(5);
 }
 
-async function boot(hash, { withSync = false, runReply = null, seedProject = '' } = {}) {
+async function boot(hash, { withSync = false, runReply = null, seedProject = '', gitOff = false } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: `http://localhost:4317/${hash}` }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
+  if (gitOff) window.document.documentElement.dataset.git = 'off';   // as the server renders it when git is missing
   // app-js-jsdom-traps: a plain #new restores the project by NAME, and a previous test's workspace choice must not leak in.
   if (seedProject) { window.localStorage.setItem('worca-cc.lastProject', seedProject); window.localStorage.setItem('worca-cc.runTarget', 'project'); }
   const runBodies = []; const calls = [];
@@ -61,6 +67,8 @@ async function boot(hash, { withSync = false, runReply = null, seedProject = '' 
     if (u.includes('/api/schedules/after/g2')) return json({ kind: 'pipeline', id: 'g2', title: 'Restored ws', status: 'done', projectDir: null, workspaceId: 'ws_1', branchGone: true });
     if (u.includes('/api/schedules/after/e1')) return json({ kind: 'pipeline', id: 'e1', title: 'Broken', status: 'error', projectDir: '/a/svc-iam', workspaceId: null });
     if (u.includes('/api/schedules/after/w2')) return json({ kind: 'pipeline', id: 'w2', title: 'Empty run', status: 'done', projectDir: null, workspaceId: 'ws_2' });
+    if (u.includes('/api/schedules/after/w3')) return json({ kind: 'pipeline', id: 'w3', title: 'Folders run', status: 'done', projectDir: null, workspaceId: 'ws_3' });
+    if (u.includes('/api/schedules/after/w4')) return json({ kind: 'pipeline', id: 'w4', title: 'Mixed run', status: 'done', projectDir: null, workspaceId: 'ws_4' });
     if (u.includes('/api/schedules/after/w1')) return json({ kind: 'pipeline', id: 'w1', title: 'Ws run', status: 'done', projectDir: null, workspaceId: 'ws_1' });
     // A ticket predecessor always answers with ITS projectDir, registered or not — the form must say so.
     if (u.includes('/api/schedules/after/t9')) return json({ kind: 'ticket', id: 't9', title: 'Elsewhere', status: 'scheduled', projectDir: '/a/not-registered', workspaceId: null });
@@ -259,6 +267,40 @@ test('#new/after/e1: a predecessor that already ended badly is picked with the a
   doc.getElementById('start-btn').click();
   await tick(3);
   assert.equal(runBodies[0].afterPolicy, 'any', 'resolveAfterRef would refuse done for an errored run');
+});
+
+test('P5: "Branch off the run before it" needs git and a Git member — an all-Folder workspace, or git off, keeps the switch off and posts no sourceFromPrevious', async () => {
+  const start = async (hash, opts) => {
+    const { window, runBodies } = await boot(hash, opts);
+    const doc = window.document;
+    await tick(30);
+    assert.equal(doc.getElementById('new-sched-badge').textContent, 'After run');
+    const sw = doc.getElementById('ws-source-previous');
+    const seen = { on: sw.classList.contains('on'), checked: sw.getAttribute('aria-checked'), rowHidden: doc.getElementById('ws-source-previous-row').classList.contains('hidden') };
+    doc.getElementById('prompt').value = 'Follow up';
+    doc.getElementById('start-btn').click();
+    await tick(3);
+    assert.equal(runBodies.length, 1);
+    return { ...seen, body: runBodies[0] };
+  };
+  await checkRows([
+    { name: '#new/after/w3: every member a Folder project', run: async () => {
+      const r = await start('#new/after/w3');
+      assert.deepEqual([r.on, r.checked, r.rowHidden], [false, 'false', true]);
+      assert.equal(r.body.after.id, 'w3');
+      assert.equal('sourceFromPrevious' in r.body, false);
+    } },
+    { name: '#new/after/w4: a Git member beside a Folder member keeps the switch on and the flag', run: async () => {
+      const r = await start('#new/after/w4');
+      assert.deepEqual([r.on, r.checked, r.rowHidden], [true, 'true', false]);
+      assert.equal(r.body.sourceFromPrevious, true);
+    } },
+    { name: '#new/after/w4 with git off: no branch to start from', run: async () => {
+      const r = await start('#new/after/w4', { gitOff: true });
+      assert.deepEqual([r.on, r.checked, r.rowHidden], [false, 'false', true]);
+      assert.equal('sourceFromPrevious' in r.body, false);
+    } },
+  ]);
 });
 
 test('#new/after/w1: turning the switch off survives a member re-render', async () => {

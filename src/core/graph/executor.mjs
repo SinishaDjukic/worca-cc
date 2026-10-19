@@ -203,7 +203,9 @@ function detachedWorkspace(ctx) {
  * Pure + exported (the parity suite pins both arms).
  */
 export function changesInstruction(ctx) {
-  if (ctx?.workMode === 'folder') {
+  // P5: the single-run folder arm only — a workspace (an all-Folder one included) takes the per-member arm below,
+  // whose workspaceDiffInstruction lines name each Folder member's own changes file.
+  if (ctx?.workMode === 'folder' && !(ctx?.workspace?.projects || []).length) {
     return `in \`${join(ctx.pipelineDir, 'changes.patch')}\`, a unified diff of everything the run changed — there is no git in this run`;
   }
   if (ctx?.workMode === 'none') return 'by reading the files in your cwd (there is no repository: every file there was made by this run)';

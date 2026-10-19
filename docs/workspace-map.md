@@ -14,7 +14,7 @@ extracts facts and does all the matching; agents fill the gaps code leaves and c
 
 | Stage | Runs as | What it does |
 |---|---|---|
-| extract | script | Lists each member's files (`git ls-files`; `graphify-out/`, build folders and vendored code skipped — `vendor/`, `node_modules/`, `bower_components/`, `jspm_packages/` and `Pods/` anywhere, third-party folders such as `third_party/` or `external/` at the member root, whose `.proto` files, most gRPC code generated from them and a Pants, Bazel or Buck dependency list — a requirements file, a `pyproject.toml` or a `Cargo.toml` — are still read) and runs the detectors — package manifests (outside sample apps under folders such as `docs/` and `examples/`), deploy files, configuration, API specs, and code (HTTP routes and clients, messaging, databases). Each fact records its file, line and the literal text found there. |
+| extract | script | Lists each member's files (`git ls-files`, or a walk of the folder for a Folder member or when git is not installed; `graphify-out/`, build folders and vendored code skipped — `vendor/`, `node_modules/`, `bower_components/`, `jspm_packages/` and `Pods/` anywhere, third-party folders such as `third_party/` or `external/` at the member root, whose `.proto` files, most gRPC code generated from them and a Pants, Bazel or Buck dependency list — a requirements file, a `pyproject.toml` or a `Cargo.toml` — are still read) and runs the detectors — package manifests (outside sample apps under folders such as `docs/` and `examples/`), deploy files, configuration, API specs, and code (HTTP routes and clients, messaging, databases). Each fact records its file, line and the literal text found there. |
 | survey | agent `workspaceScanner` | One investigator per member whose coverage is `partial` or `none` reports what code could not find: role, aliases, what the member provides and consumes. |
 | catalog | script | Checks every reported fact against its file, builds a catalog of everything the members provide, and searches every member for literal mentions of it (candidates), skipping test files and the files Normal protects (`.env*`, key and certificate files). |
 | usage | agent `workspaceUsageMapper` | One investigator per member confirms or rejects its candidates and reports further uses: dynamic URLs, generated clients, configuration. |
@@ -40,10 +40,13 @@ extracts facts and does all the matching; agents fill the gaps code leaves and c
   the overview is generated.
 - The scan agent model runs survey, usage and synth; the project agent model runs their
   investigators (Settings › Runs › Workspaces, or the scan's own Models pick).
-- A scan changes no member: it never creates a repository and never commits. Each member must be
+- A scan changes no member: it never creates a repository and never commits. A Git member must be
   the top folder of its own git repository and have a commit; a scan or re-scan with any other
-  member (a folder inside a monorepo, a repository with no commit) is refused and names it: add
-  the repository root instead, or make that folder its own repository with a commit.
+  Git member (a folder inside a monorepo, a repository with no commit) is refused and names it: add
+  the repository root instead, or make that folder its own repository with a commit. A Folder
+  member (a registered Folder project, or any member when git is not installed) is scanned on a
+  copy that the scan drops when it ends; it gets no graph and no origin alias. Members are
+  registered projects, or git repositories while git is installed.
 
 ## Coverage and confidence
 

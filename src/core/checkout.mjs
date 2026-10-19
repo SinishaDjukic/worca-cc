@@ -9,7 +9,7 @@ import { getDb, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
 import { createWorktree, removeWorktree, worktreePathForBranch, snapshotWorktreePatch } from './worktree.mjs';
 import { staleIndexLockNote } from './git-lock.mjs';
-import { readRunManifest, writeRunManifest, updateRunManifest, rmGuarded, RETAIN_REASONS } from './run-manifest.mjs';
+import { readRunManifest, writeRunManifest, updateRunManifest, rmGuarded, RETAIN_REASONS, liveRetainMembers } from './run-manifest.mjs';
 import { findPipelineRowById, retainedWorkFor, checkoutRecordsFor, readPrState, appendAuditById,
   readStoreMeta, runRootSweepLookups } from './artifacts.mjs';
 import { isNoProjectKey, NO_PROJECT_NAME } from '../shared/no-project.mjs';
@@ -278,7 +278,8 @@ export function discardCheckout({ id, members = null, force = false, stopService
       const runRoot = join(worcaHome(), 'runs', row.id);
       if (existsSync(runRoot)) {
         const cur = await readRunManifest(runRoot);
-        const left = (cur?.retain?.members || []).filter((x) => !removed.includes(x.projectKey) && existsSync(x.worktreeDir));
+        // P5: a pending Folder member of a mixed workspace keeps the root by its copyDir (it has no worktreeDir)
+        const left = liveRetainMembers({ members: (cur?.retain?.members || []).filter((x) => !removed.includes(x.projectKey)) });
         if (left.length) await updateRunManifest(runRoot, { retain: { ...cur.retain, members: left } });
         else await rmGuarded(runRoot, { worcaHome: worcaHome(), pipelineId: row.id });
       }

@@ -3,6 +3,8 @@
 // Discard. DOM over an injected `doc`, network over an injected `fetch`; no work at import. Paths shown here are
 // the server's (`/`-separated in changes.json and apply-plan on every OS); every path goes in through textContent.
 
+import { kindChip } from './run-kind.mjs';
+
 export const CHANGE_SIGN = Object.freeze({ added: '+', modified: '~', deleted: '−' });
 export const CHANGE_WORD = Object.freeze({ added: 'Added', modified: 'Updated', deleted: 'Deleted' });
 
@@ -115,7 +117,7 @@ const reasonOf = (body, status) => (body && body.error) || `The server answered 
 
 let seq = 0;
 
-export function openApplyDialog({ doc, fetch, pipelineId, memberKey = '', opener = null }) {
+export function openApplyDialog({ doc, fetch, pipelineId, memberKey = '', memberName = '', opener = null }) {
   const win = doc.defaultView;
   const id = `fc-apply-title-${++seq}`;
   const modal = el(doc, 'div', 'viewer-modal confirm-modal fc-modal');
@@ -144,7 +146,10 @@ export function openApplyDialog({ doc, fetch, pipelineId, memberKey = '', opener
   const go = btn(doc, 'btn btn-primary fc-go', 'Apply to folder');
   go.disabled = true;
   foot.append(cancel, go);
-  dlg.append(title, target, loading, plan, skipped, err, foot);
+  // P5: a workspace member's dialog names the member (name + Folder chip) above the target line.
+  const member = memberName ? el(doc, 'div', 'fc-member-line') : null;
+  if (member) member.append(el(doc, 'span', 'fc-member-name', String(memberName)), kindChip(doc, 'folder'));
+  dlg.append(...[title, member, target, loading, plan, skipped, err, foot].filter(Boolean));
   modal.append(dlg);
   doc.body.append(modal);
 

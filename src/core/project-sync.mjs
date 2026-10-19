@@ -75,6 +75,9 @@ export async function workspaceSyncBlocks(workspaceId, { mode = 'status', bases 
   // readWorkspace returns `exists[]` aligned with projectPaths: a gone folder runs no git in a dead cwd.
   const blocks = await mapWithCap(members, fanoutCap(), (m) => (ws.exists && ws.exists[m.i] === false
     ? { base: null, remote: null, state: 'unknown', missing: true }
+    // P5: a Folder member (annotated vcs 'none') has no branch and no remote: never git in its folder — nested in a
+    // repository, a fetch / ff there would move THAT repository.
+    : Array.isArray(ws.vcs) && ws.vcs[m.i] === 'none' ? { base: null, remote: null, state: 'unknown', folder: true }
     : projectSyncBlock({ dir: m.dir, projectKey: m.projectKey, base: bases[m.projectKey] || null, mode, ...act })));
   return members.map((m, i) => ({ projectKey: m.projectKey, ...blocks[i] }));
 }

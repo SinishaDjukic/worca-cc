@@ -411,3 +411,19 @@ test('size limits: no note up to 10, warnings above 10 and 20, Scan blocked abov
     } },
   ]);
 });
+
+// P5: registered Folder projects can be workspace members (U8), so the wizard offers them next to Git ones.
+const KINDS = [{ name: 'api', path: '/p/api', exists: true, key: 'k1', vcs: 'git' }, { name: 'notes', path: '/p/notes', exists: true, key: 'k2', vcs: 'none' }];
+const withKinds = (u) => (u.includes('/api/projects') ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: KINDS }) }) : null);
+
+test('the create wizard lists Folder projects next to Git ones, each with its kind chip, and both can be picked', async () => {
+  const { window } = await boot({ fetchHandler: withKinds });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  const rows = [...doc.querySelectorAll('#wiz-projects .wiz-proj')];
+  assert.deepEqual(rows.map((r) => [r.querySelector('.opt-name').textContent, r.querySelector('.kind-chip').textContent]), [['api', 'Git'], ['notes', 'Folder']]);
+  assert.ok(rows.every((r) => !r.querySelector('.wiz-proj-cb').disabled));
+  pick(window, ['/p/api', '/p/notes']);
+  assert.equal(doc.querySelector('#wiz-start-scan').disabled, false, 'a Git and a Folder project make a workspace');
+});

@@ -119,7 +119,8 @@ export function histRowState(p) {
   if (PARKED.has(s)) st = parkedState(s, p.pauseReason, p.limitEngine, p.limitNote);
   else if (FAILED.has(s)) st = { icon: 'fail', word: 'Failed', detail: '' };
   else if (STOPPED.has(s)) st = { icon: 'stop', word: 'Stopped', detail: '' };
-  else if (DONE.has(s)) st = { icon: 'done', word: doneWord(p), detail: '' };
+  // P5: a mixed workspace row carries its Folder members' rollup `changes`, but its glance is the git one (workMode absent).
+  else if (DONE.has(s)) st = { icon: 'done', word: doneWord(p.target === 'workspace' && p.workMode !== 'folder' ? { ...p, changes: null } : p), detail: '' };
   else if (s === 'running' || s === 'starting' || s === 'created') st = { icon: 'run', word: 'Running', detail: '' };
   else st = { icon: 'stop', word: s ? `${s.charAt(0).toUpperCase()}${s.slice(1)}` : 'Unknown', detail: '' };
   // An archived run keeps its terminal icon (it did finish that way) but its word says

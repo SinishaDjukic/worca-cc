@@ -26,6 +26,9 @@ project's working tree, so nothing is ever committed to your repo.
       changes.json, changes.patch
                          a Folder run's added / modified / deleted files, their state (pending /
                          applied / discarded) and their diff (built without git)
+      members/<projectKey>/
+                         a workspace run's Folder member: folder-manifest.json, changes.json,
+                         changes.patch, skipped/ (its own Changes; Apply to folder / Discard per member)
       skipped/           the run's version of files Apply to folder skipped
       skills/            the run's set skills (docs/skills.md): one generated plugin per set, passed
                          with --plugin-dir; rebuilt on resume, never inside a checkout
@@ -67,10 +70,11 @@ project's working tree, so nothing is ever committed to your repo.
                                         mcp-<messageId>.json, mode 0600 (never a project folder)
   logs/ask-web.jsonl                    Ask Worca web access: one line per web_fetch/web_search
                                         call (redacted URL, status, bytes); rotated to .1 at 5 MB
-  runs/<pipelineId>/                    detached run roots: run.json, repos/<projectKey>/ worktrees;
-                                        a Folder run's repos/<projectKey>/ is a copy of the folder,
-                                        kept (run.json retain "folder-apply") until Apply to folder,
-                                        Discard or Archive; a run without a project works in
+  runs/<pipelineId>/                    detached run roots: run.json, repos/<projectKey>/ worktrees (Git)
+                                        or copies (Folder); a Folder run's copy is kept (run.json retain
+                                        "folder-apply") until Apply to folder, Discard or Archive, and a
+                                        workspace run's root until each unapplied Folder member is applied
+                                        or discarded; a run without a project works in
                                         runs/<pipelineId>/work/ (its cwd, no git)
   metrics/
     repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-metrics

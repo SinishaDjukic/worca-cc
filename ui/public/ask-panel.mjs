@@ -4410,18 +4410,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const member = (m) => (m && m.path ? `${m.name || ''} · ${m.path}` : (m && m.name) || '');
     const rows = [
       ['Workspace', card.kind === 'create' ? card.name : card.workspaceName],
-      ...(card.kind === 'create' ? (card.members || []).map((m) => ['Member', member(m)]) : []),
-      ...(card.kind === 'add_members' ? (card.added || []).map((m) => ['Add', member(m)]) : []),
-      ...(card.kind === 'remove_member' && card.removed ? [['Remove', member(card.removed)]] : []),
+      ...(card.kind === 'create' ? (card.members || []).map((m) => ['Member', member(m), m]) : []),
+      ...(card.kind === 'add_members' ? (card.added || []).map((m) => ['Add', member(m), m]) : []),
+      ...(card.kind === 'remove_member' && card.removed ? [['Remove', member(card.removed), card.removed]] : []),
       ...(card.kind === 'rename' ? [['New name', card.name]] : []),
     ];
     const ul = make('ul', 'ask-mcard-changes');
-    for (const [label, value] of rows) {
+    for (const [label, value, m] of rows) {
       if (!value) continue;
       const li = make('li');
       li.appendChild(make('span', 'ask-mcard-change-label', label));
       const val = make('span', 'ask-mcard-change-val');
       val.appendChild(make('span', label === 'Remove' ? 'ask-mcard-before' : 'ask-mcard-after', String(value)));
+      if (m && m.vcs === 'none') val.appendChild(kindChip(doc, 'folder'));   // P5: a Folder member (P4b's kindChip binding, S59)
       li.appendChild(val);
       ul.appendChild(li);
     }
@@ -5100,11 +5101,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         members.replaceChildren();
         memberHost.replaceChildren();
         const row = opts && opts.workspaces.find((w) => w && w.id === wsSel.value);
+        // P5: a Folder member (live list vcs 'none', else the card's workMode 'folder') has no branch to pick.
         const list = row && Array.isArray(row.projectKeys)
-          ? row.projectKeys.map((k, i) => ({ projectKey: k, name: wsBasename(row.projectPaths && row.projectPaths[i]) }))
-          : Array.isArray(card.members) ? card.members.map((m) => ({ projectKey: m.projectKey, name: m.projectName })) : [];
+          ? row.projectKeys.map((k, i) => ({ projectKey: k, name: wsBasename(row.projectPaths && row.projectPaths[i]), folder: Array.isArray(row.vcs) && row.vcs[i] === 'none' }))
+          : Array.isArray(card.members) ? card.members.map((m) => ({ projectKey: m.projectKey, name: m.projectName, folder: m.workMode === 'folder' })) : [];
         members.textContent = list.map((m) => m.name).join(', ');
         for (const m of list) {
+          if (m.folder) continue;   // listed above, but no per-member source input: never in sourceBranchByKey
           const inp = doc.createElement('input');
           inp.type = 'text';
           inp.className = 'ask-card-member-src';
@@ -5113,6 +5116,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           if (card.sourceBranchByKey && card.sourceBranchByKey[m.projectKey]) inp.value = card.sourceBranchByKey[m.projectKey];
           memberHost.appendChild(rpField(m.name, inp));
         }
+        details.hidden = list.length > 0 && !memberHost.childElementCount;   // every member a Folder project: nothing to pick
+        for (const f of wsGitFields) f.hidden = list.length > 0 && list.every((m) => m.folder);   // ...and no branch to start from, name or commit onto
         updateTargetSub();
       };
       wsSel.addEventListener('change', renderMembers);

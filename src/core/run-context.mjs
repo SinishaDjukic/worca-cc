@@ -1117,16 +1117,24 @@ export function generateClaudeMd({
   const meta = [];
   // P1 (S9): a run whose every member works on a copy says so and never names git (P5 handles mixed workspaces).
   const folder = members.length > 0 && members.every((m) => m.workMode === 'folder');
+  // P5: a workspace mixing Git and Folder members names both kinds; an all-git roster keeps its bytes.
+  const mixed = !folder && members.some((m) => m.workMode === 'folder');
+  // P5: an all-Folder workspace (2+ members) has one copy per project — P1's single-project words name one folder.
+  const folders = folder && members.length > 1;
   // P3: a run without a project has one member (the reserved key) and works in the run's own `work/` folder.
   const none = members.length === 1 && members[0].workMode === 'none';
   meta.push(`# Worca CC run ${pipelineId}`, '');
   meta.push(
     none
       ? 'You are working in a **worca-cc run root** with no project. Your working folder is `work/`: every file you make goes there, and worca keeps them as this run\'s files. The run root holds run metadata only. This file is generated per run — do not edit it.'
+      : folders
+      ? 'You are working in a **worca-cc run root**. All edits happen inside `repos/<projectKey>`, one copy per project below of that project\'s folder (not a git repository: never run git there); the run root holds run metadata only. This file is generated per run from those projects\' real directories — do not edit it.'
       : folder
       ? 'You are working in a **worca-cc run root**. All edits happen inside `repos/<projectKey>`, a copy of the project\'s folder (not a git repository: never run git there); the run root holds run metadata only. This file is generated per run from the project\'s real directory — do not edit it.'
       : 'You are working in a **worca-cc run root**. All code edits happen inside ' +
-        '`repos/<projectKey>`, one git checkout per project below; the run root holds run ' +
+        '`repos/<projectKey>`, ' +
+        (mixed ? 'one checkout per project below (a git worktree for a Git project, a copy for a Folder project)' : 'one git checkout per project below') +
+        '; the run root holds run ' +
         "metadata only. This file is generated per run from those projects' real " +
         'directories — do not edit it.',
     '',
@@ -1134,8 +1142,12 @@ export function generateClaudeMd({
   meta.push('## Run layout', '');
   meta.push(none
     ? '- `work/` — this run\'s working folder (no project, no git). **All files you make go here.**'
+    : folders
+    ? '- `repos/<projectKey>/` — one copy of each project\'s folder in this run (no git). **All code edits happen here.**'
     : folder
     ? '- `repos/<projectKey>/` — a copy of the project\'s folder (no git). **All code edits happen here.**'
+    : mixed
+    ? '- `repos/<projectKey>/` — one git worktree per Git project and one copy per Folder project in this run. **All code edits happen here.**'
     : '- `repos/<projectKey>/` — one git worktree per project in this run. **All code edits happen here.**');
   meta.push('- `CLAUDE.md` (this file) — the generated context for the run.');
   meta.push('- `mcp.json` — the merged MCP server config passed to this session.');
@@ -1147,8 +1159,12 @@ export function generateClaudeMd({
   for (const m of none ? [] : [...members].sort(byProjectKey)) {
     meta.push(`- \`repos/${m.projectKey}\` — **${m.projectName || m.projectKey}**`);
     meta.push(`  - real directory: \`${m.projectDir}\``);
-    if (m.branch) meta.push(`  - branch: \`${m.branch}\``);
-    if (m.checkpointRef) meta.push(`  - checkpoint: \`${m.checkpointRef}\``);
+    if (mixed && m.workMode === 'folder') {
+      meta.push('  - Folder project: a copy with no git; the person applies its changes after the run');
+    } else {
+      if (m.branch) meta.push(`  - branch: \`${m.branch}\``);
+      if (m.checkpointRef) meta.push(`  - checkpoint: \`${m.checkpointRef}\``);
+    }
     const instruction = gi(m.projectKey).trim();
     if (instruction) meta.push(`  - graph: ${instruction.split('\n').join('\n    ')}`);
     const agents = agentsOf(m.projectKey);

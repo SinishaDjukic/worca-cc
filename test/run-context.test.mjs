@@ -29,6 +29,7 @@ import {
   mergeMcpConfigs,
   auditAncestors,
   mcpjsonApproval,
+  generateClaudeMd,
 } from '../src/core/run-context.mjs';
 import { readRunManifest, rescueModifiedMounts, removeInjectedPaths } from '../src/core/run-manifest.mjs';
 import { skipMessage } from '../src/core/mcp/registry.mjs';
@@ -1736,4 +1737,43 @@ test('registry layer: a resolver that throws adds nothing and names only a plain
   assert.ok(rc.warnings.includes('MCP registry could not be resolved (EMCPSTORE); no registry MCP servers were added to this run'));
   assert.ok(!JSON.stringify(rc.warnings).includes('sntrys_live_token_value'), 'the error text (it may quote a store file) is never recorded');
   assert.deepEqual(rc.mcpServerNames, []);
+});
+
+// test/run-context.test.mjs — append (add `generateClaudeMd` to its import from '../src/core/run-context.mjs')
+test('generateClaudeMd: a Folder member reads as a copy without git; an all-git roster is byte-identical', () => {
+  const base = { pipelineId: 'p1', projectsRoot: '/root', graphInstructions: {},
+    members: [{ projectKey: 'api-1', projectName: 'api', projectDir: '/r/api', branch: 'worca-cc/x', checkpointRef: 'abc', workMode: 'git' }] };
+  const gitOnly = generateClaudeMd(base).text;
+  const mixed = generateClaudeMd({ ...base, members: [...base.members,
+    { projectKey: 'notes-2', projectName: 'notes', projectDir: '/r/notes', branch: null, checkpointRef: null, workMode: 'folder' }] }).text;
+  const MIXED_INTRO = 'one checkout per project below (a git worktree for a Git project, a copy for a Folder project)';
+  const MIXED_LAYOUT = '- `repos/<projectKey>/` — one git worktree per Git project and one copy per Folder project in this run. **All code edits happen here.**';
+  const NOTES = '- `repos/notes-2` — **notes**\n  - real directory: `/r/notes`\n  - Folder project: a copy with no git; the person applies its changes after the run\n';
+  assert.ok(mixed.includes(NOTES));
+  assert.ok(mixed.includes(MIXED_INTRO));
+  assert.ok(mixed.includes(MIXED_LAYOUT));
+  // Nothing else moves: swapping the three mixed pieces back (and the member's memory section) gives the git bytes.
+  assert.equal(mixed.replace(MIXED_INTRO, 'one git checkout per project below')
+    .replace(MIXED_LAYOUT, '- `repos/<projectKey>/` — one git worktree per project in this run. **All code edits happen here.**')
+    .replace(NOTES, '').replace('## Project: notes — repos/notes-2\n\n*(no CLAUDE.md found in this project)*\n\n', ''), gitOnly);
+  // An all-Folder roster takes P1a's folder variant instead (members.every(folder)), with no mixed roster line.
+  const allFolder = generateClaudeMd({ ...base, members: [{ ...base.members[0], branch: null, checkpointRef: null, workMode: 'folder' }] }).text;
+  assert.ok(allFolder.includes('a copy of the project\'s folder (no git)'));
+  assert.ok(!allFolder.includes('Folder project:'));
+  assert.ok(!gitOnly.includes('Folder'));
+  assert.ok(gitOnly.includes('one git checkout per project below'));
+  // A workMode-less (pre-P1) member list keeps the same bytes as an explicit 'git' one.
+  assert.equal(generateClaudeMd({ ...base, members: [{ ...base.members[0], workMode: undefined }] }).text, gitOnly);
+});
+
+test('generateClaudeMd: an all-Folder workspace names one copy per project; a one-member all-Folder roster keeps P1\'s words', () => {
+  const m = (k, n) => ({ projectKey: k, projectName: n, projectDir: `/r/${n}`, branch: null, checkpointRef: null, workMode: 'folder' });
+  const two = generateClaudeMd({ pipelineId: 'p', projectsRoot: '/r', graphInstructions: {}, members: [m('a-1', 'a'), m('b-2', 'b')] }).text;
+  assert.ok(two.includes('All edits happen inside `repos/<projectKey>`, one copy per project below of that project\'s folder (not a git repository: never run git there)'));
+  assert.ok(two.includes('generated per run from those projects\' real directories'));
+  assert.ok(two.includes('- `repos/<projectKey>/` — one copy of each project\'s folder in this run (no git). **All code edits happen here.**'));
+  assert.ok(!two.includes('the project\'s folder (') && !two.includes('the project\'s real directory'), 'no singular wording');
+  const one = generateClaudeMd({ pipelineId: 'p', projectsRoot: '/r', graphInstructions: {}, members: [m('a-1', 'a')] }).text;
+  assert.ok(one.includes('a copy of the project\'s folder (not a git repository: never run git there)'));
+  assert.ok(one.includes('- `repos/<projectKey>/` — a copy of the project\'s folder (no git). **All code edits happen here.**'));
 });

@@ -1052,7 +1052,10 @@ export class GraphOrchestrator extends RunHarness {
       projectKey: m.projectKey,
       projectDir: m.projectDir,
       projectName: m.projectName,
-      worktreeDir: this.workDirs.get(m.projectKey) || null,
+      // P5: a Folder member's copy rides copyDir — never worktreeDir (resume re-attaches it from its branches record)
+      ...(this._memberWorkMode(m.projectKey) === 'folder'
+        ? { copyDir: this.workDirs.get(m.projectKey) || null }
+        : { worktreeDir: this.workDirs.get(m.projectKey) || null }),
       graphInstruction: this.toolInstructions.get(m.projectKey) || '',
     }));
   }
@@ -1646,7 +1649,8 @@ export class GraphOrchestrator extends RunHarness {
       if (!KEYED_KINDS.includes(node.kind)) return await this._runFlow(ctx);
       // P1: a Folder run's cwd is still the run's own copy — a link the agent swapped in would take the engine's
       // per-spawn files (Cursor's .cursor/) and every later node. A throw here pauses the run.
-      if (this.workMode === 'folder' && !(await this._folderCopyIntact())) throw new Error(`the run's copy is not the run's own folder: ${this.runCwd}`);
+      // P5: a mixed workspace (a git run) checks its Folder members' copies too — fan-out agents work in them.
+      if ((this.workMode === 'folder' || this.isWorkspace) && !(await this._folderCopyIntact())) throw new Error(`the run's copy is not the run's own folder: ${(this.isWorkspace && this._badFolderCopy) || this.runCwd}`);
       this._checkCostLimits();                  // budget gate at EVERY spawn (throws pauseErr)
       if (node.kind === 'script') {
         // A child process through the NODE site: every runner error carries

@@ -48,7 +48,7 @@ export default async function ({ inputs, outputs, ctx, log }) {
     // P7: graphify enrichment + the merged cross-repo graph, written next to the map (the pipeline
     // dir). Mock runs never build member graphs, so there it is a no-op (graph.mode 'none').
     const enrich = workspaceGraphEnricher({
-      members: ws.members.map((m) => ({ key: m.key, dir: m.dir })),
+      members: ws.members.map((m) => ({ key: m.key, dir: m.dir, ...(m.workMode === 'folder' ? { workMode: 'folder' } : {}) })),
       outPath: join(dirname(mapPath), 'workspace-graph.json'),
     });
     // M15: the overrides the run froze at start (ctx.workspace.overrides — absent on a first scan): the

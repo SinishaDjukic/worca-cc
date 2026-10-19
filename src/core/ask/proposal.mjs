@@ -5,7 +5,7 @@
 import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
 import { listProjects as realListProjects } from '../projects.mjs';
-import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, WORKSPACE_KEY_RE } from '../workspaces.mjs';
+import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, memberWorkMode as realMemberWorkMode, WORKSPACE_KEY_RE } from '../workspaces.mjs';
 import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertRunnableWorkflow, GRAPH_MEMORY_DEFRAG_WORKFLOW } from '../workflows.mjs';
 import { readGuardrailSet as realReadGuardrailSet } from '../guardrail-store.mjs';
 import { validateMemoryScope } from '../memory-sync.mjs';
@@ -21,6 +21,7 @@ import { resolveProfile as realResolveProfile } from '../source-bindings.mjs';
 import { listProfileIds as realListProfileIds } from '../plugin-config.mjs';
 import { resolveSourceRef as resolveGitSourceRef } from '../git-sync.mjs';
 import { effectiveSyncSettings } from '../project-sync.mjs';
+import { gitAvailable } from '../git-available.mjs';
 import { ENGINE_NAMES, MODEL_ENGINE_NAMES, engineLabel } from '../../shared/engine-switch.mjs';
 import { runsOn } from '../../shared/connections.mjs';
 import { normaliseTags } from '../../shared/run-tags.mjs';
@@ -69,6 +70,7 @@ export const PROPOSAL_ERRORS = Object.freeze({
   briefTooLong: `brief exceeds ${ASK_LIMITS.briefMaxChars} characters`,
   badSource: (v) => `unknown or invalid sourceBranch: ${v}`,
   byKeyUnknown: (k) => `sourceBranchByKey has an unknown project key: ${k}`,
+  byKeyFolder: (k) => `sourceBranchByKey: ${k} is a Folder project and has no branches`,
   byKeyProjectOnly: 'sourceBranchByKey is only valid for a workspace',
   missingSource: (v, remote) => `sourceBranch "${v}" exists neither locally nor on ${remote}`,
   shapeSlices: 'shape.slices must be "auto" or "off"',
@@ -167,6 +169,9 @@ export function createProposalValidator({
   assertRunnableWorkflow = realAssertRunnableWorkflow,
   readGuardrailSet = realReadGuardrailSet,
   isGitRepo = realIsGitRepo,
+  // P5 (U8): a member's mode now (registered Folder project, or any member while git is missing → 'folder')
+  memberWorkMode = realMemberWorkMode,
+  gitOn = gitAvailable,
   pathExists = existsSync,
   // Plugin task sources (source-spec.mjs): the installed sources with each one's profile roster.
   listTaskSources = () => realListTaskSources().map((s) => (s.type === 'plugin' && s.multiProfile ? { ...s, profiles: safeIds(s.plugin) } : s)),
@@ -300,8 +305,9 @@ export function createProposalValidator({
       for (let i = 0; i < paths.length; i++) {
         const dir = paths[i];
         if (!pathExists(dir)) { errors.push(PROPOSAL_ERRORS.memberPathMissing); return fail(); }
-        if (!isGitRepo(dir)) { errors.push(PROPOSAL_ERRORS.memberNotGit(dir)); return fail(); }
-        members.push({ projectKey: keys[i], projectDir: dir, projectName: basename(dir) });
+        const workMode = memberWorkMode(dir);
+        if (workMode === 'git' && !isGitRepo(dir)) { errors.push(PROPOSAL_ERRORS.memberNotGit(dir)); return fail(); }
+        members.push({ projectKey: keys[i], projectDir: dir, projectName: basename(dir), ...(workMode === 'folder' ? { workMode } : {}) });
       }
       members.sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0)); // primary first (ui/server.mjs:897)
       policyHome = typeof ws.policyProject === 'string' && paths.includes(ws.policyProject) ? ws.policyProject : null;
@@ -434,11 +440,14 @@ export function createProposalValidator({
       if (target.target !== 'workspace') errors.push(PROPOSAL_ERRORS.byKeyProjectOnly);
       else if (typeof raw === 'object' && !Array.isArray(raw)) {       // non-objects ignored, like the route
         const memberKeys = new Set(target.members.map((m) => m.projectKey));
+        const folderKeys = new Set(target.members.filter((m) => m.workMode === 'folder').map((m) => m.projectKey));
         const out = {};
         for (const [k, v] of Object.entries(raw)) {
           if (!memberKeys.has(k)) { errors.push(PROPOSAL_ERRORS.byKeyUnknown(k)); continue; }
           const val = typeof v === 'string' ? v.trim() : '';
           if (!val) continue;
+          // git missing: a Git member runs on a copy too (U3) — its branch is ignored, as POST /api/run ignores it; never "a Folder project"
+          if (folderKeys.has(k)) { if (gitOn()) errors.push(PROPOSAL_ERRORS.byKeyFolder(k)); continue; }
           if (!isSyntacticRef(val)) { errors.push(PROPOSAL_ERRORS.badSource(val)); continue; }
           out[k] = val;
         }

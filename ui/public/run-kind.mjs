@@ -37,3 +37,19 @@ export function kindChip(doc, kind) {
   s.textContent = KIND_LABELS[kind];
   return s;
 }
+
+// P5: a workspace run's Folder members, in member order — a History row's `members[]` (workMode 'folder'), else a
+// state's `projects[]` (the saved detail, or a live run that kept its state frame's projects). [] for a single-project
+// run, a legacy workspace row and an all-Git workspace. Pure.
+export function folderMembersOf(x) {
+  if (!x || typeof x !== 'object') return [];
+  if (Array.isArray(x.members) && x.members.length) {
+    return x.members.filter((m) => m && typeof m.memberKey === 'string' && m.memberKey && m.workMode === 'folder')
+      .map((m) => ({ memberKey: m.memberKey, name: m.name || m.memberKey, projectDir: m.projectDir || '' }));
+  }
+  if (Array.isArray(x.projects)) {
+    return x.projects.filter((p) => p && typeof p.projectKey === 'string' && p.projectKey && p.workMode === 'folder')
+      .map((p) => ({ memberKey: p.projectKey, name: p.projectName || p.projectKey, projectDir: p.projectDir || '' }));
+  }
+  return [];
+}

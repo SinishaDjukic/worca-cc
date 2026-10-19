@@ -42,7 +42,8 @@ function finish(ctx) {
   // P1's extract already aliases every member's origin slug (source 'git-remote'); git runs here
   // only when a relative submodule URL needs this member's own origin.
   const needsOrigin = (ctx.state.subs || []).some((s) => s.url && /^\.\.?\//.test(s.url));
-  const origin = needsOrigin ? originOf(ctx.member.dir) : null;
+  // P5: a Folder member's copy is never asked of git (it has no origin).
+  const origin = needsOrigin && ctx.member?.workMode !== 'folder' ? originOf(ctx.member.dir) : null;
   const originNorm = origin ? remoteSlug(origin) : null;
   const aliases = [];
   const facts = [];

@@ -457,7 +457,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const arts = Array.isArray(s.artifacts) ? s.artifacts : [];
     const prUrl = s.pr && isWebUrl(s.pr.url) ? s.pr.url : '';
     const canCreate = word.key === 'ship' && isGitRun(s) && !s.archived && !(s.pr && s.pr.url) && call(controls.prHost) !== false;
-    const total = (changesCounts(s.changes) || {}).total || 0; const canApply = word.key === 'folder' && !s.archived && !!s.changes && s.changes.state === 'pending' && total > 0 && typeof controls.openApply === 'function';
+    // P5: a workspace run applies each Folder member on its own (the run page's Changes); the card's Apply has no memberKey.
+    const ws = s.kind === 'workspace-run' || !!s.workspaceId;
+    const total = (changesCounts(s.changes) || {}).total || 0; const canApply = word.key === 'folder' && !ws && !s.archived && !!s.changes && s.changes.state === 'pending' && total > 0 && typeof controls.openApply === 'function';
     const np = isNoProjectRun(s);
     const sig = JSON.stringify([word, r, arts.map((a) => [a.relPath, a.bytes]), !!s.moreArtifacts, s.artifactsTotal, np, prUrl, canCreate, canApply, shapeFirstOn()]);
     if (sig === resultSig) return;

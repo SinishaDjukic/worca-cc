@@ -356,10 +356,10 @@ level and has no **Diff**, **Changes** or **Actions**.
 
 ### Workspaces
 
-- **Multi-project workspaces** — group 2–40 related repos under **Workspaces** (Advanced
-  level): **Create workspace**, pick the projects, **Scan interconnections**; the workspace
-  is saved when that scan ends. **Add projects** / **Remove** on its Overview tab re-scan
-  the new set.
+- **Multi-project workspaces** — group 2–40 related projects — Git repositories or Folder
+  projects — under **Workspaces** (Advanced level): **Create workspace**, pick the projects,
+  **Scan interconnections**; the workspace is saved when that scan ends. **Add projects** /
+  **Remove** on its Overview tab re-scan the new set.
 - **A map built from code, with evidence** — the scan is itself a pipeline run that never
   changes a member. Code detectors find REST, gRPC and GraphQL APIs, message queues, build
   dependencies, shared databases and service calls and do the matching; agents fill what
@@ -370,8 +370,9 @@ level and has no **Diff**, **Changes** or **Actions**.
   **Reject** an edge, and **Add edge** for one the scan missed. Reviews survive **Re-scan**,
   and the description rendered from the map reaches every agent of a workspace run.
 - **Runs across all members** — in **New pipeline** set **Target** to **Workspace**: one
-  plan tags each task with the projects it touches, implementers edit only those, every
-  member gets its own branch and worktree, and **Workspace Review** reviews each changed
+  plan tags each task with the projects it touches, implementers edit only those, every Git
+  member gets its own branch and worktree, every Folder member its own copy that you apply to
+  its folder (or discard) on its own, and **Workspace Review** reviews each changed
   member and merges the findings into one verdict per review cycle. See
   [`docs/workspace-map.md`](docs/workspace-map.md).
 
@@ -721,7 +722,7 @@ Requirements:
   without the Xcode Command Line Tools — worca still opens and never runs git:
   it hides the branch, pull-request, Sync and Clone controls, a project run
   works on a copy of its folder (applied back with **Apply to folder**), a
-  workspace run start answers `git is not installed on this machine`, and
+  workspace run works on a copy of each member (each applied back on its own), and
   Workspaces, Marketplace, Team metrics and Team policy stay but answer the
   same when an action needs git; installing git brings everything back without
   a restart. `WORCA_GIT=0` hides them on purpose, `WORCA_GIT=1` skips the

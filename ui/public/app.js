@@ -82,7 +82,7 @@ import { createLogDrawer } from './log-drawer.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
-import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP } from './run-kind.mjs';
+import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, chainProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
@@ -2580,6 +2580,8 @@ function onState(r, msg) {
     if (msg.branch.worktreeRemoved !== undefined) r.worktreeRemoved = msg.branch.worktreeRemoved;
   }
   if (msg.workMode === 'git' || msg.workMode === 'folder' || msg.workMode === 'none') r.workMode = msg.workMode;
+  // P5: a workspace run's members (a Folder member carries workMode 'folder'): its Changes tab lists them while it runs.
+  if (msg.target === 'workspace' && Array.isArray(msg.projects)) r.projects = msg.projects;
   // state.prompt is stamped after createPipeline, so the first snapshots have
   // none; keep the last non-empty value.
   if (typeof msg.prompt === 'string' && msg.prompt) r.prompt = msg.prompt;
@@ -7613,7 +7615,8 @@ function selectedProjectRow() {
 // 'folder' when the run would work on a copy: a Folder project, or any project while git is missing (U3). P3 extends it.
 function formWorkMode() {
   if (state.runTarget === 'none') return 'none';
-  if (state.runTarget === 'workspace') return ''; const p = selectedProjectRow(); return p && (projectKind(p) === 'folder' || !gitOn()) ? 'folder' : '';
+  if (state.runTarget === 'workspace') { const w = state.workspaces.find((x) => x && x.id === state.selectedWorkspaceId); return w && Array.isArray(w.vcs) && w.vcs.length && w.vcs.every((v) => v === 'none') ? 'folder' : ''; }   // P5: every member a Folder project
+  const p = selectedProjectRow(); return p && (projectKind(p) === 'folder' || !gitOn()) ? 'folder' : '';
 }
 // Sets or deletes #run-form[data-work-mode] (style.css hides the Branches block and every git-only control) and returns the mode.
 function paintFormWorkMode() {
@@ -7949,7 +7952,8 @@ function paintFeatureHint() {
   if (el.sameAsSource && el.sameAsSource.checked) { el.featureBranchHint.textContent = ''; return; }   // #sameAsSourceHint says what happens
   const f = el.featureBranch ? el.featureBranch.value.trim() : '';
   const ws = state.runTarget === 'workspace' ? state.workspaces.find((w) => w && w.id === state.selectedWorkspaceId) : null;
-  const paths = ws && Array.isArray(ws.projectPaths) ? ws.projectPaths : [];
+  // P5: a Folder member gets no branch (the harness copies it before _resolveMemberBranches), so it is never named.
+  const paths = ws && Array.isArray(ws.projectPaths) ? ws.projectPaths.filter((p, i) => !(Array.isArray(ws.vcs) && ws.vcs[i] === 'none')) : [];
   if (!f) {
     el.featureBranchHint.textContent = paths.length > 1
       ? 'Leave empty and Worca will propose one for each project.'
@@ -8092,6 +8096,7 @@ function paintMemberRow(key) {
   const sel = row.querySelector('select');
   let m;
   if (row.dataset.missing === '1') m = { icon: 'blocked', tone: 'muted', text: 'Folder missing · skipped', note: '' };
+  else if (row.dataset.workMode === 'folder') m = { icon: 'folder', tone: 'muted', text: 'on a copy', note: '' };   // P5: no branch to start from
   else if (el.wsSourcePrevious && el.wsSourcePrevious.classList.contains('on')) m = { icon: 'none', tone: 'muted', text: 'Starts from the branch of the run before it', note: '' };
   else {
     const v = sel ? sel.value : '';
@@ -8621,6 +8626,7 @@ function renderWorkspaceMembers() {
 function renderWorkspaceSourceBranches() {
   const host = el.wsSourceBranches;
   if (!host) return;
+  paintFormWorkMode();   // P5: a workspace of Folder members only has no Branches block (as a Folder project)
   host.innerHTML = '';
   // #527: the old member selects are gone (their late branches-fresh checks isConnected).
   state.sync.members = {};
@@ -8651,6 +8657,23 @@ function renderWorkspaceSourceBranches() {
     name.setAttribute('role', 'cell');
     name.id = `bt-name-${i}`;
     name.textContent = (key ? wsMemberName(key) : wsBasename(p)) + (missing ? ' (missing)' : '');
+
+    if (Array.isArray(ws.vcs) && ws.vcs[i] === 'none') {
+      // P5: a Folder member works on a copy — its kind chip, no branch picker (so no branches fetch and no
+      // sourceBranchByKey entry), an empty "Start from" cell, and "on a copy" (paintMemberRow) as what the run gets.
+      name.append(' ', kindChip(document, 'folder'));
+      row.dataset.workMode = 'folder';
+      if (missing) row.dataset.missing = '1';
+      const none = document.createElement('span');
+      none.setAttribute('role', 'cell');
+      const cell = document.createElement('div');
+      cell.className = 'bt-outcome';
+      cell.setAttribute('role', 'cell');
+      row.append(name, none, cell);
+      host.appendChild(row);
+      paintMemberRow(key);
+      return;
+    }
 
     const wrap = document.createElement('div');
     wrap.className = 'select-wrap';
@@ -8915,7 +8938,8 @@ function buildWorkspaceRow(w, known) {
   table.hidden = true;
   table.id = `ws-table-${w.id}`;
   toggle.setAttribute('aria-controls', table.id);
-  for (const x of [roll, members, sep, syncAll, toggle, table]) x.dataset.needsGit = '';
+  // The member strip stays while git is off (SEAMS S62): paintWsSyncItem paints names + kind chips there.
+  for (const x of [roll, syncAll, toggle, table]) x.dataset.needsGit = '';
   item.append(row, table);
   if (!known) item.setAttribute('aria-busy', 'true');
   return item;
@@ -9270,6 +9294,8 @@ function buildWdOverview(sec, id) {
     const name = document.createElement('div');
     name.className = 'wd-member-name';
     name.textContent = (proj && proj.name) || basenameOf(path);
+    const kc = Array.isArray(w.vcs) ? kindChip(document, w.vcs[i] === 'none' ? 'folder' : 'git') : null;
+    if (kc) name.append(' ', kc);
     if (!exists) { const miss = document.createElement('span'); miss.className = 'proj-missing'; miss.textContent = 'missing'; name.append(' ', miss); }
     const p = document.createElement('div');
     p.className = 'proj-path';
@@ -9856,7 +9882,8 @@ function openWsAddMembers(id) {
     box.type = 'checkbox'; box.value = p.path;
     const name = document.createElement('span'); name.className = 'wd-member-name'; name.textContent = p.name || basenameOf(p.path);
     const path = document.createElement('span'); path.className = 'proj-path'; path.textContent = p.path;
-    row.append(box, name, path);
+    const kc = kindChip(document, projectKind(p));   // P5: a Folder project can be a member (U8)
+    row.append(...(kc ? [box, name, kc, path] : [box, name, path]));
     body.appendChild(row);
   }
   // The header's Close is the way out; the one action adds the picks, or — with nothing to pick —
@@ -10162,6 +10189,8 @@ function renderWizardProjects() {
     txt.className = 'opt-name';
     txt.textContent = p.name;
     row.append(cb, txt);
+    const kc = kindChip(document, projectKind(p));   // P5: a Folder project can be a member (U8)
+    if (kc) row.appendChild(kc);
     if (p.path) {
       const sub = document.createElement('span');
       sub.className = 'opt-sub';
@@ -11714,26 +11743,40 @@ function paintWsSyncItem(item) {
   const w = state.workspaces.find((x) => x && x.id === item.dataset.workspaceId);
   if (!w) return;
   const keys = Array.isArray(w.projectKeys) ? w.projectKeys : [];
+  // P5: annotated vcs (aligned with projectPaths) marks a Folder member: no branch, no sync status, never counted.
+  // A list without vcs (an older server) paints as before: every member syncs, no kind chips.
+  const kinds = Array.isArray(w.vcs) ? w.vcs : null;
   const rows = keys.map((k, i) => {
     const b = state.syncChips[k];
     const name = syncProjectName(k) === k && Array.isArray(w.projectPaths) ? wsBasename(w.projectPaths[i]) : syncProjectName(k);
-    return { key: k, name, short: wsShortName(name, w.name), branch: (b && b.base) || '', m: b === undefined ? { icon: 'none', tone: 'muted', label: 'Checking…', hint: '', action: null, state: 'none' } : listRowModel(b) };
+    const folder = !!kinds && kinds[i] === 'none';
+    return { key: k, name, short: wsShortName(name, w.name), folder, kind: kinds ? (folder ? 'folder' : 'git') : '', branch: folder ? '' : (b && b.base) || '',
+      m: folder ? null : b === undefined ? { icon: 'none', tone: 'muted', label: 'Checking…', hint: '', action: null, state: 'none' } : listRowModel(b) };
   });
-  const roll = wsRollupModel(rows.map((r) => r.m));
+  const gitRows = rows.filter((r) => !r.folder);
+  const roll = wsRollupModel(gitRows.map((r) => r.m));
   const rollEl = item.querySelector('.ws-rollup');
-  if (rollEl) { rollEl.className = `ws-rollup tone-${roll.tone}`; rollEl.querySelector('.ws-rollup-txt').textContent = roll.text; }
+  if (rollEl) { rollEl.hidden = !gitRows.length; rollEl.className = `ws-rollup tone-${roll.tone}`; rollEl.querySelector('.ws-rollup-txt').textContent = roll.text; }
   const strip = item.querySelector('.ws-strip-members');
   if (strip) {
+    const git = gitOn();
     strip.replaceChildren(...rows.map((r) => {
       const s = document.createElement('span');
+      const nm = document.createElement('span'); nm.className = 'ws-strip-name'; nm.textContent = r.short;
+      if (r.folder || !git) {   // no status exists: the name and its kind chip, no sync icon (S62)
+        s.className = 'ws-strip-member tone-muted';
+        s.title = r.name;
+        const chip = kindChip(document, r.kind);
+        s.append(...(chip ? [nm, chip] : [nm]));
+        return s;
+      }
       s.className = `ws-strip-member tone-${r.m.tone}`;
       s.title = `${r.name}: ${r.m.label}`;
-      const nm = document.createElement('span'); nm.className = 'ws-strip-name'; nm.textContent = r.short;
       s.append(wsIcon(r.m.icon, 14), nm);
       return s;
     }));
   }
-  const behind = rows.filter((r) => r.m.action === 'sync').map((r) => r.key);
+  const behind = gitRows.filter((r) => r.m.action === 'sync').map((r) => r.key);
   const syncAll = item.querySelector('.ws-sync-all');
   if (syncAll && !syncAll.classList.contains('busy')) {
     syncAll.hidden = !behind.length;
@@ -11746,7 +11789,7 @@ function paintWsSyncItem(item) {
       paintWsSyncItem(item);
     };
   }
-  const open = wsTableOpen.has(w.id) ? wsTableOpen.get(w.id) : rows.some((r) => r.m.state === 'diverged');
+  const open = wsTableOpen.has(w.id) ? wsTableOpen.get(w.id) : gitRows.some((r) => r.m.state === 'diverged');
   const toggle = item.querySelector('.ws-toggle');
   const table = item.querySelector('.ws-table');
   if (toggle) {
@@ -11759,9 +11802,16 @@ function paintWsSyncItem(item) {
   if (!open) return;
   table.replaceChildren(...rows.map((r) => {
     const tr = document.createElement('div');
-    tr.className = `ws-trow tone-${r.m.tone}`;
     tr.dataset.key = r.key;
     const nm = document.createElement('span'); nm.className = 'ws-tname'; nm.textContent = r.name;
+    const chip = kindChip(document, r.kind);
+    if (chip) nm.append(' ', chip);
+    if (r.folder) {   // a Folder member: the folder glyph holds the icon column; no branch, status or action
+      tr.className = 'ws-trow tone-muted';
+      tr.append(wsIcon('folder', 18), nm);
+      return tr;
+    }
+    tr.className = `ws-trow tone-${r.m.tone}`;
     const c = syncRowCells(r.key, r.m, r.branch, r.name);
     tr.append(c.icon, nm, c.branch, c.status, c.action);
     return tr;
@@ -12606,7 +12656,9 @@ function paintPdBranchCards() {
   const wcard = wsDetail && wsDetail.screen && wsDetail.screen.querySelector('.pd-ov-card-branches');
   if (wcard) {
     const w = workspaceById(wsDetail.id);
-    const keys = w && Array.isArray(w.projectKeys) ? w.projectKeys : [];
+    const all = w && Array.isArray(w.projectKeys) ? w.projectKeys : [];
+    const keys = all.filter((k, i) => !(Array.isArray(w.vcs) && w.vcs[i] === 'none'));   // P5: a Folder member has no branch
+    wcard.hidden = !keys.length && all.length > 0;
     const value = wcard.querySelector('.pd-ov-value');
     const status = wcard.querySelector('.pd-ov-status');
     const sub = wcard.querySelector('.pd-ov-sub');
@@ -13979,7 +14031,7 @@ el.form.addEventListener('submit', async (e) => {
   }
   if (!gitOn()) for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
   if (target === 'none') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];   // schedule fields stay: the server's 400 shows in the card
-  if (target === 'project' && el.form.dataset.workMode === 'folder') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
+  if ((target === 'project' || target === 'workspace') && el.form.dataset.workMode === 'folder') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
 
   // #555: withButton owns #start-btn from here, and reads undefined as success, so every exit
   // returns an explicit { ok }. A failed or cancelled start never shows "Started".
@@ -14054,7 +14106,7 @@ el.form.addEventListener('submit', async (e) => {
         paintRunTagDimsWarn(data.fields.tags);
         return { ok: false };
       }
-      if (!res.ok && data && (data.code === 'FOLDER_TOO_BIG' || data.code === 'FOLDER_IS_WORCA_HOME')) { startSubmitInFlight = false; fieldError(el.projectSelect, data.error || 'This folder is too big to copy.'); return { ok: false }; }
+      if (!res.ok && data && (data.code === 'FOLDER_TOO_BIG' || data.code === 'FOLDER_IS_WORCA_HOME')) { startSubmitInFlight = false; fieldError(target === 'workspace' ? el.workspaceSelect : el.projectSelect, data.error || 'This folder is too big to copy.'); return { ok: false }; }   // P5: a workspace's Folder member — the project select is hidden then
       if (!res.ok || !data.runId) {
         startSubmitInFlight = false;
         // The alert title already says "Run not started" / "Not scheduled".
@@ -14215,7 +14267,8 @@ function syncPreviousBranchEverywhere() {
     if (el.sourceBranch.value === PREVIOUS_BRANCH || (state.sync.block && state.sync.block.base === effectiveBase())) paintSyncRowNow();
     else void refreshSyncStatusQuiet();
   }
-  const wsPick = !!(pendingSchedule && pendingSchedule.after && !pendingSchedule.after.branchGone) && state.runTarget === 'workspace';
+  // P5: only with git on and a Git member to branch off (an all-Folder workspace is formWorkMode 'folder').
+  const wsPick = !!(pendingSchedule && pendingSchedule.after && !pendingSchedule.after.branchGone) && state.runTarget === 'workspace' && gitOn() && formWorkMode() !== 'folder';
   if (el.wsSourcePreviousRow) el.wsSourcePreviousRow.classList.toggle('hidden', !wsPick);
   // ON by default with a pick in workspace mode; a deliberate OFF (the click handler marks it) survives
   // member re-renders and target switches, and the FRESH member selects follow whichever it is — every
@@ -21175,27 +21228,30 @@ async function applyRetainedFlow(btn, p, model, onApplied = null) {
 // The server's pipelines-changed broadcast after apply / discard (S5) reloads the rows; markFolderChanges settles
 // this tab at once.
 
-/** Paint every Apply bar host under `root` (the glance slot, the Changes tab's host). */
-function paintFolderBars(root, { pipelineId, memberKey = '', status, changes } = {}) {
+/** Paint every Apply bar host under `root` (the glance slot, the Changes tab's host) that belongs to `memberKey`:
+ * a host inside a workspace member's section (`[data-member-key]`, P5) is that member's, every other host the run's. */
+function paintFolderBars(root, { pipelineId, memberKey = '', memberName = '', status, changes } = {}) {
   if (!root) return;
   const model = applyBarModel({ status, changes });
   const total = (changesCounts(changes) || {}).total || 0;
   for (const host of root.querySelectorAll('.rd-apply-slot, .fc-bar-host')) {
+    const owner = host.closest('.fc-member[data-member-key]');
+    if ((owner ? owner.dataset.memberKey : '') !== memberKey) continue;
     paintApplyBar(host, model, {
-      onApply: () => { void folderApplyFlow({ pipelineId, memberKey }); },
+      onApply: () => { void folderApplyFlow({ pipelineId, memberKey, memberName }); },
       onDiscard: () => { void folderDiscardFlow({ pipelineId, memberKey, total }); },
     });
   }
 }
 
 /** The Apply to folder dialog; on success the run's changes read Applied everywhere, with a toast. */
-async function folderApplyFlow({ pipelineId, memberKey = '', opener = document.activeElement } = {}) {
-  const out = await openApplyDialog({ doc: document, fetch: (u, o) => fetch(u, o), pipelineId, memberKey, opener });
+async function folderApplyFlow({ pipelineId, memberKey = '', memberName = '', opener = document.activeElement } = {}) {
+  const out = await openApplyDialog({ doc: document, fetch: (u, o) => fetch(u, o), pipelineId, memberKey, memberName, opener });
   if (!out) return null;
   const skipped = Array.isArray(out.skipped) ? out.skipped : [];
   const k = skipped.filter((x) => x && x.reason === 'changed-in-folder').length;
   const f = skipped.filter((x) => x && x.reason === 'failed').length;
-  markFolderChanges(pipelineId, 'applied');
+  markFolderChanges(pipelineId, 'applied', { memberKey });
   notify({ tone: f > 0 ? 'warn' : 'ok', title: 'Applied to folder', key: 'folder-apply',
     detail: [filesWord(Number(out.applied) || 0), k ? `${k} skipped` : '', f ? `${f} failed` : ''].filter(Boolean).join(' · ') });
   return out;
@@ -21211,18 +21267,52 @@ async function folderDiscardFlow({ pipelineId, memberKey = '', total } = {}) {
       action: { label: 'Retry', run: () => { void folderDiscardFlow({ pipelineId, memberKey, total }); } } });
     return null;
   }
-  markFolderChanges(pipelineId, 'discarded');
+  markFolderChanges(pipelineId, 'discarded', { memberKey });
   notify({ tone: 'ok', title: 'Changes discarded', key: 'folder-discard' });
   return out;
 }
 
 /** This tab's copies of a run's changes now read `settled` ('applied' | 'discarded'); then every surface repaints. */
-function markFolderChanges(pipelineId, settled) {
+function markFolderChanges(pipelineId, settled, { memberKey = '' } = {}) {
   let matched = false;
+  const hs = histDetailState;
+  if (memberKey) {
+    // P5: one workspace member settled — its own record, then the row's rollup (rollupChanges' rule).
+    const settle = (c) => ({ ...(c || {}), state: settled });
+    // A saved state's run-level `changes` is the same rollup over its Folder members' records, counts summed: a finished
+    // all-Folder run page without a History row reads its headline from it.
+    const inBranches = (st) => {
+      if (!(st && st.branches && st.branches[memberKey])) return st;
+      const next = { ...st, branches: { ...st.branches, [memberKey]: { ...st.branches[memberKey], changes: settle(st.branches[memberKey].changes) } } };
+      const cs = folderMembersOf(next).map((m) => next.branches[m.memberKey] && next.branches[m.memberKey].changes).filter((c) => c && typeof c === 'object');
+      if (!cs.length) return next;
+      const counts = { added: 0, modified: 0, deleted: 0 };
+      for (const c of cs) for (const k of Object.keys(counts)) counts[k] += Number(c.counts && c.counts[k]) || 0;
+      return { ...next, changes: { ...(st.changes || {}), state: cs.some((c) => c.state === 'pending') ? 'pending' : cs.some((c) => c.state === 'applied') ? 'applied' : 'discarded', counts } };
+    };
+    for (const row of state.historyAll || []) {
+      if (!row || row.id !== pipelineId) continue;
+      matched = true;
+      const ms = Array.isArray(row.members) ? row.members : [];
+      for (const m of ms) if (m && m.memberKey === memberKey) m.changes = settle(m.changes);   // in place: histDetailState.record is this row
+      const states = ms.filter((m) => m && m.workMode === 'folder' && m.changes).map((m) => m.changes.state);
+      if (row.changes && states.length) row.changes = { ...row.changes, state: states.includes('pending') ? 'pending' : states.includes('applied') ? 'applied' : 'discarded' };
+    }
+    if (hs && hs.id === pipelineId && hs.data && hs.data.state) hs.data.state = inBranches(hs.data.state);
+    for (const r of runs.values()) {
+      if (!r || r.pipelineId !== pipelineId) continue;
+      const d = r._rdData && r._rdData.data;
+      if (d && d.state) d.state = inBranches(d.state);
+    }
+    writeHistoryCache(state.historyAll, state.ghAvailable, state.adoAvailable); paintHistory();
+    if (!matched && hs && hs.id === pipelineId && hs.screen && hs.data && hs.record) paintHdGlance(hs.screen, hs.record, hs.data);
+    rdRepaintOpenGlance(pipelineId); pokeAskRuns(null, 'folder-changes');
+    return;
+  }
   for (const row of state.historyAll || []) {
     if (row && row.id === pipelineId) { row.changes = { ...(row.changes || {}), state: settled }; matched = true; }   // in place: histDetailState.record is this object
   }
-  const hs = histDetailState; if (hs && hs.id === pipelineId && hs.data && hs.data.state) hs.data.state = { ...hs.data.state, changes: { ...(hs.data.state.changes || {}), state: settled } };
+  if (hs && hs.id === pipelineId && hs.data && hs.data.state) hs.data.state = { ...hs.data.state, changes: { ...(hs.data.state.changes || {}), state: settled } };
   for (const r of runs.values()) {
     if (!r || r.pipelineId !== pipelineId) continue;
     const d = r._rdData && r._rdData.data;
@@ -22805,6 +22895,8 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   const members = histWsMembers(record);
   const shippable = new Set(histWsShippable(record).map((m) => m.memberKey));
   const skipped = members.filter((m) => !m.affected && !prLive(m.pr));
+  // A changed Folder member (P5) has no branch to ship: named on its own line, never a repo row (no remotes read).
+  const folderSkipped = members.filter((m) => m.workMode === 'folder' && m.affected);
   const perProject = (data && data.results && data.results.perProject) || {};
   q('.shipit-sub').textContent =
     `This opens a pull request in each repository ${record.title || record.id} changed and puts them up for review.`;
@@ -22816,6 +22908,7 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   const rows = [];
   for (const m of members) {
     if (!m.affected && !prLive(m.pr)) continue;       // unchanged repos are only named below
+    if (m.workMode === 'folder') continue;            // Folder members: only named below
     const row = buildShipItRepoRow(m, perProject[m.memberKey]?.summary || null, shippable.has(m.memberKey));
     list.appendChild(row.el);
     rows.push(row);
@@ -22824,6 +22917,12 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     const p = document.createElement('p');
     p.className = 'shipit-skipped hint';
     p.textContent = `No changes in ${skipped.map((m) => m.name || m.memberKey).join(', ')} — skipped.`;
+    list.appendChild(p);
+  }
+  if (folderSkipped.length) {
+    const p = document.createElement('p');
+    p.className = 'shipit-folder-skipped shipit-skipped hint';
+    p.textContent = `${folderSkipped.map((m) => m.name || m.memberKey).join(', ')} (Folder) — skipped.`;
     list.appendChild(p);
   }
   list.hidden = false;
@@ -22956,6 +23055,12 @@ function histWsShippable(p) {
 // the header list and the dialog's context rows ("branch gone" is not the same as
 // "no branch info").
 function wsMemberNote(m) {
+  // A Folder member (P5) has no branch: its note is its Changes state.
+  if (m.workMode === 'folder') {
+    if (!m.affected) return 'No changes — skipped';
+    const st = m.changes && m.changes.state;
+    return st === 'applied' ? 'Applied' : st === 'discarded' ? 'Discarded' : 'On a copy';
+  }
   if (!m.affected) return 'No changes — skipped';
   if (!m.branch || !m.sourceBranch) return 'No branch recorded';
   if (!m.survived) return 'Branch no longer exists';
@@ -23114,7 +23219,10 @@ function paintHdGlance(screen, record, data) {
     workflow: trail.count ? `${trail.count} step${trail.count === 1 ? '' : 's'}` : '',
   }));
 
-  paintFolderBars(screen, { pipelineId: record.id, status: st.status, changes });
+  // P5: a workspace run applies per member (its Changes tab), never from a run-level bar.
+  const hdFm = hdFolderMembers(record, data);
+  paintFolderBars(screen, { pipelineId: record.id, status: st.status, changes: record.target === 'workspace' || st.target === 'workspace' ? null : changes });
+  paintMemberBars(screen, { pipelineId: record.id, status: st.status, members: hdFm });
   if (!gitChrome) { paintRdPrStatus(glance.querySelector('.rd-pr-status'), null); paintPrCta(glance.querySelector('.rd-pr-slot'), { state: 'none' }); return; }
   // The pull request, mirrored from the Details header's control into the card's slot
   // (paintPrCta, outside the host rebuilt above): visible exactly when it is, so at most one
@@ -24985,15 +25093,19 @@ const HD_TABS = [
   // opens Workflow.
   { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (...a) => buildHdOverview(...a) },
   { key: 'diff', label: 'Diff', level: 'advanced', needsGit: true,
-    badge: (d) => (d.results && d.results.summary
-      ? String((d.results.summary.filesNew || 0) + (d.results.summary.filesChanged || 0)) : null),
+    badge: (d) => { const r = gitOnlyResults(d.results, (d.folderMembers || []).map((m) => m.memberKey)); return r && r.summary ? String((r.summary.filesNew || 0) + (r.summary.filesChanged || 0)) : null; },
     visible: (d) => isGitRun(d.state), build: (...a) => buildHdDiff(...a) },
   // Folder runs (Projects, any way): what the run changed on its copy, in place of Diff and Actions (it made no
   // branch). Simple: a person who works in a plain folder lands the run from here.
+  // P5: a workspace run with Folder members (`d.folderMembers`, initHdTabs) shows it too, one section per member.
   { key: 'changes', label: 'Changes', level: 'simple',
-    badge: (d) => { const c = changesCounts(d.changes); return c && c.total ? String(c.total) : null; },
-    visible: (d) => isFolderRun(d.state),
-    build: (sec, record, data) => buildChangesTab(sec, { pipelineId: record.id, status: data.state.status, changes: hdChangesOf(record, data) }) },
+    badge: (d) => { const fm = d.folderMembers || []; const n = fm.length ? memberChangesTotal(fm) : ((changesCounts(d.changes) || {}).total || 0); return n ? String(n) : null; },
+    visible: (d) => isFolderRun(d.state) || (d.folderMembers || []).length > 0,
+    build: (sec, record, data) => {
+      const fm = hdFolderMembers(record, data);
+      if (fm.length) { buildMemberChanges(sec, { pipelineId: record.id, status: data.state.status, members: fm }); return; }
+      buildChangesTab(sec, { pipelineId: record.id, status: data.state.status, changes: hdChangesOf(record, data) });
+    } },
   // The saved detail payload's `artifacts` is listArtifacts' [{kind, relPath}] (no
   // step attribution); it only gates VISIBILITY here — buildHdArtifacts fetches the
   // attributed GET /api/runs/:id/artifacts before rendering. Hidden when a run has
@@ -25032,7 +25144,8 @@ function initHdTabs(screen, record, data) {
   // HD_TABS carries no `icon` key (the old initHdTabs injected HD_TAB_ICONS[key]
   // itself). Map it on here rather than editing six table entries — the engine
   // reads `t.icon`.
-  const ch = hdChangesOf(record, data); const ctx = ch && data && data.changes !== ch ? { ...data, changes: ch } : data;
+  const ch = hdChangesOf(record, data); const fm = hdFolderMembers(record, data);
+  const ctx = (ch && data && data.changes !== ch) || fm.length ? { ...data, ...(ch ? { changes: ch } : {}), folderMembers: fm } : data;
   const noProject = isNoProjectRun({ ...hdCurrentRecord(record), state: data && data.state });
   initDetailTabs(screen, HD_TABS.map((t) => ({ ...t, icon: t.key === 'workflow' ? RD_WORKFLOW_ICON : HD_TAB_ICONS[t.key], ...(t.key === 'artifacts' && noProject ? { level: 'simple' } : {}) })), ctx, {
     initial: () => (noProject ? 'artifacts' : null),
@@ -25798,10 +25911,19 @@ function hdPartialDiffNotice(doc) {
   return note;
 }
 
+// P5: a mixed workspace run's results.json lists its Folder members too (the Changes tab shows them): the git Diff
+// lists and counts its Git members only.
+function gitOnlyResults(results, folderKeys) {
+  if (!results || !results.perProject || !Array.isArray(folderKeys) || !folderKeys.length) return results;
+  const perProject = Object.fromEntries(Object.entries(results.perProject).filter(([k]) => !folderKeys.includes(k)));
+  const summary = { ...(results.summary || {}) };
+  for (const k of ['filesNew', 'filesChanged', 'filesDeleted', 'linesAdded', 'linesRemoved']) summary[k] = Object.values(perProject).reduce((t, r) => t + (Number(r && r.summary && r.summary[k]) || 0), 0);
+  return { ...results, perProject, summary };
+}
 function buildHdDiff(sec, record, data) {
   sec.innerHTML = '';
   hdCommentState = null;   // a new Diff tab supersedes the old one's poke target
-  const results = data.results;
+  const results = gitOnlyResults(data.results, hdFolderMembers(record, data).map((m) => m.memberKey));
   if (!results) {
     const empty = document.createElement('div');
     empty.className = 'hd-diff-empty';
@@ -27005,7 +27127,7 @@ const RD_TABS = [
     visible: (ctx) => isGitRun(ctx.run),
     build: (sec, ctx) => buildRdDiff(sec, ctx),
   },
-  { key: 'changes', label: 'Changes', icon: HD_TAB_ICONS.changes, level: 'simple', badge: (ctx) => { const c = changesCounts(rdFolderChanges(ctx.run)); return c && c.total ? String(c.total) : null; }, visible: (ctx) => isFolderRun(ctx.run), build: (sec, ctx) => buildRdChanges(sec, ctx) },
+  { key: 'changes', label: 'Changes', icon: HD_TAB_ICONS.changes, level: 'simple', badge: (ctx) => { const fm = rdFolderMembers(ctx.run); const n = fm.length ? memberChangesTotal(fm) : ((changesCounts(rdFolderChanges(ctx.run)) || {}).total || 0); return n ? String(n) : null; }, visible: (ctx) => isFolderRun(ctx.run) || rdFolderMembers(ctx.run).length > 0, build: (sec, ctx) => buildRdChanges(sec, ctx) },
   {
     key: 'artifacts', label: 'Artifacts', icon: HD_TAB_ICONS.artifacts, level: 'advanced',
     badge: (ctx) => {
@@ -27115,6 +27237,7 @@ function rdLoadData(r, { force = false } = {}) {
       // Repaint the open glance once the numbers land (a stale entry stays silent), and the
       // "Answered for you" heading, whose Away mode cost reads the same saved steps (rdGlanceRun).
       if (r._rdData === entry && rdOpenRun() === r && runDetailState.screen) {
+        ensureRdTabs(runDetailState.screen, r);   // P5: a workspace run's Folder members come with its saved state
         paintRdGlance(runDetailState.screen, r);
         paintNightDecisions(runDetailState.screen, r);
       }
@@ -27127,7 +27250,7 @@ function rdLoadData(r, { force = false } = {}) {
 // ── Diff tab ────────────────────────────────────────────────────────────────
 function rdDiffBadge(r) {
   const res = RD_TERMINAL.includes(r.status)
-    ? (r._rdData && r._rdData.data && r._rdData.data.results)
+    ? gitOnlyResults(r._rdData && r._rdData.data && r._rdData.data.results, rdFolderMembers(r).map((m) => m.memberKey))
     : (r._rdLiveDiff && r._rdLiveDiff.results);
   const s = res && res.summary;
   if (!s) return null;
@@ -27146,7 +27269,7 @@ async function rdFetchDiff(r) {
     return { results: body.results, patch: body.patch || '', live: true, capped: !!body.untrackedCapped };
   }
   const data = await rdLoadData(r);
-  const results = data && data.results ? data.results : null;
+  const results = data && data.results ? gitOnlyResults(data.results, rdFolderMembers(r).map((m) => m.memberKey)) : null;
   const key = historyKeyForRun(r);
   let patch = '';
   if (results && r.pipelineId && (key || r.workspaceId)) {
@@ -27309,10 +27432,10 @@ function buildRdDiff(sec, ctx) {
 
 // Folder runs (Projects, any way): what a run changed on its copy, in the Running Diff layout. Shared by the History
 // detail (HD_TABS), the Running page and P5's members. Idempotent: every call starts over.
-function buildChangesTab(sec, { pipelineId, memberKey = '', status = '', changes = null } = {}) {
+function buildChangesTab(sec, { pipelineId, memberKey = '', memberName = '', status = '', changes = null } = {}) {
   sec.replaceChildren();
   const bar = document.createElement('div'); bar.className = 'fc-bar-host'; bar.hidden = true; const host = document.createElement('div'); host.className = 'rd-diff-host'; sec.append(bar, host);
-  paintFolderBars(sec, { pipelineId, memberKey, status, changes });
+  paintFolderBars(sec, { pipelineId, memberKey, memberName, status, changes });
   const empty = (text) => {
     const d = document.createElement('div');
     d.className = 'hd-diff-empty';
@@ -27394,10 +27517,69 @@ function buildChangesTab(sec, { pipelineId, memberKey = '', status = '', changes
 
 // The Running page's Changes tab (a Folder run): No changes yet. while it goes; the saved changes once it ends.
 function buildRdChanges(sec, ctx) {
-  const paint = (r) => buildChangesTab(sec, { pipelineId: r.pipelineId, status: r.status, changes: rdFolderChanges(r) });
+  const paint = (r) => {
+    const fm = rdFolderMembers(r);
+    // A workspace run never takes the memberless path (its routes answer 400 without a memberKey), even before its members are known.
+    if (fm.length || r.kind === 'workspace-run') buildMemberChanges(sec, { pipelineId: r.pipelineId, status: r.status, members: fm });
+    else buildChangesTab(sec, { pipelineId: r.pipelineId, status: r.status, changes: rdFolderChanges(r) });
+  };
   paint(ctx.run);
   let was = RD_TERMINAL.includes(ctx.run.status);
   sec.__update = (c) => { if (!was && RD_TERMINAL.includes(c.run.status)) { was = true; paint(c.run); } };
+}
+
+// P5: a workspace run's Changes — one section per Folder member, in member order: its name and Folder chip, then
+// P1b's Changes (the member's own Apply bar and file list, every call with its memberKey) in a body under the header.
+function buildMemberChanges(sec, { pipelineId, status = '', members = [] } = {}) {
+  sec.replaceChildren();
+  if (!members.length) { const d = document.createElement('div'); d.className = 'hd-diff-empty'; d.textContent = 'Loading…'; sec.append(d); return; }
+  for (const m of members) {
+    const part = document.createElement('section');
+    part.className = 'fc-member';
+    part.dataset.memberKey = m.memberKey;
+    part.setAttribute('aria-label', m.name);
+    const head = document.createElement('h3');
+    head.className = 'fc-member-head';
+    const name = document.createElement('span');
+    name.className = 'fc-member-name';
+    name.textContent = m.name;
+    head.append(name, kindChip(document, 'folder'));
+    const body = document.createElement('div');
+    body.className = 'fc-member-body';
+    part.append(head, body);
+    sec.append(part);
+    buildChangesTab(body, { pipelineId, memberKey: m.memberKey, memberName: m.name, status, changes: m.changes || null });
+  }
+}
+// A Folder member's changes: the History row's member first (fresher after pipelines-changed), then the state's
+// member record (`state.branches[key].changes`, the saved detail).
+function wsMemberChanges(record, st, key) {
+  const m = record && Array.isArray(record.members) ? record.members.find((x) => x && x.memberKey === key) : null;
+  return (m && m.changes) || (st && st.branches && st.branches[key] && st.branches[key].changes) || null;
+}
+function hdFolderMembers(record, data) {
+  const st = data && data.state;
+  const list = [record, st].map(folderMembersOf).find((l) => l.length) || [];
+  return list.map((m) => ({ ...m, changes: wsMemberChanges(record, st, m.memberKey) }));
+}
+function rdFolderMembers(r) {
+  if (!r) return [];
+  const rec = r.pipelineId ? rdHistoryRecord(r) : null;
+  const st = r._rdData && r._rdData.data && r._rdData.data.state;
+  const list = [rec, st, r].map(folderMembersOf).find((l) => l.length) || [];
+  return list.map((m) => ({ ...m, changes: wsMemberChanges(rec, st, m.memberKey) }));
+}
+function memberChangesTotal(members) {
+  return members.reduce((n, m) => n + ((changesCounts(m.changes) || {}).total || 0), 0);
+}
+/** Repaint each Folder member's Apply bar under `root` from its own changes (the glance repaints call it). */
+function paintMemberBars(root, { pipelineId, status, members = [] } = {}) {
+  if (!root) return;
+  for (const m of members) {
+    for (const part of root.querySelectorAll(`.fc-member[data-member-key="${cssEscape(m.memberKey)}"]`)) {
+      paintFolderBars(part, { pipelineId, memberKey: m.memberKey, memberName: m.name, status, changes: m.changes || null });
+    }
+  }
 }
 
 // ── Q&A tab ─────────────────────────────────────────────────────────────────
@@ -27438,14 +27620,15 @@ function buildRdQa(sec, ctx) {
 function ensureRdTabs(screen, r) {
   if (!screen || !r) return;
   const mode = workModeOf(r);
+  const sig = `${mode}|${rdFolderMembers(r).map((m) => m.memberKey).join(',')}`;   // P5: Folder members learned later rebuild the tabs
   const built = !!screen.querySelector('.rd-tab');
-  if (built && screen.dataset.tabsMode === mode) return;
+  if (built && screen.dataset.tabsMode === sig) return;
   if (built) {
     const open = screen.querySelector('.rd-tab.active');
     if (open && !screen.dataset.wantTab && mode !== 'none') screen.dataset.wantTab = open.dataset.sec;   // P3: a run found to have no project opens on its Artifacts   // the existing hand-off below reopens it when the new set has it
     const secs = screen.querySelector('.rd-sections'); destroyActionsIn(secs); destroyGraphMounts(secs);
   }
-  screen.dataset.tabsMode = mode;
+  screen.dataset.tabsMode = sig;
   initRdTabs(screen, r);
   const want = screen.dataset.wantTab;
   if (want) {
@@ -31347,9 +31530,12 @@ function setRdMode(screen, mode, tab = '', { focus = true } = {}) {
   screen.querySelector('.rd-to-run').hidden = !details;
   if (details) {
     const tabs = detailTabsOf(screen);
+    // P5: a tab the bar has leaves nothing pending, so a later rebuild keeps the person's pick.
+    if (tabs && tab && tabs.cells.has(tab)) delete screen.dataset.wantTab;
     if (tabs && tab && tabs.cells.has(tab) && levelAtLeast(tabs.cells.get(tab).tab.level || 'simple') && (gitOn() || !tabs.cells.get(tab).tab.needsGit)) tabs.activate(tab);
-    // A deep link that lands before `hello` has no tabs yet: ensureRdTabs opens it later.
-    else if (!tabs && tab) screen.dataset.wantTab = tab;
+    // A deep link that lands before `hello` has no tabs yet, or names a tab the run learns later (P5: a mixed
+    // workspace's Changes, from its first state frame): ensureRdTabs opens it when it rebuilds.
+    else if (tab && !(tabs && tabs.cells.has(tab))) screen.dataset.wantTab = tab;
     // The graph laid out while its section sat in a hidden subtree measured 0px wide;
     // repaint it now that it is visible.
     const r = rdOpenRun();
@@ -32420,8 +32606,10 @@ function paintRdGlance(screen, r) {
     costNote: costSummaryText(runCostBreakdown(r.steps, r.totalCostUsd), fmtUsd),
     ticking: (r.status === 'running' || r.status === 'starting') && r.pendingQuestion == null,
   });
-  paintFolderBars(screen, { pipelineId: live.pipelineId, status: live.status, changes: fchanges });
-  if (folder && terminal) rdPaintTabBadges(screen, rdCtx(live));   // the saved counts land after the tabs were built
+  const rdFm = rdFolderMembers(live);   // P5: a workspace run applies per member (its Changes tab)
+  paintFolderBars(screen, { pipelineId: live.pipelineId, status: live.status, changes: live.kind === 'workspace-run' ? null : fchanges });
+  paintMemberBars(screen, { pipelineId: live.pipelineId, status: live.status, members: rdFm });
+  if ((folder || rdFm.length) && terminal) rdPaintTabBadges(screen, rdCtx(live));   // the saved counts land after the tabs were built (P5: a mixed run's Folder members too)
 
   const trail = trailColumns(r);
   paintRdLive(screen, live);
@@ -32842,7 +33030,7 @@ function rdFilesChanged(r) {
 // Projects, any way: a Folder run's changes — the History row, else the loaded detail's state.changes, else the live
 // state frame's branch.changes (P1a's folder member record).
 function rdFolderChanges(r) {
-  const rec = rdHistoryRecord(r); const d = r._rdData && r._rdData.data; return (rec && rec.changes) || (d && d.state && d.state.changes) || (r.branch && typeof r.branch === 'object' && r.branch.changes) || null;
+  const rec = rdHistoryRecord(r); const d = r._rdData && r._rdData.data; return (rec && rec.changes) || (d && d.state && d.state.changes) || (r.kind !== 'workspace-run' && r.branch && typeof r.branch === 'object' && r.branch.changes) || null;   // P5: a workspace's branch is its first member's mirror
 }
 function rdChangesRowValue(r) {
   const c = changesCounts(rdFolderChanges(r)); return c && c.total ? filesWord(c.total) : '';
@@ -35060,7 +35248,7 @@ onLevelChange(() => reselectHiddenDetailTabs());
 onLevelChange(() => {                                       // node decorations are expert detail
   for (const host of $$('.run-flow.gv-host')) { const slot = GRAPH_MOUNTS.get(host); if (slot && slot.m.repaint) slot.m.repaint(); }
 });                          // tiles above the mode wear their level
-onGitFlip((on) => { paintFormWorkMode(); reselectHiddenDetailTabs(); refreshHdFromRow(); { const hs = histDetailState; if (hs && hs.screen && hs.data && hs.record) void paintHdPublish(hs.screen, hs.record, hs.data); } { const r = rdOpenRun(); if (r && runDetailState && runDetailState.screen) repaintRunDetail(r); } const v = currentView(); if (on && (v === 'projects' || v === 'workspaces')) void refreshSyncChips(); if (on && v === 'new' && state.runTarget !== 'workspace') void refreshBranches(selectedProjectPath()); if (!on && projAddMode === 'clone' && !cloneFollow) setProjAddMode('folder'); if (!on && projFilter !== 'all') { projFilter = 'all'; paintProjFilters(); } });
+onGitFlip((on) => { paintFormWorkMode(); reselectHiddenDetailTabs(); refreshHdFromRow(); { const hs = histDetailState; if (hs && hs.screen && hs.data && hs.record) void paintHdPublish(hs.screen, hs.record, hs.data); } { const r = rdOpenRun(); if (r && runDetailState && runDetailState.screen) repaintRunDetail(r); } const v = currentView(); if (on && (v === 'projects' || v === 'workspaces')) void refreshSyncChips(); if (!on && v === 'workspaces') for (const item of document.querySelectorAll('.ws-item[data-workspace-id]')) paintWsSyncItem(item); if (on && v === 'new' && state.runTarget !== 'workspace') void refreshBranches(selectedProjectPath()); if (!on && projAddMode === 'clone' && !cloneFollow) setProjAddMode('folder'); if (!on && projFilter !== 'all') { projFilter = 'all'; paintProjFilters(); } });
 for (const t of ['input', 'change', 'click']) {
   document.getElementById('run-form')?.addEventListener(t, () => setTimeout(paintHiddenSettings, 0));
 }

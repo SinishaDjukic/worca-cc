@@ -456,12 +456,26 @@ export function workspaceContextBlock(ws) {
  * `serial` (a node on an engine with no grantable sub-agent tool, e.g. codex) keeps
  * the same per-unit work, order and merge rules but has the agent do each unit
  * itself, one at a time (workspaceSerialDirective).
+ * P5: a workspace with a Folder member (`workMode: 'folder'`) gets FOLDER_FANOUT_RULE after either variant; without
+ * one the bytes are today's.
  * @param {'explore'|'task'|'review'} strategy
- * @param {{projects?:Array<{projectName?:string,projectKey?:string}>}|null|undefined} ws
+ * @param {{projects?:Array<{projectName?:string,projectKey?:string,workMode?:string}>}|null|undefined} ws
  * @param {{relative?:boolean, endpointRouted?:boolean, serial?:boolean}} [opts]
  * @returns {string}
  */
-export function workspaceFanOutDirective(strategy, ws, { relative = false, endpointRouted = false, serial = false } = {}) {
+export function workspaceFanOutDirective(strategy, ws, opts = {}) {
+  const text = fanOutDirectiveText(strategy, ws, opts);
+  // P5: the directive's per-member git routing never applies to a Folder member, and the sub-agents it dispatches
+  // never see the task-header note — the lead must pass the rule on.
+  return text && wsMembers({ workspace: ws }).some((p) => p?.workMode === 'folder') ? text + FOLDER_FANOUT_RULE : text;
+}
+
+const FOLDER_FANOUT_RULE = 'A Folder member (`Folder, no git` under `## Workspace projects`) has no git and no checkpoint: ' +
+  'never run git there, and never let a sub-agent run it there — read that member\'s files and its changes file (named ' +
+  'on its line; missing or empty means no changes yet). Pass this rule on to every sub-agent you dispatch for a Folder member.\n\n';
+
+/** workspaceFanOutDirective's text before the P5 Folder rule ('' when there is no workspace or the strategy is unknown). */
+function fanOutDirectiveText(strategy, ws, { relative = false, endpointRouted = false, serial = false } = {}) {
   if (!ws) return '';
   if (serial) return workspaceSerialDirective(strategy, relative);
   const ANTI_RECURSION =
@@ -888,6 +902,15 @@ export const _runOptsForTests = runOpts;
 /** P1 (S9): a Folder run's task-prompt note — the copy has no git, even where the role instructions say "run git".
  *  '' unless ctx.workMode === 'folder' (P3 adds its 'none' note beside it). Exported for testing. */
 export function folderRunNote(ctx) {
+  // P5: a workspace names no single pipeline-dir patch — each Folder member's changes file is on its own line.
+  const ws = wsMembers(ctx);
+  if (ws.length) {
+    if (!ws.some((p) => p?.workMode === 'folder')) return '';
+    return 'Folder members of this run are copies of plain folders, not git repositories. Never run git in a Folder ' +
+      (ws.some((p) => p?.workMode === 'folder' && p.changesPatch)
+        ? 'member, even where your role instructions say so; read the changes file named on its line under Workspace projects.\n\n'
+        : 'member, even where your role instructions say so.\n\n');   // a read-only scan: no changes file
+  }
   if (ctx?.workMode !== 'folder') return '';
   return `This run works on a copy of a plain folder, not a git repository. Never run git here (no \`git init\`, ` +
     `\`git diff\`, \`git status\`, \`git add\` or \`git commit\`), even where your role instructions say so. ` +
@@ -990,13 +1013,23 @@ function workspaceProjectsBlock(ws, { relative = false } = {}) {
     // The `(pending)` tolerance is kept: before worktrees exist there is no dir, and
     // a member with no projectKey cannot be relativized either.
     const where = (relative && rel) || p.worktreeDir || '(pending)';
+    // P5: a Folder member is a copy with no git — no diff base, no graph; its changes file instead (none on a scan).
+    if (p.workMode === 'folder') {
+      return `- **${p.projectName || p.projectKey}** (\`${p.projectKey}\`): copy \`${where}\` (Folder, no git)` +
+        (p.changesPatch ? `, changes so far \`${p.changesPatch}\`` : '');
+    }
     const graph = relative && rel && String(p.graphInstruction || '').trim()
       ? `, graph \`${rel}/graphify-out/\`` : '';
     return `- **${p.projectName || p.projectKey}** (\`${p.projectKey}\`): worktree \`${where}\`` +
       `, diff base \`${p.checkpointRef || '(none)'}\`${graph}`;
   });
+  const folderNote = projects.some((p) => p.workMode === 'folder')
+    ? (projects.some((p) => p.workMode === 'folder' && p.changesPatch)
+      ? ' A Folder member is a plain copy with no git: read the changes file named on its line.'
+      : ' A Folder member is a plain copy with no git.')
+    : '';
   const intro = relative
-    ? `This run spans the member projects below, each checked out INSIDE your cwd. Work in ` +
+    ? `This run spans the member projects below, each checked out INSIDE your cwd.${folderNote} Work in ` +
       `a member in place — edit \`repos/<key>/…\` and run git as \`git -C repos/<key> …\` ` +
       `(never chdir out of the run root) — and diff it against that project's checkpoint:`
     : `This run spans the member projects below. A fan-out sub-agent cwds into the ` +
@@ -1019,8 +1052,10 @@ function workspaceProjectsBlock(ws, { relative = false } = {}) {
 export function workspaceDiffInstruction(ctx) {
   if (!isDetachedWorkspace(ctx)) return '';
   return wsMembers(ctx)
-    .map((p) => `- **${p.projectName || p.projectKey}**: \`git -C ${relRepo(p)} diff ` +
-      `${p.checkpointRef || 'HEAD'}\``)
+    .map((p) => (p.workMode === 'folder'
+      ? `- **${p.projectName || p.projectKey}**: Folder, no git — read \`${p.changesPatch}\``
+      : `- **${p.projectName || p.projectKey}**: \`git -C ${relRepo(p)} diff ` +
+        `${p.checkpointRef || 'HEAD'}\``))
     .join('\n');
 }
 
@@ -1140,7 +1175,9 @@ export function implementerBody({ mode = 'implement', planPath, reviewPath, task
  * @returns {string}
  */
 export function diffInstruction(ctx) {
-  if (ctx?.workMode === 'folder') {
+  // P5: the single-run folder arm names <pipelineDir>/changes.patch — a workspace has none (its consumers render
+  // workspaceDiffInstruction instead, §5.8).
+  if (ctx?.workMode === 'folder' && !wsMembers(ctx).length) {
     return `Inspect the changes in \`${join(ctx.pipelineDir, 'changes.patch')}\` (the folder as it was when the run ` +
       `started → your cwd; new and deleted files included) and \`${join(ctx.pipelineDir, 'changes.json')}\` (the list), ` +
       'then read the changed files in your cwd. There is no git in this run.';
@@ -1181,7 +1218,9 @@ export function genericIoBlock(inputs = {}, outputs = {}) {
       || (h.kind === 'runroot'
         ? `(the member checkouts under your cwd — inspect each with \`git -C repos/<key> diff <base>\`: ${
             (h.repos || [])
-              .map((r) => `${r.relDir || `repos/${r.projectKey}`} (diff base ${r.checkpointRef || 'HEAD'})`)
+              .map((r) => (r.workMode === 'folder'
+                ? `${r.relDir || `repos/${r.projectKey}`} (Folder: read ${r.changesPatch})`
+                : `${r.relDir || `repos/${r.projectKey}`} (diff base ${r.checkpointRef || 'HEAD'})`))
               .join(', ') || 'no members'})`
         : null);
     if (p) inLines.push(`- ${c}: ${p}`);

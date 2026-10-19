@@ -82,7 +82,8 @@ export function workspaceEnvelope(ws) {
   const str = (v) => (typeof v === 'string' && v ? v : null);
   const members = ws.projects
     .filter((p) => p && str(p.projectKey))
-    .map((p) => ({ key: p.projectKey, name: str(p.projectName) || p.projectKey, dir: str(p.worktreeDir), projectDir: str(p.projectDir) }))
+    .map((p) => ({ key: p.projectKey, name: str(p.projectName) || p.projectKey, dir: str(p.worktreeDir), projectDir: str(p.projectDir),
+      ...(p.workMode === 'folder' ? { workMode: 'folder' } : {}) }))   // P5: a Folder member only (absent = git)
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   const overrides = ws.overrides && typeof ws.overrides === 'object' ? ws.overrides : null;
   return { id: str(ws.workspaceId), name: str(ws.workspaceName), members, ...(overrides ? { overrides } : {}) };
@@ -113,7 +114,9 @@ export function buildEnvelope(ctx) {
   const detached = Boolean(ctx.runRoot) && Boolean(ctx.workspace);
   const repos = detached && Array.isArray(ctx.repos) && ctx.repos.length
     // A member's own diff base rides its entry (additive): the scalar ctx.checkpointRef is the PRIMARY's only.
-    ? ctx.repos.map((r) => ({ key: r.projectKey, dir: r.dir, ...(r.checkpointRef ? { checkpointRef: r.checkpointRef } : {}) }))
+    ? ctx.repos.map((r) => ({ key: r.projectKey, dir: r.dir, ...(r.checkpointRef ? { checkpointRef: r.checkpointRef } : {}),
+      // P5: a Folder member's copy has no git — its changes file instead (additive, a Folder member only).
+      ...(r.workMode === 'folder' ? { workMode: 'folder', changesPatch: r.changesPatch ?? null } : {}) }))
     : null;
   return {
     apiVersion: 1,

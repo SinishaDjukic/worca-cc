@@ -68,7 +68,7 @@ test('routes while git is missing', async (t) => {
         assert.equal(r.status, 409, `${m} ${p}`); assert.deepEqual(await r.json(), BODY, `${m} ${p}`);
       }
     } },
-    { name: 'POST /api/run (a project runs on a copy), a workspace start, resume, the branch terminal, a new workspace', run: async () => {
+    { name: 'POST /api/run (a project runs on a copy), a workspace start, resume, the branch terminal, a workspace with an unregistered member', run: async () => {
       const dir = gitDir('p0-run');
       const r = await send('post', '/api/run', { projectDir: dir, prompt: 'x', mock: true });
       assert.equal(r.status, 200);                                            // P1: unregistered + git missing → a Folder run
@@ -76,29 +76,31 @@ test('routes while git is missing', async (t) => {
       assert.equal(runs.get(runId).orch.workMode, 'folder');
       assert.equal((await send('post', '/api/stop', { runId })).status, 200); await runs.get(runId).launch;
       const ws = await send('post', '/api/run', { workspaceId: 'wks-none-0000000b', prompt: 'x', mock: true });
-      assert.equal(ws.status, 409); assert.deepEqual(await ws.json(), BODY);
+      assert.equal(ws.status, 404); assert.deepEqual(await ws.json(), { error: 'workspace not found' });   // P5: a workspace start needs no git
       const { id: paused } = await seedPipeline(dir, { status: 'paused' });   // a git run: refused before (P0) and after (P1 S3) the row read
       await assert.rejects(T.resumeRun(paused, { mock: true }), (e) => e.status === 409 && e.body.code === 'GIT_MISSING');
       const rows = await addProject({ name: 'p0term', path: dir });
       const key = rows.find((p) => p.name === 'p0term').key;
       const term = await send('post', `/api/projects/${key}/terminal`, { branch: 'main' });
       assert.equal(term.status, 409); assert.deepEqual(await term.json(), BODY);
-      const w = await send('post', '/api/workspaces', { name: 'W', projectPaths: [dir, gitDir('p0-run2')] });
-      assert.equal(w.status, 409); assert.deepEqual(await w.json(), BODY);
+      const loose = gitDir('p0-run2');                                        // P5: dir (registered p0term) is accepted
+      const w = await send('post', '/api/workspaces', { name: 'W', projectPaths: [dir, loose] });
+      assert.equal(w.status, 400); assert.deepEqual(await w.json(), { error: `member path is not a registered project: ${loose}` });
     } },
     { name: 'an Ask clone card: startCloneJob refuses git-missing before any job exists', run: async () => {
       await assert.rejects(T.startCloneJob({ url: 'https://github.com/acme/api', branch: null, name: null }),
         { code: 'git-missing', message: 'git is not installed on this machine' });
       assert.equal(T.CLONE_JOBS.size, 0);
     } },
-    { name: 'Add members to a workspace made while git was there: 409 GIT_MISSING', run: async () => {
+    { name: 'Add members to a workspace made while git was there: an unregistered repo is refused as not registered (400)', run: async () => {
       gitArrives();
       const made = await send('post', '/api/workspaces', { name: 'WM', projectPaths: [gitDir('p0-mem1'), gitDir('p0-mem2')] });
       assert.equal(made.status, 201);
       const { workspace } = await made.json();
       withNoGit();
-      const r = await send('post', `/api/workspaces/${workspace.id}/members`, { add: [gitDir('p0-mem3')] });
-      assert.equal(r.status, 409); assert.deepEqual(await r.json(), BODY);
+      const loose = gitDir('p0-mem3');
+      const r = await send('post', `/api/workspaces/${workspace.id}/members`, { add: [loose] });
+      assert.equal(r.status, 400); assert.deepEqual(await r.json(), { error: `member path is not a registered project: ${loose}` });
     } },
     { name: 'git on: the table lets requests through (a sync POST answers its own 4xx, not GIT_MISSING)', run: async () => {
       gitArrives();

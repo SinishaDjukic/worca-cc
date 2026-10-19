@@ -190,6 +190,12 @@ export async function projectSlug(projectDir) {
   return { slug, hasOrigin: !!origin, originUrl: origin?.fetchUrl ?? null, remotesOk: r.ok };
 }
 
+/** P5: a Folder project's slug — its folder's name, never from git (inside a repository, `git remote -v` and the
+ *  canonical root answer for that repository). The same slug projectSlug falls back to for a folder outside one. */
+export function folderProjectSlug(projectDir) {
+  return slugSegment(basename(resolve(projectDir))) || 'project';
+}
+
 export async function gitUserName(dir) {
   const r = await _git(dir, ['config', 'user.name'], { timeoutMs: 10_000 });
   return r.ok ? r.stdout.trim() || null : null;

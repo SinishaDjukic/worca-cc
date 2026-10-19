@@ -8,6 +8,7 @@ import { realpathSync } from 'node:fs';
 import { lstat, stat, readlink, symlink, unlink, rmdir, mkdir, chmod, rename, rm, readdir, writeFile, realpath } from 'node:fs/promises';
 import { join, dirname, basename, resolve, relative, sep } from 'node:path';
 import { folderFiles } from './project-kind.mjs';
+import { folderMemberFiles } from './folder-members.mjs';
 import {
   readFolderManifest, scanChanges, buildChangesPatch, writeChangesFiles, writeChangesJson, readChangesFile, rewriteLinkTarget,
   safeRelPath, folderCopyRoot, openRegular, hashHandle, copyHandle, readlinkInside,
@@ -43,6 +44,7 @@ const settled = (state) => new FolderApplyError(409, 'CHANGES_SETTLED',
  * P5 adds the workspace arm (same signature).
  */
 export function folderMemberTarget(state, memberKey, pipelineDir) {
+  if (state?.target === 'workspace') return workspaceMemberTarget(state, memberKey, pipelineDir);
   const mode = state?.workMode ?? state?.branch?.workMode ?? 'git';
   if (!state || mode !== 'folder') throw notFolder();
   if (memberKey != null && memberKey !== '' && memberKey !== state.projectKey) {
@@ -55,6 +57,24 @@ export function folderMemberTarget(state, memberKey, pipelineDir) {
     files: folderFiles(pipelineDir),
     memberKey: state.projectKey ?? null,
     pipelineId: state.id ?? null,                                // with memberKey: where the copy must be (folderCopyRoot)
+  };
+}
+
+/** P5 (S27): a workspace member. Its recorded mode (workspace_meta.projects[i].workMode) decides; a Git member is no copy. */
+function workspaceMemberTarget(state, memberKey, pipelineDir) {
+  const key = typeof memberKey === 'string' ? memberKey.trim() : '';
+  if (!key) throw new FolderApplyError(400, 'BAD_MEMBER', 'memberKey is required for a workspace run');
+  const project = (Array.isArray(state.projects) ? state.projects : []).find((p) => p && p.projectKey === key);
+  if (!project) throw new FolderApplyError(400, 'BAD_MEMBER', `unknown workspace member: ${key.slice(0, 80)}`);
+  if (project.workMode !== 'folder') throw notFolder();
+  const rec = state.branches && typeof state.branches[key] === 'object' && state.branches[key] ? state.branches[key] : {};
+  return {
+    realDir: rec.realDir || project.projectDir || null,
+    copyDir: rec.copyDir || null,
+    files: folderMemberFiles(pipelineDir, key),
+    memberKey: key,
+    memberName: project.projectName || key,
+    pipelineId: state.id ?? null,
   };
 }
 
@@ -74,16 +94,32 @@ export async function readFolderChanges(target) {
 /** A targeted UPDATE of the row's `branch.changes` (P5 adds workspace_meta). Merges `patch` into the record, so the
  *  counts survive Apply and Discard. */
 export function writeChangesRecord(pipelineId, patch, { memberKey } = {}) {
-  void memberKey;
-  tx(() => {
-    const row = getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(pipelineId);
-    if (!row) return;
-    let br = null;
-    try { br = row.branch ? JSON.parse(row.branch) : null; } catch { br = null; }
-    if (!br || typeof br !== 'object') return;
-    const next = { ...br, changes: { ...(br.changes || {}), ...patch } };
-    getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify(next), pipelineId);
-  });
+  tx(() => writeChangesRecordInTx(pipelineId, patch, { memberKey }));
+}
+
+/** writeChangesRecord's UPDATE for a caller already inside tx() (archivePipeline): tx() does not nest. */
+export function writeChangesRecordInTx(pipelineId, patch, { memberKey } = {}) {
+  const obj = (v) => { try { const o = v ? JSON.parse(v) : null; return o && typeof o === 'object' && !Array.isArray(o) ? o : null; } catch { return null; } };
+  const merged = (rec) => ({ ...rec, changes: { ...(rec.changes || {}), ...patch } });
+  const row = getDb().prepare('SELECT target, branch, workspace_meta FROM pipelines WHERE id = ?').get(pipelineId);
+  if (!row) return;
+  const br = obj(row.branch);
+  if (row.target === 'workspace') {
+    // P5: the member's record in workspace_meta.branches, and the scalar mirror when the member is the primary
+    const wm = obj(row.workspace_meta);
+    const rec = memberKey && wm?.branches && typeof wm.branches[memberKey] === 'object' ? wm.branches[memberKey] : null;
+    if (!rec) return;
+    const next = { ...wm, branches: { ...wm.branches, [memberKey]: merged(rec) } };
+    const primary = Array.isArray(wm.projects) ? wm.projects[0]?.projectKey : null;
+    if (br && primary === memberKey) {
+      getDb().prepare('UPDATE pipelines SET workspace_meta = ?, branch = ? WHERE id = ?').run(JSON.stringify(next), JSON.stringify(merged(br)), pipelineId);
+    } else {
+      getDb().prepare('UPDATE pipelines SET workspace_meta = ? WHERE id = ?').run(JSON.stringify(next), pipelineId);
+    }
+    return;
+  }
+  if (!br) return;
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify(merged(br)), pipelineId);
 }
 
 // v4: a path that is not there is null; any OTHER read error (EACCES, an offline placeholder, a Windows lock) throws,

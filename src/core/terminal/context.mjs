@@ -21,7 +21,7 @@ export function terminalTargets(row, { isLive = () => false, exists = existsSync
   const none = isNoProjectKey(row.project_key);
   const members = membersOfRow(row).map((m) => {
     const base = { projectKey: m.projectKey, projectName: m.projectName || m.projectKey, branch: m.br?.feature || null };
-    if (folder) {
+    if (folder || m.br?.workMode === 'folder') {             // P5: a mixed workspace's Folder member maps the same way
       // S9 / P1b S9: a Folder run's terminal opens in its copy while the copy exists and its changes wait (or the run is
       // live), else in the real folder. Never needs-checkout; no LIVE_WARNING (it says the work is committed with the run).
       const copy = m.br?.copyDir || null;

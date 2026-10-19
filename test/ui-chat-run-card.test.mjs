@@ -1294,3 +1294,21 @@ test('chat run card: a run without a project lists each file as a name, its size
   dls[0].click();
   assert.deepEqual(got, [['a41c09d2', 'work/deck.html']]);
 });
+
+test('chat run card, a workspace run with Folder members: no Apply to folder (each member applies on its own on the run page)', () => {
+  const EX = { results: null, artifacts: [], moreArtifacts: false, pr: null };
+  const CH = { state: 'pending', counts: { added: 2, modified: 0, deleted: 0 } };
+  const { card, $ } = mk({ controls: { openApply: () => Promise.resolve(null) } });
+  card.update(done(EX, { workMode: 'folder', changes: CH }));
+  assert.ok($('.chat-rc-apply'), 'a single-project Folder run offers it');
+  card.update(done(EX, { kind: 'workspace-run', workspaceId: 'wks-notes-0000abcd', workMode: 'folder', changes: CH }));
+  assert.equal($('.chat-rc-apply'), null, 'a live workspace snapshot: its Apply would POST without a memberKey (400)');
+  const rest = snapshotFromState(STATE({ status: 'done', target: 'workspace', workspaceId: 'wks-notes-0000abcd', workMode: 'folder', projects: [] }),
+    { now: 0, extras: { ...EX, changes: CH } });
+  assert.deepEqual([rest.kind, rest.workMode, rest.changes], ['workspace-run', 'folder', CH]);
+  card.update(done(EX, { workMode: 'folder', changes: CH }));
+  assert.ok($('.chat-rc-apply'));
+  card.update({ ...rest, terminal: true });
+  assert.equal($('.chat-rc-res-title').textContent, 'Finished');
+  assert.equal($('.chat-rc-apply'), null, 'a REST workspace snapshot');
+});

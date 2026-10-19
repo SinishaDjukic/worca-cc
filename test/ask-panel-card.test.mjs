@@ -87,7 +87,7 @@ function apiHandler(recorder = {}) {
     if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: recorder.projects || [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
     if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: recorder.workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
     if (url === '/api/guardrails') return { ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }, { id: 'strict', name: 'Strict' }] }) };
-    if (url === '/api/workspaces') return { ok: true, status: 200, json: async () => ({ workspaces: [{ id: 'wks-team-00000001', name: 'team', projectPaths: ['/repos/proj', '/repos/lib'], projectKeys: ['proj-00000001', 'lib-00000002'] }] }) };
+    if (url === '/api/workspaces') return { ok: true, status: 200, json: async () => ({ workspaces: recorder.workspaces || [{ id: 'wks-team-00000001', name: 'team', projectPaths: ['/repos/proj', '/repos/lib'], projectKeys: ['proj-00000001', 'lib-00000002'] }] }) };
     if (url.startsWith('/api/branches')) {
       recorder.branchCalls = [...(recorder.branchCalls || []), url];
       return { ok: true, status: 200, json: async () => ({ branches: ['main', 'dev'] }) };
@@ -1110,6 +1110,15 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       rmEl.querySelector('[data-ask-ws-decline]').click();
       await ctx.tick();
       assert.deepEqual(rec.cardPosts.at(-1), ['card_00000012', { state: 'declined' }]);
+      // P5: a Folder member of a create card carries its kind chip; a Git member carries none.
+      const mk = { type: 'workspace', kind: 'create', summary: 'Create workspace Docs with api and notes', name: 'Docs', workspaceId: null, workspaceName: null,
+        members: [{ key: 'ka', name: 'api', path: '/r/api' }, { key: 'kn', name: 'notes', path: '/r/notes', vcs: 'none' }], effects: [], warnings: [], followUps: [] };
+      ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000013', state: 'proposed', card: mk }, threadId: TID, messageId: MID, seq: 7 });
+      ctx.flush();
+      const mkEl = [...ctx.doc.querySelectorAll('[data-ask-wscard="proposed"]')].at(-1);
+      const memberRows = [...mkEl.querySelectorAll('.ask-mcard-changes li')].filter((li) => li.querySelector('.ask-mcard-change-label').textContent === 'Member');
+      assert.deepEqual(memberRows.map((li) => li.querySelector('.ask-mcard-after').textContent), ['api · /r/api', 'notes · /r/notes']);
+      assert.deepEqual(memberRows.map((li) => li.querySelector('.kind-chip')?.textContent ?? null), [null, 'Folder']);
     } },
     { name: 'actions card: each command whole, Now / New on a change, warnings and effects as text; Save / Decline post the verbs', run: async () => {
       const rec = { cardPosts: [] };
@@ -2420,4 +2429,43 @@ test('project card (ChatCreate board): Name / Folder / Kind rows; Create / Decli
   assert.deepEqual(rec.cardPosts.at(-1), ['card_00000022', { state: 'declined' }]);
   push('card_00000022', 'declined', {}, 8);
   assert.ok([...ctx.doc.querySelectorAll('.ask-card-stub')].some((x) => x.textContent === 'Declined — Create landing-page'));
+});
+
+// P5: lib is a Folder member — the card's members carry workMode 'folder', the live list carries vcs.
+const WS_FOLDER_CARD = { ...WS_CARD, members: [WS_CARD.members[0], { ...WS_CARD.members[1], workMode: 'folder' }] };
+const WS_FOLDER_ROW = { id: 'wks-team-00000001', name: 'team', projectPaths: ['/repos/proj', '/repos/lib'], projectKeys: ['proj-00000001', 'lib-00000002'], vcs: ['git', 'none'] };
+// The workspace segment's git-only fields, [label, hidden] (an attribute: jsdom loads no CSS).
+const WS_GIT_LABELS = ['Source branch', 'Feature branch', 'Run on the source branch'];
+const wsGitFields = (cardEl) => [...cardEl.querySelectorAll('.ask-rp-label')].map((l) => [l.firstChild.textContent.trim(), !!l.closest('[hidden]')])   // the label, without its ' · hint'
+  .filter(([t]) => WS_GIT_LABELS.includes(t));
+
+test('ask-panel-card: a Folder member is listed but gets no per-member source input', async () => {
+  await checkRows([
+    { name: 'the live workspace row says lib is a Folder member: listed, no source input, never in sourceBranchByKey', run: async () => {
+      const rec = { workspaces: [WS_FOLDER_ROW] };
+      const ctx = await openWithCard(WS_CARD, rec);
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.match(cardEl.querySelector('.ask-card-members').textContent, /lib/);
+      const inputs = [...cardEl.querySelectorAll('.ask-card-member-src')];
+      assert.deepEqual(inputs.map((i) => i.dataset.projectKey), ['proj-00000001']);
+      assert.deepEqual(wsGitFields(cardEl), WS_GIT_LABELS.map((l) => [l, false]), 'a Git member keeps the branch fields');
+      inputs[0].value = 'release';
+      cardEl.querySelector('[data-ask-card-start]').click();
+      await ctx.tick(); await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].sourceBranchByKey, { 'proj-00000001': 'release' });
+    } },
+    { name: 'no live row: the card\'s members say lib is a Folder member', run: async () => {
+      const ctx = await openWithCard(WS_FOLDER_CARD, { workspaces: [] });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.match(cardEl.querySelector('.ask-card-members').textContent, /lib/);
+      assert.deepEqual([...cardEl.querySelectorAll('.ask-card-member-src')].map((i) => i.dataset.projectKey), ['proj-00000001']);
+    } },
+    { name: 'every member a Folder project: no per-member source branches disclosure, and no Source branch / Feature branch / Run on the source branch field', run: async () => {
+      const ctx = await openWithCard(WS_CARD, { workspaces: [{ ...WS_FOLDER_ROW, vcs: ['none', 'none'] }] });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.equal(cardEl.querySelectorAll('.ask-card-member-src').length, 0);
+      assert.equal(cardEl.querySelector('.ask-card-members-src').hidden, true);
+      assert.deepEqual(wsGitFields(cardEl), WS_GIT_LABELS.map((l) => [l, true]));
+    } },
+  ]);
 });

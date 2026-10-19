@@ -37,7 +37,11 @@ export default async function ({ outputs, params, ctx, log }) {
     const head = label ? `## ${label}\n\n${ref ? `Base: \`${ref}\`\n\n` : ''}` : '';
     return `${head}\`\`\`${stat ? 'text' : 'diff'}\n${body || '(no changes)'}\n\`\`\`\n`;
   };
-  const md = repos ? repos.map((r, i) => section(r.dir, r.key, refs[i])).join('\n') : section(ctx.cwd, '', refs[0]);
+  // P5: a Folder member of a workspace run is a copy with no git (git there would diff an enclosing repository).
+  const folderSection = (r) => `## ${r.key}\n\nFolder project (no git): its changes are in \`${r.changesPatch}\`.\n`;
+  const md = repos
+    ? repos.map((r, i) => (r.workMode === 'folder' ? folderSection(r) : section(r.dir, r.key, refs[i]))).join('\n')
+    : section(ctx.cwd, '', refs[0]);
   const out = outputs.diff?.path;
   if (!out) throw new Error('the diff output has no path');
   const against = explicit || (repos ? 'each project\'s diff base' : refs[0]) || 'the working tree';

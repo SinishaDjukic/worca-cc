@@ -33,11 +33,13 @@ import {
   enrichPipelinesPr, reconcileStaleRunning, foreignActiveWorkspaceRuns, readPipelineForResume, persistPrState, readPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify, newPipelineId,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
+  folderApplyRetainFor,
   resolveIndexedArtifactFileForRow, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
   checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts,
 } from '../src/core/artifacts.mjs';
 import { FolderApplyError, folderMemberTarget, readFolderChanges, planFolderApply, applyFolderChanges, discardFolderChanges, releaseFolderCopy } from '../src/core/folder-apply.mjs';
+import { releaseFolderMember } from '../src/core/folder-members.mjs';
 import { readChangesFile, readRegularText, checkFolderSize } from '../src/core/folder-copy.mjs';
 import { mimeForPath, viewerKindFor } from '../src/shared/artifact-kinds.mjs';
 import { attachmentDisposition } from '../src/core/download-filename.mjs';
@@ -318,13 +320,13 @@ import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID } fro
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
-import { archivePipeline, restorePipeline, discardRetainedWorktrees, applyRetainedWork } from '../src/core/pipeline-delete.mjs';
+import { archivePipeline, restorePipeline, discardRetainedWorktrees, applyRetainedWork, archiveKeepsWork } from '../src/core/pipeline-delete.mjs';
 import {
   listWorkspaces, readWorkspace, checkNewWorkspace, scanMemberProblems,
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
   readWorkspaceMap, setWorkspaceEdgeState, addWorkspaceManualEdge, removeWorkspaceManualEdge,
   regenerateWorkspaceDescription, readWorkspaceStacks, updateWorkspaceStacks, workspaceMembers,
-  addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash,
+  addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash, memberWorkMode,
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
@@ -1606,7 +1608,6 @@ const GIT_ONLY_ROUTES = Object.freeze([
   ['post', '/api/runs/:id/base-check'], ['post', '/api/runs/:id/update-branch'],
   ['post', '/api/runs/:id/resolve-pipeline'], ['post', '/api/runs/:id/resolve-terminal'],
   ['post', '/api/runs/:id/apply-retained'], ['post', '/api/runs/:id/discard-worktree'],
-  ['post', '/api/workspaces/scan'], ['post', '/api/workspaces/:id/scan'],
   ['post', '/api/workspaces/metrics-scan'], ['post', '/api/workspaces/:id/metrics-route'], ['post', '/api/workspaces/:id/policy-route'],
   ['post', '/api/projects/:key/team-metrics/enable'], ['post', '/api/team-metrics/flush'], ['post', '/api/team-metrics/discover'],
   ['put', '/api/policy'], ['post', '/api/policy/discover'], ['post', '/api/projects/:key/policy/enable'],
@@ -2536,7 +2537,6 @@ const startRunHandler = async (req, res) => {
         title, status: 'starting', startedAt: new Date().toISOString(), startedBy, tags, events: [], pendingQuestion: null,
       };
     } else if (hasWorkspace) {
-      if (!(await gitState()).available) return gitMissing(res);   // until P5 (Folder members)
       // ── Workspace target (§2.6) ────────────────────────────────────────────
       const workspaceId = body.workspaceId.trim();
       // A stale bookmark / crafted id reads as "not found", not "bad request".
@@ -2559,15 +2559,25 @@ const startRunHandler = async (req, res) => {
       // creation, where createWorkspace enforced isGitRepo) is rejected the same
       // way, so the client gets a clean 400 instead of a mid-run worktree error.
       const projects = [];
+      await gitState();                                   // U4: refresh the cached git answer (≤ 1 min old) memberWorkMode reads
       for (const dir of ws.projectPaths) {
         if (!fs.existsSync(dir)) {
           return badRequest(res, 'workspace member path is missing');
         }
-        if (!isGitRepo(dir) || getProjectByPath(dir)?.vcs === 'none') {
+        // P5 (U8): each member's mode is decided once, here (R5: resume / stop read it back from workspace_meta.projects)
+        const workMode = memberWorkMode(dir);
+        if (workMode === 'git' && !isGitRepo(dir)) {
           return badRequest(res, `workspace member is not a git repository: ${dir}`);
         }
-        projects.push({ projectDir: dir, projectKey: projectKey(dir), projectName: path.basename(dir) });
+        if (workMode === 'folder') {
+          const big = await _folderSizeProblem(dir);                // R6 / S9: before a row, a run root or a ticket
+          if (big) return res.status(413).json(big);
+        }
+        projects.push({ projectDir: dir, projectKey: projectKey(dir), projectName: path.basename(dir), ...(workMode === 'folder' ? { workMode } : {}) });
       }
+      // P1's project arm refuses the same at start: with no Git member there is no branch to start from (a mixed workspace's
+      // Folder member copies its folder as it is when the chained run fires).
+      if (sched?.sourceFromPrevious && projects.every((p) => p.workMode === 'folder')) return badRequest(res, "a Folder project run cannot start from the previous run's branch");
       // Sort by projectKey (the canonical member order used everywhere);
       // projects[0] is the primary (lowest projectKey).
       projects.sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0));
@@ -2617,7 +2627,8 @@ const startRunHandler = async (req, res) => {
 
       const wsBuilt = buildWorkspaceMembers(projects, branch, sourceByKey);
       const wsMembers = [];
-      if (syncAllowed) for (const m of wsBuilt) wsMembers.push({ ...m, source: m.branch.source || await resolveDefaultBranch(m.projectDir) });
+      // A Folder member never syncs (no resolveDefaultBranch): runSyncOpts gives an absent member nothing.
+      if (syncAllowed) for (const m of wsBuilt) if (m.workMode !== 'folder') wsMembers.push({ ...m, source: m.branch.source || await resolveDefaultBranch(m.projectDir) });
       const sync = runSyncOpts(wsMembers, { allowed: syncAllowed, before: syncBody.before, policy: syncBody.policy,
         scheduled: !!internal, onDiverged: syncBody.onDiverged });
       if (sync.enabled && !internal && !syncBody.policy) {
@@ -5830,9 +5841,16 @@ app.post('/api/workspaces/metrics-scan', async (req, res) => {
   for (const p of normalized) {
     if (!fs.existsSync(p)) return badRequest(res, `member path is missing: ${p}`);
     if (isNoProjectWorkDir(p)) return badRequest(res, NO_PROJECT_ERRORS.register);   // P3-D11, before git runs inside it
-    if (!isGitRepo(p)) return badRequest(res, `member is not a git repository: ${p}`);
+    if (memberWorkMode(p) === 'git' && !isGitRepo(p)) return badRequest(res, `member is not a git repository: ${p}`);   // P6 (S26) prefixes !teamOverHttps(p) && here
   }
-  try { res.json(await scanMembers(normalized)); }
+  try {
+    // P5 (S26): a Folder member is never discovered (no origin to push to); the answer keeps the input order.
+    const git = normalized.filter((p) => memberWorkMode(p) === 'git');
+    const { members: found } = git.length ? await scanMembers(git) : { members: [] };
+    const byPath = new Map(found.map((m) => [m.path, m]));
+    res.json({ members: normalized.map((p) => byPath.get(p) || { path: p, key: projectKey(p), slug: path.basename(p), hasOrigin: false, enabled: false,
+      delegateTo: null, recordsLocally: false, enabledAt: null, workspaceRuns: null, error: null }) });
+  }
   catch (err) { sendMetricsError(res, err); }
 });
 
@@ -6543,8 +6561,12 @@ app.delete('/api/runs/:id', async (req, res) => {
     const report = await withRunLock(id, async () => {
       // A pending Folder run's terminal opens in its copy (S9); Archive removes the copy, as Discard does: close it first —
       // but never for a row archivePipeline will refuse as active (v8: the terminals closed, then the answer was 409).
+      // P5: a workspace run with Folder members (mixed: no run-level workMode) has copies in its run root too. A mixed
+      // run's Git member can hold a checkout or commit-failed work (the DB records or run.json's retain block), which
+      // archivePipeline refuses: leave its terminals.
       const fr = findPipelineRowById(id);
-      if (fr && !fr.archived_at && workModeOfRow(fr) === 'folder'
+      if (fr && !fr.archived_at && (workModeOfRow(fr) === 'folder' || !!folderFacts(fr).changes)
+        && !(await archiveKeepsWork(fr))
         && !['running', 'starting', 'created', 'pausing'].includes(String(fr.status || '').toLowerCase())) await stopMemberServices(id);
       return archivePipeline({
         workspaceKey: workspaceId || null,
@@ -6741,12 +6763,20 @@ for (const verb of ['apply', 'discard']) {
       if (!g) return;
       const by = actorOf(req);
       const out = await withRunLock(g.row.id, async () => {
-        const t = folderMemberTarget(readPipelineStateById(g.row.id), req.query.memberKey || null, g.pipelineDir);   // recomputed under the lock
-        await stopMemberServices(g.row.id);           // the run's terminals (S9 opens them in the copy) and its actions
+        const st = readPipelineStateById(g.row.id);
+        const t = folderMemberTarget(st, req.query.memberKey || null, g.pipelineDir);   // recomputed under the lock
+        // the run's terminals (S9 opens them in the copy) and its actions; P5: only this member's on a workspace run
+        await stopMemberServices(g.row.id, st?.target === 'workspace' ? t.memberKey : undefined);
         const r = verb === 'apply'
           ? await applyFolderChanges(t, { pipelineId: g.row.id, by })
           : await discardFolderChanges(t, { pipelineId: g.row.id, by });
-        await releaseFolderCopy(g.row.id, g.pipelineDir);   // P5 swaps in releaseFolderMember for a workspace member
+        // P5: a workspace member releases only its own copy; the run root goes with the last retained member, and stays
+        // while the fresh row still lists another pending copy
+        if (st?.target === 'workspace') {
+          const pendingMembers = folderApplyRetainFor(findPipelineRowById(g.row.id))?.members;
+          await releaseFolderMember({ worcaHome: worcaHome(), pipelineId: g.row.id, pipelineDir: g.pipelineDir, memberKey: t.memberKey, pendingMembers });
+        }
+        else await releaseFolderCopy(g.row.id, g.pipelineDir);
         return r;
       });
       emitChanged('pipelines-changed', 'updated');
@@ -9403,6 +9433,7 @@ let autoRescanOn = true; // test seam: _testing.setAutoRescan(false) skips the r
  */
 async function afterMembersChanged(workspace, added = []) {
   for (const dir of added) {
+    if (getProjectByPath(dir)?.vcs === 'none') continue;   // P5: a Folder member has no origin of its own (nested in a repository it would take that one's)
     discoverProject(dir, { force: true }).then(() => emitChanged('team-metrics-changed', 'discovered')).catch(() => { /* retried hourly */ });
     discoverPolicy(dir, { force: true }).then(() => emitChanged('team-policy-changed', 'discovered')).catch(() => { /* retried hourly */ });
   }
@@ -10027,6 +10058,12 @@ async function askPrCardFacts(row) {
     const dir = await runDirForRow(row);
     const res = dir ? JSON.parse(await fsp.readFile(path.join(dir, 'results.json'), 'utf8')) : null;
     summary = res && res.summary && typeof res.summary === 'object' ? res.summary : null;
+    // P5: a workspace run's Folder members ship in no pull request (their changes wait for Apply): count the Git members only
+    const folder = isWs ? new Set(((parse(row.workspace_meta) || {}).projects || []).filter((p) => p && p.workMode === 'folder').map((p) => p.projectKey)) : null;
+    if (summary && folder && folder.size && res.perProject && typeof res.perProject === 'object') {
+      summary = { filesNew: 0, filesChanged: 0, linesAdded: 0, linesRemoved: 0 };
+      for (const [k, v] of Object.entries(res.perProject)) if (!folder.has(k)) for (const f of Object.keys(summary)) summary[f] += Number(v?.summary?.[f]) || 0;
+    }
   } catch { summary = null; }
   return {
     pipelineId: row.id,

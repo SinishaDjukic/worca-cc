@@ -34,12 +34,12 @@ test('sync call sites while git is missing', async (t) => {
       assert.notEqual(projectKey(sub), offKey);
       assert.equal(projectKey(sub), projectKey(repo));
     } },
-    { name: 'isGitRepo false; a scan names the tool; a new workspace is refused GIT_MISSING', run: async () => {
+    { name: 'isGitRepo false; a scan only checks existence; an unregistered repo is refused as not registered', run: async () => {
       const other = gitDir('p0-sync2');
       withNoGit();
       assert.equal(isGitRepo(repo), false);
-      assert.deepEqual(scanMemberProblems([repo]), [`${repo}: git is not installed on this machine`]);
-      await assert.rejects(createWorkspace({ name: 'W', projectPaths: [repo, other] }), { code: 'GIT_MISSING', message: 'git is not installed on this machine' });
+      assert.deepEqual(scanMemberProblems([repo]), []);
+      await assert.rejects(createWorkspace({ name: 'W', projectPaths: [repo, other] }), { code: 'BAD_REQUEST', message: `member path is not a registered project: ${repo}` });
     } },
     { name: 'flip: a tracked .claude/settings.local.json counts as untracked — Approve allowed, approvals apply', run: async () => {
       const home = mkdtempSync(join(tmpdir(), 'worca-p0-home-'));

@@ -55,7 +55,8 @@ export function workspaceOf(ctx) {
   const str = (v) => (typeof v === 'string' && v ? v : '');
   const members = ws.members
     .filter((m) => isObj(m) && str(m.key) && (str(m.dir) || str(m.projectDir)))
-    .map((m) => ({ key: m.key, name: str(m.name) || m.key, dir: str(m.dir) || m.projectDir, projectDir: str(m.projectDir) || m.dir }))
+    .map((m) => ({ key: m.key, name: str(m.name) || m.key, dir: str(m.dir) || m.projectDir, projectDir: str(m.projectDir) || m.dir,
+      ...(m.workMode === 'folder' ? { workMode: 'folder' } : {}) }))
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return { id: str(ws.id) || null, name: str(ws.name) || null, members };
 }

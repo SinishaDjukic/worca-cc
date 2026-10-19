@@ -17,6 +17,7 @@ import { hostname } from 'node:os';
 import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath, isNoProjectKey, noProjectWorkDir, NO_PROJECT_KEY } from './store.mjs';
 import { NO_PROJECT_NAME } from '../shared/no-project.mjs';
 import { workModeOfRow } from './project-kind.mjs';
+import { rollupChanges } from './folder-members.mjs';
 import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { updateRunManifest } from './run-manifest.mjs';
 import { listProjects, worcaHome } from './projects.mjs';
@@ -2078,18 +2079,35 @@ export function retainedWorkFor(row) {
  * folder run, its changes are `pending` and the copy exists: a copy removed by hand self-clears.
  */
 export function folderApplyRetainFor(row) {
-  if (!row || typeof row !== 'object' || workModeOfRow(row) !== 'folder') return null;
+  if (!row || typeof row !== 'object') return null;
+  // P5: a workspace row lists its Folder members (workspace_meta.projects[i].workMode), whatever the run's own mode
+  const ws = row.target === 'workspace' ? workspaceFolderRecords(row) : null;
+  if (!ws && workModeOfRow(row) !== 'folder') return null;
   const members = [];
-  for (const [pk, br] of branchRecordsOf(row)) {
+  for (const [pk, br] of ws || branchRecordsOf(row)) {
     if (br?.changes?.state !== 'pending' || !br.copyDir || !existsSync(br.copyDir)) continue;
     members.push({ projectKey: pk || null, copyDir: br.copyDir });
   }
   return members.length ? { reason: 'folder-apply', members } : null;
 }
 
-/** S9: the folder facts a list row carries — `{ workMode, changes?: { state, counts } }` for a non-git row, `{}` for git. */
+/** P5: [[memberKey, record]] of a workspace row's Folder members (workspace_meta.projects[i].workMode === 'folder'). */
+function workspaceFolderRecords(row) {
+  const wm = typeof row?.workspace_meta === 'string' ? j(row.workspace_meta, null) : row?.workspace_meta;
+  const projects = Array.isArray(wm?.projects) ? wm.projects : (Array.isArray(row?.projects) ? row.projects : []);
+  const branches = (wm?.branches && typeof wm.branches === 'object' ? wm.branches : row?.branches) || {};
+  return projects.filter((p) => p && p.workMode === 'folder' && typeof p.projectKey === 'string')
+    .map((p) => [p.projectKey, branches[p.projectKey] || null]);
+}
+
+/** S9: the folder facts a list row carries — `{ workMode, changes?: { state, counts } }` for a non-git row, `{}` for git.
+ *  P5: a workspace row's `changes` is the rollup of its Folder members' records (a mixed workspace keeps workMode git). */
 export function folderFacts(row) {
   const workMode = workModeOfRow(row);
+  if (row?.target === 'workspace') {
+    const changes = rollupChanges(workspaceFolderRecords(row).map(([, br]) => br?.changes).filter(Boolean));
+    return { ...(workMode !== 'git' ? { workMode } : {}), ...(changes ? { changes } : {}) };
+  }
   if (workMode === 'git') return {};
   const br = typeof row?.branch === 'string' ? j(row.branch, null) : row?.branch;
   const changes = br && typeof br === 'object' ? br.changes : null;
@@ -2170,11 +2188,15 @@ async function workspaceMemberFacts(row, results, opts = {}) {
   const known = opts.withPr ? readMemberPrStates(row.id) : null;
   const gh = opts.withPr ? await anyPrHost() : false;
   return Promise.all(members.map(async (m) => {
+    const workMode = (wm.projects || []).find((p) => p?.projectKey === m.memberKey)?.workMode === 'folder' ? 'folder' : 'git';
+    const ch = workMode === 'folder' ? wm.branches?.[m.memberKey]?.changes : null;
     const out = {
       memberKey: m.memberKey, name: m.name, projectDir: m.projectDir,
       branch: m.feature, sourceBranch: m.source,
       survived: false, affected: false, added: 0, removed: 0, diffFrozen: false,
       baseCheck: baseCheckSummary(wm.branches?.[m.memberKey]?.baseCheck),
+      ...(workMode === 'folder' ? { workMode } : {}),   // absent = git: an all-Git row stays byte-identical
+      ...(ch ? { changes: { state: ch.state, counts: ch.counts } } : {}),
     };
     if (m.projectDir && m.feature) out.survived = await branchExists(m.projectDir, m.feature);
     const sum = perProject && perProject[m.memberKey] ? perProject[m.memberKey].summary : null;
@@ -2183,6 +2205,9 @@ async function workspaceMemberFacts(row, results, opts = {}) {
       out.affected = changedFileCount(sum) > 0;
       out.added = sum.linesAdded | 0;
       out.removed = sum.linesRemoved | 0;
+    } else if (ch) {
+      // a Folder member with no frozen summary: its record's counts (never git — it has no branch)
+      out.affected = ((ch.counts?.added | 0) + (ch.counts?.modified | 0) + (ch.counts?.deleted | 0)) > 0;
     } else if (out.survived && m.source) {
       out.affected = ((await commitsAhead(m.projectDir, m.source, m.feature)) || 0) > 0;
       if (out.affected) {
@@ -2703,6 +2728,7 @@ function rowToState(row) {
     if (!state.projectDir) state.projectDir = Array.isArray(wmeta?.projectPaths) ? (wmeta.projectPaths[0] ?? null) : null;
   }
   const wm = workModeOfRow(row); if (wm !== 'git') state.workMode = wm; const ch = state.branch?.changes; if (wm === 'folder' && ch) state.changes = { state: ch.state, counts: ch.counts };
+  if (row.target === 'workspace') { const ff = folderFacts(row); if (ff.changes) state.changes = ff.changes; else delete state.changes; }   // P5: the members' rollup, never the primary mirror
   return state;
 }
 

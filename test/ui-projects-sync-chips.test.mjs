@@ -31,10 +31,12 @@ const blk = (base, over = {}) => ({ base, remote: 'origin', state: 'up-to-date',
   checkedOutHere: true, fetchedAt: NOW, stale: false, settings: { beforeRun: true, onDiverged: 'ask' }, ...over });
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 
-async function boot({ projects = PROJECTS, chips = () => ({ projects: { k1: blk('dev', { state: 'behind', behind: 3 }), k2: blk('main') } }),
+async function boot({ projects = PROJECTS, workspaces = WORKSPACES, git = 'on', chips = () => ({ projects: { k1: blk('dev', { state: 'behind', behind: 3 }), k2: blk('main') } }),
   all = () => ({ projects: { k1: blk('dev'), k2: blk('main') } }), post = () => ({ sync: blk('dev') }) } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4321/' }));
   const { window } = dom;
+  // P0's gitOn() reads <html data-git>; the server renders it, so set it before app.js loads.
+  if (git === 'off') window.document.documentElement.dataset.git = 'off';
   window.Element.prototype.scrollIntoView = function () {};
   window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
   let lastWs = null;
@@ -52,7 +54,7 @@ async function boot({ projects = PROJECTS, chips = () => ({ projects: { k1: blk(
     if (u.includes('/api/sync/all')) return ok(all(opts.body ? JSON.parse(opts.body) : {}));
     if (/\/api\/projects\/[^/]+\/sync/.test(u) && method === 'POST') return ok(post());
     if (u.includes('/api/projects')) return ok({ projects });
-    if (u.includes('/api/workspaces')) return ok({ workspaces: WORKSPACES });
+    if (u.includes('/api/workspaces')) return ok({ workspaces });
     return ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [], branches: [], workspaces: [], agents: [], channels: [] });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'requestAnimationFrame']) {
@@ -418,4 +420,133 @@ test('Folder rows: a Folder chip, a No git box where the branch bar goes, a Fold
     click(ctx.window, ctx.doc.querySelector('.proj-fchip[data-filter="folder"]'));
     assert.deepEqual([...ctx.doc.querySelectorAll('#projects-list .pl-item')].filter((n) => !n.hidden).map((n) => n.dataset.key), ['k3']);
   } finally { t.mock.timers.reset(); }
+});
+
+// P5: a Folder member (annotated vcs 'none') has no branch: it never reads a sync status, and the
+// rollup, Sync all and the auto-open count the Git members only.
+const MIXED = [{ ...WORKSPACES[0], vcs: ['git', 'none'] }];
+
+test('a workspace with a Folder member: the rollup counts Git members only, the Folder row has its chip and no sync controls', async (t) => {
+  await checkRows([
+    // The server can answer for a Folder project (a folder inside a repo answers for that repo): never shown.
+    { name: 'the Folder member\'s answer is ignored: Git rows set the rollup, Sync all and the auto-open; the Folder row has a chip, no icon, no status', run: async () => {
+      const ctx = await boot({ workspaces: MIXED, chips: () => ({ projects: { k1: blk('dev', { state: 'behind', behind: 3 }), k2: blk('main', { state: 'diverged', ahead: 1, behind: 2 }) } }) });
+      const timers = useAppTimers(t);
+      try {
+        await go(ctx.window, timers, 'workspaces');
+        const item = () => ctx.doc.querySelector('.ws-item[data-workspace-id="wks-alpha-00000001"]');
+        await waitFor(timers, () => item() && item().querySelector('.ws-rollup-txt').textContent !== 'Checking…');
+        assert.equal(item().querySelector('.ws-rollup-txt').textContent, '1 behind');
+        assert.equal(tone(item().querySelector('.ws-rollup')), 'blue');
+        assert.equal(item().querySelector('.ws-sync-all').textContent, 'Sync all (1)');
+        assert.equal(item().querySelector('.ws-table').hidden, true, 'a Folder member never opens the table');
+        const strip = [...item().querySelectorAll('.ws-strip-member')];
+        assert.ok(strip[0].querySelector('.ws-icon'), 'a Git member keeps its sync icon');
+        assert.equal(strip[0].querySelector('.kind-chip'), null, 'git on: a Git entry is unchanged');
+        assert.equal(strip[1].querySelector('.ws-strip-name').textContent, 'beta');
+        assert.equal(strip[1].querySelector('.kind-chip').textContent, 'Folder');
+        assert.equal(strip[1].querySelector('.ws-icon'), null, 'no sync icon for a Folder member');
+        assert.equal(tone(strip[1]), 'muted');
+        click(ctx.window, item().querySelector('.ws-toggle'));
+        const rows = [...item().querySelectorAll('.ws-trow')];
+        assert.deepEqual(rows.map((r) => r.querySelector('.kind-chip').textContent), ['Git', 'Folder']);
+        assert.equal(label(rows[0]), '3 commits behind');
+        assert.equal(rows[1].querySelector('button'), null);
+        assert.equal(rows[1].querySelector('.ws-tlabel'), null);
+        assert.equal(rows[1].querySelector('.ws-tbranch'), null);
+      } finally {
+        t.mock.timers.reset();
+      }
+    } },
+    { name: 'a Folder member that would be behind counts nowhere: the Git member alone is "All 1 up to date", no Sync all', run: async () => {
+      const ctx = await boot({ workspaces: MIXED, chips: () => ({ projects: { k1: blk('dev'), k2: blk('main', { state: 'behind', behind: 2 }) } }) });
+      const timers = useAppTimers(t);
+      try {
+        await go(ctx.window, timers, 'workspaces');
+        const item = () => ctx.doc.querySelector('.ws-item[data-workspace-id="wks-alpha-00000001"]');
+        await waitFor(timers, () => item() && item().querySelector('.ws-rollup-txt').textContent !== 'Checking…');
+        assert.equal(item().querySelector('.ws-rollup-txt').textContent, 'All 1 up to date');
+        assert.equal(item().querySelector('.ws-sync-all').hidden, true);
+      } finally {
+        t.mock.timers.reset();
+      }
+    } },
+    { name: 'a workspace of Folder members only: no rollup, no Sync all; the table lists both with their chips', run: async () => {
+      const ctx = await boot({ workspaces: [{ ...WORKSPACES[0], vcs: ['none', 'none'] }] });
+      const timers = useAppTimers(t);
+      try {
+        await go(ctx.window, timers, 'workspaces');
+        const item = () => ctx.doc.querySelector('.ws-item[data-workspace-id="wks-alpha-00000001"]');
+        await waitFor(timers, () => item() && chipGets(ctx.calls) === 1);
+        await timers.advance(50);
+        assert.equal(item().querySelector('.ws-rollup').hidden, true, 'no Git member: no rollup');
+        assert.equal(item().querySelector('.ws-sync-all').hidden, true);
+        assert.deepEqual([...item().querySelectorAll('.ws-strip-member .kind-chip')].map((c) => c.textContent), ['Folder', 'Folder']);
+        click(ctx.window, item().querySelector('.ws-toggle'));
+        assert.deepEqual([...item().querySelectorAll('.ws-trow')].map((r) => [r.querySelector('.ws-tname').firstChild.textContent, r.querySelector('.kind-chip').textContent]),
+          [['alpha', 'Folder'], ['beta', 'Folder']]);
+      } finally {
+        t.mock.timers.reset();
+      }
+    } },
+  ]);
+});
+
+test('git off: the member strip stays (names + kind chips, no sync icons); only the sync parts are gated', async (t) => {
+  const ctx = await boot({ workspaces: MIXED, git: 'off' });
+  const timers = useAppTimers(t);
+  try {
+    await go(ctx.window, timers, 'workspaces');
+    const item = () => ctx.doc.querySelector('.ws-item[data-workspace-id="wks-alpha-00000001"]');
+    await waitFor(timers, () => item() && item().querySelectorAll('.ws-strip-member').length === 2);
+    const strip = item().querySelector('.ws-strip-members');
+    assert.equal(strip.hasAttribute('data-needs-git'), false, 'the strip is not a git surface');
+    assert.equal(item().querySelector('.ws-strip-sep').hasAttribute('data-needs-git'), false);
+    assert.deepEqual([...strip.querySelectorAll('.ws-strip-member')].map((m) => [m.querySelector('.ws-strip-name').textContent,
+      m.querySelector('.kind-chip').textContent]), [['alpha', 'Git'], ['beta', 'Folder']]);
+    assert.equal(strip.querySelector('.ws-icon'), null, 'no sync icon while git is off');
+    for (const sel of ['.ws-rollup', '.ws-sync-all', '.ws-toggle', '.ws-table']) {
+      assert.equal(item().querySelector(sel).hasAttribute('data-needs-git'), true, `${sel} stays gated`);
+    }
+    await timers.advance(400);   // past SYNC_CHIPS_MS (300): a read that was queued would have landed
+    assert.equal(chipGets(ctx.calls), 0, 'no sync status read while git is off');
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('git going away while the list is open repaints the strip without sync icons; an old list without vcs paints as before', async (t) => {
+  await checkRows([
+    { name: 'a git frame (available: false) turns every strip entry into name + kind chip', run: async () => {
+      const ctx = await boot({ workspaces: MIXED });
+      const timers = useAppTimers(t);
+      try {
+        await go(ctx.window, timers, 'workspaces');
+        const item = () => ctx.doc.querySelector('.ws-item[data-workspace-id="wks-alpha-00000001"]');
+        await waitFor(timers, () => item() && item().querySelector('.ws-rollup-txt').textContent !== 'Checking…');
+        assert.ok(item().querySelector('.ws-strip-member .ws-icon'));
+        ctx.recv({ type: 'git', git: { available: false } });
+        await timers.advance(10);
+        assert.equal(item().querySelector('.ws-strip-members .ws-icon'), null, 'no stale sync icon once git is off');
+        assert.deepEqual([...item().querySelectorAll('.ws-strip-member .kind-chip')].map((c) => c.textContent), ['Git', 'Folder']);
+      } finally {
+        t.mock.timers.reset();
+      }
+    } },
+    { name: 'no vcs on the list (an older server): no kind chips anywhere, both members sync', run: async () => {
+      const ctx = await boot();
+      const timers = useAppTimers(t);
+      try {
+        await go(ctx.window, timers, 'workspaces');
+        const item = () => ctx.doc.querySelector('.ws-item[data-workspace-id="wks-alpha-00000001"]');
+        await waitFor(timers, () => item() && item().querySelector('.ws-rollup-txt').textContent !== 'Checking…');
+        click(ctx.window, item().querySelector('.ws-toggle'));
+        assert.equal(item().querySelector('.kind-chip'), null);
+        assert.equal(item().querySelectorAll('.ws-strip-member .ws-icon').length, 2);
+        assert.deepEqual([...item().querySelectorAll('.ws-trow')].map((r) => r.querySelector('.ws-tname').textContent), ['alpha', 'beta']);
+      } finally {
+        t.mock.timers.reset();
+      }
+    } },
+  ]);
 });

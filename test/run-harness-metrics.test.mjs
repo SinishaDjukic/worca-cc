@@ -263,3 +263,52 @@ test('resume() of an interrupted run counts the gap from the last heartbeat and 
   assert.equal(step.runningSince, null);
   assert.ok(orch2.state.totalActiveMs >= 901_000, `totalActiveMs ${orch2.state.totalActiveMs}`);
 });
+
+test('P5: a workspace\'s Folder member is recorded by its folder\'s name, never through git (not even inside a repository)', async () => {
+  const { mkdirSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const { fakeHarness } = await import('./helpers/metrics-git.mjs');
+  const { _testing: gitInfoTesting } = await import('../src/core/git-info.mjs');
+  const outer = repo();
+  spawnSync('git', ['-C', outer, 'remote', 'add', 'origin', 'https://github.com/acme/monorepo.git']);
+  const notes = join(outer, 'notes');
+  mkdirSync(notes);
+  const g = repo();
+  const cwds = [];
+  gitInfoTesting.setRunner((cmd, args, o = {}) => { if (cmd === 'git') cwds.push(o.cwd); return gitInfoTesting.defaultRun(cmd, args, o); });
+  try {
+    const h = fakeHarness({ projectDir: g, runId: 'p5slug1', workspace: { id: 'wks-x-00000000', name: 'X' },
+      members: [{ projectKey: 'notes-0000abcd', projectDir: notes, workMode: 'folder' }, { projectKey: 'g-00000001', projectDir: g }] });
+    const snap = await snapshotFromHarness(h, { status: 'done' });
+    assert.ok(snap.target.projects.includes('notes'), JSON.stringify(snap.target));
+    assert.ok(!snap.target.projects.some((p) => p.includes('monorepo')), 'the enclosing repository is not the Folder member');
+    assert.ok(!cwds.includes(notes), 'no git ran in the Folder member');
+    assert.ok(cwds.includes(g), 'the spy is live: the Git member was asked');
+  } finally {
+    gitInfoTesting.reset();
+  }
+});
+
+test('P5: a Folder primary\'s record takes the actor from a Git member, never git in the folder', async () => {
+  const { mkdirSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { fakeHarness } = await import('./helpers/metrics-git.mjs');
+  const { _testing: gitInfoTesting } = await import('../src/core/git-info.mjs');
+  const { _testing: syncTesting } = await import('../src/core/metrics/sync.mjs');
+  const outer = repo();
+  const notes = join(outer, 'notes');
+  mkdirSync(notes);
+  const g = repo();
+  const cwds = [];
+  gitInfoTesting.setRunner((cmd, args, o = {}) => { if (cmd === 'git') cwds.push(o.cwd); return gitInfoTesting.defaultRun(cmd, args, o); });
+  syncTesting.setGit((cwd, args, o) => { cwds.push(cwd); return syncTesting.defaultGit(cwd, args, o); });
+  try {
+    const h = fakeHarness({ projectDir: notes, runId: 'p5slug2', workspace: { id: 'wks-x-00000000', name: 'X' },
+      members: [{ projectKey: 'a-notes-0000abcd', projectDir: notes, workMode: 'folder' }, { projectKey: 'g-00000001', projectDir: g }] });
+    const snap = await snapshotFromHarness(h, { status: 'done' });
+    assert.equal(snap.actor, 't', 'the Git member\'s git user');
+    assert.ok(!cwds.includes(notes), 'no git ran in the Folder member');
+    assert.ok(cwds.includes(g), 'the spy is live: the Git member was asked');
+  } finally { gitInfoTesting.reset(); syncTesting.reset(); }
+});

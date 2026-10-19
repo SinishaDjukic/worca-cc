@@ -111,17 +111,24 @@ test('A-m5: a registered Folder project whose folder is gone is refused, never r
   assert.equal(existsSync(dir), false);
 });
 
-test('U3: an orphan Git project runs as a folder run while git is missing; a workspace start answers GIT_MISSING', async () => {
+test('U3: an orphan Git project and a workspace of Folder projects run as folders while git is missing', async () => {
   const dir = plain({ 'c.txt': 'c\n' }); mkdirSync(join(dir, '.git')); writeFileSync(join(dir, '.git', 'HEAD'), 'ref: refs/heads/main\n');
   await api('POST', '/api/projects', { name: 'orphan', path: dir });
+  const f1 = plain({ 'n1.txt': 'n\n' }); const f2 = plain({ 'n2.txt': 'n\n' });
+  await api('POST', '/api/projects', { name: 'u3-notes-1', path: f1 });
+  await api('POST', '/api/projects', { name: 'u3-notes-2', path: f2 });
   process.env.WORCA_GIT = '0';
   try {
     await gitState({ fresh: true });
     const r = await api('POST', '/api/run', { projectDir: dir, prompt: 'x', mock: true });
     assert.equal(r.status, 200); assert.equal(runs.get(r.body.runId).orch.workMode, 'folder');
     await stopRun(r.body.runId);
-    const w = await api('POST', '/api/run', { workspaceId: 'wks-none-0000000b', prompt: 'x', mock: true });
-    assert.deepEqual(w.body, { error: 'git is not installed on this machine', code: 'GIT_MISSING' });
+    const made = await api('POST', '/api/workspaces', { name: 'U3 Folders', projectPaths: [f1, f2] });
+    assert.equal(made.status, 201, JSON.stringify(made.body));
+    const w = await api('POST', '/api/run', { workspaceId: made.body.workspace.id, prompt: 'x', mock: true });
+    assert.equal(w.status, 200, JSON.stringify(w.body));
+    assert.deepEqual(runs.get(w.body.runId).orch.workspace.projects.map((p) => p.workMode), ['folder', 'folder']);
+    await stopRun(w.body.runId);
   } finally { process.env.WORCA_GIT = '1'; gitTesting.reset(); }
 });
 
@@ -146,7 +153,7 @@ test('a Folder project run cannot continue from the previous run\'s branch', asy
   assert.deepEqual([r.status, r.body.error], [400, "a Folder project run cannot start from the previous run's branch"]);
 });
 
-test('a workspace with a Folder member is refused with the git-only message', async () => {
+test('P5: a workspace with a registered Folder member (nested in a repository) starts; that member runs on a copy', async () => {
   const a = templateRepo('ws-a', { branch: 'main', user: true, files: { 'a.txt': 'a\n' } });
   const outer = templateRepo('ws-b', { branch: 'main', user: true, files: { 'b.txt': 'b\n' } });
   dirs.push(a, outer);                                                   // templateRepo copies are the caller's to remove
@@ -158,7 +165,10 @@ test('a workspace with a Folder member is refused with the git-only message', as
   const m = getDb().prepare('INSERT INTO workspace_projects (workspace_id, project_key, ordinal) VALUES (?, ?, ?)');
   m.run('wks-mixed-0000000a', a, 0); m.run('wks-mixed-0000000a', inner, 1);
   const r = await api('POST', '/api/run', { workspaceId: 'wks-mixed-0000000a', prompt: 'x', mock: true });
-  assert.deepEqual([r.status, r.body.error], [400, `workspace member is not a git repository: ${inner}`]);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(runs.get(r.body.runId).orch.workspace.projects.map((p) => `${p.projectDir}=${p.workMode ?? 'git'}`).sort(), [`${a}=git`, `${inner}=folder`].sort());
+  await stopRun(r.body.runId);
+  assert.equal(existsSync(join(inner, '.git')), false);
 });
 
 test('a chained ticket after a run on a copy is refused when it fires (Shape-it-first slices, edited schedules)', async () => {

@@ -618,3 +618,53 @@ test('#555 D10: two failed metrics-home saves leave exactly one .tm-home-err', a
   assert.equal(errs.length, 1, 'one error line, reused');
   assert.equal(errs[0].textContent, 'disk full');
 });
+
+// P5: a workspace may hold registered Folder projects (annotated vcs 'none' aligned with projectPaths).
+test('a workspace with a Folder member: kind chips on the Projects card and in Add projects; the Branches card counts Git members only and hides with none', async () => {
+  const blk = (base, over = {}) => ({ base, remote: 'origin', state: 'up-to-date', ahead: 0, behind: 0, dirty: false, checkedOutHere: true,
+    fetchedAt: new Date().toISOString(), stale: false, settings: { beforeRun: true, onDiverged: 'ask' }, ...over });
+  const projs = [{ ...PROJECTS[0], vcs: 'git' }, { ...PROJECTS[1], vcs: 'none' }, { ...THIRD, vcs: 'none' }];
+  // The server may answer for a Folder project (a folder inside a repo answers for that repo): never counted.
+  const handler = (u) => (u.includes('/api/sync/projects') ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: { k1: blk('dev'), k2: blk('main', { state: 'behind', behind: 2 }) } }) })
+    : u.includes('/api/projects') ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: projs }) }) : null);
+  const waitSync = () => new Promise((r) => setTimeout(r, 350));   // SYNC_CHIPS_MS (300) + the read
+  await checkRows([
+    { name: 'the Projects card: each member name carries its kind chip', run: async () => {
+      const { window, show } = await boot({ fetchHandler: handler, workspaces: [{ ...WS[0], vcs: ['git', 'none'] }, WS[1]] });
+      show('workspaces/wks-alpha-00000001');
+      await settle(8);
+      const members = [...window.document.querySelectorAll('#ws-detail .wd-member')];
+      assert.deepEqual(members.map((m) => [m.querySelector('.wd-member-name').firstChild.textContent, m.querySelector('.wd-member-name .kind-chip').textContent]),
+        [['svc-iam', 'Git'], ['svc-ui', 'Folder']]);
+    } },
+    { name: 'the Branches card counts the Git member only', run: async () => {
+      const { window, show } = await boot({ fetchHandler: handler, workspaces: [{ ...WS[0], vcs: ['git', 'none'] }, WS[1]] });
+      show('workspaces/wks-alpha-00000001');
+      await settle(8);
+      await waitSync();
+      await settle();
+      const card = window.document.querySelector('#ws-detail .pd-ov-card-branches');
+      assert.equal(card.hidden, false);
+      assert.equal(card.querySelector('.pd-ov-value').textContent, 'All 1 up to date');
+      assert.equal(card.querySelector('.pd-ov-act'), null, 'nothing to sync');
+    } },
+    { name: 'the Branches card hides when every member is a Folder project', run: async () => {
+      const { window, show } = await boot({ fetchHandler: handler, workspaces: [{ ...WS[0], vcs: ['none', 'none'] }, WS[1]] });
+      show('workspaces/wks-alpha-00000001');
+      await settle(8);
+      await waitSync();
+      await settle();
+      assert.equal(window.document.querySelector('#ws-detail .pd-ov-card-branches').hidden, true);
+    } },
+    { name: 'Add projects: each candidate shows its kind chip after its name', run: async () => {
+      const { window, show } = await boot({ fetchHandler: handler, workspaces: [{ ...WS[0], vcs: ['git', 'none'] }, WS[1]] });
+      show('workspaces/wks-alpha-00000001');
+      await settle(8);
+      const doc = window.document;
+      click(window, doc.querySelector('#ws-detail .wd-members-add'));
+      await settle();
+      const rows = [...doc.querySelectorAll('#plugin-modal .wd-add-row')];
+      assert.deepEqual(rows.map((r) => [r.querySelector('.wd-member-name').textContent, r.querySelector('.wd-member-name + .kind-chip').textContent]), [['svc-api', 'Folder']]);
+    } },
+  ]);
+});
