@@ -12,8 +12,10 @@ work clears quality gates, pausing to ask *you* the questions that matter, and
 keeping every run isolated in its own git worktree and branch. Pick **Auto**
 and Worca chooses the workflow for the task, draw your own in **Workflows** (or
 ask its chat to build it), or start the shipped **Presentation** workflow to turn a brief into
-a slide deck, or **Architecture (C4)** to keep a diagram of your code that
-draws itself from the code.
+a slide deck, **Architecture (C4)** to keep a diagram of your code that
+draws itself from the code, or **Promo video** to film your product's real UI.
+Agents run on Claude Code by default, or (beta) on Codex, the GitHub Copilot CLI
+or Cursor.
 
 It ships as a **web UI**, a **CLI**, and an installable **`/worca` skill** for
 Claude Code — all running the same engine — and chat plugins (Telegram, Slack,
@@ -37,8 +39,8 @@ shape is reused; otherwise the proposal is saved as a new workflow once accepted
 **Revise** it in plain text (Advanced and up), or **Cancel run**. Turn the switch off
 (`--no-human`) and the proposal is accepted as is, with no clarify step and no agent
 questions; a loop that runs out of cycles, a recovery prompt, a cost cap or an error
-still pause the run. Pick any saved workflow instead to skip all of this. Auto is not
-available for workspace runs yet.
+still pause the run. Pick any saved workflow instead to skip all of this. Auto works
+for workspace runs too.
 
 The built-in **Default** workflow hands your task to five agents:
 
@@ -74,7 +76,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 **Agents**. Diff, Artifacts and Actions start at Advanced (see
 [UI levels](docs/ui-levels.md)).
 
-![A finished run, "CSV export for contacts", on its Diff tab: 4 files changed (+36 −0) in a file tree beside the highlighted patch of src/routes/contacts.js, with the run's worca-cc/ branch, its time and cost, and a Create PR button](docs/screenshots/run-detail.png)
+![A finished run, "CSV export for contacts", on its Diff tab: 4 files changed (+36 −0) in a file tree beside the highlighted patch of src/routes/contacts.js, with the run's worca-cc/ branch, its time and cost, and the Create PR and Publish branch buttons](docs/screenshots/run-detail.png)
 
 ## Features
 
@@ -109,12 +111,24 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   step, ticking time, cost and changed files, and a **Live view** of the running
   step inside its workflow graph; **Diff** shows the worktree's changes so far,
   and **Logs** streams every step with search (filters by source, level, step
-  and cycle at Expert).
+  and cycle at Expert). The top bar's **Activity** pill counts what needs you
+  and what is running; Settings › General › **Alerts** adds desktop
+  notifications and a tab badge when a run waits for you. **Archived runs**
+  (Advanced) lists deleted runs and restores them.
 - **One-click PRs** — a finished run's page offers **Create pull request**:
   *Ship it?* shows the files and +/− lines, lets you write the description or
-  **Generate with AI**, then pushes the branch and opens the PR with the GitHub
-  CLI (`gh`), or on [Azure DevOps](docs/azure-devops.md) with a personal access
-  token. The button then becomes **View pull request**.
+  **Generate with AI**, open it as a draft and watch it, then pushes the branch
+  and opens the PR with the GitHub CLI (`gh`), or on
+  [Azure DevOps](docs/azure-devops.md) with a personal access token. A run
+  started from a GitHub issue closes it on merge, and a workspace run opens one
+  linked PR per changed repo. The button then becomes **View pull request**.
+  **Publish branch** (Advanced) pushes the branch without a PR.
+- **Watch PR and conflicts** — with **Watch PR** on, Worca reads the open PR
+  about once a minute; a failing check, a merge conflict or a requested change
+  starts a fix run on the PR's branch and pushes the fix. After a run Worca also
+  checks whether the branch still merges into its base: **Update branch** when
+  it does, **Resolve in a pipeline** or **Resolve in a terminal** when it
+  conflicts.
 - **Mock mode** — the **Mock mode** switch on New pipeline (`--mock` on the
   CLI, `WORCA_MOCK=1` for a whole server) runs the pipeline against a
   deterministic offline mock — no `claude`, no tokens — for demos, development
@@ -122,9 +136,11 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ![Runs in Simple mode: three runs waiting on clarify questions under Needs you, the rest grouped by project, and a finished run's summary open — Ready to ship, 21m 32s, $4.82, +36 −0 across 4 files](docs/screenshots/running.png)
 
+![The Ship it? dialog for the finished run CSV export for contacts: 4 files, +36 −0, its worca-cc/ branch into main, Push branch to and Open PR in (GitHub) pickers set to origin — nimbus/nimbus-crm, a PR description previewed as What and How to test, Open as draft unticked and Watch PR ticked, Try it first with the Run, Test and Cursor buttons, and Cancel beside Open pull request](docs/screenshots/ship-it.png)
+
 ### Agents
 
-- **22 built-in agents, all data** — each is a markdown prompt plus a
+- **32 built-in agents, all data** — each is a markdown prompt plus a
   metadata sidecar declaring its typed input/output ports, so a new agent
   drops in without engine changes; your own and plugin agents load the same
   way.
@@ -139,6 +155,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
     Builder, Deck Audit, Deck Review, Deck Outputs, Deck Export.
   - *Architecture* — C4: setup (the which-file, which-bands form) and C4:
     architect (reads the code, writes the LikeC4 model).
+  - *Video* — Promo: setup, explore, script, voice, capture, mascot, scenes
+    and review.
   - *Memory defragment* — restructures one memory scope.
 - **Agents in the Library** — **Workflows › Library › Agents** lists every agent
   with its ports; built-ins are read-only, so **Duplicate** one to get an
@@ -185,7 +203,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   built in.
   Plugins can ship scripts and test cases of their own.
 
-![The Workflows view with the Library on its Scripts tab: built-in Git diff, Workspace map, Deck PDF, Deck audio, Deck bundle, Shell, JavaScript and Python rows grouped by domain, each with a runtime chip and its port line, under the All, Built-in and Yours chips and a + New script button, beside an empty canvas holding Task and End](docs/screenshots/scripts.png)
+![The Workflows view with the Library on its Scripts tab: the built-in scripts in coding, presentation, architecture, video and general folders (Git diff, Deck PDF, Deck audio, Deck bundle, C4 discover, check and render, Promo voices, narrate and render, Shell and JavaScript), each with a runtime chip and its port line, under the All, Built-in and Yours chips, beside an empty canvas holding Task and End](docs/screenshots/scripts.png)
 
 ### Workflows
 
@@ -239,7 +257,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   `worca workflow list`, `worca workflow export <id> --format json|claude|plugin`
   and `worca workflow import <file>`.
 
-![The Workflows view with the built-in Default pipeline on the full-screen canvas — Task, Clarify, Plan, Refine Plan, Implementation, Review Implementation and End wired port to port, amber loop wires swooping back under the reviewers with ≤3 pills — beside the Library open on its Workflows tab (Default, Memory defragment, Presentation), with the black + and the composer chat pill at the bottom and Auto-layout and the zoom menu bottom right](docs/screenshots/composer.png)
+![The Workflows view with the built-in Default pipeline on the full-screen canvas — Task, Clarify, Plan, Refine Plan, Implementation, Review Implementation and End wired port to port, amber loop wires swooping back under the reviewers with ≤3 pills — beside the Library open on its Workflows tab, its architecture, coding, presentation, video and shared folders with coding opened on Default, with the black + and the composer chat pill at the bottom and Auto-layout and the zoom menu bottom right](docs/screenshots/composer.png)
 
 ### Presentations
 
@@ -290,6 +308,18 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   need Chrome, Chromium or Edge; in a container, the `-full` image). Worca's own model is
   [`docs/architecture/architecture.c4`](docs/architecture/architecture.c4);
   the design is [`docs/architecture-c4.md`](docs/architecture-c4.md).
+
+### Promo video
+
+- **A product film from your real UI** — the built-in **Promo video** workflow
+  (`worca --workflow wf_promo_video --prompt "…"`) explores the project, writes a
+  script you approve, captures the product's real screens in a sandboxed copy of
+  the app, animates them with an optional mascot crew, reviews the film frame by
+  frame and renders a 1080p60 MP4 with captions and YouTube metadata. A setup
+  form asks for tone, length, pace, mascots and audio: narrated with ElevenLabs
+  (pick a voice from playable previews; the key is never stored) or silent.
+  Capture and render need Chrome or Edge and ffmpeg on the host; a run without
+  them is refused up front.
 
 ### Guardrails
 
@@ -390,14 +420,15 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   stored config; Chat can read and propose actions but never runs one; a
   hosted Worca runs nothing unless `WORCA_ACTIONS_REMOTE=1`. See
   [`docs/actions.md`](docs/actions.md).
-- **A terminal for runs and projects** — a shell in the run's or the project's folder, run by the Worca server; each command is recorded with output, exit code, duration and who ran it. A hosted Worca runs none unless WORCA_TERMINAL_REMOTE=1. See [docs/terminal.md](docs/terminal.md).
+- **A terminal for runs and projects** — a pane on every page (Ctrl+`) with a shell in the run's or the project's folder, run by the Worca server; each command is recorded with output, exit code, duration and who ran it. A hosted Worca runs none unless WORCA_TERMINAL_REMOTE=1. See [docs/terminal.md](docs/terminal.md).
 
-![A finished nimbus-crm run's Actions tab: the checked-out branch and folder, the Run, Test, Terminal, Finder, Copy command and Discard buttons, and the log of an npm test that passed](docs/screenshots/actions.png)
+![A finished nimbus-crm run's Actions tab: the checked-out branch and folder, the Run, Test, Cursor, Terminal, Finder, Copy command and Discard buttons, and the log of an npm test that passed](docs/screenshots/actions.png)
 
 ### Plugins & chat
 
 - **Plugin system with marketplaces** — a plugin is a git repo or folder with a
-  `worca-cc-plugin.json`. It can contribute task sources (e.g. GitHub Issues),
+  `worca-cc-plugin.json`. It can contribute task sources (e.g. GitHub Issues,
+  Azure Boards),
   agents (with their ask forms), scripts, skills, workflow templates, models,
   chat channels, and MCP servers for the [registry](docs/mcp-servers.md).
   Install from the **Marketplace** page (Advanced) or `worca plugin install`;
@@ -412,10 +443,17 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   Models page; see the [authoring guide](.claude/skills/creating-worca-cc-plugins/SKILL.md).
 - **Built-in marketplace** — **Worca CC Official**, Worca's GitHub repository on
   its `dev` branch, is registered on every install (nothing is installed until
-  you pick it): the GitHub Issues task source, the four chat channels below,
-  and MCP plugins for Atlassian, Cloudflare, Firebase, Notion and Railway. Set
-  `WORCA_BUILTIN_MARKETPLACE` to another repo URL or a local checkout to use
-  that instead (followed at its HEAD; only committed files count).
+  you pick it): the GitHub Issues and Azure Boards task sources, the four chat
+  channels below, and MCP plugins for Atlassian, Cloudflare, Firebase, Notion
+  and Railway. Set `WORCA_BUILTIN_MARKETPLACE` to another repo URL or a local
+  checkout to use that instead (followed at its HEAD; only committed files count).
+- **Tasks from your tracker** — an installed task source adds its button to New
+  pipeline › **Task source** (Advanced): search issues or work items, or paste a
+  GitHub issue URL or `owner/repo#123`, and the ticket becomes the run's task.
+  Each source can close its issue or work item when the run succeeds; Ask
+  Worca can find a ticket and propose a run for it. See
+  [GitHub Issues](plugins/github-source/README.md) and
+  [Azure Boards](docs/azure-devops.md).
 - **Drive runs from chat** — two-way **Telegram**, **Slack**, **Discord** and
   **Microsoft Teams** channels (Teams needs a public HTTPS endpoint through a
   tunnel; the others dial out). Pick the events that notify — questions and
@@ -437,8 +475,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   answers from Worca's own records: runs, their diffs, progress and clarify answers, workflows
   and agents, schedules, team metrics and policy, models, Actions, and tasks from installed
   trackers. It reads code in read-only, detached worktrees with an allowlisted `git` (`log`,
-  `diff`, `blame`, `grep`…), takes attached text files, images and PDFs, and never edits a file
-  itself. Settings › **Chat** (Advanced) sets the turn limit, a per-turn cost cap, whether it may
+  `diff`, `blame`, `grep`…), takes attached text files, images and PDFs, and has no file-editing
+  tools of its own (in agent mode, below, it changes files only through commands you ask for). Settings › **Chat** (Advanced) sets the turn limit, a per-turn cost cap, whether it may
   change and test-run your scripts, and opt-in web access with an allowed-domain list; chat spend counts toward the total
   budget, and a team policy can preset the limits or narrow web access, never widen it.
 - **Changes are cards you confirm** — work becomes a **run card** (project, workflow, guardrails,
@@ -456,6 +494,17 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   the run waits for an answer, pauses, fails or finishes. A pull request opened from a chat card keeps reporting
   there: the card shows its Watch PR status, and each fix run that Watch PR or Resolve starts on it appears in the
   chat as a live run card, with what started it and how it ended.
+- **Agent mode with a shared terminal** — Chat can run commands (tests,
+  builds, linters, git) in a run's or a project's folder, in up to 3 terminals
+  per chat that appear as tabs in the terminal pane, where you can type too.
+  Each command shows in the chat as a card with **Stop** and **Output**; it
+  changes files only through commands, and only when you ask. Shells get a
+  cleaned environment and a command check, which is not a sandbox; a hosted
+  Worca allows none unless `WORCA_TERMINAL_REMOTE=1`. See
+  [`docs/terminal.md`](docs/terminal.md).
+- **Pinpoint** — select text in a chat answer, a markdown artifact or the Diff
+  tab to **Explain** it, ask for **Alternatives**, leave a note or comment, or
+  send it to the chat; diff comments can become a fix run.
 - **Per-agent models for one run** — on a run card for a saved workflow, Chat can pick a
   model and effort for each agent step from the catalog (judgement steps on the top price tier,
   mechanical ones on the cheapest capable model, Anthropic first, then OpenAI; a premium-tier
@@ -474,7 +523,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   built-in voice speaks English. See [`docs/speech.md`](docs/speech.md) and
   [`docs/speech-languages.md`](docs/speech-languages.md).
 
-![The Chat page: a finished "Paginate the search endpoint" run card for nimbus-crm with elapsed time, cost, 5/5 agents and its workflow graph, then a follow-up answer about the docs repository](docs/screenshots/ask-worca.png)
+![The Chat page with its chat list: a finished "Paginate the search endpoint" run card for nimbus-crm with elapsed time, cost, its workflow graph and the result — Ready to ship, +29 −2 across 4 files, the top changed files listed — then a follow-up answer about the docs repository](docs/screenshots/ask-worca.png)
+
+![Chat agent mode: the chat "Run the CRM tests" with a Command card for npm test in nimbus-crm · main, exit 0, its 13-line output open showing one passing test, and the answer below it, beside the Terminal pane on the right with the chat's tab and the same bash session's npm test output](docs/screenshots/ask-terminal.png)
 
 ### Browser extension
 
@@ -549,12 +600,15 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **Cost on every run** — the run page shows each run's estimated cost as it goes; Expert mode
   adds per-step cost on the workflow graph. Figures are Claude Code's client-side estimates, not
   billing.
-- **Statistics** (Advanced) — pick Today, This week, This month or All time for Spent, Saved
+- **Statistics** (Advanced) — pick Today, This week, This month, Last month, All time or a Custom
+  range for Spent, Saved
   (estimated human hours × your developer rate, minus spend), Pipeline spend, Chat, Time
   worked, Pipelines finished and PRs merged, plus *Spend per* and *Runs per* charts by hour, day
   or month (runs split into finished, stopped and failed). With a total limit, a ring around your
   avatar in the sidebar fills toward it (amber from 80%, red once new runs are blocked); the account
-  menu's spend card has the figures.
+  menu's spend card has the figures. Filter or split spend by person (or by tag, see
+  [Experimental features](#experimental-features)) and export the split as CSV; see
+  [`docs/statistics.md`](docs/statistics.md).
 - **Hard limits** — set in Settings › Runs › Budget & cost limits, or with `worca config`. A
   per-pipeline cost limit pauses a runaway run before its next step; *Continue without cap (this
   pipeline)* or `worca resume <id> --ignore-cost-cap` lifts it for that run. A total cost limit
@@ -563,7 +617,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   resumes and Ask turns until the window resets or you raise the limit. Team caps live in
   [Team policy](docs/team-policy.md).
 
-![Statistics on This week — Spent, Saved, Pipeline spend, Chat, Time worked, Pipelines finished and PRs merged tiles above Spend per day and Runs per day charts, with the sidebar spend indicator at the bottom left](docs/screenshots/stats.png)
+![Statistics on a range with several days of data — Spent, Saved, Pipeline spend, Chat, Time worked, Pipelines finished and PRs merged tiles above the Spend per day and Runs per day charts, with the Everyone and grouping filters](docs/screenshots/stats.png)
 
 ### Team metrics
 
@@ -625,6 +679,16 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ### Models
 
+- **Four engines** — agents run on Claude Code by default, or on OpenAI's
+  Codex CLI, GitHub's Copilot CLI or Cursor's CLI agent, all three in **beta**.
+  Pick one per run with **Engine** on New pipeline (Advanced) or
+  `--engine codex|copilot|cursor`, or set a default on the Models page's
+  **Engine & models** card or in a project's settings. Each needs its own CLI
+  installed and signed in. The beta engines hold guardrail rules only in part,
+  so Normal and Strict need **Allow unguarded**
+  (`--allow-unguarded-engine`); Copilot and Cursor report no cost; Chat
+  runs on Claude Code or Codex. A model's connection decides which engines can
+  run it. See [`docs/models.md`](docs/models.md#codex).
 - **Bring your own models** — *Add model* on the **Models** page registers any
   model id (a proxy, a fine-tune, an alternative provider), declares which effort
   levels it supports, and attaches per-model routing env (e.g. `ANTHROPIC_BASE_URL`)
@@ -646,8 +710,11 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   OpenAI-compatible server (llama.cpp, Ollama, LM Studio, vLLM, OpenRouter) or an
   Anthropic-compatible gateway — no LiteLLM, no second daemon. Sign in or set keys
   on the **Providers** page, then *Import models…* lists what a source serves,
-  windows and capabilities included; `worca models` does the same from a terminal.
+  windows and capabilities included; `worca models list` and
+  `worca models import copilot|openai|openrouter` do the same from a terminal.
   Both pages are Expert level. See [`docs/models.md`](docs/models.md).
+
+![New pipeline in Advanced mode for the nimbus-crm project: the Workflow picker on Auto beside the Engine picker set to Codex (Beta), the hint that Codex runs this pipeline including titles and summaries, a typed task to add an Idempotency-Key header to POST /contacts, and the Branches table starting from main, up to date](docs/screenshots/engine-picker.png)
 
 ### Storage
 
@@ -666,7 +733,23 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   scheduled and finished runs from every project on the machine (see
   [Pipeline](#pipeline)). See [`docs/storage.md`](docs/storage.md).
 
-![Runs page — runs from nimbus-jobs, nimbus-crm and lumen-docs grouped by project, one scheduled and one stopped, with the finished run Paginate the search endpoint open: Ready to ship, 17m 2s, $3.65, 2 files changed](docs/screenshots/history.png)
+![Runs page — runs from nimbus-crm, lumen-docs and nimbus-web grouped by project, one scheduled and one stopped, with the finished run Paginate the search endpoint open: Ready to ship, 17m 2s, $3.65, +29 −2 across 4 files](docs/screenshots/history.png)
+
+### Experimental features
+
+- **Off until you turn them on** — unfinished features ship behind machine-wide
+  flags: **Settings › Experimental**, `worca flags on|off <key>`, or
+  `WORCA_FLAGS=<key>` at start. See [`docs/feature-flags.md`](docs/feature-flags.md).
+- **Shaper** (`shapeFirst`) — Worca shapes a thin or large task first: at most 3
+  questions, a plan for the perspectives you pick, rule checks on the plan, and
+  your approval before anything is built; a large task can be cut into slices.
+  See [`docs/shape-it-first.md`](docs/shape-it-first.md).
+- **Run tags** (`runTags`) — `key:value` tags such as `client:acme` on New
+  pipeline, run pages and Ask run cards (`--tag` on the CLI), optional
+  mandatory tags under Settings › Tags, and spend **By tag** on Statistics and
+  Team metrics.
+- **Keep awake** (`keepAwake`) — stops the computer sleeping while a run has
+  agents working.
 
 ### Getting started & UI levels
 
@@ -758,12 +841,14 @@ the `tools/railway/worca-railway.mjs` tool and this repository's
 worca ui            # start it (worca --ui does the same)
 ```
 
-Open the printed URL (default `http://localhost:4317`), add a project, and
+Open the printed URL (default `http://localhost:4317`), add a project (a
+folder, or **Clone from URL**), and
 click **New pipeline**: describe the task, pick a workflow and press
 **Start run** — turn on **Mock mode** beside it to try a run offline, with no
 Claude calls and no cost. At the Advanced [UI level](docs/ui-levels.md) the
 form also takes a markdown brief or a task pulled from a plugin source like
-GitHub Issues, guardrails, and **Schedule…** on the Start run caret. Answer
+GitHub Issues or Azure Boards, the engine, guardrails, and **Schedule…** on the
+Start run caret. Answer
 clarify questions and loop gates as they come — in the browser or from chat.
 
 The UI is one process per machine. Starting it while it is already up is not
@@ -803,6 +888,13 @@ worca --project /path/to/your/project --prompt "Add a /search endpoint" --workfl
 
 # Auto run with no proposal and no questions (loop-budget, recovery, cost and error pauses still apply; add --yes when nothing can answer them, e.g. in CI)
 worca --project /path/to/your/project --prompt "Add a /search endpoint" --workflow auto --no-human
+
+# run the agents on another engine (beta: codex, copilot, cursor)
+worca --project /path/to/your/project --prompt "Add a /search endpoint" --engine codex
+
+# register a project: the current folder, or a clone into the projects folder
+worca add
+worca add --clone https://github.com/you/your-repo.git
 
 # pause with Ctrl+C (twice stops it), continue later (survives restarts)
 worca resume <pipelineId>
@@ -845,13 +937,17 @@ worca plugin validate ./my-plugin --run-cases
 
 # the browser extension packaged with Worca
 worca extension --open          # the packaged browser extension folder
+
+# experimental features
+worca flags                     # list them
+worca flags on shapeFirst
 ```
 
 Run `worca --help` for every subcommand — projects (`add`, `list`,
-`remove`), `resume`, `runs`, `logs`, `schedule`, `workflow`, `script`,
-`plugin`, `marketplace`, `models`, `config`, `metrics`, `policy`,
-`container`, `broker`, `extension`, `doctor` — and flag; most have their own
-`worca <subcommand> help`.
+`remove`), `ui`, `resume`, `runs`, `logs`, `stop`, `pause`, `schedule`,
+`workflow`, `script`, `plugin`, `marketplace`, `models`, `config`, `flags`,
+`metrics`, `policy`, `container`, `broker`, `extension`, `doctor` — and flag;
+most have their own `worca <subcommand> help`.
 
 Exit codes, for scripts and CI wrappers: `0` the run finished (or an
 interactive run paused and you can resume it); `1` a hard error, a stop, or an
@@ -887,17 +983,20 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Architecture](docs/ARCHITECTURE.md) — the whole stack in one picture, and how Auto picks a run's topology
 - [Scripts](docs/scripts.md) — script cards that run your own program instead of an agent, the Library's Scripts tab, testing a script by itself
 - [Scheduled runs](docs/scheduled-runs.md) — start a run later, once or on a repeat, from the web UI, the CLI or the API
-- [Shape it first](docs/shape-it-first.md) — plan a task with Worca before it builds, in Chat, and cut a large one into slices
+- [Shaper](docs/shape-it-first.md) — plan a task with Worca before it builds, in Chat, and cut a large one into slices (experimental)
+- [Feature flags](docs/feature-flags.md) — the experimental features, and how to turn them on and off
 - [Guardrails](docs/guardrails.md) — per-run policy sets (Permissive, Normal, Strict), enforcement, honest limitations
 - [Workspace map](docs/workspace-map.md) — how a workspace scan maps relations, reviewing them, measuring a scan
 - [Actions](docs/actions.md) — check out a finished run and run the project's commands from Worca
-- [Models](docs/models.md) — the catalog, providers (GitHub Copilot, OpenAI-compatible) and the built-in bridge
+- [Terminal](docs/terminal.md) — the terminal pane, and Chat's agent mode with a shared terminal
+- [Models](docs/models.md) — the catalog, providers (GitHub Copilot, OpenAI-compatible), the built-in bridge, and the Codex, Copilot CLI and Cursor engines
 - [MCP servers](docs/mcp-servers.md) — Worca's own MCP registry: catalog, sets, copies, secrets, Test
 - [Skills](docs/skills.md) — skills in sets: the library, imports, `/<set>:<skill>` names, Team required skills
 - [Credential broker](docs/credential-broker.md) — model keys stay out of Worca's container: each `claude` it starts gets a short-lived token, and the broker adds the real key on the way to the provider
 - [Voice mode](docs/speech.md) — hands-free Chat: Whisper and Kokoro in the browser, or your own speech servers
 - [Voice languages](docs/speech-languages.md) — which languages work today, and the plan for more
 - [Azure DevOps](docs/azure-devops.md) — Ship-it, clone, sync, merge tracking and the Boards source on `dev.azure.com`: the token, its scopes, and what does not work yet
+- [Statistics](docs/statistics.md) — spend and outcomes by range, person and tag, CSV export and the API
 - [Team metrics](docs/team-metrics.md) — git-backed, team-wide records of finished runs on a `worca-metrics` branch
 - [Team policy](docs/team-policy.md) — team-set cost caps, allowed models, required plugins, guardrail defaults and MCP servers from a `worca-policy` branch
 - [Storage](docs/storage.md) — where state lives, project keys, migration
