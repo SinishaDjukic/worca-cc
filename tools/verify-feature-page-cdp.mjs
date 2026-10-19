@@ -163,37 +163,33 @@ check(runs.ownRow === 0, 'no separate row for slice 2\'s run');
 await auditButtonsBoth('the Runs list');
 const runsShot = await shot('runs');
 
-// ---- the feature page: the Shaper view now lives on the group page's Overview tab (runs redesign slice 4, D14)
+// ---- the feature page: the group page's model block owns the head, status and members; its Overview tab holds Shaper's
+// head-less view (log, ⋯, Ship card). The bundle merge (D12): one status line, at most one member list.
 await cdp('Page.navigate', { url: `${base}/#feature/${f.id}/overview` });
-await waitFor("!!document.querySelector('[data-view=\"feature\"] .shape-feature.is-page')", 'the feature page');
+const OV = '[data-view="feature"] .gpage-panel[data-tab="overview"] .shape-feature';
+await waitFor(`!!document.querySelector('${OV}')`, 'the feature page');
 const page = await ev(`(() => {
-  const el = document.querySelector('[data-view="feature"] .shape-feature.is-page');
+  const el = document.querySelector('${OV}');
   const main = document.querySelector('[data-view="feature"]');
   return {
-    segs: el.querySelectorAll('.shape-feature-seg').length,
-    merge: el.querySelector('.shape-feature-slice.is-done .shape-feature-merge')?.textContent || '',
-    bars: el.querySelectorAll('.shape-feature-segs').length, stageBars: el.querySelectorAll('.run-prog').length,
-    replanButton: !!el.querySelector('.shape-feature-replan'), more: !!el.querySelector('.shape-feature-more'),
-    headColor: getComputedStyle(el.querySelector('.shape-feature-head')).color,
-    amber: (() => { const p = document.createElement('span'); p.style.color = 'var(--amber-ink)'; el.appendChild(p);
-      const c = getComputedStyle(p).color; p.remove(); return c; })(),
+    statusLines: main.querySelectorAll('.run-status-text').length,
+    memberLists: main.querySelectorAll('ol.run-members').length,
+    dupes: el.querySelectorAll('.shape-feature-head, .shape-feature-status, .shape-feature-runs, ol.chat-rc-members').length,
+    replanButton: !!el.querySelector('[data-act="feature-replan"]'), more: !!el.querySelector('.shape-feature-more svg'),
     menu: (() => { el.querySelector('.shape-feature-more')?.click();
-      const items = [...document.querySelectorAll('.wfv-menu .wfv-menu-item')];
-      return { labels: items.map((b) => b.textContent), each: items.find((b) => /Approve each/.test(b.textContent))?.getAttribute('aria-checked') }; })(),
+      return [...document.querySelectorAll('.wfv-menu .wfv-menu-item')].map((b) => b.textContent); })(),
     width: el.getBoundingClientRect().width, mainWidth: main.getBoundingClientRect().width,
   };
 })()`);
-check(page.segs === 3, 'three bar parts');
-check(page.merge === 'merge first', 'slice 1 reads "merge first"');
-check(page.bars === 1 && page.stageBars === 0, 'one segmented bar, no stage bar');
-check(!page.replanButton && page.more, 'Re-plan the rest moved into ⋯');
-check(['Re-plan the rest', 'Cancel the rest'].every((l) => page.menu.labels.includes(l)), `⋯ holds ${JSON.stringify(page.menu.labels)}`);
-check(page.menu.each === 'false', 'Approve each slice\'s plan is unchecked');
-check(page.headColor === page.amber, `the halted line is amber (${page.headColor} vs ${page.amber})`);
+check(page.statusLines === 1, `one status line on the page (${page.statusLines})`);
+check(page.memberLists <= 1, `at most one member list (${page.memberLists})`);
+check(page.dupes === 0, 'the Shaper view draws no head, status, runs fold or member list');
+check(page.replanButton && page.more, 'halted: Re-plan the rest beside an icon ⋯');
+check(['Re-plan the rest', 'Cancel the rest'].every((l) => page.menu.includes(l)), `⋯ holds ${JSON.stringify(page.menu)}`);
 check(page.width > 0.8 * page.mainWidth, `full width (${Math.round(page.width)} of ${Math.round(page.mainWidth)})`);
 const pageShot = await shot('page');
 // A second ⋯ click closes the menu (toggleMenu); a document-level Escape would not reach the menu's own keydown.
-await ev("document.querySelector('[data-view=\"feature\"] .shape-feature-more').click(), !document.querySelector('.wfv-menu')");
+await ev(`document.querySelector('${OV} .shape-feature-more').click(), !document.querySelector('.wfv-menu')`);
 await auditButtonsBoth('the feature page');
 
 // ---- the group page (runs redesign slice 4, D21): title row, status card, tabs and Runs table share their edges,

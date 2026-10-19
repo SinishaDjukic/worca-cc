@@ -30,11 +30,15 @@ test('statusText and actions for rounds and a stopped Watch PR: the model\'s wor
   assert.equal(statusText(stopped).text, 'Needs you · Watch stopped · 3 fix runs, checks still failing');
   const doc = dom();
   const host = doc.createElement('div');
-  syncActions(host, stopped, { onAction: () => {} });
+  syncActions(host, stopped, { onAction: () => {}, disable: { 'ask-changes': "Ask for changes from the run's chat" } });
   const btns = [...host.querySelectorAll('button[data-model-action]')];
   assert.deepEqual(btns.map((b) => [b.textContent, b.disabled]), [['Open PR', false], ['Ask for changes', true]]);
   assert.ok(btns[0].classList.contains('btn-primary'));
-  assert.equal(btns[1].title, 'Ask for changes is not available yet');
+  assert.equal(btns[1].title, "Ask for changes from the run's chat");
+  // D8: Ask for changes has a flow now (Shaper): with no host reason it is enabled.
+  const open = doc.createElement('div');
+  syncActions(open, stopped, { onAction: () => {} });
+  assert.equal(open.querySelector('[data-model-action="ask-changes"]').disabled, false);
 });
 
 test('paintRunStatus: symbol states never paint a plain dot; bars follow D20', async () => {

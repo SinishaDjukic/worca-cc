@@ -32,7 +32,7 @@ project's working tree, so nothing is ever committed to your repo.
                          never resumes (its resume point is dropped; a paused one comes
                          back interrupted). Delete (Runs list, Advanced) is permanent:
                          it archives, then anonymises the row in place and stamps
-                         `deleted_at` (see "Run groups (v61)" below).
+                         `deleted_at` (see "Run groups (v64)" below).
   store/workspaces/<workspaceId>/       a workspace's runs, laid out like a project's store, plus
                                         workspace-graph.json — the last scan's merged cross-project
                                         graph (see workspace-map.md); the map itself and its reviews
@@ -110,7 +110,7 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
-### Run groups (v61)
+### Run groups (v64)
 
 The Runs list's groups (runs redesign §3.3) are the one new named state of the runs redesign:
 

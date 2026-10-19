@@ -6,7 +6,7 @@ import { writeState } from '../src/core/artifacts.mjs';
 import {
   collectTriggers, countsAsRequest, reserveBatch, setWatch, getWatch, replyBody, buildFixTask, updateWatch,
   attachWatchPipeline, createPrWatcher, createPrWatchRunner, MAX_FIX_RUNS, FIX_WORKFLOW_ID, BASE_WAIT_MS, RERUN_SETTLE_MS, _testing,
-  fixTrigger, fixOutcome,
+  fixTrigger, fixOutcome, fixRoundWords, stoppedWatchFact,
 } from '../src/core/pr-watch.mjs';
 
 useTempHome(after, 'pr-watch-');
@@ -192,7 +192,8 @@ test('one fix run batches failures, review threads and change requests, then pub
   assert.deepEqual([body.humanInLoop, body.engine, body.mock], [false, 'codex', true]);
   assert.equal(Object.hasOwn(body, 'model'), false);
   assert.equal(Object.hasOwn(body, 'tags'), false, 'an untagged origin starts an untagged fix run');
-  assert.deepEqual(opts, { startedBy: 'pr-watch', runId: opts.prWatchRunId, prWatchRunId: opts.prWatchRunId });
+  assert.deepEqual(opts, { startedBy: 'pr-watch', runId: opts.prWatchRunId, prWatchRunId: opts.prWatchRunId,
+    roundOf: { pipelineId: origin, request: 'fix failing checks and fix review comments and address changes requested', kinds: ['checks', 'comments', 'changes'] } });
   let w = getWatch(URL);
   assert.equal(w.status, 'fixing'); assert.equal(w.fixRuns, 1);
   assert.deepEqual(w.handled.sort(), ['check:c11@R1', 'check:c12@R1', 'comment:21', 'comment:22', 'review:31']);
@@ -1019,3 +1020,29 @@ test('merge-first: conflicts fall back to the agent run; leftover markers or a r
   }
 });
 
+test('s5: fixRoundWords gives a fix round its lower-case words, from the same pending fixTrigger reads', () => {
+  const k = (...keys) => ({ handledKeys: keys });
+  assert.deepEqual(fixRoundWords(k('check:c1@R')), { request: 'fix failing checks', kinds: ['checks'] });
+  assert.equal(fixRoundWords(k('comment:4')).request, 'fix review comments');
+  assert.equal(fixRoundWords(k('review:9')).request, 'address changes requested');
+  assert.equal(fixRoundWords({ conflict: { base: 'main' }, handledKeys: ['conflict:R@B'] }).request, 'resolve conflicts');
+  assert.equal(fixRoundWords({ conflict: { base: 'dev', why: 'behind' }, handledKeys: ['behind:ci'] }).request, 'merge dev in');
+  assert.equal(fixRoundWords(k('check:c1@R', 'comment:4')).request, 'fix failing checks and fix review comments');
+  assert.equal(fixRoundWords(k('check:c1@R'), 'api').request, 'api · fix failing checks');
+  assert.equal(fixRoundWords(null).request, 'address pull request feedback');
+});
+
+test('s5: a fix run starts with the round options: the PR\'s run, the words and the kinds', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const { io, watcher } = harness({ pr: openPr({ contexts: [failing(11)] }) });
+  await watcher.tick();
+  assert.deepEqual(io.calls.start[0].opts.roundOf, { pipelineId: origin, request: 'fix failing checks', kinds: ['checks'] });
+});
+
+test('s5: stoppedWatchFact is the watch\'s stopped reason, and null while it still watches', () => {
+  assert.deepEqual(stoppedWatchFact({ prUrl: URL, status: 'needs-person', reason: 'cap', fixRuns: 3, pipelineId: 'x' }),
+    { prUrl: URL, status: 'needs-person', reason: 'cap', fixRuns: 3 });
+  assert.equal(stoppedWatchFact({ prUrl: URL, status: 'watching', fixRuns: 1 }), null);
+  assert.equal(stoppedWatchFact(null), null);
+});

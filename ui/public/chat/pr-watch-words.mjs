@@ -1,5 +1,6 @@
-// ui/public/chat/pr-watch-words.mjs — Watch PR in the chat, as words: the pull-request card's read-only watch line
-// (GET /api/pr/watch, ui/server.mjs watchView) and a PR fix-run card's outcome (src/core/pr-watch.mjs fixOutcome).
+// ui/public/chat/pr-watch-words.mjs — Watch PR in the chat, as words: the pull-request link's watch tooltip
+// (GET /api/pr/watch, ui/server.mjs watchView), a stopped watch on the run card (Shaper s5) and a legacy PR fix-run
+// card's outcome (src/core/pr-watch.mjs fixOutcome).
 // Pure: no DOM, no fetch.
 
 /** src/core/pr-watch.mjs MAX_FIX_RUNS — that module reads the database, so the browser keeps its own copy; a test pins
@@ -31,19 +32,26 @@ export function prWatchReasonText(reason) {
   return REASONS[reason] || String(reason || 'unknown').replace(/-/g, ' ');
 }
 
-/** The pull-request card's watch line → { text, tone: 'run'|'bad'|'none' }, or null: the PR is not watched and no fix
- *  run (a Resolve) works on it. */
-export function prWatchLine(view) {
-  if (!view || typeof view !== 'object') return null;
-  const active = ACTIVE.has(view.status);
-  if (!view.watching && !active) return null;
-  if (active && view.resolving) return { text: 'Resolving conflicts', tone: 'run' };
-  if (active && view.mergingBase) return { text: `Merging ${view.mergingBase} in`, tone: 'run' };
-  if (view.status === 'starting') return { text: 'Starting a fix run', tone: 'run' };
-  if (view.status === 'fixing') return { text: 'Fixing', tone: 'run' };
-  if (view.status === 'publishing') return { text: 'Pushing the fix', tone: 'run' };
-  if (view.status === 'needs-person') return { text: `Stopped: ${prWatchReasonText(view.reason)}`, tone: 'bad' };
-  return { text: 'Watching', tone: 'none' };
+/** Shaper s5 (D23): the PR link's tooltip — the watch as a detail, never a line under the card. */
+export function prWatchTooltip(number, view) {
+  const head = `PR #${number}`;
+  if (!view || typeof view !== 'object') return head;
+  if (view.status === 'needs-person') return `${head} · watch stopped`;
+  return view.watching || ACTIVE.has(view.status) ? `${head} · watched` : head;
+}
+
+const STILL = Object.freeze({ checks: 'checks still failing', comments: 'review comments still open',
+  changes: 'changes still requested', conflict: 'conflicts still there', behind: 'still behind the base' });
+
+/** Shaper s5 (D23): a stopped watch on the run card, from stoppedWatchFact and the last fix round's kinds; null while
+ *  it still watches. */
+export function watchStoppedText(watch, kinds = []) {
+  if (!watch || watch.status !== 'needs-person') return null;
+  if (watch.reason === 'cap') {
+    const still = (kinds || []).map((k) => STILL[k]).filter(Boolean);
+    return `Watch stopped · ${watch.fixRuns || PR_WATCH_MAX_FIX_RUNS} fix runs${still.length ? `, ${still.join(' and ')}` : ''}`;
+  }
+  return `Watch stopped · ${prWatchReasonText(watch.reason)}`;
 }
 
 /** A PR fix-run card's outcome (card.fix.outcome) → { text, tone: 'ok'|'bad'|'none' }, or null while the watcher still

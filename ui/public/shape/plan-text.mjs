@@ -94,8 +94,9 @@ export function fixAllFeedback(items) {
     + 'Fix the plan so these checks pass.';
 }
 
-/** The primary names its outcome, never "anyway" (D32). */
-export const approveLabel = (plan) => (plan && plan.outline ? 'Approve the slices' : 'Approve and build');
+/** The plan card's primary names its outcome, never "anyway" (D32); every plan approval starts a build (the split is
+ *  asked before any plan). The Split card's label is outline-body's approveRunsLabel. */
+export const approveLabel = () => 'Approve and build';
 
 /** A shaped run waiting on Shaper's own step (Clarify or the plan): the run page's waiting layout. Null otherwise. */
 export function shaperWait(r, gateOn) {

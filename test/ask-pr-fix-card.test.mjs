@@ -117,3 +117,46 @@ test('a workspace member PR maps to its chat with the member key; the watcher de
   const [{ b }] = fixCards(a.id);
   assert.deepEqual([b.card.fix.memberKey, b.card.fix.once, b.card.fix.triggerLabel, b.card.title], ['web-22222222', true, 'Merge conflicts', 'Resolve PR #6 merge conflicts']);
 });
+
+// ── Shaper s5 (D20–D22): with the gate on, a fix run is a round of the PR's run — no card, row or link of its own ──
+const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
+const { roundsOf } = await import('../src/core/shape/rounds.mjs');
+/** The server's Shaper gate (WORCA_FLAGS locks it over settings.json). */
+async function withGate(fn) {
+  const saved = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = 'shapeFirst';
+  try { return await fn(); } finally { if (saved === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = saved; }
+}
+
+test('s5: with the gate on, a fix run posts no card, no row and no link; the chats holding the PR get round-changed', () => withGate(async () => {
+  const a = chatWith(prCard({ url: GH, draft: false, existed: false }));
+  const before = listMessages(a.id).length;
+  const e = await liveFix();
+  const w = openWs(); await w.opened;
+  assert.deepEqual(mod._testing.askPrFixRun(started(e.id)), []);
+  assert.equal(listMessages(a.id).length, before, '0 new rows');
+  assert.equal(fixCards(a.id).length, 0, '0 new chat cards');
+  assert.deepEqual(listRunLinks(a.id), []);
+  await until(() => w.msgs.some((m) => m.type === 'round-changed'));
+  const f = w.msgs.find((m) => m.type === 'round-changed');
+  assert.equal(f.origin, 'orig0001');
+  assert.ok(f.threadIds.includes(a.id), 'every chat holding the PR (earlier cases hold it too)');
+  w.ws.close();
+}));
+
+test('s5: with the gate on, ended writes the outcome onto the fix round\'s marker, once', () => withGate(async () => {
+  seedPipelineRow({ id: 'orig0001', status: 'done', branch: { source: 'dev', feature: 'feat/login' } });
+  seedPipelineRow({ id: 'fix00001', status: 'done', branch: { source: 'dev', featureBranch: 'feat/login',
+    roundOf: { pipelineId: 'orig0001', round: 2, request: 'fix failing checks', by: 'watch', kinds: ['checks'] } } });
+  mod._testing.askPrFixRun(ended('run-x', { kind: 'pushed', sha: 'a1b2c3d', stopped: null, fixRuns: 1 }));
+  mod._testing.askPrFixRun(ended('run-x', { kind: 'failed', reason: 'fix-failed' }));
+  assert.deepEqual(roundsOf(['orig0001']).get('orig0001')[0].outcome, { kind: 'pushed', sha: 'a1b2c3d' });
+}));
+
+test('s5: a fix run started through prWatcherDeps.startRun gets round n+1 of the PR\'s run', () => {
+  seedPipelineRow({ id: 'orig0002', status: 'done', branch: { source: 'dev', feature: 'feat/a' } });
+  assert.deepEqual(mod._testing.prFixRoundOf({ pipelineId: 'orig0002', request: 'resolve conflicts', kinds: ['conflict'] }),
+    { pipelineId: 'orig0002', round: 2, request: 'resolve conflicts', by: 'watch', kinds: ['conflict'] });
+  assert.equal(mod._testing.prFixRoundOf(null), null);
+  assert.equal(mod._testing.prFixRoundOf({ pipelineId: '' }), null);
+});

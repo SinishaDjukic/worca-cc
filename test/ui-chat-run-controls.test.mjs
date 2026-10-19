@@ -123,7 +123,7 @@ test('chat question parity: the card host renders the run page body, a 422 marks
   const panel = host.querySelector('.qpanel');
   await checkRows([
     { name: 'the form mounts with the run page heading', run: async () => {
-      assert.deepEqual(q, { id: ASK.id, kind: 'form', heading: 'Review mockups', step: 'Planner' });
+      assert.deepEqual(q, { id: ASK.id, kind: 'form', heading: 'Review mockups', step: 'Planner', stepCard: false });
       assert.ok(panel.querySelector('.af-form'));
       assert.equal(panel.classList.contains('hidden'), false);
     } },
@@ -282,7 +282,7 @@ test('chat question parity: a card panel mounted while an answer is in flight is
   await pending;
 });
 
-test('the registered card answers a recovery question with the run page\'s decision buttons (R11)', async () => {
+test('the registered card answers a recovery question with the recovery step card\'s own buttons, and names the decision (R11, shaper-cards D4/D5)', async () => {
   const ctx = await bootApp({ fetchHandler: (url) => (url === '/api/answer' ? Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) }) : null) });
   helloRun(ctx, { runId: RUN_ID, pipelineId: PID, title: 'Fix login' });
   ctx.dispatch(STATE());
@@ -298,7 +298,8 @@ test('the registered card answers a recovery question with the run page\'s decis
   assert.deepEqual(JSON.parse(ctx.calls.find((c) => c.url === '/api/answer').opts.body).payload, { decision: 'retry' });
   ctx.dispatch({ type: 'question-resolved', runId: RUN_ID, id: 'rec-1' });
   await ctx.settle();
-  assert.equal(built.el.querySelector('.chat-rc-receipt summary').textContent, 'Answer sent · Planner');
+  assert.equal(ctx.calls.filter((c) => c.url === '/api/answer').length, 1, 'posted once: the card\'s delegate does not double-post');
+  assert.equal(built.el.querySelector('.chat-rc-receipt summary').textContent, 'Retried');
   built.dispose();
 });
 

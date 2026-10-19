@@ -1,29 +1,29 @@
-// test/ui-chat-pr-watch-words.test.mjs — Watch PR as chat words: the PR card's watch line and a fix-run card's outcome.
+// test/ui-chat-pr-watch-words.test.mjs — Watch PR as chat words: the PR link's watch tooltip, a stopped watch and a fix-run card's outcome.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prWatchLine, fixOutcomeText, prWatchReasonText, PR_WATCH_MAX_FIX_RUNS } from '../ui/public/chat/pr-watch-words.mjs';
+import { prWatchTooltip, watchStoppedText, fixOutcomeText, prWatchReasonText, PR_WATCH_MAX_FIX_RUNS } from '../ui/public/chat/pr-watch-words.mjs';
 import { MAX_FIX_RUNS } from '../src/core/pr-watch.mjs';
 
 const V = (over = {}) => ({ watching: true, status: 'watching', reason: null, activePipelineId: null, resolving: false, mergingBase: null, ...over });
 
 test('the browser copy of MAX_FIX_RUNS is the watcher\'s', () => assert.equal(PR_WATCH_MAX_FIX_RUNS, MAX_FIX_RUNS));
 
-test('prWatchLine: words while watched or while a fix run works on the PR; null otherwise', () => {
-  const rows = [
-    [V(), { text: 'Watching', tone: 'none' }],
-    [V({ status: 'starting' }), { text: 'Starting a fix run', tone: 'run' }],
-    [V({ status: 'fixing', activePipelineId: 'f1' }), { text: 'Fixing', tone: 'run' }],
-    [V({ status: 'publishing' }), { text: 'Pushing the fix', tone: 'run' }],
-    [V({ status: 'fixing', resolving: true }), { text: 'Resolving conflicts', tone: 'run' }],
-    [V({ status: 'fixing', mergingBase: 'dev' }), { text: 'Merging dev in', tone: 'run' }],
-    [V({ watching: false, status: 'fixing', resolving: true }), { text: 'Resolving conflicts', tone: 'run' }],   // Resolve, watch off
-    [V({ status: 'needs-person', reason: 'cap' }), { text: `Stopped: gave up after ${MAX_FIX_RUNS} fix runs`, tone: 'bad' }],
-    [V({ status: 'needs-person', reason: 'checkout-locked' }), { text: 'Stopped: checkout locked', tone: 'bad' }],
-    [V({ watching: false }), null],
-    [V({ watching: false, status: 'ended', reason: 'merged' }), null],
-    [null, null],
-  ];
-  for (const [view, want] of rows) assert.deepEqual(prWatchLine(view), want, JSON.stringify(view));
+test('s5: the PR link tooltip says the PR is watched; no line', () => {
+  assert.equal(prWatchTooltip(781, { watching: true, status: 'watching' }), 'PR #781 · watched');
+  assert.equal(prWatchTooltip(781, { watching: true, status: 'fixing' }), 'PR #781 · watched');
+  assert.equal(prWatchTooltip(781, V({ watching: false, status: 'fixing', resolving: true })), 'PR #781 · watched');   // Resolve, watch off
+  assert.equal(prWatchTooltip(781, { watching: true, status: 'needs-person', reason: 'cap' }), 'PR #781 · watch stopped');
+  assert.equal(prWatchTooltip(781, { watching: false, status: 'ended' }), 'PR #781');
+  assert.equal(prWatchTooltip(781, null), 'PR #781');
+});
+
+test('s5: watchStoppedText names the fix runs and what is still wrong, or the reason', () => {
+  const cap = { status: 'needs-person', reason: 'cap', fixRuns: 3 };
+  assert.equal(watchStoppedText(cap, ['checks']), 'Watch stopped · 3 fix runs, checks still failing');
+  assert.equal(watchStoppedText(cap, ['checks', 'comments']), 'Watch stopped · 3 fix runs, checks still failing and review comments still open');
+  assert.equal(watchStoppedText({ status: 'needs-person', reason: 'conflict-markers', fixRuns: 1 }, []), 'Watch stopped · conflict markers were left in');
+  assert.equal(watchStoppedText({ status: 'needs-person', reason: 'checkout-locked' }, []), 'Watch stopped · checkout locked');
+  assert.equal(watchStoppedText({ status: 'watching' }, []), null);
 });
 
 test('fixOutcomeText: pushed, gave up after the last run, the PR ended, failed', () => {

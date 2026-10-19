@@ -60,7 +60,7 @@ export function paintGroupPage(root, view, deps) {
   // groupRow's costUsd is always a number: a group with no cost yet says nothing, never "Cost $0.00 total".
   root.querySelector('.gpage-meta').textContent = [view.project, row.costUsd > 0 ? `Cost ${fmtUsd(row.costUsd)} total` : ''].filter(Boolean).join(' · ');
   paintRunStatus(root.querySelector('.gpage-card .run-status'), m);
-  syncActions(root.querySelector('.gpage-actions'), m, { onAction: deps.onAction });
+  syncActions(root.querySelector('.gpage-actions'), m, { onAction: deps.onAction, disable: { 'ask-changes': "Ask for changes from the run's chat" } });
   const all = [...(row.planning ? [{ ...row.planning, isPlanning: true }] : []), ...row.members];
   const current = all.find((mb) => mb.model === m.current) || null;
   deps.mountQuestion(root.querySelector('.gpage-question'), current);

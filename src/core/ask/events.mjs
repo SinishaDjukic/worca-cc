@@ -65,7 +65,7 @@ const SCHEDULE_WRITE_TOOLS = new Set(['mcp__worca__pause_schedule', 'mcp__worca_
 // for the two schedule verbs the child already ran, posts their receipt) and adds the receipt or card to the reply.
 const CHAT_ACTION_TOOLS = new Set(['mcp__worca__change_setting', 'mcp__worca__pause_run', 'mcp__worca__resume_run',
   'mcp__worca__propose_stop_run', 'mcp__worca__send_direction', 'mcp__worca__propose_pull_request',
-  'mcp__worca__pause_schedule', 'mcp__worca__resume_schedule']);
+  'mcp__worca__pause_schedule', 'mcp__worca__resume_schedule', 'mcp__worca__propose_changes', 'mcp__worca__route_message']);
 // The Workflows chat's card tools (D13): their RESULT becomes a composer card in the parent (turn.mjs).
 const COMPOSER_CARD_TOOLS = new Set(['mcp__worca__edit_canvas', 'mcp__worca__build_workflow', 'mcp__worca__draft_agent', 'mcp__worca__draft_script']);
 /** True when a SUCCESSFUL call of `name` with `input` changed this thread's worktree rows. */
@@ -214,6 +214,8 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'propose_stop_run': return 'Preparing a stop';
     case 'send_direction': return 'Sending a direction';
     case 'propose_pull_request': return 'Preparing a pull request';
+    case 'propose_changes': return 'Preparing a Changes card';
+    case 'route_message': return 'Asking where this goes';
     case 'web_fetch': { let host = ''; try { host = new URL(String(input?.url ?? '')).hostname; } catch { /* label only */ } return host ? `Reading ${host}` : 'Reading a web page'; }
     case 'web_search': return 'Searching the web';
     case 'propose_web_access': return 'Asking to read a new site';

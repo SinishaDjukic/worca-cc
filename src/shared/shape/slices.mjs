@@ -212,12 +212,17 @@ export const FLAT_NOTE = '## Do not slice\n\nThis task is planned as one, withou
   + 'to your plan output as usual. Do not write an outline.\n\n';
 
 /** Planner and Refine of slice k (L6). `earlier`: [{index, title, summary, files:string[], more:number}]. */
-export function sliceScopeBlock({ index, total, outline, earlier = [], refiner = false, outlineChangeFile = null }) {
+export function sliceScopeBlock({ index, total, outline, earlier = [], refiner = false, outlineChangeFile = null, notes = [] }) {
   const s = outline.slices[index - 1] || { title: `slice ${index}` };
   const done = earlier.length
     ? '\nWhat the earlier slices changed (they are merged into the code you see, or on its base branch):\n'
       + earlier.map((e) => `- Slice ${e.index}, ${e.title}: ${e.summary || 'no review summary'}`
         + (e.files.length ? `\n  Files: ${e.files.map((f) => `\`${f}\``).join(', ')}${e.more ? ` (+${e.more} more)` : ''}` : '')).join('\n') + '\n'
+    : '';
+  // Shaper s5 (D12): what the chat added to this run ("Add to the feature"); the Planner plans it in.
+  const asked = !refiner && notes.some((n) => n.kind === 'plan')
+    ? '\nChanges asked in the chat for this run (plan them in; if one changes the split, say so in the outline-change file):\n'
+      + notes.filter((n) => n.kind === 'plan').map((n) => `- ${n.text}`).join('\n') + '\n'
     : '';
   const change = !refiner && outlineChangeFile
     ? `\nIf slice ${index} cannot be built as the outline describes (a prerequisite an earlier slice did not deliver, a split `
@@ -230,7 +235,7 @@ export function sliceScopeBlock({ index, total, outline, earlier = [], refiner =
     + (refiner
       ? `Judge the plan for slice ${index} only ("${s.title}"). Later slices are out of scope: do not flag their work as missing.\n`
       : `Write the plan for slice ${index} only ("${s.title}"). Later slices are out of scope: do not plan them.\n`)
-    + done + change + '\n';
+    + done + asked + change + '\n';
 }
 
 /** The task of a slice run (k ≥ 2, or a restarted slice): what its Clarify, Planner and title start from. */

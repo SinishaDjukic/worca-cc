@@ -421,8 +421,8 @@ test('the gate and recovery bodies render on the detail page too (D6)', async ()
   assert.ok(rpanel.querySelector('.recovery-retry'), 'the recovery body renders');
   assert.match(rpanel.textContent, /token expired/);
   const pauseBtn = rpanel.querySelector('.recovery-pause');
-  assert.ok(pauseBtn, 'the give-up button is "Pause run"');
-  assert.equal(pauseBtn.textContent, 'Pause run');
+  assert.ok(pauseBtn, 'the give-up button is "Pause"');
+  assert.equal(pauseBtn.textContent, 'Pause');
   assert.equal(rpanel.querySelector('.recovery-abort'), null, 'no Abort control remains');
 });
 

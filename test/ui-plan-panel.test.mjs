@@ -54,7 +54,7 @@ test('the run page renders the plan panel, not a Clarify form', async () => {
   assert.ok(panel, 'the run page panel is mounted');
   assert.equal(panel.dataset.kind, 'plan');
   assert.ok(panel.querySelector('.plan-body'), 'the plan body is drawn');
-  assert.ok(panel.querySelector('.plan-approve'), 'Run this plan is offered');
+  assert.equal(panel.querySelector('.plan-approve').textContent, 'Approve and build');
   assert.equal(panel.querySelector('.qblock'), null, 'no Clarify question blocks');
 });
 
@@ -62,11 +62,13 @@ const doc = (ctx) => ctx.window.document;
 const glance = (ctx) => doc(ctx).querySelector('#run-detail .rd-glance');
 const menuLabels = (ctx) => [...doc(ctx).querySelectorAll('.wfv-menu .wfv-menu-item')].map((b) => b.querySelector('.wfv-menu-l').textContent);
 
-test('gate on: the heading says whose turn it is; gate off keeps today\'s heading', async () => {
-  const on = await openPlan();
-  assert.equal(doc(on.ctx).querySelector('#run-detail .rd-ask-head').textContent, 'Your turn: approve the plan');
-  const off = await openPlan({ gate: false });
-  assert.equal(doc(off.ctx).querySelector('#run-detail .rd-ask-head').textContent, 'Plan ready for your approval · v1 · Shape 3/4');
+test('the step card\'s head says whose turn it is, once, with the gate on and off (the run page heading stays empty)', async () => {
+  for (const gate of [true, false]) {
+    const { ctx, panel } = await openPlan({ gate });
+    assert.equal(doc(ctx).querySelector('#run-detail .rd-ask-head').textContent, '', `gate ${gate}`);
+    assert.equal(panel.querySelector('.ask-mcard-title').textContent, 'Your turn: approve the plan');
+    assert.equal(panel.querySelector('.ask-mcard-kind').textContent, 'Plan');
+  }
 });
 
 test('shaped run waiting on its plan: card first, details folded, Pause hidden, top bar ⋯', async () => {
@@ -189,13 +191,13 @@ test('a 422 shows its errors on the plan panel', async () => {
   assert.match(err.textContent, /Too short/);
 });
 
-test('a 409 from the gated route shows the send-failed line', async () => {
+test('a 409 from the gated route says why it was not sent', async () => {
   const { ctx, panel } = await openPlan({ gated: () => fail(409, { error: 'not waiting' }) });
   click(ctx, panel.querySelector('.plan-approve'));
   await ctx.settle(5);
   const err = panel.querySelector('.plan-err');
   assert.equal(err.hidden, false);
-  assert.equal(err.textContent, 'Could not send your answer. Try again.');
+  assert.equal(err.textContent, 'Not sent: not waiting');
 });
 
 for (const [title, want] of [['(untitled)', ''], ['Real title', 'Real title']]) {

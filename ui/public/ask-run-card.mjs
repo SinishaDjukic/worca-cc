@@ -78,6 +78,8 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     artifacts: x && Array.isArray(x.artifacts) ? x.artifacts : null,
     moreArtifacts: !!(x && x.moreArtifacts),
     pr,
+    rounds: x && Array.isArray(x.rounds) ? x.rounds : [],          // Shaper s5: the run's rounds (askRunCardExtras)
+    watch: x && x.watch && typeof x.watch === 'object' ? x.watch : null,   // Shaper s5: a watch that gave up on its PR
     archived: !!state.archivedAt,                    // archived: the run folder and its History row are gone
     ...(state && state.shaping ? { shaping: state.shaping } : {}),
     // Runs redesign slice 4 (D9): the raw state runModel reads, so the card draws the same model as the list and the page.

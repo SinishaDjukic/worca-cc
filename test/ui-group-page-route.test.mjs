@@ -41,11 +41,11 @@ test('#feature/:id for an existing feature renders the group page (Runs tab firs
   assert.equal(gp.querySelector('.gpage-ship').textContent, 'Merge in order 1 → 2, or ship as one PR');
   ctx.go('feature/feat_1/overview');
   await ctx.settle(6);
-  const view = gp.querySelector('.gpage-panel[data-tab="overview"] .shape-feature.is-page');
+  const view = gp.querySelector('.gpage-panel[data-tab="overview"] .shape-feature');
   assert.ok(view, 'Overview hosts the Shaper view');
   ctx.dispatch({ type: 'run-groups-changed' });                  // a reload repaints the page
   await ctx.settle(6);
-  assert.equal(gp.querySelector('.gpage-panel[data-tab="overview"] .shape-feature.is-page'), view, 'a repaint never remounts the Shaper view');
+  assert.equal(gp.querySelector('.gpage-panel[data-tab="overview"] .shape-feature'), view, 'a repaint never remounts the Shaper view');
 });
 
 test('#feature/:id for an unknown id says so; #group/:id renders a user group without Overview', async () => {

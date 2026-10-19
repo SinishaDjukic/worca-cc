@@ -869,15 +869,29 @@ export const MOCK_OUTLINE = Object.freeze({
   ],
 });
 
+/** Shaper s2: the outline "plan this in 3 slices" writes (the feature card's recorded replay plays it back). */
+export const MOCK_OUTLINE_3 = Object.freeze({
+  why: 'Three user-facing steps, each building on the one before.',
+  slices: [
+    { id: 's1', title: 'Store chart definitions', goal: 'Charts are saved and listed.', inScope: ['the chart store'], outOfScope: ['Chat'],
+      acceptance: ['GET /api/charts returns the saved chart'], dependsOn: [], estimate: 'medium' },
+    { id: 's2', title: 'Ask for a chart in Chat', goal: 'Chat proposes a chart and saves it.', inScope: ['the Chat tool'], outOfScope: [],
+      acceptance: ['Chat shows the chart card after "chart my runs"'], dependsOn: ['s1'], estimate: 'medium' },
+    { id: 's3', title: 'Show charts on the run page', goal: 'The run page shows the saved charts.', inScope: ['the run page'], outOfScope: [],
+      acceptance: ['The run page lists the saved charts'], dependsOn: ['s2'], estimate: 'medium' },
+  ],
+});
+
 async function mockPlannerPlan(m, onEvent, prompt = '') {
   const out = m.MOCK_OUT;
   const base = m.MOCK_BASE || 'feature';
   await emitLog(onEvent, '[mock] planner writing initial plan with code snippet');
   // §3.8: a slicing prompt whose task says "plan this in slices" gets a two-slice outline and no plan (the real
   // Planner STOPs after the outline). The resumed spawn carries no MOCK_SLICES, so it writes the plan below.
-  if (m.MOCK_SLICES && /\bplan this in slices\b/i.test(prompt)) {
+  if (m.MOCK_SLICES && /\bplan this in (3 )?slices\b/i.test(prompt)) {
+    const outline = /\bplan this in 3 slices\b/i.test(prompt) ? MOCK_OUTLINE_3 : MOCK_OUTLINE;
     await ensureDir(m.MOCK_SLICES);
-    await writeFile(m.MOCK_SLICES, JSON.stringify(MOCK_OUTLINE, null, 2) + '\n', 'utf8');
+    await writeFile(m.MOCK_SLICES, JSON.stringify(outline, null, 2) + '\n', 'utf8');
     safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_SLICES}`, raw: { mock: true, file: m.MOCK_SLICES } });
     return `[mock] planner-plan: outline at ${m.MOCK_SLICES}`;
   }

@@ -1,7 +1,7 @@
-// test/ui-shape-outline-body.test.mjs — the slice outline ask's body (spec §3.8, screen 8; D30–D32). Gate on, it is
-// one decision card: a summary, compact slices, Edit slices (merge/remove preview, Undo edits), the folded check line
-// with one Fix all, the approve-each switch, Plan slice 1 / Ask for changes / ⋯ (Don't slice). Gate off, today's held
-// body: Don't slice, typed revise, Stop.
+// test/ui-shape-outline-body.test.mjs — the outline ask, the Split step card (spec §3.8, screen 8; D30–D32;
+// shaper-cards D1, D8, D9, D11, D14). One layout with the gate on and off: head, summary, compact runs with a per-run ⋯
+// (Merge with next / Remove), Undo edits, the Ask-me-before-each-run switch, the folded check line, Ask for changes /
+// Approve N runs / ⋯ (Fix all, Don't split, Stop). The UI says "run".
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -30,7 +30,7 @@ function setup({ pq = ask(), extras = true, run = {}, submit, confirm } = {}) {
   panel.className = 'qpanel';
   const calls = { submit: [], confirm: [] };
   const deps = {
-    doc, run, extras,
+    doc, run, extras, title: 'Your turn: approve the runs', chip: 'Runs',
     submit: submit ? (p) => { calls.submit.push(p); return submit(p, panel); } : async (p) => { calls.submit.push(p); return true; },
     confirm: confirm ? (o) => { calls.confirm.push(o); return confirm(o); } : async (o) => { calls.confirm.push(o); return true; },
   };
@@ -49,84 +49,109 @@ function menu($) {
   const items = [...doc.querySelectorAll('.wfv-menu .wfv-menu-item')];
   return { labels: items.map((b) => b.textContent), pick: (l) => items.find((b) => b.textContent === l).click() };
 }
-const editMode = ($) => $('.outline-edit').click();
+// Opens run i's ⋯ and returns its item labels; pick(label) clicks one.
+function rowMenu($$, i) {
+  $$('.outline-row-more')[i].click();
+  const items = [...doc.querySelectorAll('.wfv-menu .wfv-menu-item')];
+  return { labels: items.map((b) => b.textContent), pick: (l) => items.find((b) => b.textContent === l).click() };
+}
+// The text a person sees: hidden regions and the runs' own titles (fixture data) left out.
+function visibleText(panel) {
+  const copy = panel.cloneNode(true);
+  for (const n of copy.querySelectorAll('[hidden], .outline-slice-title')) n.remove();
+  return copy.textContent;
+}
 
-test('gate off: the slices, goals, acceptance and estimates render; the meta reads the count, round and check', () => {
-  const { $, $$ } = setup({ extras: false });
-  assert.equal($('.plan-meta').textContent, '2 slices · v1 · Outline 5/5');
-  assert.equal($('.outline-why').textContent, OUTLINE.why);
+test('gate on and off: the same card — head, runs, goals and estimates, one number per row (the CSS counter)', () => {
+  const on = setup();
+  const off = setup({ extras: false });
+  const shape = ({ $, $$ }) => [$('.ask-mcard-title').textContent, $('.ask-mcard-kind').textContent, $('.outline-summary').textContent,
+    ...titles($$), ...$$('.plan-actions > button').map((b) => b.textContent), $$('.outline-row-more').length];
+  assert.deepEqual(shape(off), shape(on));
+  const { $, $$ } = off;
+  assert.equal($('.ask-mcard-title').textContent, 'Your turn: approve the runs');
+  assert.equal($('.ask-mcard-kind').textContent, 'Runs');
   assert.deepEqual(titles($$), ['Slice s1', 'Slice s2']);
   assert.equal($$('.outline-slice')[1].dataset.slice, 's2');
   assert.equal($$('.outline-goal')[0].textContent, 'Make s1 possible for people');
-  assert.deepEqual($$('.outline-slice')[1].querySelectorAll('.outline-acceptance li').length, 2);
+  assert.equal($$('.outline-acceptance').length, 0, 'the list is compact');
   assert.deepEqual($$('.outline-est').map((n) => n.textContent), ['medium', 'large']);
   assert.ok($$('.outline-est')[1].classList.contains('large'));
-  assert.equal($$('.plan-check-ok').length, 5);
-  assert.equal($('.outline-approve').textContent, 'Plan slice 1');
+  assert.equal($$('.outline-slice-n').length, 0, 'no second number in the markup');
+  assert.equal($('.outline-approve').textContent, 'Approve 2 runs');
   assert.ok($('.outline-undo').hidden);
+  assert.deepEqual($$('.plan-actions > button').map((b) => b.textContent || b.getAttribute('aria-label')), ['Ask for changes', 'Approve 2 runs', 'More for these runs']);
 });
 
 test('a slice with no goal, estimate or acceptance renders none of those parts', () => {
   const lean = { why: '', slices: [slice('s1', { goal: '', acceptance: [], estimate: null }), slice('s2')] };
-  const { $, $$ } = setup({ pq: ask({ outline: lean }), extras: false });
-  const li = $$('.outline-slice')[0];
-  assert.ok(!li.querySelector('.outline-goal'));
-  assert.ok(!li.querySelector('.outline-acceptance'));
-  assert.ok(!li.querySelector('.outline-est'));
-  assert.ok($('.outline-why').hidden);
-
   const card = setup({ pq: ask({ outline: lean }) });
   const row = card.$$('.outline-slice')[0];
   assert.ok(!row.querySelector('.outline-goal'));
   assert.ok(!row.querySelector('.outline-est'));
-  assert.equal(card.$('.outline-summary').textContent, '2 slices');
+  assert.equal(card.$('.outline-summary').textContent, '2 runs');
 });
 
-test('gate on, closed: summary, compact slices, folded check line, at most 5 controls, no Stop, box closed', () => {
+test('closed: summary, compact runs, folded check line, Stop only in ⋯, box closed, no "slice" in sight', () => {
   const { $, $$, panel } = setup();
   assert.ok(panel.querySelector('.plan-body.plan-card.outline-body'));
-  assert.equal($('.outline-summary').textContent, '2 slices · The change is large and cuts across three subsystems.');
-  assert.deepEqual(titles($$), ['Slice s1', 'Slice s2']);
-  assert.deepEqual($$('.outline-est').map((n) => n.textContent), ['medium', 'large']);
-  assert.equal($$('.outline-goal')[0].textContent, 'Make s1 possible for people');
-  assert.equal($$('.outline-acceptance').length, 0, 'no acceptance lists on the card');
+  assert.equal($('.outline-summary').textContent, '2 runs · The change is large and cuts across three subsystems.');
   assert.equal($('.plan-check-line .plan-fold-text').textContent, 'Outline 5/5');
   assert.equal($('.plan-check-line').getAttribute('aria-expanded'), 'false');
   assert.ok($('.plan-checks').hidden, 'checks folded');
-  assert.equal($$('.plan-check-ok').length, 0, 'no green chips');
-  assert.equal($('.plan-stop'), null, 'the top bar has Stop (D31)');
+  assert.equal($('.plan-stop'), null);
   assert.ok($('.plan-feedback').closest('[hidden]'), 'the text box is closed');
-  assert.equal($$('.outline-merge').length + $$('.outline-remove').length, 0, 'no per-slice controls until Edit slices');
-  assert.equal($('.outline-flat'), null, 'Don\'t slice lives in ⋯');
+  assert.equal($$('.outline-merge').length + $$('.outline-remove').length, 0, 'Merge and Remove live in the per-run ⋯');
+  assert.equal($('.outline-flat'), null, 'Don\'t split lives in ⋯');
   assert.equal($$('.btn-primary').length, 1);
-  assert.equal($('.outline-approve').textContent, 'Plan slice 1');
   assert.deepEqual(reachable($$).map((n) => n.className.replace(/^btn /, '').split(' ').pop() || n.type),
-    ['outline-edit', 'checkbox', 'outline-approve', 'plan-ask-changes', 'plan-more']);
-  assert.ok(reachable($$).length <= 5);
+    ['outline-row-more', 'outline-row-more', 'checkbox', 'plan-ask-changes', 'outline-approve', 'plan-more']);
+  assert.equal($$('.outline-row-more')[1].getAttribute('aria-label'), 'More for run 2');
+  assert.equal($('.outline-approve-each').textContent, ' Ask me before each run');
+  assert.doesNotMatch(visibleText(panel), /slice/i);
 });
 
-test('gate on: the check line expands to neutral ✓ / ✕ rows; one Fix all posts the outline fix', () => {
+test('the check line expands to neutral ✓ / ✕ rows; Fix all in ⋯ posts the outline fix', () => {
   const { $, $$, calls } = setup({ pq: ask({ outline: TINY }) });
   assert.equal($('.plan-check-line .plan-fold-text').textContent, 'Outline 4/5 · 1 to fix');
-  assert.equal($('.outline-approve').textContent, 'Plan slice 1', 'never "anyway" (D32)');
+  assert.equal($('.outline-approve').textContent, 'Approve 2 runs', 'never "anyway" (D32)');
   $('.plan-check-line').click();
   assert.equal($('.plan-checks').hidden, false);
   assert.equal($('.plan-check-line').getAttribute('aria-expanded'), 'true');
   assert.deepEqual($$('.plan-check-mark').map((m) => m.getAttribute('aria-label')), ['met', 'met', 'met', 'unmet', 'met']);
   assert.ok($$('.plan-check-mark').every((m) => m.querySelector('svg') && m.textContent === ''), 'the marks are icons, not ✓ / ✕ characters');
   assert.equal($$('.plan-check-row.ok').length, 4);
-  assert.equal($$('.plan-fix').length, 0, 'no per-row Fix');
-  assert.equal($$('.plan-fix-all').length, 1);
-  $('.plan-fix-all').click();
+  assert.equal($$('.plan-fix').length + $$('.plan-fix-all').length, 0, 'no Fix button in the body');
+  menu($).pick('Fix all');
   const item = checkSlices(TINY).items.find((i) => i.id === 'notTiny');
   assert.deepEqual(calls.submit, [{ decision: 'revise', feedback: outlineFixFeedback(item) }], 'one failure: today\'s Fix answer');
   assert.equal(outlineFixAllFeedback(checkSlices(TINY).items), outlineFixFeedback(item));
   assert.match(calls.submit[0].feedback, /Rewrite the outline/);
   assert.doesNotMatch(calls.submit[0].feedback, /Fix the plan/);
-  assert.equal(setup({ pq: ask({ outline: TINY }), extras: false }).$('.outline-approve').textContent, 'Plan slice 1 anyway');
+  assert.equal(setup({ pq: ask({ outline: TINY }), extras: false }).$('.outline-approve').textContent, 'Approve 2 runs');
 });
 
-test('gate on: Ask for changes opens the box and focuses it; Send changes posts the revise', () => {
+test('the open check rows say "run", never "slice"; one run left points at Don\'t split', () => {
+  const { $, $$, panel } = setup({ pq: ask({ outline: TINY }) });
+  $('.plan-check-line').click();
+  assert.deepEqual($$('.plan-check-label').map((n) => n.textContent), [
+    'Two to five runs (six to eight need a reason)',
+    'Every run has 1–6 testable acceptance checks',
+    'Runs are behaviours, not layers',
+    'No two small runs side by side',
+    'Each run depends only on earlier runs',
+  ]);
+  assert.equal($('.plan-check-detail').textContent, 'Runs 1 and 2 are both small: merge them');
+  rowMenu($$, 0).pick('Merge with next');
+  assert.equal($('.plan-check-detail').textContent, 'One run is no split: choose Don\'t split');
+  assert.doesNotMatch(visibleText(panel), /slic/i);
+  assert.match(checkSlices(TINY).items[0].label, /slices/, 'the Planner\'s check text is unchanged');
+  const quoted = setup({ pq: ask({ outline: { ...OUTLINE, slices: [slice('s1', { title: 'Slice export', acceptance: [] }), slice('s2')] } }) });
+  quoted.$('.plan-check-line').click();
+  assert.equal(quoted.$('.plan-check-detail').textContent, '"Slice export" has no acceptance check', 'a quoted title stays as written');
+});
+
+test('Ask for changes opens the box and focuses it; Send changes posts the revise', () => {
   const { $, calls } = setup();
   const askBtn = $('.plan-ask-changes');
   assert.equal(askBtn.getAttribute('aria-expanded'), 'false');
@@ -140,80 +165,82 @@ test('gate on: Ask for changes opens the box and focuses it; Send changes posts 
   assert.deepEqual(calls.submit, [{ decision: 'revise', feedback: 'split the export out' }]);
 });
 
-test('gate on: ⋯ holds Don\'t slice, which posts flat', () => {
-  const { $, calls } = setup();
-  const m = menu($);
-  assert.deepEqual(m.labels, ['Don\'t slice']);
-  m.pick('Don\'t slice');
-  assert.deepEqual(calls.submit, [{ decision: 'flat' }]);
+test('⋯ holds Don\'t split (plan it as one), which posts flat, and Stop; Fix all only with an unmet check', async () => {
+  for (const extras of [true, false]) {
+    const { $, calls } = setup({ extras });
+    const m = menu($);
+    assert.deepEqual(m.labels, ['Don\'t split (plan it as one)', 'Stop']);
+    m.pick('Don\'t split (plan it as one)');
+    assert.deepEqual(calls.submit, [{ decision: 'flat' }]);
+  }
+  assert.deepEqual(menu(setup({ pq: ask({ outline: TINY }) }).$).labels, ['Fix all', 'Don\'t split (plan it as one)', 'Stop']);
   assert.ok(setup({ pq: ask(), run: { workspaceId: 'w1' } }).$('.plan-more'), 'a workspace run keeps ⋯');
 });
 
-test('gate on: Edit slices reveals Merge with next / Remove; they post the same answers as today', () => {
-  const merged = setup();
-  assert.equal(merged.$('.outline-edit').getAttribute('aria-expanded'), 'false');
-  editMode(merged.$);
-  assert.equal(merged.$('.outline-edit').getAttribute('aria-expanded'), 'true');
-  assert.equal(merged.$('.outline-edit').textContent, 'Done editing');
-  assert.equal(merged.$$('.outline-merge').length, 1, 'never on the last slice');
-  assert.equal(merged.$$('.outline-remove').length, 2);
-  assert.ok(merged.$('.outline-undo').hidden, 'Undo only after an edit');
-  merged.$$('.outline-merge')[0].click();
-  assert.deepEqual(titles(merged.$$), ['Slice s1 + Slice s2']);
-  assert.equal(merged.$('.outline-summary').textContent, '1 slice · The change is large and cuts across three subsystems.');
-  assert.equal(merged.$('.plan-check-line .plan-fold-text').textContent, 'Outline 4/5 · 1 to fix');
-  assert.equal(merged.$('.outline-approve').textContent, 'Plan it as one');
-  assert.equal(merged.$('.outline-undo').hidden, false);
-  merged.$('.outline-approve').click();
-  assert.deepEqual(merged.calls.submit, [{ decision: 'approve', edits: [{ op: 'merge', id: 's1' }], approveEach: false }]);
+test('Stop in ⋯ asks for confirmation, and posts only when confirmed', async () => {
+  const yes = setup({ extras: false });
+  menu(yes.$).pick('Stop');
+  await flush();
+  assert.equal(yes.calls.confirm.length, 1);
+  assert.equal(yes.calls.confirm[0].danger, true);
+  assert.deepEqual(yes.calls.submit, [{ decision: 'stop' }]);
+  const no = setup({ confirm: async () => false });
+  menu(no.$).pick('Stop');
+  await flush();
+  assert.deepEqual(no.calls.submit, []);
+});
+
+test('the per-run ⋯: Merge with next (never on the last run) / Remove; the primary follows the count', () => {
+  const three = { ...OUTLINE, slices: [slice('s1'), slice('s2'), slice('s3')] };
+  const m = setup({ pq: ask({ outline: three }) });
+  assert.equal(m.$('.outline-approve').textContent, 'Approve 3 runs');
+  assert.deepEqual(rowMenu(m.$$, 0).labels, ['Merge with next', 'Remove']);
+  assert.deepEqual(rowMenu(m.$$, 2).labels, ['Remove'], 'the last run has no Merge with next');
+  assert.ok(m.$('.outline-undo').hidden, 'Undo only after an edit');
+  rowMenu(m.$$, 0).pick('Merge with next');
+  assert.deepEqual(titles(m.$$), ['Slice s1 + Slice s2', 'Slice s3']);
+  assert.equal(m.$('.outline-approve').textContent, 'Approve 2 runs');
+  assert.equal(m.$('.outline-summary').textContent, '2 runs · The change is large and cuts across three subsystems.');
+  assert.equal(m.$('.outline-undo').hidden, false);
+  rowMenu(m.$$, 0).pick('Merge with next');
+  assert.equal(m.$('.outline-approve').textContent, 'Plan it as one');
+  assert.equal(m.$('.outline-summary').textContent, '1 run · The change is large and cuts across three subsystems.');
+  assert.equal(m.$$('.outline-row-more').length, 0, 'one run left: no Remove, no Merge with next');
+  m.$('.outline-approve').click();
+  assert.deepEqual(m.calls.submit, [{ decision: 'approve', edits: [{ op: 'merge', id: 's1' }, { op: 'merge', id: 's1' }], approveEach: false }]);
 
   const removed = setup();
-  editMode(removed.$);
-  removed.$$('.outline-remove')[0].click();
+  rowMenu(removed.$$, 0).pick('Remove');
   assert.deepEqual(titles(removed.$$), ['Slice s2']);
   removed.$('.outline-approve').click();
   assert.deepEqual(removed.calls.submit, [{ decision: 'approve', edits: [{ op: 'remove', id: 's1' }], approveEach: false }]);
 });
 
-test('gate on: Undo edits restores and posts nothing; Done editing hides the tools again, edits kept', () => {
+test('Undo edits restores and posts nothing', () => {
   const { $, $$, calls } = setup();
-  editMode($);
-  $$('.outline-remove')[0].click();
+  rowMenu($$, 0).pick('Remove');
+  assert.equal($('.outline-undo').hidden, false);
   $('.outline-undo').click();
   assert.deepEqual(titles($$), ['Slice s1', 'Slice s2']);
   assert.ok($('.outline-undo').hidden);
   assert.equal(calls.submit.length, 0);
-  $$('.outline-remove')[0].click();
-  editMode($);                                           // Done editing
-  assert.equal($$('.outline-remove').length, 0);
-  assert.ok($('.outline-undo').hidden);
-  assert.deepEqual(titles($$), ['Slice s2'], 'the edit stays in the preview');
-  $('.outline-approve').click();
-  assert.deepEqual(calls.submit, [{ decision: 'approve', edits: [{ op: 'remove', id: 's1' }], approveEach: false }]);
-});
-
-test('gate on: a re-ask\'s carried edits preview with the mode closed', () => {
-  const { $, $$, calls } = setup({ pq: ask({ edits: [{ op: 'remove', id: 's1' }] }) });
-  assert.deepEqual(titles($$), ['Slice s2']);
-  assert.equal($('.outline-edit').getAttribute('aria-expanded'), 'false');
-  assert.ok($('.outline-undo').hidden);
-  $('.outline-approve').click();
-  assert.deepEqual(calls.submit, [{ decision: 'approve', edits: [{ op: 'remove', id: 's1' }], approveEach: false }]);
 });
 
 test('outlineSummary: count, a round after the first, and the why', () => {
-  assert.equal(outlineSummary({ why: 'Two steps.', slices: [{}, {}] }, 1), '2 slices · Two steps.');
-  assert.equal(outlineSummary({ why: '', slices: [{}] }, 2), '1 slice · v2');
-  assert.equal(outlineSummary({ slices: [] }), '0 slices');
+  assert.equal(outlineSummary({ why: 'why', slices: [{}, {}, {}] }, 2), '3 runs · v2 · why');
+  assert.equal(outlineSummary({ why: 'Two steps.', slices: [{}, {}] }, 1), '2 runs · Two steps.');
+  assert.equal(outlineSummary({ why: '', slices: [{}] }, 2), '1 run · v2');
+  assert.equal(outlineSummary({ slices: [] }), '0 runs');
 });
 
-test('plan.edits on a re-ask starts the preview from them; edits that no longer apply are ignored', () => {
-  const carried = setup({ pq: ask({ edits: [{ op: 'remove', id: 's1' }] }) });
-  assert.deepEqual(titles(carried.$$), ['Slice s2']);
-  assert.equal(carried.$('.outline-edit').getAttribute('aria-expanded'), 'false');
-  assert.ok(carried.$('.outline-undo').hidden);
-  carried.$('.outline-approve').click();
-  assert.deepEqual(carried.calls.submit, [{ decision: 'approve', edits: [{ op: 'remove', id: 's1' }], approveEach: false }]);
+test('plan.edits on a re-ask starts the preview from them, gate on and off; edits that no longer apply are ignored', () => {
+  for (const extras of [true, false]) {
+    const carried = setup({ extras, pq: ask({ edits: [{ op: 'remove', id: 's1' }] }) });
+    assert.deepEqual(titles(carried.$$), ['Slice s2']);
+    assert.equal(carried.$('.outline-undo').hidden, false, 'the carried edit can be undone');
+    carried.$('.outline-approve').click();
+    assert.deepEqual(carried.calls.submit, [{ decision: 'approve', edits: [{ op: 'remove', id: 's1' }], approveEach: false }]);
+  }
 
   const stale = setup({ pq: ask({ edits: [{ op: 'remove', id: 'gone' }] }) });
   assert.deepEqual(titles(stale.$$), ['Slice s1', 'Slice s2']);
@@ -221,12 +248,13 @@ test('plan.edits on a re-ask starts the preview from them; edits that no longer 
 
   const junk = setup({ pq: ask({ edits: [{ op: 'rename', id: 's1' }, null, { op: 'merge' }] }) });
   assert.deepEqual(titles(junk.$$), ['Slice s1', 'Slice s2']);
-
-  const gateOff = setup({ pq: ask({ edits: [{ op: 'remove', id: 's1' }] }), extras: false });
-  assert.deepEqual(titles(gateOff.$$), ['Slice s1', 'Slice s2'], 'edits are a gated feature');
 });
 
-test('the switch starts unticked (D19); ticking it posts approveEach:true; plan.approveEach:true starts it ticked', () => {
+test('the switch starts unticked (D19), gate on and off; the approve posts approveEach false or true', () => {
+  const off = setup({ extras: false });
+  assert.equal(off.$('.outline-approve-each input').checked, false);
+  off.$('.outline-approve').click();
+  assert.deepEqual(off.calls.submit, [{ decision: 'approve', approveEach: false }]);
   const { $, calls } = setup();
   assert.equal($('.outline-approve-each input').checked, false);
   $('.outline-approve-each input').checked = true;
@@ -235,15 +263,8 @@ test('the switch starts unticked (D19); ticking it posts approveEach:true; plan.
 
   const reask = setup({ pq: ask({ approveEach: true }) });
   assert.equal(reask.$('.outline-approve-each input').checked, true);
-  const off = setup({ pq: ask({ approveEach: false }) });
-  assert.equal(off.$('.outline-approve-each input').checked, false);
-});
-
-test('gate off: Don\'t slice posts flat', () => {
-  const { $, calls } = setup({ extras: false });
-  assert.equal($('.outline-flat').textContent, 'Don\'t slice');
-  $('.outline-flat').click();
-  assert.deepEqual(calls.submit, [{ decision: 'flat' }]);
+  const unticked = setup({ pq: ask({ approveEach: false }) });
+  assert.equal(unticked.$('.outline-approve-each input').checked, false);
 });
 
 test('gate off: the typed revise works, and an empty one shows the field error', () => {
@@ -257,24 +278,21 @@ test('gate off: the typed revise works, and an empty one shows the field error',
   assert.deepEqual(calls.submit, [{ decision: 'revise', feedback: 'split the export out' }]);
 });
 
-test('gate off: Stop asks for confirmation, and posts only when confirmed', async () => {
-  const yes = setup({ extras: false });
-  yes.$('.plan-stop').click();
-  await flush();
-  assert.equal(yes.calls.confirm.length, 1);
-  assert.equal(yes.calls.confirm[0].danger, true);
-  assert.deepEqual(yes.calls.submit, [{ decision: 'stop' }]);
-  const no = setup({ extras: false, confirm: async () => false });
-  no.$('.plan-stop').click();
-  await flush();
-  assert.deepEqual(no.calls.submit, []);
-});
-
 test('plan.error shows in the alert', () => {
   const { $ } = setup({ pq: ask({ error: 'Could not set up the later slices: boom' }) });
   assert.equal($('.plan-err').hidden, false);
   assert.equal($('.plan-err').getAttribute('role'), 'alert');
   assert.equal($('.plan-err').textContent, 'Could not set up the later slices: boom');
+});
+
+test('a submit resolving the server\'s reason keeps the typed text and says "Not sent: …"', async () => {
+  const { $ } = setup({ submit: async () => 'this question is no longer pending' });
+  $('.plan-ask-changes').click();
+  $('.plan-feedback').value = 'fewer runs';
+  $('.plan-revise').click();
+  await flush();
+  assert.equal($('.plan-err').textContent, 'Not sent: this question is no longer pending');
+  assert.equal($('.plan-feedback').value, 'fewer runs');
 });
 
 test('a submit resolving false shows SEND_FAILED; a rejecting one too', async () => {
@@ -310,22 +328,6 @@ test('panel.__plan.setErrors paints and clears the alert', () => {
   assert.equal($('.plan-err').hidden, true);
 });
 
-test('gate off: no merge/remove/switch/Fix, but Plan slice 1, Don\'t slice, Send changes and Stop are there', () => {
-  const { $, $$, calls } = setup({ pq: ask({ outline: TINY }), extras: false });
-  assert.equal($$('.outline-merge').length, 0);
-  assert.equal($$('.outline-remove').length, 0);
-  assert.equal($$('.outline-approve-each').length, 0);
-  assert.equal($$('.plan-fix').length, 0);
-  assert.ok($('.outline-undo').hidden);
-  assert.ok($('.outline-approve'));
-  assert.ok($('.outline-flat'));
-  assert.ok($('.plan-revise'));
-  assert.ok($('.plan-stop'));
-  assert.deepEqual(titles($$), ['Slice s1', 'Slice s2'], 'the slices still show, read-only');
-  $('.outline-approve').click();
-  assert.deepEqual(calls.submit, [{ decision: 'approve' }]);
-});
-
 test('a plan that is not revisable has no typed box and no Fix', () => {
   const { $, $$ } = setup({ pq: ask({ revisable: false, outline: TINY }) });
   assert.ok(!$('.plan-feedback'));
@@ -333,6 +335,7 @@ test('a plan that is not revisable has no typed box and no Fix', () => {
   assert.equal($$('.plan-fix').length, 0);
   assert.equal($('.plan-ask-changes'), null);
   assert.equal($$('.plan-fix-all').length, 0);
+  assert.ok(!menu($).labels.includes('Fix all'), 'no Fix all on the last round');
 });
 
 test('a plan with no outline renders an empty list without throwing', () => {

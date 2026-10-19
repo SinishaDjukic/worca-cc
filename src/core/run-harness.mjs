@@ -76,7 +76,9 @@ import {
   isValidSourceRef, snapshotWorktreePatch, listLocalBranches, worktreeHead, deleteBranchIfAt,
   reusedBranchBase, isAncestor,
 } from './worktree.mjs';
-import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS } from './git-sync.mjs';
+import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit } from './git-sync.mjs';
+import { featureBase } from './shape/features.mjs';
+import { cleanOutcome } from './shape/rounds.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
 import { classifyError, rateLimitHint, brokerHint, freeDailyHint, limitResetAt, untilText } from './recoverable-error.mjs';
@@ -221,6 +223,18 @@ function hasPermissionRules(rules) {
 const validResolves = (r) => (r && typeof r === 'object' && typeof r.runId === 'string' && r.runId
   ? { runId: r.runId, member: typeof r.member === 'string' && r.member ? r.member : null } : null);
 
+/** Shaper s5 (D4, D21): the `branch.roundOf` marker of a round, or null. Server-only (req._roundOf), never from HTTP.
+ *  A Watch PR fix round also keeps `by: 'watch'`, its trigger `kinds` and its `outcome`, so a resume keeps them. */
+const ROUND_KINDS = new Set(['checks', 'comments', 'changes', 'conflict', 'behind']);
+const validRoundOf = (r) => {
+  if (!(r && typeof r === 'object' && typeof r.pipelineId === 'string' && r.pipelineId && Number.isInteger(r.round) && r.round >= 2)) return null;
+  const out = { pipelineId: r.pipelineId, round: r.round, request: typeof r.request === 'string' ? r.request.slice(0, 200) : '' };
+  if (r.by === 'watch') { out.by = 'watch'; out.kinds = (Array.isArray(r.kinds) ? r.kinds : []).filter((k) => ROUND_KINDS.has(k)); }
+  const o = cleanOutcome(r.outcome);
+  if (o) out.outcome = o;
+  return out;
+};
+
 /** The parenthetical of a workspace member's teardown audit line. Scan + kept wording is
  *  unchanged; an unchanged member's dropped branch says why. */
 function memberBranchNote(branch, { readOnly, dropped, merged = false }) {
@@ -301,6 +315,12 @@ export function safeParse(text) {
   } catch {
     return null;
   }
+}
+
+/** Shaper s5 (D14): a feature's run k ≥ 2 merges the moved base first — single project, fresh branch only. A run with
+ *  no slice, a workspace run, or a reused checkout never does. */
+export function mergesFeatureBase({ slice, freshStart, isWorkspace }) {
+  return !!(slice && slice.index >= 2 && freshStart && !isWorkspace);
 }
 
 export function firstLine(text) {
@@ -869,6 +889,8 @@ export class RunHarness extends EventEmitter {
       feature: (this.opts.branch && this.opts.branch.feature) || null,
       // #620: a "Resolve in a pipeline" run names the run it resolves (server-only, never from HTTP).
       resolves: validResolves(this.opts.branch && this.opts.branch.resolves),
+      // Shaper s5 (D4): a round of an earlier run (Ask for changes, a Watch PR fix run). Server-only, never from HTTP.
+      roundOf: validRoundOf(this.opts.branch && this.opts.branch.roundOf),
     };
     // Run on the source branch (branch.sameAsSource, explicit — never inferred from feature === source):
     // the run still works on a hidden, auto-named branch (a typed feature name is ignored) and
@@ -2508,7 +2530,11 @@ export class RunHarness extends EventEmitter {
                                                 ...(keptStart ? { startRef: keptStart } : {}),
                                                 ...(syncRecord ? { sync: syncRecord } : {}),
                                                 ...(this.branchOpts.resolves ? { resolves: this.branchOpts.resolves } : {}),
+                                                ...(this.branchOpts.roundOf ? { roundOf: this.branchOpts.roundOf } : {}),
                                                 ...(sameAsSource ? { sameAsSource: true } : {}) };
+          // Shaper s5 (D14): a feature's next run starts from the moved base. Slice k ≥ 2, single project, fresh branch only.
+          const sl = this.runShape && this.runShape.slice;
+          if (mergesFeatureBase({ slice: sl, freshStart, isWorkspace: this.isWorkspace })) await this._mergeFeatureBase(m, info, sl);
           const short = (s) => String(s).slice(0, 10);
           if ((freshStart || recreated) && diffBase && (baseMoved || (checkoutHead && diffBase !== checkoutHead))) {
             await appendAudit(this.pipeline.dir, `Diff base for \`${m.projectKey}\` moved to the run's start \`${short(diffBase)}\`.`).catch(() => {});
@@ -7950,6 +7976,23 @@ export class RunHarness extends EventEmitter {
     this._createdSources.set(m.projectKey, c.to);
     this._log('sync', 'info', `${m.projectKey}: created local ${name} tracking ${remote}/${name}`);
     await appendAudit(this.pipeline.dir, `Created local \`${name}\` in \`${m.projectKey}\` from \`${remote}/${name}\` (\`${String(c.to).slice(0, 10)}\`).`).catch(() => {});
+  }
+
+  /** Shaper s5 (D14): merge the feature's base into this run's fresh branch when it moved; move the diff base to the
+   *  merge commit, so the base's commits never count as this run's changes. */
+  async _mergeFeatureBase(m, info, sl) {
+    let base = null;
+    try { base = featureBase(sl.feature); } catch { base = null; }
+    if (!base || base === info.branch) return;
+    const r = await mergeBaseBeforeRun(resolve(m.projectDir), { base, feature: info.branch })
+      .catch((err) => ({ merged: false, status: 'error', behind: 0, files: [], error: err?.message }));
+    const line = baseMovedAudit(base, info.branch, r);
+    if (line) await appendAudit(this.pipeline.dir, line).catch(() => {});
+    if (r.merged && r.to) {
+      const rec = this.state.branches[m.projectKey];
+      this.state.branches[m.projectKey] = { ...rec, baseSha: r.to, diffBase: r.to, baseMerged: { base, behind: r.behind } };
+      this.checkpointRefs[m.projectKey] = r.to;     // dev's commits are never this run's changes
+    }
   }
 
   /**

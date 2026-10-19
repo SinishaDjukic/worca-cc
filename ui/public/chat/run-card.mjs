@@ -12,13 +12,19 @@ import { mountRunGraph } from '../graph/run-hosts.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askKindOf } from '../ask/registry.mjs';
 import { shapeFirstOn } from './shape-gate.mjs';
-import { checklistTallyText } from '../../../src/shared/shape/review-checklist.mjs';
+import { checklistScore } from '../../../src/shared/shape/review-checklist.mjs';
 import { fixOutcomeText } from './pr-watch-words.mjs';
 import { runModel } from '../../../src/shared/run-model.mjs';
 import { paintRunStatus, kindLabel, syncActions, pauseResumeOwn, renderMemberRows } from '../run-status-card.mjs';
 import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
+import { featureCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
+import { namedAnswer, forgetAnswer } from '../shape/step-receipt.mjs';
+import { renderChecklistGroups } from '../shape/checklist-view.mjs';
+import { paintFeatureActions } from '../shape/feature-actions.mjs';
+import { renderAskChanges } from './ask-changes.mjs';
+import { roundsModel, liveRound } from './rounds.mjs';
 
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
@@ -122,11 +128,15 @@ export function resultWord(snap) {
     sub: checks ? `${checks} thing${checks === 1 ? '' : 's'} to check` : 'Clean — no blocking issues flagged' };
 }
 
-/** The receipt line a question collapses into once it is resolved (mockup §5c/§5d), from what this card sent. */
+/** The receipt line a question collapses into once it is resolved (mockup §5c/§5d): the named decision this tab sent
+ *  (`sent.named`, or step-receipt.mjs's note for `painted`'s run and id, shaper-cards D5), else what this card sent,
+ *  else "Answered" (answered elsewhere, D6). */
 export function answerReceipt(sent, painted) {
+  const note = painted && painted.id ? namedAnswer(painted.runId, painted.id) : null;
+  const named = (sent && sent.named) || (note && note.text);
+  if (named) return named;
   const step = (painted && (painted.step || painted.heading)) || '';
   const tail = (t) => (step ? `${t} · ${step}` : t);
-  if (sent && sent.kind === 'gate') return sent.payload && sent.payload.decision === 'another' ? 'One more fix round · Cycle gate' : 'Continued · Cycle gate';
   if (sent && sent.payload && Array.isArray(sent.payload.answers)) {
     const n = sent.payload.answers.length;
     const k = sent.payload.answers.filter((a) => a && typeof a.choice === 'string' && a.choice.trim()).length;
@@ -153,6 +163,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   void win;
   const h = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const button = (cls, text) => { const b = h('button', cls, text); b.type = 'button'; return b; };
+  const link = (cls, href, text) => { const a = h('a', cls, text); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; };
   const call = (fn, ...args) => (typeof fn === 'function' ? fn(...args) : undefined);
   const id = ident || {};
 
@@ -184,8 +195,6 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   // ---- Shape it first: the approved plan this run was shaped into (snapshot.shaping)
   const shapedEl = h('div', 'chat-rc-shaped');
   shapedEl.hidden = true;
-  const featureEl = h('div', 'chat-rc-feature');
-  featureEl.hidden = true;
   // ---- stats
   const stats = h('div', 'ask-rc-stats');
   const stat = (label, cls) => { const box = h('div', 'ask-rc-stat'); const v = h('span', `ask-rc-stat-v ${cls}`); box.append(h('span', 'ask-rc-stat-k', label), v); stats.appendChild(box); return v; };
@@ -242,20 +251,46 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   footErr.hidden = true;
   footErr.setAttribute('role', 'status');
   footActions.append(pauseBtn, stopBtn);
-  foot.append(footActions, footErr);
-  el.append(head, statusEl, sub, fixEl, shapedEl, membersEl, stats, featureEl, agentsBox, well, qSec, resultSec, reason, foot);
+  // Shaper s3: the feature's extras beside the model's actions (feature-actions.mjs: Re-plan the rest, ⋯), D10.
+  const fActions = h('div', 'chat-rc-factions');
+  fActions.hidden = true;
+  foot.append(footActions, fActions, footErr);
+  // ---- Shaper s2: the feature card's step log (feature-card.mjs fills it; a plain run's rounds too, s5)
+  const logEl = h('ol', 'chat-rc-log');
+  logEl.hidden = true;
+  logEl.setAttribute('aria-label', 'Steps');
+  // ---- Shaper s5: the ideas saved for the next checkpoint (D11) and a watch that gave up on the run's PR (D23)
+  const notesEl = h('div', 'chat-rc-notes');
+  notesEl.hidden = true;
+  const watchEl = h('div', 'chat-rc-watch');
+  watchEl.hidden = true;
+  watchEl.setAttribute('role', 'status');
+  // ---- Shaper s5: Ask for changes on a finished run or feature (D5). Built once and kept across repaints (typed text
+  // survives the 1 s repaint); paintResult re-appends it after the result region's rebuild.
+  const changesSlot = h('div', 'chat-rc-changes');
+  changesSlot.hidden = true;
+  // Card order: the model's head / status / members, then Shaper's slots; the log sits before the open step.
+  el.append(head, statusEl, sub, fixEl, shapedEl, membersEl, stats, agentsBox, well, logEl, notesEl, watchEl, qSec, resultSec, reason, foot);
 
   let last = null, graph = null, agentsSig = null, resultSig = '', painted = null, sent = null, inFlight = false, dead = false, pauseAsked = '';
   let shownFor = null;   // the question whose receipt shows the "Answered" fallback (its answer may still be in flight)
   let curRow = null;          // the group row while this card shows a group (D11)
   let createPrBtn = null;     // the result's "Create pull request" button while paintResult shows it (D4: it is `ship`)
   let lastM = null;           // the model update() painted last, for the Pause click's repaint
+  let fm = null;              // the feature card model of the last paint (null: a plain run, or Shape it first off)
+  let roundRef = null;        // D25: set by update(): the live round's run ref, or null
+  let changesView = null;     // Shaper's Ask for changes field ({ el, focus }) while it shows
   const ref = () => runRefOf(id, last);
+  /** D11: the run whose ask is the open step — the asking member's snapshot, else this card's run. */
+  const stepSnap = (s) => (fm && fm.step && fm.step.snap) || s;
+  const stepRef = () => (fm && fm.step && fm.step.pipelineId && fm.step.pipelineId !== ref().pipelineId
+    ? { ...ref(), runId: fm.step.runId, pipelineId: fm.step.pipelineId, status: '' } : ref());
   const ownIsCurrent = () => !curRow || (!!last && ((last.runId && last.runId === curRow.runId) || (last.pipelineId && last.pipelineId === curRow.pipelineId)));
   /** The run the footer acts on: the card's own run, unless this card shows a group and is not the current member's
    *  own card. Then it is the current member, with its ticketId (Start now, Cancel) and status (Stop of a paused
    *  run); app.js runAction completes the rest from the History row (D5). */
   const target = () => {
+    if (roundRef && !curRow) return roundRef;          // D25: while a later round is live, the footer acts on that round
     if (ownIsCurrent()) return ref();
     const all = [...(curRow.planning ? [curRow.planning] : []), ...(curRow.members || [])];
     const cur = all.find((mb) => mb.model === curRow.model.current) || null;
@@ -268,6 +303,45 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const stepper = last && last.stepper;
     return isGraphManifest(stepper) ? { ...ref(), nodeLabel: (nodeId) => nodeLabelOf(stepper, nodeId) } : ref();
   };
+
+  function openPlan(c) {
+    const file = last && last.shaping && last.shaping.approved && last.shaping.approved.file;
+    if (file) return call(ctx.openArtifact, artifactRef(), { relPath: file, kind: 'plan' });
+    // `shaping` lives only in a live snapshot: otherwise app.js finds the run's plan (its Artifacts tab is advanced-only).
+    const planRef = { ...ref(), pipelineId: c.planPipelineId };
+    if (typeof ctx.openPlan === 'function') return ctx.openPlan(planRef);
+    return call(ctx.openRunPanel, planRef, { tab: 'artifacts' });
+  }
+  // Built once per card: paintFeatureActions keeps the handlers of its last rebuild. `act` reads `fm` when called.
+  // No pause/stop: the model's footer owns Pause and Stop (D10).
+  const featureDeps = {
+    act: (action, body) => (fm && fm.controls && typeof controls.featureAct === 'function'
+      ? controls.featureAct(fm.controls.featureId, action, body || {}) : Promise.resolve({ ok: false })),
+    confirm: (o) => (typeof controls.confirm === 'function' ? controls.confirm(o) : Promise.resolve(true)),
+    openPlan,
+  };
+
+  /** D7: a Watch PR fix-run card (#773) and an open shaping plan name themselves; everything else is kindLabel. */
+  const kindOf = (row, s) => (id.fix ? 'PR fix run'
+    : !row && shapeFirstOn() && s && s.shaping && !s.shaping.approved ? 'Shaping' : kindLabel(row));
+
+  /** D6: runModel's input. The snapshot's own status and question win over the raw run's: they are what paintFoot /
+   *  paintQuestion draw from, so the model and the own-button map never disagree. The PR too: resolve() merges the REST
+   *  read's pr into the snapshot only, and a live run (makeRun) has none, so a finished run with an open PR would
+   *  otherwise read Ready. runModel reads `round` ({n|round, request, by}) or `branch.roundOf` as "this run is round N",
+   *  so a round's own card already words itself; a round-1 card whose later round is live is modelled on that round's
+   *  run, with its `round`. */
+  function modelInput(s, status, lr) {
+    const base = s.run
+      ? { ...s.run, status: s.status ? status : (s.run.status || ''), pendingQuestion: s.pendingQuestion ?? s.run.pendingQuestion ?? null,
+        pr: s.pr || s.run.pr || null, watch: s.watch || s.run.watch || null }      // D24: round / branch ride on s.run
+      : { status, pendingQuestion: s.pendingQuestion || null, pr: s.pr || null, watch: s.watch || null };
+    if (!lr) return base;
+    const rs = lr.m;
+    const run = rs ? { ...(rs.run || {}), status: String(rs.status || ''), pendingQuestion: rs.pendingQuestion ?? null }
+      : { status: lr.r.status === 'starting' ? 'starting' : 'running' };
+    return { ...run, pr: base.pr, watch: base.watch, round: { n: lr.r.round, request: lr.r.request || '', by: lr.r.by || null } };
+  }
 
   // A group card's Open follows its #feature/… or #group/… href; a single run's card keeps opening the run panel.
   open.addEventListener('click', (e) => { if (curRow) return; e.preventDefault(); call(ctx.openRunPanel, ref(), {}); });
@@ -297,13 +371,16 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     else call(controls.stop, ref(), () => call(refresh));
   });
   delegateQuestion(qBody, {
-    question: () => (painted && last && last.pendingQuestion) || null,
+    // D11: a pointer-only step (fm.step.snap null: the tab has no live snapshot of that member) still answers: its
+    // id/kind come from the server's feature.ask, the same pq paintQuestion painted.
+    question: () => (!painted ? null
+      : fm && fm.step && !fm.step.snap ? { id: fm.step.id, kind: fm.step.kind }
+      : (stepSnap(last) && stepSnap(last).pendingQuestion) || null),
     send: (payload) => {
       qErr.hidden = true;
       const attempt = { id: painted.id, kind: painted.kind, payload };
-      // ref(), the card's own run: a question is drawn only on the current member's own card (paintQuestion), so it is
-      // always the run that asks.
-      Promise.resolve(call(controls.answer, ref(), painted.id, payload))
+      // stepRef(): the run whose ask is the open step (a feature's asking member), else the card's own run.
+      Promise.resolve(call(controls.answer, stepRef(), painted.id, payload))
         .then((ok) => {
           if (dead) return;
           if (!ok) { qErr.hidden = false; return; }
@@ -421,8 +498,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   }
 
   function paintQuestion(s) {
-    const status = s ? String(s.status || '') : '';
-    if (!ownIsCurrent()) {
+    // D11: the Shaper open step wins over ownIsCurrent(): a feature card shows its asking member's step.
+    if (!(fm && fm.step) && !ownIsCurrent()) {
       // A group card that is not the current member's own card draws no question (its Answer opens the member's
       // page). Release the panel without a receipt: nobody answered it.
       call(controls.releaseQuestion, qBody);
@@ -430,16 +507,22 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       qBody.hidden = true; qHead.hidden = true; qErr.hidden = true; receipt.hidden = true; qSec.hidden = true;
       return;
     }
-    const pq = s && s.source === 'live' && !RESULT_STATUS.has(status) ? s.pendingQuestion : null;
+    const src = stepSnap(s);
+    const status = src ? String(src.status || '') : '';
+    // A feature card's open step may be a member this tab follows by pointer only (fm.step.snap null): chatPaintQuestion
+    // resolves it, and answers null when there is nothing to paint.
+    const pointer = !!(fm && fm.step && !fm.step.snap);
+    const pq = pointer ? { id: fm.step.id, kind: fm.step.kind }
+      : src && src.source === 'live' && !RESULT_STATUS.has(status) ? src.pendingQuestion : null;
     // Un-hide BEFORE the run page's renderer builds (paintRdQuestions' rule): a workflow body measures its graph host
     // the moment it attaches. The null path below hides both again.
     if (pq) { qBody.hidden = false; qSec.hidden = false; }
-    const q = pq ? call(controls.paintQuestion, ref(), qBody) : null;
+    const q = pq ? call(controls.paintQuestion, stepRef(), qBody) : null;
     if (q) {
       if (!painted || painted.id !== (q.id || null)) { qErr.hidden = true; sent = null; shownFor = null; }
-      painted = { id: q.id || null, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '' };
+      painted = { id: q.id || null, runId: stepRef().runId, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '', stepCard: !!q.stepCard };
       qHead.textContent = painted.heading;
-      qHead.hidden = !painted.heading;
+      qHead.hidden = !painted.heading || painted.stepCard;   // a step card's own head says it once (shaper-cards D16)
       qBody.hidden = false;
       receipt.hidden = true;
       qSec.hidden = false;
@@ -451,7 +534,12 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     qErr.hidden = true;
     if (painted) {
       const was = painted;
-      const mine = sent && sent.id === was.id ? sent : null;
+      // A step card posts through its own submit, never `sent`: the named note is what this tab sent (shaper-cards D5).
+      // Read once, then forgotten: a later ask with the same id (a resume, another cycle) must not reuse it.
+      const named = namedAnswer(was.runId, was.id);
+      forgetAnswer(was.runId, was.id);
+      const own = sent && sent.id === was.id ? sent : null;
+      const mine = named ? { ...(own || { id: was.id, kind: was.kind, payload: { answers: named.answers } }), named: named.text } : own;
       painted = null;
       sent = null;
       // A question that went away because the run is pausing or paused, was interrupted, stopped or failed was not
@@ -496,11 +584,28 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     rhead.append(glyph, text);
     if (r && r.filesChanged) rhead.appendChild(churnEl(r));
     resultSec.appendChild(rhead);
-    // Spec D7: a shaped run's checklist tally, from results.json via runCardResults.
+    // Spec D7 / s3: the shaped run's checklist score; pressing it unfolds the run page's Perspective checklists in place.
     const tally = r && r.checklist && r.checklist.total && shapeFirstOn() ? r.checklist : null;
     if (tally) {
-      resultSec.appendChild(h('div', `chat-rc-checklist${tally.unmet || tally.missing ? ' is-open' : ''}`,
-        checklistTallyText(tally)));
+      const row = h('div', `chat-rc-checklist${tally.unmet || tally.missing ? ' is-open' : ''}`);
+      const b = button('chat-rc-checklist-btn');
+      b.textContent = checklistScore(tally);
+      b.setAttribute('aria-expanded', 'false');
+      const groups = h('div', 'chat-rc-checklist-groups');
+      groups.hidden = true;
+      b.addEventListener('click', async () => {
+        if (!groups.hidden) { groups.hidden = true; b.setAttribute('aria-expanded', 'false'); return; }
+        if (!groups.firstChild) {
+          const reviews = await Promise.resolve(call(ctx.checklists, ref())).catch(() => null);
+          const cl = reviews ? renderChecklistGroups(doc, reviews) : null;
+          if (!cl) { call(ctx.openRunPanel, ref(), { tab: 'overview' }); return; }
+          groups.appendChild(cl);
+        }
+        groups.hidden = false;
+        b.setAttribute('aria-expanded', 'true');
+      });
+      row.append(b, groups);
+      resultSec.appendChild(row);
     }
     const top = r && Array.isArray(r.topFiles) ? r.topFiles : [];
     if (top.length) {
@@ -569,7 +674,54 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       }
       resultSec.appendChild(rfoot);
     }
+    resultSec.appendChild(changesSlot);
     resultSec.hidden = false;
+  }
+
+  /** Shaper s5 (D5): the Ask for changes field — a finished single-project run, or a feature that is ready to ship or
+   *  shipped and not halted. The server mints the card from the ref (a feature's id, else the run's pipeline id). */
+  function paintChanges(s, m, roundLive) {
+    const feature = fm && fm.phase === 'feature' ? fm : null;
+    // A feature reads the GROUP model's state; until groupOf knows the row, `m` is the planning run's model (done →
+    // ready), so the field waits for curRow.
+    const finished = feature ? !!curRow && ['ready', 'in-review', 'merged'].includes(m.state)
+      : RESULT_STATUS.has(String((s && s.status) || ''));
+    const show = !!s && !roundLive && finished && s.kind !== 'workspace-run' && shapeFirstOn() && typeof ctx.postChanges === 'function'
+      && (feature ? !(feature.controls && feature.controls.halted) : !!s.pipelineId);
+    changesSlot.hidden = !show;
+    if (!show) { changesSlot.replaceChildren(); changesView = null; return; }
+    if (changesView) return;                                   // keep the person's draft across repaints
+    const to = feature ? { featureId: feature.controls.featureId } : { pipelineId: s.pipelineId };
+    changesView = renderAskChanges(doc, { onSend: (text) => ctx.postChanges(to, text) });
+    changesSlot.replaceChildren(changesView.el);
+  }
+
+  /** D8: the footer's Ask for changes (and the watch line's) focuses Shaper's field. */
+  function askForChanges() {
+    if (!changesView || changesSlot.hidden) return;
+    if (typeof changesSlot.scrollIntoView === 'function') changesSlot.scrollIntoView({ block: 'nearest' });
+    changesView.focus();                                       // renderAskChanges' own focus(): the .ask-changes-input field
+  }
+
+  /** D9: the Watch-stopped words once — the model's status line owns them; Shaper's line only fills a gap (a feature
+   *  card, whose line is the group model's). `w` is already worded: roundsModel / featureCardModel give `{ text, prUrl }`. */
+  function paintWatch(m, w) {
+    const said = /Watch stopped/.test(m.line || '');
+    watchEl.hidden = !w || !w.text || said;
+    if (watchEl.hidden) { watchEl.replaceChildren(); delete watchEl.dataset.sig; return; }
+    const withPr = isWebUrl(w.prUrl) && !m.actions.includes('open-pr');
+    const withAsk = !m.actions.includes('ask-changes') && !!changesView;
+    const sig = JSON.stringify([w.text, w.prUrl || null, withPr, withAsk]);
+    if (watchEl.dataset.sig === sig) return;                 // the 1 s tick must not steal a link's focus
+    watchEl.dataset.sig = sig;
+    const extras = [];
+    if (withPr) extras.push(link('chat-rc-watch-pr', w.prUrl, 'Open PR'));
+    if (withAsk) {
+      const ask = button('btn btn-sm btn-quiet chat-rc-watch-ask', 'Ask for changes');
+      ask.addEventListener('click', askForChanges);
+      extras.push(ask);
+    }
+    watchEl.replaceChildren(h('span', 'chat-rc-watch-text', w.text), ...extras);
   }
 
   /** Labels and disabled rules of the own Pause / Stop; paintActions decides what shows (the model, D4). */
@@ -600,14 +752,15 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     pauseBtn.disabled = inFlight || !!pauseAsked || (!resume && status !== 'running');
   }
 
-  /** The footer's model actions (D4, D11). */
+  /** The footer's model actions (D4, D11); Shaper's feature extras beside them (D10); Ask for changes wired (D8). */
   function paintActions(m, s) {
     const st = s ? String(s.status || '') : '';
     // A Pause / Resume button stands for `pause` only while running, for `resume` only while parked; a stopped,
     // resumable run gets a made "Resume" (never the Pause-labelled button). A group card owns none of its own buttons:
-    // their handlers act on the card's run, the footer acts on the current member.
+    // their handlers act on the card's run, the footer acts on the current member. D25: with a live round the model's
+    // own made Pause/Stop act through controls.act(target()) on the round's run; pauseBtn/stopBtn would act on ref().
     // pauseResumeOwn reads the label paintFoot just set (dataset.action), so the button is never owned against it.
-    const own = curRow ? {} : { ...pauseResumeOwn(pauseBtn, st), stop: stopBtn };
+    const own = curRow || roundRef ? {} : { ...pauseResumeOwn(pauseBtn, st), stop: stopBtn };
     pauseBtn.hidden = true;    // syncActions shows the owned ones again; an unowned own button stays hidden
     stopBtn.hidden = true;
     // contains(), not isConnected: a card that is not in the document yet still has it. Never on a group card (its
@@ -615,10 +768,20 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // data-min-level="advanced", so below that the footer makes its own Ship it.
     if (!curRow && createPrBtn && resultSec.contains(createPrBtn) && levelAtLeast('advanced', doc)) own.ship = createPrBtn;
     else if (createPrBtn) delete createPrBtn.dataset.modelAction;
+    const changesWhy = changesView && !changesSlot.hidden ? ''
+      : !shapeFirstOn() ? 'Turn on Shaper to ask for changes' : 'Ask for changes from the chat that started this run';
     // A group row goes along, so app.js hands the action to groupAction (D6, D11).
-    syncActions(footActions, m, { own, disable: st === 'pausing' ? { resume: 'Pausing…' } : {}, onAction: (aid, b) => call(controls.act, target(), aid, b, m, curRow) });
+    syncActions(footActions, m, {
+      own,
+      disable: { ...(st === 'pausing' ? { resume: 'Pausing…' } : {}), ...(changesWhy ? { 'ask-changes': changesWhy } : {}) },
+      onAction: (aid, b) => (aid === 'ask-changes' ? askForChanges() : call(controls.act, target(), aid, b, m, curRow)),
+    });
+    const fc = fm && fm.phase === 'feature' ? fm.controls : null;
+    if (fc) paintFeatureActions(doc, fActions, fc, featureDeps, { omit: m.actions });
+    // Clear the sig too: else the next feature paint's sig matches and returns early, leaving an empty host.
+    else { fActions.replaceChildren(); fActions.hidden = true; delete fActions.dataset.sig; }
     // A footer with nothing visible stays hidden (a Ready run whose Ship it is the result's Create pull request).
-    foot.hidden = ![...footActions.children].some((b) => !b.hidden) && footErr.hidden;
+    foot.hidden = ![...footActions.children, ...fActions.children].some((b) => !b.hidden) && footErr.hidden;
   }
 
   function update(snap) {
@@ -631,24 +794,26 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     el.classList.toggle('is-question', !!(s && s.pendingQuestion));
     el.dataset.runStatus = status;
     const pid = (s && s.pipelineId) || id.pipelineId || '';
+    // Shaper's slots (feature model, rounds) only with Shape it first on (Ordinary stays ordinary).
+    const on = shapeFirstOn();
+    fm = s && s.shaper && on ? featureCardModel({ own: s, card: s.shaper.card, snapOf: (p) => (s.shaper.snaps && s.shaper.snaps[p]) || null }) : null;
+    const roundSnap = (p) => (s && s.roundSnaps && s.roundSnaps[p]) || null;
+    // s5 (D16): a plain run's rounds (the controller fills s.roundSnaps) fill the log; the live one feeds the model (D6).
+    const rm = on ? roundsModel(s) : { log: [], watch: null };
+    const lr = !fm && on && s ? liveRound(s, roundSnap) : null;
+    roundRef = lr ? { runId: (lr.m && lr.m.runId) || null, pipelineId: lr.r.pipelineId || null, ticketId: null,
+      title: (s && s.title) || '', status: String((lr.m && lr.m.status) || lr.r.status || '') } : null;
     curRow = typeof controls.groupOf === 'function' ? controls.groupOf(ref(), s) || null : null;
-    const memo = typeof controls.memoFor === 'function' ? controls.memoFor(pid || (s && s.runId) || '') : null;
+    const memo = typeof controls.memoFor === 'function' ? controls.memoFor((lr && lr.r.pipelineId) || pid || (s && s.runId) || '') : null;
     const opts = { memo, ...(typeof controls.modelOpts === 'function' ? controls.modelOpts() : {}) };   // tests pin now / timeZone
-    // The snapshot's own status and question win over the raw run's: they are what paintFoot / paintQuestion draw from,
-    // so the model and the own-button map never disagree. The PR too: resolve() merges the REST read's pr into the
-    // snapshot only, and a live run (makeRun) has none, so a finished run with an open PR would otherwise read Ready.
-    const raw = s && s.run
-      ? { ...s.run, status: s.status ? status : (s.run.status || ''), pendingQuestion: s.pendingQuestion ?? s.run.pendingQuestion ?? null,
-        pr: s.pr || s.run.pr || null, watch: s.watch || s.run.watch || null }      // D24: round / branch ride on s.run
-      : { status, pendingQuestion: (s && s.pendingQuestion) || null, pr: (s && s.pr) || null, watch: (s && s.watch) || null };
     // No snapshot yet (update(null) at build, before the REST read lands): an empty status reads `stopped` in the model,
     // with an Archive that works. Show Starting and no actions until the run is known.
-    const m = curRow ? curRow.model : runModel(s ? raw : { status: 'starting' }, opts);
+    const m = curRow ? curRow.model : runModel(s ? modelInput(s, status, lr) : { status: 'starting' }, opts);
     lastM = s || curRow ? m : { ...m, actions: [] };
     paintStatusDot(headDot, m);
     paintRunStatus(statusEl, m);
     title.textContent = curRow ? curRow.title : (s && s.title) || id.title || 'Run';
-    kind.textContent = id.fix ? 'PR fix run' : kindLabel(curRow);   // #773: a Watch PR fix-run card names itself
+    kind.textContent = kindOf(curRow, s);
     open.setAttribute('href', curRow ? (curRow.groupKind === 'feature' ? `#feature/${encodeURIComponent(curRow.groupId)}` : `#group/${encodeURIComponent(curRow.groupId)}`) : progressRoute(id, s));
     if (curRow) { membersEl.replaceChildren(renderMemberRows(doc, curRow)); membersEl.hidden = false; } else { membersEl.replaceChildren(); membersEl.hidden = true; }
     where.textContent = [projectLabel(id, s), pid ? `#${pid}` : ''].filter(Boolean).join(' · ');
@@ -658,7 +823,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     timeEl.textContent = fmtDur(s ? s.elapsedMs : 0);
     costEl.textContent = s && s.costUsd == null ? 'cost unknown' : fmtUsd(s ? s.costUsd : 0);
     const sh = s && s.shaping;
-    if (sh && sh.approved && shapeFirstOn()) {
+    if (!fm && sh && sh.approved && on) {           // D15: a feature card's step log says it
       const name = String(sh.approved.file || '').split(/[\\/]/).pop();
       shapedEl.replaceChildren(h('span', 'chat-rc-shaped-stages', 'Clarify ✓ · Plan ✓ · Refine ✓ while planning'),
         h('span', 'chat-rc-shaped-plan', `Plan: ${name}`));
@@ -670,14 +835,15 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       }
       shapedEl.hidden = false;
     } else shapedEl.hidden = true;
-    const fid = sh && sh.feature && sh.feature.id;
-    // D11: a group card's member rows already say the count and the slice states (Known bug 9).
-    if (fid && !curRow && shapeFirstOn() && typeof ctx.mountFeature === 'function') { featureEl.hidden = false; ctx.mountFeature(featureEl, fid); }
-    else featureEl.hidden = true;
+    paintFeatureLog(doc, logEl, fm ? fm.log : rm.log);
+    notesEl.textContent = (fm && fm.notesLine) || '';
+    notesEl.hidden = !(fm && fm.notesLine);
     paintAgents(s);
     paintGraph(s, chip);
-    paintQuestion(s);       // draws only when ownIsCurrent()
+    paintQuestion(s);       // draws only when ownIsCurrent(), or the feature's open step
     paintResult(s);         // sets createPrBtn
+    paintChanges(s, m, !!lr);
+    paintWatch(m, (fm && fm.watch) || rm.watch);
     paintFoot(s);           // labels and disabled rules only
     paintActions(lastM, s); // last: the model decides what shows
   }
@@ -762,7 +928,7 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
 
   /** The snapshot a card paints: the live lineage from the store (the pipeline id is the stable key; byPipeline picks
    *  the live lineage when a superseded twin shares it), with the REST facts of a finished run merged in; else REST. */
-  function resolve(entry) {
+  function resolveRun(entry) {
     refreshIdent(entry);
     const ident = entry.ident;
     const store = storeOf(entry);
@@ -781,12 +947,53 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
         // it read THIS ending. A read taken before a resume (`interrupted` is terminal too) must never paint over the
         // new lineage's end: it would show Interrupted + Resume until the `done` re-read, and for good after a socket gap.
         if (snap.terminal && rest.terminal && rest.status === snap.status) return { ...rest, runId: snap.runId, branch: snap.branch || rest.branch };
-        return { ...snap, results: rest.results, artifacts: rest.artifacts, moreArtifacts: rest.moreArtifacts, pr: rest.pr, branch: snap.branch || rest.branch };
+        return { ...snap, results: rest.results, artifacts: rest.artifacts, moreArtifacts: rest.moreArtifacts, pr: rest.pr, branch: snap.branch || rest.branch,
+          rounds: rest.rounds, watch: rest.watch };   // Shaper s5: the run's rounds and a stopped watch are REST facts
       }
       return snap;
     }
     return entry.rest;
   }
+
+  /** Shaper s2 (D12): a shaped run's card is the feature card. ctx.shaperCard(pid, onChange) answers app.js's cached
+   *  GET /api/shape/pipelines/:pid/card (null while it loads, and for a plain run: 404); members' live snapshots come
+   *  from the run store. state.shaping is memory-only (rowToState never reads it), so a REST or terminal snapshot
+   *  asks too: a finished planning run, after a reload or a restart, is still its feature's card. */
+  function withShaper(entry, snap) {
+    const fn = entry.ctx && entry.ctx.shaperCard;
+    const pid = (snap && snap.pipelineId) || entry.ident.pipelineId;
+    if (!snap || !pid || typeof fn !== 'function' || !shapeFirstOn()) return snap;
+    if (!snap.shaping && snap.source === 'live' && !snap.terminal) return snap;   // live and running: shaping would be on it
+    const card = fn(pid, entry.onShaper);
+    if (!card) return snap;
+    const store = storeOf(entry);
+    const snaps = {};
+    // s3 (D16): while re-planning, the Re-plan the rest run's snapshot too (its Split ask is the card's open step).
+    const rpPid = card.feature && card.feature.status === 'replanning' && card.feature.replan ? card.feature.replan.pipelineId : null;
+    // s5 (D16): each slice's rounds too — a live round is what the feature card is doing now.
+    const slices = (card.feature && card.feature.slices) || [];
+    const roundPids = slices.flatMap((s) => (s.rounds || []).map((r) => r && r.pipelineId));
+    for (const p of [...slices.map((s) => s.pipelineId), ...roundPids, rpPid]) {
+      if (!p || p === pid) continue;
+      const m = store && typeof store.byPipeline === 'function' ? store.byPipeline(p) : null;
+      if (m) snaps[p] = m;
+    }
+    return { ...snap, shaper: { card, snaps } };
+  }
+  /** Shaper s5 (D16): a plain run's rounds paint from their own live snapshots (the card never reads a run store). */
+  function withRounds(entry, snap) {
+    const list = snap && Array.isArray(snap.rounds) ? snap.rounds : [];
+    if (!list.length) return snap;
+    const store = storeOf(entry);
+    const roundSnaps = {};
+    for (const r of list) {
+      const m = r && r.pipelineId && store && typeof store.byPipeline === 'function' ? store.byPipeline(r.pipelineId) : null;
+      if (m) roundSnaps[r.pipelineId] = m;
+    }
+    return { ...snap, roundSnaps };
+  }
+  const resolve = (entry) => withShaper(entry, withRounds(entry, resolveRun(entry)));
+
 
   async function hydrate(entry) {
     const pid = entry.ident.pipelineId;
@@ -879,6 +1086,7 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
   function build(block, ctx = {}) {
     const ident = progressIdent(block);
     const entry = { ident, ctx, card: null, rest: null, hydrating: false, nextHydrateAt: 0, tried: new Set() };
+    entry.onShaper = () => { if (!dead && entries.get(block.id) === entry) repaint(entry); };
     // A card's own action (Stop of a saved paused run, Create PR) re-reads EVERY card of that run: a started proposal and
     // a track_run card can show the same run, and a run this tab holds no model of sends them no frame.
     entry.card = createChatRunCard({ doc: ctx.doc, win: ctx.win, snapshot: null, ctx, controls, ident,
@@ -915,9 +1123,23 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
     };
   }
 
+  /** Shaper s5: a round of pipeline `pid` changed (app.js `round-changed`, `pr-watch-changed`): re-read its cards. A
+   *  finished card reads REST once per terminal status, so without this a new round would never show on it. */
+  function refreshPipeline(pid) {
+    if (!pid || dead) return;
+    for (const e of entries.values()) {
+      if (e.ident.pipelineId !== pid) continue;
+      for (const k of [...e.tried]) if (k.startsWith(`${pid}:`)) e.tried.delete(k);
+      e.nextHydrateAt = 0;
+      if (e.hydrating) e.again = true;
+      hydrate(e);
+    }
+  }
+
   return {
     build,
     tick,
+    refreshPipeline,
     get size() { return entries.size; },
     destroy() { dead = true; idle(); for (const e of entries.values()) e.card.destroy(); entries.clear(); },
   };

@@ -8490,7 +8490,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 /* ===== Chat P2: Action cards ===== */
 /* Receipts (act, then undo), the stop warning and the pull-request offer (ui/public/chat/action-cards.mjs), on the Ask
    card chrome. Emphasis is a background wash, never an edge line. Text colours keep 4.5:1 in both themes. */
-.ask-rcard .ask-mcard-title,.ask-prcard .ask-mcard-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.ask-rcard .ask-mcard-title,.ask-prcard .ask-mcard-title,.ask-shipcard .ask-mcard-title,.ask-changescard .ask-mcard-title,.ask-routecard .ask-mcard-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .ask-rcard :is(.ask-mcard-before,.ask-mcard-target){color:var(--ink-2);}
 .ask-rcard-change{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-family:var(--mono);font-size:12px;min-width:0;}
 .ask-rcard-change .ask-mcard-before{overflow-wrap:anywhere;}
@@ -8511,17 +8511,60 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .ask-prcard-links{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;}
 .ask-prcard-link{color:var(--blue-ink-strong);}
 .ask-prcard-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
-/* Watch PR in the chat: the pull-request card's read-only watch line, and a PR fix-run card's trigger and outcome line. */
-.ask-prcard-watch{font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}
-.ask-prcard-watch[hidden]{display:none;}
-.ask-prcard-watch.is-run{color:var(--amber-ink);}
-.ask-prcard-watch.is-bad{color:var(--red-ink);}
+/* Shaper s4: the Ship card (ui/public/shape/ship-card.mjs), in the chat and on the group page / Plans tab, and its
+   release row (ui/public/shape/release-row.mjs), also in the Ship it dialog. Tight radii, no pills. */
+.ask-shipcard-stats{font-size:12.5px;color:var(--ink);font-variant-numeric:tabular-nums;}
+.ask-shipcard-why,.ask-shipcard-closed{font-size:12px;color:var(--ink-2);}
+.ask-shipcard-done{font-weight:600;color:var(--green-ink);}
+.ask-shipcard-pr,.ask-shipcard-rel a{color:var(--blue-ink-strong);font-weight:400;}
+.ask-shipcard-rel{font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}
+.ask-shipcard-rel.is-failed{color:var(--red-ink);}
+.ask-shipcard-wait{font-size:12.5px;color:var(--ink-2);}
+.release-row{display:flex;flex-direction:column;gap:2px;font-size:12.5px;min-width:0;}
+.release-row-add,.release-row-edit{padding:0;border:0;background:none;color:var(--blue-ink-strong);font:inherit;cursor:pointer;}
+.release-row-add:focus-visible,.release-row-edit:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
+.release-row-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 4px;color:var(--ink);}
+.release-row-input{width:9em;padding:2px 6px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font-family:var(--mono);font-size:12px;}
+.release-row-source{font-size:11.5px;color:var(--ink-2);}
+.release-row-err{font-size:11.5px;color:var(--red-ink);}
+.release-row-err:empty{display:none;}
+/* Watch PR in the chat: a PR fix-run card's trigger and outcome line (the pull-request card's watch is its link's tooltip). */
 .chat-rc-fix{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;margin-top:6px;font-size:12px;color:var(--ink-2);min-width:0;}
 .chat-rc-fix[hidden]{display:none;}
 .chat-rc-fix-pr{color:var(--blue-ink-strong);}
 .chat-rc-fix-pr:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
 .chat-rc-fix-out.is-ok{color:var(--green-ink);}
 .chat-rc-fix-out.is-bad{color:var(--red-ink);}
+
+/* Shaper s5: Ask for changes (ui/public/chat/ask-changes.mjs), the Changes and Route cards (ui/public/shape/changes-card.mjs,
+   route-card.mjs), and the run card's ideas and stopped-watch lines. Existing tokens, tight radii, no pills. */
+.ask-changes{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin-top:8px;min-width:0;}
+.ask-changes[hidden]{display:none;}
+.ask-changes-input{flex:1;min-width:0;padding:4px 8px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font:inherit;font-size:12.5px;}
+.ask-changes-input:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.ask-changes-err{flex-basis:100%;font-size:11.5px;color:var(--red-ink);}
+.ask-changes-err:empty{display:none;}
+blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding:2px 0 2px 8px;border-left:2px solid var(--line);color:var(--ink);font-size:12.5px;white-space:pre-wrap;overflow-wrap:anywhere;}
+.ask-changescard-where{font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}
+.ask-changescard-done,.ask-routecard-done{font-weight:600;color:var(--green-ink);}
+.ask-routecard-guess{font-size:12px;color:var(--ink-2);}
+.ask-routecard-options{display:flex;flex-direction:column;gap:4px;margin-top:4px;}
+.ask-routecard-option{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12.5px;color:var(--ink);cursor:pointer;}
+.ask-routecard-sub{font-size:11.5px;color:var(--ink-2);}
+.ask-routecard-where{padding:1px 4px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font:inherit;font-size:12px;}
+.ask-routecard-open{padding:0;border:0;background:none;color:var(--blue-ink-strong);font:inherit;cursor:pointer;}
+.ask-routecard-open:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
+.chat-rc-notes{margin-top:4px;font-size:12px;color:var(--ink-2);}
+.chat-rc-notes[hidden]{display:none;}
+.chat-rc-watch{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin-top:6px;font-size:12px;color:var(--red-ink);min-width:0;}
+.chat-rc-watch[hidden]{display:none;}
+.chat-rc-watch-pr{color:var(--blue-ink-strong);}
+.chat-rc-watch-ask{padding:0;border:0;background:none;color:var(--blue-ink-strong);font:inherit;cursor:pointer;}
+.chat-rc-watch-pr:focus-visible,.chat-rc-watch-ask:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
+.chat-rc-changes[hidden]{display:none;}
+.shape-plan-notes{padding:8px 10px;border-radius:var(--r-ctrl);border:1px solid var(--line);}
+.shape-plan-notes-head{font-weight:600;color:var(--ink);}
+.shape-plan-notes-list{margin:4px 0 0;padding-left:18px;overflow-wrap:anywhere;}
 
 /* ===== Chat P3: run card ===== */
 /* The chat run card (ui/public/chat/run-card.mjs). It keeps the Ask progress card's look (.ask-rc-* above) and adds
@@ -8566,6 +8609,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-rc-qbody[hidden]{display:none;}
 .chat-rc-q .qpanel{margin-top:0;padding:16px;}
 .chat-rc-q .qpanel-head{display:none;}
+.shape-feature-ask .qpanel:has(.step-head) .qpanel-head{display:none;}   /* the feature page: a step card's head is its one title */
 /* A ~390px card: one column, as the run side panel's (.crp .rd-questions below) — no head gap above the body, the
    question over its answers, the decision over its issues, a severity chip over its text, and answer buttons that wrap
    as whole buttons onto the next row ("Accept & run", "Cancel run"); a label wider than the whole row ("Don't approve
@@ -8636,6 +8680,8 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-rc-create-pr:focus-visible,.chat-rc-view-pr:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .chat-rc-foot{display:flex;align-items:center;gap:8px;margin-top:14px;}
 .chat-rc-foot[hidden]{display:none;}
+.chat-rc-factions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.chat-rc-factions[hidden]{display:none;}
 /* A hovered Stop keeps the panel under its red ink (4.81:1; on --hover it is 4.03:1) — the run page's red .rd-stop:hover border. */
 .chat-rc-stop[hidden]{display:none;}
 .chat-rc-err{font-size:12px;color:var(--red-ink);}
@@ -9264,6 +9310,20 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-rc-shaped:empty{display:none;}
 .chat-rc-shaped-stages{color:var(--green-ink);font-weight:500;}
 .chat-rc-shaped-plan,.chat-rc-shaped-saved{font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere;}
+/* Shaper s2: the feature card's status line, group bar, step log and member rows — divided rows, no boxes */
+.chat-rc-fstatus{margin-top:2px;}
+.chat-rc-dot-ic{width:16px;height:16px;margin-top:0;}
+.chat-rc-chain{margin-top:8px;}
+.chat-rc-log,.chat-rc-members{list-style:none;margin:8px 0 0;padding:0;border-top:1px solid var(--line);}
+.chat-rc-log-row,.chat-rc-member{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--line);font-size:12px;color:var(--ink-2);}
+.chat-rc-log-check{width:16px;height:16px;}
+.chat-rc-log-run{color:var(--ink-3);}
+.chat-rc-log-run::after{content:" \00B7";}
+.chat-rc-log-show{margin-left:auto;background:none;border:0;padding:0 2px;color:var(--ink-2);font:inherit;cursor:pointer;text-decoration:underline;}
+.chat-rc-log-detail{flex-basis:100%;list-style:none;margin:2px 0 0 22px;padding:0;color:var(--ink-3);}
+.chat-rc-member-open{display:flex;width:100%;gap:4px;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;}
+.chat-rc-member-open:disabled{cursor:default;opacity:.7;}
+.chat-rc-member-open:focus-visible,.chat-rc-log-show:focus-visible{outline:2px solid currentColor;outline-offset:2px;}
 /* Same word as Settings › Experimental; never wraps (the ellipsis is a safety net only). */
 .chat-home-act-badge{max-width:100%;box-sizing:border-box;padding:1px 7px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 /* Poppins SemiBold "Experimental" is ~81px at 10px: below a 960px home the 4- and 9-column tiles are 64–93px, so only
@@ -9291,6 +9351,11 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 @media (prefers-reduced-motion:reduce){.shape-cl-toggle .chev{transition:none;}}
 .chat-rc-checklist{font-size:12px;color:var(--green-ink);margin:4px 0;}
 .chat-rc-checklist.is-open{color:var(--red-ink);}
+/* s3: the score is a text button; it unfolds the run page's Perspective checklists in place. */
+.chat-rc-checklist-btn{background:none;border:0;padding:0;color:inherit;font:inherit;cursor:pointer;text-decoration:underline;}
+.chat-rc-checklist-btn:focus-visible{outline:2px solid currentColor;outline-offset:2px;}
+.chat-rc-checklist-groups{margin-top:6px;color:var(--ink);}
+.chat-rc-checklist-groups[hidden]{display:none;}
 .outline-why{margin:0;color:var(--ink-2);}
 .outline-why[hidden]{display:none;}
 .outline-slices{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none;counter-reset:outline;}
@@ -9312,61 +9377,26 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .outline-under{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;font-size:12px;}
 .outline-under .outline-approve-each{font-size:12px;}
 .outline-under .outline-edit{font-size:12px;}
-.chat-rc-feature{margin:8px 0;}
-.chat-rc-feature[hidden]{display:none;}
+/* Shaper step cards (shaper-cards spec §2.2): the metrics card head, inside a question panel. */
+.qpanel .step-head{height:auto;min-height:24px;flex-wrap:wrap;margin-bottom:8px;}
+.qpanel .step-head .ask-mcard-title{white-space:normal;min-width:0;flex:1 1 auto;overflow-wrap:anywhere;}
+.outline-row-more{margin-left:auto;}
 .shape-feature{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;}
-.shape-feature-title{font-weight:600;overflow-wrap:anywhere;}
-.shape-feature-head{color:var(--ink-2);}
-.shape-feature.is-halted .shape-feature-head{color:var(--amber-ink);}
-/* D33: the page's "you are here" line. :not(.is-halted) leaves a halted page to the existing amber rule above,
-   which this more specific rule would otherwise beat. .is-needs below has the same specificity as the ink rule
-   and comes later, so amber wins there. */
-.shape-feature.is-page:not(.is-halted) .shape-feature-head{color:var(--ink);}
-.shape-feature.is-page .shape-feature-head{font-weight:600;}
-.shape-feature.is-page .shape-feature-head.is-needs{color:var(--amber-ink);}
-.shape-feature-more{margin-left:auto;}
+/* s3: the feature's head-less view (Plans tab, group page Overview): the run model owns the head and status. */
 .shape-feature-replanned{color:var(--ink-3);font-size:12px;}
-.shape-feature-bar{height:6px;border-radius:var(--r-sm);background:var(--line);overflow:hidden;}
-.shape-feature-fill{display:block;height:100%;background:var(--amber);}
-.shape-feature-slices{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;}
-.shape-feature-slice{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:6px 8px;border:1px solid var(--line);border-radius:var(--r-ctrl);}
-.shape-feature-slice-title{flex:1 1 140px;min-width:0;overflow-wrap:anywhere;}
-.shape-feature-slice-state{padding:1px 8px;border-radius:var(--r-xs);background:var(--line);color:var(--ink-3);font-size:10.5px;font-weight:600;}
-.shape-feature-slice.is-done .shape-feature-slice-state{background:var(--green-bg);color:var(--green-ink);}
-.shape-feature-slice.is-stopped .shape-feature-slice-state,.shape-feature-slice.is-error .shape-feature-slice-state,.shape-feature-slice.is-failed .shape-feature-slice-state{background:var(--red-bg);color:var(--red-ink);}
-.shape-feature-slice.is-approval .shape-feature-slice-state,.shape-feature-slice.is-questions .shape-feature-slice-state,.shape-feature-slice.is-paused .shape-feature-slice-state{background:var(--amber-bg);color:var(--amber-ink);}
-.shape-feature-slice.is-missed .shape-feature-slice-state,.shape-feature-slice.is-canceled .shape-feature-slice-state{color:var(--ink-3);}
-.shape-feature-slice.is-missed .shape-feature-slice-title,.shape-feature-slice.is-canceled .shape-feature-slice-title{color:var(--ink-3);}
-.shape-feature-pr{color:var(--ink-2);font-size:12px;}
+.shape-feature-log{margin-top:0;}
 .shape-feature-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
-.shape-feature-approve-each{display:flex;align-items:center;gap:6px;color:var(--ink-2);cursor:pointer;}
-.shape-feature-err{padding:6px 8px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);overflow-wrap:anywhere;}
+.shape-feature-actions[hidden]{display:none;}
+.shape-feature-err{flex-basis:100%;padding:6px 8px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);overflow-wrap:anywhere;}
 .shape-feature-err[hidden]{display:none;}
-/* D16: the feature page (#feature/ID), full width; one bar part per slice, tinted by its state. */
+/* D16: the group page (#feature/ID), full width. */
 .feature-page{padding:16px 20px;}
 .feature-page-gone,.feature-page-loading{color:var(--ink-3);}
 /* §5a.2: the group page could not load (server unreachable): the error and a Try again on one line. */
 .feature-page-error{color:var(--red-ink);}
 .feature-page-error .btn{margin-left:8px;}
-.shape-feature.is-page{width:100%;box-sizing:border-box;font-size:14px;}
-.shape-feature-segs{display:flex;gap:3px;height:8px;}
-.shape-feature-seg{flex:1 1 0;border-radius:var(--r-sm);background:var(--line);}
-.shape-feature-seg[data-state="done"]{background:var(--green);}
-.shape-feature-seg[data-state="running"],.shape-feature-seg[data-state="shaping"],.shape-feature-seg[data-state="starting"]{background:var(--blue);}
-.shape-feature-seg[data-state="approval"],.shape-feature-seg[data-state="questions"],.shape-feature-seg[data-state="paused"]{background:var(--amber);}
-.shape-feature-seg[data-state="stopped"],.shape-feature-seg[data-state="error"],.shape-feature-seg[data-state="failed"]{background:var(--red);}
-.shape-feature-merge{padding:1px 8px;border-radius:var(--r-sm);background:var(--blue-bg);color:var(--blue-ink);font-size:10.5px;font-weight:600;}
-.shape-feature-current{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-ctrl);}
-.shape-feature-current-title{font-weight:600;}
+.feature-page .shape-feature{width:100%;box-sizing:border-box;font-size:14px;}
 .shape-feature-order{color:var(--ink-3);font-size:12px;}
-.shape-feature-ship{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
-.shape-feature-ship-head{font-weight:600;flex-basis:100%;}
-.shape-feature-ship-why{flex-basis:100%;color:var(--ink-2);font-size:12px;}
-.shape-feature-shipped{color:var(--green-ink);}
-/* P13: the Chat run card's summary of the feature. */
-.shape-feature-sum{display:flex;flex-direction:column;gap:6px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;}
-.shape-feature-sum.is-needs .shape-feature-sum-line,.shape-feature-sum.is-halted .shape-feature-sum-line{color:var(--amber-ink);}
-.shape-feature-sum-open{align-self:flex-start;}
 /* D19: why a later slice's plan stopped. */
 .shape-plan-outline-change{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--amber-wash);border:1px solid var(--amber-line);}
 .shape-plan-outline-change-head{font-weight:600;color:var(--amber-ink);}

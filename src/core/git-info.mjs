@@ -871,6 +871,29 @@ export async function prLifecycleState({ projectDir, prUrl }) {
   return ghPrLifecycleState({ projectDir, prUrl });
 }
 
+// Shaper s4: ownerRepoOfPrUrl is module-private, which is why createDraftRelease lives here.
+/** Shaper s4: the newest tag reachable from HEAD, or null (no tags, not a repo, any failure). Never throws. */
+export async function latestTag(projectDir) {
+  if (!projectDir) return null;
+  const r = await _run('git', ['describe', '--tags', '--abbrev=0'], { cwd: projectDir });
+  const t = r.ok ? String(r.stdout || '').trim() : '';
+  return t || null;
+}
+
+/** Shaper s4: a DRAFT GitHub release (never published) on the merged PR's repo. Azure has none. */
+export async function createDraftRelease({ projectDir = null, prUrl, tag, target = null } = {}) {
+  const repo = ownerRepoOfPrUrl(prUrl);
+  if (!repo) return { ok: false, error: 'a draft release needs a GitHub pull request' };
+  const cred = await githubEnv('write', { repo });
+  if (cred.error) return { ok: false, error: cred.error };
+  const args = ['release', 'create', String(tag), '--draft', '--repo', repo, '--title', String(tag), '--generate-notes',
+    ...(target ? ['--target', String(target)] : [])];
+  const r = await _run('gh', args, { cwd: projectDir || undefined, env: cred.env });
+  if (!r.ok) return { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+  const url = String(r.stdout || '').trim().split(/\r?\n/).pop() || null;
+  return { ok: true, url };
+}
+
 /** The remote whose tracking ref holds `branch` ({ remote }), preferring origin; null = not pushed. No network. */
 export async function branchPushedTo(projectDir, branch) {
   const r = await _run('git', ['for-each-ref', '--format=%(refname)', `refs/remotes/*/${branch}`], { cwd: projectDir });

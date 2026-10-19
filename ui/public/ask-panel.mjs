@@ -5350,6 +5350,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     return out;
   }
+  /** Shaper s5: ctx.postChanges — "Ask for changes" from a finished card (`ref` = {pipelineId} or {featureId}). The
+   *  server mints the changes card; it arrives through the thread's ask-message frame. Throws {status, body} when refused. */
+  async function postChangesJson(ref, text) {
+    const id = st.threadId;
+    const fail = (status, body, msg) => { const e = new Error(msg); e.status = status; e.body = body; return e; };
+    if (!id) throw fail(0, null, 'no chat to post to');
+    let res = null;
+    try {
+      res = await fetch(`/api/ask/threads/${id}/changes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(ref || {}), text }) });
+    } catch { throw fail(0, null, 'network error'); }
+    let out = null;
+    try { out = await res.json(); } catch { out = null; }
+    if (!res.ok) throw fail(res.status, out, (out && out.error) || `request failed (${res.status})`);
+    return out;
+  }
   /** The open chat's run link for a card / pipeline / run — pipeline id first, then the card id, then the run id
    *  (the order refreshProgressIdent always used; it calls this now) — as { runId, pipelineId }, or null. */
   function runLinkFor({ cardId = null, pipelineId = null, runId = null } = {}) {
@@ -5363,11 +5378,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     doc, win, fetch,
     threadId: () => st.threadId,
     postCard: (block, body) => postCardJson(block, body),
+    postChanges: (ref, text) => postChangesJson(ref, text),                               // Shaper s5
     confirm,
     runStore,
     openRunPanel: (ref, opts) => chatDep('openRunPanel', ref, opts),
-    mountFeature: (host, id) => chatDep('mountFeature', host, id),
+    shaperCard: (pipelineId, onChange) => chatDep('shaperCard', pipelineId, onChange),   // Shaper s2 (D12)
     openArtifact: (ref, artifact) => chatDep('openArtifact', ref, artifact),
+    checklists: (ref) => chatDep('checklists', ref),                                     // Shaper s3 (D18)
+    openPlan: (ref) => chatDep('openPlan', ref),                                         // Shaper s3 (D7)
     openShipIt: (ref, link) => chatDep('openShipIt', ref, link),
     runLinkFor: (ref) => runLinkFor(ref || {}),
     appendToComposer: (text) => appendToComposer(text),

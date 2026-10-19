@@ -171,11 +171,11 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
 | Recovery prompt, cycle gate, cost-pause banner, worktree notice (retained work or a live checkout; only its Actions tab › link is Advanced), merge-back banner (a run on its source branch that could not be fast-forwarded) | all |
-| Plan approval (Shaper): one decision card — summary, folded shape check, Approve and build / Ask for changes / Full plan / ⋯ (Save to plans/); with the gate off: Run this plan / Send changes / Stop | all (rule 1) |
+| Plan approval (Shaper): one step card — head (title + Plan chip), summary, folded shape check, Ask for changes / Full plan / Approve and build / ⋯ (Fix all, Save to plans/, Stop); the same card with the gate off (Full plan opens the artifact viewer) | all (rule 1) |
 | Plan approval extras: perspectives "edit" (chips + Update plan), Fix all, Save to plans/ | S |
 | Plan approval: Open in New run | A |
-| Slice outline approval (Plan in slices): the slices, the outline check, Plan slice 1 / Don't slice / Send changes / Stop | all (rule 1) |
-| Slice outline extras: Merge with next, Remove, Fix, "Approve each slice's plan" | S |
+| Split approval (Plan in runs): one step card — head (title + Runs chip), the runs, the outline check, Ask for changes / Approve N runs / ⋯ (Fix all, Don't split, Stop) | all (rule 1) |
+| Split extras: per-run ⋯ (Merge with next, Remove), Undo edits, "Ask me before each run" | S |
 | Run page Overview: Perspective checklists (Shaper, gated): the latest review cycle as one summary line, unmet items open with their evidence, met items behind "Show N met items", earlier cycles behind "Earlier cycles" | S |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
 | Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
@@ -246,15 +246,16 @@ resets its run allowance. Worca replies to review threads without resolving them
 With the watch off, or waiting for a person, Resolve on a conflicted PR merges the
 base branch in once.
 
-A pull request opened from an Ask Worca card shows the same watch on that card, as one read-only line per pull
-request (Watching, Fixing, Resolving conflicts, Merging `dev` in, Pushing the fix, or Stopped with the reason). The
-line is hidden while the pull request is not watched. Every fix run on it, whether Watch PR started it or Resolve
+A pull request opened from an Ask Worca card shows the same watch on that card, as its link's tooltip
+(`PR #781 · watched`, `PR #781 · watch stopped`, or just `PR #781` while it is not watched). With Shaper on, a fix
+run is a round of the run whose PR it fixes: it shows on that run's card, not as a card of its own (see
+[Iterate in the chat](shape-it-first.md#iterate-in-the-chat-s5)). With Shaper off, every fix run on it, whether Watch PR started it or Resolve
 did, appears in that chat by itself as a live run card. The card says what started the run (merge conflicts,
 failing checks, review comments, changes requested) and links to the pull request. It ends with the outcome: the
 pushed fix, why nothing was pushed, or that the watch gave up after three fix runs. The card is saved with the
 chat, so it is there when the chat is opened later. The Chat row's dot lights when it lands in a chat that is not
 on screen. Nothing else is posted: switching the watch, a stop that needs a person, and a clean base merge show
-only on the line.
+only in the tooltip.
 
 ### Workflows
 
@@ -335,12 +336,16 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: Chat home tile "Shaper" (gated; help line, Experimental badge) | S |
 | Ask: run card, perspective chips and the Shaper nudge (open decisions, Run as is / Shaper with estimates) | S |
 | Ask: Shaper proposal card — title + label, clamped brief, Project, Base branch, Perspectives, What happens, Advanced (collapsed; its fields keep their own levels), Start planning / Not now / Open in New run | S |
-| Ask: the run card's question, "Answer and draft" / "Skip, draft with defaults" (shaping runs) | all (rule 1) |
+| Ask: the run card's question, "Use defaults" / "Answer" (shaping runs) | all (rule 1) |
 | Ask: live run card, "Clarify ✓ · Plan ✓ · Refine ✓ while planning", plan file, saved path + Open | S |
 | Ask: live run card, the feature strip of a sliced plan: progress, each slice's state and PR, Review plan / Answer / Open / Resume slice / Re-plan the rest / Cancel the rest / Open the re-plan, "Approve each slice's plan" | S |
 | Ask: run card result, the checklist tally ("Checklist: 3 met · 1 unmet · 1 n/a") on a finished shaped run | S |
 | Ask: the run card's agent model label, its artifact chips and "All artifacts", Create pull request / View pull request | A — as on the run page |
-| Ask: the pull-request card's Watch PR line (read-only; the switch stays on the run page) | all |
+| Ask: the pull-request card's Watch PR state, as its PR link tooltip (read-only; the switch stays on the run page) | all |
+| Ask: the run card's stopped-watch line (`Watch stopped · …`, Open PR, Ask for changes) | all (rule 1) |
+| Ask: the Ask for changes field on finished run, feature, Ship and pull-request cards | all (rule 1) |
+| Ask: the Changes card (`Changes to …`, Start round 2 / Add to Run 3's plan / Add Run 4 / Start Run 4, Not now) | all (rule 1) |
+| Ask: the Route card (`Where does this go?`, Add to … / Own run now / Save for later, Not now) | all (rule 1) |
 | Ask: a PR fix-run card — what started it, the pull request, the outcome | all |
 | Ask: the run card's agent "cycle N" label | E — a loop badge |
 | Ask: a proposal's own schedule (the "Schedule" action and its time), schedule-change cards | S — the answer the user asked for |

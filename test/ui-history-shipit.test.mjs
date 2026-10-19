@@ -1474,3 +1474,42 @@ test('the Ship it note waits for its own run: an answer that lands after the dia
   await settle(ctx.window, 4);
   assert.equal(modal.querySelector('.shipit-slice-note').hidden, true);
 });
+
+// ---------------------------------------------------------------------------
+// Shaper s4: the release row (the same component as the Ship card's)
+// ---------------------------------------------------------------------------
+
+const RELEASE_REMOTES = { ...REMOTES, release: { version: 'v1.12.0', from: 'tag', lastTag: 'v1.11.0', packageVersion: null } };
+
+test('the release row: collapsed it sends nothing; expanded with the remotes hint OK posts release.version', async () => {
+  const ctx = await bootShip({ remotes: RELEASE_REMOTES, arms: prArm(PR_OK) });
+  const modal = await openModal(ctx);
+  const row = modal.querySelector('.shipit-release [data-release-row]');
+  assert.ok(row, 'the dialog carries the release row');
+  assert.equal(row.querySelector('.release-row-add').textContent, '+ Add a release');
+  click(ctx.window, row.querySelector('.release-row-add'));
+  assert.equal(row.querySelector('.release-row-text').textContent + row.querySelector('.release-row-edit').textContent,
+    'Release v1.12.0 · draft after merge · Edit');
+  assert.equal(row.querySelector('.release-row-source').textContent, 'Last tag v1.11.0 + minor');
+  click(ctx.window, modal.querySelector('.shipit-ok'));
+  await settle(ctx.window, 6);
+  assert.deepEqual(JSON.parse(prPosts(ctx)[0].opts.body),
+    { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id, pushRemote: 'origin', baseRemote: 'origin', baseBranch: 'feat/log-ux',
+      release: { version: 'v1.12.0' } });
+});
+
+test('the release row: an invalid typed version posts nothing and leaves OK and the remote picks enabled', async () => {
+  const ctx = await bootShip({ remotes: REMOTES, arms: prArm(PR_OK) });
+  const modal = await openModal(ctx);
+  const row = modal.querySelector('.shipit-release [data-release-row]');
+  click(ctx.window, row.querySelector('.release-row-add'));
+  assert.equal(row.querySelector('.release-row-source').textContent, 'No tag or package.json version: type one');
+  row.querySelector('.release-row-input').value = 'later';
+  click(ctx.window, modal.querySelector('.shipit-ok'));
+  await settle(ctx.window, 4);
+  assert.equal(prPosts(ctx).length, 0);
+  assert.equal(row.querySelector('.release-row-err').textContent, 'Use a version like v1.12.0');
+  assert.equal(modal.querySelector('.shipit-ok').disabled, false);
+  assert.equal(modal.querySelector('.shipit-push-remote').disabled, false);
+  assert.equal(modal.querySelector('.shipit-base-remote').disabled, false);
+});

@@ -12,8 +12,8 @@ const BAR_STATES = new Set(['starting', 'working', 'needs-you', 'paused']);     
 const GROUP_ENDED = new Set(['ready', 'in-review', 'merged']);
 const PRIMARY = new Set(['answer', 'resume', 'retry', 'start-now', 'ship', 'open-pr']);
 // D5, D24: actions the model lists that have no flow yet. Shown (one model on every surface), but disabled with the
-// reason. The Shaper feature's rounds remove `ask-changes` here when they add its runAction case.
-const UNAVAILABLE = Object.freeze({ retry: 'Start a new run to try again', 'ask-changes': 'Ask for changes is not available yet' });
+// reason. Ask for changes has one now (Shaper): each host says when it is not available there (disable['ask-changes']).
+const UNAVAILABLE = Object.freeze({ retry: 'Start a new run to try again' });
 const isGroup = (m) => !!(m && m.count && Array.isArray(m.members));
 const textEl = (doc, tag, cls, text) => { const e = doc.createElement(tag); e.className = cls; e.textContent = text; return e; };
 

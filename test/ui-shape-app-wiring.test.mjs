@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootApp, runPanel } from './helpers/run-page-boot.mjs';
+import { namedAnswer } from '../ui/public/shape/step-receipt.mjs';
 
 const GATE = { flags: { shapeFirst: true } };
 const click = (ctx, el) => el.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
@@ -17,22 +18,26 @@ const res = (status, body) => Promise.resolve({ ok: status >= 200 && status < 30
 const RUN_ID = 'run-outline';
 const slice = (id, o = {}) => ({ id, title: `Slice ${id}`, goal: `Make ${id} possible for people`, inScope: ['a'], outOfScope: ['b'],
   acceptance: ['GET /api/x returns 200'], dependsOn: [], estimate: 'medium', ...o });
-const OUTLINE = { why: 'The change is large.', slices: [slice('s1'), slice('s2', { dependsOn: ['s1'], estimate: 'large' })] };
+const OUTLINE = { why: 'The change is large.', slices: [slice('s1'), slice('s2', { dependsOn: ['s1'], estimate: 'large' }), slice('s3', { dependsOn: ['s2'] })] };
 const OUTLINE_Q = { id: 'plan-outline-n_plan-1', kind: 'plan',
   plan: { port: 'plan', round: 1, revisable: true, nodeId: 'n_plan', outline: OUTLINE,
     check: { ok: true, passed: 5, total: 5, items: [], grounding: [] } } };
 
-function recorder() {
+function recorder(answer = () => res(200, { ok: true })) {
   const posts = [];
   const fetchHandler = (url, opts) => {
-    if (url === `/api/runs/${RUN_ID}/answer` || url === '/api/answer') { posts.push({ url, body: JSON.parse(opts.body) }); return res(200, { ok: true }); }
+    if (url === `/api/runs/${RUN_ID}/answer` || url === '/api/answer') {
+      const body = JSON.parse(opts.body);
+      posts.push({ url, body, named: namedAnswer(RUN_ID, body.id) });           // what this tab had noted when the POST left
+      return answer();
+    }
     return null;
   };
   return { posts, fetchHandler };
 }
 
-async function openOutline({ gate = true } = {}) {
-  const r = recorder();
+async function openOutline({ gate = true, answer } = {}) {
+  const r = recorder(answer);
   const ctx = await bootApp({ fetchHandler: r.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
   ctx.dispatch({ type: 'hello', flags: { shapeFirst: !!gate }, runs: [{ runId: RUN_ID, title: 'Outline demo', projectDir: '/tmp/p', status: 'running', kind: 'run',
@@ -42,27 +47,60 @@ async function openOutline({ gate = true } = {}) {
   return { ctx, panel: runPanel(ctx), ...r };
 }
 
-test('a pending outline ask renders the outline body, with the outline heading', async () => {
+test('a pending outline ask renders the outline body; its head names the decision (the run page heading stays empty)', async () => {
   const { ctx, panel } = await openOutline();
   assert.ok(panel.querySelector('.outline-body'), 'the outline body is drawn');
   assert.equal(panel.querySelector('.plan-approve'), null, 'not the plan body');
-  assert.equal(ctx.window.document.querySelector('#run-detail .rd-ask-head').textContent,
-    'Your turn: approve the slices', 'D30: the heading names the decision');
+  assert.equal(panel.querySelector('.ask-mcard-title').textContent, 'Your turn: approve the runs', 'D30: the head names the decision');
+  assert.equal(panel.querySelector('.ask-mcard-kind').textContent, 'Runs');
+  assert.equal(ctx.window.document.querySelector('#run-detail .rd-ask-head').textContent, '');
 });
 
-test('gate on: Plan slice 1 posts the gated answer route', async () => {
+test('gate on: Approve 3 runs posts the gated answer route, with the named receipt noted before the POST', async () => {
   const { ctx, panel, posts } = await openOutline();
+  assert.equal(panel.querySelector('.outline-approve').textContent, 'Approve 3 runs');
   click(ctx, panel.querySelector('.outline-approve'));
   await ctx.settle();
   assert.equal(posts.length, 1);
   assert.equal(posts[0].url, `/api/runs/${RUN_ID}/answer`);
   assert.equal(posts[0].body.decision, 'approve');
-  assert.equal(posts[0].body.approveEach, false, 'D19: Approve each slice\'s plan is off unless ticked');
+  assert.equal(posts[0].body.approveEach, false, 'D19: Ask me before each run is off unless ticked');
+  assert.equal(posts[0].named && posts[0].named.text, 'Split into 3 runs', 'noted before the POST (D5)');
 });
 
-test('gate off: Plan slice 1 posts /api/answer, and no merge/remove is offered', async () => {
+test('a replay of the pending ask keeps the named note; a NEW ask reusing its id (a resume) drops it', async () => {
+  const { ctx, panel } = await openOutline();
+  click(ctx, panel.querySelector('.outline-approve'));
+  await ctx.settle();
+  assert.equal(namedAnswer(RUN_ID, OUTLINE_Q.id).text, 'Split into 3 runs');
+  ctx.dispatch({ type: 'question', runId: RUN_ID, ...OUTLINE_Q });            // the subscribe replay of the same ask
+  await ctx.settle();
+  assert.equal(namedAnswer(RUN_ID, OUTLINE_Q.id).text, 'Split into 3 runs');
+  ctx.dispatch({ type: 'question-resolved', runId: RUN_ID, id: OUTLINE_Q.id });
+  ctx.dispatch({ type: 'question', runId: RUN_ID, ...OUTLINE_Q });            // asked again after a resume
+  await ctx.settle();
+  assert.equal(namedAnswer(RUN_ID, OUTLINE_Q.id), null);
+});
+
+test('a 409 with { error } keeps the typed feedback, says "Not sent: …" and forgets the named receipt', async () => {
+  const { ctx, panel, posts } = await openOutline({ answer: () => res(409, { error: 'this question is no longer pending' }) });
+  click(ctx, panel.querySelector('.plan-ask-changes'));
+  panel.querySelector('.plan-feedback').value = 'fewer runs';
+  click(ctx, panel.querySelector('.plan-revise'));
+  await ctx.settle(5);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].named && posts[0].named.text, 'Changes asked · Runs');
+  assert.equal(panel.querySelector('.plan-feedback').value, 'fewer runs');
+  assert.equal(panel.querySelector('.plan-err').hidden, false);
+  assert.equal(panel.querySelector('.plan-err').textContent, 'Not sent: this question is no longer pending');
+  assert.equal(namedAnswer(RUN_ID, OUTLINE_Q.id), null);
+});
+
+test('gate off: Approve 3 runs posts /api/answer, and the same card is drawn', async () => {
   const { ctx, panel, posts } = await openOutline({ gate: false });
   assert.equal(panel.querySelector('.outline-merge'), null);
+  assert.equal(panel.querySelector('.outline-approve').textContent, 'Approve 3 runs');
+  assert.equal(panel.querySelectorAll('.outline-row-more').length, 3);
   click(ctx, panel.querySelector('.outline-approve'));
   await ctx.settle();
   assert.equal(posts.length, 1);
@@ -123,7 +161,7 @@ test('mountShapeFeature paints the host from GET /api/shape/features/:id', async
   assert.deepEqual(server.gets, ['feat-1']);
   assert.ok(h.querySelector('.shape-feature'), 'the view is drawn');
   assert.equal(h.dataset.painted, 'feat-1');
-  assert.equal(h.querySelector('.shape-feature-head').textContent, '1 of 3 slices done');
+  assert.equal(h.querySelector('.shape-feature-status'), null, 'the model owns the status line');
 });
 
 test('no refetch loop (F41): five mounts with the fetch pending issue one GET; after a 500 none; a frame refetches', async () => {
@@ -192,11 +230,13 @@ test('two paints in flight end with the later response', async () => {
   ctx.dispatch({ type: 'shape-feature', id: 'feat-1' });
   await ctx.settle(2);
   assert.equal(pending.length, 2);
-  pending[1](res(200, FEATURE('feat-1', { done: 2 })));
+  const running = FEATURE('feat-1').slices.map((x) => (x.index === 2 ? { ...x, state: 'running', pipelineId: 'p2', runId: 'r2' } : x));
+  pending[1](res(200, FEATURE('feat-1', { slices: running })));
   await ctx.settle(5);
-  pending[0](res(200, FEATURE('feat-1', { done: 1 })));
+  pending[0](res(200, FEATURE('feat-1')));
   await ctx.settle(5);
-  assert.equal(h.querySelector('.shape-feature-head').textContent, '2 of 3 slices done');
+  // The newer (running) payload won: a Plans-type host's running run offers Shaper's Stop.
+  assert.ok(h.querySelector('[data-act="feature-stop"]'), 'the later response is the one drawn');
 });
 
 test('successor (F47): a host mounted with A that is answered with B posts to B and repaints on B frames', async () => {
@@ -264,14 +304,14 @@ test('focus (F39): after a click on a control that blurs when disabled, the new 
   const h = host();
   seam.mount(h, 'feat-1');
   await ctx.settle(5);
-  const old = h.querySelector('[data-act="shape-feature-resume"]');
+  const old = h.querySelector('[data-act="feature-resume"]');
   const proto = Object.getPrototypeOf(old);
   const desc = Object.getOwnPropertyDescriptor(proto, 'disabled') || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(proto), 'disabled');
   Object.defineProperty(old, 'disabled', { configurable: true, get() { return desc.get.call(this); }, set(v) { desc.set.call(this, v); if (v) this.blur(); } });
   old.focus();
   click(ctx, old);
   await ctx.settle(8);
-  const again = h.querySelector('[data-act="shape-feature-resume"]');
+  const again = h.querySelector('[data-act="feature-resume"]');
   assert.notEqual(again, old, 'the view was rebuilt');
   assert.equal(ctx.window.document.activeElement, again);
 });
@@ -283,7 +323,7 @@ test('schedules-changed and shape-feature frames do not throw before the Chat ho
   await ctx.settle(3);
 });
 
-// ---- D16: the feature page (#feature/ID) and the Chat run card's summary ------------------------------------------
+// ---- D16 / s3: the group page (#feature/ID), the Plans tab card and the Chat feature card's controls ----------------
 
 const PAGE_FEATURE = (o = {}) => FEATURE('feat_1', { approveEach: false, slices: [
   { index: 1, title: 'Store tags', state: 'done', pipelineId: 'p1', runId: null, pr: null },
@@ -308,8 +348,9 @@ test('#feature/feat_1 fetches the feature and renders the page view', async () =
   const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
   const { page } = await openFeaturePage({ server });
   assert.deepEqual(server.gets, ['feat_1', 'feat_1'], 'the replaced-id lookup (F47), then the Shaper view');
-  assert.ok(page.querySelector('.gpage .gpage-overview .shape-feature.is-page'));
-  assert.equal(page.querySelectorAll('.shape-feature-seg').length, 3);
+  assert.ok(page.querySelector('.gpage .gpage-overview .shape-feature'));
+  assert.equal(page.querySelectorAll('.gpage-card .run-status-text').length, 1, 'one status line: the group model\'s');
+  assert.equal(page.querySelector('.shape-feature-head'), null, 'the Shaper view draws no head');
 });
 
 test('#feature says it is loading until the feature arrives (no blank page on a slow server)', async () => {
@@ -325,7 +366,7 @@ test('#feature says it is loading until the feature arrives (no blank page on a 
     await new Promise((r) => setTimeout(r, 20));
   }
   assert.equal(page.querySelector('.feature-page-loading'), null, 'the page replaces the loading line');
-  assert.ok(page.querySelector('.gpage-overview .shape-feature.is-page'));
+  assert.ok(page.querySelector('.gpage-overview .shape-feature'));
 });
 
 test('#feature whose first load fails says so instead of loading forever', async () => {
@@ -371,27 +412,109 @@ test('the page\'s ask host survives a repaint; a state frame repaints the line w
   await ctx.settle(6);
   assert.equal(server.gets.length, 3, 'the replaced-id lookup, the first view, the repaint');
   assert.equal(page.querySelector('.gpage-card .gpage-question .qpanel'), qp, 'the same panel: a typed answer survives');
-  const head = page.querySelector('.shape-feature-head');
-  head.textContent = 'stale';
+  const line = page.querySelector('.gpage-card .run-status-text');
+  line.textContent = 'stale';
   ctx.dispatch({ type: 'state', runId: 'r2', status: 'running' });
   await ctx.settle(4);
-  assert.equal(page.querySelector('.shape-feature-head').textContent, 'Slice 2 of 3 › Plan › your approval',
-    'the state frame rewrote the line (paintFeaturePageProgress)');
+  assert.notEqual(page.querySelector('.gpage-card .run-status-text').textContent, 'stale',
+    'the state frame repainted the group model\'s line (scheduleGroupPagePaint)');
   assert.equal(server.gets.length, 3, 'a state frame does not refetch the feature');
 });
 
-test('the Chat run card mounts the summary and Open feature routes to the page; the Plans tab keeps the full card', async () => {
+test('the Plans tab and the group page Overview mount the same head-less view', async () => {
   const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
-  const { ctx, seam, host } = await bootFeature({ server });
-  const card = host();
-  seam.mountCard(card, 'feat_1');
+  const { ctx, page } = await openFeaturePage({ server });
+  assert.ok(page.querySelector('.gpage-overview .shape-feature'));
+  assert.equal(page.querySelector('.shape-feature details.shape-feature-runs'), null, 'no runs fold: the group page lists the runs');
+  const plans = ctx.window.document.createElement('div');
+  ctx.window.document.body.appendChild(plans);
+  ctx.window.__shapeFeature.mount(plans, 'feat_1');
   await ctx.settle(5);
-  assert.ok(card.querySelector('.shape-feature-sum'));
-  assert.equal(card.querySelector('.shape-feature-sum-line').textContent, 'Shaper · Slice 2 needs you');
-  click(ctx, card.querySelector('.shape-feature-sum-open'));
-  assert.equal(ctx.window.location.hash, '#feature/feat_1');
-  const plans = host();
-  seam.mount(plans, 'feat_1');
+  assert.ok(plans.querySelector('.shape-feature'));
+  assert.equal(plans.querySelector('details.shape-feature-runs'), null);
+  assert.equal(plans.querySelector('.shape-feature-ask'), null, 'no step card in the Plans tab');
+});
+
+test('group page: a ⋯ pick of Ask before each run posts approve-each {on:false}; after the frame the item reads unchecked', async () => {
+  const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE({ approveEach: true, originPipelineId: 'p1' }));
+  server.postHandler = (id, action) => { if (action === 'approve-each') server.features.set(id, { ...server.features.get(id), approveEach: false }); return res(200, { ok: true }); };
+  const { ctx, page } = await openFeaturePage({ server });
+  const doc = ctx.window.document;
+  const item = () => [...doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.trim() === 'Ask before each run');
+  click(ctx, page.querySelector('[data-act="feature-more"]'));
+  assert.equal(item().getAttribute('aria-checked'), 'true');
+  click(ctx, item());
+  await ctx.settle(8);
+  assert.deepEqual(server.posts, [{ id: 'feat_1', action: 'approve-each', body: { on: false } }]);
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(6);
+  click(ctx, page.querySelector('[data-act="feature-more"]'));
+  assert.equal(item().getAttribute('aria-checked'), 'false');
+});
+
+test('Open the plan opens the origin run\'s newest plan artifact in the popup (any UI level), else its Artifacts tab', async () => {
+  const open = async (rows) => {
+    const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE({ originPipelineId: 'p1' }));
+    const inner = server.fetchHandler;
+    server.fetchHandler = (url, opts) => (url === '/api/runs/p1/artifacts' ? res(200, { runId: 'p1', artifacts: rows, truncated: false }) : inner(url, opts));
+    const { ctx, page } = await openFeaturePage({ server });
+    click(ctx, page.querySelector('[data-act="feature-more"]'));
+    click(ctx, [...ctx.window.document.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.trim() === 'Open the plan'));
+    await ctx.settle(8);
+    return ctx;
+  };
+  const a = await open([{ kind: 'task', relPath: 'task.md' }, { kind: 'plan', relPath: 'plans/a.md' }, { kind: 'plan', relPath: 'plans/a-v2.md' }]);
+  assert.ok(a.calls.some((c) => c.url === `/api/runs/p1/artifact?rel=${encodeURIComponent('plans/a-v2.md')}`), 'the newest plan is read into the popup');
+  assert.doesNotMatch(a.window.location.hash, /artifacts/, 'no hidden Artifacts tab at the simple level');
+  const b = await open([{ kind: 'task', relPath: 'task.md' }]);
+  assert.match(b.window.location.hash, /\/artifacts$/, 'no plan indexed: the Artifacts tab, as before');
+});
+
+test('a halted Chat feature card\'s Resume posts the feature resume route once (the real chatRunControls.featureAct)', async () => {
+  const server = featureServer();
+  const { ctx } = await bootFeature({ server });
+  const { createChatRunCard } = await import('../ui/public/chat/run-card.mjs');
+  const doc = ctx.window.document;
+  const view = FEATURE('feat_1', { originPipelineId: 'p1', halted: { index: 2, state: 'stopped', waiting: [3] },
+    slices: [{ index: 1, title: 'First', state: 'done', pipelineId: 'p1', runId: null }, { index: 2, title: 'Second', state: 'stopped', pipelineId: 'p2', runId: null },
+      { index: 3, title: 'Third', state: 'planned', pipelineId: null, runId: null }], log: [], ask: null });
+  const card = createChatRunCard({ doc, win: ctx.window, ctx: {}, controls: ctx.window.__np.chatRunControls, ident: { cardId: 'c1', pipelineId: 'p1' },
+    snapshot: { source: 'rest', terminal: true, status: 'done', pipelineId: 'p1', shaper: { card: { pipelineId: 'p1', feature: view, log: [] }, snaps: {} } } });
+  doc.body.appendChild(card.el);
+  click(ctx, card.el.querySelector('[data-act="feature-resume"]'));
+  await ctx.settle(6);
+  assert.deepEqual(server.posts.map((p) => [p.id, p.action]), [['feat_1', 'resume']]);
+  card.destroy();
+});
+
+// ---- Shaper s2: the feature card's data and the feature thread (D12–D14) -------------------------------------------
+
+test('s2: threadForRun reads the slice route\'s threadId; shaperCard GETs once, and shape-feature / a member\'s question re-read it', async () => {
+  const cardGets = [];
+  const CARD = { pipelineId: 'p1', log: [], feature: { id: 'f', slices: [{ index: 1, pipelineId: 'p1' }, { index: 2, pipelineId: 'p2' }] } };
+  const fetchHandler = (url) => {
+    if (url === '/api/shape/pipelines/p2/slice') return res(200, { featureId: 'f', threadId: 't-1' });
+    if (url === '/api/shape/pipelines/p1/card') { cardGets.push(url); return res(200, CARD); }
+    return null;
+  };
+  const ctx = await bootApp({ fetchHandler });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', ...GATE, runs: [{ runId: 'run-p2', pipelineId: 'p2', title: 'Run 2', projectDir: '/tmp/p', status: 'running', kind: 'run',
+    startedAt: '2026-01-01T00:00:00Z' }] });
+  await ctx.settle();
+  const seam = ctx.window.__shapeFeature;
+  assert.equal(await seam.threadForRun({ pipelineId: 'p2' }), 't-1');
+  let heard = 0;
+  seam.shaperCard('p1', () => { heard += 1; });
+  seam.shaperCard('p1', () => {});
   await ctx.settle(5);
-  assert.ok(plans.querySelector('.shape-feature') && !plans.querySelector('.shape-feature-sum') && !plans.querySelector('.is-page'));
+  assert.equal(cardGets.length, 1, 'two asks, one GET');
+  assert.equal(seam.shaperCard('p1').pipelineId, 'p1');
+  assert.ok(heard >= 1, 'the listener heard the answer');
+  ctx.dispatch({ type: 'shape-feature', id: 'f' });
+  await ctx.settle(5);
+  assert.equal(cardGets.length, 2, 'a shape-feature frame re-reads the card');
+  ctx.dispatch({ type: 'question', runId: 'run-p2', id: 'plan-n_refine-1', kind: 'plan', plan: { round: 1 } });
+  await ctx.settle(5);
+  assert.equal(cardGets.length, 3, 'run 2\'s question re-reads the planning run\'s card (refreshShaperCardsOf)');
 });
