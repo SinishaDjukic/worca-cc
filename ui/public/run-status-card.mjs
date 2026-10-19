@@ -155,11 +155,12 @@ export function pauseResumeOwn(btn, status) {
   return {};
 }
 
-/** D11, D13: a group's member rows (Planning first, unnumbered). `table` (the group page, A13) lays each row out as
- *  title over status, then PR, cost and a quiet chevron, with the title link stretched over the row. */
-export function renderMemberRows(doc, row, { table = false } = {}) {
+/** D11, D13: a group's member rows (Planning first, unnumbered), the same table on the group page and the chat card
+ *  (A13, spec §3.4): each row is title over status, then PR, cost and a quiet chevron, with the title link stretched
+ *  over the row. */
+export function renderMemberRows(doc, row) {
   const ol = doc.createElement('ol');
-  ol.className = `run-members${table ? ' is-table' : ''}`;
+  ol.className = 'run-members is-table';
   const items = [...(row.planning && row.planning.model ? [{ ...row.planning, isPlanning: true }] : []), ...(row.members || [])];
   for (const mb of items) {
     const m = mb.model;
@@ -173,23 +174,19 @@ export function renderMemberRows(doc, row, { table = false } = {}) {
     const name = mb.isPlanning ? 'Planning' : (mb.title || '(untitled)');
     const title = textEl(doc, 'a', 'run-member-title', name);
     title.setAttribute('href', mb.href || '#runs');
+    title.title = name;
     const line = textEl(doc, 'span', 'run-member-line', statusText(m).text);
     const pr = textEl(doc, 'span', 'run-member-pr', '');
     if (mb.adhoc) pr.append(textEl(doc, 'span', 'runs-indep', 'Independent'));
     if (m.pr) pr.append(prChip(doc, m.pr));
     const num = textEl(doc, 'span', 'run-member-num', unnumbered ? '' : String(mb.position));
-    if (!table) {
-      li.append(num, dot, title, line, pr);
-    } else {
-      title.title = name;
-      const main = textEl(doc, 'span', 'run-member-main', '');
-      main.append(title, line);
-      const go = doc.createElement('span');
-      go.className = 'run-member-go';
-      go.setAttribute('aria-hidden', 'true');
-      go.append(icon(doc, 'chevron', 12));
-      li.append(num, dot, main, pr, textEl(doc, 'span', 'run-member-cost mono', mb.cost == null ? '' : fmtUsd(mb.cost)), go);
-    }
+    const main = textEl(doc, 'span', 'run-member-main', '');
+    main.append(title, line);
+    const go = doc.createElement('span');
+    go.className = 'run-member-go';
+    go.setAttribute('aria-hidden', 'true');
+    go.append(icon(doc, 'chevron', 12));
+    li.append(num, dot, main, pr, textEl(doc, 'span', 'run-member-cost mono', mb.cost == null ? '' : fmtUsd(mb.cost)), go);
     ol.append(li);
   }
   return ol;

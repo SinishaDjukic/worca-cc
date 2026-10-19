@@ -69,7 +69,7 @@ test('a live run is paused by a restart and resumes on the next start', { skip: 
   const { runModelFor } = await import('../src/core/run-status.mjs');
   const m = runModelFor(parked.id);
   assert.equal(m.word, 'Paused');
-  assert.match(m.line, /paused: restart$/);
+  assert.match(m.line, /paused · restart$/);
 
   child = startServer(env, port);
   await until(ok, 30000, `second start:\n${child.log}`);

@@ -22,14 +22,14 @@ const PR = { url: 'https://github.com/acme/app/pull/759', number: 759, state: 'O
 
 const SINGLE = [
   ['starting', R({ status: 'starting' }), 'peach', true, 'Starting', ['stop'], null],
-  ['working', R(inBuild), 'peach', true, 'Build · step: Implementation', ['pause', 'stop'], null],
+  ['working', R(inBuild), 'peach', true, 'Build · step · Implementation', ['pause', 'stop'], null],
   ['needs-you', R({ steps: [row('n_clarify', 'start')], active: [live('n_clarify')],
-    pendingQuestion: { kind: 'clarify', questions: [{}, {}] } }), 'amber', false, 'Plan · needs you: 2 questions', ['answer', 'stop'], 'question'],
+    pendingQuestion: { kind: 'clarify', questions: [{}, {}] } }), 'amber', false, 'Plan · needs you · 2 questions', ['answer', 'stop'], 'question'],
   ['paused', R({ ...inBuild, status: 'paused', steps: [row('n_clarify'), row('n_plan'), row('n_impl', 'paused')], active: [],
-    pauseReason: 'usage_limit' }), 'grey', false, 'Build · paused: usage limit', ['resume', 'stop'], null],
+    pauseReason: 'usage_limit' }), 'grey', false, 'Build · paused · usage limit', ['resume', 'stop'], null],
   ['waiting', { ticket: { status: 'scheduled', runAt: '2026-10-18T21:00:00Z' } }, 'grey-ring', false, 'Waiting · starts 21:00', ['start-now', 'cancel'], null],
   ['failed', R({ status: 'error', steps: [row('n_clarify'), row('n_plan'), row('n_impl'), row('n_review', 'error')] }),
-    'red', false, 'Review · failed: Review Implementation', ['retry', 'report'], 'alert'],
+    'red', false, 'Review · failed · Review Implementation', ['retry', 'report'], 'alert'],
   ['stopped', R({ status: 'stopped', steps: [row('n_clarify'), row('n_plan'), row('n_impl', 'stopped')] }),
     'dark-grey', false, 'Stopped at Build', ['archive'], null],
   ['ready', R({ status: 'done', endReached: true, steps: [row('n_plan'), row('n_impl'), row('n_review')] }), 'green', false, 'Ready to ship', ['ship'], null],
@@ -95,15 +95,15 @@ test('group: shipped as one PR reads "In review · 1 PR"; count "2/3" leaves Pla
 test('edge rows: restart, interruption, step named like its stage, no-stage workflow, closed PR, tomorrow', async () => {
   const paused = (o) => runModel(R({ status: 'paused', steps: [row('n_impl', 'paused')], ...o }), OPTS).line;
   await checkRows([
-    { name: 'drain', run: () => assert.equal(paused({ pauseReason: 'drain' }), 'Build · paused: restart') },
-    { name: 'interrupted', run: () => assert.equal(runModel(R({ status: 'interrupted', steps: [row('n_impl', 'start')] }), OPTS).line, 'Build · paused: interrupted') },
+    { name: 'drain', run: () => assert.equal(paused({ pauseReason: 'drain' }), 'Build · paused · restart') },
+    { name: 'interrupted', run: () => assert.equal(runModel(R({ status: 'interrupted', steps: [row('n_impl', 'start')] }), OPTS).line, 'Build · paused · interrupted') },
     { name: 'manual pause', run: () => assert.equal(paused({ pauseReason: null }), 'Build · paused') },
     { name: 'error pause reads plain paused', run: () => assert.equal(paused({ pauseReason: 'error' }), 'Build · paused') },
-    { name: 'cost pause', run: () => assert.equal(paused({ pauseReason: 'cost_pipeline' }), 'Build · paused: cost limit') },
+    { name: 'cost pause', run: () => assert.equal(paused({ pauseReason: 'cost_pipeline' }), 'Build · paused · cost limit') },
     { name: 'planner "Plan"', run: () => assert.equal(runModel(R({ steps: [row('n_plan', 'start')], active: [live('n_plan')] }), OPTS).line, 'Plan') },
     { name: 'no stage', run: () => {
       const stepper = { version: 2, graph: { wires: [], nodes: [{ id: 'n_defrag', kind: 'agent', key: 'memoryDefragmenter', label: 'Memory defragment', ports: { inputs: [], outputs: [] } }] } };
-      assert.equal(runModel(R({ stepper, steps: [row('n_defrag', 'start')], active: [live('n_defrag')] }), OPTS).line, 'Step: Memory defragment');
+      assert.equal(runModel(R({ stepper, steps: [row('n_defrag', 'start')], active: [live('n_defrag')] }), OPTS).line, 'Step · Memory defragment');
     } },
     { name: 'closed PR', run: () => {
       const m = runModel(R({ status: 'done', endReached: true, pr: { ...PR, state: 'CLOSED' } }), OPTS);
@@ -191,10 +191,10 @@ test('D22 rounds: "Running · Round 2 · STAGE", the request for a Watch PR roun
   // The raw marker the Shaper feature writes (branch.roundOf) reads the same.
   const w = runModel(R({ ...inBuild, branch: { feature: 'feat/x', roundOf: { pipelineId: 'p1', round: 2, request: 'fix failing checks', by: 'watch' } } }), OPTS);
   assert.equal(w.line, 'Running · Round 2 · fix failing checks');
-  assert.equal(runModel(R({ ...inBuild, round: { n: 1, request: 'x' } }), OPTS).line, 'Build · step: Implementation', 'round 1 is the run itself');
+  assert.equal(runModel(R({ ...inBuild, round: { n: 1, request: 'x' } }), OPTS).line, 'Build · step · Implementation', 'round 1 is the run itself');
   const ask = runModel(R({ steps: [row('n_clarify', 'start')], active: [live('n_clarify')], round: { n: 3 },
     pendingQuestion: { kind: 'clarify', questions: [{}, {}] } }), OPTS);
-  assert.equal(ask.line, 'Round 3 · Plan · needs you: 2 questions');
+  assert.equal(ask.line, 'Round 3 · Plan · needs you · 2 questions');
   assert.equal(runModel(R({ status: 'done', endReached: true, pr: PR, round: { n: 2 } }), OPTS).line, 'In review · PR #759');
   const g = groupModel({ kind: 'feature', members: [{ status: 'done' }, R({ ...inBuild, round: { n: 2 } }), { ticket: { status: 'scheduled', after: { index: 2 } } }] }, OPTS);
   assert.equal(g.line, 'Run 2 of 3 · round 2 · Build');
@@ -223,4 +223,24 @@ test('D23 Watch PR: a live fix round reads Fixing and never Needs you; a stopped
   const g = groupModel({ kind: 'feature', members: [{ status: 'done', pr: ghPr({ state: 'MERGED' }) },
     { status: 'done', pr: ghPr(), watch: { status: 'needs-person', reason: 'cap', fixRuns: 3 } }] });
   assert.deepEqual([g.state, g.count.text, g.actions], ['needs-you', '2/2', ['open-pr', 'ask-changes']]);
+});
+
+test('one wording per state: no status line has a colon form; a paused-after-restart run reads "Paused · interrupted"', () => {
+  const noStage = { version: 2, graph: { wires: [], nodes: [{ id: 'n_x', kind: 'agent', key: 'x', label: 'Defrag', ports: { inputs: [], outputs: [] } }] } };
+  const runs = [
+    ...SINGLE.map((r) => r[1]),
+    ...['usage_limit', 'cost_pipeline', 'cost_total', 'cost_pipeline_policy', 'cost_total_policy', 'drain', 'error', null]
+      .map((pauseReason) => R({ status: 'paused', steps: [row('n_impl', 'paused')], pauseReason })),
+    R({ status: 'interrupted', steps: [row('n_impl', 'start')] }),
+    R({ status: 'pausing', steps: [row('n_impl', 'start')], active: [live('n_impl')] }),
+    R({ stepper: noStage, status: 'interrupted', steps: [row('n_x', 'start')] }),
+    R({ stepper: noStage, steps: [row('n_x', 'start')], active: [live('n_x')] }),
+    R({ stepper: noStage, steps: [row('n_x', 'start')], active: [live('n_x')], pendingQuestion: { kind: 'gate' } }),
+    R({ stepper: noStage, status: 'error', steps: [row('n_x', 'error')] }),
+  ];
+  for (const run of runs) {
+    const { line } = runModel(run, OPTS);
+    assert.ok(!line.includes(': '), `colon form: ${line}`);
+  }
+  assert.equal(runModel(R({ stepper: noStage, status: 'interrupted', steps: [row('n_x', 'start')] }), OPTS).line, 'Paused · interrupted');
 });

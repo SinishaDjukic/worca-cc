@@ -527,9 +527,9 @@ test('card: a throwing localStorage does not break the card', async () => {
 
 test('a run with a status line: title names the run, body is the line, click opens its href (§5a.5)', () => {
   const a = setup();
-  a.alerts.onQuestion({ ...RUN, line: 'Plan · needs you: answer 2 questions', href: '#feature/feat_1' }, Q('q1', 'questions'));
+  a.alerts.onQuestion({ ...RUN, line: 'Plan · needs you · answer 2 questions', href: '#feature/feat_1' }, Q('q1', 'questions'));
   assert.equal(a.N.shown[0].title, 'Worca: Fix the login bug');
-  assert.equal(a.N.shown[0].body, 'Plan · needs you: answer 2 questions');
+  assert.equal(a.N.shown[0].body, 'Plan · needs you · answer 2 questions');
   a.N.shown[0].onclick({ preventDefault() {} });
   assert.deepEqual(a.opened, [{ runId: 'r1', href: '#feature/feat_1' }]);
 });

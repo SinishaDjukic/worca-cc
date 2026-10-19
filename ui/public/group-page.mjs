@@ -74,7 +74,7 @@ export function paintGroupPage(root, view, deps) {
     t.classList.toggle('active', t.dataset.tab === tab);
   }
   for (const p of root.querySelectorAll('.gpage-panel')) p.hidden = p.dataset.tab !== tab;
-  root.querySelector('.gpage-runs').replaceChildren(renderMemberRows(doc, row, { table: true }));
+  root.querySelector('.gpage-runs').replaceChildren(renderMemberRows(doc, row));
   const line = groupShipLine(row);
   const ship = root.querySelector('.gpage-ship');
   ship.textContent = line;

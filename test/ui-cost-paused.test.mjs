@@ -92,8 +92,10 @@ const historyList = (pipelines) =>
 // A run's row (listed once), and the same row when it sits in Needs you (null when it is not there).
 const groupRow = (ctx, sel) => ctx.window.document.querySelector(`#runs-list .runs-row${sel}`);
 const needsRow = (ctx, sel) => ctx.window.document.querySelector(`#runs-list .runs-sec[data-section="needs"] .runs-row${sel}`);
-// The row's status line head (run-model.mjs singleLine: "Paused: cost limit"), before " · <time or project>".
+// The row's status line head (run-model.mjs singleLine: "Paused · cost limit"), before " · " and the time or project.
+// rowWord is the state word alone; rowHead keeps its first n parts ("Paused · cost limit").
 const rowWord = (row) => row.querySelector('.runs-row-sub').textContent.split(' · ')[0];
+const rowHead = (row, n) => row.querySelector('.runs-row-sub').textContent.split(' · ').slice(0, n).join(' · ');
 
 // Seed one live run via `hello`, then drive it paused with a `done` frame that
 // carries the pause reason (the server's done broadcast really carries it —
@@ -121,15 +123,15 @@ async function openRunPage(ctx, runId = 'r1') {
 }
 const resumeOf = (page) => page.querySelector('.rd-pause');
 
-test('cost_pipeline pause: the row reads "Paused: cost limit" in Needs you, the run page shows the amber banner with an enabled Resume', async () => {
+test('cost_pipeline pause: the row reads "Paused · cost limit" in Needs you, the run page shows the amber banner with an enabled Resume', async () => {
   const ctx = await boot();
   const card = await pausedRun(ctx, 'cost_pipeline');
   assert.ok(card, 'paused run still has a row in the Runs list');
   assert.equal(card.querySelector('.cost-banner'), null, 'the list row carries no banner');
-  assert.equal(rowWord(card), 'Paused: cost limit');
+  assert.equal(rowHead(card, 2), 'Paused · cost limit');
   const needs = needsRow(ctx, '[data-run-id="r1"]');
   assert.ok(needs, 'the pause puts the run in Needs you, which points at the run page');
-  assert.equal(rowWord(needs), 'Paused: cost limit');
+  assert.equal(rowHead(needs, 2), 'Paused · cost limit');
   assert.equal(needs.dataset.state, 'paused', 'a pause is not a question');
   const page = await openRunPage(ctx);
   const banner = page.querySelector('.rd-banners .cost-banner');
@@ -180,8 +182,8 @@ test('cost_total pause: red banner, Resume disabled with reset-date tooltip', as
   const ctx = await boot({ budget: blockedBudget() });
   const card = await pausedRun(ctx, 'cost_total');
   assert.equal(card.querySelector('.cost-banner'), null, 'no banner on the list row');
-  assert.equal(rowWord(card), 'Paused: total budget');
-  assert.equal(rowWord(needsRow(ctx, '[data-run-id="r1"]')), 'Paused: total budget', 'in Needs you too');
+  assert.equal(rowHead(card, 2), 'Paused · total budget');
+  assert.equal(rowHead(needsRow(ctx, '[data-run-id="r1"]'), 2), 'Paused · total budget', 'in Needs you too');
   const page = await openRunPage(ctx);
   assert.ok(page.querySelector('.rd-banners .cost-banner.cb-total'), 'red total-budget variant on the run page');
   assert.equal(page.querySelector('.cost-banner .cb-override'), null, 'no per-pipeline override on a total-cap pause');
@@ -258,8 +260,8 @@ test('history: the row names the pause; the detail screen shows the banner and g
   const cards = ctx.window.document.querySelectorAll('#runs-list .runs-row[data-kind="hist"]');
   assert.equal(cards.length, 2);
 
-  assert.equal(rowWord(groupRow(ctx, '[data-pipeline-id="h1"]')), 'Paused: cost limit');
-  assert.equal(rowWord(groupRow(ctx, '[data-pipeline-id="h2"]')), 'Paused: total budget');
+  assert.equal(rowHead(groupRow(ctx, '[data-pipeline-id="h1"]'), 2), 'Paused · cost limit');
+  assert.equal(rowHead(groupRow(ctx, '[data-pipeline-id="h2"]'), 2), 'Paused · total budget');
   assert.ok(needsRow(ctx, '[data-pipeline-id="h2"]'), 'a paused saved run not live in this tab needs you (D5)');
 
   // The total-cap run is blocked while the budget is over.
@@ -331,9 +333,9 @@ test('reload parity: a hello-seeded paused run with pauseReason renders its row 
   assert.ok(card, 'a hello-seeded paused run still renders in the Runs list');
   // Without makeRun declaring the field, upsertRun's CREATE path drops it.
   assert.equal(ctx.window.__np.getRun('r9').pauseReason, 'cost_pipeline');
-  assert.equal(rowWord(needsRow(ctx, '[data-run-id="r9"]')), 'Paused: cost limit', 'Needs you survives a reload');
+  assert.equal(rowHead(needsRow(ctx, '[data-run-id="r9"]'), 2), 'Paused · cost limit', 'Needs you survives a reload');
   assert.equal(card.querySelector('.cost-banner'), null, 'the banner is a run-page thing');
-  assert.equal(rowWord(card), 'Paused: cost limit');
+  assert.equal(rowHead(card, 2), 'Paused · cost limit');
   const page = await openRunPage(ctx, 'r9');
   assert.ok(page.querySelector('.rd-banners .cost-banner.cb-pipeline'), 'banner survives a reload');
 });

@@ -9292,6 +9292,8 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-dot-ic{width:16px;height:16px;margin-top:0;}
 .chat-rc-chain{margin-top:8px;}
 .chat-rc-log,.chat-rc-members{list-style:none;margin:8px 0 0;padding:0;border-top:1px solid var(--line);}
+/* Fix 1 (spec §3.4): the chat card's member list is the group page's table; a card under 480px drops the cost. */
+.chat-rc-members{container:chat-rc-members / inline-size;}
 .chat-rc-log-row,.chat-rc-member{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--line);font-size:12px;color:var(--ink-2);}
 .chat-rc-log-check{width:16px;height:16px;}
 .chat-rc-log-run{color:var(--ink-3);}
@@ -9446,6 +9448,11 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .gpage-actions{display:inline-flex;gap:6px;}
 .gpage-ship{margin:8px 0 0;font-size:13px;color:var(--ink-2);}
 .gpage-ship[hidden],.gpage-panel[hidden],.gpage-question[hidden]{display:none;}
+/* Before the phone block: same specificity, so on a ≤600px viewport its two-line areas win; cost stays hidden there. */
+@container chat-rc-members (max-width:480px){
+  .run-members.is-table{grid-template-columns:20px 12px minmax(0,1fr) max-content 16px;}
+  .run-members.is-table .run-member-cost{display:none;}
+}
 @media (max-width:600px){
   .run-members.is-table{grid-template-columns:20px 12px minmax(0,1fr) max-content;}
   .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"num dot main go" ". . pr cost";}

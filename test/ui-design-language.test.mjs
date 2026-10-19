@@ -400,3 +400,37 @@ test('a flag chip in a tab strip sits inside its tab label (A4)', async () => {
     assert.deepEqual([...strip.children].filter((c) => c.matches('.flag-chip, a')).map((c) => c.outerHTML.slice(0, 60)), []);
   }
 });
+
+// Fix 2 (bundle consistency): one wording per state. A status word is followed by " · ", never ": ".
+const STATE_COLON = /\b(?:starting|working|step|needs you|pausing|paused|interrupted|waiting|failed|stopped|ready|in review|merged)\s*:\s/i;
+const blankComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+  .replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+test('status lines: no state word in a colon form in run-model or run-progress (fix 2)', () => {
+  const bad = [];
+  for (const f of ['src/shared/run-model.mjs', 'src/shared/run-progress.mjs']) {
+    const lines = blankComments(readFileSync(join(ROOT, f), 'utf8')).split('\n');
+    lines.forEach((l, i) => {
+      for (const lit of l.match(/'[^'\n]*'|`[^`\n]*`|"[^"\n]*"/g) || []) if (STATE_COLON.test(lit)) bad.push(`${f}:${i + 1} ${lit}`);
+    });
+  }
+  assert.deepEqual(bad, []);
+});
+
+// Fix 1: a member-row title is never link-styled — the one table rule sets ink and no underline, and no other rule
+// colours or underlines it; the chat card's member host is a container that drops the cost under 480px.
+test('member rows: the title is ink with no underline at rest, on every surface (fix 1, spec §3.4)', () => {
+  const own = ALL.filter((r) => splitTop(r.sel).some((s) => /\.run-member-title(?![\w-])/.test(s.split(/\s+/).at(-1))));
+  const base = own.find((r) => r.sel === '.run-members.is-table .run-member-title');
+  assert.ok(base, 'the table title rule exists');
+  assert.match(base.body, /color:var\(--ink\)/);
+  assert.match(base.body, /text-decoration:none/);
+  const other = own.filter((r) => r !== base && !/:hover/.test(r.sel))
+    .flatMap((r) => decls(r.body, '(?:color|text-decoration(?:-line)?)').map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(other, []);
+  assert.ok(ALL.some((r) => r.sel === '.chat-rc-members' && /container:chat-rc-members \/ inline-size/.test(r.body)), 'the chat member host is a container');
+  const narrow = css.slice(css.indexOf('@container chat-rc-members (max-width:480px)'));
+  assert.ok(css.includes('@container chat-rc-members (max-width:480px)'), 'the card drops the cost under 480px');
+  assert.match(narrow.slice(0, 400), /\.run-members\.is-table \.run-member-cost\{display:none;?\}/);
+  assert.ok(css.indexOf('@container chat-rc-members') < css.indexOf('@media (max-width:600px){\n  .run-members.is-table'),
+    'the phone layout comes later, so it wins on a narrow viewport');
+});

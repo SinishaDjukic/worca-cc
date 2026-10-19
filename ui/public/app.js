@@ -23789,7 +23789,7 @@ function paintHdTags(screen, record, data) {
     box.append(...tags.map((t) => tagChip(document, t)));
     const edit = document.createElement('button');
     edit.type = 'button';
-    edit.className = 'link-btn hd-tags-edit';
+    edit.className = 'btn btn-sm btn-quiet hd-tags-edit';
     edit.textContent = tags.length ? 'Edit tags' : 'Add tags';
     edit.addEventListener('click', () => { hdTagEditor = { ...hdTagEditorFor(st, repaint), host: where }; repaint(); });
     box.appendChild(edit);

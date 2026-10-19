@@ -132,20 +132,19 @@ function singleLine(state, run, prog, pr, opts) {
   const where = prog && prog.mode === 'stages' ? prog.label : '';
   switch (state) {
     case 'starting': return 'Starting';
-    case 'working': return join(where, prog && prog.step ? `step: ${prog.step}` : prog ? prog.what : '') || 'Working';
-    case 'needs-you': return join(where, `needs you: ${askWhat(run.pendingQuestion).replace(/^answer /, '')}`);
+    case 'working': return (prog && prog.step ? join(where, 'step', prog.step) : join(where, prog ? prog.what : '')) || 'Working';
+    case 'needs-you': return join(where, 'needs you', askWhat(run.pendingQuestion).replace(/^answer /, ''));
     case 'paused': {
       const s = String(run.status);
-      const word = s === 'pausing' ? 'pausing' : s === 'interrupted' ? 'paused: interrupted'
-        : PAUSE_WORD[run.pauseReason] ? `paused: ${PAUSE_WORD[run.pauseReason]}` : 'paused';
-      return join(where, word);
+      if (s === 'pausing') return join(where, 'pausing');
+      return join(where, 'paused', s === 'interrupted' ? 'interrupted' : PAUSE_WORD[run.pauseReason] || '');
     }
     case 'waiting': {
       const at = run.ticket && run.ticket.runAt ? clock(run.ticket.runAt, opts) : '';
       const after = run.ticket && run.ticket.after && run.ticket.after.index;
       return join('Waiting', at ? `starts ${at}` : after ? `starts after run ${after}` : '');
     }
-    case 'failed': { const step = failedStep(run, where); return join(where, step ? `failed: ${step}` : 'failed'); }
+    case 'failed': return join(where, 'failed', failedStep(run, where));
     case 'stopped': return where ? `Stopped at ${where}` : 'Stopped';
     case 'ready': return 'Ready to ship';
     case 'in-review': return pr && pr.number != null ? `In review · PR #${pr.number}` : 'In review';

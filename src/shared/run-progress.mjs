@@ -52,7 +52,7 @@ export function progressTone(st) {
   return 'blue';
 }
 
-/** What a waiting question asks for: the tail of "needs you: …" (P5, D33). */
+/** What a waiting question asks for: the tail of "needs you · …" (P5, D33). */
 export function askWhat(pq) {
   if (!pq) return '';
   if (pq.kind === 'workflow') return 'review the workflow';
@@ -153,7 +153,7 @@ export function runProgress(st, memo = null) {
 
   // The P5 tail for a waiting, parked or ended run; '' while it works.
   const waitWhat = () => {
-    if (pq && !['done', 'stopped', 'error'].includes(status)) return `needs you: ${askWhat(pq)}`;
+    if (pq && !['done', 'stopped', 'error'].includes(status)) return `needs you · ${askWhat(pq)}`;
     if (parkedWord) return parkedWord;
     if (status === 'stopped') return 'stopped';
     if (status === 'error') return 'failed';
@@ -181,7 +181,7 @@ export function runProgress(st, memo = null) {
     const { fraction } = remember(raw, 0);
     const now = keyed.filter((n) => active.has(n.id)).map(labelOf);
     let text;
-    if (pq && !['done', 'stopped', 'error'].includes(status)) text = `Needs you: ${askWhat(pq)}`;
+    if (pq && !['done', 'stopped', 'error'].includes(status)) text = `Needs you · ${askWhat(pq)}`;
     else if (parkedWord) text = parkedWord === 'pausing' ? 'Pausing' : 'Paused';
     else if (status === 'stopped') text = 'Stopped';
     else if (status === 'error') text = 'Failed';

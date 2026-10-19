@@ -178,7 +178,8 @@ test('kindLabel, member rows and ship lines for a feature group', () => {
   assert.equal(kindLabel(null), 'Run');
   assert.equal(kindLabel(row), 'Feature · 3 runs');
   assert.equal(kindLabel({ ...row, groupKind: 'chain' }), 'Chain · 3 runs');
-  const ol = renderMemberRows(doc, row, { table: true });
+  const ol = renderMemberRows(doc, row);
+  assert.ok(ol.classList.contains('is-table'), 'one layout for the group page and the chat card');
   const lis = [...ol.querySelectorAll('li.run-member')];
   assert.deepEqual(lis.map((li) => li.querySelector('.run-member-num').textContent), ['', '1', '2', '3']);
   assert.equal(lis[2].querySelector('.status-dot').getAttribute('aria-label'), 'Failed', 'a failed member draws "!"');
@@ -194,12 +195,6 @@ test('kindLabel, member rows and ship lines for a feature group', () => {
   assert.equal(lis[1].querySelector('.run-member-title').getAttribute('href'), '#history/acme/p1');
   assert.equal(lis[1].querySelector('.run-member-title').title, 'Slice 1');
   assert.equal(lis[1].querySelector('.run-member-cost').textContent, '$1.00');
-  // The chat card (no option) keeps today's cells.
-  const plain = renderMemberRows(doc, row);
-  assert.equal(plain.classList.contains('is-table'), false);
-  assert.equal(plain.querySelectorAll('.run-member-main, .run-member-go, .run-member-cost').length, 0);
-  assert.deepEqual([...plain.querySelector('li.run-member').children].map((c) => c.className.split(' ')[0]),
-    ['run-member-num', 'status-dot', 'run-member-title', 'run-member-line', 'run-member-pr']);
   assert.equal(groupShipLine(row), 'Ship card comes when all 3 runs are done, here and in the chat.');
   const ready = groupModel({ kind: 'feature', members: [done, done, done] }, { now: NOW });
   assert.equal(groupShipLine({ ...row, model: ready, members: ready.members.map((m, i) => ({ position: i + 1, model: m })) }),

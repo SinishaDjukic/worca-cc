@@ -399,12 +399,12 @@ test('Running: a cost_pipeline_policy pause shows the blue banner; "Continue pas
   recv({ type: 'done', runId: 'r1', status: 'paused', reason: 'cost_pipeline_policy', detail: 'team cost cap reached ($10.00 >= $10.00, acme/gateway)' });
   await settle();
   const row = () => doc.querySelector('#runs-list .runs-row[data-run-id="r1"]');
-  const word = (a) => a.querySelector('.runs-row-sub').textContent.split(' \u00b7 ')[0];
+  const word = (a) => a.querySelector('.runs-row-sub').textContent.split(' \u00b7 ').slice(0, 2).join(' \u00b7 ');
   assert.ok(row(), 'the paused run is listed in its project group');
   assert.equal(row().querySelector('.cost-banner'), null, 'the list row carries no cost banner');
   const needs = doc.querySelector('#runs-list .runs-sec[data-section="needs"] .runs-row[data-run-id="r1"]');
   assert.ok(needs, 'Needs you says the run is parked');
-  assert.equal(word(needs), 'Paused: team cap');
+  assert.equal(word(needs), 'Paused · team cap');
   await ctx.go('running/r1');                                  // the banner lives on the run page
   await settle(6);
   const banner = doc.querySelector('#run-detail .cost-banner');
@@ -412,7 +412,7 @@ test('Running: a cost_pipeline_policy pause shows the blue banner; "Continue pas
   assert.equal(banner.hidden, false);
   assert.ok(banner.classList.contains('cb-policy'), 'the blue team-cap variant');
   assert.match(banner.textContent, /Paused — team cost cap reached/);
-  assert.equal(word(row()), 'Paused: team cap', 'the row names the team cap');
+  assert.equal(word(row()), 'Paused · team cap', 'the row names the team cap');
   assert.ok(banner.querySelector('.cb-past-team-cap'));
   assert.equal(banner.querySelector('.cb-override'), null);
   banner.querySelector('.cb-past-team-cap').click();

@@ -90,7 +90,7 @@ test('hello backfill sets the badge but does not notify; a live question notifie
   assert.equal(N.shown.length, 1);
   // §5a.5: the title names the run; the body is its list row's status line.
   assert.equal(N.shown[0].title, 'Worca: Live run');
-  assert.equal(N.shown[0].body, 'Needs you: 1 question');
+  assert.equal(N.shown[0].body, 'Needs you · 1 question');
   assert.equal(N.shown[0].tag, 'worca:r2:q2');
   assert.equal(window.document.title, '(2) ? Worca');
 
@@ -121,7 +121,7 @@ test('a reconnect hello notifies a wait raised while the socket was down, once; 
   assert.equal(N.shown.length, 2, 'exactly one new notification');
   assert.equal(N.shown[1].tag, 'worca:r3:q3');
   assert.equal(N.shown[1].title, 'Worca: Waited while down');
-  assert.equal(N.shown[1].body, 'Needs you: a step failed');
+  assert.equal(N.shown[1].body, 'Needs you · a step failed');
 });
 
 test('a reconnect hello that no longer lists a pending question closes its notification', async () => {
@@ -144,7 +144,7 @@ test('a run paused on a usage limit notifies and joins the badge; stopping it cl
   await tick();
   assert.equal(N.shown.length, 1);
   assert.equal(N.shown[0].title, 'Worca: Limited run');
-  assert.equal(N.shown[0].body, 'Paused: usage limit', 'the status line, never the limit detail');
+  assert.equal(N.shown[0].body, 'Paused · usage limit', 'the status line, never the limit detail');
   assert.equal(window.document.title, '(1) ? Worca');
   recv({ type: 'done', runId: 'r1', status: 'stopped' });
   await tick();
@@ -215,7 +215,7 @@ test('a reconnect hello notifies a pause that happened while the socket was down
   await tick();
   assert.equal(N.shown.length, 1);
   assert.equal(N.shown[0].title, 'Worca: Running');
-  assert.equal(N.shown[0].body, 'Paused: total budget');
+  assert.equal(N.shown[0].body, 'Paused · total budget');
 });
 
 test('no notification while the tab is visible and focused; the badge still counts', async () => {

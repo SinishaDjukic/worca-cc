@@ -107,7 +107,7 @@ test('stages map: the wf_default shape moves Plan → Build → Review → Ready
       assert.equal(p.fraction, 0);
       assert.equal(p.text, 'Plan · choosing the workflow');
       const q = runProgress(S({ stepper, pendingQuestion: { kind: 'workflow' } }));
-      assert.equal(q.text, 'Plan · needs you: review the workflow');
+      assert.equal(q.text, 'Plan · needs you · review the workflow');
       assert.equal(q.tone, 'amber');
     } },
     { name: 'the same empty graph WITHOUT the auto tag stays P6', run: () => {
@@ -370,26 +370,26 @@ test('review cap: passes fill the quarter up to 0.8 until a clean pass', async (
 test('tone and text while waiting, parked or ended', async () => {
   const planning = { steps: [row('n_clarify', 1, { status: 'start' })], active: [live('n_clarify')] };
   await checkRows([
-    { name: 'three questions while planning → amber, "Plan · needs you: answer 3 questions"', run: () => {
+    { name: 'three questions while planning → amber, "Plan · needs you · answer 3 questions"', run: () => {
       const p = runProgress(S({ ...planning, pendingQuestion: { questions: [{}, {}, {}] } }));
       assert.equal(p.tone, 'amber');
-      assert.equal(p.text, 'Plan · needs you: answer 3 questions');
+      assert.equal(p.text, 'Plan · needs you · answer 3 questions');
     } },
     { name: 'gate / form / recovery / one question', run: () => {
-      assert.equal(runProgress(S({ ...planning, pendingQuestion: { kind: 'gate' } })).text, 'Plan · needs you: a decision');
-      assert.equal(runProgress(S({ ...planning, pendingQuestion: { kind: 'form' } })).text, 'Plan · needs you: input needed');
-      assert.equal(runProgress(S({ ...planning, pendingQuestion: { kind: 'recovery' } })).text, 'Plan · needs you: a step failed');
-      assert.equal(runProgress(S({ ...planning, pendingQuestion: { questions: [{}] } })).text, 'Plan · needs you: answer 1 question');
-      assert.equal(runProgress(S({ ...planning, pendingQuestion: {} })).text, 'Plan · needs you: answer a question');
+      assert.equal(runProgress(S({ ...planning, pendingQuestion: { kind: 'gate' } })).text, 'Plan · needs you · a decision');
+      assert.equal(runProgress(S({ ...planning, pendingQuestion: { kind: 'form' } })).text, 'Plan · needs you · input needed');
+      assert.equal(runProgress(S({ ...planning, pendingQuestion: { kind: 'recovery' } })).text, 'Plan · needs you · a step failed');
+      assert.equal(runProgress(S({ ...planning, pendingQuestion: { questions: [{}] } })).text, 'Plan · needs you · answer 1 question');
+      assert.equal(runProgress(S({ ...planning, pendingQuestion: {} })).text, 'Plan · needs you · answer a question');
     } },
     { name: 'a plan approval, a slice outline and Clarify name the wait (D33)', run: () => {
       const text = (pq) => runProgress(S({ ...planning, pendingQuestion: pq })).text;
-      assert.equal(text({ kind: 'plan', plan: { round: 1, nodeId: 'n_plan' } }), 'Plan · needs you: approve the plan');
-      assert.equal(text({ kind: 'plan', plan: { port: 'outline', outline: { why: 'w', slices: [{}, {}] } } }), 'Plan · needs you: approve the slices');
-      assert.equal(text({ kind: 'clarify', questions: [{}, {}] }), 'Plan · needs you: answer 2 questions');
-      assert.notEqual(text({ kind: 'plan', plan: {} }), 'Plan · needs you: answer a question');
+      assert.equal(text({ kind: 'plan', plan: { round: 1, nodeId: 'n_plan' } }), 'Plan · needs you · approve the plan');
+      assert.equal(text({ kind: 'plan', plan: { port: 'outline', outline: { why: 'w', slices: [{}, {}] } } }), 'Plan · needs you · approve the slices');
+      assert.equal(text({ kind: 'clarify', questions: [{}, {}] }), 'Plan · needs you · answer 2 questions');
+      assert.notEqual(text({ kind: 'plan', plan: {} }), 'Plan · needs you · answer a question');
       const p6 = { stepper: manifest([agent('n_a', 'deckA'), end()]) };
-      assert.equal(runProgress(S({ ...p6, pendingQuestion: { kind: 'plan', plan: {} } })).text, 'Needs you: approve the plan');
+      assert.equal(runProgress(S({ ...p6, pendingQuestion: { kind: 'plan', plan: {} } })).text, 'Needs you · approve the plan');
     } },
     { name: 'paused / pausing / interrupted → amber', run: () => {
       assert.equal(runProgress(S({ ...planning, status: 'paused' })).tone, 'amber');
@@ -412,7 +412,7 @@ test('tone and text while waiting, parked or ended', async () => {
     } },
     { name: 'P6 waiting text', run: () => {
       const st = { stepper: manifest([agent('n_a', 'deckA'), end()]) };
-      assert.equal(runProgress(S({ ...st, pendingQuestion: { kind: 'gate' } })).text, 'Needs you: a decision');
+      assert.equal(runProgress(S({ ...st, pendingQuestion: { kind: 'gate' } })).text, 'Needs you · a decision');
       assert.equal(runProgress(S({ ...st, status: 'paused' })).text, 'Paused');
       assert.equal(runProgress(S({ ...st, status: 'stopped' })).text, 'Stopped');
       assert.equal(runProgress(S({ ...st, status: 'error' })).text, 'Failed');

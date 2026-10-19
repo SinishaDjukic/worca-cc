@@ -137,7 +137,7 @@ test('chat run card: head, sub-line, stats, agent chips with model + cycle, Auto
       assert.ok(chip.classList.contains('is-waiting'));
       assert.equal(chip.style.getPropertyValue('--c'), 'var(--amber)');
       assert.equal($('.chat-rc-status').dataset.state, 'needs-you');
-      assert.match($('.chat-rc-status .run-status-text').textContent, /needs you: 1 question$/i);
+      assert.match($('.chat-rc-status .run-status-text').textContent, /needs you · 1 question$/i);
     } },
     { name: 'Auto: the sub-line chip names the adopted workflow; while deciding the well says so and draws no graph — and, like the run page, says when the run waits, is parked or never decided', run: async () => {
       const { card, $ } = mk();
@@ -1179,6 +1179,16 @@ test('feature card: Shaping, then the group row\'s chip, one status line and its
     assert.deepEqual($$('.run-member-title').map((n) => n.textContent), ['Planning', 'Part 1', 'Part 2', 'Part 3']);
     assert.equal($$('.run-status-text').length, 1, 'one status line');
     assert.equal($$('ol.run-members').length, 1, 'one member list');
+    // Fix 1: the chat card's member list is the group page's table — ink title over the status line, PR, cost, quiet ›.
+    const ol = $('.chat-rc-members > ol.run-members');
+    assert.ok(ol.classList.contains('is-table'), 'the group page\'s table, not the old plain rows');
+    const lis = [...ol.querySelectorAll(':scope > li.run-member')];
+    assert.equal(lis.length, 4, 'Planning + 3');
+    for (const li of lis) {
+      assert.deepEqual([...li.children].map((c) => c.className.split(' ')[0]),
+        ['run-member-num', 'status-dot', 'run-member-main', 'run-member-pr', 'run-member-cost', 'run-member-go']);
+      assert.deepEqual([...li.querySelector('.run-member-main').children].map((c) => c.className), ['run-member-title', 'run-member-line']);
+    }
     assert.equal($$('.chat-rc-fstatus, .chat-rc-chain, ol.chat-rc-members, .ask-rc-pill').length, 0, 'no Shaper duplicate');
   } finally {
     setShapeFirst(false);

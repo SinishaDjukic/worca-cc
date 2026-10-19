@@ -135,3 +135,7 @@ test('the Chat › Plans row and the release row links are controls, not §1.2 b
   const controls = BUTTON_SPEC.controls.join(',');
   assert.deepEqual([...doc.querySelectorAll('button')].filter((b) => !b.closest(controls)).map((b) => b.className), []);
 });
+
+test('B7: the run page\'s "Add tags" is a quiet sm button with a short label — no finding', () => {
+  assert.deepEqual(run('<button class="btn btn-sm btn-quiet hd-tags-edit" data-h="28">Add tags</button>'), []);
+});
