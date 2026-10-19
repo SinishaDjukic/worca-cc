@@ -47,6 +47,7 @@ import { cmdControl } from './control.mjs';
 import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
 import { cmdExtension } from './extension.mjs';
+import { cmdRun } from './run-preset.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
 } from '../core/ui-instance.mjs';
@@ -298,6 +299,9 @@ Subcommands:
   resume <pipelineId>         Continue a paused pipeline (re-attaches Claude sessions).
     [--ignore-cost-cap]       Resume past this pipeline's cost cap (persists on the run).
     [--past-team-cap]         Continue past a TEAM cap (soft; recorded to team metrics). Add --reason "<why>".
+  run --preset <name> --prompt "…"
+                              Start a run from a run preset, through the running server
+                              (needs: worca ui). See: worca run help
   runs [list|show|<id>]       List pipeline runs across projects, or show one in detail
                               (any unique prefix; --json for machines). See: worca runs help
   logs <id> [-f]              Tail a run's live log (--tail N, --component, --level,
@@ -3229,7 +3233,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3300,6 +3304,7 @@ async function main() {
     if (sub === 'list') return cmdList();
     if (sub === 'remove') return cmdRemove(rest);
     if (sub === 'resume') return cmdResume(rest);
+    if (sub === 'run') return cmdRun(rest, { out, c, fail });
     if (sub === 'runs') return cmdRuns(rest, { out, c, fail });
     if (sub === 'logs') return cmdLogs(rest, { out, c, fail });
     if (sub === 'stop' || sub === 'pause') return cmdControl(sub, rest, { out, c, fail });

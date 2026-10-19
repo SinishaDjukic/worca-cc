@@ -39,6 +39,7 @@ import { INTENTS, splitIntentLead } from './chat/intent.mjs';
 import { homeIcon } from './chat/home-icons.mjs';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
+import { applyPresetStart } from '../../src/shared/run-presets.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
   fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
@@ -4498,6 +4499,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     titleInput.placeholder = 'Run title';
     titleRow.append(titleInput, make('span', 'ask-rp-edit', '✎ click to rename'));
     head.appendChild(titleRow);
+    // Run presets (#712 slice 3): a card proposed from a preset names it; Start adds what the card has no control for.
+    const presetLine = card.preset ? make('div', 'ask-card-preset muted', `From preset ${card.preset.name}`) : null;
+    if (presetLine) head.appendChild(presetLine);
     // Run tags (#718), behind the experimental flag: prefilled from the proposal, sent on Start.
     const tagInput = flagOn('runTags', doc) ? createTagInput(doc, { value: card.tags || [], suggest: fetchTagVocabulary }) : null;
     const tagRow = tagInput ? make('div', 'ask-rp-tags') : null;
@@ -4583,6 +4587,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     workflowSel.addEventListener('change', () => {
       if (local.workflowUnavailable) { local.workflowUnavailable = false; err.textContent = ''; startBtn.disabled = false; }
       reloadLane();
+    });
+    if (presetLine) workflowSel.addEventListener('change', () => {
+      presetLine.textContent = workflowSel.value === card.preset.workflowId ? `From preset ${card.preset.name}`
+        : `From preset ${card.preset.name} — agent picks dropped (another workflow)`;
     });
 
     // agents lane (reloadLane → renderLane fills laneSec)
@@ -5139,6 +5147,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // Keyed off the schedule being POSTED — a Start now on an after-proposal carries none and keeps the picked branch.
       if (body.sourceFromPrevious) { delete body.sourceBranch; delete body.sourceBranchByKey; }
       if (ex.extras.length) body.extras = ex.extras;
+      if (block.card && block.card.preset) applyPresetStart(body, block.card.preset);
       let res = null;
       try {
         res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -5347,6 +5356,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     openRunPanel: (ref, opts) => chatDep('openRunPanel', ref, opts),
     mountFeature: (host, id) => chatDep('mountFeature', host, id),
     openArtifact: (ref, artifact) => chatDep('openArtifact', ref, artifact),
+    openFiles: (o) => chatDep('openFiles', o),
+    revealInfo: () => chatDep('revealInfo'),
+    revealFile: (o) => chatDep('revealFile', o),
     openShipIt: (ref, link) => chatDep('openShipIt', ref, link),
     runLinkFor: (ref) => runLinkFor(ref || {}),
     appendToComposer: (text) => appendToComposer(text),

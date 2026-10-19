@@ -12,6 +12,7 @@ import {
 } from './home-lists.mjs';
 import { createRunTile } from './home-run-tile.mjs';
 import { createHeroFlip } from './home-flip.mjs';
+import { createHomePresets } from './home-presets.mjs';
 import { INTENTS } from './intent.mjs';
 import { featureHeadline } from '../shape/feature-view.mjs';
 
@@ -99,7 +100,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   const section = host.closest('section[data-view="chat"]');
   const h = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const st = {
-    visiting: false, visit: 0, tab: null, chosen: false, runs: EMPTY_RUNS, threads: null, workflows: null, portsFn: null, plans: null, plansOn: false, plansOpen: new Set(),
+    visiting: false, visit: 0, tab: null, chosen: false, runs: EMPTY_RUNS, threads: null, workflows: null, portsFn: null, plans: null, plansOn: false, plansOpen: new Set(), presetsOn: false, presets: null,
     tiles: new Map(), tilesTab: null, panelSig: '', tick: null, pending: null, routing: false, runsWait: null, runsWaited: false,
   };
 
@@ -111,9 +112,12 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   const tabs = createHomeTabs({ doc, onSelect: (t) => selectTab(t, { user: true }) });
   const promos = buildPromos();
   const body = h('div', 'chat-home-body');
-  body.append(actions.el, tabs.el, promos);
+  const presetsUi = createHomePresets({
+    doc, onUse: (id) => { if (typeof deps.usePreset === 'function') deps.usePreset(id); }, onMore: () => deps.navigate('#settings/presets'),
+  });
+  body.append(actions.el, presetsUi.el, tabs.el, promos);
   host.appendChild(body);
-  const flip = createHeroFlip({ doc, win, page, parts: () => [title, actions.el, tabs.el, promos] });
+  const flip = createHeroFlip({ doc, win, page, parts: () => [title, actions.el, presetsUi.el, tabs.el, promos] });
   // The More menu and the run pickers are position:fixed: a scroll of the home (its own scroll box) would leave them
   // floating away from their tile.
   const onHomeScroll = () => actions.closeMenu();
@@ -370,9 +374,20 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     st.plans = Array.isArray(list) ? list.slice(0, 30) : [];
     if (st.tab === 'plans') renderPanel();
   }
-  /** The switches, and the Plans tab while the Shape it first gate is on. */
+  // Run presets (#712 slice 2): the viewer's presets as chips, fresh per visit, while the runPresets flag is on.
+  function paintPresets() { presetsUi.render({ on: st.presetsOn, presets: st.presets?.presets || [], target: st.presets?.target || null }); }
+  async function loadPresets(token) {
+    let got = null;
+    try { got = typeof deps.presets === 'function' ? await deps.presets() : null; } catch { got = null; }
+    if (token !== st.visit) return;
+    st.presets = got && Array.isArray(got.presets) ? got : { presets: [], target: null };
+    paintPresets();
+  }
+  /** The switches, the preset chips, and the Plans tab while the Shape it first gate is on. */
   function applyFlags(flags) {
     actions.setFlags(flags);
+    const presetsOn = flags.runPresets === true;
+    if (presetsOn !== st.presetsOn) { st.presetsOn = presetsOn; if (presetsOn && st.visiting) void loadPresets(st.visit); paintPresets(); }
     const on = flags['shapeFirst'] === true;          // the key form: the gate scan bans the dotted read outside shape-gate.mjs
     if (on === st.plansOn) return;
     st.plansOn = on;
@@ -404,6 +419,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     st.threads = null;
     st.workflows = null;
     st.plans = null;
+    st.presets = null;
     st.panelSig = '';
     const stored = readTab();
     st.chosen = !!stored;
@@ -420,6 +436,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     pullRuns();                                 // the switches keep their last known values until loadFlags answers
     void loadThreads(token);
     void loadWorkflows(token);
+    void loadPresets(token);
     void loadFlags(token);
     if (st.plansOn) void loadPlans(token);
     st.tick = clock.setInterval(() => { if (!visible()) { leave(); return; } pullRuns(); }, RUNS_TICK_MS);

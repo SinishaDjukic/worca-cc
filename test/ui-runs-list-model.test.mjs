@@ -1,14 +1,15 @@
 // test/ui-runs-list-model.test.mjs — the Runs list model (ui/public/runs-list.mjs): row words
-// and icons, times, Needs you, grouping, dedupe, search, the started-by filter, folding, and
-// the DOM the list is built from.
+// and icons, the PR glyph, times, Needs you, grouping, dedupe, search, the started-by filter,
+// folding, and the DOM the list is built from.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
   rowTime, liveRowState, histRowState, schedRowState, countNeedsYou,
   buildRunsModel, rowSub, rowMatches, isRowSelected, renderRunsList, rowInFilter, dateBucket, RUNS_FILTERS, DATE_BUCKETS, chainRow,
-  tagFilterGroups,
+  tagFilterGroups, prDisplayState, prGlyphOf,
 } from '../ui/public/runs-list.mjs';
 
 const NOW = new Date(2026, 8, 30, 15, 0).getTime();           // Wed Sep 30 2026, 15:00 local
@@ -76,6 +77,40 @@ test('a finished headline is the glance’s: the PR first, then the review', () 
   assert.equal(histRowState({ status: 'failed' }).icon, 'fail', 'status synonyms map like histStatusMeta');
   assert.equal(histRowState({ status: 'stopped' }).icon, 'stop');
   assert.equal(histRowState({ status: 'interrupted' }).word, 'Interrupted');
+});
+
+test('the PR glyph’s state: merged, closed, else an open PR is a draft, has conflicts, or is open', () => {
+  assert.equal(prDisplayState({ state: 'MERGED', isDraft: false, mergeable: 'UNKNOWN' }), 'merged');
+  assert.equal(prDisplayState({ state: 'CLOSED', isDraft: true, mergeable: 'CONFLICTING' }), 'closed',
+    'a PR that is no longer open says how it ended');
+  assert.equal(prDisplayState({ state: 'OPEN', isDraft: true, mergeable: 'CONFLICTING' }), 'draft',
+    'a draft is not up for merging yet: its conflicts wait');
+  assert.equal(prDisplayState({ state: 'OPEN', isDraft: false, mergeable: 'CONFLICTING' }), 'conflict');
+  assert.equal(prDisplayState({ state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE' }), 'open');
+  assert.equal(prDisplayState({ state: 'OPEN', isDraft: false, mergeable: 'UNKNOWN' }), 'open',
+    'GitHub has not worked the mergeability out yet: open');
+  assert.equal(prDisplayState({ state: 'OPEN' }), 'open', 'a PR known without the two fields');
+  assert.equal(prDisplayState({ state: 'open', mergeable: 'conflicting' }), 'conflict', 'any case');
+  assert.equal(prDisplayState(null), '', 'no PR: no glyph');
+  assert.equal(prDisplayState(undefined), '', 'the lookup has not answered: no glyph');
+  assert.equal(prDisplayState({ number: 4 }), '', 'a PR with no state is not drawn');
+});
+
+test('prGlyphOf: one PR’s state; a workspace run’s most urgent member PR and how many it has', () => {
+  const pr = (state, more = {}) => ({ state, url: `https://gh/x/pull/${state}`, number: 1, ...more });
+  assert.deepEqual(prGlyphOf({ pr: pr('OPEN', { isDraft: true }) }), { prIcon: 'draft', prCount: 1 });
+  assert.deepEqual(prGlyphOf({ pr: null }), { prIcon: '', prCount: 0 });
+  assert.deepEqual(prGlyphOf(null), { prIcon: '', prCount: 0 }, 'no record yet');
+  const ws = (...prs) => ({ target: 'workspace', pr: null, members: prs.map((p, i) => ({ memberKey: `m${i}`, pr: p })) });
+  assert.deepEqual(prGlyphOf(ws(pr('MERGED'), pr('OPEN'), null)), { prIcon: 'open', prCount: 2 }, 'members without a PR are not counted');
+  assert.deepEqual(prGlyphOf(ws(pr('OPEN'), pr('OPEN', { mergeable: 'CONFLICTING' }), pr('OPEN', { isDraft: true }))),
+    { prIcon: 'conflict', prCount: 3 }, 'conflicts first');
+  assert.deepEqual(prGlyphOf(ws(pr('MERGED'), pr('OPEN', { isDraft: true }))), { prIcon: 'draft', prCount: 2 }, 'a draft before a merged PR');
+  assert.deepEqual(prGlyphOf(ws(pr('CLOSED'), pr('MERGED'))), { prIcon: 'merged', prCount: 2 }, 'a merged PR before a closed one');
+  assert.deepEqual(prGlyphOf(ws(pr('CLOSED'))), { prIcon: 'closed', prCount: 1 });
+  assert.deepEqual(prGlyphOf(ws(undefined, undefined)), { prIcon: '', prCount: 0 }, 'the lookups have not answered');
+  // A legacy workspace row (members: []) and a row whose members are not resolved keep the run's own PR.
+  assert.deepEqual(prGlyphOf({ target: 'workspace', members: [], pr: pr('MERGED') }), { prIcon: 'merged', prCount: 1 });
 });
 
 test('scheduled rows: a clock, what they wait for, and the Schedules tab that lists them', () => {
@@ -217,6 +252,82 @@ test('renderRunsList: Needs you on top, foldable heads, rows as links with a tit
   assert.equal(host.querySelector('.runs-group[data-group-key="worca-00000002"] .runs-row'), null, 'a folded group renders no rows');
   const empty = renderRunsList(doc, buildRunsModel({ now: NOW }), { emptyText: 'No runs yet.' });
   assert.equal(empty[0].textContent, 'No runs yet.');
+});
+
+test('renderRunsList: a row with a PR ends with its glyph — the state’s class, an image role and a label', () => {
+  const doc = new JSDOM('').window.document;
+  const labels = {
+    draft: 'Pull request: draft', open: 'Pull request: open', merged: 'Pull request: merged',
+    conflict: 'Pull request: has conflicts', closed: 'Pull request: closed without merging',
+  };
+  const history = [
+    ...Object.keys(labels).map((s) => histIt(`h-${s}`, { prIcon: s })),
+    histIt('h-none', { pr: 'NONE', prIcon: '' }), histIt('h-odd', { prIcon: 'bogus' }),
+  ];
+  const live = [liveIt('ended', { status: 'done', pipelineId: 'p-ended', pr: 'MERGED', prIcon: 'merged' }), liveIt('run')];
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, buildRunsModel({ live, history, now: NOW })));
+  const glyphOf = (sel) => host.querySelector(`a.runs-row${sel} .runs-pr`);
+  for (const [s, label] of Object.entries(labels)) {
+    const ic = glyphOf(`[data-pipeline-id="h-${s}"]`);
+    assert.ok(ic, `${s}: drawn`);
+    assert.deepEqual([...ic.classList], ['runs-pr', `runs-pr-${s}`]);
+    assert.equal(ic.getAttribute('role'), 'img');
+    assert.equal(ic.getAttribute('aria-label'), label);
+    assert.equal(ic.getAttribute('title'), label, 'the label is the tooltip too');
+    assert.equal(ic.parentElement.lastElementChild, ic, 'it ends the row, after the title and subline');
+    assert.ok(ic.parentElement.matches('a.runs-row'), 'a child of the row link itself, not of its body');
+    assert.ok(ic.previousElementSibling.matches('.runs-row-body'), 'right of the body, so it sits top-right');
+    const svg = ic.querySelector('svg');
+    assert.equal(svg.getAttribute('viewBox'), '0 0 24 24');
+    assert.equal(svg.getAttribute('width'), '16');
+    assert.equal(svg.getAttribute('stroke-linecap'), 'round');
+    assert.equal(svg.getAttribute('aria-hidden'), 'true', 'the wrapper’s label speaks for it');
+  }
+  const shapes = Object.keys(labels).map((s) => glyphOf(`[data-pipeline-id="h-${s}"]`).querySelector('svg').innerHTML);
+  assert.equal(new Set(shapes).size, 5, 'five different glyphs');
+  assert.equal(glyphOf('[data-pipeline-id="h-none"]'), null, 'no PR: nothing at the end of the row');
+  assert.equal(glyphOf('[data-pipeline-id="h-odd"]'), null, 'an unknown state draws nothing, never a guess');
+  assert.ok(glyphOf('[data-run-id="ended"]').classList.contains('runs-pr-merged'), 'a finished live row shows its PR too');
+  assert.equal(glyphOf('[data-run-id="run"]'), null);
+});
+
+test('renderRunsList: a workspace run with several PRs adds their count after the glyph', () => {
+  const doc = new JSDOM('').window.document;
+  const history = [histIt('ws', { prIcon: 'conflict', prCount: 3 }), histIt('one', { prIcon: 'open', prCount: 1 }),
+    histIt('old', { prIcon: 'merged' })];
+  const live = [liveIt('ended', { status: 'done', pipelineId: 'p-ended', pr: 'OPEN', prIcon: 'open', prCount: 2 })];
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, buildRunsModel({ live, history, now: NOW })));
+  const ws = host.querySelector('a.runs-row[data-pipeline-id="ws"] .runs-pr');
+  assert.deepEqual([...ws.classList], ['runs-pr', 'runs-pr-conflict'], 'the most urgent state colours the glyph');
+  assert.equal(ws.getAttribute('aria-label'), '3 pull requests, the most urgent has conflicts');
+  assert.equal(ws.getAttribute('title'), ws.getAttribute('aria-label'));
+  const n = ws.querySelector('.runs-pr-count');
+  assert.equal(n.textContent, '3');
+  assert.equal(n.previousElementSibling.tagName.toLowerCase(), 'svg', 'the count follows the glyph');
+  assert.equal(n.getAttribute('aria-hidden'), 'true', 'the label says it already');
+  assert.equal(host.querySelector('a.runs-row[data-run-id="ended"] .runs-pr .runs-pr-count').textContent, '2', 'a finished live row too');
+  for (const id of ['one', 'old']) {
+    const ic = host.querySelector(`a.runs-row[data-pipeline-id="${id}"] .runs-pr`);
+    assert.equal(ic.querySelector('.runs-pr-count'), null, `${id}: one PR, no count`);
+    assert.match(ic.getAttribute('aria-label'), /^Pull request: /);
+  }
+});
+
+test('style.css: the PR glyph keeps its size at the title line’s end, in GitHub’s colours from tokens', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const rule = (sel) => {
+    const m = new RegExp(`(?:^|\\n)${sel.replace(/[.]/g, '\\.')}\\{([^}]*)\\}`).exec(css);
+    assert.ok(m, `${sel} has a rule`);
+    return m[1];
+  };
+  assert.match(rule('.runs-pr'), /flex:none/, 'never shrinks: a long title wraps instead');
+  assert.match(rule('.runs-pr'), /margin:1px 0 0 auto/, 'pushed to the row’s right end, on the title’s first line');
+  const colours = { open: '--green-ink', draft: '--ink-2', merged: '--violet-ink', conflict: '--amber-ink', closed: '--red-ink' };
+  for (const [state, token] of Object.entries(colours)) assert.equal(rule(`.runs-pr-${state}`), `color:var(${token});`, state);
+  assert.equal(rule('.runs-pr-cut'), 'stroke:var(--panel);', 'the conflict badge’s "!" shows the list behind it');
+  assert.match(rule('.runs-pr-count'), /color:var\(--ink-2\)/, 'the count is grey, whatever the glyph’s colour');
 });
 
 test('filters: Live keeps what has not ended, Finished what has, Needs you only its group', () => {

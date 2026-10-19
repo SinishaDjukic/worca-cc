@@ -60,6 +60,16 @@ test('checkRunBase records conflicts on the branch record and returns them', asy
   assert.equal(br.baseCheck.tree, undefined, 'the tree id is never stored');
 });
 
+test('checkRunBase keeps a record written after it started (an Update branch that landed meanwhile)', async () => {
+  const w = world(); commitOnFeat(w, 'f.txt', 'feature\n'); teammatePush(w, 'g.txt', 'u\n');   // the check reads "clean"
+  const later = { status: 'up-to-date', base: 'dev', behind: 0, files: [], fileCount: 0, at: new Date(Date.now() + 60_000).toISOString() };
+  const { id } = await seedRun(w, { baseCheck: later });
+  const r = await checkRunBase(id);
+  assert.deepEqual(r.members[0].baseCheck, later, 'answers what is stored');
+  assert.equal(r.members[0].tree, null);
+  assert.deepEqual(brOf(id).baseCheck, later);
+});
+
 test('workspace: one record per member, in its own repo', async () => {
   const wa = conflictWorld();
   const wb = world();

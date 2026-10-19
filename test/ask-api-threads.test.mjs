@@ -557,6 +557,103 @@ test('attachment download: text/plain + nosniff + inline (an HTML attachment too
   ]);
 });
 
+test('show_files copies on the attachment route: an SVG gets the sandbox CSP; ?as=text is JSON {text} for text kinds only, capped, owner-only', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const url = (t, a, q = '') => `${base}/api/ask/threads/${t}/attachments/${a}${q}`;
+  await checkRows([
+    { name: 'an SVG copy is served as image/svg+xml with the sandbox CSP; a PNG has no CSP', run: async () => {
+      const t = store.createThread();
+      const svg = store.addAttachment(t.id, null, { name: 'logo.svg', kind: 'image', mime: 'image/svg+xml', data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>') });
+      const png = store.addAttachment(t.id, null, { name: 'a.png', kind: 'image', mime: 'image/png', data: Buffer.from('89504e470d0a1a0a', 'hex') });
+      const r = await fetch(url(t.id, svg.id));
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get('content-type'), 'image/svg+xml');
+      assert.equal(r.headers.get('content-security-policy'), "sandbox; default-src 'none'");
+      const rp = await fetch(url(t.id, png.id));
+      assert.equal(rp.status, 200);
+      assert.equal(rp.headers.get('content-security-policy'), null);
+    } },
+    { name: '?as=text: a markdown copy comes back as {text}, never cached; an SVG is 415; a text body over 2 MiB is 413', run: async () => {
+      const t = store.createThread();
+      const md = store.addAttachment(t.id, null, { name: 'r.md', kind: 'text', mime: 'text/markdown', text: '# Report' });
+      const svg = store.addAttachment(t.id, null, { name: 'logo.svg', kind: 'image', mime: 'image/svg+xml', data: Buffer.from('<svg/>') });
+      const big = store.addAttachment(t.id, null, { name: 'big.md', kind: 'text', mime: 'text/markdown', text: 'a'.repeat(2 * 1024 * 1024 + 1) });
+      const r = await fetch(url(t.id, md.id, '?as=text'));
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get('cache-control'), 'private, no-store');
+      assert.deepEqual(await r.json(), { text: '# Report' });
+      assert.equal((await fetch(url(t.id, svg.id, '?as=text'))).status, 415);
+      assert.equal((await fetch(url(t.id, big.id, '?as=text'))).status, 413);
+    } },
+    { name: 'shared sign-in: another person gets 404 on ?as=text, the owner gets 200', run: async () => {
+      const prev = process.env.WORCA_IDENTITY_HEADER;
+      process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+      try {
+        const t = store.createThread({ createdBy: 'bob@example.com' });
+        const md = store.addAttachment(t.id, null, { name: 'r.md', kind: 'text', mime: 'text/markdown', text: 'mine' });
+        assert.equal((await fetch(url(t.id, md.id, '?as=text'), { headers: { 'x-test-user': 'ada@example.com' } })).status, 404);
+        assert.equal((await fetch(url(t.id, md.id, '?as=text'), { headers: { 'x-test-user': 'bob@example.com' } })).status, 200);
+      } finally {
+        if (prev === undefined) delete process.env.WORCA_IDENTITY_HEADER; else process.env.WORCA_IDENTITY_HEADER = prev;
+      }
+    } },
+  ]);
+});
+
+test('Show in folder: GET /api/ask/reveal says whether a folder opens here; the POST refuses an upload, a gone original and another person (no launch here)', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const info = await (await fetch(`${base}/api/ask/reveal`)).json();
+  assert.equal(typeof info.available, 'boolean');
+  assert.equal(info.available ? typeof info.label : info.label, info.available ? 'string' : null);
+  const post = (t, a, headers = {}) => fetch(`${base}/api/ask/threads/${t}/attachments/${a}/reveal`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' });
+  await checkRows([
+    { name: 'an upload has no original: 409 NO_SOURCE', run: async () => {
+      const t = store.createThread();
+      const up = store.addAttachment(t.id, null, { name: 'a.md', text: 'a' });
+      const r = await post(t.id, up.id);
+      assert.equal(r.status, 409);
+      assert.equal((await r.json()).code, 'NO_SOURCE');
+    } },
+    { name: 'a copy whose original was deleted: 409 SOURCE_GONE, nothing launched', run: async () => {
+      const t = store.createThread();
+      const c = store.addAttachment(t.id, null, { name: 'gone.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'), sourcePath: join(tmpdir(), 'worca-no-such-dir-zz', 'gone.png') });
+      const r = await post(t.id, c.id);
+      assert.equal(r.status, 409);
+      assert.equal((await r.json()).code, 'SOURCE_GONE');
+    } },
+    { name: 'an unknown attachment or thread: 404; a malformed id: 400', run: async () => {
+      const t = store.createThread();
+      assert.equal((await post(t.id, 'att_deadbeef')).status, 404);
+      assert.equal((await post('ask_deadbeef', 'att_deadbeef')).status, 404);
+      assert.equal((await post(t.id, 'not-an-id')).status, 400);
+    } },
+    { name: 'shared sign-in: another person gets 404', run: async () => {
+      const prev = process.env.WORCA_IDENTITY_HEADER;
+      process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+      try {
+        const t = store.createThread({ createdBy: 'bob@example.com' });
+        const up = store.addAttachment(t.id, null, { name: 'a.md', text: 'a' });
+        assert.equal((await post(t.id, up.id, { 'x-test-user': 'ada@example.com' })).status, 404);
+        assert.equal((await post(t.id, up.id, { 'x-test-user': 'bob@example.com' })).status, 409, 'the owner reaches the route');
+      } finally {
+        if (prev === undefined) delete process.env.WORCA_IDENTITY_HEADER; else process.env.WORCA_IDENTITY_HEADER = prev;
+      }
+    } },
+  ]);
+});
+
+test('show_files copies (message_id null) are not uploads: the thread GET and the context header leave them out', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const t = store.createThread();
+  const msg = store.appendMessage(t.id, { role: 'user', text: 'x' });
+  const up = store.addAttachment(t.id, msg.id, { name: 'up.md', text: 'mine' });
+  store.addAttachment(t.id, null, { name: 'shot.png', kind: 'image', mime: 'image/png', data: Buffer.from('89504e470d0a1a0a', 'hex') });
+  const j = await (await fetch(`${base}/api/ask/threads/${t.id}`)).json();
+  assert.deepEqual(j.attachments.map((a) => a.id), [up.id]);
+  const ctx = await mod._testing.resolveAskContext(t.id, {}, []);
+  assert.deepEqual((ctx.attachments || []).map((a) => a.id), [up.id]);
+});
+
 test('GET /api/ask/models and the hello ask array (unknown-thread subscribe is a no-op)', async () => {
   await checkRows([
     { name: 'GET /api/ask/models returns the chat catalog', run: async () => {

@@ -5,11 +5,11 @@
 //
 // Item shapes (the adapters live in app.js: runsLiveItem / runsHistItem / runsSchedItem):
 //   live:  { runId, pipelineId, title, status, ask: {kind, step}|null, pauseReason, unread,
-//            step, failedStep, startedAt, groupKey, groupName, by, pr, checks, files, tags,
+//            step, failedStep, startedAt, groupKey, groupName, by, pr, prIcon, prCount, checks, files, tags,
 //            progress: {fraction, tone}|null }
 //   hist:  { id, projectKey, title, status, pauseReason, startedAt, mtime, groupName, by,
-//            pr (a glance input: glancePrInput's output), checks, files,
-//            archived, archivedAt (archived-feed rows only), tags }
+//            pr (a glance input: glancePrInput's output), prIcon + prCount (prGlyphOf's output),
+//            checks, files, archived, archivedAt (archived-feed rows only), tags }
 //   sched: { id, scheduleId, title (may be null), status, after, queued, retryAt, runAt, groupKey, groupName, by }
 //   chain: { id, title, members[], total, index, fraction, tone, text, groupKey, groupName, open }
 import { glanceCopy } from './run-glance.mjs';
@@ -137,6 +137,36 @@ export function schedRowState(t) {
   return { icon: 'scheduled', word, detail: '' };
 }
 
+/** The state the row's PR glyph shows, from the History row's `pr` ({ state, isDraft, mergeable }, as
+ *  findPrForBranch normalizes them for GitHub and Azure DevOps alike): merged | closed | draft | conflict | open, '' without a PR. A PR's end outranks
+ *  how it stands; a draft's conflicts wait until it is up for merging, and an UNKNOWN
+ *  mergeability (GitHub works it out lazily) reads open. */
+export function prDisplayState(pr) {
+  if (!pr || typeof pr !== 'object') return '';
+  const s = String(pr.state || '').toUpperCase();
+  if (s === 'MERGED') return 'merged';
+  if (s === 'CLOSED') return 'closed';
+  if (s !== 'OPEN') return '';
+  if (pr.isDraft) return 'draft';
+  return String(pr.mergeable || '').toUpperCase() === 'CONFLICTING' ? 'conflict' : 'open';
+}
+
+// Which PR state a workspace run's glyph shows when its members' PRs differ: what needs a person first.
+const PR_URGENCY = ['conflict', 'open', 'draft', 'merged', 'closed'];
+
+/** The row's PR glyph from a History record: { prIcon, prCount }. A workspace run with member PRs shows
+ *  the most urgent member state (PR_URGENCY) and how many member PRs it has; any other run, or a workspace
+ *  run whose members name no PR (legacy rows, lookups not answered), shows its own `pr`. */
+export function prGlyphOf(record) {
+  const members = record && Array.isArray(record.members) ? record.members : [];
+  const states = members.map((m) => prDisplayState(m && m.pr)).filter(Boolean);
+  if (states.length) {
+    return { prIcon: PR_URGENCY.find((s) => states.includes(s)), prCount: states.length };
+  }
+  const own = prDisplayState(record && record.pr);
+  return { prIcon: own, prCount: own ? 1 : 0 };
+}
+
 /** Needs you: a question or gate, a pause (cost caps included), a failed run nobody opened yet. */
 export function needsYou({ kind = 'live', status = '', ask = false, unread = false } = {}) {
   if (kind === 'sched') return false;
@@ -182,6 +212,7 @@ export function liveRow(it, now = Date.now()) {
     tags: Array.isArray(it.tags) ? it.tags.map(String) : [],
     unread: !!it.unread, needs: needsYou({ kind: 'live', status, ask: !!it.ask, unread: !!it.unread }),
     progress: it.progress || null,
+    prIcon: String(it.prIcon || ''), prCount: Number(it.prCount) || 0,
   }, { at: it.startedAt }, now);
 }
 
@@ -229,6 +260,7 @@ export function histRow(p, now = Date.now()) {
     archived: !!(p && p.archived),
     base: String(p.base || ''),                      // #620: "conflicts with dev" / "dev moved", else ''
     unread: false, needs: needsYou({ kind: 'hist', status }),
+    prIcon: String(p.prIcon || ''), prCount: Number(p.prCount) || 0,
     activityMs: Number.isFinite(timeMs(p.mtime, now)) ? timeMs(p.mtime, now) : timeMs(p.startedAt, now),
   }, { at: p.startedAt || p.mtime }, now);
 }
@@ -442,6 +474,55 @@ export function renderRowIcon(doc, icon) {
   return s;
 }
 
+// The pull request glyphs (prDisplayState's states), 24-unit like GLYPHS in a thinner stroke:
+// each has several parts. The base branch is two nodes and their line on the left; the
+// head's line curves back to it, arrow first, from the head node on the right.
+const PR_BASE = [['circle', { cx: 6, cy: 5.5, r: 2.5 }], ['circle', { cx: 6, cy: 18.5, r: 2.5 }], ['path', { d: 'M6 8v8' }]];
+const PR_ARROW = ['path', { d: 'M14 3l-2.5 2.5L14 8' }];
+const prLink = (fromY, more = {}) => ['path', { d: `M18 ${fromY}V9.5a4 4 0 0 0-4-4h-2.5`, ...more }];
+const PR_GLYPHS = Object.freeze({
+  open: [...PR_BASE, prLink(16), PR_ARROW, ['circle', { cx: 18, cy: 18.5, r: 2.5 }]],
+  // Not ready yet: the link dashed, the head a dotted ring (zero-length dashes on round caps).
+  draft: [...PR_BASE, prLink(14.5, { 'stroke-dasharray': '1 3.5' }), PR_ARROW,
+    ['circle', { cx: 18, cy: 18.5, r: 3, 'stroke-width': 1.5, 'stroke-dasharray': '0 3.1416' }]],
+  // The branch curves into the main line.
+  merged: [...PR_BASE, ['path', { d: 'M6 8c0 3.3 2.7 6 6 6h3.5' }], ['circle', { cx: 18, cy: 14, r: 2.5 }]],
+  // A filled badge at the head, its "!" cut out in the list's background (.runs-pr-cut).
+  conflict: [...PR_BASE, prLink(13), PR_ARROW, ['circle', { cx: 18, cy: 18, r: 5, fill: 'currentColor', stroke: 'none' }],
+    ['path', { d: 'M18 15.3v2.7M18 21h.01', 'stroke-width': 1.8, class: 'runs-pr-cut' }]],
+  // Dropped without merging: a cross where the head was.
+  closed: [...PR_BASE, prLink(14), PR_ARROW, ['path', { d: 'M16 17l4 4M20 17l-4 4' }]],
+});
+const PR_WORDS = Object.freeze({
+  draft: 'draft', open: 'open', merged: 'merged', conflict: 'has conflicts', closed: 'closed without merging',
+});
+
+/** The row's PR glyph, named for screen readers and the tooltip; null for a row without a PR
+ *  (`state` is not one of prDisplayState's). `count` > 1 (a workspace run's member PRs) follows
+ *  the glyph as a number. Colours come from `.runs-pr-<state>` in style.css. */
+function renderPrIcon(doc, state, count = 0) {
+  if (!Object.hasOwn(PR_GLYPHS, state)) return null;
+  const label = count > 1 ? `${count} pull requests, the most urgent ${state === 'conflict' ? 'has conflicts' : `is ${PR_WORDS[state]}`}`
+    : `Pull request: ${PR_WORDS[state]}`;
+  const ic = doc.createElement('span');
+  ic.className = `runs-pr runs-pr-${state}`;
+  ic.setAttribute('role', 'img');
+  ic.setAttribute('aria-label', label);
+  ic.title = label;
+  const s = svg(doc, 'svg', {
+    viewBox: '0 0 24 24', width: 16, height: 16, fill: 'none', stroke: 'currentColor',
+    'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true',
+  });
+  for (const [tag, attrs] of PR_GLYPHS[state]) s.appendChild(svg(doc, tag, attrs));
+  ic.appendChild(s);
+  if (count > 1) {
+    const n = textEl(doc, 'span', 'runs-pr-count', String(count));
+    n.setAttribute('aria-hidden', 'true');
+    ic.appendChild(n);
+  }
+  return ic;
+}
+
 function textEl(doc, tag, cls, text) {
   const n = doc.createElement(tag);
   n.className = cls;
@@ -481,6 +562,9 @@ function renderRow(doc, r, { inNeeds = false, bucket = '', lineFrom = null } = {
     body.appendChild(renderRowLine(doc, r.progress, (lineFrom && lineFrom.get(r.key)) || ''));
   }
   a.append(ic, body);
+  // The title line's end. Not a control: a click on it is the row's, like anywhere else.
+  const pr = renderPrIcon(doc, r.prIcon, r.prCount);
+  if (pr) a.appendChild(pr);
   return a;
 }
 

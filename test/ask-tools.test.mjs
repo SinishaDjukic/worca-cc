@@ -1196,7 +1196,7 @@ test('propose_run: shape and assess exist only while the injected gate is on wit
   const { PERSPECTIVE_KEYS } = await import('../src/shared/shape/perspectives.mjs');
   const schemaOf = (deps) => createAskTools({ ...fake, ...deps }).list().find((d) => d.name === 'propose_run').inputSchema;
   const today = schemaOf({});
-  assert.deepEqual(Object.keys(today.properties), ['projectKey', 'workspaceId', 'workflowId', 'brief', 'source', 'title', 'guardrailsId', 'tags', 'memoryScope',
+  assert.deepEqual(Object.keys(today.properties), ['projectKey', 'workspaceId', 'workflowId', 'presetId', 'brief', 'source', 'title', 'guardrailsId', 'tags', 'memoryScope',
     'engine', 'sourceBranch', 'featureBranch', 'sameAsSource', 'note', 'nodes', 'attachmentIds', 'sourceBranchByKey', 'commentIds',
     'when', 'every', 'until', 'count', 'overlap', 'maxFailures', 'after', 'afterPolicy', 'sourceFromPrevious'], 'no deps: today\'s schema');
   assert.deepEqual(today.required, ['brief']);
@@ -1241,4 +1241,17 @@ test('an Ask chat with a composer bundle lists the drafts and the graph proposal
   assert.deepEqual(names.slice(names.indexOf('get_task') + 1), ['build_workflow', 'draft_agent', 'draft_script', 'get_agent', 'get_workflow']);
   for (const n of ['get_canvas', 'edit_canvas']) assert.equal(names.includes(n), false, n);
   assert.ok(names.includes('propose_run') && names.includes('propose_workflow'), 'Ask keeps its own proposals');
+});
+
+test('show_files: gated by deps.showFiles; validates counts; hands rows through resolveRow', async () => {
+  assert.equal(createAskTools(fake).list().some((t) => t.name === 'show_files'), false, 'no bundle, no tool');
+  const calls = [];
+  const t = createAskTools({ ...fake, showFiles: { show: async (req) => { calls.push(req); await req.rowFor('r_missing').catch((e) => calls.push(e.message)); return { ok: true, items: [] }; } } });
+  const def = t.list().find((d) => d.name === 'show_files');
+  assert.ok(def && def.inputSchema.additionalProperties === false && def.description.length > 20);
+  await assert.rejects(t.call('show_files', {}), /at least one/);
+  await assert.rejects(t.call('show_files', { attachmentIds: Array.from({ length: 13 }, (_, i) => `att_${i}`) }), /at most 12/);
+  await t.call('show_files', { files: [{ path: '$WORCA_ASK_OUT/a.png' }], caption: 'Home' });
+  assert.equal(calls[0].caption, 'Home');
+  assert.match(calls[1], /show_files: run not found/);
 });

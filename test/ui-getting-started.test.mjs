@@ -8,6 +8,7 @@ import {
   GETTING_STARTED_STEPS, renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone,
 } from '../ui/public/getting-started.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick, dragOut } from './helpers/popups.mjs';
 
 const dom = () => new JSDOM('<!doctype html><body><div id="host"></div><div id="pill"></div></body>', { url: 'http://localhost/' });
 const status = (done = [], extra = {}) => ({
@@ -124,8 +125,9 @@ test('welcome bindings: doors hand over their step, Skip / backdrop / Esc skip',
   click(window, modal.querySelector('[data-door="run"]'));
   assert.deepEqual(doors, ['run']);
   click(window, modal.querySelector('.ob-skip'));
-  click(window, modal);                                   // the backdrop itself
+  backdropClick(window, modal);                           // press and release on the backdrop
   click(window, modal.querySelector('.card'));            // the card is not the backdrop
+  dragOut(window, modal.querySelector('.card'), modal);   // a press inside released on the backdrop is not one
   doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
   assert.equal(skips, 3);
   unbind();

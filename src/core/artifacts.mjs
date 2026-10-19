@@ -1144,6 +1144,7 @@ export async function readPromptFile(projectDir, promptFile) {
  * @param {string} [opts.sourceType]  'prompt' | 'markdown' | 'plugin' (defaults derived)
  * @param {object} [opts.sourceMeta]  { plugin, sourceId, taskId, url, title } | null
  * @param {string} [opts.guardrailsId] the run's selected guardrail set id (per-run)
+ * @param {string|null} [opts.runSetup] JSON of the run's setup (pipelines.run_setup, v62); never on the state object
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
@@ -1157,7 +1158,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [],
+    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], runSetup = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1291,7 +1292,7 @@ export async function createPipeline(projectDir, opts = {}) {
   // no more state.json on disk. writeState also seeds the dir->id cache
   // (rememberDir) so appendAudit resolves this run without any call-site change
   // (A4). recordArtifact runs AFTER the row exists (FK -> pipelines).
-  await writeState(dir, state, { prWatchRunId });
+  await writeState(dir, state, { prWatchRunId, runSetup });
   // Run tags (#718): written once, after the row exists (FK) and after writeState's tx has
   // committed (tx cannot nest). writeState updates never touch them.
   insertRunTags(id, tags);
@@ -1398,7 +1399,7 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * @param {object} stateObj
  * @returns {Promise<object>}
  */
-export async function writeState(pipelineDir, stateObj, { prWatchRunId = null } = {}) {
+export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null } = {}) {
   const obj = { ...stateObj, updatedAt: new Date().toISOString() };
   const id = obj.id;
   if (!id) return obj; // pre-id state (constructor default): nothing to persist yet
@@ -1408,11 +1409,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null } 
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1426,7 +1427,7 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null } 
         run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
-    `).run(toPipelineRow(obj));
+    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null });
 
     // A Watch PR fix run (#619): ownership lands in the same transaction that creates the row.
     if (prWatchRunId) attachWatchPipeline(prWatchRunId, id, obj.updatedAt);
@@ -2467,13 +2468,15 @@ export function countPipelines() {
 
 /**
  * Re-walk the skeleton and resolve live PR state per branch, pushed to `onBatch`
- * in parallel batches. v1 sends ONLY `pr` (state OPEN/MERGED or null) —
- * findPrForBranch already distinguishes merged-vs-open. We do NOT compute live
- * mergeability (no prMergeable call). `onBatch(items, isFinal)` is awaited so a
- * caller can broadcast incrementally; the FINAL call always carries isFinal=true
- * (even with no PR host / no targets) so a client spinner provably clears. A workspace
- * item (a row WITH member facts) also carries `members: [{ memberKey, pr }]`; its
- * `pr` is the rollup of those.
+ * in parallel batches. Each item sends ONLY `pr`: findPrForBranch's
+ * { state, url, number, isDraft, mergeable } (state OPEN/MERGED, or CLOSED when no
+ * open or merged PR exists — the Runs list draws a dropped PR too) or null. Draft and
+ * mergeability come from the same lookup (gh or Azure REST): no prMergeable call per PR.
+ * `onBatch(items, isFinal)` is awaited so a caller can broadcast incrementally; the
+ * FINAL call always carries isFinal=true (even with no PR host / no targets) so a client
+ * spinner provably clears. A workspace item (a row WITH member facts) also carries
+ * `members: [{ memberKey, pr }]`, each `pr` in the same shape; its `pr` is the rollup
+ * of the open and merged ones.
  */
 export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
   if (!(await anyPrHost())) { await onBatch([], true); return; } // no PR host: one empty final batch
@@ -2491,17 +2494,19 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
         const known = readMemberPrStates(r.id);
         const members = await Promise.all(r.members.map(async (m) => {
           const pr = m.projectDir && m.branch
-            ? (await findPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null })) || null
+            ? (await findPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null, includeClosed: true })) || null
             : null;
-          if (pr) persistMemberPrState(r.id, m.memberKey, pr);
+          if (pr && pr.state !== 'CLOSED') persistMemberPrState(r.id, m.memberKey, pr);   // a closed PR is shown, never recorded
           return { memberKey: m.memberKey, pr };
         }));
         const pr = rollupMemberPrs(Object.fromEntries(members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
         return { projectKey: r.projectKey, id: r.id, pr, members };
       }
       const prUrl = readPrState(r.id)?.url || null;
-      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl })) || null;
-      if (pr) persistPrState(r.id, pr);   // positive observations only (null never clears)
+      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, includeClosed: true })) || null;
+      // Positive observations only (null never clears). A closed PR is shown, never
+      // recorded: pr_url keeps naming the open or merged PR the other readers act on.
+      if (pr && pr.state !== 'CLOSED') persistPrState(r.id, pr);
       return { projectKey: r.projectKey, id: r.id, pr };
     }));
     await onBatch(items, i + batchSize >= targets.length); // (items, isFinal)
@@ -3044,7 +3049,7 @@ export async function resolveIndexedArtifactFileForRow(row, rel) {
     try {
       if (!(await stat(file)).isFile()) continue;
       await access(file, fsConstants.R_OK);
-      return { rel: hit.relPath, file };
+      return { rel: hit.relPath, file, base };
     } catch { /* try the next base */ }
   }
   return null;

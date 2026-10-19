@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { pressEscape, discardPrompt, discardChanges } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -226,6 +227,26 @@ test('unsupported dialog: multi-mode browser keeps ticks across navigation; Add 
       assert.ok(doc.querySelector('#project-bulk-modal').classList.contains('hidden'));
     } },
   ]);
+});
+
+test('a ticked folder makes Escape ask first; Discard closes the browser and hands nothing to its caller', async () => {
+  const { window } = await boot({ fetchHandler: dirsHandler({ status: 'unsupported' }) });
+  openAddForm(window);
+  const doc = window.document;
+  click(window, doc.querySelector('#newProjectBrowse'));
+  await tick(); await tick(); await tick();
+  const browser = doc.querySelector('#folder-browser');
+  assert.equal(browser.classList.contains('hidden'), false);
+  const pick = doc.querySelector('#folderList .folder-pick');
+  pick.checked = true; pick.dispatchEvent(new window.Event('change', { bubbles: true }));
+  pressEscape(window);
+  assert.ok(discardPrompt(doc), 'ticked folders are a choice: Escape asks');
+  assert.equal(browser.classList.contains('hidden'), false);
+  discardChanges(doc);
+  await tick();
+  assert.ok(browser.classList.contains('hidden'), 'Discard closes the browser');
+  assert.equal(doc.querySelector('#newProjectPath').value, '', 'nothing was filled in');
+  assert.ok(doc.querySelector('#project-bulk-modal').classList.contains('hidden'), 'and no review list opened');
 });
 
 test('bulk add from New Pipeline selects the first added project in the dropdown', async () => {

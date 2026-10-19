@@ -78,6 +78,19 @@ export function builtinLaunch(key, dir, detected, { platform = process.platform,
   throw new Error(`unknown built-in ${key}`);
 }
 
+/** { file, args, opts } that opens the file manager on the folder holding `file`, with the file selected where the
+ *  platform can (Finder, Explorer); a Linux file manager opens the folder (`dir`, checked to be one by the caller).
+ *  Chat files' Show in folder (docs/show-files.md). */
+export function revealLaunch(file, dir, detected) {
+  const base = { detached: true, stdio: 'ignore', windowsHide: false };
+  const d = detected.fileManager;
+  if (!d) { const e = new Error('no file manager was found on this machine'); e.code = 'NOT_AVAILABLE'; throw e; }
+  if (d.kind === 'mac') return { file: 'open', args: ['-R', file], opts: base };
+  // Explorer takes `/select,"<path>"` as ONE argument: Node's own quoting would wrap the whole thing in quotes.
+  if (d.kind === 'win') return { file: 'explorer.exe', args: [`/select,"${file}"`], opts: { ...base, windowsVerbatimArguments: true } };
+  return { file: d.cmd, args: [dir], opts: base };
+}
+
 /** Two lines, never `&&` (Windows PowerShell 5.1). pushed = { remote } | null. */
 export function copyCommandText({ projectDir, branch, pushed }) {
   if (pushed && pushed.remote) return `git fetch ${pushed.remote} ${branch}\ngit switch ${branch}`;

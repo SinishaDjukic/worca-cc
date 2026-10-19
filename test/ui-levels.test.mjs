@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { checkRows } from './helpers/rows.mjs';
 import { paintProgressBar } from '../ui/public/run-progress-bar.mjs';
+import { backdropClick, dragOut } from './helpers/popups.mjs';
 
 import {
   UI_LEVELS, LEVEL_INFO, normalizeLevel, levelShows, levelAtLeast, currentLevel, tagLevel, keepVisible,
@@ -202,6 +203,11 @@ test('mode dialog: three radio cards, a click applies and saves, a failed save r
       assert.ok(modal.classList.contains('hidden'), 'Done closes');
       // jsdom lays nothing out (offsetParent is null), so the opener reads as gone: the fallback is the account corner.
       assert.equal(doc.activeElement, doc.getElementById('side-acct'), 'focus falls back to the account corner');
+      doc.getElementById('modeSettingsChange').click();
+      dragOut(dom.window, doc.querySelector('#mode-cards [data-level-choice]'), modal);
+      assert.ok(!modal.classList.contains('hidden'), 'a press on a card released on the backdrop is not an outside click');
+      backdropClick(dom.window, modal);
+      assert.ok(modal.classList.contains('hidden'), 'a backdrop click closes it: each card applied at once, nothing is pending');
     } },
     { name: 'a [data-mode-set] control (banner, hidden-settings note) sets the mode without opening the dialog', run: async () => {
       const doc = new JSDOM(html).window.document;
