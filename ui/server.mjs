@@ -12545,7 +12545,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   // D5 backstop, before anything is stored: an engine Ask does not run on (Cursor). The catalog filter
   // (ask/models.mjs) already makes such a model unknown to validateModelEffort.
   const modelEngine = model ? askTurnEngine(id, thread, model) : null;
-  if (model && !modelEngine && engineOfModel(model)) return { ok: false, status: 400, error: `Ask on ${engineLabel(engineOfModel(model))} is unavailable` };
+  if (model && !modelEngine && engineOfModel(model)) return { ok: false, status: 400, error: `Chat on ${engineLabel(engineOfModel(model))} is unavailable` };
   const budget = budgetStatus();                                                    // P3: the event path needs the same gate the route head applies
   if (budget.blocked) return { ok: false, status: 403, error: 'total cost limit reached', budget };
   if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {

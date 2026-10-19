@@ -34,7 +34,7 @@ and the same builds are attached as zips to each GitHub release. See [Install](#
 - **Running Actions.** When the page is served by a running Worca Action (a run's dev server), a new
   chat is pinned to that run's project, and the page context names the run. A scope you picked
   yourself is never overridden.
-- **Context menu.** Right-click a selection → **Ask Chat about selection** opens the sidebar with
+- **Context menu.** Right-click a selection → **Worca Chat: ask about selection** opens the sidebar with
   the selection quoted.
 
 ## Install
@@ -263,7 +263,7 @@ asks for:
 | `activeTab` | read the current tab's URL, title, selection and text, inject Pinpoint, and capture the visible tab for an area capture, only after you click the toolbar button, use the context menu or press a shortcut |
 | `scripting` | inject the page script into that tab |
 | `storage` | keep the Worca address and the token |
-| `contextMenus` | the **Ask Chat about selection** item |
+| `contextMenus` | the **Worca Chat: ask about selection** item |
 | `sidePanel` (Chrome, Edge) | show the sidebar; Firefox uses `sidebar_action`, which needs no permission |
 
 The manifest also declares the two keyboard shortcuts under `commands`, which is not a permission.

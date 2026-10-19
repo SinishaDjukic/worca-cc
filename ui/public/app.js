@@ -1504,7 +1504,7 @@ function handleServerMessage(msg) {
     // here is REQUIRED, not a nicety — the budget tick only refetches while
     // pipelines are live, so chat-only spend would otherwise stay stale.
     if (msg.type === 'ask-done' || msg.type === 'ask-error') {
-      scheduleOnboardingRefresh();   // the first thread ticks "Ask Chat about a run"
+      scheduleOnboardingRefresh();   // the first thread ticks "Ask about a run in Chat"
       refreshBudget();
       if (currentView() === 'stats') loadStatsView();
     }
@@ -25467,7 +25467,7 @@ function hdCommentCard(doc, comment, ctx, { detached = false, reply = false, las
     }
     actions.append(
       act('hd-cmt-resolve', comment.resolved ? 'Reopen' : 'Resolve', () => { void ctx.setResolved(comment, !comment.resolved, card); }),
-      act('hd-cmt-ask', 'Ask Chat', () => ctx.toAsk(comment)),
+      act('hd-cmt-ask', 'Ask in Chat', () => ctx.toAsk(comment)),
       act('hd-cmt-delete', 'Delete', () => { void ctx.remove(comment); }),
       act('hd-cmt-reply', 'Reply', () => ctx.openReply(comment, threadEl), 'reply'),
     );

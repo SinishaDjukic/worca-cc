@@ -76,7 +76,7 @@ const ERROR_DETAIL_MAX = 2000;
 // Ask Worca on Codex (cascading-settings-design.md §4.6, D13, D14).
 export const CODEX_NOT_READY_CODE = 'codex-not-ready';
 export const CODEX_SETUP_DOCS_URL = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#codex';
-export const CODEX_NO_LOCKDOWN_MESSAGE = "Ask on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.";
+export const CODEX_NO_LOCKDOWN_MESSAGE = "Chat on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.";
 export const CODEX_MCP_NOTE = 'Your MCP servers are available in Claude chats';
 export const CODEX_SHELL_TRIPPED_MESSAGE = 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.';
 /** D13 fail-closed beyond the shell: a Codex chat may call worca's own tools (mcp__…) only. */
@@ -135,7 +135,7 @@ class AskTurn extends EventEmitter {
   } = {}) {
     super();
     // D5 backstop: an engine Ask does not run on (Cursor: CURSOR_ASK_LOCKDOWN = null) is refused outright.
-    if (engine && !ASK_ENGINES.includes(engine)) throw new Error(`Ask on ${engineLabel(engine)} is unavailable`);
+    if (engine && !ASK_ENGINES.includes(engine)) throw new Error(`Chat on ${engineLabel(engine)} is unavailable`);
     this.threadId = threadId;
     // The chat's engine (D12) — fixed by the server from the chat's model; a Claude turn never reads the fields below.
     this.engine = engine === 'codex' ? 'codex' : 'claude';
