@@ -14697,7 +14697,7 @@ app.use((err, _req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, bench: null };
+  const summary = { reconciled: 0, sweptV1: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -14846,6 +14846,16 @@ export async function bootMaintenance({ log } = {}) {
     if (r.failed.length) console.error(`[worca-ui] repo-look sweep: ${r.failed.length} dir(s) could not be removed`);
   } catch (err) {
     console.error(`[worca-ui] repo-look sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // Requirements code looks (plans/requirements-design.md D7) a restart cut short, under <worcaHome>/tmp/requirements.
+  try {
+    const r = await sweepRepoLooks(path.join(worcaHome(), 'tmp', 'requirements'), { log: sink('repo-look') });
+    summary.requirementsRepoLooks = r;
+    if (r.removed.length) console.log(`[worca-ui] requirements repo-look sweep: removed ${r.removed.length} stale look dir(s)`);
+    if (r.failed.length) console.error(`[worca-ui] requirements repo-look sweep: ${r.failed.length} dir(s) could not be removed`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements repo-look sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   // Script bench folders (workbench W11): the newest folder per script key

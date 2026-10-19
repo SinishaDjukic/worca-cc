@@ -200,6 +200,25 @@ test('boot: repo-look sweep removes a stale auto-look-* dir under tmp/ask and re
     'its registration was removed from the source repo');
 });
 
+// Requirements code looks (plans/requirements-design.md D7) live under <worcaHome>/tmp/requirements: a
+// crash mid-orientation leaves the checkout there, so boot sweeps that base too.
+test('boot: repo-look sweep also removes a stale look under tmp/requirements', async () => {
+  const repo = await freshRepo('worca-cc-boot-reqlook-');
+  const { openRepoLook } = await import('../src/core/auto/repo-look.mjs');
+  const base = join(worcaHome(), 'tmp', 'requirements');
+  await mkdir(base, { recursive: true });
+  const look = await openRepoLook(repo, base);
+  assert.ok(look && existsSync(look.cwd), 'fixture: a single-project look checked out');
+  const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  utimesSync(look.cwd, old, old);
+
+  const res = await bootMaintenance({ log: () => {} });
+
+  assert.deepEqual(res.requirementsRepoLooks.removed, [look.cwd]);
+  assert.deepEqual(res.requirementsRepoLooks.failed, []);
+  assert.ok(!existsSync(look.cwd), 'the stale requirements look is gone');
+});
+
 // P8a: a DB stamped past 24 by a divergent ladder can still hold v1 resume
 // points, so boot sweeps them once, idempotently.
 test('bootMaintenance retires runs left paused on the v1 engine', async () => {
