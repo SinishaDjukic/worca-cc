@@ -884,6 +884,19 @@ export function createAskTools(deps) {
         inputSchema: SCHEMA.obj({ runId: SCHEMA.s('run id (optional)'), projectKey: SCHEMA.s('project key (optional)'),
           limit: SCHEMA.i('how many', 1, 50) }) },
     ] : []),
+    ...(deps.showFiles ? [
+      { name: 'show_files',
+        description: 'Show files to the user as a card in your reply (images inline; a click opens a viewer): screenshots, charts, generated reports, run artifacts, files in this chat\'s worktrees or output folder. Each file is copied into the chat, so the card outlives the original. files[].path: "$WORCA_ASK_OUT/<name>" for a file you saved there, otherwise an absolute or relative path plus the runId or projectKey whose folder holds it. runArtifacts: {runId, relPath} as list_run_artifacts names them. attachmentIds: ids of this chat\'s attachments (the attachments line of the context header, or an earlier show_files result). Credential files and anything outside those folders are refused. Returns {ok, items, refused}.',
+        inputSchema: SCHEMA.obj({
+          files: { type: 'array', maxItems: L.showFiles.maxFiles, description: 'files on disk to show',
+            items: SCHEMA.obj({ path: SCHEMA.s('"$WORCA_ASK_OUT/<name>", or an absolute or relative path'),
+              runId: SCHEMA.s('the run whose folder holds it'), projectKey: SCHEMA.s('the project whose folder holds it') }, ['path']) },
+          runArtifacts: { type: 'array', maxItems: L.showFiles.maxFiles, description: 'indexed run artifacts to show',
+            items: SCHEMA.obj({ runId: SCHEMA.s('the run id'), relPath: SCHEMA.s('the artifact path list_run_artifacts returned') }, ['runId', 'relPath']) },
+          attachmentIds: { type: 'array', maxItems: L.showFiles.maxFiles, items: { type: 'string' }, description: 'attachment ids of this chat' },
+          caption: SCHEMA.s('optional: one line shown above the files (≤ 300 chars)'),
+        }) },
+    ] : []),
     // worca Chat P2 (act, then undo): settings and run controls. Present only when the host spread the chatActions
     // bundle (chat-action-deps.mjs), so a bundle-less list (unit tests, reader-only hosts) is unchanged. The child
     // validates; the PARENT applies and posts the receipt or the card (turn.mjs _onChatAction).
@@ -2665,6 +2678,23 @@ export function createAskTools(deps) {
       const r = await composerOf('get_workflow').getWorkflow(str(input.id));
       if (!r.ok) throw new AskToolError(`get_workflow: ${r.error}`);
       return redactDeep(r);
+    },
+    async show_files(input) {
+      const sf = deps.showFiles;
+      if (!sf) throw new AskToolError('show_files: not available in this chat');
+      const list = (v) => (Array.isArray(v) ? v : []);
+      const files = list(input.files);
+      const runArtifacts = list(input.runArtifacts);
+      const attachmentIds = list(input.attachmentIds);
+      const n = files.length + runArtifacts.length + attachmentIds.length;
+      if (!n) throw new AskToolError('show_files: give at least one of files, runArtifacts or attachmentIds');
+      if (n > L.showFiles.maxFiles) throw new AskToolError(`show_files: at most ${L.showFiles.maxFiles} files per card`);
+      const rows = new Map();   // one resolveRow (async) per run id per call
+      const rowFor = (runId) => {
+        if (!rows.has(runId)) rows.set(runId, resolveRow({ id: runId }, 'show_files'));
+        return rows.get(runId);
+      };
+      return sf.show({ files, runArtifacts, attachmentIds, caption: str(input.caption), rowFor });
     },
     async run_command(input) {
       const c = commandsOf('run_command');

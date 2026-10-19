@@ -209,6 +209,7 @@ test('labelForTool: representative worca labels, Task/Agent → null, web tools 
       assert.equal(labelForTool('mcp__worca__read_file', {}), 'Reading a file');
       assert.equal(labelForTool('mcp__worca__grep', { pattern: 'x' }), 'Searching files');
       assert.equal(labelForTool('mcp__worca__glob', { pattern: '**/*.mjs' }), 'Listing files');
+      assert.equal(labelForTool('mcp__worca__show_files'), 'Showing files');
 
       assert.equal(labelForTool('Task', {}), null);
       assert.equal(labelForTool('Agent', {}), null);
@@ -717,9 +718,11 @@ const RESULT_HOOKS = [
     'propose_away_mode_change', 'onAwayProposal', { level: 'user', set: { enabled: true } }],
   ['propose_workspace_change: labelled, and its RESULT reaches onWorkspaceProposal with the full input; a sub-agent call never does',
     'propose_workspace_change', 'onWorkspaceProposal', { kind: 'add_members', workspaceId: 'wks-demo-0000abcd', projectKeys: ['k1'] }],
+  ['show_files: labelled, and its RESULT reaches onShowFiles with the full input; a sub-agent call never does',
+    'show_files', 'onShowFiles', { files: [{ path: '$WORCA_ASK_OUT/a.png' }] }],
 ];
 
-test('RESULT hooks: each hooked tool (metrics, track_run, policy, clone, web, away switch, away proposal, workspace) reaches its hook on the main stream with {toolUseId,input,text,isError}; never for a sub-agent; a throwing hook is contained', async () => {
+test('RESULT hooks: each hooked tool (metrics, track_run, policy, clone, web, away switch, away proposal, workspace, show_files) reaches its hook on the main stream with {toolUseId,input,text,isError}; never for a sub-agent; a throwing hook is contained', async () => {
   await checkRows(RESULT_HOOKS.map(([name, tool, hook, input]) => ({ name, run: () => {
     const mcpName = `mcp__worca__${tool}`;
     const calls = [];

@@ -346,6 +346,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: a classified failure's human notice (what happened and where the remedy lives) | all — recovery instructions are never hidden (rule 1); Simple gets no Models page navigation, the copy names the mode instead |
 | Ask: a classified failure's raw-detail expander ("Details") | E |
 | Ask: proposal cards themselves | all (rule 4) |
+| Ask: files card (show_files) — image tiles, file rows, viewer | S — an answer is never hidden (rule 4) |
 | Ask: the context ring and its popover's window fill and topics | S |
 | Ask: model picker, scope, cost meter, tool rows, branches, guardrails, "Open in New run" | A |
 | Ask: the chevron on a reply's activity line (`Done · 7.4s · …`) | A when it opens tool rows, E when it opens only sub-agents; the line itself shows at every level |

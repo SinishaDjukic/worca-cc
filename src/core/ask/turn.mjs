@@ -56,7 +56,7 @@ import { codexMemoryLine } from './prompt.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
 import { mentionedRefs } from './contexts.mjs';
 import {
-  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, ASK_ID_RE,
+  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment, ASK_ID_RE,
 } from './store.mjs';
 import { budgetStatus, recordAskCostDelta } from '../cost-budget.mjs';
 import { generateSuggestion, suggestionModel, claimSuggestion, releaseSuggestion, cancelSuggestion, SUGGESTION_TIMEOUT_MS } from './suggest.mjs';
@@ -211,7 +211,7 @@ class AskTurn extends EventEmitter {
       materializeSkillMount: deps.materializeSkillMount ?? materializeSkillMount,
       removeSkillMount: deps.removeSkillMount ?? ((base) => rm(base, { recursive: true, force: true })),
       store: {
-        finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments,
+        finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment,
         ...(deps.store || {}),
       },
       // Claude Code's sign-in for propose_run's per-agent picks, asked once per turn (proposal.mjs proposalClaudeAuth: a
@@ -380,6 +380,37 @@ class AskTurn extends EventEmitter {
       folder: r.folder || null, cwd: r.cwd || null, warning: r.warning || null };
     // textAt: the card sits in the answer where the command ran, not below it.
     const block = this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'command', textAt: this.reducer.textLength(), card });
+    if (block) this._persistBlocks();
+  }
+
+  /** show_files RESULT → a display-only files card, inline where the answer stands (textAt). The card is rebuilt from
+   *  THIS thread's attachment rows: an id the store does not hold for this chat is dropped, and name/mime/bytes come
+   *  from the row, never from the tool's echo. Only the sniffed kind, the optional image size, the caption and the
+   *  "not shown" notes are taken from the result. */
+  _onShowFiles(text, isError) {
+    if (isError) return;
+    let r = null;
+    try { r = JSON.parse(text); } catch { return; }
+    if (!r || r.ok !== true || !Array.isArray(r.items)) return;
+    const dim = (n) => (Number.isInteger(n) && n > 0 && n <= 100_000 ? n : null);
+    const items = [];
+    for (const it of r.items.slice(0, ASK_LIMITS.showFiles.maxFiles)) {
+      const att = it && typeof it.attId === 'string' ? this.deps.store.getAttachment(this.threadId, it.attId) : null;
+      if (!att) continue;
+      const w = dim(it.width); const h = dim(it.height);
+      // typeof first: RegExp#test(undefined) tests the string "undefined", which would pass.
+      items.push({ attId: att.id, name: att.name, kind: typeof it.kind === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(it.kind) ? it.kind : 'file',
+        mime: att.mime || null, bytes: att.bytes, ...(w && h ? { width: w, height: h } : {}),
+        ...(att.hasSource ? { source: true } : {}) });   // from the row: Show in folder opens the file this was copied from
+    }
+    if (!items.length) return;
+    const caption = typeof r.caption === 'string' ? r.caption.slice(0, 300) : '';
+    const skipped = (Array.isArray(r.refused) ? r.refused : []).slice(0, 10)
+      .map((x) => ({ name: String(x?.source || '').split(/[\\/]/).pop().slice(0, 120), reason: String(x?.reason || '').slice(0, 200) }))
+      .filter((x) => x.name || x.reason);
+    const title = caption || (items.length === 1 ? items[0].name : `${items.length} files`);
+    const card = { type: 'files', title, items, ...(caption ? { caption } : {}), ...(skipped.length ? { skipped } : {}) };
+    const block = this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'shown', textAt: this.reducer.textLength(), card });
     if (block) this._persistBlocks();
   }
 
@@ -804,6 +835,7 @@ class AskTurn extends EventEmitter {
       onComposerResult: ({ name, text, isError }) => this._onComposerResult(name, text, isError),
       onTrackRun: this.composer ? null : ({ input, isError }) => this._onTrackRun(input, isError),
       onRunCommand: ({ text, isError }) => this._onRunCommand(text, isError),
+      onShowFiles: ({ text, isError }) => this._onShowFiles(text, isError),
       onAwaySwitch: this.composer ? null : ({ text, isError }) => this._onAwaySwitch(text, isError),
       onChatAction: this.composer ? null : ({ name, text, isError, sub }) => this._onChatAction(name, text, isError, sub === true),
       onMetricsProposal: ({ input, text, isError }) => this._onMetricsProposal(input, text, isError),

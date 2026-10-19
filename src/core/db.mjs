@@ -62,7 +62,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 63;
+export const SCHEMA_VERSION = 64;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -859,7 +859,8 @@ const INCREMENTAL_COLUMNS = {
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
   artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
   ask_attachments:        { kind: "TEXT NOT NULL DEFAULT 'text'",  // v27: text | image | binary (#398)
-                            mime: 'TEXT' },               // v27: sniffed mime; NULL on pre-v27 rows (= text)
+                            mime: 'TEXT',                 // v27: sniffed mime; NULL on pre-v27 rows (= text)
+                            source_path: 'TEXT' },        // v64: the real path a show_files copy came from (server-only); NULL = an upload
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
                             author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
@@ -2260,6 +2261,7 @@ export function migrate(db) {
     if (current < SCHEMA_VERSION) refreshPromoVideoSeed(db);
     // v62 (#712 slice 2): pipelines.run_setup — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     // v63 (#712 slice 3): schedules.preset_id, scheduled_runs.preset_id — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v64: ask_attachments.source_path (a show_files copy's original, for Show in folder) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
