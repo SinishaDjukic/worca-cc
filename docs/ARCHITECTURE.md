@@ -70,7 +70,7 @@ told not to apply the large-task modifier, because the workspace implementer alr
 one sub-agent per plan task (cap 8).
 
 **Designing a workflow for a workspace from Ask Worca.** `propose_workflow` takes
-`workspaceId` or `projectKey` (at most one; neither ⇒ the pinned scope). The chat's repo
+`workspaceId` or `projectKey` (at most one; neither ⇒ the chat's scope, refused in a No-project chat; one outside the chat's scope is refused). The chat's repo
 look checks out up to 8 members detached under a throwaway dir (`auto-look-*` in
 `<worcaHome>/tmp/ask`), and a boot sweep removes looks a crashed chat child left behind
 after one hour. `propose_run` also takes `noProject: true` (a run in its own folder; no

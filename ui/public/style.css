@@ -5800,8 +5800,6 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-card-members-src summary{font-weight:600;font-size:10.5px;color:var(--ink-3);cursor:pointer;}
 .ask-card-members-src-list{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
 .ask-card-err{font-size:12px;color:var(--red-ink);min-height:0;}
-.ask-card-scope-warn{font-size:12px;color:var(--amber-ink);background:var(--amber-wash);
-  border:1px solid var(--amber-line);border-radius:8px;padding:6px 9px;}
 .ask-card-err:empty{display:none;}
 .ask-card-open-np{border:0;background:transparent;padding:0;color:var(--blue-ink);font-family:inherit;
   font-size:11.5px;cursor:pointer;}
@@ -5921,7 +5919,6 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 /* With the lane summary gone from the shaped footer, the link keeps Not now and Start planning on the right. */
 .ask-rp-foot .ask-card-open-np.link-btn{margin-right:auto;}
 .ask-rp .ask-card-err{padding:0 18px 10px;}
-.ask-rp .ask-card-scope-warn{margin:12px 18px 0;}
 .ask-pop-at{width:288px;padding:6px;border-radius:var(--r-card);max-height:min(320px,60%);overflow-y:auto;}
 @media (max-width:640px){.ask-rp-grid,.ask-rp-grid.two,.ask-rp-grid.wf-row{grid-template-columns:1fr;}}
 @media (prefers-reduced-motion: reduce){.ask-card.ask-rp{animation:none;} .ask-rp *{transition:none!important;}}
@@ -8965,6 +8962,43 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-dir-err[hidden]{display:none;}
 .ask-composer.is-direction .ask-composer-box{box-shadow:var(--shadow-glass),0 0 0 2px color-mix(in srgb, var(--blue) 45%, transparent);}
 .ask-composer.is-direction textarea.ask-input::placeholder{white-space:nowrap;overflow:hidden;}
+
+/* ===== Chat scope (Projects, any way) ===== */
+/* The chat scope pill's menu, divider, switch card. Tokens only: no amber, no edge line, no chip rules (P1b's, S11). */
+.ask-scope-item > svg{flex:none;color:var(--ink-2);}
+.ask-scope-proj{align-items:flex-start;}
+.ask-scope-proj > svg{margin-top:2px;}
+.ask-scope-col{display:flex;flex-direction:column;gap:1px;flex:1 1 auto;min-width:0;}
+.ask-scope-line{display:flex;align-items:center;gap:8px;min-width:0;}
+.ask-scope-line > .ask-model-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-scope-line > .kind-chip{margin-left:auto;}
+.ask-scope-sub{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:11px;color:var(--ink-2);}
+/* The Workflows composer's scope menu (workflows/menu.mjs) keeps the one kind chip on the right, as the Ask menu does (B8). */
+.wfv-menu-item > .kind-chip{margin-left:auto;}
+/* The run card's `Where it runs` sub-line (ask-panel.mjs updateTargetSub): the kind chip between the name and the branch words (B10). */
+.ask-rp-sec-sub > .kind-chip{margin:0 6px;}
+/* The `Switched to <name>` divider row (canvas Switched): a centered label between two hairlines, no accent. */
+.ask-divider{display:flex;align-items:center;gap:12px;margin:6px 0;font-size:12.5px;color:var(--ink-2);}
+.ask-divider::before,.ask-divider::after{content:"";flex:1 1 0;min-width:16px;height:1px;background:var(--line-2);}
+.ask-divider-in{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:calc(100% - 56px);font-weight:500;}
+.ask-divider-in > svg{flex:none;}
+.ask-divider-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* The chat question card (chat/question.mjs; canvas SwitchAsk): the Runs page's white ask-card grammar with grey lines,
+   the canvas 18px heading, a name line (label + chip) over a mono sub-line per tile; two columns once the card is wide. */
+.chat-q{container:chat-q / inline-size;}
+.chat-q .chat-rc-q-head{margin-bottom:14px;font-size:18px;}
+.chat-q.chat-rc-q :is(.qpanel,.qblock),.chat-q.chat-rc-q .qpanel[data-kind="clarify"] .qpanel-foot{border-color:var(--line);}
+.chat-q .qwhy{font-size:13.5px;font-weight:400;color:var(--ink-2);}
+.chat-q .qopt-txt{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.chat-q-opt-name{display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
+.chat-q-opt-sub{font-family:var(--mono);font-size:11.5px;font-weight:400;color:var(--ink-2);overflow-wrap:anywhere;}
+.chat-q .qpanel-foot .btn-go:disabled{opacity:.45;cursor:default;transform:none;}
+.chat-q.is-answered .qopt{cursor:default;}
+@container chat-q (min-width:640px){
+  .chat-q .qblock{grid-template-columns:minmax(0,300px) minmax(0,1fr);grid-template-rows:auto 1fr;column-gap:48px;padding:28px 32px;}
+  .chat-q .qtext{grid-row:1 / span 2;}
+  .chat-q.chat-rc-q .qopts{grid-column:2;}
+}
 
 /* ===== Chat P4: run panel ===== */
 /* The Chat page's right panel (app.js "Chat P4: the run panel"): the run pages' OWN screens (.rd live,

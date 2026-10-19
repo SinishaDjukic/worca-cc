@@ -12,12 +12,14 @@ import { DIFF_PATCH_FILE } from '../results.mjs';
 import { GUARDRAIL_PRESETS } from '../guardrails.mjs';
 import { buildCatalog } from './catalog.mjs';
 import { validateProposal } from './proposal.mjs';
-import { readAttachmentText, getAttachment, attachmentPath, getThread, listAttachments } from './store.mjs';
+import { chatScopeOf, scopeCardKeys, validateScopeSwitch } from './scope.mjs';
+import { readAttachmentText, getAttachment, attachmentPath, getThread, listAttachments, listMessages } from './store.mjs';
 import { redactAskText } from './redact.mjs';
 import { htmlToText } from './html-text.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 import { askProgress } from '../ask-projection.mjs';
 import { getDb } from '../db.mjs';
+import { listProjects, displayPath } from '../projects.mjs';
 import { readNightDecisions } from '../night/store.mjs';
 import { shapeFirstEnabled } from '../shape/gate.mjs';
 import { PERSPECTIVE_KEYS } from '../../shared/shape/perspectives.mjs';
@@ -139,18 +141,31 @@ export function defaultToolDeps({ threadId, viewer = null }) {
       if (!threadId) return [];
       try { return listAttachments(threadId); } catch { return []; }
     },
-    // #397: the user-pinned scope of the owning thread — {projectKey}|{workspaceId}|
-    // null — read fresh from the thread row per call, so a selector change lands on
-    // the very next tool call. A missing thread or an unreadable DB means "nothing
-    // pinned", never an error.
+    // the chat scope of the owning thread (P4: null = No project) — {projectKey}|
+    // {workspaceId}|null — read fresh from the thread row per call, so a scope change
+    // lands on the very next tool call. A missing thread or an unreadable DB means
+    // No project, never an error.
     pinnedScope: () => {
       if (!threadId) return null;
       let c = null;
       try { c = getThread(threadId)?.context ?? null; } catch { return null; }
-      if (!c || c.pinned !== true) return null;
-      if (typeof c.projectKey === 'string' && c.projectKey) return { projectKey: c.projectKey };
-      if (typeof c.workspaceId === 'string' && c.workspaceId) return { workspaceId: c.workspaceId };
-      return null;
+      return chatScopeOf(c);
+    },
+    // propose_scope_switch (P4): the child's check — the parent re-checks and mints the card. The
+    // stored scope and the thread's earlier scope cards are read fresh per call; an unreadable
+    // thread means no scope and no cards, an unreadable registry no projects. listProjects rows carry
+    // no displayPath (only GET /api/projects adds it, SEAMS S22/S45), so it is added here.
+    scopeSwitch: {
+      async validate(input) {
+        let thread = null;
+        let messages = [];
+        if (threadId) {
+          try { thread = getThread(threadId); messages = listMessages(threadId); } catch { thread = null; messages = []; }
+        }
+        let projects = [];
+        try { projects = (await listProjects()).map((p) => ({ ...p, displayPath: displayPath(p.path) })); } catch { projects = []; }
+        return validateScopeSwitch(input, { scope: chatScopeOf(thread?.context ?? null), projects, asked: scopeCardKeys(messages) });
+      },
     },
     // The SECURE preset is the floor, not the run's own set: guardrailsId defaults
     // to 'permissive' (empty protectedPaths), so resolving per row would show the

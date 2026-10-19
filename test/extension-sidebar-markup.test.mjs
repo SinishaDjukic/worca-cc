@@ -105,8 +105,11 @@ test('the composer row keeps Ask\'s order and controls, minus voice and Sets, pl
   for (const sel of ['.ask-ctx-ring svg', '.ask-ctx-ring-track', '.ask-ctx-ring-arc', '.ask-stop svg', '.ask-stop rect', '.ask-send svg', '.ask-model-btn svg']) {
     assert.deepEqual(attrs(row.querySelector(sel)), attrs(h.doc.querySelector(`.ask-composer-row ${sel}`)), sel);
   }
+  // Projects, any way P4 (SEAMS S44): Ask's scope pill leads with its scope icon; the extension's pill changes only its words.
+  const noLeadIcon = (s) => (s.k.length && s.k[0].t === 'svg' ? { ...s, k: s.k.slice(1) } : s);
   for (const sel of ['[data-ask-meter]', '[data-ask-ctx-btn]', '[data-ask-model-btn]', '[data-ask-scope-btn]', '[data-ask-attach-btn]']) {
-    assert.deepEqual(skeleton(row.querySelector(sel)), skeleton(h.doc.querySelector(`.ask-composer-row ${sel}`)), sel);
+    const ask = skeleton(h.doc.querySelector(`.ask-composer-row ${sel}`));
+    assert.deepEqual(skeleton(row.querySelector(sel)), sel === '[data-ask-scope-btn]' ? noLeadIcon(ask) : ask, sel);
   }
 });
 

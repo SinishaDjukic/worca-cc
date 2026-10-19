@@ -154,7 +154,7 @@ test('hide set: JS-built surfaces and requests', async () => {
         const n = (appSrc.match(new RegExp(`levelAtLeast\\(tabs\\.cells\\.get\\(${v}\\)\\.tab\\.level \\|\\| 'simple'\\) && \\(gitOn\\(\\) \\|\\| !tabs\\.cells\\.get\\(${v}\\)\\.tab\\.needsGit\\)\\) tabs\\.activate\\(${v}\\);`, 'g')) || []).length;
         assert.equal(n, 2, `${v} activations gated: ${n}`);
       }
-      for (const re of [/if \(!st\.worktrees\.length \|\| !gitOn\(doc\)\) return null;/, /if \(gitOn\(doc\)\) loadBranchesInto\(srcSel, projSel\.value, card\.sourceBranch/]) assert.match(askSrc, re);
+      for (const re of [/if \(!st\.worktrees\.length \|\| !gitOn\(doc\)\) return null;/, /const off = noBranches\(projSel\.value\);\n\s+for \(const f of \[srcField, featureField, sameField\]\) f\.hidden = off;\n\s+if \(!off\) loadBranchesInto\(srcSel, projSel\.value, want\)\.then\(updateTargetSub\); else updateTargetSub\(\);/, /=== 'folder' \|\| !gitOn\(doc\);/]) assert.match(askSrc, re);
       for (const key of ['diff', 'actions']) {
         const n = (appSrc.match(new RegExp(`key: '${key}'[^\\n]*needsGit: true`, 'g')) || []).length;
         assert.ok(n >= (key === 'diff' ? 2 : 4), `${key} tabs tagged: ${n}`);

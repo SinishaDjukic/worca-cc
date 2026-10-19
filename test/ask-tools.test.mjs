@@ -17,7 +17,8 @@ import { viewerKindFor, BINARY_KINDS } from '../src/shared/artifact-kinds.mjs';
 import { defaultToolDeps } from '../src/core/ask/tool-deps.mjs';
 import { closeDb } from '../src/core/db.mjs';
 import { addProject } from '../src/core/projects.mjs';
-import { createThread, appendMessage, addAttachment } from '../src/core/ask/store.mjs';
+import { createThread, appendMessage, addAttachment, updateThread } from '../src/core/ask/store.mjs';
+import { scopeRefusalText } from '../src/core/ask/scope.mjs';
 import { GUARDRAIL_PRESETS } from '../src/core/guardrails.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { redactAskText } from '../src/core/ask/redact.mjs';
@@ -898,6 +899,7 @@ test('temp home: a seeded project run and a seeded workspace run round-trip thro
   const other = createAskTools(defaultToolDeps({ threadId: otherThread.id }));
   await assert.rejects(() => other.call('read_attachment', { id: att.id }), { message: 'read_attachment: attachment not found' }, "another thread's attachment is invisible");
   await assert.rejects(() => other.call('read_attachment', { id: bin.id }), { message: 'read_attachment: attachment not found' }, "another thread's binary attachment is invisible");
+  updateThread(thread.id, { context: { pinned: true, projectKey: project.key } });   // P4: propose_run acts only in the chat's project
   const proposal = await real.call('propose_run', { projectKey: project.key, brief: 'Add a badge' });
   assert.equal(proposal.ok, true);
   assert.equal(proposal.card.projectKey, project.key);
@@ -1113,24 +1115,27 @@ test('#397: an unscoped run id tries the pinned scope first, then falls back eve
   await assert.rejects(t.call('get_run', { id: '4e1f2a9b', projectKey: 'other-00000003' }), /run not found/);
 });
 
-test('#397: propose_run defaults its target from the pin only when both keys are absent; a missing or failing pinnedScope dep means nothing pinned', async () => {
+test('#397/P4: propose_run takes the chat scope only when nothing is named; a target outside it is refused; no reader = no chat, a failing reader = No project', async () => {
   await checkRows([
     { name: '#397: propose_run defaults its target from the pin ONLY when both keys are absent', run: async () => {
       const t = createAskTools({ ...fake, pinnedScope: () => ({ projectKey: 'demo-00000001' }) });
       const r = await t.call('propose_run', { brief: 'x' });
       assert.equal(r.card.echoed.projectKey, 'demo-00000001', 'the pin fills the missing target');
       const r2 = await t.call('propose_run', { brief: 'x', workspaceId: 'wks-team-0000abcd' });
-      assert.equal(r2.card.echoed.projectKey, undefined, 'an explicit target is never overridden');
-      assert.equal(r2.card.echoed.workspaceId, 'wks-team-0000abcd');
+      assert.deepEqual(r2, { ok: false, errors: [scopeRefusalText({ projectKey: 'demo-00000001' }, { workspaceId: 'wks-team-0000abcd' })] });
       const tw = createAskTools({ ...fake, pinnedScope: () => ({ workspaceId: 'wks-team-0000abcd' }) });
       assert.deepEqual((await tw.call('propose_run', { brief: 'x' })).card.echoed.workspaceId, 'wks-team-0000abcd');
     } },
     { name: '#397: a missing or failing pinnedScope dep means "nothing pinned", never an error', run: async () => {
       const noDep = createAskTools(fake);   // the shared `fake` has no pinnedScope at all
-      assert.equal((await noDep.call('propose_run', { brief: 'x' })).card.echoed.projectKey, undefined);
+      const card = (await noDep.call('propose_run', { brief: 'x' })).card;
+      assert.equal(card.echoed.projectKey, undefined);
+      assert.equal(card.echoed.noProject, undefined, 'no chat: nothing filled');
       assert.equal((await noDep.call('get_run', { id: '4e1f2a9b' })).id, '4e1f2a9b');
       const throwing = createAskTools({ ...fake, pinnedScope: () => { throw new Error('db gone'); } });
-      assert.equal((await throwing.call('propose_run', { brief: 'x' })).card.echoed.projectKey, undefined);
+      const thrown = (await throwing.call('propose_run', { brief: 'x' })).card;
+      assert.equal(thrown.echoed.projectKey, undefined);
+      assert.equal(thrown.echoed.noProject, true, 'a failing reader is No project');
       assert.equal((await throwing.call('get_run', { id: '4e1f2a9b' })).id, '4e1f2a9b');
     } },
   ]);

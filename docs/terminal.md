@@ -136,8 +136,8 @@ time. Blocks and audit rows are kept. `GET /api/terminal/audit?runId=<id>` lists
 
 Every Ask Worca chat is in agent mode wherever the host allows it (there is no per-chat switch): Ask Worca
 can run shell commands in Worca terminals to check and finish work: tests, builds, linters, `git status`,
-and file changes through commands when you ask for them. It runs in a run's folder, a project's own folder,
-or the chat's pinned project.
+and file changes through commands when you ask for them. It runs in a run's folder (a run with no project has none), or in the folder of the chat's project (the chat's
+scope, or a member of its workspace); another project's folder is refused until you change the chat's scope.
 
 - **A shared terminal.** Ask opens its own terminals, labeled `Ask · <chat title> · <folder>`, at most 3
   per chat. Their tabs show in this pane on every page, next to the page's own terminal, with the same

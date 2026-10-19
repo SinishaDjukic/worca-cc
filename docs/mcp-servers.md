@@ -134,7 +134,7 @@ taken too it is skipped). In a pipeline, a deny rule on `mcp__linear__…` reach
   lets you switch memberships off for one run (schedules keep the choice); skipped memberships show
   their reason. Workspace scans and memory defragment runs get none. A workspace attaches no sets of its
   own: its Overview lists what its runs get, each row with the member project that brings it.
-- **Ask Worca:** General plus the sets of every project in play — the pinned or page project (a
+- **Ask Worca:** General plus the sets of every project in play — the chat's project or workspace (a
   workspace brings its members) and **every project the chat has a worktree on** — and the Team set of
   each one's policy (a workspace's own policy, not its members'). The chat's model
   can open a worktree on any registered project without asking, and that project's servers and skills join

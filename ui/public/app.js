@@ -107,6 +107,7 @@ import { createAskPanel } from './ask-panel.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards } from './chat/action-cards.mjs';
+import { registerScopeSwitchCard } from './chat/scope-switch-card.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
@@ -1590,6 +1591,7 @@ function handleServerMessage(msg) {
     return;
   }
   if (msg.type === 'projects-changed') {
+    askPanel?.optionsChanged();
     scheduleOnboardingRefresh();
     refreshAllCounts();
     tmCache.at = 0;
@@ -1597,6 +1599,7 @@ function handleServerMessage(msg) {
     return;
   }
   if (msg.type === 'workspaces-changed') {
+    askPanel?.optionsChanged();
     // The automatic re-scan after a member change (server afterMembersChanged) ends here.
     if (msg.workspaceId && WS_RESCAN_ENDS[msg.action]) endWsRescan(msg.workspaceId, WS_RESCAN_ENDS[msg.action], msg.runId || null);
     // A paused one resumed under a new runId: follow that run again.
@@ -3008,12 +3011,18 @@ async function initWorkflows() {
     canvas: () => wfvChatCanvas(),
     stage: els.stage, cluster: document.getElementById('wfv-br'), plus: els.add,   // fit the stage; lift the bars clear
     confirm: (o) => confirmModal(o),                    // New chat asks before it leaves unsaved drafts behind
-    // Rejects when the list could not be read: the dock drops a pinned project only on a list that loaded.
+    // Each rejects when its list could not be read: the dock drops a pinned project or workspace only on a list that loaded.
     projects: async () => {
       const r = await fetch('/api/projects');
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await safeJson(r);
       return Array.isArray(d.projects) ? d.projects : [];
+    },
+    workspaces: async () => {
+      const r = await fetch('/api/workspaces');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await safeJson(r);
+      return Array.isArray(d.workspaces) ? d.workspaces : [];
     },
   });
   els.sheetClose?.addEventListener('click', () => { void wfvRequestCloseSheet(); });
@@ -35456,6 +35465,9 @@ else if (!storedTarget) bootProjects.then(() => { if (state.projectsLoaded && !s
 // run panel (no link). chatDeps is P1's top-level const; openShipItFor is a hoisted function declaration.
 registerChatActionCards();
 chatDeps.openShipIt = openShipItFor;
+// Projects, any way P4: the scope menu's "Add project…" (P2 points it at the dialog's New tab).
+chatDeps.openAddProject = () => { void addProjectFlow(); };
+registerScopeSwitchCard();
 
 // worca Chat P6 (CONTRACT §2/§8): the composer's intent chip — a composer add-on, registered before the chat mounts.
 // A send from the home arms the hero → dock glide (chatHome.armFlip). The home itself mounts right after the page

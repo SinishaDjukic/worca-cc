@@ -98,6 +98,7 @@ const NOTE_TAIL =
   NOTE_TAIL_REPO +
   'The one other place Read may go is the file path read_attachment returns for an image or PDF attachment of this chat; never read anywhere else on disk. ' +
   "Never call propose_workflow or propose_run yourself: proposals belong to the assistant's own turn (a sub-agent's call produces no card). " +
+  "Never call propose_scope_switch yourself: asking to switch the chat's scope belongs to the assistant's own turn. " +
   "Never call build_workflow, draft_agent or draft_script yourself: drafts and workflow proposals belong to the assistant's own turn (a sub-agent's call produces no card). " +
   "Never call remember or forget yourself: saving or removing memory belongs to the assistant's own turn (list_memory and read_memory are fine). " +
   "Never call save_script or test_script yourself: writing a script or running one belongs to the assistant's own turn (list_scripts and get_script are fine). " +

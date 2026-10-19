@@ -84,7 +84,7 @@ function apiHandler(recorder = {}) {
       return { ok: true, status: 200, json: async () => ({ config: configBody().config }) };
     }
     if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' } }) };
-    if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
+    if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: recorder.projects || [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
     if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: recorder.workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
     if (url === '/api/guardrails') return { ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }, { id: 'strict', name: 'Strict' }] }) };
     if (url === '/api/workspaces') return { ok: true, status: 200, json: async () => ({ workspaces: [{ id: 'wks-team-00000001', name: 'team', projectPaths: ['/repos/proj', '/repos/lib'], projectKeys: ['proj-00000001', 'lib-00000002'] }] }) };
@@ -119,6 +119,7 @@ function apiHandler(recorder = {}) {
 
 async function openWithCard(card, recorder = {}, overrides = {}) {
   const ctx = makePanel({ fetchHandler: apiHandler(recorder), ...overrides });
+  if (overrides.git) ctx.doc.documentElement.dataset.git = overrides.git;
   ctx.storage.setItem('worca-cc.ask.thread', TID);
   ctx.panel.open();
   await ctx.tick(); await ctx.tick(); await ctx.tick();
@@ -2326,4 +2327,47 @@ test('ask-panel-card: Open in New run from a No project card hands over target n
   assert.equal(handed.length, 1);
   assert.equal(handed[0].target, 'none');
   assert.equal('projectDir' in handed[0], false);
+});
+
+test('P4 (SEAMS S12): a Folder project, or no git, has no branch rows on the run card — no GET /api/branches, the sub-line is the name alone', async () => {
+  const subEl = (cardEl) => [...cardEl.querySelectorAll('.ask-rp-sec-head')].find((h) => h.textContent.startsWith('Where it runs')).querySelector('.ask-rp-sec-sub');
+  // B10 (canvas Switched): the name, then the kind chip, then the branch words (git) — [name, chip class, the rest]
+  const subOf = (cardEl) => { const s = subEl(cardEl); const c = s.querySelector('.kind-chip'); return [s.firstChild.textContent, c ? c.className : null, c ? (c.nextSibling ? c.nextSibling.textContent : '') : null]; };
+  const branchRows = (cardEl) => ['.ask-card-source', '.ask-card-feature', '.ask-card-same-source'].map((s) => cardEl.querySelector(s).closest('.ask-rp-field').hidden);
+  await checkRows([
+    { name: 'a Folder project, then a Git one', run: async () => {
+      const rec = { projects: [{ key: 'proj-00000001', name: 'proj', path: '/repos/proj', exists: true, vcs: 'none' }, { key: 'lib-00000002', name: 'lib', path: '/repos/lib', exists: true, vcs: 'git' }] };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.deepEqual(branchRows(cardEl), [true, true, true]);
+      assert.equal(rec.branchCalls, undefined, 'no branches are asked for a folder');
+      assert.deepEqual(subOf(cardEl), ['proj', 'kind-chip kind-folder', ''], 'a Folder project: <name> · Folder');
+      const sel = cardEl.querySelector('.ask-card-project-select');
+      sel.value = '/repos/lib';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      await ctx.tick(); await ctx.tick();
+      assert.deepEqual(branchRows(cardEl), [false, false, false], 'a Git project gets them back');
+      assert.equal(rec.branchCalls.length, 1);
+      const [libName, libChip, libRest] = subOf(cardEl);
+      assert.deepEqual([libName, libChip], ['lib', 'kind-chip kind-git']);
+      assert.match(libRest, /^ · branch current · feature /, 'today\'s branch words follow the chip');
+      ctx.panel.destroy();
+    } },
+    { name: 'git missing on this machine (data-git="off"): a Git project shows none either', run: async () => {
+      const rec = { projects: [{ key: 'proj-00000001', name: 'proj', path: '/repos/proj', exists: true, vcs: 'git' }] };
+      const ctx = await openWithCard(PROJECT_CARD, rec, { git: 'off' });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.deepEqual(branchRows(cardEl), [true, true, true]);
+      assert.equal(rec.branchCalls, undefined);
+      assert.deepEqual(subOf(cardEl), ['proj', 'kind-chip kind-git', ''], 'the stored kind still shows (CONTRACT §1); no branch words');
+      ctx.panel.destroy();
+    } },
+    { name: 'a project of no known kind: the name and the branch words, no chip', run: async () => {
+      const ctx = await openWithCard(PROJECT_CARD, {});
+      const s = subEl(ctx.doc.querySelector('.ask-card'));
+      assert.equal(s.querySelector('.kind-chip'), null);
+      assert.match(s.textContent, /^proj · branch /);
+      ctx.panel.destroy();
+    } },
+  ]);
 });

@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { addProject } from '../src/core/projects.mjs';
-import { createThread, appendMessage, addAttachment } from '../src/core/ask/store.mjs';
+import { createThread, appendMessage, addAttachment, updateThread } from '../src/core/ask/store.mjs';
 import { createRpcServer, parseArgv, main } from '../src/core/ask/mcp-stdio.mjs';
 import { scriptBaseEnv } from '../src/core/graph/script-runner.mjs';
 import { Readable, Writable } from 'node:stream';
@@ -117,6 +117,7 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
   const seeded = await seedPipeline(projectDir, { title: 'Seeded', status: 'done', prompt: 'seed prompt' });
   await writeFile(join(seeded.dir, 'diff-patch.patch'), 'diff --git a/a.txt b/a.txt\n+++ b/a.txt\n+hello\n', 'utf8');
   const thread = createThread();
+  updateThread(thread.id, { context: { pinned: true, projectKey: project.key } });
   const msg = appendMessage(thread.id, { role: 'user', text: 'x' });
   const att = addAttachment(thread.id, msg.id, { name: 'n.md', text: 'attached text' });
   const other = createThread();
@@ -141,7 +142,7 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
   const msgs = r.out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
   assert.deepEqual(msgs.map((m) => m.id), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.equal(msgs[0].result.protocolVersion, '2025-11-25');
-  assert.deepEqual(msgs[1].result.tools.map((t) => t.name), ['list_projects', 'list_branches', 'list_workflows', 'list_runs', 'list_people', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'read_attachment',
+  assert.deepEqual(msgs[1].result.tools.map((t) => t.name), ['list_projects', 'list_branches', 'list_workflows', 'list_runs', 'list_people', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'propose_scope_switch', 'read_attachment',
     'list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
     'open_worktree', 'list_worktrees', 'remove_worktree', 'git',
     'list_run_artifacts', 'read_run_artifact', 'get_run_progress',
@@ -167,10 +168,8 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
   assert.equal(diff.available, true);
   assert.deepEqual(diff.files, [{ path: 'a.txt', added: 1, removed: 0 }]);
   assert.equal(JSON.parse(msgs[5].result.content[0].text).text, 'attached text', 'argv thread wins over the env thread');
-  // The memory bundle really reaches the child: this thread has no pinned scope and no page
-  // context, so `project` is null (I2-#9: pin the value, not just the shape) and the temp home's
-  // global scope is empty.
-  assert.deepEqual(JSON.parse(msgs[10].result.content[0].text), { global: [], project: null });
+  // P4: the chat's project fills list_memory's project scope (I2-#9: pin the value)
+  assert.deepEqual(JSON.parse(msgs[10].result.content[0].text), { global: [], project: { projectKey: project.key, files: [] } });
   const proposal = JSON.parse(msgs[6].result.content[0].text);
   assert.equal(proposal.ok, true);
   assert.equal(proposal.card.projectKey, project.key);

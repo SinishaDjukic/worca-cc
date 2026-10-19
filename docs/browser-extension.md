@@ -15,8 +15,9 @@ and the same builds are attached as zips to each GitHub release. See [Install](#
 - **Composer.** The composer is Ask Worca's own:
   - **+** attaches files (you can also paste or drag them in), and the camera button captures an
     area of the page (see [Area capture](#area-capture)).
-  - The scope pill sets the chat scope. **Any project** lets Worca pick the project from your
-    message; a project or workspace pins the chat to it. If Worca has no projects yet, the list says
+  - The scope pill sets the chat scope. **No project** (the default) lets Worca answer without a project; when your message is clearly about one of
+    your projects, it puts a switch card in the chat (answer it in Worca). A project or workspace sets the chat's
+    scope. If Worca has no projects yet, the list says
     **No projects in this Worca yet** (with **Open Worca**); if the list cannot be loaded, it says
     so (with **Retry**).
   - The model button picks the model and, in its **Effort** row, the effort.

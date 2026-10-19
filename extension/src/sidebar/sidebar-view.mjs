@@ -196,7 +196,7 @@ export function buildIconButton(doc, className, title, d, onClick) {
 }
 
 // ---- the chat scope (Ask's pill + popover) ---------------------------------------------------------------------
-export const ANY_PROJECT_TITLE = 'Worca picks the project from your message';
+export const NO_PROJECT_TITLE = 'Chat scope: No project';
 
 /**
  * What the picker shows, from the lists' load state and the chat's scope. Pure.
@@ -217,16 +217,16 @@ export function scopeModel({ status, projects = [], workspaces = [], scope = nul
   return { kind: 'select', value: pin || 'auto', pinned: !!pin, label: hit ? hit.label : null, projects: P, workspaces: W };
 }
 
-/** The pill: "Any project" unless pinned (then the pinned label, .is-pinned, data-pinned). m = scopeModel(…). */
+/** The pill: "No project" unless pinned (then the pinned label, .is-pinned, data-pinned). m = scopeModel(…). */
 export function patchScopePill(btn, label, m) {
   const pinned = !!m.pinned;
-  label.textContent = pinned ? (m.label || 'Pinned') : 'Any project';
+  label.textContent = pinned ? (m.label || 'Pinned') : 'No project';
   btn.classList.toggle('is-pinned', pinned);
   btn.toggleAttribute('data-pinned', pinned);
-  btn.title = pinned ? `This chat is pinned to ${m.label}` : ANY_PROJECT_TITLE;
+  btn.title = pinned ? `This chat is pinned to ${m.label}` : NO_PROJECT_TITLE;
 }
 
-/** Ask's openScopePopover body (ask-panel.mjs openScopePopover), sidebar wording: caption "Chat scope", "Any project",
+/** Ask's openScopePopover body (ask-panel.mjs openScopePopover), sidebar wording: caption "Chat scope", "No project",
  *  Projects, Workspaces — or the loading / error (+ Retry) / empty (+ Open Worca) lines. */
 export function fillScopePopover(doc, panel, m, { onPick, onRetry, onOpen }) {
   panel.appendChild(make(doc, 'div', 'ask-pop-caption', 'Chat scope'));
@@ -235,8 +235,8 @@ export function fillScopePopover(doc, panel, m, { onPick, onRetry, onOpen }) {
     panel.append(make(doc, 'div', 'ask-pop-empty', 'Couldn\'t load projects'), menuItem(doc, 'ask-scope-item', 'Retry', onRetry));
     return;
   }
-  const any = menuItem(doc, 'ask-scope-item', 'Any project', () => onPick('auto'), { checked: m.kind !== 'select' || !m.pinned });
-  any.title = ANY_PROJECT_TITLE;
+  const any = menuItem(doc, 'ask-scope-item', 'No project', () => onPick('auto'), { checked: m.kind !== 'select' || !m.pinned });
+  any.title = NO_PROJECT_TITLE;
   panel.appendChild(any);
   if (m.kind === 'empty') {
     panel.append(make(doc, 'div', 'ask-pop-divider'), make(doc, 'div', 'ask-pop-empty', 'No projects in this Worca yet'), menuItem(doc, 'ask-scope-item', 'Open Worca', onOpen));
@@ -476,8 +476,8 @@ export function buildComposer(doc, o) {
   scope.type = 'button';
   scope.setAttribute('data-ask-scope-btn', '');
   scope.setAttribute('aria-haspopup', 'menu');
-  scope.title = ANY_PROJECT_TITLE;
-  const scopeLabel = make(doc, 'span', 'ask-scope-label', 'Any project');
+  scope.title = NO_PROJECT_TITLE;
+  const scopeLabel = make(doc, 'span', 'ask-scope-label', 'No project');
   scope.append(scopeLabel, svgIcon(doc, ICON.chevronDown, 11, 2));
   scope.addEventListener('click', () => call(o.onScope, scope));
   const spacer = make(doc, 'span', 'ask-composer-spacer');

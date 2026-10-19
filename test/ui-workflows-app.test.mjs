@@ -43,7 +43,7 @@ const GITDIFF = SCRIPTS.find((s) => s.key === 'gitDiff');
 const tick = async (n = 1) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
 async function go(w, h) { w.location.hash = h; w.dispatchEvent(new w.Event('hashchange')); for (let i = 0; i < 6; i += 1) await tick(); }
 
-async function boot({ agentsFail = false, workflows = null, del = null, onboarding = null } = {}) {
+async function boot({ agentsFail = false, workflows = null, del = null, onboarding = null, workspaces = null } = {}) {
   const rows = workflows || [DEFAULT_ROW, V2_ROW, V1_ROW];
   const deletes = [];
   const importBodies = [];
@@ -80,6 +80,7 @@ async function boot({ agentsFail = false, workflows = null, del = null, onboardi
     if (path.endsWith('/api/ask/threads') && method === 'POST') return json({ thread: { id: 'ask_0000abcd', mode: 'composer', title: null } }, 201);
     if (/\/api\/ask\/threads\/[^/]+\/messages$/.test(path) && method === 'POST') return json({ userMessageId: 'askm_0000aaaa', assistantMessageId: 'askm_0000bbbb' }, 202);
     if (/\/api\/ask\/threads\/[^/]+\/cards\/[^/]+$/.test(path) && method === 'POST') return json({ block: {} });
+    if (workspaces && path.endsWith('/api/workspaces')) return json({ workspaces });
     if (path.endsWith('/api/projects')) return json({ projects: [] });
     if (url.includes('/api/workflows/import-json')) {
       const body = JSON.parse(init.body);
@@ -1783,4 +1784,12 @@ test('Ask\'s graph card: Open in Workflows opens the graph on the canvas as a NE
   assert.equal(c.template().name, 'Bug fix');
   assert.equal(c.template().id, '', 'a NEW workflow: no id');
   assert.equal(c.isDirty(), true, 'unsaved');
+});
+
+test('Projects, any way U9: the composer dock\'s scope menu lists the workspaces app.js reads', async () => {
+  const { window: w } = await boot({ workspaces: [{ id: 'wks-team-0000abcd', name: 'Team', projectKeys: [], projectPaths: [] }] });
+  await go(w, 'workflows');
+  w.document.getElementById('wfc-scope').click();
+  await tick(6);
+  assert.deepEqual([...w.document.querySelectorAll('.wfv-menu .wfv-menu-l')].map((x) => x.textContent), ['No project', 'Team']);
 });

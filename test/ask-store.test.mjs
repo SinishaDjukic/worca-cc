@@ -603,6 +603,14 @@ test('updateCardBlock: workflow/metrics/policy cards shallow-merge a `card` sub-
       const b = updateCardBlock(t.id, 'card_0000bb02', { state: 'applied', card: { result: { ok: true, detail: 'published abc1234 to acme/gateway' } } });
       assert.deepEqual(b.card, { type: 'policy', kind: 'edit', home: 'acme/gateway', summary: 'Edit', changes: [], result: { ok: true, detail: 'published abc1234 to acme/gateway' } });
     } },
+    { name: 'a scope-switch card takes a card sub-patch (choice)', run: () => {
+      const t = createThread();
+      const m = appendMessage(t.id, { role: 'assistant', text: '', status: 'done' });
+      setMessageBlocks(m.id, [{ kind: 'card', id: 'card_0000bb09', state: 'proposed', card: { type: 'scope-switch', reason: 'r', summary: 'S', candidates: [] } }]);
+      const b = updateCardBlock(t.id, 'card_0000bb09', { state: 'answered', card: { choice: 'none' } });
+      assert.equal(b.state, 'answered');
+      assert.deepEqual(b.card, { type: 'scope-switch', reason: 'r', summary: 'S', candidates: [], choice: 'none' });
+    } },
   ]);
 });
 

@@ -280,6 +280,7 @@ import { applyWorkspaceChange } from '../src/core/ask/workspace-deps.mjs';
 import { actionsEventPrompt, actionsNoticeText } from '../src/core/ask/actions-proposal.mjs';
 import { applyActionsChange } from '../src/core/ask/actions-deps.mjs';
 import { webEventPrompt, webNoticeText, chatWebHosts } from '../src/core/ask/web-proposal.mjs';
+import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeRefusalText, noProjectRunText, scopeEventPrompt, scopeNoticeText } from '../src/core/ask/scope.mjs';
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
@@ -7057,13 +7058,15 @@ const askCommands = createAskCommands({
   onFinish: (threadId, block) => { startTerminalEventTurn(threadId, block).catch((e) => console.warn(`[worca-ui] ask: terminal event for ${threadId}: ${e?.message || e}`)); },
 });
 
-/** The folder an Ask command runs in: a run member's terminal target, a project's own folder, or the pinned
- *  project. The person routes' logic without their `res`; no folder ever comes from the model. */
+/** The folder an Ask command runs in: a run member's terminal target, or
+ *  a project's folder only inside the chat scope (P4): the named member of its workspace, else the chat's project.
+ *  The person routes' logic without their `res`; no folder ever comes from the model. */
 async function askCommandTarget(threadId, { runId = null, member = null, projectKey = null } = {}) {
   const notFound = (msg) => Object.assign(new Error(msg), { code: 'NOT_FOUND' });
   if (runId) {
     const row = findPipelineRowById(runId);
     if (!row || row.archived_at) throw notFound('run not found');
+    if (isNoProjectKey(row.project_key)) throw new Error(noProjectRunText(row.id));   // SEAMS S35: no folder to give a shell
     const t = terminalTargets(row, { isLive: isLiveRun });
     const m = member ? t.members.find((x) => x.projectKey === member) : (t.members.length === 1 ? t.members[0] : null);
     if (!m) throw new Error(member ? 'that project is not part of this run' : 'this run has several projects: pass member');
@@ -7076,10 +7079,13 @@ async function askCommandTarget(threadId, { runId = null, member = null, project
       projectKey: m.projectKey, projectName: m.projectName, branch: m.branch, workspace: t.workspace, runLive: t.live,
       warning: m.warning || null, actionSnaps: activeActionSnaps(row.id) };
   }
-  const thread = askGetThread(threadId);
-  const ctx = thread?.context || {};
-  const key = projectKey || (ctx.pinned === true && typeof ctx.projectKey === 'string' ? ctx.projectKey : null);
-  if (!key) throw new Error('name a runId or a projectKey (this chat has no pinned project)');
+  const scope = chatScopeOf(askGetThread(threadId)?.context);
+  if (projectKey) {
+    const members = scope && scope.workspaceId ? [...((await readWorkspace(scope.workspaceId))?.projectKeys || [])] : [];
+    if (!targetInScope(scope, { projectKey }, members)) throw new Error(scopeRefusalText(scope, { projectKey }));
+  }
+  const key = projectKey || (scope && scope.projectKey) || null;
+  if (!key) throw new Error(scope ? "name a runId, or the projectKey of a member of this chat's workspace" : scopeRefusalText(null));
   if (!TM_PROJECT_KEY_RE.test(key)) throw new Error(`no project ${key}`);
   const p = (await listProjects()).find((x) => x.key === key);
   if (!p) throw notFound(`no project ${key}`);
@@ -11514,6 +11520,48 @@ function postAskSystemNotice(threadId, text) {
   } catch { /* thread deleted */ }
 }
 
+const ASK_SCOPE_BUSY = 'wait for this reply to finish before changing the chat scope';
+/** The name a chat scope shows as: the project's or workspace's name (its key when the row is gone), or "No project". */
+async function askScopeLabel(scope) {
+  if (!scope.pinned) return 'No project';
+  try {
+    if (scope.projectKey) return (await listProjects()).find((p) => p.key === scope.projectKey)?.name || scope.projectKey;
+    return (await readWorkspace(scope.workspaceId))?.name || scope.workspaceId;
+  } catch { return scope.projectKey || scope.workspaceId; }
+}
+
+/**
+ * P4 (CONTRACT §4): change a chat's scope — the stored context (page fields kept, target keys replaced), a
+ * "Switched to <name>" divider row when `divider`, and the ask-scope frame every open tab applies to its pill.
+ * Refused (TURN_IN_FLIGHT) while a reply runs: that turn froze its scope at start. Card routes defer through
+ * startScopeEventTurn instead. Its only awaits read synchronous stores, so no turn can start between it and a caller's
+ * startAskTurn.
+ */
+async function switchThreadScope(threadId, scope, { divider = true } = {}) {
+  const sv = askValidateScope(scope);
+  if (!sv.ok) throw Object.assign(new Error(sv.error), { code: 'BAD_SCOPE' });
+  const label = await askScopeLabel(sv.scope);
+  if (askInFlight(threadId)) throw Object.assign(new Error(ASK_SCOPE_BUSY), { code: 'TURN_IN_FLIGHT' });
+  const cur = askGetThread(threadId);
+  if (!cur) throw Object.assign(new Error('thread not found'), { code: 'NOT_FOUND' });
+  askUpdateThread(threadId, { context: withChatScope(cur.context, chatScopeOf(sv.scope)) });
+  if (sv.scope.pinned) {
+    // SEAMS S17 / D6: a chat with a scope asks nothing — its open switch cards close (they render as a receipt).
+    for (const m of askListMessages(threadId)) {
+      for (const b of Array.isArray(m.blocks) ? m.blocks : []) {
+        if (b && b.kind === 'card' && b.state === 'proposed' && b.card && b.card.type === 'scope-switch') flipCard(threadId, b.id, { state: 'closed' });
+      }
+    }
+  }
+  if (divider) {
+    const text = `Switched to ${label}`;
+    const m = askAppendMessage(threadId, { role: 'system', text, blocks: [{ kind: 'divider', text, scope: sv.scope }] });
+    broadcast({ type: 'ask-message', threadId, message: m });
+  }
+  broadcast({ type: 'ask-scope', threadId, scope: sv.scope, label });
+  return { scope: sv.scope, label };
+}
+
 /**
  * Start the oldest queued workflow-card event turn (PD26). A starter resolves {ok:false,status,error}
  * — it never throws — when the reservation fails at START time (403: the turn the user waited on spent
@@ -11733,6 +11781,7 @@ app.post('/api/ask/threads', (req, res) => {
     // Workflows view (D9): the editor's chat is a composer thread — its own toolset, prompt and history list.
     if (body.mode !== undefined && body.mode !== null && body.mode !== 'composer') return badRequest(res, 'mode must be "composer"');
     const thread = askCreateThread({ createdBy: actorOf(req), mode: body.mode === 'composer' ? 'composer' : null });
+    askUpdateThread(thread.id, { context: { pinned: false } });   // P4 (U5): a new chat starts in No project
     if (title) askUpdateThread(thread.id, { title });
     res.status(201).json({ thread: askGetThread(thread.id) });
   } catch (err) {
@@ -11865,22 +11914,20 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
       patch.model = mv.model;
       patch.effort = mv.effort;
     }
+    let scopeNext = null;
     if (body.scope !== undefined) {
-      // #397: the Ask panel's scope selector. Merged per field into the stored
-      // context — the pin replaces only the target keys, so the last page
-      // context (view, run, diff file) survives a selector change.
+      // #397 / P4: the chat's scope pill. switchThreadScope replaces only the target keys, so the last page
+      // context (view, run, diff file) survives a pill change. Refused while a reply runs (that turn froze its scope).
       const sv = askValidateScope(body.scope);
       if (!sv.ok) return badRequest(res, sv.error);
       const cur = askGetThread(id);
       if (!cur) return res.status(404).json({ error: 'thread not found' });
-      const base = cur.context && typeof cur.context === 'object' && !Array.isArray(cur.context) ? { ...cur.context } : {};
-      delete base.projectDir;
-      delete base.projectKey;
-      delete base.workspaceId;
-      delete base.projectSource;
-      patch.context = { ...base, ...sv.scope };
+      if (askInFlight(id)) return res.status(409).json({ error: ASK_SCOPE_BUSY, code: 'TURN_IN_FLIGHT' });
+      scopeNext = { body: sv.scope, divider: !sameScope(chatScopeOf(cur.context), chatScopeOf(sv.scope)) && askListMessages(id).length > 0 };
     }
-    const thread = askUpdateThread(id, patch);
+    // After every field is validated. The label lookup only reads synchronous stores, so the catch is a guard.
+    if (scopeNext) { try { await switchThreadScope(id, scopeNext.body, { divider: scopeNext.divider }); } catch (err) { if (err.code === 'TURN_IN_FLIGHT') return res.status(409).json({ error: ASK_SCOPE_BUSY, code: 'TURN_IN_FLIGHT' }); throw err; } }
+    const thread = Object.keys(patch).length ? askUpdateThread(id, patch) : askGetThread(id);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
     res.json({ thread });
   } catch (err) {
@@ -12042,26 +12089,6 @@ function askRunFromPipelineRow(row) {
   };
 }
 
-/** #397: the user-pinned scope of an ask context — {projectKey} | {workspaceId} | null. */
-function askPinnedScope(context) {
-  if (!context || typeof context !== 'object' || context.pinned !== true) return null;
-  if (typeof context.projectKey === 'string' && context.projectKey) return { projectKey: context.projectKey };
-  if (typeof context.workspaceId === 'string' && context.workspaceId) return { workspaceId: context.workspaceId };
-  return null;
-}
-
-/** #397 per-field merge: the pinned scope replaces the page context's TARGET keys
- *  (projectDir/projectKey/workspaceId); view, run, pipeline and diff-file context
- *  still follow the page. */
-function askApplyPin(ctx, pin) {
-  const out = { ...ctx, pinned: true };
-  delete out.projectDir;
-  delete out.projectKey;
-  delete out.workspaceId;
-  delete out.projectSource;   // MCP registry §9.1: the fallback tag goes with the target keys
-  return { ...out, ...pin };
-}
-
 /** #397 selector PATCH body: {pinned:false} | {pinned:true, projectKey|workspaceId}. */
 function askValidateScope(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'scope must be an object' };
@@ -12078,7 +12105,7 @@ function askValidateScope(raw) {
  *  cards allowed "for this chat". Never throws: a failure reads as off. */
 function askWebAccessFor(threadId, ctx) {
   try {
-    const pinned = askPinnedScope(ctx || {});
+    const pinned = chatScopeOf(ctx || {});
     return askWebAccess({ projectKey: pinned?.projectKey || null, chatHosts: chatWebHosts(askListMessages(threadId)) });
   } catch (err) {
     console.warn(`[worca-ask] web access resolve failed (${err?.message || err}) — web stays off`);
@@ -12181,24 +12208,22 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
     if (facts) out.deployment = facts;
   } catch { /* absent line */ }
   if (typeof signedIn === 'string' && signedIn) out.signedIn = signedIn;
-  if (ctx.pinned === true) out.pinned = true;   // #397: rendered as the [pinned by the user] marker
+  const scope = chatScopeOf(ctx);
+  if (scope) out.pinned = true; else out.noProject = true;   // #397: the [pinned by the user] marker; P4: the [No project] line
   if (ctx.timeZone) out.timeZone = ctx.timeZone;   // validated IANA name; the header adds the user's clock
   if (ctx.view) out.view = ctx.view;
   if (ctx.diffPath) out.diffPath = ctx.diffPath;   // client-supplied, already length-checked by validateClientContext
   if (ctx.runPage) out.runPage = ctx.runPage;       // an enum (RUN_PAGE_PARTS), validated the same way
   try {
-    // MCP registry §9.1: a fallback-tagged projectDir (the dropdown on a page about no project) names nothing.
-    const dir = ctx.projectSource === 'fallback' ? null : ctx.projectDir;
-    if (ctx.projectKey || dir) {
-      const projects = await listProjects();
-      const p = projects.find((x) =>
-        (ctx.projectKey && x.key === ctx.projectKey) || (dir && x.path === dir));
+    // P4: the project line comes from the chat scope only (by key), never from a projectDir.
+    if (scope?.projectKey) {
+      const p = (await listProjects()).find((x) => x.key === scope.projectKey);
       if (p) out.project = { name: p.name, key: p.key };
     }
   } catch { /* absent line */ }
   try {
-    if (ctx.workspaceId) {
-      const ws = await readWorkspace(ctx.workspaceId);
+    if (scope?.workspaceId) {
+      const ws = await readWorkspace(scope.workspaceId);
       if (ws) {
         // readWorkspace returns {id, name, projectPaths, projectKeys, …} — there
         // is NO per-member name object (the {projectName} shape is a local
@@ -12244,7 +12269,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
   } catch { /* absent line */ }
   try {
     if (ctx.pipelineId) {
-      const run = askRunByPipelineId(ctx.pipelineId, ctx.workspaceId ? `workspaces/${ctx.workspaceId}` : out.project?.key);
+      const run = askRunByPipelineId(ctx.pipelineId, scope?.workspaceId ? `workspaces/${scope.workspaceId}` : out.project?.key);
       if (run) out.run = run;
     } else if (ctx.runId) {
       const run = askLiveRun(ctx.runId);
@@ -12273,7 +12298,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // Workflows chat (D13): a composer card names its type, state and name — never the run-card shape.
         const cc = composerHeaderCard(b);
         if (cc) { cards.push(cc); continue; }
-        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away')) {
+        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
@@ -12361,9 +12386,10 @@ async function askEventPick(threadId, thread) {
  * cannot interleave (the route's earlier checks are only the fast-path 4xx). Resolves {ok:false,status,error} for the
  * 403/409/429 cases the message route maps to HTTP; {ok:true,…} once the turn is running.
  * @param {{threadId:string, thread:object, ctx:object, model:string, effort:string, text:string,
- *          files?:Array, synthetic?:{notice:string}|null}} o
+ *          files?:Array, synthetic?:{notice:string, quiet?:boolean}|null}} o
  *   text      what the MODEL gets as the user message: the typed text, or the `[worca event] …` line (synthetic)
- *   synthetic the user row renders as a notice (never a bubble) and never titles the thread (PD6)
+ *   synthetic the user row renders as a notice (never a bubble) and never titles the thread (PD6); quiet: the
+ *             transcript shows nothing for it — the divider or the answered card already says it
  */
 /** The identity Ask Worca's header shows: resolved like every other attribution, absent for 'local'. */
 function askSignedIn(req) {
@@ -12421,7 +12447,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // P3: a synthetic row keeps the EVENT as its text (buildRestoredPrompt replays it truthfully) and carries the
     // human notice as a block the panel renders instead of a bubble.
     const userMsg = askAppendMessage(id, synthetic
-      ? { role: 'user', text, blocks: [{ kind: 'notice', synthetic: true, text: synthetic.notice }] }
+      ? { role: 'user', text, blocks: [{ kind: 'notice', synthetic: true, ...(synthetic.quiet ? { quiet: true } : {}), text: synthetic.notice }] }
       : { role: 'user', text });
     job.userMessageId = userMsg.id;
     const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
@@ -12437,7 +12463,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       // P3: keep the synthetic notice in front of the attachment blocks (unreachable today — event turns pass no files — but
       // an unconditional overwrite would silently drop the notice for a future caller).
       askSetMessageBlocks(userMsg.id, [
-        ...(synthetic ? [{ kind: 'notice', synthetic: true, text: synthetic.notice }] : []),
+        ...(synthetic ? [{ kind: 'notice', synthetic: true, ...(synthetic.quiet ? { quiet: true } : {}), text: synthetic.notice }] : []),
         ...attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime })),
       ]);
     }
@@ -12461,7 +12487,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     }
     // Web access (docs/guardrails.md "Web access"): resolved ONCE per turn — local settings ⊕ the pinned project's
     // team policy — so the prompt section, the sub-agent note and the MCP child's tools agree.
-    const pinned = askPinnedScope(ctx);
+    const pinned = chatScopeOf(ctx);   // P4: the chat scope, null = No project — proposal default + scope gate
     const web = askWebAccessFor(id, ctx);
     // MCP registry §9.1–9.3: General + the targets in play (the tagged dropdown fallback excluded), minus the chat's
     // picker choices — resolved ONCE per turn, so the per-turn file, the spawn and the prompt section agree.
@@ -12636,16 +12662,11 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       if (!pc.ok) return badRequest(res, pc.error);
       composerState = pc.value;
     }
-    // #397: explicit pin beats page context, per field. A context carrying its own
-    // `pinned` verdict is authoritative — the selector-aware client already merged
-    // (true) or explicitly chose Auto (false). A context WITHOUT one comes from a
-    // pre-selector tab, and inherits the thread's stored pin so a stale tab can
-    // never silently unpin (or re-scope) the conversation.
-    let ctx = cv.context;
-    if (ctx.pinned === undefined) {
-      const inherited = askPinnedScope(thread.context);
-      if (inherited) ctx = askApplyPin(ctx, inherited);
-    }
+    // P4 (CONTRACT §4): the chat scope this message runs in. A context carrying `pinned` is authoritative — the scope
+    // pill sent it (false = No project: no page target rides along). A context without it (a pre-#397 tab, an API
+    // caller) keeps the thread's stored scope, else the projectKey / workspaceId it names; a projectDir never does.
+    const scope = cv.context.pinned === undefined ? (chatScopeOf(thread.context) || chatScopeOf(cv.context)) : chatScopeOf(cv.context);
+    const ctx = withChatScope(cv.context, scope);
 
     // §7.3 — validate EVERY attachment before ANY write (all-or-nothing).
     const files = [];
@@ -12693,6 +12714,12 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       }
     }
 
+    // P4: a send that changes the chat scope (a pick the PATCH refused mid-turn, a second tab, an API caller's first
+    // message) switches first, so every tab's pill follows; a chat with messages gets the divider before the user row.
+    if (!sameScope(chatScopeOf(thread.context), scope)) {
+      try { await switchThreadScope(id, scopeBody(scope), { divider: askListMessages(id).length > 0 }); }
+      catch (err) { if (err.code === 'TURN_IN_FLIGHT') return res.status(409).json({ error: 'turn in flight' }); throw err; }
+    }
     if (composerState) askUpdateThread(id, { composer: composerState });
     const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
@@ -13121,10 +13148,12 @@ async function startWorkflowEventTurn(threadId, block, { declined = false, thenR
   const notice = workflowNoticeText({ state, name: card.name, matched: !declined && card.adopted === true, thenRun });
   const mv = await askEventPick(threadId, thread);
   if (!mv) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
-  const start = () => startAskTurn({
-    threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},
-    model: mv.model, effort: mv.effort, text, synthetic: { notice },
-  });
+  const start = () => {
+    // The context is read when the turn starts, never when the event was queued: a scope switch queued ahead of it
+    // must not be undone (P4, C Note 5).
+    const t = askGetThread(threadId) || thread;
+    return startAskTurn({ threadId, thread: t, ctx: t.context || {}, model: mv.model, effort: mv.effort, text, synthetic: { notice } });
+  };
   if (askInFlight(threadId)) {
     // PD5/PD26: the flip stands and the reply waits — settleJob drains the queue
     // when the running turn ends, and a starter that cannot reserve a slot then
@@ -13152,8 +13181,10 @@ async function startTerminalEventTurn(threadId, block) {
   if (!mv) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
   const start = async () => {
     if (askCommands.seen(id)) return { ok: false, skipped: true };
-    return startAskTurn({ threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},
-      model: mv.model, effort: mv.effort, text, synthetic: { notice } });
+    // The context is read when the turn starts, never when the event was queued: a scope switch queued ahead of it
+    // must not be undone (P4, C Note 5).
+    const t = askGetThread(threadId) || thread;
+    return startAskTurn({ threadId, thread: t, ctx: t.context || {}, model: mv.model, effort: mv.effort, text, synthetic: { notice } });
   };
   if (askInFlight(threadId)) {
     if (!askDeferred.has(threadId)) askDeferred.set(threadId, []);
@@ -13180,10 +13211,54 @@ async function startMetricsEventTurn(threadId, block) {
   const notice = noticeText({ state, card, result });
   const mv = await askEventPick(threadId, thread);
   if (!mv) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
-  const start = () => startAskTurn({
-    threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},
-    model: mv.model, effort: mv.effort, text, synthetic: { notice },
-  });
+  const start = () => {
+    // The context is read when the turn starts, never when the event was queued: a scope switch queued ahead of it
+    // must not be undone (P4, C Note 5).
+    const t = askGetThread(threadId) || thread;
+    return startAskTurn({ threadId, thread: t, ctx: t.context || {}, model: mv.model, effort: mv.effort, text, synthetic: { notice } });
+  };
+  if (askInFlight(threadId)) {
+    if (!askDeferred.has(threadId)) askDeferred.set(threadId, []);
+    askDeferred.get(threadId).push(start);
+    return { deferred: true };
+  }
+  const r = await start();
+  if (r.ok) return { assistantMessageId: r.assistantMessageId };
+  return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
+}
+
+/** P4: the user's message a scope card continues — the newest typed user row before the card's message (event rows
+ *  are synthetic and never count), else ''. */
+function askScopeCardUserText(threadId, cardMessage) {
+  const seq = cardMessage && Number.isFinite(cardMessage.seq) ? cardMessage.seq : Infinity;
+  let text = '';
+  for (const m of askListMessages(threadId)) {
+    if (m.seq >= seq) break;
+    if (m.role !== 'user') continue;
+    if ((Array.isArray(m.blocks) ? m.blocks : []).some((b) => b && b.synthetic)) continue;
+    text = m.text || '';
+  }
+  return text;
+}
+
+/** P4 (CONTRACT §4): switch the chat (when `scope` is given) and start the event turn that continues the user's
+ *  message — or queue both while a reply runs (PD5/PD26), so the scope never changes under a running turn. The
+ *  switch and the turn's reservation have no I/O between them. P2's create card uses it too (U7). */
+async function startScopeEventTurn(threadId, { scope = null, text, notice }) {
+  const thread = askGetThread(threadId);
+  if (!thread) return null;
+  const mv = await askEventPick(threadId, thread);
+  const start = async () => {
+    if (scope) {
+      const cur = askGetThread(threadId);
+      try { await switchThreadScope(threadId, scope, { divider: !sameScope(chatScopeOf(cur?.context), chatScopeOf(scope)) }); }
+      catch (err) { return { ok: false, status: err.code === 'TURN_IN_FLIGHT' ? 409 : 500, error: err.message }; }
+    }
+    // CONTRACT §4 / U7: the pick switches the chat even when no model can continue the message.
+    if (!mv) return { ok: false, status: 503, error: 'no model available' };
+    const t = askGetThread(threadId) || thread;
+    return startAskTurn({ threadId, thread: t, ctx: t.context || {}, model: mv.model, effort: mv.effort, text, synthetic: { notice, quiet: true } });
+  };
   if (askInFlight(threadId)) {
     if (!askDeferred.has(threadId)) askDeferred.set(threadId, []);
     askDeferred.get(threadId).push(start);
@@ -13260,6 +13335,27 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       const block = flipCard(id, cardId, next.patch);
       if (!block) return res.status(409).json({ error: 'card vanished' });
       return res.json({ block });
+    }
+    if (found.block.card && found.block.card.type === 'scope-switch') {
+      // P4 (CONTRACT §4): the scope ask card answers once. A project pick switches the chat and continues the user's
+      // message in it; "none" (Continue without project) keeps No project and continues it there.
+      const card = found.block.card;
+      const keys = (Array.isArray(card.candidates) ? card.candidates : []).map((c) => c && c.projectKey).filter((k) => typeof k === 'string');
+      const choice = typeof body.choice === 'string' ? body.choice : '';
+      if (choice !== 'none' && !keys.includes(choice)) return badRequest(res, 'choice must be one of the card\'s projects or "none"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      askCardBusy.add(cardId);
+      try {
+        const pick = choice === 'none' ? null : (await listProjects()).find((p) => p.key === choice) || null;
+        if (choice !== 'none' && !pick) return res.status(409).json({ error: 'that project is no longer registered', code: 'PROJECT_GONE' });
+        const block = flipCard(id, cardId, { state: 'answered', card: { choice } });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const state = pick ? 'switched' : 'declined';
+        const text = scopeEventPrompt({ cardId, state, projectKey: pick?.key ?? null, name: pick?.name ?? '', keys, userText: askScopeCardUserText(id, found.message) });
+        const turn = await startScopeEventTurn(id, { scope: pick ? { pinned: true, projectKey: pick.key } : null, text, notice: scopeNoticeText({ state, name: pick?.name ?? '' }) });
+        return res.json({ block, turn });
+      } finally { askCardBusy.delete(cardId); }
     }
     if (found.block.card && found.block.card.type === 'receipt') {
       // worca Chat P2 (R6): a receipt is applied already — its one verb is Revert, through the path the change took
@@ -15940,7 +16036,7 @@ export { app, server, runs };
 export const _testing = {
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
-  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor,
+  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
@@ -15948,7 +16044,7 @@ export const _testing = {
   broadcast, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
+  askCommandBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
   openSliceDraft, afterRunSettled,
   networkWatchTick: () => networkWatch().tick(),

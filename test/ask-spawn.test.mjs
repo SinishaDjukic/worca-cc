@@ -317,8 +317,8 @@ const REG = () => ({
 const EMPTY = () => ({ servers: {}, env: {}, secretValues: [], grants: [], disallowedTools: [], copies: [], skipped: [], skippedTools: [], sets: [] });
 
 test('§9.3 sandboxNote: today\'s two notes byte for byte without copies; with copies the network sentence names them', () => {
-  assert.equal(sha(sandboxNote()), '28a815086c21a419427a8ead81c3f79badd494f5bbe6a1a1d116df5cb0edd4f7', 'SANDBOX_NOTE (+ the draft/graph sentence)');
-  assert.equal(sha(sandboxNote({ web: true })), '7783dc037cc92451e0f184e32dfd8b7a4f0689d9b4ff192e9adb160b59f22a74', 'SANDBOX_NOTE_WEB (+ the draft/graph sentence)');
+  assert.equal(sha(sandboxNote()), '655b1ddb591fcc66fb4b25af1e58c78d1e0968bb10653e0fb6bd0c4f24c3d66d', 'SANDBOX_NOTE (+ the draft/graph sentence)');
+  assert.equal(sha(sandboxNote({ web: true })), '08d6d0d1183dd2af282d176d6cfe60ffe53aa60e43fa3281541da3fa6362a6dc', 'SANDBOX_NOTE_WEB (+ the draft/graph sentence)');
   assert.equal(sandboxNote({ web: false, copies: [] }), SANDBOX_NOTE);
   assert.equal(sandboxNote({ web: true, copies: [] }), SANDBOX_NOTE_WEB);
   const off = sandboxNote({ copies: ['jira', 'sentry_billing'] });

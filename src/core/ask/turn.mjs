@@ -19,7 +19,7 @@ import { runClaude } from '../claude-runner.mjs';
 import { CLAUDE_SIGNED_OUT_CODE } from '../preflight.mjs';
 import { failedBecauseSignedOut } from '../claude-auth.mjs';
 import { resolveModelEnv, resolveModelCost, estimateCost, liveCostRates as defaultLiveCostRates } from '../config.mjs';
-import { worcaHome } from '../projects.mjs';
+import { worcaHome, listProjects, displayPath } from '../projects.mjs';
 import { gitAvailable } from '../git-available.mjs';
 import { generateTitle } from '../title.mjs';
 import { cleanText } from '../../shared/graph/assemble.mjs';
@@ -44,6 +44,8 @@ import { actionsProposalInput } from './actions-proposal.mjs';
 import { createWebValidator } from './web-proposal.mjs';
 import { validateScheduleChange } from './schedule-deps.mjs';
 import { lookupTask } from './source-deps.mjs';
+import { readWorkspace } from '../workspaces.mjs';
+import { scopeRefusalText, targetInScope, validateScopeSwitch, scopeCardKeys } from './scope.mjs';
 import { effectiveTimeZone } from './schedule-spec.mjs';
 import { scheduleDefaults, chatPrefs } from '../settings.mjs';
 import { ASK_ENGINES } from '../model-env.mjs';
@@ -57,7 +59,7 @@ import { codexMemoryLine } from './prompt.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
 import { mentionedRefs } from './contexts.mjs';
 import {
-  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, ASK_ID_RE,
+  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, listMessages, ASK_ID_RE,
 } from './store.mjs';
 import { budgetStatus, recordAskCostDelta } from '../cost-budget.mjs';
 import { generateSuggestion, suggestionModel, claimSuggestion, releaseSuggestion, cancelSuggestion, SUGGESTION_TIMEOUT_MS } from './suggest.mjs';
@@ -121,7 +123,7 @@ class AskTurn extends EventEmitter {
     model, effort, resumeSessionId = null,
     firstTurn = false, firstText = '', deterministicTitle = null,
     mock = null, attachmentNames = {},
-    pinnedScope = null,
+    pinnedScope = undefined,
     memoryProject = null,
     timeZone = null,
     reader = null,
@@ -191,6 +193,8 @@ class AskTurn extends EventEmitter {
     this.attachmentNames = attachmentNames || {};
     // #397: {projectKey}|{workspaceId}|null — the user-pinned scope at POST time.
     this.pinnedScope = pinnedScope && typeof pinnedScope === 'object' ? pinnedScope : null;
+    // P4: undefined = no gate (fixtures); null = No project; object = the chat scope. The server always passes one.
+    this.scopeGated = pinnedScope !== undefined;
     // The user's timezone (the browser's, validated) — the zone a proposal's when / every is read in.
     this.timeZone = effectiveTimeZone(timeZone);
     // Native-rules revision (D16): {key, name}|null — the scope set this turn mounts through --add-dir.
@@ -219,6 +223,8 @@ class AskTurn extends EventEmitter {
       // probe only when the catalog holds a Claude-run routed model).
       claudeAuthState: deps.claudeAuthState ?? proposalClaudeAuth,
       validateProposal: deps.validateProposal ?? validateProposal,
+      // P4: the member projects of a workspace scope (the _onProposal gate); its caller catches a throw.
+      workspaceMemberKeys: deps.workspaceMemberKeys ?? (async (id) => [...((await readWorkspace(id))?.projectKeys || [])]),
       revalidateWorkflow: deps.revalidateWorkflow ?? revalidateWorkflowProposal,
       validateMetricsChange: deps.validateMetricsChange ?? validateMetricsChange,
       validateAwayChange: deps.validateAwayChange ?? validateAwayChange,
@@ -231,6 +237,8 @@ class AskTurn extends EventEmitter {
       // The web card's authoritative check runs against THIS turn's resolved access (allowlist + team cap).
       validateWebProposal: deps.validateWebProposal ?? ((input) => createWebValidator({
         allowed: () => (this.web ? this.web.allowedDomains : []), teamCap: () => (this.web ? this.web.teamCap ?? null : null) })(input)),
+      // P4: the scope card's parent re-check (SEAMS S22/S45: the card shows P1a's display path; listProjects rows carry none).
+      validateScopeSwitch: deps.validateScopeSwitch ?? (async (input, { scope, threadId }) => validateScopeSwitch(input, { scope, projects: (await listProjects()).map((p) => ({ ...p, displayPath: displayPath(p.path) })), asked: scopeCardKeys(listMessages(threadId)) })),
       scheduleDefaults: deps.scheduleDefaults ?? scheduleDefaults,
       // A proposed plugin task is looked up here, once: it must exist, and the card shows its title.
       lookupTask: deps.lookupTask === undefined ? lookupTask : deps.lookupTask,
@@ -329,18 +337,30 @@ class AskTurn extends EventEmitter {
     catch { /* thread may be gone — the terminal write is equally guarded */ }
   }
 
-  async _onProposal(input) {
+  async _onProposal(input, childOk = null) {
     const d = this.deps;
     const cardId = d.newAskId('card');
     const raw = input && typeof input === 'object' ? input : {};
-    // #397: a proposal that names NO target falls back to the user-pinned scope.
-    // Mirrors the MCP child's own defaulting, so this authoritative re-validation
-    // builds the same card the model was shown.
-    const pin = this.pinnedScope;
-    const hasTarget = raw.noProject === true   // P3: a target of its own (P4a flips the no-pin default, S35)
-      || (typeof raw.projectKey === 'string' && raw.projectKey.trim())
-      || (typeof raw.workspaceId === 'string' && raw.workspaceId.trim());
-    const inp = pin && !hasTarget ? { ...raw, ...pin } : raw;
+    // P4 (CONTRACT §4): the MCP child's gate, replayed for this authoritative re-validation. A named target outside
+    // the chat scope is refused before validation (a notice only when the child did not refuse: then the model was
+    // already told). A proposal that names NO target takes the chat scope; No project proposes noProject.
+    // noProject: true is never gated (noProject plus a key is validateProposal's tooManyTargets).
+    const scope = this.pinnedScope;
+    const key = typeof raw.projectKey === 'string' ? raw.projectKey.trim() : '';
+    const ws = typeof raw.workspaceId === 'string' ? raw.workspaceId.trim() : '';
+    const named = raw.noProject === true ? null : key ? { projectKey: key } : ws ? { workspaceId: ws } : null;
+    if (this.scopeGated && named) {
+      let members = [];
+      if (scope && scope.workspaceId && named.projectKey) {
+        try { members = await d.workspaceMemberKeys(scope.workspaceId); } catch { members = []; }
+      }
+      if (!targetInScope(scope, named, members)) {
+        if (childOk !== false) this.reducer.addBlock({ kind: 'notice', text: `Proposal rejected: ${scopeRefusalText(scope, named)}` });
+        this._persistBlocks();
+        return;
+      }
+    }
+    const inp = named || raw.noProject === true ? raw : scope ? { ...raw, ...scope } : this.scopeGated ? { ...raw, noProject: true } : raw;
     try {
       // The thread's attachment ledger, so attachmentIds the model cites resolve
       // to real rows (spec §6.4). A ledger failure never blocks the card.
@@ -351,12 +371,8 @@ class AskTurn extends EventEmitter {
       // The sign-in answer this turn handed its MCP child (run()): the card is checked as the model's own call was.
       const r = await d.validateProposal(inp, { cardId, attachments, timeZone: this.timeZone, nowMs: d.now(), scheduleDefaults: defaults, lookupTask: d.lookupTask, ...(this.claudeAuth ? { claudeAuth: this.claudeAuth } : {}) });
       if (r && r.ok) {
-        // #397 guardrail: a proposal targeting a DIFFERENT project/workspace than
-        // the pinned one is accepted but flagged — the card renders the mismatch
-        // instead of silently absorbing it.
-        const scopeMismatch = !!pin && ((pin.projectKey && r.card.projectKey !== pin.projectKey)
-          || (pin.workspaceId && r.card.workspaceId !== pin.workspaceId));
-        this.reducer.addBlock({ kind: 'card', id: cardId, state: 'proposed', card: r.card, ...(scopeMismatch ? { scopeMismatch: true } : {}) });
+        // P4: the card is in the chat scope by construction — nothing to flag
+        this.reducer.addBlock({ kind: 'card', id: cardId, state: 'proposed', card: r.card });
         // commentIds are propose_run INPUT only: they never enter the card block (its
         // key set is pinned in test/ask-proposal.test.mjs) nor CARD_PATCH_KEYS. Parked
         // against the card id until the user starts the run; unknown ids are dropped,
@@ -642,6 +658,25 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /** propose_scope_switch RESULT (P4): the clone card's split — the child validated for the model; the parent re-checks
+   *  against this turn's scope and the thread's earlier scope cards, then mints the ask card. A child refusal, or a
+   *  duplicate the child could not see yet, adds nothing: the model already has the child's answer. */
+  async _onScopeSwitch(input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    let r = null;
+    try { r = await d.validateScopeSwitch(input && typeof input === 'object' ? input : {}, { scope: this.pinnedScope, threadId: this.threadId }); } catch { r = null; }
+    if (!r || !r.ok) return;
+    // Two calls in one message both pass the stored-card check: this turn's own cards count too (U14).
+    const live = scopeCardKeys([this.reducer.snapshot()]);
+    if ((r.card.candidates || []).some((c) => live.includes(c.projectKey))) return;
+    this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
+    this._persistBlocks();
+  }
+
   /**
    * propose_workspace_change RESULT: the model card's split — the child validated for the model, the parent
    * re-validates the same INPUT against the live registry and mints the card. The child's pinned-workspace
@@ -802,7 +837,7 @@ class AskTurn extends EventEmitter {
       // still reports a hallucinated propose_run as an is_error result — which onProposal re-validates into a
       // "Proposal rejected: …" notice — and a propose_workflow tool_use opens a building card before any result.
       // (onWorkflowResult needs the card onWorkflowStart made, so it stays inert there.)
-      onProposal: this.composer ? null : ({ input }) => this._onProposal(input),
+      onProposal: this.composer ? null : ({ input, childOk }) => this._onProposal(input, childOk),
       onWorkflowStart: this.composer ? null : ({ toolUseId, input }) => this._onWorkflowStart(toolUseId, input),
       onWorkflowResult: ({ toolUseId, text, isError }) => this._onWorkflowResult(toolUseId, text, isError),   // the hook's `input` is not needed here: the card is rebuilt from `out`
       onComposerResult: ({ name, text, isError }) => this._onComposerResult(name, text, isError),
@@ -819,6 +854,7 @@ class AskTurn extends EventEmitter {
       onWorkspaceProposal: ({ input, text, isError }) => this._onWorkspaceProposal(input, text, isError),
       onActionsProposal: ({ input, text, isError }) => this._onActionsProposal(input, text, isError),
       onWebProposal: ({ input, text, isError }) => this._onWebProposal(input, text, isError),
+      onScopeSwitch: this.composer ? null : ({ input, text, isError }) => this._onScopeSwitch(input, text, isError),
       // pause / resume / skip / mark-read in the child → the server's schedules-changed frames.
       onScheduleMutation: (e) => { try { this.deps.onScheduleMutation(e); } catch { /* a broken sink never breaks the turn */ } },
       // The MCP child cannot broadcast; the parent turns its comment writes into

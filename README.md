@@ -447,6 +447,7 @@ level and has no **Diff**, **Changes** or **Actions**.
   itself. Settings › **Ask Worca** (Advanced) sets the turn limit, a per-turn cost cap, whether it may
   change and test-run your scripts, and opt-in web access with an allowed-domain list; chat spend counts toward the total
   budget, and a team policy can preset the limits or narrow web access, never widen it.
+- **One scope per chat** — the composer's scope pill sets **No project**, a project or a workspace, at every interface level. Changes act only there. When a No-project message is clearly about one of your projects, Ask asks with a card — **Switch to <name>** or **Continue without project** — and the same message continues after you choose; it never switches on its own.
 - **Changes are cards you confirm** — work becomes a **run card** (project, workflow, guardrails,
   branches and brief, all editable) that starts nothing until you click **Start run**, or
   **Schedule…** to run it later ([`docs/scheduled-runs.md`](docs/scheduled-runs.md#ask-worca)).

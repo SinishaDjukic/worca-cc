@@ -39,6 +39,7 @@ import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-in
 import { shapeFirstOn } from './chat/shape-gate.mjs';
 import { INTENTS, splitIntentLead } from './chat/intent.mjs';
 import { homeIcon } from './chat/home-icons.mjs';
+import { NO_PROJECT_LABEL, scopeFromContext, scopeKind, scopeIcon, kindChip, projectKind } from './chat/scope-ui.mjs';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import {
@@ -209,10 +210,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // that a stored pick yields to. Cleared whenever the picker is re-seeded from the browser or a thread.
     pickerExplicit: false,
     catalog: null,
-    // #397: the thread's project/workspace scope. pinned:false = Auto (follow the
-    // page — today's behaviour). label caches the display name once resolved.
+    // #397: the thread's project/workspace scope. pinned:false = No project: no page target rides along (CONTRACT §4).
+    // label caches the display name once resolved.
     scope: { pinned: false, projectKey: null, workspaceId: null, label: null },
-    popover: null,            // {panel, trigger, onClose, build, refreshOn, refresh}
+    scopeHeld: null,          // S39: the thread id whose scope PATCH a running reply refused; the next send carries it
+    popover: null,           // {panel, trigger, onClose, build, refreshOn, refresh}
     contexts: [],             // the open chat's topics (thread.contexts), shown in the context popover
     threadsRefresh: null,     // the debounce timer behind the History popover's ask-run-status refetch
     expandedAgents: new Set(),
@@ -966,6 +968,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         setComposerMsg(msg);
         return false;
       }
+      st.scopeHeld = null;                           // S39: this message carried the held pick (its pinned is authoritative)
       // A toggle made while this POST was out PATCHed a value the route then overwrote with sentOff: re-send the latest.
       if (st.mcp.off !== sentOff) patchMcpOff(id, st.mcp.off);
       const { userMessageId, attachments: stored, contexts } = await res.json();
@@ -1470,13 +1473,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const scopeBtn = make('button', 'ask-scope-btn');
     scopeBtn.type = 'button';
     scopeBtn.setAttribute('data-ask-scope-btn', '');
-    scopeBtn.title = 'Project scope for this chat';
-    el.scopeLabel = make('span', 'ask-scope-label', 'Auto');
+    scopeBtn.title = 'Chat scope';
+    scopeBtn.setAttribute('aria-haspopup', 'menu');
+    scopeBtn.setAttribute('aria-expanded', 'false');
+    scopeBtn.setAttribute('aria-label', `Chat scope: ${NO_PROJECT_LABEL}`);   // updateScopeButton() runs on the first scope change
+    el.scopeIco = scopeIcon(doc, 'none', 13);
+    el.scopeIcoKind = 'none';
+    el.scopeLabel = make('span', 'ask-scope-label', NO_PROJECT_LABEL);
+    scopeBtn.appendChild(el.scopeIco);
     scopeBtn.appendChild(el.scopeLabel);
     scopeBtn.appendChild(svgIcon(ICONS.chevronDown, 11, 2));
     scopeBtn.addEventListener('click', () => openScopePopover(scopeBtn));
     el.scopeBtn = scopeBtn;
-    scopeBtn.dataset.minLevel = 'advanced';      // interface mode (docs/ui-levels.md): Auto scope is the simple path
     row.appendChild(scopeBtn);
 
     // MCP registry §9.4 + skills registry §6.8: the per-chat Sets picker — `Sets · N` (N = copies and skills that start
@@ -1735,7 +1743,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (focusTrigger) { try { p.trigger.focus(); } catch { /* ignore */ } }
   }
 
-  function menuItems(panel) { return [...panel.querySelectorAll('[role="menuitem"]:not([disabled]),[role="menuitemcheckbox"]:not([disabled])')]; }
+  function menuItems(panel) { return [...panel.querySelectorAll('[role="menuitem"]:not([disabled]),[role="menuitemcheckbox"]:not([disabled]),[role="menuitemradio"]:not([disabled])')]; }
 
   function onPopKeydown(e) {
     const p = st.popover;
@@ -2623,16 +2631,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- scope selector (#397) ------------------------------------------------
-  /** Per-field merge: the pinned scope replaces the page context's TARGET keys;
-   *  view/run/diff-file context still follow the page. Auto sends pinned:false so
-   *  the server never resurrects a stale thread pin over an explicit choice. */
+  /** Per-field merge: the page context's TARGET keys never ride (CONTRACT §4); view/run/diff-file context still
+   *  follow the page. A pin adds its one key. No project sends pinned:false and no page target, so the server never
+   *  resurrects a stale thread pin over an explicit choice. */
   function scopedContext(page) {
     const ctx = { ...page };
-    if (!st.scope.pinned) return { ...ctx, pinned: false };
     delete ctx.projectDir;
     delete ctx.projectKey;
     delete ctx.workspaceId;
     delete ctx.projectSource;                     // the fallback tag goes with the target keys (MCP registry §9.1)
+    if (!st.scope.pinned) return { ...ctx, pinned: false };
     ctx.pinned = true;
     if (st.scope.projectKey) ctx.projectKey = st.scope.projectKey;
     else if (st.scope.workspaceId) ctx.workspaceId = st.scope.workspaceId;
@@ -2641,13 +2649,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function updateScopeButton() {
     if (!el.scopeLabel) return;
-    el.scopeLabel.textContent = st.scope.pinned
-      ? (st.scope.label || st.scope.projectKey || st.scope.workspaceId || 'Pinned')
-      : 'Auto';
+    const label = st.scope.pinned
+      ? (st.scope.label || st.scope.projectKey || st.scope.workspaceId)
+      : NO_PROJECT_LABEL;
+    el.scopeLabel.textContent = label;
+    el.scopeBtn.setAttribute('aria-label', `Chat scope: ${label}`);
+    const kind = scopeKind(st.scope);
+    if (kind !== el.scopeIcoKind) {
+      const ico = scopeIcon(doc, kind, 13);
+      el.scopeIco.replaceWith(ico);
+      el.scopeIco = ico;
+      el.scopeIcoKind = kind;
+    }
     el.scopeBtn.classList.toggle('is-pinned', st.scope.pinned);
   }
 
-  function setScope(next) {
+  /** `persist:false` sends no PATCH (the server stored it already); `focus:false` neither closes popovers nor focuses
+   *  the composer (the panel API and server switches never move the focus). */
+  function setScope(next, { persist = true, focus = true } = {}) {
     st.scope = {
       pinned: !!next.pinned,
       projectKey: next.projectKey || null,
@@ -2656,30 +2675,46 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
     updateScopeButton();
     scheduleMcpRefresh();
-    closePopover({ focusTrigger: false });
-    focusComposer();
+    if (focus) {
+      closePopover({ focusTrigger: false });
+      focusComposer();
+    }
     // Persist on the thread so the pin survives reload with no message sent. A
     // brand-new chat has no row yet — the first message's context (pinned:true)
     // persists it then instead.
-    if (!st.threadId) return;
+    if (!persist || !st.threadId) return;
+    const id = st.threadId;
     const scope = st.scope.pinned
       ? (st.scope.projectKey ? { pinned: true, projectKey: st.scope.projectKey } : { pinned: true, workspaceId: st.scope.workspaceId })
       : { pinned: false };
+    // SEAMS S39: a PATCH refused while a reply runs (409 TURN_IN_FLIGHT) keeps the pick: a resync of this chat does not
+    // undo it, and the next send carries it (a message's explicit pinned is authoritative, P4a S4).
     Promise.resolve()
-      .then(() => fetch(`/api/ask/threads/${st.threadId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope }) }))
+      .then(() => fetch(`/api/ask/threads/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope }) }))
+      .then((r) => {
+        if (r && r.ok) { if (st.scopeHeld === id) st.scopeHeld = null; return; }
+        if (r && r.status === 409) return r.json().then((b) => { if (b && b.code === 'TURN_IN_FLIGHT' && st.threadId === id) st.scopeHeld = id; }, () => {});
+      })
       .catch(() => { /* the next message carries the scope in its context anyway */ });
+  }
+
+  /** The panel API's and the card ctx's setScope (CONTRACT §4): `{ pinned:false }` | `{ pinned:true, projectKey,
+   *  label? }` | `{ pinned:true, workspaceId, label? }`. PATCHes an existing chat and never moves the focus; false (and
+   *  nothing changes) for any other shape, or after destroy(). */
+  function setScopeFromApi(scope) {
+    if (st.destroyed || !scope || typeof scope !== 'object' || typeof scope.pinned !== 'boolean') return false;
+    const next = scopeFromContext(scope);
+    if (scope.pinned === true && !next.pinned) return false;
+    const label = typeof scope.label === 'string' && scope.label ? scope.label : null;
+    setScope({ ...next, label }, { focus: false });
+    if (next.pinned && !label) resolveScopeLabel();
+    return true;
   }
 
   /** Restore the selector from a stored thread context (loadThread / reopen). */
   function applyThreadScope(context) {
-    const c = context && typeof context === 'object' ? context : null;
-    const key = c && c.pinned === true && typeof c.projectKey === 'string' && c.projectKey ? c.projectKey : null;
-    const ws = c && c.pinned === true && typeof c.workspaceId === 'string' && c.workspaceId ? c.workspaceId : null;
-    st.scope = key
-      ? { pinned: true, projectKey: key, workspaceId: null, label: null }
-      : ws
-        ? { pinned: true, projectKey: null, workspaceId: ws, label: null }
-        : { pinned: false, projectKey: null, workspaceId: null, label: null };
+    // S41: the stored context reads as the server reads it (a row without pinned names its scope by key).
+    st.scope = { ...scopeFromContext(context), label: null };
     updateScopeButton();          // the raw key shows until the name resolves
     if (st.scope.pinned) resolveScopeLabel();
   }
@@ -2697,42 +2732,87 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   function openScopePopover(trigger) {
-    const panel = openPopover({ panelClass: 'ask-pop-scope', trigger, build: (p) => {
-      p.appendChild(make('div', 'ask-pop-caption', 'Chat scope'));
-    } });
+    const caption = (text) => {
+      const c = make('div', 'ask-pop-caption', text);
+      c.setAttribute('role', 'presentation');
+      return c;
+    };
+    const divider = () => {
+      const d = make('div', 'ask-pop-divider');
+      d.setAttribute('role', 'separator');
+      return d;
+    };
+    const panel = openPopover({
+      panelClass: 'ask-pop-scope',
+      trigger,
+      onClose: () => trigger.setAttribute('aria-expanded', 'false'),
+      build: (p) => { p.appendChild(caption('Chat scope')); },
+    });
     if (!panel) return;
+    panel.setAttribute('aria-label', 'Chat scope');
+    trigger.setAttribute('aria-expanded', 'true');
     loadCardOptions().then((opts) => {
       if (!st.popover || st.popover.panel !== panel) return;
-      const item = (label, on, onPick) => {
-        const it = menuItem('ask-scope-item', onPick);
-        it.appendChild(make('span', 'ask-model-name', label));
-        if (on) it.appendChild(make('span', 'ask-model-check', '✓'));
+      // A radio row: the line icon, the text, then ✓ on the pick (aria-checked carries it for screen readers).
+      const radio = (cls, on, kids, onPick) => {
+        const it = menuItem(`ask-scope-item ${cls}`, onPick);
+        it.setAttribute('role', 'menuitemradio');
+        it.setAttribute('aria-checked', on ? 'true' : 'false');
+        for (const k of kids) it.appendChild(k);
+        if (on) {
+          const check = make('span', 'ask-model-check', '✓');
+          check.setAttribute('aria-hidden', 'true');
+          it.appendChild(check);
+        }
         return it;
       };
-      panel.appendChild(item('Auto (follow current page)', !st.scope.pinned, () => setScope({ pinned: false })));
+      // The name (and its kind chip, when it has one) on one line, an optional sub-line under it.
+      const col = (name, chip, sub) => {
+        const c = make('span', 'ask-scope-col');
+        const line = make('span', 'ask-scope-line');
+        line.appendChild(make('span', 'ask-model-name', name));
+        if (chip) line.appendChild(chip);
+        c.appendChild(line);
+        if (sub) c.appendChild(make('span', 'ask-scope-sub', sub));
+        return c;
+      };
+      panel.appendChild(radio('ask-scope-none', !st.scope.pinned,
+        [scopeIcon(doc, 'none', 14), make('span', 'ask-model-name', NO_PROJECT_LABEL)],
+        () => setScope({ pinned: false })));
       const projects = opts.projects.filter((p) => p && p.key);
       if (projects.length) {
-        panel.appendChild(make('div', 'ask-pop-divider'));
-        panel.appendChild(make('div', 'ask-pop-caption', 'Projects'));
+        panel.appendChild(divider());
+        panel.appendChild(caption('Projects'));
         for (const p of projects) {
-          panel.appendChild(item(
-            p.exists === false ? `${p.name} (missing)` : p.name,
-            st.scope.pinned && st.scope.projectKey === p.key,
-            () => setScope({ pinned: true, projectKey: p.key, label: p.name }),
-          ));
+          const it = radio('ask-scope-proj', st.scope.pinned && st.scope.projectKey === p.key, [
+            scopeIcon(doc, 'project', 14),
+            col(p.exists === false ? `${p.name} (missing)` : p.name, kindChip(doc, projectKind(p)), p.displayPath || p.path),
+          ], () => setScope({ pinned: true, projectKey: p.key, label: p.name }));
+          if (p.path) it.title = p.path;          // the absolute path; the sub-line shows displayPath (S22), as text only
+          panel.appendChild(it);
         }
       }
       const workspaces = opts.workspaces.filter((w) => w && w.id);
       if (workspaces.length) {
-        panel.appendChild(make('div', 'ask-pop-divider'));
-        panel.appendChild(make('div', 'ask-pop-caption', 'Workspaces'));
+        panel.appendChild(divider());
+        panel.appendChild(caption('Workspaces'));
         for (const w of workspaces) {
-          panel.appendChild(item(
-            w.name || w.id,
-            st.scope.pinned && st.scope.workspaceId === w.id,
-            () => setScope({ pinned: true, workspaceId: w.id, label: w.name || w.id }),
-          ));
+          panel.appendChild(radio('ask-scope-ws', st.scope.pinned && st.scope.workspaceId === w.id, [
+            scopeIcon(doc, 'workspace', 14),
+            col(w.name || w.id, kindChip(doc, 'ws'), null),
+          ], () => setScope({ pinned: true, workspaceId: w.id, label: w.name || w.id })));
         }
+      }
+      // Add project… opens the app's Add project dialog (chatDeps.openAddProject, read at call time; SEAMS S19).
+      if (chatDeps && typeof chatDeps.openAddProject === 'function') {
+        panel.appendChild(divider());
+        const add = menuItem('ask-scope-item ask-scope-add', () => {
+          closePopover({ focusTrigger: false });
+          chatDep('openAddProject');
+        });
+        add.appendChild(scopeIcon(doc, 'add', 14));
+        add.appendChild(make('span', 'ask-model-name', 'Add project…'));
+        panel.appendChild(add);
       }
       const first = menuItems(panel)[0];
       if (first) { first.tabIndex = 0; try { first.focus(); } catch { /* ignore */ } }
@@ -3010,7 +3090,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     stopElapsed();
     storeThread(null);
     el.title.textContent = 'New chat';
-    applyThreadScope(null);             // #397: a brand-new chat starts on Auto
+    st.scopeHeld = null;                // S39: a held pick belongs to the chat it was made in
+    applyThreadScope(null);             // U5: a brand-new chat starts in No project
     setContexts([]);
     restoreBrowserPick();               // …and on the browser-level pick, not the last chat's
     st.mcp.off = { sets: [], members: [] };   // …and with every MCP server on
@@ -3118,6 +3199,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       n.appendChild(det);
     }
     return n;
+  }
+
+  // P4 (canvas Switched): a scope switch's divider row — the new scope's icon, `Switched to <name>` and its kind chip,
+  // centered between two hairlines. A project's Git/Folder chip comes from the cached /api/projects; No project and an
+  // unknown project get none.
+  function buildDivider(b) {
+    const s = scopeFromContext(b.scope);
+    const text = String(b.text || '');
+    const d = make('div', 'ask-divider');
+    d.setAttribute('role', 'separator');
+    d.setAttribute('aria-label', text);
+    const inner = make('span', 'ask-divider-in');
+    inner.append(scopeIcon(doc, scopeKind(s), 13), make('span', 'ask-divider-t', text));
+    if (s.workspaceId) inner.appendChild(kindChip(doc, 'ws'));
+    else if (s.projectKey) {
+      loadCardOptions().then((o) => {
+        const p = o.projects.find((x) => x && x.key === s.projectKey);
+        const c = p ? kindChip(doc, projectKind(p)) : null;
+        if (c && !st.destroyed) inner.appendChild(c);
+      });
+    }
+    d.appendChild(inner);
+    return d;
   }
 
   // ---- Start-run card (spec §9, §10.5; D1-D3) -------------------------------
@@ -4515,12 +4619,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     local.shapeUi = shapeUi;
     rootEl.appendChild(head);
 
-    // #397 guardrail: the model proposed a different target than the chat's pin.
-    if (block.scopeMismatch) {
-      rootEl.appendChild(make('div', 'ask-card-scope-warn',
-        'This proposal targets a different project or workspace than the one pinned for this chat — check the target before starting.'));
-    }
-
     // target section
     const targetSec = make('div', 'ask-rp-sec');
     const targetHead = make('div', 'ask-rp-sec-head');
@@ -4837,6 +4935,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     local.projectDir = () => (local.target === 'project' ? ((rootEl.querySelector('.ask-card-project-select') || {}).value || '') : '');
     local.workflowId = () => workflowSel.value || card.workflowId || 'wf_default';
 
+    /** The loaded /api/projects row behind a project select value (SEAMS S12), else null. */
+    function projectRowOf(value) {
+      const opts = local.options;
+      return (opts && value && opts.projects.find((p) => p && p.path === value)) || null;
+    }
+    /** S12: a Folder project has no branches, and a Git project runs as Folder while git is missing (U3). */
+    function noBranches(value) { return projectKind(projectRowOf(value)) === 'folder' || !gitOn(doc); }
     function updateTargetSub() {
       const opts = local.options;
       if (local.target === 'none') targetSub.textContent = NO_PROJECT_NAME;
@@ -4844,7 +4949,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const projSel = rootEl.querySelector('.ask-card-project-select');
         const srcSel = rootEl.querySelector('.ask-card-source');
         const name = projSel && projSel.selectedOptions[0] ? projSel.selectedOptions[0].textContent : (card.projectName || '');
-        targetSub.textContent = `${name} · branch ${(srcSel && srcSel.value) || 'current'} · feature ${featureWord()}`;
+        // B10 (canvas Switched): the name, the kind chip, then the branch words (none for a Folder project or without git).
+        const chip = kindChip(doc, projectKind(projectRowOf(projSel ? projSel.value : '')));
+        const parts = [doc.createTextNode(name)];
+        if (chip) parts.push(chip);
+        if (!noBranches(projSel ? projSel.value : '')) parts.push(doc.createTextNode(` · branch ${(srcSel && srcSel.value) || 'current'} · feature ${featureWord()}`));
+        targetSub.replaceChildren(...parts);
       } else {
         const wsSel = rootEl.querySelector('.ask-card-workspace-select');
         const row = opts && wsSel && opts.workspaces.find((w) => w && w.id === wsSel.value);
@@ -4874,13 +4984,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (local.target === 'project') {
         const projSel = rpSelect('ask-card-project-select', 'Project');
         const srcSel = rpSelect('ask-card-source', 'Source branch');
-        if (opts) {
-          fillSelect(projSel, opts.projects.map((p) => ({ value: p.path, label: p.exists === false ? `${p.name} (missing)` : p.name })), card.projectDir || (opts.projects[0] && opts.projects[0].path) || '');
-          // The fill is async: the sub-line reads the select again when the branches land,
-          // or a proposed sourceBranch would read "branch current" until the user touches it.
-          if (gitOn(doc)) loadBranchesInto(srcSel, projSel.value, card.sourceBranch || '').then(updateTargetSub);
-        }
-        projSel.addEventListener('change', () => { if (gitOn(doc)) loadBranchesInto(srcSel, projSel.value, '').then(updateTargetSub); updateTargetSub(); reloadLane(); });
         // #527: "from origin/x (remote only, 2 behind)" describes the PROPOSED branch only.
         const srcField = rpField('Source branch', srcSel, sourceRefNote(card.sourceRef));
         const srcHint = srcField.querySelector('.ask-rp-hint');
@@ -4891,6 +4994,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const featureField = lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch);
         const sameField = lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource);
         for (const f of [srcField, featureField, sameField]) f.dataset.needsGit = '';
+        // S12: a Folder project, or no git, shows no branch rows and asks for no branches. The fill is async: the
+        // sub-line reads the select again when the branches land, or a proposed sourceBranch would read "branch current".
+        const paintBranches = (want) => {
+          const off = noBranches(projSel.value);
+          for (const f of [srcField, featureField, sameField]) f.hidden = off;
+          if (!off) loadBranchesInto(srcSel, projSel.value, want).then(updateTargetSub); else updateTargetSub();
+        };
+        if (opts) {
+          fillSelect(projSel, opts.projects.map((p) => ({ value: p.path, label: p.exists === false ? `${p.name} (missing)` : p.name })), card.projectDir || (opts.projects[0] && opts.projects[0].path) || '');
+          paintBranches(card.sourceBranch || '');
+        }
+        projSel.addEventListener('change', () => { paintBranches(''); updateTargetSub(); reloadLane(); });
         if (local.shapeBranchHost) {
           // Shaper (D20): Project and Base branch on the small card, at every level; the rest in Advanced.
           srcField.querySelector('.ask-rp-label').firstChild.textContent = 'Base branch';
@@ -5373,6 +5488,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     runLinkFor: (ref) => runLinkFor(ref || {}),
     appendToComposer: (text) => appendToComposer(text),
     announce: (text) => announce(text),
+    setScope: (scope) => setScopeFromApi(scope),
+    focusComposer: () => focusComposer(),
   };
   /** Ask Worca's drafted agent / script cards and its graph card (ask-composer-cards.mjs): the Workflows chat's cards
    *  without a canvas, their actions app.js's (composerActions). Made on first use (never during construction). */
@@ -6000,7 +6117,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // PD6: a synthetic row (a workflow-card event) is a notice, never a bubble — its text is the model-facing event line.
       const synthetic = (row.blocks || []).filter((b) => b && b.kind === 'notice' && b.synthetic);
       if (synthetic.length) {
-        for (const b of synthetic) wrap.appendChild(buildNotice(b));
+        // S39: a quiet notice (a scope switch's event turn) shows nothing — the divider and the answered card say it.
+        for (const b of synthetic) if (!b.quiet) wrap.appendChild(buildNotice(b));
+        if (synthetic.every((b) => b.quiet)) wrap.hidden = true;
       } else {
         // Shaper (D21): the lead went to the model; the bubble shows the intent chip and the person's own text.
         const own = splitIntentLead(row.text || '');
@@ -6026,8 +6145,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         }
       }
     } else if (row.role === 'system') {
-      const notices = (row.blocks || []).filter((b) => b && b.kind === 'notice');
-      if (notices.length) for (const b of notices) wrap.appendChild(buildNotice(b));
+      const parts = (row.blocks || []).filter((b) => b && (b.kind === 'notice' || b.kind === 'divider'));
+      if (parts.length) for (const b of parts) wrap.appendChild(b.kind === 'divider' ? buildDivider(b) : buildNotice(b));
       else wrap.appendChild(buildNotice({ text: row.text }));
     } else {
       const activity = buildActivity(row);
@@ -6185,7 +6304,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (q && q.items.length && !snap.inFlight && !q.draining) q.paused = true;
     renderQueue();
     el.title.textContent = (snap.thread && snap.thread.title) || 'New chat';
-    applyThreadScope(snap.thread && snap.thread.context);   // #397: restore the pin
+    if (switched) st.scopeHeld = null;    // S39: a held pick belongs to the chat it was made in
+    // #397: restore the pin — S39: a resync of the same chat does not undo a held pick (the stored row is older).
+    if (switched || st.scopeHeld !== id) applyThreadScope(snap.thread && snap.thread.context);
     setContexts(snap.thread && snap.thread.contexts);
     // The picker follows the chat — on a SWITCH only: a resync of the same thread
     // would otherwise clobber a pick the user just made (its PATCH may not have landed).
@@ -6353,6 +6474,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (frame.threadId !== st.threadId) return;
       // Only the card: the terminal pane is never opened or switched for Ask's command (its tab waits there).
       applyCommandFrame(frame.command);
+      return;
+    }
+    if (frame.type === 'ask-scope') {                           // Projects, any way P4 (CONTRACT §4): a server-side switch
+      // The open chat's pill follows it with no PATCH (the server stored it), so the next send keeps the new scope.
+      if (frame.threadId === st.threadId && frame.scope && typeof frame.scope === 'object') {
+        const label = typeof frame.label === 'string' && frame.label ? frame.label : null;
+        st.scopeHeld = null;                                    // S39: the server's switch wins over a held pick
+        setScope({ ...scopeFromContext(frame.scope), label }, { persist: false, focus: false });
+        if (st.scope.pinned && !label) resolveScopeLabel();
+      }
       return;
     }
     if (THREADS_REFRESH_FRAMES.has(frame.type)) scheduleThreadsRefresh();
@@ -6678,6 +6809,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pushServerFrame,
     onHello,
     ownsKey,
+    setScope: (scope) => setScopeFromApi(scope),
+    optionsChanged: () => { st.cardOptions = null; },   // projects-changed / workspaces-changed: the next read refetches
     destroy,
   });
 }

@@ -10,6 +10,7 @@ import { redactAskText } from '../src/core/ask/redact.mjs';
 import { aggregate } from '../src/shared/team-metrics/aggregate.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { scopeRefusalText } from '../src/core/ask/scope.mjs';
 
 const NOW = Date.parse('2026-09-16T12:00:00Z');
 const RECORDS = [
@@ -146,6 +147,8 @@ test('list_team_metrics_runs paging and push_team_metrics scopes, both redacted'
 
 test('propose_metrics_change: validates only, the pinned scope fills the matching target kind, {ok:false} passes through', async () => {
   calls.length = 0; pin = null;
+  assert.deepEqual(await tools.call('propose_metrics_change', { kind: 'record', projectKey: 'gw-00000001', record: false }), { ok: false, errors: [scopeRefusalText(null, { projectKey: 'gw-00000001' })] });
+  pin = { projectKey: 'gw-00000001' };
   const r = await tools.call('propose_metrics_change', { kind: 'record', projectKey: 'gw-00000001', record: false });
   assert.deepEqual(r, { ok: true, card: { type: 'metrics', kind: 'record', projectKey: 'gw-00000001', record: false } });
   assert.deepEqual(await tools.call('propose_metrics_change', { kind: 'enable', projectKey: 'gw-00000001' }), { ok: false, errors: ['nope'] });
