@@ -199,3 +199,71 @@ test('on a shared deployment another person\'s preset answers 404 everywhere', a
   assert.match((await run.json()).error, /not found/);
   assert.equal((await post(`/api/presets/${preset.id}/check`, { projectDir: project.path }, 'ana@example.com')).status, 200);
 });
+
+const waitPipeline = async (runId, ms = 30000) => {
+  const end = Date.now() + ms;
+  for (;;) {
+    const id = runs.get(runId)?.pipelineId;
+    if (id) return id;
+    if (Date.now() > end) throw new Error('no pipeline id');
+    await new Promise((r) => setTimeout(r, 50));
+  }
+};
+
+test('a run started before the migration returns no run setup and the save action is refused with 409', async () => {
+  const { getDb } = await import('../src/core/db.mjs');
+  getDb().prepare("INSERT INTO pipelines (id, project_key, target, status) VALUES ('legacy0001', ?, 'project', 'done')").run(project.key);
+  const g = await get('/api/pipelines/legacy0001/setup');
+  assert.equal(g.status, 200);
+  assert.deepEqual((await g.json()).setup, null);
+  const s = await post('/api/pipelines/legacy0001/preset', { name: 'Old run', scope: { kind: 'project' } });
+  assert.equal(s.status, 409);
+  const j = await s.json();
+  assert.equal(j.code, 'no-run-setup');
+  assert.match(j.error, /started before Worca kept run setups/);
+  assert.equal((await get('/api/pipelines/nope00000/setup')).status, 404);
+  assert.equal((await post('/api/pipelines/nope00000/preset', { name: 'x' })).status, 404);
+});
+
+test('a preset saved from a run equals one saved in New run from the same picks; the setup holds no task', { timeout: 120000 }, async () => {
+  // n_plan is a model-only pick on purpose (D4): the checked overlay would carry effort '' for it, a New run save does not.
+  const picks = { workflowId: 'wf_default', guardrailsId: 'normal', mock: true,
+    overlay: { nodes: { n_plan: { model: 'claude-haiku-4-5' } } } };
+  const r = await post('/api/run', { projectDir: project.path, prompt: 'keep my picks', title: 'T', featureBranch: 'feat/x', allowUnguardedEngine: true, ...picks });
+  // An immediate start answers 200 { runId }; only a scheduled start (scheduledFor / repeat / after) answers 202, and it
+  // creates no pipelines row, so it would store no setup.
+  assert.equal(r.status, 200, await r.clone().text());
+  const pid = await waitPipeline((await r.json()).runId);
+  const { setup } = await (await get(`/api/pipelines/${pid}/setup`)).json();
+  for (const k of ['prompt', 'title', 'featureBranch', 'allowUnguardedEngine']) assert.equal(k in setup, false, k);
+  assert.ok(Object.keys(setup.overlay.nodes).length >= 4, 'full picks at start');
+
+  const fromRun = await post(`/api/pipelines/${pid}/preset`, { name: 'From run', scope: { kind: 'project' } });
+  assert.equal(fromRun.status, 201, await fromRun.clone().text());
+  const byHand = await post('/api/presets', { name: 'From form', scope: { kind: 'project', projectDir: project.path }, setup: picks, basis: { projectDir: project.path } });
+  assert.equal(byHand.status, 201, await byHand.clone().text());
+  const a = (await fromRun.json()).preset;
+  const b = (await byHand.json()).preset;
+  assert.equal(a.setup.overlay.nodes.n_plan.effort, b.setup.overlay.nodes.n_plan.effort, 'no effort "" from the checked overlay');
+  assert.deepEqual(a.setup, b.setup);
+  assert.deepEqual(a.scope, { kind: 'project', ref: project.key });
+  assert.equal((await post(`/api/pipelines/${pid}/preset`, { name: 'from RUN' })).status, 409, 'duplicate name');
+});
+
+test('with the flag off the run setup routes are 404', async () => {
+  process.env.WORCA_FLAGS = '-runPresets';
+  try {
+    assert.equal((await get('/api/pipelines/legacy0001/setup')).status, 404);
+    assert.equal((await post('/api/pipelines/legacy0001/preset', { name: 'x' })).status, 404);
+  } finally { process.env.WORCA_FLAGS = 'runPresets'; }
+});
+
+test('on a shared deployment the preset saved from a run belongs to the person who saved it', async () => {
+  const { getDb } = await import('../src/core/db.mjs');
+  getDb().prepare("INSERT INTO pipelines (id, project_key, target, status, started_by, run_setup) VALUES ('shared001', ?, 'project', 'done', 'ana@example.com', ?)")
+    .run(project.key, JSON.stringify({ workflowId: 'wf_default' }));
+  const s = await post('/api/pipelines/shared001/preset', { name: 'Bo copy', scope: { kind: 'global' } }, 'bo@example.com');
+  assert.equal(s.status, 201);
+  assert.equal((await s.json()).preset.createdBy, 'bo@example.com');
+  assert.equal((await (await send('GET', '/api/presets', undefined, 'ana@example.com')).json()).presets.some((p) => p.name === 'Bo copy'), false);
+});

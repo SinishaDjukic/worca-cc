@@ -1053,7 +1053,7 @@ test('History opens on the glance: page title, status line, facts, the tab rows;
 // Resume split, Pause, Stop, then the terminal button), in both modes. "Resume on <other engine>" lives in the
 // split's menu, never as a button of its own. The Details header
 // keeps only the PR controls and the ⋯ menu, and the glance card carries no run control.
-const HD_BAR_ORDER = ['hd-after', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener'];
+const HD_BAR_ORDER = ['hd-save-preset', 'hd-after', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener'];
 test('History bar per finished/paused status: Run after, Resume split only when resumable, Stop only when paused, no Pause without a live run', async () => {
   const rows = [];
   for (const [status, resumable, finished] of [
