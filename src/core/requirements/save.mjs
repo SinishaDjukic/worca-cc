@@ -1,0 +1,36 @@
+// src/core/requirements/save.mjs
+// Save to specs/ (plans/requirements-design.md D11): writes specs/FEAT-<n>-<slug>.md into the project's
+// checkout and never commits. The checks are those of Shaper's "Save to plans/" (src/core/shape/save.mjs,
+// not merged yet): to be shared once both are on dev.
+import { realpath, lstat, stat, mkdir, writeFile } from 'node:fs/promises';
+import { join, relative, isAbsolute } from 'node:path';
+
+const slugify = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+export function specFileName(feature) {
+  return `${feature.id}-${slugify(feature.title).slice(0, 60).replace(/-+$/, '') || 'feature'}.md`;
+}
+
+export async function saveSpecToCheckout({ projectDir, feature, markdown, overwrite = false }) {
+  const root = await realpath(projectDir);
+  const dir = join(root, 'specs');
+  const st = await lstat(dir).catch(() => null);
+  if (st && st.isSymbolicLink()) {
+    try { await stat(dir); } catch { return { ok: false, status: 409, error: 'specs/ is a broken link' }; }
+  }
+  await mkdir(dir, { recursive: true });
+  const real = await realpath(dir);
+  const rel = relative(root, real);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return { ok: false, status: 409, error: 'specs/ points outside the project' };
+  const name = specFileName(feature);
+  const target = join(real, name);
+  const tst = await lstat(target).catch(() => null);
+  if (tst && tst.isSymbolicLink()) return { ok: false, status: 409, error: 'refusing to write through a symlink' };
+  try {
+    await writeFile(target, markdown, { flag: overwrite ? 'w' : 'wx' });
+  } catch (err) {
+    if (err && err.code === 'EEXIST') return { ok: false, status: 409, error: 'exists', path: `specs/${name}` };
+    throw err;
+  }
+  return { ok: true, path: `specs/${name}` };
+}
