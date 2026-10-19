@@ -48,7 +48,7 @@ another system is referenced, and read when the run starts.
 | External task (plugin source, e.g. a GitHub issue) | reference only | fetched through `getTask`, as every run does; network / rate-limit / timeout errors retry with backoff inside the grace window, anything else fails at once |
 | Workflow, guardrail set | validated, id stored | validated again, current definition used |
 | Source branch | ref validated | worktree cut from the tip at start |
-| Feature branch | name stored | a series appends `-YYYYMMDD` so each occurrence has its own branch |
+| Feature branch | name stored | a series appends `-YYYYMMDD` (plus `-HHMM` when it runs several times a day) so each occurrence has its own branch |
 | Models, run config, tools | — | resolved in preflight, as today |
 | Total cost budget | warning only | enforced; a blocked budget fails the ticket |
 
@@ -70,6 +70,12 @@ when the schedule says *skip* — the ticket becomes `missed` and waits for **Ru
 now** / **Reschedule**. For a series the grace is capped at the time to the next
 occurrence, and the next slot is always computed from *now*: at most one late
 occurrence starts after downtime, a backlog is never replayed.
+
+A sub-daily series (several times a day) is not capped by the next slot: after downtime
+it starts **one** catch-up run within its grace and reports the slots that passed in one
+*missed* item; the grid then resumes. Its missed slots notify but do not count toward the
+failure streak, and an overlap skip leaves no feed item (the skipped occurrence is in its
+history).
 
 ## After another run
 
@@ -119,21 +125,37 @@ moves past the gap; one that occurs twice fires once.
   "interval": 1,                    // every N
   "weekdays": ["mo","tu","we","th","fr"],
   "monthDay": 1,                    // 1..31 (clamped to the month) | "last"
-  "time": "02:00", "tz": "Europe/Berlin",
+  // ONE of:
+  "time": "02:00",                  // once a day
+  // "times": ["09:00","13:00","17:00"],                    2..96 fixed times a day
+  // "step": { "minutes": 15, "from": "09:00", "to": "18:00" }   every N minutes (15..1440) in a daily time range
+  "tz": "Europe/Berlin",
   "end": { "type": "never" } }      // | { "type":"until","until":"2026-12-31" } | { "type":"count","count":10 }
 ```
+
+- **Several times a day.** `times` runs at each listed time; `step` runs every N minutes
+  (hours are stored as minutes: `2h` is `120`). Every N minutes restarts each matching day
+  at the range start (00:00 without one), and the range end is included: hourly from 09:00
+  to 18:00 runs at 09:00 … 18:00.
+- Runs of one schedule must be **at least 15 minutes apart**, across midnight too (the last
+  run of one day and the first of the next, when two matching days can follow each other).
+- The time range cannot cross midnight: use two schedules or a `times` list.
+- Around a daylight-saving change a sub-daily slot that does not exist has no run, and a
+  repeated hour runs once. A once-a-day time still moves past the gap.
+- `until` is the last local date (all its slots run); `count` counts runs.
 
 - **Overlap** (`skip` · `queue` · `start`): what to do when the previous occurrence is
   still starting, running or pausing. `queue` holds one occurrence until the previous
   run ends. A *paused* previous run does not block.
 - **Failure streak** (`maxFailures`, default 3, `0` = never): a ticket that could not
-  start, a missed slot, or a run that ended in an error each count; a run you stopped
+  start, a missed slot (a missed slot of a sub-daily series does not), or a run that ended in an error each count; a run you stopped
   and a paused run do not; a successful run resets it. At the limit the schedule
   pauses itself and says so. Every failure is reported either way.
 - Editing a schedule **replaces** its pending occurrence. *Run now* adds one extra
   occurrence; the series does not shift.
 
-The rule maths, the sentence ("Every weekday at 02:00") and the parsers live in
+The rule maths, the sentence ("Every weekday at 02:00", "Every 15 minutes, 09:00–18:00, weekdays",
+"Every day at 09:00, 13:00 and 17:00") and the parsers live in
 `src/shared/schedule/recurrence.mjs` — one module for the server, the CLI and the
 browser, so the editor's preview is what will run.
 
@@ -143,8 +165,10 @@ browser, so the editor's preview is what will run.
 worca --prompt "Upgrade dependencies" --at "tomorrow 02:00"     # once
 worca --prompt "…" --at 02:00 --wait                             # …and start it from this terminal
 worca --file task.md --every "weekdays 02:00"                    # repeat
+worca --prompt "…" --every "15m 09:00-18:00 weekdays"           # every 15 minutes, office hours
+worca --prompt "…" --every "day 09:00,13:00,17:00"              # several fixed times a day
 worca --memory-scope global --workflow wf_memory_defrag --every "day 03:30"
-worca --prompt "…" --cron "0 2 * * 1-5"                          # cron subset
+worca --prompt "…" --cron "0 2 * * 1-5"                          # cron subset (*/N, ranges, lists)
 worca --prompt "Add tests" --after 1a2b3c4d --source-from-previous   # when that run ends, on its branch
 worca --prompt "Docs" --after 1a2b3c4d --after-any                    # even if it fails or is stopped
 
@@ -206,7 +230,8 @@ the caller's zone — and so is a time in the past.
   *Schedule…* opens the schedule sheet at once — before the prompt is typed — and the
   pick waits on the form while *Start run* reads as **Schedule**. The sheet builds a
   sentence and shows the next three dates; presets are Once, Every day, Weekdays,
-  Weekly, Monthly, Custom. An Ask card that becomes a repeating schedule follows the
+  Weekly, Monthly, Custom; *Times a day* picks one time, a list of times, or every N
+  minutes/hours, optionally only between two times. An Ask card that becomes a repeating schedule follows the
   series (Run now, Delete schedule) instead of one run.
 - **Schedules › Schedule a run** picks the time FIRST: it opens New pipeline with the
   schedule sheet already up (`#new/schedule`); the pick then waits on the form
@@ -267,7 +292,7 @@ the issue as it is when it starts, and can write its result back.
   from a card yet.
 
 - **Your words, your clock.** The model passes what you said in the CLI's forms
-  (`tomorrow 02:00`, `+90m`, `weekdays 02:00`, `month last 03:00`) and never computes a
+  (`tomorrow 02:00`, `+90m`, `weekdays 02:00`, `month last 03:00`, `30m 09:00-18:00 weekdays`) and never computes a
   date: `src/core/ask/schedule-spec.mjs` reads them in the timezone your browser reports
   (sent with every message, shown in the context block as *user's time*), with the same
   shared module the schedule sheet uses. A series keeps its own zone when edited.
