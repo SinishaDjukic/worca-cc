@@ -16,8 +16,9 @@ export const maxListWidth = (winW) => Math.max(MIN_W, Math.min(MAX_W, Math.floor
 export function clampListWidth(w, winW) {
   return Math.min(maxListWidth(winW), Math.max(MIN_W, Math.round(Number(w) || 0)));
 }
-/** The default (style.css `clamp(280px,24%,320px)`): 24% of the shell between 280 and 320px. */
-export const defaultListWidth = (shellW) => Math.min(320, Math.max(MIN_W, Math.round((Number(shellW) || 0) * 0.24)));
+export const DEFAULT_W = 340;
+/** The default (style.css `clamp(280px,340px,min(50%,640px))`): 340px, at most half the shell and 640px, never under 280px. */
+export const defaultListWidth = (shellW) => Math.max(MIN_W, Math.min(DEFAULT_W, MAX_W, Math.floor((Number(shellW) || 0) / 2)));
 
 /**
  * Mount the handle into `shell`'s `.runs-list-pane`. `storage` is app.js's guarded localStorage, `win` the window.

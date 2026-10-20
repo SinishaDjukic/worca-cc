@@ -76,6 +76,19 @@ export function auditGroupPageLayout(root, env, doc) {
     for (let i = 0; i < cells.length; i++) for (let j = i + 1; j < cells.length; j++) {
       if (hit(cells[i][1], cells[j][1])) out.push({ rule: 'overlap', got: `${cells[i][0].className} × ${cells[j][0].className}`, text: li.querySelector('.run-member-title')?.textContent || '' });
     }
+    // Bundle QA 2: the number shares the title's first line, and the chip's icon and word share one line.
+    const titleEl = li.querySelector('.run-member-title');
+    const numEl = li.querySelector('.run-member-num');
+    if (titleEl && numEl && numEl.textContent.trim()) {
+      const n = rect(numEl), t = rect(titleEl);
+      if (n.width > 0 && t.width > 0 && n.top >= t.bottom - 1) out.push({ rule: 'num-line', got: `${n.top} vs title ${t.top}-${t.bottom}`, text: titleEl.textContent });
+    }
+    const icEl = li.querySelector('.run-member-pr .runs-pr > .ic');
+    const wordEl = li.querySelector('.run-member-pr .runs-pr-word');
+    if (icEl && wordEl) {
+      const a = rect(icEl), b = rect(wordEl);
+      if (a.width > 0 && b.width > 0 && (a.top >= b.bottom - 1 || b.top >= a.bottom - 1)) out.push({ rule: 'chip-wrap', got: `icon ${a.top}-${a.bottom} word ${b.top}-${b.bottom}`, text: wordEl.textContent });
+    }
   }
   return out;
 }

@@ -4476,8 +4476,8 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 /* ---------- Runs: one list beside one content pane (index.html section "runs") ---------- */
 .view[data-view="runs"]{flex:1 1 auto;min-height:0;padding:0;position:relative;}
 body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
-/* QA 2: the list's width is the person's (runs-resize.mjs sets --runs-list-w, clamped), else the default. */
-.runs-shell{position:relative;height:100%;display:grid;grid-template-columns:var(--runs-list-w,clamp(280px,24%,320px)) minmax(0,1fr);grid-template-rows:minmax(0,1fr);overflow:hidden;}
+/* QA 2: the list's width is the person's (runs-resize.mjs sets --runs-list-w, clamped), else 340px (bundle QA 2) inside 280px..min(50%,640px). */
+.runs-shell{position:relative;height:100%;display:grid;grid-template-columns:var(--runs-list-w,clamp(280px,340px,min(50%,640px))) minmax(0,1fr);grid-template-rows:minmax(0,1fr);overflow:hidden;}
 .runs-list-pane{position:relative;display:flex;flex-direction:column;min-height:0;background:var(--panel);border-right:1px solid var(--line);}
 /* QA 2: the handle straddles the list's right border; a 2px ink line on hover / focus, no resting shadow. */
 .runs-resize{position:absolute;top:0;bottom:0;right:-4px;width:7px;z-index:3;cursor:col-resize;touch-action:none;}
@@ -9166,14 +9166,11 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-home-wf-m{color:var(--ink-2);font-size:11.5px;}
 .chat-home-more-link{align-self:flex-start;margin-top:10px;padding:0;border:0;background:none;color:var(--blue-ink-strong);font:500 12.5px/1.4 var(--sans);cursor:pointer;}
 .chat-home-more-link:hover{text-decoration:underline;}
-/* Promos: static token gradients (a wash), no accent edge. */
+/* Promos: neutral (bundle QA 2) — the field surface, no tint and no border; tints are for what needs a person (§1.3). */
 .chat-home-promos{display:flex;flex-direction:column;gap:10px;}
 .chat-home-promos-h{margin:0;color:var(--ink-2);font:600 12px/1.3 var(--sans);}
 .chat-home-promo-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;}
-.chat-home-promo{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;padding:14px;border:0;border-radius:var(--r-card);color:var(--ink);}
-.chat-home-promo[data-promo="workflows"]{background:var(--violet-wash);}
-.chat-home-promo[data-promo="away"]{background:var(--amber-wash);}
-.chat-home-promo[data-promo="schedules"]{background:var(--blue-wash);}
+.chat-home-promo{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;padding:14px;border:0;border-radius:var(--r-card);background:var(--field);color:var(--ink);}
 .chat-home-promo-t{font-size:13.5px;font-weight:600;}
 .chat-home-promo-d{color:var(--ink-2);font-size:12px;}
 .chat-home-promo-b{margin-top:4px;}
@@ -9454,6 +9451,11 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 /* QA 7: a member row's chip is its own link to the PR; it keeps the chip's tone colour (.runs-pr.is-*). */
 .run-members.is-table a.runs-pr{text-decoration:none;}
 .run-members.is-table a.runs-pr:hover .runs-pr-word{text-decoration:underline;}
+/* Bundle QA 2: a member row's chip keeps its icon and word on one line at every width; a cell too narrow cuts the
+   word with an ellipsis, it never wraps the icon above it. */
+.run-members.is-table .runs-pr{flex-wrap:nowrap;white-space:nowrap;max-width:100%;}
+.run-members.is-table .runs-pr > .ic{flex:none;}
+.run-members.is-table .runs-pr-word{min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .run-member-num{font-size:12px;font-weight:500;color:var(--ink-2);text-align:right;}
 .run-member-line{color:var(--ink-2);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .run-member-cost{text-align:right;color:var(--ink-2);}
@@ -9480,13 +9482,13 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
   .run-members.is-table .run-member-cost{grid-area:cost}
   .run-members.is-table .run-member-go{grid-area:go}
 }
-/* QA 8: the group page can sit in a ~290px pane on a wide viewport: its table stacks by its own width. The title (up
-   to 2 lines) spans the row after the dot; number, chip and cost share the line under it, and the hover-only chevron
-   steps aside (the title link already opens the run). The chip word may wrap, never overlap the cost. */
+/* QA 8 + bundle QA 2: the group page can sit in a ~290px pane on a wide viewport: its table stacks by its own width.
+   Line 1 is the dot, the number and the title (up to 2 lines); the chip and the cost share line 2 under the title, and
+   the hover-only chevron steps aside (the title link already opens the run). */
 .gpage-runs{container:gpage-runs / inline-size;}
 @container gpage-runs (max-width:480px){
   .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content;column-gap:8px;}
-  .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"dot main main main" ". num pr cost";}
+  .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"dot num main main" ". . pr cost";}
   .run-members.is-table .run-member-num{grid-area:num}
   .run-members.is-table .run-member > .status-dot{grid-area:dot}
   .run-members.is-table .run-member-main{grid-area:main}
@@ -9494,8 +9496,22 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
   .run-members.is-table .run-member-cost{grid-area:cost}
   .run-members.is-table .run-member-go{display:none;}
   .run-members.is-table .run-member-title{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;}
-  .run-members.is-table .run-member-pr{min-width:0;justify-self:start;}
-  .run-members.is-table .run-member-pr .runs-pr{flex-wrap:wrap;}
+  .run-members.is-table .run-member-pr{min-width:0;max-width:100%;justify-self:start;}
+}
+/* Bundle QA 2: a chat card in a ~290px side pane stacks the same way. Its 480px block drops the cost from the one-line
+   row (§8); on two lines there is room, so the cost comes back beside the chip. */
+@container chat-rc-members (max-width:360px){
+  .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content;column-gap:8px;}
+  .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"dot num main main" ". . pr cost";}
+  .run-members.is-table .run-member-num{grid-area:num}
+  .run-members.is-table .run-member > .status-dot{grid-area:dot}
+  .run-members.is-table .run-member-main{grid-area:main}
+  .run-members.is-table .run-member-pr{grid-area:pr}
+  .run-members.is-table .run-member-cost{grid-area:cost}
+  .run-members.is-table .run-member-cost{display:block;}
+  .run-members.is-table .run-member-go{display:none;}
+  .run-members.is-table .run-member-title{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;}
+  .run-members.is-table .run-member-pr{min-width:0;max-width:100%;justify-self:start;}
 }
 /* QA 8: the group heading keeps a sane width; the kind chip wraps under it when there is no room. */
 .gpage .rd-title-row{flex-wrap:wrap;}

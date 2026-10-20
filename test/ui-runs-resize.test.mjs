@@ -1,9 +1,10 @@
 // test/ui-runs-resize.test.mjs — QA 2: the Runs list's resize handle (ui/public/runs-resize.mjs).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { LIST_W_KEY, MIN_W, MAX_W, KEY_STEP, clampListWidth, defaultListWidth, mountRunsResize } from '../ui/public/runs-resize.mjs';
+import { LIST_W_KEY, MIN_W, MAX_W, DEFAULT_W, KEY_STEP, clampListWidth, defaultListWidth, mountRunsResize } from '../ui/public/runs-resize.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const memStorage = (seed = {}) => { const m = new Map(Object.entries(seed)); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), m }; };
@@ -25,8 +26,11 @@ test('bounds: 280 px to the smaller of 50% of the window and 640 px', () => {
   assert.equal(clampListWidth(900, 1440), 640);
   assert.equal(clampListWidth(900, 1000), 500);
   assert.equal(clampListWidth(400, 500), 280, 'the minimum wins on a tiny window');
-  assert.equal(defaultListWidth(1200), 288);
-  assert.equal(defaultListWidth(2000), 320);
+  assert.equal(DEFAULT_W, 340);
+  assert.equal(defaultListWidth(1200), 340);
+  assert.equal(defaultListWidth(2000), 340);
+  assert.equal(defaultListWidth(600), 300, 'half a narrow shell');
+  assert.equal(defaultListWidth(500), 280, 'never under the minimum');
   assert.equal(defaultListWidth(0), 280);
 });
 
@@ -38,15 +42,15 @@ test('the handle is a focusable vertical separator with its value', () => {
   assert.equal(handle.getAttribute('aria-label'), 'Resize the runs list');
   assert.equal(handle.getAttribute('aria-valuemin'), '280');
   assert.equal(handle.getAttribute('aria-valuemax'), '640');
-  assert.equal(handle.getAttribute('aria-valuenow'), '288', 'the default: 24% of the shell');
+  assert.equal(handle.getAttribute('aria-valuenow'), '340', 'the default: 340 px');
 });
 
 test('←/→ step 16 px within the bounds and persist; Home resets', () => {
   const { win, shell, handle, storage } = setup();
   key(win, handle, 'ArrowRight');
-  assert.equal(handle.getAttribute('aria-valuenow'), '304');
-  assert.equal(shell.style.getPropertyValue('--runs-list-w'), '304px');
-  assert.equal(storage.getItem(LIST_W_KEY), '304');
+  assert.equal(handle.getAttribute('aria-valuenow'), '356');
+  assert.equal(shell.style.getPropertyValue('--runs-list-w'), '356px');
+  assert.equal(storage.getItem(LIST_W_KEY), '356');
   for (let i = 0; i < 40; i++) key(win, handle, 'ArrowRight');
   assert.equal(handle.getAttribute('aria-valuenow'), '640');
   for (let i = 0; i < 40; i++) key(win, handle, 'ArrowLeft');
@@ -54,14 +58,14 @@ test('←/→ step 16 px within the bounds and persist; Home resets', () => {
   key(win, handle, 'Home');
   assert.equal(shell.style.getPropertyValue('--runs-list-w'), '');
   assert.equal(storage.getItem(LIST_W_KEY), null);
-  assert.equal(handle.getAttribute('aria-valuenow'), '288');
+  assert.equal(handle.getAttribute('aria-valuenow'), '340');
 });
 
 const ptr = (win, el, type, clientX) => el.dispatchEvent(new win.PointerEvent(type, { clientX, button: 0, bubbles: true }));
 
 test('drag resizes live, persists on release; double-click resets', () => {
   const { win, shell, handle, storage } = setup();
-  ptr(win, handle, 'pointerdown', 288);
+  ptr(win, handle, 'pointerdown', 340);
   ptr(win, win.document, 'pointermove', 420);
   assert.equal(shell.style.getPropertyValue('--runs-list-w'), '420px');
   assert.ok(shell.classList.contains('is-resizing'));
@@ -76,7 +80,7 @@ test('drag resizes live, persists on release; double-click resets', () => {
 
 test('a cancelled pointer ends the drag: no listener left behind', () => {
   const { win, shell, handle, storage } = setup();
-  ptr(win, handle, 'pointerdown', 288);
+  ptr(win, handle, 'pointerdown', 340);
   ptr(win, win.document, 'pointermove', 352);
   ptr(win, win.document, 'pointercancel', 0);
   assert.ok(!shell.classList.contains('is-resizing'));
@@ -111,4 +115,15 @@ test('a storage that throws never breaks the handle', () => {
   const api = mountRunsResize(shell, { storage, win: dom.window });
   key(dom.window, shell.querySelector('.runs-resize'), 'ArrowRight');
   assert.equal(api.width(), 296);
+});
+
+test('bundle QA 2: the CSS default is 340px inside 280px..min(50%, 640px)', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.runs-shell\{[^}]*grid-template-columns:var\(--runs-list-w,clamp\(280px,340px,min\(50%,640px\)\)\) minmax\(0,1fr\);/);
+});
+
+test('bundle QA 2: a stored width wins over the 340px default, even a narrower one', () => {
+  const { shell, handle } = setup({ seed: { [LIST_W_KEY]: '300' } });
+  assert.equal(shell.style.getPropertyValue('--runs-list-w'), '300px');
+  assert.equal(handle.getAttribute('aria-valuenow'), '300');
 });

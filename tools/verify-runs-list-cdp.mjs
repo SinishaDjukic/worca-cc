@@ -148,7 +148,7 @@ async function resizeProof(at) {
   const v1 = await valueNow();
   check(v1 === v0 + 64 && (await listW()) === v1, `${at}: → x4 widens the list by 64px`, `${v0} → ${v1}, list ${await listW()}px`);
   await press('Home', 36);
-  const def = await ev("Math.min(320, Math.max(280, Math.round(document.getElementById('runs-shell').clientWidth * 0.24)))");
+  const def = await ev("Math.max(280, Math.min(340, 640, Math.floor(document.getElementById('runs-shell').clientWidth / 2)))");
   check((await valueNow()) === def && (await listW()) === def, `${at}: Home resets the default (${def}px)`, `value ${await valueNow()}, list ${await listW()}px`);
   const h = await ev("(() => { const r = document.querySelector('#runs-shell .runs-resize').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()");
   const to = h.x + (600 - def);

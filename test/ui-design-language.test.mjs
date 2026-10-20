@@ -460,10 +460,28 @@ test('narrow layouts: stat boxes 2 per row, the Group row stacks, group page row
   const at = css.indexOf('@container gpage-runs (max-width:480px)');
   assert.ok(at > 0, 'the narrow group table block exists');
   const block = css.slice(at, css.indexOf('\n}', at));
-  // Web UI review: "dot num main go" left the title ~96px and pushed rows past a 290px pane. The title spans the row
-  // after the dot; the number, chip and cost share the line under it; the hover-only chevron steps aside.
+  // Web UI review: "dot num main go" left the title ~96px and pushed rows past a 290px pane. Bundle QA 2: the number
+  // stays with the title on line 1 (the title spans both right columns); the chip and the cost share line 2.
   assert.match(block, /\.run-members\.is-table\{grid-template-columns:12px 20px minmax\(0,1fr\) max-content;column-gap:8px;\}/);
-  assert.match(block, /\.run-members\.is-table > \.run-member\{[^}]*grid-template-areas:"dot main main main" "\. num pr cost";/);
+  assert.match(block, /\.run-members\.is-table > \.run-member\{[^}]*grid-template-areas:"dot num main main" "\. \. pr cost";/,
+    'bundle QA 2: the number stays with the title on line 1; chip and cost share line 2');
   assert.match(block, /\.run-members\.is-table \.run-member-go\{display:none;?\}/);
   assert.match(block, /\.run-members\.is-table \.run-member-title\{[^}]*-webkit-line-clamp:2;/);
+  assert.doesNotMatch(block, /flex-wrap:wrap/, 'the chip never wraps its icon away from its word');
+  // The chip's cell is capped at its column, so the chip's max-width:100% bites and a long word ends in an ellipsis
+  // (with justify-self:start alone the cell grows to the nowrap chip and the word runs over the cost).
+  assert.match(block, /\.run-members\.is-table \.run-member-pr\{min-width:0;max-width:100%;justify-self:start;\}/);
+  // Bundle QA 2: a chat card in a ~290px side pane stacks the same way (after its 480px block, which drops the cost).
+  const chatAt = css.indexOf('@container chat-rc-members (max-width:360px)');
+  assert.ok(chatAt > css.indexOf('@container chat-rc-members (max-width:480px)'), 'the 360px block follows the 480px one');
+  const chat = css.slice(chatAt, css.indexOf('\n}', chatAt));
+  assert.match(chat, /\.run-members\.is-table > \.run-member\{[^}]*grid-template-areas:"dot num main main" "\. \. pr cost";/);
+  assert.match(chat, /\.run-members\.is-table \.run-member-cost\{display:block;?\}/, 'the cost is back, on line 2');
+  assert.match(chat, /\.run-members\.is-table \.run-member-pr\{min-width:0;max-width:100%;justify-self:start;\}/);
+  // The chip keeps icon and word on one line at every width; a too-narrow cell cuts the word with an ellipsis.
+  const chip = ALL.find((r) => r.sel === '.run-members.is-table .runs-pr');
+  assert.ok(chip, 'the member-row chip rule exists');
+  assert.match(chip.body, /flex-wrap:nowrap/);
+  assert.match(chip.body, /white-space:nowrap/);
+  assert.ok(ALL.some((r) => r.sel === '.run-members.is-table .runs-pr-word' && /text-overflow:ellipsis/.test(r.body)));
 });

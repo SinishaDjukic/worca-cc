@@ -36798,7 +36798,7 @@ function chatHomeTile(r) {
   return { ...askRunSnapshot(r), key: `live:${r.runId}`, project: g.name || '', workflow: (tpl && tpl.name) || '',
     ...(info ? { slice: { index: info.index, total: info.total, title: info.sliceTitle } } : {}) };
 }
-/** A History row that needs you (paused, its run not live in this tab): the tile's stand-in, no graph. */
+/** A History row that needs you (paused, or its PR fails checks or conflicts; its run not live in this tab): the tile's stand-in, no graph. */
 function chatHomeHistTile(p) {
   const ws = p.target === 'workspace';
   return {
@@ -36808,6 +36808,8 @@ function chatHomeHistTile(p) {
     kind: ws ? 'workspace-run' : 'run',
     title: p.title || p.id, project: histGroupName(p), workflow: '', status: String(p.status || '').toLowerCase(),
     pauseReason: p.pauseReason || null, pendingQuestion: null, live: false, terminal: false,
+    // Bundle QA 2: what runModel reads to say why a finished run needs you — its PR, a stopped Watch PR, member PRs.
+    pr: p.pr && typeof p.pr === 'object' ? p.pr : null, watch: p.watch || null, memberPrs: memberPrsOf(p),
     elapsedMs: Number(p.totalActiveMs) || 0,
     costUsd: engineReportsCost(p.runEngine) && Number.isFinite(Number(p.totalCostUsd)) ? Number(p.totalCostUsd) : null,   // null: cost unknown (Cursor), as askRunSnapshot
     progress: null, active: [], stepper: null, decor: null,

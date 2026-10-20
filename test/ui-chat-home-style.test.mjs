@@ -101,3 +101,10 @@ test('a flat white Chat page: .chat-page paints --panel, and no aurora is styled
 test('a feature card opened in Chat › Plans draws no border of its own: the Ship card inside keeps the one border (impl review 2)', () => {
   assert.match(css, /(?:^|[,}\s])\.chat-home-plan \.shape-feature\{[^}]*border:0;/);
 });
+
+test('bundle QA 2: the "More you can do" cards are neutral: the field surface, no tint, no border', () => {
+  const b = block().replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(b, /\.chat-home-promo\{[^}]*border:0;[^}]*background:var\(--field\);/);
+  assert.doesNotMatch(b, /\.chat-home-promo\[data-promo/, 'no per-card tint rule');
+  assert.doesNotMatch(b, /\.chat-home-promo[\w-]*(?:\[[^\]]*\])?\{[^}]*-wash\)/, 'no wash on any promo rule');
+});
