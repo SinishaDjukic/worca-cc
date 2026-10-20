@@ -164,7 +164,7 @@ function tile(doc, { label, chip, value, sub, meterPct = null, icon = null }) {
   if (icon) lab.append(tileIcon(doc, icon));
   lab.append(h(doc, 'span', null, label));
   if (chip) lab.append(chip);
-  card.append(lab, h(doc, 'div', 'stat-value mono', value));
+  card.append(lab, h(doc, 'div', 'stat-value', value));
   if (meterPct != null) {
     const m = h(doc, 'span', 'stat-meter');
     const f = h(doc, 'span', 'stat-meter-fill'); f.style.width = `${Math.max(0, Math.min(100, meterPct))}%`;
@@ -279,7 +279,7 @@ export function renderStackedWeekChart({ title, weeks, stacks, valueOf, yFmt, ti
   for (const st of stacks) {
     const item = h(doc, 'span', 'lg-item');
     const sw = h(doc, 'span', 'lg-swatch'); sw.style.background = st.color;
-    item.append(sw, `${st.label} `, h(doc, 'b', 'mono', legendValue(st)));
+    item.append(sw, `${st.label} `, h(doc, 'b', null, legendValue(st)));
     legend.append(item);
   }
   card.append(legend);
@@ -369,7 +369,7 @@ export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sor
   const head = h(doc, 'div', 'card-head');
   head.append(h(doc, 'h2', null, spec.title), h(doc, 'small', 'hint', spec.sub));
   card.append(head);
-  const table = h(doc, 'table', 'tm-tbl');
+  const table = h(doc, 'table', 'table tm-tbl');
   table.dataset.dim = dim;
   const thr = h(doc, 'tr');
   for (const [key, label] of spec.cols) {
@@ -393,8 +393,9 @@ export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sor
     tr.dataset.filterDim = dim;
     tr.dataset.filterKey = r.key;
     tr.tabIndex = 0;
-    for (const [key] of spec.cols) {
-      const td = h(doc, 'td', key === 'label' ? null : 'num mono');
+    for (const [key, colLabel] of spec.cols) {
+      const td = h(doc, 'td', key === 'label' ? 'table-main' : 'num mono');
+      if (key !== 'label' && colLabel) td.dataset.label = colLabel;
       if (key === 'label') {
         // An actor may be a full email now (attribution: the person who started the run on a
         // shared deployment): clipped to the column, the whole name in the tooltip.
@@ -421,7 +422,9 @@ export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sor
     td.append(h(doc, 'small', 'hint', 'No runs in this range')); tr.append(td); tbody.append(tr);
   }
   table.append(tbody);
-  card.append(table);
+  const wrap = h(doc, 'div', 'table-wrap');
+  wrap.append(table);
+  card.append(wrap);
   return card;
 }
 
@@ -434,9 +437,10 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
   head.append(title, exp);
   card.append(head);
   if (!runs.length) { card.append(h(doc, 'div', 'chart-empty hint', 'No runs recorded in this range')); return card; }
-  const table = h(doc, 'table', 'tm-tbl tm-run-tbl');
+  const table = h(doc, 'table', 'table tm-tbl tm-run-tbl');
   const thead = h(doc, 'thead'); const thr = h(doc, 'tr');
-  for (const c of ['Title', 'Workflow', 'Result', 'Cost', 'Saved', 'Duration', 'Cycles', 'PR', 'Actor', 'Started']) thr.append(h(doc, 'th', null, c));
+  const cols = ['Title', 'Workflow', 'Result', 'Cost', 'Saved', 'Duration', 'Cycles', 'PR', 'Actor', 'Started'];
+  for (const c of cols) thr.append(h(doc, 'th', null, c));
   thead.append(thr); table.append(thead);
   const tbody = h(doc, 'tbody');
   for (const r of runs.slice(0, limit)) {
@@ -469,9 +473,14 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
     who.append(whoText);
     tr.append(who);
     tr.append(h(doc, 'td', 'mono', TM_FMT.day(r.startedAt)));
+    tr.cells[0].classList.add('table-main');
+    for (let i = 1; i < tr.cells.length; i += 1) tr.cells[i].dataset.label = cols[i];
     tbody.append(tr);
   }
-  table.append(tbody); card.append(table);
+  table.append(tbody);
+  const wrap = h(doc, 'div', 'table-wrap');
+  wrap.append(table);
+  card.append(wrap);
   const shown = Math.min(limit, runs.length);
   const foot = h(doc, 'div', 'tm-runs-foot');
   foot.append(h(doc, 'small', 'hint', `Showing ${shown} of ${total} · newest first`));

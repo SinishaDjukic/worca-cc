@@ -21,17 +21,17 @@ export function presetScopeLabel(scope, names = {}) {
 }
 
 /**
- * The list element: the empty state, or one card per preset. A pinned preset whose target is not in `names`
+ * The list element: the empty state, or one divided row per preset. A pinned preset whose target is not in `names`
  * is gone (the badge "Project gone" / "Workspace gone"). `workflowNames` is { id: name } from GET /api/workflows (null: unknown).
  */
 export function renderPresetsList(doc, presets, { names = {}, workflowNames = null, now = Date.now(), onUse, onRename, onDuplicate, onEditScope, onDelete } = {}) {
-  const list = h(doc, 'div', 'presets-list');
+  const list = h(doc, 'div', 'presets-list drows');
   if (!presets.length) {
     list.append(h(doc, 'div', 'hist-empty', PRESETS_EMPTY_TEXT));
     return list;
   }
   for (const p of presets) {
-    const card = h(doc, 'div', 'card preset-card');
+    const card = h(doc, 'div', 'drow drow-stack preset-card');
     card.dataset.preset = p.id;
     const head = h(doc, 'div', 'pl-head');
     head.append(h(doc, 'b', 'preset-name', p.name), h(doc, 'span', 'badge', presetScopeLabel(p.scope, names)));

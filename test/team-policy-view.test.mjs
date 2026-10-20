@@ -289,10 +289,10 @@ const PAYLOAD = {
 test('header panel: the published document — title, source, version, notes, and the Edit action', () => {
   const card = renderPolicyHeader(PAYLOAD, { doc });
   assert.equal(card.className, 'card tp-head');
-  assert.equal(card.querySelector('.tp-head-kicker').textContent, 'SHARED WITH THE TEAM');
+  assert.equal(card.querySelector('.tp-head-kicker').textContent, 'Shared with the team');
   assert.equal(card.querySelector('.tp-head-title').textContent, 'Gateway team policy');
   const facts = [...card.querySelectorAll('.tp-facts dt')].map((dt, i) => [dt.textContent, card.querySelectorAll('.tp-facts dd')[i].textContent]);
-  assert.deepEqual(facts.map((f) => f[0]), ['SOURCE', 'APPLIES TO', 'VERSION', 'NOTES']);
+  assert.deepEqual(facts.map((f) => f[0]), ['Source', 'Applies to', 'Version', 'Notes']);
   assert.equal(facts[0][1], 'Follows gateway — the document lives there');
   assert.equal(facts[1][1], 'Runs on billing-api');
   assert.match(facts[2][1], /^3fc3cee · updated 11 min ago by Mara Lindqvist$/);

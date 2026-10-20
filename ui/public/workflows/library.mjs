@@ -11,6 +11,7 @@ import { safeAgentIcon, SCRIPT_GLYPH, thumbnailFor } from '../graph/view.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { DND_TYPE, FLOW_CARDS } from './shell.mjs';
 import { toggleMenu } from './menu.mjs';
+import { iconSvg } from '../icons.mjs';
 
 /** The sections, in the selector's order. */
 export const TOPS = Object.freeze(['agents', 'scripts', 'workflows']);
@@ -23,13 +24,8 @@ const NOUN = { agents: 'agents', scripts: 'scripts', workflows: 'workflows' };
 const KIND_TOP = { agent: 'agents', script: 'scripts', workflow: 'workflows' };
 const PINNED_KINDS = new Set(['flow', 'archived']);
 const FOLDER_GLYPH = '<path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4.6l2 2.5H19a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/>';
-const CHEVRON_GLYPH = '<path d="M9 6l6 6-6 6"/>';
 const SEARCH_GLYPH = '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>';
-const CLOSE_GLYPH = '<path d="M6 6l12 12M18 6L6 18"/>';
-const PLUS_GLYPH = '<path d="M12 6v12M6 12h12"/>';
 const TRASH_GLYPH = '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>';
-/** The row ⋯ (shell.mjs ICONS.more): an SVG, never a text glyph. */
-const MORE_GLYPH = '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>';
 const FLOW_DESC = {
   task: 'The pipeline entry: the prompt and its attached files.',
   end: 'The pipeline sink. A token arriving here completes the run.',
@@ -96,6 +92,8 @@ export function createLibrary({ doc, host, actions }) {
     s.innerHTML = body;                                 // repo-shipped glyphs or safeAgentIcon output only
     return s;
   };
+  // svg(body) wraps a glyph body; the shared icons come whole, so they are parsed once.
+  const sharedIcon = (name) => { const t = doc.createElement('template'); t.innerHTML = iconSvg(name, 16); return t.content.firstElementChild; };
   // `top`: the selected section. `folders`: the open folders ("agents/coding"), kept across section switches.
   const st = {
     top: 'agents', query: '', searchOpen: false, chip: 'all', open: false,
@@ -224,7 +222,7 @@ export function createLibrary({ doc, host, actions }) {
   closeBtn.type = 'button';
   closeBtn.id = 'wfl-close';
   closeBtn.setAttribute('aria-label', 'Close');
-  closeBtn.appendChild(svg(CLOSE_GLYPH));
+  closeBtn.appendChild(sharedIcon('x'));
   head.append(title, sbox, closeBtn);
   function syncHead() {
     head.classList.toggle('is-searching', st.searchOpen);
@@ -296,7 +294,7 @@ export function createLibrary({ doc, host, actions }) {
       nb.id = agents ? 'wfl-new-agent' : 'wfl-new-script';
       nb.title = agents ? 'New agent' : 'New script';
       nb.setAttribute('aria-label', nb.title);
-      nb.appendChild(svg(PLUS_GLYPH));
+      nb.appendChild(sharedIcon('plus'));
       nb.addEventListener('click', () => act(agents ? 'newAgent' : 'newScript'));
       row.appendChild(nb);
     } else {
@@ -309,7 +307,7 @@ export function createLibrary({ doc, host, actions }) {
   function chipRow() {
     const row = h('div', 'wfl-tools');
     for (const [k, t] of [['all', 'All'], ['builtin', 'Built-in'], ['yours', 'Yours']]) {
-      const c = h('button', 'wfl-chip', t);
+      const c = h('button', 'filter-chip', t);
       c.type = 'button';
       c.dataset.chip = k;
       c.dataset.focusKey = `chip:${k}`;            // a repaint returns focus here, never to <body> (where the canvas takes Delete)
@@ -328,7 +326,7 @@ export function createLibrary({ doc, host, actions }) {
     row.dataset.folder = key;
     row.dataset.focusKey = `folder:${key}`;
     row.setAttribute('aria-expanded', st.folders.has(key) ? 'true' : 'false');
-    const chev = svg(CHEVRON_GLYPH);
+    const chev = sharedIcon('chevron');
     chev.classList.add('wfl-chev');
     row.append(chev, svg(FOLDER_GLYPH), h('span', 'wfl-fname', folderLabel(path)), h('span', 'wfl-fn mono', String(count)));
     row.addEventListener('click', () => toggleFolder(key));
@@ -409,7 +407,7 @@ export function createLibrary({ doc, host, actions }) {
       add.title = 'Add to canvas';
       add.setAttribute('aria-label', `Add ${name} to canvas`);
       add.dataset.focusKey = `${id}:add`;
-      add.appendChild(svg(PLUS_GLYPH));
+      add.appendChild(sharedIcon('plus'));
       add.addEventListener('click', () => act('addToCanvas', key ? { kind, key } : { kind }));
       row.appendChild(add);
     }
@@ -559,7 +557,7 @@ export function createLibrary({ doc, host, actions }) {
       more.setAttribute('aria-label', `More for "${w.name || w.id}"`);
       more.setAttribute('aria-haspopup', 'menu');
       more.dataset.focusKey = `workflow:${w.id}:more`;
-      more.appendChild(svg(MORE_GLYPH));
+      more.appendChild(sharedIcon('more'));
       more.addEventListener('click', () => {
         const pinned = act('isPinned', w.id) === true;
         toggleMenu({ doc, anchor: more, align: 'end', label: `More for ${w.name || w.id}`, items: [

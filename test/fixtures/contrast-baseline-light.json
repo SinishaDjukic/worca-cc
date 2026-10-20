@@ -210,6 +210,8 @@
   "stats|text|span.stat-frac||rgb(154, 154, 161)|rgb(255,255,255)",
   "stats|text|text.ch-ytick||rgb(154, 154, 161)|rgb(255,255,255)",
   "stats|text|text||rgb(154, 154, 161)|rgb(255,255,255)",
+  "team-metrics|text|text.ch-ytick||rgb(154, 154, 161)|rgb(255,255,255)",
+  "team-metrics|text|text||rgb(154, 154, 161)|rgb(255,255,255)",
   "workspace-create|text|span.opt||rgb(154, 154, 161)|rgb(255,255,255)"
  ]
 }

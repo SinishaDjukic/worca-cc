@@ -130,7 +130,7 @@ test('project MCP tab: chips with ×, read-only Team chip, Add set, Include Gene
       const sec = doc.createElement('section');
       const { api, calls, writes } = fakeApi(a);
       await mountProjectMcp(sec, { key: 'billing-1a2b3c4d', name: 'billing', api, doc });
-      const chips = [...sec.querySelectorAll('.mcp-proj-sets .mcp-chip')];
+      const chips = [...sec.querySelectorAll('.mcp-proj-sets .chip')];
       assert.deepEqual(chips.map((c) => c.textContent), ['Billing', 'Team · acme/platform']);
       assert.ok(chips[0].querySelector('button.mcp-x svg'), 'the × is a stroke icon');
       assert.equal(chips[1].querySelector('button'), null, 'the Team chip is read-only');
@@ -147,7 +147,7 @@ test('project MCP tab: chips with ×, read-only Team chip, Add set, Include Gene
       sel.value = 'shop';
       sel.dispatchEvent(new doc.defaultView.Event('change'));
       await settle();
-      sec.querySelector('.mcp-chip button').click();
+      sec.querySelector('.chip button.mcp-x').click();
       await settle();
       assert.deepEqual(writes().map(([, , b]) => b), [
         { sets: ['billing'], includeGeneral: true },

@@ -5,6 +5,7 @@
 // endpoint calls, the modal shell, and mounting; node:test drives these via jsdom.
 
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
+import { iconSvg } from './icons.mjs';
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
   if (cls) n.className = cls;
@@ -19,10 +20,10 @@ export function renderNeedsGit(doc = globalThis.document) {
   return h(doc, 'span', 'badge waiting pl-needs-git', 'Needs git');
 }
 
-// Inline feather-style icons for card action buttons (stroke follows currentColor).
+// Icons for row action buttons (stroke follows currentColor): the shared refresh, and a local bin icons.mjs lacks.
 const ICONS = {
-  bin: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>',
-  refresh: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>',
+  bin: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>',
+  refresh: iconSvg('refresh', 14),
 };
 
 // icon button: <button class=cls>[svg] label</button>. innerHTML is a fixed
@@ -54,15 +55,15 @@ function contribSummary(c) {
 // data-channel-key="<plugin>/<id>" so a channel-status WS event can patch it
 // in place.
 export function renderPluginList(plugins, { doc = globalThis.document, channelStatus = [] } = {}) {
-  const root = h(doc, 'div', 'pl-list');
+  const root = h(doc, 'div', 'pl-list drows');
   for (const p of plugins || []) {
-    const card = h(doc, 'section', 'card plugin-card');
+    const card = h(doc, 'section', 'drow drow-stack plugin-card');
     card.dataset.name = p.name;
     if (p.enabled === false) card.classList.add('pl-disabled');
     const head = h(doc, 'div', 'pl-head');
     head.appendChild(h(doc, 'b', 'pl-name', p.name));
     head.appendChild(h(doc, 'span', 'pl-version mono', p.version || sha7(p.pinnedSha)));
-    if (p.linked) head.appendChild(h(doc, 'span', 'badge waiting pl-linked', 'linked'));
+    if (p.linked) head.appendChild(h(doc, 'span', 'badge grey pl-linked', 'linked'));
     if (p.apiMismatch) head.appendChild(h(doc, 'span', 'badge amber pl-api-mismatch', 'needs update'));
     else if (p.broken) head.appendChild(h(doc, 'span', 'badge red pl-broken', 'broken'));
     // A shipped python script on a host without python: a chip, never a block.
@@ -115,7 +116,7 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     }
     const actions = h(doc, 'div', 'pl-actions');
     for (const [cls, label] of [['pl-settings', 'Settings'], ['pl-doctor', 'Doctor'], ['pl-update', 'Update'], ['pl-remove', 'Remove']]) {
-      const b = h(doc, 'button', `btn ${cls}`, label);
+      const b = h(doc, 'button', `btn btn-sm${cls === 'pl-remove' ? ' btn-danger' : ''} ${cls}`, label);
       b.type = 'button';
       b.dataset.name = p.name;
       if (cls === 'pl-doctor') b.dataset.minLevel = 'expert';   // diagnostics (docs/ui-levels.md)
@@ -147,12 +148,12 @@ export function channelBadge(doc, c) {
 // Purge buttons carry data-name + .pl-purge-orphan for app.js's delegated
 // listener. Empty/nullish input -> childless container (app.js skips mounting).
 export function renderOrphanList(orphans, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'pl-orphans');
+  const root = h(doc, 'div', 'pl-orphans drows');
   root.dataset.minLevel = 'expert';                       // purge of leftover data (docs/ui-levels.md)
   if (!orphans || !orphans.length) return root;
   root.appendChild(h(doc, 'h3', 'pl-orphans-title', 'Leftover data'));
   for (const o of orphans) {
-    const row = h(doc, 'div', 'card pl-orphan-row');
+    const row = h(doc, 'div', 'drow drow-stack pl-orphan-row');
     row.dataset.name = o.name;
     row.appendChild(h(doc, 'b', 'pl-name', o.name));
     row.appendChild(h(doc, 'small', 'hint', 'uninstalled — config/secrets remain'));
@@ -519,19 +520,19 @@ export function relTime(iso, now = Date.now()) {
 // plugins render a badge instead; a never-synced marketplace renders no button
 // (there is no sha to pin yet — Refresh first).
 export function renderAvailableList(marketplaces, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'pl-available');
+  const root = h(doc, 'div', 'pl-available drows');
   const mkts = marketplaces || [];
   let cards = 0;
   for (const m of mkts) {
     for (const p of m.plugins || []) {
       cards++;
-      const card = h(doc, 'section', 'card pl-avail-card');
+      const card = h(doc, 'section', 'drow drow-stack pl-avail-card');
       card.dataset.name = p.name;
       card.dataset.marketplace = m.id;
       const head = h(doc, 'div', 'pl-head');
       head.appendChild(h(doc, 'b', 'pl-name', p.name));
       head.appendChild(h(doc, 'span', 'pl-version mono', p.version || sha7(m.lastSync && m.lastSync.sha)));
-      head.appendChild(h(doc, 'span', 'badge waiting pl-mkt-badge', m.name || m.id));
+      head.appendChild(h(doc, 'span', 'badge grey pl-mkt-badge', m.name || m.id));
       if (p.installed) {
         head.appendChild(h(doc, 'span', 'badge green pl-installed', 'Installed'));
       } else if (m.lastSync) {
@@ -556,19 +557,19 @@ export function renderAvailableList(marketplaces, { doc = globalThis.document } 
 // Refresh/Remove buttons (data-id). Sync failures surface as .pl-mkt-warning
 // lines; the snapshot stays usable (stale) per spec §4.6.
 export function renderMarketplaceList(marketplaces, { doc = globalThis.document, now = Date.now() } = {}) {
-  const root = h(doc, 'div', 'pl-mkts');
+  const root = h(doc, 'div', 'pl-mkts drows');
   for (const m of marketplaces || []) {
-    const row = h(doc, 'div', 'card pl-mkt-row');
+    const row = h(doc, 'div', 'drow drow-stack pl-mkt-row');
     row.dataset.id = m.id;
     const head = h(doc, 'div', 'pl-head');
     head.appendChild(h(doc, 'b', 'pl-name', m.name || m.id));
-    if (m.builtin) head.appendChild(h(doc, 'span', 'badge waiting pl-mkt-builtin', 'built-in'));
+    if (m.builtin) head.appendChild(h(doc, 'span', 'badge grey pl-mkt-builtin', 'built-in'));
     const actions = h(doc, 'div', 'pl-mkt-actions');
     // A source off GitHub on a machine without git cannot refresh: the chip stands where Refresh would.
     if (m.needsGit) actions.appendChild(renderNeedsGit(doc));
     for (const [cls, icon, label] of [
-      ...(m.needsGit ? [] : [['btn pl-mkt-refresh', 'refresh', 'Refresh']]),
-      ['pl-remove pl-mkt-remove', 'bin', 'Remove'],
+      ...(m.needsGit ? [] : [['btn btn-sm pl-mkt-refresh', 'refresh', 'Refresh']]),
+      ['btn btn-sm btn-danger pl-remove pl-mkt-remove', 'bin', 'Remove'],
     ]) {
       const b = iconBtn(doc, cls, icon, label);
       b.dataset.id = m.id;

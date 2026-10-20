@@ -530,8 +530,8 @@ test('roomy rows: 14px names, 12px second lines, 26px tiles, 32px folder rows (r
   assert.match(rule('.wfl-folder svg'), /width:20px;height:20px;/);
   assert.match(rule('.wfl-detail'), /font-size:13px;/);
   assert.match(rule('.wfl-pchip'), /font:500 11\.5px/);
-  assert.equal(css.indexOf('.wfl-actions .wfv-btn'), -1, 'the actions are .btn .btn-sm (28px, 12.5px): no skin of their own');
-  assert.match(rule('.btn-sm'), /height:28px;.*font-size:12\.5px;/);
+  assert.equal(css.indexOf('.wfl-actions .wfv-btn'), -1, 'the actions are .btn .btn-sm (28px, 12px): no skin of their own');
+  assert.match(rule('.btn-sm'), /height:28px;.*font-size:var\(--fs-meta\);/);
 });
 
 test('the search box slides over the title (reduced motion: at once); folders and tabs show the house focus ring; the breadcrumb and back-row rules are gone', async () => {
@@ -542,7 +542,8 @@ test('the search box slides over the title (reduced motion: at once); folders an
   assert.match(css, /\n\.wfl-head\.is-searching \.wfl-title\{opacity:0;visibility:hidden;\}/);
   assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{\.wfl-sbox,\.wfl-title,\.wfl-filter-input\{transition:none;\}\}/);
   assert.match(css, /:is\(\.wfl-folder,\.wfl-tab\):focus-visible\{outline:2px solid var\(--ink\);outline-offset:-2px;\}/);
-  assert.match(css, /\.wfl-chip:focus-visible\{outline:2px solid var\(--ink\);outline-offset:2px;\}/);
+  const lib = readFileSync(new URL('../ui/public/workflows/library.mjs', import.meta.url), 'utf8');
+  assert.match(lib, /h\('button', 'filter-chip', t\)/, 'the All / Built-in / Yours chips are the shared .filter-chip');
   assert.doesNotMatch(css, /\.wfl-(crumbs?|trail|csep|up|search|gh|gn|group|archived)\b/);
   const src = readFileSync(new URL('../ui/public/workflows/library.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /wfl-(crumbs?|crumb-home|trail|csep|up|search|gh|gn|group|archived)\b/);

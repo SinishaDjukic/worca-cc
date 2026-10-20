@@ -68,7 +68,7 @@ test('git gate', async () => {
       const fake = (url, o) => (String(url).startsWith('/api/sync/projects') ? json(200, { projects: { 'alpha-00000001': { remote: null } } }) : base(url, o));
       window.fetch = fake; globalThis.fetch = fake;
       window.location.hash = 'projects'; await new Promise((r) => setTimeout(r, 400));
-      doc.querySelector('.proj-fchip[data-filter="local"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+      doc.querySelector('.filter-chip[data-filter="local"]').dispatchEvent(new window.Event('click', { bubbles: true }));
       const beta = () => doc.querySelector('.pl-item[data-key="beta-00000002"]');
       assert.equal(beta().hidden, true, 'precondition: Local only hides beta');
       ws._msg({ type: 'git', git: { available: false, version: null } }); await tick();

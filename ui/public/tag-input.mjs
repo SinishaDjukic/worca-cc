@@ -215,38 +215,41 @@ function createValueChips(doc, values, changed) {
 /** Settings › Tags (D16, D17): one table row per tag — Tag (label, key small) · Values · Default · Mandatory · remove. */
 export function createDimensionEditor(doc, { value = [] } = {}) {
   const el = doc.createElement('div'); el.className = 'tag-dim-editor';
-  const table = doc.createElement('table'); table.className = 'tag-dim-table';
+  const wrap = doc.createElement('div'); wrap.className = 'table-wrap';
+  const table = doc.createElement('table'); table.className = 'table tag-dim-table';
   const head = doc.createElement('thead');
   head.innerHTML = '<tr><th>Cost tag</th><th>Values</th><th>Default</th><th>Mandatory</th><th></th></tr>';
   const rows = doc.createElement('tbody'); rows.className = 'tag-dim-rows';
   table.append(head, rows);
   const add = doc.createElement('button'); add.type = 'button'; add.className = 'btn btn-sm tag-dim-add'; add.textContent = 'Add cost tag';
   const changed = () => el.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));   // marks the card dirty
-  const td = (...kids) => { const c = doc.createElement('td'); c.append(...kids); return c; };
+  const td = (label, ...kids) => { const c = doc.createElement('td'); if (label) c.dataset.label = label; c.append(...kids); return c; };
   const addRow = (d = { key: '', label: '', values: [], required: false }) => {
     const tr = doc.createElement('tr'); tr.className = 'tag-dim-row';
-    const label = doc.createElement('input'); label.className = 'input tag-dim-label-input'; label.placeholder = 'Cost centre'; label.value = d.label; label.setAttribute('aria-label', 'Cost tag');
+    const label = doc.createElement('input'); label.className = 'input input-sm tag-dim-label-input'; label.placeholder = 'Cost centre'; label.value = d.label; label.setAttribute('aria-label', 'Cost tag');
     const key = doc.createElement('input'); key.className = 'input tag-dim-key tag-dim-key-small'; key.placeholder = 'key'; key.value = d.key; key.setAttribute('aria-label', 'Key');
     let keyTouched = !!d.key;
     key.addEventListener('input', () => { keyTouched = true; });
     label.addEventListener('input', () => { if (!keyTouched) key.value = keyFromLabel(label.value); });
-    const defCell = doc.createElement('td');
+    const defCell = td('Default');
     let def = null;
     let values = null;
     const paintDefault = (keep) => {
       const list = values ? values.get() : (d.values || []);
-      def = valueControl(doc, { label: 'Default', values: list }, { blank: 'None', cls: 'tag-dim-default' });
+      def = valueControl(doc, { label: 'Default', values: list }, { blank: 'None', cls: 'input-sm tag-dim-default' });
       def.value = !list.length || list.includes(keep) ? keep : '';
       def.addEventListener('change', changed); def.addEventListener('input', changed);
       defCell.replaceChildren(def);
     };
     values = createValueChips(doc, d.values || [], () => { paintDefault(def?.value || ''); changed(); });
+    values.el.querySelector('.tag-value-input').classList.add('input-sm');
     paintDefault(d.default || '');
     const req = doc.createElement('input'); req.type = 'checkbox'; req.className = 'tag-dim-required'; req.checked = !!d.required; req.setAttribute('aria-label', 'Mandatory');
     const rm = doc.createElement('button'); rm.type = 'button'; rm.className = 'btn btn-sm btn-quiet btn-icon tag-dim-remove'; rm.setAttribute('aria-label', 'Remove cost tag'); rm.append(icon(doc, 'x', 14));
     rm.addEventListener('click', () => { tr.remove(); changed(); });
     const tagCell = doc.createElement('div'); tagCell.className = 'tag-dim-tag'; tagCell.append(label, key);
-    tr.append(td(tagCell), td(values.el), defCell, td(req), td(rm));
+    const tagTd = td('', tagCell); tagTd.className = 'table-main';
+    tr.append(tagTd, td('Values', values.el), defCell, td('Mandatory', req), td('', rm));
     tr.__dim = { values, def: () => def };
     rows.append(tr);
   };
@@ -269,7 +272,8 @@ export function createDimensionEditor(doc, { value = [] } = {}) {
     add.hidden = on;
   };
   set(value);
-  el.append(table, add);
+  wrap.append(table);
+  el.append(wrap, add);
   return { el, get, set, setLocked };
 }
 

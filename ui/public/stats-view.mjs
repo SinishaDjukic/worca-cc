@@ -137,7 +137,7 @@ function tile(doc, { iconD, label, chip, valueNodes, meter, sub, title }) {
   lab.appendChild(h(doc, 'span', null, label));
   if (chip) lab.appendChild(chip);
   card.appendChild(lab);
-  const value = h(doc, 'div', 'stat-value mono');
+  const value = h(doc, 'div', 'stat-value');
   for (const n of valueNodes) value.appendChild(n);
   card.appendChild(value);
   if (meter) card.appendChild(meter);
@@ -488,6 +488,14 @@ export function renderSpendChart(spec, { doc = globalThis.document, fmt = DEFAUL
         fill: 'var(--blue)' }));
     },
   });
+  // One-item legend (docs/design-system.md › Charts): the series and its total, like the Runs chart.
+  const legend = h(doc, 'div', 'chart-legend');
+  const item = h(doc, 'span', 'lg-item');
+  const sw = h(doc, 'span', 'lg-swatch');
+  sw.style.background = 'var(--blue)';
+  item.append(sw, doc.createTextNode('Spend '), h(doc, 'b', '', fmt.usd(total)));
+  legend.appendChild(item);
+  card.appendChild(legend);
   card.appendChild(fig);
   return card;
 }
@@ -510,7 +518,7 @@ export function renderRunsChart(spec, { doc = globalThis.document, fmt = DEFAULT
     sw.style.background = o.color;
     item.appendChild(sw);
     item.appendChild(doc.createTextNode(`${o.label} `));
-    item.appendChild(h(doc, 'b', 'mono', String(sums[o.key])));
+    item.appendChild(h(doc, 'b', null, String(sums[o.key])));
     legend.appendChild(item);
   }
   card.appendChild(legend);
@@ -559,6 +567,9 @@ export function renderRunsChart(spec, { doc = globalThis.document, fmt = DEFAULT
 
 /** Full Statistics body: KPI row + the two chart cards (or empty notes). */
 const SLOT_NAMES = { anthropic: 'Anthropic', openai: 'OpenAI', openrouter: 'OpenRouter', copilot: 'Copilot', local: 'Local' };
+/** Stacked on phones the thead is clipped: the first cell leads the row, every other cell names its column. */
+const labelCells = (tr, heads) => { tr.cells[0].classList.add('table-main'); for (let i = 1; i < tr.cells.length; i++) tr.cells[i].dataset.label = heads[i]; };
+
 const compactCount = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n));
 
 /**
@@ -580,9 +591,10 @@ export function renderPeopleCard(byPerson, rangeLabel, { doc = globalThis.docume
   }
   const top = Math.max(...people.map((p) => p.usd), 0);
   const total = people.reduce((a, p) => a + p.usd, 0);
-  const table = h(doc, 'table', 'people-table');
+  const table = h(doc, 'table', 'table people-table');
   const head = h(doc, 'tr', null);
-  for (const t of ['Person', 'Spend', 'Requests', 'Tokens in / out', 'Providers']) head.appendChild(h(doc, 'th', null, t));
+  const heads = ['Person', 'Spend', 'Requests', 'Tokens in / out', 'Providers'];
+  for (const t of heads) head.appendChild(h(doc, 'th', null, t));
   const thead = h(doc, 'thead', null); thead.appendChild(head); table.appendChild(thead);
   const tbody = h(doc, 'tbody', null);
   for (const p of people) {
@@ -599,12 +611,13 @@ export function renderPeopleCard(byPerson, rangeLabel, { doc = globalThis.docume
     tr.appendChild(h(doc, 'td', 'num', compactCount(p.requests)));
     tr.appendChild(h(doc, 'td', 'num', `${compactCount(p.inputTokens + (p.cacheReadTokens || 0))} / ${compactCount(p.outputTokens)}`));
     tr.appendChild(h(doc, 'td', 'people-slots', [...new Set(p.slots.map((s) => `${SLOT_NAMES[s.slot] || s.slot}${s.plan === 'subscription' ? ' (subscription)' : ''}`))].join(', ')));
+    labelCells(tr, heads);
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
-  const scroll = h(doc, 'div', 'people-scroll');
-  scroll.appendChild(table);
-  card.appendChild(scroll);
+  const wrap = h(doc, 'div', 'table-wrap');
+  wrap.appendChild(table);
+  card.appendChild(wrap);
   card.appendChild(h(doc, 'small', 'hint', `${fmt.usd(total)} in total, metered by the credential broker. Each call is charged to the person whose action caused it.`));
   return card;
 }
@@ -646,10 +659,11 @@ export function renderGroupsCard(groups, rangeLabel, { doc = globalThis.document
     return card;
   }
   const top = Math.max(...groups.rows.map((r) => r.spentUsd), 0);
-  const table = h(doc, 'table', 'people-table groups-table');
+  const table = h(doc, 'table', 'table people-table groups-table');
   const head = h(doc, 'tr', null);
   const label = groups.label === 'person' ? 'Person' : groups.label;
-  for (const t of [label, 'Spend', 'Share', 'Runs', 'Finished', 'Stopped', 'Failed', 'PRs merged']) head.appendChild(h(doc, 'th', null, t));
+  const heads = [label, 'Spend', 'Share', 'Runs', 'Finished', 'Stopped', 'Failed', 'PRs merged'];
+  for (const t of heads) head.appendChild(h(doc, 'th', null, t));
   const thead = h(doc, 'thead', null); thead.appendChild(head); table.appendChild(thead);
   const tbody = h(doc, 'tbody', null);
   for (const r of groups.rows) {
@@ -667,20 +681,21 @@ export function renderGroupsCard(groups, rangeLabel, { doc = globalThis.document
     for (const c of ['runs', 'finished', 'stopped', 'failed', 'prsMerged']) {
       tr.appendChild(h(doc, 'td', 'num', r.kind === 'ask' ? '—' : String(r[c])));
     }
+    labelCells(tr, heads);
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
   const tfoot = h(doc, 'tfoot', null);
   const ft = h(doc, 'tr', null);
-  ft.appendChild(h(doc, 'td', null, 'Total'));
-  ft.appendChild(h(doc, 'td', 'people-usd', fmt.usd(totalUsd)));
+  ft.appendChild(h(doc, 'td', 'table-main', 'Total'));
+  ft.appendChild(h(doc, 'td', 'people-usd', fmt.usd(totalUsd))).dataset.label = heads[1];
   ft.appendChild(h(doc, 'td', 'num', ''));
-  ft.appendChild(h(doc, 'td', 'num', String(totalRuns)));
+  ft.appendChild(h(doc, 'td', 'num', String(totalRuns))).dataset.label = heads[3];
   for (let i = 0; i < 4; i++) ft.appendChild(h(doc, 'td', 'num', ''));   // finished … PRs merged: 8 cells, like the head
   tfoot.appendChild(ft); table.appendChild(tfoot);
-  const scroll = h(doc, 'div', 'people-scroll');
-  scroll.appendChild(table);
-  card.appendChild(scroll);
+  const wrap = h(doc, 'div', 'table-wrap');
+  wrap.appendChild(table);
+  card.appendChild(wrap);
   card.appendChild(h(doc, 'small', 'hint', 'Runs are counted in the period they started; spend is counted when it happened, so a row can show spend with 0 runs.'));
   return card;
 }
@@ -715,28 +730,27 @@ export function renderShapingCard(shaping, rangeLabel, { doc = globalThis.docume
     card.appendChild(h(doc, 'p', 'chart-empty hint', 'No finished runs with a recorded size in this period.'));
     return card;
   }
-  const table = h(doc, 'table', 'people-table');
+  const table = h(doc, 'table', 'table people-table');
   const head = h(doc, 'tr', null);
-  for (const t of ['Size', 'Planned', 'Runs', 'Average cost', 'Average active time', 'Average review cycles']) head.appendChild(h(doc, 'th', null, t));
+  const heads = ['Size', 'Planned', 'Runs', 'Average cost', 'Average active time', 'Average review cycles'];
+  for (const t of heads) head.appendChild(h(doc, 'th', null, t));
   const thead = h(doc, 'thead', null); thead.appendChild(head); table.appendChild(thead);
   const tbody = h(doc, 'tbody', null);
   const dash = (v, f) => (v == null ? '–' : f(v));
   for (const g of groups) {
     for (const [i, [label, c]] of [['With Shaper', g.shaped], ['Without', g.unshaped]].entries()) {
       const tr = h(doc, 'tr', null);
-      if (i === 0) { const size = h(doc, 'td', 'people-name', SIZE_LABELS[g.size] || g.size); size.rowSpan = 2; tr.appendChild(size); }
-      tr.appendChild(h(doc, 'td', null, label));
-      tr.appendChild(h(doc, 'td', 'num', String(c.runs)));
-      tr.appendChild(h(doc, 'td', 'num', dash(c.avgCostUsd, fmt.usd)));
-      tr.appendChild(h(doc, 'td', 'num', dash(c.avgActiveMs, fmt.duration)));
-      tr.appendChild(h(doc, 'td', 'num', dash(c.avgReviewCycles, String)));
+      if (i === 0) { const size = h(doc, 'td', 'people-name table-main', SIZE_LABELS[g.size] || g.size); size.rowSpan = 2; tr.appendChild(size); }
+      // The size cell spans both rows, so the second row starts at Planned: label by name, not by index.
+      const cells = [label, String(c.runs), dash(c.avgCostUsd, fmt.usd), dash(c.avgActiveMs, fmt.duration), dash(c.avgReviewCycles, String)];
+      cells.forEach((text, k) => { tr.appendChild(h(doc, 'td', k ? 'num' : null, text)).dataset.label = heads[k + 1]; });
       tbody.appendChild(tr);
     }
   }
   table.appendChild(tbody);
-  const scroll = h(doc, 'div', 'people-scroll');
-  scroll.appendChild(table);
-  card.appendChild(scroll);
+  const wrap = h(doc, 'div', 'table-wrap');
+  wrap.appendChild(table);
+  card.appendChild(wrap);
   card.appendChild(h(doc, 'small', 'hint', 'Finished runs started in this period. Size comes from the lines and files each run changed: small is up to 150 lines and 5 files, medium up to 800 lines and 20 files.'));
   return card;
 }

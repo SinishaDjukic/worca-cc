@@ -314,6 +314,12 @@ test('a row opens the project page by click, Enter or chevron (hash, header, foc
       assert.ok(d.querySelector('.pd-meta .pd-path-copy'), 'the header path has a copy button');
       assert.equal(d.querySelector('.pd-sec[data-sec="overview"] .pd-ov-card-path'), null, 'no PATH card repeating the header');
       assert.ok(d.querySelector('.pd-sec[data-sec="overview"] .pd-ov-card-branch'), 'BRANCH card');
+      // Tile labels are sentence case; only the Key tile's value is mono (an id).
+      const labels = [...d.querySelectorAll('.pd-sec[data-sec="overview"] .pd-ov-label')].map((l) => l.textContent);
+      assert.deepEqual(labels.slice(0, 2), ['Branch', 'Runs']);
+      assert.deepEqual(labels.filter((l) => /^[A-Z ]{3,}$/.test(l)), [], 'no capitals-only label');
+      assert.deepEqual([...d.querySelectorAll('.pd-ov-value.mono')], [d.querySelector('.pd-ov-card-key .pd-ov-value')]);
+      assert.equal(d.querySelector('.pd-ov-card-last').tagName, 'BUTTON', 'Last run still opens the run');
     } },
     { name: 'Enter on a focused row and the chevron button both open the page; a keyless row is inert', run: async () => {
       await goProjects(window);                   // back on the list: the first row left alpha's page open

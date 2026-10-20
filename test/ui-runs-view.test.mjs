@@ -1026,25 +1026,48 @@ test('run labels: the bar\'s Label picker shows a dash for a label some runs car
   assert.equal(doc.querySelectorAll('.label-picker').length, 1, 'the picker stays open across toggles');
 });
 
-test('run labels: the head\'s Label filter keeps matching rows; its chip × clears it', async () => {
-  const history = [...HIST, LABELLED(['hotfix'])];
-  const { window, doc, recv } = await boot({ history, labels: [{ label: 'hotfix', count: 1 }] });
+test('run labels: search offers "Runs labelled hotfix" (and label:hotfix); it keeps matching rows; its chip × clears it; no Label button', async () => {
+  for (const q of ['hotfix', 'label:hotfix']) {
+    const history = [...HIST, LABELLED(['hotfix'])];
+    const { window, doc, recv } = await boot({ history, labels: [{ label: 'hotfix', count: 1 }] });
+    labelsHello(recv);
+    go(window, 'runs'); await settle(window);
+    assert.equal(doc.getElementById('runs-label-btn'), null, 'the head has no Label button');
+    assert.equal(doc.querySelectorAll('#runs-list a.runs-row').length, 3);
+    go(window, 'projects'); await settle(window);
+    const input = doc.getElementById('tsearch-input');
+    input.focus();
+    input.value = q; input.dispatchEvent(new window.Event('input', { bubbles: true }));
+    const opt = [...doc.querySelectorAll('#tsearch-pop [role="option"]')]
+      .find((o) => o.querySelector('.tsearch-title')?.textContent === 'Runs labelled hotfix');
+    assert.ok(opt, `"${q}" offers the label filter`);
+    click(window, opt); await settle(window, 8);
+    assert.equal(window.location.hash, '#runs', q);
+    assert.deepEqual([...doc.querySelectorAll('#runs-list a.runs-row')].map((a) => a.dataset.pipelineId), ['llll0001'], q);
+    const filter = doc.getElementById('runs-label-filter');
+    assert.equal(filter.hidden, false);
+    assert.equal(filter.querySelectorAll('.label-chip').length, 1);
+    click(window, filter.querySelector('.label-x')); await settle(window, 8);
+    assert.equal(filter.hidden, true);
+    assert.equal(doc.querySelectorAll('#runs-list a.runs-row').length, 3);
+  }
+});
+
+test('run labels: "Runs labelled hotfix" opens the filtered list, not the run the pane remembers', async () => {
+  const { window, doc, recv } = await boot({ history: [...HIST, LABELLED(['hotfix'])], labels: [{ label: 'hotfix', count: 1 }] });
   labelsHello(recv);
-  go(window, 'runs'); await settle(window);
-  assert.equal(doc.querySelectorAll('#runs-list a.runs-row').length, 3);
-  click(window, doc.getElementById('runs-label-btn')); await settle(window, 8);
-  const box = doc.querySelector('.label-picker .lp-row[data-label="hotfix"] .lp-check');
-  assert.equal(doc.querySelector('.label-picker .lp-create'), null, 'the filter never creates a word');
-  box.checked = true;
-  box.dispatchEvent(new window.Event('change', { bubbles: true }));
-  await settle(window, 8);
+  go(window, `history/${KEY}/aaaa0001`); await settle(window, 8);   // the pane now remembers a run outside the filter
+  go(window, 'settings'); await settle(window);
+  const input = doc.getElementById('tsearch-input');
+  input.focus();
+  input.value = 'hotfix'; input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  const opt = [...doc.querySelectorAll('#tsearch-pop [role="option"]')]
+    .find((o) => o.querySelector('.tsearch-title')?.textContent === 'Runs labelled hotfix');
+  click(window, opt); await settle(window, 8);
+  assert.equal(window.location.hash, '#runs');
+  assert.equal(doc.getElementById('hist-shell').classList.contains('detail-open'), false, 'not the remembered run');
+  assert.equal(doc.getElementById('runs-empty').hidden, false, 'the list and the empty pane');
   assert.deepEqual([...doc.querySelectorAll('#runs-list a.runs-row')].map((a) => a.dataset.pipelineId), ['llll0001']);
-  const filter = doc.getElementById('runs-label-filter');
-  assert.equal(filter.hidden, false);
-  assert.equal(filter.querySelectorAll('.label-chip').length, 1);
-  click(window, filter.querySelector('.label-x')); await settle(window, 8);
-  assert.equal(filter.hidden, true);
-  assert.equal(doc.querySelectorAll('#runs-list a.runs-row').length, 3);
 });
 
 test('openRunsSelected (Statistics › Cost "Tag N runs"): routes to #runs with the listed runs ticked; the rest are reported', async () => {

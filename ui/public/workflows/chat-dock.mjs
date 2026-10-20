@@ -116,7 +116,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   const head = h('div', 'wfc-head');
   const title = h('span', 'wfc-title', 'Composer chat');
   const ctx = h('span', 'wfc-ctx');
-  const sel = h('button', 'wfc-sel');
+  const sel = h('button', 'btn btn-sm btn-quiet wfc-sel');
   sel.type = 'button';
   sel.title = 'Show on canvas';
   const newBtn = iconBtn('wfc-new', 'New chat', 'plus');
@@ -363,7 +363,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
         img.src = `data:${f.mime};base64,${f.dataBase64}`;
         chip.appendChild(img);
       }
-      const x = h('button', 'wfc-file-x');
+      const x = h('button', 'btn btn-sm btn-quiet btn-icon wfc-file-x');
       x.append(icon(doc, 'x', 12));
       x.type = 'button';
       x.setAttribute('aria-label', `Remove ${f.name}`);

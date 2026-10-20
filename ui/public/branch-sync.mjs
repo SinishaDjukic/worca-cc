@@ -401,8 +401,8 @@ export function openSyncDialog({ title = 'Sync status', subtitle = '', sync, aut
     const commitsHead = h('h3', { class: 'sync-commits-head', text: 'Incoming commits' });
     const commits = h('ol', { class: 'sync-commits' });
     const note = h('div', { class: 'sync-note', hidden: true });
-    const closeBtn = h('button', { type: 'button', class: 'btn btn-sm', text: 'Close' });
-    const syncBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm sync-go', text: 'Sync' });
+    const closeBtn = h('button', { type: 'button', class: 'btn', text: 'Close' });
+    const syncBtn = h('button', { type: 'button', class: 'btn btn-primary sync-go', text: 'Sync' });
     const prefsSection = prefs ? buildPrefsSection(prefs) : null;
     const card = h('div', { class: 'card sync-card' },
       h('div', { class: 'card-head' }, h('h2', { id: 'sync-dlg-title', text: title }), xBtn),

@@ -130,11 +130,15 @@ test('live run page: one set of cost tag chips (in the facts row) after repeated
   assert.equal(doc.querySelectorAll('#run-detail .rd-facts .tag-chip, #run-detail .rd-page-meta .tag-chip').length, 0);
 });
 
-test('finished run page: chips in the facts row + Edit cost tags, an editor that survives a repaint, a PUT, and the server\'s list after Save', async () => {
+test('finished run page: chips in the Cost tags row + Edit cost tags, an editor that survives a repaint, a PUT, and the server\'s list after Save', async () => {
   const puts = [];
   let answer = () => okRes({ tags: ['client:globex'], changed: true });
+  // The dimensions answer is held back: when it lands, costTagsFact's callback repaints the glance alone (below).
+  let releaseDims;
+  const dimsHeld = new Promise((r) => { releaseDims = r; });
   const detail = { ...DETAIL, state: { ...DETAIL.state, tags: ['client:acme'] } };
   const ctx = await bootDetail({ detail, arms: (url, opts) => {
+    if (url.startsWith('/api/tag-dimensions')) return dimsHeld.then(() => ({ ok: true, status: 200, json: async () => ({ dims: [] }) }));
     if (url.endsWith(`/api/runs/${ROW.id}/tags`) && opts.method === 'PUT') { puts.push(JSON.parse(opts.body)); return answer(); }
     if (url.endsWith('/api/tags')) return okRes({ keys: [], values: {} });
     return null;
@@ -143,8 +147,8 @@ test('finished run page: chips in the facts row + Edit cost tags, an editor that
   await openDetail(ctx, null);
   await deliverRows(ctx, [ROW]);
   const doc = ctx.window.document;
-  // The landing page's head (the glance) carries the editor and its facts row the chips; Details › Overview has both.
-  const row2 = () => doc.querySelector('#hist-detail .hd-glance .rd-page-meta');
+  // The landing page's Cost tags row carries the chips and, last, the editor; Details › Overview has both (D15, D16).
+  const row2 = () => doc.querySelector('#hist-detail .rd-facts .rd-cost-row');
   const facts = () => [...doc.querySelectorAll('#hist-detail .rd-facts .tag-chip')].map((c) => c.textContent);
   assert.equal(row2().querySelectorAll('.hd-tags').length, 1, 'two header paints, one tag box');
   assert.equal(row2().querySelectorAll('.hd-tags .tag-chip').length, 0, 'no duplicate chips beside the button');
@@ -159,6 +163,18 @@ test('finished run page: chips in the facts row + Edit cost tags, an editor that
   await deliverRows(ctx, [ROW]);
   assert.equal(row2().querySelectorAll('.hd-tags').length, 1);
   assert.deepEqual([...row2().querySelectorAll('.hd-tags .tag-input .tag-chip')].map((c) => c.firstChild.textContent), ['client:globex'], 'the open editor kept its chip');
+  // One more glance repaint with the editor open (the dimensions answer lands): the same input stays and keeps focus.
+  const typing = input();
+  typing.focus();
+  releaseDims();
+  await settle(ctx.window, 4);
+  assert.equal(input(), typing, 'the same input element');
+  assert.ok(typing.isConnected);
+  assert.equal(doc.activeElement, typing, 'focus survives the repaint');
+  // A history broadcast repaints the header (paintHdHeaderMeta → paintHdTags): the held editor is not moved, so focus stays.
+  await deliverRows(ctx, [ROW]);
+  assert.equal(input(), typing);
+  assert.equal(doc.activeElement, typing, 'focus survives a header repaint');
   answer = () => fail(400, { error: 'tags: "x:" needs a value after the colon' });
   click(ctx.window, row2().querySelector('.hd-tags-save'));
   await settle(ctx.window, 4);
@@ -177,9 +193,14 @@ test('finished run page: "Add cost tags" when the run has none; no tag UI with t
   await openDetail(ctx, null);
   const doc = ctx.window.document;
   assert.equal(doc.querySelector('#hist-detail .hd-tags'), null, 'flag off: nothing');
+  assert.equal(doc.querySelector('#hist-detail .rd-cost-row'), null, 'flag off: no Cost tags row');
   flagsOn(ctx.window);
   await deliverRows(ctx, [ROW]);
-  for (const host of ['.hd-glance .rd-page-meta', '.hd-row2']) {
+  // D16: with no tags the row still shows, so "Add cost tags" stays reachable.
+  const row = doc.querySelector('#hist-detail .rd-facts .rd-cost-row');
+  assert.equal(row.firstElementChild.textContent, 'Cost tags');
+  assert.equal(row.lastElementChild.querySelector('.hd-tags-edit').textContent, 'Add cost tags');
+  for (const host of ['.rd-facts .rd-cost-row', '.hd-row2']) {
     const edit = doc.querySelector(`#hist-detail ${host} .hd-tags-edit`);
     assert.equal(edit.textContent, 'Add cost tags', host);
     // B7: the one button component, quiet — like "Add to group…" — never a link-styled button.
@@ -446,8 +467,13 @@ test('style.css: the fill flash is off under prefers-reduced-motion', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   assert.match(css, /@media \(prefers-reduced-motion: ?reduce\)\{[^@]*\.tag-chip\.is-filled\{animation:none;\}/);
 });
+test('style.css: the Cost tags row wraps; the old in-tile rules are gone', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.rd-cost-row\{display:flex;flex-wrap:wrap;/);
+  assert.doesNotMatch(css, /\.rd-cost-tags\b/);
+});
 
-test('run page head: cost tags tile next to time and cost; a required key absent shows "client · missing"; no "Tags" text anywhere', async () => {
+test('run page head: time, cost and changes tiles only; one Cost tags row under them with "client · missing"; no "Tags" text anywhere', async () => {
   const dims = { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [], autofill: { tags: [], from: null } };
   // run-page-boot returns the handler's value AS the fetch Response (:45-48), so answer with a Response-like object.
   const ctx = await bootApp({ fetchHandler: (url) => (url.startsWith('/api/tag-dimensions')
@@ -457,10 +483,17 @@ test('run page head: cost tags tile next to time and cost; a required key absent
   ctx.go('running/run-m1'); await ctx.settle(); await ctx.settle();
   const doc = ctx.window.document;
   const tiles = [...doc.querySelectorAll('#run-detail .rd-facts .rd-stats > div > span')].map((s) => s.textContent);
-  assert.ok(tiles.includes('cost tags'));
-  assert.deepEqual([...doc.querySelectorAll('#run-detail .rd-facts .tag-chip')].map((c) => c.textContent), ['team:web', 'client · missing']);
-  assert.ok(doc.querySelector('#run-detail .rd-facts .tag-missing'));
+  assert.equal(tiles.includes('cost tags'), false, 'no cost tags tile');
+  assert.equal(doc.querySelectorAll('#run-detail .rd-stats .tag-chip').length, 0);
+  const row = doc.querySelector('#run-detail .rd-facts .rd-stats + .rd-cost-row');
+  assert.ok(row, 'the row sits right under the tiles');
+  assert.equal(row.firstElementChild.className, 'rd-cost-row-label');
+  assert.equal(row.firstElementChild.textContent, 'Cost tags');
+  assert.deepEqual([...row.querySelectorAll(':scope > .tag-chip')].map((c) => c.textContent), ['team:web', 'client · missing']);
+  assert.ok(row.querySelector(':scope > .tag-missing'));
+  assert.equal(row.querySelector('.hd-tags-edit'), null, 'the live page has no editor (D16)');
   assert.equal(doc.querySelectorAll('#run-detail .rd-page-meta .tag-chip').length, 0);
+  // "Cost tags" has a lowercase t, so /\bTags\b/ does not match it.
   // "no visible text reads 'Tags' outside identifiers": text nodes and labelling attributes of the whole booted page
   const walker = doc.createTreeWalker(doc.body, ctx.window.NodeFilter.SHOW_TEXT);
   const bad = [];
@@ -470,7 +503,7 @@ test('run page head: cost tags tile next to time and cost; a required key absent
   assert.deepEqual(bad, []);
 });
 
-test('finished run page: the facts row shows the run\'s cost tags and the missing required key; the meta line keeps only the button', async () => {
+test('finished run page: the Cost tags row holds the chips, the missing key and the Edit control last; the meta line has no tag box', async () => {
   const dims = { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [], autofill: { tags: [], from: null } };
   const detail = { ...DETAIL, state: { ...DETAIL.state, tags: ['team:web'] } };
   const ctx = await bootDetail({ detail, arms: (url) => (url.startsWith('/api/tag-dimensions') ? okRes(dims) : null) });
@@ -479,8 +512,9 @@ test('finished run page: the facts row shows the run\'s cost tags and the missin
   await deliverRows(ctx, [ROW]);
   await settle(ctx.window, 4);
   const doc = ctx.window.document;
-  assert.deepEqual([...doc.querySelectorAll('#hist-detail .rd-facts .tag-chip')].map((c) => c.textContent), ['team:web', 'client · missing']);
-  const meta = doc.querySelector('#hist-detail .hd-glance .rd-page-meta');
-  assert.equal(meta.querySelector('.hd-tags-edit').textContent, 'Edit cost tags');
-  assert.equal(meta.querySelectorAll('.tag-chip').length, 0);
+  const row = doc.querySelector('#hist-detail .rd-facts .rd-stats + .rd-cost-row');
+  assert.deepEqual([...row.querySelectorAll(':scope > .tag-chip')].map((c) => c.textContent), ['team:web', 'client · missing']);
+  assert.ok(row.lastElementChild.classList.contains('hd-tags'), 'the control is the row\'s last item');
+  assert.equal(row.lastElementChild.querySelector('.hd-tags-edit').textContent, 'Edit cost tags');
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-meta .hd-tags'), null);
 });

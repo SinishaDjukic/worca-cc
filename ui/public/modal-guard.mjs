@@ -160,9 +160,9 @@ export function askDiscard(doc, message = DISCARD_MESSAGE) {
     head.append(title);
     const msg = make('p', 'confirm-message', message);
     msg.id = 'discard-message';
-    const keep = make('button', 'btn btn-sm discard-keep', 'Keep editing');
+    const keep = make('button', 'btn discard-keep', 'Keep editing');
     keep.type = 'button';
-    const go = make('button', 'btn btn-sm btn-danger discard-go', 'Discard');
+    const go = make('button', 'btn btn-danger discard-go', 'Discard');
     go.type = 'button';
     const actions = make('div', 'confirm-actions');
     actions.append(keep, go);

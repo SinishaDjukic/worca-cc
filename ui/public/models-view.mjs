@@ -138,14 +138,14 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
     const s = h(doc, 'div', 'mv-section');
     s.dataset.section = key;
     const head = h(doc, 'div', 'mv-section-head');
-    const btn = h(doc, 'button', 'mv-sec-toggle');
+    const btn = h(doc, 'button', 'btn btn-quiet btn-sm mv-sec-toggle');
     btn.type = 'button';
     btn.dataset.section = key;
     // The shared disclosure chevron (style.css .adv-chev), turned down while the group is open.
     const caret = h(doc, 'span', 'mv-sec-caret adv-chev');
     caret.setAttribute('aria-hidden', 'true');
     btn.appendChild(caret);
-    btn.appendChild(h(doc, 'h3', 'mv-section-title', title));
+    btn.appendChild(h(doc, 'h3', 'section-title mv-section-title', title));
     btn.appendChild(h(doc, 'span', 'mv-sec-count', ''));
     head.appendChild(btn);
     s.appendChild(head);
@@ -185,7 +185,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
   const CHIPS = [['all', 'All'], ['global', 'Yours'], ['builtin', 'Built-in'], ['codex', 'Codex'], ['plugin', 'Plugin'], ['policy', 'Team'], ['needs-setup', 'Needs setup']];
   if (highlight.length) CHIPS.push(['imported', 'Just imported']);
   for (const [id, label] of CHIPS) {
-    const c = h(doc, 'button', `mv-filter${filter === id ? ' on' : ''}`, label);
+    const c = h(doc, 'button', 'filter-chip', label);
     c.type = 'button'; c.dataset.filter = id;
     c.setAttribute('aria-pressed', filter === id ? 'true' : 'false');
     chips.appendChild(c);
@@ -533,7 +533,8 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
   const envWrap = h(doc, 'div', 'mv-env');
   const rows = editing && model.env ? Object.entries(model.env) : [];
   for (const [k, v] of rows) envWrap.appendChild(envRow(doc, k, v));
-  const add = h(doc, 'button', 'btn mv-env-add', '+ env var');
+  const add = h(doc, 'button', 'btn mv-env-add', 'Env var');
+  add.prepend(icon(doc, 'plus', 14));
   add.type = 'button';
   grid.appendChild(field('Routing env (merged into the claude spawn for this model)', envWrap,
     'e.g. ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN. ANTHROPIC_MODEL sets the wire id sent to --model (the id above stays worca’s handle). Stored values show masked; leave masked to keep. WORCA_* and process keys are reserved. Through a provider, the bridge owns ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY / ANTHROPIC_MODEL — setting them here is refused.'));

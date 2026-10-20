@@ -3,7 +3,7 @@
 // gradients or accent borders.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, statSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -242,6 +242,11 @@ const REMOVED_RUNS = [
 test('no Runs list or run page rule removed by the redesign comes back (Known bug 10)', () => {
   assert.deepEqual([...new Set(REMOVED_RUNS)].flatMap((c) => scan(classRe(c)).map((h) => `${c} — ${h}`)), []);
 });
+// Slice 3: the four one-off filter chips are gone; .filter-chip is the only one (docs/design-system.md › Filter chip).
+const REMOVED_CHIPS = ['mv-filter', 'wfl-chip', 'proj-fchip', 'mcp-chip'];
+test('ui/public no longer defines or uses mv-filter, wfl-chip, proj-fchip or mcp-chip', () => {
+  assert.deepEqual(REMOVED_CHIPS.flatMap((c) => scan(classRe(c)).map((h) => `${c} — ${h}`)), []);
+});
 test('the removed-selector scan flags a reappearance (self-test)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'wdl-'));
   const f = join(dir, 'x.css');
@@ -341,8 +346,8 @@ test('the tab-emitter scan flags a bare per-view tab (self-test)', () => {
 });
 
 // Size scale (review A5, C): controls at 28/32/40, tiles 56-64, an info tip's hit target at least 24.
-const CONTROL_HEIGHTS = { '.tab': 32, '.seg button': 28, '.seg.seg-sm button': 24, '.chat-home-preset': 28, '.wfl-chip': 28,
-  '.wfl-folder': 32, '.info-tip': 24, '.chat-home-act': 40 };
+const CONTROL_HEIGHTS = { '.tab': 32, '.seg button': 28, '.chat-home-preset': 28, '.filter-chip': 28,
+  '.wfl-folder': 32, '.info-tip': 28, '.chat-home-act': 40 };
 const OFF_SCALE = [26, 31, 34, 36, 43, 44, 55, 78];
 const CONTROL_WORD = /^(?:tab|tabs|seg|btn|chip|preset|act|folder|switch|button)$/;
 // Rows, not controls (spec §1.2): allowed at their own height. Each entry names its reason.
@@ -484,4 +489,299 @@ test('narrow layouts: stat boxes 2 per row, the Group row stacks, group page row
   assert.match(chip.body, /flex-wrap:nowrap/);
   assert.match(chip.body, /white-space:nowrap/);
   assert.ok(ALL.some((r) => r.sel === '.run-members.is-table .runs-pr-word' && /text-overflow:ellipsis/.test(r.body)));
+});
+
+// Design system (docs/design-system.md): the guide's tables match style.css, and drift only shrinks.
+const DEBT = JSON.parse(readFileSync(join(ROOT, 'test/fixtures/design-debt.json'), 'utf8'));
+const GUIDE = join(ROOT, 'docs/design-system.md');
+// `| \`--r-xs\` | 4px | …` and `| small | 28px | …` rows of the guide's tables.
+const guideRows = (text, re) => [...text.matchAll(re)].map((m) => [m[1], m[2]]);
+const ratchet = (found, listed, what) => {
+  const extra = found.filter((s) => !listed.includes(s));
+  const stale = listed.filter((s) => !found.includes(s));
+  assert.deepEqual(extra, [], `new ${what}: fix it, do not add it to test/fixtures/design-debt.json`);
+  assert.deepEqual(stale, [], `${what} no longer in the code: remove it from test/fixtures/design-debt.json`);
+};
+
+test('the ratchet rejects a new offender and a stale entry, and passes an exact list', () => {
+  assert.doesNotThrow(() => ratchet(['.a select', '.b select'], ['.a select', '.b select'], 'x'));
+  assert.throws(() => ratchet(['.a select', '.b select'], ['.a select'], 'x'), /new x/);
+  assert.throws(() => ratchet(['.a select'], ['.a select', '.gone select'], 'x'), /x no longer in the code/);
+});
+
+test('the guide exists with Foundations, Components, Patterns and Do and don\'t', () => {
+  assert.ok(existsSync(GUIDE), 'docs/design-system.md');
+  const g = readFileSync(GUIDE, 'utf8');
+  for (const h of ['## Foundations', '## Components', '## Patterns', '## Do and don\'t']) assert.ok(g.includes(`\n${h}\n`), h);
+});
+
+test('the guide\'s corner table is the :root radius set, 4/6/8/12 and nothing else', () => {
+  const g = readFileSync(GUIDE, 'utf8');
+  const root = ALL.find((r) => r.sel === ':root').body;
+  const rows = guideRows(g, /^\| `(--r-(?:xs|sm|md|lg))` \| (\d+px) \|/gm);
+  assert.deepEqual(rows.map(([, v]) => v), ['4px', '6px', '8px', '12px']);
+  for (const [tok, v] of rows) assert.match(root, new RegExp(`${tok}:${v};`), `${tok} is ${v} in style.css`);
+  // No other radius token anywhere in style.css (--r-pill is the switch track; --r-card / --r-ctrl are aliases).
+  const own = ALL.flatMap((r) => decls(r.body, '--r-[\\w-]+').map(([p, v]) => [p, v, r]))
+    .filter(([p]) => !['--r-xs', '--r-sm', '--r-md', '--r-lg', '--r-pill', '--r-card', '--r-ctrl'].includes(p));
+  assert.deepEqual(own.map(([p, v, r]) => where(r, `${p}:${v}`)), []);
+});
+
+test('the guide\'s size table matches the button and field rules: 28 / 32 / 40', () => {
+  const g = readFileSync(GUIDE, 'utf8');
+  assert.deepEqual(guideRows(g, /^\| (small|medium|large) \| (\d+)px \|/gm),
+    [['small', '28'], ['medium', '32'], ['large', '40']]);
+  const body = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
+  assert.match(body('select'), /(?:^|;)\s*height:32px/, 'select is 32px');
+  assert.match(body('input[type="text"]'), /(?:^|;)\s*height:32px/, 'a text input is 32px');
+  assert.match(body('.select-sm'), /(?:^|;)\s*height:28px/, '.select-sm is 28px');
+  assert.match(body('.input-sm'), /(?:^|;)\s*height:28px/, '.input-sm is 28px');
+  assert.match(body('select'), /border-radius:var\(--r-sm\)/, 'a field has the 6px corner');
+});
+
+// A field's size is set once: rules whose last compound is a text input, number input or select may not set height
+// or vertical padding, except the base rules and the listed debt (slices 2 and 3 empty it). A class counts only as a
+// whole word (`.select`, not `.ins-select` or `.select-wrap`).
+const isFieldCompound = (s) => {
+  const lc = lastCompound(s);
+  return /^(?:select|input\[type="(?:text|number)"\])(?![\w-])/.test(lc) || /\.(?:input|select)(?![\w-])/.test(lc);
+};
+const FIELD_BASE = ['.input', '.select', 'input[type="text"]', 'input[type="number"]', 'select', '.input-sm', '.select-sm', 'textarea.input'];
+function fieldOverrides() {
+  const out = new Set();
+  for (const r of ALL) {
+    const sels = splitTop(r.sel).filter((s) => isFieldCompound(s) && !FIELD_BASE.includes(s));
+    if (!sels.length) continue;
+    const sizes = decls(r.body, '(?:min-)?height|padding(?:-top|-bottom)?')
+      .filter(([p, v]) => p.includes('height') ? !/^(?:auto|1px)$/.test(v) : !/^0(?:px)?(?:\s|$)/.test(v));
+    if (sizes.length) for (const s of sels) out.add(s);
+  }
+  return [...out].sort();
+}
+test('fields: one 32px / 28px size; per-view size overrides only shrink (design-debt.json)', () => {
+  assert.equal(isFieldCompound('.wm-filters .select'), true);
+  assert.equal(isFieldCompound('.step-config select:focus'), true);
+  assert.equal(isFieldCompound('.ins-select'), false);
+  assert.equal(isFieldCompound('.select-wrap::after'), false);
+  const found = fieldOverrides();
+  // The divided-row control sets a width only, so it never enters the ratchet.
+  assert.deepEqual(found.filter((s) => s.includes('.drow-control')), []);
+  ratchet(found, DEBT.fieldSizeOverrides, 'field size override');
+});
+
+// A field that keeps the base 32px height has 30px inside its border: more than 7px of vertical padding leaves less
+// than a 13px line of content, and the text is cut off. Only a rule that sets its own height may pad more.
+const vPad = (v) => { const p = v.split(/\s+/).map((x) => parseFloat(x) || 0); return Math.max(p[0], p[2] ?? p[0]); };
+function clippedFields() {
+  const out = new Set();
+  for (const r of ALL) {
+    const sels = splitTop(r.sel).filter((s) => isFieldCompound(s) && !FIELD_BASE.includes(s));
+    if (!sels.length || decls(r.body, '(?:min-)?height').length) continue;
+    const pads = decls(r.body, 'padding(?:-top|-bottom)?').map(([p, v]) => (p === 'padding' ? vPad(v) : parseFloat(v) || 0));
+    if (pads.some((n) => n > 7)) for (const s of sels) out.add(s);
+  }
+  return [...out].sort();
+}
+test('fields: no per-view rule pads a 32px field so far vertically that its text is cut off', () => {
+  assert.equal(vPad('10px 36px 10px 13px'), 10);
+  assert.equal(vPad('0 36px 0 13px'), 0);
+  assert.equal(vPad('9px 12px'), 9);
+  assert.equal(vPad('4px 8px 9px'), 9);
+  assert.deepEqual(clippedFields(), []);
+});
+
+test('one filter chip: 28px, 6px corner, a quiet tinted selected state', () => {
+  const chip = ALL.filter((r) => splitTop(r.sel).includes('.filter-chip')).map((r) => r.body).join(';');
+  assert.match(chip, /height:28px/);
+  assert.match(chip, /border-radius:var\(--r-sm\)/);
+  // Every rule for a pressed chip, however its selector is written.
+  // `.on` as a whole class only: `\b` would also match `.on-x` (a word boundary sits before the hyphen).
+  const on = ALL.filter((r) => splitTop(r.sel).some((s) => /\.filter-chip(?![\w-])/.test(s) && /aria-pressed="true"|\.on(?![\w-])/.test(s)));
+  assert.ok(on.length, 'a selected filter chip rule');
+  const body = on.map((r) => r.body).join(';');
+  assert.match(body, /background:var\(--field\)/);
+  assert.match(body, /border-color:var\(--ink\)/);
+  assert.doesNotMatch(body, /background(?:-color)?:var\(--ink\)/);
+});
+
+// Whole classes only: `.on\b` would also catch `.on-x`, `.active\b` `.active-tab`, `.btn\b` `.btn-row`.
+const PRESSED = /\[aria-pressed="true"\]|\.(?:on|active)(?![\w-])/;
+// The toggle's own fill only: the pressed state sits on the last compound, and a pseudo-element (a tab's underline,
+// a switch knob) or a descendant (a radio's mark inside a pressed choice) is not the toggle.
+const pressedFill = (s) => !/::?(?:before|after)(?![\w-])/.test(s) && PRESSED.test(lastCompound(s)) && !/\.(?:btn|nav)(?![\w-])/.test(s);
+test('no pressed toggle goes solid ink outside the button (design-debt.json)', () => {
+  assert.equal(PRESSED.test('.x-chip.on'), true);
+  assert.equal(PRESSED.test('.x-chip.on-dark'), false);
+  assert.equal(PRESSED.test('.tab.active-tab'), false);
+  assert.equal(pressedFill('.x-chip.on'), true);
+  assert.equal(pressedFill('.tab.on::after'), false);
+  assert.equal(pressedFill('.af-choice.on .af-mark'), false);
+  const found = ALL.flatMap((r) => splitTop(r.sel)
+    .filter(pressedFill)
+    .filter(() => /(?:^|;)\s*background(?:-color)?:var\(--ink\)/.test(r.body)));
+  ratchet([...new Set(found)].sort(), DEBT.solidPressed, 'solid pressed toggle');
+});
+
+test('segmented: every .seg button is 28px; .seg-sm has no size of its own', () => {
+  const sized = ALL.filter((r) => splitTop(r.sel).some((s) => /\.seg\b[^,]*\bbutton\b/.test(s)))
+    .flatMap((r) => decls(r.body, 'height').map(([, v]) => where(r, v))).filter((w) => !w.endsWith('28px'));
+  assert.deepEqual(sized, []);
+  assert.deepEqual(ALL.filter((r) => /\.seg-sm\b/.test(r.sel)).map((r) => where(r, r.body.trim())), []);
+});
+
+test('one chip size: the grouped chip rule sets 18px and zero vertical padding', () => {
+  const group = ALL.find((r) => r.sel.startsWith(':is(.badge,'));
+  assert.match(group.body, /height:18px/);
+  assert.match(group.body, /padding-top:0/);
+  assert.match(group.body, /padding-bottom:0/);
+});
+
+test('headings: page title 22, sub-page 18, section 15, subsection 13; card h2 is the section size', () => {
+  const body = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
+  assert.match(body('.page-title'), /font:700 var\(--fs-page\)\/var\(--lh-title\)/);
+  assert.match(body('.subpage-title'), /font:600 var\(--fs-subpage\)\/var\(--lh-title\)/);
+  assert.match(body('.section-title'), /font:600 var\(--fs-section\)\/var\(--lh-title\)/);
+  assert.match(body('.subsection-title'), /font:600 var\(--fs-body\)\/var\(--lh-body\)/);
+  for (const s of ['.card h2', '.card-head h2']) {
+    assert.match(body(s), /font-size:var\(--fs-section\)/, s);
+    assert.match(body(s), /font-weight:600/, s);
+  }
+});
+
+test('a table stacks per row in a narrow container (never scrolls sideways); the empty line is quiet', () => {
+  assert.match(css, /@container dtable \(max-width:560px\)\{[\s\S]*?\.table,\.table tbody,\.table tr,\.table td\{display:block/);
+  assert.match(css, /\.table-wrap\{container:dtable \/ inline-size;\}/);
+  assert.match(css, /@container drows \(max-width:560px\)\{[\s\S]*?\.drow-control\{grid-column:1;/);
+  const empty = ALL.filter((r) => splitTop(r.sel).includes('.empty-line')).map((r) => r.body).join(';');
+  assert.match(empty, /color:var\(--ink-2\)/, 'the empty line is quiet');
+});
+
+test('Runs list: selected and Needs-you rows take the sidebar nav item\'s corner (--r-sm) and hide their own divider', () => {
+  const nav = ALL.find((r) => r.sel === '.nav button');
+  assert.match(nav.body, /border-radius:var\(--r-sm\)/);
+  for (const sel of ['.runs-item.is-needs', '.runs-item:has(> a.runs-row.selected)']) {
+    const body = ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
+    assert.match(body, /border-radius:var\(--r-sm\)/, sel);
+    assert.match(body, /border-bottom-color:transparent/, sel);
+  }
+});
+
+test('a script-focused Back button shows no ring for a pointer user', () => {
+  const r = ALL.find((x) => x.sel.startsWith(':root[data-input="pointer"]') && x.sel.includes('.pd-header'));
+  assert.ok(r, 'the pointer suppressor covers .pd-header');
+  assert.match(r.body, /outline:none/);
+});
+
+// The same pattern as the button audit's typed-plus rule: "+" then a capitalised word ("+ Add", "+ Case", "+ Override").
+// "+N more" counters do not match (an uppercase letter followed by a space, not a lowercase letter).
+const TYPED_PLUS = /['"`>]\+ ?[A-Z][a-z]/;
+test('no typed "+" as an icon in a label (design-debt.json)', () => {
+  assert.equal(TYPED_PLUS.test("button(doc, 'btn btn-sm', '+ Add server')"), true);
+  assert.equal(TYPED_PLUS.test("chip.textContent = '+3 more'"), false);
+  assert.equal(TYPED_PLUS.test('`+N more`'), false);
+  const hits = scan(TYPED_PLUS, FILES.filter((f) => !f.endsWith('.html'))).map((h) => h.split(':')[0]);
+  ratchet([...new Set(hits)].sort(), DEBT.typedPlus, 'typed "+" label');
+});
+
+// D19-D23: the type scale. A px size in font-size or the font shorthand must be a step. var(--fs-…), em and the
+// graph's calc(… * var(--gv-scale)) are not px literals and pass. 26px belongs to the Chat home hero alone.
+const TYPE_SCALE = [11, 12, 13, 15, 18, 22];
+const HERO = '.chat-home-title';
+const pxOf = (p, v) => (p === 'font-size' ? v.match(/^([\d.]+)px$/) : v.match(/(?:^|\s)([\d.]+)px(?=[\s/])/))?.[1];
+function offScale() {
+  const out = new Set();
+  for (const r of ALL) for (const [p, v] of decls(r.body, 'font-size|font')) {
+    const px = pxOf(p, v);
+    if (px === undefined || TYPE_SCALE.includes(Number(px))) continue;
+    for (const s of splitTop(r.sel)) if (!(px === '26' && s === HERO)) out.add(`${s} → ${px}px`);
+  }
+  return [...out].sort();
+}
+// D20: what slice 1 moves onto the scale. Shared rules by exact selector, the shell and the screens by class prefix.
+// When the browser type audit (8c) finds an off-scale text on a slice-1 state that these miss, add its prefix here.
+const SHARED_TYPE = ['body', 'button', '.topbar .sub', '.pill-status', '.pill-run', '.card h2', '.card-head h2', '.input', '.select',
+  '.textarea', '.ta-hl-back', 'input[type="text"]', 'input[type="number"]', 'input[type="file"]', 'textarea', 'select', '.input-sm',
+  '.select-sm', '.btn-sm', '.btn-lg', '.check-inline', '.file .state', '.extra-pill-x', '.mention-item', '.form-msg', '.toast .tt',
+  '.field-error', '.card-alert .ca-title', '.dirty-mark', '.field-compact .hint', '.check-row', '.opt-row', '.opt-row .opt-sub',
+  '.confirm-field > label', '.confirm-field .input', '.confirm-checkbox', '.stat-value', '.stat-frac', '.stat-sub'];
+const SLICE1_TYPE = new RegExp('(?:^|[\\s(,>+~])(?:' + [
+  '\\.topnav', '\\.tsearch', '\\.activity-', '\\.nav(?![\\w-])', '\\.nav-', '\\.sidebar', '\\.side-', '\\.user ', '\\.acct',   // shell
+  '\\.runs-', '\\.rd-', '\\.hd-', '\\.rg-', '\\.cost-pop', '\\.cost-bd-', '\\.artifact-', '\\.log(?![\\w-])',                  // Runs list, run page
+  '\\.run-log-head', '\\.run-warn', '\\.label-(?:chip|more)',
+  '\\.q(?:panel|text|opt|free|block|answered|tune)', '\\.af-', '\\.issue-', '\\.retained-banner', '\\.merge-back-banner',
+  '\\.wf-pop-', '\\.wf-preview-hint', '\\.agent-type-pill', '\\.sub-model-pill', '\\.skill-pill', '\\.graphify-pill',
+  '\\.gpage', '\\.feature-page', '\\.shape-', '\\.run-member', '\\.run-status', '\\.chat-rc-shaped', '\\.ask-mcard-',          // group, feature
+  '\\.ask-shipcard-', '\\.plan-(?:body|meta|check-ok|tag|ground)', '\\.outline-est', '\\.ask-rp-shape-what', '\\.ask-md a\\.ask-ref-chip',
+  '\\.chat-home', '\\.chat-run-tile', '\\.ask-composer', '\\.chat-head',                                                                       // Chat home
+  '\\.agents-wf', '\\.agent-(?:mod|origin|row)', '\\.wf-engine-hints', '\\.step-(?:config|current)', '\\.branches-', '\\.bt-',   // New run
+  '\\.sp-', '\\.pl-profile-bar', '\\.src-badge', '\\.btn-split-menu',
+].join('|') + ')');
+const inSlice1 = (entry) => { const s = entry.split(' → ')[0]; return SHARED_TYPE.includes(s) || SLICE1_TYPE.test(s); };
+
+test('type: pxOf reads font-size and the font shorthand; relative sizes are not px literals; the slice-1 scope', () => {
+  assert.equal(pxOf('font-size', '12.5px'), '12.5');
+  assert.equal(pxOf('font', '600 9.5px/1 var(--mono)'), '9.5');
+  assert.equal(pxOf('font', '13.5px/20px var(--sans)'), '13.5');
+  assert.equal(pxOf('font', '700 var(--fs-page)/var(--lh-title) var(--sans)'), undefined);
+  assert.equal(pxOf('font-size', 'max(9px,calc(11.5px * var(--gv-scale)))'), undefined);
+  assert.equal(pxOf('font', '800 calc(12px * var(--gv-scale))/calc(21px * var(--gv-scale)) var(--sans)'), undefined);
+  assert.equal(pxOf('font-size', '.92em'), undefined);
+  assert.equal(inSlice1('.rd-srow → 14px'), true);
+  assert.equal(inSlice1('.sidebar.collapsed .nav-count → 9.5px'), true);
+  assert.equal(inSlice1('.btn-sm → 12.5px'), true);
+  assert.equal(inSlice1('.wfl-name → 14px'), false);
+  assert.equal(inSlice1('.log-filters .log-f → 12.5px'), false);
+  assert.equal(inSlice1('.run-flow .node .fan .fl → 9.5px'), false);
+});
+
+test('type: the guide\'s Type table is the :root --fs-* set; titles 1.25, the rest 1.5; body is 13 / 1.5', () => {
+  const g = readFileSync(GUIDE, 'utf8');
+  const rows = [...g.matchAll(/^\| `(--fs-[a-z]+)` \| (\d+)px \| ([\d.]+) \|/gm)].map((m) => [m[1], Number(m[2]), m[3]]);
+  assert.deepEqual(rows.map(([, px]) => px), [11, 12, 13, 15, 18, 22, 22, 26]);
+  const root = ALL.find((r) => r.sel === ':root').body;
+  for (const [tok, px, lh] of rows) {
+    assert.match(root, new RegExp(`${tok}:${px}px;`), `${tok} is ${px}px in style.css`);
+    assert.equal(lh, px <= 13 ? '1.5' : '1.25', `${tok} line height in the guide`);
+  }
+  assert.match(root, /--lh-body:1\.5;/);
+  assert.match(root, /--lh-title:1\.25;/);
+  const own = ALL.flatMap((r) => decls(r.body, '--fs-[\\w-]+').map(([p]) => p)).filter((p) => !rows.some(([t]) => t === p));
+  assert.deepEqual(own, [], 'no --fs-* token outside the guide');
+  const body = ALL.filter((r) => r.sel === 'body').map((r) => r.body).join(';');
+  assert.match(body, /font-size:var\(--fs-body\)/);
+  assert.match(body, /line-height:var\(--lh-body\)/);
+  assert.match(ALL.filter((r) => r.sel === 'button').map((r) => r.body).join(';'), /font:inherit/, 'a bare button takes its parent\'s step');
+});
+
+test('type: every px size in style.css is a step, 26px only on the Chat home hero (design-debt.json typeScale)', () => {
+  ratchet(offScale(), DEBT.typeScale, 'off-scale font size');
+});
+
+test('type: no listed off-scale size is on the shell, a shared component or a slice-1 screen', () => {
+  assert.deepEqual(DEBT.typeScale.filter(inSlice1), []);
+});
+
+test('type: stat values 22, the page title 22, the Chat home hero 26 (22 under 760px)', () => {
+  const body = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
+  assert.match(body('.stat-value'), /font-size:var\(--fs-stat\)/);
+  assert.match(body('.rd-page-title'), /font:700 var\(--fs-page\)\/var\(--lh-title\)/);
+  assert.match(body('.chat-home-title'), /font:600 var\(--fs-hero\)\/var\(--lh-title\)/);
+  assert.match(css, /@media \(max-width:760px\)\{\.chat-home-title\{font-size:var\(--fs-page\);/);
+});
+
+// D24: chart text is drawn as SVG 'font-size' attributes; slice 2 moves the three chart files onto the scale.
+const SVG_TYPE = /'font-size':\s*(?!(?:11|12|13|15|18|22)(?![\d.]))[\d.]+/;
+test('charts: the guide sets their heights and text steps; off-scale SVG text sizes only shrink (design-debt.json svgTypeScale)', () => {
+  assert.equal(SVG_TYPE.test("'font-size': 10.5,"), true);
+  assert.equal(SVG_TYPE.test("'font-size': 11.5,"), true);
+  assert.equal(SVG_TYPE.test("'font-size': 11,"), false);
+  const g = readFileSync(GUIDE, 'utf8');
+  const at = g.indexOf('\n### Charts\n');
+  assert.ok(at > 0, 'Components › Charts');
+  const charts = g.slice(at, g.indexOf('\n### ', at + 1));
+  assert.match(charts, /Cost and value chart about 260px/);
+  assert.match(charts, /overview\s+charts \(Statistics, Team metrics\) about 180px/);
+  assert.match(charts, /Axis labels are 11px/);
+  assert.match(charts, /legends 12px/);
+  ratchet([...new Set(scan(SVG_TYPE).map((h) => h.split(':')[0]))].sort(), DEBT.svgTypeScale, 'off-scale SVG font size');
 });

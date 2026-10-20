@@ -82,3 +82,24 @@ test('#schedules opens on Activity; the strip is the one .tabs strip with counts
   assert.equal(window.location.hash, '#schedules', 'Activity is the bare route');
   assert.equal(onTab(doc), 'activity');
 });
+
+test('Schedules use the shared parts: Activity is a table with a badge per row; Once and Repeating are divided rows', async () => {
+  let window = await boot('#schedules');
+  let doc = window.document;
+  const table = doc.querySelector('#schedules-feed table.table');
+  assert.ok(table, 'the feed is the shared table');
+  assert.ok(table.parentElement.classList.contains('table-wrap'));
+  const rows = [...doc.querySelectorAll('#schedules-feed .sched-feed-item')];
+  assert.ok(rows.length >= 1);
+  for (const r of rows) {
+    assert.equal(r.tagName, 'TR');
+    assert.ok(r.cells[0].querySelector('.badge'), 'the Kind cell holds a badge');
+  }
+  const seg = [...doc.querySelectorAll('#schedules-feed .seg button')];
+  assert.ok(seg.length === 3 && seg.every((b) => b.hasAttribute('aria-pressed')));
+  window = await boot('#schedules/once');
+  doc = window.document;
+  const item = doc.querySelector('#schedules-once .sched-item');
+  assert.ok(item.classList.contains('drow') && !item.classList.contains('card'), 'a divided row, not a card');
+  assert.ok(item.parentElement.classList.contains('drows'));
+});

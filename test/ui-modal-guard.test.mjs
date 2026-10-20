@@ -246,6 +246,6 @@ test('Discard changes?: Keep editing is a plain small button, Discard the danger
   type(window, field, 'draft');
   pressEscape(window, field);
   const q = discardPrompt(doc);
-  assert.equal(q.querySelector('.discard-keep').className, 'btn btn-sm discard-keep');
-  assert.equal(q.querySelector('.discard-go').className, 'btn btn-sm btn-danger discard-go');
+  assert.equal(q.querySelector('.discard-keep').className, 'btn discard-keep');
+  assert.equal(q.querySelector('.discard-go').className, 'btn btn-danger discard-go');
 });

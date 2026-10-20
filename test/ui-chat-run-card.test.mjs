@@ -967,7 +967,7 @@ test('chat run card CSS: the result counts and error, a hovered file row or Stop
     '.chat-rc-deciding{padding:28px 16px;text-align:center;color:var(--ink-2);font-size:12.5px;}',
   ]) assert.ok(p3.includes(rule), rule);
   assert.ok(!p3.includes('.chat-rc-stop:hover'), 'Stop takes the .btn-danger hover, no rule of its own');
-  assert.ok(css.includes(':is(.rd-questions,.chat-rc-q) .qanswered{font:600 14px var(--sans);color:var(--ink);}'));
+  assert.ok(css.includes(':is(.rd-questions,.chat-rc-q) .qanswered{font:600 var(--fs-body) var(--sans);color:var(--ink);}'));
   const ink = pair('--ink');
   for (const [fg, mix, bgs] of [['--green-ink', true, ['--field', '--hover']], ['--red-ink', true, ['--field', '--hover']],
     ['--red-ink', false, ['--panel']], ['--ink', false, ['--panel']]]) {

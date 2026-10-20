@@ -119,7 +119,7 @@ export function needsSignInPill(m, { doc = globalThis.document } = {}) {
 function providerStatePill(doc, c) {
   if (!c.termsCurrent) {
     // What unblocks sign-in, in the "Read notice" button's own words — and it opens that notice.
-    const pill = h(doc, 'button', 'badge grey mv-cp-terms mv-cp-terms-pill',
+    const pill = h(doc, 'button', 'btn btn-sm btn-quiet mv-cp-terms mv-cp-terms-pill',
       c.acknowledgedTerms ? 'please re-read the updated notice' : 'please read the notice first');
     pill.type = 'button';
     pill.title = 'Sign-in is blocked until you acknowledge the GitHub Copilot notice. Click to read it.';
@@ -315,14 +315,14 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
   // card read as one long form, and the page has room for them now. Inside the Models view (the
   // old home) it stays a single card. Either way the rows keep their shape, so every flow that
   // finds .mv-pv-row[data-provider] is unaffected.
-  const root = h(doc, split ? 'div' : 'section', split ? 'mv-providers mv-providers-split' : 'card mv-providers');
+  const root = h(doc, split ? 'div' : 'section', split ? 'mv-providers mv-providers-split drows' : 'card mv-providers');
   if (!split) {
     const head = h(doc, 'div', 'mv-head');
-    head.appendChild(h(doc, 'h3', 'mv-section-title', 'Providers'));
+    head.appendChild(h(doc, 'h3', 'section-title mv-section-title', 'Providers'));
     root.appendChild(head);
+    root.appendChild(h(doc, 'small', 'hint mv-providers-hint',
+      "Providers let Worca run models that don't speak the Anthropic API — through its own in-process bridge. Sign in or set a key once; then import or add models on the Models page and pick them anywhere a model is picked."));
   }
-  root.appendChild(h(doc, 'small', 'hint mv-providers-hint',
-    "Providers let Worca run models that don't speak the Anthropic API — through its own in-process bridge. Sign in or set a key once; then import or add models on the Models page and pick them anywhere a model is picked."));
   // Credential broker: keys and the Copilot sign-in are per person, on the broker's key page.
   // This card keeps the shared settings (base URLs, concurrency, the Copilot notice, imports);
   // its key fields, sign-in and key test are hidden (style.css .mv-providers--broker).
@@ -336,12 +336,12 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     }
     root.appendChild(note);
   }
-  /** One provider's row, in its own card when the tab hosts it. The row's name and state badge title the card. */
+  /** One provider's row, a divided row when the tab hosts it. The row's name and state badge title it. */
   const place = (row) => {
     if (!split) { root.appendChild(row); return; }
-    const card = h(doc, 'section', 'card mv-pv-card');
-    card.appendChild(row);
-    root.appendChild(card);
+    const item = h(doc, 'section', 'drow drow-stack mv-pv-card');
+    item.appendChild(row);
+    root.appendChild(item);
   };
 
   // ── GitHub Copilot ──
@@ -438,7 +438,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
       // One click to a hosted catalog: fills the URL (and a ${VAR} key when none is set), then the
       // user Tests and Saves as for any endpoint. Nothing is stored until Save.
       const pre = h(doc, 'small', 'hint mv-pv-presets', 'Preset: ');
-      const or = h(doc, 'button', 'link-btn mv-pv-preset', 'OpenRouter');
+      const or = h(doc, 'button', 'btn btn-sm btn-quiet mv-pv-preset', 'OpenRouter');
       or.type = 'button'; or.dataset.provider = name; or.dataset.preset = 'openrouter';
       or.title = `Point this provider at OpenRouter (${OPENROUTER_PRESET.baseUrl})`;
       pre.appendChild(or);

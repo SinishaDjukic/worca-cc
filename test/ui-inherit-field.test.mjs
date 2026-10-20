@@ -48,6 +48,15 @@ test('number field: inherit placeholder; an override shows the badge; Clear retu
   assert.deepEqual(readDirtyFields(root), { askMaxTurns: null });
 });
 
+test('the inherit field is a divided row: field drow inherit-field, a plain .input in .drow-control', () => {
+  const f = renderInheritField(doc(), { id: 'askMaxTurns', label: 'Turn limit', kind: 'number', level: 'user', own: undefined, inherited: { value: 400, source: 'default' } });
+  assert.equal(f.className, 'field drow inherit-field');
+  const input = f.querySelector('.inherit-input');
+  assert.ok(input.classList.contains('input') && !input.classList.contains('input-mini'));
+  assert.ok(input.closest('.drow-control'), 'the control sits in .drow-control');
+  assert.ok(f.querySelector('.label-row').classList.contains('drow-label'));
+});
+
 test('a select whose own value is null (the API\'s "not set") shows the inherited choice, not a blank', () => {
   const eng = renderInheritField(doc(), { id: 'run.engine', label: 'Default engine', kind: 'select', level: 'user', own: null,
     inherited: { value: 'claude', source: 'default' }, options: [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }] });

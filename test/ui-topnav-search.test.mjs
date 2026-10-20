@@ -33,7 +33,7 @@ function setup({ platform = '', sources = SOURCES, lazy = null } = {}) {
   const doc = window.document;
   if (platform) Object.defineProperty(window.navigator, 'platform', { value: platform, configurable: true });
   window.Element.prototype.scrollIntoView = function () {};
-  const calls = { navigate: [], workflow: [], ask: [], lazy: 0 };
+  const calls = { navigate: [], workflow: [], ask: [], label: [], lazy: 0 };
   const src = { ...sources };
   const search = createTopnavSearch({
     doc, win: window, root: doc.querySelector('.tsearch'),
@@ -42,6 +42,7 @@ function setup({ platform = '', sources = SOURCES, lazy = null } = {}) {
     onAsk: (q) => calls.ask.push(q),
     navigate: (href) => calls.navigate.push(href),
     openWorkflow: (id) => calls.workflow.push(id),
+    onLabel: (l) => calls.label.push(l),
   });
   const $ = (id) => doc.getElementById(id);
   const key = (target, k, init = {}) => {
@@ -496,4 +497,16 @@ test('runs are found by tag: client:acme, client: and acme; the matching tag sho
   for (const q of ['client:acme', 'acme']) assert.deepEqual(searchRows({ live }, q).runs.map((r) => r.title), ['Fix invoices'], q);
   assert.deepEqual(searchRows({ live }, 'client:').runs.map((r) => r.title).sort(), ['Fix invoices', 'Other']);
   assert.match(searchRows({ live }, 'acme').runs[0].meta, /client:acme/);
+});
+
+test('a label row: tag icon, Enter calls onLabel with the word and never navigates', async () => {
+  const { calls, $, type, key, options } = setup({ sources: { ...SOURCES, labels: ['hotfix'] } });
+  $('tsearch-input').focus();
+  type('label:hotfix');
+  const row = options().find((o) => o.querySelector('.tsearch-title').textContent === 'Runs labelled hotfix');
+  assert.ok(row && row.querySelector('svg.tsearch-ic path'), 'the row has the tag icon');
+  assert.equal(options()[0], row, 'the only match, so it is active');
+  key($('tsearch-input'), 'Enter');
+  assert.deepEqual(calls.label, ['hotfix']);
+  assert.deepEqual(calls.navigate, []);
 });

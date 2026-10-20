@@ -11,6 +11,7 @@ import {
 } from './script-forms.mjs';
 import { openArtifactPicker, readInputFile } from './artifact-picker.mjs';
 import { escapeHtml } from './code-editor.mjs';
+import { icon } from './icons.mjs';
 import {
   CASE_ID_RE, EXPECT_VERDICTS, MAX_CASES, MAX_CASE_NAME, evaluateExpect,
 } from '../../src/shared/graph/script-cases.mjs';
@@ -85,7 +86,9 @@ function casesStrip(doc, data, caseState, { unsaved = false } = {}) {
   // `.bench-case-actions` is the slot Update is added to and removed from, so the
   // other buttons never move as the selection changes.
   const actions = h(doc, 'div', 'bench-case-actions');
-  actions.append(miniBtn(doc, 'bench-save-case', 'Save as case'), miniBtn(doc, 'bench-add-case', '+ Case'));
+  const addCase = miniBtn(doc, 'bench-add-case', 'Add case');
+  addCase.prepend(icon(doc, 'plus', 14));
+  actions.append(miniBtn(doc, 'bench-save-case', 'Save as case'), addCase);
   col.appendChild(actions);
   const all = miniBtn(doc, 'bench-run-all', 'Run all');
   all.disabled = unsaved || caseListFor(data).cases.length === 0;

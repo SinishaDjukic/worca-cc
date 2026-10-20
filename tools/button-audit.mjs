@@ -1,12 +1,12 @@
 // tools/button-audit.mjs (new) — the one-button-style audit (runs-redesign spec §1.2, §5.2; known bug 4).
-// auditButtons and auditSurface are serialised into the page by the CDP proofs as `(${auditButtons})(…)`, so their
-// bodies must not reference anything outside their own parameters.
+// auditButtons, auditSurface, auditSizes and auditType are serialised into the page by the CDP proofs as
+// `(${auditButtons})(…)`, so their bodies must not reference anything outside their own parameters.
 
 export const BUTTON_SPEC = Object.freeze({
   sizes: ['btn-sm', 'btn-lg'],                          // none = medium
   variants: ['btn-primary', 'btn-quiet', 'btn-danger'], // none = secondary
   heights: { 'btn-sm': 28, '': 32, 'btn-lg': 40 },
-  fontSizes: { 'btn-sm': '12.5px', '': '13px', 'btn-lg': '14px' },
+  fontSizes: { 'btn-sm': '12px', '': '13px', 'btn-lg': '13px' },
   corners: ['6px', '0px'],                              // 0 for the joined halves of a split button
   // D10: controls, not §1.2 buttons. They still obey the radius tokens (test/ui-design-language.test.mjs).
   controls: ['.nav button', '.seg button', '.tab', '[role="tab"]', '[role="menuitem"]', '[role="menuitemradio"]',
@@ -16,9 +16,12 @@ export const BUTTON_SPEC = Object.freeze({
     'button.pd-ov-card', 'button.wd-member', 'button.ask-activity-head', 'button.act-srow-name', 'button.runs-sec-head',
     'button.gp-row', 'button.agent-row-head', 'button.hd-tree-file', 'button.hd-tree-dir', 'button.ask-filescard-thumb', 'button.ask-filescard-name', 'button.chat-home-act',
     'button.chat-home-wf', 'button.chat-home-chat', 'button.chat-home-plan-open', 'button.release-row-add', 'button.release-row-edit',
-    'button.wfl-folder', 'button.mcp-setrow', 'button.mv-sec-toggle', 'button.proj-open', 'button.xtoggle',
-    '.mv-filter', '.mv-cp-terms-pill', '.cost-bd-btn', '.linkish', '.hd-dl-more-btn', '.plan-fold', '.plan-persp-edit', '.qopt', '.afb-main',
+    'button.wfl-folder', 'button.mcp-setrow', 'button.proj-open', 'button.xtoggle', 'button.gs-tile',
+    '.mv-cp-terms-pill', '.cost-bd-btn', '.linkish', '.hd-dl-more-btn', '.plan-fold', '.plan-persp-edit', '.qopt', '.afb-main',
     '.afb-folder', '.acct', '[class*="chip"]'],
+  // .btn labels that still type "+" instead of icon(doc, 'plus'), exactly as shown; slice 3 emptied this
+  // (docs/design-system.md › Button). The static twin is DEBT.typedPlus in test/fixtures/design-debt.json.
+  plusDebt: [],
 });
 
 /**
@@ -61,6 +64,7 @@ export function auditButtons(root, spec, env) {
     const shown = (el.textContent || '').replace(/[…]/g, '').trim();
     const words = shown.split(/\s+/).filter((w) => /\w/.test(w));
     if (words.length > 3 && !/^Approve with \d+ open issues?$/.test(shown)) bad('long-label', shown.slice(0, 40));
+    if (/^\+ ?[A-Z][a-z]/.test(shown) && !spec.plusDebt.includes(shown)) bad('typed-plus', shown.slice(0, 40));
   }
   // One primary per group of actions (spec §1.3). A .btn-split (main half + caret) is one action (D11).
   const isPrimary = (c) => visible(c) && (c.classList.contains('btn-primary')
@@ -80,8 +84,8 @@ export function auditButtons(root, spec, env) {
 
 export const SURFACE_SPEC = Object.freeze({
   heights: [28, 32, 40],
-  infoMin: 24,
-  controls: ['.tab', '.seg', '.wfl-chip', '.wfl-folder', '.chat-home-preset'],
+  infoMin: 28,
+  controls: ['.tab', '.seg', '.wfl-folder', '.chat-home-preset', '.filter-chip'],
   tiles: { sel: '.chat-home-act', min: 56, max: 64 },
   cards: ['.ask-card', '.chat-rc', '.shape-feature', '.rd-sheet', '.card'],
   fields: '.file, .ta-hl-back',   // input-like boxes (the file drop zone, a textarea's highlight backdrop) keep their borders
@@ -140,6 +144,96 @@ export function auditSurface(root, spec, env) {
   for (const c of root.querySelectorAll('.flag-chip')) {
     const p = c.parentElement;
     if (p && p.matches('[role="tablist"], .tabs, .seg')) bad(c, 'chip-outside-label', p.className);
+  }
+  return out;
+}
+
+/** Field, segmented and chip sizes (docs/design-system.md › Field, Segmented control, Chips). `spec.debt` holds the
+ *  field selectors test/fixtures/design-debt.json still allows their own size; a field they match is skipped. */
+export const SIZE_SPEC = Object.freeze({
+  fields: 'input[type="text"],input[type="number"],select,.input,.select',
+  fieldHeights: [28, 32],
+  fieldCorner: '6px',
+  seg: '.seg button',
+  segHeight: 28,
+  chips: '.badge,.flag-chip,.issue-sev,.artifact-kind,.tp-kind,.sk-kind,.team-chip .kind,.hd-ov-file-kind,.ask-mcard-kind,.wf-log-live,.kind-chip',
+  chipHeight: 18,
+  debt: [],
+});
+
+export function auditSizes(root, spec, env) {
+  const win = root.ownerDocument.defaultView;
+  const style = (env && env.style) || ((el) => win.getComputedStyle(el));
+  const rect = (env && env.rect) || ((el) => el.getBoundingClientRect());
+  const sig = (el) => el.tagName.toLowerCase() + [...el.classList].sort().map((c) => `.${c}`).join('');
+  const visible = (el) => { const r = rect(el); return r.width > 0 && r.height > 0; };
+  const h = (el) => Math.round(rect(el).height);
+  const out = [];
+  const bad = (el, rule, got) => out.push({ sig: sig(el), rule, got: String(got), text: (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 40) });
+  const excused = (el) => spec.debt.some((s) => { try { return el.matches(s); } catch { return false; } });
+  for (const el of root.querySelectorAll(spec.fields)) {
+    if (!visible(el) || excused(el)) continue;
+    if (!spec.fieldHeights.includes(h(el))) bad(el, 'field-height', `${h(el)}px`);
+    if (style(el).borderTopLeftRadius !== spec.fieldCorner) bad(el, 'field-corner', style(el).borderTopLeftRadius);
+  }
+  for (const el of root.querySelectorAll(spec.seg)) if (visible(el) && h(el) !== spec.segHeight) bad(el, 'seg-height', `${h(el)}px`);
+  const over = (env && env.over) || ((el) => el.scrollWidth > el.clientWidth);
+  for (const el of root.querySelectorAll(spec.chips)) {
+    if (!visible(el)) continue;
+    if (h(el) !== spec.chipHeight) bad(el, 'chip-height', `${h(el)}px`);
+    // 18px with zero vertical padding must not clip the label sideways either (R-ux-2: "none truncates").
+    if (over(el)) bad(el, 'chip-truncated', `${el.scrollWidth}>${el.clientWidth}`);
+  }
+  return out;
+}
+
+/** Type scale (docs/design-system.md › Type): every visible element with its own text renders at a step. The graph
+ *  canvases, SVG and the terminal are skipped (D23). One entry per element signature. */
+export const TYPE_SPEC = Object.freeze({
+  sizes: [11, 12, 13, 15, 18, 22, 26],
+  skip: 'svg, .run-flow, .gv-world, .xterm',
+});
+
+export function auditType(root, spec, env) {
+  const win = root.ownerDocument.defaultView;
+  const style = (env && env.style) || ((el) => win.getComputedStyle(el));
+  const rect = (env && env.rect) || ((el) => el.getBoundingClientRect());
+  const out = [];
+  const seen = new Set();
+  for (const el of root.querySelectorAll('*')) {
+    if (el.closest(spec.skip)) continue;
+    if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) continue;
+    const r = rect(el);
+    if (!(r.width > 0 && r.height > 0)) continue;
+    const px = parseFloat(style(el).fontSize);
+    // Not rounded: Math.round(12.5) is 13 and would hide a half size. 0.1 lets `.92em` code (11.96px) pass.
+    if (spec.sizes.some((s) => Math.abs(s - px) < 0.1)) continue;
+    const sig = el.tagName.toLowerCase() + [...el.classList].sort().map((c) => `.${c}`).join('');
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    out.push({ sig, rule: 'type-scale', got: `${px}px`, text: el.textContent.trim().slice(0, 40) });
+  }
+  return out;
+}
+
+// Slice 3 (D13): stray clickables. Every visible button under `root` is .btn or one of the shared controls, or one of
+// the rows and tiles a person opens (docs/design-system.md › Cards versus divided rows). Nothing screen-specific.
+export const STRAY_SPEC = Object.freeze({
+  allow: ['.tab', '[role="tab"]', '.seg button', '.seg-btn', '.filter-chip', '.switch', '[role="switch"]', '[role^="menuitem"]',
+    '[role="option"]', '[role="radio"]', '.info-tip', 'button.wfl-folder', 'div.wfl-main', 'button.mcp-setrow', 'button.gs-tile',
+    'button.ob-door', 'button.wfc-chip-btn'],
+  skip: '#wfv-canvas',
+});
+export function auditStray(root, spec, env) {
+  const rect = (env && env.rect) || ((el) => el.getBoundingClientRect());
+  const visible = (el) => { const r = rect(el); return r.width > 0 && r.height > 0; };
+  const allow = spec.allow.join(',');
+  const out = [];
+  if (!root) return out;
+  for (const el of root.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"]')) {
+    if (!visible(el) || el.classList.contains('btn') || el.matches(allow) || el.closest(spec.skip)) continue;
+    out.push({ sig: el.tagName.toLowerCase() + [...el.classList].sort().map((c) => `.${c}`).join(''), rule: 'outside-btn',
+      text: (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 40) });
   }
   return out;
 }

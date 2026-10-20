@@ -182,3 +182,13 @@ test('extras: hidden with the empty card when filters match nothing', () => {
   assert.equal(r.el.querySelector('.cr-tail').hidden, true);
   assert.equal(r.el.querySelector('.cr-empty-card').hidden, false);
 });
+
+test('stacked on phones, every table cell is the row name or carries its column label', () => {
+  const { doc } = mount({ state: { by: 'tag:client' } });
+  const heads = [...doc.querySelectorAll('.cr-table thead th')].map((th) => th.textContent);
+  for (const tr of doc.querySelectorAll('.cr-table tbody tr')) {
+    const cells = [...tr.cells];
+    assert.ok(cells[0].classList.contains('table-main'));
+    assert.deepEqual(cells.slice(1).map((td) => td.dataset.label), heads.slice(1));
+  }
+});

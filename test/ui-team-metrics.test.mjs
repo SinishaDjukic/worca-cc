@@ -117,6 +117,24 @@ test('#team-metrics routes from the sidebar entry (directly below Stats) and ren
       const { window, tick } = await boot({ url: 'http://localhost:4317/#team-metrics', fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TM_DATA }) });
       await tick(); await tick();
       assert.equal(window.document.querySelectorAll('#tm-body .stat-tile').length, 6);
+      assert.equal(window.location.hash, '#team-metrics', 'a fresh load keeps the hash');
+      assert.equal(window.document.querySelector('[data-view="chat"]').classList.contains('hidden'), true, 'not Chat');
+      assert.equal(window.document.getElementById('topnav-title').textContent, 'Team metrics');
+    } },
+    { name: 'simple level and a late /api/flags: the hash stays #team-metrics and Team metrics shows', run: async () => {
+      const tm = tmHandler({ scopes: SCOPES_ON, data: TM_DATA });
+      const { window, tick } = await boot({ url: 'http://localhost:4317/#team-metrics', fetchHandler: (u, o) => {
+        if (u.includes('/api/flags')) return new Promise((r) => setTimeout(() => r({ ok: true, status: 200, json: async () => ({ flags: {} }) }), 30));
+        if (u.includes('/api/settings')) return respond({ uiLevel: 'simple' });
+        return tm(u, o);
+      } });
+      await new Promise((r) => setTimeout(r, 60));
+      await tick(); await tick();
+      const doc = window.document;
+      assert.equal(window.location.hash, '#team-metrics');
+      assert.equal(doc.querySelector('[data-view="team-metrics"]').classList.contains('hidden'), false);
+      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), true);
+      assert.equal(doc.getElementById('topnav-title').textContent, 'Team metrics');
     } },
   ]);
 });

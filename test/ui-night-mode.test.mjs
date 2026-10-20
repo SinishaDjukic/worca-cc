@@ -465,6 +465,17 @@ test('night form patch: empty = __unset (inherit; team cap/window stay in force)
   ]);
 });
 
+test('night form fields are divided rows: every .night-field is a .drow, no input-mini input', () => {
+  const dom = new JSDOM('<!doctype html><body><div id="f"></div></body>');
+  const root = dom.window.document.getElementById('f');
+  renderNightForm(root, { level: 'user', values: {} });
+  const fields = [...root.querySelectorAll('.night-field')];
+  assert.ok(fields.length >= 8);
+  for (const f of fields) assert.ok(f.classList.contains('drow'), f.querySelector('label')?.textContent);
+  assert.equal(root.querySelectorAll('input.input-mini').length, 0);
+  assert.ok(root.querySelector('.drow-control .night-strategy'), 'a select sits in .drow-control');
+});
+
 const formRoot = () => new JSDOM('<div id="r"></div>').window.document.getElementById('r');
 const fire = (node, type) => node.dispatchEvent(new node.ownerDocument.defaultView.Event(type, { bubbles: true }));
 

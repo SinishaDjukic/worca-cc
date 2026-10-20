@@ -10,7 +10,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { auditButtons, BUTTON_SPEC } from './button-audit.mjs';
+import { auditButtons, auditType, BUTTON_SPEC, TYPE_SPEC } from './button-audit.mjs';
 import { auditRunsLayout } from './runs-layout-audit.mjs';
 
 const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -131,6 +131,8 @@ async function audit(where) {
   check(problems.length === 0, `${where}: 0 layout problems`, JSON.stringify(problems.slice(0, 8)));
 }
 const BUTTON_AUDIT = `(${auditButtons})(document.body, ${JSON.stringify(BUTTON_SPEC)}, null)`;
+// D23: every visible text on the type scale (docs/design-system.md › Type).
+const TYPE_AUDIT = `(${auditType})(document.body, ${JSON.stringify(TYPE_SPEC)}, null)`;
 const closeMenus = () => ev("document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));document.querySelector('.group-picker')?.remove();0");
 
 // QA 2: the list's resize handle: → x4 widens by 64px, Home resets the default, a drag reaches 600px and survives a reload.
@@ -197,6 +199,24 @@ for (const width of [290, 375, 1440]) {
       check(gap === 16, `${at}: the Add to group picker is the full width minus 16px`, `innerWidth - width = ${gap}`);
     }
     await closeMenus();
+    // Decided corner (D11): a highlighted row takes the sidebar nav item's radius (--r-sm) and hides its own divider.
+    // Probe rows carry the real classes, appended and removed in one evaluation (no repaint in between).
+    const corners = await ev(`(() => {
+      const row = document.querySelector('#runs-list .runs-item');
+      const needs = row.cloneNode(false); needs.classList.add('is-needs');
+      const sel = row.cloneNode(false); const a = document.createElement('a'); a.className = 'runs-row selected'; sel.append(a);
+      row.parentElement.append(needs, sel);
+      const cs = (el) => getComputedStyle(el);
+      const out = { needs: cs(needs).borderTopLeftRadius, selected: cs(sel).borderTopLeftRadius,
+        nav: cs(document.querySelector('.nav button')).borderTopLeftRadius,
+        lines: [cs(needs).borderBottomColor, cs(sel).borderBottomColor] };
+      needs.remove(); sel.remove();
+      return out; })()`);
+    check(corners.nav === '6px' && corners.needs === corners.nav && corners.selected === corners.nav,
+      `${at}: a selected and a Needs-you row have the nav item's corner`, JSON.stringify(corners));
+    check(corners.lines.every((c) => c === 'rgba(0, 0, 0, 0)'), `${at}: a highlighted row hides its own divider`, JSON.stringify(corners.lines));
+    const offType = await ev(TYPE_AUDIT);
+    check(offType.length === 0, `${at}: every text is on the type scale`, JSON.stringify(offType.slice(0, 8)));
     const bad = await ev(BUTTON_AUDIT);
     check(bad.length === 0, `${at}: every button is .btn in 3 sizes x 4 variants`, JSON.stringify(bad.slice(0, 8)));
     if (width === 1440 && theme === 'light') await resizeProof(at);

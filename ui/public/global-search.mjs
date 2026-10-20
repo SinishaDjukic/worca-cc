@@ -11,9 +11,10 @@
 //     workflows:  [{ id, name, builtin }]
 //     schedules:  GET /api/schedules `schedules` — the series: { id, title, sentence, status }
 //     tickets:    GET /api/schedules `tickets` — { id, scheduleId, title, status, runAt, after }
+//     labels:     [string] — the label words in use on the listed runs (the Runs list label filter)
 //   }
-//   Row = { kind: 'run'|'project'|'workspace'|'workflow'|'schedule'|'ticket', id, title, meta,
-//           tone?: 'need'|'run'|'fail'|'idle' (runs), href? (every kind but workflow), workflowId? }
+//   Row = { kind: 'run'|'project'|'workspace'|'workflow'|'schedule'|'ticket'|'label', id, title, meta,
+//           tone?: 'need'|'run'|'fail'|'idle' (runs), href? (every kind but workflow and label), workflowId?, label? }
 import { liveRow, histRow } from './runs-list.mjs';
 import { formatInstant } from '../../src/shared/schedule/recurrence.mjs';
 
@@ -21,7 +22,7 @@ export const RUN_LIMIT = 5;
 export const OTHER_LIMIT = 6;
 
 const ENDED_ICONS = new Set(['done', 'stop', 'fail']);
-const KIND_ORDER = Object.freeze({ project: 0, workspace: 1, workflow: 2, schedule: 3, ticket: 3 });
+const KIND_ORDER = Object.freeze({ project: 0, workspace: 1, workflow: 2, schedule: 3, ticket: 3, label: 4 });
 const WORD_CHAR = /[\p{L}\p{N}]/u;
 
 /** The chip's glyph: ⌘K on a Mac, Ctrl K elsewhere (the key handler takes both chords everywhere). */
@@ -95,7 +96,12 @@ function otherRows(src, tz) {
       rows.push({ kind: 'ticket', id: String(t.id), title: String(t.title || 'Scheduled run'), meta: ticketMeta(t, tz), href: '#schedules/once' });
     }
   }
-  return rows.map((row) => ({ row, hay: `${row.title} ${row.meta}`.toLowerCase() }));
+  // D17: a Runs list label filter. Matched by the word and by `label:word`, never by its "Runs labelled" title.
+  for (const l of list(src.labels)) {
+    const label = String(l);
+    if (label) rows.push({ kind: 'label', id: label, title: `Runs labelled ${label}`, meta: 'Runs filter', label });
+  }
+  return rows.map((row) => ({ row, hay: (row.kind === 'label' ? `${row.label} label:${row.label}` : `${row.title} ${row.meta}`).toLowerCase() }));
 }
 
 /** Does `w` start a word of `t` (at 0, or after a character that is not a letter or digit)? */

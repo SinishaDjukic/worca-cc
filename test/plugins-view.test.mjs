@@ -264,7 +264,7 @@ test('orphan list: row per orphan with Purge button; empty input -> empty contai
     [{ name: 'ghost-src', dataDir: '/home/u/.worca-cc/plugins/ghost-src/data' }],
     { doc },
   );
-  assert.equal(el.className, 'pl-orphans');
+  assert.equal(el.className, 'pl-orphans drows');
   const rows = el.querySelectorAll('.pl-orphan-row');
   assert.equal(rows.length, 1);
   assert.equal(rows[0].querySelector('.pl-name').textContent, 'ghost-src');

@@ -29,7 +29,7 @@ test('providers card: not connected / not acknowledged states; sign-in block rep
   const cp = card.querySelector('.mv-pv-row[data-provider="copilot"]');
   // The state pill says what unblocks sign-in in the notice button's words, and IS a notice
   // button: the same .mv-cp-terms class the Providers delegation opens the notice for.
-  const pill = cp.querySelector('.badge');
+  const pill = cp.querySelector('.mv-cp-terms-pill');
   assert.equal(pill.tagName, 'BUTTON');
   assert.equal(pill.type, 'button');
   assert.equal(pill.textContent, 'please read the notice first');
@@ -42,7 +42,7 @@ test('providers card: not connected / not acknowledged states; sign-in block rep
   assert.equal(noticeButtons.at(-1).textContent, 'Read notice');
   // An acknowledgement of an older notice: the pill asks for the updated one.
   const stale = renderProvidersCard({ copilot: { connected: false, termsCurrent: false, acknowledgedTerms: '2026-01-01T00:00:00.000Z' } }, { doc });
-  assert.equal(stale.querySelector('.mv-pv-row[data-provider="copilot"] .badge').textContent, 'please re-read the updated notice');
+  assert.equal(stale.querySelector('.mv-pv-row[data-provider="copilot"] .mv-cp-terms-pill').textContent, 'please re-read the updated notice');
   // Once acknowledged the pill is plain status again, not a button.
   const ok = renderProvidersCard({ copilot: { connected: false, termsCurrent: true } }, { doc });
   assert.equal(ok.querySelector('.mv-pv-row[data-provider="copilot"] .badge').tagName, 'SPAN');
