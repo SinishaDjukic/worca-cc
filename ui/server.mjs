@@ -5835,7 +5835,7 @@ app.get('/api/counts', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/stats?range=today|week|month|lastMonth|custom|all[&from&to][&tag…][&person][&groupBy][&byTag=1[&tagKey…]]
+// GET /api/stats?range=today|week|month|lastMonth|custom|all[&from&to][&tag…][&person][&groupBy][&byTag=1[&tagKey…]][&report=1]
 //   -> the Statistics view payload (§6.9). A bad range/filter/groupBy is the caller's fault: getStats'
 //   RangeError maps to 400. The broker's per-person card is skipped while a filter is active (it
 //   cannot be narrowed by tag).
@@ -5850,6 +5850,7 @@ app.get('/api/stats', async (req, res) => {
       filter: { tags: q.tag == null ? [] : [].concat(q.tag), person: str(q.person) },
       groupBy: str(q.groupBy),
       tagKeys: q.byTag === '1' ? (q.tagKey == null ? [] : [].concat(q.tagKey)) : null,
+      report: q.report === '1',
     });
   } catch (err) {
     if (err instanceof RangeError) return badRequest(res, err.message);

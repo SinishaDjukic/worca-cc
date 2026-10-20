@@ -17,6 +17,7 @@
 import { prepare } from './db.mjs';
 import { parseTag, formatTag, MAX_TAGS, TAG_KEY_RE } from '../shared/run-tags.mjs';
 import { actorLabel } from './identity.mjs';
+import { readTagsFor } from './run-tags-store.mjs';
 import {
   budgetStatus, costWindowStart, costWindowEnd, allTimeTotals, roundUsd,
   askWindowedSpendUsd,
@@ -309,6 +310,105 @@ function tagGroupsFor(configured, ctx) {
   return configured.map((k) => table(k, true)).concat(others);
 }
 
+// Statistics › Cost (value report, labels-cost-tags s3): one fact per run the window counts.
+const FACT_SELECT = `
+    SELECT p.id AS id, p.project_key AS projectKey, pj.name AS projectName, p.started_by AS who, p.status AS status,
+      p.pr_url AS prUrl, p.pr_state AS prState, COALESCE(p.human_hours, 0) AS hours,
+      COALESCE(p.started_at, p.updated_at) AS startedAt,
+      json_extract(CASE WHEN json_valid(p.stepper) THEN p.stepper END, '$.template.name') AS wfName,
+      json_extract(CASE WHEN json_valid(p.stepper) THEN p.stepper END, '$.template.id') AS wfId,
+      CASE WHEN p.total_cost_usd > 0 THEN p.total_cost_usd ELSE COALESCE(s.sc, 0) END AS totalUsd${TOTALS_FROM}
+    LEFT JOIN projects pj ON pj.key = p.project_key`;
+const FACT_STATUS = { done: 'finished', stopped: 'stopped', error: 'failed', paused: 'paused', interrupted: 'paused' };
+// Ledger spend whose pipelines row is gone (src/core/pipeline-delete.mjs keeps cost_ledger rows): it counts in the
+// totals, so it gets a fact too. `orphan: true` keeps it out of runIds (nothing to open), not out of the chart.
+const ORPHAN_FACT = Object.freeze({ person: null, project: null, workflow: null, status: null, pr: null,
+  usd: 0, hours: 0, inCohort: false, orphan: true, startedMs: null, hourBucket: -1 });
+
+/** The project as people know it (D10): its registered name, else the key's slug. project_key is
+ *  `<slug>-<sha1[:8]>` (store.mjs projectKey), not a path, so the hash suffix is cut. */
+function projectOf(name, key) {
+  if (name) return String(name);
+  const k = String(key || '');
+  return k ? k.replace(/-[0-9a-f]{8}$/, '') || k : null;
+}
+
+function factOf(r, inCohort) {
+  return {
+    id: r.id, person: actorLabel(r.who) || null, project: projectOf(r.projectName, r.projectKey),
+    workflow: r.wfName || r.wfId || null, status: FACT_STATUS[r.status] || 'running',
+    pr: r.prUrl ? (r.prState === 'MERGED' ? 'merged' : 'opened') : null,
+    tags: {}, usd: 0, hours: inCohort ? Math.round(Number(r.hours || 0) * 100) / 100 : 0, inCohort,
+    startedMs: Date.parse(r.startedAt) || null, hourBucket: -1, spend: [],
+  };
+}
+
+/** Ledger spend per run in [fromMs, toMs); with a filter, only rows of matching runs. */
+function ledgerByRun(fromMs, toMs, filter) {
+  if (!isFiltered(filter)) {
+    return prepare('SELECT pipeline_id AS id, SUM(amount_usd) AS usd FROM cost_ledger WHERE ts >= ? AND ts < ? GROUP BY pipeline_id')
+      .all(fromMs, toMs);
+  }
+  const f = filterSql(filter);
+  return prepare(`SELECT l.pipeline_id AS id, SUM(l.amount_usd) AS usd FROM cost_ledger l JOIN pipelines p ON p.id = l.pipeline_id
+    WHERE l.ts >= ? AND l.ts < ?${f.sql} GROUP BY l.pipeline_id`).all(fromMs, toMs, ...f.params);
+}
+
+/**
+ * Per-run facts over one window: the cohort (runs, hours, outcomes) plus every run with ledger spend in it. Money is
+ * the ledger by timestamp for a bounded range, the fallback-aware row totals for 'all' (groupedRows' rule). The
+ * rounding drift goes onto the top spender, so Σ usd === pipelineSpendUsd. `buckets` adds each run's per-bucket spend
+ * ([index, usd]) and the bucket its hours are drawn in (its start, clamped into the window).
+ */
+function reportFacts({ win, fromMs, toMs, allTime, filter, pipelineSpendUsd, buckets = null }) {
+  const f = filterSql(filter);
+  const facts = new Map();
+  for (const r of prepare(`${FACT_SELECT} WHERE ${win.sql}${f.sql}`).all(...win.params, ...f.params)) {
+    const x = factOf(r, true);
+    if (allTime) x.usd = roundUsd(r.totalUsd || 0);
+    facts.set(r.id, x);
+  }
+  if (!allTime) {
+    const money = ledgerByRun(fromMs, toMs, filter);
+    const missing = money.map((m) => m.id).filter((id) => id && !facts.has(id));
+    for (let i = 0; i < missing.length; i += 500) {
+      const chunk = missing.slice(i, i + 500);
+      for (const r of prepare(`${FACT_SELECT} WHERE p.id IN (${chunk.map(() => '?').join(', ')})`).all(...chunk)) {
+        facts.set(r.id, factOf(r, false));
+      }
+    }
+    for (const m of money) {
+      let x = facts.get(m.id);
+      if (!x) { x = { ...ORPHAN_FACT, id: `orphan:${m.id}`, tags: {}, spend: [] }; facts.set(x.id, x); }   // no pipeline row
+      x.usd = roundUsd(x.usd + (m.usd || 0));
+    }
+  }
+  for (const [id, list] of readTagsFor([...facts.values()].filter((x) => !x.orphan).map((x) => x.id))) {
+    const x = facts.get(id);
+    for (const t of list) { const { tag } = parseTag(t); if (tag) x.tags[tag.key] = tag.value; }
+  }
+  const list = [...facts.values()];
+  const drift = roundUsd(pipelineSpendUsd - list.reduce((a, x) => a + x.usd, 0));
+  if (drift && list.length) {
+    const top = list.reduce((m, x) => (x.usd > m.usd ? x : m), list[0]);
+    top.usd = roundUsd(top.usd + drift);
+  }
+  if (buckets && buckets.length) {
+    buckets.forEach(({ startMs, endMs }, i) => {
+      for (const m of ledgerByRun(startMs, endMs, filter)) {
+        const x = facts.get(m.id) || facts.get(`orphan:${m.id}`);
+        if (x && m.usd) x.spend.push([i, roundUsd(m.usd)]);
+      }
+    });
+    for (const x of list) {
+      if (!x.inCohort || x.startedMs == null) continue;
+      const at = Math.max(x.startedMs, buckets[0].startMs);
+      x.hourBucket = buckets.findIndex((b) => at >= b.startMs && at < b.endMs);
+    }
+  }
+  return list;
+}
+
 /** Ask Worca window aggregate (ask-cost-statistics-design.md D5/D6): spend,
  *  DISTINCT sessions, turns. A thread is a session in every window it has a
  *  costed turn in. */
@@ -366,7 +466,7 @@ function buildBuckets(windowStart, now, bucket) {
 }
 
 /** GET /api/stats backing (spec §6.9). @throws {RangeError} on unknown range. */
-export function getStats({ range = 'month', now = new Date(), from = null, to = null, filter: rawFilter = null, groupBy = null, tagKeys = null } = {}) {
+export function getStats({ range = 'month', now = new Date(), from = null, to = null, filter: rawFilter = null, groupBy = null, tagKeys = null, report = false } = {}) {
   if (!RANGES.includes(range)) throw new RangeError(`unknown stats range: ${range}`);
   const filter = normaliseStatsFilter(rawFilter || {});
   const filtered = isFiltered(filter);
@@ -451,9 +551,10 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
   // Buckets end at min(now, windowEnd − 1 ms) and are clamped to the window, so a past window
   // (Last month) is fully drawn and a month bucket of a custom range never counts money outside it.
   const seriesEnd = new Date(Math.min(now.getTime(), windowEnd.getTime() - 1));
-  const series = buildBuckets(windowStart, seriesEnd, bucket).map(({ startMs: s0, endMs: e0 }) => {
-    const startMs = Math.max(s0, windowStart.getTime());
-    const endMs = Math.min(e0, windowEnd.getTime());
+  const seriesWindows = buildBuckets(windowStart, seriesEnd, bucket).map(({ startMs: s0, endMs: e0 }) => ({
+    startMs: Math.max(s0, windowStart.getTime()), endMs: Math.min(e0, windowEnd.getTime()),
+  }));
+  const series = seriesWindows.map(({ startMs, endMs }) => {
     const c = bucketTotalsFn(startMs, endMs, filter);
     return {
       bucketStartMs: startMs,
@@ -475,10 +576,26 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
   } : null;
   const tagGroups = tagKeyList ? tagGroupsFor(tagKeyList, groupCtx) : null;
 
-  return {
+  const out = {
     range, bucket,
     windowStartMs: windowStart.getTime(), windowEndMs: windowEnd.getTime(),
     totals, prev, budget, series, humanRateUsd: rate,
     filter, filtered, groupBy: group ? groupBy : null, groups, tagGroups, people: peopleInUse(),
   };
+  if (report) {
+    const winOf = range === 'today' ? WINDOWS.active : WINDOWS.cohort;
+    out.report = {
+      buckets: seriesWindows.map((b) => b.startMs),
+      runs: reportFacts({ win: groupCtx.win, fromMs: groupCtx.fromMs, toMs: groupCtx.toMs, allTime: range === 'all',
+        filter, pipelineSpendUsd: totals.pipelineSpendUsd, buckets: seriesWindows }),
+      prevRuns: prev ? reportFacts({ win: winOf(prevStart.getTime(), prevEnd.getTime()), fromMs: prevStart.getTime(),
+        toMs: prevEnd.getTime(), allTime: false, filter, pipelineSpendUsd: prev.pipelineSpendUsd }) : null,
+      ask: filtered ? null : {
+        spentUsd: totals.ask.spendUsd,
+        prevSpentUsd: prev ? prev.ask.spendUsd : null,
+        series: seriesWindows.map((b) => roundUsd(askWindowedSpendUsd(b.startMs, b.endMs))),
+      },
+    };
+  }
+  return out;
 }

@@ -1031,3 +1031,12 @@ test('run labels: the head\'s Label filter keeps matching rows; its chip × clea
   assert.equal(filter.hidden, true);
   assert.equal(doc.querySelectorAll('#runs-list a.runs-row').length, 3);
 });
+
+test('openRunsSelected (Statistics › Cost "Tag N runs"): routes to #runs with the listed runs ticked; the rest are reported', async () => {
+  const { window, doc } = await boot();
+  window.__np.openRunsSelected(['aaaa0001', 'aaaa0002', 'zzzz9999']);
+  await settle(window, 8);
+  assert.equal(window.location.hash, '#runs');
+  assert.equal(doc.getElementById('runs-bulk-n').textContent, '2 selected');
+  assert.equal(doc.querySelector('#toasts .toast .tt').textContent, 'Selected 2 of 3 runs');
+});

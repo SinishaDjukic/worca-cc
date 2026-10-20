@@ -181,7 +181,8 @@ import {
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
-import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv } from './stats-view.mjs';
+import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv, statsRangeLabel, DEFAULT_FMT } from './stats-view.mjs';
+import { createCostReport } from './cost-report.mjs';
 import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
 import { createComposer, isReservedWorkflowId } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
@@ -18603,7 +18604,7 @@ if (el.modelShareBtn) {
 // ---------------------------------------------------------------------------
 // A remembered view chip (#718 slice 4), per browser. A missing or throwing localStorage, or a stale value,
 // falls back, so module evaluation never breaks on it.
-const VIEW_CHIPS = ['overview', 'person', 'tag'];
+const VIEW_CHIPS = ['overview', 'person', 'cost'];
 const STATS_VIEW_KEY = 'worca-cc.stats.view';
 function storedChoice(key, allowed, fallback) {
   try { const v = localStorage.getItem(key); return allowed.includes(v) ? v : fallback; } catch { return fallback; }
@@ -18612,7 +18613,23 @@ function storeChoice(key, value) {
   try { localStorage.setItem(key, value); } catch { /* private mode */ }
 }
 
-const statsState = { range: null, from: '', to: '', tags: [], person: '', groupBy: '', view: storedChoice(STATS_VIEW_KEY, VIEW_CHIPS, 'overview'), last: null };
+// 'tag' was the By cost tag chip (#718 slice 4); the Cost and value report replaced it (labels-cost-tags s3).
+const storedStatsView = () => { const v = storedChoice(STATS_VIEW_KEY, [...VIEW_CHIPS, 'tag'], 'overview'); return v === 'tag' ? 'cost' : v; };
+const statsState = { range: null, from: '', to: '', tags: [], person: '', groupBy: '', view: storedStatsView(), last: null };
+
+let costReport = null;   // one instance for the page: a refetch repaints the same chart, so its areas morph
+function costReportFor() {
+  if (costReport) return costReport;
+  let reduced = false;
+  try { reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* no matchMedia */ }
+  costReport = createCostReport({
+    doc: document, fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle, hours: DEFAULT_FMT.hours },
+    storage: localStorage, reducedMotion: reduced,
+    onOpenRuns: (ids) => openRunsSelected(ids),
+    onDownload: (csv, name) => downloadStatsCsv(csv, name),
+  });
+  return costReport;
+}
 const statsTagInput = createTagInput(document, { suggest: fetchTagVocabulary, placeholder: 'Filter: client:acme…', strict: false });
 document.getElementById('stats-tags')?.appendChild(statsTagInput.el);
 statsTagInput.onChange((tags) => { statsState.tags = tags; loadStatsView(); });
@@ -18637,15 +18654,12 @@ async function paintStatsGroupOptions() {
   if (sel.value !== statsState.groupBy) statsState.groupBy = '';   // a key that vanished
 }
 
-/** Flag on: paint #stats-view (By tag only while a tag exists or a dimension is configured) → the view to show
- *  and the dims it was decided with. A stored `tag` while By tag is unavailable shows Overview but stays stored. */
+/** Flag on: highlight the chosen #stats-view chip → the view to show and the dims (policy dimensions, in their
+ *  order) the Cost report's picker leads with. Every chip shows: the Cost report's built-in dimensions always exist. */
 async function paintStatsViewChips() {
-  const keys = (await fetchTagVocabulary())?.keys || [];
   const dims = await loadAllTagDims();
-  const tagOk = keys.length > 0 || dims.length > 0;
   const seg = document.getElementById('stats-view');
-  seg.querySelector('[data-stats-view="tag"]').hidden = !tagOk;
-  const view = statsState.view === 'tag' && !tagOk ? 'overview' : statsState.view;
+  const view = statsState.view;
   for (const b of seg.querySelectorAll('button[data-stats-view]')) {
     const on = b.dataset.statsView === view;
     b.classList.toggle('on', on);
@@ -18693,15 +18707,21 @@ async function loadStatsView() {
     ? await paintStatsViewChips().catch(() => ({ view: 'overview', dims: [] }))
     : { view: null, dims: [] };
   if (!chips) await paintStatsGroupOptions().catch(() => {});      // a vanished tag key resets groupBy before the query
+  // Cost has its own filter bar (cost-report.mjs), so the page's cost tag field and Person select step aside.
+  const cost = chips && view === 'cost';
+  document.getElementById('stats-tags').hidden = cost;
+  document.getElementById('stats-person').closest('.select-wrap').hidden = cost;
   // A network-level rejection is not an !res.ok — without this catch it escapes
   // as an unhandled rejection and leaves the body stuck in .is-loading.
   let res, data;
   try {
-    // Flag on: the chip decides groupBy and byTag. Flag off: the tag field is hidden, so its chips must not
-    // narrow the numbers either.
-    const query = chips
-      ? { ...statsState, groupBy: view === 'person' ? 'person' : '', byTag: view === 'tag', tagKeys: dims.map((d) => d.key) }
-      : { ...statsState, tags: [] };
+    // Flag on: the chip decides groupBy, and Cost asks for the per-run facts (its own chips filter them in the
+    // browser). Flag off: the tag field is hidden, so its chips must not narrow the numbers either.
+    const query = cost
+      ? { range: statsState.range, from: statsState.from, to: statsState.to, report: true }
+      : chips
+        ? { ...statsState, groupBy: view === 'person' ? 'person' : '' }
+        : { ...statsState, tags: [] };
     res = await fetch(`/api/stats?${statsQuery(query)}`);
     data = await safeJson(res);
   } catch (err) {
@@ -18718,11 +18738,15 @@ async function loadStatsView() {
   }
   statsState.last = data;                               // the export reads the rows on screen
   paintStatsPeople(data.people);
-  document.getElementById('stats-filter-note').hidden = !data.filtered;
-  const fmt = { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle };
-  body.replaceChildren(view && view !== 'overview'
-    ? renderStatsView(data, view, { fmt, dims })
-    : renderStatsBody(data, { fmt }));
+  document.getElementById('stats-filter-note').hidden = cost || !data.filtered;
+  if (cost) {
+    const r = costReportFor();
+    r.update({ data, dims, rangeLabel: statsRangeLabel(data), range: statsState.range });
+    body.replaceChildren(r.el);
+  } else {
+    const fmt = { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle };
+    body.replaceChildren(view && view !== 'overview' ? renderStatsView(data, view, { fmt, dims }) : renderStatsBody(data, { fmt }));
+  }
   loadTmScopes().then((d) => { const a = document.getElementById('stats-tm-hint'); if (a) a.hidden = !d.anyEnabled; });
 }
 
@@ -19304,14 +19328,6 @@ function downloadStatsCsv(csv, name) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 el.statsBody.addEventListener('click', (e) => {
-  const csv = e.target.closest('.alloc-csv');
-  if (csv) {
-    const t = statsState.last?.tagGroups?.find((g) => g.key === csv.dataset.key);
-    if (!t) return;
-    const label = dimensionLabel(allTagDimsCache?.dims || [], t.key) || t.key;
-    downloadStatsCsv(groupsToCsv({ label, rows: t.rows }), `statistics-${statsState.range}-tag-${t.key}.csv`);
-    return;
-  }
   if (!e.target.closest('.stats-export') || !statsState.last?.groups) return;
   downloadStatsCsv(groupsToCsv(statsState.last.groups),
     `statistics-${statsState.range}-${(statsState.last.groupBy || '').replace(':', '-')}.csv`);
@@ -20304,6 +20320,7 @@ async function paintPooledBudgetTile(scopeId, records) {
  *  tmState: tmState's initialiser reads it, and a const read above its declaration throws. */
 const TM_RUN_PAGE = 50;
 const TM_VIEW_KEY = 'worca.teamMetrics.view';
+const TM_VIEW_CHIPS = ['overview', 'person', 'tag'];   // Team metrics keeps By tag until s4 (Statistics has Cost)
 const tmState = {
   scopeId: localStorage.getItem('worca.teamMetrics.scope') || '',
   range: 'this-month', from: '', to: '', groupBy: 'workflow',
@@ -20312,7 +20329,7 @@ const tmState = {
   runLimit: TM_RUN_PAGE,            // raised by "Show all N runs" (§4.9 "every record in range")
   cache: new Map(),                 // scopeId → last payload this session: switching back paints at once
   tab: 'overview',                  // 'overview' | 'timeline' — the hash param (#team-metrics/timeline)
-  view: storedChoice(TM_VIEW_KEY, VIEW_CHIPS, 'overview'),   // the Overview tab's chip (#718 slice 4)
+  view: storedChoice(TM_VIEW_KEY, TM_VIEW_CHIPS, 'overview'),   // the Overview tab's chip (#718 slice 4)
   lastTagTables: [],                // the By tag allocationModels last painted (the per-table CSV reads them)
   // Timeline: calendar position, grouping (kept per viewer) and the tile filter.
   tl: {
@@ -30813,7 +30830,8 @@ const RUNS_COLLAPSED_KEY = 'worca-cc.runs.collapsed';   // project / date sectio
 // rowsByKey: every top-level and member row of the last paint; memos: runProgress / cost memos per run and group.
 const runsUi = { view: loadRunsView(localStorage), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false,
   groupsToggled: new Map(), recentShown: RECENT_PAGE, selecting: false, anchorKey: null,
-  sel: createRunsSelection(), rowsByKey: new Map(), memos: new Map(), lastModel: null, listCounts: null };
+  sel: createRunsSelection(), rowsByKey: new Map(), memos: new Map(), lastModel: null, listCounts: null,
+  pendingSelect: null };   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
 const memoFor = (id) => { if (!runsUi.memos.has(id)) runsUi.memos.set(id, {}); return runsUi.memos.get(id); };
 
 function histGroupName(p) {
@@ -31232,6 +31250,7 @@ function paintRunsList() {
   if (archivedView && state.historyArchived === null) loadHistoryArchived();
   runsUi.lastModel = model;
   runsUi.rowsByKey = new Map(model.sections.flatMap((s) => s.rows.flatMap((r) => [[r.key, r], ...(r.kind === 'chain' ? r.members.map((m) => [m.key, m]) : [])])));
+  applyPendingSelect(answered);
   runsUi.sel.prune(new Set(runsUi.rowsByKey.keys()));
   // Under Show = Archived the history source is the archived feed, so the model's other counts would read 0.
   if (!archivedView) runsUi.listCounts = model.counts;
@@ -31680,6 +31699,41 @@ function openRunsForProject(key) {
   runsUi.reveal = `project:${key}`;
   goRunsList();          // the list itself: no D6 restore over the group it reveals
 }
+// "Tag N runs" (Statistics › Cost): open the Runs list with those runs ticked. Applied on the first paint after
+// History has answered, so the rows exist; runs not in the list (archived, past the Recent page) are reported.
+function openRunsSelected(pipelineIds) {
+  runsUi.pendingSelect = new Set((pipelineIds || []).filter(Boolean));
+  goRunsList();
+}
+function applyPendingSelect(answered) {
+  const want = runsUi.pendingSelect;
+  if (!want || !answered) return;
+  runsUi.pendingSelect = null;
+  const keys = [];
+  const found = new Set();
+  for (const [k, r] of runsUi.rowsByKey) {
+    if (k.startsWith('member:')) continue;
+    // A chain's planning run sits in r.planning, not in r.members (ui/public/runs-list.mjs:365).
+    const ids = r.kind === 'chain' ? [r.planning?.pipelineId, ...(r.members || []).map((m) => m.pipelineId)] : [r.pipelineId];
+    const hit = ids.filter((id) => id && want.has(id));
+    if (!hit.length) continue;
+    keys.push(k);
+    for (const id of hit) found.add(id);
+  }
+  runsUi.sel.clear();
+  runsUi.sel.selectAll(keys);
+  runsUi.selecting = keys.length > 0;
+  // A ticked row in a folded project/date section would be selected but unseen: unfold those sections and repaint.
+  const hitKeys = new Set(keys);
+  const folded = (runsUi.lastModel?.sections || []).filter((s) => s.collapsed && s.rows.some((r) => hitKeys.has(r.key)));
+  if (folded.length) {
+    for (const s of folded) runsUi.collapsed.delete(s.id);
+    persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed);   // as openRunsForProject does
+    queueMicrotask(paintRunsList);
+  }
+  if (found.size < want.size) notify({ tone: 'info', title: `Selected ${found.size} of ${want.size} runs`, detail: 'The others are archived, filtered out, or further down the list.' });
+}
+if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { openRunsSelected });
 
 // ── The Runs page's two panes: layout, which detail shows, focus ────────────
 // Two panes need the list (260-320px) beside the glance card (544px + 64px padding); below

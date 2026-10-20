@@ -2886,6 +2886,38 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 #stats-body.is-loading{opacity:.55;pointer-events:none;transition:opacity .15s;}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0 0 0 0);white-space:nowrap;border:0;}
+/* Statistics › Cost: the Cost and value report (cost-report.mjs, cost-area-chart.mjs, cost-dimension-picker.mjs) */
+.cost-report{display:flex;flex-direction:column;gap:14px;}
+.stat-row.cr-kpis{grid-template-columns:repeat(5,minmax(0,1fr));margin-bottom:0;}
+@media (max-width:1080px){ .stat-row.cr-kpis{grid-template-columns:repeat(2,minmax(0,1fr));} }
+.cr-bar,.cr-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.cr-chip{gap:4px;}
+.cr-save-form{display:inline-flex;gap:6px;align-items:center;}
+.cr-chart .cr-area{stroke:var(--surface);stroke-width:1;transition:opacity .15s;}
+.cr-chart .cr-area.is-dim{opacity:.3;}
+.cr-plot.is-wiping{animation:cr-wipe .5s ease-out;}
+@keyframes cr-wipe{from{clip-path:inset(0 100% 0 0);}to{clip-path:inset(0 0 0 0);}}
+.cr-legend .lg-item{display:inline-flex;align-items:center;gap:6px;}
+.cr-swatch{border-radius:var(--r-xs);flex:none;}
+.cr-name-in{display:flex;align-items:center;gap:4px;padding-left:calc(var(--cr-depth,0) * 18px);}
+.cr-expand-gap{display:inline-block;width:28px;flex:none;}
+.cr-share-cell{min-width:120px;}
+.cr-share-in{display:flex;align-items:center;gap:8px;}
+.cr-share-bar{flex:1;height:6px;background:var(--line);border-radius:var(--r-xs);overflow:hidden;}
+.cr-share-fill{display:block;height:100%;background:var(--ink-3);transition:width .25s ease-out;}
+.cr-table tr.cr-kind-none td,.cr-table tr.cr-kind-ask td{color:var(--ink-2);}
+.cr-table tr td.is-neg{color:var(--red-ink);}
+.cr-table tr.cr-enter{animation:cr-slide .18s ease-out;}
+@keyframes cr-slide{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
+.cr-picker{position:fixed;z-index:60;width:280px;max-height:380px;display:flex;flex-direction:column;gap:6px;padding:8px;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu);}
+.cr-pick-list{overflow:auto;max-height:300px;display:flex;flex-direction:column;}
+.cr-pick-group{font-size:11.5px;color:var(--ink-3);padding:6px 6px 2px;}
+.cr-pick-row{display:flex;justify-content:space-between;gap:8px;padding:6px;border:0;background:none;text-align:left;
+  border-radius:var(--r-sm);color:var(--ink);font:inherit;cursor:pointer;}
+.cr-pick-row:hover,.cr-pick-row:focus-visible,.cr-pick-row[aria-selected="true"]{background:var(--hover);}
+.cr-pick-hint{color:var(--ink-3);}
+@media (prefers-reduced-motion: reduce){.cr-plot.is-wiping,.cr-table tr.cr-enter{animation:none;}}
 
 /* ---------- Team metrics page (boards 1–3) ---------- */
 /* style.css has no global [hidden]{display:none} (see its own notes at :324 / :677): an author

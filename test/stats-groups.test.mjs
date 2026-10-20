@@ -185,3 +185,35 @@ test('tagKeys: null = no tables; a bad or duplicate key', () => {
   assert.deepEqual(getStats({ range: 'lastMonth', now: NOW, tagKeys: ['cc', 'cc'] }).tagGroups.filter((t) => t.key === 'cc').length, 1);
   assert.throws(() => getStats({ range: 'lastMonth', now: NOW, tagKeys: Array.from({ length: 51 }, (_, i) => `k${i}`) }), RangeError);
 });
+
+test('report facts: every run the window counts, money reconciles with the Spent tile', () => {
+  const s = getStats({ range: 'lastMonth', now: NOW, report: true });
+  const f = s.report;
+  assert.equal(f.buckets.length, 31);
+  const byId = new Map(f.runs.map((x) => [x.id, x]));
+  assert.deepEqual(byId.get(acme).tags, { client: 'acme', spike: '' });
+  assert.equal(byId.get(acme).person, 'alice');
+  assert.equal(byId.get(acme).project, 'p', 'no projects row: the key p-xxxxxxxx reads as its slug');
+  assert.equal(byId.get(globex).status, 'failed');
+  assert.equal(byId.get(untagged).person, null);
+  assert.equal(roundUsd(f.runs.reduce((a, x) => a + x.usd, 0)), s.totals.pipelineSpendUsd);
+  // Σ is true by construction (drift step); per-run money catches an attribution bug.
+  assert.deepEqual([acme, globex, untagged, straddle].map((id) => byId.get(id).usd), [1.25, 2, 0.5, 1]);
+  assert.equal(roundUsd(s.totals.pipelineSpendUsd + f.ask.spentUsd), s.totals.spentUsd);
+  assert.deepEqual(byId.get(straddle).spend, [[30, 1]], 'only the August part, in the 31 August bucket');
+});
+
+test('report facts: a run that only spent in the window carries money but no run and no hours', () => {
+  const s = getStats({ range: 'month', now: NOW, report: true });
+  const x = s.report.runs.find((r) => r.id === straddle);
+  assert.equal(x.usd, 3);
+  assert.equal(x.inCohort, false);
+  assert.equal(x.hours, 0);
+});
+
+test('report facts honour a tag filter and drop Ask Worca; no report key without the option', () => {
+  const s = getStats({ range: 'lastMonth', now: NOW, report: true, filter: { tags: ['client:acme'] } });
+  assert.deepEqual(s.report.runs.map((x) => x.id).sort(), [acme, straddle].sort());
+  assert.equal(s.report.ask, null);
+  assert.equal('report' in getStats({ range: 'lastMonth', now: NOW }), false);
+});
