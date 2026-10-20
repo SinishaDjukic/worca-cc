@@ -153,8 +153,9 @@ answers turn, no feature).
 **Failures.** A job never throws out: a failure becomes an `error` turn with its code (`TIMEOUT`, `BUDGET`,
 `BAD_REPLY`, `INTERRUPTED`, …), its `job`, and whatever the failed calls cost, booked like any other spend.
 After a failed round the feature is `your_turn` (the answers or **Finish now** still wait for a round);
-after a failed look it rests where it was: `done` when its latest round said so, else `your_turn`. An
-archive made while a job runs wins: the job makes no further call and the feature stays archived.
+after a failed look it rests where it was: `done` when its latest round said so, else `your_turn`.
+**Archive** is refused (409 busy) while a job runs. As a defensive guard, a job that finds its feature
+archived anyway (e.g. a direct store write) makes no further model call and leaves it archived.
 
 **Try again** (`POST …/retry`) needs the latest turn to be an error. With no orientation yet it runs the
 orientation and round 1; after a failed look it re-runs the look only (no paid round); otherwise it
