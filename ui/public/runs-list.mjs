@@ -18,6 +18,8 @@
 // none of them (D1).
 import { icon } from './icons.mjs';
 import { glanceCopy } from './run-glance.mjs';
+import { splitShown, matchesLabels } from '../../src/shared/run-labels.mjs';
+import { labelChip } from './label-picker.mjs';
 import { paintProgressBar, renderRowLine } from './run-progress-bar.mjs';
 import { renderStatusDot } from './status-dot.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
@@ -202,6 +204,7 @@ export function liveRow(it, now = Date.now()) {
     title: String(it.title || '(untitled)'), status,
     groupKey: String(it.groupKey || ''), groupName: String(it.groupName || ''), by: String(it.by || ''),
     tags: Array.isArray(it.tags) ? it.tags.map(String) : [],
+    labels: Array.isArray(it.labels) ? it.labels.map(String) : [],
     unread: !!it.unread, needs: needsYou({ kind: 'live', status, ask: !!it.ask, unread: !!it.unread }),
     progress: it.progress || null,
     cost: it.cost ?? null,                           // D32: the row's hover "Cost $1.23"; null = unknown
@@ -226,6 +229,7 @@ export function histRow(p, now = Date.now()) {
     title: String(p.title || p.id || '(untitled)'), status,
     groupKey: key, groupName: String(p.groupName || key || '(unknown project)'), by: String(p.by || ''),
     tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
+    labels: Array.isArray(p.labels) ? p.labels.map(String) : [],
     archived: !!(p && p.archived),
     base: String(p.base || ''),                      // #620: "conflicts with dev" / "dev moved", else ''
     unread: false, needs: needsYou({ kind: 'hist', status, prNeeds: prNeedsOf(p.run || p) }),
@@ -389,7 +393,7 @@ export function groupRow(g, { now = Date.now() } = {}) {
  * run is (a firing ticket's id IS its runId). A row a group claims folds into that group's row.
  */
 export function buildRunsModel({
-  live = [], history = [], scheduled = [], groups = [], person = '', show = 'all', groupBy = 'none',
+  live = [], history = [], scheduled = [], groups = [], person = '', labels = [], show = 'all', groupBy = 'none',
   collapsed = new Set(), toggled = new Map(), recentShown = RECENT_PAGE, archivedCount = null, now = Date.now(),
 } = {}) {
   const view = { show: RUNS_SHOW.includes(show) ? show : 'all', groupBy: RUNS_GROUP_BY.includes(groupBy) ? groupBy : 'none' };
@@ -403,7 +407,7 @@ export function buildRunsModel({
     ...scheduled.filter((t) => t && !liveIds.has(String(t.id)))
       .map((t) => withModel(schedRow(t, now), { ticket: { status: t.status, runAt: t.after ? null : t.runAt, after: t.after ? {} : null } })),
     ...history.filter((p) => p && p.id && !listed.has(String(p.id))).map((p) => withModel(histRow(p, now), p.run || { status: p.status })),
-  ].filter((r) => !person || r.by === person);
+  ].filter((r) => (!person || r.by === person) && matchesLabels(r.labels, labels));
   const groupRows = groups.map((g) => groupRow(g, { now }));
   const groupOf = (r) => groupRows.find((x) => rowChainKeys(r).some((k) => x.memberKeys.has(k))) || null;
   // Needs before the fold (runs-list-needs-before-collapse): a member that needs you raises its group.
@@ -508,6 +512,21 @@ function iconButton(doc, cls, name, label) {
   return b;
 }
 
+/** Up to 2 label chips after the title, then "+N" (its title names the rest). Null when the row has none. */
+export function rowLabels(doc, labels) {
+  if (!labels || !labels.length) return null;
+  const { shown, more } = splitShown(labels, 2);
+  const box = doc.createElement('span');
+  box.className = 'runs-row-labels';
+  box.append(...shown.map((l) => labelChip(doc, l)));
+  if (more) {
+    const m = textEl(doc, 'span', 'label-more', `+${more}`);
+    m.title = labels.slice(2).join(', ');
+    box.append(m);
+  }
+  return box;
+}
+
 function renderItem(doc, r, { section = '', level = 'top', checked, selecting, spansProjects = false, lineFrom = null, position = '', now = Date.now() } = {}) {
   const item = doc.createElement('div');
   item.className = `runs-item${checked.has(r.key) ? ' is-checked' : ''}${r.needs && level === 'top' ? ' is-needs' : ''}`;
@@ -541,7 +560,9 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   // QA 3: a PR-driven member keeps the list's own line, so the model's reason line never sits next to its own chip.
   let line = level === 'member' && LIVE_MEMBER.has(r.model.state) && !r.model.prNeeds ? r.model.line : listLine(r, { section, time });
   if (spansProjects && level === 'top' && r.groupName) line = and(line, r.groupName);
-  a.append(textEl(doc, 'span', 'runs-row-title', position ? `${position} · ${r.title}` : r.title), right, textEl(doc, 'span', 'runs-row-sub', line));
+  const title = textEl(doc, 'span', 'runs-row-title', position ? `${position} · ${r.title}` : r.title);
+  const lab = rowLabels(doc, r.labels);
+  a.append(...[title, lab, right, textEl(doc, 'span', 'runs-row-sub', line)].filter(Boolean));
   if (r.kind === 'chain' && !ENDED_STATES.has(r.model.state) && r.model.progress) {
     a.append(renderRowLine(doc, { fraction: r.model.progress.fraction }, (lineFrom && lineFrom.get(r.key)) || ''));
   } else if (r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed' && !r.model.prNeeds && r.model.progress) {

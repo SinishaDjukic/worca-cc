@@ -276,3 +276,13 @@ test('GET /api/stats: shaping only with the shapeFirst flag on', async () => {
     assert.ok(Array.isArray((await (await fetch(`${base}/api/stats?range=all`)).json()).shaping.groups));
   } finally { if (saved === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = saved; }
 });
+
+test('GET /api/stats?report=1 adds report (runs, prevRuns, buckets, ask); without it there is no report key', async () => {
+  let res = await fetch(`${base}/api/stats?range=month&report=1`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  for (const k of ['buckets', 'runs', 'prevRuns', 'ask']) assert.ok(k in body.report, `report.${k}`);
+  assert.equal(body.report.buckets.length, body.series.length);
+  res = await fetch(`${base}/api/stats?range=month`);
+  assert.equal('report' in (await res.json()), false);
+});

@@ -55,8 +55,8 @@ export const FLAGS = Object.freeze([
   }),
   entry({
     key: 'runTags',
-    title: 'Run tags',
-    description: 'Tag runs (client:acme, team:web) on the New run form, run pages, Runs list, Statistics and Team metrics, with optional tag dimensions from team policy or Settings.',
+    title: 'Cost tags',
+    description: 'Cost tags (client:acme, team:web) on the New run form, run pages, Runs list, Statistics and Team metrics, with optional tag dimensions from team policy or Settings.',
     stage: 'experimental',
     default: false,
     owner: 'e-angelov',
@@ -78,6 +78,18 @@ export const FLAGS = Object.freeze([
     extendReason: 'moved to beta once schedules, the CLI and Chat start from presets (#712 slice 3)',
     reviewBy: '2027-01-15',
     docs: 'docs/run-presets.md',
+  }),
+  entry({
+    key: 'runLabels',
+    title: 'Run labels',
+    description: 'Free-word labels on runs (hotfix, needs demo): chips on the Runs list, run pages and chat run cards, a Label filter and a Label action for selected runs. Labels never affect cost, policy or reports.',
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.11.0',
+    added: '2026-10-20',
+    reviewBy: '2027-01-18',
+    docs: 'docs/feature-flags.md',
   }),
 ]);
 

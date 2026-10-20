@@ -201,10 +201,11 @@ test('statsQuery: byTag adds byTag=1 and one tagKey per configured key', () => {
   assert.equal(statsQuery({ range: 'month', byTag: false, tagKeys: ['cc'] }), 'range=month');
 });
 
-test('renderStatsView: By tag = one table per key labelled by dimension; By person = the person table alone', () => {
-  const tag = renderStatsView(VIEW_MODEL, 'tag', { doc, dims: [{ key: 'cc', label: 'Cost centre' }] });
-  assert.deepEqual([...tag.querySelectorAll('.alloc-card h2')].map((n) => n.textContent), ['Cost centre', 'client']);
-  assert.equal(tag.querySelector('.stat-row'), null);
+test('statsQuery: report adds report=1 (Statistics › Cost)', () => {
+  assert.equal(statsQuery({ range: 'month', report: true }), 'range=month&report=1');
+});
+
+test('renderStatsView: By person = the person table alone', () => {
   const person = renderStatsView(VIEW_MODEL, 'person', { doc });
   assert.equal(person.querySelector('.groups-card h2').textContent, 'By person');
   assert.equal(person.querySelectorAll('.groups-card').length, 1);

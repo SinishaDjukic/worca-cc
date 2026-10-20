@@ -307,24 +307,12 @@ async function openTm(opts) {
   return ctx;
 }
 
-test('Team metrics chips: By tag tables over the loaded records with Untagged and a total; remembered', async () => {
-  const ctx = await openTm({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TAGGED() }) });
-  const doc = ctx.window.document;
-  assert.deepEqual([...doc.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'By tag']);
-  doc.querySelector('#tm-view [data-tm-view="tag"]').click(); await ctx.tick();
-  const card = doc.querySelector('#tm-body .alloc-card');
-  assert.equal(card.querySelector('h2').textContent, 'client');
-  assert.deepEqual([...card.querySelectorAll('tbody tr')].map((r) => [r.cells[0].textContent, r.cells[2].textContent]), [['acme', '75%'], ['Untagged', '25%']]);
-  assert.equal(card.querySelector('tfoot tr').cells[1].textContent, '$4.00');
-  assert.equal(doc.querySelector('#tm-body .tm-run-tbl'), null);
-  assert.equal(ctx.window.localStorage.getItem('worca.teamMetrics.view'), 'tag');
-});
-
-test('Team metrics chips: By person = the By actor table alone; By tag hidden without tags; flag off = no chips', async () => {
+test('Team metrics chips: By person = the By actor table alone; a stored By tag opens Cost without tags; flag off = no chips', async () => {
   const plain = await openTm({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TM_DATA }), storage: { 'worca.teamMetrics.view': 'tag' } });
   const doc = plain.window.document;
-  assert.deepEqual([...doc.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person']);
-  assert.ok(doc.querySelector('#tm-body .tm-run-tbl'), 'a stored "tag" without tags renders Overview');
+  assert.deepEqual([...doc.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'Cost']);
+  assert.equal(doc.querySelector('#tm-view [data-tm-view="cost"]').getAttribute('aria-pressed'), 'true');
+  assert.ok(doc.querySelector('#tm-body .cost-report'), 'a stored "tag" without tags renders Cost');
   doc.querySelector('#tm-view [data-tm-view="person"]').click(); await plain.tick();
   assert.equal(doc.querySelector('#tm-body .tm-run-tbl'), null);
   assert.deepEqual([...doc.querySelectorAll('#tm-body .tm-tbl')].map((t) => t.dataset.dim), ['actor']);
@@ -336,20 +324,57 @@ test('Team metrics chips: By person = the By actor table alone; By tag hidden wi
   assert.ok(off.window.document.querySelector('#tm-body .tm-run-tbl'));
 });
 
-test('Team metrics By tag: the CSV link downloads that key', async () => {
-  const ctx = await openTm({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TAGGED() }), storage: { 'worca.teamMetrics.view': 'tag' } });
-  // Node's URL, not ctx.window.URL: app.js's bare URL/Blob are Node globals here (see the Step 5 CSV test).
-  const blobs = []; const names = [];
+const DIMS = { dims: [{ key: 'client', label: 'Client', values: [], required: true }] };
+const withDims = (inner) => (u, o) => (u.includes('/api/tag-dimensions') ? respond(DIMS) : inner(u, o));
+const COSTED = () => {
+  const at = new Date().toISOString();
+  const rec = (id, usd, actor, tags) => ({ ...makeRecord({ id, startedAt: at, usd, actor }), ...(tags ? { tags } : {}) });
+  return { ...TM_DATA, humanRateUsd: 35, records: [
+    rec('a1', 6, 'Developer A', ['client:acme']), rec('a2', 1.5, 'Developer A'), rec('a3', 2, 'Developer A'),
+    rec('a4', 0.5, 'Developer A', ['spike']), rec('b1', 3, 'Developer B', ['client:globex']),
+  ] };
+};
+
+test('Team metrics › Cost: the report table, the heat grid and the to-do strip; a stored By tag opens Cost', async () => {
+  const ctx = await openTm({ fetchHandler: withDims(tmHandler({ scopes: SCOPES_ON, data: COSTED() })), storage: { 'worca.teamMetrics.view': 'tag' } });
+  const doc = ctx.window.document;
+  await ctx.tick();
+  assert.deepEqual([...doc.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'Cost']);
+  assert.equal(doc.querySelector('#tm-view [data-tm-view="cost"]').getAttribute('aria-pressed'), 'true');
+  const body = doc.getElementById('tm-body');
+  assert.deepEqual([...body.querySelectorAll('.cr-table tbody tr')].map((r) => r.cells[0].textContent.trim()), ['acme', 'globex', 'Unallocated']);
+  assert.deepEqual([...body.querySelectorAll('.tm-heat-table thead th')].map((t) => t.textContent), ['Person', 'acme', 'globex', 'Unallocated', 'Total']);
+  assert.deepEqual([...body.querySelectorAll('.tm-heat-table tbody tr')].map((r) => r.cells[0].textContent), ['Developer A', 'Developer B']);
+  const row = body.querySelector('.tm-todo .tm-todo-row');
+  assert.deepEqual([...row.children].map((c) => c.textContent), ['Developer A', '3 runs', '$4.00', 'missing Client']);
+  assert.equal(body.querySelector('.cr-runs'), null);
+  assert.equal(doc.getElementById('tm-tag').hidden, true);
+  assert.equal(doc.getElementById('tm-filters').hidden, true);
+  assert.equal(body.querySelector('.alloc-card'), null);
+});
+
+test('Team metrics › Cost: Download CSV names the scope, range and key; chip choice remembered; own report state', async () => {
+  const ctx = await openTm({ fetchHandler: withDims(tmHandler({ scopes: SCOPES_ON, data: COSTED() })) });
+  const { window } = ctx;
+  const doc = window.document;
+  doc.querySelector('#tm-view [data-tm-view="cost"]').click();
+  await ctx.tick();
+  assert.equal(window.localStorage.getItem('worca.teamMetrics.view'), 'cost');
+  // Stub the download as the replaced .alloc-csv test did: Node's URL (app.js's bare URL/Blob are Node globals here),
+  // restored in finally so later tests in the process keep the real createObjectURL.
+  let name = '';
   const orig = [URL.createObjectURL, URL.revokeObjectURL];
-  URL.createObjectURL = (b) => { blobs.push(b); return 'blob:x'; };
+  URL.createObjectURL = () => 'blob:x';
   URL.revokeObjectURL = () => {};
-  ctx.window.HTMLAnchorElement.prototype.click = function () { names.push(this.download); };
+  window.HTMLAnchorElement.prototype.click = function () { name = this.download; };
   try {
-    ctx.window.document.querySelector('#tm-body .alloc-csv[data-key="client"]').click();
-    assert.deepEqual(names, ['team-metrics-project-billing-api-0123abcd-this-month-tag-client.csv']);
-    // Blob.text() strips a leading BOM, so decode the bytes with ignoreBOM to see it.
-    assert.match(new TextDecoder('utf-8', { ignoreBOM: true }).decode(await blobs[0].arrayBuffer()), /^\uFEFFclient,spendUsd,sharePct,runs\r\nacme,3,75,1\r\n/);
+    doc.querySelector('#tm-body .cr-csv').click();
   } finally {
     [URL.createObjectURL, URL.revokeObjectURL] = orig;
   }
+  assert.equal(name, 'team-metrics-project-billing-api-0123abcd-this-month-cost-client.csv');
+  assert.match(doc.querySelector('#tm-body .cr-chart-card .card-head small').textContent, /^[A-Z][a-z]{2} 1 – [A-Z][a-z]{2} \d{2}$/);   // "Oct 1 – Oct 31"
+  doc.querySelector('#tm-body .cr-metric [data-metric="hours"]').click();
+  assert.ok(window.localStorage.getItem('worca-cc.teamMetrics.cost.v1'));
+  assert.equal(window.localStorage.getItem('worca-cc.stats.cost.v1'), null);
 });

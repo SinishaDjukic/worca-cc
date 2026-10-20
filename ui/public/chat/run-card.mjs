@@ -26,6 +26,8 @@ import { renderChecklistGroups } from '../shape/checklist-view.mjs';
 import { paintFeatureActions } from '../shape/feature-actions.mjs';
 import { renderAskChanges } from './ask-changes.mjs';
 import { roundsModel, liveRound } from './rounds.mjs';
+import { flagOn } from '../flags.mjs';
+import { labelChip } from '../label-picker.mjs';
 
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
@@ -184,6 +186,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   head.append(headDot, title, kind, h('span', 'ask-rc-spacer'), open);
   // NOT `status`: update() already has `const status` (the status string), which would shadow this element.
   const statusEl = h('div', 'chat-rc-status');
+  // Run labels (slice 1): read-only chips under the status line.
+  const labelsEl = h('div', 'chat-rc-labels');
+  labelsEl.setAttribute('aria-label', 'Labels');
+  let labelsSig = '';
   const membersEl = h('div', 'chat-rc-members');
   membersEl.hidden = true;
   const sub = h('div', 'ask-rc-sub');
@@ -272,7 +278,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const changesSlot = h('div', 'chat-rc-changes');
   changesSlot.hidden = true;
   // Card order: the model's head / status / members, then Shaper's slots; the log sits before the open step.
-  el.append(head, statusEl, sub, fixEl, shapedEl, membersEl, stats, agentsBox, well, logEl, notesEl, watchEl, qSec, resultSec, reason, foot);
+  el.append(head, statusEl, labelsEl, sub, fixEl, shapedEl, membersEl, stats, agentsBox, well, logEl, notesEl, watchEl, qSec, resultSec, reason, foot);
 
   let last = null, graph = null, agentsSig = null, resultSig = '', painted = null, sent = null, inFlight = false, dead = false, pauseAsked = '';
   let shownFor = null;   // the question whose receipt shows the "Answered" fallback (its answer may still be in flight)
@@ -822,6 +828,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     lastM = s || curRow ? m : { ...m, actions: [] };
     paintStatusDot(headDot, m);
     paintRunStatus(statusEl, m);
+    const labels = flagOn('runLabels', doc) && s && Array.isArray(s.labels) ? s.labels : [];   // the card's own document (jsdom tests)
+    const sig = labels.join('\n');
+    if (sig !== labelsSig) { labelsSig = sig; labelsEl.replaceChildren(...labels.map((l) => labelChip(doc, l))); }
     title.textContent = curRow ? curRow.title : (s && s.title) || id.title || 'Run';
     kind.textContent = kindOf(curRow, s);
     open.setAttribute('href', curRow ? (curRow.groupKind === 'feature' ? `#feature/${encodeURIComponent(curRow.groupId)}` : `#group/${encodeURIComponent(curRow.groupId)}`) : progressRoute(id, s));
@@ -958,7 +967,7 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
         // new lineage's end: it would show Interrupted + Resume until the `done` re-read, and for good after a socket gap.
         if (snap.terminal && rest.terminal && rest.status === snap.status) return { ...rest, runId: snap.runId, branch: snap.branch || rest.branch };
         return { ...snap, results: rest.results, artifacts: rest.artifacts, moreArtifacts: rest.moreArtifacts, pr: rest.pr, branch: snap.branch || rest.branch,
-          rounds: rest.rounds, watch: rest.watch };   // Shaper s5: the run's rounds and a stopped watch are REST facts
+          rounds: rest.rounds, watch: rest.watch, labels: rest.labels ?? snap.labels };   // Shaper s5: the run's rounds and a stopped watch are REST facts
       }
       return snap;
     }

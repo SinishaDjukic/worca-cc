@@ -355,8 +355,11 @@ import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById, listNet
 import { createNetworkWatch, NETWORK_ACTOR } from '../src/core/network-wait.mjs';
 import { probeReachable, hostOf } from '../src/core/upstream-probe.mjs';
 import { editRunTags, readRunTags, tagVocabulary } from '../src/core/run-tags-store.mjs';
+import { editRunLabels, changeLabels, labelVocabulary, readRunLabels, renameLabel, deleteLabel, readLabelsFor } from '../src/core/run-labels-store.mjs';
 import { normaliseTags, describeTagChange, parseTag } from '../src/shared/run-tags.mjs';
+import { normaliseLabels } from '../src/shared/run-labels.mjs';
 import { normaliseDimensions, prefillTags } from '../src/shared/tag-dimensions.mjs';
+import { autoFillTags } from '../src/shared/cost-tag-suggest.mjs';
 import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, prefillSources } from '../src/core/tag-dimensions.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
@@ -1134,7 +1137,16 @@ function summarizeRuns() {
     workspaceId: r.workspaceId || null,
     projectNames: r.projectNames || null,
     tags: r.tags || [],
+    labels: liveLabels(r),
   }));
+}
+
+// Run labels (slice 1): a live entry reads its stored labels once, the first summary after its pipeline id exists,
+// so a run recovered after a restart keeps them; the label routes keep r.labels current after that.
+function liveLabels(r) {
+  if (!r.pipelineId) return r.labels || [];
+  if (!Array.isArray(r.labels)) r.labels = readRunLabels(r.pipelineId);
+  return r.labels;
 }
 
 // Birth announcement for a freshly-registered run: broadcasts the metadata that
@@ -1156,6 +1168,7 @@ function announceRun(entry) {
     startedBy: entry.startedBy || null,
     lastAction: entry.lastAction || null,
     tags: entry.tags || [],
+    labels: entry.labels || [],
   });
 }
 
@@ -2510,6 +2523,15 @@ const startRunHandler = async (req, res) => {
       tags = t.tags;
       body.tags = tags;
     }
+    // s2: labels a start carries (inherited by a chained, Shaper, round or Watch PR run). A person's bad label is a 400;
+    // stored data (exempt starts) drops a bad entry instead.
+    let labels = [];
+    if (body.labels !== undefined) {
+      const n = normaliseLabels(tagExempt && Array.isArray(body.labels) ? body.labels.filter((l) => !normaliseLabels([l]).errors.length) : body.labels);
+      if (n.errors.length) return badRequest(res, `labels: ${n.errors[0]}`);
+      labels = n.labels;
+      body.labels = labels;
+    }
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
@@ -2733,6 +2755,7 @@ const startRunHandler = async (req, res) => {
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
         tags,
+        labels,
         ...(shape ? { shape } : {}),
         ...(runSetup ? { runSetup } : {}),
       });
@@ -2880,6 +2903,7 @@ const startRunHandler = async (req, res) => {
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
         tags,
+        labels,
         ...(shape ? { shape } : {}),
         ...(runSetup ? { runSetup } : {}),
       });
@@ -3471,6 +3495,10 @@ async function fireTicket(ticket) {
     if (body.tags === undefined && p.pipelineId) {
       const inherited = readRunTags(p.pipelineId);
       if (inherited.length) body.tags = inherited;
+    }
+    if (body.labels === undefined && p.pipelineId) {   // s2: labels inherit the same way; an explicit [] opts out
+      const inherited = readRunLabels(p.pipelineId);
+      if (inherited.length) body.labels = inherited;
     }
     if (ticket.sourceFromPrevious) {
       const prev = p.pipelineId ? previousBranchesOf(p.pipelineId) : null;
@@ -5812,7 +5840,7 @@ app.get('/api/counts', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/stats?range=today|week|month|lastMonth|custom|all[&from&to][&tag…][&person][&groupBy][&byTag=1[&tagKey…]]
+// GET /api/stats?range=today|week|month|lastMonth|custom|all[&from&to][&tag…][&person][&groupBy][&byTag=1[&tagKey…]][&report=1]
 //   -> the Statistics view payload (§6.9). A bad range/filter/groupBy is the caller's fault: getStats'
 //   RangeError maps to 400. The broker's per-person card is skipped while a filter is active (it
 //   cannot be narrowed by tag).
@@ -5827,6 +5855,7 @@ app.get('/api/stats', async (req, res) => {
       filter: { tags: q.tag == null ? [] : [].concat(q.tag), person: str(q.person) },
       groupBy: str(q.groupBy),
       tagKeys: q.byTag === '1' ? (q.tagKey == null ? [] : [].concat(q.tagKey)) : null,
+      report: q.report === '1',
     });
   } catch (err) {
     if (err instanceof RangeError) return badRequest(res, err.message);
@@ -6293,8 +6322,82 @@ app.put('/api/runs/:id/tags', (req, res) => {
   res.json({ tags: out.tags, changed: out.changed });
 });
 
+// Run labels (slice 1). Behind runLabels: 404 while off. Labels never reach stats, metrics or policy.
+const labelsOn = requireFlag('runLabels');
+const MAX_BULK_LABEL_RUNS = 500;
+
+app.get('/api/labels', labelsOn, (req, res) => res.json({ labels: labelVocabulary() }));
+
+// Patch every live entry of these runs, so the next hello / run frame carries the new set.
+function syncLiveLabels(rows) {
+  for (const { id, labels } of rows) for (const r of runs.values()) if (r.pipelineId === id) r.labels = labels;
+}
+
+app.put('/api/runs/:id/labels', labelsOn, (req, res) => {
+  const row = findPipelineRowById(req.params.id);
+  if (!row) return res.status(404).json({ error: 'pipeline not found' });
+  if (!Array.isArray(req.body?.labels)) return badRequest(res, 'labels must be a list of strings');
+  let out;
+  try { out = editRunLabels(row.id, req.body.labels); }
+  catch (e) { if (e?.code === 'BAD_LABELS') return badRequest(res, e.message); throw e; }
+  if (out.changed) { syncLiveLabels([{ id: row.id, labels: out.labels }]); emitChanged('pipelines-changed', 'labels'); }
+  res.json({ labels: out.labels, changed: out.changed });
+});
+
+app.post('/api/runs/bulk/labels', labelsOn, (req, res) => {
+  const { pipelineIds, add = [], remove = [] } = req.body || {};
+  if (!Array.isArray(pipelineIds) || !pipelineIds.length) return badRequest(res, 'pipelineIds must be a non-empty list');
+  if (pipelineIds.length > MAX_BULK_LABEL_RUNS) return badRequest(res, `at most ${MAX_BULK_LABEL_RUNS} runs at once`);
+  if (!Array.isArray(add) || !Array.isArray(remove) || !(add.length || remove.length)) return badRequest(res, 'add or remove a label');
+  const found = [];
+  const missing = [];
+  for (const id of new Set(pipelineIds.map(String))) {
+    const row = findPipelineRowById(id);
+    if (row) found.push(row.id); else missing.push(id);
+  }
+  let out;
+  try { out = found.length ? changeLabels(found, { add, remove }) : []; }
+  catch (e) { if (e?.code === 'BAD_LABELS') return badRequest(res, e.message); throw e; }
+  const changed = out.filter((r) => r.changed);
+  if (changed.length) { syncLiveLabels(changed); emitChanged('pipelines-changed', 'labels'); }
+  res.json({ runs: out, missing });
+});
+
+// s2 (D20): Settings › Labels renames, merges or deletes a label on every run. One tx each, in the store.
+function labelsChangedEverywhere(ids) {
+  if (!ids.length) return;
+  const now = readLabelsFor(ids);
+  syncLiveLabels(ids.map((id) => ({ id, labels: now.get(id) || [] })));
+  emitChanged('pipelines-changed', 'labels');
+}
+
+app.post('/api/labels/rename', labelsOn, (req, res) => {
+  let out;
+  try { out = renameLabel(req.body?.from, req.body?.to); }
+  catch (e) { if (e?.code === 'BAD_LABELS') return badRequest(res, e.message); throw e; }
+  if (!out.ids.length && out.from !== out.label) return res.status(404).json({ error: 'label not found' });
+  labelsChangedEverywhere(out.ids);
+  res.json({ label: out.label, runs: out.ids.length, merged: out.merged });
+});
+
+app.delete('/api/labels/:label', labelsOn, (req, res) => {
+  let out;
+  try { out = deleteLabel(req.params.label); }   // Express has already decoded %20 / %2F in the param
+  catch (e) { if (e?.code === 'BAD_LABELS') return badRequest(res, e.message); throw e; }
+  if (!out.ids.length) return res.status(404).json({ error: 'label not found' });
+  labelsChangedEverywhere(out.ids);
+  res.json({ label: out.label, runs: out.ids.length });
+});
+
 // Autocomplete vocabulary for tag fields: keys, then values already in use, most used first.
-app.get('/api/tags', (req, res) => res.json(tagVocabulary()));
+// s2 (D5): ?projectDir= scopes the vocabulary to that project; without it the vocabulary is machine-wide.
+app.get('/api/tags', (req, res) => {
+  const rawDir = typeof req.query.projectDir === 'string' && req.query.projectDir ? req.query.projectDir : null;
+  if (rawDir && rawDir.includes('\0')) return badRequest(res, 'invalid projectDir');
+  let key = null;
+  if (rawDir) { try { key = projectKey(resolveProjectDir(rawDir)); } catch { key = null; } }
+  res.json(tagVocabulary(key ? { projectKey: key } : {}));
+});
 // Tag dimensions (D9): one run target's list, or the machine-wide union for Statistics, the Runs list and Team metrics.
 app.get('/api/tag-dimensions', async (req, res) => {
   const rawDir = typeof req.query.projectDir === 'string' && req.query.projectDir ? req.query.projectDir : null;
@@ -6308,8 +6411,11 @@ app.get('/api/tag-dimensions', async (req, res) => {
       const info = await dimensionsForTarget({ projectDir, workspaceId });
       // D4: the form's pre-fill, dimension keys only (the form keeps project defaults for other keys itself).
       // D19: enforce is flag-aware here, so the client gate needs no flag check of its own.
-      const prefill = prefillTags(info.dims, [], prefillSources({ projectDir, person: startedByOf(req) }));
-      return res.json({ ...info, enforce: flagEnabled('runTags') && info.enforce === true, prefill });
+      const src = prefillSources({ projectDir, person: startedByOf(req) });
+      const prefill = prefillTags(info.dims, [], src);
+      // s2 (D7, D8): the New run / Ask card fill, sent ONLY for a project target (a workspace has no single project).
+      const autofill = projectDir ? autoFillTags({ dims: info.dims, lastRun: src.lastUsed, projectDefaults: src.projectDefaults }) : undefined;
+      return res.json({ ...info, enforce: flagEnabled('runTags') && info.enforce === true, prefill, ...(autofill ? { autofill } : {}) });
     }
     res.json({ ...(await allTagDimensions()), team: await teamTagPolicy() });
   } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
@@ -7169,7 +7275,7 @@ function prWatchOrigin(w) {
   return { pipelineId: row.id, projectKey: m.projectKey, projectDir: m.projectDir, branch: m.br.feature,
     sourceBranch: m.br.source || null, baseRemote: effectiveSyncSettings(m.projectKey).remote || null,
     guardrailsId: row.guardrails_id || null, engine: runEngineOfRow(row),
-    mock: rp?.mock === true, tags: readRunTags(row.id) };
+    mock: rp?.mock === true, tags: readRunTags(row.id), labels: readRunLabels(row.id) };
 }
 /** The pr-watch-changed frame: the run's STORE key (a workspace run's is `workspaces/<wk>`, the key its
  *  History detail carries), its id and the member, so only the matching open detail / member row refreshes. */
@@ -13554,7 +13660,7 @@ app.post('/api/pinpoint', async (req, res) => {
 });
 
 // ---- Shaper s5: Ask for changes and the Route card (D5, D6); the tools' parent half ----
-const factDeps = { readPrState, findPipelineRowById, readRunTags, featureView: (fid) => featureView(fid, { live: liveSliceOf }) };
+const factDeps = { readPrState, findPipelineRowById, readRunTags, readRunLabels, featureView: (fid) => featureView(fid, { live: liveSliceOf }) };
 /** A turn of this thread is still being written (askInFlight: the job while it runs). */
 const threadTurnBusy = (threadId) => askInFlight(threadId) != null;
 /** The person's message and an assistant row carrying the card, both broadcast (offerShipCard's way). → the assistant row */
@@ -13568,7 +13674,7 @@ function postThreadExchange(threadId, text, card) {
 }
 /** Shaper (ordinary stays ordinary, D6): propose_changes / route_message, applied in the parent. Re-checked NOW with the
  *  live runs overlay (an open step the classic MCP child cannot see, D7); a refusal is a notice in the reply. */
-const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags };
+const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags, readRunLabels };
 function askShapeAction(req, threadId) {
   if (!shapeFirstEnabled()) return { ok: false, notice: 'Not applied: Shaper is off' };
   if (!threadId) return { ok: false, notice: 'Not applied: no chat to post to' };

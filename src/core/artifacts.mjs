@@ -26,6 +26,7 @@ import { memoryTotals } from './memory-sync.mjs';
 import { actorLabel } from './identity.mjs';
 import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
 import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
+import { insertRunLabels, readLabelsFor, readRunLabels } from './run-labels-store.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -1158,7 +1159,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], runSetup = null,
+    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1296,6 +1297,7 @@ export async function createPipeline(projectDir, opts = {}) {
   // Run tags (#718): written once, after the row exists (FK) and after writeState's tx has
   // committed (tx cannot nest). writeState updates never touch them.
   insertRunTags(id, tags);
+  insertRunLabels(id, labels);   // s2: an inherited run's labels, written once like its tags
   recordArtifact(id, 'prompt', 'prompt.md');
   if (workspaceKey) recordArtifact(id, 'workspace-description', 'workspace-description.md');
   for (const rel of copiedExtras) recordArtifact(id, 'extra', rel);
@@ -2368,6 +2370,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   }
   const tagMap = readTagsFor(out.map((e) => e.id));
   for (const e of out) e.tags = tagMap.get(e.id) || [];
+  const labelMap = readLabelsFor(out.map((e) => e.id));
+  for (const e of out) e.labels = labelMap.get(e.id) || [];
   out.sort((a, b) => b.mtime - a.mtime);
   return out;
 }
@@ -2463,6 +2467,8 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   }
   const tagMap = readTagsFor(out.map((e) => e.id));
   for (const e of out) e.tags = tagMap.get(e.id) || [];
+  const labelMap = readLabelsFor(out.map((e) => e.id));
+  for (const e of out) e.labels = labelMap.get(e.id) || [];
 
   // Newest-first, with a deterministic tiebreaker so equal-mtime rows do not
   // reorder run-to-run now that build order is non-deterministic (parallel).
@@ -2638,6 +2644,7 @@ function rowToState(row) {
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),
     tags: readRunTags(row.id),
+    labels: readRunLabels(row.id),
   };
   // The pause cause rides resume_point (no column): expose it on the DETAIL payload
   // too, so a deep-linked History detail no longer waits for the LIST row.

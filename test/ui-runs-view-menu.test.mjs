@@ -10,10 +10,10 @@ const mem = (seed = {}) => {
 
 test('the view is remembered per browser; old keys migrate once; junk falls back to the default', () => {
   const s = mem({ 'worca-cc.runs.filter': 'live', 'worca-cc.runs.groupBy': 'project' });
-  assert.deepEqual(loadRunsView(s), { show: 'running', groupBy: 'project', person: '' });
+  assert.deepEqual(loadRunsView(s), { show: 'running', groupBy: 'project', person: '', labels: [] });
   assert.equal(s.m.has('worca-cc.runs.filter'), false);
   saveRunsView(s, { show: 'needs', groupBy: 'none', person: '' });
-  assert.deepEqual(loadRunsView(s), { show: 'needs', groupBy: 'none', person: '' });
+  assert.deepEqual(loadRunsView(s), { show: 'needs', groupBy: 'none', person: '', labels: [] });
   assert.deepEqual(loadRunsView(mem({ [VIEW_KEY]: '{bad' })), DEFAULT_VIEW);
   assert.deepEqual(loadRunsView({ getItem() { throw new Error('denied'); } }), DEFAULT_VIEW);
 });
@@ -22,6 +22,13 @@ test('chip: none for the default; "Running · 2 of 41 runs"; group by alone', ()
   assert.equal(viewChip(DEFAULT_VIEW, { shown: 41, total: 41 }), '');
   assert.equal(viewChip({ show: 'running', groupBy: 'none', person: '' }, { shown: 2, total: 41 }), 'Running · 2 of 41 runs');
   assert.equal(viewChip({ show: 'all', groupBy: 'project', person: '' }, { shown: 41, total: 41 }), 'By project');
+});
+
+test('labels: the record round-trips them and drops non-strings; a labels-only filter shows "N of M runs"', () => {
+  const s = mem();
+  saveRunsView(s, { show: 'all', groupBy: 'none', person: '', labels: ['Hotfix', 3, null] });
+  assert.deepEqual(loadRunsView(s), { show: 'all', groupBy: 'none', person: '', labels: ['hotfix'] });
+  assert.equal(viewChip({ show: 'all', groupBy: 'none', person: '', labels: ['hotfix'] }, { shown: 1, total: 3 }), '1 of 3 runs');
 });
 
 test('menu items: Show with counts, Group by, Select; Started by only on shared deployments', () => {

@@ -17,6 +17,7 @@ import { renderGateCard, renderRecoveryCard, stepChip, stepTitle } from '../ui/p
 import { renderPlanBody } from '../ui/public/shape/plan-body.mjs';
 import { renderOutlineBody } from '../ui/public/shape/outline-body.mjs';
 import { noteAnswer, namedAnswer, forgetAnswer } from '../ui/public/shape/step-receipt.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
 
 const RECORDED = JSON.parse(readFileSync(new URL('./fixtures/role-review/recorded-run.json', import.meta.url), 'utf8')).plan.roleReviews;
 
@@ -1915,4 +1916,18 @@ test('merge: a live Watch PR round feeds runModel, so the one status line names 
     $('[data-model-action="stop"]').click();                  // D25: the round's run, not the finished round 1
     assert.deepEqual(acts, [['beef00f2', 'stop']]);
   } finally { setShapeFirst(false); }
+});
+
+test('run labels (slice 1): read-only chips after the status line; none for an empty list or with the flag off', () => {
+  const f = mk();
+  applyFlags({ runLabels: true }, f.doc);
+  f.card.update(live({ labels: ['hotfix'] }));
+  assert.equal(f.$$('.chat-rc-labels .label-chip').length, 1);
+  assert.equal(f.$('.chat-rc-labels .label-x'), null, 'no remove control on the card');
+  assert.equal(f.$('.chat-rc-status').nextElementSibling, f.$('.chat-rc-labels'));
+  f.card.update(live({ labels: [] }));
+  assert.equal(f.$$('.chat-rc-labels .label-chip').length, 0);
+  const off = mk();
+  off.card.update(live({ labels: ['hotfix'] }));
+  assert.equal(off.$$('.label-chip').length, 0);
 });

@@ -103,7 +103,7 @@ import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.m
 import { buildGroupPage, paintGroupPage, runReceipts } from './group-page.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
-import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody, rangeKeys } from './runs-selection.mjs';
+import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody, rangeKeys, labelTargets } from './runs-selection.mjs';
 import { bulkConfirm } from '../../src/shared/run-bulk.mjs';
 import { openGroupPicker } from './group-picker.mjs';
 import { ACTION_LABEL, groupModel, runModel } from '../../src/shared/run-model.mjs';
@@ -185,7 +185,8 @@ import {
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
-import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv } from './stats-view.mjs';
+import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv, statsRangeLabel, DEFAULT_FMT } from './stats-view.mjs';
+import { createCostReport } from './cost-report.mjs';
 import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
 import { createComposer, isReservedWorkflowId } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
@@ -223,7 +224,8 @@ import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, util
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { mountHouseBrief } from './house-brief-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
-import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton, renderPooledBudgetTile, renderTagFilterSelect } from './team-metrics-view.mjs';
+import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton, renderPooledBudgetTile,
+  renderTagFilterSelect, renderHeatGrid, renderMissingTagsStrip, TM_FMT } from './team-metrics-view.mjs';
 // Team policy (team-policy design §11): the Projects cell, the enable dialog, the page (read +
 // edit), the workspace line, the Settings readout, the New pipeline notes, the Plugins strip.
 import {
@@ -233,8 +235,8 @@ import {
   renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel, renderMcpStrip, renderMcpConsent, handleTeamSkillClick,
 } from './team-policy-view.mjs';
 import { mcpRunsLabel, renderMcpRunsPop, renderRunSkills } from './mcp-run-picker.mjs';
-import { aggregate, toCsv, recordTags, tagBreakdowns } from '../../src/shared/team-metrics/aggregate.mjs';
-import { allocationModel, fromBreakdownRows, allocationCsv } from './tag-allocation.mjs';
+import { aggregate, toCsv, recordTags } from '../../src/shared/team-metrics/aggregate.mjs';
+import { recordFacts, heatGrid, missingKeyTodos } from '../../src/shared/team-metrics/cost-facts.mjs';
 import { buildWorkItems, prLookupFor } from '../../src/shared/team-metrics/timeline.mjs';
 import { renderTimeline, renderTimelinePopover, timelineWindow, shiftAnchor, TL_MODES, TL_ZOOMS } from './team-metrics-timeline.mjs';
 import {
@@ -262,9 +264,9 @@ import { runPresetScopeOptions, runPresetRequest, runPresetErrorText, RUN_PRESET
 import { renderPresetsList } from './run-presets-view.mjs';
 import { presetSetupSummary, presetSavedNote, workflowNamesFrom } from './run-presets-names.mjs';
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
-import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor } from './tag-input.mjs';
-import { normaliseTags, formatTag } from '../../src/shared/run-tags.mjs';
-import { splitByDimensions, tagGroupOptions, dimensionLabel, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
+import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, flashFilled, missingSlot } from './tag-input.mjs';
+import { normaliseTags, formatTag, parseTag } from '../../src/shared/run-tags.mjs';
+import { splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
@@ -294,6 +296,9 @@ import { toggleMenu, openMenu } from './workflows/menu.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
 import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
+import { openLabelPicker, closeLabelPickerFor, fetchLabels, labelChip } from './label-picker.mjs';
+import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/run-labels.mjs';
+import { renderLabelsSection, runCount } from './labels-settings.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
 // this module resolves here: the browser's storage, else an in-memory stand-in, so the page boots and forgets on reload.
@@ -1856,6 +1861,7 @@ function handleServerMessage(msg) {
       workspaceId: msg.workspaceId || undefined,
       projectNames: Array.isArray(msg.projectNames) && msg.projectNames.length ? msg.projectNames : undefined,
       tags: Array.isArray(msg.tags) ? msg.tags : undefined,
+      labels: Array.isArray(msg.labels) ? msg.labels : undefined,
     });
     updateNavCounts();
     renderPipelineTabs();
@@ -2009,6 +2015,7 @@ function onHello(msg) {
       night: r0.night || undefined,
       networkWait: r0.networkWait || null,
       tags: Array.isArray(r0.tags) ? r0.tags : undefined,
+      labels: Array.isArray(r0.labels) ? r0.labels : undefined,
       shaping: r0.shaping || null,
     });
     // Seed the run's stepper from the hello summary so the live card resolves
@@ -2156,7 +2163,7 @@ function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
   pauseDetail = null, limitEngine = null, limitResetAt = null, runEngine = undefined, startedBy = null, lastAction = null,
-  workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [],
+  workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [], labels = [],
   shaping = null, networkWait = null,
 }) {
   return {
@@ -2182,6 +2189,7 @@ function makeRun({
     night,                // Away mode on this run: {optIn, override, decisions, flagged, openedAt} (hello / state)
     networkWait,          // waiting for the network: {node, host, since, until} or null
     tags,                 // run tags (#718): normalised 'key:value' / 'key' strings (hello / run-created)
+    labels: Array.isArray(labels) ? labels : [],   // run labels (slice 1): free words (hello / run-created)
     shaping,              // Shape it first: {perspectives, rounds, approved, savedTo} on a shaping run (hello / state), or null
     // Stable ordering key: assigned once per runId, never bumped by activity
     // and never re-minted if the run is dropped and re-materialized.
@@ -4688,7 +4696,11 @@ function paintEngineHints() {
 }
 // Run tags (#718): the New run form's chip field, shown while the runTags flag is on. It starts from the
 // project's default tags; once the person edits it, later project changes leave it alone.
-const runTagInput = createTagInput(document, { suggest: fetchTagVocabulary });
+// s2: suggestions follow the project and the target's policy dimensions.
+const runTagInput = createTagInput(document, {
+  suggest: () => fetchTagVocabulary(state.runTarget === 'workspace' ? null : state.projectDir),
+  dims: () => state.tagDims?.dims || [],
+});
 document.getElementById('runTagsField')?.appendChild(runTagInput.el);
 // Tag dimensions (slice 3): one slot per configured key above the free-form field. The slots own the
 // dimension keys; the free-form field keeps every other key. Required only warns, never blocks.
@@ -4717,8 +4729,8 @@ function paintRunTagDimsWarn(reason = null) {
 function paintRunTagDims(info, tags) {
   state.tagDims = info && Array.isArray(info.dims) ? info : { source: null, home: null, dims: [], enforce: false };
   const dims = state.tagDims.dims;
-  const typed = runTagDims.dirty() ? runTagDims.get() : [];          // keep what the user typed into a slot
-  const next = createDimensionSlots(document, dims, { value: [...tags, ...typed] });
+  // Keep only the slots the user touched (a cleared one stays empty); the untouched ones take this target's fill.
+  const next = createDimensionSlots(document, dims, { value: tags, edits: runTagDims.edits() });
   next.onChange(() => paintRunTagDimsWarn());
   runTagDims.el.replaceWith(next.el);
   runTagDims = next;
@@ -4727,7 +4739,7 @@ function paintRunTagDims(info, tags) {
   // The policy (Settings › Tags "Require mandatory tags", or team policy) decides: on with a tag ticked Mandatory, the
   // field says so and Start waits for it; off, tags are optional.
   const opt = document.querySelector('.run-tags-field .opt');
-  if (opt) opt.textContent = state.tagDims.enforce && dims.some((d) => d.required) ? '· mandatory tags required' : '(optional)';
+  if (opt) opt.textContent = state.tagDims.enforce && dims.some((d) => d.required) ? '· mandatory cost tags required' : '(optional)';
   paintRunTagDimsWarn();
 }
 runTagInput.onChange(() => paintRunTagDimsWarn());
@@ -4744,11 +4756,17 @@ async function refreshRunTagDims() {
   let info = null;
   if (q) { try { const r = await fetch(`/api/tag-dimensions${q}`); info = r.ok ? await safeJson(r) : null; } catch {} }
   if (gen !== runTagDimsGen) return;
-  const { slots, rest } = splitByDimensions(state.runTagDefaults || [], info?.dims || []);
+  runTagInput.resetSuggestions();
+  // s2: the person's last tagged run in this project fills the field (D6, D9); else the project's defaults, as before.
+  const fill = info?.autofill?.from === 'last-run' ? info.autofill.tags : (state.runTagDefaults || []);
+  const { slots, rest } = splitByDimensions(fill, info?.dims || []);
+  const filled = !runTagInput.dirty() && info?.autofill?.from === 'last-run';
   if (!runTagInput.dirty()) runTagInput.set(rest);
-  // D4: the server's pre-fill (project default → Default → last used) when it sent one.
-  const slotTags = Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
+  // D4: the server's pre-fill (project default → Default → last used) when it sent one; the last run's slots win.
+  const slotTags = filled ? Object.entries(slots).map(([key, value]) => formatTag({ key, value }))
+    : Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
   paintRunTagDims(info, slotTags);
+  if (filled) flashFilled(runTagInput.el, rest);
 }
 document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (e) => {
   const btn = e.currentTarget;
@@ -7179,10 +7197,14 @@ function clearTask(submitted) {
   if (!sameTask(snapshotTask(), submitted)) return;
   lastTask = submitted;
   setTask({ title: '', prompt: '', markdown: '', mdFileName: '', extras: [] });
-  { // #718: the next run starts from the project's defaults again, the dimension keys in their slots
-    const { slots, rest } = splitByDimensions(state.runTagDefaults || [], state.tagDims.dims);
+  { // #718 + s2: the next run starts from the last run's cost tags (D6), else the project's defaults, the dimension keys in their slots
+    const sent = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
+    if (state.tagDims?.autofill && sent.length) state.tagDims.autofill = { tags: sent, from: 'last-run' };   // project target only (D8)
+    const lastRun = state.tagDims?.autofill?.from === 'last-run';
+    const { slots, rest } = splitByDimensions(lastRun ? state.tagDims.autofill.tags : (state.runTagDefaults || []), state.tagDims.dims);
+    const slotTags = Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
     runTagInput.set(rest, { clearText: true });
-    runTagDims.set(Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value })));
+    runTagDims.set(lastRun ? slotTags : Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : slotTags);
     paintRunTagDimsWarn();
   }
   el.reuseTask.hidden = false;
@@ -15394,6 +15416,43 @@ function paintTagDimsSettings(data) {
   tagsLocal = { tagDimensions: Array.isArray(data?.tagDimensions) ? data.tagDimensions : [], enforceTags: data?.enforceTags === true };
   paintTagsTab();
 }
+// s2 (D2, D21): Settings › Labels & cost tags › Labels. Re-read on every visit to the tab.
+async function loadLabelsSection() {
+  const host = document.getElementById('labelsSettingsList');
+  if (!host || !flagOn('runLabels')) return;
+  const labels = await fetchLabels();
+  host.replaceChildren(renderLabelsSection(document, labels, {
+    onRename: (row) => void labelSettingsAct(() => renameLabelFlow(row, labels)),
+    onDelete: (row) => void labelSettingsAct(() => deleteLabelFlow(row)),
+  }));
+}
+function labelSettingsError(msg) {
+  const e = document.getElementById('labelsSettingsError');
+  if (e) { e.textContent = msg || ''; e.hidden = !msg; }
+}
+async function labelSettingsAct(act) {
+  labelSettingsError('');
+  const r = await act();
+  if (r && !r.ok) labelSettingsError((await r.json().catch(() => ({}))).error || `Could not change the label (${r.status}).`);
+  if (r) await loadLabelsSection();
+  // The closing modal releases focus only at the next frame (as presetMenuAct): then move it onto the first row's ⋯.
+  await new Promise((res) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(() => res()) : setTimeout(res, 0)));
+  document.querySelector('#labelsSettingsList .lbl-set-more')?.focus();
+}
+async function renameLabelFlow(row, labels) {
+  const v = await promptModal({ title: 'Rename label', fields: [{ id: 'label', label: 'Label', value: row.label, required: true }] });
+  if (!v) return null;
+  const to = normaliseLabel(v.label).label;   // undefined for a bad name: the server answers 400 with the reason
+  if (to === row.label) return null;
+  if (to && labels.some((l) => l.label === to)
+    && !(await confirmModal({ title: 'Merge labels', message: `Merge “${row.label}” into “${to}” on ${runCount(row.count)}?`, confirmLabel: 'Merge' }))) return null;
+  return fetch('/api/labels/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: row.label, to: v.label }) });
+}
+async function deleteLabelFlow(row) {
+  const ok = await confirmModal({ title: 'Delete label', message: `Remove “${row.label}” from ${runCount(row.count)}?`, confirmLabel: 'Delete label', danger: true });
+  if (!ok) return null;
+  return fetch(`/api/labels/${encodeURIComponent(row.label)}`, { method: 'DELETE' });
+}
 async function loadTagsTeam() {
   // safeJson answers {} on a bad body, so `?.team ?? null` covers it.
   let next = null;
@@ -18604,7 +18663,7 @@ if (el.modelShareBtn) {
 // ---------------------------------------------------------------------------
 // A remembered view chip (#718 slice 4), per browser. A missing or throwing localStorage, or a stale value,
 // falls back, so module evaluation never breaks on it.
-const VIEW_CHIPS = ['overview', 'person', 'tag'];
+const VIEW_CHIPS = ['overview', 'person', 'cost'];
 const STATS_VIEW_KEY = 'worca-cc.stats.view';
 function storedChoice(key, allowed, fallback) {
   try { const v = localStorage.getItem(key); return allowed.includes(v) ? v : fallback; } catch { return fallback; }
@@ -18613,7 +18672,23 @@ function storeChoice(key, value) {
   try { localStorage.setItem(key, value); } catch { /* private mode */ }
 }
 
-const statsState = { range: null, from: '', to: '', tags: [], person: '', groupBy: '', view: storedChoice(STATS_VIEW_KEY, VIEW_CHIPS, 'overview'), last: null };
+// 'tag' was the By cost tag chip (#718 slice 4); the Cost and value report replaced it (labels-cost-tags s3).
+const storedStatsView = () => { const v = storedChoice(STATS_VIEW_KEY, [...VIEW_CHIPS, 'tag'], 'overview'); return v === 'tag' ? 'cost' : v; };
+const statsState = { range: null, from: '', to: '', tags: [], person: '', groupBy: '', view: storedStatsView(), last: null };
+
+let costReport = null;   // one instance for the page: a refetch repaints the same chart, so its areas morph
+function costReportFor() {
+  if (costReport) return costReport;
+  let reduced = false;
+  try { reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* no matchMedia */ }
+  costReport = createCostReport({
+    doc: document, fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle, hours: DEFAULT_FMT.hours },
+    storage: localStorage, reducedMotion: reduced,
+    onOpenRuns: (ids) => openRunsSelected(ids),
+    onDownload: (csv, name) => downloadStatsCsv(csv, name),
+  });
+  return costReport;
+}
 const statsTagInput = createTagInput(document, { suggest: fetchTagVocabulary, placeholder: 'Filter: client:acme…', strict: false });
 document.getElementById('stats-tags')?.appendChild(statsTagInput.el);
 statsTagInput.onChange((tags) => { statsState.tags = tags; loadStatsView(); });
@@ -18638,15 +18713,12 @@ async function paintStatsGroupOptions() {
   if (sel.value !== statsState.groupBy) statsState.groupBy = '';   // a key that vanished
 }
 
-/** Flag on: paint #stats-view (By tag only while a tag exists or a dimension is configured) → the view to show
- *  and the dims it was decided with. A stored `tag` while By tag is unavailable shows Overview but stays stored. */
+/** Flag on: highlight the chosen #stats-view chip → the view to show and the dims (policy dimensions, in their
+ *  order) the Cost report's picker leads with. Every chip shows: the Cost report's built-in dimensions always exist. */
 async function paintStatsViewChips() {
-  const keys = (await fetchTagVocabulary())?.keys || [];
   const dims = await loadAllTagDims();
-  const tagOk = keys.length > 0 || dims.length > 0;
   const seg = document.getElementById('stats-view');
-  seg.querySelector('[data-stats-view="tag"]').hidden = !tagOk;
-  const view = statsState.view === 'tag' && !tagOk ? 'overview' : statsState.view;
+  const view = statsState.view;
   for (const b of seg.querySelectorAll('button[data-stats-view]')) {
     const on = b.dataset.statsView === view;
     b.classList.toggle('on', on);
@@ -18694,15 +18766,21 @@ async function loadStatsView() {
     ? await paintStatsViewChips().catch(() => ({ view: 'overview', dims: [] }))
     : { view: null, dims: [] };
   if (!chips) await paintStatsGroupOptions().catch(() => {});      // a vanished tag key resets groupBy before the query
+  // Cost has its own filter bar (cost-report.mjs), so the page's cost tag field and Person select step aside.
+  const cost = chips && view === 'cost';
+  document.getElementById('stats-tags').hidden = cost;
+  document.getElementById('stats-person').closest('.select-wrap').hidden = cost;
   // A network-level rejection is not an !res.ok — without this catch it escapes
   // as an unhandled rejection and leaves the body stuck in .is-loading.
   let res, data;
   try {
-    // Flag on: the chip decides groupBy and byTag. Flag off: the tag field is hidden, so its chips must not
-    // narrow the numbers either.
-    const query = chips
-      ? { ...statsState, groupBy: view === 'person' ? 'person' : '', byTag: view === 'tag', tagKeys: dims.map((d) => d.key) }
-      : { ...statsState, tags: [] };
+    // Flag on: the chip decides groupBy, and Cost asks for the per-run facts (its own chips filter them in the
+    // browser). Flag off: the tag field is hidden, so its chips must not narrow the numbers either.
+    const query = cost
+      ? { range: statsState.range, from: statsState.from, to: statsState.to, report: true }
+      : chips
+        ? { ...statsState, groupBy: view === 'person' ? 'person' : '' }
+        : { ...statsState, tags: [] };
     res = await fetch(`/api/stats?${statsQuery(query)}`);
     data = await safeJson(res);
   } catch (err) {
@@ -18719,11 +18797,15 @@ async function loadStatsView() {
   }
   statsState.last = data;                               // the export reads the rows on screen
   paintStatsPeople(data.people);
-  document.getElementById('stats-filter-note').hidden = !data.filtered;
-  const fmt = { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle };
-  body.replaceChildren(view && view !== 'overview'
-    ? renderStatsView(data, view, { fmt, dims })
-    : renderStatsBody(data, { fmt }));
+  document.getElementById('stats-filter-note').hidden = cost || !data.filtered;
+  if (cost) {
+    const r = costReportFor();
+    r.update({ data, dims, rangeLabel: statsRangeLabel(data), range: statsState.range });
+    body.replaceChildren(r.el);
+  } else {
+    const fmt = { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle };
+    body.replaceChildren(view && view !== 'overview' ? renderStatsView(data, view, { fmt, dims }) : renderStatsBody(data, { fmt }));
+  }
   loadTmScopes().then((d) => { const a = document.getElementById('stats-tm-hint'); if (a) a.hidden = !d.anyEnabled; });
 }
 
@@ -19289,14 +19371,6 @@ function downloadStatsCsv(csv, name) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 el.statsBody.addEventListener('click', (e) => {
-  const csv = e.target.closest('.alloc-csv');
-  if (csv) {
-    const t = statsState.last?.tagGroups?.find((g) => g.key === csv.dataset.key);
-    if (!t) return;
-    const label = dimensionLabel(allTagDimsCache?.dims || [], t.key) || t.key;
-    downloadStatsCsv(groupsToCsv({ label, rows: t.rows }), `statistics-${statsState.range}-tag-${t.key}.csv`);
-    return;
-  }
   if (!e.target.closest('.stats-export') || !statsState.last?.groups) return;
   downloadStatsCsv(groupsToCsv(statsState.last.groups),
     `statistics-${statsState.range}-${(statsState.last.groupBy || '').replace(':', '-')}.csv`);
@@ -20290,6 +20364,13 @@ async function paintPooledBudgetTile(scopeId, records) {
  *  tmState: tmState's initialiser reads it, and a const read above its declaration throws. */
 const TM_RUN_PAGE = 50;
 const TM_VIEW_KEY = 'worca.teamMetrics.view';
+const TM_VIEW_CHIPS = ['overview', 'person', 'cost'];
+// 'tag' was the By cost tag chip (#718 slice 4); the Cost and value report replaced it (labels-cost-tags s4).
+const storedTmView = () => { const v = storedChoice(TM_VIEW_KEY, [...TM_VIEW_CHIPS, 'tag'], 'overview'); return v === 'tag' ? 'cost' : v; };
+const TM_COST_STATE_KEY = 'worca-cc.teamMetrics.cost.v1';
+const TM_COST_VIEWS_KEY = 'worca-cc.teamMetrics.costViews.v1';
+// Statistics' delta-chip wording (stats-view.mjs deltaChip) for a Team metrics range.
+const TM_DELTA_RANGE = { 'this-month': 'month', 'last-month': 'lastMonth', quarter: 'custom', year: 'custom', custom: 'custom', all: 'all' };
 const tmState = {
   scopeId: localStorage.getItem('worca.teamMetrics.scope') || '',
   range: 'this-month', from: '', to: '', groupBy: 'workflow',
@@ -20298,8 +20379,7 @@ const tmState = {
   runLimit: TM_RUN_PAGE,            // raised by "Show all N runs" (§4.9 "every record in range")
   cache: new Map(),                 // scopeId → last payload this session: switching back paints at once
   tab: 'overview',                  // 'overview' | 'timeline' — the hash param (#team-metrics/timeline)
-  view: storedChoice(TM_VIEW_KEY, VIEW_CHIPS, 'overview'),   // the Overview tab's chip (#718 slice 4)
-  lastTagTables: [],                // the By tag allocationModels last painted (the per-table CSV reads them)
+  view: storedTmView(),             // the Overview tab's chip (#718 slice 4)
   // Timeline: calendar position, grouping (kept per viewer) and the tile filter.
   tl: {
     zoom: 'month', anchor: Date.now(), filter: null,
@@ -20592,6 +20672,29 @@ function onTimelineClick(e) {
   return true;
 }
 
+let tmCostReport = null;   // one instance, as Statistics keeps: a re-render morphs the same chart
+function tmCostReportFor() {
+  if (tmCostReport) return tmCostReport;
+  let reduced = false;
+  try { reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* no matchMedia */ }
+  tmCostReport = createCostReport({
+    doc: document, fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle, hours: DEFAULT_FMT.hours },
+    storage: localStorage, reducedMotion: reduced, stateKey: TM_COST_STATE_KEY, viewsKey: TM_COST_VIEWS_KEY,
+    onOpenRuns: null,                                   // teammates' runs: most are not in this machine's Runs list
+    onDownload: (csv, name) => downloadStatsCsv(csv, name),
+    csvName: (_st, key) => `team-metrics-${tmState.scopeId.replace(/[^a-z0-9-]+/gi, '-')}-${tmState.range}-cost-${key.replace(/[^a-z0-9._-]+/gi, '-')}.csv`,
+    extras: ({ runs, by, byLabel }) => ({
+      lead: renderMissingTagsStrip(missingKeyTodos(runs, tmState.dims), { doc: document, fmt: { usd: fmtUsd }, dims: tmState.dims }),
+      tail: [renderHeatGrid(heatGrid(runs, { by }), { doc: document, fmt: { usd: fmtUsd }, byLabel })],
+    }),
+  });
+  return tmCostReport;
+}
+// The window is UTC (resolveRange), so the label is UTC too: TM_FMT.day prints "Oct 1" from an ISO string, as the
+// rest of Team metrics does. (stats-view.mjs tipDate is private and prints LOCAL weekday dates.)
+const tmDay = (ms) => TM_FMT.day(new Date(ms).toISOString());
+const tmRangeLabel = (facts, range) => (range === 'all' ? 'All time' : `${tmDay(facts.windowStartMs)} – ${tmDay(facts.windowEndMs - 1)}`);
+
 function renderTeamMetrics() {
   const body = document.getElementById('tm-body');
   const data = tmState.data;
@@ -20619,26 +20722,32 @@ function renderTeamMetrics() {
     homeHint.append('Metrics home ', Object.assign(document.createElement('code'), { className: 'mono', textContent: data.scope.home || '—' }),
       ` · records from ${(data.scope.sources || []).length} member repositor${(data.scope.sources || []).length === 1 ? 'y' : 'ies'}, grouped by workspace name`);
   }
-  // View chips (flag on only): By tag while a dimension is configured or a loaded record carries a tag.
-  const tagChip = tagsOn && (tmState.dims.length > 0 || loadedTags.length > 0);
-  const view = !tagsOn ? null : (tmState.view === 'tag' && !tagChip ? 'overview' : tmState.view);
-  const tagTables = view !== 'tag' ? [] : tagBreakdowns(data.records, {
-    range: tmState.range, from: tmState.from || null, to: tmState.to || null, filter: aggFilter, now: Date.now(),
-    keys: tmState.dims.map((d) => d.key),
-  }).map((t) => allocationModel({ key: t.key, label: dimensionLabel(tmState.dims, t.key) || t.key, rows: fromBreakdownRows(t.rows) }));
-  tmState.lastTagTables = tagTables;
+  // View chips (flag on only). Cost is the Cost and value report over the team records in the range; the page's
+  // #tm-tag select and #tm-filters chips step aside there (the report has its own filter bar).
+  const view = tagsOn ? tmState.view : null;
+  let costEl = null;
+  if (view === 'cost') {
+    const facts = recordFacts(data.records || [], { range: tmState.range, from: tmState.from || null, to: tmState.to || null, now: Date.now() });
+    const r = tmCostReportFor();
+    r.update({
+      data: { bucket: facts.bucket, humanRateUsd: data.humanRateUsd ?? 0,
+        report: { buckets: facts.buckets, runs: facts.runs, prevRuns: facts.prevRuns, ask: null } },
+      dims: tmState.dims, rangeLabel: tmRangeLabel(facts, tmState.range), range: TM_DELTA_RANGE[tmState.range] || 'custom',
+    });
+    costEl = r.el;
+  }
   body.classList.remove('is-loading');
-  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, tagChip, tagTables }));
+  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, costEl }));
   tmState.lastAgg = agg;
   // The #tm-tag select, beside the range controls (replaced on every render; hidden with the flag off).
   const tagSel = renderTagFilterSelect(tagsOn ? data.records || [] : [], tmState.tag, { doc: document });
-  if (tmState.tab === 'timeline') tagSel.hidden = true;
+  if (tmState.tab === 'timeline' || view === 'cost') tagSel.hidden = true;
   const oldTag = document.getElementById('tm-tag');
   oldTag?.replaceWith(tagSel);
   void paintPooledBudgetTile(tmState.scopeId, data.records || []);   // team policy (design board 10): advisory tile, when the scope's policy sets one
   const chips = document.getElementById('tm-filters');
   const active = Object.entries(tmState.filter).filter(([, v]) => v != null);
-  chips.hidden = !(active.length || tmState.tag);
+  chips.hidden = view === 'cost' || !(active.length || tmState.tag);
   chips.replaceChildren(...active.map(([dim, key]) => {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'chip tm-filter-chip'; b.dataset.dim = dim;
@@ -20650,7 +20759,7 @@ function renderTeamMetrics() {
   if (tmState.tag) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'chip tm-filter-chip'; b.dataset.dim = 'tag';
-    b.textContent = `tag: ${tmState.tag} ×`;
+    b.textContent = `cost tag: ${tmState.tag} ×`;
     chips.append(b);
   }
 }
@@ -20694,16 +20803,6 @@ if (tmSection) {
       tmState.view = viewBtn.dataset.tmView;
       storeChoice(TM_VIEW_KEY, tmState.view);
       renderTeamMetrics();
-      return;
-    }
-    const allocCsv = e.target.closest('.alloc-csv');
-    if (allocCsv) {
-      const m = (tmState.lastTagTables || []).find((t) => t.key === allocCsv.dataset.key);
-      if (!m) return;
-      const url = URL.createObjectURL(new Blob([allocationCsv(m)], { type: 'text/csv;charset=utf-8' }));
-      const a = Object.assign(document.createElement('a'), { href: url, download: `team-metrics-${tmState.scopeId.replace(/[^a-z0-9-]+/gi, '-')}-${tmState.range}-tag-${m.key}.csv` });
-      document.body.append(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
       return;
     }
     if (e.target.closest('#tm-timeline')) { onTimelineClick(e); return; }
@@ -23204,11 +23303,10 @@ function paintHdGlance(screen, record, data) {
   // Runs redesign slice 4: the one status block and the Group row, as on the live page (no bar: the run is finished).
   paintRunStatus(glance.querySelector('.rd-sheet .run-status'), runModel(hdModelRun(record, data), { memo: memoFor(record.id) }));
   paintGroupLine(glance.querySelector('.rd-page-head .rd-group-line'), record.id || '', record.title || '', groupHomeOf(record.id || ''));
+  paintRunLabels(glance.querySelector(':scope > .rd-sheet'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
 
-  // Time · Cost · Changes, as on the Running page in every state.
-  const activeMs = typeof st.totalActiveMs === 'number' ? st.totalActiveMs : liveTotalMs(st.steps, 0);
-  paintGlanceFacts(glance, { summary: s || null, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
-    costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd) });
+  // Time · Cost · Cost tags · Changes, as on the Running page in every state.
+  paintHdFacts(screen, record, data);
 
   // The result: every tab, the actions. The things to check live in Overview only.
   const host = glance.querySelector('.hd-result');
@@ -23831,12 +23929,23 @@ function hdDot() {
 // in the landing page's head (the glance) and in Details › Overview. The editor stays in the head it was
 // opened from; the element itself survives a header repaint, so its uncommitted chips are kept.
 let hdTagEditor = null;   // { pipelineId, el, input, host }
+// The finished page's facts row (also repainted after a cost tag Save, and when the run's dimensions answer: D18).
+function paintHdFacts(screen, record, data) {
+  const glance = screen && screen.querySelector('.hd-glance');
+  if (!glance || !data || !data.state) return;
+  const st = data.state;
+  const s = data.results && data.results.summary;
+  const activeMs = typeof st.totalActiveMs === 'number' ? st.totalActiveMs : liveTotalMs(st.steps, 0);
+  paintGlanceFacts(glance, { summary: s || null, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
+    costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd),
+    costTags: costTagsFact(st.tags, record && record.projectDir, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }, record && record.target) });
+}
 function paintHdTags(screen, record, data) {
   const hosts = { glance: screen.querySelector('.hd-glance .rd-page-meta'), row2: screen.querySelector('.hd-row2') };
   for (const host of Object.values(hosts)) host?.querySelector('.hd-tags')?.remove();
   if (!flagOn('runTags')) return;
   const st = data.state;
-  const repaint = () => paintHdTags(screen, record, data);
+  const repaint = () => { paintHdTags(screen, record, data); paintHdFacts(screen, record, data); };
   for (const [where, host] of Object.entries(hosts)) {
     if (!host) continue;
     const box = document.createElement('span');
@@ -23847,20 +23956,23 @@ function paintHdTags(screen, record, data) {
       continue;
     }
     const tags = st.tags || [];
-    box.append(...tags.map((t) => tagChip(document, t)));
+    // s2 (D10): the glance shows the chips in its cost tags tile; the meta line keeps only the button.
+    if (where !== 'glance') box.append(...tags.map((t) => tagChip(document, t)));
     const edit = document.createElement('button');
     edit.type = 'button';
     edit.className = 'btn btn-sm btn-quiet hd-tags-edit';
-    edit.textContent = tags.length ? 'Edit tags' : 'Add tags';
-    edit.addEventListener('click', () => { hdTagEditor = { ...hdTagEditorFor(st, repaint), host: where }; repaint(); });
+    edit.textContent = tags.length ? 'Edit cost tags' : 'Add cost tags';
+    edit.addEventListener('click', () => { hdTagEditor = { ...hdTagEditorFor(st, repaint, record), host: where }; repaint(); });
     box.appendChild(edit);
     host.appendChild(box);
   }
 }
-function hdTagEditorFor(st, repaint) {
+function hdTagEditorFor(st, repaint, record) {
   const el = document.createElement('span');
   el.className = 'hd-tags-editor';
-  const input = createTagInput(document, { value: st.tags || [], suggest: fetchTagVocabulary });
+  // s2: `st` (data.state) has no projectDir; the record has. A cache entry is a pending object until its fetch answers.
+  const input = createTagInput(document, { value: st.tags || [], suggest: () => fetchTagVocabulary(record?.projectDir || null),
+    dims: () => { const g = runTagDimsCache.get(record?.projectDir); return Array.isArray(g) ? g : []; } });
   const save = document.createElement('button');
   save.type = 'button';
   save.className = 'btn btn-primary btn-sm hd-tags-save';
@@ -29046,6 +29158,7 @@ function askRunSnapshot(r) {
     title: r.title || '', projectKey: null, workspaceId: r.workspaceId || null, projectDir: r.projectDir || '',
     projectNames: Array.isArray(r.projectNames) ? r.projectNames : null,
     status: r.status, pauseReason: r.pauseReason || null, pendingQuestion: r.pendingQuestion || null,
+    labels: Array.isArray(r.labels) ? r.labels : [],
     ...(r.shaping ? { shaping: r.shaping } : {}),
     live: isLive(r), terminal: !!r._finished || isTerminalStatus(r.status),
     startedAt: r.startedAt || null, elapsedMs: liveTotalMs(r.steps, Date.now()),
@@ -30786,7 +30899,8 @@ const RUNS_COLLAPSED_KEY = 'worca-cc.runs.collapsed';   // project / date sectio
 // rowsByKey: every top-level and member row of the last paint; memos: runProgress / cost memos per run and group.
 const runsUi = { view: loadRunsView(localStorage), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false,
   groupsToggled: new Map(), recentShown: RECENT_PAGE, selecting: false, anchorKey: null,
-  sel: createRunsSelection(), rowsByKey: new Map(), memos: new Map(), lastModel: null, listCounts: null };
+  sel: createRunsSelection(), rowsByKey: new Map(), memos: new Map(), lastModel: null, listCounts: null,
+  pendingSelect: null };   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
 const memoFor = (id) => { if (!runsUi.memos.has(id)) runsUi.memos.set(id, {}); return runsUi.memos.get(id); };
 
 function histGroupName(p) {
@@ -30846,6 +30960,7 @@ function runsLiveItem(r) {
     checks: rec && typeof rec.checks === 'number' ? rec.checks : null,
     files: rec && typeof rec.files === 'number' ? rec.files : null,
     tags: flagOn('runTags') ? (r.tags || []) : [],
+    labels: flagOn('runLabels') ? (r.labels || []) : [],
     // The run model reads the raw run (runs-list.mjs runModel); its monotonic progress memo is kept per run. A finished
     // run takes its History row's PR (rdModelRun), so it reads In review here as on the run page.
     run: rdModelRun(r), memo: memoFor(r.pipelineId || r.runId),
@@ -31138,6 +31253,7 @@ function runsHistItem(p) {
     files: typeof p.files === 'number' ? p.files : null,
     base: baseRowNote(p.baseCheck),
     tags: flagOn('runTags') ? (p.tags || []) : [],
+    labels: flagOn('runLabels') ? (p.labels || []) : [],
     run: histRun(p),
     cost: engineReportsCost(p.runEngine) ? (p.totalCostUsd ?? null) : null,
   };
@@ -31156,7 +31272,7 @@ const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, 
   r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
   r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
   r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '',
-    m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.icon] : 0])] : 0];
+    m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.icon] : 0])] : 0, (r.labels || []).join('\n')];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over, then the selected row stands in;
@@ -31185,6 +31301,7 @@ function paintRunsList() {
     scheduled: schedulesView.upcoming(SCHEDULED_GROUP_WINDOW_MS).map(runsSchedItem),
     groups: runsGroupItems(),
     person: viewer.shared ? runsUi.view.person : '',
+    labels: flagOn('runLabels') ? runsUi.view.labels : [],
     show: runsUi.view.show, groupBy: runsUi.view.groupBy, collapsed: runsUi.collapsed, toggled: runsUi.groupsToggled,
     recentShown: runsUi.recentShown, archivedCount: state.historyArchived ? state.historyArchived.length : null, now: Date.now(),
   });
@@ -31202,6 +31319,7 @@ function paintRunsList() {
   if (archivedView && state.historyArchived === null) loadHistoryArchived();
   runsUi.lastModel = model;
   runsUi.rowsByKey = new Map(model.sections.flatMap((s) => s.rows.flatMap((r) => [[r.key, r], ...(r.kind === 'chain' ? r.members.map((m) => [m.key, m]) : [])])));
+  applyPendingSelect(answered);
   runsUi.sel.prune(new Set(runsUi.rowsByKey.keys()));
   // Under Show = Archived the history source is the archived feed, so the model's other counts would read 0.
   if (!archivedView) runsUi.listCounts = model.counts;
@@ -31352,11 +31470,63 @@ function paintRunsChip(model) {
   const chip = document.getElementById('runs-view-chip');
   if (!chip) return;
   const person = viewer.shared ? runsPeople().find((p) => p.key === runsUi.view.person) : null;
-  const text = viewChip(runsUi.view, { shown: model.shown, total: (runsUi.listCounts || model.counts).all, personName: person ? person.name : '' });
+  const text = viewChip(flagOn('runLabels') ? runsUi.view : { ...runsUi.view, labels: [] }, { shown: model.shown, total: (runsUi.listCounts || model.counts).all, personName: person ? person.name : '' });
   chip.hidden = !text;
   chip.querySelector('.runs-view-chip-t').textContent = text;
+  paintRunsLabelFilter();
 }
-document.querySelector('#runs-view-chip .runs-view-reset')?.addEventListener('click', () => setRunsView({ show: 'all', groupBy: 'none', person: '' }));
+document.querySelector('#runs-view-chip .runs-view-reset')?.addEventListener('click', () => setRunsView({ show: 'all', groupBy: 'none', person: '', labels: [] }));
+
+// ── Run labels (slice 1): the Label filter, the selection bar's Label action ──
+async function sendJson(method, url, body) {
+  const r = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw httpError(r, out);
+  return out;
+}
+/** A label change the server confirmed, patched into this tab at once (pipelines-changed reloads History too). */
+function applyLabelsLocally(list) {
+  const by = new Map(list.map((x) => [x.id, x.labels]));
+  for (const p of [...(state.historyAll || []), ...(state.historyArchived || [])]) if (p && by.has(p.id)) p.labels = by.get(p.id);
+  for (const r of runs.values()) if (r.pipelineId && by.has(r.pipelineId)) r.labels = by.get(r.pipelineId);
+  scheduleRunsPaint();
+}
+
+// Runs head: the Label filter (no create: a filter word must be in use).
+function paintRunsLabelFilter() {
+  const box = document.getElementById('runs-label-filter');
+  if (!box) return;
+  const chosen = flagOn('runLabels') ? runsUi.view.labels : [];
+  box.hidden = !chosen.length;
+  box.replaceChildren(...chosen.map((l) => labelChip(document, l, { onRemove: () => setRunsView({ labels: chosen.filter((x) => x !== l) }) })));
+}
+document.getElementById('runs-label-btn')?.addEventListener('click', async (e) => {
+  const anchor = e.currentTarget;
+  if (closeLabelPickerFor(document, anchor)) return;   // a second press closes it
+  const used = await fetchLabels();
+  anchor.setAttribute('aria-expanded', 'true');
+  openLabelPicker({ doc: document, anchor, used, allowCreate: false, title: 'Filter by label',
+    states: new Map(runsUi.view.labels.map((l) => [l, 'all'])),
+    onToggle: (label, on) => setRunsView({ labels: on ? [...runsUi.view.labels, label] : runsUi.view.labels.filter((x) => x !== label) }),
+    onClose: () => anchor.setAttribute('aria-expanded', 'false') });
+});
+
+// Selection bar: the Label action.
+async function openRunsLabelPicker(anchor) {
+  if (closeLabelPickerFor(document, anchor)) return;
+  const targets = labelTargets(selectedTargets());
+  if (!targets.length) return;
+  const used = await fetchLabels();
+  openLabelPicker({ doc: document, anchor, used, mode: 'up', title: 'Label selected runs',
+    states: labelStates(targets.map((t) => t.labels)),
+    onToggle: async (label, on) => {
+      try {
+        const out = await sendJson('POST', '/api/runs/bulk/labels', { pipelineIds: targets.map((t) => t.pipelineId), [on ? 'add' : 'remove']: [label] });
+        for (const t of targets) t.labels = applyLabelChange(t.labels, on ? { add: [label] } : { remove: [label] });
+        applyLabelsLocally(out.runs);
+      } catch (err) { notify(actionError('label the selected runs', err)); }
+    } });
+}
 
 // ── Selection, keys and the action bar (runs-selection.mjs, D19-D21) ──
 const visibleTopKeys = () => [...el.runsList.querySelectorAll('.runs-item[data-level="top"]')].map((n) => n.dataset.rowKey);
@@ -31387,7 +31557,7 @@ document.getElementById('runs-list-pane')?.addEventListener('keydown', (e) => {
 // Esc clears the selection wherever focus is (the list, the open run beside it, the page). A menu, the group picker or
 // a modal owns its own Escape first.
 function runsListOwnsEscape() {
-  if (document.querySelector('.wfv-menu, .group-picker')) return true;
+  if (document.querySelector('.wfv-menu, .group-picker, .label-picker')) return true;
   return runsUi.sel.size > 0 || runsUi.selecting;
 }
 function overlayUp() {
@@ -31396,7 +31566,7 @@ function overlayUp() {
 }
 document.addEventListener('keydown', (e) => {
   // openMenu (workflows/menu.mjs) and the group picker stop their Escape at the menu, so it never gets here.
-  if (e.key !== 'Escape' || e.defaultPrevented || overlayUp() || document.querySelector('.wfv-menu, .group-picker')) return;
+  if (e.key !== 'Escape' || e.defaultPrevented || overlayUp() || document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;
   if (!runsUi.sel.size && !runsUi.selecting) return;
   e.preventDefault();
   runsUi.sel.clear();
@@ -31455,6 +31625,11 @@ function paintRunsBar() {
     b.disabled = m[a].count === 0;
     if (m[a].title) b.title = m[a].title; else b.removeAttribute('title');
   }
+  const labelBtn = bar.querySelector('[data-bulk="label"]');
+  if (labelBtn) {
+    labelBtn.disabled = !labelTargets(selectedTargets()).length;
+    if (labelBtn.disabled) labelBtn.title = 'None of the selected runs can be labelled yet'; else labelBtn.removeAttribute('title');
+  }
 }
 async function postBulk(body) {
   const r = await fetch('/api/runs/bulk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -31496,6 +31671,7 @@ document.getElementById('runs-bulk')?.addEventListener('click', (e) => {
   const b = e.target.closest && e.target.closest('[data-bulk]');
   if (!b) return;
   if (b.dataset.bulk === 'cancel') { runsUi.sel.clear(); runsUi.selecting = false; runsUi.anchorKey = null; paintRunsList(); return; }
+  if (b.dataset.bulk === 'label') { void openRunsLabelPicker(b); return; }
   runBulkAction(b.dataset.bulk);
 });
 
@@ -31593,6 +31769,41 @@ function openRunsForProject(key) {
   runsUi.reveal = `project:${key}`;
   goRunsList();          // the list itself: no D6 restore over the group it reveals
 }
+// "Tag N runs" (Statistics › Cost): open the Runs list with those runs ticked. Applied on the first paint after
+// History has answered, so the rows exist; runs not in the list (archived, past the Recent page) are reported.
+function openRunsSelected(pipelineIds) {
+  runsUi.pendingSelect = new Set((pipelineIds || []).filter(Boolean));
+  goRunsList();
+}
+function applyPendingSelect(answered) {
+  const want = runsUi.pendingSelect;
+  if (!want || !answered) return;
+  runsUi.pendingSelect = null;
+  const keys = [];
+  const found = new Set();
+  for (const [k, r] of runsUi.rowsByKey) {
+    if (k.startsWith('member:')) continue;
+    // A chain's planning run sits in r.planning, not in r.members (ui/public/runs-list.mjs:365).
+    const ids = r.kind === 'chain' ? [r.planning?.pipelineId, ...(r.members || []).map((m) => m.pipelineId)] : [r.pipelineId];
+    const hit = ids.filter((id) => id && want.has(id));
+    if (!hit.length) continue;
+    keys.push(k);
+    for (const id of hit) found.add(id);
+  }
+  runsUi.sel.clear();
+  runsUi.sel.selectAll(keys);
+  runsUi.selecting = keys.length > 0;
+  // A ticked row in a folded project/date section would be selected but unseen: unfold those sections and repaint.
+  const hitKeys = new Set(keys);
+  const folded = (runsUi.lastModel?.sections || []).filter((s) => s.collapsed && s.rows.some((r) => hitKeys.has(r.key)));
+  if (folded.length) {
+    for (const s of folded) runsUi.collapsed.delete(s.id);
+    persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed);   // as openRunsForProject does
+    queueMicrotask(paintRunsList);
+  }
+  if (found.size < want.size) notify({ tone: 'info', title: `Selected ${found.size} of ${want.size} runs`, detail: 'The others are archived, filtered out, or further down the list.' });
+}
+if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { openRunsSelected });
 
 // ── The Runs page's two panes: layout, which detail shows, focus ────────────
 // Two panes need the list (260-320px) beside the glance card (544px + 64px padding); below
@@ -33049,6 +33260,7 @@ function paintRdGlance(screen, r) {
     activeMs: rdActiveMs(r), cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(r.steps, r.totalCostUsd), fmtUsd),
     ticking: (r.status === 'running' || r.status === 'starting') && r.pendingQuestion == null,
+    costTags: costTagsFact(r.tags, r.projectDir, () => rdRepaintOpenGlance(r.pipelineId), r.workspaceId ? 'workspace' : 'project'),
   });
 
   const trail = trailColumns(r);
@@ -33199,7 +33411,32 @@ function activityOverviewValue(results) {
 // the time to the 1 s ticker (`.run-time`, rdTickHosts) while the run executes; a live
 // run knows only how many files its worktree changed (`liveFiles`), a finished one the
 // line counts too (`summary`).
-function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost = null, costNote = '', ticking = false } = {}) {
+// s2 (D11): the run target's dimensions, fetched once per project dir for the page session.
+const runTagDimsCache = new Map();   // projectDir → dims[] once answered, else { waiting: Set of repaint callbacks }
+function runRequiredKeys(projectDir, onLoad) {
+  if (!projectDir || !flagOn('runTags')) return [];
+  const got = runTagDimsCache.get(projectDir);
+  if (Array.isArray(got)) return got.filter((d) => d.required).map((d) => d.key);
+  if (got) { if (onLoad) got.waiting.add(onLoad); return []; }
+  const pending = { waiting: new Set(onLoad ? [onLoad] : []) };
+  runTagDimsCache.set(projectDir, pending);
+  fetch(`/api/tag-dimensions?projectDir=${encodeURIComponent(projectDir)}`)
+    .then((r) => (r.ok ? r.json() : null)).catch(() => null)
+    .then((info) => {
+      runTagDimsCache.set(projectDir, Array.isArray(info?.dims) ? info.dims : []);
+      for (const fn of pending.waiting) { try { fn(); } catch { /* a closed page */ } }
+    });
+  return [];
+}
+// D8: a workspace run has no single project, so it gets chips but never a missing slot (pass target 'workspace').
+const costTagsFact = (tags, projectDir, onLoad, target = 'project') => {
+  if (!flagOn('runTags')) return null;
+  const have = new Set((tags || []).map((t) => parseTag(t).tag?.key));
+  const missing = (target === 'workspace' ? [] : runRequiredKeys(projectDir, onLoad)).filter((k) => !have.has(k));
+  return (tags || []).length || missing.length ? { tags: tags || [], missing } : null;
+};
+
+function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost = null, costNote = '', ticking = false, costTags = null } = {}) {
   const tiles = document.createElement('div');
   tiles.className = 'rd-stats';
   const tile = (big, small, cls = '') => {
@@ -33214,6 +33451,12 @@ function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost =
   };
   if (activeMs != null) tiles.append(tile(fmtDuration(activeMs) || '0s', 'time', ticking ? 'run-time' : ''));
   if (cost != null) tiles.append(tile(fmtUsd(cost), costNote || 'cost'));
+  if (costTags) {   // s2 (D10): the run's cost tags next to time and cost, then a dashed slot per missing required key
+    const box = document.createElement('span');
+    box.className = 'rd-cost-tags';
+    box.append(...costTags.tags.map((t) => tagChip(document, t)), ...costTags.missing.map((k) => missingSlot(document, k)));
+    tiles.append(tile(box, 'cost tags', 'rd-cost-tags-b'));
+  }
   if (summary) {
     const files = (summary.filesNew || 0) + (summary.filesChanged || 0);
     tiles.append(tile(hdFileCountsNode(document, { added: summary.linesAdded || 0, removed: summary.linesRemoved || 0 }),
@@ -34086,6 +34329,52 @@ function rdDot() {
   return s;
 }
 
+// Run labels under the run page status (slice 1). One row per sheet, rebuilt on every header paint.
+// A saved change stores the new set (onSaved: data only) and repaints just this row (D18).
+function paintRunLabels(sheet, { pipelineId, labels, onSaved = () => {} }) {
+  if (!sheet) return;
+  sheet.querySelector(':scope > .rd-labels')?.remove();
+  if (!flagOn('runLabels')) return;
+  const row = document.createElement('div');
+  row.className = 'rd-labels';
+  row.setAttribute('aria-label', 'Labels');
+  const done = (next) => {
+    applyLabelsLocally([{ id: pipelineId, labels: next }]);
+    onSaved(next);
+    if (sheet.isConnected) paintRunLabels(sheet, { pipelineId, labels: next, onSaved });
+  };
+  // The chip ×: replace the set (PUT). A picker toggle: a delta for this one run (D17), so quick toggles never race.
+  const remove = async (l) => {
+    try { done((await sendJson('PUT', `/api/runs/${encodeURIComponent(pipelineId)}/labels`, { labels: list.filter((x) => x !== l) })).labels); }
+    catch (err) { notify(actionError('change the labels', err)); }
+  };
+  const toggle = async (label, on) => {
+    try {
+      const out = await sendJson('POST', '/api/runs/bulk/labels', { pipelineIds: [pipelineId], [on ? 'add' : 'remove']: [label] });
+      done(out.runs[0]?.labels || []);
+    } catch (err) { notify(actionError('change the labels', err)); }
+  };
+  const list = labels || [];
+  row.append(...list.map((l) => labelChip(document, l, pipelineId ? { onRemove: remove } : {})));
+  if (pipelineId) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn btn-sm btn-quiet rd-labels-edit';
+    b.textContent = list.length ? 'Label' : 'Add label';
+    b.setAttribute('aria-haspopup', 'dialog');
+    b.addEventListener('click', async () => {
+      if (closeLabelPickerFor(document, b)) return;
+      // A toggle repaints this row (done), so the picker follows the current button rather than this one.
+      const anchor = () => (sheet.isConnected && sheet.querySelector(':scope > .rd-labels > .rd-labels-edit')) || b;
+      openLabelPicker({ doc: document, anchor, used: await fetchLabels(), title: 'Labels',
+        states: new Map(list.map((l) => [l, 'all'])), onToggle: toggle });
+    });
+    row.append(b);
+  }
+  const head = sheet.querySelector(':scope > .rd-sheet-head');
+  if (row.childElementCount && head) head.after(row);
+}
+
 function paintRdHeader(screen, r) {
   screen.querySelector('.rd-title').textContent = r.title || r.runId;
   screen.querySelector('.rd-bar-title').textContent = r.title || r.runId;
@@ -34115,8 +34404,8 @@ function paintRdHeader(screen, r) {
   const starter = personShown(r.startedBy);
   if (starter) screen.querySelector('.rd-page-meta').append(personChip(starter));
   // Run tags (#718): read-only chips after the person chip, replaced on every paint.
-  for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();
-  if (flagOn('runTags')) screen.querySelector('.rd-page-meta').append(...(r.tags || []).map((t) => tagChip(document, t)));
+  for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();   // s2: the chips moved to the cost tags tile
+  paintRunLabels(screen.querySelector('.rd-glance > .rd-sheet'), { pipelineId: r.pipelineId || '', labels: r.labels, onSaved: (l) => { r.labels = l; } });
 
   // Meta: project · started · elapsed · cost · step n/m · step name.
   const meta = screen.querySelector('.rd-meta');
@@ -35166,7 +35455,7 @@ const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'adv
 const VIEW_TITLES = Object.freeze({
   chat: 'Chat', stats: 'Statistics', workflows: 'Workflows', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'team-metrics': 'Team metrics', 'team-policy': 'Team policy',
-  guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Tags',
+  guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Labels & cost tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules', presets: 'Presets',
 });
@@ -35570,7 +35859,7 @@ function showSettingsTab(param = '') {
     // '#settings/runs/actions' and the like: a link to one card (the Actions tab's "Set one in Settings").
     void loadSettings().then(() => focusSettingsCard(settingsPanes.find((p) => p.dataset.tab === tab), sub));
   }
-  if (tab === 'tags') void loadTagsTeam();
+  if (tab === 'tags') { void loadTagsTeam(); void loadLabelsSection(); }
   if (tab === 'presets') void loadPresetsView();
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);

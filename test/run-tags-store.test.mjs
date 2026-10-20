@@ -76,3 +76,24 @@ test('editRunTags: new tags must be key:value; a bare key already on the run is 
   assert.throws(() => editRunTags('bbbbbbb2', ['hello world']), (e) => e.code === 'BAD_TAGS');
   assert.deepEqual(readRunTags('bbbbbbb2'), ['client:globex', 'urgent']);
 });
+
+const rowAt = (id, key, by, at) => getDb().prepare(`
+  INSERT INTO pipelines (id, project_key, target, title, status, phase, cycle, started_at, updated_at, started_by)
+  VALUES (?, ?, 'project', 't', 'done', 'done', 1, ?, ?, ?)`).run(id, key, at, at, by);
+test('tagVocabulary({projectKey}): only that project\'s runs; each value carries its newest start', () => {
+  rowAt('tv000001', 'p-one', 'ana@x.io', '2026-10-01T10:00:00Z'); insertRunTags('tv000001', ['epic:old']);
+  rowAt('tv000002', 'p-one', 'ana@x.io', '2026-10-09T10:00:00Z'); insertRunTags('tv000002', ['epic:new']);
+  rowAt('tv000003', 'p-two', 'ana@x.io', '2026-10-10T10:00:00Z'); insertRunTags('tv000003', ['other:x']);
+  const v = tagVocabulary({ projectKey: 'p-one' });
+  assert.deepEqual(v.keys.map((k) => k.key), ['epic']);
+  assert.deepEqual(v.values.epic.map((x) => [x.value, x.lastAt]).sort(), [['new', '2026-10-09T10:00:00Z'], ['old', '2026-10-01T10:00:00Z']]);
+  assert.ok(tagVocabulary().keys.some((k) => k.key === 'other'), 'no projectKey stays machine-wide');
+});
+test('auto-fill source: the same person\'s newest tagged run in this project; a project where only others tagged gives nothing', () => {
+  rowAt('af000001', 'acme', 'dee@x.io', '2026-10-01T10:00:00Z'); insertRunTags('af000001', ['client:acme']);
+  rowAt('af000002', 'acme', 'dee@x.io', '2026-10-05T10:00:00Z'); insertRunTags('af000002', ['client:acme', 'team:web']);
+  rowAt('af000003', 'globex', 'dee@x.io', '2026-10-09T10:00:00Z'); insertRunTags('af000003', ['client:globex']);
+  rowAt('af000004', 'initech', 'eve@x.io', '2026-10-09T10:00:00Z'); insertRunTags('af000004', ['client:initech']);
+  assert.deepEqual(lastUsedTags('acme', 'dee@x.io'), ['client:acme', 'team:web']);
+  assert.deepEqual(lastUsedTags('initech', 'dee@x.io'), []);
+});

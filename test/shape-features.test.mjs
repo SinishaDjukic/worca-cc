@@ -12,6 +12,8 @@ import { projectKey } from '../src/core/store.mjs';
 import { writeReview, writeClarify, appendAuditById } from '../src/core/artifacts.mjs';
 import { createThread, linkRun } from '../src/core/ask/store.mjs';
 import { getTicket, runDueTickets, updateTicket } from '../src/core/scheduler.mjs';
+import { insertRunTags } from '../src/core/run-tags-store.mjs';
+import { editRunLabels } from '../src/core/run-labels-store.mjs';
 import {
   createSliceFeature, retireFeaturesOf, sliceRequest, sliceTitle, featureView, currentFeatureId, featureOfPipeline,
   earlierSliceChanges, cancelRest, resumeFeature, rechainWaiting, replanRest, setApproveEach, featureApprovesEach,
@@ -812,4 +814,34 @@ test('s5: a live round holds the Ship card back and is listed on its run', () =>
   assert.deepEqual(v.slices[2].rounds.map((r) => r.round), [2]);
   assert.equal(v.ship.ready, false);
   assert.equal(liveRoundOf(id).pipelineId, 'r0000002');
+});
+
+test('s2: a follow-up slice and a re-plan carry the origin run\'s cost tags and labels in their request; an untagged origin adds none', () => {
+  const pid = pipe('done');
+  const f = createSliceFeature({ pipelineId: pid, projectDir: root, title: 'Charts', outline: outlineOf(2), perspectives: ['product'],
+    workflowId: 'wf_shape', startedBy: 'ann', base: { mock: true } });
+  insertRunTags(pid, ['client:acme']); editRunLabels(pid, ['hotfix']);
+  const ap = appendFeatureRun(f.id, { title: 'more', goal: 'g', kind: 'follow-up' });
+  const req = getTicket(ap.ticketId, { withRequest: true }).request;
+  assert.deepEqual([req.tags, req.labels], [['client:acme'], ['hotfix']]);
+  const extra = appendFeatureRun(f.id, { title: 'extra', goal: 'g', kind: 'extra' });   // chained: inherits at fire, not in the request
+  assert.equal(Object.hasOwn(getTicket(extra.ticketId, { withRequest: true }).request, 'labels'), false);
+  const bare = createSliceFeature({ pipelineId: pipe('done'), projectDir: root, title: 'Bare', outline: outlineOf(2), perspectives: ['product'],
+    workflowId: 'wf_shape', startedBy: 'ann', base: { mock: true } });
+  const req2 = getTicket(appendFeatureRun(bare.id, { title: 'more', goal: 'g', kind: 'follow-up' }).ticketId, { withRequest: true }).request;
+  assert.deepEqual([Object.hasOwn(req2, 'tags'), Object.hasOwn(req2, 'labels')], [false, false]);
+  // a re-plan with nothing done (as 'replanRest with nothing done …') carries them too
+  const r = mk(2, { pipelineId: pipe('stopped') });
+  insertRunTags(r.pid, ['client:acme']); editRunLabels(r.pid, ['hotfix']);
+  const rq = getTicket(replanRest(r.id).ticketId, { withRequest: true }).request;
+  assert.deepEqual([rq.tags, rq.labels], [['client:acme'], ['hotfix']]);
+});
+
+test('s2: a slice 1 restart (no predecessor) carries the origin run\'s cost tags and labels', () => {
+  const a = mk(2, { pipelineId: pipe('stopped') });   // slice 1 is the origin run, stopped
+  insertRunTags(a.pid, ['client:acme']); editRunLabels(a.pid, ['hotfix']);
+  const res = resumeFeature(a.id);
+  assert.equal(res.action, 'restart', JSON.stringify(res));
+  const rq = getTicket(res.ticketId, { withRequest: true }).request;
+  assert.deepEqual([rq.tags, rq.labels], [['client:acme'], ['hotfix']]);
 });

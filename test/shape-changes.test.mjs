@@ -1,7 +1,7 @@
 // test/shape-changes.test.mjs
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { changesCard, applyChanges, routeCard, applyRoute, shapeToolFit, shapeThreadFacts } from '../src/core/shape/changes.mjs';
+import { changesCard, applyChanges, routeCard, applyRoute, shapeToolFit, shapeThreadFacts, threadWork } from '../src/core/shape/changes.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 
@@ -161,4 +161,23 @@ test('context facts: a feature names each run, the next one and the open step; a
   const r = shapeThreadFacts(runWork({ status: 'done' }));
   assert.deepEqual(r.run, { id: 'aaaa0002', title: 'Add a chart', status: 'done', finished: true, pr: { number: 41, state: 'open' }, rounds: 1 });
   assert.equal(shapeThreadFacts(null), null);
+});
+
+test('s2: a round and Own run now carry the origin\'s tags and labels; none → no fields', async () => {
+  const card = changesCard({ text: 'x', facts: { run: { ...RUN, tags: ['client:acme'], labels: ['hotfix'] }, feature: null } });
+  assert.deepEqual([card.run.tags, card.run.labels], [['client:acme'], ['hotfix']]);
+  const bare = changesCard({ text: 'x', facts: { run: { ...RUN }, feature: null } });
+  assert.equal(Object.hasOwn(bare.run, 'labels'), false);
+  const route = routeCard({ text: 'own it', feature: { id: 'f1', title: 'F', projectDir: '/p', tags: ['client:acme'], labels: ['hotfix'], slices: [] },
+    guess: { choice: 'own' } });
+  let sent = null;
+  await applyRoute(route, { verb: 'own' }, { startRun: async (b) => { sent = b; return { status: 200, body: { runId: 'r1' } }; } });
+  assert.deepEqual([sent.tags, sent.labels], [['client:acme'], ['hotfix']]);
+});
+
+test('s2: threadWork hands readRunLabels to its fact deps, so a route or tool card sees the run\'s labels', () => {
+  const deps = { findPipelineRowById: (id) => ({ id, target: 'project', status: 'done', title: 't', project_key: 'nope', branch: null }),
+    readPrState: () => null, readRunTags: () => ['client:acme'], readRunLabels: () => ['hotfix'] };
+  const work = threadWork([{ pipelineId: 'tw000001' }], deps);
+  assert.deepEqual([work.run.tags, work.run.labels], [['client:acme'], ['hotfix']]);
 });

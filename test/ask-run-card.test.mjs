@@ -42,6 +42,7 @@ test('snapshotFromState: a REST row becomes a frozen snapshot with decor, progre
   assert.equal(s.live, true);
   assert.deepEqual(snapshotFromState(STATE({ status: 'paused' }), { now: 0 }).decor.liveWireIds, [], 'a paused row is resolved: no ants');
   assert.equal(snapshotFromState(STATE({ status: 'done' })).terminal, true);
+  assert.deepEqual(snapshotFromState(STATE({ labels: ['hotfix'] })).labels, ['hotfix'], 'run labels (slice 1) ride the snapshot');
   // Runs redesign slice 4 (D9): the raw run the one model reads; a REST state never carries the question.
   const up = snapshotFromState(STATE({ status: 'PAUSED' }), { now: 0 });
   assert.equal(up.run.status, up.status);

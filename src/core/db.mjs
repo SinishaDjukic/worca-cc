@@ -62,7 +62,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 67;
+export const SCHEMA_VERSION = 68;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1060,6 +1060,19 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
 );
 `;
 
+// v68 (labels slice 1): run labels — free words that organise runs. Never read by stats, metrics or policy.
+// Written only by the label routes; survive archive/restore; removed by hand on a hard delete (pipeline-delete.mjs).
+const RUN_LABELS_DDL = `
+CREATE TABLE IF NOT EXISTS run_labels (
+  pipeline_id TEXT NOT NULL,
+  label       TEXT NOT NULL,
+  added_at    TEXT NOT NULL,
+  PRIMARY KEY (pipeline_id, label),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_run_labels_label ON run_labels (label);
+`;
+
 // v59 (#718; 57-58 are Shaper's): run tags. One row per (run, key); the plain tag `spike` is value ''. Written at run
 // creation and by the tag-edit route only — writeState never touches them. pipelines rows are never
 // DELETEd (pipeline-delete.mjs), so the CASCADE is convention, and tags survive archive/restore.
@@ -1217,6 +1230,7 @@ const INCREMENTAL_TABLES = {
   shape_feature_notes: SHAPE_NOTES_DDL,
   run_tags:       RUN_TAGS_DDL,
   run_tag_events: RUN_TAGS_DDL,
+  run_labels:     RUN_LABELS_DDL,
   run_presets:    RUN_PRESETS_DDL,
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
@@ -2332,6 +2346,7 @@ export function migrate(db) {
       db.exec(SHAPE_NOTES_DDL);
       if (hasColumn(db, 'pipelines', 'branch')) db.exec(ROUND_OF_INDEX_DDL);
     }
+    if (current < 68) db.exec(RUN_LABELS_DDL);   // v68 run labels
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

@@ -1,8 +1,10 @@
 // ui/public/runs-view-menu.mjs — the Runs list's one View menu (runs redesign §3.1): Show (with counts), Group by,
 // Started by (shared deployments) and Select. Pure: items for workflows/menu.mjs openMenu, the chip text, and the
 // per-browser record. app.js opens the menu and repaints.
+import { normaliseLabels } from '../../src/shared/run-labels.mjs';
+
 export const VIEW_KEY = 'worca-cc.runs.view';
-export const DEFAULT_VIEW = Object.freeze({ show: 'all', groupBy: 'none', person: '' });
+export const DEFAULT_VIEW = Object.freeze({ show: 'all', groupBy: 'none', person: '', labels: Object.freeze([]) });
 const SHOW = [['all', 'All'], ['needs', 'Needs you'], ['running', 'Running'], ['finished', 'Finished'], ['archived', 'Archived']];
 const GROUP = [['none', 'None'], ['project', 'Project'], ['date', 'Date']];
 const OLD_SHOW = { all: 'all', live: 'running', finished: 'finished', needs: 'needs', archived: 'archived' };
@@ -12,6 +14,7 @@ function clean(v) {
     show: SHOW.some(([id]) => id === v?.show) ? v.show : 'all',
     groupBy: GROUP.some(([id]) => id === v?.groupBy) ? v.groupBy : 'none',
     person: typeof v?.person === 'string' ? v.person : '',
+    labels: normaliseLabels(Array.isArray(v?.labels) ? v.labels.filter((l) => typeof l === 'string') : []).labels.slice(0, 20),
   };
 }
 
@@ -34,7 +37,7 @@ export function saveRunsView(storage, v) {
   try { storage.setItem(VIEW_KEY, JSON.stringify(clean(v))); } catch { /* private mode: the view lasts the session */ }
 }
 
-const isDefault = (v) => v.show === 'all' && v.groupBy === 'none' && !v.person;
+const isDefault = (v) => v.show === 'all' && v.groupBy === 'none' && !v.person && !(v.labels || []).length;
 
 /** '' for the default view, else the non-default parts and "N of M runs". */
 export function viewChip(v, { shown, total, personName = '' }) {
@@ -43,7 +46,7 @@ export function viewChip(v, { shown, total, personName = '' }) {
   if (v.show !== 'all') parts.push(SHOW.find(([id]) => id === v.show)[1]);
   if (v.groupBy !== 'none') parts.push(`By ${v.groupBy}`);
   if (v.person) parts.push(personName || v.person);
-  if (v.show !== 'all' || v.person) parts.push(v.show === 'archived' ? `${shown} run${shown === 1 ? '' : 's'}` : `${shown} of ${total} runs`);
+  if (v.show !== 'all' || v.person || (v.labels || []).length) parts.push(v.show === 'archived' ? `${shown} run${shown === 1 ? '' : 's'}` : `${shown} of ${total} runs`);
   return parts.join(' · ');
 }
 

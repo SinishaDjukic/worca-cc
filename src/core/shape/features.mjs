@@ -13,6 +13,8 @@ import { PLAN_ASK_KIND } from './run.mjs';
 import { roundsOf } from './rounds.mjs';
 import { getWatch, stoppedWatchFact } from '../pr-watch.mjs';
 import { clipTitle } from '../title.mjs';
+import { readRunTags } from '../run-tags-store.mjs';
+import { readRunLabels } from '../run-labels-store.mjs';
 
 const j = (t, d) => { try { return t ? JSON.parse(t) : d; } catch { return d; } };
 const iso = (ms) => new Date(ms).toISOString();
@@ -123,6 +125,14 @@ export function featureApprovesEach(id) {
 
 export function setApproveEach(id, on, { now = Date.now() } = {}) {
   return getDb().prepare('UPDATE shape_features SET approve_each = ?, updated_at = ? WHERE id = ?').run(on ? 1 : 0, iso(now), String(id)).changes > 0;
+}
+
+/** s2: what a Shaper run started without a predecessor carries from the feature's origin run: its cost tags and labels. */
+function originCarry(f) {
+  const pid = f && f.origin_pipeline_id;
+  if (!pid) return {};
+  const tags = readRunTags(pid); const labels = readRunLabels(pid);
+  return { ...(tags.length ? { tags } : {}), ...(labels.length ? { labels } : {}) };
 }
 
 function featureRow(id) {
@@ -299,8 +309,9 @@ export function appendFeatureRun(featureId, { title, goal, kind, by = null, now 
     const after = last.pipelineId ? { kind: 'pipeline', id: last.pipelineId } : { kind: 'ticket', id: last.ticketId };
     const t = createTicket({
       title: sliceTitle(f.title, index, index, s), projectDir: f.project_dir,
-      request: sliceRequest({ feature, index, outline, perspectives: f.perspectives, workflowId: f.workflow_id, base: f.base,
+      request: { ...sliceRequest({ feature, index, outline, perspectives: f.perspectives, workflowId: f.workflow_id, base: f.base,
         projectDir: f.project_dir, startedBy: by, sourceBranch: kind === 'follow-up' ? f.source_branch : null }),
+      ...(kind === 'follow-up' ? originCarry(f) : {}) },   // s2: a chained `extra` inherits at fire instead
       ...(kind === 'extra' ? { after, afterPolicy: 'done', sourceFromPrevious: true } : { runAtMs: now }),
       createdBy: by, now,
     });
@@ -546,9 +557,9 @@ export function resumeFeature(id, { live = () => null, by = null, now = Date.now
   // F43: createTicket throws on {kind:'pipeline', id:null}. A previous slice with no pipeline has not run (e.g. this
   // slice was started early with Run now): nothing to chain after.
   if (prev && !prev.pipelineId) return { status: 409, error: `slice ${prev.index} has not run yet: start it first` };
-  const request = sliceRequest({ feature: { id, title: f.title }, index: h.index, outline: f.outline, perspectives: f.perspectives,
+  const request = { ...sliceRequest({ feature: { id, title: f.title }, index: h.index, outline: f.outline, perspectives: f.perspectives,
     workflowId: f.workflow_id, base: f.base, projectDir: f.project_dir, startedBy: by,
-    sourceBranch: prev ? null : f.source_branch || null });
+    sourceBranch: prev ? null : f.source_branch || null }), ...(prev ? {} : originCarry(f)) };   // s2: chained restarts inherit at fire
   let ticketId = null;
   tx(() => {
     const t = createTicket({
@@ -591,6 +602,7 @@ export function replanRest(id, { live = () => null, by = null, now = Date.now() 
   const request = {
     projectDir: f.project_dir, prompt: replanBrief({ featureTitle: f.title, outline: f.outline, doneCount: view.done }),
     title: `${f.title} · re-plan`, workflowId: f.workflow_id, ...top, ...(branch ? { sourceBranch: branch } : {}),
+    ...originCarry(f),
     shape: { perspectives: f.perspectives, slices: 'auto', replaces: id },
     internal,
   };

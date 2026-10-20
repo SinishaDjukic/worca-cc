@@ -708,6 +708,7 @@ export async function purgePipeline({ projectDir = null, key = null, workspaceKe
     db.prepare(`UPDATE pipelines SET title = 'deleted run', prompt = NULL, started_by = NULL,
       archived_at = COALESCE(archived_at, ?), deleted_at = ? WHERE id = ?`).run(ts, ts, String(id));
     db.prepare('DELETE FROM run_tags WHERE pipeline_id = ?').run(String(id));
+    db.prepare('DELETE FROM run_labels WHERE pipeline_id = ?').run(String(id));
     db.prepare('DELETE FROM run_tag_events WHERE pipeline_id = ?').run(String(id));   // tag history is part of the record
     db.prepare('DELETE FROM run_group_members WHERE pipeline_id = ?').run(String(id));
   });
