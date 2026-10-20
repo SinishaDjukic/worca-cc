@@ -755,3 +755,84 @@ test('Set up team metrics: while the enable POST is out, Escape and the header C
   pressEscape(window);
   assert.equal(modal.classList.contains('hidden'), true, 'once it answered, Escape closes it');
 });
+
+// A Folder project in worca's projects folder: GET /api/projects marks it ownedFolder (ui/server.mjs projectsForApi).
+const OWNED = [{ ...PROJECTS[0], path: '/Users/me/.worca-cc/projects/alpha', displayPath: '~/.worca-cc/projects/alpha', vcs: 'none', ownedFolder: true }, PROJECTS[1]];
+const reply = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
+
+test('Remove of worca\'s own Folder project: a danger confirm naming the folder, then DELETE with deleteFolder=1', async () => {
+  const calls = [];
+  const { window } = await boot({ fetchHandler: (u, opts) => {
+    if (u.includes('/api/projects') && opts.method === 'DELETE') { calls.push(u); return reply(200, { projects: [PROJECTS[1]], folder: { path: OWNED[0].path, deleted: true } }); }
+    if (u.includes('/api/projects')) return reply(200, { projects: OWNED });
+    return null;
+  } });
+  await goHash(window, 'projects/alpha-00000001');
+  const doc = window.document;
+  click(window, doc.querySelector('#proj-detail .pd-remove'));
+  await tick();
+  assert.equal(doc.querySelector('#confirm-modal').classList.contains('hidden'), false);
+  const msg = doc.querySelector('#confirm-message').textContent;
+  assert.ok(msg.includes('~/.worca-cc/projects/alpha'), msg);
+  assert.match(msg, /every file in it will be deleted permanently/);
+  assert.match(msg, /This cannot be undone/);
+  assert.match(msg, /Run history stays/);
+  assert.doesNotMatch(msg, /left untouched/);
+  assert.equal(doc.querySelector('#confirm-message strong').textContent, '~/.worca-cc/projects/alpha', 'the folder stands out');
+  assert.ok(doc.querySelector('#confirm-ok').classList.contains('danger'), 'destructive styling');
+  click(window, doc.querySelector('#confirm-ok'));
+  await tick(); await tick(); await tick();
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /\?name=alpha&deleteFolder=1$/);
+  await tick(); await tick();
+  assert.equal(window.location.hash, '#projects');
+});
+
+test('Remove of any other project keeps today\'s confirm and sends no deleteFolder', async () => {
+  const calls = [];
+  const { window } = await boot({ fetchHandler: (u, opts) => {
+    if (u.includes('/api/projects') && opts.method === 'DELETE') { calls.push(u); return reply(200, { projects: [PROJECTS[1]] }); }
+    return null;
+  } });
+  await goHash(window, 'projects/alpha-00000001');
+  const doc = window.document;
+  click(window, doc.querySelector('#proj-detail .pd-remove'));
+  await tick();
+  assert.match(doc.querySelector('#confirm-message').textContent, /The folder on disk and its run history are left untouched\./);
+  assert.equal(doc.querySelector('#confirm-ok').classList.contains('danger'), false);
+  click(window, doc.querySelector('#confirm-ok'));
+  await tick(); await tick(); await tick();
+  assert.equal(calls.length, 1);
+  assert.doesNotMatch(calls[0], /deleteFolder/);
+});
+
+test('a 409 DELETE_FOLDER_REQUIRED (an older list) asks again naming the folder; a folder that could not be deleted is reported', async () => {
+  const calls = [];
+  const { window } = await boot({ fetchHandler: (u, opts) => {
+    if (u.includes('/api/projects') && opts.method === 'DELETE') {
+      calls.push(u);
+      return /deleteFolder=1/.test(u)
+        ? reply(200, { projects: [PROJECTS[1]], folder: { path: '/Users/me/dev/alpha', deleted: false, error: 'EBUSY' },
+          warning: 'Removed "alpha", but its folder could not be deleted (EBUSY). What is left of it is still at ~/dev/alpha.' })
+        : reply(409, { error: 'Removing "alpha" also deletes its folder ~/dev/alpha and every file in it.', code: 'DELETE_FOLDER_REQUIRED', displayPath: '~/dev/alpha' });
+    }
+    return null;
+  } });
+  await goHash(window, 'projects/alpha-00000001');
+  const doc = window.document;
+  click(window, doc.querySelector('#proj-detail .pd-remove'));
+  await tick();
+  assert.match(doc.querySelector('#confirm-message').textContent, /left untouched/, 'the list said nothing about the folder');
+  click(window, doc.querySelector('#confirm-ok'));
+  await tick(); await tick(); await tick(); await tick();
+  assert.equal(doc.querySelector('#confirm-modal').classList.contains('hidden'), false, 'asked again');
+  assert.equal(doc.querySelector('#confirm-message strong').textContent, '~/dev/alpha');
+  assert.ok(doc.querySelector('#confirm-ok').classList.contains('danger'));
+  click(window, doc.querySelector('#confirm-ok'));
+  await tick(); await tick(); await tick();
+  assert.deepEqual(calls.map((u) => /deleteFolder=1/.test(u)), [false, true]);
+  await tick(); await tick();
+  assert.equal(window.location.hash, '#projects');
+  const t = lastToast(doc);
+  assert.ok(t && `${t.title} ${t.detail}`.includes('could not be deleted (EBUSY)'), JSON.stringify(t));
+});

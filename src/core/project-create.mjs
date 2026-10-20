@@ -131,9 +131,10 @@ function mapAddError(err) {
   return new ProjectAddError('INVALID', message);
 }
 
+/** The registered project whose name folds (NFC + lowercase) to `name`'s, or null: a refusal names it by its stored spelling. */
 async function nameTaken(listProjects, name) {
   const want = fold(name);
-  return (await listProjects()).some((p) => p && typeof p.name === 'string' && fold(p.name) === want);
+  return (await listProjects()).find((p) => p && typeof p.name === 'string' && fold(p.name) === want) ?? null;
 }
 
 /**
@@ -245,8 +246,10 @@ export async function createProject({ name, useGit = false, dryRun = false } = {
   const folder = folderNameFor(clean);
   const root = resolve(d.projectsRoot ?? getProjectsRoot());
   const dir = join(root, folder);
-  if (await nameTaken(d.listProjects, clean)) throw new ProjectAddError('EXISTS', `a project named "${clean}" already exists`);
-  if (getProjectByPath(dir)) throw new ProjectAddError('EXISTS', 'this project path is already registered');   // its folder may be gone
+  const taken = await nameTaken(d.listProjects, clean);
+  if (taken) throw new ProjectAddError('EXISTS', `a project named "${taken.name}" already exists`);
+  const registered = getProjectByPath(dir);   // its folder may be gone
+  if (registered) throw new ProjectAddError('EXISTS', `${dir} is already registered as "${registered.name}"; pick another name`);
   const clash = diskClash(root, folder);
   if (clash !== null) throw new ProjectAddError('EXISTS', `${join(root, clash)} already exists; pick another name`);
   const gitOn = d.gitAvailable();

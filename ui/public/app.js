@@ -13402,9 +13402,18 @@ async function afterDependentsNote(query) {
 
 // Remove a project. Returns true when the registry changed, false on cancel or failure. `errEl`
 // (the project page's .pd-error) takes the failure text when given; the list message otherwise.
+// A Folder project in worca's own projects folder (the server's ownedFolder) goes with its folder: the confirm names
+// the folder and says so, and only then is deleteFolder=1 sent. Every other project keeps the unregister-only copy.
 async function deleteProject(p, errEl = null) {
   const schedNote = await scheduleDependentsNote(`projectDir=${encodeURIComponent(p.path || '')}`, 'Removing the project cancels them.');
-  const ok = await confirmModal({
+  const owned = p.ownedFolder === true;
+  const ok = await confirmModal(owned ? {
+    title: 'Remove project and folder',
+    message: [`Remove “${p.name}” and delete its folder?\n`, { strong: p.displayPath || p.path || '' },
+      `\nThe folder and every file in it will be deleted permanently. This cannot be undone. Run history stays.${schedNote}`],
+    confirmLabel: 'Delete folder and remove',
+    danger: true,
+  } : {
     title: 'Remove project',
     message: `Remove “${p.name}” from the list?\nThe folder on disk and its run history are left untouched.${schedNote}`,
     confirmLabel: 'Remove project',
@@ -13416,13 +13425,20 @@ async function deleteProject(p, errEl = null) {
   };
   say('');
   try {
-    const res = await fetch(`/api/projects?name=${encodeURIComponent(p.name)}`, { method: 'DELETE' });
+    const res = await fetch(`/api/projects?name=${encodeURIComponent(p.name)}${owned ? '&deleteFolder=1' : ''}`, { method: 'DELETE' });
     const data = await safeJson(res);
+    // This page's list is older than the server's verdict: the folder goes too. Ask again, naming it.
+    if (res.status === 409 && data.code === 'DELETE_FOLDER_REQUIRED' && !owned) {
+      return deleteProject({ ...p, ownedFolder: true, displayPath: data.displayPath || p.displayPath }, errEl);
+    }
     if (!res.ok) { say(data.error || `HTTP ${res.status}`); return false; }
     state.projects = Array.isArray(data.projects) ? data.projects : [];
     if (localStorage.getItem(LAST_PROJECT_KEY) === p.name) localStorage.removeItem(LAST_PROJECT_KEY);
     renderProjectsList();
     renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || ''); // keep New-pipeline dropdown in sync
+    // Unregistered either way; what happened to the folder is a toast, so it outlives the page going back to the list.
+    if (data.warning) setProjectsMsg(data.warning, 'err');
+    else if (data.notice) setProjectsMsg(data.notice, 'warn');
     return true;
   } catch (e) {
     say(e.message);
@@ -13766,7 +13782,14 @@ async function saveProjectNew() {
       body: JSON.stringify({ name, ...(useGit ? { useGit: true } : {}) }),
     });
     const data = await safeJson(res);
-    if (!res.ok) { setProjAddMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    if (!res.ok) {
+      setProjAddMsg(data.error || `HTTP ${res.status}`, 'err');
+      // A refusal of this name (taken meanwhile, a folder on disk, …) keeps Create off until the name or Use git changes
+      // and the live check passes; a failure (500 FAILED) leaves it on for another try. Typed over while in flight: the
+      // live check judges the new name, so a late refusal of the old one never locks it.
+      if (data.code && data.code !== 'FAILED' && el.projAddName.value.trim() === name && projAddGitOn() === useGit) setProjAddRefused(true);
+      return;
+    }
     afterProjectAdded(data.projects, data.project || null);
   } catch (e) {
     setProjAddMsg(e.message, 'err');
