@@ -64,7 +64,7 @@ test('the home mounts in [data-chat-home]; the intent add-on is registered once 
   const home = doc.querySelector('[data-chat-page] [data-chat-home]');
   assert.ok(home, 'P1 page');
   assert.equal(home.querySelector('.chat-home-title').textContent, 'What should worca do?');
-  assert.equal(home.querySelectorAll('.chat-home-act').length, 9);
+  assert.equal(home.querySelectorAll('.chat-home-act').length, 8, 'the flags are off: the default Shaper pin is absent');
   assert.equal(composerAddons().filter((a) => a.id === 'intent').length, 1);
   const lead = doc.querySelector('[data-chat-page] [data-chat-composer-lead]');
   assert.ok(lead, 'P1 lead row');
@@ -75,7 +75,7 @@ test('the home mounts in [data-chat-home]; the intent add-on is registered once 
   assert.equal(chip.querySelector('.chat-intent-l').textContent, 'New run');
   assert.equal(doc.querySelector('[data-chat-page] .ask-input').placeholder, 'Describe the task…');
   assert.equal(home.querySelector('.chat-home-act[data-intent="script"]').hidden, true, 'GET /api/settings chat.scriptTools:false');
-  assert.equal(home.querySelector('.chat-home-act[data-intent="shape"]').hidden, true, 'Shaper: no hello turned the shapeFirst gate on');
+  assert.equal(home.querySelector('.chat-home-act[data-intent="shape"]'), null, 'Shaper pin: no hello turned the shapeFirst gate on');
   assert.ok(ctx.calls.some((c) => c.url === '/api/sources'), 'task sources were asked once per visit');
 });
 
@@ -391,4 +391,24 @@ test('Running lists the newest run first, as the Running list does', async () =>
   const doc = ctx.window.document;
   assert.equal(selected(doc), 'running');
   assert.deepEqual([...doc.querySelectorAll('.chat-run-tile')].map((t) => t.dataset.tileKey), ['live:m2', 'live:m1', 'live:m0']);
+});
+
+test('bundle QA 2: a History row in Needs you through its PR is a tile that says why, never "Done"', async () => {
+  const ctx = await bootChat({ history: [
+    HROW({ id: 'gggg0007', title: 'Red CI', pr: { url: 'https://github.com/o/r/pull/781', number: 781, state: 'OPEN', checks: { state: 'failing', total: 12, failed: 3, pending: 0 } } }),
+    HROW({ id: 'hhhh0008', title: 'Clash', pr: { url: 'https://github.com/o/r/pull/782', number: 782, state: 'OPEN', mergeable: 'CONFLICTING' } }),
+  ] });
+  helloRun(ctx, { runId: 'zz', pipelineId: 'ffff0000', title: 'Old', status: 'done' });
+  await revisit(ctx);
+  const doc = ctx.window.document;
+  assert.equal(selected(doc), 'needs');
+  const tile = (id) => doc.querySelector(`.chat-run-tile[data-tile-key="hist:k1/${id}"]`);
+  for (const [id, word] of [['gggg0007', 'Checks failing'], ['hhhh0008', 'Conflicts']]) {
+    const pill = tile(id).querySelector('.chat-run-tile-pill');
+    assert.equal(pill.querySelector('.chat-run-tile-pt').textContent, word);
+    assert.ok(pill.classList.contains('st-amber'));
+    const dot = pill.querySelector('.status-dot[data-state="needs-you"]');
+    assert.ok(dot && !dot.querySelector('svg.status-sym'), 'a plain amber dot');
+  }
+  assert.equal([...doc.querySelectorAll('.chat-run-tile-pt')].filter((n) => n.textContent === 'Done').length, 0);
 });

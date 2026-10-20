@@ -329,7 +329,7 @@ enforces the set's latest definition.
     (`*.github.io`, `*.vercel.app`, `*.co.uk`, …); list the exact host instead.
   - **New sites are approved in the chat.** When Ask wants a host that is not
     allowed, it calls `propose_web_access` and ends its turn. The card shows the
-    host, the reason and the exact URL: **Allow for this chat** (recorded on the
+    host, the reason and the exact URL: **Allow in chat** (recorded on the
     card; other chats are unaffected), **Always allow** (the exact host joins the
     allowlist above) or **Deny**. The click is re-checked against the chat's
     current web access, so a card fails if web access was switched off or the

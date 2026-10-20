@@ -1,6 +1,7 @@
 // src/core/shape/ship.mjs — Ship as (D24) and the feature's changelog entry (D25). The server injects the PR and git
 // operations; this module decides the order. Engine side, ungated: only POST /api/shape/features/:id/ship reaches it.
 import { changelogWithFeature } from '../../shared/shape/slices.mjs';
+import { parseReleaseChoice } from '../../shared/release-version.mjs';
 
 export const SHIP_MODES = Object.freeze(['stacked', 'one']);
 
@@ -23,7 +24,8 @@ export function onePrBody(slices, keptUrl = null, { maxChars = Infinity } = {}) 
  *   openOnePr({pipelineId, title, body}):Promise<{ok,url?,existed?,error?}>, adoptOnePr({url, pipelineId, body}):Promise<{ok,error?}>,
  *   markReady(prUrl):Promise<{ok,error?}>, close(prUrl, comment, pipelineId):Promise<{ok,error?}>,
  *   refreshBody(prUrl, pipelineId):Promise<unknown>}} deps
- * @returns {Promise<{ok:true, mode, prUrl:string|null, warnings:string[]}|{ok:false, status:number, error:string}>}
+ * @returns {Promise<{ok:true, mode, prUrl:string|null, closed?:number, warnings:string[]}|{ok:false, status:number, error:string}>}
+ *   closed (mode 'one'): how many drafts were closed. The one PR replaces the last row's PR, so the rows cannot tell.
  */
 export async function shipFeature({ feature, mode, maxBody = Infinity }, deps) {
   if (!SHIP_MODES.includes(mode)) return { ok: false, status: 400, error: 'mode must be stacked or one' };
@@ -56,10 +58,32 @@ export async function shipFeature({ feature, mode, maxBody = Infinity }, deps) {
     const a = await deps.adoptOnePr({ url: one.url, pipelineId: last.pipelineId, body: onePrBody(slices, kept, { maxChars: maxBody }) });
     if (!a.ok) return { ok: false, status: 500, error: `could not mark the pull request ready: ${a.error}` };
   }
+  let closed = 0;
   for (const s of slices) {
     if (s.pr.url === kept) continue;
     const c = await deps.close(s.pr.url, `Shipped as one pull request: ${one.url}`, s.pipelineId);
-    if (!c.ok) warnings.push(`could not close slice ${s.index}'s draft: ${c.error}`);
+    if (c.ok) closed++;
+    else warnings.push(`could not close slice ${s.index}'s draft: ${c.error}`);
   }
-  return { ok: true, mode, prUrl: one.url, warnings };
+  return { ok: true, mode, prUrl: one.url, closed, warnings };
+}
+
+/** Shaper s4: the Ship card's verbs; nothing else is accepted on a `ship` card. null = Not now. */
+export const SHIP_CARD_VERBS = Object.freeze({ 'ship-one': 'one', 'ship-stacked': 'stacked', 'not-now': null });
+
+/** → { ok:true, verb, mode:'one'|'stacked'|null, release:{version}|null } | { ok:false, status:400, error } */
+export function shipCardVerb(body) {
+  const b = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  if (typeof b.verb !== 'string' || !Object.prototype.hasOwnProperty.call(SHIP_CARD_VERBS, b.verb)) {
+    return { ok: false, status: 400, error: 'verb must be ship-one, ship-stacked or not-now' };
+  }
+  const mode = SHIP_CARD_VERBS[b.verb];
+  if (mode === null) {
+    return b.release === undefined || b.release === null
+      ? { ok: true, verb: b.verb, mode: null, release: null }
+      : { ok: false, status: 400, error: 'not-now takes no release' };
+  }
+  const r = parseReleaseChoice(b.release);
+  if (r.error) return { ok: false, status: 400, error: r.error };
+  return { ok: true, verb: b.verb, mode, release: r.value };
 }

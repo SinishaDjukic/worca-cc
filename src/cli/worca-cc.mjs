@@ -314,7 +314,7 @@ Subcommands:
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
   script <cmd> [...]          Manage and test scripts: list|show|new|rm|test. See: worca script help
   config [get|set|unset]      Budget & cost-limit settings
-  flags [list|on|off|reset]   Experimental features: on/off <key>, reset [<key>]
+  flags [list|on|off|reset]   Labs features: on/off <key>, reset [<key>]
   ui [start|stop|restart|status]
                               Run the web UI (default http://localhost:4317). See: worca ui help
   workflow <cmd> [...]        Export a workflow (Claude Code skill, JSON, or plugin) / import JSON: list|export|import. See: worca workflow help

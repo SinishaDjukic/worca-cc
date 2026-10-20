@@ -4,7 +4,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,10 +14,11 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { createThread, linkRun as askLinkRun } from '../src/core/ask/store.mjs';
+import { createThread, linkRun as askLinkRun, listMessages } from '../src/core/ask/store.mjs';
 import { createSliceFeature, recordShapePlan, retireFeaturesOf } from '../src/core/shape/features.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
 import { withEnv as withEnvVars } from './helpers/with-env.mjs';
+import { NO_ADO, REMOTES_V, okRun, failRun, argOf, ghCalls, git, stubShip, shipKit } from './helpers/ship-world.mjs';
 
 useTempHome(after, 'worca-shape-server-slices-');
 
@@ -149,7 +150,7 @@ test('GET /api/shape/pipelines/:pid/slice: the slice\'s place in its feature; 40
     assert.equal(r.status, 200);
     const body = await r.json();
     assert.deepEqual({ ...body, state: undefined }, { featureId: f.id, title: 'Charts', index: 2, total: 3, sliceTitle: 'Slice 2',
-      state: undefined, next: { index: 3, title: 'Slice 3', state: 'planned' } });
+      state: undefined, next: { index: 3, title: 'Slice 3', state: 'planned' }, threadId: null });
     assert.equal((await get('/api/shape/pipelines/p-plain-zz/slice')).status, 404);
   });
   await withGate(false, async () => {
@@ -417,8 +418,6 @@ test('errors never escape: with shape_feature_slices gone resume answers 500, th
 }));
 
 // ── D24: a finished slice opens a draft PR (openSliceDraft, from afterRunSettled) ──────────────────────────────
-const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
-const REMOTES_V = 'origin\thttps://github.com/me/repo.git (fetch)\norigin\thttps://github.com/me/repo.git (push)\n';
 /** gh present, one origin; every argv lands in `seen`. `create(args)` answers gh pr create (a URL, or a failure). */
 function stubGh(seen, { create = () => okRun('https://github.com/me/repo/pull/7\n') } = {}) {
   gitInfo.setRunner((cmd, args) => {
@@ -429,10 +428,7 @@ function stubGh(seen, { create = () => okRun('https://github.com/me/repo/pull/7\
     return okRun('');
   });
 }
-const okRun = (stdout) => Promise.resolve({ ok: true, stdout, stderr: '', code: 0 });
-const failRun = (stderr) => Promise.resolve({ ok: false, stdout: '', stderr, code: 1 });
 const creates = (seen) => seen.filter((a) => a[0] === 'gh' && a[1] === 'pr' && a[2] === 'create');
-const argOf = (argv, flag) => argv[argv.indexOf(flag) + 1];
 let gitInfo;
 const NEEDS_META = () => writeStoreMeta(projectKey(project), 'project', { key: projectKey(project), name: 'P', path: project });
 /** Slice 1 done on feat/<p1> from main, slice 2 done on feat/<p2> from slice 1's branch (stacked), its ticket fired. */
@@ -510,52 +506,8 @@ test('afterRunSettled: a done slice opens its draft (no merge back needed); stop
 }));
 
 // ── D24, D25: POST /api/shape/features/:id/ship ─────────────────────────────────────────────────────────────────
-const git = (cwd, ...args) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
-/** A real repo (the changelog commit is real git) with slices 1..3 done on stacked branches, each with a draft PR. */
-const shipDirs = [];
-after(() => { for (const d of shipDirs) rmSync(d, { recursive: true, force: true }); });
-function shipWorld({ prs = true } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'worca-ship-'));
-  shipDirs.push(dir);
-  git(dir, 'init', '-q', '-b', 'main'); git(dir, 'config', 'user.email', 't@t'); git(dir, 'config', 'user.name', 't');
-  git(dir, 'config', 'commit.gpgsign', 'false');
-  writeFileSync(join(dir, 'f.txt'), 'x\n'); git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'init');
-  const key = projectKey(dir);
-  writeStoreMeta(key, 'project', { key, name: 'S', path: dir });
-  const pids = [];
-  let source = 'main';
-  for (let i = 1; i <= 3; i++) {
-    const id = nextId();
-    git(dir, 'branch', `feat/${id}`, source);
-    seedPipelineRow({ id, projectKey: key, status: 'done', title: `Charts · ${i}/3: Slice ${i}`, branch: { source, feature: `feat/${id}` } });
-    pids.push(id);
-    source = `feat/${id}`;
-  }
-  const f = createSliceFeature({ pipelineId: pids[0], projectDir: dir, title: 'Charts', outline: outlineOf(3), perspectives: ['product'],
-    workflowId: 'wf_shape', base: { mock: true } });
-  for (let i = 2; i <= 3; i++) {
-    const t = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(f.id, i).ticket_id;
-    getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?").run(pids[i - 1], t);
-  }
-  if (prs) {
-    pids.forEach((p, i) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?").run(`https://github.com/me/repo/pull/${i + 1}`, i + 1, p));
-  }
-  return { dir, f, pids, last: `feat/${pids[2]}` };
-}
-/** gh/git stub for the ship: `gh pr create` answers `create`, every argv is recorded. */
-function stubShip(seen, { create = () => okRun('https://github.com/me/repo/pull/9\n'), ready = () => okRun('') } = {}) {
-  gitInfo.setRunner((cmd, args) => {
-    seen.push([cmd, ...args]);
-    if (cmd === 'gh' && args[0] === '--version') return okRun('gh 2.x');
-    if (cmd === 'git' && args[0] === 'remote') return okRun(REMOTES_V);
-    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') return create(args);
-    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'ready') return ready(args);
-    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args.includes('body')) return okRun('Some body');
-    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') return okRun('https://github.com/me/repo/pull/3\n');
-    return okRun('');
-  });
-}
-const ghCalls = (seen, sub) => seen.filter((a) => a[0] === 'gh' && a[1] === 'pr' && a[2] === sub);
+const { shipWorld, cleanup: shipCleanup } = shipKit({ nextId, outlineOf });
+after(shipCleanup);
 const ship = (id, mode) => post(`/api/shape/features/${id}/ship`, { mode });
 const shipT = (name, fn) => test(name, () => withGate(true, () => withEnvVars(NO_ADO, async () => {
   ({ _testing: gitInfo } = await import('../src/core/git-info.mjs'));
@@ -569,6 +521,16 @@ shipT('Ship as: a bad mode is 400, a feature not yet done is 409, an unknown one
   assert.equal((await ship('feat_missing', 'one')).status, 404);
   const half = mk(2, 'done');
   assert.equal((await ship(half.id, 'one')).status, 409);
+});
+
+shipT('s5: a live round of run 3 holds Ship back with a 409 naming it', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();
+  seedPipelineRow({ id: 'rnd5s003', status: 'running', branch: { source: w.last, sameAsSource: true, roundOf: { pipelineId: w.pids[2], round: 2, request: 'blue' } } });
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).error, 'a round of run 3 is still going');
+  assert.equal(ghCalls(seen, 'create').length, 0);
 });
 
 shipT('stacked: CHANGELOG.md on the last slice\'s branch, pushed, gh pr ready ×3 in order; the feature reads stacked', async () => {
@@ -604,6 +566,7 @@ shipT('one PR: gh pr create on the chain root (no draft, no "Part of"), then the
   assert.equal(readPrState(w.pids[2]).state, 'OPEN');
   const v = await view(w.f.id);
   assert.deepEqual([v.ship.mode, v.ship.prUrl], ['one', 'https://github.com/me/repo/pull/9']);
+  assert.equal(v.ship.result.closed, 3, 'slice 3\'s draft counts though its row now holds the one PR');
 });
 
 shipT('one PR when gh reports the last slice\'s draft already exists: it is made ready and edited, only two closes', async () => {
@@ -614,6 +577,7 @@ shipT('one PR when gh reports the last slice\'s draft already exists: it is made
   assert.deepEqual(ghCalls(seen, 'ready').map((a) => a[3]), ['https://github.com/me/repo/pull/3']);
   assert.ok(ghCalls(seen, 'edit').some((a) => a[3] === 'https://github.com/me/repo/pull/3'));
   assert.deepEqual(ghCalls(seen, 'close').map((a) => a[3]), ['https://github.com/me/repo/pull/1', 'https://github.com/me/repo/pull/2']);
+  assert.equal((await view(w.f.id)).ship.result.closed, 2);
 });
 
 shipT('a done slice with no PR gets one first; when that fails the answer is 409 and nothing else ran', async () => {
@@ -648,3 +612,122 @@ shipT('a failed ready then a retry: CHANGELOG.md keeps one ### Charts entry; two
 test('Ship as with the gate off answers the gate\'s refusal', () => withGate(false, async () => {
   assert.equal((await post('/api/shape/features/feat_x/ship', { mode: 'one' })).status, 404);
 }));
+
+// ── Shaper s2: the Chat feature card route, the slice route's thread ─────────────
+const fire = (featureId, idx, pid) => getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?")
+  .run(pid, getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(featureId, idx).ticket_id);
+
+test('GET /api/shape/pipelines/:pid/card: 404 gate off, unknown or plain run; a shaped run\'s log; the feature with its ask', () => withGate(true, async () => {
+  assert.equal((await get('/api/shape/pipelines/p-nope-zz/card')).status, 404);
+  const plain = pipe('running');
+  const ePlain = liveEntry(plain);                                   // orch.state.shaping = {} is truthy: give it none
+  ePlain.orch.state = {};
+  assert.equal((await get(`/api/shape/pipelines/${plain}/card`)).status, 404, 'a plain run is no feature card');
+  dropEntry(ePlain);
+  const shapedPid = pipe('running');
+  const eShaped = liveEntry(shapedPid);                              // shaping: {} (live, outline not yet approved)
+  const s = await get(`/api/shape/pipelines/${shapedPid}/card`);
+  assert.equal(s.status, 200);
+  assert.deepEqual(await s.json(), { pipelineId: shapedPid, feature: null, log: [] });
+  dropEntry(eShaped);
+  const { id: fid, pid: p1 } = mk(3, 'done');
+  const p2 = pipe('running');
+  fire(fid, 2, p2);
+  const e2 = liveEntry(p2, { pending: { id: 'plan-n_refine-1', kind: 'plan', plan: {} } });
+  try {
+    const r = await get(`/api/shape/pipelines/${p1}/card`);
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.pipelineId, p1);
+    assert.deepEqual(body.feature.ask, { index: 2, runId: e2.id, pipelineId: p2, id: 'plan-n_refine-1', kind: 'plan' });
+    await withGate(false, async () => assert.equal((await get(`/api/shape/pipelines/${p1}/card`)).status, 404));
+  } finally {
+    dropEntry(e2);
+    getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id IN (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ?)").run(fid);
+  }
+}));
+
+test('GET /api/shape/pipelines/:pid/slice carries the feature thread', () => withGate(true, async () => {
+  const { id: fid, pid: p1 } = mk(2, 'done');
+  const p2 = pipe('running');
+  fire(fid, 2, p2);
+  const thread = createThread({ title: 'charts' });
+  askLinkRun(thread.id, { runId: 'run-x', pipelineId: p1, cardId: 'card_x' });
+  try {
+    const info = await (await get(`/api/shape/pipelines/${p2}/slice`)).json();
+    assert.equal(info.threadId, thread.id);
+  } finally {
+    getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id IN (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ?)").run(fid);
+  }
+}));
+
+test('re-plan from the card: the re-plan run\'s Split ask is the feature\'s ask, and the old URL still resolves', () => withGate(true, async () => {
+  const f = mk(3, 'stopped');
+  const r = await post(`/api/shape/features/${f.id}/replan`, {});
+  assert.equal(r.status, 200);
+  const { runId: ticketId } = await r.json();
+  const rp = pipe('running');
+  getDb().prepare('UPDATE scheduled_runs SET pipeline_id = ? WHERE id = ?').run(rp, ticketId);
+  const e = liveEntry(rp, { pending: { id: 'q-split', kind: 'plan', plan: { outline: { why: 'w', slices: [] } } } });
+  try {
+    const v = await view(f.id);
+    assert.equal(v.status, 'replanning');
+    assert.deepEqual(v.ask, { index: null, runId: e.id, pipelineId: rp, id: 'q-split', kind: 'outline' });
+    assert.match(v.log.at(-1).text, /^Re-planning runs? /);
+    const next = mk(2, 'running', { replaces: f.id });          // the re-plan's outline approved
+    const viaOld = await get(`/api/shape/features/${f.id}`);
+    assert.equal(viaOld.status, 200);
+    const body = await viaOld.json();
+    assert.equal(body.id, next.id);
+    assert.equal(body.replanOf, f.id);
+  } finally { dropEntry(e); }
+}));
+
+// ── Shaper s4: the release on Ship as, the Ship card synced from the route, the release hints, POST /api/pr's release ──
+shipT('Ship as with a bad release is 400; a ship from the route flips the thread\'s Ship card to applied and stores the release', async () => {
+  const seen = []; stubShip(seen, { describe: 'v1.11.0' });
+  const w = shipWorld();
+  const thread = createThread({ title: 'charts' });
+  askLinkRun(thread.id, { runId: 'run-s4', pipelineId: w.pids[0], cardId: 'card_s4' });
+  await testing.offerShipCard(w.pids[2]);
+  const card = () => listMessages(thread.id).flatMap((m) => m.blocks || []).find((b) => b.card && b.card.type === 'ship');
+  assert.equal(card().state, 'proposed');
+  assert.equal(card().card.release.version, 'v1.12.0');
+  assert.equal((await post(`/api/shape/features/${w.f.id}/ship`, { mode: 'one', release: { version: 'bad' } })).status, 400);
+  assert.equal(ghCalls(seen, 'create').length, 0);
+  const r = await post(`/api/shape/features/${w.f.id}/ship`, { mode: 'one', release: { version: 'v1.12.0' } });
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.equal(card().state, 'applied');
+  assert.deepEqual({ mode: card().card.result.mode, prUrl: card().card.result.prUrl, release: card().card.result.release },
+    { mode: 'one', prUrl: 'https://github.com/me/repo/pull/9', release: { version: 'v1.12.0', url: null, error: null } });
+  const row = getDb().prepare('SELECT release_version, release_target FROM shape_features WHERE id = ?').get(w.f.id);
+  assert.deepEqual({ ...row }, { release_version: 'v1.12.0', release_target: 'main' });
+});
+
+shipT('GET /api/shape/features/:id on a ready feature carries the release hint from the last tag', async () => {
+  const seen = []; stubShip(seen, { describe: 'v1.11.0' });
+  const w = shipWorld();
+  const v = await view(w.f.id);
+  assert.equal(v.ship.ready, true);
+  assert.equal(v.ship.hint.version, 'v1.12.0');
+  assert.equal(v.ship.hint.from, 'tag');
+  assert.ok(seen.some((a) => a[0] === 'git' && a[1] === 'describe' && a.includes('--tags')));
+});
+
+shipT('GET /api/pr/remotes carries the release hint; POST /api/pr with a release stores it on the run, with memberKey it is 400', async () => {
+  const seen = []; stubShip(seen, { describe: 'v1.11.0', create: () => okRun('https://github.com/me/repo/pull/12\n') });
+  const w = shipWorld({ prs: false });
+  const pk = projectKey(w.dir);
+  const rm = await (await get(`/api/pr/remotes?id=${w.pids[0]}&projectKey=${pk}`)).json();
+  assert.equal(rm.release?.version, 'v1.12.0', JSON.stringify(rm));
+  const bad = await post('/api/pr', { id: w.pids[0], projectKey: pk, release: { version: 'nope' } });
+  assert.equal(bad.status, 400);
+  const member = await post('/api/pr', { id: w.pids[0], projectKey: pk, memberKey: 'other', release: { version: 'v1.12.0' } });
+  assert.equal(member.status, 400);
+  assert.equal((await member.json()).error, 'a release is for a single-project run');
+  assert.equal(ghCalls(seen, 'create').length, 0, 'refused before anything is pushed');
+  const r = await post('/api/pr', { id: w.pids[0], projectKey: pk, release: { version: 'v1.12.0' } });
+  assert.equal(r.status, 200, await r.clone().text());
+  const row = getDb().prepare('SELECT release_version, release_target FROM pipelines WHERE id = ?').get(w.pids[0]);
+  assert.deepEqual({ ...row }, { release_version: 'v1.12.0', release_target: 'main' });
+});

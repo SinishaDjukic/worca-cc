@@ -1,5 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { buildFilesCard, filesForViewer, fileViewerUrls, registerBuiltinFileRenderers } from '../ui/public/chat/files-card.mjs';
 import { _resetFileRenderers, registerFileRenderer } from '../ui/public/chat/file-renderers.mjs';
@@ -90,4 +91,22 @@ test('files card Show in folder: a hosted worca (revealInfo null) never shows it
   const none = ctxOf();
   const b = buildFilesCard({ id: 'card_00000006', state: 'shown', card: { type: 'files', items: [{ ...ITEMS[3], source: true }] } }, none.ctx);
   assert.equal(b.el.querySelector('.ask-filescard-reveal'), null);
+});
+
+test('files card: its icon buttons are the one button component; the card adds no resting shadow or literal radius', () => {
+  const { ctx } = ctxOf({ revealInfo: () => ({ label: 'Finder' }), revealFile: () => {} });
+  const items = [{ ...ITEMS[0], source: true }, { ...ITEMS[3], source: true }];
+  const { el } = buildFilesCard({ id: 'card_00000002', state: 'shown', card: { type: 'files', title: 'Two', items } }, ctx);
+  const ibs = [...el.querySelectorAll('.ask-filescard-ib')];
+  assert.equal(ibs.length, 4, 'Show in folder and Download on each item');
+  for (const ib of ibs) {
+    assert.ok(['btn', 'btn-sm', 'btn-quiet', 'btn-icon'].every((c) => ib.classList.contains(c)), ib.className);
+  }
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const card = [...css.matchAll(/([^{}]*\.ask-filescard[^{}]*)\{([^}]*)\}/g)].map((m) => [m[1].trim(), m[2]]);
+  assert.ok(card.length >= 10);
+  for (const [sel, body] of card) {
+    assert.doesNotMatch(body, /border-radius:\s*\d/, `${sel}: token radius only`);
+    assert.doesNotMatch(body, /box-shadow|--shadow-card/, `${sel}: no resting shadow`);
+  }
 });

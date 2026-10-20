@@ -30,7 +30,9 @@ project's working tree, so nothing is ever committed to your repo.
                          the run stays viewable under Runs › Archived and can be
                          restored there, minus the reclaimed artifacts. A restored run
                          never resumes (its resume point is dropped; a paused one comes
-                         back interrupted).
+                         back interrupted). Delete (Runs list, Advanced) is permanent:
+                         it archives, then anonymises the row in place and stamps
+                         `deleted_at` (see "Run groups (v65)" below).
   store/workspaces/<workspaceId>/       a workspace's runs, laid out like a project's store, plus
                                         workspace-graph.json — the last scan's merged cross-project
                                         graph (see workspace-map.md); the map itself and its reviews
@@ -107,6 +109,20 @@ Everything that used to be a per-run `.json`/`.md` control file —
 `workflows/*.json` — is a **row in `worca-cc.db`** instead. Only the
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
+
+### Run groups (v65)
+
+The Runs list's groups (runs redesign §3.3) are the one new named state of the runs redesign:
+
+- `run_groups` holds the groups a person creates (`grp_` + 12 hex, a title, the first run's project).
+- `run_group_members` holds one row per ad-hoc member: `pipeline_id` is the primary key, so a run is in one group at a
+  time. Its `group_id` names either a `run_groups.id` or a Shaper feature (`shape_features.id`); it has no foreign key,
+  `src/core/run-groups.mjs` checks it. A feature's own slices are not rows here: they come from `shape_feature_slices`.
+  Removing the last member of a user group deletes the group.
+- `pipelines.deleted_at` marks a run deleted from the Runs list. Delete keeps an anonymised row (title "deleted run",
+  no prompt, no starter, no tags, no group) so its cost stays in Statistics; every feed skips it.
+- `pipelines.pr_verdict` is the last CI, mergeability, draft and review verdict the PR refresh read for an open GitHub
+  PR (JSON). The Runs list's PR chip ("Checks failing", "Conflicts", …) reads it through `readPrState`.
 
 ## Resolution rules
 

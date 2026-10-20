@@ -367,6 +367,7 @@ const fake = {
   },
   findPipelineRowById: (id) => [ROW_P, ROW_W, ROW_A, ROW_B, ROW_S].find((r) => r.id === id) ?? null,
   totalsFor: (row) => ({ cost: row.total_cost_usd > 0 ? row.total_cost_usd : (row.id === '8c3d12ab' ? 0.33 : null), active: null }),
+  runStatusLine: () => 'Ready to ship',
   readStoreMeta: (key) => (key === 'demo-00000001' ? { name: 'Demo' } : null),
   readDiffPatch: async (row) => diffs.get(row.id) ?? null,
   hasDiffPatch: async (row) => diffs.has(row.id),
@@ -404,6 +405,25 @@ test('list(): forty-five tools with JSON-Schema inputs', () => {
   }
   assert.deepEqual(tools.list().find((d) => d.name === 'get_run').inputSchema.required, ['id']);
   assert.deepEqual(tools.list().find((d) => d.name === 'propose_run').inputSchema.required, ['brief']);
+});
+
+test('Shaper tools: listed only with chatActions, the gate and a followed thread; the child\'s refusal is the model\'s result', async () => {
+  const { PERSPECTIVE_KEYS } = await import('../src/shared/shape/perspectives.mjs');
+  const seen = [];
+  const shapeTools = (follows, verdict) => ({ follows: () => follows, check: (kind, input) => { seen.push([kind, input]); return verdict; } });
+  const on = { shapeFirstOn: () => true, perspectiveKeys: PERSPECTIVE_KEYS, chatActions: {} };
+  const names = (deps) => createAskTools({ ...fake, ...deps }).list().map((d) => d.name).filter((n) => n === 'propose_changes' || n === 'route_message');
+  assert.deepEqual(names({ ...on, shapeTools: shapeTools(true, { ok: true }) }), ['propose_changes', 'route_message']);
+  assert.deepEqual(names({ ...on, shapeTools: shapeTools(false, { ok: true }) }), [], 'a thread that follows nothing');
+  assert.deepEqual(names({ ...on, shapeFirstOn: () => false, shapeTools: shapeTools(true, { ok: true }) }), [], 'gate off');
+  assert.deepEqual(names({ shapeFirstOn: () => true, perspectiveKeys: PERSPECTIVE_KEYS, shapeTools: shapeTools(true, { ok: true }) }), [], 'no chatActions bundle');
+  await assert.rejects(createAskTools({ ...fake, ...on }).call('propose_changes', { pipelineId: 'aaaa0001', request: 'x' }), /propose_changes: unavailable/);
+  const ok = await createAskTools({ ...fake, ...on, shapeTools: shapeTools(true, { ok: true }) }).call('propose_changes', { pipelineId: 'aaaa0001', request: 'make it blue' });
+  assert.deepEqual([ok.ok, ok.requested], [true, { kind: 'changes', pipelineId: 'aaaa0001', request: 'make it blue' }]);
+  const no = await createAskTools({ ...fake, ...on, shapeTools: shapeTools(true, { ok: false, error: 'the run is still going' }) })
+    .call('route_message', { featureId: 'f1', text: 'x', guess: 'add', reason: 'r' });
+  assert.deepEqual(no, { ok: false, error: 'the run is still going' });
+  assert.deepEqual(seen.at(-1), ['route', { featureId: 'f1', text: 'x', guess: 'add', reason: 'r' }]);
 });
 
 test('list_projects / list_workflows come from the shared catalog', async () => {
@@ -456,7 +476,7 @@ test('list_runs: scan limit, filters, newest-first, shape per target, limit clam
 test('get_run: scoped and key-less lookups, project and workspace shapes, archived flag', async () => {
   const p = await tools.call('get_run', { id: '4e1f2a9b', projectKey: 'demo-00000001' });
   assert.deepEqual(p, { id: '4e1f2a9b', title: 'Fix login', target: 'project', project: { key: 'demo-00000001', name: 'Demo' }, workspace: null,
-    status: 'done', phase: 'done', startedAt: ROW_P.started_at, updatedAt: ROW_P.updated_at, branch: 'worca-cc/fix-login-4e1f2a9b', sourceBranch: 'main',
+    status: 'done', phase: 'done', statusLine: 'Ready to ship', startedAt: ROW_P.started_at, updatedAt: ROW_P.updated_at, branch: 'worca-cc/fix-login-4e1f2a9b', sourceBranch: 'main',
     guardrailsId: 'normal', prompt: 'Fix the login bug', totalCostUsd: 1.25, hasDiff: true, archived: false, startedBy: null });
   assert.deepEqual(await tools.call('get_run', { id: '4e1f2a9b' }), p, 'key-less lookup finds the same row');
   const w = await tools.call('get_run', { id: '8c3d12ab', workspaceId: 'wks-team-0000abcd' });

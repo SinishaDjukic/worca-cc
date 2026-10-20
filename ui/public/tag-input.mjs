@@ -1,5 +1,6 @@
 // ui/public/tag-input.mjs — the run-tag chip field (#718): chips with ×, a text input, native
 // <datalist> suggestions (keys, then values already in use). Pure DOM; `doc` is injected for jsdom.
+import { icon } from './icons.mjs';
 import { parseTag, formatTag, normaliseTags, MAX_TAGS } from '../../src/shared/run-tags.mjs';
 import { missingRequired, keyFromLabel, tagProblems, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 
@@ -48,8 +49,9 @@ export function createTagInput(doc, { value = [], suggest = null, placeholder = 
   const paint = () => {
     chips.replaceChildren(...tags.map((t) => {
       const c = tagChip(doc, t);
-      const x = doc.createElement('button'); x.type = 'button'; x.className = 'tag-x'; x.textContent = '×';
+      const x = doc.createElement('button'); x.type = 'button'; x.className = 'tag-x';
       x.setAttribute('aria-label', `Remove ${t}`);
+      x.append(icon(doc, 'x', 12));
       x.addEventListener('click', () => { tags = tags.filter((y) => y !== t); edited = true; paint(); emit(); });
       c.appendChild(x); return c;
     }));
@@ -163,7 +165,9 @@ function createValueChips(doc, values, changed) {
     mirror.value = list.join('\n');
     el.replaceChildren(mirror, ...list.map((v) => {
       const chip = tagChip(doc, v);
-      const x = doc.createElement('button'); x.type = 'button'; x.className = 'tag-x'; x.textContent = '×'; x.setAttribute('aria-label', `Remove ${v}`);
+      const x = doc.createElement('button'); x.type = 'button'; x.className = 'tag-x';
+      x.setAttribute('aria-label', `Remove ${v}`);
+      x.append(icon(doc, 'x', 12));
       x.addEventListener('click', () => { list = list.filter((y) => y !== v); paint(); changed(); });
       chip.append(x); return chip;
     }), input);
@@ -188,7 +192,7 @@ export function createDimensionEditor(doc, { value = [] } = {}) {
   head.innerHTML = '<tr><th>Tag</th><th>Values</th><th>Default</th><th>Mandatory</th><th></th></tr>';
   const rows = doc.createElement('tbody'); rows.className = 'tag-dim-rows';
   table.append(head, rows);
-  const add = doc.createElement('button'); add.type = 'button'; add.className = 'btn btn-ghost btn-mini tag-dim-add'; add.textContent = 'Add a tag';
+  const add = doc.createElement('button'); add.type = 'button'; add.className = 'btn btn-sm tag-dim-add'; add.textContent = 'Add a tag';
   const changed = () => el.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));   // marks the card dirty
   const td = (...kids) => { const c = doc.createElement('td'); c.append(...kids); return c; };
   const addRow = (d = { key: '', label: '', values: [], required: false }) => {
@@ -211,7 +215,7 @@ export function createDimensionEditor(doc, { value = [] } = {}) {
     values = createValueChips(doc, d.values || [], () => { paintDefault(def?.value || ''); changed(); });
     paintDefault(d.default || '');
     const req = doc.createElement('input'); req.type = 'checkbox'; req.className = 'tag-dim-required'; req.checked = !!d.required; req.setAttribute('aria-label', 'Mandatory');
-    const rm = doc.createElement('button'); rm.type = 'button'; rm.className = 'btn btn-ghost btn-mini tag-dim-remove'; rm.textContent = '×'; rm.setAttribute('aria-label', 'Remove tag');
+    const rm = doc.createElement('button'); rm.type = 'button'; rm.className = 'btn btn-sm btn-quiet btn-icon tag-dim-remove'; rm.setAttribute('aria-label', 'Remove tag'); rm.append(icon(doc, 'x', 14));
     rm.addEventListener('click', () => { tr.remove(); changed(); });
     const tagCell = doc.createElement('div'); tagCell.className = 'tag-dim-tag'; tagCell.append(label, key);
     tr.append(td(tagCell), td(values.el), defCell, td(req), td(rm));

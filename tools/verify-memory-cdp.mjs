@@ -282,8 +282,8 @@ try {
   const live = await ev(`(async()=>{const m=await import('/memory-view.mjs');const rep=await (await fetch('/api/memory/global')).json();
     const el=m.renderHealthCard({...rep,defragRunId:'proof-run'},{doc:document});const b=el.querySelector('.mem-defrag');
     return {runId:b.dataset.runId,disabled:b.disabled,text:b.textContent,run:!!el.querySelector('.mem-run'),hint:!!el.querySelector('.mem-host-hint')};})()`);
-  check('6b', 'while a defragment run is live the SAME button opens it: data-run-id, enabled, "Defragmenting… open the run", and no second control',
-    live.runId === 'proof-run' && live.disabled === false && live.text === 'Defragmenting… open the run' && live.run === false && live.hint === false, live);
+  check('6b', 'while a defragment run is live the SAME button opens it: data-run-id, enabled, "Open run", and no second control',
+    live.runId === 'proof-run' && live.disabled === false && live.text === 'Open run' && live.run === false && live.hint === false, live);
 
   // ---- (6c) and the real card is back to an enabled Defragment --------------
   await go('settings/memory');

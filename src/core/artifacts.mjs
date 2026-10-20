@@ -24,7 +24,7 @@ import { readRunLedger } from './metrics/ledger.mjs';
 import { readPolicyState } from './policy/state.mjs';
 import { memoryTotals } from './memory-sync.mjs';
 import { actorLabel } from './identity.mjs';
-import { attachWatchPipeline } from './pr-watch.mjs';
+import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
 import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
@@ -1532,9 +1532,10 @@ export function persistPrState(pipelineId, pr) {
   try {
     tx(() => {
       getDb().prepare(
-        `UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ?, pr_checked_at = ?
-         WHERE id = ?`,
-      ).run(pr.url, pr.number ?? null, pr.state ?? 'OPEN', new Date().toISOString(), pipelineId);
+        `UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ?, pr_checked_at = ?,
+           pr_verdict = COALESCE(?, pr_verdict) WHERE id = ?`,
+      ).run(pr.url, pr.number ?? null, pr.state ?? 'OPEN', new Date().toISOString(),
+        pr.verdict ? JSON.stringify(pr.verdict) : null, pipelineId);   // the verdict is written when the lookup read one, kept otherwise
     });
   } catch { /* best-effort */ }
 }
@@ -1545,13 +1546,20 @@ export function persistPrState(pipelineId, pr) {
  * the base repo, not the cwd's default) is resolved by URL instead of by branch.
  * The resolved `state` (rowToState) deliberately omits pr_* — use this instead.
  * @param {string} pipelineId
- * @returns {{ url:string, number:(number|null), state:string }|null}
+ * The stored CI verdict (pr_verdict: draft / reviewDecision / mergeable / checks) is spread onto the PR, and `fixing`
+ * says a Watch PR fix run is live on it right now (runs redesign §2.1a, D31).
+ * @returns {{ url:string, number:(number|null), state:string, draft?, reviewDecision?, mergeable?, checks?, fixing? }|null}
  */
 export function readPrState(pipelineId) {
   if (!pipelineId) return null;
   try {
-    const row = getDb().prepare('SELECT pr_url, pr_number, pr_state FROM pipelines WHERE id = ?').get(pipelineId);
-    return row && row.pr_url ? { url: row.pr_url, number: row.pr_number ?? null, state: row.pr_state ?? 'OPEN' } : null;
+    const row = getDb().prepare('SELECT pr_url, pr_number, pr_state, pr_verdict FROM pipelines WHERE id = ?').get(pipelineId);
+    if (!row || !row.pr_url) return null;
+    let v = null;
+    try { v = row.pr_verdict ? JSON.parse(row.pr_verdict) : null; } catch { v = null; }
+    // `fixing` only when true, so every caller's existing deepEqual on a PR with no verdict and no fix run holds.
+    return { url: row.pr_url, number: row.pr_number ?? null, state: row.pr_state ?? 'OPEN', ...(v || {}),
+      ...(watchActive(getWatch(row.pr_url)) ? { fixing: true } : {}) };
   } catch { return null; }
 }
 
@@ -1587,6 +1595,10 @@ export function persistMemberPrState(pipelineId, memberKey, pr) {
 }
 
 /** A workspace run's member PRs as { [memberKey]: { url, number, state } } ({} on none/any failure). */
+/** A workspace member's PR with `fixing` when a Watch PR fix run is live on it right now (D31), as readPrState
+ *  marks a single run's. Never persisted. */
+const withFixing = (pr) => (pr && watchActive(getWatch(pr.url)) ? { ...pr, fixing: true } : pr);
+
 export function readMemberPrStates(pipelineId) {
   if (!pipelineId) return {};
   try {
@@ -2146,7 +2158,7 @@ async function workspaceMemberFacts(row, results, opts = {}) {
     }
     if (opts.withPr) {
       out.pr = gh && m.projectDir && m.feature
-        ? await findPrForBranch({ projectDir: m.projectDir, head: m.feature, prUrl: known[m.memberKey]?.url || null })
+        ? withFixing(await findPrForBranch({ projectDir: m.projectDir, head: m.feature, prUrl: known[m.memberKey]?.url || null }))
         : null;
     }
     return out;
@@ -2284,9 +2296,17 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   } else if (opts.withPr && repoDir && feature) {
     // Single-project runs AND legacy workspace rows (empty workspace_meta.projects):
     // the unchanged primary-only lookup, pr_url first — never overwritten with null.
-    entry.pr = (await anyPrHost())
-      ? await findPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null })
+    // The fresh lookup wins over the stored row (a PR merged since the last refresh, or a newer PR for the branch);
+    // stored fields (the CI verdict) are used only for the same URL. Persisting is the enrich path's job.
+    const found = (await anyPrHost())
+      ? await findPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null, withVerdict: true })
       : null;
+    if (found) {
+      const { verdict, ...fresh } = found;
+      const stored = readPrState(row.id);
+      entry.pr = { ...(stored && stored.url === fresh.url ? stored : {}), ...fresh, ...(verdict || {}),
+        ...(watchActive(getWatch(fresh.url)) ? { fixing: true } : {}) };
+    } else entry.pr = null;
   }
   return entry;
 }
@@ -2376,7 +2396,7 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            ${RUN_ENGINE_SQL} AS run_engine
     FROM pipelines
-    WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'}
+    WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
     LIMIT ?
   `).all(Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : -1); // -1 = unlimited (SQLite)
@@ -2472,6 +2492,7 @@ export function countPipelines() {
  * { state, url, number, isDraft, mergeable } (state OPEN/MERGED, or CLOSED when no
  * open or merged PR exists — the Runs list draws a dropped PR too) or null. Draft and
  * mergeability come from the same lookup (gh or Azure REST): no prMergeable call per PR.
+ * A single run's OPEN PR also carries the stored CI verdict (`draft`, `reviewDecision`, `checks`) and `fixing` (D31).
  * `onBatch(items, isFinal)` is awaited so a caller can broadcast incrementally; the
  * FINAL call always carries isFinal=true (even with no PR host / no targets) so a client
  * spinner provably clears. A workspace item (a row WITH member facts) also carries
@@ -2497,16 +2518,22 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
             ? (await findPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null, includeClosed: true })) || null
             : null;
           if (pr && pr.state !== 'CLOSED') persistMemberPrState(r.id, m.memberKey, pr);   // a closed PR is shown, never recorded
-          return { memberKey: m.memberKey, pr };
+          return { memberKey: m.memberKey, pr: withFixing(pr) };
         }));
         const pr = rollupMemberPrs(Object.fromEntries(members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
         return { projectKey: r.projectKey, id: r.id, pr, members };
       }
       const prUrl = readPrState(r.id)?.url || null;
-      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, includeClosed: true })) || null;
+      const found = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true, includeClosed: true })) || null;
       // Positive observations only (null never clears). A closed PR is shown, never
       // recorded: pr_url keeps naming the open or merged PR the other readers act on.
-      if (pr && pr.state !== 'CLOSED') persistPrState(r.id, pr);
+      if (found && found.state !== 'CLOSED') persistPrState(r.id, found);
+      if (!found) return { projectKey: r.projectKey, id: r.id, pr: null };
+      // The live PR (isDraft / mergeable) plus the stored verdict and `fixing`, as rowToHistoryEntry builds it.
+      const { verdict, ...fresh } = found;
+      const stored = fresh.state === 'CLOSED' ? null : readPrState(r.id);
+      const pr = { ...(stored && stored.url === fresh.url ? stored : {}), ...fresh, ...(verdict || {}),
+        ...(watchActive(getWatch(fresh.url)) ? { fixing: true } : {}) };
       return { projectKey: r.projectKey, id: r.id, pr };
     }));
     await onBatch(items, i + batchSize >= targets.length); // (items, isFinal)

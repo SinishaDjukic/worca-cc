@@ -1,6 +1,11 @@
 // ui/public/run-presets-picker.mjs — New run's Preset picker (docs/run-presets.md). app.js owns state and
 // fetches; this module renders and computes. Names are set with textContent only (a name is user input).
 import { PRESET_LIMITS, checkPresetName } from '../../src/shared/run-presets.mjs';
+import { presetEngineName, UNKNOWN_ENGINE_LABEL } from './run-presets-names.mjs';
+
+export const BROKEN_SCOPE_HINT = 'Edit the preset\'s scope in Settings › Presets';
+// Below Advanced the Presets tab is hidden (docs/ui-levels.md): point at New run's ⋯ menu instead.
+export const BROKEN_SCOPE_HINT_SIMPLE = 'Delete the preset from the Preset menu, or switch to Advanced to edit its scope';
 
 /** Group presets for the menu: "Any project" first, then one group per pinned target (label from `names`). */
 export function presetMenuGroups(presets, names = {}) {
@@ -41,13 +46,17 @@ export function presetHiddenItems(setup) {
   if (setup?.nightMode) items.push('Away mark');
   const o = (setup?.mcpOptOut || []).length;
   if (o) items.push(o === 1 ? '1 Sets opt-out' : `${o} Sets opt-outs`);
-  if (setup?.engine && setup.engine !== 'claude') items.push(`${setup.engine} engine`);
+  // An engine outside the catalog is "Unknown engine", not "Unknown engine engine".
+  if (setup?.engine && setup.engine !== 'claude') {
+    const label = presetEngineName(setup.engine);
+    items.push(label === UNKNOWN_ENGINE_LABEL ? label : `${label} engine`);
+  }
   if (setup?.mock) items.push('Mock mode');
   return items;
 }
 
 /** The broken card: one row per item with the server's exact message; Reset only where the item allows it. */
-export function renderBrokenCard(doc, broken, { onReset } = {}) {
+export function renderBrokenCard(doc, broken, { onReset, canEditScope = true } = {}) {
   const card = doc.createElement('div');
   card.className = 'card card-warn preset-broken';
   card.hidden = !broken.length;
@@ -63,13 +72,13 @@ export function renderBrokenCard(doc, broken, { onReset } = {}) {
     row.append(msg);
     if (b.reset) {
       const btn = doc.createElement('button');
-      btn.type = 'button'; btn.className = 'btn-ghost btn-mini'; btn.textContent = 'Reset to project default';
+      btn.type = 'button'; btn.className = 'btn btn-sm'; btn.textContent = 'Reset to default';
       btn.addEventListener('click', () => onReset && onReset(b));
       row.append(btn);
     } else {
       const hint = doc.createElement('span');
       hint.className = 'muted';
-      hint.textContent = 'Edit the preset\'s scope in Settings › Presets';
+      hint.textContent = canEditScope ? BROKEN_SCOPE_HINT : BROKEN_SCOPE_HINT_SIMPLE;
       row.append(hint);
     }
     card.append(row);

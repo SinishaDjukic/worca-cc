@@ -1,7 +1,7 @@
 // src/core/shape/stats.mjs — Shaper D28: what a shaped run records about its shaping. Pure, no imports.
 
 /** The nodes that run before the approval stop; every other step row is building. */
-export const SHAPING_NODES = Object.freeze(['n_clarify', 'n_plan', 'n_refine']);
+export const SHAPING_NODES = Object.freeze(['n_clarify', 'n_plan', 'n_roles', 'n_refine']);
 const REVIEW_NODE = 'n_review';
 const BY = new Set(['person', 'check']);
 // The same 4-decimal rounding as run-harness.mjs roundUsd/sumStepCosts, so shaping + building = totalCostUsd.

@@ -500,3 +500,17 @@ test('list: a Cursor custom model carries a Cursor badge, and there is no Cursor
   assert.equal(el.querySelector('.mv-card[data-id="sonnet-4.5"] .mv-engine').textContent, 'Cursor');
   assert.equal([...el.querySelectorAll('[data-filter]')].some((c) => c.dataset.filter === 'cursor'), false);
 });
+
+test('phones: the Models header and the model cards wrap at 760px instead of running off a 375px screen', async () => {
+  const { readFileSync } = await import('node:fs');
+  const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+  assert.match(html, /<div class="mv-head-actions">\s*<button type="button" id="model-share-btn"/, 'the header buttons sit in a styled group, not an inline-styled div');
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\n\.mv-head-actions\{display:flex;gap:8px;flex:0 0 auto;\}/);
+  const phone = css.match(/@media \(max-width:760px\)\{\s*\[data-view="models"\] \.topbar\{[^}]*\}[^@]*/);
+  assert.ok(phone, 'a phone block for the Models page');
+  assert.match(phone[0], /\[data-view="models"\] \.topbar\{flex-wrap:wrap;\}/);
+  assert.match(phone[0], /\.mv-head-actions\{flex:1 1 100%;flex-wrap:wrap;\}/);
+  assert.match(phone[0], /\.mv-card\{flex-wrap:wrap;\}/);
+  assert.match(phone[0], /\.mv-body\{flex-basis:100%;\}/);
+});

@@ -538,10 +538,10 @@ test('a successful ship updates the list row, and PR-enrichment hooks repaint th
       const OTHER = row({ id: 'aaaa1111', title: 'Another run' });
       const ctx = await bootShip({ rows: [row(), OTHER], arms: prArm(PR_OK) });
       const { window } = ctx;
-      const rowSel = `#runs-list .runs-row[data-slot="group"][data-pipeline-id="${ROW.id}"]`;
+      const rowSel = `#runs-list .runs-row[data-pipeline-id="${ROW.id}"]`;
       const word = () => window.document.querySelector(`${rowSel} .runs-row-sub`).textContent;
       const modal = await openModal(ctx);
-      assert.match(word(), /^Finished\b/, 'no PR yet: the row reads Finished');
+      assert.match(word(), /^Ready to ship\b/, 'no PR yet: the row reads Ready to ship');
       click(window, modal.querySelector('.shipit-ok'));
       await settle(window, 6);
 
@@ -555,7 +555,8 @@ test('a successful ship updates the list row, and PR-enrichment hooks repaint th
       assert.equal(listFetches(), before, 'hopping between saved runs does not refetch /api/history');
 
       assert.ok(window.document.querySelector(rowSel), 'the list row is still there');
-      assert.match(word(), /^In review\b/, 'the row reads the OPEN PR');
+      assert.equal(window.document.querySelector(rowSel).dataset.state, 'in-review', 'the row reads the OPEN PR');
+      assert.ok(window.document.querySelector(`${rowSel} .runs-pr`), 'its PR chip is on the right');
       // Re-entering the run must NOT offer Create PR again: that was the stale-button ->
       // double-POST loop (patchHistoryPr in the ship path + the `if (!record.pr)` gate).
       assert.equal(hdPr(window).hidden, true, 'the Create-PR button was swapped out');
@@ -641,7 +642,7 @@ test('Create PR eligibility: never for workspace runs (detail or list, histPrEli
       go(ctx.window, 'runs');                                  // nothing remembered: the bare list
       await settle(ctx.window);
       const listRow = ctx.window.document.querySelector(
-        `#runs-list .runs-row[data-slot="group"][data-project-key="${WKS_KEY}"][data-pipeline-id="${ROW.id}"]`);
+        `#runs-list .runs-row[data-project-key="${WKS_KEY}"][data-pipeline-id="${ROW.id}"]`);
       assert.ok(listRow, 'the workspace row is listed');
       click(ctx.window, listRow);                              // navigate the way the row does
       await settle(ctx.window, 5);
@@ -1490,29 +1491,34 @@ function sliceArm({ info = SLICE_INFO, hold = false } = {}) {
   return a;
 }
 
-test('a done slice\'s History page names its place and the next slice, with Open feature; a repaint keeps one line', async () => {
-  const s = sliceArm();
-  const ctx = await bootShip({ arms: s.arm });
+// Runs redesign slice 4 (D18): the History glance's Group row says where the run sits (it replaces the slice line).
+const CHARTS = { groups: [{ id: 'feat_1', kind: 'feature', title: 'Charts', projectKey: null, planning: null, cost: { usd: 0, byPipeline: {} },
+  members: [1, 2, 3].map((i) => ({ position: i, title: `Slice ${i}`, pipelineId: i === 1 ? ROW.id : null, ticketId: i === 1 ? null : `t${i}`,
+    status: i === 1 ? 'done' : null, pr: null, ticket: i === 1 ? null : { id: `t${i}`, status: 'scheduled', runAt: null, after: true }, adhoc: false, after: i === 1 ? null : i - 1 })) }] };
+const groupsArm = (groups) => (url) => (url.startsWith('/api/run-groups') ? ok(groups) : null);
+
+test('a done slice\'s History page says "Part of Charts · run 1 of 3", linking the feature page; a repaint keeps one link', async () => {
+  const ctx = await bootShip({ arms: groupsArm(CHARTS) });
   gateOn(ctx);
   await openDetail(ctx);
   await settle(ctx.window, 4);
-  const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-slice-line');
+  const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-page-head .rd-group-line');
   assert.equal(line.hidden, false);
-  assert.equal(line.querySelector('.rd-slice-link').textContent, 'Slice 1 of 3 · next: Slice 2 (planned)');
-  assert.equal(line.querySelector('.rd-slice-link').getAttribute('href'), '#feature/feat_1');
-  assert.equal(line.querySelector('.rd-slice-open').textContent, 'Open feature');
-  assert.equal(s.calls, 1);
+  assert.equal(line.textContent.replace(/\s+/g, ' ').trim(), 'Group Part of Charts · run 1 of 3');
+  assert.equal(line.querySelector('a.rd-group-link').getAttribute('href'), '#feature/feat_1');
+  assert.equal(ctx.window.document.querySelector('#hist-detail .rd-slice-line'), null, 'the Group row replaces the slice line');
   await openDetail(ctx);                                 // the same detail again: painted in place
-  assert.equal(ctx.window.document.querySelectorAll('#hist-detail .rd-slice-link').length, 1);
+  assert.equal(ctx.window.document.querySelectorAll('#hist-detail .rd-group-link').length, 1);
 });
 
-test('a plain run (the slice endpoint answers 404) shows no slice line', async () => {
-  const s = sliceArm({ info: null });
-  const ctx = await bootShip({ arms: s.arm });
+test('a plain run (in no group) shows no group link; at Expert it offers "Add to group…"', async () => {
+  const ctx = await bootShip({ arms: groupsArm({ groups: [] }) });
   gateOn(ctx);
   await openDetail(ctx);
   await settle(ctx.window, 4);
-  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-slice-line').hidden, true);
+  const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-group-line');
+  assert.equal(line.querySelector('.rd-group-link'), null);
+  assert.equal(line.querySelector('.rd-group-add').textContent, 'Add to group…');
 });
 
 test('Ship it for a slice with a next slice says to merge this PR first, on the first open; a plain run has no note', async () => {
@@ -1542,4 +1548,43 @@ test('the Ship it note waits for its own run: an answer that lands after the dia
   s.release?.();
   await settle(ctx.window, 4);
   assert.equal(modal.querySelector('.shipit-slice-note').hidden, true);
+});
+
+// ---------------------------------------------------------------------------
+// Shaper s4: the release row (the same component as the Ship card's)
+// ---------------------------------------------------------------------------
+
+const RELEASE_REMOTES = { ...REMOTES, release: { version: 'v1.12.0', from: 'tag', lastTag: 'v1.11.0', packageVersion: null } };
+
+test('the release row: collapsed it sends nothing; expanded with the remotes hint OK posts release.version', async () => {
+  const ctx = await bootShip({ remotes: RELEASE_REMOTES, arms: prArm(PR_OK) });
+  const modal = await openModal(ctx);
+  const row = modal.querySelector('.shipit-release [data-release-row]');
+  assert.ok(row, 'the dialog carries the release row');
+  assert.equal(row.querySelector('.release-row-add').textContent, '+ Add a release');
+  click(ctx.window, row.querySelector('.release-row-add'));
+  assert.equal(row.querySelector('.release-row-text').textContent + row.querySelector('.release-row-edit').textContent,
+    'Release v1.12.0 · draft after merge · Edit');
+  assert.equal(row.querySelector('.release-row-source').textContent, 'Last tag v1.11.0 + minor');
+  click(ctx.window, modal.querySelector('.shipit-ok'));
+  await settle(ctx.window, 6);
+  assert.deepEqual(JSON.parse(prPosts(ctx)[0].opts.body),
+    { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id, pushRemote: 'origin', baseRemote: 'origin', baseBranch: 'feat/log-ux',
+      release: { version: 'v1.12.0' } });
+});
+
+test('the release row: an invalid typed version posts nothing and leaves OK and the remote picks enabled', async () => {
+  const ctx = await bootShip({ remotes: REMOTES, arms: prArm(PR_OK) });
+  const modal = await openModal(ctx);
+  const row = modal.querySelector('.shipit-release [data-release-row]');
+  click(ctx.window, row.querySelector('.release-row-add'));
+  assert.equal(row.querySelector('.release-row-source').textContent, 'No tag or package.json version: type one');
+  row.querySelector('.release-row-input').value = 'later';
+  click(ctx.window, modal.querySelector('.shipit-ok'));
+  await settle(ctx.window, 4);
+  assert.equal(prPosts(ctx).length, 0);
+  assert.equal(row.querySelector('.release-row-err').textContent, 'Use a version like v1.12.0');
+  assert.equal(modal.querySelector('.shipit-ok').disabled, false);
+  assert.equal(modal.querySelector('.shipit-push-remote').disabled, false);
+  assert.equal(modal.querySelector('.shipit-base-remote').disabled, false);
 });

@@ -53,17 +53,17 @@ test('controller: a card goes live from the run store, repaints on frames (never
   const ctl = createRunCardController({ controls: { prHost: () => true }, runStore: store, tickMs: 0 });
   const built = ctl.build(BLOCK, ctx);
   doc.body.appendChild(built.el);
-  assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Planner');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working');
   assert.deepEqual(fetches, [], 'a run in the live map is never fetched');
   assert.equal(typeof built.handle.relayout, 'function');
   assert.equal(built.handle.parts.graph, built.el.querySelector('.chat-rc-well'));
   store.snaps.set('run-uuid-1', liveSnap({ status: 'done', terminal: true, active: [] }, { status: 'done', active: [] }));
   store.poke('run-uuid-1', 'log');
   await settle();
-  assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Planner', 'a log line repaints nothing');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working', 'a log line repaints nothing');
   store.poke('run-uuid-1', 'done');
   await settle();
-  assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Done');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'ready');
   assert.deepEqual(fetches, ['/api/ask/runs/abcd1234'], 'the finished run\'s facts, once');
   assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Ready to ship', 'REST facts merged into the live snapshot');
   assert.equal(built.el.querySelector('.chat-rc-file-path').textContent, 'a.mjs');
@@ -86,7 +86,7 @@ test('controller: REST hydration for runs this tab gets no frames for — on bui
       doc.body.appendChild(built.el);
       await settle();
       assert.equal(fetches.length, 1);
-      assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Planner', 'painted from REST');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working', 'painted from REST');
       ctl.tick();
       assert.equal(fetches.length, 1, 'not yet due');
       t += PROGRESS_REHYDRATE_MS;
@@ -109,7 +109,7 @@ test('controller: REST hydration for runs this tab gets no frames for — on bui
       const built = ctl.build(BLOCK, ctx);
       doc.body.appendChild(built.el);
       await settle();
-      assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Starting');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'starting');
       assert.equal(built.el.querySelector('.ask-rc-title').textContent, 'Fix login', 'the identity title');
       ctl.destroy();
     } },
@@ -140,7 +140,7 @@ test('controller: a started run proposal learns its pipeline id from the store, 
       doc.body.appendChild(built.el);
       await settle();
       assert.deepEqual(fetches, ['/api/ask/runs/abcd1234']);
-      assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Done');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'ready');
       ctl.destroy();
     } },
     { name: 'a failed launch', run: async () => {
@@ -149,6 +149,68 @@ test('controller: a started run proposal learns its pipeline id from the store, 
       const built = ctl.build({ kind: 'card', id: 'card_4', state: 'failed', runId: 'run-uuid-4', error: 'Preflight failed', card: { projectKey: 'p' } }, ctx);
       doc.body.appendChild(built.el);
       assert.equal(built.el.querySelector('.ask-rc-reason').textContent, 'Run failed: Preflight failed');
+      ctl.destroy();
+    } },
+  ]);
+});
+
+test('controller: the first load says loading, deleted or unreachable; a painted card keeps its paint (§5a.2)', async () => {
+  const LOADING = 'Loading run…';
+  const DELETED = 'This run was deleted. The chat keeps what was said about it.';
+  const UNREACHABLE = "Could not load this run: Worca's server could not be reached. The card fills in when it is back.";
+  const reasonOf = (built) => { const r = built.el.querySelector('.ask-rc-reason'); return r.hidden ? '' : r.textContent; };
+  const card = (handler, { now } = {}) => {
+    const { doc, ctx } = env(handler);
+    const ctl = createRunCardController({ controls: {}, runStore: fakeStore(), tickMs: 0, ...(now ? { now } : {}) });
+    const built = ctl.build(BLOCK, ctx);
+    doc.body.appendChild(built.el);
+    return { ctl, built };
+  };
+  await checkRows([
+    { name: 'in flight: Loading run…', run: async () => {
+      const { ctl, built } = card(() => new Promise(() => {}));
+      await settle();
+      assert.equal(reasonOf(built), LOADING);
+      ctl.destroy();
+    } },
+    { name: 'a 404: the run was deleted', run: async () => {
+      const { ctl, built } = card(() => ({ ok: false, status: 404, json: async () => ({}) }));
+      await settle();
+      assert.equal(reasonOf(built), DELETED);
+      ctl.destroy();
+    } },
+    { name: 'a network error: unreachable', run: async () => {
+      const { ctl, built } = card(() => Promise.reject(new TypeError('Failed to fetch')));
+      await settle();
+      assert.equal(reasonOf(built), UNREACHABLE);
+      ctl.destroy();
+    } },
+    { name: 'painted, then the server goes: the last paint stays, no reason', run: async () => {
+      let t = 1000;
+      let up = true;
+      const { ctl, built } = card(() => (up ? ok({ state: STATE({ status: 'running' }), live: null, extras: null }) : Promise.reject(new TypeError('Failed to fetch'))), { now: () => t });
+      await settle();
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working');
+      up = false;
+      t += PROGRESS_REHYDRATE_MS;
+      ctl.tick();
+      await settle();
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working', 'the last paint stays');
+      assert.equal(reasonOf(built), '');
+      ctl.destroy();
+    } },
+    { name: 'unreachable, then the next hydrate answers: the line goes and the card paints', run: async () => {
+      let t = 1000;
+      let up = false;
+      const { ctl, built } = card(() => (up ? ok({ state: STATE({ status: 'running' }), live: null, extras: null }) : Promise.reject(new TypeError('Failed to fetch'))), { now: () => t });
+      await settle();
+      assert.equal(reasonOf(built), UNREACHABLE);
+      up = true;
+      t += PROGRESS_REHYDRATE_MS;
+      ctl.tick();
+      await settle();
+      assert.equal(reasonOf(built), '');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working');
       ctl.destroy();
     } },
   ]);
@@ -217,7 +279,7 @@ test('controller: a finished run paints from its persisted state once read — t
   const built = ctl.build(BLOCK, ctx);
   doc.body.appendChild(built.el);
   await settle();
-  assert.equal(built.el.querySelector('.ask-rc-prog').textContent, 'Finished');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'ready', 'the persisted state: a finished run');
   assert.equal(built.el.querySelectorAll('.chat-rc-graph .node.is-skipped').length, 0);
   built.dispose();
 });
@@ -265,7 +327,7 @@ test('controller: the 1 s tick repaints a live card from the store; a 200 for AN
       doc.body.appendChild(built.el);
       await settle();
       assert.equal(built.el.querySelector('.ask-rc-title').textContent, 'Fix login');
-      assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Starting');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'starting');
       ctl.destroy();
     } },
   ]);
@@ -367,7 +429,7 @@ test('controller: a REST read older than the store\'s finished run never repaint
   const built = ctl.build(BLOCK, ctx);
   doc.body.appendChild(built.el);
   await settle();
-  assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Done');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'ready');
   ctl.destroy();
 });
 
@@ -649,7 +711,7 @@ test('panel: a PR fix-run card on a system row renders as the chat run card; its
   ctx.flush();
   const card = ctx.doc.querySelector('.ask-msg-system .chat-rc');
   assert.ok(card, 'the card renders on the system row');
-  assert.equal(card.querySelector('.ask-rc-kicker').textContent, 'PR fix run');
+  assert.equal(card.querySelector('.kind-chip').textContent, 'PR fix run');
   const settled = { ...FIX, card: { ...FIX.card, pipelineId: 'abcd1234', fix: { ...FIX.card.fix, outcome: { kind: 'pushed', sha: 'abc1234', stopped: null, fixRuns: 1 } } } };
   ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: row([settled]), unread: true });
   ctx.flush();

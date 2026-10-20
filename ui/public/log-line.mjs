@@ -1,4 +1,5 @@
 // ui/public/log-line.mjs
+import { currentPass, openBlocking } from '../../src/shared/shape/role-review.mjs';
 
 // Pure, DOM-free: the className for one log line, given its level and whether it
 // belongs to a fanned-out sub-agent. Extracted so the sub-agent styling decision
@@ -111,4 +112,13 @@ export function cycleSeparatorBefore(state, rec) {
   seen.set(key, last == null ? n : Math.max(last, n));
   if (last == null || n <= last) return null;
   return `Cycle ${rec.cycle}`;
+}
+
+/** The receipt a plan approval collapses into (slice 4): "Plan approved · 5 roles reviewed · 1 open issue accepted". */
+export function planApprovedLine(roleReviews) {
+  const n = currentPass(roleReviews)?.rounds.at(-1)?.roles.length || 0;
+  const open = openBlocking(roleReviews);
+  return ['Plan approved',
+    n ? `${n} role${n === 1 ? '' : 's'} reviewed` : '',
+    open ? `${open} open issue${open === 1 ? '' : 's'} accepted` : ''].filter(Boolean).join(' · ');
 }

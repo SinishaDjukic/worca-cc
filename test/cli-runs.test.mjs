@@ -253,6 +253,18 @@ test('a paused run: the detail says how to resume; after a usage limit its engin
   assert.doesNotMatch((await run(['runs', 'aaa10001'])).stdout, /Resume with/, 'a finished run has nothing to resume');
 });
 
+test('the detail prints the run model status line as `state`, and --json carries it as statusLine (§5a.7)', async () => {
+  insertPipeline({ id: 'ggg60001', projectKey: 'proj-g', title: 'paused at build', status: 'paused', minutesAgo: 1 });
+  getDb().prepare("INSERT INTO pipeline_steps (pipeline_id, key, node_id, status, execution_id) VALUES (?, '0:impl', 'impl', 'paused', 'x:impl:1')")
+    .run('ggg60001');
+  getDb().prepare('UPDATE pipelines SET stepper = ? WHERE id = ?').run(JSON.stringify({ version: 2,
+    graph: { nodes: [{ id: 'impl', kind: 'agent', key: 'implementer', label: 'Implementation', progressStage: 'build' }], wires: [] } }), 'ggg60001');
+  const r = await run(['runs', 'ggg60001']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^\s+state\s+Build · paused$/m);
+  assert.equal(JSON.parse((await run(['runs', 'ggg60001', '--json'])).stdout).statusLine, 'Build · paused');
+});
+
 test('--json carries shapeStats for a shaped run (Shaper D28) and no shapeStats key otherwise', async () => {
   const STATS = { questions: { asked: 2, skipped: 1 }, revises: [{ round: 1, by: 'person' }], shapeScore: 0.875,
     reviewCycles: 2, checklist: null, cost: { shaping: 12.5, building: 30 } };

@@ -1,3 +1,4 @@
+import { icon } from './icons.mjs';
 import { renderInheritField, readDirtyFields } from './inherit-field.mjs';
 import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { applyEngineLocks, engineLock } from './engine-locks.mjs';
@@ -38,7 +39,7 @@ function slotTable(doc, cls, title, rows, { what, from, onTest = null, always = 
     const actions = doc.createElement('div'); actions.className = 'engine-slot-actions';
     const model = r.el.querySelector('.inherit-model');
     if (onTest && model) {
-      const test = doc.createElement('button'); test.type = 'button'; test.className = 'btn btn-ghost btn-mini engine-slot-test'; test.textContent = 'Test';
+      const test = doc.createElement('button'); test.type = 'button'; test.className = 'btn btn-sm engine-slot-test'; test.textContent = 'Test';
       test.title = 'Send one tiny prompt to this model';
       const paintTest = () => { test.hidden = !model.value; };
       model.addEventListener('change', paintTest); paintTest();
@@ -46,13 +47,13 @@ function slotTable(doc, cls, title, rows, { what, from, onTest = null, always = 
       actions.append(test);
     }
     const clear = r.el.querySelector('.inherit-clear');
-    if (clear) { clear.textContent = '×'; clear.setAttribute('aria-label', `Clear ${r.label}`); clear.title = 'Clear: follow ' + from; clear.classList.add('engine-slot-clear'); actions.append(clear); }
+    if (clear) { clear.replaceChildren(icon(doc, 'x', 14)); clear.setAttribute('aria-label', `Clear ${r.label}`); clear.title = 'Clear: follow ' + from; clear.classList.add('engine-slot-clear'); actions.append(clear); }
     r.el.append(actions);
     box.append(r.el);
   }
   const rest = doc.createElement('small'); rest.className = 'hint engine-slot-rest';
   const add = doc.createElement('select'); add.className = 'select engine-slot-add'; add.setAttribute('aria-label', `Override a ${what}`);
-  const all = doc.createElement('button'); all.type = 'button'; all.className = 'btn btn-ghost btn-mini engine-slot-all'; all.dataset.minLevel = 'expert';
+  const all = doc.createElement('button'); all.type = 'button'; all.className = 'btn btn-sm engine-slot-all'; all.dataset.minLevel = 'expert';
   let showAll = false;
   const paint = () => {
     const hidden = rows.filter((r) => r.el.hidden);

@@ -69,3 +69,12 @@ test('a pre-migration run (setup null) and the flag off both leave the button hi
   assert.equal((await openRun({ setup: null })).btn().hidden, true);
   assert.equal((await openRun({ setup: { workflowId: 'wf_default' }, flag: false })).btn().hidden, true);
 });
+
+test('the run page button reads "Save as preset" (A14: 1–3 words, verb first); the tooltip keeps the long form', async () => {
+  const { btn } = await openRun({ setup: { workflowId: 'wf_default' } });
+  const b = btn();
+  assert.equal(b.hidden, false);
+  assert.equal(b.querySelector('.hd-btn-label').textContent, 'Save as preset');
+  assert.equal(b.getAttribute('aria-label'), 'Save as preset');
+  assert.equal(b.title, "Save this run's setup as a run preset");
+});

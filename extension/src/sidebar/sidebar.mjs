@@ -592,9 +592,9 @@ function setPhase(p) {
   s.box.className = `wx-state wx-${kind}`;
   const row = V.make(doc, 'div', 'wx-state-actions');
   const btn = (cls, label, fn) => { const b = V.make(doc, 'button', cls, label); b.type = 'button'; b.onclick = fn; row.append(b); };
-  if (['unpaired', 'denied', 'expired'].includes(p)) btn('btn-go', p === 'unpaired' ? 'Connect' : 'Ask again', () => void startPairing());
-  if (p === 'offline' || p === 'loading') btn('btn-ghost', 'Try again', () => void probe());
-  if (p === 'pairing') btn('btn-ghost', 'Open Worca', openInWorca);
+  if (['unpaired', 'denied', 'expired'].includes(p)) btn('btn btn-primary', p === 'unpaired' ? 'Connect' : 'Ask again', () => void startPairing());
+  if (p === 'offline' || p === 'loading') btn('btn', 'Try again', () => void probe());
+  if (p === 'pairing') btn('btn', 'Open Worca', openInWorca);
   s.body.replaceChildren(...V.stateNodes(doc, kind, { baseUrl: st.baseUrl, reason: p === 'offline' ? st.offlineReason : null, code: st.code && `${st.code.slice(0, 3)} ${st.code.slice(3)}` }), row);
   s.settings.sync(st.baseUrl);
   if (s.box.parentNode !== app) app.replaceChildren(s.box);
@@ -635,7 +635,7 @@ function mountPaired() {
   // worca's Chat head button (ask-panel.mjs newChatButton('chat-head-btn')): "+ New chat", right after the chat list.
   const newBtn = V.buildNewChatButton(doc, 'chat-head-btn', () => newChat());
   // Settings (D10): the same disclosure as the state screens, revealed under the head.
-  const settingsBtn = V.buildIconButton(doc, 'ask-icon-btn chat-head-btn', 'Settings', V.ICON.settings, () => {
+  const settingsBtn = V.buildIconButton(doc, 'btn btn-quiet btn-icon chat-head-btn', 'Settings', V.ICON.settings, () => {
     settings.el.hidden = !settings.el.hidden;
     if (!settings.el.hidden) settings.el.open = true;
   });

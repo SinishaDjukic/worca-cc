@@ -209,9 +209,10 @@ test('Last month, Group by and Custom drive the /api/stats query', async () => {
   assert.equal(doc.getElementById('stats-to').hasAttribute('aria-invalid'), false);
 });
 
-test('narrow widths: the range control wraps and a grouped table scrolls inside its card', () => {
+test('narrow widths: the range control scrolls on one 32px row and a grouped table scrolls inside its card', () => {
   const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
-  assert.match(css, /#stats-range\{[^}]*flex-wrap:wrap/, 'six range buttons must wrap, not run off-screen');
+  // Review A5: a wrapped segmented control is 62px, off the size scale; it scrolls within its width instead of running off-screen.
+  assert.match(css, /#stats-range\{[^}]*flex-wrap:nowrap;max-width:100%;overflow-x:auto;/, 'six range buttons stay one row and scroll, not run off-screen');
   // A grid item keeps min-width:auto, so the 1fr track grows to the table's
   // min-content width and .people-scroll never scrolls; min-width:0 caps it.
   assert.match(css, /\.people-grid>\*\{min-width:0;\}/);

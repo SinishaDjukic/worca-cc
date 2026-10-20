@@ -503,6 +503,15 @@ export function normalizeMergeable(raw) {
   return 'UNKNOWN';
 }
 
+const VERDICT_FIELDS = 'isDraft,reviewDecision,mergeable,statusCheckRollup';
+/** The list's CI verdict for one open PR (runs redesign §2.1a, D31), from `gh pr view --json` output. */
+export function prVerdictOf(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;   // a catch-all stub's list JSON is no verdict
+  const c = rollupChecks(obj.statusCheckRollup || []);
+  return { draft: !!obj.isDraft, reviewDecision: obj.reviewDecision || null, mergeable: normalizeMergeable(obj.mergeable),
+    checks: { state: c.state, total: c.total, failed: c.failed, pending: c.pending } };
+}
+
 /**
  * Read mergeability. A `prUrl` is repo-agnostic (a fork PR lives in the BASE
  * repo, which need not be the cwd's default) and wins; else the head selector
@@ -641,7 +650,14 @@ const normalizePr = (pr) => ({
  * else the branch's newest closed one): the Runs list draws a PR dropped
  * without merging, where every other caller reads "no PR" and offers Create.
  */
-async function ghFindPrForBranch({ projectDir, head, prUrl = null, includeClosed = false }) {
+/** The OPEN PR's verdict by one extra `gh pr view` (merged PRs need none). Null on any failure: the chip keeps today's words. */
+async function ghPrVerdict(projectDir, url) {
+  const v = await _run('gh', ['pr', 'view', url, '--json', VERDICT_FIELDS], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(url) })).env });
+  if (!v.ok) return null;
+  try { return prVerdictOf(JSON.parse(v.stdout || 'null')); } catch { return null; }
+}
+async function ghFindPrForBranch({ projectDir, head, prUrl = null, withVerdict = false, includeClosed = false }) {
+  const done = async (pr) => (withVerdict && pr && pr.state === 'OPEN' ? { ...pr, verdict: await ghPrVerdict(projectDir, pr.url) } : pr);
   let closedAtUrl = null;
   if (prUrl) {
     const v = await _run('gh', ['pr', 'view', prUrl, '--json', PR_FIELDS], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(prUrl) })).env });
@@ -650,7 +666,7 @@ async function ghFindPrForBranch({ projectDir, head, prUrl = null, includeClosed
       try { obj = JSON.parse(v.stdout || 'null'); } catch { obj = null; }
       if (obj && typeof obj === 'object' && !Array.isArray(obj) && obj.url) {
         const pr = normalizePr(obj);
-        if (pr.state === 'OPEN' || pr.state === 'MERGED') return pr;
+        if (pr.state === 'OPEN' || pr.state === 'MERGED') return done(pr);
         // CLOSED: fall through to the branch search below; includeClosed's last resort.
         if (pr.state === 'CLOSED') closedAtUrl = pr;
       }
@@ -668,7 +684,7 @@ async function ghFindPrForBranch({ projectDir, head, prUrl = null, includeClosed
   } catch { /* unparseable output: no PR */ }
   // Requirement is binary: hide the button if any OPEN or MERGED PR exists.
   const live = norm.find((p) => p.state === 'OPEN') || norm.find((p) => p.state === 'MERGED');
-  if (live) return live;
+  if (live) return done(live);
   if (!includeClosed) return null;
   return closedAtUrl || norm.find((p) => p.state === 'CLOSED') || null;
 }
@@ -935,10 +951,11 @@ export async function prMergeable(opts = {}) {
 }
 
 /**
- * { state: OPEN|MERGED, url, number, isDraft, mergeable } | null for `head`, by forge (see ghFindPrForBranch).
- * `includeClosed` adds a CLOSED (Azure: abandoned) PR as the last resort. Never throws.
+ * { state: OPEN|MERGED, url, number, isDraft, mergeable } | null for `head`, by forge (see ghFindPrForBranch). Never throws.
+ * `includeClosed` adds a CLOSED (Azure: abandoned) PR as the last resort.
+ * `withVerdict` (GitHub only): an OPEN PR also carries `verdict` (prVerdictOf), for the Runs list's PR chip (D31).
  */
-export async function findPrForBranch({ projectDir, head, prUrl = null, includeClosed = false } = {}) {
+export async function findPrForBranch({ projectDir, head, prUrl = null, withVerdict = false, includeClosed = false } = {}) {
   if (!projectDir || !head) return null;
   const strip = (pr) => (pr ? { state: pr.state, url: pr.url, number: pr.number, isDraft: pr.isDraft === true, mergeable: pr.mergeable || 'UNKNOWN' } : null);
   if (forgeOfPrUrl(prUrl) === 'azure') {
@@ -953,7 +970,7 @@ export async function findPrForBranch({ projectDir, head, prUrl = null, includeC
   const az = prUrl ? null : await azureBaseRemote(projectDir);
   if (az) return strip(await azurePr.findPrForBranch({ head, baseRepo: az, includeClosed }));
   if (!(await ghUsable())) return null;
-  return ghFindPrForBranch({ projectDir, head, prUrl, includeClosed });
+  return ghFindPrForBranch({ projectDir, head, prUrl, withVerdict, includeClosed });
 }
 
 /** OPEN | MERGED | CLOSED | null for a persisted PR URL, by its forge (see ghPrLifecycleState). */
@@ -962,6 +979,29 @@ export async function prLifecycleState({ projectDir, prUrl }) {
   if (forgeOfPrUrl(prUrl) === 'azure') return (await azurePr.viewPr({ prUrl }))?.state || null;
   if (!(await ghUsable())) return null;
   return ghPrLifecycleState({ projectDir, prUrl });
+}
+
+// Shaper s4: ownerRepoOfPrUrl is module-private, which is why createDraftRelease lives here.
+/** Shaper s4: the newest tag reachable from HEAD, or null (no tags, not a repo, any failure). Never throws. */
+export async function latestTag(projectDir) {
+  if (!projectDir) return null;
+  const r = await _run('git', ['describe', '--tags', '--abbrev=0'], { cwd: projectDir });
+  const t = r.ok ? String(r.stdout || '').trim() : '';
+  return t || null;
+}
+
+/** Shaper s4: a DRAFT GitHub release (never published) on the merged PR's repo. Azure has none. */
+export async function createDraftRelease({ projectDir = null, prUrl, tag, target = null } = {}) {
+  const repo = ownerRepoOfPrUrl(prUrl);
+  if (!repo) return { ok: false, error: 'a draft release needs a GitHub pull request' };
+  const cred = await githubEnv('write', { repo });
+  if (cred.error) return { ok: false, error: cred.error };
+  const args = ['release', 'create', String(tag), '--draft', '--repo', repo, '--title', String(tag), '--generate-notes',
+    ...(target ? ['--target', String(target)] : [])];
+  const r = await _run('gh', args, { cwd: projectDir || undefined, env: cred.env });
+  if (!r.ok) return { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+  const url = String(r.stdout || '').trim().split(/\r?\n/).pop() || null;
+  return { ok: true, url };
 }
 
 /** The remote whose tracking ref holds `branch` ({ remote }), preferring origin; null = not pushed. No network. */

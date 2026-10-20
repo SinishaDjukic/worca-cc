@@ -150,7 +150,7 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
     return s;
   };
   const iconBtn = (cls, label, glyph) => {
-    const b = h('button', `apv-ib ${cls}`);
+    const b = h('button', `btn btn-quiet btn-icon apv-ib ${cls}`);
     b.type = 'button';
     b.title = label;
     b.setAttribute('aria-label', label);
@@ -178,7 +178,7 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
   const prevBtn = iconBtn('apv-prev', 'Previous file', GLYPH.prev);
   const pos = h('span', 'apv-pos mono');
   const nextBtn = iconBtn('apv-next', 'Next file', GLYPH.next);
-  const dlBtn = h('button', 'apv-btn apv-dl');
+  const dlBtn = h('button', 'btn apv-dl');
   dlBtn.type = 'button';
   dlBtn.setAttribute('aria-label', 'Download');
   dlBtn.append(svg(GLYPH.download), h('span', null, 'Download'));
@@ -273,9 +273,9 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
     fact('Step', m.step || '');
     fact('Cycle', cycleOf(a, m) || '');
     fact('Path', displayPath(rel));
-    const dl = h('button', 'apv-btn apv-btn-primary apv-info-dl');
+    const dl = h('button', 'btn btn-primary apv-info-dl');
     dl.type = 'button';
-    dl.setAttribute('aria-label', 'Download');      // ≤760 px hides its text (.apv-btn span): the name must stay
+    dl.setAttribute('aria-label', 'Download');      // ≤760 px hides its text (.apv-info-dl span): the name must stay
     dl.append(svg(GLYPH.download), h('span', null, 'Download'));
     dl.addEventListener('click', (e) => { if (!(e.detail > 1)) download(); });
     box.append(ic, h('p', 'apv-info-name', baseName(rel)), h('p', 'apv-info-note', reason), facts, dl);

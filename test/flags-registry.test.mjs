@@ -23,6 +23,9 @@ test('the real registry has no problems today, is frozen and every docs page exi
     if (f.docs) assert.ok(existsSync(fileURLToPath(new URL(`../${f.docs}`, import.meta.url))), `${f.key}: ${f.docs} exists`);
   }
   assert.equal(flagByKey('nope'), null);
+  // UI/UX review F: Keep awake is beta and on by default (a switch in Settings › Runs too).
+  const ka = flagByKey('keepAwake');
+  assert.deepEqual([ka.stage, ka.default], ['beta', true]);
 });
 
 test('registryProblems flags every rule', async () => {

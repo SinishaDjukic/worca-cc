@@ -106,6 +106,26 @@ test('_onChatAction: the child\'s request reaches deps.chatAction; its card or n
         [['mcp__worca__propose_stop_run', { runId: 'aaaa0001' }, asked('stop')]]);
       assert.deepEqual(blocks.filter((b) => b.kind === 'card').map((b) => [b.state, b.card.type]), [['proposed', 'run-stop']]);
     } },
+    { name: 'Shaper propose_changes: the request and the turn\'s thread reach deps.chatAction; its card lands proposed', run: async () => {
+      const seen = [];
+      const req = { kind: 'changes', pipelineId: 'aaaa0001', request: 'make it blue' };
+      const blocks = await runWith({ chatAction: async (r, ctx) => { seen.push([r, ctx]); return { ok: true, block: { state: 'proposed', card: { type: 'changes' } } }; } },
+        [['mcp__worca__propose_changes', { pipelineId: 'aaaa0001', request: 'make it blue' }, JSON.stringify({ ok: true, requested: req })]]);
+      assert.equal(seen.length, 1);
+      assert.deepEqual(seen[0][0], req);
+      assert.match(seen[0][1].threadId, /^ask_/);
+      assert.deepEqual(blocks.filter((b) => b.kind === 'card').map((b) => [b.state, b.card.type]), [['proposed', 'changes']]);
+    } },
+    { name: 'Shaper propose_changes from a sub-agent is never applied: a notice says so', run: async () => {
+      let n = 0;
+      const blocks = await runWith({ chatAction: async () => { n += 1; return { ok: true, block: { state: 'proposed', card: { type: 'changes' } } }; } }, (onEvent) => {
+        push(onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id: 'toolu_task', name: 'Agent', input: { description: 'helper', subagent_type: 'general-purpose', prompt: 'x' } }] } });
+        push(onEvent, { type: 'assistant', parent_tool_use_id: 'toolu_task', message: { id: 'msg_c', content: [{ type: 'tool_use', id: 'toolu_sub', name: 'mcp__worca__propose_changes', input: { pipelineId: 'aaaa0001', request: 'x' } }] } });
+        push(onEvent, { type: 'user', parent_tool_use_id: 'toolu_task', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_sub', content: JSON.stringify({ ok: true, requested: { kind: 'changes', pipelineId: 'aaaa0001', request: 'x' } }) }] } });
+      });
+      assert.equal(n, 0, 'never applied');
+      assert.deepEqual(blocks.map((b) => [b.kind, b.text]), [['notice', 'Not applied: a sub-agent asked to propose changes — ask again in this chat']]);
+    } },
     { name: 'a refusal from the parent is a notice', run: async () => {
       const blocks = await runWith({ chatAction: async () => ({ ok: false, notice: 'Could not pause Fix login: it is paused' }) },
         [['mcp__worca__pause_run', { runId: 'aaaa0001' }, asked('pause')]]);

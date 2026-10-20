@@ -1,6 +1,6 @@
 // test/ui-flags.test.mjs — feature flags in the real shell (D4-D9, D12): the first paint hides an off
 // flag, a `flags` frame flips it live and fires onFlagChange, data-flag + data-min-level need both,
-// Settings › Experimental lists / toggles / locks / resets at every level, and the chip links to the row.
+// Settings › Labs lists / toggles / locks / resets at every level, and the chip links to the row.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -10,7 +10,7 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { renderIndexHtml } from '../src/core/index-html.mjs';
 import { applyFlags, flagOn, onFlagChange, chip, decorateFlagChips } from '../ui/public/flags.mjs';
-import { createFlagsView } from '../ui/public/flags-view.mjs';
+import { createFlagsView, bindFlagSwitch } from '../ui/public/flags-view.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
@@ -70,7 +70,7 @@ test('first paint, live flip, events, and flags × levels', async () => {
       const note = doc.getElementById('flags-demo-note');
       const a = note.querySelector('a.flag-chip');
       assert.equal(a.getAttribute('href'), '#settings/experimental/flagsDemo');
-      assert.equal(a.textContent, 'Experimental');
+      assert.equal(a.textContent, 'Labs');
       assert.equal(a.dataset.flag, 'flagsDemo');
       decorateFlagChips(doc);
       assert.equal(note.querySelectorAll('a.flag-chip').length, 1);
@@ -81,7 +81,7 @@ test('first paint, live flip, events, and flags × levels', async () => {
   ]);
 });
 
-test('Settings › Experimental view: rows, toggle PATCH body, locked row, requires confirm, Reset all', async () => {
+test('Settings › Labs view: rows, toggle PATCH body, locked row, requires confirm, Reset all', async () => {
   const { document: doc } = page();
   const host = doc.getElementById('flags-host');
   const calls = []; const confirms = [];
@@ -97,7 +97,7 @@ test('Settings › Experimental view: rows, toggle PATCH body, locked row, requi
     { name: 'load lists the flag with its stage badge and an off switch', run: async () => {
       await view.load();
       const row = host.querySelector('[data-flag-row="flagsDemo"]');
-      assert.equal(row.querySelector('.flag-stage').textContent, 'Experimental');
+      assert.equal(row.querySelector('.flag-stage').textContent, 'Labs');
       assert.equal(row.querySelector('[role="switch"]').getAttribute('aria-checked'), 'false');
       assert.ok(doc.getElementById('flags-reset').disabled, 'nothing stored: nothing to reset');
     } },
@@ -112,7 +112,7 @@ test('Settings › Experimental view: rows, toggle PATCH body, locked row, requi
     { name: 'Reset all confirms, then PATCHes null for every unlocked flag', run: async () => {
       doc.getElementById('flags-reset').click();
       await tick(); await tick();
-      assert.equal(confirms.at(-1), 'Reset all experimental features?');
+      assert.equal(confirms.at(-1), 'Reset all Labs features?');
       assert.deepEqual(calls.at(-1), ['PATCH', { flagsDemo: null }]);
     } },
     { name: 'a repaint (what a flags frame triggers) keeps focus on the switch', run: async () => {
@@ -168,7 +168,7 @@ async function bootApp({ level, flags }) {
   return { window, doc: window.document, frame: (msg) => WSStub.last.emit('message', { data: JSON.stringify(msg) }) };
 }
 
-test('app: the Experimental tab shows at every level; a flags frame flips the page; the chip opens the row', async () => {
+test('app: the Labs tab shows at every level; a flags frame flips the page; the chip opens the row', async () => {
   await checkRows([
     { name: 'the tab button is level simple and never gated, at simple, advanced and expert', run: async () => {
       for (const level of ['simple', 'advanced', 'expert']) {
@@ -210,4 +210,83 @@ test('flagOn on a document without <html> reads off, never throws', () => {
   doc.documentElement.remove();
   assert.equal(doc.documentElement, null);
   assert.equal(flagOn('runTags', doc), false);
+});
+
+test('A4: a tab gets its Beta chip inside the label as plain text; other hosts keep the sibling link; data-flag-chip names an ungated flag', () => {
+  const { document: doc } = page();
+  decorateFlagChips(doc);
+  const strip = doc.getElementById('settings-tabs');
+  const presets = strip.querySelector('button[data-tab="presets"]');
+  const inside = presets.querySelector('.flag-chip');
+  assert.ok(inside, 'the chip sits inside the tab');
+  assert.equal(inside.tagName, 'SPAN');
+  assert.equal(inside.getAttribute('href'), null, 'never a link inside a tab');
+  assert.equal(inside.textContent, 'Beta');
+  assert.match(presets.textContent, /^Presets\s*Beta$/);
+  assert.equal(strip.children.length, strip.querySelectorAll('button[data-tab]').length, 'one element child per tab');
+  const b = doc.createElement('button'); b.dataset.flag = 'flagsDemo'; doc.body.appendChild(b);
+  chip(b);
+  assert.equal(b.nextElementSibling.tagName, 'A', 'a non-tab button keeps the sibling link');
+  const txt = doc.getElementById('keepAwakeTxt');
+  const c = txt.querySelector('.flag-chip');
+  assert.ok(c, 'the Keep awake row shows its Beta chip');
+  assert.equal(c.textContent, 'Beta');
+  assert.equal(c.dataset.flag, undefined, 'an ungated host: the chip is never hidden by the flag gate');
+});
+
+test('bindFlagSwitch (Settings › Runs, review F): one source with the Labs page', async () => {
+  const { document: doc } = page({ flags: { keepAwake: true } });
+  const el = doc.getElementById('keepAwakeSwitch');
+  const msg = doc.getElementById('keepAwakeMsg');
+  await checkRows([
+    { name: 'paints from data-flags, then a click sends PATCH {keepAwake:false} and repaints off', run: async () => {
+      const calls = [];
+      const api = async (method, body) => {
+        calls.push([method, body]);
+        return method === 'GET' ? { ok: true, status: 200, data: { flags: [{ key: 'keepAwake', on: true, locked: false }] } }
+          : { ok: true, status: 200, data: { flags: [{ key: 'keepAwake', on: body.keepAwake }] } };
+      };
+      const off = bindFlagSwitch(el, 'keepAwake', { api, msgEl: msg });
+      assert.equal(el.getAttribute('aria-checked'), 'true');
+      await tick();
+      el.click();
+      await tick();
+      assert.deepEqual(calls, [['GET', undefined], ['PATCH', { keepAwake: false }]]);
+      assert.equal(el.getAttribute('aria-checked'), 'false');
+      assert.equal(flagOn('keepAwake', doc), false, 'the page state follows, so the Labs row repaints too');
+      applyFlags({ keepAwake: true }, doc);
+      assert.equal(el.getAttribute('aria-checked'), 'true', 'a flags frame repaints it');
+      off();
+      applyFlags({ keepAwake: false }, doc);
+      assert.equal(el.getAttribute('aria-checked'), 'true', 'unbound: no repaint');
+      applyFlags({ keepAwake: true }, doc);
+    } },
+    { name: 'a locked flag disables the switch; a click then sends nothing', run: async () => {
+      const calls = [];
+      const api = async (method, body) => { calls.push([method, body]); return { ok: true, status: 200, data: { flags: [{ key: 'keepAwake', on: true, locked: true }] } }; };
+      const off = bindFlagSwitch(el, 'keepAwake', { api, msgEl: msg });
+      await tick();
+      assert.ok(el.classList.contains('disabled'));
+      assert.equal(el.getAttribute('aria-disabled'), 'true');
+      assert.equal(msg.textContent, 'Locked by WORCA_FLAGS', 'the status line says why the switch is dead');
+      el.click();
+      await tick();
+      assert.deepEqual(calls.map((c) => c[0]), ['GET']);
+      off();
+      el.classList.remove('disabled'); el.removeAttribute('aria-disabled'); el.tabIndex = 0;
+      msg.textContent = '';
+    } },
+    { name: 'a 409 reverts the switch, disables it and writes the error', run: async () => {
+      const api = async (method) => (method === 'GET' ? { ok: true, status: 200, data: { flags: [{ key: 'keepAwake', on: true, locked: false }] } }
+        : { ok: false, status: 409, data: { error: 'keepAwake is locked by WORCA_FLAGS' } });
+      const off = bindFlagSwitch(el, 'keepAwake', { api, msgEl: msg });
+      await tick();
+      el.click();
+      await tick();
+      assert.equal(el.getAttribute('aria-checked'), 'true', 'reverted');
+      assert.ok(el.classList.contains('disabled'));
+      assert.equal(msg.textContent, 'keepAwake is locked by WORCA_FLAGS');
+      off();
+    } },
+  ]);
 });

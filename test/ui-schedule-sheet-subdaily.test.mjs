@@ -63,3 +63,12 @@ test('Edit reopens a stored step rule in hours with its time range', async () =>
   doc.querySelector('.sched-ok').click();
   assert.deepEqual((await done).repeat.rule.step, rule.step);
 });
+
+test('the "Only between" row wraps so From/To keep a readable width', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  const rule = (sel) => (css.match(new RegExp(sel.replace(/[.*+?^${}()|[\]\\>]/g, '\\$&') + '\\{([^}]*)\\}')) || [])[1] || '';
+  assert.match(rule('.sched-range'), /flex-wrap:wrap/);
+  assert.match(rule('.sched-range > .sched-between'), /flex:1 0 100%/); // the label takes its own line
+  assert.match(rule('.sched-range > input[type="time"]'), /min-width:7\.5em/);
+});

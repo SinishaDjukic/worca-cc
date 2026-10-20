@@ -84,6 +84,7 @@ import {
   stepModelsSetting, assertStepModelsInput, setStepModels,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
   askEngineSetting, assertAskEngineInput, setAskEngineSetting, askModelsSetting, assertAskModelsInput, setAskModels,
+  chatHomePinsFor, setChatHomePinsFor,
 } from '../src/core/settings.mjs';
 import { resolveSetting, resolveAll, writeProjectSettings, assertProjectSettingsPatch, resolveRunEngine, defragSlotPair } from '../src/core/settings-cascade.mjs';
 import { resolveNightConfig, validateNightPatch } from '../src/core/night/config.mjs';
@@ -112,8 +113,8 @@ import {
   getAttachment as askGetAttachment, attachmentPath as askAttachmentPath, readAttachmentText as askReadAttachmentText,
   attachmentSourcePath as askAttachmentSourcePath,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
-  findRunLinksByPipeline as askFindRunLinksByPipeline,
-  finishMessage as askFinishMessage,
+  findRunLinksByPipeline as askFindRunLinksByPipeline, runLinkTarget,
+  finishMessage as askFinishMessage, newAskId,
   newAskId as askNewId, findPullRequestCards as askFindPullRequestCards, findFixRunCards as askFindFixRunCards,
 } from '../src/core/ask/store.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
@@ -285,7 +286,7 @@ import { webEventPrompt, webNoticeText, chatWebHosts } from '../src/core/ask/web
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
-import { drainTimeoutMs, autoResumeEnabled, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
+import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
 import {
@@ -303,7 +304,9 @@ import {
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, checkBaseMerge, mergeBaseInto, startConflictMerge, branchCheckouts,
   commitFileOnBranch,
 } from '../src/core/git-sync.mjs';
-import { shipFeature, SHIP_MODES } from '../src/core/shape/ship.mjs';
+import { shipFeature, SHIP_MODES, shipCardVerb } from '../src/core/shape/ship.mjs';
+import { releaseVersionHint, recordRunRelease, draftReleasesOnMerge } from '../src/core/draft-release.mjs';
+import { parseReleaseChoice } from '../src/shared/release-version.mjs';
 import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
@@ -313,13 +316,18 @@ import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, lis
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
   markPrReady, closePr, uncommittedPatch, ghItemSummaries } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
-import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID } from '../src/core/pr-watch.mjs';
+import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID, stoppedWatchFact } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef, prSummary, workItemSummaries } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
 import { createRefResolver } from '../src/core/ask/refs.mjs';
 import { REFS_MAX } from '../src/shared/chip-refs.mjs';
-import { archivePipeline, restorePipeline, discardRetainedWorktrees, applyRetainedWork } from '../src/core/pipeline-delete.mjs';
+import { archivePipeline, restorePipeline, purgePipeline, discardRetainedWorktrees, applyRetainedWork } from '../src/core/pipeline-delete.mjs';
+import { runBulk } from '../src/core/run-bulk.mjs';
+import { BULK_ACTIONS } from '../src/shared/run-bulk.mjs';
+import { listRunGroups, createRunGroup, addToGroup, removeFromGroup, groupMembers, RunGroupError } from '../src/core/run-groups.mjs';
+import { runModel } from '../src/shared/run-model.mjs';
+import { runModelFor } from '../src/core/run-status.mjs';
 import {
   listWorkspaces, readWorkspace, checkNewWorkspace, scanMemberProblems,
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
@@ -331,11 +339,17 @@ import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { shapeFirstEnabled, requireShapeFirst } from '../src/core/shape/gate.mjs';
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
+import { currentPass } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
-  rechainWaiting, replanRest, setApproveEach, stackedPrBase, recordShapePlan, listShapePlans, chainFeature,
-  sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput } from '../src/core/shape/features.mjs';
+  rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
+  sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput,
+  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf } from '../src/core/shape/features.mjs';
+import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
+import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts } from '../src/core/shape/changes.mjs';
+import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
+import { routeCardVerb, changesCardVerb } from '../src/shared/shape/route.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById, listNetworkWaitRuns } from '../src/core/artifacts.mjs';
 import { createNetworkWatch, NETWORK_ACTOR } from '../src/core/network-wait.mjs';
@@ -347,6 +361,7 @@ import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, pr
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
+import { ensureHouseBrief, writeHouseBriefPins } from '../src/core/house-brief.mjs';
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
 import {
   memoryRoot, GLOBAL_SCOPE, projectScope, scopeKey, isValidMemoryName, MEMORY_NAME_HELP, memoryScopeReport,
@@ -404,7 +419,7 @@ import {
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
   resolveAfterRef, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
-  chainBaseBranchesOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
+  chainBaseBranchesOf, stackedPrBaseOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
 } from '../src/core/scheduler.mjs';
 import {
   onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
@@ -579,7 +594,7 @@ const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
 const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
 // local | container | hosted (src/core/deployment.mjs): what Ask Worca is told about where it runs.
 const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
-// Experimental keepAwake flag (docs/feature-flags.md): one OS child holds off idle system sleep while
+// Beta keepAwake flag, default on locally (docs/feature-flags.md): one OS child holds off idle system sleep while
 // any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it wherever a
 // run's status or pendingQuestion changes, and when the flag flips.
 const keepAwake = createKeepAwake({ deployment: DEPLOYMENT, log: (line) => console.warn(line) });
@@ -1185,6 +1200,9 @@ function wireRun(entry) {
       const event = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }) };
 
       if (name === 'question') {
+        // Slice 4: the Plan step card's role rows read the current pass of role reviews off the plan ask (D1).
+        const rr = event.kind === 'plan' && event.plan && !event.plan.outline ? currentPass(orch.state?.roleReviews) : null;
+        if (rr) event.plan = { ...event.plan, roleReviews: rr };
         entry.pendingQuestion = event;
       }
       if (name === 'night-decision') {
@@ -1303,11 +1321,26 @@ function wireRun(entry) {
       // Clarify's questions, changes no status, so key on everything the view reads. Gated and caught (F42).
       if (orch.runShape?.slice && (name === 'question' || name === 'state' || name === 'exec' || name === 'done')) {
         const pq = entry.pendingQuestion;
-        const key = `${entry.status}|${pq ? pq.kind : ''}|${orch.state?.shaping?.approved ? 1 : 0}`;
+        const key = `${entry.status}|${pq ? `${pq.kind}:${pq.id || ''}` : ''}|${orch.state?.shaping?.approved ? 1 : 0}`;
         if (key !== entry._featureKey) {
           entry._featureKey = key;
           broadcastFeaturesOf(() => [featureOfPipeline(entry.pipelineId)?.featureId].filter(Boolean));
         }
+      }
+      // Shaper s5 (D16): a round reports into its origin's card, which gets none of the round's own frames.
+      if (name === 'question' || name === 'state' || name === 'done') {
+        try {
+          const roundOf = orch.state?.branch?.roundOf;
+          if (roundOf && roundOf.pipelineId) {
+            const key = `${entry.status}|${entry.pendingQuestion?.kind || ''}`;
+            if (key !== entry._roundKey) {
+              entry._roundKey = key;
+              broadcast({ type: 'round-changed', origin: roundOf.pipelineId });
+              const at = featureOfPipeline(roundOf.pipelineId);
+              if (at && at.featureId) broadcastFeature(currentFeatureId(at.featureId));
+            }
+          }
+        } catch (err) { console.error(`[worca-ui] round frame failed: ${err && err.message ? err.message : err}`); }
       }
 
       record(event);
@@ -2142,9 +2175,26 @@ function askLinkIsPrFix(link) {
  */
 function askPrFixRun(event) {
   if (!event || typeof event.runId !== 'string' || !event.runId || !event.watch || typeof event.watch.prUrl !== 'string') return [];
+  if (event.phase === 'ended') {
+    try { if (event.pipelineId) setRoundOutcome(event.pipelineId, event.outcome); }
+    catch (err) { console.error(`[worca-ui] fix round outcome for ${event.runId} failed: ${err && err.message ? err.message : err}`); }
+  }
+  // Shaper s5 (D22): with the gate on, a fix run is a round of the PR's run: it reports into that run's card.
+  if (shapeFirstEnabled()) { askPrFixRound(event); return event.phase === 'ended' ? askSettlePrFixCards(event) : []; }
   if (event.phase === 'started') return askPostPrFixCards(event);
   if (event.phase === 'ended') return askSettlePrFixCards(event);
   return [];
+}
+
+/** Shaper s5 (D22): a fix run reports into the run card already in each chat holding the PR — no card, row or link. */
+function askPrFixRound({ watch }) {
+  try {
+    const origin = roundOrigin(watch.pipelineId);
+    const threadIds = [...new Set(askFindPullRequestCards(watch.prUrl).map((l) => l.threadId))];
+    broadcast({ type: 'round-changed', origin, threadIds });
+    const at = featureOfPipeline(origin);                  // { featureId, … } | null
+    if (at && at.featureId) broadcastFeature(currentFeatureId(at.featureId));
+  } catch (err) { console.error(`[worca-ui] fix round for ${watch.prUrl} failed: ${err && err.message ? err.message : err}`); }
 }
 
 function askPostPrFixCards({ watch, runId, trigger, once }) {
@@ -2270,7 +2320,7 @@ const startRunHandler = async (req, res) => {
     const presetOwner = internal ? (typeof stored.presetOwner === 'string' && stored.presetOwner ? stored.presetOwner : null) : askViewer(req);
     let presetRow = null;
     if (body.presetId !== undefined) {
-      if (!flagEnabled('runPresets')) return badRequest(res, 'presetId needs the Run presets feature (Settings › Experimental features)');
+      if (!flagEnabled('runPresets')) return badRequest(res, 'presetId needs the Run presets feature (Settings › Labs features)');
       presetRow = readPreset(body.presetId, { owner: presetOwner });
       // 404 like the preset routes: a missing and another person's preset answer the same (R-sec-3).
       if (!presetRow) return res.status(404).json({ error: `preset ${JSON.stringify(String(body.presetId).slice(0, 40))} not found` });
@@ -2448,9 +2498,11 @@ const startRunHandler = async (req, res) => {
     // A person's tags must be key:value; the project's stored defaults (the form pre-fills them) may keep a
     // bare key saved before that rule.
     // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
-    // Their tags are stored data (a ticket's request, a predecessor's or parent's tags), so the key:value rule skips them too.
+    // Their tags are stored data (a ticket's request, a predecessor's or parent's tags, a changes/route card's origin
+    // run's tags), so the key:value rule skips them too.
     const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
-      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
+      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID
+      || req._cardStart === true;   // Shaper s5 (D19): a run started from a changes/route card; its tags are the origin's stored tags
     let tags = [];
     if (body.tags !== undefined) {
       const t = normaliseTags(body.tags, tagExempt ? {} : { strict: true, keep: storedDefaultTags(body.projectDir) });
@@ -2531,6 +2583,9 @@ const startRunHandler = async (req, res) => {
 
     // #620 Resolve in a pipeline: the run it resolves. Set in-process by /resolve-pipeline only, never from HTTP.
     const resolveOf = req._resolveOf && typeof req._resolveOf === 'object' && typeof req._resolveOf.runId === 'string' ? req._resolveOf : null;
+    // Shaper s5 (D4): a round of an earlier run (Ask for changes → Start round n, or a Watch PR fix run). Set in-process
+    // by startRunAs / invokeStartRun only, never from HTTP.
+    const roundOf = req._roundOf && typeof req._roundOf === 'object' && typeof req._roundOf.pipelineId === 'string' ? req._roundOf : null;
     // Run on the source branch (explicit flag — never inferred from feature === source): the run
     // auto-names its hidden branch, so a typed feature name is ignored (and never date-suffixed).
     // A Workspace scan or a memory defragment lands no work: the flag does not apply there.
@@ -2541,6 +2596,7 @@ const startRunHandler = async (req, res) => {
       feature: !sameAsSource && typeof body.featureBranch === 'string' && body.featureBranch.trim()
         ? body.featureBranch.trim() : null,
       ...(resolveOf ? { resolves: { runId: resolveOf.runId, member: resolveOf.member || null } } : {}),
+      ...(roundOf ? { roundOf } : {}),
       ...(sameAsSource ? { sameAsSource: true } : {}),
     };
     const syncBody = {
@@ -3271,7 +3327,7 @@ function releaseAskCard(item) {
 }
 
 /** Call startRunHandler without HTTP. Resolves { status, body }. */
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null } = {}) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null } = {}) {
   let out = { status: 200, body: null };
   const res = {
     statusCode: 200,
@@ -3279,8 +3335,19 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     json(payload) { out = { status: this.statusCode, body: payload }; return this; },
   };
   await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: runId,
-    _prWatchRunId: prWatchRunId }, res);
+    _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}) }, res);
   return out;
+}
+
+/** Shaper s5 (D20): a Watch PR fix run is round n+1 of the run that opened the PR. Null on bad input or a read error,
+ *  and the fix run then starts as before, without a marker. */
+function prFixRoundOf(r) {
+  if (!r || typeof r !== 'object' || typeof r.pipelineId !== 'string' || !r.pipelineId) return null;
+  try {
+    const origin = roundOrigin(r.pipelineId);
+    return { pipelineId: origin, round: nextRound(origin), request: String(r.request || '').slice(0, 200),
+      by: 'watch', kinds: Array.isArray(r.kinds) ? r.kinds.map(String) : [] };
+  } catch { return null; }
 }
 
 /** Ticket id -> who clicked "Run now" (identity.mjs actor), consumed by the firing it causes. */
@@ -3378,7 +3445,7 @@ async function fireTicket(ticket) {
   if (ticket.presetId) {
     const stored = body.internal && typeof body.internal === 'object' ? body.internal : {};
     const name = typeof stored.presetName === 'string' && stored.presetName ? stored.presetName : ticket.presetId;
-    if (!flagEnabled('runPresets')) return { ok: false, error: `it follows the run preset "${name}", and run presets are turned off (Settings › Experimental)`, transient: false };
+    if (!flagEnabled('runPresets')) return { ok: false, error: `it follows the run preset "${name}", and run presets are turned off (Settings › Labs)`, transient: false };
     const preset = readPreset(ticket.presetId, { owner: typeof stored.presetOwner === 'string' && stored.presetOwner ? stored.presetOwner : null });
     if (!preset) return { ok: false, error: `Preset "${name}" no longer exists`, transient: false };
     const keep = Array.isArray(stored.presetOverrides) ? stored.presetOverrides.filter((k) => typeof k === 'string') : [];
@@ -3483,7 +3550,10 @@ function afterRunSettled(orch) {
   try {
     const st = orch.getState?.();
     if (orch.runShape?.slice && st?.status === 'done' && st.id) {
-      draft = openSliceDraft(st.id).catch((err) => console.error(`[worca-ui] slice draft PR failed: ${err?.message || err}`));
+      // s4: the draft first, then the Ship card (it needs the last slice's PR for "View pull request").
+      draft = openSliceDraft(st.id).catch((err) => console.error(`[worca-ui] slice draft PR failed: ${err?.message || err}`))
+        .then(() => offerShipCard(st.id))
+        .catch((err) => console.error(`[worca-ui] ship card failed: ${err?.message || err}`));
     }
     if (!ranMergeBack(st)) return draft;
     emitChanged('pipelines-changed', 'updated');
@@ -4430,9 +4500,7 @@ function liveSliceOf(id) {
   if (!e || !e.orch) return null;
   const status = String(e.status || '');
   if (SETTLED_RUN.has(status) && status !== 'paused') return null;
-  const pq = e.pendingQuestion;
-  return { runId: e.id, status, waiting: !!(pq && pq.kind === PLAN_ASK_KIND), asking: !!(pq && pq.kind !== PLAN_ASK_KIND),
-    approved: !!e.orch.state?.shaping?.approved };
+  return liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved });
 }
 function broadcastFeature(id) { if (id && shapeFirstEnabled()) broadcast({ type: 'shape-feature', id }); }
 /** F42: the run-event and tick hooks. Gate first (no query while it is off), and never let a throw escape: in wireRun
@@ -4465,7 +4533,12 @@ app.get('/api/shape/features/:id', async (req, res) => {
     const view = featureView(cur, { live: liveSliceOf });
     if (!view) return res.status(404).json({ error: 'unknown feature' });
     // P17: the Ship as default, once every slice is done (async: it reads each slice's results.json).
-    if (view.ship && view.ship.ready) Object.assign(view.ship, await featureShipSuggestion(view));
+    // s4: and the release row's version hint (the repo's last tag / package.json).
+    if (view.ship && view.ship.ready) {
+      Object.assign(view.ship, await featureShipSuggestion(view));
+      const sc = shipCtxOf(view);
+      view.ship.hint = sc.error ? null : await releaseVersionHint(sc.target.repoDir);
+    }
     res.json({ ...view, replanOf: cur !== req.params.id ? req.params.id : null });
   } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
 });
@@ -4476,6 +4549,18 @@ app.get('/api/shape/pipelines/:pid/slice', (req, res) => {
   try {
     const out = sliceOfPipeline(req.params.pid, { live: liveSliceOf });
     if (!out) return res.status(404).json({ error: 'not a slice' });
+    res.json({ ...out, threadId: featureThread(out.featureId)?.threadId || null });   // s2 D14: the thread that started the feature
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+// Shaper s2 (D10): the Chat feature card — the planning run's decision log, and once split the feature view with its
+// open ask. Synchronous: Express 4 catches a sync throw, and shapeRouteError answers it.
+app.get('/api/shape/pipelines/:pid/card', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    // shaped: the entry's in-memory shaping (state.shaping is never persisted). A settled entry still carries it.
+    const out = shaperCard(req.params.pid, { live: liveSliceOf, shaped: (pid) => !!liveRunEntry(pid)?.orch?.state?.shaping });
+    if (!out) return res.status(404).json({ error: 'not a shaped run' });
     res.json(out);
   } catch (err) { shapeRouteError(res, err); }
 });
@@ -4567,66 +4652,130 @@ async function refreshSliceBody(prUrl, pid, repoDir) {
   return editPrBody({ projectDir: repoDir, prUrl, body: [fresh, ...lines.slice(end)].join('\n') });
 }
 const SHIPPING = new Set();     // feature ids with a Ship as in flight (ship_mode is written only at the end)
+// Shaper s4: one ship path for the group page route and the Ship card. → { status, body }. `release` = { version } |
+// null (validated by the caller).
+async function shipFeatureNow(id, mode, { actor = null, release = null } = {}) {
+  if (!SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be stacked or one' } };
+  if (SHIPPING.has(id)) return { status: 409, body: { error: 'this feature is already shipping' } };
+  const view = featureView(id, { live: liveSliceOf });
+  if (!view) return { status: 404, body: { error: 'unknown feature' } };
+  if (view.ship.mode) return { status: 409, body: { error: `this feature was already shipped as ${view.ship.mode === 'one' ? 'one PR' : 'stacked PRs'}` } };
+  const round = liveRoundOf(id);                    // Shaper s5 (D16): a live round holds Ship back
+  if (round) {
+    const s = view.slices.find((x) => (x.rounds || []).some((r) => r.pipelineId === round.pipelineId));
+    return { status: 409, body: { error: `a round of run ${s ? s.index : '?'} is still going` } };
+  }
+  if (!view.ship.ready) return { status: 409, body: { error: 'every slice must be done before the feature ships' } };
+  SHIPPING.add(id);
+  try {
+    // A slice whose draft never opened (a CLI-started run, or the auto draft failed at the time) gets its PR now,
+    // the same way; a failure stays visible as shipFeature's "slice K has no pull request yet".
+    let shown = view;
+    if (shown.slices.some((s) => s.pipelineId && !s.pr)) {
+      for (const s of shown.slices) if (s.pipelineId && !s.pr) await openSliceDraft(s.pipelineId);
+      shown = featureView(id, { live: liveSliceOf }) || view;
+    }
+    const input = await featureShipInput(shown);
+    const ctx = shipCtxOf(shown);
+    if (ctx.error) return { status: 409, body: { error: ctx.error } };
+    const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000 }, {
+      commitChangelog: (pid, update) => commitFileOnBranch(ctx.target.repoDir, {
+        branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }),
+      push: async () => {
+        const picked = await pickPrRemotes({}, ctx.target.repoDir);
+        if (picked.error) return { ok: false, error: picked.error };
+        const p = await pushBranch(ctx.target.repoDir, ctx.target.feature, picked.pushRemote);
+        return p.ok ? { ok: true } : { ok: false, error: p.stderr };
+      },
+      openOnePr: async ({ pipelineId, title, body }) => {
+        const r = await createRunPr({ id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
+          description: body, title, actor, preamble: false });
+        return r.ok ? { ok: true, url: r.pr.url, existed: !!r.pr.existed } : { ok: false, error: r.error };
+      },
+      adoptOnePr: async ({ url, body }) => {
+        const r = await markPrReady({ prUrl: url });
+        if (!r.ok) return r;
+        if (forgeOfPrUrl(url) !== 'azure') await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
+        return { ok: true };
+      },
+      markReady: (prUrl) => markPrReady({ prUrl }),
+      close: async (prUrl, comment, pid) => {
+        const r = await closePr({ prUrl, comment });
+        if (r.ok) { const pr = readPrState(pid); if (pr && pr.url === prUrl) persistPrState(pid, { ...pr, state: 'CLOSED' }); }
+        return r;
+      },
+      refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
+    });
+    if (!out.ok) return { status: out.status, body: { error: out.error } };
+    recordShip(id, { mode: out.mode, prUrl: out.prUrl, closed: out.closed, release: release ? { version: release.version, target: ctx.base } : null });
+    appendAuditById(ctx.state.id, `Feature shipped as ${out.mode === 'one' ? 'one PR' : 'stacked PRs'}${byActor(actor)}${out.prUrl ? `: ${out.prUrl}` : ''}`
+      + `${release ? ` · draft release ${release.version} after merge` : ''}`, { actor });
+    broadcastFeature(id);
+    syncShipCard(id);
+    return { status: 200, body: { ok: true, mode: out.mode, prUrl: out.prUrl, warnings: out.warnings } };
+  } finally { SHIPPING.delete(id); }
+}
 app.post('/api/shape/features/:id/ship', async (req, res) => {
   if (!requireShapeFirst(req, res)) return;
-  const id = String(req.params.id);
   try {
-    const mode = req.body && req.body.mode;
-    if (!SHIP_MODES.includes(mode)) return res.status(400).json({ error: 'mode must be stacked or one' });
-    if (SHIPPING.has(id)) return res.status(409).json({ error: 'this feature is already shipping' });
-    const view = featureView(id, { live: liveSliceOf });
-    if (!view) return res.status(404).json({ error: 'unknown feature' });
-    if (view.ship.mode) return res.status(409).json({ error: `this feature was already shipped as ${view.ship.mode === 'one' ? 'one PR' : 'stacked PRs'}` });
-    if (!view.ship.ready) return res.status(409).json({ error: 'every slice must be done before the feature ships' });
-    SHIPPING.add(id);
-    const actor = actorOf(req);
-    try {
-      // A slice whose draft never opened (a CLI-started run, or the auto draft failed at the time) gets its PR now,
-      // the same way; a failure stays visible as shipFeature's "slice K has no pull request yet".
-      let shown = view;
-      if (shown.slices.some((s) => s.pipelineId && !s.pr)) {
-        for (const s of shown.slices) if (s.pipelineId && !s.pr) await openSliceDraft(s.pipelineId);
-        shown = featureView(id, { live: liveSliceOf }) || view;
-      }
-      const input = await featureShipInput(shown);
-      const ctx = shipCtxOf(shown);
-      if (ctx.error) return res.status(409).json({ error: ctx.error });
-      const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000 }, {
-        commitChangelog: (pid, update) => commitFileOnBranch(ctx.target.repoDir, {
-          branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }),
-        push: async () => {
-          const picked = await pickPrRemotes({}, ctx.target.repoDir);
-          if (picked.error) return { ok: false, error: picked.error };
-          const p = await pushBranch(ctx.target.repoDir, ctx.target.feature, picked.pushRemote);
-          return p.ok ? { ok: true } : { ok: false, error: p.stderr };
-        },
-        openOnePr: async ({ pipelineId, title, body }) => {
-          const r = await createRunPr({ id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
-            description: body, title, actor, preamble: false });
-          return r.ok ? { ok: true, url: r.pr.url, existed: !!r.pr.existed } : { ok: false, error: r.error };
-        },
-        adoptOnePr: async ({ url, body }) => {
-          const r = await markPrReady({ prUrl: url });
-          if (!r.ok) return r;
-          if (forgeOfPrUrl(url) !== 'azure') await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
-          return { ok: true };
-        },
-        markReady: (prUrl) => markPrReady({ prUrl }),
-        close: async (prUrl, comment, pid) => {
-          const r = await closePr({ prUrl, comment });
-          if (r.ok) { const pr = readPrState(pid); if (pr && pr.url === prUrl) persistPrState(pid, { ...pr, state: 'CLOSED' }); }
-          return r;
-        },
-        refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
-      });
-      if (!out.ok) return res.status(out.status).json({ error: out.error });
-      recordShip(id, { mode: out.mode, prUrl: out.prUrl });
-      appendAuditById(ctx.state.id, `Feature shipped as ${out.mode === 'one' ? 'one PR' : 'stacked PRs'}${byActor(actor)}${out.prUrl ? `: ${out.prUrl}` : ''}`, { actor });
-      broadcastFeature(id);
-      res.json({ ok: true, mode: out.mode, prUrl: out.prUrl, warnings: out.warnings });
-    } finally { SHIPPING.delete(id); }
+    const rel = parseReleaseChoice(req.body && req.body.release);
+    if (rel.error) return badRequest(res, rel.error);
+    const r = await shipFeatureNow(String(req.params.id), req.body && req.body.mode, { actor: actorOf(req), release: rel.value });
+    res.status(r.status).json(r.body);
   } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
 });
+
+/** Shaper s4: the feature's Ship card in a thread ({ message, block }) or null. */
+function findShipCardIn(threadId, featureId) {
+  for (const m of askListMessages(threadId)) {
+    for (const b of m.blocks || []) {
+      // currentFeatureId: a card offered before a Re-plan the rest still names the feature that replaced it.
+      if (b && b.kind === 'card' && b.card && b.card.type === 'ship' && currentFeatureId(b.card.featureId) === featureId) return { message: m, block: b };
+    }
+  }
+  return null;
+}
+/** Shaper s4: when the last run settles done, the feature's thread gets its Ship card (once). Best effort. */
+async function offerShipCard(pipelineId) {
+  if (!shapeFirstEnabled()) return null;
+  const at = featureOfPipeline(pipelineId);
+  if (!at) return null;
+  const fid = currentFeatureId(at.featureId);
+  const view = featureView(fid, { live: liveSliceOf });
+  if (!view || !view.ship.ready) return null;
+  const th = featureThread(fid);
+  if (!th || !askGetThread(th.threadId) || findShipCardIn(th.threadId, fid)) return null;
+  const stats = await featureShipSuggestion(view);
+  const ctx = shipCtxOf(view);
+  const release = ctx.error ? null : await releaseVersionHint(ctx.target.repoDir);
+  const card = { type: 'ship', featureId: fid, title: view.title, runs: view.total, files: stats.files,
+    added: stats.linesAdded, deleted: stats.linesRemoved, suggested: stats.suggested, release };
+  const message = askAppendMessage(th.threadId, { role: 'assistant', text: '', status: 'done',
+    blocks: [{ kind: 'card', id: newAskId('card'), state: 'proposed', card }] });
+  broadcast({ type: 'ask-message', threadId: th.threadId, message });
+  return message;
+}
+/** Shaper s4: the draft release pass, at boot and on the hourly until-pr timer (it polls the forge itself). */
+function releasesPass() {
+  return draftReleasesOnMerge()
+    .then((out) => {
+      if (!out) return;
+      for (const c of [...out.created, ...out.failed]) {
+        if (c.table === 'shape_features') { broadcastFeature(c.id); syncShipCard(c.id); }
+      }
+      if (out.created.length || out.failed.length) emitChanged('pipelines-changed', 'updated');
+    })
+    .catch((err) => console.error(`[worca-ui] draft releases: ${err?.message || err}`));
+}
+/** Shaper s4: after a ship (or a draft release) the thread's Ship card shows what happened, whichever surface shipped. */
+function syncShipCard(featureId) {
+  try {
+    const view = featureView(featureId, { live: liveSliceOf });
+    const th = view && view.ship.result ? featureThread(featureId) : null;
+    const found = th ? findShipCardIn(th.threadId, featureId) : null;
+    if (found) flipCard(th.threadId, found.block.id, { state: 'applied', card: { result: view.ship.result } });
+  } catch (err) { console.error(`[worca-ui] ship card sync failed: ${err?.message || err}`); }
+}
 
 /** A plan row's state when its run is not live: the pipelines row first, then the link row (follow.mjs). */
 const PLAN_STATE = { done: 'done', stopped: 'stopped', error: 'stopped', interrupted: 'stopped', paused: 'paused', starting: 'running', running: 'running' };
@@ -6101,6 +6250,31 @@ app.put('/api/projects/:key/tags/defaults', async (req, res) => {
   res.json({ tags: writeProjectDefaultTags(p.key, t.tags) });
 });
 
+// House brief (Settings → Project): GET rebuilds only when a source hash or the pins changed; PUT replaces the
+// pinned lines; POST refresh rebuilds now. A project with no sources answers an empty brief, not an error.
+// A missing project directory is handled inside collectHouseBriefSources (existsSync), so p.path is passed as is.
+const houseBriefOf = (p, force = false) => ensureHouseBrief({ projectKey: p.key, projectDir: p.path, force });
+app.get('/api/projects/:key/house-brief', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    res.json(await houseBriefOf(p));
+  } catch (err) { res.status(500).json({ error: err?.message || 'house brief could not be built' }); }
+});
+app.put('/api/projects/:key/house-brief/pinned', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    try { writeHouseBriefPins(p.key, req.body?.pinned); }
+    catch (err) { if (err?.code === 'EPINS') return badRequest(res, err.message); throw err; }
+    res.json(await houseBriefOf(p));
+  } catch (err) { res.status(500).json({ error: err?.message || 'house brief could not be built' }); }
+});
+app.post('/api/projects/:key/house-brief/refresh', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    res.json(await houseBriefOf(p, true));
+  } catch (err) { res.status(500).json({ error: err?.message || 'house brief could not be built' }); }
+});
+
 // Run tags (#718): replace a run's tags (any status; the UI offers it on finished runs), logging who
 // changed what in run_tag_events and on the run's timeline. By pipeline id alone, archived runs included.
 app.put('/api/runs/:id/tags', (req, res) => {
@@ -6555,6 +6729,104 @@ app.get('/api/history/:key/:id/artifact-raw/*', async (req, res) => {
 // disappears from History and every list/count read. The remote branch is never
 // touched. Refused (409) while the run is live in this process.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------- Runs list: groups and bulk actions (runs redesign §3.2, §3.3)
+function bulkResolve(t) {
+  const entry = t.runId ? runs.get(t.runId) : t.pipelineId ? liveRunEntry(t.pipelineId) : null;
+  const pid = t.pipelineId || entry?.pipelineId || null;
+  if (entry && !SETTLED_RUN.has(entry.status)) {
+    // steps: a running entry reads as working, not starting; both are stoppable, so the verdict is the same.
+    const m = runModel({ status: entry.status, pendingQuestion: entry.pendingQuestion ?? null, steps: [{ nodeId: 'x' }] });
+    return { id: pid || entry.id, runId: entry.id, pipelineId: pid, title: entry.title || pid || entry.id, state: m.state, status: entry.status };
+  }
+  if (pid) {
+    const row = getDb().prepare('SELECT title, status, project_key, workspace_key FROM pipelines WHERE id = ? AND deleted_at IS NULL').get(pid);
+    if (!row) return null;
+    const m = runModelFor(pid);
+    // runModelFor reads readPrState, so a done run whose PR needs you arrives with prNeeds (D31) and the table treats it as finished.
+    return { id: pid, pipelineId: pid, runId: entry?.id || null, title: row.title || pid, state: m ? m.state : 'stopped', status: row.status,
+      prNeeds: !!(m && m.prNeeds), key: row.project_key, workspaceKey: row.workspace_key };
+  }
+  const tk = t.ticketId ? getTicket(t.ticketId) : null;
+  if (!tk) return null;
+  // A fired ticket is its pipeline now; resolve it as one (a member ref sent before the fire still lands right).
+  if (tk.pipelineId) return bulkResolve({ pipelineId: tk.pipelineId });
+  // The model's own ticket table: scheduled / missed → waiting, firing → starting, canceled / skipped → stopped, failed → failed.
+  return { id: tk.id, ticketId: tk.id, title: tk.title || 'Scheduled run', state: runModel({ ticket: { status: tk.status, runAt: null } }).state, status: tk.status };
+}
+const rowScope = (t) => ({ key: t.workspaceKey ? null : t.key, workspaceKey: t.workspaceKey || null, id: t.pipelineId });
+
+app.post('/api/runs/bulk', async (req, res) => {
+  try {
+    const { action, targets = [], groups = [] } = req.body || {};
+    if (!BULK_ACTIONS.includes(action)) return badRequest(res, 'action must be stop, archive, delete or restore');
+    if (!Array.isArray(targets) || !Array.isArray(groups) || targets.length + groups.length > 500) return badRequest(res, 'targets and groups must be arrays (500 at most)');
+    const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
+    if (![...targets, ...groups].every((x) => isObj(x) && (x.members == null || (Array.isArray(x.members) && x.members.every(isObj)))))
+      return badRequest(res, 'every target, group and member must be an object');
+    const by = actorOf(req);
+    const AUDIT = { archive: 'Run archived', restore: 'Run restored', delete: 'Run deleted' };
+    // archive / restore / purge return null for an unknown run (→ skipped) and a flag for a no-op
+    // ({alreadyArchived}, {alreadyActive}, {alreadyDeleted}), which writes no audit line.
+    const audited = (fn) => async (t) => {
+      const r = await fn(rowScope(t));
+      if (!r) throw new Error('run not found');
+      if (!r.alreadyArchived && !r.alreadyActive && !r.alreadyDeleted) appendAuditById(t.pipelineId, `${AUDIT[action]}${byActor(by)}.`, { actor: by });
+      return r;
+    };
+    const out = await runBulk({ action, targets, groups }, {
+      resolve: bulkResolve,
+      expandGroup: (g) => groupMembers(g.id),
+      stop: (t) => {
+        const entry = t.runId ? runs.get(t.runId) : null;
+        if (entry && !SETTLED_RUN.has(entry.status)) return stopRun(t.runId, by);
+        if (!t.pipelineId) throw new Error('it is starting — try again in a moment');   // a firing ticket
+        return stopPausedPipeline(t.pipelineId, by);
+      },
+      archive: audited(archivePipeline),
+      restore: audited(restorePipeline),
+      delete: audited(purgePipeline),
+      cancel: (t) => !!cancelTicket(t.ticketId, { by }),
+      afterGroupStop: (g) => { cancelRest(g.id, { by }); broadcastFeature(g.id); },   // a non-active feature returns {status:409}: nothing to do
+    });
+    emitChanged('pipelines-changed', `bulk-${action}`);
+    if (out.cancelled.length || action === 'stop') emitChanged('schedules-changed', 'bulk');
+    emitChanged('run-groups-changed', 'bulk');
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ error: String(err.message || err) });
+  }
+});
+
+const groupError = (res, err) => (err instanceof RunGroupError ? res.status(err.status).json({ error: err.message, code: err.code }) : res.status(500).json({ error: String(err.message || err) }));
+// Runs redesign §5a.1: an old `#running/<runId>` link from chat history → the saved run it became.
+app.get('/api/run-links/:runId', (req, res) => {
+  const t = runLinkTarget(String(req.params.runId || ''));
+  if (!t) return res.status(404).json({ error: 'No saved run for that link' });
+  res.json(t);
+});
+app.get('/api/run-groups', (req, res) => { try { res.json({ groups: listRunGroups() }); } catch (err) { groupError(res, err); } });
+app.post('/api/run-groups', (req, res) => {
+  try {
+    const g = createRunGroup({ title: req.body?.title, pipelineId: String(req.body?.pipelineId || ''), by: actorOf(req) });
+    emitChanged('run-groups-changed', 'created');
+    res.status(201).json({ group: g });
+  } catch (err) { groupError(res, err); }
+});
+app.post('/api/run-groups/:id/members', (req, res) => {
+  try {
+    const r = addToGroup({ groupId: req.params.id, pipelineId: String(req.body?.pipelineId || ''), by: actorOf(req) });
+    emitChanged('run-groups-changed', 'added');
+    res.json({ ok: true, ...r });
+  } catch (err) { groupError(res, err); }
+});
+app.delete('/api/run-groups/members/:pipelineId', (req, res) => {
+  try {
+    const r = removeFromGroup({ pipelineId: req.params.pipelineId });
+    emitChanged('run-groups-changed', 'removed');
+    res.json({ ok: true, ...r });
+  } catch (err) { groupError(res, err); }
+});
+
 app.delete('/api/runs/:id', async (req, res) => {
   const id = req.params.id;
   const workspaceId = typeof req.query.workspaceId === 'string' ? req.query.workspaceId.trim() : '';
@@ -6904,7 +7176,10 @@ function prWatchOrigin(w) {
 function prWatchFrame(pipelineId, memberKey) {
   const row = findPipelineRowById(pipelineId);
   const projectKey = !row ? null : (row.target === 'workspace' || row.workspace_key) ? `workspaces/${row.workspace_key}` : row.project_key;
-  return { type: 'pr-watch-changed', projectKey, pipelineId: row?.id || pipelineId, memberKey: memberKey || null };
+  const prUrl = row ? readPrState(row.id)?.url : null;
+  // `fixing` (D31) only when true, so test/pr-watch-api.test.mjs's deepEquals (no live fix run) hold unchanged.
+  return { type: 'pr-watch-changed', projectKey, pipelineId: row?.id || pipelineId, memberKey: memberKey || null,
+    ...(prUrl && !memberKey && watchActive(getWatch(prUrl)) ? { fixing: true } : {}) };
 }
 const prWatcherDeps = {
   originOf: prWatchOrigin,
@@ -6922,7 +7197,7 @@ const prWatcherDeps = {
   liveOnBranch: (where) => liveRunOnBranch(where) || terminalResolveOnBranch(where),
   freeCheckout: ({ projectDir, branch }) => freeBranchCheckout({ projectDir, branch, stopServices: stopCheckoutServices, by: 'pr-watch',
     busy: busyActionRunIds([...liveRunIds(), ...[...runs.values()].map((r) => r.pipelineId).filter((id) => id && isFinishingRun(id))]) }),
-  startRun: (body, opts) => invokeStartRun(body, null, opts),
+  startRun: (body, { roundOf = null, ...opts } = {}) => invokeStartRun(body, null, { ...opts, roundOf: prFixRoundOf(roundOf) }),
   // By pipeline once one exists: every resume (manual, after a drain or restart, after a cost pause) runs
   // under a fresh run id, so the start-time id only finds the run until its pipeline row exists.
   liveRun: ({ runId, pipelineId }) => {
@@ -7838,8 +8113,8 @@ function runSourceIssue(pipelineId, { baseRemote = null, memberKey = null } = {}
 // none. Same pipeline resolution as POST /api/pr (the repo dir comes from the
 // pipeline's store_meta, never from the query). gh is not required here.
 // The base-branch choices ride along: `chain` is the run chain's base branches,
-// root first (a run outside a chain: just its source), `defaultBase` its root, and
-// `branches` each remote's branches from the remote-tracking refs, without HEAD and
+// root first (a run outside a chain: just its source), `defaultBase` its root, or the direct source while the
+// previous run's PR is not merged (stackedPrBaseOf), and `branches` each remote's branches from the remote-tracking refs, without HEAD and
 // the run's own feature branch. The base remote is fetched first (45 s TTL, 8 s bound,
 // negative-cached) so `baseStatus` can warn when the base moved since the run started
 // (warn only, #527). A git remote failure still carries the chain so the dialog can offer it.
@@ -7868,10 +8143,11 @@ app.get('/api/pr/remotes', async (req, res) => {
   const chain = (await Promise.all((walked.length ? walked : (source ? [source] : []))
     .map((b) => prBaseBranch(repoDir, b, remoteNames)))).filter((b) => b !== feature);
   const pipelineId = resolved.state.id || resolved.id;
-  // L10: a slice's PR stacks on the previous slice's branch until that slice's PR merges. The route is async with
-  // no try/catch (F29): a failed feature lookup keeps the chain-root default instead of rejecting.
+  // A run started from the previous run's branch (any chain, a Shaper slice is one) stacks its PR on that branch
+  // until the previous run's PR merges. The route is async with no try/catch (F29): a failed lookup keeps the
+  // chain-root default instead of rejecting.
   let stacked = null;
-  try { stacked = stackedPrBase(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
+  try { stacked = stackedPrBaseOf(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
   const defaultBase = stacked || chain[0] || null;
   if (!rl.ok) {
     const issue = runSourceIssue(pipelineId, { memberKey: target.memberKey });
@@ -7906,7 +8182,7 @@ app.get('/api/pr/remotes', async (req, res) => {
     return { ...r, prHost: r.forge ? p.label : null, prSupported: a.ok, ...(a.ok ? {} : { prReason: a.reason }) };
   }));
   res.json({ ok: true, remotes, defaults, remembered,
-    chain, defaultBase, branches, baseStatus, issue });
+    chain, defaultBase, branches, baseStatus, issue, release: await releaseVersionHint(repoDir) });   // s4: the release row's hint
 });
 
 /** D24: a finished slice opens a draft PR for early review (best effort: a failure is an audit line). */
@@ -7918,11 +8194,11 @@ async function openSliceDraft(pipelineId) {
   const target = prTargetFor(state);
   if (target.error || !target.repoDir) return null;
   // The PR dialog's default base (GET /api/pr/remotes): the chain without the feature branch itself, stacked on the
-  // previous slice's branch until that slice's PR merges.
+  // previous run's branch until that run's PR merges.
   const walked = chainBaseBranchesOf(pipelineId);
   const chain = (walked.length ? walked : (target.source ? [target.source] : [])).filter((b) => b !== target.feature);
   let base = null;
-  try { base = stackedPrBase(pipelineId, chain) || chain[0] || null; } catch { base = chain[0] || null; }
+  try { base = stackedPrBaseOf(pipelineId, chain) || chain[0] || null; } catch { base = chain[0] || null; }
   if (!base) return null;
   let out = await createRunPr({ id: pipelineId, state, target, base, draft: true });
   // A forge that refuses drafts (GitHub's free plan for private repositories): open it ready instead.
@@ -8060,6 +8336,9 @@ app.post('/api/pr', async (req, res) => {
   }
   if (!(body.watch === undefined || body.watch === true || body.watch === false)) return badRequest(res, 'watch must be a boolean');
   const draft = body.draft === true;
+  // Shaper s4: the release row's choice, a draft release once the PR merges (draftReleasesOnMerge).
+  const relChoice = parseReleaseChoice(body.release);
+  if (relChoice.error) return badRequest(res, relChoice.error);
   // worca Chat P2 (R9): the chat's pull-request card this Ship it dialog was opened from — both or neither, checked
   // BEFORE anything is pushed; applied below only when the PR is really open (on failure it stays proposed).
   const hasAskThread = body.askThreadId !== undefined && body.askThreadId !== null;
@@ -8093,6 +8372,8 @@ app.post('/api/pr', async (req, res) => {
   const target = prTargetFor(state, body.memberKey);
   if (target.error) return badRequest(res, target.error);
   const { repoDir, feature, source, memberKey } = target;
+  // A workspace / member PR has no single repo to tag.
+  if (relChoice.value && (memberKey || body.memberKey)) return badRequest(res, 'a release is for a single-project run');
   if (askPrLink) {
     // The card rule reads the RESOLVED member (prTargetFor drops a memberKey a project run does not have), so a project
     // card already applied is never opened again by naming a member. Still before anything is pushed.
@@ -8119,6 +8400,10 @@ app.post('/api/pr', async (req, res) => {
     return res.status(out.status).json({ error: out.error, ...(out.kind ? { kind: out.kind } : {}), ...(out.forge ? { forge: out.forge } : {}) });
   }
   const { pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr } = out;
+  if (relChoice.value) {
+    try { recordRunRelease(id, { version: relChoice.value.version, target: base }); }
+    catch (err) { console.error(`[worca-ui] could not record the release: ${err?.message || err}`); }   // the PR stands
+  }
   // Remember the choice for this project (only once a PR was actually created).
   if (remotes.length) {
     try { await setPrRemotePrefs(repoDir, { pushRemote, baseRemote }); } catch { /* best-effort */ }
@@ -9923,7 +10208,10 @@ const askChatActions = createChatActionHost({
 function askChatTurnDeps(turnReader) {
   return {
     awaySwitch: (req) => askChatActions.awaySwitch(req, { actor: turnReader || 'local', person: turnReader }),
-    chatAction: (req) => askChatActions.apply(req, { actor: askActorFor(turnReader) }),
+    // Shaper's two card tools need the thread (what it follows); every other kind is the chat action host's.
+    chatAction: (req, o = {}) => (req && (req.kind === 'changes' || req.kind === 'route')
+      ? askShapeAction(req, o.threadId || null)
+      : askChatActions.apply(req, { actor: askActorFor(turnReader) })),
   };
 }
 
@@ -9995,6 +10283,8 @@ function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillR
         return { status: live.orch.state?.status ?? live.status ?? null, night: live.orch.state?.night || null, waiting: live.orch.pendingQuestion != null,
           projectDir: dir, projectKey: dir ? projectKey(dir) : null };
       },
+      // Shaper (D7): here the tools see the live runs, so an open step's refusal reaches the model as the tool result.
+      ...defaultShapeToolDeps({ threadId, live: (id) => liveSliceOf(id) }),
     },
   });
   askRelays.set(token, entry);
@@ -10128,19 +10418,21 @@ function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
 }
 
 /**
- * B3 (opt-in, WORCA_AUTO_RESUME=1): after boot maintenance, resume the runs a drain paused and
- * the runs this start found dead under a previous process (`interruptedIds`), each as the person
- * who last started or resumed it. Resumes go through resumeRun's whole guard chain (budget gates
+ * B3: after boot maintenance, resume the runs a drain paused (by default; WORCA_AUTO_RESUME=0 turns
+ * it off) and, with WORCA_AUTO_RESUME=1, also the runs this start found dead under a previous process
+ * (`interruptedIds`), each as the person who last started or resumed it. Resumes go through resumeRun's whole guard chain (budget gates
  * included); a refusal is logged and leaves the run waiting for a person.
  */
 async function autoResumeOnBoot({ interruptedIds = [], env = process.env, mock = isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) } = {}) {
-  if (!autoResumeEnabled(env)) return { enabled: false, resumed: [], failed: [] };
+  const mode = autoResumeMode(env);
+  if (mode === 'off') return { enabled: false, resumed: [], failed: [] };
   const rows = getDb().prepare(`SELECT id, status, started_by, archived_at, resume_point FROM pipelines
     WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL ORDER BY started_at ASC`).all()
     .map((r) => { let rp = null; try { rp = r.resume_point ? JSON.parse(r.resume_point) : null; } catch { /* unreadable point */ } return { ...r, resumePoint: rp }; });
   const picks = autoResumeCandidates(rows, {
     interruptedNow: new Set(interruptedIds),
     hasResumeTicket: (id) => resumeTicketsFor(id).length > 0,
+    includeInterrupted: mode === 'all',
   });
   const resumed = [];
   const failed = [];
@@ -11519,6 +11811,19 @@ async function runSetupOf(normalized, basis) {
   }
 }
 
+// The Chat home's pinned workflows (src/shared/home-pins.mjs): one ordered list per person, in settings.json.
+app.get('/api/chat-home/pins', (req, res) => {
+  res.json({ pins: chatHomePinsFor(askViewer(req)) });
+});
+app.put('/api/chat-home/pins', async (req, res) => {
+  try {
+    res.json({ pins: await setChatHomePinsFor(askViewer(req), (req.body || {}).pins) });
+  } catch (err) {
+    if (err && err.code === 'BAD_HOME_PINS') return badRequest(res, err.message);
+    res.status(500).json({ error: String((err && err.message) || err) });
+  }
+});
+
 app.use('/api/presets', requireFlag('runPresets'));
 
 app.get('/api/presets', (req, res) => {
@@ -11995,7 +12300,12 @@ async function askRunCardExtras(row) {
     artifacts = rows.map((a) => ({ kind: a.kind, relPath: a.relPath, bytes: a.bytes, nodeId: a.nodeId, cycle: a.cycle }));
     moreArtifacts = total > RUN_CARD_ARTIFACTS;
   } catch { /* the artifact index is best-effort here */ }
-  return { results, artifacts, moreArtifacts, pr: readPrState(row.id) };
+  const pr = readPrState(row.id);
+  let rounds = [];
+  try { rounds = roundsOf([row.id]).get(row.id) || []; } catch { rounds = []; }
+  let watch = null;
+  try { watch = pr && pr.url ? stoppedWatchFact(getWatch(pr.url)) : null; } catch { watch = null; }
+  return { results, artifacts, moreArtifacts, pr, rounds, watch };
 }
 
 // Ask Worca progress card hydration (plan D9): the run's detail state by pipeline id OR live run id, no store key.
@@ -12006,8 +12316,10 @@ app.get('/api/ask/runs/:id', async (req, res) => {
   if (!ASK_RUN_REF_RE.test(id)) return res.status(400).json({ error: 'invalid run id' });
   try {
     const entry = liveRunEntry(id);
-    const state = readPipelineStateById(entry && entry.pipelineId ? entry.pipelineId : id);
-    if (!state) return res.status(404).json({ error: 'run not found' });
+    const row = findPipelineRowById(entry && entry.pipelineId ? entry.pipelineId : id);
+    // A deleted run keeps an anonymised row (deleted_at) for Statistics; the chat card must still read it as gone.
+    if (!row || row.deleted_at) return res.status(404).json({ error: 'run not found' });
+    const state = readPipelineStateById(row.id);
     // Shape it first, plan in slices: state.shaping is in memory only (F46), so a finished or unloaded slice 1 would
     // lose its feature strip. The feature row is durable. Best effort, and only while the gate is on.
     if (!state.shaping && shapeFirstEnabled()) {
@@ -12016,7 +12328,7 @@ app.get('/api/ask/runs/:id', async (req, res) => {
         if (at && at.idx === 1) state.shaping = { feature: { id: at.featureId, index: 1 } };
       } catch { /* the feature tables are best-effort here */ }
     }
-    const extras = await askRunCardExtras(findPipelineRowById(state.id));
+    const extras = await askRunCardExtras(row);
     res.json({ state, live: entry ? { runId: entry.id, status: entry.status } : null, extras });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -12545,6 +12857,11 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       };
     });
     if (links.length) out.linkedRuns = links;
+    // Shaper (D9): what this thread follows, read-only, for propose_changes / route_message. Gate off: no line.
+    if (shapeFirstEnabled()) {
+      try { const s = shapeThreadFacts(threadWork(askListRunLinks(threadId), shapeToolFactDeps)); if (s) out.shape = s; }
+      catch { /* absent line */ }
+    }
     const cards = [];
     for (const m of askListMessages(threadId)) {
       if (!Array.isArray(m.blocks)) continue;
@@ -12566,7 +12883,8 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
           continue;
         }
         // worca Chat P2: a receipt, a stop warning or a pull-request offer in one line — the next turn sees a revert.
-        if (b.card && (b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request')) {
+        if (b.card && (b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship'
+          || b.card.type === 'changes' || b.card.type === 'route')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: chatActionSummary(b.card) });
           continue;
         }
@@ -13229,6 +13547,56 @@ app.post('/api/pinpoint', async (req, res) => {
   }
 });
 
+// ---- Shaper s5: Ask for changes and the Route card (D5, D6); the tools' parent half ----
+const factDeps = { readPrState, findPipelineRowById, readRunTags, featureView: (fid) => featureView(fid, { live: liveSliceOf }) };
+/** A turn of this thread is still being written (askInFlight: the job while it runs). */
+const threadTurnBusy = (threadId) => askInFlight(threadId) != null;
+/** The person's message and an assistant row carrying the card, both broadcast (offerShipCard's way). → the assistant row */
+function postThreadExchange(threadId, text, card) {
+  const user = askAppendMessage(threadId, { role: 'user', text, blocks: [] });
+  broadcast({ type: 'ask-message', threadId, message: user });
+  const message = askAppendMessage(threadId, { role: 'assistant', text: '', status: 'done',
+    blocks: [{ kind: 'card', id: newAskId('card'), state: 'proposed', card }] });
+  broadcast({ type: 'ask-message', threadId, message });
+  return message;
+}
+/** Shaper (ordinary stays ordinary, D6): propose_changes / route_message, applied in the parent. Re-checked NOW with the
+ *  live runs overlay (an open step the classic MCP child cannot see, D7); a refusal is a notice in the reply. */
+const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags };
+function askShapeAction(req, threadId) {
+  if (!shapeFirstEnabled()) return { ok: false, notice: 'Not applied: Shaper is off' };
+  if (!threadId) return { ok: false, notice: 'Not applied: no chat to post to' };
+  let r;
+  try { r = shapeToolCheck(req.kind, req, askListRunLinks(threadId), shapeToolFactDeps); }
+  catch (err) { return { ok: false, notice: `Could not do that: ${err && err.message ? err.message : err}` }; }
+  return r.ok ? { ok: true, block: { state: 'proposed', card: r.card } } : { ok: false, notice: `Not applied: ${r.error}` };
+}
+
+// Shaper s5 (D5): Ask for changes from a finished card. body { pipelineId? | featureId?, text } → 201 { message }
+app.post('/api/ask/threads/:id/changes', async (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const id = askIdParam(res, req.params.id, 'thread');
+    if (!id) return;
+    const { pipelineId, featureId, text } = req.body || {};
+    if (typeof text !== 'string' || !text.trim()) return badRequest(res, 'text is required');
+    if (text.length > 4000) return badRequest(res, 'text must be at most 4000 characters');
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    if (threadTurnBusy(id)) return res.status(409).json({ error: 'a reply is still being written' });
+    const facts = typeof featureId === 'string' && featureId ? landingFactsOfFeature(featureId, factDeps)
+      : landingFacts(String(pipelineId || ''), factDeps);
+    if (facts && facts.run && facts.run.finished === false) return res.status(409).json({ error: 'the run is still going' });
+    const halted = facts && facts.feature && facts.feature.slices.find((s) => ['stopped', 'error', 'failed', 'paused'].includes(s.state));
+    if (halted) return res.status(409).json({ error: `Run ${halted.index} stopped: resume or re-plan it first` });
+    const card = facts && changesCard({ text, facts });
+    if (!card) return res.status(409).json({ error: 'this run has no single branch to change' });
+    const message = postThreadExchange(id, text.trim(), card);
+    res.status(201).json({ message });
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // Chat P3 (R10): a direction from the chat composer's "→ run" chip. The run must be one this thread follows
 // (ask_run_links: by its run_id — a live UUID, or the 8-hex id track_run stores — or its pipeline_id). The text goes
 // through the SAME in-process post as POST /api/runs/:id/directions; then the thread keeps it as a user row carrying
@@ -13592,6 +13960,51 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       } finally { askCardBusy.delete(cardId); }
       if (!block) return res.status(409).json({ error: 'card vanished' });
       return res.json({ block });
+    }
+    if (found.block.card && (found.block.card.type === 'changes' || found.block.card.type === 'route')) {
+      // Shaper s5 (D5, D6): the card type decides the verbs; anything else is refused before any state check.
+      const c = found.block.card;
+      const v = c.type === 'changes' ? changesCardVerb(body) : routeCardVerb(body);
+      if (!v.ok) return badRequest(res, v.error);
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (v.verb === 'not-now') { const block = flipCard(id, cardId, { state: 'declined' }); return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' }); }
+      if (!shapeFirstEnabled()) return res.status(404).json({ error: 'not found' });
+      askCardBusy.add(cardId);
+      let r;
+      try {
+        const by = actorOf(req);
+        // D19: every card start is tag-exempt; the round number is read at Start (nextRound, src/core/shape/rounds.mjs).
+        const deps = { startRun: (b, extra) => startRunAs(req, b, { ...extra, _cardStart: true }), nextRound,
+          addNote: (fid, n) => addFeatureNote(currentFeatureId(fid), { ...n, by }),
+          appendRun: (fid, o) => appendFeatureRun(currentFeatureId(fid), { ...o, by }), tick: () => { void schedulerTick(); } };
+        r = c.type === 'changes' ? await applyChanges(c, deps) : await applyRoute(c, v, deps);
+      } catch (err) { r = { ok: false, status: 500, error: err && err.message ? err.message : String(err) }; }
+      finally { askCardBusy.delete(cardId); }
+      if (!r.ok) return res.status(r.status || 500).json({ error: r.error });
+      if (c.featureId) broadcastFeature(currentFeatureId(c.featureId));
+      if (c.type === 'changes' && c.landing.kind === 'round') broadcast({ type: 'round-changed', origin: c.landing.target.roundOf });
+      const block = flipCard(id, cardId, { state: 'applied', card: { result: { ...r.result, verb: v.verb, where: v.where || null } } });
+      return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' });
+    }
+    if (found.block.card && found.block.card.type === 'ship') {
+      // Shaper s4: the Ship card ships, or Not now; nothing else (the verb set is the card type's, not the request's).
+      const v = shipCardVerb(body);
+      if (!v.ok) return badRequest(res, v.error);
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (v.mode === null) {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' });
+      }
+      if (!shapeFirstEnabled()) return res.status(404).json({ error: 'not found' });   // requireShapeFirst's answer
+      askCardBusy.add(cardId);
+      try {
+        const r = await shipFeatureNow(currentFeatureId(found.block.card.featureId), v.mode, { actor: actorOf(req), release: v.release });
+        if (r.status !== 200) return res.status(r.status).json(r.body);
+      } finally { askCardBusy.delete(cardId); }
+      const again = askFindCard(id, cardId);     // syncShipCard flipped it to applied
+      return res.json({ block: again ? again.block : null });
     }
     if (found.block.card && found.block.card.type === 'pull-request') {
       // worca Chat P2 (R9): "Not now" only — the pull request is opened from the Ship it dialog, and POST /api/pr flips
@@ -15919,6 +16332,7 @@ export async function bootMaintenance({ log } = {}) {
     if (orphans) console.log(`[worca-ui] actions: stopped ${orphans} orphaned process(es) from a previous server`);
     const interrupted = markInterruptedSetups();
     const { released } = await releaseKeptCheckouts({ busy: busyActionRunIds(), stopServices: stopCheckoutServices });
+    void releasesPass();     // Shaper s4: a ship PR that merged while the server was down gets its draft release
     const { maxCheckouts } = actionsSettings();
     const { evicted } = maxCheckouts
       ? await enforceCheckoutCap({ max: maxCheckouts, busy: busyActionRunIds(), stopServices: stopCheckoutServices })
@@ -16105,7 +16519,7 @@ if (isMain) {
   }
 
   bootMaintenance().then((summary) => {
-    // B3: with WORCA_AUTO_RESUME=1, continue what the last stop paused (or a crash interrupted).
+    // B3: continue what the last stop paused (and, with WORCA_AUTO_RESUME=1, what a crash interrupted).
     autoResumeOnBoot({ interruptedIds: summary?.reconciledIds || [] })
       .catch((err) => console.error(`[worca-ui] auto-resume failed: ${err && err.message ? err.message : err}`));
   }, (err) => {
@@ -16213,6 +16627,7 @@ if (isMain) {
       releaseKeptCheckouts({ busy: busyActionRunIds(), stopServices: stopCheckoutServices })
         .then(({ released }) => { if (released.length) emitChanged('pipelines-changed', 'updated'); })
         .catch(() => {});
+      void releasesPass();
     }, 3_600_000);
     keptTimer.unref();
   });
@@ -16231,9 +16646,9 @@ export const _testing = {
   validateResumeTarget, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
-  prWatcherDeps, askPrFixRun, askLinkIsPrFix,
-  applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
-  openSliceDraft, afterRunSettled,
+  prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
+  applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
+  openSliceDraft, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
   networkWatchTick: () => networkWatch().tick(),
   setNetworkProbe(fn) { _networkProbe = fn; },
   setAutoRescan(on) { autoRescanOn = on !== false; },

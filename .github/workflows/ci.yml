@@ -195,7 +195,7 @@ jobs:
       matrix:
         include:
           - group: composer + run-monitor
-            proofs: "verify:composer verify:run-monitor"
+            proofs: "verify:composer verify:run-monitor verify:feature-page"
           - group: theme + memory + scripts
             proofs: "verify:theme verify:memory verify:scripts"
           - group: ask-forms + workspace-map + flags

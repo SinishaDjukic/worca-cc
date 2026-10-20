@@ -615,7 +615,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   or month (runs split into finished, stopped and failed). With a total limit, a ring around your
   avatar in the sidebar fills toward it (amber from 80%, red once new runs are blocked); the account
   menu's spend card has the figures. Filter or split spend by person (or by tag, see
-  [Experimental features](#experimental-features)) and export the split as CSV; see
+  [Labs features](#labs-features)) and export the split as CSV; see
   [`docs/statistics.md`](docs/statistics.md).
 - **Hard limits** — set in Settings › Runs › Budget & cost limits, or with `worca config`. A
   per-pipeline cost limit pauses a runaway run before its next step; *Continue without cap (this
@@ -743,10 +743,10 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ![Runs page — runs from nimbus-crm, lumen-docs and nimbus-web grouped by project, one scheduled and one stopped, with the finished run Paginate the search endpoint open: Ready to ship, 17m 2s, $3.65, +29 −2 across 4 files](docs/screenshots/history.png)
 
-### Experimental features
+### Labs features
 
 - **Off until you turn them on** — unfinished features ship behind machine-wide
-  flags: **Settings › Experimental**, `worca flags on|off <key>`, or
+  flags: **Settings › Labs**, `worca flags on|off <key>`, or
   `WORCA_FLAGS=<key>` at start. See [`docs/feature-flags.md`](docs/feature-flags.md).
 - **Shaper** (`shapeFirst`) — Worca shapes a thin or large task first: at most 3
   questions, a plan for the perspectives you pick, rule checks on the plan, and

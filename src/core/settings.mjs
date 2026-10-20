@@ -67,6 +67,7 @@ import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
+import { normalizePins, storedPins } from '../shared/home-pins.mjs';
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -2340,6 +2341,32 @@ export async function setScheduleDefaults(patch = {}) {
   if (has('maxFailures')) put('scheduleMaxFailures', patch.maxFailures);
   await persistSettings(settings);
   return scheduleDefaults();
+}
+
+/** The person a Chat home pin list belongs to: the signed-in name lowercased, '' for a local or operator install. */
+const pinsPersonKey = (person) => String(person ?? '').trim().toLowerCase();
+function pinsMap(settings) {
+  const m = settings.chatHomePins;
+  // A null-prototype copy: a person named "__proto__" stays an ordinary key.
+  return Object.assign(Object.create(null), m && typeof m === 'object' && !Array.isArray(m) ? m : {});
+}
+
+/** The person's pinned workflow ids (Chat home quick actions), in pin order. Never set = ['wf_shape']. Never throws. */
+export function chatHomePinsFor(person) {
+  if (homeGuarded()) return storedPins(undefined);
+  return storedPins(pinsMap(readSettings())[pinsPersonKey(person)]);
+}
+
+/** Replace the person's list ([] = nothing pinned, kept as such). Throws { code: 'BAD_HOME_PINS' } before any write. */
+export async function setChatHomePinsFor(person, list) {
+  const { pins, errors } = normalizePins(list);
+  if (errors.length) throw Object.assign(new Error(errors[0]), { code: 'BAD_HOME_PINS' });
+  const settings = readSettings();
+  const map = pinsMap(settings);
+  map[pinsPersonKey(person)] = pins;
+  settings.chatHomePins = map;
+  await persistSettings(settings);
+  return chatHomePinsFor(person);
 }
 
 /** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */

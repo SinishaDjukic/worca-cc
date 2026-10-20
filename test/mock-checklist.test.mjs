@@ -54,3 +54,42 @@ test('the reviewer reports the plan\'s items: cycle 1 [unmet, met], cycle 2 [met
   assert.ok((await review(2, plan)).checklist.every((c) => c.evidence));
   assert.equal(Object.hasOwn(await review(1, bare), 'checklist'), false);
 });
+
+// ── role reviews (spec §3): the plan reviewer's role mode and the refiner's `addressed` ──
+
+test('the plan reviewer in role mode writes one checklist entry per MOCK_CHECKLIST id, and every issue has section and fix', async () => {
+  const dir = await tmp();
+  const json = join(dir, 'role-ux-plan-review-cycle1.json');
+  const run = () => runMock({ cwd: dir, systemPrompt: '', onEvent: () => {},
+    prompt: markers({ MOCK_ROLE: 'plan-review', MOCK_CYCLE: 1, MOCK_PERSPECTIVE: 'ux', MOCK_CHECKLIST: 'R-ux-1,R-ux-2',
+      MOCK_OUT: join(dir, 'f.md'), MOCK_JSON: json }) });
+  const prev = process.env.WORCA_MOCK_ROLE_REVIEW;
+  try {
+    delete process.env.WORCA_MOCK_ROLE_REVIEW;
+    await run();
+    let r = JSON.parse(await readFile(json, 'utf8'));
+    assert.deepEqual(r.checklist.map((c) => [c.id, c.status]), [['R-ux-1', 'met'], ['R-ux-2', 'met']]);
+    assert.deepEqual(r.issues.map((i) => i.severity), ['minor'], 'the default is one non-blocking finding');
+    for (const i of r.issues) { assert.ok(i.section); assert.ok(i.fix); }
+    process.env.WORCA_MOCK_ROLE_REVIEW = '{"ux":{"1":"critical"}}';
+    await run();
+    r = JSON.parse(await readFile(json, 'utf8'));
+    assert.deepEqual(r.issues.map((i) => i.severity), ['critical']);
+    assert.deepEqual(r.checklist.map((c) => c.status), ['unmet', 'unmet']);
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_MOCK_ROLE_REVIEW; else process.env.WORCA_MOCK_ROLE_REVIEW = prev;
+  }
+});
+
+test('the refiner fed MOCK_FINDINGS lists that file\'s finding ids in `addressed`; without it, no key', async () => {
+  const dir = await tmp();
+  const findings = join(dir, 'findings.md');
+  await writeFile(findings, '# Role reviews — round 1\n\n## UX\n\n- **ux-1-1** [critical] Testing: x — fix: y\n\n## QA\n\n- **qa-1-1** [minor] t — fix: f\n');
+  const json = join(dir, 'refine.json');
+  const run = (extra) => runMock({ cwd: dir, systemPrompt: '', onEvent: () => {},
+    prompt: markers({ MOCK_ROLE: 'refiner', MOCK_CYCLE: 1, MOCK_OUT: join(dir, 'plan-v2.md'), MOCK_JSON: json, ...extra }) });
+  await run({ MOCK_FINDINGS: findings });
+  assert.deepEqual(JSON.parse(await readFile(json, 'utf8')).addressed, ['ux-1-1', 'qa-1-1']);
+  await run({});
+  assert.equal('addressed' in JSON.parse(await readFile(json, 'utf8')), false);
+});

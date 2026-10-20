@@ -50,7 +50,7 @@ test('conflicts: the pill, the files and both Resolve buttons; no Update branch'
   assert.equal(shown(btn(li, 'hd-base-pipeline')), true);
   assert.equal(shown(btn(li, 'hd-base-terminal')), true);
   assert.equal(shown(btn(li, 'hd-base-recheck')), false, 'the check runs on open: no Re-check here');
-  assert.ok(['btn', 'btn-ghost', 'btn-mini'].every((c) => btn(li, 'hd-base-pipeline').classList.contains(c)), 'the house small button');
+  assert.ok(['btn', 'btn-sm'].every((c) => btn(li, 'hd-base-pipeline').classList.contains(c)), 'the house small button');
 });
 
 test('an open PR: no Resolve in a pipeline here (its Overview row has Resolve); the terminal stays', async () => {

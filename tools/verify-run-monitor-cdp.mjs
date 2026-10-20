@@ -320,22 +320,26 @@ try {
   log(`run ${runId} holding at ${entry.pendingQuestion.id} (status ${entry.status})`);
 
   // ================ PHASE 1 — the LIVE run (the Runs page) ==================
-  // The waiting run's Needs-you row (it repeats in its project group below).
-  const CARD_ROOT = `#runs-list .runs-needs .runs-row[data-run-id=${JSON.stringify(runId)}]`;
+  // The waiting run's row in the Needs you section (each run is listed once).
+  const CARD_ROOT = `#runs-list .runs-sec[data-section="needs"] .runs-row[data-run-id=${JSON.stringify(runId)}]`;
   await go('runs', { first: true });
   await ev(`localStorage.removeItem('worca-cc.runs.last');0`);   // the bare list: nothing remembered reopens
+  // The Runs list at its 280px floor (runs-resize.mjs LIST_W_KEY): the run page's stage then has the width these
+  // geometry checks were measured at. The 340px default (bundle QA 2) leaves the 7-card graph wider than the stage
+  // even at the 0.3 zoom floor at 1280px, so check (6)'s fit could not hold for a reason that is not the canvas nav's.
+  await ev(`localStorage.setItem('worca-cc.runs.listWidth','280');0`);
   await go('runs');
   await until(`document.querySelector(${JSON.stringify(CARD_ROOT)})`, 'the waiting run in Needs you');
   await settle('card');
 
-  // (1a) the row is compact: an icon, a title and a subline — no graph, log, banner or inline panel
+  // (1a) the row is compact: the status dot, a title and its line — no graph, log, banner or inline panel
   const shape = await ev(`(()=>{const c=document.querySelector(${JSON.stringify(CARD_ROOT)});
     return {graph:!!c.querySelector('.run-flow-wrap,.run-flow'),log:!!c.querySelector('.log,.log-filters'),
       panel:!!c.querySelector('.qpanel'),banner:!!c.querySelector('.cost-banner'),density:!!document.querySelector('.run-density'),
-      icon:c.dataset.icon,sub:(c.querySelector('.runs-row-sub')||{}).textContent||''};})()`);
+      state:c.dataset.state,sub:(c.querySelector('.runs-row-sub')||{}).textContent||''};})()`);
   check('1a', 'Runs list row: no graph, log, banner or inline panel; the waiting run sits in Needs you, says what it waits for, and opens the run page',
     !shape.graph && !shape.log && !shape.panel && !shape.banner && !shape.density
-    && shape.icon === 'ask' && shape.sub.length > 0, shape);
+    && shape.state === 'needs-you' && shape.sub.length > 0, shape);
   await clickCentre(CARD_ROOT, 'the Needs-you row');
   await until(`location.hash === '#running/${runId}' && document.querySelector('#run-detail .rd-questions:not([hidden])')`, 'the run page with its question');
 

@@ -12,7 +12,7 @@ Nothing about a run's own branch or history changes — `worca-metrics` carries 
 
 ## Enable and join
 
-A project turns team metrics on from its project page's **Team** tab (`Set up team metrics…`; the Projects
+A project turns team metrics on from its project page's **Team** tab (`Set up metrics…`; the Projects
 list row only carries a one-line status chip), in one of two modes:
 
 - **Here, on this repository** — Worca creates the orphan branch `worca-metrics` on `origin`,
@@ -24,7 +24,7 @@ list row only carries a one-line status chip), in one of two modes:
   name. A delegate must be a project (or workspace member/home) Worca already knows about on
   this machine; delegating to a project that itself delegates ("chains") is rejected.
 
-If a teammate has already enabled the branch on `origin` before you do, clicking **Set up team metrics…**
+If a teammate has already enabled the branch on `origin` before you do, clicking **Set up metrics…**
 here **joins** it instead of creating a second orphan history — the push-not-fast-forward from
 a race is exactly this case, handled the same way.
 
@@ -79,7 +79,7 @@ detail — the **Metrics branch** column says where each project's runs land —
 The home comes first, then members that need attention, then the routed ones; past six members
 the table collapses behind **Show N more** and the table head sums up the rest ("44 routed · 5
 not routed"). The table head also holds the actions: **Choose metrics home…** / **Change metrics
-home…** opens the picker, and **Route all to metrics home** sets up every member that has no
+home…** opens the picker, and **Route all** sets up every member that has no
 `worca-metrics` branch yet to delegate to the home in one action. Members that already record on
 their own branch or delegate elsewhere are left alone, so that button is hidden when there is
 nothing it could change. A sentence appears under the table only when it matters: no home chosen
@@ -234,7 +234,7 @@ toggle is on:
 
 | Chip state | Meaning | Action shown |
 |---|---|---|
-| Off ("runs stay on this machine") | Not enabled | `Set up team metrics…` |
+| Off ("runs stay on this machine") | Not enabled | `Set up metrics…` |
 | Not available | No `origin` remote on this repository | none |
 | On (green) | Enabled, nothing pending, last push (if any) succeeded | — |
 | On · N pending (amber) | Runs are queued in the local outbox, not yet pushed | `Push now` |

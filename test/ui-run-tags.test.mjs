@@ -177,7 +177,10 @@ test('finished run page: "Add tags" when the run has none; no tag UI with the fl
   flagsOn(ctx.window);
   await deliverRows(ctx, [ROW]);
   for (const host of ['.hd-glance .rd-page-meta', '.hd-row2']) {
-    assert.equal(doc.querySelector(`#hist-detail ${host} .hd-tags-edit`).textContent, 'Add tags', host);
+    const edit = doc.querySelector(`#hist-detail ${host} .hd-tags-edit`);
+    assert.equal(edit.textContent, 'Add tags', host);
+    // B7: the one button component, quiet — like "Add to group…" — never a link-styled button.
+    assert.deepEqual([...edit.classList], ['btn', 'btn-sm', 'btn-quiet', 'hd-tags-edit'], host);
     assert.equal(doc.querySelectorAll(`#hist-detail ${host} .tag-chip`).length, 0, host);
   }
 });

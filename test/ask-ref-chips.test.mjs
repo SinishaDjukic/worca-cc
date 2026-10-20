@@ -2,6 +2,7 @@
 // chips (which refs: src/shared/chip-refs.mjs, test/chip-refs.test.mjs) and how the chips fill in, over the REAL
 // marked + DOMPurify output the chat renders.
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { createMarkdownRenderer } from '../ui/public/ask-markdown.mjs';
@@ -274,4 +275,16 @@ test('ask-ref-chips: a run link the server does not know is never polled; its to
 test('workItemTone: process states map to tones; unknown states stay neutral', () => {
   assert.deepEqual(['New', 'Active', 'In Progress', 'Resolved', 'Closed', 'Done', 'Removed', 'Triage'].map(workItemTone),
     ['slate', 'blue', 'blue', 'amber', 'green', 'green', 'red', 'slate']);
+});
+
+test('style.css: a ref chip uses the token corner, a neutral fill and a coloured word, never a filled pill', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const rules = [...css.matchAll(/([^{}]*\.ask-ref-(?:chip|pill)[^{}]*)\{([^}]*)\}/g)].map((m) => [m[1].trim(), m[2]]);
+  assert.ok(rules.length >= 8, `${rules.length} ref chip rules`);
+  for (const [sel, body] of rules) {
+    assert.doesNotMatch(body, /border-radius:\s*(?!var\(--r-xs\))/, `${sel}: radius only var(--r-xs)`);
+    assert.doesNotMatch(body, /999px|box-shadow/, `${sel}: no pill, no shadow`);
+    if (sel.includes('.ask-ref-pill')) assert.doesNotMatch(body, /background/, `${sel}: the word carries the colour, nothing fills behind it`);
+  }
+  assert.match(css, /\.ask-ref-pill\.tone-violet\{color:var\(--violet-ink\);\}/);
 });

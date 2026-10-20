@@ -572,6 +572,14 @@ function chainReaches(after, selfId) {
   return false;
 }
 
+/** The run whose feature branch `pipelineId` started from: its latest ticket's predecessor when that ticket
+ *  started it "from its branch" (source_from_previous). null = no previous run (or its ticket was purged). */
+function chainPredecessorOf(pipelineId) {
+  const t = getDb().prepare('SELECT after_kind, after_id, source_from_previous FROM scheduled_runs WHERE pipeline_id = ? ORDER BY updated_at DESC LIMIT 1').get(String(pipelineId));
+  if (!t || !t.source_from_previous || !t.after_id) return null;
+  return (t.after_kind === 'ticket' ? getTicket(t.after_id)?.pipelineId : t.after_id) || null;
+}
+
 /**
  * The base branches a run's PR can target along its chain, root first:
  * [root, …, directSource]. Walks back through the tickets that started each run
@@ -592,9 +600,7 @@ export function chainBaseBranchesOf(pipelineId) {
   const seen = new Set([row.id]);
   let cur = row.id;
   for (let depth = 0; depth < CHAIN_DEPTH_CAP; depth++) {
-    const t = getDb().prepare('SELECT after_kind, after_id, source_from_previous FROM scheduled_runs WHERE pipeline_id = ? ORDER BY updated_at DESC LIMIT 1').get(cur);
-    if (!t || !t.source_from_previous || !t.after_id) break;
-    const predId = t.after_kind === 'ticket' ? getTicket(t.after_id)?.pipelineId : t.after_id;
+    const predId = chainPredecessorOf(cur);
     if (!predId || seen.has(predId)) break;
     const pred = branchOf(pipelineRefRow(predId));
     if (!pred || pred.feature !== chain[0] || typeof pred.source !== 'string' || !pred.source) break;
@@ -603,6 +609,22 @@ export function chainBaseBranchesOf(pipelineId) {
     cur = predId;
   }
   return chain;
+}
+
+/**
+ * The PR dialog's default base for a run started from the previous run's branch (L10, generic): its direct
+ * source, the chain's last entry, until the previous run's PR is MERGED. null = keep the chain root.
+ * `chain` is chainBaseBranchesOf's answer (mapped to remote branch names): two entries or more prove the first
+ * link matched. A workspace row never stacks: each member's base stays its own source.
+ */
+export function stackedPrBaseOf(pipelineId, chain) {
+  if (!Array.isArray(chain) || chain.length < 2) return null;
+  const row = pipelineRefRow(pipelineId);
+  if (!row || row.target === 'workspace') return null;
+  const predId = chainPredecessorOf(row.id);
+  if (!predId) return null;
+  const pr = getDb().prepare('SELECT pr_url, pr_state FROM pipelines WHERE id = ?').get(String(predId));
+  return pr && pr.pr_url && pr.pr_state === 'MERGED' ? null : chain[chain.length - 1];
 }
 
 // ── run progress: chains (spec 2026-10-14 run-progress P8) ───────────────────
@@ -691,6 +713,8 @@ export function runChains({ isLive = null } = {}) {
     walk(root);
     if (order.length < 2) continue;
     const members = order.map(member);
+    // D29: the 1-based position of the member this one runs after (null for the root), for "starts after run N".
+    order.forEach((n, i) => { const j = n.parent ? order.findIndex((x) => x.key === n.parent) : -1; members[i].after = j >= 0 ? j + 1 : null; });
     if (!members.some((m) => m.state === 'current' || m.state === 'waiting')) continue;
     out.push({ id: root.key, title: members[0].title, members });
   }

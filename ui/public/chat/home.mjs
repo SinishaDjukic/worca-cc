@@ -112,8 +112,10 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   const tabs = createHomeTabs({ doc, onSelect: (t) => selectTab(t, { user: true }) });
   const promos = buildPromos();
   const body = h('div', 'chat-home-body');
+  // Settings › Presets is Advanced (docs/ui-levels.md): Simple's "N more…" opens New run's picker, which lists all.
   const presetsUi = createHomePresets({
-    doc, onUse: (id) => { if (typeof deps.usePreset === 'function') deps.usePreset(id); }, onMore: () => deps.navigate('#settings/presets'),
+    doc, onUse: (id) => { if (typeof deps.usePreset === 'function') deps.usePreset(id); },
+    onMore: () => deps.navigate((typeof deps.level === 'function' ? deps.level() : 'expert') === 'simple' ? '#new' : '#settings/presets'),
   });
   body.append(actions.el, presetsUi.el, tabs.el, promos);
   host.appendChild(body);
@@ -133,7 +135,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
       const card = h('div', 'chat-home-promo');
       card.dataset.promo = p.id;
       card.dataset.minLevel = p.min;
-      const b = h('button', 'chat-home-promo-b', p.button);
+      const b = h('button', 'btn btn-sm chat-home-promo-b', p.button);
       b.type = 'button';
       b.addEventListener('click', () => {
         deps.setIntent(p.intent);
@@ -365,7 +367,15 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     if (token !== st.visit) return;
     st.workflows = validWorkflows(got && got.list);
     st.portsFn = got && typeof got.portsFn === 'function' ? got.portsFn : null;
+    actions.setPins({ workflows: st.workflows });
     if (st.tab === 'workflows') renderPanel();
+  }
+  // The person's pinned workflows (src/shared/home-pins.mjs), fresh per visit; the row shows the visible ones.
+  async function loadPins(token) {
+    let got = null;
+    try { got = typeof deps.pins === 'function' ? await deps.pins() : null; } catch { got = null; }
+    if (token !== st.visit) return;
+    if (Array.isArray(got)) actions.setPins({ pins: got });   // null = keep the row's default (Shaper)
   }
   async function loadPlans(token) {
     let list = [];
@@ -375,7 +385,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     if (st.tab === 'plans') renderPanel();
   }
   // Run presets (#712 slice 2): the viewer's presets as chips, fresh per visit, while the runPresets flag is on.
-  function paintPresets() { presetsUi.render({ on: st.presetsOn, presets: st.presets?.presets || [], target: st.presets?.target || null }); }
+  function paintPresets() { presetsUi.render({ on: st.presetsOn, presets: st.presets?.presets || [], target: st.presets?.target || null, workflowNames: st.presets?.workflowNames ?? null }); }
   async function loadPresets(token) {
     let got = null;
     try { got = typeof deps.presets === 'function' ? await deps.presets() : null; } catch { got = null; }
@@ -436,6 +446,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     pullRuns();                                 // the switches keep their last known values until loadFlags answers
     void loadThreads(token);
     void loadWorkflows(token);
+    void loadPins(token);
     void loadPresets(token);
     void loadFlags(token);
     if (st.plansOn) void loadPlans(token);
@@ -471,6 +482,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
       if (data.workflows && Array.isArray(data.workflows.list)) {
         st.workflows = validWorkflows(data.workflows.list);
         st.portsFn = typeof data.workflows.portsFn === 'function' ? data.workflows.portsFn : null;
+        actions.setPins({ workflows: st.workflows });
       }
       if (data.runs) applyRuns(normRuns(data.runs));
       else { maybeChoose(); if (st.chosen) renderPanel(); }

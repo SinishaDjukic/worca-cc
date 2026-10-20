@@ -545,7 +545,7 @@ worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cur
 
 - **A harness's own sign-in** (your Claude Code, ChatGPT or Cursor subscription): the paused run offers to continue on each other harness that is ready (installed and signed in). From the command line every other harness is listed; the resume refuses one that is not ready.
 - **A provider or a custom endpoint** (a gateway's quota, an API key's limit): the pause names the provider (*OpenAI-compatible limit — …*). No other harness is offered: it would reach the same provider.
-- **Either way**, *Resume with another model…* (the run page's banner and the Resume menu) picks a model on another connection, and every remaining step of the run runs on it. From the command line: `worca resume <id> --model <model id>`. It must be a catalog model the run's harness can run.
+- **Either way**, *Switch model…* (the run page's banner and the Resume menu) picks a model on another connection, and every remaining step of the run runs on it. From the command line: `worca resume <id> --model <model id>`. It must be a catalog model the run's harness can run.
 
 **Chat on Cursor is not available.** A chat needs every shell and disk tool switched off, and no Cursor switch for that is known. Cursor models are not offered in Chat.
 

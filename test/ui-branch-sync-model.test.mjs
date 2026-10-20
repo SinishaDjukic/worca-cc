@@ -246,7 +246,7 @@ async function dom(body = '') {
 }
 const ROW = `<div class="sync-row" id="sync-row" hidden>
   <button type="button" class="sync-pill grey" id="sync-pill"><span class="sdot"></span><span class="sync-pill-txt">Checking…</span></button>
-  <button type="button" class="btn btn-mini sync-btn" id="sync-btn"><span>Sync</span></button>
+  <button type="button" class="btn btn-sm sync-btn" id="sync-btn"><span>Sync</span></button>
   <label class="switch-row sync-auto"><input id="syncAuto" class="sw-input" type="checkbox" checked></label>
 </div><button id="opener">open</button>`;
 
@@ -382,7 +382,7 @@ test('chooseSyncRefusal: diverged → origin; forbidden → Cancel only; fetch-f
   m = w.document.querySelector('.sync-modal');
   assert.match(m.textContent, /A: Sign-in to origin failed/);
   assert.match(m.textContent, /B: origin could not be reached/);
-  [...m.querySelectorAll('button')].find((b) => b.textContent === 'Start anyway from last fetch').click();
+  [...m.querySelectorAll('button')].find((b) => b.textContent === 'Start anyway').click();
   assert.equal(await p, 'last-fetch');
 
   p = chooseSyncRefusal({ code: 'sync-diverged', options: ['origin', 'cancel'], members });

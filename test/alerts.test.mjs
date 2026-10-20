@@ -38,7 +38,7 @@ function fakeNotification({ permission = 'granted', answer = 'granted' } = {}) {
 }
 
 /** A document whose visibility and focus the test sets. */
-function fakeDoc({ visible = false, focused = false, html = '<!DOCTYPE html><html><head><title>Worca CC</title><link rel="icon" type="image/png" href="/assets/worca-favicon.png"></head><body></body></html>' } = {}) {
+function fakeDoc({ visible = false, focused = false, html = '<!DOCTYPE html><html><head><title>Worca</title><link rel="icon" type="image/png" href="/assets/worca-favicon.png"></head><body></body></html>' } = {}) {
   const dom = new JSDOM(html, { url: 'http://localhost:4317/' });
   const doc = dom.window.document;
   const look = { visible, focused };
@@ -95,10 +95,12 @@ test('tag format is worca:<runId>:<questionId>', () => {
 });
 
 test('title prefix: (N) is added, replaced and removed at 0', () => {
-  assert.equal(titleWithCount('Worca CC', 2), '(2) Worca CC');
-  assert.equal(titleWithCount('(2) Worca CC', 3), '(3) Worca CC');
-  assert.equal(titleWithCount('(3) Worca CC', 0), 'Worca CC');
-  assert.equal(titleWithCount('Worca CC', 0), 'Worca CC');
+  assert.equal(titleWithCount('Worca', 2), '(2) Worca');
+  assert.equal(titleWithCount('(2) Worca', 3), '(3) Worca');
+  assert.equal(titleWithCount('(3) Worca', 0), 'Worca');
+  assert.equal(titleWithCount('Worca', 0), 'Worca');
+  assert.equal(titleWithCount('(1) Worca', 3), '(3) Worca', 'an existing prefix is replaced');
+  assert.equal(titleWithCount('(3) ? Worca', 2), '(2) Worca', 'QA 6: an old prefix with the ? is stripped');
 });
 
 test('badge count: runs waiting plus unread problems; junk counts as 0', () => {
@@ -334,14 +336,24 @@ test('test notification: shown only while notifications are on and granted, with
 
 // ── badge ─────────────────────────────────────────────────────────────────────
 
-test('badge: the title shows (2) with two waiting runs and goes back at 0', () => {
-  const a = setup({ badge: true });
+test('badge: the title shows (2) with two waiting runs and goes back at 0; problems stay out of the title', () => {
+  const calls = [];
+  const a = setup({ badge: true, nav: { setAppBadge: (n) => { calls.push(n); } } });
   a.alerts.updateBadge({ waitingRuns: 2 });
-  assert.equal(a.doc.title, '(2) Worca CC');
+  assert.equal(a.doc.title, '(2) Worca');
   a.alerts.updateBadge({ unreadProblems: 1 });
-  assert.equal(a.doc.title, '(3) Worca CC');
+  assert.equal(a.doc.title, '(2) Worca', 'unread schedule problems are not runs that need you');
+  assert.equal(calls.at(-1), 3, 'the app badge still counts them');
   a.alerts.updateBadge({ waitingRuns: 0, unreadProblems: 0 });
-  assert.equal(a.doc.title, 'Worca CC');
+  assert.equal(a.doc.title, 'Worca');
+});
+
+test('unread schedule problems dot the favicon but never put a number in the title', async () => {
+  const a = setup({ badge: true });
+  a.alerts.updateBadge({ unreadProblems: 1 });
+  assert.equal(a.doc.title, 'Worca');
+  await tick();   // applyBadge draws the dot in a microtask (ui/public/alerts.mjs), like the file's other favicon tests
+  assert.deepEqual(a.drawn, ['/assets/worca-favicon.png'], 'the favicon still gets its dot');
 });
 
 test('badge: the favicon is swapped for the dotted one and restored at 0', async () => {
@@ -377,21 +389,21 @@ test('badge switch off: no title, favicon or app-badge change; turning it off cl
   const a = setup({ badge: false, nav });
   a.alerts.updateBadge({ waitingRuns: 2 });
   await tick();
-  assert.equal(a.doc.title, 'Worca CC');
+  assert.equal(a.doc.title, 'Worca');
   assert.equal(a.doc.querySelector('link[rel~="icon"]').getAttribute('href'), '/assets/worca-favicon.png');
   assert.deepEqual(calls, []);
   assert.deepEqual(a.drawn, []);
   a.alerts.setBadge(true);
-  assert.equal(a.doc.title, '(2) Worca CC');
+  assert.equal(a.doc.title, '(2) Worca');
   a.alerts.setBadge(false);
-  assert.equal(a.doc.title, 'Worca CC');
+  assert.equal(a.doc.title, 'Worca');
   assert.equal(a.store.getItem(ALERT_KEYS.badge), '0');
 });
 
 test('badge works with notifications off once the badge switch is on, and needs no permission', () => {
   const a = setup({ notify: false, badge: true, N: null });
   a.alerts.updateBadge({ waitingRuns: 1 });
-  assert.equal(a.doc.title, '(1) Worca CC');
+  assert.equal(a.doc.title, '(1) Worca');
 });
 
 test('a developer who never turns Alerts on sees no change', async () => {
@@ -400,7 +412,7 @@ test('a developer who never turns Alerts on sees no change', async () => {
   a.alerts.updateBadge({ waitingRuns: 3, unreadProblems: 1 });
   await tick();
   assert.equal(a.N.shown.length, 0);
-  assert.equal(a.doc.title, 'Worca CC');
+  assert.equal(a.doc.title, 'Worca');
   assert.deepEqual(a.drawn, []);
 });
 
@@ -510,4 +522,22 @@ test('card: a throwing localStorage does not break the card', async () => {
   assert.equal(a.$('#alertsNotify').checked, false);
   await assert.doesNotReject(() => a.flip('#alertsNotify'));
   await assert.doesNotReject(() => a.flip('#alertsBadge'));
+});
+
+// ── §5a.5: an alert says what the list says ───────────────────────────────────
+
+test('a run with a status line: title names the run, body is the line, click opens its href (§5a.5)', () => {
+  const a = setup();
+  a.alerts.onQuestion({ ...RUN, line: 'Plan · needs you · answer 2 questions', href: '#feature/feat_1' }, Q('q1', 'questions'));
+  assert.equal(a.N.shown[0].title, 'Worca: Fix the login bug');
+  assert.equal(a.N.shown[0].body, 'Plan · needs you · answer 2 questions');
+  a.N.shown[0].onclick({ preventDefault() {} });
+  assert.deepEqual(a.opened, [{ runId: 'r1', href: '#feature/feat_1' }]);
+});
+
+test('a paused run with a status line uses it too; an untitled one keeps the kind title', () => {
+  const a = setup();
+  a.alerts.onPaused({ runId: 'r2', title: '', line: 'Paused · usage limit' }, 'usage_limit');
+  assert.equal(a.N.shown[0].title, 'Worca: Usage limit reached');
+  assert.equal(a.N.shown[0].body, 'Paused · usage limit');
 });

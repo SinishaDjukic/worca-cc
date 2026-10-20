@@ -62,7 +62,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 64;
+export const SCHEMA_VERSION = 67;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -847,7 +847,14 @@ const INCREMENTAL_COLUMNS = {
                             // Shaper D28, no version of their own (-4-slices owns v57); reconcileSchema adds them
                             shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
                             run_size: 'TEXT',     // small|medium|large from the run's changed lines/files; NULL = unknown
-                            run_setup: 'TEXT' },  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start or a scan
+                            run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start or a scan
+                            deleted_at: 'TEXT',   // v65: Delete (runs redesign §3.2) keeps an anonymised row for Statistics
+                            pr_verdict: 'TEXT',   // v65: the PR chip's CI verdict (JSON), runs redesign §2.1a
+                            release_version: 'TEXT',  // v66 (Shaper s4): the Ship it dialog's draft release tag; NULL = none
+                            release_target: 'TEXT',   // v66: the branch the tag points at (the PR's base)
+                            release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
+                            release_url: 'TEXT',      // v66: the draft release's URL
+                            release_error: 'TEXT' },  // v66: why creating it failed (not retried)
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -873,8 +880,15 @@ const INCREMENTAL_COLUMNS = {
                             composer: 'TEXT' },      // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
   shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
                             ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
-                            shipped_at: 'TEXT' },     // v58: when Ship as ran
-  shape_feature_slices:   { draft_pr_url: 'TEXT' },   // v58 (D24): the PR openSliceDraft opened as a draft
+                            shipped_at: 'TEXT',       // v58: when Ship as ran
+                            ship_closed: 'INTEGER',   // v66 (Shaper s4): drafts the one PR closed; NULL = unknown
+                            release_version: 'TEXT',  // v66 (Shaper s4): the draft release's tag chosen at Ship; NULL = none
+                            release_target: 'TEXT',   // v66: the branch the tag points at (the feature's base)
+                            release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
+                            release_url: 'TEXT',      // v66: the draft release's URL
+                            release_error: 'TEXT' },  // v66: why creating it failed (not retried)
+  shape_feature_slices:   { draft_pr_url: 'TEXT',      // v58 (D24): the PR openSliceDraft opened as a draft
+                            kind: 'TEXT' },            // v67 (Shaper s5): 'extra' | 'follow-up' (appendFeatureRun); NULL = from the outline
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
   workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
                             policy_project: 'TEXT',     // v32: team-policy home (member absolute path); NULL = no home
@@ -1086,6 +1100,29 @@ CREATE TABLE IF NOT EXISTS run_presets (
 CREATE UNIQUE INDEX IF NOT EXISTS run_presets_owner_name ON run_presets (COALESCE(created_by, ''), name COLLATE NOCASE);
 `;
 
+// v65 (runs redesign §3.3): user-created groups and ad-hoc membership — the one new named state the clarify answer
+// allows. group_id names a run_groups.id (grp_…) OR a shape_features.id (feat_…), so it has no FK; src/core/run-groups.mjs
+// checks it. pipeline_id is the primary key: a run is in one group at a time.
+const RUN_GROUPS_DDL = `
+CREATE TABLE IF NOT EXISTS run_groups (
+  id          TEXT PRIMARY KEY,
+  title       TEXT NOT NULL,
+  project_key TEXT,
+  created_by  TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS run_group_members (
+  pipeline_id TEXT PRIMARY KEY,
+  group_id    TEXT NOT NULL,
+  position    INTEGER NOT NULL,
+  added_by    TEXT,
+  added_at    TEXT NOT NULL,
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_run_group_members_group ON run_group_members (group_id, position);
+`;
+
 const SHAPE_SLICES_DDL = `
 CREATE TABLE IF NOT EXISTS shape_features (
   id TEXT PRIMARY KEY,
@@ -1131,6 +1168,26 @@ CREATE TABLE IF NOT EXISTS shape_plans (
 );
 `;
 
+export const SHAPE_NOTES_DDL = `
+CREATE TABLE IF NOT EXISTS shape_feature_notes (
+  id TEXT PRIMARY KEY,
+  feature_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('plan', 'idea')),   -- plan: the run's Planner reads it; idea: shown at the checkpoint
+  text TEXT NOT NULL,
+  run_index INTEGER,                                     -- the run it is for; NULL = no run left yet (appendFeatureRun assigns it)
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (feature_id) REFERENCES shape_features (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_shape_feature_notes_feature ON shape_feature_notes (feature_id, run_index);
+`;
+
+// Shaper s5 (D4): the round marker branch.roundOf lives on the round's own pipelines row; this finds a run's rounds.
+// Guarded by json_valid like src/core/artifacts.mjs: an unguarded json_extract index makes every INSERT/UPDATE
+// of a pipelines row whose branch is not valid JSON throw "malformed JSON".
+export const ROUND_OF_EXPR = "json_extract(CASE WHEN json_valid(branch) THEN branch END, '$.roundOf.pipelineId')";
+const ROUND_OF_INDEX_DDL = `CREATE INDEX IF NOT EXISTS idx_pipelines_round_of ON pipelines (${ROUND_OF_EXPR})`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1157,9 +1214,12 @@ const INCREMENTAL_TABLES = {
   shape_features: SHAPE_SLICES_DDL,
   shape_feature_slices: SHAPE_SLICES_DDL,
   shape_plans: SHAPE_SLICES_DDL,
+  shape_feature_notes: SHAPE_NOTES_DDL,
   run_tags:       RUN_TAGS_DDL,
   run_tag_events: RUN_TAGS_DDL,
   run_presets:    RUN_PRESETS_DDL,
+  run_groups:        RUN_GROUPS_DDL,
+  run_group_members: RUN_GROUPS_DDL,
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -1184,6 +1244,8 @@ const INCREMENTAL_INDEXES = {
     table: 'scheduled_runs',
     ddl: 'CREATE INDEX IF NOT EXISTS idx_scheduled_runs_after ON scheduled_runs (after_id)',
   },
+  // An expression index on pipelines.branch: a minimal hand-seeded pipelines(id) has no such column to index.
+  idx_pipelines_round_of: { table: 'pipelines', column: 'branch', ddl: ROUND_OF_INDEX_DDL },
 };
 
 /**
@@ -1207,6 +1269,7 @@ function missingColumns(db) {
   return missing;
 }
 
+const hasColumn = (db, table, col) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
 const hasSqliteObject = (db, type, name) => db.prepare(
   "SELECT count(*) AS n FROM sqlite_master WHERE type=? AND name=?"
 ).get(type, name).n > 0;
@@ -1221,7 +1284,8 @@ function schemaGaps(db) {
   const tables = Object.keys(INCREMENTAL_TABLES)
     .filter((t) => !hasSqliteObject(db, 'table', t));
   const indexes = Object.entries(INCREMENTAL_INDEXES)
-    .filter(([name, { table }]) => hasSqliteObject(db, 'table', table)
+    .filter(([name, { table, column }]) => hasSqliteObject(db, 'table', table)
+                                && (!column || hasColumn(db, table, column))
                                 && !hasSqliteObject(db, 'index', name))
     .map(([name]) => name);
   return { columns: missingColumns(db), tables, indexes };
@@ -2262,6 +2326,12 @@ export function migrate(db) {
     // v62 (#712 slice 2): pipelines.run_setup — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     // v63 (#712 slice 3): schedules.preset_id, scheduled_runs.preset_id — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     // v64: ask_attachments.source_path (a show_files copy's original, for Show in folder) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 65) db.exec(RUN_GROUPS_DDL);   // v65 run groups (runs redesign §3.3); pipelines.deleted_at / pr_verdict come from INCREMENTAL_COLUMNS
+    // v66 (Shaper s4): release_* on shape_features and pipelines, ship_closed on shape_features — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 67) {                              // v67 (Shaper s5); slices.kind via INCREMENTAL_COLUMNS
+      db.exec(SHAPE_NOTES_DDL);
+      if (hasColumn(db, 'pipelines', 'branch')) db.exec(ROUND_OF_INDEX_DDL);
+    }
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

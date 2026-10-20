@@ -1,7 +1,7 @@
 // test/title.test.mjs
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { sanitizeTitle, generateTitle, isRefusalTitle } from '../src/core/title.mjs';
+import { sanitizeTitle, clipTitle, generateTitle, isRefusalTitle } from '../src/core/title.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,7 +11,7 @@ import { CODEX_DEFAULT_MODEL } from '../src/core/engines/codex.mjs';
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 
-test('sanitizeTitle: strips quotes/labels/fences, first line only, caps at 70 on a word boundary', async () => {
+test('sanitizeTitle: strips quotes/labels/fences, first line only, caps at 60 on a word boundary', async () => {
   await checkRows([
     { name: 'sanitizeTitle strips quotes, collapses whitespace, caps length', run: () => {
       assert.equal(sanitizeTitle('  "Add user auth"\n'), 'Add user auth');
@@ -20,19 +20,31 @@ test('sanitizeTitle: strips quotes/labels/fences, first line only, caps at 70 on
       assert.equal(sanitizeTitle('Title: Fix the thing'), 'Fix the thing');
       assert.equal(sanitizeTitle('Title: Fix the\n  thing'), 'Fix the'); // 2nd line dropped (first-line-only)
       const long = 'x'.repeat(120);
-      assert.ok(sanitizeTitle(long).length <= 70);
+      assert.ok(sanitizeTitle(long).length <= 60);
       assert.equal(sanitizeTitle(''), '');
       assert.equal(sanitizeTitle('```\ncode\n```'), 'code'); // strips stray code fences
     } },
     { name: 'sanitizeTitle truncates at a word boundary, never mid-word', run: () => {
       const long = 'Implement the new authentication middleware layer for every incoming request handler';
       const t = sanitizeTitle(long);
-      assert.ok(t.length <= 70);
+      assert.ok(t.length <= 60);
       assert.ok(!t.endsWith('reque'), 'must not cut mid-word');
       // every word of the output is a whole word of the input
       for (const w of t.split(' ')) assert.ok(long.split(' ').includes(w), `"${w}" is a fragment`);
       // a single unbroken run longer than the cap still hard-slices (nothing to break on)
-      assert.equal(sanitizeTitle('x'.repeat(120)).length, 70);
+      assert.equal(sanitizeTitle('x'.repeat(120)).length, 60);
+      // a 61-char sentence is cut at a word, not hard-sliced at 60
+      const s61 = 'Add a short tag picker to every run row in the Runs list view';
+      assert.equal(s61.length, 61);
+      assert.equal(sanitizeTitle(s61), 'Add a short tag picker to every run row in the Runs list');
+    } },
+    { name: 'clipTitle cuts at a word at or after max/2, hard-cuts an unbroken word, drops trailing punctuation (review D)', run: () => {
+      assert.equal(clipTitle('Customer perspective: upgrade safety, empty states', 40), 'Customer perspective: upgrade safety');
+      assert.equal(clipTitle('Pin charts', 40), 'Pin charts');
+      assert.equal(clipTitle('y'.repeat(50), 40), 'y'.repeat(40));
+      assert.equal(clipTitle('ab ' + 'z'.repeat(50), 40), 'ab ' + 'z'.repeat(37), 'a space before max/2 is too early: hard cut');
+      assert.equal(clipTitle('  spaced\n  out  ', 40), 'spaced out');
+      assert.equal(clipTitle(null, 40), '');
     } },
   ]);
 });

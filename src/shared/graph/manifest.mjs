@@ -177,6 +177,8 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       to: { node: w.to.node, port: w.to.port }, loop };
     // maxCycles rides LOOP wires only: overlay > authored > default.
     if (loop) cell.maxCycles = coerceCycles(wireOverlays[w.id]?.maxCycles ?? w.config?.maxCycles);
+    // What a spent loop does (role reviews, spec §3): kept so a resumed run, rebuilt from this manifest, still knows.
+    if (loop && w.config?.onExhausted !== undefined) cell.onExhausted = w.config.onExhausted;
     return cell;
   });
 
@@ -267,6 +269,7 @@ export function manifestTemplate(manifest) {
     wires: (manifest?.graph?.wires || []).map((w) => {
       const wire = { id: w.id, from: { ...w.from }, to: { ...w.to } };
       if (w.loop && w.maxCycles !== undefined) wire.config = { maxCycles: w.maxCycles };
+      if (w.loop && w.onExhausted !== undefined) wire.config = { ...(wire.config || {}), onExhausted: w.onExhausted };
       return wire;
     }),
   };

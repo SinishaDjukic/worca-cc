@@ -9,6 +9,7 @@
 // The field NAMES are the contract: `param:<id>`, `port:<dir>:<i>:<field>`,
 // `data-port-add`, `data-port-remove` are exactly P1b's, so the composer's
 // routing and its tests hold after the move.
+import { icon } from './icons.mjs';
 import { effectiveScriptParams, paramValueError, readConfigPorts } from '../../src/shared/graph/script-meta.mjs';
 import { createCodeEditor } from './code-editor.mjs';
 
@@ -231,8 +232,9 @@ export function renderPortEditor(rawPorts, { doc = globalThis.document, hasVerdi
         row.appendChild(fn);
       }
       if (!readOnly) {
-        const rm = h(doc, 'button', 'ins-prm', '×');
+        const rm = h(doc, 'button', 'btn btn-sm btn-quiet btn-icon ins-prm');
         rm.type = 'button'; rm.dataset.portRemove = `${dir}:${i}`; rm.title = 'Remove';
+        rm.setAttribute('aria-label', 'Remove'); rm.append(icon(doc, 'x', 14));
         row.appendChild(rm);
       }
       wrap.appendChild(row);

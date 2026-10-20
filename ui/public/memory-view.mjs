@@ -76,7 +76,7 @@ function defragIcon(doc) {
  * `{ key, name } | null` — the project that would host a GLOBAL defragment run (a project scope
  * hosts its own, so `host` is ignored there); with no registered project the button is disabled
  * and the hint says so, in visible text as well as the title. While a run is live the button stays
- * ENABLED, reads "Defragmenting… open the run" and carries `data-run-id`: the controller routes to
+ * ENABLED, reads "Open run" (the counters line says it is defragmenting) and carries `data-run-id`: the controller routes to
  * `#running/<id>`. The global host hint also names Settings › Memory's defragment model when one is
  * set (`report.defragModel`, see defragModelPhrase).
  */
@@ -94,14 +94,15 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
   head.appendChild(h(doc, 'span', 'mem-counters',
     `${plural(health.files || 0, 'file')} · ${health.bytes || 0} bytes · ${health.alwaysOnBytes || 0} bytes always loaded · ${plural(health.writesSinceDefrag || 0, 'write')} since the last defragment` +
     (health.lastDefragAt ? ` · last defragmented ${formatWhen(health.lastDefragAt)}` : '') +
-    (health.failedWrites ? ` · ${plural(health.failedWrites, 'failed write')}` : '')));
+    (health.failedWrites ? ` · ${plural(health.failedWrites, 'failed write')}` : '') +
+    (report?.defragRunId ? ' · defragmenting now' : '')));
   // The ONE control sits at the head's right edge (margin-left:auto), styled like every other
-  // secondary pill (btn-ghost) with the defragment glyph before its label.
+  // secondary pill (btn) with the defragment glyph before its label.
   const runId = report?.defragRunId ? String(report.defragRunId) : '';
-  const btn = h(doc, 'button', 'btn btn-ghost btn-mini mem-defrag');
+  const btn = h(doc, 'button', 'btn btn-sm mem-defrag');
   btn.type = 'button';
   btn.appendChild(defragIcon(doc));
-  btn.appendChild(doc.createTextNode(runId ? 'Defragmenting… open the run' : 'Defragment'));
+  btn.appendChild(doc.createTextNode(runId ? 'Open run' : 'Defragment'));
   if (runId) btn.dataset.runId = runId;
   else if (isGlobal && !host) { btn.disabled = true; btn.title = NO_HOST_HINT; }
   head.appendChild(btn);
@@ -125,7 +126,7 @@ export function renderFileList(files, { doc = globalThis.document, selected = ''
   const wrap = h(doc, 'div', 'mem-list');
   const head = h(doc, 'div', 'mem-list-head');
   head.appendChild(h(doc, 'span', 'mem-list-title', 'Files'));
-  const add = h(doc, 'button', 'btn btn-ghost btn-mini mem-new', 'New file');
+  const add = h(doc, 'button', 'btn btn-sm mem-new', 'New file');
   add.type = 'button';
   head.appendChild(add);
   wrap.appendChild(head);
@@ -174,12 +175,12 @@ export function renderEditor(file, { doc = globalThis.document, isNew = false, m
   wrap.appendChild(status);
   const actions = h(doc, 'div', 'actions mem-actions');
   if (!isNew) {
-    const d = h(doc, 'button', 'btn btn-danger btn-mini mem-delete', 'Delete');
+    const d = h(doc, 'button', 'btn btn-danger btn-sm mem-delete', 'Delete');
     d.type = 'button'; d.disabled = !!locked;
     actions.appendChild(d);
   }
-  const cancel = h(doc, 'button', 'btn btn-ghost btn-mini mem-cancel', 'Cancel'); cancel.type = 'button';
-  const save = h(doc, 'button', 'btn btn-primary btn-mini mem-save', 'Save'); save.type = 'button'; save.disabled = !!locked;
+  const cancel = h(doc, 'button', 'btn btn-sm mem-cancel', 'Cancel'); cancel.type = 'button';
+  const save = h(doc, 'button', 'btn btn-primary btn-sm mem-save', 'Save'); save.type = 'button'; save.disabled = !!locked;
   actions.append(cancel, save);
   wrap.appendChild(actions);
   return wrap;
@@ -201,7 +202,7 @@ export function renderMemoryHistory(snapshots, { doc = globalThis.document, lock
     row.dataset.id = s.id;
     row.appendChild(h(doc, 'span', 'mem-snap-id mono', s.id));
     row.appendChild(h(doc, 'span', 'mem-snap-count', plural((s.files || []).length, 'file')));
-    const btn = h(doc, 'button', 'btn btn-ghost btn-mini mem-restore', 'Restore');
+    const btn = h(doc, 'button', 'btn btn-sm mem-restore', 'Restore');
     btn.type = 'button'; btn.dataset.id = s.id; btn.disabled = !!locked;
     row.appendChild(btn);
     wrap.appendChild(row);

@@ -10,6 +10,7 @@ for (const k of ['document', 'location', 'DOMParser']) Object.defineProperty(glo
 const realFetch = globalThis.fetch;
 after(() => { globalThis.fetch = realFetch; });
 const { createSchedulesView } = await import('../ui/public/schedules-view.mjs');
+const { UNREACHABLE_DETAIL } = await import('../ui/public/action-errors.mjs');
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async () => { for (let i = 0; i < 8; i++) await tick(); };
@@ -26,6 +27,7 @@ function mount({ routes = {} } = {}) {
     const key = `${init.method || 'GET'} ${String(url).split('?')[0]}`;
     calls.push(key);
     const json = (status, body) => ({ ok: status < 400, status, json: async () => body });
+    if (routes[key] === 'offline') throw new TypeError('Failed to fetch');
     if (Object.hasOwn(routes, key)) return json(...routes[key]);
     if (key === 'GET /api/schedules') return json(200, { schedules: [SERIES], tickets: [TICKET], counts: {} });
     if (key === 'GET /api/notifications') return json(200, { notifications: [], unread: 0 });
@@ -66,6 +68,50 @@ test('series actions toast their okText; a failed action is an err toast', async
       await settle();
       assert.deepEqual(m.toasts, [{ tone: 'err', title: 'nothing to skip', detail: '' }]);
       assert.equal(m.msgEl.textContent, '');
+      m.view.destroy();
+    } },
+  ]);
+});
+
+test('a waiting run\'s Cancel and Run now failures say what failed and the next step (D8)', async () => {
+  await checkRows([
+    { name: 'Cancel with the server unreachable', run: async () => {
+      const m = mount({ routes: { 'DELETE /api/schedules/t_1': 'offline' } });
+      await m.view.load();
+      btn(m.onceHost, 'Cancel').click();
+      await settle();
+      assert.deepEqual(m.toasts, [{ tone: 'err', title: 'Could not cancel the waiting run', detail: UNREACHABLE_DETAIL }]);
+      assert.equal(m.msgEl.textContent, '');
+      m.view.destroy();
+    } },
+    { name: 'Run now answered 404', run: async () => {
+      const m = mount({ routes: { 'POST /api/schedules/t_1/run-now': [404, { error: 'no such ticket' }] } });
+      await m.view.load();
+      btn(m.onceHost, 'Run now').click();
+      await settle();
+      assert.deepEqual(m.toasts, [{ tone: 'err', title: 'Could not start the run now', detail: 'no such ticket. Reload the list to see what is there now.' }]);
+      m.view.destroy();
+    } },
+    { name: 'a repeating schedule\'s Run now with the server unreachable', run: async () => {
+      const m = mount({ routes: { 'POST /api/schedules/sch_1/run-now': 'offline' } });
+      await m.view.load();
+      btn(m.repeatingHost, 'Run now').click();
+      await settle();
+      assert.deepEqual(m.toasts, [{ tone: 'err', title: 'Could not start the run now', detail: UNREACHABLE_DETAIL }]);
+      assert.equal(m.msgEl.textContent, '');
+      m.view.destroy();
+    } },
+    { name: 'a missed run\'s Run now in the feed with the server unreachable', run: async () => {
+      const missed = { ...TICKET, id: 't_m', status: 'missed' };
+      const m = mount({ routes: {
+        'GET /api/schedules': [200, { schedules: [], tickets: [missed], counts: {} }],
+        'GET /api/notifications': [200, { notifications: [{ id: 'n_1', kind: 'missed', ticketId: 't_m', scheduleId: null, at: SOON, title: 'Upgrade', resolvedAt: null }], unread: 1 }],
+        'POST /api/schedules/t_m/run-now': 'offline',
+      } });
+      await m.view.load();
+      btn(m.feedHost, 'Run now').click();
+      await settle();
+      assert.deepEqual(m.toasts, [{ tone: 'err', title: 'Could not start the run now', detail: UNREACHABLE_DETAIL }]);
       m.view.destroy();
     } },
   ]);

@@ -32,7 +32,7 @@ export function createCommandCard({ doc, card, onStop, onShow = () => {}, expand
   el.dataset.blockId = card.blockId;
   const head = h(doc, 'div', 'ask-cmd-head');
   const pill = h(doc, 'span', 'ask-cmd-pill st-peach', 'running');
-  const stop = h(doc, 'button', 'ask-cmd-stop', 'Stop');            // styled like .ask-rc-open (there is no .btn-sm)
+  const stop = h(doc, 'button', 'btn btn-sm btn-danger ask-cmd-stop', 'Stop');
   stop.type = 'button';
   stop.setAttribute('aria-label', 'Stop this command');
   stop.addEventListener('click', () => { stop.disabled = true; onStop(card.sessionId); });

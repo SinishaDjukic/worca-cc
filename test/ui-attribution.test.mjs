@@ -135,37 +135,53 @@ async function history(rows, whoami = SHARED) {
   return ctx;
 }
 // The listed finished runs, by pipeline id (group copies only: Needs you repeats rows).
-const rowIds = (ctx) => [...ctx.doc.querySelectorAll('#runs-list .runs-row[data-slot="group"][data-kind="hist"]')]
+const rowIds = (ctx) => [...ctx.doc.querySelectorAll('#runs-list .runs-row[data-kind="hist"]')]
   .map((r) => r.dataset.pipelineId).sort();
+// The View menu's "Started by" section (runs redesign D6): its items as [label, checked], and a pick by label.
+function openView(ctx) {
+  ctx.doc.querySelector('.wfv-menu') && ctx.doc.body.dispatchEvent(new ctx.window.Event('pointerdown', { bubbles: true }));
+  ctx.doc.getElementById('runs-view-btn').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  return ctx.doc.querySelector('.wfv-menu');
+}
+function people(ctx) {
+  const menu = openView(ctx);
+  const kids = [...menu.children];
+  const at = kids.findIndex((n) => n.classList.contains('wfv-menu-h') && n.textContent === 'Started by');
+  if (at < 0) return null;
+  const out = [];
+  for (const n of kids.slice(at + 1)) { if (!n.matches('[role="menuitemradio"]')) break; out.push(n); }
+  return out;
+}
 
-test('Runs list: Started-by pills filter every group (you first, again clears); none on a solo/local deployment', async () => {
+test('Runs list: the View menu\'s Started by narrows every section (you first, Everyone clears); none on a solo/local deployment', async () => {
   await checkRows([
     { name: 'Runs list: a one-person or local deployment shows no Started-by filter', run: async () => {
       for (const whoami of [SOLO, { name: null, source: 'local', shared: false }]) {
         const ctx = await history([ROW({ id: 'a2', startedBy: 'ada@example.com' }), ROW({ id: 'a1', startedBy: 'Solo Operator' })], whoami);
         assert.deepEqual(rowIds(ctx), ['a1', 'a2'], 'the runs are listed');
-        assert.equal(ctx.doc.querySelectorAll('#historyFilter .hist-pill.person').length, 0, 'no Started by filter');
+        assert.equal(people(ctx), null, 'the View menu has no Started by header');
       }
     } },
-    { name: 'Runs filter: "Started by" pills, you first; one filters every group, again clears', run: async () => {
+    { name: 'Runs filter: "Started by" in the View menu, you first; a person filters every section, Everyone clears', run: async () => {
       const ctx = await history([
         ROW({ id: 'b3', startedBy: 'ada@example.com', projectKey: 'beta-00000002', projectName: 'Beta', projectDir: '/x/beta' }),
         ROW({ id: 'a3', startedBy: 'ada@example.com' }),
         ROW({ id: 'a2', startedBy: 'grace@example.com' }),
         ROW({ id: 'a1', startedBy: ME }),
       ]);
-      const pills = () => [...ctx.doc.querySelectorAll('#historyFilter .hist-pill.person')];
-      assert.deepEqual(pills().map((b) => b.textContent.replace(/\s+/g, ' ').trim()), ['Myou 1', 'Aada@example.com 2', 'Ggrace@example.com 1']);
+      const label = (n) => n.querySelector('.wfv-menu-l').textContent;
+      assert.deepEqual(people(ctx).map(label), ['Everyone', 'you', 'ada@example.com', 'grace@example.com']);
       assert.deepEqual(rowIds(ctx), ['a1', 'a2', 'a3', 'b3']);
-      pills()[1].dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+      people(ctx)[2].dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
       await settle(ctx.window);
       assert.deepEqual(rowIds(ctx), ['a3', 'b3'], "only ada's runs, in both projects");
-      assert.equal(pills()[1].getAttribute('aria-pressed'), 'true');
-      // clicking the active person pill again shows everyone
-      pills()[1].dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+      assert.equal(people(ctx)[2].getAttribute('aria-checked'), 'true');
+      assert.match(ctx.doc.querySelector('#runs-view-chip .runs-view-chip-t').textContent, /^ada@example\.com · 2 of 2 runs$/);
+      // Everyone shows every run again
+      people(ctx)[0].dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
       await settle(ctx.window);
       assert.deepEqual(rowIds(ctx), ['a1', 'a2', 'a3', 'b3']);
-      assert.equal(pills()[1].getAttribute('aria-pressed'), 'false');
+      assert.equal(people(ctx)[2].getAttribute('aria-checked'), 'false');
     } },
   ]);
 });

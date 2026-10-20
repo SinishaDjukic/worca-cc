@@ -420,7 +420,8 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
       const subPatchable = !!(b.card && (b.card.type === 'workflow' || b.card.type === 'metrics'
         || b.card.type === 'policy' || b.card.type === 'schedule' || b.card.type === 'model' || b.card.type === 'clone' || b.card.type === 'web'
         || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away'
-        || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request'
+        || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship'
+        || b.card.type === 'changes' || b.card.type === 'route'
         || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'
         || (b.card.type === 'progress' && !!b.card.fix)));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
@@ -611,6 +612,20 @@ export function findRunLinksByPipeline(pipelineId) {
   getDb();
   if (typeof pipelineId !== 'string' || !pipelineId) return [];
   return prepare('SELECT * FROM ask_run_links WHERE pipeline_id = ? ORDER BY created_at DESC, run_id').all(pipelineId).map(rowToRunLink);
+}
+
+/** An old `#running/<runId>` link (chat history) → its saved run: `{ pipelineId, historyKey }` (the `#history/` key,
+ *  as listAllPipelines builds it), or null when no chat ever linked that id or the run was deleted. A resumed run's
+ *  link row carries the new runId (updateRunLink), so a link from before the resume cannot resolve. */
+export function runLinkTarget(runId) {
+  getDb();
+  if (typeof runId !== 'string' || !runId) return null;
+  const r = prepare(`SELECT p.id, p.target, p.project_key, p.workspace_key FROM ask_run_links l
+    JOIN pipelines p ON p.id = l.pipeline_id
+    WHERE l.run_id = ? AND p.deleted_at IS NULL ORDER BY l.created_at DESC LIMIT 1`).get(runId);
+  if (!r) return null;
+  const historyKey = r.target === 'workspace' && r.workspace_key ? `workspaces/${r.workspace_key}` : r.project_key || null;
+  return historyKey ? { pipelineId: r.id, historyKey } : null;
 }
 
 export function listRunLinks(threadId) {

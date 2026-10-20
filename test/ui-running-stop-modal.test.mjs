@@ -421,10 +421,14 @@ test('a stray error frame after a pause leaves the run paused', async () => {
   assert.equal(scr.querySelector('.rd-stop').hidden, false);
 });
 
-test('an INTERRUPTED run offers no Stop on its page (it stays resumable)', async () => {
+test('an INTERRUPTED run offers no working Stop on its page (it stays resumable)', async () => {
   const ctx = await boot();
   seedPaused(ctx, { status: 'interrupted' });
   openDetail(ctx);
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(ctx.window.document.querySelector('#run-detail .rd-stop').hidden, true);
+  // The one run model lists Stop for a parked run (runs redesign slice 4): it shows, disabled, with the reason.
+  const stop = ctx.window.document.querySelector('#run-detail .rd-stop');
+  assert.equal(stop.hidden, false);
+  assert.equal(stop.disabled, true);
+  assert.equal(stop.title, 'An interrupted run cannot be stopped');
 });

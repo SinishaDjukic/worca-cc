@@ -48,7 +48,7 @@ function glyph(doc, body) {
 function fileActions(doc, item, href, ctx, tid) {
   const box = make(doc, 'span', 'ask-filescard-acts');
   if (item.source === true && tid && typeof ctx.revealFile === 'function' && typeof ctx.revealInfo === 'function') {
-    const fb = make(doc, 'button', 'ask-filescard-ib ask-filescard-reveal');
+    const fb = make(doc, 'button', 'btn btn-sm btn-quiet btn-icon ask-filescard-ib ask-filescard-reveal');
     fb.type = 'button';
     fb.hidden = true;
     fb.appendChild(glyph(doc, GLYPH.folder));
@@ -62,7 +62,7 @@ function fileActions(doc, item, href, ctx, tid) {
     box.appendChild(fb);
   }
   if (href) {
-    const dl = make(doc, 'a', 'ask-filescard-ib ask-filescard-dl');
+    const dl = make(doc, 'a', 'btn btn-sm btn-quiet btn-icon ask-filescard-ib ask-filescard-dl');
     dl.href = href;
     dl.setAttribute('download', item.name);
     dl.title = 'Download';

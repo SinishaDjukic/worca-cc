@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
 import { listAllPipelines, enrichPipelinesPr, persistMemberPrState, readMemberPrStates } from '../src/core/artifacts.mjs';
+import { setWatch, updateWatch } from '../src/core/pr-watch.mjs';
 import { seedWorkspacePipeline } from './helpers/db-seed.mjs';
 
 let home, prevHome, runId, runDir;
@@ -142,4 +143,23 @@ test('a legacy workspace row (no workspace_meta.projects) keeps its primary-only
   assert.deepEqual(row.members, []);
   assert.deepEqual(row.pr, { number: 4, state: 'MERGED', url: 'https://github.com/o/old/pull/4', isDraft: false, mergeable: 'UNKNOWN' },
     'no members -> the primary-only lookup stands (never overwritten with a null rollup)');
+});
+
+test('a live Watch PR fix round marks that member PR fixing, in the enrich batch and the History row (D31)', async () => {
+  stub();
+  const WEB8 = 'https://github.com/o/web/pull/8';
+  setWatch({ prUrl: WEB8, pipelineId: runId, memberKey: 'web-00000002', enabled: true });
+  const batches = [];
+  await enrichPipelinesPr(async (items) => { batches.push(...items); });
+  const prOf = (members, key) => members.find((m) => m.memberKey === key).pr;
+  assert.equal(prOf(batches.find((x) => x.id === runId).members, 'web-00000002').fixing, undefined, 'only watching: not Fixing');
+  updateWatch(WEB8, { status: 'fixing' });
+  batches.length = 0;
+  await enrichPipelinesPr(async (items) => { batches.push(...items); });
+  const sent = batches.find((x) => x.id === runId);
+  assert.equal(prOf(sent.members, 'web-00000002').fixing, true);
+  assert.equal(prOf(sent.members, 'doc-00000003').fixing, undefined, 'other members stay as they are');
+  assert.equal(readMemberPrStates(runId)['web-00000002'].fixing, undefined, 'fixing is live, never recorded');
+  const row = (await listAllPipelines({ withPr: true })).find((p) => p.id === runId);
+  assert.equal(prOf(row.members, 'web-00000002').fixing, true, 'the History row reads the same');
 });

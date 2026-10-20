@@ -40,3 +40,12 @@ test('shapeRecordFrom restores the recorded parts from a stored shapeStats and i
   assert.deepEqual(shapeRecordFrom(stored), { questions: { asked: 2, skipped: 1 }, revises: [{ round: 1, by: 'check' }], shapeScore: 0.5 });
   assert.deepEqual(shapeRecordFrom('nope'), { questions: { asked: 0, skipped: 0 }, revises: [], shapeScore: null });
 });
+
+test('role reviews: n_roles slice rows are shaping cost, and shaping + building is the run total', () => {
+  const withRoles = [...steps,
+    { nodeId: 'n_roles', kind: 'task', status: 'done', costUsd: 0.5 }, { nodeId: 'n_roles', kind: 'task', status: 'done', costUsd: 0.5 }];
+  const { cost } = buildShapeStats(shapeRecordFrom(null), withRoles);
+  assert.deepEqual(cost, { shaping: 29, building: 31 });
+  const total = withRoles.reduce((n, s) => n + (s.costUsd || 0), 0);
+  assert.equal(cost.shaping + cost.building, total);
+});

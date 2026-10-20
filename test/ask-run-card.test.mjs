@@ -42,6 +42,11 @@ test('snapshotFromState: a REST row becomes a frozen snapshot with decor, progre
   assert.equal(s.live, true);
   assert.deepEqual(snapshotFromState(STATE({ status: 'paused' }), { now: 0 }).decor.liveWireIds, [], 'a paused row is resolved: no ants');
   assert.equal(snapshotFromState(STATE({ status: 'done' })).terminal, true);
+  // Runs redesign slice 4 (D9): the raw run the one model reads; a REST state never carries the question.
+  const up = snapshotFromState(STATE({ status: 'PAUSED' }), { now: 0 });
+  assert.equal(up.run.status, up.status);
+  assert.equal(up.run.status, 'paused');
+  assert.equal(up.run.pendingQuestion, null);
   assert.equal(snapshotFromState(STATE({ target: 'workspace', workspaceId: 'wks-1', projects: [{ projectName: 'a' }, { projectName: 'b' }] })).workspaceId, 'wks-1');
   const v1 = snapshotFromState(STATE({ stepper: null }));
   assert.equal(v1.decor, null, 'a v1 row draws no graph');

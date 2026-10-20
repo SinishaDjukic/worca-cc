@@ -347,6 +347,7 @@ export async function restorePipeline({ projectDir = null, key = null, workspace
   if (ACTIVE.has(String(row.status || '').toLowerCase())) {
     throw err('cannot restore a running pipeline', 'RUNNING');
   }
+  if (row.deleted_at) throw err('pipeline was deleted', 'DELETED');
   if (!row.archived_at) {
     return { ok: true, id: row.id, alreadyActive: true, warnings: [] };
   }
@@ -692,4 +693,25 @@ async function applyRetainedUnderLock({ storeKey, id, projectDir, by }) {
 // kept for the pre-existing suites (test/pipeline-delete.test.mjs,
 // test/persist-roundtrip.test.mjs) that assert the FS/branch reclamation half
 // under the old name — which archive still performs in full.
+/** Delete (runs redesign §3.2): permanent. archivePipeline removes the run's files, worktree and local branch (remote
+ *  branches and PRs are never touched); then the row is anonymised in place and stamped deleted_at. The row itself
+ *  stays so its cost stays in Statistics, which sums every pipelines row. */
+export async function purgePipeline({ projectDir = null, key = null, workspaceKey = null, id } = {}) {
+  const db = getDb();
+  const row = db.prepare('SELECT archived_at, deleted_at FROM pipelines WHERE id = ?').get(String(id));
+  if (!row) throw Object.assign(new Error('pipeline not found'), { code: 'NOT_FOUND' });
+  if (row.deleted_at) return { ok: true, id, alreadyDeleted: true, deleted: true, warnings: [] };
+  const report = row.archived_at ? { ok: true, id, warnings: [] } : await archivePipeline({ projectDir, key, workspaceKey, id });
+  if (!report) return null;            // archivePipeline found no row for this scope: the bulk wrapper reports "run not found"
+  const ts = new Date().toISOString();
+  tx(() => {
+    db.prepare(`UPDATE pipelines SET title = 'deleted run', prompt = NULL, started_by = NULL,
+      archived_at = COALESCE(archived_at, ?), deleted_at = ? WHERE id = ?`).run(ts, ts, String(id));
+    db.prepare('DELETE FROM run_tags WHERE pipeline_id = ?').run(String(id));
+    db.prepare('DELETE FROM run_tag_events WHERE pipeline_id = ?').run(String(id));   // tag history is part of the record
+    db.prepare('DELETE FROM run_group_members WHERE pipeline_id = ?').run(String(id));
+  });
+  return { ...report, deleted: true };
+}
+
 export { archivePipeline as deletePipeline };

@@ -106,6 +106,18 @@ const TOTALS_FROM = `
 const TOTALS_SELECT = `
     SELECT ${TOTALS_COLUMNS}${TOTALS_FROM}`;
 
+/** Spend over the given pipelines with Statistics' own per-row rule (row total, else the step sum), deleted and
+ *  archived rows included, so a group total and Statistics agree (runs redesign §2.4). */
+export function spendOfPipelines(ids) {
+  const list = [...new Set((ids || []).filter(Boolean).map(String))];
+  if (!list.length) return { usd: 0, byPipeline: {} };
+  const rows = prepare(`SELECT p.id AS id,
+      CASE WHEN p.total_cost_usd > 0 THEN p.total_cost_usd ELSE COALESCE(s.sc, 0) END AS usd ${TOTALS_FROM}
+    WHERE p.id IN (${list.map(() => '?').join(', ')})`).all(...list);
+  const byPipeline = Object.fromEntries(rows.map((r) => [r.id, roundUsd(r.usd)]));
+  return { usd: roundUsd(rows.reduce((a, r) => a + Number(r.usd || 0), 0)), byPipeline };
+}
+
 export const RUN_SIZES = Object.freeze(['small', 'medium', 'large']);
 
 // Shaper (D28): finished runs started in the window that have a size, shaped (shape_stats set) vs not.

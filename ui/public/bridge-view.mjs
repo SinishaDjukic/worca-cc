@@ -7,6 +7,7 @@
 // and the delegated listeners. Interactive elements carry a routing class
 // (mv-cp-*, mv-pv-*, mvi-*, mv-conn-*) plus data-provider / data-id.
 
+import { icon } from './icons.mjs';
 import { codexReaches, runsOnText } from '../../src/shared/connections.mjs';
 
 function h(doc, tag, cls, text) {
@@ -106,7 +107,7 @@ export function needsSignInPill(m, { doc = globalThis.document } = {}) {
   const b = h(doc, 'span', 'badge red mv-needs-signin-badge', m.signInReason === 'terms' ? 'needs acknowledgement' : m.signInReason === 'no_key' ? 'needs API key' : 'needs sign-in');
   b.title = m.signInMessage || 'The provider behind this model is not usable yet.';
   wrap.appendChild(b);
-  const btn = h(doc, 'button', 'btn-ghost mv-signin', m.signInReason === 'no_key' ? 'Set key' : 'Sign in');
+  const btn = h(doc, 'button', 'btn mv-signin', m.signInReason === 'no_key' ? 'Set key' : 'Sign in');
   btn.type = 'button';
   btn.dataset.provider = m.bridged || '';
   wrap.appendChild(btn);
@@ -238,7 +239,7 @@ function renderSpeechRow(doc, sp) {
     // The built-in engines' downloads (~/.worca-cc/speech-cache); the next mic use fetches them again.
     const cache = h(doc, 'div', 'mv-pv-btns mv-sp-cache');
     cache.appendChild(h(doc, 'small', 'hint', `Downloaded speech models: ${formatSpeechBytes(sp.cacheBytes)}`));
-    const clear = h(doc, 'button', 'btn-ghost mv-sp-clear', 'Remove speech models');
+    const clear = h(doc, 'button', 'btn mv-sp-clear', 'Remove speech models');
     clear.type = 'button';
     cache.appendChild(clear);
     main.appendChild(cache);
@@ -284,7 +285,7 @@ function renderSpeechRow(doc, sp) {
     }
     for (const [field, label, placeholder] of SPEECH_FIELDS[kind]) server.appendChild(speechInput(doc, kind, field, label, placeholder, s));
     const btns = h(doc, 'div', 'mv-pv-btns');
-    const test = h(doc, 'button', 'btn-ghost mv-sp-test', kind === 'stt' ? 'Test speech-to-text' : 'Test text-to-speech');
+    const test = h(doc, 'button', 'btn mv-sp-test', kind === 'stt' ? 'Test speech-to-text' : 'Test text-to-speech');
     test.type = 'button';
     test.dataset.kind = kind;
     btns.appendChild(test);
@@ -295,7 +296,7 @@ function renderSpeechRow(doc, sp) {
   row.appendChild(ctl);
   const save = h(doc, 'div', 'mv-pv-btns');
   save.dataset.cardActions = '';
-  const b = h(doc, 'button', 'btn-go mv-sp-save', 'Save');
+  const b = h(doc, 'button', 'btn btn-primary mv-sp-save', 'Save');
   b.type = 'button';
   save.appendChild(b);
   row.appendChild(save);
@@ -384,24 +385,24 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
 
   const cpBtns = h(doc, 'div', 'mv-pv-btns');
   cpBtns.dataset.cardActions = '';
-  const imp = h(doc, 'button', 'btn-ghost mv-cp-fetch-models', 'Import models…');
+  const imp = h(doc, 'button', 'btn mv-cp-fetch-models', 'Import models…');
   // With the broker, the import runs with the viewer's own Copilot sign-in (on the key page).
   imp.type = 'button'; imp.disabled = !c.connected && !brokered;
   if (imp.disabled) imp.title = 'Sign in first';
   cpBtns.appendChild(imp);
-  const quotaBtn = h(doc, 'button', 'btn-ghost mv-cp-quota-refresh', 'Refresh usage');
+  const quotaBtn = h(doc, 'button', 'btn mv-cp-quota-refresh', 'Refresh usage');
   quotaBtn.type = 'button'; quotaBtn.disabled = !c.connected;
   cpBtns.appendChild(quotaBtn);
   if (c.connected) {
-    const outBtn = h(doc, 'button', 'btn-ghost mv-cp-signout', 'Sign out');
+    const outBtn = h(doc, 'button', 'btn mv-cp-signout', 'Sign out');
     outBtn.type = 'button';
     cpBtns.appendChild(outBtn);
   } else if (!signIn) {
-    const inBtn = h(doc, 'button', 'btn-go mv-cp-signin', 'Sign in…');
+    const inBtn = h(doc, 'button', 'btn btn-primary mv-cp-signin', 'Sign in…');
     inBtn.type = 'button';
     cpBtns.appendChild(inBtn);
   }
-  const terms = h(doc, 'button', 'btn-ghost mv-cp-terms', c.acknowledgedTerms ? 'Re-read notice' : 'Read notice');
+  const terms = h(doc, 'button', 'btn mv-cp-terms', c.acknowledgedTerms ? 'Re-read notice' : 'Read notice');
   terms.type = 'button';
   cpBtns.appendChild(terms);
   cp.appendChild(cpBtns);
@@ -462,15 +463,15 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     btns.dataset.cardActions = '';
     if (name === 'openai') {
       // §8.4 for a server you run: ask the endpoint what it serves instead of typing model ids.
-      const browse = h(doc, 'button', 'btn-ghost mv-pv-browse', 'Import models…');
+      const browse = h(doc, 'button', 'btn mv-pv-browse', 'Import models…');
       browse.type = 'button'; browse.dataset.provider = name;
       browse.title = 'List what this endpoint serves (llama.cpp, Ollama, LM Studio, vLLM…) and import the ones you want';
       btns.appendChild(browse);
     }
-    const test = h(doc, 'button', 'btn-ghost mv-pv-test', 'Test connection');
+    const test = h(doc, 'button', 'btn mv-pv-test', 'Test connection');
     test.type = 'button'; test.dataset.provider = name;
     btns.appendChild(test);
-    const save = h(doc, 'button', 'btn-go mv-pv-save', 'Save');
+    const save = h(doc, 'button', 'btn btn-primary mv-pv-save', 'Save');
     save.type = 'button'; save.dataset.provider = name;
     btns.appendChild(save);
     row.appendChild(btns);
@@ -536,17 +537,17 @@ export function renderCopilotSignIn(flow, { doc = globalThis.document } = {}) {
   box.appendChild(h(doc, 'small', 'hint', 'Enter this code on github.com to connect your Copilot account:'));
   const codeRow = h(doc, 'div', 'mv-cp-code-row');
   codeRow.appendChild(h(doc, 'code', 'mv-cp-code', flow.userCode || ''));
-  const copy = h(doc, 'button', 'btn-ghost mv-cp-copy', 'Copy code');
+  const copy = h(doc, 'button', 'btn mv-cp-copy', 'Copy code');
   copy.type = 'button'; copy.dataset.code = flow.userCode || '';
   codeRow.appendChild(copy);
-  const link = h(doc, 'a', 'btn-ghost mv-cp-open', 'Open github.com/login/device');
+  const link = h(doc, 'a', 'btn mv-cp-open', 'Open github.com/login/device');
   link.href = flow.verificationUri || 'https://github.com/login/device';
   link.target = '_blank'; link.rel = 'noopener';
   codeRow.appendChild(link);
   box.appendChild(codeRow);
   const status = h(doc, 'small', `hint mv-cp-status${flow.error ? ' err' : ''}`, flow.error || flow.status || 'Waiting for approval…');
   box.appendChild(status);
-  const cancel = h(doc, 'button', 'btn-ghost mv-cp-cancel', flow.error ? 'Dismiss' : 'Cancel');
+  const cancel = h(doc, 'button', 'btn mv-cp-cancel', flow.error ? 'Dismiss' : 'Cancel');
   cancel.type = 'button';
   box.appendChild(cancel);
   return box;
@@ -554,7 +555,12 @@ export function renderCopilotSignIn(flow, { doc = globalThis.document } = {}) {
 
 // ── Import from Copilot (§8.4) ───────────────────────────────────────────────
 
-const yesNo = (v) => (v ? '✓' : '—');
+/** A yes/no table cell: a check icon (named "yes" for screen readers) or a dash. */
+const yesNoCell = (doc, v) => {
+  const td = h(doc, 'td', null, v ? null : '—');
+  if (v) { td.setAttribute('aria-label', 'yes'); td.append(icon(doc, 'check', 12)); }
+  return td;
+};
 const fmtK = (n) => (n ? `${Math.round(n / 1000)}k` : '—');
 
 /** The import sheet over GET /api/providers/copilot/models' list. */
@@ -593,9 +599,9 @@ export function renderImportSheet(models, { doc = globalThis.document } = {}) {
       tr.appendChild(nameTd);
       tr.appendChild(h(doc, 'td', null, m.vendor || '—'));
       tr.appendChild(h(doc, 'td', 'num', fmtK(m.contextWindow || m.maxPromptTokens)));
-      tr.appendChild(h(doc, 'td', null, yesNo(m.toolCalls)));
-      tr.appendChild(h(doc, 'td', null, yesNo(m.vision)));
-      tr.appendChild(h(doc, 'td', null, yesNo(m.reasoning)));
+      tr.appendChild(yesNoCell(doc, m.toolCalls));
+      tr.appendChild(yesNoCell(doc, m.vision));
+      tr.appendChild(yesNoCell(doc, m.reasoning));
       tr.appendChild(h(doc, 'td', 'mvi-api', API_SHORT[m.api] || '—'));
       const status = [];
       if (m.inCatalog) status.push('in catalog ✓');
@@ -611,9 +617,9 @@ export function renderImportSheet(models, { doc = globalThis.document } = {}) {
   msg.setAttribute('aria-live', 'polite');
   root.appendChild(msg);
   const btns = h(doc, 'div', 'mv-editor-btns');
-  const go = h(doc, 'button', 'btn-go mvi-go', 'Import selected');
+  const go = h(doc, 'button', 'btn btn-primary mvi-go', 'Import selected');
   go.type = 'button'; go.disabled = !list.length;
-  const cancel = h(doc, 'button', 'btn-ghost mvi-cancel', 'Cancel');
+  const cancel = h(doc, 'button', 'btn mvi-cancel', 'Cancel');
   cancel.type = 'button';
   btns.appendChild(go); btns.appendChild(cancel);
   root.appendChild(btns);
@@ -701,8 +707,8 @@ export function renderEndpointSheet(payload, { doc = globalThis.document } = {})
         ctxTd.appendChild(h(doc, 'span', 'mvi-ctx-unknown', `? · supports ${fmtK(m.trainedContext)}`));
       }
       tr.appendChild(ctxTd);
-      tr.appendChild(h(doc, 'td', null, m.toolCalls === null || m.toolCalls === undefined ? '?' : yesNo(m.toolCalls)));
-      tr.appendChild(h(doc, 'td', null, m.vision === null || m.vision === undefined ? '?' : yesNo(m.vision)));
+      tr.appendChild(m.toolCalls === null || m.toolCalls === undefined ? h(doc, 'td', null, '?') : yesNoCell(doc, m.toolCalls));
+      tr.appendChild(m.vision === null || m.vision === undefined ? h(doc, 'td', null, '?') : yesNoCell(doc, m.vision));
       const status = [];
       if (m.inCatalog) status.push('in catalog ✓');
       if (m.loaded === true) status.push('loaded');
@@ -718,9 +724,9 @@ export function renderEndpointSheet(payload, { doc = globalThis.document } = {})
   msg.setAttribute('aria-live', 'polite');
   root.appendChild(msg);
   const btns = h(doc, 'div', 'mv-editor-btns');
-  const go = h(doc, 'button', 'btn-go mvi-go', 'Import selected');
+  const go = h(doc, 'button', 'btn btn-primary mvi-go', 'Import selected');
   go.type = 'button'; go.disabled = !list.some((m) => m.importable !== false);
-  const cancel = h(doc, 'button', 'btn-ghost mvi-cancel', 'Cancel');
+  const cancel = h(doc, 'button', 'btn mvi-cancel', 'Cancel');
   cancel.type = 'button';
   btns.appendChild(go); btns.appendChild(cancel);
   root.appendChild(btns);

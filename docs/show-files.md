@@ -1,6 +1,6 @@
 # Files in the chat
 
-Ask Worca can put files into its reply as a **files card**. Images show inline as tiles. Any other file is a row
+Chat can put files into its reply as a **files card**. Images show inline as tiles. Any other file is a row
 with its kind and size. Every file has two icon buttons, the same as a run's artifacts: **Download**, and **Show in
 folder** (labelled with the app, for example *Show in Finder*). A tile shows them when you point at it. A click on a
 tile or a row opens the viewer: ←/→ steps through the card's files, an image zooms on click, and the viewer has
@@ -96,7 +96,7 @@ screenshot that is `$WORCA_ASK_OUT`, for a project file the project folder, for 
   `show_files`; your uploads are never blocked by it.
 - The per-kind caps in the table above.
 
-Every text kind is redacted when it is copied, with the same patterns as the rest of Ask Worca. This is best effort:
+Every text kind is redacted when it is copied, with the same patterns as the rest of Chat. This is best effort:
 redaction is pattern-based, and binary files (images, PDFs, media) cannot be redacted, so they are shown as they
 are. SVG is shown as an image and is not redacted.
 

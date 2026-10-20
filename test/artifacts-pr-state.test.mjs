@@ -120,8 +120,11 @@ test('enrichPipelinesPr batches {projectKey,id,pr} with a final done; one empty 
       assert.ok(a, 'seeded branch row was enriched');
       assert.deepEqual(Object.keys(a).sort(), ['id', 'pr', 'projectKey'], 'only {projectKey,id,pr}');
       assert.deepEqual(a.pr, { state: 'OPEN', url: 'https://gh/x/pull/7', number: 7, isDraft: false, mergeable: 'CONFLICTING' });
-      assert.equal(prCalls.length, collected.length, 'one gh call per PR: no separate mergeability read');
-      assert.ok(prCalls.every((args) => args[1] === 'list' && args.includes('number,state,url,isDraft,mergeable')));
+      const lists = prCalls.filter((a) => a[1] === 'list');
+      assert.equal(lists.length, collected.length, 'one lookup per PR: no separate mergeability read');
+      assert.ok(lists.every((args) => args.includes('number,state,url,isDraft,mergeable')));
+      assert.ok(prCalls.filter((a) => a[1] !== 'list').every((a) => a[1] === 'view' && a[4] === 'isDraft,reviewDecision,mergeable,statusCheckRollup'),
+        'the only other call is the OPEN PR’s CI verdict (D31)');
       assert.equal(finalDone, true, 'the final batch flags done=true');
     } },
     { name: 'enrichPipelinesPr sends a closed-only PR (the Runs list draws it) but never records it', run: async () => {

@@ -63,7 +63,7 @@ const ICON_CLOSE = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" 
 function iconButton(doc, cls, label, tip, svg) {
   const b = doc.createElement('button');
   b.type = 'button';
-  b.className = `btn-ghost ${cls}`;
+  b.className = `btn ${cls}`;
   b.setAttribute('aria-label', label);
   b.title = tip;
   b.innerHTML = svg;

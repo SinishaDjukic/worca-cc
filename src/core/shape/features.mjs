@@ -3,18 +3,27 @@
 // every route that reaches it is gated (ui/server.mjs).
 import { randomUUID } from 'node:crypto';
 import { getDb, tx } from '../db.mjs';                  // node:sqlite: tx(fn), never db.transaction (F23)
-import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf } from '../scheduler.mjs';
+import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf, stackedPrBaseOf } from '../scheduler.mjs';
 import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } from '../artifacts.mjs';
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
+import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
+import { PLAN_ASK_KIND } from './run.mjs';
+import { roundsOf } from './rounds.mjs';
+import { getWatch, stoppedWatchFact } from '../pr-watch.mjs';
+import { clipTitle } from '../title.mjs';
 
 const j = (t, d) => { try { return t ? JSON.parse(t) : d; } catch { return d; } };
 const iso = (ms) => new Date(ms).toISOString();
 const FILES_IN_SCOPE = 25;
 
+export const SLICE_TITLE_MAX = 40;
+
+/** A slice run's title (review D): "Run 2 · Pin charts". The feature name lives in the run's "Part of …" row; the
+ *  feature title and total stay in the signature for the callers. */
 export function sliceTitle(featureTitle, index, total, slice) {
-  return `${featureTitle} · ${index}/${total}: ${slice.title}`.slice(0, 200);
+  return `Run ${index} · ${clipTitle(slice && slice.title, SLICE_TITLE_MAX) || `slice ${index}`}`;
 }
 
 /** F24: a stored request's run options. A fired ticket reads its model and starter from `request.internal`
@@ -126,7 +135,7 @@ function sliceRows(featureId) {
   return getDb().prepare('SELECT * FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(String(featureId)).map((r) => {
     const ticket = r.ticket_id ? getTicket(r.ticket_id) : null;
     return { index: r.idx, sliceId: r.slice_id, title: r.title, ticketId: r.ticket_id, ticket,
-      pipelineId: r.pipeline_id || ticket?.pipelineId || null, draftPrUrl: r.draft_pr_url || null };
+      pipelineId: r.pipeline_id || ticket?.pipelineId || null, draftPrUrl: r.draft_pr_url || null, kind: r.kind || null };
   });
 }
 
@@ -149,40 +158,160 @@ function sliceState(row, live) {
   return (p && PIPELINE_STATE[p.status]) || 'starting';
 }
 
+/** L8: the runs-map entry as featureView's `live` reads it (ui/server.mjs liveSliceOf). `waiting` is a pending plan
+ *  ask, `asking` any other pending ask; `ask` names it for the feature card's open step (s2, D9). */
+export function liveSliceFrom({ runId, status, pendingQuestion = null, approved = false }) {
+  const pq = pendingQuestion || null;
+  const plan = !!pq && pq.kind === PLAN_ASK_KIND;
+  return { runId, status: String(status || ''), waiting: plan, asking: !!pq && !plan, approved: !!approved,
+    ask: pq ? { id: pq.id || null, kind: plan && pq.plan && pq.plan.outline ? 'outline' : pq.kind } : null };
+}
+
+const auditTexts = (pid) => (pid ? getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(String(pid)).map((r) => r.text) : []);
+function clarifyOf(pid) {
+  const r = readClarifyRow(pid);
+  return { questions: Array.isArray(r.questions?.questions) ? r.questions.questions : [], answers: Array.isArray(r.answers?.answers) ? r.answers.answers : [] };
+}
+/** D7: the feature card's step log, from the origin run's clarify row and audit lines, each later run's audit lines,
+ *  and (while re-planning) every run after the last done one: replanBrief re-plans the halted run with the canceled. */
+function featureLog(f, slices) {
+  const lastDone = Math.max(0, ...slices.filter((s) => s.state === 'done').map((s) => s.index));
+  const replan = f.status === 'replanning' || f.status === 'replanned'
+    ? slices.filter((s) => s.index > lastDone).map((s) => s.index) : null;
+  return buildDecisionLog({
+    clarify: clarifyOf(f.origin_pipeline_id), origin: auditTexts(f.origin_pipeline_id), sliced: true,
+    runs: slices.filter((s) => s.index > 1 && s.pipelineId).map((s) => ({ index: s.index, events: auditTexts(s.pipelineId) })),
+    slices: slices.map((s) => {
+      const o = f.outline.slices[s.index - 1] || {};
+      return { index: s.index, title: s.title, goal: o.goal || '', acceptance: Array.isArray(o.acceptance) ? o.acceptance : [] };
+    }),
+    replan,
+    rounds: slices.flatMap((s) => (s.rounds || []).map((r) => ({ run: s.index, ...r }))),
+  });
+}
+
 export function featureView(id, { live = () => null } = {}) {
   const f = featureRow(id);
   if (!f) return null;
-  const slices = sliceRows(id).map((r) => {
+  let ask = null;
+  const rows = sliceRows(id);
+  const rounds = roundsOf(rows.map((r) => r.pipelineId));
+  const slices = rows.map((r) => {
     const state = sliceState(r, live);
     const l = r.pipelineId ? live(r.pipelineId) : null;
+    if (!ask && l && l.ask) ask = { index: r.index, runId: l.runId || null, pipelineId: r.pipelineId, id: l.ask.id, kind: l.ask.kind };
     const pr0 = r.pipelineId ? readPrState(r.pipelineId) : null;
     // D24: the PR openSliceDraft opened as a draft reads "draft" until the feature ships (pr_state stays OPEN, P18).
     const pr = pr0 ? { ...pr0, draft: !f.ship_mode && !!r.draftPrUrl && r.draftPrUrl === pr0.url } : null;
     const s = f.outline.slices[r.index - 1] || {};
     return { index: r.index, title: r.title, goal: s.goal || '', estimate: s.estimate || null, state,
-      runId: l?.runId || null, pipelineId: r.pipelineId, ticketId: r.ticketId, pr };
+      runId: l?.runId || null, pipelineId: r.pipelineId, ticketId: r.ticketId, pr,
+      kind: r.kind || null, rounds: (r.pipelineId && rounds.get(r.pipelineId)) || [],
+      watch: pr && pr.url ? stoppedWatchFact(getWatch(pr.url)) : null };
   });
+  const roundLive = slices.some((s) => s.rounds.some((x) => LIVE_ROUND.has(x.status)));
+  const ideas = getDb().prepare(`SELECT COUNT(*) AS n FROM shape_feature_notes WHERE feature_id = ? AND kind = 'idea'
+    AND (run_index IS NULL OR run_index NOT IN (SELECT idx FROM shape_feature_slices WHERE feature_id = ? AND pipeline_id IS NOT NULL))`).get(f.id, f.id).n;
   const done = slices.filter((s) => s.state === 'done').length;
   const h = slices.find((s, i) => HALTS.has(s.state) || (i > 0 && STUCK.has(s.state) && slices[i - 1].state === 'done'));
   const waiting = h ? slices.filter((s) => s.index > h.index && (s.state === 'planned' || s.state === 'missed')).map((s) => s.index) : [];
   const status = f.status === 'active' && done === slices.length ? 'done' : f.status;
   // D24: Ship as once every slice is done, on a feature that is still active and not shipped. The suggestion is
   // async (featureShipSuggestion); the GET route merges it.
-  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !f.ship_mode,
-    mode: f.ship_mode || null, prUrl: f.ship_pr_url || null, suggested: null, linesAdded: null };
+  const lastPrUrl = slices.length ? (slices[slices.length - 1].pr?.url || null) : null;
+  const release = f.release_version ? { version: f.release_version, url: f.release_url || null, error: f.release_error || null } : null;
+  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !f.ship_mode && !roundLive,
+    mode: f.ship_mode || null, prUrl: f.ship_pr_url || null, lastPrUrl, suggested: null, linesAdded: null,
+    linesRemoved: null, files: null, release,
+    // s4: what the applied Ship card shows, wherever it renders (chat, group page, Plans).
+    result: f.ship_mode ? { mode: f.ship_mode, prUrl: f.ship_pr_url || lastPrUrl,
+      closed: f.ship_mode === 'one' ? (f.ship_closed ?? slices.filter((s) => s.pr && s.pr.state === 'CLOSED').length) : 0, release } : null };
   // The Re-plan the rest run (replanning/replanned): its ticket id is the run id it fires as (ui/server.mjs:2188).
   const rt = f.replan_ticket_id ? getTicket(f.replan_ticket_id) : null;
   const replan = rt ? { ticketId: rt.id, pipelineId: rt.pipelineId || null, runId: rt.pipelineId ? (live(rt.pipelineId)?.runId || null) : null } : null;
+  // s3 (D16): while re-planning, no slice asks; the Re-plan the rest run's Split ask is the card's open step.
+  if (!ask && f.status === 'replanning' && replan && replan.pipelineId) {
+    const l = live(replan.pipelineId);
+    if (l && l.ask) ask = { index: null, runId: l.runId || null, pipelineId: replan.pipelineId, id: l.ask.id, kind: l.ask.kind };
+  }
   return {
     id: f.id, title: f.title, projectKey: projectKey(f.project_dir),   // a History link needs it (F28)
     status, approveEach: f.approve_each !== 0, total: slices.length, done,
     halted: h ? { index: h.index, state: h.state, waiting } : null,
     open: slices.some((s) => ['planned', 'missed'].includes(s.state)),
     replacedBy: f.replaced_by || null, replan, slices, ship,
+    originPipelineId: f.origin_pipeline_id, ask, log: featureLog(f, slices), notes: { ideas },
   };
 }
 
 export const ONE_PR_MAX_LINES = 1500;
+
+const NOT_STARTED = new Set(['planned', 'missed']);
+const LIVE_ROUND = new Set(['running', 'starting', 'paused']);
+
+/** Shaper s5 (D11): a note on the feature for the next run not started yet (NULL when none is left). A plan note
+ *  with no run left to plan is not stored ({id: null, runIndex: null}): the card's caller refuses it. */
+export function addFeatureNote(featureId, { kind, text, by = null, now = Date.now() }) {
+  if (kind !== 'plan' && kind !== 'idea') throw new TypeError('kind must be plan or idea');
+  const v = featureView(featureId);
+  if (!v) return null;
+  const next = v.slices.find((s) => NOT_STARTED.has(s.state));
+  if (kind === 'plan' && !next) return { id: null, runIndex: null };
+  const id = `note_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+  getDb().prepare('INSERT INTO shape_feature_notes (id, feature_id, kind, text, run_index, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(id, featureId, kind, String(text).slice(0, 4000), next ? next.index : null, by, iso(now));
+  return { id, runIndex: next ? next.index : null };
+}
+
+/** The notes for run `index`, oldest first. */
+export function featureNotes(featureId, index) {
+  return getDb().prepare('SELECT kind, text FROM shape_feature_notes WHERE feature_id = ? AND run_index = ? ORDER BY created_at, rowid')
+    .all(String(featureId), Number(index)).map((r) => ({ kind: r.kind, text: r.text }));
+}
+
+/** The feature's base branch (slice 1's source): what a later run merges first (D14) and a follow-up starts from (D13). */
+export function featureBase(featureId) {
+  return getDb().prepare('SELECT source_branch FROM shape_features WHERE id = ?').get(String(featureId))?.source_branch || null;
+}
+
+/** D16: the feature's live round, or null (the ship verbs refuse while one runs). */
+export function liveRoundOf(featureId) {
+  const pids = sliceRows(featureId).map((s) => s.pipelineId).filter(Boolean);
+  for (const list of roundsOf(pids).values()) for (const r of list) if (LIVE_ROUND.has(r.status)) return r;
+  return null;
+}
+
+/** Shaper s5 (D13): run N+1 of the feature. 'extra' chains after the last run; 'follow-up' fires now from the base. */
+export function appendFeatureRun(featureId, { title, goal, kind, by = null, now = Date.now() }) {
+  if (kind !== 'extra' && kind !== 'follow-up') throw new TypeError('kind must be extra or follow-up');
+  const db = getDb();
+  const f = featureRow(featureId);
+  if (!f) return null;
+  const rows = sliceRows(featureId);
+  const index = rows.length + 1;
+  const last = rows[rows.length - 1];
+  const s = { id: `s${index}`, title: String(title).slice(0, 120), goal: String(goal || ''), inScope: [], outOfScope: [],
+    acceptance: [], dependsOn: [], estimate: null };
+  const outline = { ...f.outline, slices: [...f.outline.slices, s] };
+  const feature = { id: f.id, title: f.title };
+  let ticketId = null;
+  tx(() => {
+    const after = last.pipelineId ? { kind: 'pipeline', id: last.pipelineId } : { kind: 'ticket', id: last.ticketId };
+    const t = createTicket({
+      title: sliceTitle(f.title, index, index, s), projectDir: f.project_dir,
+      request: sliceRequest({ feature, index, outline, perspectives: f.perspectives, workflowId: f.workflow_id, base: f.base,
+        projectDir: f.project_dir, startedBy: by, sourceBranch: kind === 'follow-up' ? f.source_branch : null }),
+      ...(kind === 'extra' ? { after, afterPolicy: 'done', sourceFromPrevious: true } : { runAtMs: now }),
+      createdBy: by, now,
+    });
+    ticketId = t.id;
+    db.prepare('INSERT INTO shape_feature_slices (feature_id, idx, slice_id, title, ticket_id, pipeline_id, kind) VALUES (?, ?, ?, ?, ?, NULL, ?)')
+      .run(f.id, index, s.id, s.title, t.id, kind);
+    db.prepare("UPDATE shape_features SET outline = ?, status = 'active', updated_at = ? WHERE id = ?").run(JSON.stringify(outline), iso(now), f.id);
+    db.prepare('UPDATE shape_feature_notes SET run_index = ? WHERE feature_id = ? AND run_index IS NULL').run(index, f.id);
+  });
+  return { index, ticketId };
+}
 
 /** D24: openSliceDraft's draft, so the page can say "draft" (pipelines.pr_state stays OPEN, P18). */
 export function recordSliceDraft(pipelineId, url) {
@@ -192,22 +321,31 @@ export function recordSliceDraft(pipelineId, url) {
     .run(String(url), at.featureId, at.idx).changes > 0;
 }
 
-/** D24: what Ship as did. Once: a second call changes nothing and answers false. */
-export function recordShip(id, { mode, prUrl = null, now = Date.now() }) {
-  return getDb().prepare('UPDATE shape_features SET ship_mode = ?, ship_pr_url = ?, shipped_at = ?, updated_at = ? WHERE id = ? AND ship_mode IS NULL')
-    .run(mode, prUrl, iso(now), iso(now), String(id)).changes > 0;
+/** D24: what Ship as did. Once: a second call changes nothing and answers false. s4: with the draft release chosen and
+ *  how many drafts the one PR closed (shipFeature's count; NULL = unknown, the view counts CLOSED rows). */
+export function recordShip(id, { mode, prUrl = null, closed = null, release = null, now = Date.now() }) {
+  return getDb().prepare(`UPDATE shape_features SET ship_mode = ?, ship_pr_url = ?, ship_closed = ?, shipped_at = ?, updated_at = ?,
+      release_version = ?, release_target = ? WHERE id = ? AND ship_mode IS NULL`)
+    .run(mode, prUrl, Number.isInteger(closed) ? closed : null, iso(now), iso(now), release ? release.version : null,
+      release ? (release.target || null) : null, String(id))
+    .changes > 0;
 }
 
 /** P17: the Ship as default from the slices' frozen line counts (results.json summary.linesAdded; unknown = 0). Async:
  *  the run dir lookup is async, so this cannot live in sync featureView. */
 export async function featureShipSuggestion(view) {
-  let added = 0;
+  let added = 0; let removed = 0; let files = 0;
   for (const s of view.slices) {
     if (!s.pipelineId) continue;
-    try { const res = await readRunResultsById(s.pipelineId); const n = res?.summary?.linesAdded; if (Number.isFinite(n)) added += n; }
-    catch { /* unknown counts as 0 */ }
+    try {
+      const sum = (await readRunResultsById(s.pipelineId))?.summary || {};
+      if (Number.isFinite(sum.linesAdded)) added += sum.linesAdded;
+      if (Number.isFinite(sum.linesRemoved)) removed += sum.linesRemoved;
+      // 'D' rows are already inside filesChanged (app.js summary rule): new + changed, never + deleted.
+      files += (Number.isFinite(sum.filesNew) ? sum.filesNew : 0) + (Number.isFinite(sum.filesChanged) ? sum.filesChanged : 0);
+    } catch { /* unknown counts as 0 */ }
   }
-  return { suggested: added < ONE_PR_MAX_LINES ? 'one' : 'stacked', linesAdded: added };
+  return { suggested: added < ONE_PR_MAX_LINES ? 'one' : 'stacked', linesAdded: added, linesRemoved: removed, files };
 }
 
 /** D24, D25: what Ship as needs per slice: its PR, its last code review summary (capped as earlierSliceChanges caps
@@ -236,6 +374,34 @@ export function currentFeatureId(id) {
     cur = r.replaced_by;
   }
   return cur;
+}
+
+/** Shaper s2 (D10): what the Chat feature card reads for the run its thread started — the feature view (log and open
+ *  ask included) once the outline is approved, else, for a run `shaped(pid)` names (its runs-map entry carries
+ *  orch.state.shaping), the run's own decision log. null for an unknown run and for a plain one. */
+export function shaperCard(pipelineId, { live = () => null, shaped = () => false } = {}) {
+  const pid = String(pipelineId);
+  if (!getDb().prepare('SELECT 1 FROM pipelines WHERE id = ?').get(pid)) return null;
+  const at = featureOfPipeline(pid);
+  const feature = at ? featureView(currentFeatureId(at.featureId), { live }) : null;
+  if (!feature && !shaped(pid)) return null;
+  return { pipelineId: pid, feature, log: feature ? feature.log : buildDecisionLog({ clarify: clarifyOf(pid), origin: auditTexts(pid) }) };
+}
+
+/** Shaper s2 (D14): the Chat thread that started a feature — its origin run's link row — walking `replaces` back
+ *  through Re-plan the rest (that run has no link of its own). null when no thread started it (a CLI run). */
+export function featureThread(featureId) {
+  const feat = getDb().prepare('SELECT origin_pipeline_id AS pid, replaces FROM shape_features WHERE id = ?');
+  const link = getDb().prepare('SELECT thread_id AS threadId, card_id AS cardId FROM ask_run_links WHERE pipeline_id = ? ORDER BY created_at LIMIT 1');
+  let cur = featureId ? String(featureId) : null;
+  for (let i = 0; i < REPLAN_HOPS && cur; i++) {
+    const f = feat.get(cur);
+    if (!f) return null;
+    const l = link.get(f.pid);
+    if (l) return { threadId: l.threadId, cardId: l.cardId || null };
+    cur = f.replaces || null;
+  }
+  return null;
 }
 
 /** The feature whose slice ran as this pipeline: the run that approved the outline (origin, F48), slice 1 by row,
@@ -437,14 +603,9 @@ export function replanRest(id, { live = () => null, by = null, now = Date.now() 
   return { ticketId };
 }
 
-/** L10: a slice k ≥ 2's PR base while the previous slice's PR is open: its direct source. null = keep the default. */
+/** L10: a slice's PR base — the generic stacked base (scheduler.mjs stackedPrBaseOf); a slice is one chained run. */
 export function stackedPrBase(pipelineId, chain) {
-  if (!Array.isArray(chain) || chain.length < 2) return null;
-  const at = featureOfPipeline(pipelineId);
-  if (!at || at.idx < 2) return null;
-  const prev = sliceRows(at.featureId)[at.idx - 2];
-  const pr = prev?.pipelineId ? readPrState(prev.pipelineId) : null;
-  return pr && pr.state === 'MERGED' ? null : chain[chain.length - 1];
+  return stackedPrBaseOf(pipelineId, chain);
 }
 
 /** L12: a shaped run started from a Chat card (Plans tab). */

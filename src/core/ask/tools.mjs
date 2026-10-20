@@ -426,6 +426,10 @@ export function createAskTools(deps) {
         perspectives: { ...PERSPECTIVE_LIST, description: 'the perspectives you would pick if it were shaped' },
       } },
   } : {};
+  // Shaper (ordinary stays ordinary): propose_changes / route_message, listed only with the chatActions bundle, the gate
+  // and a thread that follows a run or a feature (shape-tool-deps.mjs). The child checks; the PARENT posts the card.
+  const shapeTools = deps.shapeTools && typeof deps.shapeTools.check === 'function' ? deps.shapeTools : null;
+  const shapeToolsOn = shapeOn && !!deps.chatActions && !!shapeTools && typeof shapeTools.follows === 'function' && shapeTools.follows() === true;
 
   const defs = [
     { name: 'list_projects',
@@ -927,6 +931,17 @@ export function createAskTools(deps) {
         description: 'Offer a pull request for a finished run with changes: puts a card in the chat whose button opens the Ship it dialog, where the user reviews the description and opens the pull request — nothing is pushed until they do. Never claim a pull request was opened — the card says so. Only from your own turn.',
         inputSchema: CHAT_RUN_REF },
     ] : []),
+    ...(shapeToolsOn ? [
+      { name: 'propose_changes',
+        description: 'Shaper: when the user asks to change the work of a finished run or a finished feature this chat follows, put a Changes card in the chat. worca picks where it lands: a new round on the same branch (and the same pull request), before Ship, or a follow-up run from the base once merged. Nothing starts until the user presses the card\'s button. Never for a question, a summary or thanks; never while a Plan or Split step is open (it is answered on its step card). A feature with runs still to go takes route_message instead. Returns {ok:true} or {ok:false, error} saying why not. Only from your own turn.',
+        inputSchema: SCHEMA.obj({ pipelineId: SCHEMA.s('the run (8-hex id) this chat follows, or any run of its feature'),
+          request: SCHEMA.s('the change, in the user\'s words') }, ['pipelineId', 'request']) },
+      { name: 'route_message',
+        description: 'Shaper: when the user brings a new idea or change while the feature this chat follows still has runs to go, put a "Where does this go?" card in the chat: Add to the feature, Own run now (from the base, its own pull request) or Save for later. guess = your pick (add, own or save), reason = one short line why; the user can pick another. Never for a question, a summary or thanks; never while a Plan or Split step is open. Returns {ok:true} or {ok:false, error}. Only from your own turn.',
+        inputSchema: SCHEMA.obj({ featureId: SCHEMA.s('the feature this chat follows'), text: SCHEMA.s('the idea, in the user\'s words'),
+          guess: { type: 'string', enum: ['add', 'own', 'save'], description: 'add | own | save' },
+          reason: SCHEMA.s('one short line: why this guess') }, ['featureId', 'text', 'guess', 'reason']) },
+    ] : []),
   ];
 
   const EMPTY_DIFF = () => ({ available: false, files: [], text: '', truncated: false, totalBytes: 0, nextOffset: 0 });
@@ -992,6 +1007,9 @@ export function createAskTools(deps) {
         members: (Array.isArray(wsMeta.projects) ? wsMeta.projects : []).map((p) => p.projectName) } : null,
       status: row.status ?? null,
       phase: row.phase ?? null,
+      // The one run model's status line (src/shared/run-model.mjs): the same words as the app and the CLI (§5a.7).
+      // Conditional spread (the file's idiom): fakes without the dep keep today's exact shape.
+      ...(typeof deps.runStatusLine === 'function' ? { statusLine: deps.runStatusLine(row) } : {}),
       startedAt: row.started_at ?? null,
       updatedAt: row.updated_at ?? null,
       // A run on its source branch that merged back: its work is ON the source, its own branch is gone.
@@ -1581,6 +1599,11 @@ export function createAskTools(deps) {
   const chatOf = (tool) => {
     if (!deps.chatActions || typeof deps.chatActions !== 'object') throw new AskToolError(`${tool}: unavailable`);
     return deps.chatActions;
+  };
+  const SHAPE_CARD_NOTE = 'worca puts the card in the chat right after this call, or a notice says why not. Nothing starts until the user presses its button: never say it started.';
+  const shapeToolOf = (tool) => {
+    if (!shapeToolsOn) throw new AskToolError(`${tool}: unavailable`);   // not listed: gate off, no thread, or none followed
+    return shapeTools;
   };
   async function chatRunOf(input, tool) {
     const runId = str(input.runId) || str(input.pipelineId);
@@ -2814,6 +2837,20 @@ export function createAskTools(deps) {
         }
       }
       return { ok: true, requested: { kind: 'pull-request', runId }, note: 'A card offers it; the user opens the pull request from its Ship it dialog. Never say one was opened.' };
+    },
+    async propose_changes(input) {
+      const st = shapeToolOf('propose_changes');
+      const req = { pipelineId: str(input.pipelineId), request: str(input.request) };
+      const r = st.check('changes', req);
+      if (!r || r.ok !== true) return { ok: false, error: (r && r.error) || 'not available here' };
+      return { ok: true, requested: { kind: 'changes', ...req }, note: SHAPE_CARD_NOTE };
+    },
+    async route_message(input) {
+      const st = shapeToolOf('route_message');
+      const req = { featureId: str(input.featureId), text: str(input.text), guess: str(input.guess), reason: str(input.reason) };
+      const r = st.check('route', req);
+      if (!r || r.ok !== true) return { ok: false, error: (r && r.error) || 'not available here' };
+      return { ok: true, requested: { kind: 'route', ...req }, note: SHAPE_CARD_NOTE };
     },
   };
 

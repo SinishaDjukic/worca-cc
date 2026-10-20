@@ -755,6 +755,24 @@ async function unmergedFiles(wt) {
   return r.ok ? nulNames(r.stdout) : [];
 }
 
+/** Shaper s5 (D14): before a feature's next run, merge the base branch into the run's fresh branch when it moved.
+ *  Never writes a conflicted merge: on conflicts the branch is left as is (the clash shows at this run, #620's check
+ *  after it). @returns {{merged: boolean, status: string, behind: number, files: string[], to?: string, error?: string}} */
+export async function mergeBaseBeforeRun(dir, { base, feature, remote = 'origin' }) {
+  const c = await checkBaseMerge(dir, { base, feature, remote });
+  const out = { merged: false, status: c.status, behind: c.behind || 0, files: c.files || [] };
+  if (c.status !== 'clean') return out;
+  const m = await mergeBaseInto(dir, { feature, baseSha: c.baseSha, headSha: c.headSha, baseRef: c.baseRef, tree: c.tree });
+  return m.ok ? { ...out, merged: true, to: m.to } : { ...out, status: 'error', error: m.kind || 'failed' };
+}
+
+/** The audit line feature-log.mjs parseBaseLine reads; null when there is nothing to say. */
+export function baseMovedAudit(base, feature, r) {
+  if (r.merged) return `Base \`${base}\` moved: merged into \`${feature}\` (${r.behind} ${r.behind === 1 ? 'commit' : 'commits'}).`;
+  if (r.status === 'conflicts') return `Base \`${base}\` moved: conflicts in ${r.files.length} ${r.files.length === 1 ? 'file' : 'files'}.`;
+  return null;
+}
+
 /**
  * Resolve in a terminal (#620): start `git merge --no-ff --no-commit <baseSha>` in a run's checkout and leave the
  * conflicts for a person. A merge already in progress is reported as is (idempotent). Never throws.

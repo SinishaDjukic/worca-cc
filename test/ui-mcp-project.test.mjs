@@ -131,7 +131,8 @@ test('project MCP tab: chips with ×, read-only Team chip, Add set, Include Gene
       const { api, calls, writes } = fakeApi(a);
       await mountProjectMcp(sec, { key: 'billing-1a2b3c4d', name: 'billing', api, doc });
       const chips = [...sec.querySelectorAll('.mcp-proj-sets .mcp-chip')];
-      assert.deepEqual(chips.map((c) => c.textContent), ['Billing×', 'Team · acme/platform']);
+      assert.deepEqual(chips.map((c) => c.textContent), ['Billing', 'Team · acme/platform']);
+      assert.ok(chips[0].querySelector('button.mcp-x svg'), 'the × is a stroke icon');
       assert.equal(chips[1].querySelector('button'), null, 'the Team chip is read-only');
       assert.equal(chips[1].getAttribute('href'), '#connectors/sets/team-acme-platform-9333');
       assert.match(sec.textContent, /Include General in runs/);

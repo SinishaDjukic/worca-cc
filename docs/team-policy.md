@@ -58,9 +58,9 @@ usually larger, so one cap is normally wrong for one of the two).
   or follows a policy, and uses that policy (with its `workspaceRuns` block) for workspace runs.
   Member projects' own policies are never unioned into a workspace run; the run log names a
   member with a tighter cap. The pointer is per machine, like the metrics home, and defaults to
-  the metrics home when that member's policy resolves. "Route all to policy home" writes a
+  the metrics home when that member's policy resolves. "Route all" writes a
   marker on every member that has no branch yet.
-- Set up from the project page's **Team** tab (`Set up team policy…`: here, or follow; the Projects
+- Set up from the project page's **Team** tab (`Set up policy…`: here, or follow; the Projects
   list row only carries a one-line status chip), the workspace page's **Team** tab (the policy
   home), or `worca policy init --here | --follow <slug>`.
 
@@ -177,8 +177,8 @@ in the run log and a red chip on the Projects row (the sentence is on the projec
 ## Getting started
 
 The checklist's ninth tile, **Set a team policy** (docs/getting-started.md), walks the
-real controls: a project row → its **Team** tab → **Set up team policy…** → the dialog's
-**Create branch and enable** → the new home's page, ending on **Edit policy** with Done.
+real controls: a project row → its **Team** tab → **Set up policy…** → the dialog's
+**Create and enable** → the new home's page, ending on **Edit policy** with Done.
 A project pointed at another home stays on its page and the block is explained; one with no
 origin remote, or one already on, gets its block ringed with the reason. The tick is derived:
 any project or workspace that resolves a policy from the cached branch reads
