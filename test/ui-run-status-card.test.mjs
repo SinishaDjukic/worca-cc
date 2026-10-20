@@ -227,3 +227,14 @@ test('QA 4: a member row never repeats its chip ("Done" + "Merged"); the dot lea
     assert.equal(a.getAttribute('target'), '_blank');
   } })));
 });
+
+test('a run in Needs you only through its PR has finished: no current-run bar (an empty one read as 0%)', () => {
+  const doc = dom();
+  for (const pr of [{ checks: { state: 'failing', total: 12, failed: 3, pending: 0 } }, { mergeable: 'CONFLICTING' }]) {
+    const m = runModel({ status: 'done', pr: { url: 'https://github.com/o/r/pull/781', number: 781, state: 'OPEN', ...pr } }, { now: NOW });
+    assert.deepEqual([m.state, m.prNeeds], ['needs-you', true]);
+    const host = doc.createElement('div');
+    paintRunStatus(host, { ...m, progress: m.progress || { mode: 'nodes', fraction: 0, total: 4 } });
+    assert.equal(host.querySelector('.run-status-bar').hidden, true);
+  }
+});

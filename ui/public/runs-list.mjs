@@ -544,7 +544,8 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   a.append(textEl(doc, 'span', 'runs-row-title', position ? `${position} · ${r.title}` : r.title), right, textEl(doc, 'span', 'runs-row-sub', line));
   if (r.kind === 'chain' && !ENDED_STATES.has(r.model.state) && r.model.progress) {
     a.append(renderRowLine(doc, { fraction: r.model.progress.fraction }, (lineFrom && lineFrom.get(r.key)) || ''));
-  } else if (r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed' && r.model.progress) {
+  } else if (r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed' && !r.model.prNeeds && r.model.progress) {
+    // A run in Needs you only through its PR (conflicts, failing checks) has finished: no progress bar to draw.
     const stage = doc.createElement('div');
     stage.className = 'run-prog runs-stage';
     paintProgressBar(stage, r.model.progress, { pulse: r.model.pulse });
