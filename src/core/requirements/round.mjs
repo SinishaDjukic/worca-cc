@@ -108,7 +108,7 @@ function threadText(turns) {
       }
     } else if (t.kind === 'assumption') {
       lines.push(Array.isArray(t.payload.ids) && t.payload.ids.length
-        ? `The product owner ${asData(t.payload.status)} assumptions ${t.payload.ids.map(asData).join(', ')}.`
+        ? `The product owner ${{ confirmed: 'confirmed', rejected: 'rejected', open: 'reopened' }[t.payload.status] || 'changed'} assumptions ${t.payload.ids.map(asData).join(', ')}.`
         : `The product owner marked assumption ${asData(t.payload.id)} as ${asData(t.payload.status)}.`);
     } else if (t.kind === 'followup') {
       const ids = (t.payload.assumptions || []).map(asData);

@@ -5,7 +5,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createFeature, getFeature, listTurns, updateFeature, setContext } from '../src/core/requirements/store.mjs';
+import { createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext } from '../src/core/requirements/store.mjs';
 import { REPO_LOOK_TOOLS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import {
   startOrientation, submitAnswers, finishInterview, followUp, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS,
@@ -603,5 +603,36 @@ test('follow-up: refused at the spending limit becomes a BUDGET error turn', asy
   await followUp(f.seq, {}, deps(fakeRunner([]), { budget: () => ({ blocked: true, totalLimitUsd: 5 }) }));
   await settled(f.seq);
   assert.equal(listTurns(f.seq).at(-1).payload.code, 'BUDGET');
+  assert.equal(getFeature(f.seq).status, 'your_turn');
+});
+
+test('follow-up: a refused follow-up is retried as a follow-up round (rounds >= 6)', async () => {
+  const { f, d } = await doneAfterSix();
+  setAssumption(f.seq, 'A-2', 'rejected');
+  delete process.env.WORCA_MOCK;
+  await followUp(f.seq, {}, deps(fakeRunner([]), { budget: () => ({ blocked: true, totalLimitUsd: 5 }) }));
+  await settled(f.seq);
+  assert.equal(listTurns(f.seq).at(-1).payload.code, 'BUDGET');
+  process.env.WORCA_MOCK = '1';
+  await retry(f.seq, {}, d);
+  await settled(f.seq);
+  const last = listTurns(f.seq).at(-1);
+  assert.equal(last.kind, 'round');
+  assert.deepEqual(last.payload.followUp, ['A-2']);
+  assert.deepEqual(last.payload.questions.map((x) => x.id), ['replace-a-2']);
+  assert.equal(getFeature(f.seq).status, 'your_turn');
+});
+
+test('follow-up: after an interrupted follow-up, the boot sweep and retry ask the follow-up round', async () => {
+  const { f, d } = await doneAfterSix();
+  setAssumption(f.seq, 'A-1', 'rejected');
+  appendTurn(f.seq, { kind: 'followup', payload: { assumptions: ['A-1'] } });
+  updateFeature(f.seq, { status: 'thinking' });
+  assert.equal(recoverInterrupted(), 1);
+  await retry(f.seq, {}, d);
+  await settled(f.seq);
+  const last = listTurns(f.seq).at(-1);
+  assert.deepEqual(last.payload.followUp, ['A-1']);
+  assert.equal(last.payload.questions.length, 1);
   assert.equal(getFeature(f.seq).status, 'your_turn');
 });

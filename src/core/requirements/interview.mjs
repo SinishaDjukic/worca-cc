@@ -191,8 +191,9 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
   setStatus(seq, 'thinking', by);
   notify(d, seq);
   const f = requireFeature(seq);
-  const isFinal = final || (!followUp && f.rounds + 1 >= MAX_ROUNDS);
-  const followItems = followUp ? f.spec.assumptions.filter((a) => followUp.includes(a.id)).map((a) => ({ id: a.id, text: a.text })) : null;
+  const found = followUp ? f.spec.assumptions.filter((a) => followUp.includes(a.id) && a.status === 'rejected').map((a) => ({ id: a.id, text: a.text })) : [];
+  const followItems = found.length ? found : null;   // none left rejected: an ordinary round
+  const isFinal = final || (!followItems && f.rounds + 1 >= MAX_ROUNDS);
   const turns = listTurns(seq);
   const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal, removedCriteria: removedCriteria(turns) };
   let applied = null;
@@ -227,7 +228,7 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
     failTurn(seq, { code: 'BAD_REPLY', message: `Worca's reply could not be read (${lastErr.message}). Try again.`, job: 'round', costUsd: cost, model }, by, 'your_turn');
     return;
   }
-  const turnId = appendTurn(seq, { kind: 'round', payload: { questions: applied.questions, note: applied.note, done: applied.done, final: isFinal, ...(followUp ? { followUp } : {}) },
+  const turnId = appendTurn(seq, { kind: 'round', payload: { questions: applied.questions, note: applied.note, done: applied.done, final: isFinal, ...(followItems ? { followUp: followItems.map((a) => a.id) } : {}) },
     model: model || null, costUsd: cost || null }, { by });
   charge(seq, turnId, cost, model);
   setStatus(seq, applied.done ? 'done' : 'your_turn', by, {
@@ -310,6 +311,7 @@ export function retry(seq, { by = null } = {}, deps = {}) {
   const lastReal = listTurns(seq).filter((t) => t.kind !== 'error').at(-1);
   if (!f.orientation) return startOrientation(seq, { by }, deps);
   if (listTurns(seq).at(-1).payload.job === 'look') return startOrientation(seq, { by, thenRound: false }, deps);
+  if (lastReal?.kind === 'followup') return startJob(seq, d, () => runRound(seq, d, by, { followUp: lastReal.payload.assumptions }), by);
   return startJob(seq, d, () => runRound(seq, d, by, { final: lastReal?.kind === 'finish' }), by);
 }
 
