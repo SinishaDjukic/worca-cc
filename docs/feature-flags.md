@@ -26,8 +26,8 @@ remote flags.
 | `flagsDemo` | experimental, default off | A note in Settings › Experimental that proves the system end to end. |
 | `keepAwake` | beta, default on | Stops the OS sleeping on its idle timer while a run has agents working; the display may still turn off. Also a switch in Settings › Runs; no effect on a container or hosted worca. A run waiting on a question, paused or ended does not count, and nothing is held on a container or hosted worca. The UI server holds one child tied to its pid: `caffeinate -i -w <pid>` on macOS, `systemd-inhibit --what=idle` wrapping `tail --pid <pid>` on Linux, a PowerShell child holding `SetThreadExecutionState(ES_CONTINUOUS \| ES_SYSTEM_REQUIRED)` on Windows. A missing tool logs one warning and never affects a run. |
 | `shapeFirst` | experimental, default off | Shaper: a run can stop after its plan is refined and wait for a person to approve, revise or stop it; the `wf_shape` workflows, the plan answer route and the Chat surfaces exist only while it is on. Off, those routes answer 404 and the CLI refuses the workflows. |
-| `runTags` | experimental, default off | The tag field on the New run form, tag chips and the tag filter on the Runs list, tag chips and editing on run pages, the tag field on Ask Worca run cards, the tag filter and tag Group by options on Statistics. Tag dimensions (team policy `runs.tagDimensions`, or Settings › Runs › Tag dimensions): the New run slots and their required-key warning, the dimension labels in the Statistics Group by and the Runs list filter's optgroups. Team metrics: the tag Group by options and the tag filter. Tags set through the API or CLI are stored whatever the flag. |
-| `runPresets` | beta, default on | [Run presets](run-presets.md): the Preset picker and Save current setup… on the New run form, the Settings › Presets tab, schedules that follow a preset, `worca run --preset` and Ask Worca's `list_presets` / `propose_run` `presetId`. Off, every `/api/presets` route answers 404 and `POST /api/run` refuses a `presetId` with 400. |
+| `runTags` | experimental, default off | The tag field on the New run form, tag chips and the tag filter on the Runs list, tag chips and editing on run pages, the tag field on Chat run cards, the tag filter and tag Group by options on Statistics. Tag dimensions (team policy `runs.tagDimensions`, or Settings › Runs › Tag dimensions): the New run slots and their required-key warning, the dimension labels in the Statistics Group by and the Runs list filter's optgroups. Team metrics: the tag Group by options and the tag filter. Tags set through the API or CLI are stored whatever the flag. |
+| `runPresets` | beta, default on | [Run presets](run-presets.md): the Preset picker and Save current setup… on the New run form, the Settings › Presets tab, schedules that follow a preset, `worca run --preset` and Chat's `list_presets` / `propose_run` `presetId`. Off, every `/api/presets` route answers 404 and `POST /api/run` refuses a `presetId` with 400. |
 
 ## Add a flag
 
@@ -88,7 +88,7 @@ import { requireFlag, flagEnabled } from '../src/core/flags.mjs';
 
 app.get('/api/dashboard/charts', requireFlag('customDashboard'), handler);   // 404 while off
 if (flagEnabled('customDashboard')) broadcast(frame);                         // WS frames
-if (flagEnabled('customDashboard')) defs.push(tool);                          // Ask Worca tools, in createAskTools
+if (flagEnabled('customDashboard')) defs.push(tool);                          // Chat tools, in createAskTools
 ```
 
 `requireFlag` answers `404 { error: 'not found' }` while the flag is off: a disabled feature

@@ -32,7 +32,7 @@ project's working tree, so nothing is ever committed to your repo.
                          never resumes (its resume point is dropped; a paused one comes
                          back interrupted). Delete (Runs list, Advanced) is permanent:
                          it archives, then anonymises the row in place and stamps
-                         `deleted_at` (see "Run groups (v64)" below).
+                         `deleted_at` (see "Run groups (v65)" below).
   store/workspaces/<workspaceId>/       a workspace's runs, laid out like a project's store, plus
                                         workspace-graph.json — the last scan's merged cross-project
                                         graph (see workspace-map.md); the map itself and its reviews
@@ -45,21 +45,21 @@ project's working tree, so nothing is ever committed to your repo.
                                         notifications (see scheduled-runs.md).
                                         (v34: after_kind/after_id/after_policy/
                                         source_from_previous — a run that waits for another run.)
-  ask/<threadId>/att/<attachmentId>.<ext>  Ask Worca attachment bodies — .txt for text kinds,
+  ask/<threadId>/att/<attachmentId>.<ext>  Chat attachment bodies — .txt for text kinds,
                                         the sniffed type's extension for images/PDFs (threads, messages and
                                         run links live in the DB: ask_threads, ask_messages,
                                         ask_attachments, ask_run_links); removed with the thread.
                                         Chat spend is copied per turn into ask_cost_ledger
                                         (append-only, FK-free), so Statistics keeps session
                                         count and cost after deletion
-  ask/<threadId>/wt/<worktreeId>/       Ask Worca chat worktrees: read-only DETACHED git
+  ask/<threadId>/wt/<worktreeId>/       chat worktrees: read-only DETACHED git
                                         checkouts the assistant opens (registry: ask_worktrees;
                                         removed with the thread, reconciled at boot)
   ask/<threadId>/skills/<messageId>/    an Ask turn's set skills, one generated plugin per set;
                                         written before the turn's spawn, removed when the turn ends
-  tmp/ask/                              the Ask Worca assistant's scratch cwd + per-turn
+  tmp/ask/                              the Chat assistant's scratch cwd + per-turn
                                         mcp-<messageId>.json, mode 0600 (never a project folder)
-  logs/ask-web.jsonl                    Ask Worca web access: one line per web_fetch/web_search
+  logs/ask-web.jsonl                    Chat web access: one line per web_fetch/web_search
                                         call (redacted URL, status, bytes); rotated to .1 at 5 MB
   runs/<pipelineId>/                    detached run roots: run.json, repos/<projectKey>/ worktrees
   metrics/
@@ -110,7 +110,7 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
-### Run groups (v64)
+### Run groups (v65)
 
 The Runs list's groups (runs redesign §3.3) are the one new named state of the runs redesign:
 

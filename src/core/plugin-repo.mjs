@@ -121,23 +121,16 @@ async function tipSha(cache, ref, exec) {
 }
 
 /**
- * `worca plugin add`: clone/refresh the bare cache, then discover plugins in the
- * HEAD tree (or branch `ref`'s). A root worca-cc-marketplace.json (spec §4.1), when present and
- * structurally valid, is AUTHORITATIVE — its listed dirs (any depth) are the only
- * candidates, even when the list is empty. Without one, the depth 0/1 scan of
- * spec §4.3 applies unchanged.
- * @returns {{repoUrl:string, sha:string, discovered:Array<{name,subdir,manifest}>,
- *   warnings:string[], marketplace:{name:string, description:string}|null}}
+ * Discovery at one commit of any git dir — worca's bare cache (addPluginRepo) or a checkout's
+ * real git dir (marketplace-publish.mjs checks the commit it is about to push, #717). The rules a
+ * marketplace sync applies, unchanged: a root worca-cc-marketplace.json, when present and
+ * structurally valid, is AUTHORITATIVE; else the depth 0-1 scan; committed files only; the
+ * engines gate (normalizeManifest); first name wins.
+ * @returns {Promise<{sha:string, discovered:Array<{name,subdir,manifest}>, warnings:string[],
+ *   marketplace:{name:string, description:string}|null}>}
  */
-export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null } = {}) {
-  // `owner/repo` shorthand -> GitHub URL (spec §4.3) — only when it is not a
-  // real local path (local fixture repos in tests stay untouched).
-  if (/^[\w.-]+\/[\w.-]+$/.test(repoUrl) && !existsSync(repoUrl)) {
-    repoUrl = `https://github.com/${repoUrl}`;
-  }
-  const cache = await ensureCache(repoUrl, exec);
-  const sha = await tipSha(cache, ref, exec);
-  const allPaths = (await gitDir(cache, ['ls-tree', '-r', '--name-only', sha], exec))
+export async function discoverAtCommit(gitDirPath, sha, { exec = defaultExec } = {}) {
+  const allPaths = (await gitDir(gitDirPath, ['ls-tree', '-r', '--name-only', sha], exec))
     .split('\n').map((s) => s.trim()).filter(Boolean);
   const warnings = [];
   let marketplace = null;
@@ -145,7 +138,7 @@ export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null } 
   if (allPaths.includes('worca-cc-marketplace.json')) {
     let mp = null;
     try {
-      mp = parseMarketplaceManifest(JSON.parse(await gitDir(cache, ['show', `${sha}:worca-cc-marketplace.json`], exec)));
+      mp = parseMarketplaceManifest(JSON.parse(await gitDir(gitDirPath, ['show', `${sha}:worca-cc-marketplace.json`], exec)));
     } catch {
       mp = { ok: false, errors: ['invalid JSON'] };
     }
@@ -175,7 +168,7 @@ export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null } 
     const subdir = p === 'worca-cc-plugin.json' ? '' : p.slice(0, -'/worca-cc-plugin.json'.length);
     let raw;
     try {
-      raw = JSON.parse(await gitDir(cache, ['show', `${sha}:${p}`], exec));
+      raw = JSON.parse(await gitDir(gitDirPath, ['show', `${sha}:${p}`], exec));
     } catch {
       warnings.push(`${p}: invalid JSON — skipped`);
       continue;
@@ -192,7 +185,24 @@ export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null } 
     seenNames.add(res.manifest.name);
     discovered.push({ name: res.manifest.name, subdir, manifest: res.manifest });
   }
-  return { repoUrl, sha, discovered, warnings, marketplace };
+  return { sha, discovered, warnings, marketplace };
+}
+
+/**
+ * `worca plugin add`: clone/refresh the bare cache, then discover plugins in the
+ * HEAD tree (or branch `ref`'s) — see discoverAtCommit for the rules.
+ * @returns {{repoUrl:string, sha:string, discovered:Array<{name,subdir,manifest}>,
+ *   warnings:string[], marketplace:{name:string, description:string}|null}}
+ */
+export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null } = {}) {
+  // `owner/repo` shorthand -> GitHub URL (spec §4.3) — only when it is not a
+  // real local path (local fixture repos in tests stay untouched).
+  if (/^[\w.-]+\/[\w.-]+$/.test(repoUrl) && !existsSync(repoUrl)) {
+    repoUrl = `https://github.com/${repoUrl}`;
+  }
+  const cache = await ensureCache(repoUrl, exec);
+  const sha = await tipSha(cache, ref, exec);
+  return { repoUrl, ...(await discoverAtCommit(cache, sha, { exec })) };
 }
 
 /** `<sourceId>.<key>` for every secret configSchema field of a manifest. */

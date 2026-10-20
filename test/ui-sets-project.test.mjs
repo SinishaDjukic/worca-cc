@@ -209,7 +209,7 @@ test('workspace Overview: "Sets from member projects" — member chips with set 
   assert.match(js, /paintMcpResolution\(mcp, \{ target: \{ workspaceId: id \}, title: w\.name \|\| w\.id, members: memberProjects, api: mcpApi \}\)/, 'buildWdOverview paints it');
 });
 
-test('Settings › Ask Worca: General\'s servers and skills as chips, the edit link, the Skill-tool line', async () => {
+test('Settings › Chat: General\'s servers and skills as chips, the edit link, the Skill-tool line', async () => {
   const host = doc.createElement('div');
   const generalView = { set: { id: 'general', name: 'General', group: 'general', greyed: false, home: null, usedBy: [], pluginName: 'general' }, members: [],
     skills: [{ skillId: 'skill:library:worca', name: 'worca', qualifiedName: 'general:worca', description: 'Drive worca', enabled: true },

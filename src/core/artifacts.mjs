@@ -3076,7 +3076,7 @@ export async function resolveIndexedArtifactFileForRow(row, rel) {
     try {
       if (!(await stat(file)).isFile()) continue;
       await access(file, fsConstants.R_OK);
-      return { rel: hit.relPath, file };
+      return { rel: hit.relPath, file, base };
     } catch { /* try the next base */ }
   }
   return null;

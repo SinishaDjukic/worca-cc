@@ -16,7 +16,7 @@ for a pinned workflow, then **More**.
 - **One pin in the row, the rest in More.** The first pin that can show takes the slot. Every other pin
   is listed in **More** under a **Pinned** header, in the order you pinned them.
 - **What a click does.** A pinned tile shows the workflow's name and arms **New run** with that workflow:
-  the composer chip shows the workflow's name, and your message asks Ask Worca to propose a run of that
+  the composer chip shows the workflow's name, and your message asks Chat to propose a run of that
   workflow. Nothing is sent until you send.
 - **Unpin from the tile.** Right-click a pinned tile (or focus it and press Shift+F10 or the menu key)
   and pick **Unpin**. The next pin moves into the slot.

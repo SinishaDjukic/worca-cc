@@ -1,6 +1,6 @@
 // src/core/ask/model-proposal.mjs
 // The ONE validator behind mcp__worca__propose_model_change, the edit merge its apply replays,
-// and the event/notice text of the model card (docs/models.md "Ask Worca"). Pure: every reader
+// and the event/notice text of the model card (docs/models.md "Chat"). Pure: every reader
 // and every dry-run setter is injected (model-deps.mjs binds the real ones), so the MCP child
 // validates for the model's self-correction and the parent turn re-validates authoritatively —
 // the policy-proposal.mjs split. Nothing here writes; applying a card is ui/server.mjs's

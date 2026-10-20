@@ -1,6 +1,6 @@
 # Voice mode: languages — where we are and how to expand
 
-Status and plan for languages other than English in Ask Worca's voice mode
+Status and plan for languages other than English in Chat's voice mode
 ([speech.md](speech.md)). **Nothing in the "Plan" section is implemented yet.**
 Bulgarian is the intended first test language, but it is explicitly out of scope
 for now.

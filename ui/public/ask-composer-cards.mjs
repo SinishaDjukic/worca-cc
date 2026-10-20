@@ -132,7 +132,7 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
     }
     if (!f.ok) { fail(b, `Not saved — ${f.error}`); return; }
     const turn = f.body && f.body.turn;
-    if (turn && turn.error) fail(b, `Saved. Ask Worca could not reply: ${turn.error}`);
+    if (turn && turn.error) fail(b, `Saved. Chat could not reply: ${turn.error}`);
   }
   async function openBuild(b) {
     if (b.state === 'saved' && b.workflowId) { if (typeof openComposer === 'function') openComposer(b.workflowId); return; }

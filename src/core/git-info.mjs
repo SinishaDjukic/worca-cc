@@ -714,6 +714,54 @@ export function prHeadRef(head, headOwner) {
   return headOwner ? `${headOwner}:${head}` : head;
 }
 
+// ── Marketplace publishing (#717): push access and forks ─────────────────────
+
+/**
+ * Can worca's write credential push to `repo` (OWNER/REPO on github.com)? `gh api repos/O/R` →
+ * `.permissions.push`. A GitHub App installation token gets no `permissions` block → canPush:null
+ * (unknown: the caller tries the push and forks on a refusal). Same credential path as createPr
+ * (githubEnv write, push-as-person when configured). Never throws:
+ * { ok:true, canPush:true|false|null } | { ok:false, error }.
+ */
+export async function ghRepoAccess({ repo } = {}) {
+  const slug = ownerRepo(repo);
+  if (!slug) return { ok: false, error: 'repo is required' };
+  const cred = await githubEnv('write', { repo: slug });
+  if (cred.error) return { ok: false, error: cred.error };
+  const r = await _run('gh', ['api', `repos/${slug}`, '--jq', '.permissions'], { env: cred.env, timeout: 30_000 });
+  if (!r.ok) return { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+  let perms = null;
+  try { perms = JSON.parse(String(r.stdout || '').trim() || 'null'); } catch { perms = null; }
+  return { ok: true, canPush: perms && typeof perms === 'object' ? perms.push === true : null };
+}
+
+/**
+ * Fork `repo` into the credential's account (`POST repos/O/R/forks`; GitHub answers with the
+ * EXISTING fork when there is one, possibly renamed, so the name comes from the answer) and wait
+ * until it serves `repos/<fork>` — forks are created asynchronously and a push right after the
+ * POST can 404. Installation tokens cannot fork: that 403 is returned as the error.
+ * Never throws: { ok:true, owner, repo, slug } | { ok:false, error }.
+ */
+export async function ghForkRepo({ repo, waitMs = 60_000, stepMs = 2_000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  const slug = ownerRepo(repo);
+  if (!slug) return { ok: false, error: 'repo is required' };
+  const cred = await githubEnv('write', { repo: slug });
+  if (cred.error) return { ok: false, error: cred.error };
+  const r = await _run('gh', ['api', '-X', 'POST', `repos/${slug}/forks`, '-F', 'default_branch_only=true', '--jq', '.full_name'],
+    { env: cred.env, timeout: 60_000 });
+  const full = String(r.stdout || '').trim();
+  if (!r.ok || !/^[^/\s]+\/[^/\s]+$/.test(full)) return { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const v = await _run('gh', ['api', `repos/${full}`, '--jq', '.full_name'], { env: cred.env, timeout: 30_000 });
+    if (v.ok && String(v.stdout || '').trim()) break;
+    if (Date.now() >= until) return { ok: false, error: `the fork ${full} was not ready after ${Math.round(waitMs / 1000)} s — try again in a minute` };
+    await sleep(stepMs);
+  }
+  const [owner, name] = full.split('/');
+  return { ok: true, owner, repo: name, slug: full };
+}
+
 /**
  * The repo's git remotes from `git remote -v`, in git's (alphabetical) order.
  * Each entry is { name, fetchUrl, pushUrl, host, owner, repo, slug, forge, org, project } with
@@ -794,6 +842,49 @@ async function ghPrLifecycleState({ projectDir, prUrl }) {
     { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(prUrl) })).env });
   if (!v.ok) return null;
   try { const s = JSON.parse(v.stdout || 'null')?.state; return ['OPEN', 'MERGED', 'CLOSED'].includes(s) ? s : null; } catch { return null; }
+}
+
+// ── Chat answer chips (src/core/ask/refs.mjs) ─────────────────────────────────
+
+const GH_CHIP_TIMEOUT_MS = 10_000;
+const ghChipPr = (n) => {
+  if (!n || typeof n.title !== 'string') return null;
+  const state = n.state === 'MERGED' ? 'merged' : n.state === 'CLOSED' ? 'closed' : n.state === 'OPEN' ? (n.isDraft ? 'draft' : 'open') : null;
+  return state ? { kind: 'pr', title: n.title, state } : null;
+};
+const ghChipIssue = (n) => {
+  if (!n || typeof n.title !== 'string') return null;
+  const state = n.state === 'OPEN' ? 'open' : n.state === 'CLOSED' ? 'closed' : null;
+  return state ? { kind: 'issue', title: n.title, state } : null;
+};
+
+/**
+ * Title and lifecycle of issues and pull requests in ONE github.com repo ("owner/name"): one `gh api graphql` with a
+ * `pullRequest` and an `issue` alias per number (the metrics/prs.mjs batch pattern) and the read credential
+ * (githubEnv; gh's own login without one). Two typed aliases, not `issueOrPullRequest`: a GitHub App read token has
+ * pull_requests but no issues permission (github-app.mjs PERMISSIONS), and the typed `pullRequest` field is the one
+ * the PR watcher already reads with it. → Map<number, { kind:'pr'|'issue', title, state:'open'|'draft'|'merged'|
+ * 'closed' }>. A number GitHub could not answer (unknown, no access, gh missing, a failed App mint, offline, a
+ * timeout) is left out. Never throws.
+ */
+export async function ghItemSummaries({ repo, numbers, timeout = GH_CHIP_TIMEOUT_MS }) {
+  const out = new Map();
+  const [owner, name, extra] = String(repo || '').split('/');
+  const list = [...new Set(Array.isArray(numbers) ? numbers : [])].filter((n) => Number.isSafeInteger(n) && n > 0 && n < 1e9);
+  if (!owner || !name || extra !== undefined || !list.length || !(await hasGh())) return out;
+  const aliases = list.map((n) => `p${n}: pullRequest(number: ${n}) { title state isDraft } i${n}: issue(number: ${n}) { title state }`);
+  const query = `query { r: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { ${aliases.join(' ')} } }`;
+  const cred = await githubEnv('read', { repo: `${owner}/${name}` });
+  if (cred.error) return out;                      // a failed App mint: never fall back to the server user's own gh login
+  // --hostname: these refs are github.com ones even when the server's GH_HOST names an Enterprise host.
+  const r = await _run('gh', ['api', 'graphql', '--hostname', 'github.com', '-f', `query=${query}`], { timeout, env: cred.env });
+  let body = null;
+  try { body = JSON.parse(r.stdout || 'null'); } catch { body = null; }
+  // Every number misses one of its two aliases, so gh always exits non-zero here; it still prints the data it has.
+  const node = body && body.data && body.data.r;
+  if (!node || typeof node !== 'object') return out;
+  for (const n of list) { const it = ghChipPr(node[`p${n}`]) || ghChipIssue(node[`i${n}`]); if (it) out.set(n, it); }
+  return out;
 }
 
 // ── PR providers (dispatch by forge) ────────────────────────────────────────

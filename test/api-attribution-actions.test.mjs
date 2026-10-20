@@ -106,6 +106,9 @@ test('Ask threads: owned by their creator; others get 404; "delete all" deletes 
   assert.equal((await req('DELETE', `/api/ask/threads/${g.id}`, null, 'ada@example.com')).status, 404);
   assert.equal((await req('POST', '/api/ask/mcp-preview', { threadId: g.id, context: {} }, 'grace@example.com')).status, 200);
   assert.equal((await req('POST', '/api/ask/mcp-preview', { threadId: g.id, context: {} }, 'ada@example.com')).status, 404, 'the MCP picker preview reads a thread too');
+  const chipOf = async (who) => (await req('POST', '/api/ask/refs/resolve', { refs: [`chat:${g.id}`] }, who)).body.refs[`chat:${g.id}`];
+  assert.deepEqual(await chipOf('grace@example.com'), { ok: true, kind: 'chat', title: 'Grace’s' });
+  assert.deepEqual(await chipOf('ada@example.com'), { ok: false }, 'an answer chip never names another person\'s chat');
   assert.equal((await req('GET', `/api/ask/threads/${g.id}`, null, 'grace@example.com')).status, 200);
   const cleared = (await req('DELETE', '/api/ask/threads', null, 'ada@example.com')).body;
   assert.equal(cleared.removed.threads, 1);

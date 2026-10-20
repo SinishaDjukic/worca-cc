@@ -110,7 +110,8 @@ import {
   listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
   findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
   addAttachment as askAddAttachment, listAttachments as askListAttachments,
-  getAttachment as askGetAttachment, attachmentPath as askAttachmentPath,
+  getAttachment as askGetAttachment, attachmentPath as askAttachmentPath, readAttachmentText as askReadAttachmentText,
+  attachmentSourcePath as askAttachmentSourcePath,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline, runLinkTarget,
   finishMessage as askFinishMessage, newAskId,
@@ -199,7 +200,7 @@ import { createAskCommands, terminalEventPrompt, terminalNoticeText } from '../s
 import { openBranchWorktree, removeBranchWorktree, releaseBranchWorktree, enforceBranchWorktreeCap, sweepBranchWorktrees } from '../src/core/terminal/worktrees.mjs';
 import { pidAlive, killDescendants } from '../src/core/terminal/pty.mjs';
 import { createTerminalFanout } from '../src/core/terminal/fanout.mjs';
-import { detectBuiltins, builtinLaunch, copyCommandText, findOnPath } from '../src/core/actions/builtins.mjs';
+import { detectBuiltins, builtinLaunch, revealLaunch, copyCommandText, findOnPath } from '../src/core/actions/builtins.mjs';
 import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamples, launcherWarning, lineForPickedApp } from '../src/core/actions/launcher.mjs';
 import { assertNoRawCommand, normalizeStacks, memberAliases, SETUP_ACTION_ID, ActionConfigError } from '../src/core/actions/model.mjs';
 import { parsePortRange } from '../src/core/actions/ports.mjs';
@@ -287,6 +288,7 @@ import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
+import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
 import {
   saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
 } from '../src/core/workflow-share.mjs';
@@ -312,12 +314,14 @@ import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
-  markPrReady, closePr, uncommittedPatch } from '../src/core/git-info.mjs';
+  markPrReady, closePr, uncommittedPatch, ghItemSummaries } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID, stoppedWatchFact } from '../src/core/pr-watch.mjs';
-import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
+import { forkRefusal, workItemIdFromSourceRef, prSummary, workItemSummaries } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
+import { createRefResolver } from '../src/core/ask/refs.mjs';
+import { REFS_MAX } from '../src/shared/chip-refs.mjs';
 import { archivePipeline, restorePipeline, purgePipeline, discardRetainedWorktrees, applyRetainedWork } from '../src/core/pipeline-delete.mjs';
 import { runBulk } from '../src/core/run-bulk.mjs';
 import { BULK_ACTIONS } from '../src/shared/run-bulk.mjs';
@@ -422,7 +426,7 @@ import {
 } from '../src/core/notifications.mjs';
 import {
   normalizeRule, nextOccurrence, previewOccurrences, describeRule, parseScheduledFor, localDate,
-  isValidTimeZone, formatInstant, OVERLAP_POLICIES, MISSED_POLICIES,
+  isValidTimeZone, formatInstant, occurrenceStamp, OVERLAP_POLICIES, MISSED_POLICIES,
 } from '../src/shared/schedule/recurrence.mjs';
 import { REASON } from '../src/core/failure-policy.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
@@ -3449,7 +3453,7 @@ async function fireTicket(ticket) {
     // An Ask card can never propose Permissive (D9 / R-sec-2), so an unattended run from one never starts on it,
     // whatever the preset says now. (A missing guardrailsId starts as Permissive.)
     if (ticket.askCardId && (!body.guardrailsId || body.guardrailsId === 'permissive')) {
-      return { ok: false, error: `it was scheduled from Ask Worca and the run preset "${name}" now resolves to Permissive guardrails; pick a stricter set in the preset or schedule it again`, transient: false };
+      return { ok: false, error: `it was scheduled from Chat and the run preset "${name}" now resolves to Permissive guardrails; pick a stricter set in the preset or schedule it again`, transient: false };
     }
   }
   if (body.source && body.source.type === 'plugin') {
@@ -3491,12 +3495,13 @@ async function fireTicket(ticket) {
       Object.assign(body, prev);
     }
   }
-  // Every occurrence of a series needs its own feature branch — except a run on its source branch,
-  // which has none of its own (the server ignores featureBranch for it).
+  // Every occurrence of a series needs its own feature branch: the local date, plus the time
+  // when the series runs several times a day — except a run on its source branch, which has
+  // none of its own (the server ignores featureBranch for it).
   if (ticket.scheduleId && body.sameAsSource !== true && typeof body.featureBranch === 'string' && body.featureBranch.trim()) {
     const s = getSchedule(ticket.scheduleId);
-    const day = (s && s.tz ? localDate(Date.parse(ticket.runAt), s.tz) : ticket.runAt.slice(0, 10)).replace(/-/g, '');
-    body.featureBranch = `${body.featureBranch.trim()}-${day}`;
+    const stamp = s && s.rule && s.tz ? occurrenceStamp(Date.parse(ticket.runAt), s.rule) : ticket.runAt.slice(0, 10).replace(/-/g, '');
+    body.featureBranch = `${body.featureBranch.trim()}-${stamp}`;
   }
   // A "Run now" click names its clicker for this one firing (scheduleVerb records it).
   const runNowBy = RUN_NOW_BY.get(ticket.id) || null;
@@ -3886,7 +3891,7 @@ app.get('/api/schedules/after/:id', async (req, res) => {
 app.get('/api/schedules/:id', (req, res) => {
   const found = findScheduleItem(req.params.id);
   if (!found) return res.status(404).json({ error: 'schedule not found' });
-  const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50 }).reverse() : [];
+  const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50, newestFirst: true }) : [];
   res.json({ ...found, item: found.kind === 'once' ? ticketPresetName(withAfter(found.item)) : schedulePresetName(found.item), history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50, reader: notifReader(req) }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
 });
 
@@ -6997,7 +7002,7 @@ const ACTION_ENTRY_CAP = 50;                        // finished action entries k
 const actionsPidFileNow = () => actionsPidFile(worcaHome());
 const actions = new ActionRegistry({ portRange: () => parsePortRange(actionsSettings()) });
 Object.defineProperty(actions, 'pidFile', { get: actionsPidFileNow });
-Object.defineProperty(actions, 'stateFile', { get: () => actionsStateFile(worcaHome()) });   // Ask Worca reads it (readActionsState)
+Object.defineProperty(actions, 'stateFile', { get: () => actionsStateFile(worcaHome()) });   // Chat reads it (readActionsState)
 const stackStates = new Map();                     // `${runId}:${stackId}` -> state reported by runStack (D26)
 const stackTokens = new Map();                     // `${runId}:${stackId}` -> token of the live start; deleted by Stop
 const setupJobs = new Map();                       // `${runId}:${member}` -> Promise<boolean> (D25)
@@ -7293,7 +7298,7 @@ const askCommands = createAskCommands({
   // their own chat; app.js routes ask-* frames to the Ask panel.
   onUpdate: (threadId, command) => broadcast({ type: 'ask-command', threadId, command }),
   onOpen: (threadId, target) => {
-    if (target.runId) appendAuditById(target.runId, `Terminal opened by Ask Worca in ${target.projectName || target.projectKey}.`, { actor: `ask:${threadId}` });
+    if (target.runId) appendAuditById(target.runId, `Terminal opened by Chat in ${target.projectName || target.projectKey}.`, { actor: `ask:${threadId}` });
   },
   onFinish: (threadId, block) => { startTerminalEventTurn(threadId, block).catch((e) => console.warn(`[worca-ui] ask: terminal event for ${threadId}: ${e?.message || e}`)); },
 });
@@ -10024,7 +10029,7 @@ const settingsState = () => ({
   humanRateUsdPerHour: humanRateUsdPerHour(),
   askMaxTurns: askMaxTurns(),
   askMaxBudgetUsd: askMaxBudgetUsd(),
-  askWeb: askWeb(),                                       // Ask Worca web access (off by default)
+  askWeb: askWeb(),                                       // Chat web access (off by default)
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
   debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
   resumeAfterUsageLimit: resumeAfterUsageLimit(),
@@ -10046,8 +10051,8 @@ const settingsState = () => ({
   runEngine: runEngineSetting() ?? null,
   stepModels: stepModelsSetting(),
   utilityModels: utilityModelsSetting(),
-  askEngine: askEngineSetting() ?? null,                  // Ask Worca: the engine new chats start on (D17)
-  askModels: askModelsSetting(),                          // Ask Worca: the model per engine (D17)
+  askEngine: askEngineSetting() ?? null,                  // Chat: the engine new chats start on (D17)
+  askModels: askModelsSetting(),                          // Chat: the model per engine (D17)
   nightMode: nightModeSettings(),                         // night mode: the user layer (only the fields set)
   nightModeEffective: resolveNightConfig({ user: nightModeSettings() }).config,   // no project: the global view
   nightModeToggle: nightModeToggle(),                     // auto | on | off (live switch)
@@ -11610,16 +11615,46 @@ app.delete('/api/workflows/:id', async (req, res) => {
 function workflowExportErrorStatus(code) {
   if (code === 'NOT_FOUND') return 404;
   if (code === 'BAD_REQUEST' || code === 'UNSUPPORTED' || code === 'MISSING_SKILL') return 400;
-  if (code === 'INVALID_GRAPH') return 422;
+  if (code === 'INVALID_GRAPH' || code === 'VALIDATION_FAILED' || code === 'DISCOVERY_FAILED' || code === 'MARKETPLACE_INVALID') return 422;
   if (code === 'CONFLICT' || code === 'CANCELLED') return 409;
+  // Marketplace export (#717): the remote side failed (clone / fork / push / PR) — not our 500.
+  if (code === 'GIT_FAILED' || code === 'FORK_FAILED' || code === 'PUSH_FAILED' || code === 'PR_FAILED') return 502;
   return 500;
 }
 
 app.post('/api/workflows/:id/export', async (req, res) => {
   const body = req.body || {};
   const destination = body.destination;
-  if (destination !== 'global' && destination !== 'project' && destination !== 'plugin') {
-    return badRequest(res, "destination must be 'global', 'project' or 'plugin'");
+  if (destination !== 'global' && destination !== 'project' && destination !== 'plugin' && destination !== 'marketplace') {
+    return badRequest(res, "destination must be 'global', 'project', 'plugin' or 'marketplace'");
+  }
+  // ── destination 'marketplace' (#717): the plugin goes to a registered marketplace as ONE pull
+  //    request on worca/plugin/<name>. dryRun = Preview (clone, build, validate; push nothing).
+  if (destination === 'marketplace') {
+    if (typeof body.marketplaceId !== 'string' || !MARKETPLACE_ID_RE.test(body.marketplaceId)) {
+      return badRequest(res, 'marketplaceId is required for a marketplace export');
+    }
+    if (!(body.draft === undefined || body.draft === true || body.draft === false)) {
+      return badRequest(res, 'draft must be a boolean');
+    }
+    if (body.keepVersion) {
+      return badRequest(res, 'keepVersion does not apply to a marketplace export (a changed export always bumps the patch version)');
+    }
+    try {
+      const result = await exportWorkflowToMarketplace({
+        workflowId: req.params.id, marketplaceId: body.marketplaceId,
+        pluginName: typeof body.pluginName === 'string' ? body.pluginName : undefined,
+        draft: body.draft === true, dryRun: !!body.dryRun, startedBy: startedByOf(req),
+      });
+      return res.json(result);
+    } catch (err) {
+      return res.status(workflowExportErrorStatus(err && err.code)).json({
+        error: err && err.message ? err.message : String(err),
+        code: err?.code || null,
+        ...(Array.isArray(err?.problems) ? { problems: err.problems } : {}),
+        ...(Array.isArray(err?.errors) ? { errors: err.errors } : {}),
+      });
+    }
   }
   // ── destination 'plugin' (#421): a plugin folder the recipient links/reimports.
   //    Same Plan/Apply shape as the Claude Code export, so the modal renders both.
@@ -12012,7 +12047,7 @@ async function drainAskDeferred(threadId) {
     try { r = await next(); } catch (e) { r = { ok: false, error: e && e.message ? e.message : String(e) }; }
     if (r && r.ok) return;                                        // its settleJob continues the chain
     if (r && r.skipped) continue;                                 // #574: the model already saw that end
-    postAskSystemNotice(threadId, `Ask Worca could not reply to an event: ${(r && r.error) || 'unknown error'}`);
+    postAskSystemNotice(threadId, `Chat could not reply to an event: ${(r && r.error) || 'unknown error'}`);
   }
 }
 
@@ -12232,7 +12267,8 @@ app.get('/api/ask/threads/:id', (req, res) => {
       // has left the catalog.
       thread: { ...thread, engine: askChatEngine(id, thread) },
       messages: askListMessages(id),
-      attachments: askListAttachments(id),
+      // show_files copies (message_id null, docs/show-files.md) are not uploads: they never join the run card's @ picker.
+      attachments: askListAttachments(id).filter((a) => a.messageId != null),
       runLinks: askListRunLinks(id),
       // P4 §10: the SAME narrow envelope the list_worktrees MCP tool and the
       // ask-worktrees frame carry — never the full row.
@@ -12294,6 +12330,54 @@ app.get('/api/ask/runs/:id', async (req, res) => {
     }
     const extras = await askRunCardExtras(row);
     res.json({ state, live: entry ? { runId: entry.id, status: entry.status } : null, extras });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Chat answer chips (src/core/ask/refs.mjs): one batch of ref keys -> a title and a status per ref. Read-only. Someone
+// else's chat answers exactly like an unknown one (askThreadVisible), a Workflows composer thread is no chat, and the
+// GitHub / Azure DevOps lookups run on worca's own credentials, so a caller that may be an agent gets none of them.
+const askRefResolver = createRefResolver({
+  github: (repo, numbers) => ghItemSummaries({ repo, numbers }),
+  azurePr: (ref) => prSummary(ref),
+  workItems: (org, ids) => workItemSummaries({ org, ids }),
+});
+/** One run for a chip, by History id or app run id: the live entry's title, status and pause cause first (fresher
+ *  than the row), the saved row's #history home. A saved run's pause cause rides resume_point, read the way
+ *  rowToState reads it. A live run with no History row yet answers its app run id only (id null). null when
+ *  neither the runs Map nor the DB knows it. */
+function askRefRun(id) {
+  const entry = liveRunEntry(id);
+  const pid = (entry && entry.pipelineId) || (/^[0-9a-f]{8}$/.test(id) ? id : null);
+  const row = pid ? findPipelineRowById(pid) : null;
+  if (!row && !entry) return null;
+  const saved = row ? askRunFromPipelineRow(row) : null;
+  const live = entry ? askLiveRun(entry.id) : null;
+  let rp = null;
+  try { rp = row && row.resume_point ? JSON.parse(row.resume_point) : null; } catch { rp = null; }
+  return {
+    id: saved ? saved.id : pid, runId: entry ? entry.id : null,
+    title: (live && live.title) || (saved && saved.title) || '',
+    status: (live && live.status) || (saved && saved.status) || '',
+    pauseReason: entry ? (entry.pauseReason || null) : (rp && typeof rp.pauseReason === 'string' ? rp.pauseReason : null),
+    home: row ? (row.workspace_key ? `workspaces/${row.workspace_key}` : (row.project_key || null)) : (live ? live.home : null),
+  };
+}
+app.post('/api/ask/refs/resolve', async (req, res) => {
+  const refs = req.body && req.body.refs;
+  if (!Array.isArray(refs) || refs.length > REFS_MAX || !refs.every((k) => typeof k === 'string' && k.length <= 300)) {
+    return badRequest(res, `refs must be an array of at most ${REFS_MAX} ref keys`);
+  }
+  try {
+    res.json({ refs: await askRefResolver.resolve(refs, {
+      run: askRefRun,
+      chat: (id) => {
+        const thread = askGetThread(id);
+        return thread && thread.mode !== 'composer' && askThreadVisible(thread, req) ? { title: thread.title || '' } : null;
+      },
+      external: !agentMayBeCaller(req),
+    }) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -12436,6 +12520,7 @@ app.delete('/api/ask/threads/:id/worktrees/:wtId', async (req, res) => {
   }
 });
 
+const ASK_TEXT_PREVIEW_MAX = 2 * 1024 * 1024; // the viewer's TEXT_PREVIEW_MAX_BYTES (artifacts/common.mjs)
 app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
@@ -12451,24 +12536,34 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
     // this is what makes an HTML attachment (a text kind labelled text/html)
     // safe: with nosniff it is shown as source, never rendered or run on the
     // worca origin, so text/html must never be served here. Binary bodies are
-    // sniff-verified allowlisted mimes only (never scriptable markup like SVG),
-    // so serving their real mime inline is safe — and it is what lets the
-    // transcript render <img> thumbnails (#398).
+    // sniff-verified allowlisted mimes only, so serving their real mime inline
+    // is safe — and it is what lets the transcript render <img> thumbnails
+    // (#398). The one scriptable binary is a show_files SVG copy, which gets the
+    // sandbox CSP below.
     const type = att.kind === 'text' ? 'text/plain; charset=utf-8' : (att.mime || 'application/octet-stream');
+    // The chat files card's viewer reads a text body as JSON {text}, like the artifact text route (docs/show-files.md).
+    if (req.query.as === 'text') {
+      if (att.kind !== 'text') return res.status(415).json({ error: 'not a text attachment' });
+      if (att.bytes > ASK_TEXT_PREVIEW_MAX) return res.status(413).json({ error: 'too large to preview' });
+      const r = askReadAttachmentText(id, attId);
+      if (!r) return res.status(404).json({ error: 'not found' });
+      res.set('Cache-Control', 'private, no-store');
+      return res.json({ text: r.text });
+    }
     // Streamed, not readFileSync + send: a body is immutable under its
     // store-minted id, so a stat-based ETag/Last-Modified plus a year-long
     // private immutable cache replaces a 5 MB sync read and sha1 per request —
     // the transcript re-creates every <img> on each structural render.
+    const headers = { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline',
+      'Cache-Control': 'private, max-age=31536000, immutable' };
+    // A show_files SVG is drawn through <img> only; opened in its own tab, the sandbox CSP keeps its scripts dead
+    // (the ask-files route's rule).
+    if (att.mime === 'image/svg+xml') headers['Content-Security-Policy'] = "sandbox; default-src 'none'";
     res.sendFile(path.basename(file), {
       root: path.dirname(file),
       dotfiles: 'deny',
       cacheControl: false,
-      headers: {
-        'Content-Type': type,
-        'X-Content-Type-Options': 'nosniff',
-        'Content-Disposition': 'inline',
-        'Cache-Control': 'private, max-age=31536000, immutable',
-      },
+      headers,
     }, (err) => {
       if (!err || res.headersSent) return;
       if (err.code === 'ENOENT' || err.status === 404) return res.status(404).json({ error: 'attachment not found' });
@@ -12477,6 +12572,36 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
+});
+
+// Show in folder (docs/show-files.md): a chat files card opens the file manager on the file a show_files copy was made
+// from. It opens on THIS machine, so never on a hosted worca, never for a caller that may be an agent, and only where a
+// file manager was found. The path never leaves the server: the card holds a `source` flag, this route reads the row.
+const askRevealAvailable = (req) => !REMOTE_MODE && !agentMayBeCaller(req) && !!builtins().fileManager;
+app.get('/api/ask/reveal', (req, res) => {
+  res.json({ available: askRevealAvailable(req), label: askRevealAvailable(req) ? builtins().fileManager.label : null });
+});
+app.post('/api/ask/threads/:id/attachments/:attId/reveal', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  const attId = askIdParam(res, req.params.attId, 'attachment');
+  if (!attId) return;
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: 'Show in folder cannot be used from inside the container while agent isolation is on.', code: 'REVEAL_AGENT_BLOCKED' });
+  if (REMOTE_MODE) return res.status(403).json({ error: 'Folders open on the machine worca runs on, so Show in folder is off on a hosted worca.', code: 'REVEAL_REMOTE' });
+  if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+  if (!askGetAttachment(id, attId)) return res.status(404).json({ error: 'attachment not found' });
+  const source = askAttachmentSourcePath(id, attId);
+  if (!source) return res.status(409).json({ error: 'This file was not shown from a folder.', code: 'NO_SOURCE' });
+  let st = null;
+  try { st = fs.statSync(source); } catch { st = null; }
+  if (!st || !st.isFile()) return res.status(409).json({ error: 'The original file is gone: it was moved or deleted after it was shown.', code: 'SOURCE_GONE' });
+  const dir = path.dirname(source);
+  let l;
+  try { l = revealLaunch(source, dir, builtins()); }
+  catch (e) { return res.status(409).json({ error: e.message, code: e.code || 'NOT_AVAILABLE' }); }
+  const r = await launchAndWatch(l, { spawn });
+  if (!r.ok) return res.status(409).json({ error: `The file manager did not open: ${r.error}`, code: 'LAUNCH_FAILED' });
+  res.json({ ok: true });
 });
 
 // D8/§8.1: the chat model catalog. Fresh per request (the /api/config
@@ -12782,7 +12907,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
     // newest first — inlined current files must not be double-listed, so the
     // earlier set excludes the whole current message, not just `listed` ids.
     const earlier = askListAttachments(threadId)
-      .filter((a) => !currentMessageId || a.messageId !== currentMessageId)
+      .filter((a) => a.messageId != null && (!currentMessageId || a.messageId !== currentMessageId))   // uploads only: a show_files copy never takes a header slot
       .slice(-ASK_LIMITS.headerAttachments)
       .reverse()
       .map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
@@ -12863,7 +12988,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   // D5 backstop, before anything is stored: an engine Ask does not run on (Cursor). The catalog filter
   // (ask/models.mjs) already makes such a model unknown to validateModelEffort.
   const modelEngine = model ? askTurnEngine(id, thread, model) : null;
-  if (model && !modelEngine && engineOfModel(model)) return { ok: false, status: 400, error: `Ask on ${engineLabel(engineOfModel(model))} is unavailable` };
+  if (model && !modelEngine && engineOfModel(model)) return { ok: false, status: 400, error: `Chat on ${engineLabel(engineOfModel(model))} is unavailable` };
   const budget = budgetStatus();                                                    // P3: the event path needs the same gate the route head applies
   if (budget.blocked) return { ok: false, status: 403, error: 'total cost limit reached', budget };
   if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
@@ -13632,7 +13757,7 @@ async function saveBuildCard(threadId, block, { acceptScripts = null } = {}) {
  * keeps `turn.error` for API clients.
  */
 function failedEventTurn(threadId, turn) {
-  postAskSystemNotice(threadId, `Ask Worca could not reply to an event: ${turn.error || 'unknown error'}`);
+  postAskSystemNotice(threadId, `Chat could not reply to an event: ${turn.error || 'unknown error'}`);
   return turn;
 }
 
@@ -13891,7 +14016,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block });
     }
     if (found.block.card && found.block.card.type === 'schedule') {
-      // Schedule card (docs/scheduled-runs.md "Ask Worca"): proposed → applied | failed | declined. The change —
+      // Schedule card (docs/scheduled-runs.md "Chat"): proposed → applied | failed | declined. The change —
       // start now, move, edit, cancel, delete — happens HERE, behind the click, through the same scheduleVerb
       // the Schedules page uses; never in the model's tool.
       if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
@@ -13916,7 +14041,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block, turn });
     }
     if (found.block.card && found.block.card.type === 'model') {
-      // Model card (docs/models.md "Ask Worca"): proposed → applied | failed | declined. The catalog / provider
+      // Model card (docs/models.md "Chat"): proposed → applied | failed | declined. The catalog / provider
       // write happens HERE, behind the click, through the same setters the Models view uses — each re-validates.
       if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
       if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
@@ -13960,7 +14085,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
         try {
           const host = found.block.card.change?.host;
           const now = askWebAccessFor(id, askGetThread(id)?.context || {});
-          if (!now.enabled) throw new Error('web access is off for this chat — switch it on in Settings → Ask Worca → Web access');
+          if (!now.enabled) throw new Error('web access is off for this chat — switch it on in Settings → Chat → Web access');
           if (Array.isArray(now.teamCap) && !askHostAllowed(host, now.teamCap)) throw new Error(`${host} is outside the team policy's web allowlist`);
           if (body.scope === 'always') { await addAskWebHost(host); emitChanged('settings-changed'); }
           result = { ok: true, scope: body.scope };
@@ -14015,7 +14140,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block, turn });
     }
     if (found.block.card && found.block.card.type === 'actions') {
-      // Actions card (docs/actions.md "Ask Worca"): proposed → applied | failed | declined. The config write happens
+      // Actions card (docs/actions.md "Chat"): proposed → applied | failed | declined. The config write happens
       // HERE, behind the click, through the same core setters as PUT /api/projects/:key/actions and
       // /api/workspaces/:id/actions — each re-validates — and behind the same D4 guard: an isolated agent must
       // not plant a command a person's later click would run. Applying stores config; it starts nothing.
@@ -14076,7 +14201,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block });
     }
     if (found.block.card && ['metrics', 'policy', 'away'].includes(found.block.card.type)) {
-      // Metrics / policy card (docs/team-metrics.md, docs/team-policy.md "Ask Worca"): proposed → applied | failed |
+      // Metrics / policy card (docs/team-metrics.md, docs/team-policy.md "Chat"): proposed → applied | failed |
       // declined. The change is the outward-facing part — a branch on origin, a commit to the team's policy, a
       // marker on another repo, this machine's switch, the workspace's home — so it happens HERE, behind the
       // click, never in the model's tool.
@@ -14690,6 +14815,13 @@ app.get('/api/marketplaces', (req, res) => {
   try {
     res.json({ marketplaces: withInstalled(listMarketplaces()) });
   } catch (err) { sendPluginError(res, err); }
+});
+
+// Export → Worca plugin → Marketplace (#717): the marketplaces a pull request can go to (GitHub /
+// Azure DevOps remotes inside WORCA_CLONE_ALLOW when set) and the rest with why — from the stored list, no network.
+app.get('/api/marketplaces/publish-targets', (_req, res) => {
+  try { res.json(listPublishTargets()); }
+  catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 
 // Dev-mode link of a LOCAL plugin folder — the `worca plugin link <dir>` path
@@ -16508,7 +16640,7 @@ export const _testing = {
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor,
   startCloneJob, followCloneCard, CLONE_JOBS,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
+  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,
   broadcast, askFilesRunDir,
   validateResumeTarget, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,

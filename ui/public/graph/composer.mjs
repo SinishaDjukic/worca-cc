@@ -15,6 +15,7 @@ import { renderNodeInspector, renderWireInspector, renderEmptyInspector, stripLe
 import { paramEditorHook } from '../script-forms.mjs';
 import { renderSaveDialog, openDialog, closeDialog } from './save-dialog.mjs';
 import { withButton, fieldError, clearFieldErrors, cardAlert } from '../feedback.mjs';
+import { guardModal } from '../modal-guard.mjs';
 import { PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, NODE_W, snap }
   from '../../../src/shared/graph/geometry.mjs';
 import { hitRoute } from '../../../src/shared/graph/route.mjs';
@@ -507,6 +508,9 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     if (ev.key === 'Tab') { insTab = ev.shiftKey ? -1 : 1; setTimeout(() => { insTab = 0; }, 0); }   // see paintInspector
     if (ev.defaultPrevented) return;              // a menu/popover already handled it
     if (modalUp()) return;                        // a modal owns the keyboard — never the canvas
+    // An Escape something else already used — modal-guard closing the pop-up on top, which it does BEFORE
+    // this listener runs, so modalUp() no longer sees that pop-up — is not the canvas's to act on too.
+    if (ev.key === 'Escape' && ev.defaultPrevented) return;
     if (isTyping(ev.target)) return;              // guard FIRST — before space, before anything
     // ⌘Z / ⇧⌘Z still reach the canvas from a fenced BUTTON (Save, Auto-layout, a Library row, a chat card): a pointer
     // click focuses it, and undo is the one key with no other meaning there. Fields stay theirs (isTyping, above).
@@ -814,9 +818,13 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     dialog.dataset.saveAs = mode.copy ? '1' : '';
     dialog.querySelector('.sd-actions').dataset.cardActions = '';   // a refusal's cardAlert lands above it
     hostEls.dialogHost.replaceChildren(dialog);
-    dialog.querySelector('.sd-cancel').addEventListener('click', () => closeDialog(dialog));
+    // A form: Escape (or the browser's own close request) asks once the name or domain changed, a backdrop
+    // click never closes it, Cancel closes at once. modal-guard's question opens in the top layer above it.
+    const guard = guardModal(dialog, { kind: 'form', close: () => closeDialog(dialog) });
+    dialog.querySelector('.sd-cancel').addEventListener('click', () => guard.cancel());
     dialog.querySelector('.sd-confirm').addEventListener('click', () => { confirmSave(); });
     openDialog(dialog);
+    guard.opened();
     return dialog;
   }
 

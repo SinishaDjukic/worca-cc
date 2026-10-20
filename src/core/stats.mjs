@@ -266,7 +266,7 @@ function groupedRows(g, { win, fromMs, toMs, filter, allTime, ask, totalUsd }) {
   for (const r of money) rowFor(r.g).spentUsd += r.usd || 0;
 
   const out = [...rows.values()].map((r) => ({ ...r, spentUsd: roundUsd(r.spentUsd) }));
-  if (ask) out.push({ kind: 'ask', key: null, label: 'Ask Worca', spentUsd: ask.spendUsd,
+  if (ask) out.push({ kind: 'ask', key: null, label: 'Chat', spentUsd: ask.spendUsd,
     sessions: ask.sessions, ...Object.fromEntries(COUNT_KEYS.map((c) => [c, 0])) });
   const kept = out.filter((r) => r.spentUsd !== 0 || r.runs !== 0)
     .sort((a, b) => NONE_ORDER[a.kind] - NONE_ORDER[b.kind] || b.spentUsd - a.spentUsd

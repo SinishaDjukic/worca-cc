@@ -388,8 +388,8 @@ test('runCopilotProcess refuses a writable folder inside Worca\'s home before it
   assert.ok(f.record().argv.includes(plans));
 });
 
-test('Ask Worca does not run on copilot', async () => {
-  await assert.rejects(runCopilotProcess({ askLockdown: true, bin: '/nonexistent/copilot' }), /Ask Worca does not run on Copilot/);
+test('Chat does not run on copilot', async () => {
+  await assert.rejects(runCopilotProcess({ askLockdown: true, bin: '/nonexistent/copilot' }), /Chat does not run on Copilot/);
 });
 
 test('preflight: a missing binary refuses the run; a working one passes', POSIX, async () => {

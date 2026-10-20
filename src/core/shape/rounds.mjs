@@ -1,5 +1,5 @@
 // src/core/shape/rounds.mjs — Shaper s5 (D4): rounds of a run. The marker is branch.roundOf on the round's own row
-// ({pipelineId: round 1's id, round: n, request}); idx_pipelines_round_of (v66) finds them. A Watch PR fix round
+// ({pipelineId: round 1's id, round: n, request}); idx_pipelines_round_of (v67) finds them. A Watch PR fix round
 // (D20, D21) also carries `by: 'watch'`, its trigger `kinds` and, once the watch lets go, its `outcome`.
 import { getDb, ROUND_OF_EXPR } from '../db.mjs';
 

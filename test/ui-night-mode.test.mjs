@@ -372,7 +372,7 @@ test('away row: unread settings: disabled, a click opens Settings › Runs and c
   assert.equal(menuOpen(doc), false, 'the route closes the menu');
 });
 
-test('away row: settings-changed (Settings, another tab, Ask Worca) repaints it and an open project tab', async () => {
+test('away row: settings-changed (Settings, another tab, Chat) repaints it and an open project tab', async () => {
   let body = sideBody();
   Date.now = () => Date.parse('2026-09-28T15:00:00Z');
   const ctx = await boot({ away: () => body });

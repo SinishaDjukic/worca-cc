@@ -21,6 +21,7 @@ import { previewText, REPORT_PREVIEW_DEBOUNCE_MS } from '../ui/public/report-run
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
+import { backdropClick, pressEscape, discardPrompt, discardChanges } from './helpers/popups.mjs';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
@@ -666,4 +667,55 @@ test('a blocked popup still hands the reporter the created issue', async () => {
   assert.equal(filed.hidden, false, 'the created issue is surfaced in the modal');
   const a = filed.querySelector('a');
   assert.equal(a.getAttribute('href'), FILED_URL, 'as a link the reporter can click');
+});
+
+test('Report this run: Cancel sits before Create GitHub issue; a backdrop click never closes it; a written expectation makes Escape ask', async () => {
+  const ctx = await boot({ fetchHandler: arms() });
+  await openHistoryReport(ctx);
+  const doc = ctx.window.document;
+  const modal = doc.getElementById('report-modal');
+  assert.deepEqual([...doc.querySelectorAll('.report-head-actions button')].map((b) => b.textContent), ['Cancel', 'Create GitHub issue']);
+  backdropClick(ctx.window, modal);
+  assert.equal(modal.classList.contains('hidden'), false, 'never on a backdrop click');
+  const ta = doc.getElementById('report-expectation');
+  ta.value = 'it should have stopped';
+  ta.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  pressEscape(ctx.window);
+  assert.ok(discardPrompt(doc), 'asks first');
+  discardChanges(doc);
+  await settle(ctx.window, 2);
+  assert.equal(modal.classList.contains('hidden'), true);
+});
+
+test('Report this run: while the issue is filing, Cancel and Escape wait; once filed the way out says Close and Escape asks nothing, even over a written expectation', async (t) => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const base = arms();
+  const ctx = await boot({ fetchHandler: (url, opts) => (url.endsWith('/report-issue') ? gate.then(() => jsonRes(200, FILED)) : base(url, opts)) });
+  await openHistoryReport(ctx);
+  const doc = ctx.window.document;
+  const modal = doc.getElementById('report-modal');
+  stubTab(ctx.window);
+  // Written before Create: a change until it is filed, then part of the issue — nothing left to lose.
+  const timers = useAppTimers(t);
+  try {
+    const ta = doc.getElementById('report-expectation');
+    ta.value = 'it should have stopped';
+    ta.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+    await timers.advance(REPORT_PREVIEW_DEBOUNCE_MS + 50);   // the preview rebuilds with it: Create is ready again
+    await timers.settle(8);
+  } finally {
+    t.mock.timers.reset();
+  }
+  click(ctx.window, createBtn(ctx.window));
+  assert.equal(doc.getElementById('report-close').disabled, true, 'Cancel waits while filing');
+  pressEscape(ctx.window);
+  assert.equal(modal.classList.contains('hidden'), false, 'so does Escape');
+  release();
+  await settle(ctx.window, 6);
+  assert.equal(doc.getElementById('report-close').disabled, false);
+  assert.equal(doc.getElementById('report-close').textContent, 'Close');
+  pressEscape(ctx.window);
+  assert.equal(discardPrompt(doc), null, 'filed: nothing left to lose');
+  assert.equal(modal.classList.contains('hidden'), true);
 });

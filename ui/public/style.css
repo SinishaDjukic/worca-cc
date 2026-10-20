@@ -1593,6 +1593,12 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    z-index the export modal would paint over it, hiding the Browse… picker.
    Elevate it above every other modal so it is always usable when open. */
 #folder-browser.viewer-modal{z-index:70;}
+/* "Discard changes?" (modal-guard.mjs askDiscard): a native <dialog> opened with showModal(), so it
+   paints in the top layer above every .viewer-modal, the folder browser and the composer's own
+   <dialog>. These rules undo the UA dialog box so the .viewer-modal scrim and centred .card apply. */
+dialog.discard-modal{max-width:none;max-height:none;width:auto;height:auto;margin:0;border:0;color:inherit;}
+dialog.discard-modal:not([open]){display:none;}
+dialog.discard-modal::backdrop{background:transparent;}
 .viewer-modal .card{width:min(860px,100%);max-height:86vh;overflow:auto;}
 /* The artifact viewer's header actions (Full screen · Close) share one row and one height. */
 #viewer-card .viewer-actions{display:inline-flex;align-items:center;gap:8px;}
@@ -1700,6 +1706,9 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .export-choices{display:flex;gap:12px;margin:4px 0 2px 64px;}
 .export-choice{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);cursor:pointer;}
 .export-choice input[type="radio"]{margin:0;}
+.export-pr-preview{margin-top:8px;}
+.export-pr-preview > summary{cursor:pointer;font-size:12px;}
+.export-pr-preview > pre{max-height:240px;overflow:auto;white-space:pre-wrap;font-size:12px;margin:6px 0 0;}
 /* Per-agent fan-out toggle in the New Pipeline rows. */
 .fanout-toggle {
   display: inline-flex;
@@ -5722,7 +5731,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-pop-effort-none{font-size:11px;color:var(--ink-3);}
 @media (prefers-reduced-motion: reduce){.ask-card.ask-wfcard{animation:none;}}
 
-/* ---------- metrics card chrome (ui/public/ask-panel.mjs buildMetricsCard; docs/team-metrics.md "Ask Worca") ---------- */
+/* ---------- metrics card chrome (ui/public/ask-panel.mjs buildMetricsCard; docs/team-metrics.md "Chat") ---------- */
 .ask-card.ask-mcard{gap:0;padding:16px 18px;border-width:1px;}
 .ask-mcard>*{min-width:0;}
 .ask-mcard-head{display:flex;align-items:center;gap:8px;height:24px;}
@@ -5744,7 +5753,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-mcard-results li.is-skipped{color:var(--ink-3);}
 .ask-mcard-actions{display:flex;align-items:center;gap:8px;margin-top:14px;}
 .ask-mcard.is-applied .ask-mcard-head{opacity:.9;}
-/* Team policy card (docs/team-policy.md "Ask Worca"): an edit's before → after list. */
+/* Team policy card (docs/team-policy.md "Chat"): an edit's before → after list. */
 .ask-mcard-changes{list-style:none;margin:4px 0 0;padding:8px 10px;border-radius:var(--r-sm);background:var(--field);display:flex;flex-direction:column;gap:4px;font-size:12.5px;}
 .ask-mcard-changes li{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px;min-width:0;}
 .ask-mcard-change-label{color:var(--ink-2);}
@@ -5758,13 +5767,13 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-awcard-after mark{background:var(--amber-wash);color:inherit;border-radius:var(--r-xs);padding:0 2px}
 .ask-awcard-changes{margin:4px 0 0;padding-left:18px}
 .ask-awcard-saved{margin-top:8px;font-size:12.5px}
-/* actions card (buildActionsCard; docs/actions.md "Ask Worca"): each command block shown whole, word for word */
+/* actions card (buildActionsCard; docs/actions.md "Chat"): each command block shown whole, word for word */
 .ask-acard-change{flex-direction:column;align-items:stretch;}
 .ask-acard-change .ask-mcard-change-val{display:flex;flex-direction:column;align-items:stretch;gap:4px;}
 .ask-acard-cmd{display:block;white-space:pre-wrap;overflow-wrap:anywhere;font-weight:400;}
 .ask-acard-cmd.ask-mcard-before{text-decoration:none;opacity:.7;}
 .ask-acard-tag{font-family:var(--sans);font-size:11px;color:var(--ink-3);}
-/* schedule card (buildScheduleCard; docs/scheduled-runs.md "Ask Worca"): the metrics card's chrome + a before/after grid */
+/* schedule card (buildScheduleCard; docs/scheduled-runs.md "Chat"): the metrics card's chrome + a before/after grid */
 .ask-scard-kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;margin-top:4px;font-size:12.5px;}
 .ask-scard-k{color:var(--ink-3);}
 .ask-scard-v{color:var(--ink);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
@@ -5772,7 +5781,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 /* endpoint import sheet (bridge-view.mjs renderEndpointSheet): the server's own warnings, and a window it would not name */
 .mvi-warn{display:block;color:var(--amber-ink);}
 .mvi-ctx-unknown{color:var(--ink-3);font-size:11.5px;}
-/* model card (buildModelCard; docs/models.md "Ask Worca"): the policy card's change list + what will still block the model */
+/* model card (buildModelCard; docs/models.md "Chat"): the policy card's change list + what will still block the model */
 .ask-modcard-warn,.ask-wscard-warn{color:var(--amber-ink);}
 .ask-modcard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}
 
@@ -6596,6 +6605,11 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .sched-inline > *{flex:1 1 0;min-width:0;}
 .sched-inline > input[type="number"]{flex:0 0 92px;}
 .sched-inline > [hidden]{display:none;}
+/* The range sits in one half of .field-grid-2: the label takes its own line so From/To share the width. */
+.sched-range{margin-top:8px;flex-wrap:wrap;row-gap:6px;}
+.sched-range > input[type="time"]{flex:1 1 0;min-width:7.5em;}
+.sched-range > .sched-between{flex:1 0 100%;display:flex;gap:6px;align-items:center;font-size:13px;color:var(--ink-2);}
+.sched-range > .sched-range-dash{flex:0 0 auto;}
 .sched-card .field-grid-2[hidden],.sched-card .field[hidden]{display:none;}
 .sched-sentence{margin:4px 0 8px;padding:13px 15px;border-radius:var(--r-ctrl);background:var(--violet-wash);
   border:1px solid var(--violet-bg);font-size:14px;line-height:1.45;}
@@ -8550,6 +8564,33 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .shape-plan-notes{padding:8px 10px;border-radius:var(--r-ctrl);border:1px solid var(--line);}
 .shape-plan-notes-head{font-weight:600;color:var(--ink);}
 .shape-plan-notes-list{margin:4px 0 0;padding-left:18px;overflow-wrap:anywhere;}
+/* ===== Chat: files card (show_files, docs/show-files.md) ===== */
+.ask-filescard .ask-mcard-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ask-filescard-grid,.ask-filescard-list,.ask-filescard-skipped{margin-top:12px}
+.ask-filescard-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.ask-filescard-grid.is-single{grid-template-columns:minmax(0,420px)}
+.ask-filescard-thumb{display:flex;align-items:center;justify-content:center;padding:0;aspect-ratio:4/3;overflow:hidden;border:0;border-radius:var(--r-sm);background:var(--field);cursor:zoom-in}
+.ask-filescard-grid.is-single .ask-filescard-thumb{aspect-ratio:auto;max-height:320px}
+.ask-filescard-thumb:focus-visible{outline:2px solid var(--ink-2);outline-offset:2px}
+.ask-filescard-img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+.ask-filescard-list{display:flex;flex-direction:column;gap:6px}
+.ask-filescard-file{display:flex;align-items:center;gap:10px;min-width:0}
+.ask-filescard-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0;border:0;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;text-decoration:underline;text-decoration-color:var(--line-2)}
+.ask-filescard-meta{flex:none;color:var(--ink-3);font-size:12px}
+.ask-filescard-tile{position:relative;display:flex;min-width:0}
+.ask-filescard-tile .ask-filescard-thumb{flex:1 1 auto;min-width:0}
+/* Icon buttons in the run artifacts browser's style (.afb-dl): Show in folder, Download. */
+.ask-filescard-acts{flex:none;margin-left:auto;display:flex;align-items:center;gap:2px}
+/* Icon buttons are .btn.btn-sm.btn-quiet.btn-icon; this hook carries layout only. [hidden] must stay: .btn sets
+   display:inline-flex, which beats the UA [hidden] rule (the reveal button starts hidden until revealInfo answers). */
+.ask-filescard-ib{flex:none}
+.ask-filescard-ib[hidden]{display:none}
+.ask-filescard-ib svg{width:16px;height:16px}
+.ask-filescard-tile .ask-filescard-acts{position:absolute;top:6px;right:6px;margin:0;padding:2px;border-radius:var(--r-sm);background:var(--surface);opacity:0}
+.ask-filescard-tile:hover .ask-filescard-acts,.ask-filescard-tile:focus-within .ask-filescard-acts{opacity:1}
+@media (hover:none){.ask-filescard-tile .ask-filescard-acts{opacity:1}}
+.ask-filescard-skipped{margin-bottom:0;color:var(--ink-3);font-size:12px}
+@media (max-width:480px){.ask-filescard-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 /* ===== Chat P3: run card ===== */
 /* The chat run card (ui/public/chat/run-card.mjs). It keeps the Ask progress card's look (.ask-rc-* above) and adds
@@ -9516,6 +9557,24 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 /* QA 8: the group heading keeps a sane width; the kind chip wraps under it when there is no room. */
 .gpage .rd-title-row{flex-wrap:wrap;}
 .gpage .gpage-title{flex:1 1 160px;min-width:min(100%,160px);}
+
+/* Chat: answer ref chips (ui/public/ask-ref-chips.mjs). A neutral chip with the token corner; the
+   status is a coloured word (the .runs-pr.is-* pattern), never a filled pill. */
+.ask-md a.ask-ref-chip{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:22px;box-sizing:border-box;padding:0 6px;border-radius:var(--r-xs);vertical-align:-5px;overflow:hidden;background:var(--field);color:var(--ink);font-size:12.5px;line-height:22px;text-decoration:none;white-space:nowrap;}
+.ask-md a.ask-ref-chip:hover{background:var(--hover);}
+.ask-md a.ask-ref-chip:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.ask-ref-ic{flex:none;}
+.ask-ref-label{flex:none;max-width:28ch;overflow:hidden;text-overflow:ellipsis;font-weight:600;color:var(--blue-ink-strong);}
+.ask-ref-sep{flex:none;}
+.ask-ref-title{min-width:0;max-width:36ch;overflow:hidden;text-overflow:ellipsis;}
+.ask-ref-pill{flex:none;font-size:11px;font-weight:500;line-height:16px;}
+.ask-ref-pill.tone-green{color:var(--green-ink);}
+.ask-ref-pill.tone-violet{color:var(--violet-ink);}
+.ask-ref-pill.tone-red{color:var(--red-ink);}
+.ask-ref-pill.tone-amber{color:var(--amber-ink);}
+.ask-ref-pill.tone-peach{color:var(--h-peach-ink);}
+.ask-ref-pill.tone-blue{color:var(--h-blue-ink);}
+.ask-ref-pill.tone-slate{color:var(--slate-ink);}
 
 /* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint (a
    question the amber wash). It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a

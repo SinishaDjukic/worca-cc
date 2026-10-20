@@ -362,8 +362,8 @@ Options:
   --at <when>              Run ONCE, later: "02:00", "tomorrow 02:00", "+90m", "2026-09-19 02:00",
                            or ISO 8601 with an offset. Needs a Worca server up at that time — or --wait
   --wait                   With --at: hold this terminal and start the run here when it is due
-  --every <pattern>        Repeat: "day 03:30", "weekdays 02:00", "mon,thu 02:00", "month 1 02:00"
-  --cron "<m h dom mon dow>"   Repeat (cron subset: fixed time + days of week or one day of month)
+  --every <pattern>        Repeat: "day 03:30", "weekdays 02:00", "day 09:00,17:00", "15m 09:00-18:00 weekdays"
+  --cron "<m h dom mon dow>"   Repeat (cron subset: */N, ranges, lists + days of week or one day of month)
                            More schedule options (--until, --count, --overlap, --max-failures,
                            --if-missed, --grace, --tz): worca schedule help
   --after <id>             Start when another run ends: a run id or a scheduled run id (any unique prefix)
@@ -1585,9 +1585,15 @@ Options (json):
   --out <file>             Write to <file> instead of stdout
 Options (plugin):
   --target <dir>           The plugin folder (created, or updated in place)
+  --marketplace <id>       Instead of a folder: open a pull request that adds (or updates) the plugin
+                           in a registered GitHub / Azure DevOps marketplace (see: worca marketplace list).
+                           One branch per plugin (worca/plugin/<name>), one commit; forks when you
+                           cannot push. A changed re-export bumps the patch version.
+  --draft                  With --marketplace: open the pull request as a draft
   --name <plugin>          Plugin name (default: an existing manifest's name, else the folder name)
   --keep-version           Do not patch-bump the manifest version on an update
-  --dry-run                Show the classification; write nothing
+  --dry-run                Show the classification; write nothing (with --marketplace: also the
+                           index change and the PR body; nothing is pushed)
 
 Import: the id is minted from the name; a name already in use gets a " (2)" suffix —
 nothing is ever overwritten. A workflow that needs agents you do not have is refused;
@@ -2415,6 +2421,30 @@ async function cmdMarketplace(argv) {
   }
 }
 
+/** `worca workflow export --marketplace`: the file rows (repo-relative), the index change, then the
+ *  PR — or why there is none. Dry run prints the PR title + body instead of a link. */
+function printMarketplaceExport(r) {
+  for (const p of r.files.created) out(`${c('green', 'create')}\t${p}`);
+  for (const p of r.files.updated) out(`${c('cyan', 'update')}\t${p}`);
+  for (const p of r.files.noop) out(`${c('gray', 'no-op')}\t${p}`);
+  for (const s of r.files.skipped) out(`${c('gray', 'skip')}\t${s.path}\t(${s.reason})`);
+  if (r.index.added) out(`${c('cyan', 'index')}\tworca-cc-marketplace.json\t+ "${r.subdir}"`);
+  for (const w of r.warnings) out(`${c('yellow', 'warn')}\t${w}`);
+  if (r.status === 'unchanged') {
+    out(`\nNo changes — ${r.marketplace.name} (${r.base}) already has plugin "${r.name}" (${r.versionText}); no pull request opened`);
+    return;
+  }
+  const via = r.pushTo === 'fork' ? (r.fork ? ` from ${r.fork.repo}` : ' from your fork') : '';
+  out(`\nplugin "${r.name}" (${r.versionText}) → ${r.marketplace.repo}: ${r.branch} → ${r.base}${via}`);
+  if (r.status === 'dry-run') {
+    out(`validation: lint ${r.validation.lint}; script cases: ${r.validation.cases}; discovery ${r.validation.discovery}`);
+    out(`\n--- pull request: ${r.title}${r.draft ? ' (draft)' : ''}\n${r.body}\n---\ndry run: nothing pushed`);
+    return;
+  }
+  const verb = { opened: 'opened', updated: 'updated (pushed to its branch)', 'up-to-date': 'already up to date' }[r.status];
+  out(`pull request ${verb}${r.draft ? ' (draft)' : ''}: ${r.prUrl}`);
+}
+
 async function cmdWorkflow(argv) {
   const verb = argv[0];
   const rest = argv.slice(1);
@@ -2471,11 +2501,12 @@ async function cmdWorkflow(argv) {
         }
       }
       case 'export': {
-        const a = pluginArgs(rest, ['--target', '--slug', '--on-conflict', '--format', '--out', '--name'], ['--global', '--dry-run', '--keep-version']);
+        const a = pluginArgs(rest, ['--target', '--slug', '--on-conflict', '--format', '--out', '--name', '--marketplace'], ['--global', '--dry-run', '--keep-version', '--draft']);
         const id = a._[0];
-        if (!id) fail('Usage: worca workflow export <id> [--format claude|json|plugin] [--global | --target <dir>] [--slug <name>] [--out <file>] [--name <plugin>] [--keep-version] [--dry-run] [--on-conflict=skip|overwrite|namespace]');
+        if (!id) fail('Usage: worca workflow export <id> [--format claude|json|plugin] [--global | --target <dir> | --marketplace <id>] [--slug <name>] [--out <file>] [--name <plugin>] [--keep-version] [--draft] [--dry-run] [--on-conflict=skip|overwrite|namespace]');
         const format = a.format || 'claude';
         if (!['claude', 'json', 'plugin'].includes(format)) fail(`--format must be claude|json|plugin (got ${format})`);
+        if ((a.marketplace || a.draft) && format !== 'plugin') fail('--marketplace and --draft apply only to --format plugin');
 
         if (format === 'json') {
           const payload = await share.exportGraphJson(id);
@@ -2492,7 +2523,22 @@ async function cmdWorkflow(argv) {
         }
 
         if (format === 'plugin') {
-          if (!a.target) fail('--format plugin requires --target <dir> (the plugin folder)');
+          if (a.marketplace) {
+            if (a.target) fail('--target and --marketplace are mutually exclusive');
+            if (a.global) fail('--global does not apply to --format plugin');
+            if (a['keep-version']) fail('--keep-version does not apply to --marketplace (a changed export always bumps the patch version)');
+            const mkt = await import('../core/marketplaces.mjs');
+            try { mkt.seedBuiltinMarketplace(); } catch { /* registry unwritable: go on without the builtin */ }
+            const mp = await import('../core/marketplace-publish.mjs');
+            const r = await mp.exportWorkflowToMarketplace({
+              workflowId: id, marketplaceId: a.marketplace, pluginName: a.name,
+              draft: !!a.draft, dryRun: !!a['dry-run'],
+            });
+            printMarketplaceExport(r);
+            return 0;
+          }
+          if (a.draft) fail('--draft applies only to --marketplace');
+          if (!a.target) fail('--format plugin requires --target <dir> (the plugin folder) or --marketplace <id>');
           if (a.global) fail('--global does not apply to --format plugin');
           const r = await xp.exportWorkflowPlugin({
             workflowId: id, targetDir: resolve(process.cwd(), a.target), pluginName: a.name,
@@ -3312,7 +3358,7 @@ async function main() {
   // runMock), which writes no pipeline artifact — a mock pipeline under dontAsk dies
   // at its first artifact read with no hint why. Refuse the PAIR, not the mode.
   if (flags.permissionMode === 'dontAsk' && /^(1|true|yes|on)$/i.test(String(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK ?? ''))) {
-    fail('--permission-mode dontAsk cannot be combined with --mock: the mock runner reserves it for the Ask Worca assistant.');
+    fail('--permission-mode dontAsk cannot be combined with --mock: the mock runner reserves it for the Chat assistant.');
   }
 
   // A defragment run needs no task text: synthesise the same brief the UI wrapper sends.

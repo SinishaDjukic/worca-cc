@@ -1,5 +1,5 @@
 // test/ask-api-policy-cards.test.mjs
-// The team-policy card end to end over WORCA_MOCK (docs/team-policy.md "Ask Worca"), against a
+// The team-policy card end to end over WORCA_MOCK (docs/team-policy.md "Chat"), against a
 // real bare origin: the mock's propose_policy_change → the parent re-validates and mints the card
 // → POST /api/ask/threads/:id/cards/:cardId `applied` publishes ONE commit to the worca-policy
 // branch (the change happens HERE, behind the click) or `declined` changes nothing; each flips the

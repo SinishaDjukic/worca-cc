@@ -237,7 +237,7 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   // "route ... to the metrics home"). A bare "which workspaces use team metrics?" gets the generic echo answer.
   const metrics = !wfEvent && !tmEvent && !trEvent && /\bmetrics\b/i.test(userText)
     && /\b(?:stop|start|turn|toggle|switch|record\w*|route|change|enable|disable|set)\b/i.test(userText);
-  // Scheduled runs (docs/scheduled-runs.md "Ask Worca"): a schedule-card EVENT; a CHANGE to an existing schedule
+  // Scheduled runs (docs/scheduled-runs.md "Chat"): a schedule-card EVENT; a CHANGE to an existing schedule
   // (its id in the text); or a new run to schedule ("schedule …"). All before the run arm, whose \brun\b would fire.
   const scEvent = /^\s*\[worca event\] schedule card (card_[0-9a-f]{8}) (applied|declined|failed)/.exec(userText);
   const scId = /\b(sch_[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i.exec(userText);
@@ -253,7 +253,7 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   const wantsAuto = /\bauto\b/i.test(userText);
   const workflow = !wfEvent && !tmEvent && !trEvent && !metrics && !policy && !scNew && !scChange && !taskKey && /\bworkflow\b/i.test(userText);
   const agents = !wfEvent && !tmEvent && !trEvent && /\bagents?\b/i.test(userText);
-  // Models (docs/models.md "Ask Worca"): "add a local llama model" proposes a keyless llama.cpp entry; "remove model
+  // Models (docs/models.md "Chat"): "add a local llama model" proposes a keyless llama.cpp entry; "remove model
   // <id>" its removal. The parent re-validates the INPUT against the real catalog and mints the card.
   const modelAdd = !wfEvent && !tmEvent && !trEvent && !scEvent && /\bllama\b/i.test(userText) && /\b(?:add|register)\b/i.test(userText);
   const modelRemove = !wfEvent && !tmEvent && !trEvent && !scEvent && !modelAdd ? /\bremove model ([A-Za-z0-9._-]+)/i.exec(userText) : null;
