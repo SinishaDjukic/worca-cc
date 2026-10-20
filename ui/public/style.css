@@ -8371,7 +8371,7 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-history-toggle > svg{width:20px;height:20px;flex:none;}
 .chat-history-toggle[aria-pressed="true"]{background:var(--field);color:var(--ink);}
 .chat-page[data-view="home"] .chat-head [data-ask-new-btn]{visibility:hidden;}
-.chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(24px,8vh,80px) 16px 32px;}
+.chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(16px,4vh,40px) 16px 32px;}
 .chat-hero-slot{width:100%;max-width:var(--chat-text-max);}
 .chat-hero-slot .ask-composer{padding:0;--ask-col-inset:0px;}
 .chat-page[data-view="thread"] .chat-home{display:none;}
@@ -9092,7 +9092,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-home{position:relative;}
 .chat-home > *{position:relative;}
 .chat-home-title{margin:0 0 18px;text-align:center;color:var(--ink);font:600 30px/1.2 var(--sans);letter-spacing:-.01em;}
-.chat-home-body{container:chat-home / inline-size;display:flex;flex-direction:column;gap:24px;width:100%;max-width:1040px;margin:20px auto 32px;box-sizing:border-box;}
+.chat-home-body{container:chat-home / inline-size;display:flex;flex-direction:column;gap:24px;width:100%;max-width:1040px;margin:8px auto 32px;box-sizing:border-box;}
 .chat-ic{display:inline-grid;place-items:center;flex:none;line-height:0;}
 .chat-ic svg{width:100%;height:100%;}
 /* Quick actions: all 7 tiles, 1 pin and More in one row above a 640px container (8 × 72px + gaps), 4 per row
