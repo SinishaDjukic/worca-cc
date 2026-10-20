@@ -216,6 +216,24 @@ test('a history row whose run is listed live is not shown twice; the started-by 
   assert.deepEqual(keysOf(mine).sort(), ['hist:worca-00000002/h1', 'live:mine']);
 });
 
+test('the label filter keeps runs with ANY chosen label; a group stays when one member matches; a row shows 2 chips then +N', () => {
+  const m = buildRunsModel({ live: [liveIt('r1', { labels: ['needs demo'] }), liveIt('r2')],
+    history: [histIt('h1', { labels: ['hotfix', 'spike'] }), histIt('h2', { labels: ['spike'] })], labels: ['hotfix', 'needs demo'], now: NOW });
+  assert.deepEqual(keysOf(m).sort(), ['hist:worca-00000002/h1', 'live:r1']);
+  const g = { id: 'grp_l', groupKind: 'user', title: 'Labelled', members: [
+    { position: 1, title: 'A', pipelineId: 'g1', kind: 'hist', run: { status: 'done' } },
+    { position: 2, title: 'B', pipelineId: 'g2', kind: 'hist', run: { status: 'done' } }] };
+  const gm = buildRunsModel({ history: [histIt('g1', { labels: ['hotfix'] }), histIt('g2'), histIt('x')], groups: [g], labels: ['hotfix'], now: NOW });
+  assert.deepEqual(keysOf(gm), ['chain:grp_l']);
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, buildRunsModel({ history: [histIt('h4', { labels: ['hotfix', 'needs demo', 'spike', 'release'] }), histIt('h0')], now: NOW })));
+  const row4 = host.querySelector('.runs-item[data-row-key="hist:worca-00000002/h4"] .runs-row-labels');
+  assert.equal(row4.querySelectorAll('.label-chip').length, 2);
+  assert.equal(row4.querySelector('.label-more').textContent, '+2');
+  assert.equal(row4.querySelector('.label-more').title, 'spike, release');
+  assert.equal(host.querySelector('.runs-item[data-row-key="hist:worca-00000002/h0"] .runs-row-labels'), null);
+});
+
 test('an archived run reads "Archived" with its time under Show = Archived', () => {
   assert.equal(histRowState({ status: 'done', pr: 'MERGED', archived: true }).word, 'Archived');
   const m = buildRunsModel({ history: [histIt('h-arch', { archived: true, run: { status: 'done' } }), histIt('h-live')], show: 'archived', now: NOW });

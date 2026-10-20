@@ -67,7 +67,7 @@ async function pickView(window, doc, label) {
 // `runGroups` answers GET /api/run-groups with the array's current contents; `onGroupCall` sees each POST / DELETE on
 // /api/run-groups* (logged in `groupPosts`); `bulk(body)` answers POST /api/runs/bulk (bodies logged in `posts`).
 async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [{ name: 'proj', path: PROJECT, exists: true }], history = HIST, archived = [ARCH], chains = [],
-  runGroups = [], onGroupCall = () => {}, bulk = () => ({ ok: true, done: [], cancelled: [], skipped: [] }), setup, tickets = [] } = {}) {
+  runGroups = [], onGroupCall = () => {}, bulk = () => ({ ok: true, done: [], cancelled: [], skipped: [] }), setup, tickets = [], labels = [] } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
   const { window } = dom;
   windows.push(window);
@@ -82,12 +82,19 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
   const posts = [];
   const groupPosts = [];
   const schedCalls = [];
+  const labelPosts = [];
   const ok =(body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
   window.fetch = (u, init = {}) => {
     const s = String(u);
     const method = (init.method || 'GET').toUpperCase();
     const body = init.body ? JSON.parse(init.body) : null;
     if (s.endsWith('/api/runs/bulk') && method === 'POST') { posts.push(body); return ok(bulk(body)); }
+    // Run labels (slice 1): the vocabulary, and the bulk delta (each post logged in `labelPosts`).
+    if (s.endsWith('/api/labels')) return ok({ labels });
+    if (s.endsWith('/api/runs/bulk/labels') && method === 'POST') {
+      labelPosts.push(body);
+      return ok({ runs: body.pipelineIds.map((id) => ({ id, labels: body.add || [], changed: true })), missing: [] });
+    }
     if (s.includes('/api/run-groups') && method !== 'GET') { groupPosts.push({ method, url: s, body }); onGroupCall({ method, url: s, body }); return ok({ ok: true }); }
     if (s.endsWith('/api/run-groups')) return ok({ groups: runGroups });
     if (s.includes('/api/projects')) return ok({ projects });
@@ -119,7 +126,7 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
     click(window, window.document.getElementById(yes ? 'confirm-ok' : 'confirm-cancel'));
     await settle(window, 8);
   };
-  return { window, doc: window.document, recv, posts, groupPosts, schedCalls, confirmWith };
+  return { window, doc: window.document, recv, posts, groupPosts, schedCalls, labelPosts, confirmWith };
 }
 
 test('one Runs nav item; a bare #running or #history lands on #runs with the empty state', async () => {
@@ -314,7 +321,7 @@ test('the View menu: Show and Group by narrow and regroup the list, the chip res
       assert.equal(chip.querySelector('.runs-view-chip-t').textContent, 'Finished · 2 of 3 runs');
       await pickView(window, doc, 'Running');
       assert.deepEqual(titles(), ['r-live']);
-      assert.deepEqual(JSON.parse(window.localStorage.getItem('worca-cc.runs.view')), { show: 'running', groupBy: 'none', person: '' });
+      assert.deepEqual(JSON.parse(window.localStorage.getItem('worca-cc.runs.view')), { show: 'running', groupBy: 'none', person: '', labels: [] });
       const second = await boot({ storage: { 'worca-cc.runs.view': window.localStorage.getItem('worca-cc.runs.view') } });
       go(second.window, 'runs'); await settle(second.window);
       assert.equal(second.doc.getElementById('runs-view-chip').querySelector('.runs-view-chip-t').textContent, 'Running · 0 of 2 runs', 'the view survives a reload');
@@ -342,7 +349,7 @@ test('the View menu: Show and Group by narrow and regroup the list, the chip res
     { name: 'the old filter / group-by keys migrate once into the one view record', run: async () => {
       const { window, doc } = await boot({ storage: { 'worca-cc.runs.filter': 'live', 'worca-cc.runs.groupBy': 'project' } });
       go(window, 'runs'); await settle(window);
-      assert.deepEqual(JSON.parse(window.localStorage.getItem('worca-cc.runs.view')), { show: 'running', groupBy: 'project', person: '' });
+      assert.deepEqual(JSON.parse(window.localStorage.getItem('worca-cc.runs.view')), { show: 'running', groupBy: 'project', person: '', labels: [] });
       assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), null);
       assert.equal(doc.querySelector('#runs-view-chip .runs-view-chip-t').textContent, 'Running · By project · 0 of 2 runs');
     } },
@@ -963,4 +970,64 @@ test('§2.4: a row shows its cost on hover, a group its total; an engine without
   assert.equal(rowEl(doc, '[data-pipeline-id="aaaa0001"]').title, 'Cost $1.23');
   assert.equal(rowEl(doc, '[data-pipeline-id="aaaa0002"]').title, 'Cost unknown');
   assert.equal(groupItem(doc, `chain:${FEATURE_GROUP.id}`).querySelector(':scope > a.runs-row').title, 'Group total $4.56');
+});
+
+// ── Run labels (slice 1) ───────────────────────
+
+const LABELLED = (labels, extra = {}) => ({ id: 'llll0001', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Labelled thing',
+  status: 'done', startedAt: '2026-09-29T07:00:00Z', mtime: 1, labels, ...extra });
+const labelsHello = (recv, on = true) => recv({ type: 'hello', flags: on ? { runLabels: true } : {}, runs: [] });
+
+test('run labels: a row with 4 labels shows 2 chips and +2; flag off, no chip at all', async () => {
+  for (const on of [true, false]) {
+    const { window, doc, recv } = await boot({ history: [...HIST, LABELLED(['hotfix', 'needs demo', 'spike', 'release'])] });
+    labelsHello(recv, on);
+    go(window, 'runs'); await settle(window);
+    if (!on) { assert.equal(doc.querySelectorAll('#runs-list .label-chip').length, 0, 'flag off: no chip'); window.close(); continue; }
+    const row = rowEl(doc, '[data-pipeline-id="llll0001"]');
+    assert.equal(row.querySelectorAll('.runs-row-labels .label-chip').length, 2);
+    assert.equal(row.querySelector('.label-more').textContent, '+2');
+    assert.equal(row.querySelector('.runs-row-title').nextElementSibling.className, 'runs-row-labels', 'the chips sit after the title');
+    window.close();
+  }
+});
+
+test('run labels: the bar\'s Label picker shows a dash for a label some runs carry; ticking it posts every selected id once', async () => {
+  const history = [LABELLED(['hotfix']), LABELLED(['hotfix'], { id: 'llll0002', title: 'Second' }), LABELLED([], { id: 'llll0003', title: 'Third' })];
+  const { window, doc, recv, labelPosts } = await boot({ history, labels: [{ label: 'hotfix', count: 2 }] });
+  labelsHello(recv);
+  go(window, 'runs'); await settle(window);
+  for (const id of ['llll0001', 'llll0002', 'llll0003']) { tick(window, itemOf(doc, `[data-pipeline-id="${id}"]`).querySelector('.runs-check')); await settle(window); }
+  const btn = doc.querySelector('#runs-bulk [data-bulk="label"]');
+  assert.equal(btn.disabled, false);
+  click(window, btn); await settle(window, 8);
+  const box = doc.querySelector('.label-picker .lp-row[data-label="hotfix"] .lp-check');
+  assert.equal(box.indeterminate, true, 'some of the selected runs have it');
+  box.checked = true;
+  box.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await settle(window, 8);
+  assert.equal(labelPosts.length, 1);
+  assert.deepEqual({ ...labelPosts[0], pipelineIds: [...labelPosts[0].pipelineIds].sort() }, { pipelineIds: ['llll0001', 'llll0002', 'llll0003'], add: ['hotfix'] });
+  assert.equal(doc.querySelectorAll('.label-picker').length, 1, 'the picker stays open across toggles');
+});
+
+test('run labels: the head\'s Label filter keeps matching rows; its chip × clears it', async () => {
+  const history = [...HIST, LABELLED(['hotfix'])];
+  const { window, doc, recv } = await boot({ history, labels: [{ label: 'hotfix', count: 1 }] });
+  labelsHello(recv);
+  go(window, 'runs'); await settle(window);
+  assert.equal(doc.querySelectorAll('#runs-list a.runs-row').length, 3);
+  click(window, doc.getElementById('runs-label-btn')); await settle(window, 8);
+  const box = doc.querySelector('.label-picker .lp-row[data-label="hotfix"] .lp-check');
+  assert.equal(doc.querySelector('.label-picker .lp-create'), null, 'the filter never creates a word');
+  box.checked = true;
+  box.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await settle(window, 8);
+  assert.deepEqual([...doc.querySelectorAll('#runs-list a.runs-row')].map((a) => a.dataset.pipelineId), ['llll0001']);
+  const filter = doc.getElementById('runs-label-filter');
+  assert.equal(filter.hidden, false);
+  assert.equal(filter.querySelectorAll('.label-chip').length, 1);
+  click(window, filter.querySelector('.label-x')); await settle(window, 8);
+  assert.equal(filter.hidden, true);
+  assert.equal(doc.querySelectorAll('#runs-list a.runs-row').length, 3);
 });

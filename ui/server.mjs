@@ -351,6 +351,7 @@ import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById, listNet
 import { createNetworkWatch, NETWORK_ACTOR } from '../src/core/network-wait.mjs';
 import { probeReachable, hostOf } from '../src/core/upstream-probe.mjs';
 import { editRunTags, readRunTags, tagVocabulary } from '../src/core/run-tags-store.mjs';
+import { editRunLabels, changeLabels, labelVocabulary, readRunLabels } from '../src/core/run-labels-store.mjs';
 import { normaliseTags, describeTagChange, parseTag } from '../src/shared/run-tags.mjs';
 import { normaliseDimensions, prefillTags } from '../src/shared/tag-dimensions.mjs';
 import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, prefillSources } from '../src/core/tag-dimensions.mjs';
@@ -1130,7 +1131,16 @@ function summarizeRuns() {
     workspaceId: r.workspaceId || null,
     projectNames: r.projectNames || null,
     tags: r.tags || [],
+    labels: liveLabels(r),
   }));
+}
+
+// Run labels (slice 1): a live entry reads its stored labels once, the first summary after its pipeline id exists,
+// so a run recovered after a restart keeps them; the label routes keep r.labels current after that.
+function liveLabels(r) {
+  if (!r.pipelineId) return r.labels || [];
+  if (!Array.isArray(r.labels)) r.labels = readRunLabels(r.pipelineId);
+  return r.labels;
 }
 
 // Birth announcement for a freshly-registered run: broadcasts the metadata that
@@ -1152,6 +1162,7 @@ function announceRun(entry) {
     startedBy: entry.startedBy || null,
     lastAction: entry.lastAction || null,
     tags: entry.tags || [],
+    labels: entry.labels || [],
   });
 }
 
@@ -6286,6 +6297,47 @@ app.put('/api/runs/:id/tags', (req, res) => {
     emitChanged('pipelines-changed', 'tags');
   }
   res.json({ tags: out.tags, changed: out.changed });
+});
+
+// Run labels (slice 1). Behind runLabels: 404 while off. Labels never reach stats, metrics or policy.
+const labelsOn = requireFlag('runLabels');
+const MAX_BULK_LABEL_RUNS = 500;
+
+app.get('/api/labels', labelsOn, (req, res) => res.json({ labels: labelVocabulary() }));
+
+// Patch every live entry of these runs, so the next hello / run frame carries the new set.
+function syncLiveLabels(rows) {
+  for (const { id, labels } of rows) for (const r of runs.values()) if (r.pipelineId === id) r.labels = labels;
+}
+
+app.put('/api/runs/:id/labels', labelsOn, (req, res) => {
+  const row = findPipelineRowById(req.params.id);
+  if (!row) return res.status(404).json({ error: 'pipeline not found' });
+  if (!Array.isArray(req.body?.labels)) return badRequest(res, 'labels must be a list of strings');
+  let out;
+  try { out = editRunLabels(row.id, req.body.labels); }
+  catch (e) { if (e?.code === 'BAD_LABELS') return badRequest(res, e.message); throw e; }
+  if (out.changed) { syncLiveLabels([{ id: row.id, labels: out.labels }]); emitChanged('pipelines-changed', 'labels'); }
+  res.json({ labels: out.labels, changed: out.changed });
+});
+
+app.post('/api/runs/bulk/labels', labelsOn, (req, res) => {
+  const { pipelineIds, add = [], remove = [] } = req.body || {};
+  if (!Array.isArray(pipelineIds) || !pipelineIds.length) return badRequest(res, 'pipelineIds must be a non-empty list');
+  if (pipelineIds.length > MAX_BULK_LABEL_RUNS) return badRequest(res, `at most ${MAX_BULK_LABEL_RUNS} runs at once`);
+  if (!Array.isArray(add) || !Array.isArray(remove) || !(add.length || remove.length)) return badRequest(res, 'add or remove a label');
+  const found = [];
+  const missing = [];
+  for (const id of new Set(pipelineIds.map(String))) {
+    const row = findPipelineRowById(id);
+    if (row) found.push(row.id); else missing.push(id);
+  }
+  let out;
+  try { out = found.length ? changeLabels(found, { add, remove }) : []; }
+  catch (e) { if (e?.code === 'BAD_LABELS') return badRequest(res, e.message); throw e; }
+  const changed = out.filter((r) => r.changed);
+  if (changed.length) { syncLiveLabels(changed); emitChanged('pipelines-changed', 'labels'); }
+  res.json({ runs: out, missing });
 });
 
 // Autocomplete vocabulary for tag fields: keys, then values already in use, most used first.

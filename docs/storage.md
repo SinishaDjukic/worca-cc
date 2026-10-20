@@ -123,6 +123,8 @@ The Runs list's groups (runs redesign §3.3) are the one new named state of the 
   no prompt, no starter, no tags, no group) so its cost stays in Statistics; every feed skips it.
 - `pipelines.pr_verdict` is the last CI, mergeability, draft and review verdict the PR refresh read for an open GitHub
   PR (JSON). The Runs list's PR chip ("Checks failing", "Conflicts", …) reads it through `readPrState`.
+- `run_labels` (v67): one row per (run, label), `added_at` keeps the order on the run; survives archive and restore,
+  removed with the run on a hard delete; never read by Statistics or the team metrics record.
 
 ## Resolution rules
 

@@ -19,7 +19,7 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECTS = [{ name: 'web', path: '/a/web', exists: true }, { name: 'api', path: '/a/api', exists: true }];
 const ok = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 const tick = () => new Promise((r) => setTimeout(r, 0));
-const flagsOn = (window) => applyFlags({ runTags: true }, window.document);
+const flagsOn = (window) => applyFlags({ runTags: true, runLabels: true }, window.document);
 
 async function bootForm({ tagsFor = () => [], dims = null, runResponse = null } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
@@ -300,4 +300,79 @@ test('A workspace run with no workspace picked shows no slots, even when a proje
   ctx.doc.querySelector('#target-seg button[data-target="workspace"]').click();
   for (let i = 0; i < 8; i++) await tick();
   assert.equal(ctx.doc.querySelectorAll('.tag-dim-slot').length, 0);
+});
+
+// ── Run labels (slice 1): the .rd-labels row under the run page status ──
+
+test('run labels, live page: one .rd-labels row right after .rd-sheet-head across 3 repaints', async () => {
+  const ctx = await bootApp();
+  flagsOn(ctx.window);
+  for (let i = 0; i < 3; i++) {
+    helloRun(ctx, { runId: 'run-l1', pipelineId: 'aaaa0001', labels: ['hotfix'] });
+    if (i === 0) ctx.go('running/run-l1');
+    await ctx.settle();
+  }
+  const doc = ctx.window.document;
+  const rows = doc.querySelectorAll('#run-detail .rd-labels');
+  assert.equal(rows.length, 1, 'three header paints, one row');
+  assert.ok(rows[0].previousElementSibling.classList.contains('rd-sheet-head'));
+  assert.deepEqual([...rows[0].querySelectorAll('.label-chip-t')].map((c) => c.textContent), ['hotfix']);
+  assert.equal(rows[0].querySelector('.rd-labels-edit').textContent, 'Label');
+});
+
+test('run labels, finished page: × PUTs the set without the word; a picker tick posts a one-run delta; one row stays', async () => {
+  const puts = [];
+  const posts = [];
+  const detail = { ...DETAIL, state: { ...DETAIL.state, labels: ['hotfix', 'spike'] } };
+  const ctx = await bootDetail({ detail, arms: (url, opts) => {
+    if (url.endsWith(`/api/runs/${ROW.id}/labels`) && opts.method === 'PUT') { puts.push(JSON.parse(opts.body)); return okRes({ labels: ['spike'], changed: true }); }
+    if (url.endsWith('/api/runs/bulk/labels') && opts.method === 'POST') {
+      posts.push(JSON.parse(opts.body));
+      return okRes({ runs: [{ id: ROW.id, labels: ['spike', 'release'], changed: true }], missing: [] });
+    }
+    if (url.endsWith('/api/labels')) return okRes({ labels: [{ label: 'release', count: 1 }] });
+    return null;
+  } });
+  flagsOn(ctx.window);
+  await openDetail(ctx, null);
+  await deliverRows(ctx, [ROW]);
+  const doc = ctx.window.document;
+  const row = () => doc.querySelector('#hist-detail .hd-glance .rd-labels');
+  assert.ok(row().previousElementSibling.classList.contains('rd-sheet-head'));
+  click(ctx.window, row().querySelector('.label-x'));
+  await settle(ctx.window, 6);
+  assert.deepEqual(puts, [{ labels: ['spike'] }]);
+  assert.deepEqual([...row().querySelectorAll('.label-chip-t')].map((c) => c.textContent), ['spike']);
+  click(ctx.window, row().querySelector('.rd-labels-edit'));
+  await settle(ctx.window, 6);
+  const box = doc.querySelector('.label-picker .lp-row[data-label="release"] .lp-check');
+  box.checked = true;
+  box.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  await settle(ctx.window, 6);
+  assert.deepEqual(posts, [{ pipelineIds: [ROW.id], add: ['release'] }]);
+  assert.equal(doc.querySelectorAll('#hist-detail .hd-glance .rd-labels').length, 1);
+  assert.deepEqual([...row().querySelectorAll('.label-chip-t')].map((c) => c.textContent), ['spike', 'release']);
+  // The toggle rebuilt the row's button: the open picker follows it (Esc refocuses it; a second press closes it).
+  doc.querySelector('.label-picker').dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(doc.activeElement, row().querySelector('.rd-labels-edit'));
+  click(ctx.window, row().querySelector('.rd-labels-edit'));
+  await settle(ctx.window, 6);
+  const box2 = doc.querySelector('.label-picker .lp-row[data-label="release"] .lp-check');
+  box2.checked = false;
+  box2.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  await settle(ctx.window, 6);
+  click(ctx.window, row().querySelector('.rd-labels-edit'));
+  await settle(ctx.window, 6);
+  assert.equal(doc.querySelector('.label-picker'), null, 'a press on the rebuilt button closes the picker');
+});
+
+test('run labels, finished page: "Add label" when the run has none; no row with the flag off', async () => {
+  const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, labels: [] } } });
+  await openDetail(ctx, null);
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#hist-detail .rd-labels'), null, 'flag off: nothing');
+  flagsOn(ctx.window);
+  await deliverRows(ctx, [ROW]);
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-labels .rd-labels-edit').textContent, 'Add label');
+  assert.equal(doc.querySelectorAll('#hist-detail .hd-glance .label-chip').length, 0);
 });

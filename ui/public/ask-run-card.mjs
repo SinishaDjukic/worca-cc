@@ -62,6 +62,7 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     status,
     pauseReason: state.pauseReason || null,
     pendingQuestion: null,
+    labels: Array.isArray(state.labels) ? state.labels : [],
     live,
     terminal: TERMINAL_RUN_STATUS.has(status),
     startedAt: state.startedAt || null,

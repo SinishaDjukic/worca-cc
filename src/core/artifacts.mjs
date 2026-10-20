@@ -26,6 +26,7 @@ import { memoryTotals } from './memory-sync.mjs';
 import { actorLabel } from './identity.mjs';
 import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
 import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
+import { readLabelsFor, readRunLabels } from './run-labels-store.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -2368,6 +2369,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   }
   const tagMap = readTagsFor(out.map((e) => e.id));
   for (const e of out) e.tags = tagMap.get(e.id) || [];
+  const labelMap = readLabelsFor(out.map((e) => e.id));
+  for (const e of out) e.labels = labelMap.get(e.id) || [];
   out.sort((a, b) => b.mtime - a.mtime);
   return out;
 }
@@ -2463,6 +2466,8 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   }
   const tagMap = readTagsFor(out.map((e) => e.id));
   for (const e of out) e.tags = tagMap.get(e.id) || [];
+  const labelMap = readLabelsFor(out.map((e) => e.id));
+  for (const e of out) e.labels = labelMap.get(e.id) || [];
 
   // Newest-first, with a deterministic tiebreaker so equal-mtime rows do not
   // reorder run-to-run now that build order is non-deterministic (parallel).
@@ -2638,6 +2643,7 @@ function rowToState(row) {
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),
     tags: readRunTags(row.id),
+    labels: readRunLabels(row.id),
   };
   // The pause cause rides resume_point (no column): expose it on the DETAIL payload
   // too, so a deep-linked History detail no longer waits for the LIST row.

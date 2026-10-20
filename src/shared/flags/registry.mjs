@@ -79,6 +79,18 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-01-15',
     docs: 'docs/run-presets.md',
   }),
+  entry({
+    key: 'runLabels',
+    title: 'Run labels',
+    description: 'Free-word labels on runs (hotfix, needs demo): chips on the Runs list, run pages and chat run cards, a Label filter and a Label action for selected runs. Labels never affect cost, policy or reports.',
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.11.0',
+    added: '2026-10-20',
+    reviewBy: '2027-01-18',
+    docs: 'docs/feature-flags.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));

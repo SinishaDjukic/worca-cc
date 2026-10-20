@@ -39,9 +39,17 @@ export function runsKeyAction(e, { size = 0 } = {}) {
 export function rowTarget(r) {
   const one = (x) => ({ id: x.pipelineId || x.ticketId || x.runId || x.key, title: x.title, state: x.model.state, prNeeds: !!x.model.prNeeds,
     status: x.run ? x.run.status : x.status, pipelineId: x.pipelineId || null, runId: x.runId || null,
-    ticketId: x.ticketId || (x.kind === 'sched' ? x.key.slice('sched:'.length) : null) });
+    ticketId: x.ticketId || (x.kind === 'sched' ? x.key.slice('sched:'.length) : null),
+    labels: Array.isArray(x.labels) ? x.labels : [] });
   if (r.kind !== 'chain') return one(r);
   return { id: r.key, title: r.title, state: r.model.state, groupId: r.groupId, groupKind: r.groupKind, members: r.members.map(one) };
+}
+
+/** The Label action's runs: every selected pipeline (a chain's members), deduped; rows without a pipeline id are skipped. */
+export function labelTargets(targets) {
+  const out = new Map();
+  for (const t of targets) for (const x of (t.members || [t])) if (x.pipelineId && !out.has(x.pipelineId)) out.set(x.pipelineId, { pipelineId: x.pipelineId, labels: x.labels || [] });
+  return [...out.values()];
 }
 
 /** The bar: label and, per action, how many it applies to, the title naming what it skips, and the plan. */

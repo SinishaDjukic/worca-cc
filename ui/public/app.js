@@ -103,7 +103,7 @@ import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.m
 import { buildGroupPage, paintGroupPage, runReceipts } from './group-page.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
-import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody, rangeKeys } from './runs-selection.mjs';
+import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody, rangeKeys, labelTargets } from './runs-selection.mjs';
 import { bulkConfirm } from '../../src/shared/run-bulk.mjs';
 import { openGroupPicker } from './group-picker.mjs';
 import { ACTION_LABEL, groupModel, runModel } from '../../src/shared/run-model.mjs';
@@ -290,6 +290,8 @@ import { toggleMenu, openMenu } from './workflows/menu.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
 import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
+import { openLabelPicker, closeLabelPickerFor, fetchLabels, labelChip } from './label-picker.mjs';
+import { labelStates, applyLabelChange } from '../../src/shared/run-labels.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
 // this module resolves here: the browser's storage, else an in-memory stand-in, so the page boots and forgets on reload.
@@ -1851,6 +1853,7 @@ function handleServerMessage(msg) {
       workspaceId: msg.workspaceId || undefined,
       projectNames: Array.isArray(msg.projectNames) && msg.projectNames.length ? msg.projectNames : undefined,
       tags: Array.isArray(msg.tags) ? msg.tags : undefined,
+      labels: Array.isArray(msg.labels) ? msg.labels : undefined,
     });
     updateNavCounts();
     renderPipelineTabs();
@@ -2004,6 +2007,7 @@ function onHello(msg) {
       night: r0.night || undefined,
       networkWait: r0.networkWait || null,
       tags: Array.isArray(r0.tags) ? r0.tags : undefined,
+      labels: Array.isArray(r0.labels) ? r0.labels : undefined,
       shaping: r0.shaping || null,
     });
     // Seed the run's stepper from the hello summary so the live card resolves
@@ -2151,7 +2155,7 @@ function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
   pauseDetail = null, limitEngine = null, limitResetAt = null, runEngine = undefined, startedBy = null, lastAction = null,
-  workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [],
+  workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [], labels = [],
   shaping = null, networkWait = null,
 }) {
   return {
@@ -2177,6 +2181,7 @@ function makeRun({
     night,                // Away mode on this run: {optIn, override, decisions, flagged, openedAt} (hello / state)
     networkWait,          // waiting for the network: {node, host, since, until} or null
     tags,                 // run tags (#718): normalised 'key:value' / 'key' strings (hello / run-created)
+    labels: Array.isArray(labels) ? labels : [],   // run labels (slice 1): free words (hello / run-created)
     shaping,              // Shape it first: {perspectives, rounds, approved, savedTo} on a shaping run (hello / state), or null
     // Stable ordering key: assigned once per runId, never bumped by activity
     // and never re-minted if the run is dropped and re-materialized.
@@ -23162,6 +23167,7 @@ function paintHdGlance(screen, record, data) {
   // Runs redesign slice 4: the one status block and the Group row, as on the live page (no bar: the run is finished).
   paintRunStatus(glance.querySelector('.rd-sheet .run-status'), runModel(hdModelRun(record, data), { memo: memoFor(record.id) }));
   paintGroupLine(glance.querySelector('.rd-page-head .rd-group-line'), record.id || '', record.title || '', groupHomeOf(record.id || ''));
+  paintRunLabels(glance.querySelector(':scope > .rd-sheet'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
 
   // Time · Cost · Changes, as on the Running page in every state.
   const activeMs = typeof st.totalActiveMs === 'number' ? st.totalActiveMs : liveTotalMs(st.steps, 0);
@@ -29028,6 +29034,7 @@ function askRunSnapshot(r) {
     title: r.title || '', projectKey: null, workspaceId: r.workspaceId || null, projectDir: r.projectDir || '',
     projectNames: Array.isArray(r.projectNames) ? r.projectNames : null,
     status: r.status, pauseReason: r.pauseReason || null, pendingQuestion: r.pendingQuestion || null,
+    labels: Array.isArray(r.labels) ? r.labels : [],
     ...(r.shaping ? { shaping: r.shaping } : {}),
     live: isLive(r), terminal: !!r._finished || isTerminalStatus(r.status),
     startedAt: r.startedAt || null, elapsedMs: liveTotalMs(r.steps, Date.now()),
@@ -30802,6 +30809,7 @@ function runsLiveItem(r) {
     checks: rec && typeof rec.checks === 'number' ? rec.checks : null,
     files: rec && typeof rec.files === 'number' ? rec.files : null,
     tags: flagOn('runTags') ? (r.tags || []) : [],
+    labels: flagOn('runLabels') ? (r.labels || []) : [],
     // The run model reads the raw run (runs-list.mjs runModel); its monotonic progress memo is kept per run. A finished
     // run takes its History row's PR (rdModelRun), so it reads In review here as on the run page.
     run: rdModelRun(r), memo: memoFor(r.pipelineId || r.runId),
@@ -31094,6 +31102,7 @@ function runsHistItem(p) {
     files: typeof p.files === 'number' ? p.files : null,
     base: baseRowNote(p.baseCheck),
     tags: flagOn('runTags') ? (p.tags || []) : [],
+    labels: flagOn('runLabels') ? (p.labels || []) : [],
     run: histRun(p),
     cost: engineReportsCost(p.runEngine) ? (p.totalCostUsd ?? null) : null,
   };
@@ -31112,7 +31121,7 @@ const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, 
   r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
   r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
   r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '',
-    m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.icon] : 0])] : 0];
+    m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.icon] : 0])] : 0, (r.labels || []).join('\n')];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over, then the selected row stands in;
@@ -31141,6 +31150,7 @@ function paintRunsList() {
     scheduled: schedulesView.upcoming(SCHEDULED_GROUP_WINDOW_MS).map(runsSchedItem),
     groups: runsGroupItems(),
     person: viewer.shared ? runsUi.view.person : '',
+    labels: flagOn('runLabels') ? runsUi.view.labels : [],
     show: runsUi.view.show, groupBy: runsUi.view.groupBy, collapsed: runsUi.collapsed, toggled: runsUi.groupsToggled,
     recentShown: runsUi.recentShown, archivedCount: state.historyArchived ? state.historyArchived.length : null, now: Date.now(),
   });
@@ -31307,11 +31317,63 @@ function paintRunsChip(model) {
   const chip = document.getElementById('runs-view-chip');
   if (!chip) return;
   const person = viewer.shared ? runsPeople().find((p) => p.key === runsUi.view.person) : null;
-  const text = viewChip(runsUi.view, { shown: model.shown, total: (runsUi.listCounts || model.counts).all, personName: person ? person.name : '' });
+  const text = viewChip(flagOn('runLabels') ? runsUi.view : { ...runsUi.view, labels: [] }, { shown: model.shown, total: (runsUi.listCounts || model.counts).all, personName: person ? person.name : '' });
   chip.hidden = !text;
   chip.querySelector('.runs-view-chip-t').textContent = text;
+  paintRunsLabelFilter();
 }
-document.querySelector('#runs-view-chip .runs-view-reset')?.addEventListener('click', () => setRunsView({ show: 'all', groupBy: 'none', person: '' }));
+document.querySelector('#runs-view-chip .runs-view-reset')?.addEventListener('click', () => setRunsView({ show: 'all', groupBy: 'none', person: '', labels: [] }));
+
+// ── Run labels (slice 1): the Label filter, the selection bar's Label action ──
+async function sendJson(method, url, body) {
+  const r = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw httpError(r, out);
+  return out;
+}
+/** A label change the server confirmed, patched into this tab at once (pipelines-changed reloads History too). */
+function applyLabelsLocally(list) {
+  const by = new Map(list.map((x) => [x.id, x.labels]));
+  for (const p of [...(state.historyAll || []), ...(state.historyArchived || [])]) if (p && by.has(p.id)) p.labels = by.get(p.id);
+  for (const r of runs.values()) if (r.pipelineId && by.has(r.pipelineId)) r.labels = by.get(r.pipelineId);
+  scheduleRunsPaint();
+}
+
+// Runs head: the Label filter (no create: a filter word must be in use).
+function paintRunsLabelFilter() {
+  const box = document.getElementById('runs-label-filter');
+  if (!box) return;
+  const chosen = flagOn('runLabels') ? runsUi.view.labels : [];
+  box.hidden = !chosen.length;
+  box.replaceChildren(...chosen.map((l) => labelChip(document, l, { onRemove: () => setRunsView({ labels: chosen.filter((x) => x !== l) }) })));
+}
+document.getElementById('runs-label-btn')?.addEventListener('click', async (e) => {
+  const anchor = e.currentTarget;
+  if (closeLabelPickerFor(document, anchor)) return;   // a second press closes it
+  const used = await fetchLabels();
+  anchor.setAttribute('aria-expanded', 'true');
+  openLabelPicker({ doc: document, anchor, used, allowCreate: false, title: 'Filter by label',
+    states: new Map(runsUi.view.labels.map((l) => [l, 'all'])),
+    onToggle: (label, on) => setRunsView({ labels: on ? [...runsUi.view.labels, label] : runsUi.view.labels.filter((x) => x !== label) }),
+    onClose: () => anchor.setAttribute('aria-expanded', 'false') });
+});
+
+// Selection bar: the Label action.
+async function openRunsLabelPicker(anchor) {
+  if (closeLabelPickerFor(document, anchor)) return;
+  const targets = labelTargets(selectedTargets());
+  if (!targets.length) return;
+  const used = await fetchLabels();
+  openLabelPicker({ doc: document, anchor, used, mode: 'up', title: 'Label selected runs',
+    states: labelStates(targets.map((t) => t.labels)),
+    onToggle: async (label, on) => {
+      try {
+        const out = await sendJson('POST', '/api/runs/bulk/labels', { pipelineIds: targets.map((t) => t.pipelineId), [on ? 'add' : 'remove']: [label] });
+        for (const t of targets) t.labels = applyLabelChange(t.labels, on ? { add: [label] } : { remove: [label] });
+        applyLabelsLocally(out.runs);
+      } catch (err) { notify(actionError('label the selected runs', err)); }
+    } });
+}
 
 // ── Selection, keys and the action bar (runs-selection.mjs, D19-D21) ──
 const visibleTopKeys = () => [...el.runsList.querySelectorAll('.runs-item[data-level="top"]')].map((n) => n.dataset.rowKey);
@@ -31342,7 +31404,7 @@ document.getElementById('runs-list-pane')?.addEventListener('keydown', (e) => {
 // Esc clears the selection wherever focus is (the list, the open run beside it, the page). A menu, the group picker or
 // a modal owns its own Escape first.
 function runsListOwnsEscape() {
-  if (document.querySelector('.wfv-menu, .group-picker')) return true;
+  if (document.querySelector('.wfv-menu, .group-picker, .label-picker')) return true;
   return runsUi.sel.size > 0 || runsUi.selecting;
 }
 function overlayUp() {
@@ -31351,7 +31413,7 @@ function overlayUp() {
 }
 document.addEventListener('keydown', (e) => {
   // openMenu (workflows/menu.mjs) and the group picker stop their Escape at the menu, so it never gets here.
-  if (e.key !== 'Escape' || e.defaultPrevented || overlayUp() || document.querySelector('.wfv-menu, .group-picker')) return;
+  if (e.key !== 'Escape' || e.defaultPrevented || overlayUp() || document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;
   if (!runsUi.sel.size && !runsUi.selecting) return;
   e.preventDefault();
   runsUi.sel.clear();
@@ -31410,6 +31472,11 @@ function paintRunsBar() {
     b.disabled = m[a].count === 0;
     if (m[a].title) b.title = m[a].title; else b.removeAttribute('title');
   }
+  const labelBtn = bar.querySelector('[data-bulk="label"]');
+  if (labelBtn) {
+    labelBtn.disabled = !labelTargets(selectedTargets()).length;
+    if (labelBtn.disabled) labelBtn.title = 'None of the selected runs can be labelled yet'; else labelBtn.removeAttribute('title');
+  }
 }
 async function postBulk(body) {
   const r = await fetch('/api/runs/bulk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -31451,6 +31518,7 @@ document.getElementById('runs-bulk')?.addEventListener('click', (e) => {
   const b = e.target.closest && e.target.closest('[data-bulk]');
   if (!b) return;
   if (b.dataset.bulk === 'cancel') { runsUi.sel.clear(); runsUi.selecting = false; runsUi.anchorKey = null; paintRunsList(); return; }
+  if (b.dataset.bulk === 'label') { void openRunsLabelPicker(b); return; }
   runBulkAction(b.dataset.bulk);
 });
 
@@ -34041,6 +34109,52 @@ function rdDot() {
   return s;
 }
 
+// Run labels under the run page status (slice 1). One row per sheet, rebuilt on every header paint.
+// A saved change stores the new set (onSaved: data only) and repaints just this row (D18).
+function paintRunLabels(sheet, { pipelineId, labels, onSaved = () => {} }) {
+  if (!sheet) return;
+  sheet.querySelector(':scope > .rd-labels')?.remove();
+  if (!flagOn('runLabels')) return;
+  const row = document.createElement('div');
+  row.className = 'rd-labels';
+  row.setAttribute('aria-label', 'Labels');
+  const done = (next) => {
+    applyLabelsLocally([{ id: pipelineId, labels: next }]);
+    onSaved(next);
+    if (sheet.isConnected) paintRunLabels(sheet, { pipelineId, labels: next, onSaved });
+  };
+  // The chip ×: replace the set (PUT). A picker toggle: a delta for this one run (D17), so quick toggles never race.
+  const remove = async (l) => {
+    try { done((await sendJson('PUT', `/api/runs/${encodeURIComponent(pipelineId)}/labels`, { labels: list.filter((x) => x !== l) })).labels); }
+    catch (err) { notify(actionError('change the labels', err)); }
+  };
+  const toggle = async (label, on) => {
+    try {
+      const out = await sendJson('POST', '/api/runs/bulk/labels', { pipelineIds: [pipelineId], [on ? 'add' : 'remove']: [label] });
+      done(out.runs[0]?.labels || []);
+    } catch (err) { notify(actionError('change the labels', err)); }
+  };
+  const list = labels || [];
+  row.append(...list.map((l) => labelChip(document, l, pipelineId ? { onRemove: remove } : {})));
+  if (pipelineId) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn btn-sm btn-quiet rd-labels-edit';
+    b.textContent = list.length ? 'Label' : 'Add label';
+    b.setAttribute('aria-haspopup', 'dialog');
+    b.addEventListener('click', async () => {
+      if (closeLabelPickerFor(document, b)) return;
+      // A toggle repaints this row (done), so the picker follows the current button rather than this one.
+      const anchor = () => (sheet.isConnected && sheet.querySelector(':scope > .rd-labels > .rd-labels-edit')) || b;
+      openLabelPicker({ doc: document, anchor, used: await fetchLabels(), title: 'Labels',
+        states: new Map(list.map((l) => [l, 'all'])), onToggle: toggle });
+    });
+    row.append(b);
+  }
+  const head = sheet.querySelector(':scope > .rd-sheet-head');
+  if (row.childElementCount && head) head.after(row);
+}
+
 function paintRdHeader(screen, r) {
   screen.querySelector('.rd-title').textContent = r.title || r.runId;
   screen.querySelector('.rd-bar-title').textContent = r.title || r.runId;
@@ -34072,6 +34186,7 @@ function paintRdHeader(screen, r) {
   // Run tags (#718): read-only chips after the person chip, replaced on every paint.
   for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();
   if (flagOn('runTags')) screen.querySelector('.rd-page-meta').append(...(r.tags || []).map((t) => tagChip(document, t)));
+  paintRunLabels(screen.querySelector('.rd-glance > .rd-sheet'), { pipelineId: r.pipelineId || '', labels: r.labels, onSaved: (l) => { r.labels = l; } });
 
   // Meta: project · started · elapsed · cost · step n/m · step name.
   const meta = screen.querySelector('.rd-meta');

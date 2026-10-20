@@ -678,6 +678,9 @@
                 <button type="button" class="btn btn-sm btn-quiet runs-view-btn" id="runs-view-btn" aria-haspopup="menu" aria-expanded="false">
                   View <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9.5l6 6 6-6"></path></svg>
                 </button>
+                <button type="button" class="btn btn-sm btn-quiet runs-label-btn" id="runs-label-btn" data-flag="runLabels" aria-haspopup="dialog" aria-expanded="false">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg> Label
+                </button>
                 <label class="runs-all-wrap" hidden><input type="checkbox" class="runs-check runs-all" id="runs-all" aria-label="Select all visible runs"> Select all</label>
               </div>
               <div class="runs-view-chip" id="runs-view-chip" hidden>
@@ -686,12 +689,14 @@
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"></path></svg>
                 </button>
               </div>
+              <div class="runs-label-filter" id="runs-label-filter" data-flag="runLabels" aria-label="Label filter" hidden></div>
               <!-- Runs redesign §5a.9: the one-time What's new note (whats-new.mjs), above the list. -->
               <div id="runs-whats-new" hidden></div>
               <div class="runs-list" id="runs-list" aria-label="Runs" aria-live="polite"></div>
               <!-- The selection's actions (runs-selection.mjs): each shows how many runs it applies to. -->
               <div class="runs-bulk" id="runs-bulk" role="toolbar" aria-label="Selected runs" hidden>
                 <span class="runs-bulk-n" id="runs-bulk-n">0 selected</span>
+                <button type="button" class="btn btn-sm" data-bulk="label" data-flag="runLabels" aria-haspopup="dialog">Label</button>
                 <button type="button" class="btn btn-sm" data-bulk="stop">Stop <span class="runs-bulk-c">0</span></button>
                 <button type="button" class="btn btn-sm" data-bulk="archive">Archive <span class="runs-bulk-c">0</span></button>
                 <button type="button" class="btn btn-sm btn-danger" data-bulk="delete" data-min-level="advanced">Delete <span class="runs-bulk-c">0</span></button>

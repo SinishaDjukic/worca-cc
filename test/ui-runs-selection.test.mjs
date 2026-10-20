@@ -1,7 +1,7 @@
 // test/ui-runs-selection.test.mjs — Runs list selection (runs redesign §3.2, §5a.4): keys, the selection set, the bar, the bulk body
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createRunsSelection, runsKeyAction, barModel, bulkBody, rangeKeys } from '../ui/public/runs-selection.mjs';
+import { createRunsSelection, runsKeyAction, barModel, bulkBody, rangeKeys, rowTarget, labelTargets } from '../ui/public/runs-selection.mjs';
 
 const ev = (key, o = {}) => ({ key, metaKey: false, ctrlKey: false, targetIsRow: true, inField: false, ...o });
 
@@ -55,4 +55,15 @@ test('rangeKeys (A11, spec §3.2): Shift-click selects the visible keys from the
   assert.deepEqual(rangeKeys(['a', 'b', 'c', 'd'], 'd', 'b'), ['b', 'c', 'd']);
   assert.deepEqual(rangeKeys(['a', 'b', 'c', 'd'], 'x', 'c'), ['c'], 'a missing anchor selects just the key');
   assert.deepEqual(rangeKeys(['a', 'b', 'c', 'd'], 'a', 'z'), [], 'a key outside the list selects nothing');
+});
+
+test('labelTargets: a chain expands to its members\' pipeline ids, deduped; a scheduled ticket is skipped', () => {
+  const m = { state: 'done' };
+  const chain = rowTarget({ kind: 'chain', key: 'chain:c1', title: 'C', model: m, groupId: 'c1', groupKind: 'chain', members: [
+    { key: 'member:c1/p1', pipelineId: 'p1', model: m, labels: ['hotfix'] },
+    { key: 'member:c1/t1', kind: 'sched', ticketId: 't1', model: m }] });
+  const solo = rowTarget({ kind: 'hist', key: 'hist:k/p1', pipelineId: 'p1', model: m, labels: ['hotfix'] });
+  const other = rowTarget({ kind: 'hist', key: 'hist:k/p2', pipelineId: 'p2', model: m });
+  const ticket = rowTarget({ kind: 'sched', key: 'sched:t2', model: m });
+  assert.deepEqual(labelTargets([chain, solo, other, ticket]), [{ pipelineId: 'p1', labels: ['hotfix'] }, { pipelineId: 'p2', labels: [] }]);
 });

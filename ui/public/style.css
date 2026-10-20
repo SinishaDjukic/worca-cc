@@ -7773,6 +7773,32 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .hd-tags-editor{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;}
 .hd-tags .tag-input{flex:1 1 280px;}
 .rd-page-meta > .tag-chip{margin-left:6px;}
+/* Run labels (slice 1): the outlined chip; colour only on the dot (labelHue → .hue-*). */
+.label-chip{display:inline-flex;align-items:center;gap:4px;max-width:160px;min-width:0;padding:2px 6px;border-radius:var(--r-xs);border:1px solid var(--line);
+  color:var(--ink-2);font-size:11.5px;font-weight:500;white-space:nowrap;}
+.label-chip-t{overflow:hidden;text-overflow:ellipsis;}
+.label-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--slate);}
+.label-dot.hue-blue{background:var(--blue);}.label-dot.hue-violet{background:var(--violet);}.label-dot.hue-teal{background:var(--teal);}
+.label-dot.hue-pink{background:var(--pink);}.label-dot.hue-indigo{background:var(--indigo);}.label-dot.hue-lime{background:var(--lime);}
+.label-dot.hue-cocoa{background:var(--cocoa);}.label-dot.hue-slate{background:var(--slate);}
+.label-x{border:0;background:none;cursor:pointer;color:var(--ink-3);font:inherit;padding:0 2px;display:inline-flex;}
+.label-more{flex:none;color:var(--ink-3);font-size:11.5px;font-variant-numeric:tabular-nums;}
+.runs-row-labels{flex:0 1 auto;min-width:0;display:inline-flex;align-items:center;gap:4px;overflow:hidden;}
+.runs-label-filter{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 6px 20px;}
+.runs-label-filter[hidden]{display:none;}
+.rd-labels{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+/* Shaper wait: .rd-sheet is a flex row there (see the .rd-glance[data-shaper-wait] rules); the labels take their own line under the head. */
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > .rd-labels{flex-basis:100%;}
+.chat-rc-labels{display:flex;flex-wrap:wrap;gap:4px;}
+.chat-rc-labels:empty{display:none;}
+.label-picker{position:fixed;z-index:60;width:280px;max-width:calc(100vw - 16px);max-height:60vh;overflow:auto;background:var(--panel);
+  border:1px solid var(--line-2);border-radius:var(--r-sm);padding:8px;box-shadow:var(--shadow-menu);}
+.lp-list{display:flex;flex-direction:column;margin-top:6px;}
+.lp-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 4px;cursor:pointer;}
+.lp-row:hover,.lp-create:hover{background:var(--hover);}
+.lp-create{display:block;width:100%;padding:6px 4px;border:0;background:none;text-align:left;color:inherit;font:inherit;cursor:pointer;}
+.lp-empty{margin:8px 4px;color:var(--ink-3);}
+@media (max-width: 480px){.label-chip{max-width:96px;}.label-picker{width:calc(100vw - 16px);}}
 .mcp-member{padding:14px 16px;margin-top:10px;}
 .mcp-member .pl-enable{margin-left:0;}
 [data-view="connectors"] .mono,.mcp-def .mono,.mcp-fields .mono{font-family:var(--mono);}
