@@ -8385,7 +8385,7 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-history-toggle > svg{width:20px;height:20px;flex:none;}
 .chat-history-toggle[aria-pressed="true"]{background:var(--field);color:var(--ink);}
 .chat-page[data-view="home"] .chat-head [data-ask-new-btn]{visibility:hidden;}
-.chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(24px,8vh,80px) 16px 32px;}
+.chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(16px,4vh,40px) 16px 32px;}
 .chat-hero-slot{width:100%;max-width:var(--chat-text-max);}
 .chat-hero-slot .ask-composer{padding:0;--ask-col-inset:0px;}
 .chat-page[data-view="thread"] .chat-home{display:none;}
@@ -9133,14 +9133,15 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-home{position:relative;}
 .chat-home > *{position:relative;}
 .chat-home-title{margin:0 0 18px;text-align:center;color:var(--ink);font:600 30px/1.2 var(--sans);letter-spacing:-.01em;}
-.chat-home-body{container:chat-home / inline-size;display:flex;flex-direction:column;gap:24px;width:100%;max-width:1040px;margin:20px auto 32px;box-sizing:border-box;}
+.chat-home-body{container:chat-home / inline-size;display:flex;flex-direction:column;gap:24px;width:100%;max-width:1040px;margin:8px auto 32px;box-sizing:border-box;}
 .chat-ic{display:inline-grid;place-items:center;flex:none;line-height:0;}
 .chat-ic svg{width:100%;height:100%;}
 /* Quick actions: all 7 tiles, 1 pin and More in one row above a 640px container (8 × 72px + gaps), 4 per row
    below it. auto-fit: a level-gated or switched-off tile collapses its track instead of leaving a hole. */
 /* Quick actions (review B10): 56px, icon + label on one line, no border, hover tint. */
-.chat-home-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:4px;}
-.chat-home-act{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:10px;min-width:0;min-height:56px;
+.chat-home-actions{display:flex;flex-wrap:nowrap;justify-content:center;gap:4px;overflow:hidden;}
+.chat-home-act[data-overflow]{display:none;}
+.chat-home-act{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:8px;flex:none;min-width:0;min-height:40px;
   padding:0 12px;box-sizing:border-box;border:0;border-radius:var(--r-sm);background:none;color:var(--ink);
   font:500 13px/1.3 var(--sans);text-align:left;cursor:pointer;}
 .chat-home-act:hover{background:var(--hover);}
@@ -9230,7 +9231,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 :is(.chat-home-act,.chat-home-panel,.chat-home-chat,.chat-home-wf,.chat-home-promo-b,.chat-run-tile-answer,.chat-intent-x,.chat-home-more-link,.chat-home-preset,.chat-home-preset-more):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* A long rotating example never wraps to a clipped second line in the one-row hero composer (390px). */
 .chat-hero-slot .ask-input::placeholder{white-space:nowrap;overflow:hidden;}
-@container chat-home (max-width:640px){.chat-home-actions{grid-template-columns:repeat(2,minmax(0,1fr));}.chat-home-promo-row{grid-template-columns:1fr;}}
+@container chat-home (max-width:640px){.chat-home-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}.chat-home-promo-row{grid-template-columns:1fr;}}
 @container chat-home (max-width:440px){.chat-home-runs{grid-template-columns:1fr;}.chat-home-wfs{grid-template-columns:repeat(2,minmax(0,1fr));}}
 @media (max-width:760px){.chat-home-title{font-size:24px;margin-bottom:14px;}}
 @media (prefers-reduced-motion: reduce){
@@ -9355,10 +9356,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-member-open:focus-visible,.chat-rc-log-show:focus-visible{outline:2px solid currentColor;outline-offset:2px;}
 /* QA 1: on a tile that carries a badge (the Shaper pin), the badge takes its own line under the label at its normal
    size; "Experimental" (~81px at 10px) fits every tile (≥ 143px at a 290px home). Never truncated. */
-.chat-home-act:has(> .chat-home-act-badge){display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"ic l" "ic b";align-content:center;column-gap:10px;row-gap:2px;}
-.chat-home-act:has(> .chat-home-act-badge) > .chat-ic{grid-area:ic;}
-.chat-home-act:has(> .chat-home-act-badge) > .chat-home-act-l{grid-area:l;}
-.chat-home-act-badge{grid-area:b;justify-self:start;box-sizing:border-box;padding:1px 7px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;line-height:1.4;white-space:nowrap;}
+.chat-home-act-badge{flex:none;box-sizing:border-box;padding:1px 7px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;line-height:1.4;white-space:nowrap;}
 .shape-checklists{margin:12px 0;display:flex;flex-direction:column;gap:6px;}
 .shape-cl-title{font-size:13px;margin:0;color:var(--ink-2);}
 .shape-cl-cycle{border:1px solid var(--line);border-radius:var(--r-ctrl);padding:6px 10px;background:var(--panel);

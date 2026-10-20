@@ -26,10 +26,11 @@ test('tokens only: no hex colour and no coloured left-edge line anywhere in the 
   assert.doesNotMatch(rules, /border-left/);
 });
 
-test('quick actions: 56px tiles, icon and label on one line, no border, a hover tint (review B10); auto-fit (a gated tile leaves no hole), 2 below a 640px container; the phone heading shrinks', () => {
+test('quick actions: one row of label-sized 40px tiles (icon, label, badge inline), no border, a hover tint; 2 columns below a 640px container; the phone heading shrinks', () => {
   const b = block();
-  assert.match(b, /\.chat-home-actions\{display:grid;grid-template-columns:repeat\(auto-fit,minmax\(160px,1fr\)\);/);
-  assert.match(b, /\.chat-home-act\{display:flex;flex-direction:row;[^}]*min-height:56px;[^}]*border:0;/);
+  assert.match(b, /\.chat-home-actions\{display:flex;flex-wrap:nowrap;justify-content:center;gap:4px;overflow:hidden;\}/);
+  assert.match(b, /\.chat-home-act\[data-overflow\]\{display:none;\}/);
+  assert.match(b, /\.chat-home-act\{display:flex;flex-direction:row;[^}]*flex:none;[^}]*min-height:40px;[^}]*border:0;/);
   assert.match(b, /\.chat-home-act:hover\{background:var\(--hover\);\}/);
   // Web UI review: "Shaper" broke as "Shap / er" beside its Experimental badge. The label never shrinks or wraps;
   // the badge (overflow:hidden, ellipsis) is what gives way.
@@ -37,7 +38,7 @@ test('quick actions: 56px tiles, icon and label on one line, no border, a hover 
   assert.doesNotMatch(b, /\.chat-home-act-l\{[^}]*overflow-wrap:anywhere/);
   assert.match(b, /\.chat-home-promo-row\{display:grid;grid-template-columns:repeat\(auto-fit,minmax\(200px,1fr\)\);/, 'the Advanced Schedules promo leaves no hole either');
   assert.match(b, /\.chat-home-body\{container:chat-home \/ inline-size;/);
-  assert.match(b, /@container chat-home \(max-width:640px\)\{\.chat-home-actions\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);\}/);
+  assert.match(b, /@container chat-home \(max-width:640px\)\{\.chat-home-actions\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\);\}/);
   assert.match(b, /@media \(max-width:760px\)\{\.chat-home-title\{font-size:24px;/);
 });
 
