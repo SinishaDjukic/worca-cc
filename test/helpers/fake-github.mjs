@@ -3,7 +3,7 @@
 // serves, .gitattributes export rules included). "No git" in P6 tests is P0's test/helpers/git-off.mjs withNoGit(t).
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,8 +21,8 @@ export async function fakeGithub() {
   let bigContents = false;                 // the contents API's answer for files of 1–100 MB: encoding "none", no content
 
   // ---- git plumbing on a bare repo (GIT_WORK_TREE = the empty root: index commands need one, none touches it) ----
-  const run = (bare, args, { input, env, raw = false } = {}) => {
-    const out = execFileSync('git', [...ID, '--git-dir', bare, ...args], { input, env: { ...process.env, ...env }, maxBuffer: 512 * 2 ** 20, stdio: 'pipe' });
+  const run = (bare, args, { env, raw = false } = {}) => {
+    const out = execFileSync('git', [...ID, '--git-dir', bare, ...args], { env: { ...process.env, ...env }, maxBuffer: 512 * 2 ** 20, stdio: 'pipe' });
     return raw ? out : out.toString('utf8').trim();
   };
   const tryRun = (bare, args, opts) => { try { return run(bare, args, opts); } catch { return null; } };
@@ -31,7 +31,12 @@ export async function fakeGithub() {
     run(bare, base ? ['read-tree', base] : ['read-tree', '--empty'], { env });
     for (const e of entries) {
       if (e.remove) { run(bare, ['update-index', '--force-remove', e.path], { env }); continue; }
-      const blob = run(bare, ['hash-object', '-w', '--stdin'], { input: e.content });
+      // From a file, not --stdin: on macOS a synchronous spawn's `input` to git sometimes never reaches its end under
+      // parallel load, and git waits on stdin for good.
+      const file = join(root, `blob-${randomBytes(4).toString('hex')}`);
+      writeFileSync(file, e.content);
+      const blob = run(bare, ['hash-object', '-w', '--no-filters', '--', file]);
+      rmSync(file, { force: true });
       run(bare, ['update-index', '--add', '--cacheinfo', `${e.mode},${blob},${e.path}`], { env });
     }
     const tree = run(bare, ['write-tree'], { env });

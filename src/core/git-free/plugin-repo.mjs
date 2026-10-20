@@ -6,7 +6,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rea
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { structuredPatch } from 'diff';
+import { Worker } from 'node:worker_threads';
 import { wholeFileHunk, PATCH_MAX_EDIT_LENGTH, PATCH_DIFF_TIMEOUT_MS } from '../folder-copy.mjs';
 import { gitMissingError } from '../git-available.mjs';
 import { repoSnapshotRoot, discoverPlugins, assembleManifestDelta, manifestMcp } from '../plugin-repo.mjs';
@@ -238,14 +238,34 @@ function treeEntries(dir) {
 }
 
 // The update review's jsdiff budget for all its files together: each file gets what is left of it (at most
-// PATCH_DIFF_TIMEOUT_MS) and the loop yields before each file, so N large files block the server for one file's share at a
-// time and diff for at most this long. A file past it is one whole-file hunk, as a file past jsdiff's own budget is.
+// PATCH_DIFF_TIMEOUT_MS), diffed in a worker thread (diff-worker.mjs) while the loop yields before each file, so N large
+// files never block the server and diff for at most this long. A file past it is one whole-file hunk, as a file past
+// jsdiff's own budget is.
 const REVIEW_DIFF_BUDGET_MS = 2_000;
 let reviewBudgetMs = REVIEW_DIFF_BUDGET_MS;
 const nextTurn = () => new Promise((r) => setImmediate(r));
 let reviewYield = nextTurn;
 
-const hunkRange = (start, n) => (n === 0 ? `${start - 1},0` : n === 1 ? `${start}` : `${start},${n}`);
+/** One review's diff worker, started at its first text diff: diff() resolves to jsdiff's hunk lines, or null past its
+ *  edit/time budget; close() stops the worker. */
+function reviewDiffer() {
+  let worker = null;
+  return {
+    diff(oldText, newText, timeout) {
+      worker ??= new Worker(new URL('./diff-worker.mjs', import.meta.url));
+      const w = worker;
+      return new Promise((resolve, reject) => {
+        const settle = (fn, v) => { w.off('message', onMessage).off('error', onError).off('exit', onExit); fn(v); };
+        const onMessage = (hunk) => settle(resolve, hunk);
+        const onError = (err) => settle(reject, err);
+        const onExit = (code) => settle(reject, new Error(`the update review's diff worker exited (${code})`));
+        w.on('message', onMessage).on('error', onError).on('exit', onExit);
+        w.postMessage({ oldText, newText, options: { context: 3, maxEditLength: PATCH_MAX_EDIT_LENGTH, timeout } });
+      });
+    },
+    close() { worker?.terminate().catch(() => {}); },
+  };
+}
 const isBinary = (buf) => buf.subarray(0, 8000).includes(0);   // git's rule: a NUL in the first 8000 bytes
 
 /** The changed paths between two plugin folders, in git's path order: { filename, status, oldMode, newMode, additions,
@@ -259,28 +279,31 @@ async function treeChanges(pinRoot, candRoot, subdir) {
   const paths = [...new Set([...a.keys(), ...b.keys()])].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
   const out = [];
   const deadline = Date.now() + reviewBudgetMs;
-  for (const p of paths) {
-    const x = a.get(p);
-    const y = b.get(p);
-    if (x && y && x.mode === y.mode && x.bytes.equals(y.bytes)) continue;
-    const before = x?.bytes ?? Buffer.alloc(0);
-    const after = y?.bytes ?? Buffer.alloc(0);
-    const f = { filename: prefix + p, status: !x ? 'added' : !y ? 'removed' : 'modified', oldMode: x?.mode ?? null, newMode: y?.mode ?? null, before, after };
-    if (isBinary(before) || isBinary(after)) {
-      out.push({ ...f, binary: true, oldSize: before.length, newSize: after.length, additions: 0, deletions: 0, changes: 0 });
-      continue;
+  const differ = reviewDiffer();
+  try {
+    for (const p of paths) {
+      const x = a.get(p);
+      const y = b.get(p);
+      if (x && y && x.mode === y.mode && x.bytes.equals(y.bytes)) continue;
+      const before = x?.bytes ?? Buffer.alloc(0);
+      const after = y?.bytes ?? Buffer.alloc(0);
+      const f = { filename: prefix + p, status: !x ? 'added' : !y ? 'removed' : 'modified', oldMode: x?.mode ?? null, newMode: y?.mode ?? null, before, after };
+      if (isBinary(before) || isBinary(after)) {
+        out.push({ ...f, binary: true, oldSize: before.length, newSize: after.length, additions: 0, deletions: 0, changes: 0 });
+        continue;
+      }
+      const [oldText, newText] = [before.toString('utf8'), after.toString('utf8')];
+      await reviewYield();   // the server answers other requests between two files' diffs
+      const left = Math.min(PATCH_DIFF_TIMEOUT_MS, deadline - Date.now());
+      // A spent budget takes the timeout fallback at once (jsdiff would still split both texts into lines first).
+      const hunk = (left > 0 ? await differ.diff(oldText, newText, left) : null) ?? wholeFileHunk(oldText, newText);
+      let additions = 0;
+      let deletions = 0;
+      for (const l of hunk) { if (l[0] === '+') additions++; else if (l[0] === '-') deletions++; }
+      out.push({ ...f, additions, deletions, changes: additions + deletions, hunk });
     }
-    const [oldText, newText] = [before.toString('utf8'), after.toString('utf8')];
-    await reviewYield();   // the server answers other requests between two files' diffs
-    const left = Math.min(PATCH_DIFF_TIMEOUT_MS, deadline - Date.now());
-    // A spent budget takes the timeout fallback at once (jsdiff would still split both texts into lines first).
-    const patch = left > 0 ? structuredPatch('', '', oldText, newText, '', '', { context: 3, maxEditLength: PATCH_MAX_EDIT_LENGTH, timeout: left }) : undefined;
-    const hunk = patch === undefined ? wholeFileHunk(oldText, newText)
-      : patch.hunks.flatMap((h) => [`@@ -${hunkRange(h.oldStart, h.oldLines)} +${hunkRange(h.newStart, h.newLines)} @@`, ...h.lines]);
-    let additions = 0;
-    let deletions = 0;
-    for (const l of hunk) { if (l[0] === '+') additions++; else if (l[0] === '-') deletions++; }
-    out.push({ ...f, additions, deletions, changes: additions + deletions, hunk });
+  } finally {
+    differ.close();
   }
   return out;
 }

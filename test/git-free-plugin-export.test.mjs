@@ -3,6 +3,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { structuredPatch } from 'diff';
 import { chmodSync, existsSync, readFileSync, readdirSync, lstatSync, readlinkSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -13,6 +14,7 @@ import { readPluginsLock, writePluginsLock, pluginDir } from '../src/core/plugin
 import { _testing as ghTesting } from '../src/core/git-free/github.mjs';
 import { fakeGithub } from './helpers/fake-github.mjs';
 import { withNoGit } from './helpers/git-off.mjs';
+import { PATCH_MAX_EDIT_LENGTH, PATCH_DIFF_TIMEOUT_MS } from '../src/core/folder-copy.mjs';
 import { noGitBinDir, _testing as stubTesting } from '../src/core/nogit-stub.mjs';
 
 useTempHome(after);
@@ -374,13 +376,17 @@ test('an update preview of a plugin pinned by a tag or an abbreviated sha keeps 
   }
 });
 
-test('the update review diffs within one time budget and yields between files: many large changes never stall the server', async (t) => {
+test('the update review diffs within one time budget, off the server\'s thread: many large changes never stall the server', async (t) => {
   const { _testing: reviewTesting } = await import('../src/core/git-free/plugin-repo.mjs');
   reviewTesting.setReviewBudget(800);
   t.after(() => reviewTesting.setReviewBudget(null));
-  // ~78 kB of alternating lines with an edit every 50 lines: about 160 ms of diffing per file on a laptop, ~4 s for all 24
+  // ~78 kB of alternating lines with an edit every 50 lines: about 250 ms of diffing per file on a laptop, ~6 s for all 24
   const base = Array.from({ length: 40_000 }, (_, i) => (i % 2 ? 'b' : 'a')).join('\n') + '\n';
   const edited = base.split('\n').map((l, i) => (i % 50 === 0 && i < 39_990 ? 'c' : l)).join('\n');
+  // One file's diff on this thread, as the review asks jsdiff for it: the yardstick for a stall, whatever the runner's speed.
+  const t0 = performance.now();
+  structuredPatch('', '', base, edited, '', '', { context: 3, maxEditLength: PATCH_MAX_EDIT_LENGTH, timeout: PATCH_DIFF_TIMEOUT_MS });
+  const oneDiff = performance.now() - t0;
   const v1 = { 'p/worca-cc-plugin.json': MANIFEST('budget-plugin'), 'p/index.mjs': INDEX };
   const v2 = {};
   for (let i = 0; i < 24; i++) { const f = `p/data/f${String(i).padStart(2, '0')}.txt`; v1[f] = base; v2[f] = edited; }
@@ -389,15 +395,22 @@ test('the update review diffs within one time budget and yields between files: m
   gh.commit('acme/budget', { message: 'regenerate', files: v2 });
   writePluginsLock({ ...readPluginsLock(), 'budget-plugin': { repo: url, subdir: 'p', pinnedSha: sha, version: '0.1.0', enabled: true } });
   withNoGit(t);
-  // The fake builds compare with a synchronous `git diff` per file: answer "no common ancestor", so only worca's own work is timed.
-  ghTesting.setFetch(async (u, init) => (String(u).includes('/compare/')
-    ? new Response('{"message":"Not Found"}', { status: 404, headers: { 'content-type': 'application/json' } }) : gh.fetch(u, init)));
+  // The fake server answers with a synchronous git call per request (tree listings, archives, compare): the clock starts at
+  // the review's first yield, once both snapshots are built, so only worca's own work is timed.
   let stall = 0;
-  let last = performance.now();
-  const tick = setInterval(() => { const now = performance.now(); stall = Math.max(stall, now - last); last = now; }, 10);
+  let last;
+  let tick;
+  let yields = 0;
+  const lap = () => { const now = performance.now(); stall = Math.max(stall, now - last); last = now; };
+  reviewTesting.setReviewYield(async () => {
+    if (!yields++) { last = performance.now(); tick = setInterval(lap, 10); }
+    await new Promise((r) => setImmediate(r));
+  });
+  t.after(() => reviewTesting.setReviewYield(null));
   let p;
-  try { p = await fetchCandidate('budget-plugin'); } finally { clearInterval(tick); ghTesting.setFetch(gh.fetch); }
-  assert.ok(stall < 450, `the event loop stalled ${Math.round(stall)} ms`);
+  try { p = await fetchCandidate('budget-plugin'); } finally { if (tick) { clearInterval(tick); lap(); } }
+  assert.equal(yields, 24);   // one yield before each file's diff
+  assert.ok(stall < oneDiff / 2, `the event loop stalled ${Math.round(stall)} ms; one file's diff takes ${Math.round(oneDiff)} ms`);
   // A file past the budget is one whole-file hunk, counted as a jsdiff timeout is: every old line out, every new one in.
   assert.match(p.diffstat.split('\n')[23], /^ p\/data\/f23\.txt \| 80000 /);
 });
