@@ -755,7 +755,9 @@ level and has no **Diff**, **Changes** or **Actions**.
   global `settings.json` stays in your home folder.
 - **Projects folder** — **New** (just a name) and **Clone from URL** put
   projects in `~/.worca-cc/projects/` (it follows `WORCA_HOME` and Settings ›
-  **Worca root folder**);
+  **Worca root folder**); New names the folder in lowercase with `_` for
+  spaces (**Worca Presentation** → `worca_presentation`), the project keeps
+  the name as typed;
   `WORCA_PROJECTS_ROOT` or Settings › **Projects root folder** moves it.
   Existing projects stay where they are.
 - **One list for every project** — **Runs** in the sidebar shows live,

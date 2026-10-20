@@ -1,6 +1,6 @@
 // src/core/project-create.mjs
 // The one module every New / Use git / probe path goes through — routes, the Ask card, tests.
-// New (a name → <projects root>/<name>), add a folder with `Use git`, and the folder probe the
+// New (a name → <projects root>/<folder name>), add a folder with `Use git`, and the folder probe the
 // Add project dialog reads. Every check runs before the first mkdir / git init; a failure after
 // one of them removes what this call made (the new folder, or the .git it made) and nothing else.
 
@@ -59,6 +59,16 @@ export function checkFolderName(raw) {
   if (name.endsWith('.')) throw invalid('the name cannot end with a dot');   // a trailing space cannot survive the trim
   if (RESERVED.test(name)) throw invalid(`"${name}" is a reserved name on Windows`);
   return name;
+}
+
+/**
+ * The folder New makes for a name: lowercase, each run of spaces one `_` ("Worca Presentation" → worca_presentation),
+ * so no shell on any OS needs it quoted. The project keeps the name as typed. Checked again: lowercase can grow the
+ * UTF-8 bytes (İ → i̇).
+ * @throws {ProjectAddError} code INVALID
+ */
+export function folderNameFor(raw) {
+  return checkFolderName(checkFolderName(raw).toLowerCase().replace(/\s+/g, '_'));
 }
 
 function withDeps(deps = {}) {
@@ -224,7 +234,7 @@ export function runGitInit(dir, { timeoutMs = 15_000 } = {}) {
 }
 
 /**
- * New: a folder named `name` under the projects root (made on first use), registered as a Folder
+ * New: a folder named folderNameFor(`name`) under the projects root (made on first use), registered as a Folder
  * project, or a Git one with `useGit` (git init once). Nothing is created on any refusal.
  * @returns {Promise<{dryRun:true, root:string, path:string, name:string, displayPath:string}|{project:object, projects:object[]}>}
  * @throws {ProjectAddError}
@@ -232,11 +242,12 @@ export function runGitInit(dir, { timeoutMs = 15_000 } = {}) {
 export async function createProject({ name, useGit = false, dryRun = false } = {}, deps = {}) {
   const d = withDeps(deps);
   const clean = checkFolderName(name);
+  const folder = folderNameFor(clean);
   const root = resolve(d.projectsRoot ?? getProjectsRoot());
-  const dir = join(root, clean);
+  const dir = join(root, folder);
   if (await nameTaken(d.listProjects, clean)) throw new ProjectAddError('EXISTS', `a project named "${clean}" already exists`);
   if (getProjectByPath(dir)) throw new ProjectAddError('EXISTS', 'this project path is already registered');   // its folder may be gone
-  const clash = diskClash(root, clean);
+  const clash = diskClash(root, folder);
   if (clash !== null) throw new ProjectAddError('EXISTS', `${join(root, clash)} already exists; pick another name`);
   const gitOn = d.gitAvailable();
   if (useGit && !gitOn) throw new ProjectAddError('GIT_MISSING', GIT_MISSING.message);

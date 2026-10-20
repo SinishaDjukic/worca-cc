@@ -12,7 +12,7 @@ import { _testing as gitTesting } from '../src/core/git-available.mjs';
 import { listProjects, addProject, displayPath } from '../src/core/projects.mjs';
 import { onboardingStatus } from '../src/core/onboarding.mjs';
 import { noProjectWorkDir } from '../src/core/store.mjs';
-import { checkFolderName, createProject, addProjectFolder, probeFolder, countFiles, ProjectAddError, runGitInit } from '../src/core/project-create.mjs';
+import { checkFolderName, folderNameFor, createProject, addProjectFolder, probeFolder, countFiles, ProjectAddError, runGitInit } from '../src/core/project-create.mjs';
 
 useTempHome(after, 'worca-cc-pcreate-');
 const made = [];                                                  // every temp folder this file makes; removed in after()
@@ -52,6 +52,19 @@ test('checkFolderName: one portable folder name, trimmed; refusals name the rule
   assert.equal(checkFolderName(CJK.repeat(85)), CJK.repeat(85), '255 UTF-8 bytes: the folder-name limit of ext4 / APFS');
 });
 
+test('folderNameFor: lowercase, each run of spaces one _; the New name rule still applies', () => {
+  assert.equal(folderNameFor('Worca Presentation'), 'worca_presentation');
+  assert.equal(folderNameFor('  Tax   papers 2026 '), 'tax_papers_2026', 'trimmed; a run of spaces is one _');
+  assert.equal(folderNameFor('Q3' + String.fromCharCode(0xa0) + 'Plan' + String.fromCharCode(0x3000) + 'B'), 'q3_plan_b', 'any Unicode space');
+  assert.equal(folderNameFor('landing-page'), 'landing-page');
+  assert.equal(folderNameFor('Проект Едно'), 'проект_едно');
+  assert.throws(() => folderNameFor('a/b'), (e) => e instanceof ProjectAddError && e.code === 'INVALID' && e.message === SEP);
+  const grows = CJK.repeat(80) + 'İ'.repeat(7);                    // 254 UTF-8 bytes; lowercase 261 (İ is 2 bytes, i̇ is 3)
+  assert.equal(checkFolderName(grows), grows);
+  assert.throws(() => folderNameFor(grows), (e) => e instanceof ProjectAddError && e.message === 'the name is too long for a folder',
+    'lowercase can grow the bytes: the folder name is checked too');
+});
+
 test('createProject: a folder under the projects root, Folder kind; useGit runs git init once; refusals create nothing', async () => {
   await checkRows([
     { name: 'no git: a plain folder, vcs none, the projects root made on first use', run: async () => {
@@ -61,6 +74,20 @@ test('createProject: a folder under the projects root, Folder kind; useGit runs 
       assert.equal(out.project.vcs, 'none');
       assert.equal(existsSync(join(root, 'site', '.git')), false);
       assert.ok((await listProjects()).some((p) => p.name === 'site' && p.vcs === 'none'));
+    } },
+    { name: 'the folder is the lowercase name with _ for spaces; the project keeps the name as typed', run: async () => {
+      const out = await createProject({ name: 'Worca Presentation' }, { projectsRoot: ROOT });
+      assert.equal(out.project.path, join(ROOT, 'worca_presentation'));
+      assert.equal(out.project.name, 'Worca Presentation');
+      assert.equal(existsSync(join(ROOT, 'worca_presentation')), true);
+      assert.deepEqual(await createProject({ name: 'Board Deck', dryRun: true }, { projectsRoot: ROOT }),
+        { dryRun: true, root: ROOT, path: join(ROOT, 'board_deck'), name: 'Board Deck', displayPath: displayPath(join(ROOT, 'board_deck')) },
+        'the dry run (the dialog\'s Location, the Ask card) shows the same folder');
+      assert.equal(await outcome(createProject({ name: 'worca  presentation' }, { projectsRoot: ROOT })),
+        'EXISTS: this project path is already registered', 'another name with the same folder is refused');
+      mkdirSync(join(ROOT, 'old_notes'));
+      assert.equal(await outcome(createProject({ name: 'Old Notes' }, { projectsRoot: ROOT })),
+        `EXISTS: ${join(ROOT, 'old_notes')} already exists; pick another name`, 'a folder on disk with that folder name');
     } },
     { name: 'useGit: git init once, vcs git', run: async () => {
       const out = await createProject({ name: 'gitsite', useGit: true }, { projectsRoot: ROOT });
